@@ -14,14 +14,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections import Counter
+from time import perf_counter
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 from langsmith import traceable
 
 from app.agents.grammar_agent import GrammarAgentDeps
-from app.agents.repair_agent import RepairAgentDeps
+from app.agents.repair_agent import RepairPatchDeps
 from app.agents.translation_agent import TranslationAgentDeps
 from app.agents.vocabulary_agent import VocabularyAgentDeps
 from app.config.settings import get_settings
@@ -33,10 +35,21 @@ from app.llm.types import ModelSelection
 from app.schemas.analysis import AnalyzeRequestMeta, ArticleStructure, RenderSceneModel, Warning
 from app.schemas.internal.analysis import PreparedSentence
 from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
+from app.schemas.internal.normalized import NormalizedAnnotationResult
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
 from app.services.analysis.postprocess.draft_validators import validate_all_drafts
 from app.services.analysis.postprocess.normalize_and_ground import normalize_and_ground
-from app.services.analysis.postprocess.projection import project_to_render_scene
+from app.services.analysis.postprocess.projection import (
+    project_normalized_to_render_scene,
+)
+from app.services.analysis.postprocess.repair_items import (
+    apply_repair_patches_to_normalized_result,
+    build_repair_patch_request_with_stats,
+)
+from app.services.analysis.postprocess.repair_policy import (
+    repair_worthy_drop_count,
+    should_trigger_patch_repair,
+)
 from app.services.analysis.preprocess.input_preparation import prepare_input
 from app.services.analysis.prompting.strategy_builder import (
     build_grammar_bundle_async,
@@ -58,11 +71,71 @@ MAX_ANNOTATION_ATTEMPTS = 3
 
 # 触发 repair 的条件
 ANCHOR_FAILURE_THRESHOLD = 0.35
+REPAIR_PATCH_MAX_TARGETS = 8
+
+
+def _repair_enabled(config: RunnableConfig | None) -> bool:
+    """决定是否启用 repair。
+
+    优先级：config["configurable"]["repair_enabled"] > env CLAREAD_WORKFLOW_REPAIR_ENABLED。
+    默认启用。显式设置为 "false" / "0" / "no" 时关闭。
+    """
+    # 1. 显式 config 优先
+    if config is not None:
+        configurable = config.get("configurable") if isinstance(config, dict) else None
+        if configurable and isinstance(configurable, dict):
+            val = configurable.get("repair_enabled")
+            if val is not None:
+                if isinstance(val, bool):
+                    return val
+                if str(val).lower() in ("false", "0", "no"):
+                    return False
+                return True
+
+    # 2. 环境变量
+    env_val = os.environ.get("CLAREAD_WORKFLOW_REPAIR_ENABLED")
+    if env_val is not None:
+        return env_val.lower() not in ("false", "0", "no")
+
+    # 3. 默认启用
+    return True
 
 
 def _annotation_count_by_type(annotations: list[Any]) -> dict[str, int]:
     counts = Counter(getattr(a, "type", str(type(a).__name__)) for a in annotations)
     return dict(sorted(counts.items()))
+
+
+ANCHOR_DROP_REASONS = frozenset({
+    "anchor_not_substring", "anchor_invalid", "resolve_failed",
+    "sentence_id_not_found", "schematic_anchor_not_groundable",
+})
+
+
+def _anchor_drop_summary(drop_log: list[Any]) -> dict[str, Any]:
+    """按 (annotation_type, drop_reason) 汇总 anchor 相关 drop。"""
+    anchor_drops = [
+        e for e in drop_log
+        if getattr(e, "drop_reason", "") in ANCHOR_DROP_REASONS
+    ]
+    by_type_and_reason = Counter(
+        (getattr(e, "annotation_type", ""), getattr(e, "drop_reason", ""))
+        for e in anchor_drops
+    )
+    return {
+        "total_anchor_drops": len(anchor_drops),
+        "by_annotation_type_and_reason": [
+            {"annotation_type": at, "drop_reason": dr, "count": cnt}
+            for (at, dr), cnt in by_type_and_reason.most_common()
+        ],
+    }
+
+
+def _merge_timings(state: AnalyzeState, new_timings: dict[str, float]) -> dict[str, float]:
+    """合并节点计时到 state。"""
+    merged = dict(state.get("node_timings", {}) or {})
+    merged.update(new_timings)
+    return merged
 
 
 def _model_selection(config: RunnableConfig | None) -> ModelSelection | None:
@@ -174,7 +247,10 @@ async def _run_vocabulary_llm_span(
 ) -> dict[str, Any]:
     result = await run_vocabulary_agent(deps, model_selection=model_selection)
     usage = extract_run_usage(result)
-    return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
+    return {
+        "output": result.output if hasattr(result, "output") else result,
+        "usage_metadata": usage,
+    }
 
 
 @traceable(name="grammar_llm_call", run_type="llm")
@@ -186,7 +262,10 @@ async def _run_grammar_llm_span(
 ) -> dict[str, Any]:
     result = await run_grammar_agent(deps, model_selection=model_selection)
     usage = extract_run_usage(result)
-    return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
+    return {
+        "output": result.output if hasattr(result, "output") else result,
+        "usage_metadata": usage,
+    }
 
 
 @traceable(name="translation_llm_call", run_type="llm")
@@ -198,7 +277,10 @@ async def _run_translation_llm_span(
 ) -> dict[str, Any]:
     result = await run_translation_agent(deps, model_selection=model_selection)
     usage = extract_run_usage(result)
-    return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
+    return {
+        "output": result.output if hasattr(result, "output") else result,
+        "usage_metadata": usage,
+    }
 
 
 # -------------------------------------------------------------------
@@ -207,6 +289,7 @@ async def _run_translation_llm_span(
 
 
 async def prepare_input_node(state: AnalyzeState) -> AnalyzeState:
+    t0 = perf_counter()
     payload = state["payload"]
     prepared_input = prepare_input(payload.text)
     warnings: list[Any] = []
@@ -220,6 +303,7 @@ async def prepare_input_node(state: AnalyzeState) -> AnalyzeState:
                 payload=payload,
                 profile_id="unresolved",
             ),
+            "node_timings": _merge_timings(state, {"prepare_input": perf_counter() - t0}),
         }
 
     FAIL_WARN = {"code_like", "other"}
@@ -260,17 +344,42 @@ async def prepare_input_node(state: AnalyzeState) -> AnalyzeState:
             )
         )
 
-    return {"prepared_input": prepared_input, "warnings": warnings}
+    return {
+        "prepared_input": prepared_input,
+        "warnings": warnings,
+        "node_timings": _merge_timings(
+            state, {"prepare_input": perf_counter() - t0}
+        ),
+    }
 
 
-async def derive_user_config_node(state: AnalyzeState) -> AnalyzeState:
+async def derive_user_config_node(
+    state: AnalyzeState, config: RunnableConfig
+) -> AnalyzeState:
+    t0 = perf_counter()
+    # Always resolve repair_enabled from config/env, even if plan already exists,
+    # so the conditional edge can read it from state.
+    repair_enabled = _repair_enabled(config)
     existing_plan = state.get("goal_execution_plan")
     if existing_plan is not None:
-        return {}
+        return {
+            "repair_enabled": repair_enabled,
+            "node_timings": _merge_timings(
+                state, {"derive_user_config": perf_counter() - t0}
+            ),
+        }
 
     payload = state["payload"]
-    plan = build_goal_execution_plan(payload.reading_goal, payload.reading_variant)
-    return {"goal_execution_plan": plan}
+    plan = build_goal_execution_plan(
+        payload.reading_goal, payload.reading_variant
+    )
+    return {
+        "goal_execution_plan": plan,
+        "repair_enabled": repair_enabled,
+        "node_timings": _merge_timings(
+            state, {"derive_user_config": perf_counter() - t0}
+        ),
+    }
 
 
 async def _run_parallel_agents(
@@ -317,32 +426,78 @@ async def _run_parallel_agents(
     grammar_meta = _build_agent_trace_metadata(state, "grammar_agent", model_selection)
     translation_meta = _build_agent_trace_metadata(state, "translation_agent", model_selection)
 
-    vocab_task = _run_vocabulary_llm_span(
-        deps=vocab_deps, metadata=vocab_meta, model_selection=model_selection
+    # 各 agent 独立计时：在各自 coroutine 内 perf_counter
+    # 即使 agent 抛异常也记录耗时，方便定位 timeout/失败瓶颈
+    async def _timed(coro: Any) -> tuple[Any, float]:
+        t0 = perf_counter()
+        try:
+            result = await coro
+        except Exception as exc:
+            elapsed = perf_counter() - t0
+            return exc, elapsed
+        elapsed = perf_counter() - t0
+        return result, elapsed
+
+    vocab_task = _timed(
+        _run_vocabulary_llm_span(
+            deps=vocab_deps, metadata=vocab_meta,
+            model_selection=model_selection,
+        )
     )
-    grammar_task = _run_grammar_llm_span(
-        deps=grammar_deps, metadata=grammar_meta, model_selection=model_selection
+    grammar_task = _timed(
+        _run_grammar_llm_span(
+            deps=grammar_deps, metadata=grammar_meta,
+            model_selection=model_selection,
+        )
     )
-    translation_task = _run_translation_llm_span(
-        deps=translation_deps, metadata=translation_meta, model_selection=model_selection
+    translation_task = _timed(
+        _run_translation_llm_span(
+            deps=translation_deps, metadata=translation_meta,
+            model_selection=model_selection,
+        )
     )
 
-    results = await asyncio.gather(vocab_task, grammar_task, translation_task, return_exceptions=True)
+    gather_t0 = perf_counter()
+    results = await asyncio.gather(
+        vocab_task, grammar_task, translation_task,
+        return_exceptions=True,
+    )
+    _ = perf_counter() - gather_t0  # wall time for parallel_agents recorded separately
 
-    vocab_result = results[0] if not isinstance(results[0], Exception) else None
-    grammar_result = results[1] if not isinstance(results[1], Exception) else None
-    translation_result = results[2] if not isinstance(results[2], Exception) else None
+    # 从 _timed 返回值中提取 agent 结果和独立耗时
+    # _timed 始终返回 (result_or_exc, elapsed)，不再需要 gather 捕获异常
+    agent_timings: dict[str, float] = {}
+    raw_results: list[Any] = []
+    for i, key in enumerate(
+        ("vocabulary_agent", "grammar_agent", "translation_agent")
+    ):
+        agent_result, agent_elapsed = results[i]
+        raw_results.append(agent_result)
+        agent_timings[key] = agent_elapsed
+
+    vocab_result = raw_results[0] if not isinstance(raw_results[0], Exception) else None
+    grammar_result = raw_results[1] if not isinstance(raw_results[1], Exception) else None
+    translation_result = raw_results[2] if not isinstance(raw_results[2], Exception) else None
 
     errors: list[Warning] = []
-    if isinstance(results[0], Exception):
-        logger.exception("vocabulary_agent 调用失败")
-        errors.append(Warning(code="VOCABULARY_AGENT_FAILED", level="error", message=f"vocabulary agent 调用失败: {results[0]}"))
-    if isinstance(results[1], Exception):
-        logger.exception("grammar_agent 调用失败")
-        errors.append(Warning(code="GRAMMAR_AGENT_FAILED", level="error", message=f"grammar agent 调用失败: {results[1]}"))
-    if isinstance(results[2], Exception):
-        logger.exception("translation_agent 调用失败")
-        errors.append(Warning(code="TRANSLATION_AGENT_FAILED", level="error", message=f"translation agent 调用失败: {results[2]}"))
+    if isinstance(raw_results[0], Exception):
+        logger.error("vocabulary_agent 调用失败", exc_info=raw_results[0])
+        errors.append(Warning(
+            code="VOCABULARY_AGENT_FAILED", level="error",
+            message=f"vocabulary agent 调用失败: {raw_results[0]}",
+        ))
+    if isinstance(raw_results[1], Exception):
+        logger.error("grammar_agent 调用失败", exc_info=raw_results[1])
+        errors.append(Warning(
+            code="GRAMMAR_AGENT_FAILED", level="error",
+            message=f"grammar agent 调用失败: {raw_results[1]}",
+        ))
+    if isinstance(raw_results[2], Exception):
+        logger.error("translation_agent 调用失败", exc_info=raw_results[2])
+        errors.append(Warning(
+            code="TRANSLATION_AGENT_FAILED", level="error",
+            message=f"translation agent 调用失败: {raw_results[2]}",
+        ))
 
     vocabulary_output = vocab_result.get("output") if vocab_result else None
     grammar_output = grammar_result.get("output") if grammar_result else None
@@ -359,7 +514,11 @@ async def _run_parallel_agents(
         translation_result.get("usage_metadata") or translation_result.get("usage")
         if translation_result else None
     )
-    usage_summary = _aggregate_usage_summary({"vocabulary": vocabulary_usage, "grammar": grammar_usage, "translation": translation_usage})
+    usage_summary = _aggregate_usage_summary({
+        "vocabulary": vocabulary_usage,
+        "grammar": grammar_usage,
+        "translation": translation_usage,
+    })
 
     return {
         "vocabulary_draft": vocabulary_output,
@@ -371,14 +530,21 @@ async def _run_parallel_agents(
         "usage_summary": usage_summary,
         "rag_debug": _build_learning_rag_debug(grammar_bundle),
         "agent_errors": errors,
+        "agent_timings": agent_timings,
     }
 
 
 async def parallel_agents_node(state: AnalyzeState, config: RunnableConfig) -> AnalyzeState:
     """Parallel agents node."""
+    t0 = perf_counter()
     model_selection = _model_selection(config)
     result = await _run_parallel_agents(state, model_selection)
     errors = result.get("agent_errors", [])
+    parallel_elapsed = perf_counter() - t0
+
+    # 合并 agent 子耗时和 parallel_agents 总耗时
+    agent_timings = result.get("agent_timings", {})
+    timings = _merge_timings(state, {"parallel_agents": parallel_elapsed, **agent_timings})
 
     return {
         "vocabulary_draft": result.get("vocabulary_draft"),
@@ -390,11 +556,13 @@ async def parallel_agents_node(state: AnalyzeState, config: RunnableConfig) -> A
         "usage_summary": result.get("usage_summary"),
         "rag_debug": result.get("rag_debug"),
         "warnings": [*state.get("warnings", []), *errors],
+        "node_timings": timings,
     }
 
 
 async def normalize_and_ground_node(state: AnalyzeState) -> AnalyzeState:
     """Normalize and ground node。"""
+    t0 = perf_counter()
     prepared_input = state["prepared_input"]
     vocabulary_draft = state.get("vocabulary_draft")
     grammar_draft = state.get("grammar_draft")
@@ -403,17 +571,46 @@ async def normalize_and_ground_node(state: AnalyzeState) -> AnalyzeState:
     partial_warnings: list[Warning] = []
     if vocabulary_draft is None:
         vocabulary_draft = VocabularyDraft()
-        partial_warnings.append(Warning(code="VOCABULARY_AGENT_FAILED", level="error", message="vocabulary agent 未返回有效结果，词汇标注已降级为空"))
+        partial_warnings.append(Warning(
+            code="VOCABULARY_AGENT_FAILED", level="error",
+            message="vocabulary agent 未返回有效结果，词汇标注已降级为空",
+        ))
     if grammar_draft is None:
         grammar_draft = GrammarDraft()
-        partial_warnings.append(Warning(code="GRAMMAR_AGENT_FAILED", level="error", message="grammar agent 未返回有效结果，语法标注已降级为空"))
+        partial_warnings.append(Warning(
+            code="GRAMMAR_AGENT_FAILED", level="error",
+            message="grammar agent 未返回有效结果，语法标注已降级为空",
+        ))
     if translation_draft is None:
-        translation_draft = TranslationDraft(title="（翻译不可用）", sentence_translations=[])
-        partial_warnings.append(Warning(code="TRANSLATION_AGENT_FAILED", level="error", message="translation agent 未返回有效结果，翻译已降级为空"))
+        translation_draft = TranslationDraft(
+            title="（翻译不可用）", sentence_translations=[]
+        )
+        partial_warnings.append(Warning(
+            code="TRANSLATION_AGENT_FAILED", level="error",
+            message="translation agent 未返回有效结果，翻译已降级为空",
+        ))
 
-    sentences = [PreparedSentence.model_validate(s) if not isinstance(s, PreparedSentence) else s for s in prepared_input.sentences]
-    validation_warnings = validate_all_drafts(vocabulary_draft, grammar_draft, translation_draft, sentences)
-    draft_warnings = [Warning(code="DRAFT_VALIDATION", level="warning", message=msg) for msg in validation_warnings]
+    # Draft 统计：按 annotation type 分组
+    all_draft_annotations: list[Any] = []
+    all_draft_annotations.extend(vocabulary_draft.vocab_highlights)
+    all_draft_annotations.extend(vocabulary_draft.phrase_glosses)
+    all_draft_annotations.extend(vocabulary_draft.context_glosses)
+    all_draft_annotations.extend(grammar_draft.grammar_notes)
+    all_draft_annotations.extend(grammar_draft.sentence_analyses)
+    draft_counts = _annotation_count_by_type(all_draft_annotations)
+
+    sentences = [
+        PreparedSentence.model_validate(s)
+        if not isinstance(s, PreparedSentence) else s
+        for s in prepared_input.sentences
+    ]
+    validation_warnings = validate_all_drafts(
+        vocabulary_draft, grammar_draft, translation_draft, sentences
+    )
+    draft_warnings = [
+        Warning(code="DRAFT_VALIDATION", level="warning", message=msg)
+        for msg in validation_warnings
+    ]
 
     normalized_result = normalize_and_ground(
         vocabulary_draft=vocabulary_draft,
@@ -423,29 +620,145 @@ async def normalize_and_ground_node(state: AnalyzeState) -> AnalyzeState:
         policy=state["goal_execution_plan"].policy,
     )
 
+    # Normalized 统计：按 annotation type 分组
+    normalized_counts = _annotation_count_by_type(normalized_result.annotations)
+
+    # Anchor 相关 drop 汇总
+    anchor_drop = _anchor_drop_summary(normalized_result.drop_log)
+
+    # Drop 统计：按 annotation_type / drop_reason / drop_stage 分组
+    drop_by_type = Counter(getattr(e, "annotation_type", "") for e in normalized_result.drop_log)
+    drop_by_reason = Counter(getattr(e, "drop_reason", "") for e in normalized_result.drop_log)
+    drop_by_stage = Counter(getattr(e, "drop_stage", "") for e in normalized_result.drop_log)
+
+    annotation_stats: dict[str, Any] = {
+        "draft_counts": draft_counts,
+        "normalized_counts": normalized_counts,
+        "drop_counts_by_type": dict(sorted(drop_by_type.items())),
+        "drop_counts_by_reason": dict(sorted(drop_by_reason.items())),
+        "drop_counts_by_stage": dict(sorted(drop_by_stage.items())),
+        "anchor_drop_summary": anchor_drop,
+        "canonical_stats": normalized_result.canonical_stats,
+    }
+
+    # Repair decision stats：即使不进入 repair_agent_node 也能观测
+    # canonical/patch 口径：使用 normalized_annotations + combined drops
+    pre_repair_count = len(normalized_result.normalized_annotations)
+    combined_drops = (
+        list(normalized_result.drop_log or [])
+        + list(normalized_result.canonical_drop_log or [])
+    )
+    repair_worthy_drops = repair_worthy_drop_count(combined_drops)
+    total_annotations = pre_repair_count + repair_worthy_drops
+    failure_ratio = (
+        repair_worthy_drops / total_annotations
+        if total_annotations > 0 else 0.0
+    )
+    will_repair = should_trigger_patch_repair(
+        normalized_result, threshold=ANCHOR_FAILURE_THRESHOLD
+    )
+
+    repair_decision_stats: dict[str, Any] = {
+        "repair_triggered": False,
+        "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
+        "trigger_reason": (
+            f"failure_ratio={failure_ratio:.2f}"
+            f" > threshold={ANCHOR_FAILURE_THRESHOLD}"
+            if will_repair else None
+        ),
+        "pre_repair_annotation_count": pre_repair_count,
+        "post_repair_annotation_count": None,
+        "repair_elapsed_s": None,
+        "repair_succeeded": None,
+        "repair_disabled": not state.get("repair_enabled", True),
+        "patch_failure_ratio": round(failure_ratio, 4),
+        "canonical_repair_worthy_drop_count": repair_worthy_drops,
+    }
+
     return {
         "normalized_result": normalized_result,
         "drop_log": normalized_result.drop_log,
+        "canonical_drop_log": normalized_result.canonical_drop_log,
         "warnings": [*state.get("warnings", []), *partial_warnings, *draft_warnings],
+        "node_timings": _merge_timings(
+            state, {"normalize_and_ground": perf_counter() - t0}
+        ),
+        "annotation_stats": annotation_stats,
+        "repair_stats": repair_decision_stats,
     }
 
 
 async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> AnalyzeState:
-    """Repair agent node（条件触发）。"""
+    """Repair agent node（条件触发）。
+
+    只使用 item-level patch repair。
+    可通过 config["configurable"]["repair_enabled"]=false 或
+    env CLAREAD_WORKFLOW_REPAIR_ENABLED=false 显式关闭。
+    """
+    t0 = perf_counter()
     normalized_result = state.get("normalized_result")
 
-    if normalized_result is not None and normalized_result.drop_log:
-        quality_drops = [
-            d for d in normalized_result.drop_log
-            if d.drop_stage != "density_control"
-        ]
-        quality_drop_count = len(quality_drops)
-        annotation_count = len(normalized_result.annotations)
-        failure_ratio = quality_drop_count / (annotation_count + quality_drop_count) if annotation_count > 0 else 0.0
-        if failure_ratio <= ANCHOR_FAILURE_THRESHOLD:
-            return {"repair_request": None}
-    elif normalized_result is not None:
-        return {"repair_request": None}
+    repair_enabled = state.get("repair_enabled")
+    if repair_enabled is None:
+        repair_enabled = _repair_enabled(config)
+
+    # ── Disabled guard ──────────────────────────────────────────────
+    if not repair_enabled:
+        repair_stats: dict[str, Any] = {
+            "repair_triggered": False,
+            "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
+            "trigger_reason": None,
+            "pre_repair_annotation_count": None,
+            "post_repair_annotation_count": None,
+            "repair_elapsed_s": None,
+            "repair_succeeded": None,
+            "repair_disabled": True,
+        }
+        return {
+            "repair_request": None,
+            "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
+            "repair_stats": repair_stats,
+        }
+
+    # ── Trigger guard (patch policy) ────────────────────────────────
+    will_repair = should_trigger_patch_repair(
+        normalized_result, threshold=ANCHOR_FAILURE_THRESHOLD
+    )
+
+    if not will_repair:
+        repair_stats = {
+            "repair_triggered": False,
+            "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
+            "trigger_reason": None,
+            "pre_repair_annotation_count": None,
+            "post_repair_annotation_count": None,
+            "repair_elapsed_s": None,
+            "repair_succeeded": None,
+            "repair_disabled": False,
+        }
+        return {
+            "repair_request": None,
+            "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
+            "repair_stats": repair_stats,
+        }
+
+    # Compute canonical failure ratio for trigger_reason
+    if normalized_result is not None:
+        combined_drops = list(normalized_result.drop_log or [])
+        combined_drops.extend(normalized_result.canonical_drop_log or [])
+        patch_drop_count = repair_worthy_drop_count(combined_drops)
+        patch_annotation_count = len(normalized_result.normalized_annotations)
+        patch_total = patch_annotation_count + patch_drop_count
+        failure_ratio = (
+            patch_drop_count / patch_total if patch_total > 0 else 0.0
+        )
+    else:
+        failure_ratio = 0.0
+
+    trigger_reason = (
+        f"failure_ratio={failure_ratio:.2f}"
+        f" > threshold={ANCHOR_FAILURE_THRESHOLD}"
+    )
 
     prepared_input = state["prepared_input"]
     vocabulary_draft = state.get("vocabulary_draft")
@@ -453,77 +766,245 @@ async def repair_agent_node(state: AnalyzeState, config: RunnableConfig) -> Anal
     translation_draft = state.get("translation_draft")
 
     if vocabulary_draft is None or grammar_draft is None or translation_draft is None:
-        return {"repair_request": None}
+        repair_stats = {
+            "repair_triggered": True,
+            "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
+            "trigger_reason": trigger_reason,
+            "pre_repair_annotation_count": None,
+            "post_repair_annotation_count": None,
+            "repair_elapsed_s": None,
+            "repair_succeeded": None,
+            "repair_disabled": False,
+        }
+        return {
+            "repair_request": None,
+            "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
+            "repair_stats": repair_stats,
+        }
 
-    quality_drop_count = len([d for d in (normalized_result.drop_log or []) if d.drop_stage != "density_control"])
-    total_drop_count = len(normalized_result.drop_log) if normalized_result else 0
-    error_context = f"normalized_result 锚点失败率过高或结构异常。quality_drops: {quality_drop_count}, density_drops: {total_drop_count - quality_drop_count}"
-    repair_deps = RepairAgentDeps(
-        sentences=[{"sentence_id": s.sentence_id, "text": s.text} for s in prepared_input.sentences],
-        original_drafts={
-            "vocabulary_draft": vocabulary_draft.model_dump(mode="json") if vocabulary_draft else {},
-            "grammar_draft": grammar_draft.model_dump(mode="json") if grammar_draft else {},
-            "translation_draft": translation_draft.model_dump(mode="json") if translation_draft else {},
-        },
+    return await _repair_patch_mode(
+        state, config, t0, normalized_result,
+        trigger_reason, prepared_input,
+        vocabulary_draft, grammar_draft, translation_draft,
     )
-    repair_meta = _build_agent_trace_metadata(state, "repair_agent", _model_selection(config))
-    repair_meta["extra"] = {**(repair_meta.get("extra") or {}), "error_context": error_context}
+
+
+async def _repair_patch_mode(
+    state: AnalyzeState,
+    config: RunnableConfig,
+    t0: float,
+    normalized_result: NormalizedAnnotationResult,
+    trigger_reason: str,
+    prepared_input: Any,
+    vocabulary_draft: VocabularyDraft,
+    grammar_draft: GrammarDraft,
+    translation_draft: TranslationDraft,
+) -> AnalyzeState:
+    """Item-level patch repair 逻辑。"""
+    # patch mode 使用 canonical 口径（normalized_annotations），
+    # 因为 patch repair 修的就是 normalized_annotations
+    pre_repair_count = len(normalized_result.normalized_annotations)
+    sentences = [
+        PreparedSentence.model_validate(s)
+        if not isinstance(s, PreparedSentence) else s
+        for s in prepared_input.sentences
+    ]
+
+    # 1. Build patch request with stats
+    build_result = build_repair_patch_request_with_stats(
+        drop_log=normalized_result.drop_log or [],
+        sentences=sentences,
+        vocabulary_draft=vocabulary_draft,
+        grammar_draft=grammar_draft,
+        translation_draft=translation_draft,
+        canonical_drop_log=normalized_result.canonical_drop_log or [],
+        max_targets=REPAIR_PATCH_MAX_TARGETS,
+    )
+
+    patch_base_stats: dict[str, Any] = {
+        "patch_target_count": None,
+        "patch_repair_worthy_count": None,
+        "patch_missing_sentence_count": None,
+        "patch_selected_target_count": None,
+        "patch_patched_count": None,
+        "patch_delete_count": None,
+        "patch_invalid_patch_count": None,
+        "patch_postprocess_drop_count": None,
+        "patch_no_targets": False,
+    }
+
+    if build_result.request is None:
+        # No valid targets (all missing sentences or no repair-worthy drops)
+        patch_base_stats.update({
+            "patch_no_targets": True,
+            "patch_repair_worthy_count": build_result.stats.repair_worthy_count,
+            "patch_missing_sentence_count": build_result.stats.missing_sentence_count,
+            "patch_selected_target_count": build_result.stats.selected_target_count,
+        })
+        repair_stats = {
+            "repair_triggered": True,
+            "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
+            "trigger_reason": trigger_reason,
+            "pre_repair_annotation_count": pre_repair_count,
+            "post_repair_annotation_count": pre_repair_count,
+            "repair_elapsed_s": None,
+            "repair_succeeded": False,
+            **patch_base_stats,
+        }
+        return {
+            "repair_request": None,
+            "warnings": [
+                *state.get("warnings", []),
+                Warning(
+                    code="REPAIR_PATCH_NO_TARGETS", level="warning",
+                    message="patch repair: 无可用修复 target，跳过 LLM 调用",
+                ),
+            ],
+            "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
+            "repair_stats": repair_stats,
+        }
+
+    # Record build stats
+    patch_base_stats.update({
+        "patch_target_count": len(build_result.request.targets),
+        "patch_repair_worthy_count": build_result.stats.repair_worthy_count,
+        "patch_missing_sentence_count": build_result.stats.missing_sentence_count,
+        "patch_selected_target_count": build_result.stats.selected_target_count,
+    })
+
+    patch_request = build_result.request
+
+    # 2. Call patch repair LLM
+    patch_deps = RepairPatchDeps(patch_request=patch_request)
+    patch_meta = _build_agent_trace_metadata(
+        state, "repair_patch_agent", _model_selection(config)
+    )
+    patch_meta["extra"] = {
+        **(patch_meta.get("extra") or {}),
+        "target_count": len(patch_request.targets),
+    }
 
     repair_model_selection = _model_selection(config)
     try:
-        repair_result = await _run_repair_llm_span(
-            deps=repair_deps,
-            metadata=repair_meta,
-            error_context=error_context,
+        repair_inner_t0 = perf_counter()
+        patch_llm_result = await _run_repair_patch_llm_span(
+            deps=patch_deps,
+            metadata=patch_meta,
             model_selection=repair_model_selection,
         )
-        repaired_result = repair_result.get("output")
-        repair_usage = repair_result.get("usage_metadata")
+        repair_elapsed = perf_counter() - repair_inner_t0
+        patch_result = patch_llm_result.get("output")
+        repair_usage = patch_llm_result.get("usage_metadata")
+
+        # 3. Merge patches into normalized result
+        annotation_density = (
+            state["goal_execution_plan"].policy.annotation_density
+        )
+        merge = apply_repair_patches_to_normalized_result(
+            result=normalized_result,
+            patch_result=patch_result,
+            patch_request=patch_request,
+            sentences=sentences,
+            annotation_density=annotation_density,
+        )
+
+        repaired_result = merge.result
+        merge_stats = merge.stats
+
+        # Record merge stats
+        patch_base_stats.update({
+            "patch_patched_count": merge_stats.patched_count,
+            "patch_delete_count": merge_stats.delete_count,
+            "patch_invalid_patch_count": merge_stats.invalid_patch_count,
+            "patch_postprocess_drop_count": merge_stats.postprocess_drop_count,
+        })
+
         usage_summary = _aggregate_usage_summary({
             "vocabulary": state.get("vocabulary_usage"),
             "grammar": state.get("grammar_usage"),
             "translation": state.get("translation_usage"),
             "repair": repair_usage,
         })
+
+        post_repair_count = len(repaired_result.normalized_annotations)
+        repair_stats = {
+            "repair_triggered": True,
+            "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
+            "trigger_reason": trigger_reason,
+            "pre_repair_annotation_count": pre_repair_count,
+            "post_repair_annotation_count": post_repair_count,
+            "repair_elapsed_s": repair_elapsed,
+            "repair_succeeded": True,
+            **patch_base_stats,
+        }
+
+        # Update annotation_stats
+        annotation_stats = dict(state.get("annotation_stats") or {})
+        annotation_stats.update({
+            "canonical_stats": repaired_result.canonical_stats,
+        })
+
         return {
-            "repair_request": {"error_context": error_context, "repaired": True},
+            "repair_request": {
+                "target_count": len(patch_request.targets),
+                "repaired": True,
+            },
             "normalized_result": repaired_result,
-            "drop_log": repaired_result.drop_log if repaired_result else state.get("drop_log", []),
+            "drop_log": repaired_result.drop_log,
+            "canonical_drop_log": repaired_result.canonical_drop_log,
+            "annotation_stats": annotation_stats,
             "repair_usage": repair_usage,
             "usage_summary": usage_summary,
+            "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
+            "repair_stats": repair_stats,
         }
     except Exception:
-        logger.exception("repair_agent 调用失败")
+        logger.exception("repair_patch_agent 调用失败")
         usage_summary = _aggregate_usage_summary({
             "vocabulary": state.get("vocabulary_usage"),
             "grammar": state.get("grammar_usage"),
             "translation": state.get("translation_usage"),
         })
+        repair_stats = {
+            "repair_triggered": True,
+            "trigger_threshold": ANCHOR_FAILURE_THRESHOLD,
+            "trigger_reason": trigger_reason,
+            "pre_repair_annotation_count": pre_repair_count,
+            "post_repair_annotation_count": None,
+            "repair_elapsed_s": None,
+            "repair_succeeded": False,
+            **patch_base_stats,
+        }
         return {
-            "repair_request": {"error_context": error_context, "repaired": False},
+            "repair_request": {
+                "repaired": False,
+            },
             "warnings": [
                 *state.get("warnings", []),
-                Warning(code="REPAIR_AGENT_FAILED", level="warning", message="repair agent 调用失败，继续使用归一化结果"),
+                Warning(
+                    code="REPAIR_PATCH_AGENT_FAILED", level="warning",
+                    message="patch repair agent 调用失败，继续使用归一化结果",
+                ),
             ],
             "usage_summary": usage_summary,
+            "node_timings": _merge_timings(state, {"repair_agent": perf_counter() - t0}),
+            "repair_stats": repair_stats,
         }
 
 
-@traceable(name="repair_llm_call", run_type="llm")
-async def _run_repair_llm_span(
+@traceable(name="repair_patch_llm_call", run_type="llm")
+async def _run_repair_patch_llm_span(
     *,
-    deps: RepairAgentDeps,
+    deps: RepairPatchDeps,
     metadata: dict[str, object],
-    error_context: str,
     model_selection: ModelSelection | None = None,
 ) -> dict[str, Any]:
-    from app.agents.repair_agent import build_repair_prompt, get_repair_agent
+    from app.agents.repair_agent import build_repair_patch_prompt, get_repair_patch_agent
     from app.llm.agent_runner import run_agent_with_route
-    from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
 
     result = await run_agent_with_route(
-        agent=get_repair_agent(),
-        prompt=build_repair_prompt(deps, error_context),
+        agent=get_repair_patch_agent(),
+        prompt=build_repair_patch_prompt(deps),
         deps=deps,
         route=MODEL_ROUTE_ANNOTATION_GENERATION,
         model_selection=model_selection,
@@ -537,18 +1018,28 @@ async def _run_repair_llm_span(
 
 async def project_render_scene_node(state: AnalyzeState) -> AnalyzeState:
     """Project to render scene node。"""
+    t0 = perf_counter()
     payload = state["payload"]
     prepared_input = state["prepared_input"]
     normalized_result = state.get("normalized_result")
     plan = state.get("goal_execution_plan")
 
     if normalized_result is None:
-        return {"render_scene": _empty_result(request_id=payload.request_id or "", payload=payload, profile_id=plan.prompt_profile if plan else "unresolved")}
+        return {
+            "render_scene": _empty_result(
+                request_id=payload.request_id or "",
+                payload=payload,
+                profile_id=(
+                    plan.prompt_profile if plan else "unresolved"
+                ),
+            ),
+            "node_timings": _merge_timings(
+                state, {"project_render_scene": perf_counter() - t0}
+            ),
+        }
 
-    from app.schemas.internal.analysis import AnnotationOutput
-    annotation_output = AnnotationOutput(annotations=normalized_result.annotations, sentence_translations=normalized_result.sentence_translations)
-    projection_outcome = project_to_render_scene(
-        annotation_output=annotation_output,
+    projection_outcome = project_normalized_to_render_scene(
+        normalized_result=normalized_result,
         prepared_input=prepared_input,
         source_type=payload.source_type,
         reading_goal=payload.reading_goal,
@@ -559,18 +1050,36 @@ async def project_render_scene_node(state: AnalyzeState) -> AnalyzeState:
 
     return {
         "render_scene": projection_outcome.result,
-        "warnings": [*state.get("warnings", []), *[Warning(**w) for w in projection_outcome.warnings]],
+        "warnings": [
+            *state.get("warnings", []),
+            *[Warning(**w) for w in projection_outcome.warnings],
+        ],
+        "node_timings": _merge_timings(
+            state, {"project_render_scene": perf_counter() - t0}
+        ),
     }
 
 
 async def assemble_result_node(state: AnalyzeState) -> AnalyzeState:
     """Assemble result node。"""
+    t0 = perf_counter()
     render_scene = state.get("render_scene")
 
     if render_scene is None:
         payload = state["payload"]
         plan = state.get("goal_execution_plan")
-        return {"render_scene": _empty_result(request_id=payload.request_id or "", payload=payload, profile_id=plan.prompt_profile if plan else "unresolved")}
+        return {
+            "render_scene": _empty_result(
+                request_id=payload.request_id or "",
+                payload=payload,
+                profile_id=(
+                    plan.prompt_profile if plan else "unresolved"
+                ),
+            ),
+            "node_timings": _merge_timings(
+                state, {"assemble_result": perf_counter() - t0}
+            ),
+        }
 
     existing_warnings = state.get("warnings", [])
     if existing_warnings and hasattr(render_scene, "warnings"):
@@ -580,11 +1089,27 @@ async def assemble_result_node(state: AnalyzeState) -> AnalyzeState:
                 render_scene.warnings.append(w)
                 seen_keys.add((w.code, w.sentence_id))
 
-    heavy_failure_codes = {"VOCABULARY_AGENT_FAILED", "GRAMMAR_AGENT_FAILED", "TRANSLATION_AGENT_FAILED", "NORMALIZE_AND_GROUND_FAILED"}
-    has_heavy_failure = any(w.code in heavy_failure_codes for w in render_scene.warnings)
-    has_no_entries = len(render_scene.sentence_entries) == 0 and len(render_scene.inline_marks) == 0
-    informational_codes = {"LOW_ENGLISH_RATIO", "HIGH_NOISE_RATIO", "UNSUPPORTED_TEXT_TYPE", "DRAFT_VALIDATION"}
-    has_informational_only = len(render_scene.warnings) > 0 and all(w.code in informational_codes for w in render_scene.warnings)
+    heavy_failure_codes = {
+        "VOCABULARY_AGENT_FAILED", "GRAMMAR_AGENT_FAILED",
+        "TRANSLATION_AGENT_FAILED", "NORMALIZE_AND_GROUND_FAILED",
+    }
+    has_heavy_failure = any(
+        w.code in heavy_failure_codes for w in render_scene.warnings
+    )
+    has_no_entries = (
+        len(render_scene.sentence_entries) == 0
+        and len(render_scene.inline_marks) == 0
+    )
+    informational_codes = {
+        "LOW_ENGLISH_RATIO", "HIGH_NOISE_RATIO",
+        "UNSUPPORTED_TEXT_TYPE", "DRAFT_VALIDATION",
+    }
+    has_informational_only = (
+        len(render_scene.warnings) > 0
+        and all(
+            w.code in informational_codes for w in render_scene.warnings
+        )
+    )
 
     if has_heavy_failure and has_no_entries:
         render_scene.user_facing_state = "degraded_heavy"
@@ -593,4 +1118,9 @@ async def assemble_result_node(state: AnalyzeState) -> AnalyzeState:
     else:
         render_scene.user_facing_state = "normal"
 
-    return {"render_scene": render_scene}
+    return {
+        "render_scene": render_scene,
+        "node_timings": _merge_timings(
+            state, {"assemble_result": perf_counter() - t0}
+        ),
+    }

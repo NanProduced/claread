@@ -11,6 +11,28 @@ def _get_project_root() -> Path:
     return Path(__file__).parent.parent.parent
 
 
+@lru_cache(maxsize=1)
+def _load_local_env_values() -> dict[str, str]:
+    env_path = _get_project_root() / ".env"
+    if not env_path.is_file():
+        return {}
+
+    values: dict[str, str] = {}
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
 class Settings(BaseSettings):
     app_name: str = "Claread透读"
     app_env: str = "development"
@@ -19,12 +41,17 @@ class Settings(BaseSettings):
     annotation_model_profile: str = ""
     dict_ai_model_profile: str = ""
     ask_claread_profile: str = ""
-    reader_ask_planner_model_profile: str = ""
+    # Round 16: ``reader_ask_planner_model_profile`` has been removed.
+    # The live agent-loop-first path no longer resolves a planner LLM.
+    reader_ask_replan_model_profile: str = ""
     daily_annotation_model_profile: str = ""
     daily_analysis_model_profile: str = ""
     daily_review_model_profile: str = ""
+    rag_embedding_model_profile: str = ""
+    rag_rerank_model_profile: str = ""
     model_profiles_json: str = ""
     model_presets_json: str = ""
+    reader_ask_model_options_json: str = ""
     langsmith_enabled: bool = False
     langsmith_tracing: bool = True
     langsmith_project: str = "claread-dev"
@@ -108,6 +135,14 @@ class Settings(BaseSettings):
         if path.startswith("config/"):
             return str(_get_project_root() / path)
         return path
+
+    def resolve_external_env_var(self, env_name: str, *, fallback: str = "") -> str:
+        if not env_name:
+            return fallback
+        runtime_value = os.getenv(env_name)
+        if runtime_value:
+            return runtime_value
+        return _load_local_env_values().get(env_name, fallback)
 
 
 @lru_cache(maxsize=1)

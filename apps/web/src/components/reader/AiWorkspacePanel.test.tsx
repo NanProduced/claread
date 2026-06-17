@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReaderAskAttachment, ReaderAskPageIdentity } from "@/lib/reader-plate";
-import type { ReaderAskMessageDto } from "@/types/api/reader-ask";
+import type { ReaderAskUiMessageDto } from "@/types/api/reader-ask";
 import { consumeReaderAskSse } from "./ask/sse";
 import { AiWorkspacePanel, createSseMessageHandler } from "./AiWorkspacePanel";
 
@@ -123,6 +124,7 @@ const completedPayload = {
   run_info: null,
   supplement_candidates: [],
   persisted_supplements: [],
+  usage_event_id: "usage-1",
   disambiguation: null,
   external_asset_disambiguation: null,
 };
@@ -190,6 +192,31 @@ function jsonResponse(payload: unknown, status = 200) {
 function mockFetch() {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url.endsWith("/api/web/reader-ask/model-options")) {
+      return jsonResponse({
+        default_key: "ask-clarity",
+        items: [
+          {
+            key: "ask-clarity",
+            label: "Qwen 3.7 Max",
+            description: "适合带 reasoning 的 Ask 问答。",
+            model_name: "qwen3.7-max",
+            replan_model_name: "qwen3.7-max",
+            price_multiplier: 1,
+            is_default: true,
+          },
+          {
+            key: "ask-fast",
+            label: "DeepSeek Chat",
+            description: "更快的直接回答。",
+            model_name: "deepseek-chat",
+            replan_model_name: "deepseek-chat",
+            price_multiplier: 0.8,
+            is_default: false,
+          },
+        ],
+      });
+    }
     if (url.includes("/api/web/reader-ask/threads?record_id=")) {
       return jsonResponse({
         items: [
@@ -198,6 +225,14 @@ function mockFetch() {
             record_id: "record-1",
             title: "Ask Claread",
             is_default: true,
+            selected_model: {
+              key: "ask-clarity",
+              label: "Qwen 3.7 Max",
+              description: "适合带 reasoning 的 Ask 问答。",
+              model_name: "qwen3.7-max",
+              replan_model_name: "qwen3.7-max",
+              price_multiplier: 1,
+            },
             archived_at: null,
             created_at: "2026-05-20T00:00:00Z",
             updated_at: "2026-05-20T00:00:00Z",
@@ -212,6 +247,14 @@ function mockFetch() {
         record_id: "record-1",
         title: "Ask Claread",
         is_default: true,
+        selected_model: {
+          key: "ask-clarity",
+          label: "Qwen 3.7 Max",
+          description: "适合带 reasoning 的 Ask 问答。",
+          model_name: "qwen3.7-max",
+          replan_model_name: "qwen3.7-max",
+          price_multiplier: 1,
+        },
         archived_at: null,
         created_at: "2026-05-20T00:00:00Z",
         updated_at: "2026-05-20T00:00:00Z",
@@ -225,6 +268,14 @@ function mockFetch() {
         record_id: "record-1",
         title: "Ask Claread",
         is_default: true,
+        selected_model: {
+          key: "ask-clarity",
+          label: "Qwen 3.7 Max",
+          description: "适合带 reasoning 的 Ask 问答。",
+          model_name: "qwen3.7-max",
+          replan_model_name: "qwen3.7-max",
+          price_multiplier: 1,
+        },
         archived_at: null,
         created_at: "2026-05-20T00:00:00Z",
         updated_at: "2026-05-20T00:00:00Z",
@@ -315,7 +366,7 @@ function mockFetch() {
   });
 }
 
-function createAssistantMessage(overrides: Partial<ReaderAskMessageDto> = {}): ReaderAskMessageDto {
+function createAssistantMessage(overrides: Partial<ReaderAskUiMessageDto> = {}): ReaderAskUiMessageDto {
   return {
     id: "msg-assistant-1",
     thread_id: "thread-1",
@@ -350,7 +401,7 @@ function createAssistantMessage(overrides: Partial<ReaderAskMessageDto> = {}): R
   };
 }
 
-function mockThreadMessages(messages: ReaderAskMessageDto[]) {
+function mockThreadMessages(messages: ReaderAskUiMessageDto[]) {
   vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
@@ -359,6 +410,14 @@ function mockThreadMessages(messages: ReaderAskMessageDto[]) {
         record_id: "record-1",
         title: "Ask Claread",
         is_default: true,
+        selected_model: {
+          key: "ask-clarity",
+          label: "Qwen 3.7 Max",
+          description: "适合带 reasoning 的 Ask 问答。",
+          model_name: "qwen3.7-max",
+          replan_model_name: "qwen3.7-max",
+          price_multiplier: 1,
+        },
         archived_at: null,
         created_at: "2026-05-20T00:00:00Z",
         updated_at: "2026-05-20T00:00:00Z",
@@ -700,7 +759,7 @@ describe("AiWorkspacePanel", () => {
     ).toBe(true);
   });
 
-  it("keeps explainability disclosures out of the default assistant surface", async () => {
+  it("keeps debug disclosures out of the default assistant surface while preserving source disclosures", async () => {
     render(
       <AiWorkspacePanel
         open
@@ -727,10 +786,11 @@ describe("AiWorkspacePanel", () => {
       expect(screen.getByText("解释完成。")).not.toBeNull();
     });
 
-    expect(screen.queryByRole("button", { name: /依据与上下文/i })).toBeNull();
+    expect(screen.queryByText("引用与来源")).toBeNull();
     expect(screen.queryByRole("button", { name: /证据/i })).toBeNull();
+    expect(screen.queryByText("上下文策略")).toBeNull();
     expect(screen.queryByRole("button", { name: /运行轨迹/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /工具步骤/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /当前文章上下文/i })).toBeNull();
   });
 
   it("shows the current page chip and recent related-article search from the add menu", async () => {
@@ -752,9 +812,13 @@ describe("AiWorkspacePanel", () => {
     });
 
     expect(screen.getByText("Test Reader")).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "添加其他文章" }));
+    await userEvent.click(screen.getByRole("button", { name: "添加其他文章" }));
 
-    expect(screen.getByPlaceholderText("搜索其他文章")).not.toBeNull();
+    // Without forceMount, DropdownMenu content renders asynchronously after
+    // the controlled open state updates.
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("搜索其他文章")).not.toBeNull();
+    });
     expect(screen.getByText("最近文章")).not.toBeNull();
     await waitFor(() => {
       expect(screen.getByText("Climate Policy")).not.toBeNull();
@@ -1070,24 +1134,26 @@ describe("AiWorkspacePanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("待确认补充")).not.toBeNull();
+      expect(screen.getByText("写入语法旁注")).not.toBeNull();
     });
+
+    expect(screen.queryByText("补充内容")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "确认" }));
 
     await waitFor(() => {
-      expect(screen.getByText("已写入当前页")).not.toBeNull();
+      expect(screen.getAllByText("已写入当前页").length).toBeGreaterThan(0);
       expect(screen.getByText("已把这条 AI 补充写入当前页。")).not.toBeNull();
     });
     expect(onActionExecuted).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除补充" }));
 
     await waitFor(() => {
       expect(screen.getByText("已从当前页移除这条 AI 补充。")).not.toBeNull();
     });
     expect(onSupplementDeleted).toHaveBeenCalledWith("supp-1");
-    expect(screen.queryByText("已写入当前页")).toBeNull();
+    expect(screen.queryByRole("button", { name: "删除补充" })).toBeNull();
   });
 
   it("renders asset disambiguation cards and re-sends the current question after selection", async () => {
@@ -1417,9 +1483,212 @@ describe("AiWorkspacePanel", () => {
     });
 
     expect(screen.queryByText("请解释这里的语法作用。")).toBeNull();
-    expect(screen.getByText("AI 助手生成")).not.toBeNull();
     expect(screen.getByText("Compare A with B")).not.toBeNull();
     expect(screen.getByText(/聚焦片段/)).not.toBeNull();
+    expect(screen.getByText("标注有帮助")).not.toBeNull();
+  });
+
+  it("includes liveContextAttachment in request attachments when no other attachments", async () => {
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[]}
+        liveContextAttachment={sentenceAttachment}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释这句" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+    });
+
+    const streamCall = vi
+      .mocked(global.fetch)
+      .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
+    const bodyAttachments = body.attachments as Record<string, unknown>[];
+    expect(bodyAttachments).toHaveLength(1);
+    expect(bodyAttachments[0]).toMatchObject({
+      kind: "text_selection",
+      subtype: "sentence",
+      label: "整句",
+      selected_text: "Climate change presents an existential challenge.",
+    });
+  });
+
+  it("merges liveContextAttachment with existing attachments in request", async () => {
+    const externalRecordAttachment: ReaderAskAttachment = {
+      kind: "record_ref",
+      subtype: "related_record",
+      label: "Climate Policy",
+      targetKey: "record:record-2:record",
+      metadata: {
+        pageIdentity,
+        sourceSurface: "ask_context_picker",
+        entryAction: "ask_about_this",
+        recordId: "record-2",
+        recordTitle: "Climate Policy",
+      },
+    };
+
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[externalRecordAttachment]}
+        liveContextAttachment={sentenceAttachment}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "结合另一篇文章解释这句" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+    });
+
+    const streamCall = vi
+      .mocked(global.fetch)
+      .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
+    const bodyAttachments = body.attachments as Record<string, unknown>[];
+    expect(bodyAttachments).toHaveLength(2);
+    expect(bodyAttachments.some((a) => a.kind === "record_ref" && a.subtype === "related_record")).toBe(true);
+    expect(bodyAttachments.some((a) => a.kind === "text_selection" && a.subtype === "sentence")).toBe(true);
+  });
+
+  it("deduplicates liveContextAttachment when same attachment already exists in attachments", async () => {
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[sentenceAttachment]}
+        liveContextAttachment={sentenceAttachment}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释这句" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+    });
+
+    const streamCall = vi
+      .mocked(global.fetch)
+      .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
+    const bodyAttachments = body.attachments as Record<string, unknown>[];
+    // Same attachment should appear only once, not duplicated
+    expect(bodyAttachments).toHaveLength(1);
+    expect(bodyAttachments[0]).toMatchObject({
+      kind: "text_selection",
+      subtype: "sentence",
+    });
+  });
+
+  it("does not inject liveContextAttachment into quick action requests", async () => {
+    const quickActionAttachment: ReaderAskAttachment = {
+      kind: "text_selection",
+      subtype: "text_range",
+      label: "选区",
+      selectedText: "quick action text",
+      targetKey: "record:record-1:range:s2:0:16:hash2",
+      metadata: {
+        pageIdentity,
+        sourceSurface: "selection_toolbar",
+        entryAction: "explain_this",
+        sentenceId: "s2",
+        paragraphId: "p1",
+      },
+    };
+
+    const onPendingQuickActionConsumed = vi.fn();
+    render(
+      <AiWorkspacePanel
+        open
+        pageIdentity={pageIdentity}
+        recordId="record-1"
+        recordTitle="Test Reader"
+        attachments={[]}
+        liveContextAttachment={sentenceAttachment}
+        pendingQuickActionRequest={{
+          content: "解释这段语法",
+          attachments: [quickActionAttachment],
+          entryAction: "explain_this",
+        }}
+        onPendingQuickActionConsumed={onPendingQuickActionConsumed}
+        onRemoveAttachment={vi.fn()}
+        onClearAttachments={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.find(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+    });
+
+    const streamCall = vi
+      .mocked(global.fetch)
+      .mock.calls.find(([url]) => String(url).includes("/messages/stream"));
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
+    const bodyAttachments = body.attachments as Record<string, unknown>[];
+
+    // Quick action should only have its own attachment, not the liveContextAttachment
+    expect(bodyAttachments).toHaveLength(1);
+    expect(bodyAttachments[0]).toMatchObject({
+      kind: "text_selection",
+      subtype: "text_range",
+      selected_text: "quick action text",
+    });
   });
 
   it("shows '重新生成' (not '继续生成') for interrupted messages and triggers a full regenerate", async () => {
@@ -1603,7 +1872,7 @@ describe("AiWorkspacePanel", () => {
     expect(onComposerTextareaBlur).toHaveBeenCalledTimes(1);
   });
 
-  it("renders light footnote style citations without redundant labels", async () => {
+  it("renders citation badges in the Ask answer surface", async () => {
     vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
@@ -1627,10 +1896,13 @@ describe("AiWorkspacePanel", () => {
               citations: [
                 {
                   citation_id: "cite-1",
+                  kind: "anchor",
                   label: "Paragraph 1",
                   record_id: "record-1",
                   target_key: "p1",
+                  source_article_title: "Source Article A",
                   selected_text: "This is the source text that was cited.",
+                  metadata_json: {},
                 }
               ],
               action_proposals: [],
@@ -1667,10 +1939,51 @@ describe("AiWorkspacePanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("引用")).not.toBeNull();
-      expect(screen.getByText("当前文章")).not.toBeNull();
-      expect(screen.getByText("This is the source text that was cited.")).not.toBeNull();
+      expect(screen.getByText("Here is the answer.")).not.toBeNull();
     });
+
+    expect(screen.getByText("[1]")).not.toBeNull();
+    expect(screen.getByText("Paragraph 1")).not.toBeNull();
+    expect(screen.getByText("Source Article A")).not.toBeNull();
+    expect(screen.queryByText("This is the source text that was cited.")).toBeNull();
+  });
+
+  it("does not render context anchor cards above user messages", async () => {
+    mockThreadMessages([
+      {
+        ...createAssistantMessage({
+          id: "msg-user-1",
+          role: "user",
+          content_md: "帮我分析这句话。",
+          context_anchors: [
+            {
+              anchor_type: "sentence",
+              sentence_id: "s1",
+              paragraph_id: "p1",
+              target_key: "record:record-1:sentence:s1",
+              label: "整句",
+              selected_text: "This anchor card should stay hidden.",
+              segments: [],
+              payload_json: {},
+            },
+          ],
+        }),
+      } as ReaderAskUiMessageDto,
+      createAssistantMessage({
+        id: "msg-assistant-2",
+        content_md: "这是回答。",
+      }),
+    ]);
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("帮我分析这句话。")).not.toBeNull();
+      expect(screen.getByText("这是回答。")).not.toBeNull();
+    });
+
+    expect(screen.queryByText("整句")).toBeNull();
+    expect(screen.queryByText("This anchor card should stay hidden.")).toBeNull();
   });
 
   it("shows a prompt-kit loader for streaming answers without the ellipsis fallback", async () => {
@@ -1684,9 +1997,10 @@ describe("AiWorkspacePanel", () => {
     renderPanel();
 
     await waitFor(() => {
-      expect(screen.getByText("正在生成解释")).not.toBeNull();
+      expect(screen.getByText("正在读取当前文章与附件上下文，准备本轮解释。")).not.toBeNull();
     });
 
+    expect(screen.queryByText("思考中")).toBeNull();
     expect(screen.queryByText("…")).toBeNull();
   });
 
@@ -1701,7 +2015,7 @@ describe("AiWorkspacePanel", () => {
     renderPanel();
 
     await waitFor(() => {
-      expect(screen.getByText("正在生成解释")).not.toBeNull();
+      expect(screen.getByText("正在组织回答")).not.toBeNull();
       expect(screen.getByText("已生成第一句。")).not.toBeNull();
     });
   });
@@ -1720,7 +2034,8 @@ describe("AiWorkspacePanel", () => {
       expect(screen.getByText("解释完成。")).not.toBeNull();
     });
 
-    expect(screen.queryByText("正在生成解释")).toBeNull();
+    expect(screen.queryByText("正在整理问题")).toBeNull();
+    expect(screen.queryByText("正在组织回答")).toBeNull();
   });
 
   it("shows reasoning while streaming even before reasoning markdown arrives", async () => {
@@ -1736,13 +2051,264 @@ describe("AiWorkspacePanel", () => {
     const { container } = renderPanel();
 
     await waitFor(() => {
-      expect(screen.getAllByText("正在梳理解释思路").length).toBeGreaterThan(0);
+      expect(screen.getByText("思考中")).not.toBeNull();
+      expect(screen.getByText("正在形成可展示的思路…")).not.toBeNull();
     });
 
     const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
     const content = container.querySelector('[data-slot="reasoning-content"]');
     expect(trigger?.getAttribute("aria-expanded")).toBe("true");
     expect(content?.getAttribute("data-state")).toBe("open");
+  });
+
+  it("normalizes duplicated tool trace entries into one visible step while streaming", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "streaming",
+        content_md: "已生成第一句。",
+        tool_trace: [
+          {
+            tool_name: "get_record_context",
+            status: "started",
+            started_at: "2026-05-20T00:00:00Z",
+            completed_at: null,
+            input_summary: null,
+            summary: null,
+            next_actions: [],
+            artifacts: [],
+            metadata_json: {},
+          },
+          {
+            tool_name: "get_record_context",
+            status: "completed",
+            started_at: "2026-05-20T00:00:00Z",
+            completed_at: "2026-05-20T00:00:01Z",
+            input_summary: null,
+            summary: "已读取当前文章上下文。",
+            next_actions: [],
+            artifacts: [],
+            metadata_json: {},
+          },
+        ],
+      }),
+    ]);
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /当前文章上下文/ })).not.toBeNull();
+      expect(screen.getByText("Completed")).not.toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /当前文章上下文/ }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/已读取当前文章上下文/)).toHaveLength(1);
+    });
+
+    expect(screen.queryByText("Running")).toBeNull();
+  });
+
+  it("uses the active Ask model for new turns and retry requests", async () => {
+    vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/web/reader-ask/model-options")) {
+        return jsonResponse({
+          default_key: "ask-clarity",
+          items: [
+            {
+              key: "ask-clarity",
+              label: "Qwen 3.7 Max",
+              description: "适合带 reasoning 的 Ask 问答。",
+              model_name: "qwen3.7-max",
+              replan_model_name: "qwen3.7-max",
+              price_multiplier: 1,
+              is_default: true,
+            },
+            {
+              key: "ask-fast",
+              label: "DeepSeek Chat",
+              description: "更快的直接回答。",
+              model_name: "deepseek-chat",
+              replan_model_name: "deepseek-chat",
+              price_multiplier: 0.8,
+              is_default: false,
+            },
+          ],
+        });
+      }
+      if (url.includes("/api/web/reader-ask/threads?record_id=")) {
+        return jsonResponse({
+          items: [
+            {
+              id: "thread-1",
+              record_id: "record-1",
+              title: "Ask Claread",
+              is_default: true,
+              selected_model: {
+                key: "ask-fast",
+                label: "DeepSeek Chat",
+                description: "更快的直接回答。",
+                model_name: "deepseek-chat",
+                replan_model_name: "deepseek-chat",
+                price_multiplier: 0.8,
+              },
+              archived_at: null,
+              created_at: "2026-05-20T00:00:00Z",
+              updated_at: "2026-05-20T00:00:00Z",
+              last_message_at: null,
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
+        return jsonResponse({
+          id: "thread-1",
+          record_id: "record-1",
+          title: "Ask Claread",
+          is_default: true,
+          selected_model: {
+            key: "ask-fast",
+            label: "DeepSeek Chat",
+            description: "更快的直接回答。",
+            model_name: "deepseek-chat",
+            replan_model_name: "deepseek-chat",
+            price_multiplier: 0.8,
+          },
+          archived_at: null,
+          created_at: "2026-05-20T00:00:00Z",
+          updated_at: "2026-05-20T00:00:00Z",
+          last_message_at: null,
+          messages: [],
+        });
+      }
+      return mockFetch()(input, init);
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      const modelSelect = screen.getByLabelText("切换 Ask Claread 模型");
+      expect(modelSelect.textContent ?? "").toContain("DeepSeek Chat");
+    });
+    expect(screen.queryByText("当前模型 · DeepSeek Chat")).toBeNull();
+    expect(screen.queryByText("更快的直接回答。")).toBeNull();
+
+    const composer = screen.getByRole("textbox");
+    fireEvent.change(composer, { target: { value: "帮我解释这一句。" } });
+    fireEvent.keyDown(composer, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.find(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+      expect(streamCall?.[1]?.body).toContain('"model":"ask-fast"');
+    });
+
+    vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/web/reader-ask/model-options")) {
+        return jsonResponse({
+          default_key: "ask-clarity",
+          items: [
+            {
+              key: "ask-clarity",
+              label: "Qwen 3.7 Max",
+              description: "适合带 reasoning 的 Ask 问答。",
+              model_name: "qwen3.7-max",
+              replan_model_name: "qwen3.7-max",
+              price_multiplier: 1,
+              is_default: true,
+            },
+            {
+              key: "ask-fast",
+              label: "DeepSeek Chat",
+              description: "更快的直接回答。",
+              model_name: "deepseek-chat",
+              replan_model_name: "deepseek-chat",
+              price_multiplier: 0.8,
+              is_default: false,
+            },
+          ],
+        });
+      }
+      if (url.includes("/api/web/reader-ask/threads?record_id=")) {
+        return jsonResponse({
+          items: [
+            {
+              id: "thread-1",
+              record_id: "record-1",
+              title: "Ask Claread",
+              is_default: true,
+              selected_model: {
+                key: "ask-fast",
+                label: "DeepSeek Chat",
+                description: "更快的直接回答。",
+                model_name: "deepseek-chat",
+                replan_model_name: "deepseek-chat",
+                price_multiplier: 0.8,
+              },
+              archived_at: null,
+              created_at: "2026-05-20T00:00:00Z",
+              updated_at: "2026-05-20T00:00:00Z",
+              last_message_at: null,
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
+        return jsonResponse({
+          id: "thread-1",
+          record_id: "record-1",
+          title: "Ask Claread",
+          is_default: true,
+          selected_model: {
+            key: "ask-fast",
+            label: "DeepSeek Chat",
+            description: "更快的直接回答。",
+            model_name: "deepseek-chat",
+            replan_model_name: "deepseek-chat",
+            price_multiplier: 0.8,
+          },
+          archived_at: null,
+          created_at: "2026-05-20T00:00:00Z",
+          updated_at: "2026-05-20T00:00:00Z",
+          last_message_at: null,
+          messages: [
+            createAssistantMessage({
+              id: "msg-retry-target",
+              status: "interrupted",
+              content_md: "已有部分答案。",
+            }),
+          ],
+        });
+      }
+      if (url.includes("/retry/stream")) {
+        return new Response("", {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return mockFetch()(input, init);
+    });
+
+    cleanup();
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "重新生成" })).not.toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
+
+    await waitFor(() => {
+      const retryCall = vi
+        .mocked(global.fetch)
+        .mock.calls.find(([url]) => String(url).includes("/retry/stream"));
+      expect(retryCall).toBeTruthy();
+      expect(retryCall?.[1]?.body).toBe(JSON.stringify({ model: "ask-fast" }));
+    });
   });
 
   it("renders reasoning deltas immediately while the answer is still streaming", async () => {
@@ -1802,7 +2368,7 @@ describe("AiWorkspacePanel", () => {
     const { container } = renderPanel();
 
     await waitFor(() => {
-      expect(screen.getByText("解释思路")).not.toBeNull();
+      expect(screen.getByText("思考过程")).not.toBeNull();
       expect(screen.getByText("这里是答案正文。")).not.toBeNull();
     });
 
@@ -1811,12 +2377,66 @@ describe("AiWorkspacePanel", () => {
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
     expect(content?.getAttribute("data-state")).toBe("closed");
 
-    fireEvent.click(screen.getByText("解释思路"));
+    fireEvent.click(screen.getByText("思考过程"));
 
     await waitFor(() => {
       expect(trigger?.getAttribute("aria-expanded")).toBe("true");
       expect(content?.getAttribute("data-state")).toBe("open");
       expect(screen.getByText("推理细节在这里。")).not.toBeNull();
+    });
+  });
+
+  it("restores completed reasoning from hydration without showing streaming state", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "completed",
+        content_md: "最终答案。",
+        reasoning_md: "这是刷新后恢复的推理内容。",
+        reasoning_status: "completed",
+      }),
+    ]);
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("最终答案。")).not.toBeNull();
+    });
+
+    // Completed reasoning must be collapsed, not streaming
+    const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+
+    // User can expand to see the reasoning content
+    fireEvent.click(screen.getByText("思考过程"));
+    await waitFor(() => {
+      expect(screen.getByText("这是刷新后恢复的推理内容。")).not.toBeNull();
+    });
+  });
+
+  it("keeps a completed reasoning trigger visible even when the model returned no reasoning text", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "completed",
+        content_md: "这是直接回答。",
+        reasoning_md: "",
+        reasoning_status: "completed",
+      }),
+    ]);
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("这是直接回答。")).not.toBeNull();
+      expect(screen.getByText("思考过程")).not.toBeNull();
+    });
+
+    const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(screen.getByText("思考过程"));
+
+    await waitFor(() => {
+      expect(screen.getByText("本轮模型未返回可展示的思考内容。")).not.toBeNull();
     });
   });
 
@@ -1865,8 +2485,35 @@ describe("AiWorkspacePanel", () => {
 // ---------------------------------------------------------------------------
 
 describe("createSseMessageHandler – replan.started", () => {
+  let rafCallbacks: FrameRequestCallback[] = [];
+  let rafIdCounter = 1;
+
+  beforeEach(() => {
+    rafCallbacks = [];
+    rafIdCounter = 1;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      const id = rafIdCounter++;
+      rafCallbacks.push(cb);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+      // no-op for tests
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function flushRaf() {
+    const callbacks = [...rafCallbacks];
+    rafCallbacks = [];
+    for (const cb of callbacks) {
+      cb(0);
+    }
+  }
+
   it("sets replan_status to 'replanning' on replan.started event", () => {
-    type Msg = ReaderAskMessageDto;
+    type Msg = ReaderAskUiMessageDto;
     const targetId = "msg-1";
     const messages: Msg[] = [
       {
@@ -1907,12 +2554,13 @@ describe("createSseMessageHandler – replan.started", () => {
       event: "replan.started",
       data: { message_id: targetId, reason: "degenerate_answer" },
     });
+    flushRaf();
 
     expect(updatedMessages[0].replan_status).toBe("replanning");
   });
 
   it("resets replan_status to 'idle' on message.completed event", () => {
-    type Msg = ReaderAskMessageDto;
+    type Msg = ReaderAskUiMessageDto;
     const targetId = "msg-1";
     const messages: Msg[] = [
       {
@@ -1965,15 +2613,18 @@ describe("createSseMessageHandler – replan.started", () => {
         response_cards: [],
         supplement_candidates: [],
         persisted_supplements: [],
+        usage_event_id: "usage-1",
       },
     });
+    flushRaf();
 
     expect(updatedMessages[0].replan_status).toBe("idle");
     expect(updatedMessages[0].content_md).toBe("This is the replanned answer.");
+    expect(updatedMessages[0].usage_event_id).toBe("usage-1");
   });
 
   it("replaces interrupted preview content on the first regenerate delta", () => {
-    type Msg = ReaderAskMessageDto;
+    type Msg = ReaderAskUiMessageDto;
     const targetId = "msg-1";
     const messages: Msg[] = [
       {
@@ -2010,8 +2661,437 @@ describe("createSseMessageHandler – replan.started", () => {
       event: "message.delta",
       data: { delta: "新的开头" },
     });
+    flushRaf();
 
     expect(updatedMessages[0].content_md).toBe("新的开头");
     expect(updatedMessages[0].regenerate_preview).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createSseMessageHandler – reasoning lifecycle tests
+// ---------------------------------------------------------------------------
+
+describe("createSseMessageHandler – reasoning lifecycle", () => {
+  let rafCallbacks: FrameRequestCallback[] = [];
+  let rafIdCounter = 1;
+
+  beforeEach(() => {
+    rafCallbacks = [];
+    rafIdCounter = 1;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      const id = rafIdCounter++;
+      rafCallbacks.push(cb);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function flushRaf() {
+    const callbacks = [...rafCallbacks];
+    rafCallbacks = [];
+    for (const cb of callbacks) {
+      cb(0);
+    }
+  }
+
+  type Msg = ReaderAskUiMessageDto;
+
+  function makeStreamingAssistant(overrides: Partial<Msg> = {}): Msg {
+    return {
+      id: "msg-1",
+      thread_id: "thread-1",
+      role: "assistant",
+      status: "streaming",
+      content_md: "",
+      reasoning_md: null,
+      reasoning_status: null,
+      context_anchors: [],
+      citations: [],
+      action_proposals: [],
+      tool_trace: [],
+      evidence: [],
+      trace_summary: null,
+      disambiguation: null,
+      external_asset_disambiguation: null,
+      response_cards: [],
+      supplement_candidates: [],
+      persisted_supplements: [],
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function setupHandler(messages: Msg[]) {
+    let updatedMessages: Msg[] = messages;
+    const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
+      updatedMessages = updater(updatedMessages);
+    };
+    const onError = vi.fn();
+    const handler = createSseMessageHandler("msg-1", updateMessage, undefined, onError);
+    return {
+      getMessages: () => updatedMessages,
+      handler,
+      onError,
+    };
+  }
+
+  it("enters streaming on reasoning.started even when reasoning_md is empty", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "reasoning.started", data: { message_id: "msg-1" } });
+    flushRaf();
+
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+    expect(getMessages()[0].reasoning_md).toBe("");
+  });
+
+  it("appends reasoning.delta content without losing prior deltas", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({ reasoning_status: "streaming", reasoning_md: "" }),
+    ]);
+
+    handler({ event: "reasoning.delta", data: { message_id: "msg-1", delta: "step 1" } });
+    flushRaf();
+    expect(getMessages()[0].reasoning_md).toBe("step 1");
+
+    handler({ event: "reasoning.delta", data: { message_id: "msg-1", delta: " step 2" } });
+    flushRaf();
+    expect(getMessages()[0].reasoning_md).toBe("step 1 step 2");
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+  });
+
+  it("transitions to completed on reasoning.completed", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({ reasoning_status: "streaming", reasoning_md: "thinking content" }),
+    ]);
+
+    handler({ event: "reasoning.completed", data: { message_id: "msg-1" } });
+    flushRaf();
+
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+    // reasoning_md must not be cleared
+    expect(getMessages()[0].reasoning_md).toBe("thinking content");
+  });
+
+  it("preserves streamed reasoning_md when message.completed payload has empty reasoning_md", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({
+        reasoning_status: "completed",
+        reasoning_md: "accumulated thinking",
+        content_md: "partial answer",
+      }),
+    ]);
+
+    handler({
+      event: "message.completed",
+      data: {
+        id: "msg-1",
+        thread_id: "thread-1",
+        content_md: "final answer",
+        submission_mode: "chat",
+        resolved_intent: "explain",
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+        // Server sends empty reasoning_md — frontend must keep its accumulated content
+        reasoning_md: "",
+        reasoning_status: "completed",
+      },
+    });
+
+    expect(getMessages()[0].reasoning_md).toBe("accumulated thinking");
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+    expect(getMessages()[0].content_md).toBe("final answer");
+  });
+
+  it("preserves streamed reasoning_md when message.completed payload omits reasoning fields", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({
+        reasoning_status: "completed",
+        reasoning_md: "accumulated thinking",
+        content_md: "partial answer",
+      }),
+    ]);
+
+    handler({
+      event: "message.completed",
+      data: {
+        id: "msg-1",
+        thread_id: "thread-1",
+        content_md: "final answer",
+        submission_mode: "chat",
+        resolved_intent: "explain",
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+        // Server omits reasoning_md and reasoning_status entirely
+      },
+    });
+
+    expect(getMessages()[0].reasoning_md).toBe("accumulated thinking");
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+  });
+
+  it("infers reasoning_status=completed when payload has reasoning_md but no reasoning_status", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({
+        reasoning_status: null,
+        reasoning_md: null,
+        content_md: "",
+      }),
+    ]);
+
+    handler({
+      event: "message.completed",
+      data: {
+        id: "msg-1",
+        thread_id: "thread-1",
+        content_md: "final answer",
+        submission_mode: "chat",
+        resolved_intent: "explain",
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+        // Server sends reasoning_md but omits reasoning_status
+        reasoning_md: "server-side reasoning content",
+      },
+    });
+
+    expect(getMessages()[0].reasoning_md).toBe("server-side reasoning content");
+    // Must infer "completed" from the presence of reasoning_md
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+  });
+
+  it("does not leave reasoning in streaming after message.interrupted", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({
+        reasoning_status: "streaming",
+        reasoning_md: "partial thinking",
+        content_md: "partial answer",
+      }),
+    ]);
+
+    handler({ event: "message.interrupted", data: { content_md: "partial answer" } });
+
+    expect(getMessages()[0].status).toBe("interrupted");
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+    expect(getMessages()[0].reasoning_md).toBe("partial thinking");
+  });
+
+  it("does not leave reasoning in streaming after message.interrupted with empty reasoning_md", () => {
+    // reasoning.started fired but no delta arrived yet
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({
+        reasoning_status: "streaming",
+        reasoning_md: "",
+        content_md: "",
+      }),
+    ]);
+
+    handler({ event: "message.interrupted", data: {} });
+
+    expect(getMessages()[0].status).toBe("interrupted");
+    // Even with empty reasoning_md, streaming status must not persist
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+  });
+
+  it("keeps reasoning_status unchanged on interrupt when reasoning was never started", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({
+        reasoning_status: null,
+        reasoning_md: null,
+        content_md: "partial",
+      }),
+    ]);
+
+    handler({ event: "message.interrupted", data: {} });
+
+    expect(getMessages()[0].status).toBe("interrupted");
+    expect(getMessages()[0].reasoning_status).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createSseMessageHandler – context.compacting & CONTEXT_TOO_LARGE tests
+// ---------------------------------------------------------------------------
+
+describe("createSseMessageHandler – context compression UX", () => {
+  let rafCallbacks: FrameRequestCallback[] = [];
+  let rafIdCounter = 1;
+
+  beforeEach(() => {
+    rafCallbacks = [];
+    rafIdCounter = 1;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      const id = rafIdCounter++;
+      rafCallbacks.push(cb);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function flushRaf() {
+    const callbacks = [...rafCallbacks];
+    rafCallbacks = [];
+    for (const cb of callbacks) {
+      cb(0);
+    }
+  }
+
+  type Msg = ReaderAskUiMessageDto;
+
+  function makeStreamingAssistant(overrides: Partial<Msg> = {}): Msg {
+    return {
+      id: "msg-1",
+      thread_id: "thread-1",
+      role: "assistant",
+      status: "streaming",
+      content_md: "",
+      reasoning_md: null,
+      reasoning_status: null,
+      context_anchors: [],
+      citations: [],
+      action_proposals: [],
+      tool_trace: [],
+      evidence: [],
+      trace_summary: null,
+      disambiguation: null,
+      external_asset_disambiguation: null,
+      response_cards: [],
+      supplement_candidates: [],
+      persisted_supplements: [],
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function setupHandler(messages: Msg[]) {
+    let updatedMessages: Msg[] = messages;
+    const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
+      updatedMessages = updater(updatedMessages);
+    };
+    const onError = vi.fn();
+    const handler = createSseMessageHandler("msg-1", updateMessage, undefined, onError);
+    return {
+      getMessages: () => updatedMessages,
+      handler,
+      onError,
+    };
+  }
+
+  it("sets compacting to true on context.compacting event", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "context.compacting", data: { message_id: "msg-1" } });
+    flushRaf();
+
+    expect(getMessages()[0].compacting).toBe(true);
+  });
+
+  it("resets compacting to false on message.delta", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({ compacting: true }),
+    ]);
+
+    handler({ event: "message.delta", data: { message_id: "msg-1", delta: "开始回答" } });
+    flushRaf();
+
+    expect(getMessages()[0].compacting).toBe(false);
+    expect(getMessages()[0].content_md).toBe("开始回答");
+  });
+
+  it("resets compacting to false on message.completed", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({ compacting: true, content_md: "部分回答" }),
+    ]);
+
+    handler({
+      event: "message.completed",
+      data: {
+        id: "msg-1",
+        thread_id: "thread-1",
+        content_md: "最终回答",
+        submission_mode: "chat",
+        resolved_intent: "explain",
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+      },
+    });
+
+    expect(getMessages()[0].compacting).toBe(false);
+  });
+
+  it("resets compacting to false on message.interrupted", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({ compacting: true, content_md: "中断的回答" }),
+    ]);
+
+    handler({ event: "message.interrupted", data: { content_md: "中断的回答" } });
+
+    expect(getMessages()[0].compacting).toBe(false);
+    expect(getMessages()[0].status).toBe("interrupted");
+  });
+
+  it("calls onError with user_message for CONTEXT_TOO_LARGE error", () => {
+    const { handler, onError } = setupHandler([makeStreamingAssistant()]);
+
+    handler({
+      event: "error",
+      data: {
+        code: "CONTEXT_TOO_LARGE",
+        detail: "Context exceeds budget even after aggressive compaction.",
+        user_message: "当前对话上下文过长，无法继续。请尝试精简问题或开始新对话。",
+      },
+    });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(
+      "当前对话上下文过长，无法继续。请尝试精简问题或开始新对话。",
+    );
+  });
+
+  it("clears compacting and replan_status on error event", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({ compacting: true, replan_status: "replanning" }),
+    ]);
+
+    handler({
+      event: "error",
+      data: {
+        code: "CONTEXT_TOO_LARGE",
+        detail: "Context exceeds budget even after aggressive compaction.",
+        user_message: "当前对话上下文过长，无法继续。请尝试精简问题或开始新对话。",
+      },
+    });
+
+    expect(getMessages()[0].status).toBe("failed");
+    expect(getMessages()[0].compacting).toBe(false);
+    expect(getMessages()[0].replan_status).toBe("idle");
   });
 });

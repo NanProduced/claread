@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from app.agents.repair_agent import RepairAgentDeps, build_repair_prompt
+from app.agents.repair_agent import RepairPatchDeps, build_repair_patch_prompt
 from app.eval_adapter.schemas import (
     NodeLabExampleEntry,
     WorkflowLabBaselineBundle,
@@ -84,21 +84,28 @@ def _learning_layer(
 
 
 def _repair_layer(sentences: list[dict[str, object]]) -> WorkflowLabPromptLayer:
-    prompt = build_repair_prompt(
-        RepairAgentDeps(
-            sentences=sentences,
-            original_drafts={
-                "vocabulary_draft": {},
-                "grammar_draft": {},
-                "translation_draft": {},
-            },
-        ),
-        "示例错误上下文：normalized_result 锚点失败率过高或结构异常。",
+    from app.schemas.internal.repair import RepairPatchRequest, RepairTarget
+
+    patch_request = RepairPatchRequest(
+        sentences=sentences,
+        targets=[
+            RepairTarget(
+                annotation_type="vocab_highlight",
+                sentence_id="s1",
+                anchor_text="[示例锚定文本]",
+                drop_reason="quote_not_found",
+                drop_stage="grounding",
+                source_agent="vocabulary",
+                is_canonical=True,
+                draft_payload=None,
+            )
+        ],
     )
+    prompt = build_repair_patch_prompt(RepairPatchDeps(patch_request=patch_request))
     return WorkflowLabPromptLayer(
         agent_name="repair",
         label=_AGENT_LABELS["repair"],
-        instructions=load_agent_instructions("repair"),
+        instructions=load_agent_instructions("repair", section="patch"),
         policy_name=None,
         policy_focus=None,
         policy_variant=None,
@@ -113,7 +120,10 @@ def get_workflow_lab_baseline_bundle(
 ) -> WorkflowLabBaselineBundle:
     plan = build_goal_execution_plan(request.reading_goal, request.reading_variant)
     if getattr(plan, "topology_mode", "unknown") != "learning":
-        raise ValueError("workflow_lab v1 only supports learning topology; academic should use a dedicated academic lab/workflow")
+        raise ValueError(
+            "workflow_lab v1 only supports learning topology; "
+            "academic should use a dedicated academic lab/workflow"
+        )
 
     plan.few_shot_mode = request.few_shot_mode
     sentences = _sample_sentences(request.sample_sentences)

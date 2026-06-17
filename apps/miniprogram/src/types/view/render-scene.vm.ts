@@ -28,7 +28,30 @@ export interface MultiTextAnchor {
   parts: SpanRef[]
 }
 
-export type InlineMarkAnchor = TextAnchor | MultiTextAnchor
+export interface RangePart {
+  start: number
+  end: number
+  text: string
+  role?: string
+  sourceQuote?: string
+  resolutionKind?: string
+}
+
+export interface RangeAnchor {
+  kind: 'range'
+  sentenceId: string
+  offsetUnit: 'utf16'
+  range: RangePart
+}
+
+export interface MultiRangeAnchor {
+  kind: 'multi_range'
+  sentenceId: string
+  offsetUnit: 'utf16'
+  ranges: RangePart[]
+}
+
+export type InlineMarkAnchor = TextAnchor | MultiTextAnchor | RangeAnchor | MultiRangeAnchor
 
 export type RenderType = 'background' | 'underline'
 
@@ -126,6 +149,13 @@ export interface InlineMarkModel {
 
 export type SentenceEntryType = 'grammar_note' | 'sentence_analysis'
 
+export interface SentenceEntryChunk {
+  order?: number
+  label: string
+  text: string
+  occurrence?: number | null
+}
+
 export interface SentenceEntryModel {
   id: string
   sentenceId: string
@@ -133,6 +163,8 @@ export interface SentenceEntryModel {
   label: string
   title?: string
   content: string
+  analysisText?: string | null
+  chunks?: SentenceEntryChunk[]
 }
 
 export interface RenderSceneVmBase {

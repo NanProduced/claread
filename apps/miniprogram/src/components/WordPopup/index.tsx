@@ -274,6 +274,95 @@ function isLikelyProperCandidate(candidate: { label: string; partOfSpeech?: stri
   return query === query.toLowerCase() && candidate.label !== candidate.label.toLowerCase()
 }
 
+interface ContextHighlightFragment {
+  text: string
+  occurrence?: number
+}
+
+function getContextHighlightFragments(
+  mark: AnyInlineMarkModel | null,
+  lookupText: string,
+): ContextHighlightFragment[] {
+  if (mark?.anchor.kind === 'multi_text') {
+    return mark.anchor.parts
+      .map(part => ({ text: String(part.anchorText || '').trim(), occurrence: part.occurrence }))
+      .filter(part => part.text.length > 0)
+  }
+  if (mark?.anchor.kind === 'text') {
+    const text = String(mark.anchor.anchorText || '').trim()
+    return text ? [{ text, occurrence: mark.anchor.occurrence }] : []
+  }
+  if (mark?.anchor.kind === 'range') {
+    const text = String(mark.anchor.range.text || '').trim()
+    return text ? [{ text }] : []
+  }
+  if (mark?.anchor.kind === 'multi_range') {
+    return mark.anchor.ranges
+      .map(r => ({ text: String(r.text || '').trim() }))
+      .filter(part => part.text.length > 0)
+  }
+  const text = lookupText.trim()
+  return text ? [{ text }] : []
+}
+
+function findContextOccurrence(text: string, fragment: string, occurrence = 1): number {
+  if (!text || !fragment) return -1
+  const safeOccurrence = occurrence > 0 ? occurrence : 1
+  const lowerText = text.toLocaleLowerCase()
+  const lowerFragment = fragment.toLocaleLowerCase()
+  let fromIndex = 0
+  let count = 0
+  while (fromIndex <= text.length) {
+    let idx = text.indexOf(fragment, fromIndex)
+    if (idx < 0) idx = lowerText.indexOf(lowerFragment, fromIndex)
+    if (idx < 0) return -1
+    count += 1
+    if (count === safeOccurrence) return idx
+    fromIndex = idx + Math.max(fragment.length, 1)
+  }
+  return -1
+}
+
+function buildContextHighlightSegments(
+  contextSentence: string,
+  fragments: ContextHighlightFragment[],
+): Array<{ text: string; highlighted: boolean }> {
+  const matches = fragments
+    .map(fragment => {
+      const start = findContextOccurrence(contextSentence, fragment.text, fragment.occurrence)
+      if (start < 0) return null
+      return { start, end: start + fragment.text.length }
+    })
+    .filter((match): match is { start: number; end: number } => Boolean(match))
+    .sort((left, right) => left.start - right.start || right.end - left.end)
+
+  if (!matches.length) {
+    return [{ text: contextSentence, highlighted: false }]
+  }
+
+  const filtered: Array<{ start: number; end: number }> = []
+  let cursor = -1
+  for (const match of matches) {
+    if (match.start < cursor) continue
+    filtered.push(match)
+    cursor = match.end
+  }
+
+  const segments: Array<{ text: string; highlighted: boolean }> = []
+  let index = 0
+  for (const match of filtered) {
+    if (match.start > index) {
+      segments.push({ text: contextSentence.slice(index, match.start), highlighted: false })
+    }
+    segments.push({ text: contextSentence.slice(match.start, match.end), highlighted: true })
+    index = match.end
+  }
+  if (index < contextSentence.length) {
+    segments.push({ text: contextSentence.slice(index), highlighted: false })
+  }
+  return segments
+}
+
 function WordLookupSlip({
   lookupText,
   dictResult,
@@ -919,15 +1008,15 @@ export default function WordPopup({
   const isLLMAnnotated = !!glossary
 
   const renderContextExcerpt = () => {
-    if (!contextSentence || !lookupText) return null
-    const escaped = lookupText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const parts = contextSentence.split(new RegExp(`(${escaped})`, 'gi'))
+    if (!contextSentence) return null
+    const fragments = getContextHighlightFragments(mark, lookupText)
+    const segments = buildContextHighlightSegments(contextSentence, fragments)
     return (
       <View className='source-context-excerpt'>
-        {parts.map((part, i) =>
-          part.toLowerCase() === lookupText.toLowerCase()
-            ? <Text key={i} className='excerpt-highlight'>{part}</Text>
-            : <Text key={i}>{part}</Text>
+        {segments.map((segment, i) =>
+          segment.highlighted
+            ? <Text key={i} className='excerpt-highlight'>{segment.text}</Text>
+            : <Text key={i}>{segment.text}</Text>
         )}
       </View>
     )

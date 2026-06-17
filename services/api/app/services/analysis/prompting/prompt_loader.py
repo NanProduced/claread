@@ -49,7 +49,7 @@ def get_prompt_version() -> str:
     return _load_registry().get("version", "unknown")
 
 
-def load_agent_instructions(agent_name: str) -> str:
+def load_agent_instructions(agent_name: str, *, section: str | None = None) -> str:
     override_text = get_prompt_override_agent_instructions(agent_name)
     if override_text is not None:
         return override_text
@@ -59,7 +59,8 @@ def load_agent_instructions(agent_name: str) -> str:
         raise KeyError(f"Agent '{agent_name}' not found in prompt registry")
     entry = agents[agent_name]
     data = _load_yaml_file(entry["file"])
-    content = data.get("content", "")
+    key = f"{section}_content" if section else "content"
+    content = data.get(key, "")
     if isinstance(content, str):
         return content.strip()
     return str(content).strip()

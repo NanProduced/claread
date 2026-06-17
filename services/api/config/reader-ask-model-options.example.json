@@ -1,0 +1,139 @@
+{
+  "_comment": [
+    "这是字段说明版 example，不可直接作为运行时配置加载。",
+    "复制到正式配置前，请删除所有以下划线开头的注释键。",
+    "Ask Claread 面板可选模型由这里控制；这里的 selection 只应该覆盖 reader_ask / reader_ask_replan 两个 route。",
+    "Round 18: reader_ask_planner route 和 planner_model_name DTO 字段均已移除；配置只暴露主回答与 repair/replan route。",
+    "reader-ask-model-options controls the Ask panel model selector, not the full profiles surface. Options can mix native and compat providers."
+  ],
+  "default_option": "glm-standard",
+  "billing_defaults": {
+    "_field_notes": {
+      "multiplier_input": "计费时输入 token 的权重。",
+      "multiplier_output": "计费时输出 token 的权重。",
+      "tokens_per_point": "多少加权 token 折算 1 个 Claread 积分点。",
+      "price_multiplier": "全局倍率；通常保持 1.0，再由每个 option 单独加价。",
+      "reserved_points": "发起 Ask 前预留的最低积分点数。它只负责预扣/风控，不再参与 prompt token 预算。",
+      "billing_policy_version": "计费策略版本，方便审计与历史回看。"
+    },
+    "multiplier_input": 1,
+    "multiplier_output": 5,
+    "tokens_per_point": 1000,
+    "price_multiplier": 1.0,
+    "reserved_points": 10,
+    "billing_policy_version": "analysis_weighted_tokens_v1"
+  },
+  "runtime_defaults": {
+    "_field_notes": {
+      "max_input_tokens": "Ask 运行时允许送入模型的最大 prompt/input token 预算。compaction 只看这个字段，不再看 reserved_points。",
+      "max_output_tokens": "Ask 主回答/重试/replan 的默认输出上限。若 profile/model 自带更低 max_tokens，会取更小值。",
+      "prompt_buffer_tokens": "为 provider/system 包装层预留的安全缓冲。"
+    },
+    "max_input_tokens": 24000,
+    "max_output_tokens": 3200,
+    "prompt_buffer_tokens": 800
+  },
+  "options": {
+    "_comment": "option key 会持久化到 reader_ask_threads.selected_model_key，建议稳定命名，不要轻易改 key。",
+    "glm-standard": {
+      "_field_notes": {
+        "label": "前端直接展示给用户的模型名。",
+        "description": "运营补充说明；前端可显示为档位解释。",
+        "selection": "模型选择对象。可直接写 routes/default_profile，也可引用 preset。",
+        "price_multiplier": "当前 option 对 billing_defaults 的倍率覆盖。",
+        "runtime_budget": "可选。只覆盖当前 option 的运行预算；未写字段回退到 runtime_defaults。",
+        "enabled": "false 表示该选项不对用户开放；后端会跳过它。enabled=true 的 option 必须在 reader_ask / replan 两个 route 上都能 resolve 且能 build。"
+      },
+      "label": "GLM-5.1",
+      "description": "默认档位：主回答与 replan 使用 GLM-5.1。",
+      "selection": {
+        "_field_notes": {
+          "preset": "可选，先引用一个 preset，再在当前 selection 里继续覆盖。",
+          "default_profile": "当前 selection 未给某个 Ask route 单独指定时，回退到这个 profile。",
+          "routes": "Ask 专用 route 覆盖。这里不要写 workflow / daily route。"
+        },
+        "default_profile": "ask-main-glm51",
+        "routes": {
+          "reader_ask": {
+            "_field_notes": {
+              "profile": "主回答 route 使用的 profile。",
+              "fallback_profiles": "主 profile 失败后的备选 profile。",
+              "model_settings": "仅当前 route 再叠加的模型参数。"
+            },
+            "profile": "ask-main-glm51",
+            "fallback_profiles": [
+              "ask-main-deepseek-v4-pro"
+            ],
+            "model_settings": {
+              "timeout": 180.0,
+              "extra_body": {
+                "enable_thinking": true,
+                "preserve_thinking": true
+              }
+            }
+          },
+          "reader_ask_replan": {
+            "profile": "ask-replan-glm51",
+            "fallback_profiles": [
+              "ask-replan-deepseek-v4-pro"
+            ]
+          }
+        }
+      },
+      "runtime_budget": {
+        "max_input_tokens": 24000,
+        "max_output_tokens": 3200,
+        "prompt_buffer_tokens": 800
+      },
+      "price_multiplier": 1.0,
+      "enabled": true
+    },
+    "qwen-premium": {
+      "label": "Qwen 3.7 Max",
+      "description": "高质量档位：主回答与 replan 使用 Qwen 3.7 Max，并保留 thinking 流。",
+      "selection": {
+        "preset": "ask_qwen_premium"
+      },
+      "runtime_budget": {
+        "max_input_tokens": 28000,
+        "max_output_tokens": 4000
+      },
+      "price_multiplier": 1.6,
+      "enabled": true
+    },
+    "qwen-premium-native": {
+      "_field_notes": "Native provider delivers visible reasoning stream via DashScope native protocol; compat provider uses OpenAI-compatible transport. Same remote model, different transport/protocol and streaming behavior.",
+      "label": "Qwen 3.7 Max (Native)",
+      "description": "高质量原生档位：主回答与 replan 走 DashScope 原生协议，支持可见 reasoning 流。",
+      "selection": {
+        "preset": "ask_qwen_premium_native"
+      },
+      "runtime_budget": {
+        "max_input_tokens": 28000,
+        "max_output_tokens": 4000
+      },
+      "price_multiplier": 1.6,
+      "enabled": true
+    },
+    "deepseek-pro": {
+      "label": "DeepSeek V4 Pro",
+      "description": "高性价比档位：主回答与 replan 使用 DeepSeek V4 Pro。",
+      "selection": {
+        "preset": "ask_deepseek_balanced"
+      },
+      "runtime_budget": {
+        "max_input_tokens": 24000,
+        "max_output_tokens": 3200
+      },
+      "price_multiplier": 1.3,
+      "enabled": true
+    },
+    "route-default-example": {
+      "label": "Use Backend Defaults",
+      "description": "selection = null 代表直接沿用后端当前 Ask route 默认配置。",
+      "selection": null,
+      "price_multiplier": 1.0,
+      "enabled": false
+    }
+  }
+}

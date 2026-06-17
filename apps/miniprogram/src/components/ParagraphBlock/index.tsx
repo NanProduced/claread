@@ -1,7 +1,18 @@
 import { useMemo, memo, useState, useEffect, useCallback } from 'react'
 import Taro from '@tarojs/taro'
 import { View, Text } from '@tarojs/components'
-import { AnyInlineMarkModel, AnySentenceEntryModel, VisualTone, AcademicVisualTone, SentenceModel, TranslationModel } from '../../types/view/render-scene.vm'
+import {
+  AnyInlineMarkModel,
+  AnySentenceEntryModel,
+  VisualTone,
+  AcademicVisualTone,
+  SentenceModel,
+  TranslationModel,
+  type RangePart,
+  type RangeAnchor,
+  type MultiRangeAnchor,
+  type SentenceEntryModel,
+} from '../../types/view/render-scene.vm'
 import { UserAnnotationDto } from '../../services/api/user-annotations.client'
 import type { ReaderNoteDto } from '../../services/api/reader-notes.client'
 import ClickableWord from '../ClickableWord'
@@ -25,6 +36,10 @@ const TONE_PRIORITY: Record<VisualTone | AcademicVisualTone, number> = {
   grammar: 4,
   term: 5,
   logic: 6,
+}
+
+function isSentenceAnalysisEntry(entry: AnySentenceEntryModel): entry is SentenceEntryModel {
+  return entry.entryType === 'sentence_analysis'
 }
 
 export interface WordClickPayload {
@@ -82,6 +97,29 @@ function findTextAnchorPosition(text: string, anchorText: string, occurrence = 1
     pos = idx + 1
   }
   return -1
+}
+
+function isRangeAnchor(anchor: AnyInlineMarkModel['anchor']): anchor is RangeAnchor {
+  return anchor.kind === 'range'
+}
+
+function isMultiRangeAnchor(anchor: AnyInlineMarkModel['anchor']): anchor is MultiRangeAnchor {
+  return anchor.kind === 'multi_range'
+}
+
+function validateRangePart(sentenceText: string, part: RangePart): boolean {
+  if (!Number.isInteger(part.start) || !Number.isInteger(part.end)) return false
+  if (!(part.start >= 0 && part.end > part.start && part.end <= sentenceText.length)) return false
+  if (sentenceText.slice(part.start, part.end) !== part.text) return false
+  return true
+}
+
+function getAnchorTexts(mark: AnyInlineMarkModel): string[] {
+  if (mark.anchor.kind === 'text') return [mark.anchor.anchorText]
+  if (mark.anchor.kind === 'multi_text') return mark.anchor.parts.map(part => part.anchorText).filter(Boolean)
+  if (mark.anchor.kind === 'range') return [mark.anchor.range.text]
+  if (mark.anchor.kind === 'multi_range') return mark.anchor.ranges.map(r => r.text).filter(Boolean)
+  return []
 }
 
 function renderPlainSegmentAsClickableWords(
@@ -185,11 +223,6 @@ function includesMatch(haystack: string, needle: string): boolean {
   return haystack.includes(needle) || compactForMatch(haystack).includes(compactNeedle)
 }
 
-function getAnchorTexts(mark: AnyInlineMarkModel): string[] {
-  if (mark.anchor.kind === 'text') return [mark.anchor.anchorText]
-  return mark.anchor.parts.map(part => part.anchorText).filter(Boolean)
-}
-
 function getMarkTerms(mark: AnyInlineMarkModel): string[] {
   const glossary = mark.glossary as Record<string, unknown> | undefined
   const terms: string[] = [
@@ -289,26 +322,75 @@ function adjustMarkForDropCap(mark: AnyInlineMarkModel, sourceText: string, lett
     }
   }
 
-  const parts = mark.anchor.parts
-    .map(part => {
-      const pos = findTextAnchorPosition(sourceText, part.anchorText, part.occurrence || 1)
-      if (pos !== letterIndex) return part
-      return {
-        ...part,
-        anchorText: part.anchorText.slice(1),
-      }
-    })
-    .filter(part => part.anchorText.length > 0)
+  if (mark.anchor.kind === 'multi_text') {
+    const parts = mark.anchor.parts
+      .map(part => {
+        const pos = findTextAnchorPosition(sourceText, part.anchorText, part.occurrence || 1)
+        if (pos !== letterIndex) return part
+        return {
+          ...part,
+          anchorText: part.anchorText.slice(1),
+        }
+      })
+      .filter(part => part.anchorText.length > 0)
 
-  if (parts.length === 0) return null
+    if (parts.length === 0) return null
 
-  return {
-    ...mark,
-    anchor: {
-      ...mark.anchor,
-      parts,
-    },
+    return {
+      ...mark,
+      anchor: {
+        ...mark.anchor,
+        parts,
+      },
+    }
   }
+
+  if (isRangeAnchor(mark.anchor)) {
+    const r = mark.anchor.range
+    // Range is entirely after the removed letter: shift left by 1
+    if (r.start > letterIndex) {
+      const adjusted: RangePart = { ...r, start: r.start - 1, end: r.end - 1 }
+      return { ...mark, anchor: { ...mark.anchor, range: adjusted } }
+    }
+    // Range starts at or before the removed letter and extends past it
+    if (r.start <= letterIndex && r.end > letterIndex) {
+      // Remove the drop-cap character from the text
+      const adjustedText = r.text.slice(r.start === letterIndex ? 1 : 0)
+      if (!adjustedText) return null
+      const adjustedStart = r.start === letterIndex ? r.start : r.start
+      const adjustedEnd = adjustedStart + adjustedText.length
+      // Verify the adjusted range against the body text (sourceText minus the letter)
+      const bodyText = sourceText.slice(0, letterIndex) + sourceText.slice(letterIndex + 1)
+      if (bodyText.slice(adjustedStart, adjustedEnd) !== adjustedText) return null
+      const adjusted: RangePart = { ...r, start: adjustedStart, end: adjustedEnd, text: adjustedText }
+      return { ...mark, anchor: { ...mark.anchor, range: adjusted } }
+    }
+    // Range is entirely before the removed letter: no adjustment needed
+    return mark
+  }
+
+  if (isMultiRangeAnchor(mark.anchor)) {
+    const adjustedRanges: RangePart[] = []
+    for (const r of mark.anchor.ranges) {
+      if (r.start > letterIndex) {
+        adjustedRanges.push({ ...r, start: r.start - 1, end: r.end - 1 })
+      } else if (r.start <= letterIndex && r.end > letterIndex) {
+        const adjustedText = r.text.slice(r.start === letterIndex ? 1 : 0)
+        if (!adjustedText) return null // Any part failure → discard entire mark
+        const adjustedStart = r.start
+        const adjustedEnd = adjustedStart + adjustedText.length
+        const bodyText = sourceText.slice(0, letterIndex) + sourceText.slice(letterIndex + 1)
+        if (bodyText.slice(adjustedStart, adjustedEnd) !== adjustedText) return null
+        adjustedRanges.push({ ...r, start: adjustedStart, end: adjustedEnd, text: adjustedText })
+      } else {
+        adjustedRanges.push(r)
+      }
+    }
+    if (adjustedRanges.length === 0) return null
+    return { ...mark, anchor: { ...mark.anchor, ranges: adjustedRanges } }
+  }
+
+  return mark
 }
 
 function adjustMarksForDropCap(marks: AnyInlineMarkModel[], sourceText: string, letterIndex: number): AnyInlineMarkModel[] {
@@ -446,6 +528,15 @@ function renderTextWithMarks(
     return wordOccurrenceMap[w]
   }
 
+  const getMarkLookupText = (mark: AnyInlineMarkModel, surfaceText: string) => {
+    const lookupText = typeof mark.lookupText === 'string' ? mark.lookupText.trim() : ''
+    return lookupText || surfaceText
+  }
+
+  const sameLookupSurfaceText = (left: string, right: string) => (
+    left.trim().toLocaleLowerCase() === right.trim().toLocaleLowerCase()
+  )
+
   // 沉浸模式下只保留词汇相关的标记（vocab, phrase, context）
   const visibleMarks = isImmersive
     ? marks.filter(m => ['vocab', 'phrase', 'context', 'term', 'logic'].includes(m.visualTone))
@@ -462,7 +553,7 @@ function renderTextWithMarks(
       if (pos >= 0) {
         flatParts.push({ mark: m, start: pos, end: pos + m.anchor.anchorText.length, text: m.anchor.anchorText })
       }
-    } else {
+    } else if (m.anchor.kind === 'multi_text') {
       m.anchor.parts.forEach((part, idx) => {
         const pos = findTextAnchorPosition(text, part.anchorText, part.occurrence || 1)
         if (pos >= 0) {
@@ -479,6 +570,28 @@ function renderTextWithMarks(
           }
           flatParts.push({ mark: partMark, start: pos, end: pos + part.anchorText.length, text: part.anchorText, role: part.role })
         }
+      })
+    } else if (isRangeAnchor(m.anchor)) {
+      if (m.anchor.offsetUnit === 'utf16' && validateRangePart(text, m.anchor.range)) {
+        const r = m.anchor.range
+        flatParts.push({ mark: m, start: r.start, end: r.end, text: r.text, role: r.role })
+      }
+    } else if (isMultiRangeAnchor(m.anchor)) {
+      if (m.anchor.offsetUnit !== 'utf16') return
+      const allValid = m.anchor.ranges.every(r => validateRangePart(text, r))
+      if (!allValid) return
+      m.anchor.ranges.forEach((r, idx) => {
+        const partMark: AnyInlineMarkModel = {
+          ...m,
+          id: `${m.id}-part-${idx}`,
+          parentId: m.id,
+          anchor: {
+            kind: 'text',
+            sentenceId: m.anchor.sentenceId,
+            anchorText: r.text,
+          },
+        }
+        flatParts.push({ mark: partMark, start: r.start, end: r.end, text: r.text, role: r.role })
       })
     }
   })
@@ -598,9 +711,17 @@ function renderTextWithMarks(
       || (item.mark.parentId && normalizeId(activeMarkId) === normalizeId(item.mark.parentId))
       || (groupActiveIds && (groupActiveIds.has(item.mark.id) || (item.mark.parentId && groupActiveIds.has(item.mark.parentId))))
     )
-    const isSaved = vocabSet?.has(item.text.toLowerCase())
-    const savedStatus = vocabSavedMap?.[item.text.toLowerCase()]
-    const markOcc = getNextOccurrence(item.text)
+    const markLookupText = getMarkLookupText(item.mark, item.text)
+    const lookupKey = markLookupText.toLocaleLowerCase()
+    const isSaved = vocabSet?.has(lookupKey)
+    const savedStatus = vocabSavedMap?.[lookupKey]
+    const markOcc = item.mark.anchor.kind === 'text'
+      ? item.mark.anchor.occurrence ?? (
+        sameLookupSurfaceText(markLookupText, item.text)
+          ? getNextOccurrence(item.text)
+          : undefined
+      )
+      : undefined
     const markInSelection = selectionRange
       ? item.start < selectionRange.end && item.end > selectionRange.start
       : false
@@ -842,6 +963,8 @@ const ParagraphBlock = memo(function ParagraphBlock({
           if (mark) {
             if (mark.anchor.kind === 'text') snippet = mark.anchor.anchorText
             else if (mark.anchor.kind === 'multi_text') snippet = mark.anchor.parts.map(p => p.anchorText).join(' ... ')
+            else if (mark.anchor.kind === 'range') snippet = mark.anchor.range.text
+            else if (mark.anchor.kind === 'multi_range') snippet = mark.anchor.ranges.map(r => r.text).join(' ... ')
           }
           return {
             id: e.id,
@@ -859,9 +982,9 @@ const ParagraphBlock = memo(function ParagraphBlock({
           }
         }),
         ...sentenceEntries
-          .filter(e => e.entryType === 'sentence_analysis')
+          .filter(isSentenceAnalysisEntry)
           .map(e => {
-            const parsed = parseSentenceAnalysis(e.content)
+            const parsed = parseSentenceAnalysis(e.content, e.chunks)
             return {
               id: e.id,
               type: 'sentence' as const,

@@ -1,7 +1,17 @@
 <script setup>
 import { computed } from "vue";
 import ResultBlock from "../../../components/ResultBlock.vue";
-import { dash, normalizeWorkflowScene, sceneInlineMarks, sceneSentenceEntries, sceneTranslations, sceneWarnings } from "../composables/workflowLabFormatting.js";
+import {
+  dash,
+  inlineMarkAnchorText,
+  inlineMarkDisplayTitle,
+  inlineMarkShowsDistinctAnchor,
+  normalizeWorkflowScene,
+  sceneInlineMarks,
+  sceneSentenceEntries,
+  sceneTranslations,
+  sceneWarnings,
+} from "../composables/workflowLabFormatting.js";
 
 const props = defineProps({
   payload: { type: Object, default: null },
@@ -63,16 +73,42 @@ const coverageFacts = computed(() => {
   ];
 });
 
+function pushUnique(list, value) {
+  const text = String(value || "").trim();
+  if (!text || list.includes(text)) return;
+  list.push(text);
+}
+
+function lexicalGroupTypeLabel(type) {
+  switch (String(type || "").trim()) {
+    case "vocab_highlight":
+      return "词汇";
+    case "phrase_gloss":
+      return "短语";
+    case "context_gloss":
+      return "语境";
+    default:
+      return type || "其他";
+  }
+}
+
 const lexicalGroups = computed(() => {
   const map = new Map();
   for (const item of inlineMarks.value.filter((entry) => entry?.annotation_type !== "grammar_note")) {
     const key = String(item.annotation_type || "other");
-    const current = map.get(key) || { type: key, count: 0, anchors: [] };
+    const current = map.get(key) || { type: key, count: 0, titles: [], anchors: [] };
     current.count += 1;
-    current.anchors.push(item?.anchor?.anchor_text || item?.lookup_text || "—");
+    pushUnique(current.titles, inlineMarkDisplayTitle(item));
+    if (inlineMarkShowsDistinctAnchor(item)) {
+      pushUnique(current.anchors, inlineMarkAnchorText(item));
+    }
     map.set(key, current);
   }
-  return Array.from(map.values());
+  return Array.from(map.values()).map((group) => ({
+    ...group,
+    titleSummary: group.titles.join(" / ") || "—",
+    anchorSummary: group.anchors.join(" / "),
+  }));
 });
 
 const grammarItems = computed(() => {
@@ -80,7 +116,7 @@ const grammarItems = computed(() => {
   for (const item of inlineMarks.value.filter((entry) => entry?.annotation_type === "grammar_note")) {
     rows.push({
       sentenceId: item?.anchor?.sentence_id || "—",
-      title: item?.anchor?.anchor_text || "grammar note",
+      title: inlineMarkAnchorText(item) || "grammar note",
       type: "grammar_note",
     });
   }
@@ -149,10 +185,11 @@ const perAgentUsage = computed(() => {
           <div v-if="lexicalGroups.length" class="group-list">
             <article v-for="group in lexicalGroups" :key="group.type" class="group-card">
               <div class="group-meta">
-                <strong>{{ group.type }}</strong>
+                <strong>{{ lexicalGroupTypeLabel(group.type) }}</strong>
                 <span>{{ group.count }} 条</span>
               </div>
-              <p>{{ group.anchors.join(" / ") }}</p>
+              <p>{{ group.titleSummary }}</p>
+              <p v-if="group.anchorSummary" class="anchor-summary">原文：{{ group.anchorSummary }}</p>
             </article>
           </div>
           <p v-else class="empty-line">没有词汇类标注。</p>
@@ -341,6 +378,11 @@ const perAgentUsage = computed(() => {
   font-size: 12px;
   line-height: 1.6;
   overflow-wrap: anywhere;
+}
+
+.group-card .anchor-summary {
+  color: var(--theme--foreground-subdued);
+  font-size: 11px;
 }
 
 .agent-card strong {

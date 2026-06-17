@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Plate,
   usePlateEditor,
@@ -60,6 +60,7 @@ export interface PlateReaderSurfaceProps {
   jumpTarget?: ReaderJumpTarget | null;
   focusTarget?: ReaderJumpTarget | null;
   hoveredAnnotationTargetKey?: string | null;
+  activeInlineMarkKey?: string | null;
   assetProjection?: ReaderAssetProjection | null;
   readerNotesBySentence?: Map<string, WebReaderNoteVm[]>;
   activeReaderNoteId?: string | null;
@@ -145,6 +146,7 @@ export function PlateReaderSurface({
   jumpTarget = null,
   focusTarget = null,
   hoveredAnnotationTargetKey = null,
+  activeInlineMarkKey = null,
   readerNotesBySentence = new Map<string, WebReaderNoteVm[]>(),
   activeReaderNoteId = null,
   onAnalysisFocusChange,
@@ -169,6 +171,8 @@ export function PlateReaderSurface({
     () => document.children.filter((node): node is ReaderParagraphNode => node.type === "reader_paragraph"),
     [document.children],
   );
+  const [hoveredInlineMarkKey, setHoveredInlineMarkKey] = useState<string | null>(null);
+  const [focusedInlineMarkKey, setFocusedInlineMarkKey] = useState<string | null>(null);
 
   const paragraphIndexById = useMemo(
     () => new Map(paragraphNodes.map((node, index) => [node.paragraphId, index])),
@@ -249,7 +253,7 @@ export function PlateReaderSurface({
         const segmentsList: Array<SentenceAnalysisSegment & { entryId: string }> = [];
         sentenceNode.children.forEach((child) => {
           if (child.type === "reader_sentence_analysis" && expandedIds.has(child.entryId)) {
-            const parsed = parseSentenceAnalysisContent(child.content);
+            const parsed = parseSentenceAnalysisContent(child.content, child.chunks);
             const segments = buildSentenceAnalysisSegments(sentenceNode.sourceText, parsed.chunks);
             segmentsList.push(
               ...segments.map((segment) => ({
@@ -580,7 +584,12 @@ export function PlateReaderSurface({
         contextFocusRangesBySentence={contextFocusRangesBySentence}
         noteFocusRangesBySentence={noteFocusRangesBySentence}
         hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
+        hoveredInlineMarkKey={hoveredInlineMarkKey}
+        focusedInlineMarkKey={focusedInlineMarkKey}
+        activeInlineMarkKey={activeInlineMarkKey}
         onHoverAnnotationTargetKeyChange={onHoverAnnotationTargetKeyChange}
+        onHoverInlineMarkKeyChange={setHoveredInlineMarkKey}
+        onFocusInlineMarkKeyChange={setFocusedInlineMarkKey}
         activeAnalysisEntryId={activeAnalysisEntryId}
         expandedAnalysisEntryIds={expandedIds}
         sentenceTextBySentence={sentenceTextBySentence}
@@ -602,6 +611,9 @@ export function PlateReaderSurface({
       selectionFocusRangesBySentence,
       contextFocusRangesBySentence,
       hoveredAnnotationTargetKey,
+      hoveredInlineMarkKey,
+      focusedInlineMarkKey,
+      activeInlineMarkKey,
       noteFocusRangesBySentence,
       onHoverAnnotationTargetKeyChange,
       sentenceTextBySentence,

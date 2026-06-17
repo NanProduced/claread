@@ -7,6 +7,7 @@ from app.schemas.reader_ask import (
     ReaderAskContextPlan,
     ReaderAskDisambiguation,
     ReaderAskEvidenceItem,
+    ReaderAskFollowUpSuggestion,
     ReaderAskMessage,
     ReaderAskPersistedSupplement,
     ReaderAskResolvedContextInput,
@@ -23,6 +24,64 @@ from app.schemas.reader_ask import (
     ReaderAskActionProposal,
     ReaderAskCitation,
 )
+
+# ---------------------------------------------------------------------------
+# Stream Checkpoint Shape Contract (P0-4)
+# ---------------------------------------------------------------------------
+# The stable set of user-visible fields that must be present in every
+# `user_visible_output_json` — whether written by the streaming checkpoint
+# flush or by the completed output builder.  Repository hydration reads the
+# user-facing message fields from this shape; usage/cost fields remain on the
+# output snapshot and are not projected onto the top-level message DTO.
+#
+# Adding a field here requires:
+#   1. Adding it to `ReaderAskUserVisibleOutput` schema
+#   2. Passing it through `build_user_visible_output`
+#   3. Reading it in `repository._message_row_to_dict`
+#   4. Adding a test to verify the field survives the round-trip
+# ---------------------------------------------------------------------------
+
+USER_VISIBLE_OUTPUT_FIELDS: frozenset[str] = frozenset({
+    # content
+    "content_md",
+    "reasoning_md",
+    "reasoning_status",
+    # intent / mode
+    "submission_mode",
+    "resolved_intent",
+    # cards & actions
+    "response_cards",
+    "citations",
+    "action_proposals",
+    "tool_trace",
+    "evidence",
+    "trace_summary",
+    # disambiguation
+    "disambiguation",
+    "external_asset_disambiguation",
+    # context
+    "resolved_context",
+    "context_plan",
+    "resolved_context_input",
+    # run metadata
+    "run_info",
+    "usage_summary",
+    "billed_points",
+    # supplements
+    "supplement_candidates",
+    "persisted_supplements",
+    # Round 2: follow-up prompt suggestions (suggest_prompts tool)
+    "follow_up_suggestions",
+})
+
+# Fields that repository hydration projects from user_visible_output_json onto
+# the top-level message DTO. Usage/cost fields stay available on
+# current_user_visible_output / current_turn_run rather than becoming message
+# fields.
+HYDRATION_READ_FIELDS: frozenset[str] = USER_VISIBLE_OUTPUT_FIELDS - {
+    "usage_summary",
+    "billed_points",
+}
 
 
 def build_user_message_metadata(
@@ -82,6 +141,7 @@ def build_user_visible_output(
     persisted_supplements: list[ReaderAskPersistedSupplement] | list[dict[str, Any]],
     reasoning_md: str | None = None,
     reasoning_status: str | None = None,
+    follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | list[dict[str, Any]] | None = None,
 ) -> ReaderAskUserVisibleOutput:
     normalized_run_info = (
         run_info
@@ -96,6 +156,14 @@ def build_user_visible_output(
         item if isinstance(item, ReaderAskPersistedSupplement) else ReaderAskPersistedSupplement.model_validate(item)
         for item in persisted_supplements
     ]
+    if follow_up_suggestions is None:
+        normalized_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
+    else:
+        normalized_suggestions = [
+            item if isinstance(item, ReaderAskFollowUpSuggestion)
+            else ReaderAskFollowUpSuggestion.model_validate(item)
+            for item in follow_up_suggestions
+        ]
     return ReaderAskUserVisibleOutput(
         content_md=content_md,
         submission_mode=submission_mode,
@@ -118,7 +186,16 @@ def build_user_visible_output(
         persisted_supplements=normalized_persisted,
         reasoning_md=reasoning_md,
         reasoning_status=reasoning_status,
+        follow_up_suggestions=normalized_suggestions,
     )
+
+
+def validate_output_dict_fields(output_dict: dict[str, Any]) -> list[str]:
+    """Check that *output_dict* contains every field in ``USER_VISIBLE_OUTPUT_FIELDS``.
+
+    Returns a list of missing field names (empty if valid).
+    """
+    return sorted(USER_VISIBLE_OUTPUT_FIELDS - set(output_dict.keys()))
 
 
 def to_completed_payload(
@@ -126,10 +203,12 @@ def to_completed_payload(
     message_id: str,
     thread_id: str,
     output: ReaderAskUserVisibleOutput,
+    usage_event_id: str | None = None,
 ) -> ReaderAskCompletedPayload:
     return ReaderAskCompletedPayload(
         id=message_id,
         thread_id=thread_id,
+        usage_event_id=usage_event_id,
         **output.model_dump(mode="python"),
     )
 
@@ -161,5 +240,6 @@ def visible_output_from_message(message: ReaderAskMessage, message_dict: dict[st
         persisted_supplements=message.persisted_supplements,
         reasoning_md=message.reasoning_md,
         reasoning_status=message.reasoning_status,
+        follow_up_suggestions=message.follow_up_suggestions,
     )
     return output.model_dump(mode="json")

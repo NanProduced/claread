@@ -5,7 +5,7 @@ import JsonTreeView from "../../../components/JsonTreeView.vue";
 import WorkflowSentenceNotebook from "./WorkflowSentenceNotebook.vue";
 import SentenceCompareDiffView from "./SentenceCompareDiffView.vue";
 import WorkflowHealthPanel from "./WorkflowHealthPanel.vue";
-import { dash, normalizeWorkflowScene } from "../composables/workflowLabFormatting.js";
+import { dash, normalizeWorkflowScene, extractLLMConfigSnapshot } from "../composables/workflowLabFormatting.js";
 
 // 接收单跑 compare 产物
 // compareResult = { baseline, candidate, compare, input_snapshot }
@@ -78,6 +78,8 @@ function summarizeRun(side) {
   const phraseGlossCount = inlineMarks.filter(m => m?.annotation_type === "phrase_gloss").length;
   const contextGlossCount = inlineMarks.filter(m => m?.annotation_type === "context_gloss").length;
 
+  const llmConfig = extractLLMConfigSnapshot(artifact);
+
   return {
     adapter_status: adapterStatus,
     latency_seconds: Number.isFinite(latency) ? latency : 0,
@@ -97,6 +99,14 @@ function summarizeRun(side) {
     vocab_highlight_count: vocabHighlightCount,
     phrase_gloss_count: phraseGlossCount,
     context_gloss_count: contextGlossCount,
+
+    llm_config_profile: llmConfig?.profile || null,
+    llm_config_model: llmConfig?.model || null,
+    llm_config_expected_tool_choice: llmConfig?.expected_tool_choice || null,
+    llm_config_thinking: llmConfig?.thinking_enabled ? "开启" : llmConfig ? "关闭" : null,
+    llm_config_structured_output_mode: llmConfig?.default_structured_output_mode || null,
+    llm_config_parallel_tool_calls: llmConfig?.parallel_tool_calls ?? null,
+    llm_config_expected_response_format: llmConfig?.expected_response_format ?? null,
   };
 }
 
@@ -289,6 +299,11 @@ function readingVariantLabel(value) {
             <div class="meta-row"><span class="meta-label">候选版本</span><span class="meta-value">{{ dash(baselineSummary?.prompt_variant_id, "baseline default") }}</span></div>
             <div class="meta-row"><span class="meta-label">Snapshot</span><span class="meta-value mono-val">{{ dash(baselineSummary?.prompt_snapshot_hash) }}</span></div>
             <div class="meta-row"><span class="meta-label">模型</span><span class="meta-value">{{ dash(baselineSummary?.profile_name || baselineSummary?.model_name) }}</span></div>
+            <div class="meta-row"><span class="meta-label">tool_choice</span><span class="meta-value">{{ dash(baselineSummary?.llm_config_expected_tool_choice) }}</span></div>
+            <div class="meta-row"><span class="meta-label">结构化输出</span><span class="meta-value">{{ dash(baselineSummary?.llm_config_structured_output_mode) }}</span></div>
+            <div class="meta-row"><span class="meta-label">response_format</span><span class="meta-value">{{ dash(baselineSummary?.llm_config_expected_response_format) }}</span></div>
+            <div class="meta-row"><span class="meta-label">parallel_tool_calls</span><span class="meta-value">{{ baselineSummary?.llm_config_parallel_tool_calls === true ? '是' : baselineSummary?.llm_config_parallel_tool_calls === false ? '否' : dash(baselineSummary?.llm_config_parallel_tool_calls) }}</span></div>
+            <div class="meta-row"><span class="meta-label">Thinking</span><span class="meta-value">{{ dash(baselineSummary?.llm_config_thinking) }}</span></div>
             <div class="meta-row">
               <span class="meta-label">耗时</span>
               <div class="meta-val-with-diff">
@@ -363,6 +378,11 @@ function readingVariantLabel(value) {
             <div class="meta-row"><span class="meta-label">候选版本</span><span class="meta-value">{{ dash(candidateSummary?.prompt_variant_id, "baseline") }}</span></div>
             <div class="meta-row"><span class="meta-label">Snapshot</span><span class="meta-value mono-val">{{ dash(candidateSummary?.prompt_snapshot_hash) }}</span></div>
             <div class="meta-row"><span class="meta-label">模型</span><span class="meta-value">{{ dash(candidateSummary?.profile_name || candidateSummary?.model_name) }}</span></div>
+            <div class="meta-row"><span class="meta-label">tool_choice</span><span class="meta-value">{{ dash(candidateSummary?.llm_config_expected_tool_choice) }}</span></div>
+            <div class="meta-row"><span class="meta-label">结构化输出</span><span class="meta-value">{{ dash(candidateSummary?.llm_config_structured_output_mode) }}</span></div>
+            <div class="meta-row"><span class="meta-label">response_format</span><span class="meta-value">{{ dash(candidateSummary?.llm_config_expected_response_format) }}</span></div>
+            <div class="meta-row"><span class="meta-label">parallel_tool_calls</span><span class="meta-value">{{ candidateSummary?.llm_config_parallel_tool_calls === true ? '是' : candidateSummary?.llm_config_parallel_tool_calls === false ? '否' : dash(candidateSummary?.llm_config_parallel_tool_calls) }}</span></div>
+            <div class="meta-row"><span class="meta-label">Thinking</span><span class="meta-value">{{ dash(candidateSummary?.llm_config_thinking) }}</span></div>
             <div class="meta-row">
               <span class="meta-label">耗时</span>
               <div class="meta-val-with-diff">

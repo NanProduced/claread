@@ -6,7 +6,9 @@ import type {
   ReaderAskActionConfirmResponseDto,
   ReaderAskContextRecordSearchResponseDto,
   ReaderAskDeleteSupplementResponseDto,
+  ReaderAskMessageRetryRequestDto,
   ReaderAskMessageStreamRequestDto,
+  ReaderAskModelOptionListResponseDto,
   ReaderAskThreadCreateRequestDto,
   ReaderAskThreadDetailDto,
   ReaderAskThreadListResponseDto,
@@ -49,6 +51,14 @@ export function listUpstreamReaderAskContextRecords(
       sessionToken,
     },
   );
+}
+
+export function listUpstreamReaderAskModelOptions(
+  sessionToken: string,
+): Promise<UpstreamResult<ReaderAskModelOptionListResponseDto>> {
+  return fastApiFetch<ReaderAskModelOptionListResponseDto>("/reader-ask/model-options", {
+    sessionToken,
+  });
 }
 
 export function createUpstreamReaderAskThread(
@@ -131,6 +141,7 @@ export async function createUpstreamReaderAskStream(
 export async function retryUpstreamReaderAskMessage(
   threadId: string,
   messageId: string,
+  body: ReaderAskMessageRetryRequestDto,
   sessionToken: string,
 ): Promise<Response> {
   return fetch(`${getBaseUrl()}/reader-ask/threads/${threadId}/messages/${messageId}/retry/stream`, {
@@ -138,7 +149,9 @@ export async function retryUpstreamReaderAskMessage(
     headers: {
       accept: "text/event-stream",
       authorization: `Bearer ${sessionToken}`,
+      "content-type": "application/json",
     },
+    body: JSON.stringify(body),
     cache: "no-store",
   });
 }

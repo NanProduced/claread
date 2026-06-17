@@ -15,6 +15,7 @@ import {
   formatClockTime,
   compactFactRows,
   quickValidationLabel,
+  nodeLabel,
   resultIssue,
   buildPromptPacketSections,
   parseNestedJson,
@@ -86,9 +87,27 @@ const singleRunSummaryFacts = computed(() => {
   return compactFactRows(facts);
 });
 
-const singleRunGrammarValidation = computed(() => {
-  if (state.activeNode !== "grammar") return null;
+const singleRunQuickValidation = computed(() => {
   return singleRunResult.value?.run?.quick_validation || null;
+});
+
+const singleRunQuickValidationTitle = computed(() => `${nodeLabel(state.activeNode)} 快速校验`);
+
+const singleRunQuickValidationHint = computed(() => {
+  const validation = singleRunQuickValidation.value;
+  if (!validation || validation.status !== "warning") return "";
+  const hardCount = Number(validation.hard_warning_count ?? validation.warning_count ?? 0);
+  const softCount = Number(validation.soft_warning_count ?? validation.soft_warnings?.length ?? 0);
+  if (hardCount > 0 && softCount > 0) {
+    return "当前输出里同时有会影响落地的硬警告和仅供观察的软提示。先看卡片中的具体信息，再判断是结构错误还是质量观察。";
+  }
+  if (hardCount > 0) {
+    return "当前输出里有会影响 grounding / renderability 的警告。先看卡片中的具体 warning，再决定是否信任这条输出。";
+  }
+  if (softCount > 0) {
+    return "当前输出本身可用，但有一些仅供质量观察的提示；这些不应直接理解为结构失败。";
+  }
+  return "当前输出里有待检查项，请结合原句和结构化卡片一起判断。";
 });
 
 const singleRunIssue = computed(() => resultIssue(singleRunResult.value?.run));
@@ -154,19 +173,19 @@ const savedSingleRunAt = computed(() => singleRunUiState.value?.lastSavedAt || "
           <div class="output-block__header">
             <h4 class="block-title">结构化输出</h4>
             <div
-              v-if="singleRunGrammarValidation"
+              v-if="singleRunQuickValidation"
               class="validation-summary"
-              :class="`is-${singleRunGrammarValidation.status === 'pass' ? 'success' : singleRunGrammarValidation.status === 'warning' ? 'warning' : 'danger'}`"
+              :class="`is-${singleRunQuickValidation.status === 'pass' ? 'success' : singleRunQuickValidation.status === 'warning' ? 'warning' : 'danger'}`"
             >
-              <strong>Grammar 快速校验</strong>
-              <span>{{ quickValidationLabel(singleRunGrammarValidation) }}</span>
+              <strong>{{ singleRunQuickValidationTitle }}</strong>
+              <span>{{ quickValidationLabel(singleRunQuickValidation) }}</span>
             </div>
           </div>
           <p
-            v-if="singleRunGrammarValidation?.status === 'warning'"
+            v-if="singleRunQuickValidationHint"
             class="validation-hint"
           >
-            这次输出里有锚点或拆解块需要人工复看。先看原句高亮，再决定是否信任这条解释。
+            {{ singleRunQuickValidationHint }}
           </p>
           <NodeProbeOutputView
             :node-name="state.activeNode"

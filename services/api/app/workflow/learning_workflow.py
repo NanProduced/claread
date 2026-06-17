@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from app.services.analysis.postprocess.repair_policy import (
+    should_trigger_patch_repair,
+)
 from app.workflow.analyze_nodes import (
     assemble_result_node,
     derive_user_config_node,
@@ -16,27 +20,33 @@ from app.workflow.analyze_nodes import (
 from app.workflow.analyze_state import AnalyzeState
 
 
+def _repair_enabled(state: AnalyzeState) -> bool:
+    """判断 repair 是否启用。
+
+    优先级：state["repair_enabled"] > env CLAREAD_WORKFLOW_REPAIR_ENABLED > True。
+    state["repair_enabled"] 由 derive_user_config_node 从 config 写入。
+    """
+    enabled = state.get("repair_enabled")
+    if enabled is not None:
+        return bool(enabled)
+    env_val = os.environ.get("CLAREAD_WORKFLOW_REPAIR_ENABLED")
+    if env_val is not None:
+        return env_val.lower() not in ("false", "0", "no")
+    return True
+
+
 def _should_repair(state: AnalyzeState) -> bool:
     """判断是否需要触发 repair_agent。
 
-    只统计 quality drops（排除 density_control 正常裁剪），
-    与 repair_agent_node 内部的判断标准保持一致。
+    只使用 patch repair policy（合并 drop_log + canonical_drop_log，
+    用 normalized_annotations 计数）。
+    repair_enabled=false 时直接跳过。
     """
-    normalized_result = state.get("normalized_result")
-    if normalized_result is None:
+    if not _repair_enabled(state):
         return False
 
-    drop_log = normalized_result.drop_log or []
-    quality_drops = [d for d in drop_log if d.drop_stage != "density_control"]
-    quality_drop_count = len(quality_drops)
-    annotation_count = len(normalized_result.annotations)
-
-    if annotation_count == 0:
-        # 如果所有标注都被 drop 但有 quality drops，应触发 repair
-        return quality_drop_count > 0
-
-    failure_ratio = quality_drop_count / (annotation_count + quality_drop_count)
-    return failure_ratio > 0.35
+    normalized_result = state.get("normalized_result")
+    return should_trigger_patch_repair(normalized_result, threshold=0.35)
 
 
 def build_learning_graph() -> Any:

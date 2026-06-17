@@ -84,19 +84,32 @@ class TranslationItem(BaseModel):
 
 InlineMarkRenderType = Literal["background", "underline"]
 VisualTone = Literal["vocab", "phrase", "context", "grammar"]
+SentenceEntrySourceKind = Literal["workflow", "ask_supplement"]
 
 
 class InlineGlossary(BaseModel):
     zh: str | None = Field(default=None, description="中文释义")
     gloss: str | None = Field(default=None, description="语境义")
     reason: str | None = Field(default=None, description="为什么词典义不够好")
-    phrase_type: Literal["collocation", "phrasal_verb", "idiom", "proper_noun", "compound"] | None = Field(default=None, description="短语类型")
+    phrase_type: (
+        Literal["collocation", "phrasal_verb", "idiom", "proper_noun", "compound"]
+        | None
+    ) = Field(
+        default=None,
+        description=(
+            "短语类型。collocation 为默认的常见搭配；phrasal_verb 用于以动词为核心的整体动作短语；"
+            "idiom 仅用于明显非字面或高度固定的惯用表达；proper_noun 仅用于正式命名的专名；"
+            "compound 用于稳定的多词概念名词、术语或类别名称。"
+        ),
+    )
 
 
 class TextAnchor(BaseModel):
     kind: Literal["text"] = Field(default="text", description="锚点类型为单段文本")
     sentence_id: str = Field(description="所属句子标识")
-    anchor_text: str = Field(description="锚点文本，必须直接摘自对应句子")
+    anchor_text: str = Field(
+        description="投影后的锚点文本，必须是对应句子中的连续字面子串，不得包含省略号或讲解模板"
+    )
     occurrence: int | None = Field(
         default=None, ge=1, description="同一句中 anchor_text 多次出现时，指明要命中的第几次"
     )
@@ -116,7 +129,48 @@ class MultiTextAnchor(BaseModel):
     parts: list[SpanRefPart] = Field(default_factory=list, description="多段锚点的各部分")
 
 
-InlineMarkAnchor = TextAnchor | MultiTextAnchor
+class RangePart(BaseModel):
+    """Single range within a MultiRangeAnchor or RangeAnchor.
+
+    Offsets are sentence-local UTF-16 code unit offsets (0-based, half-open).
+    """
+
+    start: int = Field(ge=0, description="句子内 UTF-16 起始偏移 (0-based)")
+    end: int = Field(gt=0, description="句子内 UTF-16 结束偏移 (半开区间)")
+    text: str = Field(min_length=1, description="句子文本 slice 对应的原文")
+    role: str | None = Field(default=None, description="结构角色")
+    source_quote: str | None = Field(default=None, description="原始 LLM quote 文本")
+    resolution_kind: Literal["exact", "canonicalized", "boundary_trimmed"] | None = Field(
+        default=None,
+        description="resolve 方式",
+    )
+
+
+class RangeAnchor(BaseModel):
+    """Range-based anchor for single-span annotations.
+
+    Offsets are sentence-local UTF-16 code unit offsets.
+    """
+
+    kind: Literal["range"] = Field(default="range", description="锚点类型为单段 range")
+    sentence_id: str = Field(description="所属句子标识")
+    offset_unit: Literal["utf16"] = Field(default="utf16", description="偏移单位")
+    range: RangePart = Field(description="句子内 UTF-16 range")
+
+
+class MultiRangeAnchor(BaseModel):
+    """Range-based anchor for multi-span annotations.
+
+    Offsets are sentence-local UTF-16 code unit offsets.
+    """
+
+    kind: Literal["multi_range"] = Field(default="multi_range", description="锚点类型为多段 range")
+    sentence_id: str = Field(description="所属句子标识")
+    offset_unit: Literal["utf16"] = Field(default="utf16", description="偏移单位")
+    ranges: list[RangePart] = Field(min_length=1, description="句子内 UTF-16 ranges")
+
+
+InlineMarkAnchor = TextAnchor | MultiTextAnchor | RangeAnchor | MultiRangeAnchor
 
 
 class InlineMark(BaseModel):
@@ -150,6 +204,29 @@ class SentenceEntry(BaseModel):
     content: str = Field(
         default="",
         description="详情内容，支持 Markdown 格式（**粗体**, *斜体*, `行内代码`, - 列表）",
+    )
+    source_kind: SentenceEntrySourceKind = Field(
+        default="workflow",
+        description=(
+            "入口来源。workflow 为分析工作流生成；"
+            "ask_supplement 为 Ask Claread 追加的补充入口。"
+        ),
+    )
+    supplement_id: str | None = Field(
+        default=None,
+        description="当 source_kind=ask_supplement 时的补充标识。",
+    )
+    deletable: bool = Field(default=False, description="该入口是否允许在前端删除。")
+    target_key: str | None = Field(default=None, description="补充或入口关联的目标 key。")
+    paragraph_id: str | None = Field(default=None, description="关联的段落标识。")
+    created_from_turn_run_id: str | None = Field(
+        default=None,
+        description="生成该入口的 Ask turn run 标识。",
+    )
+    schema_version: str | None = Field(default=None, description="入口投影数据的 schema 版本。")
+    lifecycle_status: str | None = Field(
+        default=None,
+        description="Ask supplement 的生命周期状态。",
     )
 
 
@@ -206,7 +283,9 @@ class AcademicInlineMark(BaseModel):
 class AcademicSentenceEntry(BaseModel):
     id: str = Field(description="稳定入口标识")
     sentence_id: str = Field(description="关联的句子标识")
-    entry_type: Literal["term_note", "logic_note", "interpretation_note", "content_summary"] = Field(description="入口类型")
+    entry_type: (
+        Literal["term_note", "logic_note", "interpretation_note", "content_summary"]
+    ) = Field(description="入口类型")
     label: str = Field(description="Chip 显示文案")
     title: str | None = Field(default=None, description="详情面板标题")
     content: str = Field(default="", description="详情内容")
@@ -225,11 +304,18 @@ class AcademicRenderSceneModel(BaseModel):
     inline_marks: list[AcademicInlineMark] = Field(default_factory=list, description="行内标注。")
     sentence_entries: list[AcademicSentenceEntry] = Field(
         default_factory=list,
-        description="句尾入口。当 entry_type='content_summary' 时为 content_summary 的扁平文本版本，与顶层 content_summary 互为补充。",
+        description=(
+            "句尾入口。当 entry_type='content_summary' 时为 content_summary "
+            "的扁平文本版本，与顶层 content_summary 互为补充。"
+        ),
     )
     content_summary: ContentSummary | None = Field(
         default=None,
-        description="内容概要结构化数据。前端优先消费此字段做结构化渲染；sentence_entries 中的 content_summary entry 是其扁平文本降级版本，用于简单列表展示。",
+        description=(
+            "内容概要结构化数据。前端优先消费此字段做结构化渲染；"
+            "sentence_entries 中的 content_summary entry 是其扁平文本降级版本，"
+            "用于简单列表展示。"
+        ),
     )
     title: str | None = Field(
         default=None,

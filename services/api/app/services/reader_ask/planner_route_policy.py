@@ -1,0 +1,310 @@
+"""Route-policy compatibility helpers for Ask Claread.
+
+The live service runtime is agent-loop-only and no longer calls a route
+resolver. This module retains the historical ``PlannerRoute`` literal plus
+the hint predicate helpers used by ``build_agent_loop_context``.
+
+Round 8 migrates the deictic-without-anchor fallback from planner_first to
+agent_loop_first with a clarification hint, so the agent asks the user to
+select a specific location instead of silently falling back to the planner.
+
+Round 9 migrates the cross-record-toggle + keywords fallback from
+planner_first to agent_loop_first with a cross-record intent hint, so the
+agent calls resolve_known_reference on demand instead of requiring planner
+pre-resolution.
+
+Round 10 migrates the explicit external attachments (record_ref /
+analysis_ref / supplement_ref) fallback from planner_first to
+agent_loop_first. The agent-loop-first path detects external attachments,
+injects a hint, and the agent calls load_explicit_attachment_context on
+demand instead of requiring planner pre-resolution.
+
+Round 11 migrates the dictionary anchor / dictionary attachment fallback
+from planner_first to agent_loop_first. The agent-loop-first path detects
+dictionary anchors/attachments, injects a dictionary_anchor_hint, and the
+agent answers based on article context and the explicit dictionary anchor
+metadata instead of requiring planner pre-resolution.
+
+Round 12 migrates the long-history fallback from planner_first to
+agent_loop_first. The agent-loop-first path detects long history and
+injects a long_history_hint so the model knows older messages have been
+summarized. The structured history summary and recent-window truncation
+in runtime_contract.py handle the actual compression — no planner call
+needed.
+
+Route values:
+
+- ``"agent_loop_first"`` — the only live route. The main agent receives a
+  minimal payload (overview, anchors, attachments, history) and calls read
+  tools on demand.
+- ``"planner_first"`` — legacy route, no longer triggered by any live
+  condition. The code path is preserved for backward-compatible trace
+  serialization and future emergency fallback.
+
+``resolve_planner_route`` is retained only as a compatibility helper for older
+route-policy tests and always returns ``"agent_loop_first"``. It is not called
+by ``service.py``.
+
+See ``docs/architecture/ask-claread.md`` for the current architecture.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Literal
+
+from app.schemas.reader_ask import (
+    ReaderAskAnchorRef,
+    ReaderAskAttachment,
+    ReaderAskContextPlan,
+    ReaderAskEntryAction,
+    ReaderAskTraceSummary,
+)
+
+if TYPE_CHECKING:
+    from app.services.reader_ask.runtime_contract import ReaderAskAnswerRuntimeInput
+
+
+# ---------------------------------------------------------------------------
+# Route type
+# ---------------------------------------------------------------------------
+
+PlannerRoute = Literal["agent_loop_first", "planner_first"]
+"""Possible planner route values.
+
+- ``"agent_loop_first"``: default — model calls tools on demand.
+- ``"planner_first"``: legacy fallback — planner pre-fetches context.
+"""
+
+# ---------------------------------------------------------------------------
+# Agent-loop hint predicates
+# ---------------------------------------------------------------------------
+
+# Substring keywords that, when present in the user's latest message, indicate
+# cross-article intent. Used by `has_cross_record_intent` to detect
+# cross-article intent for the agent-loop-first hint (Round 9).
+_CROSS_RECORD_KEYWORDS: tuple[str, ...] = (
+    "另一篇",
+    "之前那篇",
+    "previous",
+    "earlier",
+    "另一",
+    "上篇",
+)
+
+# Deictic expressions that strongly refer to a specific location in the
+# text without an anchor. Round 8: these no longer trigger planner_first;
+# instead, the agent-loop-first path injects a clarification hint so the
+# agent asks the user to select a specific location.
+_DEICTIC_PATTERNS: tuple[str, ...] = (
+    "这里",
+    "这句",
+    "这段",
+    "这一句",
+    "这一段",
+    "这行",
+    "this sentence",
+    "that sentence",
+    "this paragraph",
+    "that paragraph",
+    "this line",
+    "that line",
+    "this part",
+    "that part",
+    "here",
+)
+
+# History length threshold beyond which `has_long_history` returns True,
+# triggering the `long_history_hint` in the agent-loop-first path (Round 12).
+_LONG_HISTORY_THRESHOLD: int = 10
+
+
+# ---------------------------------------------------------------------------
+# Helper predicates
+# ---------------------------------------------------------------------------
+
+
+def detect_cross_record_in_message(text: str) -> bool:
+    """Return True if ``text`` contains any known cross-article intent keyword.
+
+    Exported for unit testing and future extension.
+    """
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(keyword.lower() in lowered for keyword in _CROSS_RECORD_KEYWORDS)
+
+
+def has_deictic_without_anchor(text: str, anchors: list[ReaderAskAnchorRef]) -> bool:
+    """Return True if ``text`` contains a strong deictic expression but
+    the request has no anchors to ground the reference.
+
+    Round 8: this is now a public API used by ``build_agent_loop_context``
+    to inject a clarification hint instead of triggering planner_first.
+    """
+    if not text:
+        return False
+    if anchors:
+        return False
+    lowered = text.lower()
+    return any(pattern.lower() in lowered for pattern in _DEICTIC_PATTERNS)
+
+
+def has_cross_record_intent(cross_record_toggle: bool, text: str) -> bool:
+    """Return True if the user has enabled cross-record context and the
+    message contains cross-article intent keywords.
+
+    Round 9: this is a public API used by ``build_agent_loop_context``
+    to inject a cross-record intent hint instead of triggering planner_first.
+    The agent can then call ``resolve_known_reference`` on demand.
+    """
+    if not cross_record_toggle:
+        return False
+    return detect_cross_record_in_message(text)
+
+
+def has_explicit_external_attachments(
+    attachments: list[ReaderAskAttachment],
+    *,
+    current_record_id: str | None = None,
+) -> bool:
+    """Return True if any attachment is an explicit external reference.
+
+    Round 10: this is a public API used by ``build_agent_loop_context``
+    to inject an external attachment hint instead of triggering planner_first.
+    The agent can then call ``load_explicit_attachment_context`` on demand.
+
+    Filtering rules (Round 10 Fix 3):
+
+    - ``record_ref`` with ``subtype="related_record"`` is always external.
+    - ``record_ref`` with ``subtype="current_record"`` is NOT external — it
+      refers to the current record and needs no external loading.
+    - ``analysis_ref`` / ``supplement_ref`` are only external if they resolve
+      to a record_id that differs from ``current_record_id``.  When
+      ``current_record_id`` is not provided, they are conservatively treated
+      as external.
+    """
+    from app.services.reader_ask.planner import (
+        _attachment_record_id,
+        _attachment_target_record,
+    )
+
+    for att in attachments:
+        if att.kind == "record_ref":
+            # Only related_record is external; current_record is local.
+            if att.subtype == "related_record":
+                return True
+            continue
+        if att.kind in ("analysis_ref", "supplement_ref"):
+            if current_record_id is None:
+                # No current_record_id → conservatively treat as external.
+                return True
+            resolved_rid = _attachment_record_id(att)
+            if resolved_rid and resolved_rid != current_record_id:
+                return True
+            continue
+    return False
+
+
+def has_dictionary_anchor_or_attachment(
+    anchors: list[ReaderAskAnchorRef],
+    attachments: list[ReaderAskAttachment],
+) -> bool:
+    """Return True if any anchor is a dictionary_entry or any attachment
+    carries a dictionary-related subtype.
+
+    Round 11: public API used by ``build_agent_loop_context`` to inject a
+    ``dictionary_anchor_hint`` instead of triggering planner_first. The
+    agent answers based on article context and the explicit dictionary
+    anchor metadata.
+    """
+    for anchor in anchors:
+        if anchor.anchor_type == "dictionary_entry":
+            return True
+    for attachment in attachments:
+        if attachment.kind == "dictionary_entry" or attachment.subtype == "dictionary_entry":
+            return True
+    return False
+
+
+def has_long_history(
+    history_messages: list[dict[str, Any]],
+    *,
+    threshold: int = _LONG_HISTORY_THRESHOLD,
+) -> bool:
+    """Return True if history length exceeds the threshold.
+
+    Round 12: public API used by ``build_agent_loop_context`` to inject a
+    ``long_history_hint`` instead of triggering planner_first. The
+    structured history summary and recent-window truncation in
+    ``runtime_contract.py`` handle the actual compression — no planner
+    call needed.
+    """
+    return len(history_messages) > threshold
+
+
+# ---------------------------------------------------------------------------
+# Route resolution
+# ---------------------------------------------------------------------------
+
+
+def resolve_planner_route(
+    *,
+    entry_action: ReaderAskEntryAction,
+    history_messages: list[dict[str, Any]],
+    attachments: list[ReaderAskAttachment],
+    anchors: list[ReaderAskAnchorRef],
+    cross_record_toggle: bool,
+    latest_user_message: str,
+) -> PlannerRoute:
+    """Determine the planner route for a given request.
+
+    Always returns ``"agent_loop_first"``. All former planner_first triggers
+    have been migrated:
+
+    - Round 8: deictic-without-anchor → clarification hint
+    - Round 9: cross-record intent → cross_record_intent_hint
+    - Round 10: external attachments → external_attachment_hint
+    - Round 11: dictionary anchor/attachment → dictionary_anchor_hint
+    - Round 12: long history → long_history_hint
+
+    The ``"planner_first"`` route value is still a valid ``PlannerRoute``
+    literal for backward-compatible trace serialization, but no live
+    condition triggers it.
+
+    The ``entry_action`` is no longer used as a whitelist gate — all entry
+    actions default to agent-loop-first.
+    """
+    return "agent_loop_first"
+
+
+def build_minimal_context_plan_for_runtime_input(
+    contract: ReaderAskAnswerRuntimeInput,
+) -> ReaderAskContextPlan:
+    """Thin wrapper around :func:`app.services.reader_ask.planner.build_minimal_context_plan`
+    using the contract's request data.
+    """
+    from app.services.reader_ask.planner import build_minimal_context_plan
+
+    return build_minimal_context_plan(
+        entry_action=contract.entry_action,
+        attachments=list(contract.attachments),
+        anchors=list(contract.anchors),
+    )
+
+
+def build_minimal_trace_summary_for_runtime_input(
+    contract: ReaderAskAnswerRuntimeInput,
+    *,
+    planner_skipped: bool,
+) -> ReaderAskTraceSummary:
+    """Thin wrapper around :func:`app.services.reader_ask.planner.build_minimal_trace_summary`
+    using the contract's request data.
+    """
+    from app.services.reader_ask.planner import build_minimal_trace_summary
+
+    return build_minimal_trace_summary(
+        entry_action=contract.entry_action,
+        attachments=list(contract.attachments),
+        anchors=list(contract.anchors),
+        planner_skipped=planner_skipped,
+    )

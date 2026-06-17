@@ -12,7 +12,9 @@ from app.schemas.reader_ask import (
     ReaderAskActionConfirmResponse,
     ReaderAskContextRecordSearchResponse,
     ReaderAskDeleteSupplementResponse,
+    ReaderAskMessageRetryRequest,
     ReaderAskMessageStreamRequest,
+    ReaderAskModelOptionListResponse,
     ReaderAskThreadCreateRequest,
     ReaderAskThreadDetail,
     ReaderAskThreadListResponse,
@@ -51,6 +53,18 @@ async def list_reader_ask_context_records(
         query=query,
         exclude_record_id=exclude_record_id,
     )
+
+
+@router.get(
+    "/model-options",
+    response_model=ReaderAskModelOptionListResponse,
+    summary="Ask Claread 可选模型列表",
+)
+async def list_reader_ask_model_options(
+    current_user: AuthUserDep,
+) -> ReaderAskModelOptionListResponse:
+    _ = current_user
+    return await ask_svc.list_model_options()
 
 
 @router.post("/threads", response_model=ReaderAskThreadSummary, summary="创建或获取 Ask 线程")
@@ -114,10 +128,16 @@ async def retry_reader_ask_message(
     current_user: AuthUserDep,
     thread_id: UUID,
     message_id: UUID,
+    body: ReaderAskMessageRetryRequest,
 ) -> StreamingResponse:
     async def event_stream():
         try:
-            async for chunk in ask_svc.retry_thread_message(UUID(current_user.user_id), thread_id, message_id):
+            async for chunk in ask_svc.retry_thread_message(
+                UUID(current_user.user_id),
+                thread_id,
+                message_id,
+                body,
+            ):
                 yield chunk
         except HTTPException as exc:
             yield (

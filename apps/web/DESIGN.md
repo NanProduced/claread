@@ -137,6 +137,27 @@ Reader 只有两种模式。`精读 Intensive` 是主工作模式，强调批注
 - 精读模式说批注语言，沉浸模式说编排语言
 - 句后批注展开是 Claread 最有记忆点的动作
 
+## Current Baseline And Future Surfaces
+
+当前 Web baseline 已经落在真实产品代码上，而不是早期方向图或占位 mock。正式实现以 `apps/web/docs/reader-ia.md`、`apps/web/docs/design/component-system.md`、`apps/web/docs/design/component-library-v0.md` 和当前页面代码共同校准。
+
+当前已经进入 baseline 的设计事实：
+
+- Reader 2.0 使用 `render_scene -> Plate document -> Plate readOnly runtime` 作为 Web 阅读投影。
+- Reader 只有 `精读 Intensive` 和 `沉浸 Immersive` 两种阅读意图；阅读设置只校准字号、字体和主题，不反向拼出模式效果。
+- `/app/read` 是粘贴开始与每日精选并存的阅读入口，不是后台首页。
+- Library 是阅读记录入口，Vocabulary 是词汇资产入口；二者不再合并成独立学习资产中心。
+- `grammar_note` 与 `sentence_analysis` 当前是句后解释层和原文锚点组合，不命名为 Grammar X-Ray。
+
+仍属于目标设计系统、但不是当前 baseline 的 surface：
+
+- 完整产品页 hero 与后续营销/内容页。
+- 分享页与导出页的最终 artifact 形态。
+- Grammar X-Ray 作为未来高保真语法透视能力。
+- Artifact Studio、PDF、Markdown、Notion 同步等更完整沉淀能力。
+
+这些未来 surface 必须从本文的同一母语言出发，但不能提前占据当前 Reader、词典、批注和句后解释的主视觉权重。占位页可以存在；占位页不是设计标准。
+
 ## Brand Assets
 
 Claread Web 的品牌资产不是临时装饰，也不是页面最后补上的角标。Logo 光圈、横版标识、App icon 和品牌探索图共同定义 Claread 的“阅读镜头”记忆点。任何 Web 端视觉工作都必须先检查品牌资产，再决定页面如何表达品牌。
@@ -204,11 +225,17 @@ Claread 的色彩不是“暖纸 + 蓝色按钮”，而是一套可跨全站复
 
 **The No-Fake-Paper Rule.** 禁止纸面纹理、旧化肌理、纤维噪点和伪书页做旧。只要纸感来自装饰，而不是来自层次和用色，它就失败了。
 
+### Implementation Alignment
+
+本文中的 `Paper / Light / Dark` 色组是设计目标层。当前运行时 token 已经接入三主题，但若 `Dark` token 偏向冷黑后台感，应以后续 token 收口为准，把夜读重新拉回暖暗、低刺激、有层次的阅读场景。不要为了匹配现有实现而把本文的夜读原则降级成后台暗色主题。
+
 ## Typography
 
 **Display Font:** Source Serif 4 搭配 Source Han Serif SC 回退。  
 **Body Font:** Inter 搭配 PingFang SC 回退。  
 **Label/Mono Font:** 核心产品不需要另一套 mono 主语汇，标签仍由 Inter 承担。
+
+当前 Web 运行时以 `next/font/google` 接入 `Source Serif 4` 和 `Inter`。如果 `packages/design-tokens/src/web/tokens.css` 中仍保留 `Newsreader` 等旧 reading token，应视为实现待清理项；设计判断以本文和运行时字体槽位为准，不再把旧 token 名称当作新的视觉方向。
 
 **Character:** Claread 的字体系是 `60%` 学术骨架与 `40%` 文学气味。它不是 JAMA 式冷白学术，也不是 Granta 式文学封面。它更接近 LRB、The Atlantic、Aeon 那种长杂志语气：骨架严谨，开场有气味，正文始终可读。这个判断同时适用于产品页 hero、Reader 标题、精选卡、分享封面和导出物。
 

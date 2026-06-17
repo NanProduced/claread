@@ -6,16 +6,16 @@ Annotation 校验器
 校验规则：
 
 1. VocabHighlight：
-   - text 必须是 sentence 的真实子串
+   - text 必须能确定性落成 sentence 的真实锚点
    - 不允许有释义字段（由后端词典接口提供）
 
 2. PhraseGloss：
-   - text 必须是 sentence 的真实子串
+   - text 是短语卡片标题 / lookup_text；若提供 spans，则以 spans 作为真实锚点
    - phrase_type 必须是预定义集合
    - zh 必须为中文
 
 3. ContextGloss：
-   - text 必须是 sentence 的真实子串
+   - text 必须能确定性落成 sentence 的真实锚点
    - gloss 和 reason 必须为中文
 
 4. GrammarNote：
@@ -34,13 +34,20 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
+from app.schemas.common import TextSpan
 from app.schemas.internal.analysis import (
     AnnotationOutput,
     ContextGloss,
     GrammarNote,
     PhraseGloss,
+    PreparedSentence,
     SentenceAnalysis,
     VocabHighlight,
+)
+from app.services.analysis.postprocess.anchor_resolution import (
+    resolve_explicit_anchor_parts,
+    resolve_grammar_anchor_to_source,
+    resolve_vocabulary_anchor_binding,
 )
 
 if TYPE_CHECKING:
@@ -63,6 +70,15 @@ def _is_chinese(text: str) -> bool:
 def _is_substring(text: str, sentence_text: str) -> bool:
     """检查 text 是否为 sentence_text 的子串"""
     return text in sentence_text
+
+
+def _as_prepared_sentence(sentence_id: str, sentence_text: str) -> PreparedSentence:
+    return PreparedSentence(
+        sentence_id=sentence_id,
+        paragraph_id="validation",
+        text=sentence_text,
+        sentence_span=TextSpan(start=0, end=len(sentence_text)),
+    )
 
 
 class ValidationResult:
@@ -98,10 +114,15 @@ def validate_vocab_highlight(
         return result
 
     # 检查 text 是否为真实子串
-    if not _is_substring(annotation.text, sentence_text):
+    prepared_sentence = _as_prepared_sentence(annotation.sentence_id, sentence_text)
+    if resolve_vocabulary_anchor_binding(
+        prepared_sentence,
+        annotation.text,
+        annotation.occurrence,
+    ) is None:
         result.add_error(
             "anchor_not_substring",
-            f"VocabHighlight.text 不是句子真实子串: '{annotation.text}'",
+            f"VocabHighlight.text 不是可稳定映射的原文锚点: '{annotation.text}'",
             sentence_id=annotation.sentence_id,
         )
 
@@ -123,10 +144,26 @@ def validate_phrase_gloss(
         )
         return result
 
-    if not _is_substring(annotation.text, sentence_text):
+    prepared_sentence = _as_prepared_sentence(annotation.sentence_id, sentence_text)
+    if annotation.spans:
+        parts = [
+            {"anchor_text": span.text, "occurrence": span.occurrence, "role": span.role}
+            for span in annotation.spans
+        ]
+        if resolve_explicit_anchor_parts(prepared_sentence, parts) is None:
+            result.add_error(
+                "anchor_not_substring",
+                f"PhraseGloss.spans 不是可稳定映射的原文证据: '{annotation.text}'",
+                sentence_id=annotation.sentence_id,
+            )
+    elif resolve_vocabulary_anchor_binding(
+        prepared_sentence,
+        annotation.text,
+        annotation.occurrence,
+    ) is None:
         result.add_error(
             "anchor_not_substring",
-            f"PhraseGloss.text 不是句子真实子串: '{annotation.text}'",
+            f"PhraseGloss.text 在未提供 spans 时必须可稳定映射为原文锚点: '{annotation.text}'",
             sentence_id=annotation.sentence_id,
         )
 
@@ -161,10 +198,36 @@ def validate_context_gloss(
         )
         return result
 
-    if not _is_substring(annotation.text, sentence_text):
+    prepared_sentence = _as_prepared_sentence(annotation.sentence_id, sentence_text)
+    if annotation.spans:
+        parts = [
+            {
+                "anchor_text": span.text,
+                "occurrence": span.occurrence,
+                "role": span.role,
+            }
+            for span in annotation.spans
+        ]
+        if resolve_explicit_anchor_parts(prepared_sentence, parts) is None:
+            result.add_error(
+                "anchor_not_substring",
+                (
+                    "ContextGloss.spans 不是可稳定映射的原文锚点: "
+                    f"{[s.text for s in annotation.spans]}"
+                ),
+                sentence_id=annotation.sentence_id,
+            )
+    elif resolve_vocabulary_anchor_binding(
+        prepared_sentence,
+        annotation.text,
+        annotation.occurrence,
+    ) is None:
         result.add_error(
             "anchor_not_substring",
-            f"ContextGloss.text 不是句子真实子串: '{annotation.text}'",
+            (
+                "ContextGloss.text 不是可稳定映射的原文锚点: "
+                f"'{annotation.text}'"
+            ),
             sentence_id=annotation.sentence_id,
         )
 
@@ -198,8 +261,9 @@ def validate_grammar_note(
         )
         return result
 
+    prepared_sentence = _as_prepared_sentence(annotation.sentence_id, sentence_text)
     for i, span in enumerate(annotation.spans):
-        if not _is_substring(span.text, sentence_text):
+        if resolve_grammar_anchor_to_source(prepared_sentence, span.text, span.occurrence) is None:
             result.add_error(
                 "anchor_not_substring",
                 f"GrammarNote.spans[{i}].text 不是句子真实子串: '{span.text}'",

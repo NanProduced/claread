@@ -357,11 +357,7 @@ async def _retrieve_from_backend(
     result.query_tags = query_tags
 
     t0 = time.monotonic()
-    embedding_result = await embed_single_with_metadata(
-        query_text,
-        model=settings.bailian_embedding_model,
-        dimension=settings.bailian_embedding_dimension,
-    )
+    embedding_result = await embed_single_with_metadata(query_text)
     query_vector = embedding_result.embeddings[0]
     result.embedding_latency_ms = (time.monotonic() - t0) * 1000
     result.embedding_model = embedding_result.model
@@ -464,7 +460,6 @@ async def _retrieve_from_backend(
         query=query_text,
         documents=rerank_docs,
         top_n=settings.grammar_rag_rerank_topn,
-        model=settings.bailian_rerank_model,
     )
     rerank_results = rerank_result.results
     result.rerank_latency_ms = (time.monotonic() - t0) * 1000

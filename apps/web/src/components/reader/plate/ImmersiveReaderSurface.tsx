@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RenderElement, RenderLeaf } from "platejs/react";
 import { Plate, usePlateEditor } from "platejs/react";
 import { Highlighter, MessageSquare } from "lucide-react";
@@ -47,6 +47,7 @@ interface ImmersiveReaderSurfaceProps {
   jumpTarget?: ReaderJumpTarget | null;
   focusTarget?: ReaderJumpTarget | null;
   hoveredAnnotationTargetKey?: string | null;
+  activeInlineMarkKey?: string | null;
   assetProjection?: ReaderAssetProjection | null;
   readerNotesBySentence?: Map<string, WebReaderNoteVm[]>;
   onHoverAnnotationTargetKeyChange?: (targetKey: string | null) => void;
@@ -249,6 +250,7 @@ export function ImmersiveReaderSurface({
   jumpTarget = null,
   focusTarget = null,
   hoveredAnnotationTargetKey = null,
+  activeInlineMarkKey = null,
   assetProjection = null,
   readerNotesBySentence = new Map<string, WebReaderNoteVm[]>(),
   onHoverAnnotationTargetKeyChange,
@@ -309,6 +311,8 @@ export function ImmersiveReaderSurface({
     });
     return map;
   }, [assetProjection?.annotationRangesBySentence]);
+  const [hoveredInlineMarkKey, setHoveredInlineMarkKey] = useState<string | null>(null);
+  const [focusedInlineMarkKey, setFocusedInlineMarkKey] = useState<string | null>(null);
 
   const jumpFocusRangesBySentence = useMemo(
     () => focusRangesBySentence(jumpTarget, sentenceTextBySentence),
@@ -498,7 +502,12 @@ export function ImmersiveReaderSurface({
         contextFocusRangesBySentence={contextFocusRangesBySentence}
         noteFocusRangesBySentence={noteFocusRangesBySentence}
         hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
+        hoveredInlineMarkKey={hoveredInlineMarkKey}
+        focusedInlineMarkKey={focusedInlineMarkKey}
+        activeInlineMarkKey={activeInlineMarkKey}
         onHoverAnnotationTargetKeyChange={onHoverAnnotationTargetKeyChange}
+        onHoverInlineMarkKeyChange={setHoveredInlineMarkKey}
+        onFocusInlineMarkKeyChange={setFocusedInlineMarkKey}
         activeAnalysisEntryId={null}
         expandedAnalysisEntryIds={new Set()}
         sentenceTextBySentence={sentenceTextBySentence}
@@ -507,7 +516,10 @@ export function ImmersiveReaderSurface({
     ),
     [
       assetRangesBySentence,
+      activeInlineMarkKey,
       hoveredAnnotationTargetKey,
+      hoveredInlineMarkKey,
+      focusedInlineMarkKey,
       jumpFocusRangesBySentence,
       noteFocusRangesBySentence,
       onHoverAnnotationTargetKeyChange,

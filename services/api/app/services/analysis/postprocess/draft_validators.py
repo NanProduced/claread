@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 from app.schemas.internal.analysis import (
-    ContextGloss,
-    PhraseGloss,
     PreparedSentence,
-    VocabHighlight,
     is_likely_basic_english_word,
     is_single_token,
 )
-from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
+from app.schemas.internal.drafts import (
+    DraftContextGloss,
+    DraftPhraseGloss,
+    DraftVocabHighlight,
+    GrammarDraft,
+    TranslationDraft,
+    VocabularyDraft,
+)
+from app.services.analysis.postprocess.anchor_resolution import (
+    resolve_explicit_anchor_parts,
+    resolve_grammar_anchor_to_source,
+    resolve_vocabulary_anchor_binding,
+)
 from app.services.analysis.postprocess.normalize import is_substring
 
 
@@ -24,30 +33,72 @@ class DraftValidationError(Exception):
         super().__init__(self.message)
 
 
-def validate_vocab_highlight_business_rules(item: VocabHighlight) -> list[str]:
+def validate_vocab_highlight_business_rules(item: DraftVocabHighlight) -> list[str]:
     warnings: list[str] = []
     if " " in item.text:
         warnings.append("vocab_highlight: text must be a single word without spaces")
     return warnings
 
 
-def validate_phrase_gloss_business_rules(item: PhraseGloss) -> list[str]:
+def validate_phrase_gloss_business_rules(item: DraftPhraseGloss) -> list[str]:
     warnings: list[str] = []
-    if is_single_token(item.text) and item.phrase_type not in {"proper_noun", "compound"}:
+    phrase_text = getattr(item, "label", None) or getattr(item, "text", "")
+    if is_single_token(phrase_text) and item.phrase_type not in {"proper_noun", "compound"}:
         warnings.append(
-            "phrase_gloss: single-token text only allowed for proper_noun or compound"
+            "phrase_gloss: single-token label only allowed for proper_noun or compound"
         )
-    if item.phrase_type == "proper_noun" and is_likely_basic_english_word(item.text):
+    if item.phrase_type == "proper_noun" and is_likely_basic_english_word(phrase_text):
         warnings.append("phrase_gloss: proper_noun must not be a basic English word")
     return warnings
 
 
-def validate_context_gloss_business_rules(item: ContextGloss) -> list[str]:
+def validate_context_gloss_business_rules(item: DraftContextGloss) -> list[str]:
     warnings: list[str] = []
     if not item.gloss.strip():
         warnings.append("context_gloss: gloss must not be empty")
     if not item.reason.strip():
         warnings.append("context_gloss: reason must not be empty")
+    return warnings
+
+
+def _vocabulary_anchor_matches(
+    text: str, sentence: PreparedSentence, occurrence: int | None,
+) -> bool:
+    if is_substring(text, sentence.text):
+        return True
+    return resolve_vocabulary_anchor_binding(sentence, text, occurrence) is not None
+
+
+def _grammar_anchor_matches(text: str, sentence: PreparedSentence, occurrence: int | None) -> bool:
+    return resolve_grammar_anchor_to_source(sentence, text, occurrence) is not None
+
+
+def _phrase_gloss_anchor_quotes_match(
+    item: DraftPhraseGloss,
+    sentence: PreparedSentence,
+) -> list[str]:
+    if not item.anchor_quotes:
+        return []
+
+    warnings: list[str] = []
+    previous_end: int | None = None
+    for q in item.anchor_quotes:
+        parts = [{"anchor_text": q.text, "role": q.role}]
+        resolved_parts = resolve_explicit_anchor_parts(sentence, parts)
+        if resolved_parts is None:
+            warnings.append(
+                f"phrase_gloss: anchor quote text '{q.text}' "
+                f"not found in sentence {item.sentence_id}"
+            )
+            continue
+        resolved_part = resolved_parts[0]
+        if previous_end is not None and resolved_part.span.start < previous_end:
+            warnings.append(
+                f"phrase_gloss: anchor quotes out of source order in sentence {item.sentence_id}"
+            )
+            break
+        previous_end = resolved_part.span.end
+
     return warnings
 
 
@@ -63,33 +114,49 @@ def validate_vocabulary_draft(
         if v.sentence_id not in sentence_map:
             warnings.append(f"vocab_highlight: sentence_id {v.sentence_id} not found")
             continue
-        sent_text = sentence_map[v.sentence_id].text
-        if not is_substring(v.text, sent_text):
+        sentence = sentence_map[v.sentence_id]
+        if not _vocabulary_anchor_matches(v.text, sentence, None):
             warnings.append(
                 f"vocab_highlight: text '{v.text}' not found in sentence {v.sentence_id}"
             )
 
     for p in draft.phrase_glosses:
         warnings.extend(validate_phrase_gloss_business_rules(p))
+        for q in p.anchor_quotes:
+            if "..." in q.text:
+                warnings.append(
+                    f"phrase_gloss: anchor quote text '{q.text}' "
+                    f"contains ellipsis in sentence {p.sentence_id}"
+                )
         if p.sentence_id not in sentence_map:
             warnings.append(f"phrase_gloss: sentence_id {p.sentence_id} not found")
             continue
-        sent_text = sentence_map[p.sentence_id].text
-        if not is_substring(p.text, sent_text):
+        sentence = sentence_map[p.sentence_id]
+        if p.anchor_quotes:
+            warnings.extend(_phrase_gloss_anchor_quotes_match(p, sentence))
+        elif not _vocabulary_anchor_matches(p.label, sentence, None):
             warnings.append(
-                f"phrase_gloss: text '{p.text}' not found in sentence {p.sentence_id}"
+                f"phrase_gloss: label '{p.label}' not found in sentence {p.sentence_id}"
             )
 
     for c in draft.context_glosses:
         warnings.extend(validate_context_gloss_business_rules(c))
+        for q in c.anchor_quotes:
+            if "..." in q.text:
+                warnings.append(
+                    f"context_gloss: anchor quote text '{q.text}' "
+                    f"contains ellipsis in sentence {c.sentence_id}"
+                )
         if c.sentence_id not in sentence_map:
             warnings.append(f"context_gloss: sentence_id {c.sentence_id} not found")
             continue
-        sent_text = sentence_map[c.sentence_id].text
-        if not is_substring(c.text, sent_text):
-            warnings.append(
-                f"context_gloss: text '{c.text}' not found in sentence {c.sentence_id}"
-            )
+        sentence = sentence_map[c.sentence_id]
+        for q in c.anchor_quotes:
+            if not _vocabulary_anchor_matches(q.text, sentence, None):
+                warnings.append(
+                    f"context_gloss: anchor quote text '{q.text}' "
+                    f"not found in sentence {c.sentence_id}"
+                )
 
     return warnings
 
@@ -102,14 +169,21 @@ def validate_grammar_draft(
     sentence_map = {s.sentence_id: s for s in sentences}
 
     for g in draft.grammar_notes:
+        for q in g.anchor_quotes:
+            if "..." in q.text:
+                warnings.append(
+                    f"grammar_note: anchor quote text '{q.text}' "
+                    f"contains ellipsis in sentence {g.sentence_id}"
+                )
         if g.sentence_id not in sentence_map:
             warnings.append(f"grammar_note: sentence_id {g.sentence_id} not found")
             continue
-        sent_text = sentence_map[g.sentence_id].text
-        for span in g.spans:
-            if not is_substring(span.text, sent_text):
+        sentence = sentence_map[g.sentence_id]
+        for q in g.anchor_quotes:
+            if not _grammar_anchor_matches(q.text, sentence, None):
                 warnings.append(
-                    f"grammar_note: span text '{span.text}' not found in sentence {g.sentence_id}"
+                    f"grammar_note: anchor quote text '{q.text}' "
+                    f"not found in sentence {g.sentence_id}"
                 )
 
     for s in draft.sentence_analyses:

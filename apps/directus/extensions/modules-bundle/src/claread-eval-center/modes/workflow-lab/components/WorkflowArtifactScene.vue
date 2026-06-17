@@ -2,13 +2,20 @@
 import { computed } from "vue";
 import ResultBlock from "../../../components/ResultBlock.vue";
 import JsonTreeView from "../../../components/JsonTreeView.vue";
+import AnchorDebugPanel from "./AnchorDebugPanel.vue";
 import {
   dash,
+  inlineMarkAnchorText,
+  inlineMarkDisplayTitle,
+  inlineMarkPrimarySummary,
+  inlineMarkSecondarySummary,
+  inlineMarkShowsDistinctAnchor,
   normalizeWorkflowScene,
   sceneInlineMarks,
   sceneSentenceEntries,
   sceneTranslations,
   sceneWarnings,
+  extractLLMConfigSnapshot,
 } from "../composables/workflowLabFormatting.js";
 
 const props = defineProps({
@@ -20,14 +27,46 @@ const props = defineProps({
 });
 
 const scene = computed(() => normalizeWorkflowScene(props.payload));
+const llmConfig = computed(() => extractLLMConfigSnapshot(props.payload));
 const translations = computed(() => sceneTranslations(scene.value));
 const inlineMarks = computed(() => sceneInlineMarks(scene.value));
 const sentenceEntries = computed(() => sceneSentenceEntries(scene.value));
 const warnings = computed(() => sceneWarnings(scene.value));
 const dropLog = computed(() => Array.isArray(props.payload?.drop_log) ? props.payload.drop_log : []);
 
-function anchorText(mark) {
-  return mark?.anchor?.anchor_text || mark?.anchor?.text || mark?.lookup_text || "-";
+function annotationTypeLabel(mark) {
+  switch (mark?.annotation_type) {
+    case "vocab_highlight":
+      return "词汇";
+    case "phrase_gloss":
+      return "短语";
+    case "context_gloss":
+      return "语境";
+    case "grammar_note":
+      return "语法";
+    default:
+      return mark?.annotation_type || "标注";
+  }
+}
+
+function markTitle(mark) {
+  return inlineMarkDisplayTitle(mark);
+}
+
+function markAnchor(mark) {
+  return inlineMarkAnchorText(mark);
+}
+
+function markShowAnchor(mark) {
+  return inlineMarkShowsDistinctAnchor(mark);
+}
+
+function markSummary(mark) {
+  return inlineMarkPrimarySummary(mark) || mark?.visual_tone || "未提供说明";
+}
+
+function markDetail(mark) {
+  return inlineMarkSecondarySummary(mark);
 }
 </script>
 
@@ -73,10 +112,12 @@ function anchorText(mark) {
           <div v-if="inlineMarks.length" class="card-list">
             <article v-for="(item, index) in inlineMarks" :key="`mark-${index}`" class="scene-card">
               <div class="card-row">
-                <strong>{{ dash(anchorText(item)) }}</strong>
-                <span>{{ dash(item.annotation_type) }}</span>
+                <strong>{{ dash(markTitle(item)) }}</strong>
+                <span>{{ dash(annotationTypeLabel(item)) }}</span>
               </div>
-              <p>{{ dash(item.visual_tone, "未提供 visual tone") }}</p>
+              <p v-if="markShowAnchor(item)" class="anchor-line">原文锚点：{{ markAnchor(item) }}</p>
+              <p>{{ dash(markSummary(item), "未提供说明") }}</p>
+              <p v-if="markDetail(item)" class="card-detail">{{ markDetail(item) }}</p>
             </article>
           </div>
           <p v-else class="empty-line">暂无行内标注。</p>
@@ -132,6 +173,45 @@ function anchorText(mark) {
             <p v-else>暂无 drop log。</p>
           </div>
         </div>
+      </ResultBlock>
+
+      <ResultBlock v-if="llmConfig" title="LLM 配置" :open="false">
+        <dl class="llm-config-grid">
+          <div><dt>Profile</dt><dd>{{ dash(llmConfig.profile) }}</dd></div>
+          <div><dt>Provider</dt><dd>{{ dash(llmConfig.provider) }}</dd></div>
+          <div><dt>Adapter</dt><dd>{{ dash(llmConfig.adapter) }}</dd></div>
+          <div><dt>Model</dt><dd>{{ dash(llmConfig.model) }}</dd></div>
+          <div><dt>tool_choice_required</dt><dd>{{ llmConfig.openai_supports_tool_choice_required === true ? '是' : llmConfig.openai_supports_tool_choice_required === false ? '否' : dash(llmConfig.openai_supports_tool_choice_required) }}</dd></div>
+          <div><dt>expected_tool_choice</dt><dd>{{ dash(llmConfig.expected_tool_choice) }}</dd></div>
+          <div><dt>json_schema</dt><dd>{{ llmConfig.supports_json_schema_output === true ? '是' : llmConfig.supports_json_schema_output === false ? '否' : dash(llmConfig.supports_json_schema_output) }}</dd></div>
+          <div><dt>json_object</dt><dd>{{ llmConfig.supports_json_object_output === true ? '是' : llmConfig.supports_json_object_output === false ? '否' : dash(llmConfig.supports_json_object_output) }}</dd></div>
+          <div><dt>structured_output_mode</dt><dd>{{ dash(llmConfig.default_structured_output_mode) }}</dd></div>
+          <div><dt>response_format</dt><dd>{{ dash(llmConfig.expected_response_format) }}</dd></div>
+          <div><dt>parallel_tool_calls</dt><dd>{{ llmConfig.parallel_tool_calls === true ? '是' : llmConfig.parallel_tool_calls === false ? '否' : dash(llmConfig.parallel_tool_calls) }}</dd></div>
+          <div><dt>thinking</dt><dd>{{ llmConfig.thinking_enabled ? '开启' : '关闭' }}</dd></div>
+        </dl>
+        <details v-if="llmConfig.structured_output_runtime?.length" class="runtime-details" open>
+          <summary>Per-Agent 结构化输出配置</summary>
+          <div v-for="(entry, idx) in llmConfig.structured_output_runtime" :key="idx" class="runtime-entry">
+            <dl class="llm-config-grid">
+              <div><dt>Agent</dt><dd>{{ dash(entry.agent_name) }}</dd></div>
+              <div><dt>Profile</dt><dd>{{ dash(entry.profile_name) }}</dd></div>
+              <div><dt>Model</dt><dd>{{ dash(entry.model_name) }}</dd></div>
+              <div><dt>output_mode</dt><dd>{{ dash(entry.resolved_default_structured_output_mode) }}</dd></div>
+              <div><dt>tool_choice</dt><dd>{{ dash(entry.inferred_expected_tool_choice) }}</dd></div>
+              <div><dt>response_format</dt><dd>{{ dash(entry.inferred_expected_response_format) }}</dd></div>
+              <div><dt>parallel_tool_calls</dt><dd>{{ entry.resolved_parallel_tool_calls === true ? '是' : entry.resolved_parallel_tool_calls === false ? '否' : dash(entry.resolved_parallel_tool_calls) }}</dd></div>
+              <div><dt>thinking</dt><dd>{{ entry.resolved_thinking_enabled ? '开启' : '关闭' }}</dd></div>
+              <div v-if="entry.observed_usage"><dt>observed_usage</dt><dd>{{ entry.observed_usage }}</dd></div>
+              <div v-if="entry.observed_retry_count != null"><dt>retry_count</dt><dd>{{ entry.observed_retry_count }}</dd></div>
+              <div v-if="entry.observed_request_count != null"><dt>request_count</dt><dd>{{ entry.observed_request_count }}</dd></div>
+            </dl>
+          </div>
+        </details>
+      </ResultBlock>
+
+      <ResultBlock title="Anchor Debug" :open="false">
+        <AnchorDebugPanel :payload="payload" />
       </ResultBlock>
 
       <ResultBlock v-if="showDebug" title="完整 JSON" :open="false">
@@ -242,6 +322,12 @@ function anchorText(mark) {
   line-height: 1.55;
 }
 
+.scene-card .anchor-line,
+.scene-card .card-detail {
+  color: var(--theme--foreground-subdued);
+  font-size: 12px;
+}
+
 .quality-strip {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -278,6 +364,26 @@ function anchorText(mark) {
   border-radius: 8px;
   padding: 18px;
   background: var(--theme--background-subdued);
+}
+
+.llm-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 1px;
+  border: 1px solid var(--theme--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.llm-config-grid div {
+  background: var(--theme--background-subdued);
+  padding: 10px;
+}
+
+.llm-config-grid dd {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 @media (max-width: 980px) {

@@ -38,7 +38,6 @@ ReaderAskEntryAction = Literal[
     "explain_this",
     "why_here",
     "lookup_in_context",
-    "compare_translation",
 ]
 ReaderAskAttachmentKind = Literal[
     "text_selection",
@@ -50,8 +49,6 @@ ReaderAskAttachmentKind = Literal[
 ReaderAskResponseCardType = Literal[
     "grammar_note_card",
     "sentence_breakdown_card",
-    "vocabulary_in_context_card",
-    "practice_card",
 ]
 ReaderAskSubmissionMode = Literal["chat", "quick_action"]
 ReaderAskSupplementType = Literal["grammar_note"]
@@ -73,6 +70,8 @@ ReaderAskWorkingSetMode = Literal[
     "clarification",
 ]
 ReaderAskPlannerAssetType = Literal["analysis", "supplement"]
+ReaderAskContextScope = Literal["sentence", "paragraph", "article", "cross_article"]
+ReaderAskAnswerPolicy = Literal["concise", "detailed", "step_by_step", "comparative"]
 
 
 class ReaderAskAnchorSegment(BaseModel):
@@ -464,6 +463,11 @@ class ReaderAskPlannerDecision(BaseModel):
     )
     working_set: ReaderAskPlannerWorkingSetDecision = Field(default_factory=ReaderAskPlannerWorkingSetDecision)
     rationale: str | None = None
+    context_scope: ReaderAskContextScope | None = None
+    decision_confidence: Literal["high", "medium", "low"] | None = None
+    requires_local_anchor: bool | None = None
+    answer_policy: ReaderAskAnswerPolicy | None = None
+    tool_hints: list[str] | None = None
 
     @field_validator("resolved_intent", mode="before")
     @classmethod
@@ -628,30 +632,8 @@ class ReaderAskSentenceBreakdownCard(BaseModel):
     origin: Literal["ask_ai"] = "ask_ai"
 
 
-class ReaderAskVocabularyInContextCard(BaseModel):
-    card_type: Literal["vocabulary_in_context_card"] = "vocabulary_in_context_card"
-    query: str
-    display_word: str | None = None
-    phonetic: str | None = None
-    meaning_zh: str | None = None
-    why_here: str | None = None
-    translation_zh: str | None = None
-    learning_tip: str | None = None
-    source_sentence: str | None = None
-
-
-class ReaderAskPracticeCard(BaseModel):
-    card_type: Literal["practice_card"] = "practice_card"
-    title: str
-    prompt: str
-    expected_focus: str | None = None
-    hints: list[str] = Field(default_factory=list)
-    answer_guidance: str | None = None
-    source_sentence: str | None = None
-
-
 ReaderAskResponseCard = Annotated[
-    ReaderAskGrammarNoteCard | ReaderAskSentenceBreakdownCard | ReaderAskVocabularyInContextCard | ReaderAskPracticeCard,
+    ReaderAskGrammarNoteCard | ReaderAskSentenceBreakdownCard,
     Field(discriminator="card_type"),
 ]
 
@@ -682,8 +664,30 @@ class ReaderAskMessage(BaseModel):
     reasoning_md: str | None = None
     reasoning_status: Literal["idle", "streaming", "completed"] | None = None
     usage_event_id: str | None = None
+    # Round 2: follow-up prompt suggestions emitted by
+    # ``suggest_prompts`` tool. The frontend renders them as clickable
+    # chips at the tail of the assistant message.
+    follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
     created_at: str
     updated_at: str
+
+
+class ReaderAskSelectedModel(BaseModel):
+    key: str
+    label: str
+    description: str | None = None
+    model_name: str | None = None
+    replan_model_name: str | None = None
+    price_multiplier: float = 1.0
+
+
+class ReaderAskModelOptionSummary(ReaderAskSelectedModel):
+    is_default: bool = False
+
+
+class ReaderAskModelOptionListResponse(BaseModel):
+    default_key: str
+    items: list[ReaderAskModelOptionSummary]
 
 
 class ReaderAskThreadSummary(BaseModel):
@@ -691,6 +695,7 @@ class ReaderAskThreadSummary(BaseModel):
     record_id: str
     title: str | None = None
     is_default: bool
+    selected_model: ReaderAskSelectedModel | None = None
     archived_at: str | None = None
     created_at: str
     updated_at: str
@@ -710,6 +715,7 @@ class ReaderAskThreadCreateRequest(BaseModel):
 
     record_id: str
     title: str | None = Field(default=None, max_length=120)
+    model: str | None = None
 
 
 class ReaderAskActionConfirmResult(BaseModel):
@@ -752,6 +758,23 @@ class ReaderAskMessageStreamRequest(BaseModel):
     model: str | None = None
 
 
+class ReaderAskMessageRetryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    model: str | None = None
+
+
+class ReaderAskFollowUpSuggestion(BaseModel):
+    """A single follow-up prompt chip (Round 2 suggest_prompts tool).
+
+    ``label`` is the chip text (≤40 chars); ``prompt`` is the actual
+    user message to send when the chip is clicked (≤200 chars).
+    """
+
+    label: str
+    prompt: str
+
+
 class ReaderAskUserVisibleOutput(BaseModel):
     content_md: str
     submission_mode: ReaderAskSubmissionMode = "chat"
@@ -774,11 +797,17 @@ class ReaderAskUserVisibleOutput(BaseModel):
     persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
     reasoning_md: str | None = None
     reasoning_status: Literal["idle", "streaming", "completed"] | None = None
+    # Round 2: follow-up prompt suggestions emitted by the
+    # ``suggest_prompts`` tool. The frontend renders them as clickable
+    # chips at the tail of the assistant message. None when the tool
+    # was not called.
+    follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
 
 
 class ReaderAskCompletedPayload(ReaderAskUserVisibleOutput):
     id: str
     thread_id: str
+    usage_event_id: str | None = None
 
 
 class ReaderAskStreamEnvelope(BaseModel):

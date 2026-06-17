@@ -129,15 +129,7 @@ function inferLookupKind(annotationType: AnnotationType, value: unknown): Phrase
 }
 
 function toPhraseKind(value: unknown): PhraseKind | undefined {
-  if (
-    value === "word" ||
-    value === "phrase" ||
-    value === "collocation" ||
-    value === "phrasal_verb" ||
-    value === "idiom" ||
-    value === "proper_noun" ||
-    value === "compound"
-  ) {
+  if (value === "word" || value === "phrase") {
     return value;
   }
 
@@ -166,12 +158,66 @@ function toWarningLevel(value: unknown): WarningLevel {
   return "info";
 }
 
+function readNumber(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function readOptionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function mapAnchor(value: unknown): InlineMarkAnchor | null {
   if (!isRecord(value)) {
     return null;
   }
 
   const sentenceId = readString(value.sentence_id ?? value.sentenceId);
+
+  if (value.kind === "multi_range") {
+    return {
+      kind: "multi_range",
+      sentenceId,
+      offsetUnit: "utf16",
+      ranges: readArray(value.ranges)
+        .filter(isRecord)
+        .map((range) => ({
+          start: readNumber(range.start),
+          end: readNumber(range.end),
+          text: readString(range.text),
+          role: readOptionalString(range.role),
+          sourceQuote: readOptionalString(range.source_quote ?? range.sourceQuote),
+          resolutionKind: readOptionalString(range.resolution_kind ?? range.resolutionKind),
+        }))
+        .filter((range) => range.end > range.start && range.text.length > 0),
+    };
+  }
+
+  if (value.kind === "range") {
+    const range = isRecord(value.range) ? value.range : value;
+    const start = readNumber(range.start);
+    const end = readNumber(range.end);
+    const text = readString(range.text);
+    if (end <= start || text.length === 0) {
+      return null;
+    }
+    return {
+      kind: "range",
+      sentenceId,
+      offsetUnit: "utf16",
+      start,
+      end,
+      text,
+      sourceQuote: readOptionalString(
+        range.source_quote ?? range.sourceQuote ?? value.source_quote ?? value.sourceQuote,
+      ),
+      resolutionKind: readOptionalString(
+        range.resolution_kind ??
+          range.resolutionKind ??
+          value.resolution_kind ??
+          value.resolutionKind,
+      ),
+    };
+  }
 
   if (value.kind === "multi_text") {
     return {
@@ -308,13 +354,26 @@ function mapSentenceEntries(value: unknown): SentenceEntryModel[] {
     .map((entry) => {
       const sourceKind: SentenceEntryModel["sourceKind"] =
         entry.source_kind === "ask_supplement" ? "ask_supplement" : "workflow";
+      const analysisText = readOptionalString(entry.analysis_text ?? entry.analysisText);
+      const content = readString(entry.content, analysisText ?? "");
+      const chunks = readArray(entry.chunks)
+        .filter(isRecord)
+        .map((chunk) => ({
+          order: readOptionalNumber(chunk.order),
+          label: readString(chunk.label),
+          text: readString(chunk.text),
+          occurrence: readOptionalNumber(chunk.occurrence) ?? null,
+        }))
+        .filter((chunk) => chunk.label.length > 0 && chunk.text.length > 0);
       return {
         id: readString(entry.id),
         sentenceId: readString(entry.sentence_id),
         entryType: readString(entry.entry_type, "sentence_analysis") as SentenceEntryType,
         label: readString(entry.label, "解析"),
         title: readOptionalString(entry.title),
-        content: readString(entry.content),
+        content,
+        analysisText,
+        chunks: chunks.length > 0 ? chunks : undefined,
         sourceKind,
         supplementId: readOptionalString(entry.supplement_id),
         deletable: readBoolean(entry.deletable, false),

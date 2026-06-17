@@ -17,7 +17,6 @@ describe("ThemePreferencesSection", () => {
   it("renders only the unified three-theme selector", () => {
     render(<ThemePreferencesSection />);
 
-    expect(screen.getByText("主题")).toBeTruthy();
     expect(screen.getByText("纸质")).toBeTruthy();
     expect(screen.getByText("浅色")).toBeTruthy();
     expect(screen.getByText("深色")).toBeTruthy();

@@ -1,3 +1,137 @@
 {
-  "presets": {}
+  "_comment": [
+    "这是字段说明版 example，不可直接作为运行时配置加载。",
+    "复制到正式配置前，请删除所有以下划线开头的注释键。",
+    "preset 的本质是 route -> profile 的一组映射；也可以继续引用另一个 preset 作为基础。",
+    "Round 16: reader_ask_planner route 已移除，presets can mix native and compat profiles for Ask main/replan."
+  ],
+  "workflow_base": {
+    "_field_notes": {
+      "preset": "可选，引用另一个 preset 作为基础；后定义的 routes / default_profile 会覆盖基础 preset。",
+      "default_profile": "当前 selection 未显式指定 route 时的默认 profile。",
+      "routes": "按 route 粒度做覆盖。route key 必须来自 app/llm/routes.py。"
+    },
+    "default_profile": "workflow-qwen36-plus",
+    "routes": {
+      "_comment": "完整 route 列表：annotation_generation / dict_ai / reader_ask / reader_ask_replan / daily_annotation / daily_analysis / daily_review。",
+      "annotation_generation": {
+        "_field_notes": {
+          "profile": "当前 route 的主 profile。",
+          "fallback_profiles": "主 profile 不可用时的备用 profile 列表，按顺序尝试。",
+          "model_settings": "仅当前 route 额外叠加的模型参数，优先级高于 profile。"
+        },
+        "profile": "workflow-qwen36-plus",
+        "fallback_profiles": [
+          "workflow-deepseek-v4-pro"
+        ],
+        "model_settings": {
+          "timeout": 90.0,
+          "extra_body": {
+            "enable_thinking": false
+          }
+        }
+      },
+      "dict_ai": {
+        "profile": "workflow-qwen36-plus"
+      },
+      "daily_annotation": {
+        "profile": "workflow-qwen36-plus"
+      },
+      "daily_analysis": {
+        "profile": "workflow-deepseek-v4-pro",
+        "fallback_profiles": [
+          "workflow-qwen36-plus"
+        ]
+      },
+      "daily_review": {
+        "profile": "workflow-deepseek-v4-pro"
+      }
+    }
+  },
+  "workflow_qwen37_max": {
+    "preset": "workflow_base",
+    "default_profile": "workflow-qwen37-max",
+    "routes": {
+      "annotation_generation": {
+        "profile": "workflow-qwen37-max"
+      },
+      "dict_ai": {
+        "profile": "workflow-qwen37-max"
+      }
+    }
+  },
+  "workflow_deepseek_v4_pro_tool_required": {
+    "_field_notes": "DeepSeek V4 Pro tool_choice=required 实验预设。不替换 workflow_deepseek_v4_pro 生产预设。",
+    "routes": {
+      "annotation_generation": {
+        "profile": "workflow-deepseek-v4-pro-tool-required"
+      },
+      "dict_ai": {
+        "profile": "workflow-deepseek-v4-pro-tool-required"
+      }
+    }
+  },
+  "ask_deepseek_balanced": {
+    "preset": "workflow_base",
+    "routes": {
+      "reader_ask": {
+        "profile": "ask-main-deepseek-v4-pro",
+        "fallback_profiles": [
+          "ask-main-glm51"
+        ]
+      },
+      "reader_ask_replan": {
+        "profile": "ask-replan-deepseek-v4-pro",
+        "fallback_profiles": [
+          "ask-replan-glm51"
+        ]
+      }
+    }
+  },
+  "ask_qwen_premium": {
+    "preset": "workflow_base",
+    "routes": {
+      "reader_ask": {
+        "profile": "ask-main-qwen37-max",
+        "fallback_profiles": [
+          "ask-main-glm51",
+          "ask-main-deepseek-v4-pro"
+        ],
+        "model_settings": {
+          "timeout": 180.0,
+          "extra_body": {
+            "enable_thinking": true,
+            "preserve_thinking": true
+          }
+        }
+      },
+      "reader_ask_replan": {
+        "profile": "ask-replan-qwen37-max",
+        "fallback_profiles": [
+          "ask-replan-glm51",
+          "ask-replan-deepseek-v4-pro"
+        ]
+      }
+    }
+  },
+  "ask_qwen_premium_native": {
+    "_field_notes": "Ask main/replan via native provider for visible reasoning stream.",
+    "preset": "workflow_base",
+    "routes": {
+      "reader_ask": {
+        "profile": "ask-main-qwen37-max-native",
+        "fallback_profiles": [
+          "ask-main-glm51-native",
+          "ask-main-deepseek-v4-pro"
+        ]
+      },
+      "reader_ask_replan": {
+        "profile": "ask-replan-qwen37-max-native",
+        "fallback_profiles": [
+          "ask-replan-glm51-native",
+          "ask-replan-deepseek-v4-pro"
+        ]
+      }
+    }
+  }
 }

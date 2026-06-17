@@ -2,8 +2,8 @@
 
 ## 文档状态
 
-- 状态：current frozen scope
-- 日期：2026-05-20
+- 状态：current agent-loop baseline
+- 日期：2026-06-17
 - 适用范围：Claread Web Reader 内当前 Ask Claread 模块
 - 事实基线：以当前代码、测试与可验证行为为准
 - 文档关系：
@@ -15,7 +15,7 @@
 
 Ask Claread 是 Reader 内、围绕当前文章工作的阅读助手。它的当前定位是：
 
-`article-rooted, attachment-first, planner-driven, write-confirmed`
+`article-rooted, attachment-first, agent-loop-first, write-confirmed`
 
 它不是：
 
@@ -45,9 +45,29 @@ Ask Claread 是 Reader 内、围绕当前文章工作的阅读助手。它的当
 
 用户应能知道本轮回答基于哪些对象、是否扩展到了其他文章、是否使用了词典或稳定资产。
 
+composer context chip 是“下一轮发送时会带入的上下文承诺”。如果某个 selection 只是阅读态提示，不应放在 composer context chip 区；只要它以 chip 形式出现，发送时就必须进入 request attachments。
+
 ### 写动作必须确认
 
 当前保留的写动作都需要确认后才执行，且必须明确目标锚点和写入结果。
+
+高风险写动作，包括未来可能出现的批量写入、跨文章整理或删除类动作，也必须先计划/确认，不能由模型静默执行。
+
+### 状态文案产品化
+
+Ask 面板向用户展示“系统正在做什么”，不暴露 token budget、retrieval chunk、agent repair、checkpoint flush 等技术细节。
+
+当前约定：
+
+- 普通生成：`正在生成`
+- 问题理解 / 意图归类：`正在理解问题`
+- 上下文整理：`正在整理上下文`
+- context compression：`上下文压缩中`
+- 词典查询：`正在查词典`
+- 外部文章或资产解析：`正在查找相关文档`
+- 压缩失败时给可操作错误，例如提示用户移除部分上下文后重试
+
+完整 `context_plan / evidence / trace_summary` 仍作为可展开的信任层，不默认占据普通用户界面。
 
 ## 当前公开 contract
 
@@ -99,7 +119,8 @@ Ask Claread 是 Reader 内、围绕当前文章工作的阅读助手。它的当
 - 不新增 user turn
 - 当前用户可见结果始终以最新 run 为准
 - retry 入口绑定 assistant run，不直接绑 user bubble
-- 若上一轮流式中断并保留 partial output，前端文案显示为“继续生成”
+- 若上一轮流式中断并保留 partial output，前端文案显示为“重新生成”
+- 当前不承诺断点续写；重新生成会创建新的 run，并 supersede 旧 run
 
 ### 输入与附件
 
@@ -120,6 +141,8 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - 当前 UI 以结构化分析结果卡为主，文字说明为辅助层
 - composer context 只表示“下一轮待发送的上下文”，发送成功后会清空
 - live selection 只作为“当前可带入”的阅读态提示，不等于已经排队发送
+- context picker 选中的对象会变成 composer chip；chip 等于 runtime attachment，不作为技术 trace 展示
+- chip 应短、小、可移除、可跳转；长文本只在 hover / popover 中展示
 
 ## 当前已实现能力
 
@@ -129,7 +152,8 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - 局部上下文窗口
 - 当前文章 stable record insights
 - 当前文章 article overview（若已有）
-- 词典与词典 AI 辅助
+- 生词本查询
+- dictionary anchor / dictionary attachment 的文章语境解释
 
 补充：
 
@@ -163,6 +187,7 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - 外部 sentence window
 - 外部 dictionary path
 - 跨文章用户资产检索（高亮/笔记/收藏）
+- “所有上下文”“全部文章”这类超出实际能力的 source scope
 
 ## 当前回答输出
 
@@ -172,6 +197,7 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - `submission_mode`
 - `resolved_intent`
 - `citations`
+- `tool_trace`
 - `evidence`
 - `context_plan`
 - `resolved_context_input`
@@ -182,6 +208,7 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - `action_proposals`
 - `supplement_candidates`
 - `persisted_supplements`
+- `follow_up_suggestions`
 - `run_info`
 - `usage_summary`
 - `billed_points`
@@ -197,6 +224,9 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 补充：
 
 - `context_plan / resolved_context_input / evidence / trace_summary` 在 Ask 面板中默认折叠展示
+- `tool_trace` 在 Ask 面板中以紧凑 tool chip row 呈现，不默认展开技术细节
+- `citations` 在消息底部以 citation badge / list 呈现，作为用户可见回源线索
+- `follow_up_suggestions` 在 assistant 消息尾部以可点击 chips 呈现，点击后作为下一轮 prompt 输入
 - `reasoning.*` 是 run-scoped 的正式输出字段
 - Ask 在流式阶段会按节流 checkpoint 持续回写当前 `turn_run.user_visible_output_json`
 - 刷新页面时会直接回显已持久化的正文与 thinking 快照，但不会自动恢复原 SSE 连接或继续跑同一个未完成 run
@@ -247,7 +277,7 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 ### 冻结为当前事实的部分
 
 - attachment-first Ask contract
-- planner-first runtime
+- agent-loop-only runtime（`planner_first` 仅作为历史 trace value 保留，没有 live route）
 - `conversation / turn_run / user_visible_output / eval_trace`
 - record-level 与 asset-level HITP
 - current run hydration 优先于 legacy metadata fallback

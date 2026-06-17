@@ -20,6 +20,10 @@
   },
   "registries": {
     "@platejs": "https://platejs.org/r/{name}.json",
-    "@plate": "https://platejs.org/r/{name}.json"
+    "@plate": "https://platejs.org/r/{name}.json",
+    "@ai-elements": "https://elements.ai-sdk.dev/api/registry/{name}.json",
+    "@prompt-kit": "https://prompt-kit.com/c/{name}.json",
+    "@aceternity": "https://ui.aceternity.com/registry/{name}.json",
+    "@magicui": "https://magicui.design/r/{name}"
   }
 }

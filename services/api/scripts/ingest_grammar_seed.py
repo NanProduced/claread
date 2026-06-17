@@ -1,7 +1,8 @@
 """Grammar seed 数据 ingestion 脚本。
 
 从 grammar_seed_v1.jsonl 读取 seed 数据，
-调用百炼 Embedding 对 retrieval_text 生成向量，写入 Zilliz 两个 collection。
+通过统一 registry 解析 embedding 配置，对 retrieval_text 生成向量，
+写入 Zilliz 两个 collection。
 
 映射字段：example_id, vector, reading_variant, output_type, grammar_tags,
 retrieval_text, label, source_sentence, output_fragment, quality_score, approved。
@@ -69,7 +70,7 @@ async def _run_ingestion(
     sys.path.insert(0, str(SERVER_ROOT))
 
     from app.config.settings import get_settings
-    from app.infra.bailian_embedding import embed_texts
+    from app.infra.bailian_embedding import embed_texts, resolve_embedding_config
     from app.infra.zilliz_client import (
         close_zilliz,
         init_zilliz,
@@ -80,6 +81,7 @@ async def _run_ingestion(
     )
 
     settings = get_settings()
+    embedding_model, embedding_dimension, embedding_api_key = resolve_embedding_config()
 
     records = _load_seed(seed_file)
     logger.info("Loaded %d seed records from %s", len(records), seed_file)
@@ -97,11 +99,11 @@ async def _run_ingestion(
         if force_recreate:
             logger.info("Collections would be dropped and recreated before ingestion")
         for r in records:
-            mapped = _map_record_to_zilliz(r, [0.0] * settings.bailian_embedding_dimension)
+            mapped = _map_record_to_zilliz(r, [0.0] * embedding_dimension)
             collection = (
-                "grammar_note_examples"
+                settings.zilliz_collection_grammar_note
                 if r["output_type"] == "grammar_note"
-                else "sentence_analysis_examples"
+                else settings.zilliz_collection_sentence_analysis
             )
             logger.info(
                 "  %s → collection=%s, variant=%s, label=%s",
@@ -117,8 +119,11 @@ async def _run_ingestion(
         logger.error("ZILLIZ_URI and ZILLIZ_TOKEN must be configured in .env")
         sys.exit(1)
 
-    if not settings.bailian_api_key:
-        logger.error("BAILIAN_API_KEY must be configured in .env")
+    if not embedding_api_key:
+        logger.error(
+            "Embedding API key must be configured via RAG_EMBEDDING_MODEL_PROFILE "
+            "or deprecated BAILIAN_API_KEY fallback."
+        )
         sys.exit(1)
 
     await init_zilliz(uri=settings.zilliz_uri, token=settings.zilliz_token)
@@ -134,7 +139,7 @@ async def _run_ingestion(
         if force_recreate:
             await zilliz_drop_collection(collection_name)
 
-        await zilliz_create_collection(collection_name, dimension=settings.bailian_embedding_dimension)
+        await zilliz_create_collection(collection_name, dimension=embedding_dimension)
 
         existing_ids: set[str] = set()
         if not force_recreate:
@@ -165,8 +170,8 @@ async def _run_ingestion(
             t0 = time.monotonic()
             vectors = await embed_texts(
                 texts,
-                model=settings.bailian_embedding_model,
-                dimension=settings.bailian_embedding_dimension,
+                model=embedding_model,
+                dimension=embedding_dimension,
             )
             elapsed = time.monotonic() - t0
             logger.info(

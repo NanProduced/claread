@@ -1809,6 +1809,30 @@ export function registerNodeLabRoutes(router, context, deps) {
     }
   });
 
+  router.delete("/node-lab/candidates/:candidateId", async (req, res, next) => {
+    if (!buildAuthGuard(req, res)) return;
+    try {
+      const candidateId = validateIdentifier(req.params.candidateId, "candidate_id", isSafeFileId);
+      const row = await database("eval_node_lab_candidate_drafts").where({ candidate_id: candidateId }).first();
+      if (!row) {
+        throw Object.assign(new Error("Candidate was not found."), {
+          status: 404,
+          code: "NODE_LAB_CANDIDATE_NOT_FOUND",
+        });
+      }
+      await database("eval_node_lab_candidate_drafts").where({ candidate_id: candidateId }).del();
+      res.json({ data: candidateDraftSummary(row) });
+    } catch (error) {
+      if (error?.status) {
+        res.status(error.status).json({
+          errors: [{ message: error.message, extensions: { code: error.code, field: error.field } }],
+        });
+      } else {
+        next(error);
+      }
+    }
+  });
+
   router.get("/node-lab/sessions", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
     try {

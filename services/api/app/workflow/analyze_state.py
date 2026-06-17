@@ -29,9 +29,16 @@ class AnalyzeState(TypedDict, total=False):
     # Normalization result
     normalized_result: NormalizedAnnotationResult | None
     drop_log: list[DropLogEntry]  # Alias for normalized_result.drop_log for direct access
+    canonical_drop_log: list[DropLogEntry]  # Canonical shadow path drops
 
     # Optional repair
     repair_request: dict | None
+    repair_enabled: bool  # Whether repair is enabled, resolved in derive_user_config_node
+
+    # Debug metrics
+    node_timings: dict[str, float]  # node_name → elapsed seconds
+    annotation_stats: dict[str, object] | None
+    repair_stats: dict[str, object] | None
 
     # Final result
     render_scene: RenderSceneModel

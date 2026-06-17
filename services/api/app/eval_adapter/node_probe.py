@@ -18,14 +18,16 @@ from app.eval_adapter.schemas import (
     WorkflowIdentity,
 )
 from app.eval_adapter.shared import (
+    build_llm_config_snapshot,
+    build_llm_config_snapshot_safe,
+    rag_override,
+    trace_scope,
+)
+from app.eval_adapter.shared import (
     model_identity as build_model_identity,
 )
 from app.eval_adapter.shared import (
     prompt_identity as build_prompt_identity,
-)
-from app.eval_adapter.shared import (
-    rag_override,
-    trace_scope,
 )
 from app.eval_adapter.shared import (
     request_id as build_request_id,
@@ -133,6 +135,7 @@ def _failure_result(
     latency_ms: int,
     model_identity: ModelIdentity | None = None,
     topology_mode: str = "unknown",
+    llm_config_snapshot: dict[str, Any] | None = None,
 ) -> ArticleAnalysisNodeProbeResult:
     return ArticleAnalysisNodeProbeResult(
         status=status,
@@ -142,6 +145,7 @@ def _failure_result(
         schema_identity=_schema_identity(topology_mode),
         prompt_identity=build_prompt_identity(request, prompt_version=get_prompt_version()),
         model_identity=model_identity,
+        llm_config_snapshot=llm_config_snapshot,
         node_name=request.node_name,
         runtime_summary={"latency_ms": latency_ms},
         trace_refs=build_trace_refs(request_id=request_id),
@@ -209,29 +213,45 @@ async def run_article_analysis_node_probe(
     model_selection = request.model_selection
     model_identity: ModelIdentity | None = None
     topology_mode = "unknown"
+    requires_live_model = not request.dry_run
 
     try:
+        # Dry-run only builds prompt/deps/debug output and does not actually call
+        # the LLM, so resolve-only validation is enough there. Real execution
+        # paths require a buildable model.
         validate_model_selection(
             get_settings(),
             model_selection,
             (MODEL_ROUTE_ANNOTATION_GENERATION,),
+            buildable=requires_live_model,
         )
         model_identity = build_model_identity(model_selection, settings=get_settings())
     except ModelSelectionError as exc:
         latency_ms = int((perf_counter() - started_at) * 1000)
+        _snap = build_llm_config_snapshot_safe(
+            model_selection, settings=get_settings(),
+        )
         return _failure_result(
             request,
             request_id=request_id,
             status="failed",
             error=exc,
             latency_ms=latency_ms,
+            llm_config_snapshot=_snap.model_dump(mode="json") if _snap else None,
         )
+
+    _llm_snapshot = build_llm_config_snapshot(
+        model_selection, settings=get_settings(),
+    )
 
     try:
         plan = build_goal_execution_plan(request.reading_goal, request.reading_variant)
         topology_mode = getattr(plan, "topology_mode", "unknown")
         if topology_mode != "learning":
-            raise ValueError("node_probe v1 only supports learning topology; academic should use a dedicated academic lab/workflow")
+            raise ValueError(
+                "node_probe v1 only supports learning topology; "
+                "academic should use a dedicated academic lab/workflow"
+            )
 
         with (
             prompt_runtime_override(request.prompt_override),
@@ -271,6 +291,9 @@ async def run_article_analysis_node_probe(
             latency_ms=latency_ms,
             model_identity=model_identity,
             topology_mode=topology_mode,
+            llm_config_snapshot=(
+                _llm_snapshot.model_dump(mode="json") if _llm_snapshot else None
+            ),
         )
     except Exception as exc:
         latency_ms = int((perf_counter() - started_at) * 1000)
@@ -282,6 +305,9 @@ async def run_article_analysis_node_probe(
             latency_ms=latency_ms,
             model_identity=model_identity,
             topology_mode=topology_mode,
+            llm_config_snapshot=(
+                _llm_snapshot.model_dump(mode="json") if _llm_snapshot else None
+            ),
         )
 
     latency_ms = int((perf_counter() - started_at) * 1000)
@@ -310,4 +336,5 @@ async def run_article_analysis_node_probe(
         rag_debug=bundle.rag_debug,
         trace_refs=build_trace_refs(request_id=request_id),
         warnings=[],
+        llm_config_snapshot=_llm_snapshot.model_dump(mode="json") if _llm_snapshot else None,
     )

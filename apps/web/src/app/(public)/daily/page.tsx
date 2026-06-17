@@ -5,7 +5,7 @@ import { ClareadStamp } from "@/components/brand/BrandMarks";
 import { PublicSiteHeader } from "@/components/layout";
 import { fetchDailyReaderList, fetchDailyReaderToday } from "@/services/api/daily-reader";
 import { appCtaForSession, getProjectedWebSession } from "@/services/bff/session";
-import { appReadRoute, dailyArticleRoute, dailyRoute, examplesRoute, loginRoute } from "@/lib/routes";
+import { appReadRoute, dailyArticleRoute, dailyRoute, loginRoute, homeRoute } from "@/lib/routes";
 import type { DailyReaderListItem } from "@/types/view/DailyReaderVm";
 
 export const dynamic = "force-dynamic";
@@ -107,13 +107,13 @@ function EmptyLeadState() {
         今日精读暂未发布
       </h2>
       <p className="mt-3 max-w-xl text-sm leading-6 text-muted">
-        Web 已接入真实每日精读数据源。当前上游没有返回今日已发布文章，请稍后再来，或先阅读公开示例。
+        Web 已接入真实每日精读数据源。当前上游没有返回今日已发布文章，请稍后再来，或先回到首页。
       </p>
       <Link
-        href={examplesRoute}
+        href={homeRoute}
         className="focus-ring mt-8 inline-flex w-fit items-center gap-2 rounded-pill bg-ink px-5 py-2.5 text-sm font-semibold text-surface transition-opacity hover:opacity-90"
       >
-        打开公开示例
+        返回首页
         <ArrowRight aria-hidden="true" className="h-4 w-4" />
       </Link>
     </div>

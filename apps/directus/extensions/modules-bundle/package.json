@@ -108,6 +108,11 @@
         "source": "src/claread-eval-center/index.js"
       },
       {
+        "type": "module",
+        "name": "claread-llm-config",
+        "source": "src/claread-llm-config/index.js"
+      },
+      {
         "type": "layout",
         "name": "claread-observability-groups",
         "source": "src/claread-observability-groups-layout/index.js"

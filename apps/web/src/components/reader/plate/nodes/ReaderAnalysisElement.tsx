@@ -121,7 +121,7 @@ export function ReaderAnalysisElement({
   const supportsSourceLinkPreview = element.entryType === "grammar_note";
 
   const parsed = element.entryType === "sentence_analysis"
-    ? parseSentenceAnalysisContent(element.content)
+    ? parseSentenceAnalysisContent(element.content, element.chunks)
     : null;
   const headerIconActionClassName = cn(
     "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted/68 transition-[color,opacity] duration-[var(--cl-duration-fast)] ease-[var(--cl-ease-standard)]",
@@ -304,11 +304,11 @@ export function ReaderAnalysisElement({
                       </div>
                     ))}
                   </div>
-                ) : (
+                ) : !parsed.summary ? (
                   <p className="reader-entry-note-prose whitespace-pre-line text-[0.95rem] leading-[1.75] text-ink">
                     <EnhancedText text={element.content} />
                   </p>
-                )}
+                ) : null}
               </>
             ) : (
               <p className="reader-entry-note-prose whitespace-pre-line text-[0.95rem] leading-[1.75] text-ink">

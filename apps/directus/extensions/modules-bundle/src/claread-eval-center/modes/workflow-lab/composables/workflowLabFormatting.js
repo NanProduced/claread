@@ -87,6 +87,91 @@ export function sceneWarnings(scene) {
   return Array.isArray(scene?.warnings) ? scene.warnings : [];
 }
 
+function normalizeDisplayText(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/[“”]/g, "\"")
+    .replace(/[‘’]/g, "'")
+    .trim()
+    .toLowerCase();
+}
+
+export function inlineMarkAnchorParts(mark) {
+  const anchor = mark?.anchor;
+  if (!anchor || typeof anchor !== "object") return [];
+
+  // multi_range: extract text from each range part
+  if (anchor.kind === "multi_range" && Array.isArray(anchor.ranges)) {
+    return anchor.ranges
+      .map((range) => ({
+        text: String(range?.text ?? "").trim(),
+        occurrence: 1,
+        role: String(range?.role || "").trim(),
+      }))
+      .filter((part) => part.text);
+  }
+
+  // range: single range anchor
+  if (anchor.kind === "range") {
+    const range = anchor.range && typeof anchor.range === "object" ? anchor.range : anchor;
+    const text = String(range.text ?? "").trim();
+    if (!text) return [];
+    return [{
+      text,
+      occurrence: 1,
+      role: String(range.role || "").trim(),
+    }];
+  }
+
+  if (anchor.kind === "multi_text" && Array.isArray(anchor.parts)) {
+    return anchor.parts
+      .map((part) => ({
+        text: String(part?.anchor_text ?? part?.anchorText ?? "").trim(),
+        occurrence: Number(part?.occurrence) || 1,
+        role: String(part?.role || "").trim(),
+      }))
+      .filter((part) => part.text);
+  }
+  const text = String(anchor.anchor_text ?? anchor.anchorText ?? anchor.text ?? "").trim();
+  if (!text) return [];
+  return [{
+    text,
+    occurrence: Number(anchor.occurrence) || 1,
+    role: String(anchor.role || "").trim(),
+  }];
+}
+
+export function inlineMarkAnchorText(mark, separator = " / ") {
+  const parts = inlineMarkAnchorParts(mark);
+  return parts.map((part) => part.text).join(separator).trim();
+}
+
+export function inlineMarkLookupText(mark) {
+  return String(mark?.lookup_text ?? mark?.lookupText ?? "").trim();
+}
+
+export function inlineMarkDisplayTitle(mark) {
+  const lookup = inlineMarkLookupText(mark);
+  const anchor = inlineMarkAnchorText(mark);
+  const fallback = String(mark?.label || mark?.title || "").trim();
+  return lookup || anchor || fallback || "—";
+}
+
+export function inlineMarkShowsDistinctAnchor(mark) {
+  const title = inlineMarkDisplayTitle(mark);
+  const anchor = inlineMarkAnchorText(mark);
+  if (!anchor) return false;
+  return normalizeDisplayText(title) !== normalizeDisplayText(anchor);
+}
+
+export function inlineMarkPrimarySummary(mark) {
+  return String(mark?.glossary?.zh || mark?.glossary?.gloss || "").trim();
+}
+
+export function inlineMarkSecondarySummary(mark) {
+  return String(mark?.glossary?.reason || mark?.glossary?.phrase_type || "").trim();
+}
+
 export function formatRunIdentity(run) {
   const variant = run?.prompt_variant_id || "baseline";
   const totalCases = run?.learning_case_count ?? run?.total_cases ?? 0;
@@ -671,6 +756,53 @@ export function compareHealthInsights(baselineHealth, candidateHealth) {
     removedCodesMeta,
     stateDirection,
     overallDirectionLabel,
+  };
+}
+
+/**
+ * 从 artifact 中提取 llm_config_snapshot 关键字段。
+ * 返回 null 或一个对象，包含：
+ *   profile, provider, adapter, model,
+ *   openai_supports_tool_choice_required, expected_tool_choice,
+ *   supports_json_schema_output, supports_json_object_output,
+ *   default_structured_output_mode, thinking_enabled,
+ *   parallel_tool_calls, expected_response_format,
+ *   structured_output_runtime (per-agent resolved + observed)
+ */
+export function extractLLMConfigSnapshot(artifact) {
+  const snapshot = artifact?.llm_config_snapshot;
+  if (!snapshot || typeof snapshot !== "object") return null;
+
+  const so = snapshot.structured_output || {};
+  const ms = snapshot.model_settings || {};
+  const eb = ms.extra_body || {};
+
+  // Determine thinking enabled
+  let thinkingEnabled = false;
+  if (eb.enable_thinking === true) thinkingEnabled = true;
+  if (typeof eb.thinking === "object" && eb.thinking?.type === "enabled") thinkingEnabled = true;
+  // Also check top-level thinking_enabled from backend
+  if (snapshot.thinking_enabled === true) thinkingEnabled = true;
+
+  // Extract per-agent runtime entries
+  const runtimeEntries = Array.isArray(snapshot.structured_output_runtime)
+    ? snapshot.structured_output_runtime
+    : [];
+
+  return {
+    profile: snapshot.profile_name || null,
+    provider: snapshot.provider || null,
+    adapter: snapshot.adapter || null,
+    model: snapshot.model_name || null,
+    openai_supports_tool_choice_required: so.openai_supports_tool_choice_required ?? null,
+    expected_tool_choice: so.expected_tool_choice || null,
+    supports_json_schema_output: so.supports_json_schema_output ?? null,
+    supports_json_object_output: so.supports_json_object_output ?? null,
+    default_structured_output_mode: so.default_structured_output_mode || null,
+    expected_response_format: so.expected_response_format ?? null,
+    thinking_enabled: thinkingEnabled,
+    parallel_tool_calls: snapshot.parallel_tool_calls ?? null,
+    structured_output_runtime: runtimeEntries,
   };
 }
 

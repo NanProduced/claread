@@ -24,6 +24,26 @@ uv run ruff check app tests
 
 `ruff` 和 `mypy` 的全量门槛仍需继续校准；改动后至少对触达文件运行 targeted ruff。
 
+## Ask Claread 真实 LLM Smoke
+
+Ask Claread 的真实 LLM smoke 默认跳过。只有同时满足以下三项才允许执行：
+
+- `CLAREAD_ALLOW_REAL_LLM_TESTS=1`
+- `CLAREAD_REAL_LLM_MODEL=<已授权模型名>`
+- pytest 显式传入 `-m real_llm`
+
+运行示例：
+
+```powershell
+cd services/api
+$env:CLAREAD_ALLOW_REAL_LLM_TESTS = "1"
+$env:CLAREAD_REAL_LLM_MODEL = "glm-5.1"
+uv run pytest tests/test_reader_ask_real_llm_smoke.py -m real_llm -v
+```
+
+测试会先校验当前 `reader_ask` route 解析出的 `model_name` 与
+`CLAREAD_REAL_LLM_MODEL` 完全一致；不一致时跳过，避免误用本地默认模型。
+
 ## Web 验证
 
 工作目录：仓库根目录。

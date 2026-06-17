@@ -1,3 +1,5 @@
+import type { SentenceEntryChunk } from "@/types/view/ReaderMockVm";
+
 export interface AnalysisChunk {
   order: string;
   label: string;
@@ -14,7 +16,44 @@ export interface SentenceAnalysisSegment {
 export function parseSentenceAnalysisContent(content: string): {
   summary: string;
   chunks: AnalysisChunk[];
+};
+export function parseSentenceAnalysisContent(
+  content: string,
+  structuredChunks: SentenceEntryChunk[] | undefined,
+): {
+  summary: string;
+  chunks: AnalysisChunk[];
+};
+export function parseSentenceAnalysisContent(
+  content: string,
+  structuredChunks?: SentenceEntryChunk[],
+): {
+  summary: string;
+  chunks: AnalysisChunk[];
 } {
+  const directChunks = (structuredChunks ?? [])
+    .map((chunk, index) => ({
+      order: typeof chunk.order === "number" ? String(chunk.order) : String(index + 1),
+      label: chunk.label.trim(),
+      text: chunk.text.trim(),
+    }))
+    .filter((chunk) => chunk.label.length > 0 && chunk.text.length > 0)
+    .sort((left, right) => {
+      const leftOrder = Number.parseInt(left.order, 10);
+      const rightOrder = Number.parseInt(right.order, 10);
+      if (Number.isNaN(leftOrder) || Number.isNaN(rightOrder) || leftOrder === rightOrder) {
+        return 0;
+      }
+      return leftOrder - rightOrder;
+    });
+
+  if (directChunks.length > 0) {
+    return {
+      summary: content.trim(),
+      chunks: directChunks,
+    };
+  }
+
   const chunks: AnalysisChunk[] = [];
   const summaryLines: string[] = [];
   const chunkRegex = /^-\s*\*\*(?:(\d+)\.\s*)?([^*]+)\*\*[：:]\s*[`'"](.+)[`'"]$/;

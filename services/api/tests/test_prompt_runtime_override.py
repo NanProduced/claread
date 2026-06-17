@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -78,6 +79,23 @@ def test_instruction_override_falls_back_outside_scope() -> None:
     assert load_agent_instructions("grammar") == baseline
 
 
+def test_grammar_instructions_define_source_evidence_span_contract() -> None:
+    instructions = load_agent_instructions("grammar")
+
+    assert "anchor_quotes" in instructions
+    assert "必须逐字复制原句中的连续可见片段" in instructions
+    assert "不得用 ... 或省略号代替原文中间内容" in instructions
+    assert "自然短片段" not in instructions
+
+
+def test_vocabulary_instructions_define_phrase_title_and_explicit_spans_contract() -> None:
+    instructions = load_agent_instructions("vocabulary")
+
+    assert "phrase_gloss.label 是短语卡片标题 / lookup_text / 教学短语名" in instructions
+    assert "默认每条 phrase_gloss 都提供 anchor_quotes" in instructions
+    assert "兼作旧式锚点" not in instructions
+
+
 def test_workflow_lab_baseline_bundle_returns_learning_prompt_layers() -> None:
     bundle = get_workflow_lab_baseline_bundle(
         WorkflowLabBaselineBundleRequest(
@@ -126,6 +144,101 @@ def test_load_examples_stays_baseline_while_strategy_controls_few_shot_mode() ->
         examples = load_examples("grammar", "intermediate_reading")
 
     assert examples == baseline
+
+
+def test_grammar_examples_use_exact_visible_text_anchors() -> None:
+    variants = [
+        "beginner_reading",
+        "intensive_reading",
+        "gaokao",
+        "cet",
+        "kaoyan",
+        "tem",
+        "ielts_toefl",
+    ]
+
+    for variant in variants:
+        for example in load_examples("grammar", variant):
+            if example.get("example_type") != "grammar":
+                continue
+            payload = json.loads(example["output_fragment"])
+            sentence_text = example["sentence_text"]
+            for quote in payload.get("anchor_quotes", []):
+                quote_text = quote["text"]
+                assert "..." not in quote_text
+                assert quote_text in sentence_text
+
+
+def test_vocabulary_phrase_examples_use_explicit_source_spans() -> None:
+    variants = [
+        "beginner_reading",
+        "default",
+        "intensive_reading",
+        "gaokao",
+        "cet",
+        "kaoyan",
+        "tem",
+        "ielts_toefl",
+    ]
+
+    for variant in variants:
+        for example in load_examples("vocabulary", variant):
+            if example.get("example_type") != "phrase":
+                continue
+            payload = json.loads(example["output_fragment"])
+            if payload.get("type") != "phrase_gloss":
+                continue
+            sentence_text = example["sentence_text"]
+            anchor_quotes = payload.get("anchor_quotes")
+            assert anchor_quotes, f"{variant} phrase_gloss example missing anchor_quotes"
+            assert 1 <= len(anchor_quotes) <= 4
+            for quote in anchor_quotes:
+                quote_text = quote["text"]
+                assert "..." not in quote_text
+                assert quote_text in sentence_text
+
+
+def test_vocabulary_examples_output_fragments_are_valid_json() -> None:
+    variants = [
+        "beginner_reading",
+        "default",
+        "intensive_reading",
+        "gaokao",
+        "cet",
+        "kaoyan",
+        "tem",
+        "ielts_toefl",
+    ]
+
+    for variant in variants:
+        for example in load_examples("vocabulary", variant):
+            payload = json.loads(example["output_fragment"])
+            assert isinstance(payload, dict), f"{variant} output_fragment must decode to an object"
+
+
+def test_grammar_examples_output_fragments_are_valid_json() -> None:
+    variants = [
+        "beginner_reading",
+        "intensive_reading",
+        "gaokao",
+        "cet",
+        "kaoyan",
+        "tem",
+        "ielts_toefl",
+    ]
+
+    for variant in variants:
+        for example in load_examples("grammar", variant):
+            payload = json.loads(example["output_fragment"])
+            assert isinstance(payload, dict), f"{variant} output_fragment must decode to an object"
+
+
+def test_grammar_policy_lines_focus_on_teaching_strategy_not_anchor_shape() -> None:
+    policy_lines = load_policy_lines("grammar", "explicit_exam", "gaokao")
+    joined = " ".join(policy_lines)
+
+    assert "锚点" not in joined
+    assert "span" not in joined
 
 
 def test_few_shot_mode_variant_uses_manifest_examples_without_baseline_fallback() -> None:

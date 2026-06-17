@@ -166,6 +166,208 @@ body {
   background: var(--app-scroll-thumb);
 }
 
+.ask-conversation-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(24, 24, 20, 0.16) transparent;
+}
+
+.ask-conversation-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.ask-conversation-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ask-conversation-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(24, 24, 20, 0.12);
+}
+
+.ask-conversation-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(24, 24, 20, 0.2);
+}
+
+.ask-message-response [data-streamdown$="-wrapper"],
+.ask-message-response [data-streamdown="code-block"],
+.ask-message-response [data-streamdown="mermaid-block"] {
+  position: relative;
+  margin: 0.75rem 0 0.9rem;
+  gap: 0.45rem;
+  border-radius: 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--hairline) 22%, transparent);
+  background: color-mix(in srgb, var(--card) 82%, rgba(255, 255, 255, 0.48));
+  padding: 0.42rem;
+  box-shadow: none;
+}
+
+/* Hide language title header for code and mermaid blocks */
+.ask-message-response [data-streamdown="code-block"] > div:first-child,
+.ask-message-response [data-streamdown="mermaid-block"] > div:first-child {
+  display: none !important;
+}
+
+/* Floating Actions Container */
+.ask-message-response [data-streamdown$="-wrapper"] > div:first-child,
+.ask-message-response [data-streamdown="code-block"] > div:nth-child(2),
+.ask-message-response [data-streamdown="mermaid-block"] > div:nth-child(2) {
+  display: flex !important;
+  align-items: center;
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  z-index: 2;
+  gap: 0.08rem;
+  padding: 0.18rem;
+  border: 1px solid color-mix(in srgb, var(--hairline) 22%, transparent) !important;
+  border-radius: 0.95rem;
+  background: color-mix(in srgb, var(--background) 88%, transparent) !important;
+  box-shadow: 0 4px 14px rgba(24, 24, 20, 0.06) !important;
+  backdrop-filter: blur(10px);
+  font-size: 0;
+  margin: 0 !important;
+
+  opacity: 0;
+  transition: opacity 0.2s ease-in-out;
+  pointer-events: none;
+}
+
+.ask-message-response [data-streamdown$="-wrapper"]:hover > div:first-child,
+.ask-message-response [data-streamdown="code-block"]:hover > div:nth-child(2),
+.ask-message-response [data-streamdown="mermaid-block"]:hover > div:nth-child(2) {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+/* Buttons inside Actions Container */
+.ask-message-response [data-streamdown$="-wrapper"] > div:first-child button,
+.ask-message-response [data-streamdown="code-block"] > div:nth-child(2) button,
+.ask-message-response [data-streamdown="mermaid-block"] > div:nth-child(2) button {
+  display: inline-flex;
+  height: 1.55rem;
+  width: 1.55rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: color-mix(in srgb, var(--foreground) 56%, transparent) !important;
+  box-shadow: none !important;
+}
+
+.ask-message-response [data-streamdown$="-wrapper"] > div:first-child button:hover,
+.ask-message-response [data-streamdown="code-block"] > div:nth-child(2) button:hover,
+.ask-message-response [data-streamdown="mermaid-block"] > div:nth-child(2) button:hover {
+  border-color: color-mix(in srgb, var(--hairline) 72%, transparent) !important;
+  background: color-mix(in srgb, var(--background) 88%, transparent) !important;
+  color: var(--foreground) !important;
+}
+
+.ask-message-response [data-streamdown$="-wrapper"] > div:first-child button svg,
+.ask-message-response [data-streamdown="code-block"] > div:nth-child(2) button svg,
+.ask-message-response [data-streamdown="mermaid-block"] > div:nth-child(2) button svg {
+  width: 13px !important;
+  height: 13px !important;
+}
+
+.ask-message-response [data-streamdown="code-block"] > div:nth-child(2) button,
+.ask-message-response [data-streamdown="mermaid-block"] > div:nth-child(2) button {
+  height: 1.45rem !important;
+  width: 1.45rem !important;
+}
+
+.ask-message-response [data-streamdown="code-block"] > div:nth-child(2) button svg,
+.ask-message-response [data-streamdown="mermaid-block"] > div:nth-child(2) button svg {
+  width: 12px !important;
+  height: 12px !important;
+}
+
+.ask-message-response [data-streamdown="table-wrapper"] > div:last-child {
+  border-radius: 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--hairline) 22%, transparent);
+  background: color-mix(in srgb, var(--background) 94%, transparent);
+}
+
+.ask-message-response [data-streamdown="mermaid-block"] > div:last-child {
+  min-height: clamp(14rem, 30vw, 20rem);
+  margin-top: 0.05rem;
+  border-radius: 0.78rem;
+}
+
+/*
+ * Fix: Mermaid diagram truncation.
+ *
+ * streamdown's PanZoomContainer uses `overflow-hidden` + `min-h-28` (7rem).
+ * For tall diagrams the SVG exceeds 7rem but the flex-column container doesn't
+ * grow because `size-full` on the `[data-streamdown="mermaid"]` wrapper
+ * resolves to 0 when no explicit height is set on the parent.
+ *
+ * The fix:
+ *  1. Let the `[data-streamdown="mermaid"]` wrapper height be content-driven.
+ *  2. Remove PanZoomContainer's tight `min-h-28` and let it grow with the SVG.
+ *  3. Keep `overflow-hidden` so pan/zoom still clips correctly at edges.
+ *  4. Ensure the SVG itself fills width and derives height from its viewBox.
+ */
+.ask-message-response [data-streamdown="mermaid-block"] [data-streamdown="mermaid"] {
+  height: auto !important;
+}
+
+/* PanZoomContainer outer: let height follow content instead of clamping at 7rem */
+.ask-message-response [data-streamdown="mermaid-block"] [data-streamdown="mermaid"] > div {
+  min-height: clamp(14rem, 30vw, 20rem) !important;
+  height: auto !important;
+}
+
+/* SVG: scale to container width; height from viewBox */
+.ask-message-response [data-streamdown="mermaid-block"] [data-streamdown="mermaid"] svg {
+  max-width: 100%;
+  height: auto !important;
+}
+
+.ask-message-response [data-streamdown="mermaid-block"] > div:last-child button {
+  height: 1.75rem;
+  width: 1.75rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background) 88%, transparent);
+  box-shadow: none;
+}
+
+.ask-message-response [data-streamdown="table-wrapper"] > div:last-child::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.ask-message-response [data-streamdown="table-wrapper"] > div:last-child::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ask-message-response [data-streamdown="table-wrapper"] > div:last-child::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(24, 24, 20, 0.12);
+}
+
+.ask-message-response [data-streamdown="table-header"] {
+  background: color-mix(in srgb, var(--muted) 88%, var(--background));
+}
+
+.ask-reasoning-response {
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+  color: color-mix(in srgb, var(--foreground) 70%, transparent);
+  font-size: 12.5px;
+  line-height: 1.75;
+}
+
+.ask-reasoning-response p {
+  margin: 0;
+}
+
+.ask-reasoning-response p + p,
+.ask-reasoning-response ul,
+.ask-reasoning-response ol {
+  margin-top: 0.65rem;
+}
+
 :root {
   --reader-floating-surface: rgba(255, 255, 255, 0.985);
   --reader-floating-surface-strong: rgba(251, 250, 246, 0.965);
@@ -1597,7 +1799,10 @@ select {
 }
 
 .reader-mark--vocab.reader-mark--interactive:hover,
-.reader-mark--vocab.reader-mark--interactive:focus-visible {
+.reader-mark--vocab.reader-mark--interactive:focus-visible,
+.reader-mark--vocab.reader-mark--group-hovered,
+.reader-mark--vocab.reader-mark--group-focused,
+.reader-mark--vocab.reader-mark--group-active {
   color: var(--reader-mark-vocab-hover-ink);
   background: var(--reader-mark-vocab-hover-fill);
   box-shadow: none;
@@ -1613,7 +1818,10 @@ select {
 }
 
 .reader-mark--phrase.reader-mark--interactive:hover,
-.reader-mark--phrase.reader-mark--interactive:focus-visible {
+.reader-mark--phrase.reader-mark--interactive:focus-visible,
+.reader-mark--phrase.reader-mark--group-hovered,
+.reader-mark--phrase.reader-mark--group-focused,
+.reader-mark--phrase.reader-mark--group-active {
   color: var(--reader-mark-phrase-hover-ink);
   background: var(--reader-mark-phrase-hover-fill);
   box-shadow: none;
@@ -1629,7 +1837,10 @@ select {
 }
 
 .reader-mark--context.reader-mark--interactive:hover,
-.reader-mark--context.reader-mark--interactive:focus-visible {
+.reader-mark--context.reader-mark--interactive:focus-visible,
+.reader-mark--context.reader-mark--group-hovered,
+.reader-mark--context.reader-mark--group-focused,
+.reader-mark--context.reader-mark--group-active {
   color: var(--reader-mark-context-hover-ink);
   background: var(--reader-mark-context-hover-fill);
   box-shadow: none;
@@ -1681,8 +1892,14 @@ select {
 
 .reader-mark--grammar.reader-mark--interactive:hover,
 .reader-mark--grammar.reader-mark--interactive:focus-visible,
+.reader-mark--grammar.reader-mark--group-hovered,
+.reader-mark--grammar.reader-mark--group-focused,
+.reader-mark--grammar.reader-mark--group-active,
 .reader-mark--interactive:hover .reader-mark--grammar-segment,
 .reader-mark--interactive:focus-visible .reader-mark--grammar-segment,
+.reader-mark--group-hovered .reader-mark--grammar-segment,
+.reader-mark--group-focused .reader-mark--grammar-segment,
+.reader-mark--group-active .reader-mark--grammar-segment,
 .reader-mark--grammar-linked {
   background-image: linear-gradient(
     to right,
@@ -1752,7 +1969,10 @@ select {
   transition: background 160ms ease, color 160ms ease;
 }
 
-.reader-mark--term.reader-mark--interactive:hover {
+.reader-mark--term.reader-mark--interactive:hover,
+.reader-mark--term.reader-mark--group-hovered,
+.reader-mark--term.reader-mark--group-focused,
+.reader-mark--term.reader-mark--group-active {
   color: var(--reader-mark-term-hover-ink);
   background:
     repeating-linear-gradient(
@@ -1772,7 +1992,10 @@ select {
   transition: background 160ms ease, color 160ms ease;
 }
 
-.reader-mark--logic.reader-mark--interactive:hover {
+.reader-mark--logic.reader-mark--interactive:hover,
+.reader-mark--logic.reader-mark--group-hovered,
+.reader-mark--logic.reader-mark--group-focused,
+.reader-mark--logic.reader-mark--group-active {
   color: var(--reader-mark-logic-hover-ink);
   background:
     linear-gradient(to right, var(--reader-mark-logic-hover-line-strong), var(--reader-mark-logic-hover-line-soft)) 0 calc(100% - 0.14em) / 100% 0.08em no-repeat,
@@ -1805,6 +2028,13 @@ select {
 
 .reader-mark--active {
   background-color: var(--reader-mark-active-surface);
+  box-shadow:
+    0 0 0 1px var(--reader-mark-active-outline),
+    0 0.22em 0.82em var(--reader-mark-active-shadow);
+}
+
+.reader-mark--group-active {
+  border-radius: 0.18em;
   box-shadow:
     0 0 0 1px var(--reader-mark-active-outline),
     0 0.22em 0.82em var(--reader-mark-active-shadow);
@@ -3340,6 +3570,53 @@ select {
   letter-spacing: -0.01em !important;
 }
 
+@keyframes prompt-kit-loader-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.32;
+    transform: scale(0.72);
+  }
+
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes prompt-kit-loader-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes prompt-kit-loader-blink {
+  0%,
+  100% {
+    opacity: 0.38;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.prompt-kit-loader-dot {
+  animation: prompt-kit-loader-dot 1s ease-in-out infinite;
+}
+
+.prompt-kit-loader-shimmer {
+  animation: prompt-kit-loader-shimmer 1.4s linear infinite;
+}
+
+.prompt-kit-loader-blink {
+  animation: prompt-kit-loader-blink 1.2s ease-in-out infinite;
+}
+
 /* Hide scrollbar utility */
 .scrollbar-hide::-webkit-scrollbar {
   display: none !important;
@@ -3347,4 +3624,33 @@ select {
 .scrollbar-hide {
   -ms-overflow-style: none !important;  /* IE and Edge */
   scrollbar-width: none !important;  /* Firefox */
+}
+
+@theme inline {
+  --animate-shimmer-slide: shimmer-slide var(--speed) ease-in-out infinite alternate;
+  --animate-spin-around: spin-around calc(var(--speed) * 2) infinite linear;
+  @keyframes shimmer-slide {
+  to {
+    transform: translate(calc(100cqw - 100%), 0);
+    }
+  }
+  @keyframes spin-around {
+  0% {
+    transform: translateZ(0) rotate(0);
+    }
+  15%, 35% {
+    transform: translateZ(0) rotate(90deg);
+    }
+  65%, 85% {
+    transform: translateZ(0) rotate(270deg);
+    }
+  100% {
+    transform: translateZ(0) rotate(360deg);
+    }
+  }
+}
+
+::view-transition-old(root), ::view-transition-new(root) {
+    animation: none;
+    mix-blend-mode: normal;
 }

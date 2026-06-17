@@ -20,8 +20,13 @@ from app.eval_adapter.schemas import (
     SchemaIdentity,
     WorkflowIdentity,
 )
-from app.schemas.internal.analysis import GrammarNote, SpanRef
-from app.schemas.internal.drafts import GrammarDraft, TranslationDraft, VocabularyDraft
+from app.schemas.internal.drafts import (
+    AnchorQuote,
+    DraftGrammarNote,
+    GrammarDraft,
+    TranslationDraft,
+    VocabularyDraft,
+)
 
 
 def _settings() -> Settings:
@@ -30,13 +35,25 @@ def _settings() -> Settings:
         annotation_model_profile="",
         model_profiles_json=json.dumps(
             {
-                "eval-profile": {
-                    "provider": "openai_compatible",
-                    "model_name": "eval-model",
-                    "base_url": "https://example.invalid/v1",
-                    "api_key": "secret-key",
-                    "model_settings": {"temperature": 0.2},
-                }
+                "providers": {
+                    "eval-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.invalid/v1",
+                        "api_key": "secret-key",
+                    }
+                },
+                "models": {
+                    "eval-model": {
+                        "provider": "eval-provider",
+                        "model_name": "eval-model",
+                        "model_settings": {"temperature": 0.2},
+                    }
+                },
+                "profiles": {
+                    "eval-profile": {
+                        "model": "eval-model",
+                    }
+                },
             }
         ),
     )
@@ -162,10 +179,10 @@ async def test_grammar_node_probe_returns_raw_grammar_draft(
     monkeypatch.setattr(node_probe, "get_settings", _settings)
     draft = GrammarDraft(
         grammar_notes=[
-            GrammarNote(
+            DraftGrammarNote(
                 sentence_id="s1",
-                spans=[SpanRef(text="Although", role="subordinator")],
-                label="Adverbial clause",
+                grammar_point="Adverbial clause",
+                anchor_quotes=[AnchorQuote(text="Although", role="subordinator")],
                 note_zh="Although 引导让步状语从句。",
             )
         ],
@@ -184,7 +201,7 @@ async def test_grammar_node_probe_returns_raw_grammar_draft(
 
     assert result.status == "succeeded"
     assert result.node_output is not None
-    assert result.node_output["grammar_notes"][0]["label"] == "Adverbial clause"
+    assert result.node_output["grammar_notes"][0]["grammar_point"] == "Adverbial clause"
     assert result.runtime_summary is not None
     assert result.runtime_summary["latency_ms"] >= 0
     run_mock.assert_awaited_once()
@@ -285,7 +302,7 @@ def test_eval_model_profiles_route_returns_sanitized_summaries(
     payload = response.json()
     assert isinstance(payload, list)
     assert payload[0]["profile_name"] == "eval-profile"
-    assert payload[0]["provider"] == "openai_compatible"
+    assert payload[0]["provider"] == "eval-provider"
     assert payload[0]["model_name"] == "eval-model"
     assert payload[0]["annotation_route_default"] is False
     assert "api_key" not in payload[0]

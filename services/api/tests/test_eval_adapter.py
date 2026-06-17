@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -21,10 +20,8 @@ from app.eval_adapter.schemas import (
     SchemaIdentity,
     WorkflowIdentity,
 )
-from app.llm.types import ModelSelection
 from app.schemas.analysis import AnalyzeRequestMeta, ArticleStructure, RenderSceneModel
 from app.services.analysis.prompting.runtime_context import is_grammar_rag_enabled
-from app.workflow import analyze_nodes
 
 
 def _settings() -> Settings:
@@ -33,17 +30,29 @@ def _settings() -> Settings:
         annotation_model_profile="",
         model_profiles_json=json.dumps(
             {
-                "eval-profile": {
-                    "provider": "openai_compatible",
-                    "model_name": "eval-model",
-                    "base_url": "https://example.invalid/v1",
-                    "api_key": "secret-key",
-                    "model_settings": {
-                        "temperature": 0.2,
-                        "extra_headers": {"Authorization": "Bearer secret"},
-                        "extra_body": {"thinking": {"type": "disabled"}},
-                    },
-                }
+                "providers": {
+                    "eval-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.invalid/v1",
+                        "api_key": "secret-key",
+                    }
+                },
+                "models": {
+                    "eval-model": {
+                        "provider": "eval-provider",
+                        "model_name": "eval-model",
+                        "model_settings": {
+                            "temperature": 0.2,
+                            "extra_headers": {"Authorization": "Bearer secret"},
+                            "extra_body": {"thinking": {"type": "disabled"}},
+                        },
+                    }
+                },
+                "profiles": {
+                    "eval-profile": {
+                        "model": "eval-model",
+                    }
+                },
             }
         ),
     )
@@ -121,11 +130,15 @@ async def test_eval_adapter_returns_sanitized_success_result(
         "app.services.analysis.debug_snapshots.get_settings",
         lambda: settings,
     )
+    monkeypatch.setattr(
+        eval_article_analysis, "validate_model_selection", lambda *a, **kw: None
+    )
 
-    async def _fake_workflow(payload):
+    async def _fake_workflow(payload, *, repair_enabled=None):
         assert payload.request_id == "eval:run-1:case-1"
         assert payload.model_selection.default_profile == "eval-profile"
         assert is_grammar_rag_enabled(settings) is False
+        assert repair_enabled is True
         return {
             "render_scene": _render_scene(payload.request_id),
             "usage_summary": {
@@ -192,6 +205,9 @@ async def test_eval_adapter_uses_provided_prompt_snapshot_hash(
         "run_article_analysis_with_state",
         AsyncMock(return_value={"render_scene": _render_scene("eval:req")}),
     )
+    monkeypatch.setattr(
+        eval_article_analysis, "validate_model_selection", lambda *a, **kw: None
+    )
 
     result = await eval_article_analysis.run_article_analysis_eval(
         ArticleAnalysisEvalRequest(
@@ -243,7 +259,7 @@ async def test_eval_adapter_returns_structured_timeout(
     settings = _settings()
     monkeypatch.setattr(eval_article_analysis, "get_settings", lambda: settings)
 
-    async def _slow_workflow(_payload):
+    async def _slow_workflow(_payload, *, repair_enabled=None):
         await asyncio.sleep(0.05)
         return {"render_scene": _render_scene("eval:req")}
 
@@ -309,32 +325,6 @@ async def test_eval_adapter_does_not_call_business_side_effects(
         mock.assert_not_called()
 
 
-def test_repair_llm_span_forwards_model_selection(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, object] = {}
-
-    async def _fake_run_agent_with_route(**kwargs):
-        captured.update(kwargs)
-        return SimpleNamespace(output="ok", usage=lambda: None)
-
-    monkeypatch.setattr(
-        "app.llm.agent_runner.run_agent_with_route",
-        _fake_run_agent_with_route,
-    )
-    selection = ModelSelection(default_profile="eval-profile")
-
-    result = asyncio.run(
-        analyze_nodes._run_repair_llm_span(
-            deps=analyze_nodes.RepairAgentDeps(sentences=[], original_drafts={}),
-            metadata={},
-            error_context="repair",
-            model_selection=selection,
-        )
-    )
-
-    assert result["output"] == "ok"
-    assert captured["model_selection"] == selection
-
-
 def test_eval_workflow_route_is_admin_key_protected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -383,7 +373,11 @@ def test_eval_workflow_route_rejects_academic_goal(
     response = client.post(
         "/eval/article-analysis/workflow",
         headers={"x-admin-api-key": "eval-key"},
-        json={"text": "Academic text.", "reading_goal": "academic", "reading_variant": "academic_general"},
+        json={
+            "text": "Academic text.",
+            "reading_goal": "academic",
+            "reading_variant": "academic_general",
+        },
     )
 
     assert response.status_code == 422
@@ -391,7 +385,9 @@ def test_eval_workflow_route_rejects_academic_goal(
     # Pydantic validation error wraps the ValueError message
     error_detail = body.get("detail", [])
     messages = [e.get("msg", "") for e in error_detail if isinstance(e, dict)]
-    assert any("learning topology" in m for m in messages), f"Expected 'learning topology' in error messages, got: {messages}"
+    assert any(
+        "learning topology" in m for m in messages
+    ), f"Expected 'learning topology' in error messages, got: {messages}"
 
 
 def test_eval_node_probe_route_rejects_academic_goal(
@@ -408,14 +404,20 @@ def test_eval_node_probe_route_rejects_academic_goal(
     response = client.post(
         "/eval/article-analysis/node-probe",
         headers={"x-admin-api-key": "eval-key"},
-        json={"text": "Academic text.", "reading_goal": "academic", "reading_variant": "academic_general"},
+        json={
+            "text": "Academic text.",
+            "reading_goal": "academic",
+            "reading_variant": "academic_general",
+        },
     )
 
     assert response.status_code == 422
     body = response.json()
     error_detail = body.get("detail", [])
     messages = [e.get("msg", "") for e in error_detail if isinstance(e, dict)]
-    assert any("learning topology" in m for m in messages), f"Expected 'learning topology' in error messages, got: {messages}"
+    assert any(
+        "learning topology" in m for m in messages
+    ), f"Expected 'learning topology' in error messages, got: {messages}"
 
 
 def test_eval_workflow_route_allows_learning_goal(
@@ -433,8 +435,615 @@ def test_eval_workflow_route_allows_learning_goal(
     response = client.post(
         "/eval/article-analysis/workflow",
         headers={"x-admin-api-key": "eval-key"},
-        json={"text": "Learning text.", "reading_goal": "daily_reading", "reading_variant": "intermediate_reading"},
+        json={
+            "text": "Learning text.",
+            "reading_goal": "daily_reading",
+            "reading_variant": "intermediate_reading",
+        },
     )
 
     assert response.status_code == 200
     run_mock.assert_awaited_once()
+
+
+def test_list_model_profile_summaries_skips_broken_profiles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile referencing a provider that doesn't exist in the registry
+    must not crash the entire summary list — it should be silently skipped."""
+    from app.eval_adapter.shared import list_model_profile_summaries
+
+    # Two profiles: one valid, one referencing a model whose provider
+    # is absent from the providers dict — resolve_model_config raises
+    # ModelSelectionError for the broken one.
+    settings = Settings(
+        default_model_profile="eval-profile",
+        annotation_model_profile="eval-profile",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "eval-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.invalid/v1",
+                        "api_key": "secret-key",
+                    },
+                },
+                "models": {
+                    "eval-model": {
+                        "provider": "eval-provider",
+                        "model_name": "eval-model",
+                    },
+                    "broken-model": {
+                        "provider": "missing-provider",
+                        "model_name": "broken-model",
+                    },
+                },
+                "profiles": {
+                    "eval-profile": {
+                        "model": "eval-model",
+                    },
+                    "broken-profile": {
+                        "model": "broken-model",
+                    },
+                },
+            }
+        ),
+    )
+
+    summaries = list_model_profile_summaries(settings=settings)
+    # Only the working profile should appear; broken-profile must be skipped
+    names = [s.profile_name for s in summaries]
+    assert "eval-profile" in names
+    assert "broken-profile" not in names
+
+
+def test_list_model_profile_summaries_skips_unknown_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile referencing a provider that doesn't even exist in the
+    registry must not crash the summary list."""
+    from app.eval_adapter.shared import list_model_profile_summaries
+
+    settings = Settings(
+        default_model_profile="good-profile",
+        annotation_model_profile="good-profile",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "eval-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.invalid/v1",
+                        "api_key": "secret-key",
+                    },
+                },
+                "models": {
+                    "eval-model": {
+                        "provider": "eval-provider",
+                        "model_name": "eval-model",
+                    },
+                    "ghost-model": {
+                        "provider": "nonexistent-provider",
+                        "model_name": "ghost-model",
+                    },
+                },
+                "profiles": {
+                    "good-profile": {
+                        "model": "eval-model",
+                    },
+                    "ghost-profile": {
+                        "model": "ghost-model",
+                    },
+                },
+            }
+        ),
+    )
+
+    summaries = list_model_profile_summaries(settings=settings)
+    names = [s.profile_name for s in summaries]
+    assert "good-profile" in names
+    assert "ghost-profile" not in names
+
+
+def test_list_model_profile_summaries_propagates_unexpected_errors() -> None:
+    """Non-ModelSelectionError exceptions must NOT be silently swallowed."""
+    from app.eval_adapter.shared import list_model_profile_summaries
+
+    settings = Settings(
+        default_model_profile="eval-profile",
+        annotation_model_profile="eval-profile",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "eval-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": "https://example.invalid/v1",
+                        "api_key": "secret-key",
+                    },
+                },
+                "models": {
+                    "eval-model": {
+                        "provider": "eval-provider",
+                        "model_name": "eval-model",
+                    },
+                },
+                "profiles": {
+                    "eval-profile": {
+                        "model": "eval-model",
+                    },
+                },
+            }
+        ),
+    )
+
+    with (
+        pytest.raises(RuntimeError, match="unexpected bug"),
+    ):
+        # Patch resolve_model_config to raise a programming error
+        # that must propagate, not be caught.
+        with patch(
+            "app.eval_adapter.shared.resolve_model_config",
+            side_effect=RuntimeError("unexpected bug"),
+        ):
+            list_model_profile_summaries(settings=settings)
+
+
+def test_list_model_profile_summaries_is_resolve_only_not_buildability() -> None:
+    """list_model_profile_summaries is a resolve-only catalog. It should NOT
+    crash even if a profile resolves but cannot be built (e.g. missing api_key
+    at build time). It only checks resolution, not buildability."""
+    from app.eval_adapter.shared import list_model_profile_summaries
+
+    # dashscope_native provider with api_key set — resolves successfully,
+    # but if we tried to build it, it might fail for other reasons.
+    # The point is: list_model_profile_summaries should not call
+    # build_model_instance at all.
+    settings = Settings(
+        default_model_profile="native-profile",
+        annotation_model_profile="native-profile",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "dashscope": {
+                        "adapter": "dashscope_native",
+                        "api_key": "test-key",
+                    },
+                },
+                "models": {
+                    "native-model": {
+                        "provider": "dashscope",
+                        "model_name": "qwen3.7-max",
+                    },
+                },
+                "profiles": {
+                    "native-profile": {
+                        "model": "native-model",
+                    },
+                },
+            }
+        ),
+    )
+
+    summaries = list_model_profile_summaries(settings=settings)
+    assert len(summaries) >= 1
+    assert summaries[0].profile_name == "native-profile"
+    assert summaries[0].provider == "dashscope"
+
+
+def test_eval_entry_guards_use_buildable_true() -> None:
+    """Article analysis and real node_probe execution should call
+    validate_model_selection with buildable=True, not just resolve-only.
+    This test verifies the call signature by patching
+    validate_model_selection and checking the buildable kwarg."""
+    from app.eval_adapter import article_analysis, node_probe
+
+    # Patch validate_model_selection to capture the buildable kwarg
+    calls: list[dict] = []
+
+    def _fake_validate(settings, selection, routes, *, buildable=False):
+        calls.append({"buildable": buildable})
+        # Don't actually validate — just capture the call
+
+    async def _fake_workflow(_payload, **_kw):
+        return {"render_scene": None}
+
+    with (
+        patch(
+            "app.eval_adapter.article_analysis.validate_model_selection",
+            side_effect=_fake_validate,
+        ),
+        patch(
+            "app.eval_adapter.article_analysis.build_model_identity",
+            return_value=None,
+        ),
+        patch(
+            "app.eval_adapter.article_analysis.run_article_analysis_with_state",
+            _fake_workflow,
+        ),
+    ):
+        asyncio.run(
+            article_analysis.run_article_analysis_eval(
+                article_analysis.ArticleAnalysisEvalRequest(
+                    text="hello",
+                    reading_goal="daily_reading",
+                    reading_variant="intermediate_reading",
+                )
+            )
+        )
+
+    assert len(calls) == 1
+    assert calls[0]["buildable"] is True, (
+        "article_analysis entry guard should use buildable=True"
+    )
+
+    calls.clear()
+
+    async def _fake_agent(**_kw):
+        return None
+
+    with (
+        patch("app.eval_adapter.node_probe.validate_model_selection", side_effect=_fake_validate),
+        patch("app.eval_adapter.node_probe.build_model_identity", return_value=None),
+        patch("app.eval_adapter.node_probe.prepare_input"),
+        patch("app.eval_adapter.node_probe.run_vocabulary_agent", _fake_agent),
+        patch("app.eval_adapter.node_probe.run_grammar_agent", _fake_agent),
+        patch("app.eval_adapter.node_probe.run_translation_agent", _fake_agent),
+    ):
+        asyncio.run(
+            node_probe.run_article_analysis_node_probe(
+                node_probe.ArticleAnalysisNodeProbeRequest(
+                    text="hello",
+                    reading_goal="daily_reading",
+                    reading_variant="intermediate_reading",
+                )
+            )
+        )
+
+    assert len(calls) == 1
+    assert calls[0]["buildable"] is True, (
+        "node_probe entry guard should use buildable=True"
+    )
+
+
+def test_eval_dry_run_entry_guards_remain_resolve_only() -> None:
+    """Dry-run paths only build prompt/debug artifacts and should not require
+    a buildable model instance."""
+    from app.eval_adapter import node_lab, node_probe
+
+    calls: list[dict] = []
+
+    def _fake_validate(settings, selection, routes, *, buildable=False):
+        calls.append({"buildable": buildable})
+
+    with (
+        patch("app.eval_adapter.node_probe.validate_model_selection", side_effect=_fake_validate),
+        patch("app.eval_adapter.node_probe.build_model_identity", return_value=None),
+    ):
+        asyncio.run(
+            node_probe.run_article_analysis_node_probe(
+                node_probe.ArticleAnalysisNodeProbeRequest(
+                    text="hello",
+                    reading_goal="daily_reading",
+                    reading_variant="intermediate_reading",
+                    dry_run=True,
+                )
+            )
+        )
+
+    assert len(calls) == 1
+    assert calls[0]["buildable"] is False, (
+        "node_probe dry-run should remain resolve-only"
+    )
+
+    calls.clear()
+
+    with (
+        patch("app.eval_adapter.node_lab.validate_model_selection", side_effect=_fake_validate),
+        patch("app.eval_adapter.node_lab.build_model_identity", return_value=None),
+    ):
+        asyncio.run(
+            node_lab.run_article_analysis_node_lab(
+                node_lab.ArticleAnalysisNodeLabRunRequest(
+                    node_name="grammar",
+                    text="hello",
+                    dry_run=True,
+                    candidate_override={
+                        "candidate_id": "cand-a",
+                        "node_name": "grammar",
+                    },
+                )
+            )
+        )
+
+    assert len(calls) == 1
+    assert calls[0]["buildable"] is False, (
+        "node_lab dry-run should remain resolve-only"
+    )
+
+
+@pytest.mark.anyio
+async def test_eval_result_includes_node_timings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings()
+    monkeypatch.setattr(eval_article_analysis, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.services.analysis.debug_snapshots.get_settings",
+        lambda: settings,
+    )
+    monkeypatch.setattr(
+        eval_article_analysis,
+        "run_article_analysis_with_state",
+        AsyncMock(
+            return_value={
+                "render_scene": _render_scene("eval:req"),
+                "usage_summary": {
+                    "available": True,
+                    "per_agent": {},
+                    "aggregate": {
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                        "total_tokens": 3,
+                    },
+                },
+                "warnings": [],
+                "node_timings": {
+                    "prepare_input": 0.1,
+                    "parallel_agents": 5.0,
+                    "normalize_and_ground": 0.2,
+                },
+            }
+        ),
+    )
+    monkeypatch.setattr(eval_article_analysis, "get_prompt_version", lambda: "prompt-test")
+
+    result = await eval_article_analysis.run_article_analysis_eval(
+        ArticleAnalysisEvalRequest(text="Sentence one.")
+    )
+
+    assert result.node_timings is not None
+    assert "prepare_input" in result.node_timings
+    assert "parallel_agents" in result.node_timings
+
+
+@pytest.mark.anyio
+async def test_eval_result_includes_repair_stats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings()
+    monkeypatch.setattr(eval_article_analysis, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.services.analysis.debug_snapshots.get_settings",
+        lambda: settings,
+    )
+    monkeypatch.setattr(
+        eval_article_analysis,
+        "run_article_analysis_with_state",
+        AsyncMock(
+            return_value={
+                "render_scene": _render_scene("eval:req"),
+                "usage_summary": {
+                    "available": True,
+                    "per_agent": {},
+                    "aggregate": {
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                        "total_tokens": 3,
+                    },
+                },
+                "warnings": [],
+                "node_timings": {
+                    "prepare_input": 0.1,
+                    "parallel_agents": 5.0,
+                    "normalize_and_ground": 0.2,
+                },
+                "repair_stats": {
+                    "repair_triggered": False,
+                    "trigger_threshold": 0.35,
+                    "trigger_reason": None,
+                    "pre_repair_annotation_count": 3,
+                    "post_repair_annotation_count": None,
+                    "repair_elapsed_s": None,
+                    "repair_succeeded": None,
+                },
+            }
+        ),
+    )
+    monkeypatch.setattr(eval_article_analysis, "get_prompt_version", lambda: "prompt-test")
+
+    result = await eval_article_analysis.run_article_analysis_eval(
+        ArticleAnalysisEvalRequest(text="Sentence one.")
+    )
+
+    assert result.repair_stats is not None
+    assert result.repair_stats["repair_triggered"] is False
+    assert "trigger_threshold" in result.repair_stats
+
+
+@pytest.mark.anyio
+async def test_eval_result_includes_canonical_drop_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings()
+    monkeypatch.setattr(eval_article_analysis, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.services.analysis.debug_snapshots.get_settings",
+        lambda: settings,
+    )
+    monkeypatch.setattr(
+        eval_article_analysis,
+        "run_article_analysis_with_state",
+        AsyncMock(
+            return_value={
+                "render_scene": _render_scene("eval:req"),
+                "usage_summary": {
+                    "available": True,
+                    "per_agent": {},
+                    "aggregate": {
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                        "total_tokens": 3,
+                    },
+                },
+                "warnings": [],
+                "node_timings": {
+                    "prepare_input": 0.1,
+                    "parallel_agents": 5.0,
+                    "normalize_and_ground": 0.2,
+                },
+                "repair_stats": {
+                    "repair_triggered": False,
+                    "trigger_threshold": 0.35,
+                    "trigger_reason": None,
+                    "pre_repair_annotation_count": 3,
+                    "post_repair_annotation_count": None,
+                    "repair_elapsed_s": None,
+                    "repair_succeeded": None,
+                },
+                "canonical_drop_log": [
+                    {
+                        "source_agent": "vocabulary",
+                        "annotation_type": "phrase_gloss",
+                        "sentence_id": "s1",
+                        "anchor_text": "missing",
+                        "drop_reason": "quote_not_found",
+                        "drop_stage": "grounding",
+                        "dropped_at": "2025-01-01T00:00:00Z",
+                    }
+                ],
+                "drop_log": [],
+            }
+        ),
+    )
+    monkeypatch.setattr(eval_article_analysis, "get_prompt_version", lambda: "prompt-test")
+
+    result = await eval_article_analysis.run_article_analysis_eval(
+        ArticleAnalysisEvalRequest(text="Sentence one.")
+    )
+
+    assert isinstance(result.canonical_drop_log, list)
+    assert len(result.canonical_drop_log) == 1
+    assert result.canonical_drop_log[0]["drop_reason"] == "quote_not_found"
+
+
+@pytest.mark.anyio
+async def test_eval_result_includes_llm_config_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings()
+    monkeypatch.setattr(eval_article_analysis, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.services.analysis.debug_snapshots.get_settings",
+        lambda: settings,
+    )
+    monkeypatch.setattr(
+        eval_article_analysis,
+        "run_article_analysis_with_state",
+        AsyncMock(
+            return_value={
+                "render_scene": _render_scene("eval:req"),
+                "usage_summary": {
+                    "available": True,
+                    "per_agent": {},
+                    "aggregate": {
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                        "total_tokens": 3,
+                    },
+                },
+                "warnings": [],
+            }
+        ),
+    )
+    monkeypatch.setattr(eval_article_analysis, "get_prompt_version", lambda: "prompt-test")
+    # validate_model_selection(buildable=True) triggers build_model_instance
+    # which creates httpx.AsyncClient blocked by conftest; mock it to skip build.
+    monkeypatch.setattr(
+        eval_article_analysis,
+        "validate_model_selection",
+        lambda *a, **kw: None,
+    )
+
+    result = await eval_article_analysis.run_article_analysis_eval(
+        ArticleAnalysisEvalRequest(
+            text="Sentence one.",
+            model_selection={"default_profile": "eval-profile"},
+        )
+    )
+
+    assert result.status == "succeeded"
+    assert result.llm_config_snapshot is not None
+    snapshot = result.llm_config_snapshot
+    assert snapshot["profile_name"] == "eval-profile"
+    assert snapshot["provider"] == "eval-provider"
+    assert snapshot["adapter"] == "openai_compatible"
+    assert snapshot["model_name"] == "eval-model"
+    assert "structured_output" in snapshot
+    # No explicit openai_profile → resolved profile is None → PydanticAI
+    # defaults apply: tool_choice_required=True, mode=tool → "required"
+    assert snapshot["structured_output"]["expected_tool_choice"] == "required"
+    assert snapshot["structured_output"]["openai_supports_tool_choice_required"] is True
+    # Verify inferred defaults are filled (not null)
+    assert snapshot["structured_output"]["default_structured_output_mode"] == "tool"
+    assert snapshot["structured_output"]["supports_json_schema_output"] is False
+    assert snapshot["structured_output"]["supports_json_object_output"] is False
+    assert snapshot["structured_output"]["expected_response_format"] is None
+    # Verify JSON serialization round-trips
+    dumped = json.dumps(snapshot)
+    assert isinstance(json.loads(dumped), dict)
+    # Verify new fields are present
+    assert "parallel_tool_calls" in snapshot
+    assert "thinking_enabled" in snapshot
+    assert "structured_output_runtime" in snapshot
+    assert isinstance(snapshot["structured_output_runtime"], list)
+    assert len(snapshot["structured_output_runtime"]) == 3
+    for entry in snapshot["structured_output_runtime"]:
+        assert "agent_name" in entry
+        assert entry["profile_name"] == "eval-profile"
+        assert "resolved_default_structured_output_mode" in entry
+        assert "inferred_expected_tool_choice" in entry
+        assert "resolved_parallel_tool_calls" in entry
+        assert "resolved_thinking_enabled" in entry
+        assert "observed_usage" in entry
+        assert "observed_retry_count" in entry
+        assert "observed_request_count" in entry
+
+
+@pytest.mark.anyio
+async def test_eval_adapter_passes_repair_enabled_to_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_article_analysis_eval passes repair_enabled=True to
+    run_article_analysis_with_state."""
+    settings = _settings()
+    monkeypatch.setattr(eval_article_analysis, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.services.analysis.debug_snapshots.get_settings",
+        lambda: settings,
+    )
+
+    captured_kwargs: dict = {}
+
+    async def _fake_workflow(payload, *, repair_enabled=None):
+        captured_kwargs["repair_enabled"] = repair_enabled
+        return {
+            "render_scene": _render_scene("eval:req"),
+            "usage_summary": {
+                "available": True,
+                "per_agent": {},
+                "aggregate": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+            },
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(
+        eval_article_analysis,
+        "run_article_analysis_with_state",
+        _fake_workflow,
+    )
+    monkeypatch.setattr(eval_article_analysis, "get_prompt_version", lambda: "prompt-test")
+
+    # Default: repair_enabled=True
+    req = ArticleAnalysisEvalRequest(text="Sentence one.")
+    assert req.repair_enabled is True
+    await eval_article_analysis.run_article_analysis_eval(req)
+    assert captured_kwargs["repair_enabled"] is True

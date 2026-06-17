@@ -79,6 +79,36 @@ describe("ReaderQuickPeek", () => {
     expect(onAttachToAsk).toHaveBeenCalled();
   });
 
+  it("prefers lookupText as the structured inspect title for multi_text phrases", () => {
+    render(
+      <ReaderQuickPeek
+        inspect={{
+          kind: "structured_annotation_inspect",
+          sentenceId: "s1",
+          contextSentence: "People often refer to this pattern as a shortcut.",
+          markId: "mark-multi",
+          annotationType: "phrase_gloss",
+          visualTone: "phrase",
+          anchorText: "refer to",
+          lookupText: "refer to ... as",
+          glossary: {
+            zh: "把……称作……",
+            phraseType: "collocation",
+          },
+          title: "固定搭配",
+          label: "固定搭配",
+        }}
+        onDismiss={vi.fn()}
+        onAttachToAsk={vi.fn()}
+        onLookupPhrase={vi.fn()}
+      />,
+    );
+
+    const inspectDialog = screen.getAllByRole("dialog").at(-1);
+    expect(inspectDialog).toBeTruthy();
+    expect(within(inspectDialog!).getByText("refer to ... as")).toBeTruthy();
+  });
+
   it("offers AI fallback when the dictionary has no entry", () => {
     const onRequestAI = vi.fn();
 

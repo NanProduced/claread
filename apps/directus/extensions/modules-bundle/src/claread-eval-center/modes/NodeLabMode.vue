@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, provide, watch, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onErrorCaptured, onMounted, provide, watch, ref } from "vue";
 import BaselineReference from "./node-lab/components/BaselineReference.vue";
 import CandidateEditor from "./node-lab/components/CandidateEditor.vue";
 import SingleRunResult from "./node-lab/components/SingleRunResult.vue";
@@ -419,6 +419,27 @@ watch(
 );
 
 const activeWorkspaceTab = ref("config");
+const renderError = ref("");
+
+function recoverNodeLabRender() {
+  renderError.value = "";
+  activeWorkspaceTab.value = "config";
+  scrollNodeLabToTop();
+}
+
+function scrollNodeLabToTop() {
+  nextTick(() => {
+    document.querySelector(".node-lab-container")?.scrollIntoView({
+      block: "start",
+      inline: "nearest",
+    });
+  });
+}
+
+onErrorCaptured((error) => {
+  renderError.value = error instanceof Error ? error.message : String(error || "未知渲染错误");
+  return false;
+});
 
 // Watch for single run or compare results to automatically switch tab to 'result'
 watch(
@@ -426,6 +447,7 @@ watch(
   ([newCompare, newSingle]) => {
     if (newCompare || newSingle) {
       activeWorkspaceTab.value = "result";
+      scrollNodeLabToTop();
     }
   }
 );
@@ -435,8 +457,13 @@ watch(
   () => state.activeWorkspace,
   () => {
     activeWorkspaceTab.value = "config";
+    scrollNodeLabToTop();
   }
 );
+
+watch(activeWorkspaceTab, () => {
+  scrollNodeLabToTop();
+});
 
 onMounted(async () => {
   loadPersistedState();
@@ -529,6 +556,13 @@ onBeforeUnmount(() => {
 
     <div v-if="feedback.error" class="feedback-banner error">{{ feedback.error }}</div>
     <div v-else-if="feedback.info" class="feedback-banner info">{{ feedback.info }}</div>
+    <div v-if="renderError" class="feedback-banner error render-error-banner">
+      <div>
+        <strong>Node Lab 结果区渲染失败</strong>
+        <span>{{ renderError }}</span>
+      </div>
+      <button class="btn-link" @click="recoverNodeLabRender">回到配置</button>
+    </div>
 
     <!-- Sticky Actions & Tab Control Bar -->
     <div v-if="state.activeWorkspace !== 'sessions'" class="sticky-actions-bar">
@@ -586,7 +620,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div
-      v-if="state.activeWorkspace !== 'sessions'"
+      v-if="state.activeWorkspace !== 'sessions' && !renderError"
       class="workbench"
       :class="{
         'is-compare': state.activeWorkspace === 'baseline_compare',

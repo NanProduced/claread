@@ -1,293 +1,521 @@
 # Claread 竞品格局与差异化分析
 
-本文记录 Claread 在“阅读 + 笔记 + 英语 + AI”交叉领域的竞品分析。它用于产品定位、设计总纲和 Web Reader 规划，不是具体功能承诺。
+本文记录 Claread 在英文深读、语言学习阅读器、AI 文档阅读、通用 Agent、阅读笔记与产物沉淀交叉领域的竞品格局。它用于产品定位、研发优先级和长期护城河判断，不是具体功能承诺。
 
-最后更新：2026-05-13
+最后更新：2026-06-08
 
 ## 核心判断
 
-Claread 表面是一个友好的阅读器，内核是面向中文用户的英文理解与语法解析引擎，最终输出是一份可阅读、可批注、可分享的精读成品。
+Claread 是一个面向中文用户的英文深读产品。它的入口是文章，记忆点是句子；AI 是让理解成立的方法，不是产品中心。
 
-竞品大多只覆盖其中一部分：
+对外品牌口径：
 
-- 阅读 + 笔记产品擅长高亮、同步、导出，但默认用户已经读得懂英文。
-- 语言学习阅读器擅长点击查词、生词本和 SRS，但通常弱在语法、长难句和篇章结构解读。
-- AI 资料理解产品擅长问答、总结和生成 briefing，但更像资料工作台，不像单篇精读阅读器。
-- Goodnotes / Notion / Readwise Export 这类产品有产物感和导出能力，但它们是容器，不是自动生成精读笔记的内容引擎。
+- **Name story**: `Cla = Clarify`。Claread 主动帮你把英文读懂、讲清楚。
+- **Product slogan**: **Read Deeply, Understand Clearly**。
+- **叙事关系**: `Clarify` 是产品做的事，`Clearly` 是用户得到的结果。二者同属 `clar-` 词族，品牌故事自洽。
 
-Claread 的核心机会是：**把 AI 的结构化输出渲染成有审美、有锚点、有语法与句子层级的阅读页面，并进一步生成可分享、可导出的精读笔记。**
+Claread 不应把护城河定义为“AI 能解释语法”。Notion AI、Kimi、DeepSeek、豆包、通义千问和通义智文都能通过 prompt 临时生成英文解释、翻译、摘要和语法讲解。
 
-## 四个差异化生态位
+Claread 真正要守住的是：
 
-综合四组竞品，Claread 的差异化不来自任何单点能力，而是来自四个维度的组合。目前市面上常见产品通常只覆盖其中一到两个维度。
+> 把英文文章的语法级理解，做成稳定、可回看、可评测、可积累的阅读产品。
 
-### 1. 句法 + 篇章的中文用户深度解读
+换句话说，竞品可以模拟一次解释，但 Claread 要把解释产品化：
 
-对手多停留在词汇层：点击查词、语境释义、生词保存、SRS 复习。Claread 应同时覆盖四层：
+- 原文锚点稳定。
+- 句子、词组、语法点和笔记有结构化对象。
+- 中文学习者解释口径稳定。
+- Reader 交互让用户低摩擦地逐句理解。
+- 输出质量可通过 eval 和样本库持续治理。
+- 阅读资产能回看、复习、导出或同步。
 
-1. 词：重点词、语境义、搭配、词形。
-2. 句：长难句、主干、从句、非谓语、修饰关系、指代。
-3. 段落：主题句、段落大意、论证功能、转折递进。
-4. 篇章：文章结构、逻辑链、作者意图和阅读策略。
+## 相比旧版的修正
 
-竞品常服务“英语母语者读得快”或“学英语者背得多”，Claread 服务的是“中文用户读得懂这一篇”。
+旧版文档中仍然成立的判断：
 
-### 2. 微信生态的粘贴即解读
+- Claread 不做完整 read-it-later 收件箱。
+- Claread 不做 NotebookLM 式多资料工作台。
+- 语法、句子解析和原文锚点是一等公民。
+- 生词本是支持资产，不是产品中心。
+- 分享和导出应服从克制、编辑性的品牌气质。
 
-多数竞品依赖浏览器扩展、Web app、桌面端或独立 App。Claread 小程序可以成为公众号、朋友圈、微信群、网页文章之后的自然下一步：
+需要修正的部分：
 
-- 不强迫用户安装 App。
-- 不抢用户原本的内容平台位置。
-- 不把产品做成新的 read-it-later 收件箱。
-- 让用户在已有微信内容流中完成“粘贴 -> 解读 -> 分享/保存”。
+- **Notion 已不再只是笔记容器。** Notion 当前产品重心已经转向 AI workspace、Agents、Enterprise Search、AI Meeting Notes 和连接器生态。
+- **通用 Agent 已经能模拟一次 Claread 流程。** Kimi、通义、豆包、DeepSeek 这类产品具备长上下文、联网搜索、文件理解、深度思考、多模态或工具调用能力。
+- **分享 / 导出不是第一护城河。** 它们仍重要，但当前最先要稳住的是语法级理解的产品化：Reader 锚点、句子展开、解释质量、语法资产和评测治理。
+- **Grammar X-Ray 应作为高价值方向评估，而不是当前已实现承诺。** 当前可对外强调的是句后解释层、`grammar_note` / `sentence_analysis` 的真实产品动作；是否命名为 Grammar X-Ray 需另行评审。
 
-Web 端后续承担更高保真阅读、导出和分享能力；小程序继续承担低门槛入口。
+## 竞品地图
 
-### 3. 安静工具气质
-
-Claread 不应复制学习产品常见的打卡、连续天数、排行榜、学习小组和强运营页面，也不应复制 NotebookLM 式资料工作台重 UI。
-
-设计气质应保持：
-
-- 阅读先于工具。
-- 解释围绕原文出现。
-- AI 能力结构化呈现，而不是默认 chat 化。
-- 生词本是资产，不是焦虑入口。
-- UI 像 Notion / Goodnotes 一样友好、简约、有质感，而不是 Word / WPS 式专业编辑器。
-
-### 4. 可沉淀的产物
-
-Claread 的一次解读不应只是一次临时会话，而应变成可复看、可分享、可导出的精读产物：
-
-- 长图：用于微信、朋友圈、小红书、即刻等社交传播。
-- PDF：用于保存、打印、归档。
-- Markdown：用于个人知识库和二次编辑。
-- Notion 行或页面：作为高阶同步能力，后置规划。
-
-这使 Claread 有机会替代“Readwise + Notion 手动整理”的一部分工作流。用户分享的不是工具截图，而是一份由 Claread 生成的精读笔记。
-
-## 横向分组
-
-| 分组 | 代表产品 | 核心定位 | 对 Claread 最有参考价值的点 | 最容易被 Claread 拉开的点 |
+| 分组 | 代表产品 | 当前强项 | 与 Claread 的关系 | Claread 必须胜出的地方 |
 | --- | --- | --- | --- | --- |
-| 阅读 + 笔记 | Readwise Reader、Omnivore | Read-it-later + 高亮注释 + 同步到 Notion / Obsidian 的知识管理枢纽 | 把高亮/笔记当一等公民、跨设备同步、键盘流交互、Jinja2 可定制导出 | 不做结构化解读，只做翻译/AI chat 附加；更面向英文母语者“读得快”，不是中文用户“读得懂” |
-| 语言学习阅读器 | Readlang、LingQ、Language Reactor、Langik、SentiaRead | 点击查词 + 语境翻译 + 生词本 + SRS 复习 | Clean distraction-free 阅读容器、AI 语境解释、按等级释义、跨形态识别词形 | 普遍偏向积累生词和复习闭环；语法、长难句、篇章结构解读都弱 |
-| AI 长文/资料理解 | NotebookLM、Explainpaper、SciSpace | 上传资料 -> 总结 / 问答 / briefing / audio overview / study guide | 把 AI 输出变成可分享对象，提供结构化交付物，保留引用回源 | 面向资料工作台而不是单篇精读；对英文学习者过重，缺少可视的逐句解读层 |
-| 笔记质感与导出 | Goodnotes、Notion、Readwise Export | 把笔记做成可保存 / 可转发 / 可打印的产物 | PDF / Markdown / 图片导出、导出模板、产物本身作为社交资产 | 它们是容器不是生成器；Claread 的精读笔记可以直接由解析结果生成 |
+| AI workspace / work agents | Notion / Notion AI | Agent、Enterprise Search、Meeting Notes、连接 Slack / Drive / GitHub / Jira 等应用、数据库和权限治理 | 能模拟“文章库 + AI 解释 + 复习台账”，但本质是工作空间 | 原生 Reader、逐句锚点、中文英语学习解释口径、语法级资产 |
+| 通用 AI agent / assistant | Kimi、DeepSeek、豆包、通义千问 | 长上下文、联网搜索、文件阅读、多模态、深度思考、工具调用、生成报告 | 能通过 prompt 做一次英文精读 | 稳定阅读状态、句子级锚点、结构化语法对象、学习闭环 |
+| AI 文档阅读 / 资料理解 | NotebookLM、通义智文、SciSpace、Explainpaper | 文档导读、问答、摘要、引用回源、Audio Overview / study guide 等 artifacts | 很接近“AI 帮你读资料”，竞争压力真实存在 | 不是读得快，而是逐句读懂；不是资料工作台，而是英文深读 Reader |
+| 语言学习阅读器 | Langik、Readlang、LingQ、Language Reactor、SentiaRead | 点击查词、语境翻译、AI explain、SRS、生词状态、字幕学习 | 最接近 Claread 的用户场景 | 长难句、语法结构、篇章逻辑、中文学习者解释规范 |
+| 阅读 / 笔记 / 产物感 | Readwise Reader、Goodnotes、Notability、mymind | 高亮笔记、导出同步、手写批注、学习材料生成、私人知识库 | 是工作流和产物感参考，不是直接语法竞品 | 把 AI 解析产物做成可阅读、可复习、可导出的深读资产 |
 
-## 1. 阅读 + 笔记类
+## Notion 与 AI Workspace 产品
 
-代表产品：Readwise Reader、Omnivore。
+### 当前事实
 
-Readwise Reader 是成熟的 power-reader 产品。它把文章、newsletter、EPUB、PDF、视频、推文等放进统一 Reader，并把高亮、标签、笔记、导出和回顾做成核心工作流。Readwise 自己强调 annotation 是数字阅读的关键能力，并提供 Web 键盘流、右侧 margin notes、导出到 Notion / Obsidian / Logseq 等能力。
+Notion 当前对外已经不是简单的笔记软件，而是 AI workspace。其 AI 产品线包括 Notion Agent、Custom Agents、Enterprise Search、AI Meeting Notes、Research Mode、页面内写作和数据库能力。Notion 官方页面明确强调 AI 可以使用 workspace 和 connected apps 的上下文，完成问答、写报告、处理任务和搜索信息。
 
-Omnivore 曾是免费开源 read-it-later 产品。2024 年 10 月，Omnivore 团队加入 ElevenLabs；TechCrunch 记录 Omnivore 用户需在 2024 年 11 月前导出数据，Heise 也记录了服务关闭和数据删除窗口。这说明 read-it-later 枢纽如果缺少清晰商业模型和长期维护，容易被同步、存储、解析和获客成本拖垮。
+参考来源：
 
-### 做得好的地方
+- [Notion AI](https://www.notion.com/product/ai)
+- [Notion Enterprise Search](https://www.notion.com/product/enterprise-search)
+- [Notion AI Meeting Notes](https://www.notion.com/help/ai-meeting-notes)
+- [Notion Agent](https://www.notion.com/help/notion-agent)
+- [Custom Agents](https://www.notion.com/help/custom-agent)
+- [Notion AI Connectors](https://www.notion.com/help/category/notion-ai-connectors)
 
-- 把高亮、标签和笔记做成一等公民，而不是阅读器的附属按钮。
-- Web 端支持键盘阅读与键盘标注，例如用快捷键高亮、打标签、加笔记。
-- 导出生态强，支持 Markdown、CSV，并同步到 Notion、Obsidian 等笔记工具。
-- Jinja2 模板让重度用户能自定义导出结构、frontmatter、标签和原文链接。
-- 统一收件箱覆盖多内容形态，适合 power reader 长期沉淀阅读资产。
+Notion 的优势不在于“解释一句英文”，而在于它能把知识、任务、会议、数据库、外部工具和团队权限放进同一工作空间。Enterprise Search 可以跨 Notion workspace 和 Slack、Google Drive、GitHub、Jira、Microsoft Teams、SharePoint、OneDrive 等来源搜索，并返回带引用的答案。
 
-### 短板 / 盲区
+### Notion 如何模拟 Claread
 
-- 默认假设用户读得懂英文，AI 只是辅助解释或 chat，不提供结构化词法、句法、篇章解读。
-- 重度键盘流和导出模板对国内大学生、碎片阅读和微信场景门槛较高。
-- Read-it-later 枢纽不是 Claread 当前最该承担的入口，容易把产品拉向内容平台和阅读 backlog 管理。
+Notion 可以用一套数据库和 AI workflow 模拟 Claread 的一部分：
 
-### 给 Claread 的启示
+1. 把英文文章保存为 Notion page、PDF 或数据库条目。
+2. 用 Notion Agent 或 AI block 逐句解释文章。
+3. 用数据库行模拟 `Article -> Sentence`，字段包括原句、段落序号、翻译、语法点、词汇、难句改写、学习状态和复习日期。
+4. 用 Custom Agent 在新文章入库或状态变更时自动补全解释字段。
+5. 用 Calendar、reminder 或 database view 做复习台账。
 
-1. Claread 的“高亮”不是用户手动划线，而是 AI 自动生成的重点词、语法结构、长难句、逻辑链和段落要点。这些应成为一等公民。
-2. Web 端应学习 Readwise 的 annotation asset 思维：每个解释、批注和用户笔记都应该可定位、可复看、可导出。
-3. Markdown / PDF 导出至少要有。Notion 同步可以作为高阶能力，但首期不做 Jinja2 这类极客模板系统。
-4. 不做完整 read-it-later 枢纽。Claread 应聚焦“单篇深度解读”，让微信收藏、浏览器收藏、Readwise/Pocket/Instapaper 等成为上游来源。
+这说明 Notion 能模拟“资料库 + AI 解释 + 工作流 + 复习台账”。但它模拟的是知识管理流程，不是原生阅读体验。
 
-## 2. 语言学习阅读器
+### Claread 必须胜出的地方
 
-代表产品：Readlang、LingQ、Language Reactor、Langik、SentiaRead。
+Claread 不应和 Notion 比通用 workspace。Claread 要赢的是：
 
-这一类与 Claread 最相邻，共同模式是“点击查词 -> 语境解释 -> 生词保存 -> SRS 复习”。Readlang 明确强调干净无干扰阅读界面和 AI 语境解释；LingQ 有成熟的 SRS 状态；Language Reactor 在视频/字幕环境中提供双语字幕、弹出词典、视频控制和桌面 Chrome 插件；Langik 把 AI assistant 放进 EPUB/PDF reader；SentiaRead 明确面向英语学习者，提供按 A1-C2 水平调节的语境释义和跨设备同步。
+- **Reader-first**: 用户带着一篇英文文章进入，直接开始读，不需要先搭数据库。
+- **Sentence anchor**: 解释绑定到原文句子、短语和 text range，而不是散落在 page block 或聊天记录里。
+- **Stable grammar objects**: `grammar_note`、`sentence_analysis`、词汇、短语和用户笔记是结构化对象，不是一次性回答。
+- **Chinese learner lens**: 解释面向中文英语学习者，关注定语从句、非谓语、后置修饰、插入语、指代、省略、倒装、长句主干等真实痛点。
+- **Evaluation loop**: 语法解释质量可被样本、judge、Example Lab 和 Eval Center 持续评估。
 
-### 做得好的地方
+推荐产品判断：
 
-- Readlang 的 clean distraction-free 阅读哲学值得继承。
-- Readlang 和 SentiaRead 的 context-aware explanations 证明“按句子上下文解释词义”是有效需求。
-- SentiaRead 按用户英语水平解释释义，符合 i+1 可理解输入思路。
-- LingQ 的 SRS 状态和复习节奏可以作为生词复习参考。
-- Language Reactor / SentiaRead / LangGrove 等产品对“保存过的词在后续内容中自动高亮”形成了清晰范式。
-- Langik 的 Highlight -> Translate / Explain / Analyze Grammar 交互说明 AI 分层解读是用户能理解的入口。
+> Notion 帮团队管理知识，Claread 帮学习者把一篇英文文章拆成可理解、可追踪、可复习的句级学习资产。
 
-### 短板 / 盲区
+## 通用 AI Agent 与 Assistant
 
-- 大多数产品把生词本和 SRS 当核心，容易把用户推入打卡、复习、进度统计的学习焦虑闭环。
-- 语法解析普遍弱，尤其是嵌套从句、修饰关系、主干识别、指代消解和长难句结构。
-- 篇章级理解缺位，少有产品真正解释主题句、段落角色、论证链和逻辑连接。
-- 多端覆盖与中国用户入口不匹配。很多产品偏 Chrome extension、Mac/iOS 或海外账号体系，微信小程序生态几乎空白。
-- 审美容易偏学习产品：进度条、连击天数、徽章、颜色等级。这与 Claread 的安静阅读气质冲突。
+### 当前事实
 
-### 给 Claread 的启示
+通用 AI assistant 的能力边界已经显著上移。
 
-1. Claread 应定义为“面向中文用户的 AI 句法 + 篇章解读器”，不是另一个生词本应用。
-2. 同一篇文章，对手输出若干词义，Claread 应输出长难句拆解、主题句识别、逻辑链、段落大意和中文学习者真正卡住的语法点。
-3. 生词本可以保留，但应降权为轻复习和上下文资产，不做排行榜、连续打卡和强学习焦虑。
-4. 微信小程序是相邻赛道的真空带。小程序继续作为低门槛入口，Web 则承担更完整的高保真精读体验。
+Kimi 官方帮助中心将其定位为带联网搜索、深度思考、多模态推理和超长上下文的 AI assistant，并提供 Agent、文件处理、Deep Research、文档和表格处理等能力。
 
-## 3. AI 长文/资料理解
+参考来源：
 
-代表产品：NotebookLM、Explainpaper、SciSpace。
+- [Kimi overview](https://www.kimi.com/help/getting-started/overview)
+- [Kimi model list](https://platform.kimi.ai/docs/models)
 
-这一类是资料工作台。NotebookLM 的价值不只是 chat，而是把 sources 变成可操作对象，再生成 Audio Overview、FAQ、briefing document、study guide、mind map、report 等 artifacts。NotebookLM 也支持 public notebook，让 AI 输出成为可分享对象。Explainpaper 的“highlight -> explain”路径简洁，但更像即时解释器。SciSpace 的引用回源值得关注。
+DeepSeek 官方 API 文档强调 reasoning、长上下文、JSON 输出、工具调用等模型能力。C 端产品能力和 API 能力需区分，但它已经是高性价比推理与通用模型生态的重要参照。
 
-### 做得好的地方
+参考来源：
 
-- NotebookLM 把 AI 输出变成可分享对象，public notebook 可以让其他人继续查看 artifacts 和问答。
-- Audio Overview 和 briefing / FAQ / study guide 证明 AI 结果不应只停留在聊天记录，而应成为结构化交付物。
-- Explainpaper 把“读不懂就划一下”做成很直接的交互。
-- SciSpace 的引用回源思路能降低幻觉风险，让用户知道解释来自原文何处。
+- [DeepSeek API Docs](https://api-docs.deepseek.com/)
+- [DeepSeek Reasoning Model](https://api-docs.deepseek.com/guides/reasoning_model)
+- [DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)
 
-### 短板 / 盲区
+豆包和火山方舟覆盖 C 端 AI 助手、多模态、深度思考、联网问答、文档 / 图片 / 视频 / 音频理解、Function Calling、MCP、Agent 应用等能力。
 
-- 它们不是为读懂英文设计，目标是资料理解、研究和知识工作，而不是语言学习和逐句精读。
-- NotebookLM 类产品场景重，需要 source 管理、生成 artifacts、在 chat/source/studio 间切换。
-- 对中文非技术用户来说，资料工作台 UI 容易复杂，不够安静。
-- 缺少“原文句子 -> 词法/句法/语义/翻译”这种可视逐句解读层。
+参考来源：
 
-### 给 Claread 的启示
+- [豆包 App](https://apps.apple.com/cn/app/%E8%B1%86%E5%8C%85-%E5%AD%97%E8%8A%82%E8%B7%B3%E5%8A%A8%E6%97%97%E4%B8%8B-ai-%E5%8A%A9%E6%89%8B/id6459478672)
+- [火山方舟文档](https://www.volcengine.com/docs/82379/2123228)
+- [联网问答 Agent](https://www.volcengine.com/docs/85508/1510774)
 
-1. 借鉴“AI 输出可分享”这件事。一次 Claread 解读应能变成可分享链接、图片、PDF 或 Markdown。
-2. 可考虑轻量音频衍生产物，例如长难句朗读、段落主旨语音卡片，但不要直接复制 NotebookLM 的双主播对谈。
-3. 坚持单篇精读，不把 Claread 做成资料工作台。结果页不应慢慢变成 NotebookLM。
-4. 保留引用回源：词汇、语法、句子和篇章解释都应锚定原文位置。
+通义千问 / Qwen 和通义智文覆盖 AI assistant、Deep Research、联网搜索、文档阅读、多模态、工具调用和大上下文处理。通义智文尤其接近“AI 文档阅读助手”，支持网页、文档、论文、图书阅读、结构化导读、文档对话、段落溯源和翻译。
 
-## 4. 笔记质感与导出
+参考来源：
 
-代表产品：Goodnotes、Notion、Readwise Export。
+- [Qwen Chat](https://qwen.ai/qwenchat)
+- [Qwen Deep Research](https://help.aliyun.com/zh/model-studio/qwen-deep-research)
+- [通义智文](https://www.tongyi.com/zhiwen)
 
-这一组的核心不是 AI，而是产物感。用户希望笔记可以保存、转发、打印、二次编辑。Goodnotes 支持 PDF、图片和 Goodnotes 文档导出。Readwise 支持 Markdown / CSV，以及 Notion / Obsidian 等同步，还提供 Jinja2 导出模板。
+### 它们如何模拟 Claread
 
-### 做得好的地方
+通用 Agent 的最小模拟路径：
 
-- Goodnotes 的 PDF / Image / 原生文档导出覆盖打印、转发和二次编辑。
-- Readwise 的模板化导出适合重度知识管理用户。
-- 产物本身就是社交资产：Goodnotes 笔记截图、Readwise Notion 库、Obsidian 导出都可以被展示和传播。
+1. 上传英文文章、PDF、网页链接或直接粘贴文本。
+2. 要求模型逐句解释词汇、短语、语法、长难句和篇章结构。
+3. 要求生成中英对照、例句、测验和复述题。
+4. 要求把语法点整理成表格或复习清单。
 
-### 短板 / 盲区
+这条路径已经足以让用户觉得“AI 可以帮我读英文”。因此 Claread 不能靠“我们也有 AI 解释”建立差异。
 
-- Goodnotes 和 Notion 是容器，不自动生成精读内容。
-- Readwise 导出的是用户已有高亮和笔记，不是 AI 自动生成的结构化精读笔记。
-- Goodnotes PDF 在某些查看器中存在 JPEG2000 兼容问题。Claread 如果基于浏览器渲染/服务端导出 PDF，应注意跨查看器稳定性。
-- Jinja2 模板能力强，但对 Claread 的主流目标用户过重，容易破坏即用即走体验。
+### Claread 必须胜出的地方
 
-### 给 Claread 的启示
+通用 Agent 的弱点也是 Claread 的机会：
 
-1. 把“一次解读 = 一份精读笔记”做成产品资产。
-2. 首期导出优先级建议为：分享链接、长图、PDF、Markdown。Notion 同步后置。
-3. 分享图设计要服从品牌克制原则，可以有多模板，但不能变成学习产品常见的花哨截图。
-4. 不做 Jinja2 模板。提供少量高质量预设模板即可，例如精读卡、全文翻译、词汇语法笔记。
+- **没有稳定 Reader 状态。** 聊天流不维护文章版本、阅读进度、段落层级、句子 ID 和可复现 render snapshot。
+- **锚点容易漂移。** 回答引用自然语言片段或页码，不天然绑定 sentence anchor、text range 和用户标注。
+- **解释口径不稳定。** 同一个语法点可能今天按考试语法讲，明天按翻译腔讲，后天变成泛泛总结。
+- **缺少结构化语法资产。** 能临时解释，但不沉淀 clause、modifier、reference、difficulty、error pattern、example relation 等可复用对象。
+- **学习闭环弱。** 可以生成练习，但不天然把词汇、句子、语法点、复习记录、错因和再次遇见的上下文串起来。
 
-## Claread 的差异化路线
+Claread 的策略不是和这些 assistant 拼万能，而是把它们变成可能的后台模型、judge 或 explainer。产品护城河掌握在 Claread 自己的阅读对象、锚点、资产、解释规范和评测体系里。
 
-### 产品定义
+## AI 文档阅读与资料工作台
 
-Claread 是一台英文阅读镜头。它以友好的阅读器形态呈现，以结构化 AI 解析为内核，把文章中的词汇、语法、句子和语义关系转化为精致、可读、可分享的精读笔记。
+### 当前事实
 
-### 核心竞争点
+NotebookLM、通义智文、SciSpace、Explainpaper 这类产品说明“AI 帮你读资料”已经是成熟赛道。
 
-1. **结构化精读**：不是问答，不是总结，而是把一篇英文文章拆成词汇、短语、语法、句子结构、翻译、上下文理解和篇章逻辑。
-2. **语法与句子解析可视化**：这是面向中国用户的关键差异。重点包括主干识别、修饰关系、从句嵌套、非谓语、指代、倒装、省略和长难句重排。
-3. **精读成品可分享**：用户分享的不是“我问了 AI 一个问题”，而是“这篇文章被 Claread 透读后长这样”。
-4. **多端同内核、多种呈现**：底层输出稳定，展示 profile 可切换。小程序保持克制，Web 承担更高保真批注与分享产物。
+NotebookLM 以 source-grounded notebook 为核心，支持 source chat、Audio Overview、mind map、FAQ、study guide、briefing document、public notebooks 等 artifacts。
 
-### 品牌方向
+参考来源：
 
-关键词建议：
+- [NotebookLM Audio Overview](https://support.google.com/notebooklm/answer/16212820)
+- [Create a Notebook in NotebookLM](https://support.google.com/notebooklm/answer/16206563)
+- [Public notebooks](https://support.google.com/notebooklm/answer/16322204)
 
-- Lucid：把复杂英文变清楚。
-- Editorial：像编辑加工过的文章，不像工具输出。
-- Instrumental：像一台精密阅读仪器，有能力但不张扬。
-- Tactile：有纸张、笔记、标注、导出物的质感。
+通义智文明确写出“论文 / 文档 / 图书 / 网页”，并提供场景化阅读、结构化导读、文档对话、段落溯源和全文 / 划词翻译。
 
-Logo 的光圈 / 镜头 / 聚焦隐喻天然支持“阅读镜头”定位。蓝色楔形可以作为“Claread 光线”或核心高亮记忆点，但不必作为大面积主色。品牌可以有多种 material / finish variants，例如 matte black、embossed paper、foil stamp、glossy app icon、tonal debossed。核心不变的是聚焦、透读和清晰理解。
+参考来源：
 
-## Web Reader 与分享产物机会
+- [通义智文](https://www.tongyi.com/zhiwen)
 
-Web 端不应做成 Word / WPS 式专业编辑器，也不应做成普通 SaaS dashboard。建议方向是：
+### Claread 的差异
 
-```text
-Notion 的友好组织
-+ Goodnotes 的批注质感
-+ Readwise 的阅读批注效率
-+ Claread 独有的语法解析层
-```
+这些产品追求的是“读得更快、读得更多、能问资料”。Claread 要追求的是“这篇英文我真的逐句读懂了”。
 
-可规划多个展示 profile，但底层 `render_scene` / canonical analysis 不变：
+差异应清楚写成：
 
-| Profile | 目标 | 说明 |
-| --- | --- | --- |
-| 阅读模式 | 保持原文沉浸 | 原文优先，批注轻量悬浮 |
-| 学习模式 | 强化语言学习 | 语法、句子、词汇解释更明显 |
-| 旁注模式 | 桌面高保真 | 类似 margin notes，适合 Web 宽屏 |
-| 笔记模式 | 生成精读笔记 | 面向导出和复习 |
-| 分享模式 | 社交传播 | 模板化视觉，可生成链接/长图/PDF |
+- AI 文档阅读器把 source 变成 overview、Q&A 和报告。
+- Claread 把 article 变成可逐句理解的阅读页面。
+- AI 文档阅读器更像资料工作台。
+- Claread 更像一张带批注的英文编辑台。
+- AI 文档阅读器强调摘要和检索。
+- Claread 强调句子结构、语法关系、译文归属和中文解释。
 
-首批分享模板建议：
+因此 Claread 不应该走 NotebookLM 式多 source workspace，也不应该把 Ask Claread 放到 Reader 中央。Ask 是辅助，Reader 中的句子展开才是签名动作。
 
-- **Grammar X-Ray**：突出句子结构和语法拆解，最能体现 Claread 差异化。
-- **Magazine Brief**：高级杂志式长图，适合朋友圈、小红书、即刻。
-- **Notebook Study**：Goodnotes 风格学习笔记，适合保存和打印。
-- **Minimal Share Card**：一屏摘要，用于微信卡片、社交预览和轻分享。
+## 语言学习阅读器
 
-其中 Grammar X-Ray 最值得优先投入。它是其他竞品最难复制、也最能体现“透读”的视觉资产。
+### 当前事实
 
-## 产品边界
+语言学习阅读器与 Claread 用户场景最接近。
 
-近期应避免：
+Langik 主打 EPUB / PDF Web Reader，用户高亮文本后可以问 AI translation、grammar、vocabulary、context、themes、author ideas，并有语言设置、熟练度、TTS、生词和 SRS。
 
-- 做完整 read-it-later 收件箱。
-- 做资料工作台和多 source notebook。
-- 做强打卡、排行榜、连续学习压力。
-- 做复杂模板语言或极客导出系统。
-- 把 AI chat 放到 Reader 中央，让结构化解析退化为聊天记录。
+参考来源：
 
-应坚持：
+- [Langik](https://www.langik.com/en)
 
-- 单篇深度优先。
-- 解释锚定原文。
-- 语法和句子解析是一等公民。
-- 生词本是资产，不是产品中心。
-- 分享和导出是品牌传播层，不是简单截图。
+Readlang 提供在线 eReader、快速 inline translation、AI context-aware explanations、flashcards、Web Reader、video player、词汇管理和 Anki export。
 
-## 待继续评估
+参考来源：
 
-1. Web 首版 Reader 默认采用“阅读模式”还是“旁注模式”。
-2. 首批分享模板先做 Grammar X-Ray + Magazine Brief，还是 Grammar X-Ray + Notebook Study。
-3. Logo 蓝色在 Web Reader 中承担“交互高亮”还是“品牌光线”。
-4. 语法解析的第一批视觉语法：主谓宾、修饰、从句、非谓语、插入语、指代，哪些优先。
-5. Markdown / PDF / 长图 / 分享链接的导出顺序。
+- [Readlang Features](https://readlang.com/features)
 
-## 参考来源
+LingQ 强在真实内容和词汇状态：书、文章、播客、Netflix、YouTube、歌曲等内容导入，点击词创建 LingQ，词汇状态、SRS、playlist 和大量语言生态。
+
+参考来源：
+
+- [LingQ](https://www.lingq.com/en/)
+
+Language Reactor 强在 Netflix / YouTube 双语字幕、弹出词典、精确播放控制、文本导入、机器翻译和 TTS，是视频语言学习的成熟工具。
+
+参考来源：
+
+- [Language Reactor Chrome Web Store](https://chromewebstore.google.com/detail/language-reactor/hoombieeljmmljlkjmnheibnpciblicm)
+
+SentiaRead 主打 AI-powered English Learning Reader，强调上下文定义、A1-C2 CEFR 解释、i+1 comprehensible input、跨设备和 saved words。
+
+参考来源：
+
+- [SentiaRead](https://sentiaread.com/)
+
+### 它们更强的地方
+
+- 内容生态、导入和跨设备成熟度。
+- 点击查词 / 语境释义的低摩擦。
+- 生词状态、SRS 和 Anki / flashcard 工作流。
+- 视频字幕学习场景。
+- CEFR 或熟练度分级解释。
+
+### Claread 必须更锋利的地方
+
+多数语言学习阅读器停在词、短语、句子翻译或聊天式 AI explain。Claread 的差异应集中在：
+
+- 长难句主干识别。
+- 从句、非谓语、后置修饰、插入语、指代和省略的可视解释。
+- 句子和段落逻辑的中文解释。
+- 语法点不是一次性 chat，而是可回看、可评测、可复习的结构化对象。
+- 中文用户常见误区被解释口径主动覆盖。
+
+推荐产品判断：
+
+> 其他产品帮你顺畅读下去，Claread 帮你把卡住的句子真正拆明白。
+
+## 阅读、笔记与产物沉淀
+
+### 当前事实
+
+Readwise Reader 是成熟的 power reader：统一收件箱、文章 / newsletter / RSS / PDF / YouTube / Twitter / EPUB、键盘高亮、标签、笔记、Ghostreader、导出到 Readwise / Notion / Obsidian 等。
+
+参考来源：
 
 - [Readwise Reader](https://readwise.io/read/)
-- [Readwise Reader Docs: Highlights, Tags, and Notes](https://docs.readwise.io/reader/docs/faqs/highlights-tags-notes)
-- [Readwise Reader Docs: Exporting](https://docs.readwise.io/reader/docs/faqs/exporting)
-- [Readwise Docs: Obsidian Export](https://docs.readwise.io/readwise/docs/exporting-highlights/obsidian)
-- [Readwise Docs: Notion Export](https://docs.readwise.io/readwise/docs/exporting-highlights/notion)
-- [ElevenLabs: Omnivore joins ElevenLabs](https://elevenlabs.io/blog/omnivore-joins-elevenlabs)
-- [TechCrunch: ElevenLabs has hired the team behind Omnivore](https://techcrunch.com/2024/10/29/elevenlabs-has-hired-the-team-behind-omnivore-a-reader-app/)
-- [Heise: Later reading app Omnivore closes down](https://www.heise.de/en/news/Later-reading-app-Omnivore-closes-down-9998733.html)
-- [Readlang](https://readlang.com/)
+- [Readwise Reader Highlights, Tags, and Notes](https://docs.readwise.io/reader/docs/faqs/highlights-tags-notes)
+- [Readwise Reader Exporting](https://docs.readwise.io/reader/docs/faqs/exporting)
+
+Goodnotes 和 Notability 说明“学习产物感”非常重要。Goodnotes 强在手写、PDF annotation、AI search、summary、mind map、meeting minutes to project plan、跨设备和导出。Notability 强在把 notes、PDFs、recordings 转成 summary、quiz、flashcards，以及录音和笔记时间轴绑定。
+
+参考来源：
+
+- [Goodnotes](https://www.goodnotes.com/)
+- [Goodnotes AI](https://www.goodnotes.com/ai)
+- [Notability](https://notability.com/zh-Hans)
+
+mymind 则是私人知识库和视觉记忆感参考：自动分类、AI tagging、Smart Spaces、文章保存和无文件夹心智。
+
+参考来源：
+
+- [mymind](https://mymind.com/)
+
+### 给 Claread 的启示
+
+这些产品不能替代 Claread，但它们提醒我们：
+
+- 一次阅读不能只停留在临时页面，应该沉淀成资产。
+- 高亮、注释、词汇、句子解释、阅读 snapshot、summary、quiz、review item、export artifact 应被定义为产品对象。
+- 分享 / 导出要做，但它是第二层护城河。第一层先是“解释是否准确、稳定、可定位、可复习”。
+- 未来导出可以包括 Markdown、PDF、长图、Notion 页面，但不能过早把产品拉向导出模板系统。
+
+## 竞品可以模拟什么
+
+这一节必须长期保留。它防止 Claread 误以为“别人做不了”。
+
+### Notion 可以模拟
+
+- 文章库。
+- 逐句解释数据库。
+- AI 自动补全语法点。
+- 复习状态和提醒。
+- 老师 / 同学协作评论。
+- Notion AI 搜索过往文章和语法点。
+
+但它模拟不出低摩擦 Reader 和原生句子级标注体验。
+
+### 通用 Agent 可以模拟
+
+- 粘贴文章后逐句解释。
+- 生成语法表。
+- 生成翻译、摘要、测验、复习卡。
+- 结合联网搜索解释背景。
+- 用长上下文处理较长文章。
+
+但它们无法天然保留可复现的阅读状态、句子锚点、用户资产和长期解释规范。
+
+### AI 文档阅读器可以模拟
+
+- 上传资料。
+- 生成导读、摘要和 study guide。
+- 文档问答和段落溯源。
+- 翻译和引用。
+
+但它们默认服务资料理解和快速阅读，不服务中文用户的逐句语法深读。
+
+### 语言学习阅读器可以模拟
+
+- 点击查词。
+- 语境翻译。
+- AI explain grammar。
+- 生词本和 SRS。
+- 字幕学习。
+
+但它们普遍缺少“长难句结构被产品化”的稳定表达。
+
+## Claread 必须更好的地方
+
+Claread 应把竞争力集中在七个层面。
+
+### 1. 稳定阅读对象
+
+文章不是一次 prompt 的上下文，而是一个可版本化、可渲染、可回看的阅读对象。它应包含 paragraph、sentence、text range、render scene、analysis result 和用户资产。
+
+### 2. 句子级记忆点
+
+入口是文章，记忆点是句子。Claread 最有识别度的瞬间应该是：
+
+> 用户点开一句英文，句后解释层像编辑旁注一样展开，把这句话为什么难、哪里修饰哪里、中文该如何理解讲清楚。
+
+### 3. 语法作为产品对象
+
+语法解释不能只是文本回答。它应逐步沉淀为结构化对象：
+
+- grammar note
+- sentence analysis
+- chunk / clause
+- modifier relation
+- reference / pronoun resolution
+- pattern label
+- difficulty signal
+- learner pitfall
+- source sentence anchor
+
+当前 baseline 不必一次全部实现，但方向上必须把语法当作对象，而不是 chat answer。
+
+### 4. 中文学习者解释标准
+
+Claread 应形成固定解释口径：
+
+1. 先抓主干。
+2. 再拆从句、非谓语、后置修饰和插入结构。
+3. 解释中文学习者为什么容易卡住。
+4. 给自然译文，而不是机械对照。
+5. 必要时给一句可迁移的结构说明。
+
+这比“模型自由发挥”更重要。
+
+### 5. 评测治理质量
+
+语法解释质量必须进入评测治理：
+
+- Example Lab 沉淀典型句。
+- Eval Center 比较候选 workflow。
+- judge 检查解释准确性、中文可读性、术语一致性、回源正确性。
+- bad case 反哺 prompt、grammar RAG、few-shot 和 schema。
+
+这是真正可累积的护城河。
+
+### 6. Reader 交互
+
+产品差异不能只写在文档里，要在交互里出现：
+
+- 点句子展开解释。
+- 选词查词。
+- 句子高亮与 note marker。
+- 原文、译文、词汇、语法、笔记层次清楚。
+- Ask Claread 辅助当前文章，但不夺走 Reader 中心。
+
+### 7. 学习资产闭环
+
+当前 Vocabulary / Review 已经是资产起点。后续更重要的是让用户从“读懂这一句”走向“下次认出同类结构”：
+
+- 从读过的句子生成语法卡。
+- 相似结构再次出现时轻提示。
+- 复习不只围绕单词，也围绕句法模式。
+- 用户笔记、纠错和反馈回到结构化资产。
+
+## 护城河策略
+
+Claread 的护城河不是模型，而是围绕英文深读建立的产品协议和质量系统。
+
+### Product Moat
+
+- Reader-first workflow。
+- Article -> sentence -> explanation -> asset 的对象链。
+- 签名交互：句后解释展开。
+- 中文英语学习者解释标准。
+- 不把 AI chat 放在中心。
+
+### Data Moat
+
+- 真实用户阅读句子。
+- 句子级 bad cases。
+- grammar RAG examples。
+- 中文解释口径样本。
+- 文章、句子、词汇、语法点、用户笔记和反馈之间的关系数据。
+
+### Evaluation Moat
+
+- 专门评测长难句拆解。
+- 专门评测 grammar note 是否准确。
+- 专门评测中文解释是否清楚。
+- 专门评测 source anchor 是否正确。
+- 专门评测同类结构的解释一致性。
+
+### Design Moat
+
+- 像编辑台，不像 AI dashboard。
+- 像阅读产品，不像后台。
+- 句子展开像旁注，不像聊天气泡。
+- 解释围绕原文出现，不把 AI chat 放到 Reader 中心。
+
+### Distribution Moat
+
+- 小程序承担低门槛入口。
+- Web 承担高保真深读。
+- Daily 承担公开内容体验。
+- 未来分享 / 导出承担传播和沉淀。
+
+## 产品策略建议
+
+### 近期优先
+
+1. **Reader signature interaction**
+   把“点开一句话，被讲清楚”的动作做稳、做漂亮、做成 Claread 的品牌现场。
+
+2. **Grammar quality evaluation**
+   用 Eval Center / Example Lab 持续治理 grammar note 和 sentence analysis 的准确性、一致性、中文可读性。
+
+3. **Structured grammar assets**
+   让语法解释逐步从文本回答变成可回看、可复用、可复习的结构化资产。
+
+### 后续优先
+
+- Grammar X-Ray 是否命名和视觉化。
+- 分享页 artifact。
+- PDF / Markdown / 长图导出。
+- Notion 同步。
+- 更完整的语法复习。
+- 跨文章相似结构召回。
+
+这些方向有价值，但不应抢走当前第一护城河：英文文章逐句语法级理解。
+
+## Source Index
+
+### Notion / AI Workspace
+
+- [Notion AI](https://www.notion.com/product/ai)
+- [Notion Enterprise Search](https://www.notion.com/product/enterprise-search)
+- [Notion AI Meeting Notes](https://www.notion.com/help/ai-meeting-notes)
+- [Notion Agent](https://www.notion.com/help/notion-agent)
+- [Custom Agents](https://www.notion.com/help/custom-agent)
+- [Notion AI Connectors](https://www.notion.com/help/category/notion-ai-connectors)
+
+### General AI Agents
+
+- [Kimi overview](https://www.kimi.com/help/getting-started/overview)
+- [Kimi model list](https://platform.kimi.ai/docs/models)
+- [DeepSeek API Docs](https://api-docs.deepseek.com/)
+- [DeepSeek Reasoning Model](https://api-docs.deepseek.com/guides/reasoning_model)
+- [DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)
+- [豆包 App](https://apps.apple.com/cn/app/%E8%B1%86%E5%8C%85-%E5%AD%97%E8%8A%82%E8%B7%B3%E5%8A%A8%E6%97%97%E4%B8%8B-ai-%E5%8A%A9%E6%89%8B/id6459478672)
+- [火山方舟文档](https://www.volcengine.com/docs/82379/2123228)
+- [联网问答 Agent](https://www.volcengine.com/docs/85508/1510774)
+- [Qwen Chat](https://qwen.ai/qwenchat)
+- [Qwen Deep Research](https://help.aliyun.com/zh/model-studio/qwen-deep-research)
+
+### AI Document Reading
+
+- [NotebookLM Audio Overview](https://support.google.com/notebooklm/answer/16212820)
+- [Create a Notebook in NotebookLM](https://support.google.com/notebooklm/answer/16206563)
+- [NotebookLM Public Notebooks](https://support.google.com/notebooklm/answer/16322204)
+- [通义智文](https://www.tongyi.com/zhiwen)
+
+### Language Learning Readers
+
+- [Langik](https://www.langik.com/en)
 - [Readlang Features](https://readlang.com/features)
-- [Readlang About](https://readlang.com/about)
-- [Readlang Blog: Context-Aware Translations](https://blog.readlang.com/2024/12/04/context-aware-translations-and-two-other-features.html)
-- [LingQ Support: SRS Review](https://lingq-support.groovehq.com/help/how-does-the-lingq-srs-review-work)
-- [Language Reactor Chrome Web Store](https://chromewebstore.google.com/detail/language-reactor/hoombieeljmmljlkjmnheibnpciblicm?hl=en-US)
-- [Langik](https://langik.com/)
+- [LingQ](https://www.lingq.com/en/)
+- [Language Reactor Chrome Web Store](https://chromewebstore.google.com/detail/language-reactor/hoombieeljmmljlkjmnheibnpciblicm)
 - [SentiaRead](https://sentiaread.com/)
-- [SentiaRead Download](https://sentiaread.com/download)
-- [NotebookLM Help: Public Notebooks](https://support.google.com/notebooklm/answer/16322204)
-- [NotebookLM Help: Audio Overview](https://support.google.com/notebooklm/answer/16212820)
-- [NotebookLM Help: Create a Notebook](https://support.google.com/notebooklm/answer/16206563)
-- [Goodnotes Support: Export Documents or Pages](https://support.goodnotes.com/hc/en-us/articles/7353742824975-Export-documents-or-pages)
-- [Goodnotes Support: Images Missing from Exported PDFs](https://support.goodnotes.com/hc/en-us/articles/7353711100175-Images-are-missing-from-exported-PDFs-in-Goodnotes)
+- [Lector](https://lector.dev/)
+- [Lingosive](https://lingosive.com/en)
+
+### Reading / Notes / Output Artifacts
+
+- [Readwise Reader](https://readwise.io/read/)
+- [Readwise Reader Highlights, Tags, and Notes](https://docs.readwise.io/reader/docs/faqs/highlights-tags-notes)
+- [Readwise Reader Exporting](https://docs.readwise.io/reader/docs/faqs/exporting)
+- [Goodnotes](https://www.goodnotes.com/)
+- [Goodnotes AI](https://www.goodnotes.com/ai)
+- [Notability](https://notability.com/zh-Hans)
+- [mymind](https://mymind.com/)

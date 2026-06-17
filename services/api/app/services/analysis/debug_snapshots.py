@@ -118,7 +118,11 @@ def build_normalize_summary(result: dict[str, Any] | None) -> dict[str, Any] | N
                 str(code)
                 for warning in warnings
                 for code in [
-                    warning.get("code") if isinstance(warning, dict) else getattr(warning, "code", None)
+                    (
+                        warning.get("code")
+                        if isinstance(warning, dict)
+                        else getattr(warning, "code", None)
+                    )
                 ]
                 if code
             }
@@ -170,6 +174,17 @@ def build_drop_log_summary(result: dict[str, Any] | None) -> dict[str, Any] | No
     by_annotation_type = Counter(entry.annotation_type for entry in drop_log)
     by_reason = Counter(entry.drop_reason for entry in drop_log)
 
+    # Anchor 相关 drop 汇总
+    anchor_reasons = {
+        "anchor_not_substring", "anchor_invalid",
+        "resolve_failed", "sentence_id_not_found",
+        "schematic_anchor_not_groundable",
+    }
+    anchor_drops = [e for e in drop_log if e.drop_reason in anchor_reasons]
+    anchor_by_type_and_reason = Counter(
+        (e.annotation_type, e.drop_reason) for e in anchor_drops
+    )
+
     return {
         "available": True,
         "total_drop_count": len(drop_log),
@@ -181,6 +196,13 @@ def build_drop_log_summary(result: dict[str, Any] | None) -> dict[str, Any] | No
             {"reason": reason, "count": count}
             for reason, count in by_reason.most_common(5)
         ],
+        "anchor_failure_summary": {
+            "total_anchor_drops": len(anchor_drops),
+            "by_annotation_type_and_reason": [
+                {"annotation_type": at, "drop_reason": dr, "count": cnt}
+                for (at, dr), cnt in anchor_by_type_and_reason.most_common()
+            ],
+        },
     }
 
 
@@ -191,10 +213,18 @@ def build_runtime_summary(
     billed_points: int,
 ) -> dict[str, Any]:
     usage_summary = usage_summary or {}
-    aggregate = usage_summary.get("aggregate") if isinstance(usage_summary.get("aggregate"), dict) else {}
+    aggregate = (
+        usage_summary.get("aggregate")
+        if isinstance(usage_summary.get("aggregate"), dict)
+        else {}
+    )
     return {
         "usage_available": bool(usage_summary.get("available")),
-        "per_agent": usage_summary.get("per_agent") if isinstance(usage_summary.get("per_agent"), dict) else {},
+        "per_agent": (
+            usage_summary.get("per_agent")
+            if isinstance(usage_summary.get("per_agent"), dict)
+            else {}
+        ),
         "aggregate": {
             "input_tokens": aggregate.get("input_tokens"),
             "output_tokens": aggregate.get("output_tokens"),
@@ -214,6 +244,61 @@ def build_academic_quality(result: dict[str, Any] | None) -> dict[str, Any] | No
         "quality_issues": list(academic.quality_issues),
         "paragraph_roles": [_model_to_dict(role) for role in academic.paragraph_roles],
     }
+
+
+def build_node_timings_summary(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    """从 result 中提取 node_timings，增加 workflow_total。"""
+    timings = result.get("node_timings") if result else None
+    if not timings:
+        return None
+    summary = dict(timings)
+    # 只累加顶层节点耗时（不含 agent 子耗时，因为并行执行已包含在 parallel_agents 中）
+    top_level_keys = {
+        "prepare_input", "derive_user_config", "parallel_agents",
+        "normalize_and_ground", "repair_agent", "project_render_scene",
+        "assemble_result",
+    }
+    summary["workflow_total"] = sum(
+        v for k, v in timings.items()
+        if k in top_level_keys and isinstance(v, int | float)
+    )
+    return summary
+
+
+def build_annotation_stats_summary(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    """从 result 中提取 annotation_stats。"""
+    return result.get("annotation_stats") if result else None
+
+
+def build_repair_stats_summary(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    """从 result 中提取 repair_stats。"""
+    return result.get("repair_stats") if result else None
+
+
+def build_drop_log_entries(result: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """从 result 中提取 drop_log 并序列化为 dict 列表。"""
+    drop_log = _coerce_drop_log(result)
+    if not drop_log:
+        return []
+    return [entry.model_dump(mode="json") for entry in drop_log]
+
+
+def build_canonical_drop_log_entries(
+    result: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """从 result 中提取 canonical_drop_log 并序列化为 dict 列表。"""
+    if not result:
+        return []
+    raw = result.get("canonical_drop_log")
+    if not raw:
+        return []
+    entries: list[dict[str, Any]] = []
+    for entry in raw:
+        if isinstance(entry, DropLogEntry):
+            entries.append(entry.model_dump(mode="json"))
+        elif isinstance(entry, dict):
+            entries.append(DropLogEntry.model_validate(entry).model_dump(mode="json"))
+    return entries
 
 
 def build_trace_refs(
@@ -270,6 +355,10 @@ def build_debug_snapshot_payload(
         "academic_quality_json": build_academic_quality(result),
         "rag_debug_json": result.get("rag_debug") if result else None,
         "trace_refs_json": build_trace_refs(request_id=request_id),
+        "node_timings_json": build_node_timings_summary(result),
+        "annotation_stats_json": build_annotation_stats_summary(result),
+        "repair_stats_json": build_repair_stats_summary(result),
+        "canonical_drop_log_json": build_canonical_drop_log_entries(result),
     }
 
 
@@ -278,7 +367,7 @@ async def upsert_debug_snapshot(snapshot: dict[str, Any]) -> None:
     if pool is None:
         raise RuntimeError("Database pool not initialized")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)  # noqa: UP017
 
     async with pool.acquire() as conn:
         await conn.execute(
@@ -301,13 +390,18 @@ async def upsert_debug_snapshot(snapshot: dict[str, Any]) -> None:
                 academic_quality_json,
                 rag_debug_json,
                 trace_refs_json,
+                node_timings_json,
+                annotation_stats_json,
+                repair_stats_json,
+                canonical_drop_log_json,
                 created_at,
                 updated_at
             )
             VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                 $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb,
-                $15::jsonb, $16::jsonb, $17::jsonb, $18, $18
+                $15::jsonb, $16::jsonb, $17::jsonb, $18::jsonb,
+                $19::jsonb, $20::jsonb, $21::jsonb, $22, $22
             )
             ON CONFLICT (task_id) DO UPDATE SET
                 record_id = EXCLUDED.record_id,
@@ -326,6 +420,10 @@ async def upsert_debug_snapshot(snapshot: dict[str, Any]) -> None:
                 academic_quality_json = EXCLUDED.academic_quality_json,
                 rag_debug_json = EXCLUDED.rag_debug_json,
                 trace_refs_json = EXCLUDED.trace_refs_json,
+                node_timings_json = EXCLUDED.node_timings_json,
+                annotation_stats_json = EXCLUDED.annotation_stats_json,
+                repair_stats_json = EXCLUDED.repair_stats_json,
+                canonical_drop_log_json = EXCLUDED.canonical_drop_log_json,
                 updated_at = EXCLUDED.updated_at
             """,
             snapshot["record_id"],
@@ -345,5 +443,9 @@ async def upsert_debug_snapshot(snapshot: dict[str, Any]) -> None:
             jsonb_param(snapshot.get("academic_quality_json")),
             jsonb_param(snapshot.get("rag_debug_json")),
             jsonb_param(snapshot.get("trace_refs_json")),
+            jsonb_param(snapshot.get("node_timings_json")),
+            jsonb_param(snapshot.get("annotation_stats_json")),
+            jsonb_param(snapshot.get("repair_stats_json")),
+            jsonb_param(snapshot.get("canonical_drop_log_json")),
             now,
         )

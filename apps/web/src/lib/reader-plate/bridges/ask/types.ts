@@ -27,8 +27,7 @@ export type ReaderAskEntryAction =
   | "ask_about_this"
   | "explain_this"
   | "why_here"
-  | "lookup_in_context"
-  | "compare_translation";
+  | "lookup_in_context";
 
 export type ReaderAskAttachmentSubtype =
   | ReaderTextSelection["anchorType"]

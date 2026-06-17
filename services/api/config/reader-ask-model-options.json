@@ -1,0 +1,60 @@
+{
+  "default_option": "glm-standard",
+  "billing_defaults": {
+    "reserved_points": 10,
+    "tokens_per_point": 1000,
+    "billing_policy_version": "analysis_weighted_tokens_v1"
+  },
+  "runtime_defaults": {
+    "max_input_tokens": 24000,
+    "max_output_tokens": 3200,
+    "prompt_buffer_tokens": 800
+  },
+  "options": {
+    "glm-standard": {
+      "label": "GLM-5.1",
+      "description": "默认档位：主回答与 replan 使用 GLM-5.1",
+      "selection": {
+        "routes": {
+          "reader_ask": {
+            "profile": "ask-main-glm51"
+          },
+          "reader_ask_replan": {
+            "profile": "ask-replan-glm51"
+          }
+        }
+      },
+      "price_multiplier": 1.0
+    },
+    "qwen-max": {
+      "label": "Qwen 3.7 Max",
+      "description": "高质量档位：主回答与 replan 使用 Qwen 3.7 Max，并保留 thinking 流。",
+      "selection": {
+        "routes": {
+          "reader_ask": {
+            "profile": "ask-main-qwen37-max"
+          },
+          "reader_ask_replan": {
+            "profile": "ask-replan-qwen37-max"
+          }
+        }
+      },
+      "price_multiplier": 1.6
+    },
+    "deepseek-pro": {
+      "label": "DeepSeek V4 Pro",
+      "description": "高性价比档位：主回答与 replan 使用 DeepSeek V4 Pro",
+      "selection": {
+        "routes": {
+          "reader_ask": {
+            "profile": "ask-main-deepseek-v4-pro"
+          },
+          "reader_ask_replan": {
+            "profile": "ask-replan-deepseek-v4-pro"
+          }
+        }
+      },
+      "price_multiplier": 1.3
+    }
+  }
+}

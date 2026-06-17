@@ -50,7 +50,20 @@ services/api/config/model-presets.json
 
 # Local temporary files - do not commit!
 **/tmp/
-docs/tmp/*
+**/tmp/**
+.tmp/
+.tmp/**
+docs/tmp/
+docs/tmp/**
+apps/web/docs/tmp/
+apps/web/docs/tmp/**
+apps/web/tmp/
+apps/web/tmp/**
+.remember/tmp/
+.remember/tmp/**
+
+# Vendored component library sources — installed via shadcn CLI from
+# @ai-elements and @prompt-kit registries. Tracked, not ignored.
 
 # Local design captures and UI review screenshots
 reader-*.png

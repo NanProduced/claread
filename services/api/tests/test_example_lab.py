@@ -19,12 +19,24 @@ def _settings_with_profile(profile: str = "primary", *, base_url: str = "https:/
         default_model_profile=profile,
         model_profiles_json=json.dumps(
             {
-                profile: {
-                    "provider": "openai_compatible",
-                    "model_name": "primary-model",
-                    "base_url": base_url,
-                    "api_key": api_key,
-                }
+                "providers": {
+                    "primary-provider": {
+                        "adapter": "openai_compatible",
+                        "base_url": base_url,
+                        "api_key": api_key,
+                    }
+                },
+                "models": {
+                    "primary-model": {
+                        "provider": "primary-provider",
+                        "model_name": "primary-model",
+                    }
+                },
+                "profiles": {
+                    profile: {
+                        "model": "primary-model",
+                    }
+                },
             }
         ),
     )

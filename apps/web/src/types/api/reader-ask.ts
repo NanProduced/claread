@@ -40,8 +40,7 @@ export type ReaderAskEntryActionDto =
   | "ask_about_this"
   | "explain_this"
   | "why_here"
-  | "lookup_in_context"
-  | "compare_translation";
+  | "lookup_in_context";
 export type ReaderAskAttachmentKindDto =
   | "text_selection"
   | "annotation_ref"
@@ -328,6 +327,7 @@ export interface ReaderAskTraceSummaryDto {
   planner_mode:
     | "direct_answer"
     | "needs_local_clarification"
+    | "partial_answer_with_followup"
     | "known_reference_resolved"
     | "known_reference_ambiguous"
     | "known_reference_not_found";
@@ -425,33 +425,14 @@ export interface ReaderAskSentenceBreakdownCardDto {
   origin: "ask_ai";
 }
 
-export interface ReaderAskVocabularyInContextCardDto {
-  card_type: "vocabulary_in_context_card";
-  query: string;
-  display_word?: string | null;
-  phonetic?: string | null;
-  meaning_zh?: string | null;
-  why_here?: string | null;
-  translation_zh?: string | null;
-  learning_tip?: string | null;
-  source_sentence?: string | null;
-}
-
-export interface ReaderAskPracticeCardDto {
-  card_type: "practice_card";
-  title: string;
+export interface ReaderAskFollowUpSuggestionDto {
+  label: string;
   prompt: string;
-  expected_focus?: string | null;
-  hints: string[];
-  answer_guidance?: string | null;
-  source_sentence?: string | null;
 }
 
 export type ReaderAskResponseCardDto =
   | ReaderAskGrammarNoteCardDto
-  | ReaderAskSentenceBreakdownCardDto
-  | ReaderAskVocabularyInContextCardDto
-  | ReaderAskPracticeCardDto;
+  | ReaderAskSentenceBreakdownCardDto;
 
 export interface ReaderAskMessageDto {
   id: string;
@@ -478,18 +459,26 @@ export interface ReaderAskMessageDto {
   persisted_supplements: ReaderAskPersistedSupplementDto[];
   reasoning_md?: string | null;
   reasoning_status?: "idle" | "streaming" | "completed" | null;
-  replan_status?: "idle" | "replanning" | null;
-  regenerate_preview?: boolean | null;
+  follow_up_suggestions?: ReaderAskFollowUpSuggestionDto[] | null;
   usage_event_id?: string | null;
   created_at: string;
   updated_at: string;
 }
+
+export interface ReaderAskMessageUiStateDto {
+  replan_status?: "idle" | "replanning" | null;
+  compacting?: boolean | null;
+  regenerate_preview?: boolean | null;
+}
+
+export type ReaderAskUiMessageDto = ReaderAskMessageDto & ReaderAskMessageUiStateDto;
 
 export interface ReaderAskThreadSummaryDto {
   id: string;
   record_id: string;
   title?: string | null;
   is_default: boolean;
+  selected_model?: ReaderAskSelectedModelDto | null;
   archived_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -502,6 +491,24 @@ export interface ReaderAskThreadDetailDto extends ReaderAskThreadSummaryDto {
 
 export interface ReaderAskThreadListResponseDto {
   items: ReaderAskThreadSummaryDto[];
+}
+
+export interface ReaderAskSelectedModelDto {
+  key: string;
+  label: string;
+  description?: string | null;
+  model_name?: string | null;
+  replan_model_name?: string | null;
+  price_multiplier: number;
+}
+
+export interface ReaderAskModelOptionSummaryDto extends ReaderAskSelectedModelDto {
+  is_default: boolean;
+}
+
+export interface ReaderAskModelOptionListResponseDto {
+  default_key: string;
+  items: ReaderAskModelOptionSummaryDto[];
 }
 
 export interface ReaderAskActionConfirmResponseDto {
@@ -552,11 +559,14 @@ export interface ReaderAskCompletedPayloadDto {
   persisted_supplements: ReaderAskPersistedSupplementDto[];
   reasoning_md?: string | null;
   reasoning_status?: "idle" | "streaming" | "completed" | null;
+  follow_up_suggestions?: ReaderAskFollowUpSuggestionDto[] | null;
+  usage_event_id?: string | null;
 }
 
 export interface ReaderAskThreadCreateRequestDto {
   record_id: string;
   title?: string | null;
+  model?: string | null;
 }
 
 export interface ReaderAskMessageStreamRequestDto {
@@ -564,6 +574,10 @@ export interface ReaderAskMessageStreamRequestDto {
   page_identity: ReaderAskPageIdentityDto;
   attachments: ReaderAskAttachmentDto[];
   entry_action: ReaderAskEntryActionDto;
+  model?: string | null;
+}
+
+export interface ReaderAskMessageRetryRequestDto {
   model?: string | null;
 }
 
@@ -581,6 +595,7 @@ export type ReaderAskStreamEventName =
   | "tool.started"
   | "tool.completed"
   | "tool.failed"
+  | "context.compacting"
   | "replan.started"
   | "message.interrupted"
   | "message.completed"

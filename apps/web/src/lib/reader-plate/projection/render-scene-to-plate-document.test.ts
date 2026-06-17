@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach } from "vitest";
 import type { ReaderMockVm } from "@/types/view/ReaderMockVm";
-import { renderSceneToPlateDocument } from "./render-scene-to-plate-document";
+import { renderSceneToPlateDocument, _getRangeValidationDiagnostics, _clearRangeValidationDiagnostics } from "./render-scene-to-plate-document";
 
 function createBaseScene(): ReaderMockVm {
   return {
@@ -76,6 +76,18 @@ describe("renderSceneToPlateDocument", () => {
           label: "句子拆解",
           title: "句子拆解",
           content: "主语是 Institutional memory，谓语是 shapes。",
+          chunks: [
+            {
+              order: 1,
+              label: "主语",
+              text: "Institutional memory",
+            },
+            {
+              order: 2,
+              label: "谓语",
+              text: "shapes",
+            },
+          ],
         },
       ],
     };
@@ -115,7 +127,7 @@ describe("renderSceneToPlateDocument", () => {
     if (sentenceText.type !== "reader_sentence_text") {
       throw new Error("Expected sentence text node");
     }
-    expect(sentenceText.children).toEqual([
+    expect(sentenceText.children).toMatchObject([
       {
         text: "Institutional memory ",
         readerSentenceId: "s1",
@@ -152,6 +164,24 @@ describe("renderSceneToPlateDocument", () => {
       type: "reader_translation",
       sentenceId: "s1",
       translationZh: "制度记忆会塑造政策选择。",
+    });
+
+    const analysis = sentence.children[3];
+    expect(analysis).toMatchObject({
+      type: "reader_sentence_analysis",
+      entryId: "entry-analysis",
+      chunks: [
+        {
+          order: 1,
+          label: "主语",
+          text: "Institutional memory",
+        },
+        {
+          order: 2,
+          label: "谓语",
+          text: "shapes",
+        },
+      ],
     });
   });
 
@@ -269,7 +299,7 @@ describe("renderSceneToPlateDocument", () => {
       "term_note",
       "logic_note",
     ]);
-    expect(sentenceText.children).toEqual([
+    expect(sentenceText.children).toMatchObject([
       {
         text: "Institutional memory",
         readerSentenceId: "s1",
@@ -429,6 +459,371 @@ describe("renderSceneToPlateDocument", () => {
     expect(tailMarkLeaf).toMatchObject({
       text: " policy",
       readerMarkAnchorText: "shapes policy",
+    });
+  });
+
+  it("keeps multi_text vocabulary parts linked to the same mark and lookup text", () => {
+    const scene: ReaderMockVm = {
+      ...createBaseScene(),
+      inlineMarks: [
+        {
+          id: "mark-multi",
+          annotationType: "phrase_gloss",
+          anchor: {
+            kind: "multi_text",
+            sentenceId: "s1",
+            parts: [
+              { anchorText: "Institutional memory" },
+              { anchorText: "policy choices" },
+            ],
+          },
+          renderType: "background",
+          visualTone: "phrase",
+          clickable: true,
+          lookupKind: "phrase",
+          lookupText: "refer to ... as",
+        },
+      ],
+    };
+
+    const document = renderSceneToPlateDocument(scene);
+    const paragraph = document.children[0];
+    if (paragraph.type !== "reader_paragraph") {
+      throw new Error("Expected paragraph node");
+    }
+
+    const sentence = paragraph.children[0];
+    const sentenceText = sentence.children[0];
+    if (sentenceText.type !== "reader_sentence_text") {
+      throw new Error("Expected sentence text node");
+    }
+
+    const markedLeaves = sentenceText.children.filter((leaf) => leaf.readerMarkId === "mark-multi");
+    expect(markedLeaves).toHaveLength(2);
+    expect(markedLeaves.map((leaf) => leaf.readerMarkAnchorText)).toEqual([
+      "Institutional memory",
+      "policy choices",
+    ]);
+    expect(markedLeaves.map((leaf) => leaf.readerMarkLookupText)).toEqual([
+      "refer to ... as",
+      "refer to ... as",
+    ]);
+  });
+
+  // ── Phase 3A: Range / MultiRange anchor tests ──────────────────
+
+  describe("range anchor", () => {
+    beforeEach(() => {
+      _clearRangeValidationDiagnostics();
+    });
+
+    it("projects range anchor with UTF-16 offsets", () => {
+      const scene: ReaderMockVm = {
+        ...createBaseScene(),
+        inlineMarks: [
+          {
+            id: "mark-range",
+            annotationType: "vocab_highlight",
+            anchor: {
+              kind: "range",
+              sentenceId: "s1",
+              offsetUnit: "utf16",
+              start: 21,
+              end: 27,
+              text: "shapes",
+            },
+            renderType: "background",
+            visualTone: "vocab",
+            clickable: true,
+          },
+        ],
+      };
+
+      const document = renderSceneToPlateDocument(scene);
+      const paragraph = document.children[0];
+      if (paragraph.type !== "reader_paragraph") throw new Error("Expected paragraph");
+
+      const sentence = paragraph.children[0];
+      const sentenceText = sentence.children[0];
+      if (sentenceText.type !== "reader_sentence_text") throw new Error("Expected sentence text");
+
+      const markedLeaf = sentenceText.children.find(
+        (leaf) => leaf.readerMarkId === "mark-range",
+      );
+      expect(markedLeaf).toMatchObject({
+        text: "shapes",
+        readerTextStartOffset: 21,
+        readerTextEndOffset: 27,
+        readerMarkAnnotationType: "vocab_highlight",
+        readerMarkAnchorText: "shapes",
+      });
+    });
+
+    it("projects multi_range anchor with multiple ranges", () => {
+      const scene: ReaderMockVm = {
+        ...createBaseScene(),
+        inlineMarks: [
+          {
+            id: "mark-multi-range",
+            annotationType: "phrase_gloss",
+            anchor: {
+              kind: "multi_range",
+              sentenceId: "s1",
+              offsetUnit: "utf16",
+              ranges: [
+                { start: 0, end: 20, text: "Institutional memory" },
+                { start: 28, end: 43, text: "policy choices." },
+              ],
+            },
+            renderType: "background",
+            visualTone: "phrase",
+            clickable: true,
+            lookupKind: "phrase",
+            lookupText: "Institutional memory / policy choices",
+          },
+        ],
+      };
+
+      const document = renderSceneToPlateDocument(scene);
+      const paragraph = document.children[0];
+      if (paragraph.type !== "reader_paragraph") throw new Error("Expected paragraph");
+
+      const sentence = paragraph.children[0];
+      const sentenceText = sentence.children[0];
+      if (sentenceText.type !== "reader_sentence_text") throw new Error("Expected sentence text");
+
+      const markedLeaves = sentenceText.children.filter(
+        (leaf) => leaf.readerMarkId === "mark-multi-range",
+      );
+      expect(markedLeaves).toHaveLength(2);
+      expect(markedLeaves[0]).toMatchObject({
+        text: "Institutional memory",
+        readerTextStartOffset: 0,
+        readerTextEndOffset: 20,
+        readerMarkAnchorText: "Institutional memory",
+      });
+      expect(markedLeaves[1]).toMatchObject({
+        text: "policy choices.",
+        readerTextStartOffset: 28,
+        readerTextEndOffset: 43,
+        readerMarkAnchorText: "policy choices.",
+      });
+    });
+
+    it("skips mark and emits warning when range text does not match", () => {
+      const scene: ReaderMockVm = {
+        ...createBaseScene(),
+        inlineMarks: [
+          {
+            id: "mark-bad-range",
+            annotationType: "vocab_highlight",
+            anchor: {
+              kind: "range",
+              sentenceId: "s1",
+              offsetUnit: "utf16",
+              start: 21,
+              end: 27,
+              text: "WRONG",
+            },
+            renderType: "background",
+            visualTone: "vocab",
+            clickable: true,
+          },
+        ],
+      };
+
+      const document = renderSceneToPlateDocument(scene);
+      const paragraph = document.children[0];
+      if (paragraph.type !== "reader_paragraph") throw new Error("Expected paragraph");
+
+      const sentence = paragraph.children[0];
+      const sentenceText = sentence.children[0];
+      if (sentenceText.type !== "reader_sentence_text") throw new Error("Expected sentence text");
+
+      // No mark should be applied
+      const markedLeaves = sentenceText.children.filter(
+        (leaf) => leaf.readerMarkId === "mark-bad-range",
+      );
+      expect(markedLeaves).toHaveLength(0);
+
+      // Warning should be emitted
+      const diagnostics = _getRangeValidationDiagnostics();
+      expect(diagnostics.length).toBeGreaterThanOrEqual(1);
+      expect(diagnostics[0].markId).toBe("mark-bad-range");
+      expect(diagnostics[0].expectedText).toBe("WRONG");
+    });
+
+    it("handles emoji / surrogate pair in UTF-16 range offsets", () => {
+      const emojiScene: ReaderMockVm = {
+        schemaVersion: "3.0.0",
+        request: {
+          requestId: "req-emoji",
+          sourceType: "user_input",
+          readingGoal: "daily_reading",
+          readingVariant: "intermediate_reading",
+          profileId: "upstream",
+        },
+        article: {
+          paragraphs: [{ paragraphId: "p1", sentenceIds: ["s1"] }],
+          sentences: [
+            {
+              sentenceId: "s1",
+              paragraphId: "p1",
+              text: "I feel 😊 about this.",
+            },
+          ],
+        },
+        userFacingState: "normal",
+        translations: [],
+        inlineMarks: [],
+        sentenceEntries: [],
+        warnings: [],
+      };
+
+      // "😊" is U+1F60A, encoded as 2 UTF-16 code units (surrogate pair)
+      // "I feel " = 7 code units, "😊" = 2 code units, " about this." = 12 code units
+      emojiScene.inlineMarks = [
+        {
+          id: "mark-emoji",
+          annotationType: "vocab_highlight",
+          anchor: {
+            kind: "range",
+            sentenceId: "s1",
+            offsetUnit: "utf16",
+            start: 7,
+            end: 9,
+            text: "😊",
+          },
+          renderType: "background",
+          visualTone: "vocab",
+          clickable: true,
+        },
+      ];
+
+      const document = renderSceneToPlateDocument(emojiScene);
+      const paragraph = document.children[0];
+      if (paragraph.type !== "reader_paragraph") throw new Error("Expected paragraph");
+
+      const sentence = paragraph.children[0];
+      const sentenceText = sentence.children[0];
+      if (sentenceText.type !== "reader_sentence_text") throw new Error("Expected sentence text");
+
+      const markedLeaf = sentenceText.children.find(
+        (leaf) => leaf.readerMarkId === "mark-emoji",
+      );
+      expect(markedLeaf).toMatchObject({
+        text: "😊",
+        readerTextStartOffset: 7,
+        readerTextEndOffset: 9,
+        readerMarkAnchorText: "😊",
+      });
+    });
+
+    it("still renders legacy text / multi_text anchors", () => {
+      const scene: ReaderMockVm = {
+        ...createBaseScene(),
+        inlineMarks: [
+          {
+            id: "mark-text",
+            annotationType: "vocab_highlight",
+            anchor: {
+              kind: "text",
+              sentenceId: "s1",
+              anchorText: "shapes",
+              occurrence: 1,
+            },
+            renderType: "background",
+            visualTone: "vocab",
+            clickable: true,
+          },
+          {
+            id: "mark-multi-text",
+            annotationType: "phrase_gloss",
+            anchor: {
+              kind: "multi_text",
+              sentenceId: "s1",
+              parts: [
+                { anchorText: "Institutional memory" },
+                { anchorText: "policy choices" },
+              ],
+            },
+            renderType: "background",
+            visualTone: "phrase",
+            clickable: true,
+            lookupKind: "phrase",
+          },
+        ],
+      };
+
+      const document = renderSceneToPlateDocument(scene);
+      const paragraph = document.children[0];
+      if (paragraph.type !== "reader_paragraph") throw new Error("Expected paragraph");
+
+      const sentence = paragraph.children[0];
+      const sentenceText = sentence.children[0];
+      if (sentenceText.type !== "reader_sentence_text") throw new Error("Expected sentence text");
+
+      // Text anchor
+      const textMark = sentenceText.children.find(
+        (leaf) => leaf.readerMarkId === "mark-text",
+      );
+      expect(textMark).toMatchObject({
+        text: "shapes",
+        readerMarkAnchorText: "shapes",
+      });
+
+      // Multi-text anchor
+      const multiTextMarks = sentenceText.children.filter(
+        (leaf) => leaf.readerMarkId === "mark-multi-text",
+      );
+      expect(multiTextMarks).toHaveLength(2);
+      expect(multiTextMarks.map((l) => l.readerMarkAnchorText)).toEqual([
+        "Institutional memory",
+        "policy choices",
+      ]);
+    });
+
+    it("drops entire multi_range mark when any part has invalid range", () => {
+      const scene: ReaderMockVm = {
+        ...createBaseScene(),
+        inlineMarks: [
+          {
+            id: "mark-partial-bad",
+            annotationType: "phrase_gloss",
+            anchor: {
+              kind: "multi_range",
+              sentenceId: "s1",
+              offsetUnit: "utf16",
+              ranges: [
+                { start: 0, end: 20, text: "Institutional memory" },
+                { start: 28, end: 43, text: "WRONG_TEXT" },
+              ],
+            },
+            renderType: "background",
+            visualTone: "phrase",
+            clickable: true,
+          },
+        ],
+      };
+
+      const document = renderSceneToPlateDocument(scene);
+      const paragraph = document.children[0];
+      if (paragraph.type !== "reader_paragraph") throw new Error("Expected paragraph");
+
+      const sentence = paragraph.children[0];
+      const sentenceText = sentence.children[0];
+      if (sentenceText.type !== "reader_sentence_text") throw new Error("Expected sentence text");
+
+      // Entire mark should be dropped (fail-closed), not just the bad part
+      const markedLeaves = sentenceText.children.filter(
+        (leaf) => leaf.readerMarkId === "mark-partial-bad",
+      );
+      expect(markedLeaves).toHaveLength(0);
+
+      // Diagnostic for the invalid part
+      const diagnostics = _getRangeValidationDiagnostics();
+      expect(diagnostics.length).toBeGreaterThanOrEqual(1);
+      expect(diagnostics[0].markId).toBe("mark-partial-bad");
     });
   });
 });

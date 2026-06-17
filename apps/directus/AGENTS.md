@@ -9,6 +9,12 @@
 - Bootstrap 阶段只允许做 runtime、扩展壳子和本地开发体验，不做业务 schema 和执行逻辑。
 - 不在 Directus hook / endpoint 中塞 judge、workflow replay、向量入库等重逻辑。
 
+## Serena
+
+- 需要 Serena 做符号级检索、引用分析或重构时，只激活当前子项目 `claread-directus`。
+- 不要从本目录向上激活仓库根目录为 Serena 项目；跨子项目检索优先用 RTK / shell / git diff。
+- 未经用户明确要求，不写 Serena memory；长期事实应更新正式文档或本 `AGENTS.md`。如果 memory 与代码、测试或正式文档冲突，以后者为准，并删除或覆盖过期 memory。
+
 ## 目录约束
 
 - `extensions/modules-bundle/`：Claread Console 自定义 module。

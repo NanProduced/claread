@@ -178,6 +178,44 @@ describe("dictionary bridge adapters", () => {
     });
   });
 
+  it("keeps context_gloss multi_text lookups on the phrase route", () => {
+    const sentence = createSentence("They apply the rule to unfamiliar cases.");
+
+    const inspectIntent = inspectIntentFromStructuredMark({
+      mark: {
+        id: "mark-context",
+        annotationType: "context_gloss",
+        visualTone: "context",
+        lookupKind: "phrase",
+        lookupText: "apply ... to",
+        glossary: {
+          gloss: "把……应用到……",
+          reason: "这里强调把规则迁移到新情境中的用法。",
+        },
+      },
+      sentence,
+      anchorText: "apply",
+      sourceContext: "他们把这条规则应用到不熟悉的案例中。",
+      startOffset: 5,
+      endOffset: 10,
+    });
+
+    expect(inspectIntent).toMatchObject({
+      kind: "structured_annotation_inspect",
+      annotationType: "context_gloss",
+      lookupText: "apply ... to",
+      lookupKind: "phrase",
+      anchorText: "apply",
+    });
+
+    expect(lookupIntentFromStructuredInspect(inspectIntent)).toMatchObject({
+      kind: "lexical_lookup",
+      query: "apply ... to",
+      lookupType: "phrase",
+      annotationType: "context_gloss",
+    });
+  });
+
   it("converts lookup intents into dictionary snapshots", () => {
     const snapshot = readerLookupSnapshotFromIntent(
       "record-1",

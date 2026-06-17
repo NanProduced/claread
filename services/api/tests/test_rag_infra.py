@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -261,12 +262,22 @@ class TestZillizSchemaContract:
 
 
 class TestEmbeddingClient:
+    def test_resolve_embedding_config_raises_on_incompatible_adapter(self):
+        from app.infra.bailian_embedding import EmbeddingError, resolve_embedding_config
+
+        with patch("app.infra.bailian_embedding.get_settings", return_value=SimpleNamespace()), patch(
+            "app.llm.router.resolve_model_config",
+            return_value=SimpleNamespace(adapter="openai_compatible"),
+        ):
+            with pytest.raises(EmbeddingError, match="incompatible adapter"):
+                resolve_embedding_config()
+
     @pytest.mark.anyio
     async def test_embed_texts_raises_when_no_api_key(self):
         from app.infra.bailian_embedding import EmbeddingError, embed_texts
-        with patch("app.infra.bailian_embedding.get_settings") as mock_settings:
-            mock_settings.return_value.bailian_api_key = ""
-            with pytest.raises(EmbeddingError, match="BAILIAN_API_KEY"):
+        with patch("app.infra.bailian_embedding.resolve_embedding_config") as mock_resolve:
+            mock_resolve.return_value = ("text-embedding-v4", 1024, "")
+            with pytest.raises(EmbeddingError, match="No API key"):
                 await embed_texts(["test text"])
 
     @pytest.mark.anyio
@@ -283,7 +294,7 @@ class TestEmbeddingClient:
             result = await embed_single("test text")
             assert result == [0.1, 0.2, 0.3]
             mock_embed.assert_called_once_with(
-                ["test text"], model="text-embedding-v4", dimension=1024
+                ["test text"], model=None, dimension=None
             )
 
     @pytest.mark.anyio
@@ -291,9 +302,9 @@ class TestEmbeddingClient:
         from app.infra.bailian_embedding import _EmbeddingBatchResult, embed_texts
         texts = [f"text {i}" for i in range(30)]
 
-        with patch("app.infra.bailian_embedding.get_settings") as mock_settings, \
+        with patch("app.infra.bailian_embedding.resolve_embedding_config") as mock_resolve, \
              patch("app.infra.bailian_embedding._call_embedding_sync") as mock_call:
-            mock_settings.return_value.bailian_api_key = "test_key"
+            mock_resolve.return_value = ("text-embedding-v4", 1024, "test_key")
             mock_call.side_effect = lambda texts, **kw: _EmbeddingBatchResult(
                 embeddings=[[0.1] * 1024 for _ in texts],
                 usage_data={},
@@ -309,9 +320,9 @@ class TestEmbeddingClient:
         from app.infra.bailian_embedding import _EmbeddingBatchResult, embed_texts
         texts = [f"text {i}" for i in range(3)]
 
-        with patch("app.infra.bailian_embedding.get_settings") as mock_settings, \
+        with patch("app.infra.bailian_embedding.resolve_embedding_config") as mock_resolve, \
              patch("app.infra.bailian_embedding._call_embedding_sync") as mock_call:
-            mock_settings.return_value.bailian_api_key = "test_key"
+            mock_resolve.return_value = ("text-embedding-v4", 1024, "test_key")
             mock_call.return_value = _EmbeddingBatchResult(
                 embeddings=[[0.1] * 1024 for _ in texts],
                 usage_data={},
@@ -322,14 +333,37 @@ class TestEmbeddingClient:
             assert len(result) == 3
             assert mock_call.call_count == 1
 
+    @pytest.mark.anyio
+    async def test_embed_texts_with_metadata_empty_input_uses_resolved_config(self):
+        from app.infra.bailian_embedding import embed_texts_with_metadata
+
+        with patch("app.infra.bailian_embedding.resolve_embedding_config") as mock_resolve:
+            mock_resolve.return_value = ("text-embedding-v5", 1536, "test_key")
+
+            result = await embed_texts_with_metadata([])
+
+            assert result.model == "text-embedding-v5"
+            assert result.dimension == 1536
+            assert result.input_count == 0
+
 
 class TestRerankClient:
+    def test_resolve_rerank_config_raises_on_incompatible_adapter(self):
+        from app.infra.bailian_rerank import RerankError, resolve_rerank_config
+
+        with patch("app.infra.bailian_rerank.get_settings", return_value=SimpleNamespace()), patch(
+            "app.llm.router.resolve_model_config",
+            return_value=SimpleNamespace(adapter="openai_compatible"),
+        ):
+            with pytest.raises(RerankError, match="incompatible adapter"):
+                resolve_rerank_config()
+
     @pytest.mark.anyio
     async def test_rerank_raises_when_no_api_key(self):
         from app.infra.bailian_rerank import RerankError, rerank
-        with patch("app.infra.bailian_rerank.get_settings") as mock_settings:
-            mock_settings.return_value.bailian_api_key = ""
-            with pytest.raises(RerankError, match="BAILIAN_API_KEY"):
+        with patch("app.infra.bailian_rerank.resolve_rerank_config") as mock_resolve:
+            mock_resolve.return_value = ("qwen3-rerank", "")
+            with pytest.raises(RerankError, match="No API key"):
                 await rerank("test query", ["doc1", "doc2"])
 
     @pytest.mark.anyio
@@ -347,9 +381,9 @@ class TestRerankClient:
             RerankResult(index=0, relevance_score=0.80, document="doc1"),
         ]
 
-        with patch("app.infra.bailian_rerank.get_settings") as mock_settings, \
+        with patch("app.infra.bailian_rerank.resolve_rerank_config") as mock_resolve, \
              patch("app.infra.bailian_rerank._call_rerank_sync") as mock_call:
-            mock_settings.return_value.bailian_api_key = "test_key"
+            mock_resolve.return_value = ("qwen3-rerank", "test_key")
             mock_call.return_value = _RerankBatchResult(
                 results=mock_results,
                 usage_data={},
@@ -360,3 +394,16 @@ class TestRerankClient:
             assert len(result) == 2
             assert result[0].relevance_score == 0.95
             assert result[1].relevance_score == 0.80
+
+    @pytest.mark.anyio
+    async def test_rerank_with_metadata_empty_documents_uses_resolved_config(self):
+        from app.infra.bailian_rerank import rerank_with_metadata
+
+        with patch("app.infra.bailian_rerank.resolve_rerank_config") as mock_resolve:
+            mock_resolve.return_value = ("qwen3-rerank-v2", "test_key")
+
+            result = await rerank_with_metadata("query", [])
+
+            assert result.model == "qwen3-rerank-v2"
+            assert result.top_n == 0
+            assert result.input_count == 0

@@ -17,6 +17,26 @@ import type {
   ReaderTranslationNode,
 } from "../model";
 
+/** Range validation diagnostics emitted when canonical range anchors fail validation. */
+export interface RangeValidationDiagnostic {
+  markId: string;
+  sentenceId: string;
+  partIndex?: number;
+  start: number;
+  end: number;
+  expectedText: string;
+}
+
+const rangeValidationDiagnostics: RangeValidationDiagnostic[] = [];
+
+export function _getRangeValidationDiagnostics(): readonly RangeValidationDiagnostic[] {
+  return rangeValidationDiagnostics;
+}
+
+export function _clearRangeValidationDiagnostics(): void {
+  rangeValidationDiagnostics.length = 0;
+}
+
 const ANALYSIS_BLOCK_TYPE_BY_ENTRY: Record<
   Exclude<SentenceEntryModel["entryType"], "content_summary">,
   ReaderAnalysisBlockNodeType
@@ -101,6 +121,31 @@ function normalizedText(value: string): string {
   return value.trim();
 }
 
+/**
+ * Slice text by UTF-16 code unit offsets.
+ * JavaScript string indexing is already UTF-16 code unit based,
+ * so `text.slice(start, end)` gives the UTF-16 slice directly.
+ */
+function utf16Slice(text: string, start: number, end: number): string {
+  return text.slice(start, end);
+}
+
+/**
+ * Validate that a UTF-16 range in sentence text matches the expected text.
+ * Returns true if the slice matches, false otherwise.
+ */
+function validateUtf16Range(
+  sentenceText: string,
+  start: number,
+  end: number,
+  expectedText: string,
+): boolean {
+  if (start < 0 || end > sentenceText.length || start >= end) {
+    return false;
+  }
+  return utf16Slice(sentenceText, start, end) === expectedText;
+}
+
 function findTextAnchorPosition(text: string, anchorText: string, occurrence = 1): number {
   let count = 0;
   let position = 0;
@@ -130,11 +175,70 @@ function extractMarkRanges(
   const ranges: MarkRange[] = [];
 
   for (const mark of inlineMarks) {
-    if (mark.anchor.kind === "text") {
+    const anchor = mark.anchor;
+
+    // Range anchor: use UTF-16 offsets directly with validation
+    if (anchor.kind === "range") {
+      if (!validateUtf16Range(sentence.text, anchor.start, anchor.end, anchor.text)) {
+        rangeValidationDiagnostics.push({
+          markId: mark.id,
+          sentenceId: sentence.sentenceId,
+          start: anchor.start,
+          end: anchor.end,
+          expectedText: anchor.text,
+        });
+        continue;
+      }
+      ranges.push({
+        key: mark.id,
+        mark,
+        start: anchor.start,
+        end: anchor.end,
+        anchorText: anchor.text,
+        fullAnchorText: anchor.text,
+      });
+      continue;
+    }
+
+    // Multi-range anchor: validate ALL parts first; fail-closed if any part is invalid
+    if (anchor.kind === "multi_range") {
+      let allValid = true;
+      for (let i = 0; i < anchor.ranges.length; i++) {
+        const part = anchor.ranges[i];
+        if (!validateUtf16Range(sentence.text, part.start, part.end, part.text)) {
+          rangeValidationDiagnostics.push({
+            markId: mark.id,
+            sentenceId: sentence.sentenceId,
+            partIndex: i,
+            start: part.start,
+            end: part.end,
+            expectedText: part.text,
+          });
+          allValid = false;
+        }
+      }
+      if (allValid) {
+        for (let i = 0; i < anchor.ranges.length; i++) {
+          const part = anchor.ranges[i];
+          ranges.push({
+            key: `${mark.id}-part-${i}`,
+            mark,
+            start: part.start,
+            end: part.end,
+            anchorText: part.text,
+            fullAnchorText: part.text,
+          });
+        }
+      }
+      continue;
+    }
+
+    // Text anchor: legacy text lookup
+    if (anchor.kind === "text") {
       const start = findTextAnchorPosition(
         sentence.text,
-        mark.anchor.anchorText,
-        mark.anchor.occurrence ?? 1,
+        anchor.anchorText,
+        anchor.occurrence ?? 1,
       );
 
       if (start >= 0) {
@@ -142,16 +246,17 @@ function extractMarkRanges(
           key: mark.id,
           mark,
           start,
-          end: start + mark.anchor.anchorText.length,
-          anchorText: mark.anchor.anchorText,
-          fullAnchorText: mark.anchor.anchorText,
+          end: start + anchor.anchorText.length,
+          anchorText: anchor.anchorText,
+          fullAnchorText: anchor.anchorText,
         });
       }
 
       continue;
     }
 
-    mark.anchor.parts.forEach((part, index) => {
+    // Multi-text anchor: legacy text lookup per part
+    anchor.parts.forEach((part, index) => {
       const start = findTextAnchorPosition(
         sentence.text,
         part.anchorText,
@@ -342,6 +447,8 @@ function createAnalysisBlockNode(
     label: entry.label,
     title: entry.title,
     content: entry.content,
+    analysisText: entry.analysisText,
+    chunks: entry.chunks,
     sourceKind: entry.sourceKind,
     supplementId: entry.supplementId,
     deletable: entry.deletable,
@@ -448,6 +555,9 @@ function createParagraphNode(
 export function renderSceneToPlateDocument(
   readerScene: ReaderMockVm,
 ): ReaderPlateDocument {
+  // Clear diagnostics from previous render
+  rangeValidationDiagnostics.length = 0;
+
   const sentenceById = new Map(
     readerScene.article.sentences
       .filter((sentence) => sentence.sentenceId && sentence.paragraphId && sentence.text)

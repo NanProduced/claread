@@ -8,6 +8,12 @@
 - 微信登录、分享、分包、storage、rpx、包体积和 DevTools 行为都属于小程序专属约束。
 - 小程序无法承载的 UI/UX 能力不代表后端或 Web 不能支持。
 
+## Serena
+
+- 需要 Serena 做符号级检索、引用分析或重构时，只激活当前子项目 `claread-miniprogram`。
+- 不要从本目录向上激活仓库根目录为 Serena 项目；跨子项目检索优先用 RTK / shell / git diff。
+- 未经用户明确要求，不写 Serena memory；长期事实应更新正式文档或本 `AGENTS.md`。如果 memory 与代码、测试或正式文档冲突，以后者为准，并删除或覆盖过期 memory。
+
 ## 当前基线
 
 - 主功能应以微信开发者工具人工验证为准。

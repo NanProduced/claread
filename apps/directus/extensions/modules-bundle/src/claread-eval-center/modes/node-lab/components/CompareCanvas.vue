@@ -21,6 +21,16 @@ const { compareResult, compareSentenceRows, state, loading, selectedJudgeRequest
 
 const showInlineJudge = ref(true);
 
+const translationTitleCompare = computed(() => {
+  const baseline = String(compareResult.value?.baseline?.node_output?.title || "").trim();
+  const candidate = String(compareResult.value?.candidate?.node_output?.title || "").trim();
+  return {
+    baseline: baseline || "未返回标题",
+    candidate: candidate || "未返回标题",
+    identical: Boolean(baseline && candidate && baseline === candidate),
+  };
+});
+
 const rubricScoringItems = computed(() => {
   const result = selectedJudgeRequestDetail.value?.result?.rubric_scoring_result;
   if (!result) return { baseline: [], candidate: [] };
@@ -135,6 +145,28 @@ function emptyTextForNode(nodeName) {
     <span>正在运行 Compare，结果加载后将显示逐句对比...</span>
   </div>
   <div v-else-if="compareResult" class="compare-canvas">
+    <section v-if="state.activeNode === 'translation'" class="translation-title-compare" aria-label="Translation title compare">
+      <header class="translation-title-compare__header">
+        <div>
+          <span class="section-kicker">文章总结标题</span>
+          <h4>Baseline / Candidate 标题对比</h4>
+        </div>
+        <span class="badge" :class="translationTitleCompare.identical ? 'badge-success-soft' : 'badge-neutral'">
+          {{ translationTitleCompare.identical ? "一致" : "需对照" }}
+        </span>
+      </header>
+      <div class="translation-title-compare__grid">
+        <div class="translation-title-cell">
+          <span>Baseline</span>
+          <strong :class="{ muted: !compareResult?.baseline?.node_output?.title }">{{ translationTitleCompare.baseline }}</strong>
+        </div>
+        <div class="translation-title-cell">
+          <span>Candidate</span>
+          <strong :class="{ muted: !compareResult?.candidate?.node_output?.title }">{{ translationTitleCompare.candidate }}</strong>
+        </div>
+      </div>
+    </section>
+
     <div
       v-for="row in compareSentenceRows"
       :key="row.sentenceId"
@@ -176,6 +208,7 @@ function emptyTextForNode(nodeName) {
               :node-name="state.activeNode"
               :output="scopedOutputForRow(row.baseline, state.activeNode)"
               :prepared-sentences="scopedPreparedSentences(compareResult?.baseline, row.sentenceId)"
+              :quick-validation="compareResult?.baseline?.quick_validation || null"
               empty-text="该句没有词汇标注。"
             />
           </template>
@@ -262,6 +295,7 @@ function emptyTextForNode(nodeName) {
               :node-name="state.activeNode"
               :output="scopedOutputForRow(row.baseline, state.activeNode)"
               :prepared-sentences="scopedPreparedSentences(compareResult?.baseline, row.sentenceId)"
+              :quick-validation="compareResult?.baseline?.quick_validation || null"
               empty-text="该句在 Baseline 中没有词汇标注。"
             />
             <div v-else class="compare-empty">该句在 Baseline 中没有词汇标注。</div>
@@ -335,6 +369,7 @@ function emptyTextForNode(nodeName) {
               :node-name="state.activeNode"
               :output="scopedOutputForRow(row.candidate, state.activeNode)"
               :prepared-sentences="scopedPreparedSentences(compareResult?.candidate, row.sentenceId)"
+              :quick-validation="compareResult?.candidate?.quick_validation || null"
               empty-text="该句在 Candidate 中没有词汇标注。"
             />
             <div v-else class="compare-empty">该句在 Candidate 中没有词汇标注。</div>
@@ -377,6 +412,70 @@ function emptyTextForNode(nodeName) {
 .compare-canvas {
   display: grid;
   gap: 16px;
+}
+
+.translation-title-compare {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.translation-title-compare__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-subdued);
+}
+
+.translation-title-compare__header h4 {
+  margin: 2px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.section-kicker {
+  color: var(--color-text-subdued);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.translation-title-compare__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.translation-title-cell {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px 16px;
+}
+
+.translation-title-cell + .translation-title-cell {
+  border-left: 1px solid var(--color-border);
+}
+
+.translation-title-cell span {
+  color: var(--color-text-subdued);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.translation-title-cell strong {
+  color: var(--color-text);
+  font-size: 15px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.translation-title-cell strong.muted {
+  color: var(--color-text-subdued);
+  font-weight: 600;
 }
 
 .compare-row {
@@ -588,6 +687,13 @@ function emptyTextForNode(nodeName) {
 @media (max-width: 1200px) {
   .compare-row__body {
     grid-template-columns: 1fr;
+  }
+  .translation-title-compare__grid {
+    grid-template-columns: 1fr;
+  }
+  .translation-title-cell + .translation-title-cell {
+    border-top: 1px solid var(--color-border);
+    border-left: 0;
   }
   .unified-judge-row {
     grid-template-columns: 1fr;

@@ -24,8 +24,17 @@ function parseSseChunk(chunk: string): ReaderAskStreamEnvelopeDto[] {
             data: JSON.parse(data) as Record<string, unknown>,
           },
         ];
-      } catch {
-        return [];
+      } catch (parseError) {
+        return [
+          {
+            event: "error" as ReaderAskStreamEventName,
+            data: {
+              code: "SSE_PARSE_ERROR",
+              detail: `Failed to parse SSE data for event "${event}": ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+              raw_data: data,
+            },
+          },
+        ];
       }
     });
 }
@@ -42,14 +51,15 @@ export async function consumeReaderAskSse(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let parseErrorEncountered = false;
 
   try {
     while (true) {
-      if (signal?.aborted) {
+      if (signal?.aborted || parseErrorEncountered) {
         break;
       }
       const { value, done } = await reader.read();
-      if (done || signal?.aborted) {
+      if (done || signal?.aborted || parseErrorEncountered) {
         break;
       }
       buffer += decoder.decode(value, { stream: true });
@@ -63,10 +73,19 @@ export async function consumeReaderAskSse(
       buffer = buffer.slice(boundary + 2);
       for (const event of parseSseChunk(ready)) {
         onEvent(event);
+        if (
+          event.event === "error" &&
+          (event.data as Record<string, unknown>)?.code === "SSE_PARSE_ERROR"
+        ) {
+          parseErrorEncountered = true;
+          break;
+        }
       }
     }
 
-    if (buffer.trim()) {
+    // Do not process trailing buffer after a parse error — the stream is
+    // considered corrupted and subsequent events cannot be trusted.
+    if (!parseErrorEncountered && buffer.trim()) {
       for (const event of parseSseChunk(buffer)) {
         onEvent(event);
       }

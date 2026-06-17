@@ -31,7 +31,41 @@ export interface MultiTextAnchor {
   parts: SpanRef[]
 }
 
-export type InlineMarkAnchor = TextAnchor | MultiTextAnchor
+export interface RangePart {
+  /** Start offset in UTF-16 code units within the sentence text. */
+  start: number
+  /** End offset in UTF-16 code units within the sentence text (exclusive). */
+  end: number
+  /** Expected text at this range, used for validation. */
+  text: string
+  role?: string
+  sourceQuote?: string
+  resolutionKind?: string
+}
+
+export interface RangeAnchor {
+  kind: 'range'
+  sentenceId: string
+  offsetUnit: 'utf16'
+  start: number
+  end: number
+  text: string
+  sourceQuote?: string
+  resolutionKind?: string
+}
+
+export interface MultiRangeAnchor {
+  kind: 'multi_range'
+  sentenceId: string
+  offsetUnit: 'utf16'
+  ranges: RangePart[]
+}
+
+export type InlineMarkAnchor =
+  | TextAnchor
+  | MultiTextAnchor
+  | RangeAnchor
+  | MultiRangeAnchor
 
 export type RenderType = 'background' | 'underline'
 
@@ -93,7 +127,7 @@ export interface InlineGlossary {
   zh?: string
   gloss?: string
   reason?: string
-  phraseType?: 'collocation' | 'phrasal_verb' | 'idiom' | 'proper_noun' | 'compound'
+  phraseType?: PhraseType
 }
 
 export type AnnotationType =
@@ -106,14 +140,16 @@ export type AnnotationType =
 
 export type VisualTone = 'vocab' | 'phrase' | 'context' | 'grammar' | 'term' | 'logic'
 
-export type PhraseKind =
-  | 'word'
-  | 'phrase'
+export type PhraseType =
   | 'collocation'
   | 'phrasal_verb'
   | 'idiom'
   | 'proper_noun'
   | 'compound'
+
+export type PhraseKind =
+  | 'word'
+  | 'phrase'
 
 export interface InlineMarkModel {
   id: string
@@ -136,6 +172,13 @@ export type SentenceEntryType =
   | 'interpretation_note'
   | 'content_summary'
 
+export interface SentenceEntryChunk {
+  order?: number
+  label: string
+  text: string
+  occurrence?: number | null
+}
+
 export interface SentenceEntryModel {
   id: string
   sentenceId: string
@@ -143,6 +186,8 @@ export interface SentenceEntryModel {
   label: string
   title?: string
   content: string
+  analysisText?: string
+  chunks?: SentenceEntryChunk[]
   sourceKind?: 'workflow' | 'ask_supplement'
   supplementId?: string
   deletable?: boolean

@@ -125,6 +125,34 @@ Eval Center 当前 v1 是 learning-only，所有 eval adapter 入口（article-a
 - 线上 RAG promotion
 - ingestion 状态编排
 
+### LLM Config Control Plane
+
+`LLM Config` 是 Directus 中的 LLM 配置 authoring 控制面，通过 5 个 collection 覆盖 provider / model / profile / preset / ask option 的 CRUD 管理。
+
+它负责：
+
+- LLM 配置的可视化 authoring 与生命周期管理（draft → active → deprecated）
+- 配置 bundle 导出（与 services/api JSON schema 对齐）
+- 导出前校验（与后端 Pydantic schema 规则一致）
+
+它不负责：
+
+- services/api 运行时直接读取（导出 bundle 需手动/脚本复制到 services/api/config/）
+- 运行时模型选择逻辑
+- API key 实际鉴权
+
+5 个 collection：
+
+| Collection | 说明 |
+|------------|------|
+| `llm_providers` | 供应商连接配置（adapter / base_url / api_key_env） |
+| `llm_models` | 远端模型定义（FK → provider，model_name） |
+| `llm_profiles` | 场景级配置（FK → model，model_settings override） |
+| `llm_presets` | route→profile 映射集合（可选继承 base_preset） |
+| `llm_ask_options` | Ask Claread 用户可选模型档位 |
+
+数据流：Directus authoring → `export-llm-config-bundle.mjs` → JSON bundle → `services/api/config/`
+
 ## Example Lab / Grammar RAG 当前契约
 
 ### Authoring 真源
@@ -206,6 +234,7 @@ Directus / Claread Console 负责：
 |----|--------|------|
 | 业务层 | 无前缀 | 现有业务表（`analysis_records` 等），Directus 默认只读 |
 | 控制层 | `eval_*` / `eval_node_lab_*` / `eval_workflow_*` | Eval Center 控制面表，Directus 可读写 |
+| 配置层 | `llm_*` | LLM Config 控制面表，Directus 可读写 |
 | 系统层 | `directus_*` | Directus 系统表，不手动干预 |
 
 ### 能力边界矩阵

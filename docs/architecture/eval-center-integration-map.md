@@ -83,12 +83,32 @@ academic graph 在后端主 workflow `/analyze` 中继续保留，服务主产�
 
 约束：`type` 固定 `sentence_analysis`；`label` 非空；`analysis_zh` 非空；`chunks` 可为空数组，若存在则每项必须有 int `order`、string `label`、string `text`。
 
+### phrase_gloss
+
+```json
+{
+  "type": "phrase_gloss",
+  "text": "turn ... into",
+  "spans": [{ "text": "turn" }, { "text": "into" }],
+  "phrase_type": "phrasal_verb",
+  "zh": "把……变成……"
+}
+```
+
+约束：
+
+- `type` 固定 `phrase_gloss`
+- `text` 是短语标题 / `lookup_text` / 教学短语名，不再要求它本身必须是原文连续子串
+- `spans` 是前端原文高亮证据；推荐提供 1-4 个 span。连续短语通常 1 个 span，不连续短语通常 2-4 个 spans
+- 若存在 `spans`，则每项必须有 string `text`，且 `span.text` 必须逐字复制原句中的连续真实片段
+- `phrase_type`、`zh` 为必填
+
 ### 校验位置
 
 | 校验层 | 文件 | 校验内容 |
 |--------|------|----------|
 | Directus hook | `apps/directus/extensions/hooks-bundle/src/index.js` | `validateFragmentShape()` — type 匹配、必填字段、spans/chunks 元素结构 |
-| API schema | `services/api/app/eval_adapter/schemas.py` | `_validate_output_fragment_structure` — 同上，拒绝未知 type |
+| API schema | `services/api/app/eval_adapter/schemas.py` | `_validate_output_fragment_structure` — grammar example 结构校验，拒绝未知 type |
 | 审计脚本 | `services/api/scripts/audit_grammar_examples.py` | example_type ↔ fragment.type 一致性、必填字段、label 同步 |
 
 ## 3. retrieval_text 格式

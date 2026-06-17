@@ -276,9 +276,15 @@ export function VocabularyClient({
     window.history.replaceState(null, "", url.toString());
   }, [selectedId]);
 
+  // Initialize isDesktop from the current media query (adjust state during render)
+  const [mqInitialized, setMqInitialized] = useState(false);
+  if (!mqInitialized && typeof window !== "undefined") {
+    setMqInitialized(true);
+    setIsDesktop(window.matchMedia("(min-width: 1024px)").matches);
+  }
+
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1024px)");
-    setIsDesktop(mq.matches);
     const handler = (e: MediaQueryListEvent) => {
       setIsDesktop(e.matches);
     };

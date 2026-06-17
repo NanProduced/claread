@@ -14,14 +14,16 @@ from app.eval_adapter.schemas import (
     WorkflowIdentity,
 )
 from app.eval_adapter.shared import (
+    build_llm_config_snapshot,
+    build_llm_config_snapshot_safe,
+    rag_override,
+    trace_scope,
+)
+from app.eval_adapter.shared import (
     model_identity as build_model_identity,
 )
 from app.eval_adapter.shared import (
     prompt_identity as build_prompt_identity,
-)
-from app.eval_adapter.shared import (
-    rag_override,
-    trace_scope,
 )
 from app.eval_adapter.shared import (
     request_id as build_request_id,
@@ -35,9 +37,14 @@ from app.observability import SURFACE_EVAL_WORKFLOW_LAB, set_trace_surface
 from app.schemas.analysis import AnalyzeRequest
 from app.services.analysis.debug_snapshots import (
     build_academic_quality,
+    build_annotation_stats_summary,
+    build_canonical_drop_log_entries,
+    build_drop_log_entries,
     build_drop_log_summary,
+    build_node_timings_summary,
     build_normalize_summary,
     build_preprocess_summary,
+    build_repair_stats_summary,
     build_runtime_summary,
     build_trace_refs,
     resolve_workflow_identity,
@@ -116,6 +123,7 @@ def _failure_result(
     error: BaseException,
     latency_ms: int,
     model_identity: ModelIdentity | None = None,
+    llm_config_snapshot: dict[str, Any] | None = None,
 ) -> ArticleAnalysisEvalResult:
     topology_mode = _topology_mode(request)
     return ArticleAnalysisEvalResult(
@@ -133,6 +141,7 @@ def _failure_result(
         ),
         prompt_identity=build_prompt_identity(request, prompt_version=get_prompt_version()),
         model_identity=model_identity,
+        llm_config_snapshot=llm_config_snapshot,
         runtime_summary={"latency_ms": latency_ms},
         trace_refs=build_trace_refs(request_id=request_id),
     )
@@ -147,21 +156,32 @@ async def run_article_analysis_eval(
     model_identity: ModelIdentity | None = None
 
     try:
+        # Execution entry guard: the model must be buildable, not just
+        # resolvable, because we are about to actually call the LLM.
         validate_model_selection(
             get_settings(),
             model_selection,
             (MODEL_ROUTE_ANNOTATION_GENERATION,),
+            buildable=True,
         )
         model_identity = build_model_identity(model_selection, settings=get_settings())
     except ModelSelectionError as exc:
         latency_ms = int((perf_counter() - started_at) * 1000)
+        _snap = build_llm_config_snapshot_safe(
+            model_selection, settings=get_settings(),
+        )
         return _failure_result(
             request,
             request_id=request_id,
             status="failed",
             error=exc,
             latency_ms=latency_ms,
+            llm_config_snapshot=_snap.model_dump(mode="json") if _snap else None,
         )
+
+    _llm_snapshot = build_llm_config_snapshot(
+        model_selection, settings=get_settings(),
+    )
 
     payload = AnalyzeRequest(
         text=request.text,
@@ -181,10 +201,14 @@ async def run_article_analysis_eval(
             trace_scope(request),
         ):
             if request.timeout_seconds is None:
-                result = await run_article_analysis_with_state(payload)
+                result = await run_article_analysis_with_state(
+                    payload, repair_enabled=request.repair_enabled,
+                )
             else:
                 result = await asyncio.wait_for(
-                    run_article_analysis_with_state(payload),
+                    run_article_analysis_with_state(
+                        payload, repair_enabled=request.repair_enabled,
+                    ),
                     timeout=request.timeout_seconds,
                 )
     except TimeoutError as exc:
@@ -196,6 +220,9 @@ async def run_article_analysis_eval(
             error=exc,
             latency_ms=latency_ms,
             model_identity=model_identity,
+            llm_config_snapshot=(
+                _llm_snapshot.model_dump(mode="json") if _llm_snapshot else None
+            ),
         )
     except Exception as exc:
         latency_ms = int((perf_counter() - started_at) * 1000)
@@ -206,11 +233,20 @@ async def run_article_analysis_eval(
             error=exc,
             latency_ms=latency_ms,
             model_identity=model_identity,
+            llm_config_snapshot=(
+                _llm_snapshot.model_dump(mode="json") if _llm_snapshot else None
+            ),
         )
 
     latency_ms = int((perf_counter() - started_at) * 1000)
     render_scene = result.get("render_scene")
     topology_mode = _topology_mode(request)
+
+    # Enrich snapshot with observed usage from runtime_summary
+    _runtime = _runtime_summary(result, latency_ms=latency_ms)
+    if _llm_snapshot:
+        from app.eval_adapter.shared import enrich_structured_output_runtime
+        enrich_structured_output_runtime(_llm_snapshot, _runtime)
 
     return ArticleAnalysisEvalResult(
         status="succeeded",
@@ -223,9 +259,15 @@ async def run_article_analysis_eval(
         preprocess_summary=build_preprocess_summary(request.text, result),
         normalize_summary=build_normalize_summary(result),
         drop_log_summary=build_drop_log_summary(result),
-        runtime_summary=_runtime_summary(result, latency_ms=latency_ms),
+        runtime_summary=_runtime,
         academic_quality=build_academic_quality(result),
         rag_debug=result.get("rag_debug"),
         trace_refs=build_trace_refs(request_id=request_id),
         warnings=_warnings(result),
+        node_timings=build_node_timings_summary(result),
+        annotation_stats=build_annotation_stats_summary(result),
+        repair_stats=build_repair_stats_summary(result),
+        drop_log=build_drop_log_entries(result),
+        canonical_drop_log=build_canonical_drop_log_entries(result),
+        llm_config_snapshot=_llm_snapshot.model_dump(mode="json") if _llm_snapshot else None,
     )

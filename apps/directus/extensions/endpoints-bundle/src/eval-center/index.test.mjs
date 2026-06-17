@@ -57,6 +57,7 @@ import {
   dispatchNodeLabJudgeWorker,
   findDuplicateRunHistoryTrial,
   recoverStaleDirectusAsyncJudgeRequests,
+  registerNodeLabRoutes,
   updateSessionAggregate,
 } from "./node-lab.js";
 
@@ -213,6 +214,62 @@ function createNodeLabJudgeRequestsDb(initialRows) {
         for (const row of rows) {
           if (!matches(row, state)) continue;
           Object.assign(row, patch);
+          count += 1;
+        }
+        return Promise.resolve(count);
+      },
+    };
+    return builder;
+  }
+
+  database.rows = rows;
+  return database;
+}
+
+function createNodeLabCandidateDraftsDb(initialRows) {
+  const rows = initialRows.map((row) => ({ ...row }));
+
+  function database(tableName) {
+    assert.equal(tableName, "eval_node_lab_candidate_drafts");
+    const state = { where: {}, orderBy: null, limit: null };
+    const apply = () => {
+      let result = rows.filter((row) => matches(row, state));
+      if (state.orderBy) {
+        const { field, direction } = state.orderBy;
+        result = result.slice().sort((left, right) => {
+          const compare = String(left[field] || "").localeCompare(String(right[field] || ""));
+          return direction === "desc" ? -compare : compare;
+        });
+      }
+      if (typeof state.limit === "number") {
+        result = result.slice(0, state.limit);
+      }
+      return result;
+    };
+    const builder = {
+      where(criteria) {
+        Object.assign(state.where, criteria);
+        return builder;
+      },
+      orderBy(field, direction = "asc") {
+        state.orderBy = { field, direction };
+        return builder;
+      },
+      limit(value) {
+        state.limit = value;
+        return builder;
+      },
+      first() {
+        return Promise.resolve(apply()[0] || null);
+      },
+      select() {
+        return Promise.resolve(apply());
+      },
+      del() {
+        let count = 0;
+        for (let i = rows.length - 1; i >= 0; i -= 1) {
+          if (!matches(rows[i], state)) continue;
+          rows.splice(i, 1);
           count += 1;
         }
         return Promise.resolve(count);
@@ -418,6 +475,30 @@ function createResponseProbe() {
   };
 }
 
+function createRouterProbe() {
+  const routes = {
+    get: new Map(),
+    post: new Map(),
+    patch: new Map(),
+    delete: new Map(),
+  };
+  return {
+    routes,
+    get(path, handler) {
+      routes.get.set(path, handler);
+    },
+    post(path, handler) {
+      routes.post.set(path, handler);
+    },
+    patch(path, handler) {
+      routes.patch.set(path, handler);
+    },
+    delete(path, handler) {
+      routes.delete.set(path, handler);
+    },
+  };
+}
+
 function workflowCaseArtifact({
   runId,
   caseId = "case-1",
@@ -588,6 +669,101 @@ test("workflow rename patch routes keep the Directus admin auth guard", () => {
     /router\.patch\("\/workflow-lab\/run-history\/single-run\/:runId",\s*async\s*\(req,\s*res,\s*next\)\s*=>\s*\{\s*if\s*\(!buildAuthGuard\(req,\s*res\)\)\s*return;/,
     "workflow single-run rename route must enforce buildAuthGuard",
   );
+});
+
+test("node-lab candidate delete route removes a saved candidate draft", async () => {
+  const database = createNodeLabCandidateDraftsDb([
+    {
+      candidate_id: "cand-1",
+      node_name: "grammar",
+      label: "Grammar candidate",
+      description: "to delete",
+      source_kind: "baseline_clone",
+      edit_mode: "structured",
+      status: "draft",
+      instruction_layer_json: JSON.stringify({ text: "candidate instructions" }),
+      policy_layer_json: JSON.stringify({ lines: ["policy"] }),
+      few_shot_layer_json: JSON.stringify({ few_shot_mode: "baseline", examples: [] }),
+      model_layer_json: JSON.stringify({ model_profile: null }),
+      normalized_manifest_json: JSON.stringify({ node_name: "grammar" }),
+      draft_hash: "hash-1",
+      notes: "note",
+      tags_json: JSON.stringify([]),
+      date_created: "2026-06-10T00:00:00.000Z",
+      date_updated: "2026-06-10T00:00:00.000Z",
+    },
+  ]);
+  const router = createRouterProbe();
+  registerNodeLabRoutes(
+    router,
+    { env: {}, database },
+    {
+      buildAuthGuard,
+      clampLimit: () => 50,
+      joinUrl: (...parts) => parts.join(""),
+      parseUpstreamError: (error) => error,
+      readEnv: () => "",
+      resolveEvalsRoot: () => "",
+      resolveNodeLabArtifactsRoot: () => "",
+      resolveRequestTimeoutMs: () => 1000,
+      isSafeFileId,
+    },
+  );
+
+  const handler = router.routes.delete.get("/node-lab/candidates/:candidateId");
+  assert.equal(typeof handler, "function");
+
+  const res = createResponseProbe();
+  await handler(
+    {
+      accountability: { user: "00000000-0000-0000-0000-000000000001", admin: true },
+      params: { candidateId: "cand-1" },
+    },
+    res,
+    (error) => {
+      throw error;
+    },
+  );
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload?.data?.candidate_id, "cand-1");
+  assert.equal(database.rows.length, 0);
+});
+
+test("node-lab candidate delete route returns 404 for a missing draft", async () => {
+  const database = createNodeLabCandidateDraftsDb([]);
+  const router = createRouterProbe();
+  registerNodeLabRoutes(
+    router,
+    { env: {}, database },
+    {
+      buildAuthGuard,
+      clampLimit: () => 50,
+      joinUrl: (...parts) => parts.join(""),
+      parseUpstreamError: (error) => error,
+      readEnv: () => "",
+      resolveEvalsRoot: () => "",
+      resolveNodeLabArtifactsRoot: () => "",
+      resolveRequestTimeoutMs: () => 1000,
+      isSafeFileId,
+    },
+  );
+
+  const handler = router.routes.delete.get("/node-lab/candidates/:candidateId");
+  const res = createResponseProbe();
+  await handler(
+    {
+      accountability: { user: "00000000-0000-0000-0000-000000000001", admin: true },
+      params: { candidateId: "missing-candidate" },
+    },
+    res,
+    (error) => {
+      throw error;
+    },
+  );
+
+  assert.equal(res.statusCode, 404);
+  assert.equal(res.payload?.errors?.[0]?.extensions?.code, "NODE_LAB_CANDIDATE_NOT_FOUND");
 });
 
 test("isSafeFileId rejects traversal-looking values", () => {

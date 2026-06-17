@@ -124,11 +124,17 @@ class SentenceTranslation(BaseModel):
 
 
 class SpanRef(BaseModel):
-    """语法锚点片段。"""
+    """需要绑定到原句的连续证据片段。"""
 
     model_config = BASE_MODEL_CONFIG
 
-    text: str = Field(min_length=1, description="对应句子中的精确子串")
+    text: str = Field(
+        min_length=1,
+        description=(
+            "原句中的精确连续可见子串，用作原文证据文本。"
+            "必须对应原句中的真实文本；禁止使用省略号或改写后的概括性文本。"
+        ),
+    )
     occurrence: int | None = Field(
         default=None, ge=1, description="同一句中该文本第几次出现"
     )
@@ -155,7 +161,11 @@ class VocabHighlight(BaseModel):
     sentence_id: str = Field(description="句子ID")
     text: str = Field(
         min_length=1,
-        description="原文中的单个英文词。不能含空格；多词表达请使用 PhraseGloss 或 ContextGloss。",
+        description=(
+            "用于前端原文高亮的单个英文词锚点。最终必须能落成对应句子中的单个原文词形；"
+            "不能含空格，不得改成词典原形或其他非原句 surface form。"
+            "多词表达请使用 PhraseGloss 或 ContextGloss。"
+        ),
     )
     occurrence: int | None = Field(default=None, ge=1, description="同一句中该文本第几次出现")
 
@@ -177,13 +187,34 @@ class PhraseGloss(BaseModel):
     text: str = Field(
         min_length=1,
         description=(
-            "需要整体解释的原文表达。默认应为多词表达；若为单个词，只允许在需要整体解释的专有名词"
-            "或紧密复合词场景下出现。"
+            "短语卡片标题 / lookup_text / 教学短语名。用于前端短语卡片标题与查询词，"
+            "不是 phrase_gloss.spans 存在时的页面锚点主字段。可以写成原句中的连续短语，"
+            "也可以写成 turn ... into、refer to ... as 这类教学短语名。默认应为多词表达；"
+            "若为单个词，只允许在需要整体解释的专有名词或紧密复合词场景下出现。"
         ),
     )
-    occurrence: int | None = Field(default=None, ge=1, description="同一句中该文本第几次出现")
+    spans: list[SpanRef] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=4,
+        description=(
+            "用于前端原文高亮的证据 spans。"
+            "默认应提供：连续短语可提供 1 个 span；不连续短语可提供 2-4 个 span。"
+            "每个 span.text 都必须是原句中的连续真实子串，不得使用 ... 或概括性改写。"
+            "提供 spans 时，前端锚点只以 spans 为准。"
+        ),
+    )
+    occurrence: int | None = Field(
+        default=None,
+        ge=1,
+        description="仅当未提供 spans 时使用，表示 text 在同一句中的第几次出现",
+    )
     phrase_type: Literal["collocation", "phrasal_verb", "idiom", "proper_noun", "compound"] = Field(
-        description="短语类型。proper_noun 仅用于确实需要整体说明的专名。"
+        description=(
+            "短语类型。collocation 为默认的常见搭配；phrasal_verb 用于以动词为核心的整体动作短语；"
+            "idiom 仅用于明显非字面或高度固定的惯用表达；proper_noun 仅用于正式命名的专名；"
+            "compound 用于稳定的多词概念名词、术语或类别名称。"
+        )
     )
     zh: str = Field(min_length=1, description="中文释义")
 
@@ -193,6 +224,14 @@ class PhraseGloss(BaseModel):
             raise ValueError("Single-token PhraseGloss is only allowed for proper_noun or compound")
         if self.phrase_type == "proper_noun" and is_likely_basic_english_word(self.text):
             raise ValueError("proper_noun PhraseGloss must not use a basic English word")
+        if self.spans is not None:
+            if not 1 <= len(self.spans) <= 4:
+                raise ValueError("PhraseGloss.spans must contain 1 to 4 spans when provided")
+            if any("..." in span.text for span in self.spans):
+                raise ValueError(
+                    "PhraseGloss.spans must use exact "
+                    "continuous substrings, not ellipsis"
+                )
         return self
 
 
@@ -206,8 +245,25 @@ class ContextGloss(BaseModel):
     text: str = Field(
         min_length=1,
         description=(
-            "原文中的词或表达。用于词典义不足以解释当前语境的情况；若只是固定搭配整体义，优先使用"
-            " PhraseGloss。"
+            "用于前端原文绑定的语境证据表达。可以直接写原句中的连续真实子串，也可以写成"
+            "可恢复为同一句内多段原文的示意性框架（如 refer to ... as、prompt sb to do sth）。"
+            "不要改写成脱离原句的词典原形或概括性 paraphrase。用于词典义不足以解释当前语境的情况；"
+            "若只是固定搭配整体义，优先使用 PhraseGloss。"
+        ),
+    )
+    display: str | None = Field(
+        default=None,
+        description=(
+            "展示文本（来自 Draft 层 display 字段）。"
+            "当 display 与 text 不同时，前端展示用 display，"
+            "原文绑定用 text。"
+        ),
+    )
+    spans: list[SpanRef] | None = Field(
+        default=None,
+        description=(
+            "原文锚点 spans（来自 Draft 层 anchor_quotes 转换）。"
+            "提供 spans 时，前端锚点以 spans 为准（同 PhraseGloss）。"
         ),
     )
     occurrence: int | None = Field(default=None, ge=1, description="同一句中该文本第几次出现")
@@ -222,7 +278,13 @@ class GrammarNote(BaseModel):
 
     type: Literal["grammar_note"] = "grammar_note"
     sentence_id: str = Field(description="句子ID")
-    spans: list[SpanRef] = Field(min_length=1, max_length=4, description="语法锚点片段")
+    spans: list[SpanRef] = Field(
+        min_length=1,
+        max_length=4,
+        description=(
+            "1-4 个原文证据锚点列表，连续结构通常使用 1 个 span。"
+        ),
+    )
     label: str = Field(min_length=1, description="语法点名称")
     note_zh: str = Field(min_length=1, description="中文说明")
 

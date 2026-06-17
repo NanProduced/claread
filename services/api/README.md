@@ -74,10 +74,16 @@ uv run mypy app
 - `ALIYUN_DYPNSAPI_SIGN_NAME`
 - `ALIYUN_DYPNSAPI_LOGIN_TEMPLATE_CODE`（赠送登录/注册模板默认 `100001`）
 - `ALIYUN_DYPNSAPI_*` 或本地已有的 `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET`
+- `DEFAULT_MODEL_PROFILE` / `ANNOTATION_MODEL_PROFILE` / `ASK_CLAREAD_PROFILE`
+- `READER_ASK_REPLAN_MODEL_PROFILE`
+- `RAG_EMBEDDING_MODEL_PROFILE` / `RAG_RERANK_MODEL_PROFILE`
 - `MODEL_PROFILES_JSON`
+- `MODEL_PRESETS_JSON`
+- `READER_ASK_MODEL_OPTIONS_JSON`
+- `DASHSCOPE_API_KEY` / `DEEPSEEK_API_KEY` / `MINIMAX_API_KEY` / `MOONSHOT_API_KEY`
 - `LANGSMITH_*`
 - `ZILLIZ_*`
-- `BAILIAN_*`
+- `BAILIAN_*`（仅作为 embedding/rerank 的 deprecated fallback）
 
 ## 数据库
 
@@ -90,6 +96,12 @@ infra/migrations/
 ```
 
 当前数据库基线是 pre-release squashed `0001_initial_schema.sql`。
+
+如果本地库早于最新 `0001` 启动，新增字段需要手动补齐；例如 Ask Claread 线程模型选择字段：
+
+```sql
+ALTER TABLE reader_ask_threads ADD COLUMN IF NOT EXISTS selected_model_key TEXT;
+```
 
 词典表是高成本数据资产，保护和恢复策略见 `services/api/docs/database.md`。
 

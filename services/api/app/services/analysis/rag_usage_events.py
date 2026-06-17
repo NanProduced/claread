@@ -16,6 +16,12 @@ from app.services.ai_usage import (
     record_ai_usage_event,
 )
 
+# Mapping from capability code to the corresponding ModelRoute constant name.
+_CAPABILITY_TO_ROUTE: dict[str, str] = {
+    CAPABILITY_RAG_EMBEDDING: "rag_embedding",
+    CAPABILITY_RAG_RERANK: "rag_rerank",
+}
+
 logger = logging.getLogger(__name__)
 
 _RAG_EVENT_DEFINITIONS = {
@@ -133,6 +139,38 @@ def _aggregate_event_payload(
     }
 
 
+def _resolve_registry_fields(capability_code: str) -> dict[str, str | None]:
+    """Resolve model_route / model_profile / model_provider from the registry.
+
+    Returns a dict with keys model_route, model_profile, model_provider.
+    Falls back to None values if the registry has no route default for this
+    capability, so the audit event is still recorded (just without registry
+    metadata).
+    """
+    from app.config.settings import get_settings
+    from app.llm.routes import ModelRoute
+    from app.llm.router import resolve_model_config
+
+    route_name = _CAPABILITY_TO_ROUTE.get(capability_code)
+    if not route_name:
+        return {"model_route": None, "model_profile": None, "model_provider": None}
+
+    try:
+        route: ModelRoute = route_name  # type: ignore[assignment]
+        settings = get_settings()
+        config = resolve_model_config(settings, route)
+        if config is not None:
+            return {
+                "model_route": route_name,
+                "model_profile": config.profile_name,
+                "model_provider": config.provider,
+            }
+    except Exception:
+        logger.debug("Registry resolution failed for %s, using defaults", capability_code, exc_info=True)
+
+    return {"model_route": route_name, "model_profile": None, "model_provider": None}
+
+
 async def record_rag_usage_events_from_result(
     *,
     result: Mapping[str, Any] | None,
@@ -157,6 +195,8 @@ async def record_rag_usage_events_from_result(
         if payload is None:
             continue
 
+        registry_fields = _resolve_registry_fields(capability_code)
+
         try:
             await record_ai_usage_event(
                 AIUsageEventCreate(
@@ -172,7 +212,9 @@ async def record_rag_usage_events_from_result(
                     workflow_version=workflow_version,
                     schema_version=schema_version,
                     prompt_version=prompt_version,
-                    model_provider="bailian",
+                    model_route=registry_fields["model_route"],
+                    model_profile=registry_fields["model_profile"],
+                    model_provider=registry_fields["model_provider"],
                     model_name=payload["model_name"],
                     usage_data=payload["usage_data"],
                     latency_ms=payload["latency_ms"],

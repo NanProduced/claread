@@ -20,20 +20,18 @@ import {
   Globe,
   Sparkles,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 
 import type { ReaderRecordVm } from "@/adapters/records.adapter";
+import type { AiWorkspacePanelProps } from "@/components/reader/AiWorkspacePanel";
+import { ReaderContextPanel } from "@/components/reader/ReaderContextPanel";
+import { ReaderGlobalFeedbackPrompt } from "@/components/reader/ReaderGlobalFeedbackPrompt";
+import { ReaderNotePanel } from "@/components/reader/ReaderNotePanel";
+import { SelectionToolbar } from "@/components/reader/SelectionToolbar";
+import { ReaderDictionaryRail, ReaderQuickPeek } from "@/components/reader/dictionary";
+import { useReaderFloatingLayer } from "@/components/reader/ReaderFloatingLayer";
 import {
-  AiWorkspacePanel,
-  ReaderContextPanel,
-  ReaderDictionaryRail,
-  ReaderGlobalFeedbackPrompt,
-  ImmersiveReaderSurface,
-  IntensiveReaderSurface,
-  ReaderNotePanel,
-  ReaderQuickPeek,
-  ReaderSettingsPanel,
-  SelectionToolbar,
   defaultReaderSettings,
   modeShowsTranslation,
   modeVisibility,
@@ -42,9 +40,11 @@ import {
   readerModeTypography,
   readerThemeClassName,
   type ReaderSettingsState,
-  textRangeAnchorAttributes,
-  useReaderFloatingLayer,
-} from "@/components/reader";
+} from "@/components/reader/settings";
+import { ReaderSettingsPanel } from "@/components/reader/settings/ReaderSettingsPanel";
+import { textRangeAnchorAttributes } from "@/components/reader/reader-anchors";
+import { ImmersiveReaderSurface } from "@/components/reader/plate/ImmersiveReaderSurface";
+import { IntensiveReaderSurface } from "@/components/reader/plate/IntensiveReaderSurface";
 import { useAppearance } from "@/components/providers/appearance-provider";
 import {
   buildWebPreferencesFromLocal,
@@ -160,6 +160,14 @@ import { cn } from "@/lib/cn";
 import { FavoriteButton } from "./FavoriteButton";
 import { FeedbackSheet, FEEDBACK_CONFIG_BY_SCOPE } from "@/components/reader/FeedbackSheet";
 import type { FeedbackScopeDto, FeedbackSentimentDto, FeedbackTypeDto } from "@/types/api/feedback";
+
+const AiWorkspacePanel = dynamic<AiWorkspacePanelProps>(
+  () => import("@/components/reader/AiWorkspacePanel").then((module) => module.AiWorkspacePanel),
+  {
+    ssr: false,
+    loading: () => null,
+  },
+);
 
 type ReaderDataSource = "upstream-render-scene" | "upstream-source-text";
 
@@ -662,9 +670,7 @@ export function ReaderWorkbench({
   const [notePanelOpen, setNotePanelOpen] = useState(false);
   const [hoveredAnnotationTargetKey, setHoveredAnnotationTargetKey] = useState<string | null>(null);
   const [activeAnnotationTargetKey, setActiveAnnotationTargetKey] = useState<string | null>(null);
-  const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(() =>
-    readStoredReaderSettings(),
-  );
+  const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(defaultReaderSettings);
   const [immersiveHeaderHidden, setImmersiveHeaderHidden] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
@@ -672,7 +678,7 @@ export function ReaderWorkbench({
   const [composerTextareaFocused, setComposerTextareaFocused] = useState(false);
   const [pendingAskQuickAction, setPendingAskQuickAction] = useState<{
     content: string;
-    entryAction: "ask_about_this" | "explain_this" | "why_here" | "lookup_in_context" | "compare_translation";
+    entryAction: "ask_about_this" | "explain_this" | "why_here" | "lookup_in_context";
     attachments: ReaderAskAttachment[];
   } | null>(null);
   const [dictionaryPinned, setDictionaryPinned] = useState(false);
@@ -761,6 +767,15 @@ export function ReaderWorkbench({
   });
 
   useEffect(() => {
+    queueMicrotask(() => {
+      const storedSettings = readStoredReaderSettings();
+      skipNextReaderSettingsSyncRef.current = true;
+      setReaderSettings(storedSettings);
+      readerSettingsHydratedRef.current = true;
+    });
+  }, []);
+
+  useEffect(() => {
     if (!readerSettingsHydratedRef.current || !webPreferencesSyncReady) {
       return;
     }
@@ -782,12 +797,8 @@ export function ReaderWorkbench({
   }, [readerSettings, webPreferencesSyncReady]);
 
   useEffect(() => {
-    readerSettingsHydratedRef.current = true;
-  }, []);
-
-  useEffect(() => {
     if (isWebPreferencesSyncReady()) {
-      setWebPreferencesSyncReady(true);
+      queueMicrotask(() => setWebPreferencesSyncReady(true));
       return;
     }
 
@@ -1649,13 +1660,11 @@ export function ReaderWorkbench({
     articleObserver.observe(articleElement);
     readingColumnObserver.observe(readingColumnElement);
     window.addEventListener("resize", updateDictionaryDockLayout);
-    const intervalId = window.setInterval(updateDictionaryDockLayout, 250);
 
     return () => {
       articleObserver.disconnect();
       readingColumnObserver.disconnect();
       window.removeEventListener("resize", updateDictionaryDockLayout);
-      window.clearInterval(intervalId);
     };
   }, [dictionaryPanelVisible]);
 
@@ -3315,7 +3324,7 @@ export function ReaderWorkbench({
     openAskWithAttachments([
       askAttachmentFromTranslation(pageIdentity, sentence, translationZh, {
         sourceSurface: "translation",
-        entryAction: "compare_translation",
+        entryAction: "ask_about_this",
       }),
     ]);
   }
@@ -3981,6 +3990,7 @@ export function ReaderWorkbench({
                   selectionFocusRangesBySentence={selectionFocusRangesBySentence}
                   contextFocusRangesBySentence={contextFocusRangesBySentence}
                   hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
+                  activeInlineMarkKey={activeInspect?.markId ?? null}
                   assetProjection={assetProjection}
                   readerNotesBySentence={readerNotesBySentence}
                   onAnnotationJump={jumpToAnnotation}
@@ -4013,6 +4023,7 @@ export function ReaderWorkbench({
                   selectionFocusRangesBySentence={selectionFocusRangesBySentence}
                   contextFocusRangesBySentence={contextFocusRangesBySentence}
                   hoveredAnnotationTargetKey={hoveredAnnotationTargetKey}
+                  activeInlineMarkKey={activeInspect?.markId ?? null}
                   assetProjection={assetProjection}
                   readerNotesBySentence={readerNotesBySentence}
                   activeReaderNoteId={activeReaderNoteId}
@@ -4268,7 +4279,7 @@ export function ReaderWorkbench({
                 annotationType: inspect.annotationType,
                 clientSurface: "reader",
                 entryPoint: "dictionary_inspect_feedback",
-                contextSummary: inspect.label ?? inspect.anchorText ?? inspect.lookupText ?? "标注反馈",
+                contextSummary: inspect.label ?? inspect.lookupText ?? inspect.anchorText ?? "标注反馈",
                 contextJson: {
                   mark_id: inspect.markId,
                   annotation_type: inspect.annotationType,
@@ -4358,7 +4369,7 @@ export function ReaderWorkbench({
                 annotationType: inspect.annotationType,
                 clientSurface: "reader",
                 entryPoint: "dictionary_inspect_feedback",
-                contextSummary: inspect.label ?? inspect.anchorText ?? inspect.lookupText ?? "标注反馈",
+                contextSummary: inspect.label ?? inspect.lookupText ?? inspect.anchorText ?? "标注反馈",
                 contextJson: {
                   mark_id: inspect.markId,
                   annotation_type: inspect.annotationType,
@@ -4484,7 +4495,6 @@ export function ReaderWorkbench({
           onClearAttachments={clearAskAttachments}
           onAppendAttachments={appendAskAttachments}
           onJumpToAttachment={jumpToAskAttachment}
-          onJumpToCitation={jumpToAskCitation}
           onActionExecuted={handleAskActionExecuted}
           onSupplementDeleted={deleteAnalysisSupplement}
           onPendingQuickActionConsumed={() => setPendingAskQuickAction(null)}

@@ -75,6 +75,7 @@ export function createNodeLabState() {
     run: false,
     compare: false,
     saveCandidate: false,
+    deleteCandidate: false,
     saveJudgeConfig: false,
     saveRunHistory: false,
     queueJudge: false,
@@ -270,9 +271,7 @@ export function createNodeLabState() {
       Object.assign(state.readingVariantByNode, saved?.readingVariantByNode || {});
       Object.assign(state.candidateDraftsByNode, saved?.candidateDraftsByNode || {});
       Object.assign(state.judgeDraftsByNode, saved?.judgeDraftsByNode || {});
-      Object.assign(state.singleRunResultsByNode, saved?.singleRunResultsByNode || {});
       Object.assign(state.singleRunUiStateByNode, saved?.singleRunUiStateByNode || {});
-      Object.assign(state.compareResultsByNode, saved?.compareResultsByNode || {});
       Object.assign(state.compareUiStateByNode, saved?.compareUiStateByNode || {});
       Object.assign(state.selectedSessionIdByNode, saved?.selectedSessionIdByNode || {});
       Object.assign(state.latestPersistedCompareTrialByNode, saved?.latestPersistedCompareTrialByNode || {});
@@ -304,9 +303,7 @@ export function createNodeLabState() {
       readingVariantByNode: state.readingVariantByNode,
       candidateDraftsByNode: state.candidateDraftsByNode,
       judgeDraftsByNode: state.judgeDraftsByNode,
-      singleRunResultsByNode: state.singleRunResultsByNode,
       singleRunUiStateByNode: state.singleRunUiStateByNode,
-      compareResultsByNode: state.compareResultsByNode,
       compareUiStateByNode: state.compareUiStateByNode,
       selectedSessionIdByNode: state.selectedSessionIdByNode,
       selectedTrialIdBySession: state.selectedTrialIdBySession,
@@ -335,8 +332,13 @@ export function createNodeLabState() {
     if (typeof window === "undefined") return;
     if (persistTimer) window.clearTimeout(persistTimer);
     persistTimer = window.setTimeout(() => {
-      window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(persistedStatePayload()));
-      persistTimer = null;
+      try {
+        window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(persistedStatePayload()));
+      } catch {
+        // Best-effort UI restore only. Large compare payloads must not break Node Lab rendering.
+      } finally {
+        persistTimer = null;
+      }
     }, 300);
   }
 

@@ -54,6 +54,7 @@ async def test_upsert_debug_snapshot_preserves_created_at_and_updates_updated_at
     sql = execute.await_args.args[0]
     assert "updated_at = EXCLUDED.updated_at" in sql
     assert "created_at = EXCLUDED.created_at" not in sql
+    assert "canonical_drop_log_json" in sql
     assert "few_shot_debug_json" not in sql
 
 
