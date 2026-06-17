@@ -13,9 +13,8 @@ from app.schemas.reader_ask import ReaderAskAnchorRef, ReaderAskCitation
 from app.services.reader_ask.agent_invocation import (
     ReaderAskStreamCompleted,
     ReaderAskStreamSseEvent,
-    build_reader_ask_planner_model_route,
-    build_reader_ask_replan_model_route,
     build_reader_ask_replan_event,
+    build_reader_ask_replan_model_route,
     resolve_reader_ask_agent,
     run_reader_ask_replan,
     stream_reader_ask_agent_run,
@@ -525,29 +524,9 @@ class TestBuildReaderAskReplanEvent:
         assert result is None
 
 
-class TestBuildReaderAskPlannerModelRoute:
-    """build_reader_ask_planner_model_route delegates to build_model_for_route."""
-
-    @patch("app.services.reader_ask.agent_invocation.build_model_for_route")
-    @patch("app.services.reader_ask.agent_invocation.get_settings")
-    def test_uses_planner_route(
-        self,
-        mock_settings: MagicMock,
-        mock_build: MagicMock,
-    ) -> None:
-        """Delegates to build_model_for_route with MODEL_ROUTE_READER_ASK_PLANNER."""
-        from app.llm.routes import MODEL_ROUTE_READER_ASK_PLANNER
-
-        fake_model = MagicMock()
-        fake_config = MagicMock()
-        mock_build.return_value = (fake_model, fake_config)
-
-        result = build_reader_ask_planner_model_route()
-
-        mock_build.assert_called_once_with(
-            mock_settings.return_value, MODEL_ROUTE_READER_ASK_PLANNER, None
-        )
-        assert result == (fake_model, fake_config)
+# Round 16: ``TestBuildReaderAskPlannerModelRoute`` has been removed along
+# with the deleted ``build_reader_ask_planner_model_route`` facade. The
+# planner model route is no longer resolved at runtime.
 
 
 class TestBuildReaderAskReplanModelRoute:

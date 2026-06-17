@@ -677,6 +677,11 @@ class ReaderAskSelectedModel(BaseModel):
     label: str
     description: str | None = None
     model_name: str | None = None
+    # Round 16: ``planner_model_name`` is deprecated. The live agent-loop-first
+    # path no longer resolves or invokes a planner LLM. The field is retained
+    # for backward-compatible API/DTO serialization (frontend may still
+    # consume it) and for model-options chain integrity, but it must not be
+    # interpreted as evidence of an active planner LLM route.
     planner_model_name: str | None = None
     replan_model_name: str | None = None
     price_multiplier: float = 1.0

@@ -3424,7 +3424,7 @@ def test_runtime_budget_kwargs_uses_resolved_option_budget() -> None:
             prompt_buffer_tokens=900,
         ),
         main_model_name="glm-5.1",
-        planner_model_name="qwen3.6-plus",
+        planner_model_name=None,
         replan_model_name="glm-5.1",
         is_default=True,
     )

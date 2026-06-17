@@ -13,11 +13,13 @@
 
 当前 Ask Claread 已冻结为：
 
-`article-rooted, planner-first, turn-run-backed, write-confirmed`
+`article-rooted, agent-loop-first, turn-run-backed, write-confirmed`
 
 的 Reader 内阅读助手。
 
 它的核心目标不是做泛聊天，而是围绕当前文章、显式附件和受控跨文章扩展来回答问题、产出证据，并处理可确认写入动作。
+
+`agent-loop-first` 表示主回答 agent 直接消费最小 payload（overview、anchors、attachments、history），并按需调用 read tools 解析上下文，而不是先经过独立的 semantic planner LLM 预解析。`planner_first` 仅作为历史 trace value 保留，没有任何 live condition 触发它。
 
 ## 当前运行分层
 
@@ -41,18 +43,17 @@ Ask Claread 当前采用四层真相源：
 
 1. 读取请求与线程状态
 2. 解析 attachments / anchors / page identity
-3. 构建 planner input（user message / history / attachments / normalized anchors / backend affordances）
-4. 调用 semantic planner，产出结构化 `planner_decision`
-5. 基于 planner 决定调用 reference resolver / structured asset lookup
-6. materialize current / external record / external asset contexts
-7. 若为 `selection_toolbar` 触发的快捷分析操作，先执行结构化句法生成
-8. 构建 answer runtime input contract
-9. 生成回答或生成 disambiguation output
-10. post-process 为 `user_visible_output`
-11. 写入 `turn_run.user_visible_output_json`
-12. 更新 assistant message 的最小兼容状态指针
+3. `resolve_planner_route(...)` 始终返回 `"agent_loop_first"`；`planner_first` 仅作为 trace value 保留
+4. 基于 attachments / anchors 构造 minimal context plan 与 minimal trace summary，不调用任何 planner LLM
+5. 若为 `selection_toolbar` 触发的快捷分析操作，先执行结构化句法生成
+6. 构建 answer runtime input contract（包含 overview、anchors、attachments、history、agent-loop hints）
+7. 主回答 agent 按需调用 read tools（`get_record_context` / `resolve_known_reference` / `get_record_insights` / `get_user_vocabulary_book` 等）解析上下文
+8. 生成回答或生成 disambiguation output
+9. post-process 为 `user_visible_output`
+10. 写入 `turn_run.user_visible_output_json`
+11. 更新 assistant message 的最小兼容状态指针
 
-其中第 7 步的快捷分析路径具有固定约束：
+其中第 5 步的快捷分析路径具有固定约束：
 
 - `entry_action in {"why_here", "explain_this"}`
 - 且主 attachment `metadata.source_surface == "selection_toolbar"`
@@ -66,28 +67,16 @@ Ask Claread 当前采用四层真相源：
 
 ### Planner
 
-`planner.py` 当前统一产出 `ReaderAskPlanningSnapshot`。当前字段为：
+`planner.py` 当前保留为 agent-loop runtime 复用的 pure helper 集合，不再调用任何 planner LLM。当前仍提供的 helper 包括：
 
-- `resolved_intent`
-- `planner_decision`
-- `planner_validation_status`
-- `reference_needs`
-- `retrieval_needs`
-- `resolved_references`
-- `structured_asset_needs`
-- `structured_asset_resolution`
-- `working_set`
-- `context_plan`
-- `trace_summary`
-- `disambiguation_state`
-- `external_asset_disambiguation_state`
-- `clarification_only`
+- `MinimalPlanningSnapshot` / `build_minimal_context_plan` / `build_minimal_trace_summary`
+- attachment id parser
+- context plan / trace summary 构造
+- resolved context helper
 
-其中职责边界为：
+`ReaderAskPlanningSnapshot` 作为 typed dataclass 仍保留，用于 trace 与 eval 观测，但 `planner_decision` / `planner_validation_status` / `reference_needs` / `retrieval_needs` / `resolved_references` / `structured_asset_needs` / `structured_asset_resolution` / `working_set` / `disambiguation_state` / `external_asset_disambiguation_state` / `clarification_only` 等字段在 agent-loop-first 路径下不再由独立 planner LLM 产出，而是由主回答 agent 在 tool loop 内按需解析。
 
-- semantic planner model 负责产出 `planner_decision`
-- `planner.py` 负责把 planner decision、resolver 输出和 working set 合成为 typed planning snapshot
-- planner 负责决定“用什么上下文”，不负责直接生成最终回答
+`resolve_planner_route(...)` 始终返回 `"agent_loop_first"`；`"planner_first"` 仅作为 `PlannerRoute` Literal 与 trace value 保留，没有任何 live condition 触发它。
 
 ### Resolver
 
@@ -171,13 +160,12 @@ Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` �
 
 ### Facade / Invocation Wiring
 
-`service.py` 当前仍是 Ask Claread 的入口编排层，但不再直接构造 agent deps、planner deps、reader-ask model route 或 agent stream lifecycle。
+`service.py` 当前仍是 Ask Claread 的入口编排层，但不再直接构造 agent deps、reader-ask model route 或 agent stream lifecycle。
 
 稳定 wiring 边界为：
 
 - `agent_deps_factory.py` 是 `ReaderAskAgentDeps` 的唯一 service 路径构造入口，并统一注入 `tool_availability`。
-- `agent_invocation.py` 负责 reader-ask agent/model resolution、non-streaming replan 调用、agent stream lifecycle facade、replan event facade，以及 planner model route callback。
-- `planning_deps_factory.py` 负责构造 `ResolvePlanningDeps` / `RunPlannerDeps`，固定接线 resolver、structured asset resolver、supplements listing 与 planner model route callback。
+- `agent_invocation.py` 负责 reader-ask agent/model resolution、non-streaming replan 调用、agent stream lifecycle facade 与 replan event facade。`reader_ask_planner` model route 已在 Round 16 彻底移除，不再有 planner model route callback。
 - `ReaderAskAgentDeps.event_queue` 是 stream-wide event bus，类型语义为 `Queue[tuple[str, dict[str, Any]]]`；`ToolEventName` 只约束 tool runtime 内部 `_emit_tool_event(...)` 的 `tool.started / tool.completed / tool.failed`。
 
 `service.py` 不应重新直接调用：
@@ -187,7 +175,6 @@ Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` �
 - `get_reader_ask_agent()` / `build_reader_ask_prompt(...)`
 - reader-ask route 常量或 `build_model_for_route(...)`
 - `agent_runner_svc` 的 stream lifecycle 函数
-- `ResolvePlanningDeps(...)` / `RunPlannerDeps(...)`
 
 ### Output Contract
 
@@ -258,7 +245,7 @@ Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` �
 - stable record insights
 - dictionary context
 
-这些内容是否进入运行，由 planner 决定。
+这些内容是否进入运行，由主回答 agent 在 tool loop 内按需决定。
 
 ### Article Overview / Overview Hint
 
@@ -275,7 +262,7 @@ Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` �
 
 - learning overview 通过异步、best-effort 的轻量 `overview hint` 生成
 - overview hint 允许返回 `unavailable`，表示文本过碎、过短或缺乏篇章逻辑
-- Ask planner / answer agent 只把它当弱线索，用于 record 判别和 article-level 首轮理解
+- Ask answer agent 只把它当弱线索，用于 record 判别和 article-level 首轮理解
 - 需要更高覆盖度时，仍应主动拉 `record_context`、`source_excerpt` 或 external context
 
 ### 跨文章上下文
@@ -431,11 +418,11 @@ Reader 标注体系完成重构后，Ask Claread 已不再依赖“用户学习�
 
 后续若继续扩展跨文章能力，应优先评估：
 
-- planner 的 history expansion 条件
+- agent-loop runtime 的 history expansion 条件
 - resolver 的 future structured lookup 扩展点
 - agent tools 中是否需要新增受控的跨文章引用入口
 
-Ask Claread 短期保持 bounded reader-agent harness：semantic planner -> bounded context/runtime preparation -> answer agent with controlled tools -> stream/checkpoint/recovery。后续若评估受限 multi-step reader loop，必须先限定最大 step 数、稳定每步 tool observation、接入 eval trace，并保证 UI 只表达用户能理解的处理状态。
+Ask Claread 当前已是 agent-loop-first harness：主回答 agent 直接消费 minimal payload，按需调用 controlled read tools 解析上下文，再生成回答并 stream/checkpoint/recovery。后续若评估受限 multi-step reader loop，必须先限定最大 step 数、稳定每步 tool observation、接入 eval trace，并保证 UI 只表达用户能理解的处理状态。下一轮重构方向（single agent loop / multi-step reader loop）见 `docs/development/mainline.md`。
 
 ### 当前 Attachment 类型与 Anchor 类型
 

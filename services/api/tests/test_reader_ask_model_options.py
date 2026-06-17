@@ -50,16 +50,13 @@ def test_list_reader_ask_model_options_resolves_stage_model_names(monkeypatch) -
     settings = Settings(
         annotation_model_profile="annotation",
         ask_claread_profile="ask-default",
-        reader_ask_planner_model_profile="planner-default",
         reader_ask_replan_model_profile="replan-default",
         model_profiles_json=_catalog(
             {
                 "annotation": "annotation-model",
                 "ask-default": "ask-default-model",
-                "planner-default": "planner-default-model",
                 "replan-default": "replan-default-model",
                 "ask-pro": "glm-5.1",
-                "planner-pro": "qwen3.6-plus-2026-04-02",
                 "replan-pro": "glm-5.1",
             }
         ),
@@ -83,7 +80,6 @@ def test_list_reader_ask_model_options_resolves_stage_model_names(monkeypatch) -
                         "selection": {
                             "routes": {
                                 "reader_ask": {"profile": "ask-pro"},
-                                "reader_ask_planner": {"profile": "planner-pro"},
                                 "reader_ask_replan": {"profile": "replan-pro"},
                             }
                         },
@@ -102,7 +98,8 @@ def test_list_reader_ask_model_options_resolves_stage_model_names(monkeypatch) -
     assert default_key == "glm-fast"
     assert len(items) == 1
     assert items[0].main_model_name == "glm-5.1"
-    assert items[0].planner_model_name == "qwen3.6-plus-2026-04-02"
+    # Round 16: planner LLM route removed; planner_model_name is always None.
+    assert items[0].planner_model_name is None
     assert items[0].replan_model_name == "glm-5.1"
     assert items[0].billing.reserved_points == 12
     assert items[0].billing.price_multiplier == 1.5
@@ -117,13 +114,11 @@ def test_resolve_reader_ask_model_option_falls_back_for_stale_thread_key(monkeyp
     settings = Settings(
         annotation_model_profile="annotation",
         ask_claread_profile="ask-default",
-        reader_ask_planner_model_profile="planner-default",
         reader_ask_replan_model_profile="replan-default",
         model_profiles_json=_catalog(
             {
                 "annotation": "annotation-model",
                 "ask-default": "ask-default-model",
-                "planner-default": "planner-default-model",
                 "replan-default": "replan-default-model",
             }
         ),
@@ -141,20 +136,17 @@ def test_resolve_reader_ask_model_option_falls_back_for_stale_thread_key(monkeyp
     assert option.requested_key == "missing-key"
     assert option.main_model_name == "ask-default-model"
 
-
 def test_resolve_reader_ask_model_option_rejects_invalid_explicit_key(monkeypatch) -> None:
     monkeypatch.setattr(model_options_svc, "build_model_instance", lambda config: object())
 
     settings = Settings(
         annotation_model_profile="annotation",
         ask_claread_profile="ask-default",
-        reader_ask_planner_model_profile="planner-default",
         reader_ask_replan_model_profile="replan-default",
         model_profiles_json=_catalog(
             {
                 "annotation": "annotation-model",
                 "ask-default": "ask-default-model",
-                "planner-default": "planner-default-model",
                 "replan-default": "replan-default-model",
             }
         ),
@@ -171,7 +163,6 @@ def test_build_reader_ask_model_catalog_rejects_unbuildable_enabled_option(
     settings = Settings(
         annotation_model_profile="annotation",
         ask_claread_profile="ask-default",
-        reader_ask_planner_model_profile="planner-default",
         reader_ask_replan_model_profile="replan-default",
         model_profiles_json=json.dumps(
             {
@@ -195,10 +186,6 @@ def test_build_reader_ask_model_catalog_rejects_unbuildable_enabled_option(
                         "provider": "dashscope-native",
                         "model_name": "qwen3.7-max",
                     },
-                    "planner-model": {
-                        "provider": "compat-provider",
-                        "model_name": "qwen3.6-plus-2026-04-02",
-                    },
                     "replan-model": {
                         "provider": "dashscope-native",
                         "model_name": "qwen3.7-max",
@@ -207,10 +194,8 @@ def test_build_reader_ask_model_catalog_rejects_unbuildable_enabled_option(
                 "profiles": {
                     "annotation": {"model": "annotation-model"},
                     "ask-default": {"model": "ask-model"},
-                    "planner-default": {"model": "planner-model"},
                     "replan-default": {"model": "replan-model"},
                     "ask-native": {"model": "ask-model"},
-                    "planner-compat": {"model": "planner-model"},
                     "replan-native": {"model": "replan-model"},
                 },
             }
@@ -224,7 +209,6 @@ def test_build_reader_ask_model_catalog_rejects_unbuildable_enabled_option(
                         "selection": {
                             "routes": {
                                 "reader_ask": {"profile": "ask-native"},
-                                "reader_ask_planner": {"profile": "planner-compat"},
                                 "reader_ask_replan": {"profile": "replan-native"},
                             }
                         },
@@ -253,13 +237,11 @@ def test_fallback_option_must_be_buildable_when_no_enabled_options_exist(
     settings = Settings(
         annotation_model_profile="annotation",
         ask_claread_profile="ask-default",
-        reader_ask_planner_model_profile="planner-default",
         reader_ask_replan_model_profile="replan-default",
         model_profiles_json=_catalog(
             {
                 "annotation": "annotation-model",
                 "ask-default": "ask-default-model",
-                "planner-default": "planner-default-model",
                 "replan-default": "replan-default-model",
             }
         ),

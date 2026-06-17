@@ -117,11 +117,10 @@ Claread 后端当前使用三层模型配置：
   "options": {
     "glm-standard": {
       "label": "GLM-5.1",
-      "description": "默认档位：主回答与 replan 使用 GLM-5.1，planner 固定走 Qwen 3.6 Plus。",
+      "description": "默认档位：主回答与 replan 使用 GLM-5.1。",
       "selection": {
         "routes": {
           "reader_ask": { "profile": "ask-main-glm51" },
-          "reader_ask_planner": { "profile": "ask-planner-qwen36-plus" },
           "reader_ask_replan": { "profile": "ask-replan-glm51" }
         }
       },
@@ -147,7 +146,6 @@ Claread 后端当前使用三层模型配置：
 DEFAULT_MODEL_PROFILE=workflow-qwen36-plus
 ANNOTATION_MODEL_PROFILE=workflow-qwen36-plus
 ASK_CLAREAD_PROFILE=ask-main-glm51
-READER_ASK_PLANNER_MODEL_PROFILE=ask-planner-qwen36-plus
 READER_ASK_REPLAN_MODEL_PROFILE=ask-replan-glm51
 MODEL_PROFILES_JSON=config/model-profiles.json
 MODEL_PRESETS_JSON=config/model-presets.json

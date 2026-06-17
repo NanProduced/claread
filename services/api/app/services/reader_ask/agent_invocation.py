@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from functools import partial
 from typing import Any
 
 from pydantic_ai import Agent
@@ -25,7 +24,6 @@ from app.llm.call_guard import assert_real_llm_allowed
 from app.llm.router import build_model_for_route
 from app.llm.routes import (
     MODEL_ROUTE_READER_ASK,
-    MODEL_ROUTE_READER_ASK_PLANNER,
     MODEL_ROUTE_READER_ASK_REPLAN,
 )
 from app.llm.types import ModelSelection, ResolvedModelConfig, RunModelSettings
@@ -200,22 +198,15 @@ def build_reader_ask_replan_event(
 
 
 # ---------------------------------------------------------------------------
-# Planner model route callback facade
+# Replan model route facade
 # ---------------------------------------------------------------------------
-
-def build_reader_ask_planner_model_route(
-    model_selection: ModelSelection | None = None,
-) -> tuple[Any, ResolvedModelConfig | None]:
-    """Return the model and config for the READER_ASK_PLANNER route.
-
-    Thin wrapper so service.py does not need to import
-    ``build_model_for_route`` / ``MODEL_ROUTE_READER_ASK_PLANNER`` directly.
-    """
-    return build_model_for_route(
-        get_settings(),
-        MODEL_ROUTE_READER_ASK_PLANNER,
-        model_selection,
-    )
+# Round 16: the planner model route facade
+# (``build_reader_ask_planner_model_route`` /
+# ``make_reader_ask_planner_model_route_cb``) has been removed. The live
+# agent-loop-first path no longer resolves a planner model; the only
+# callers were the deleted semantic planner execution path. The replan
+# model route facade below is retained because the agent-loop repair
+# path still resolves a replan model.
 
 
 def build_reader_ask_replan_model_route(
@@ -226,9 +217,3 @@ def build_reader_ask_replan_model_route(
         MODEL_ROUTE_READER_ASK_REPLAN,
         model_selection,
     )
-
-
-def make_reader_ask_planner_model_route_cb(
-    model_selection: ModelSelection | None = None,
-) -> Callable[[], tuple[Any, ResolvedModelConfig | None]]:
-    return partial(build_reader_ask_planner_model_route, model_selection)

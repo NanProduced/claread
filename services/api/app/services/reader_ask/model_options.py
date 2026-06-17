@@ -12,7 +12,6 @@ from app.llm.provider_factory import ModelProviderError, build_model_instance
 from app.llm.router import ModelSelectionError, resolve_model_config, validate_model_selection
 from app.llm.routes import (
     MODEL_ROUTE_READER_ASK,
-    MODEL_ROUTE_READER_ASK_PLANNER,
     MODEL_ROUTE_READER_ASK_REPLAN,
 )
 from app.llm.types import ModelSelection, ResolvedModelConfig
@@ -22,9 +21,14 @@ from app.services.ai_usage.billing import (
 )
 from app.services.reader_ask import config as cfg
 
+# Round 16: ``MODEL_ROUTE_READER_ASK_PLANNER`` has been removed from
+# ``_ASK_MODEL_ROUTES``. The live agent-loop-first path no longer resolves
+# or invokes a planner LLM. ``planner_model_name`` is still emitted in the
+# resolved option (always ``None``) for backward-compatible DTO
+# serialization, but no route resolution or buildability check is performed
+# for a planner route.
 _ASK_MODEL_ROUTES = (
     MODEL_ROUTE_READER_ASK,
-    MODEL_ROUTE_READER_ASK_PLANNER,
     MODEL_ROUTE_READER_ASK_REPLAN,
 )
 
@@ -74,6 +78,9 @@ class ResolvedReaderAskModelOption:
     billing: WeightedTokensBillingConfig
     runtime_budget: ReaderAskRuntimeBudgetConfig
     main_model_name: str | None
+    # Round 16: ``planner_model_name`` is deprecated. Retained for
+    # backward-compatible model-options serialization; the live path no
+    # longer resolves or invokes a planner LLM.
     planner_model_name: str | None
     replan_model_name: str | None
     is_default: bool
@@ -174,7 +181,6 @@ def _build_catalog_cached(
     annotation_model_profile: str,
     dict_ai_model_profile: str,
     ask_claread_profile: str,
-    reader_ask_planner_model_profile: str,
     reader_ask_replan_model_profile: str,
     daily_annotation_model_profile: str,
     daily_analysis_model_profile: str,
@@ -188,7 +194,6 @@ def _build_catalog_cached(
         annotation_model_profile=annotation_model_profile,
         dict_ai_model_profile=dict_ai_model_profile,
         ask_claread_profile=ask_claread_profile,
-        reader_ask_planner_model_profile=reader_ask_planner_model_profile,
         reader_ask_replan_model_profile=reader_ask_replan_model_profile,
         daily_annotation_model_profile=daily_annotation_model_profile,
         daily_analysis_model_profile=daily_analysis_model_profile,
@@ -208,7 +213,6 @@ def build_reader_ask_model_catalog(settings: Settings) -> ReaderAskModelCatalogC
         annotation_model_profile=settings.annotation_model_profile,
         dict_ai_model_profile=settings.dict_ai_model_profile,
         ask_claread_profile=settings.ask_claread_profile,
-        reader_ask_planner_model_profile=settings.reader_ask_planner_model_profile,
         reader_ask_replan_model_profile=settings.reader_ask_replan_model_profile,
         daily_annotation_model_profile=settings.daily_annotation_model_profile,
         daily_analysis_model_profile=settings.daily_analysis_model_profile,
@@ -260,7 +264,8 @@ def _resolve_option(
         billing=billing,
         runtime_budget=runtime_budget,
         main_model_name=_resolved_model_name(settings, MODEL_ROUTE_READER_ASK, option.selection),
-        planner_model_name=_resolved_model_name(settings, MODEL_ROUTE_READER_ASK_PLANNER, option.selection),
+        # Round 16: planner LLM route removed; planner_model_name is always None.
+        planner_model_name=None,
         replan_model_name=_resolved_model_name(settings, MODEL_ROUTE_READER_ASK_REPLAN, option.selection),
         is_default=is_default,
         used_fallback=used_fallback,
@@ -270,7 +275,8 @@ def _resolve_option(
 
 def _fallback_default_option(settings: Settings) -> ResolvedReaderAskModelOption:
     main_model_name = _resolved_model_name(settings, MODEL_ROUTE_READER_ASK, None)
-    planner_model_name = _resolved_model_name(settings, MODEL_ROUTE_READER_ASK_PLANNER, None)
+    # Round 16: planner LLM route removed; planner_model_name is always None.
+    planner_model_name = None
     replan_model_name = _resolved_model_name(settings, MODEL_ROUTE_READER_ASK_REPLAN, None)
     label = main_model_name or "Default Ask model"
     return ResolvedReaderAskModelOption(

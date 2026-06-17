@@ -210,7 +210,6 @@ dev/staging/prod 由构建环境注入。
 | Route | 推荐 profile 类型 | 推荐 adapter | 建议 thinking | 备注 |
 |-------|-------------------|-------------|--------------|------|
 | `reader_ask` | ask-main-* | dashscope_native | 开启 | 主回答走原生，支持可见 reasoning |
-| `reader_ask_planner` | ask-planner-* | openai_compatible | 关闭 | planner 先固定 compat |
 | `reader_ask_replan` | ask-replan-* | dashscope_native | 开启 | replan 走原生 |
 | `annotation_generation` | workflow-* | openai_compatible | 关闭 | 结构化输出，compat 已验证 |
 | `dict_ai` | workflow-* | openai_compatible | 关闭 | 词典 AI |

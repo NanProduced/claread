@@ -15,7 +15,7 @@
 
 Ask Claread 是 Reader 内、围绕当前文章工作的阅读助手。它的当前定位是：
 
-`article-rooted, attachment-first, planner-driven, write-confirmed`
+`article-rooted, attachment-first, agent-loop-first, write-confirmed`
 
 它不是：
 
@@ -271,7 +271,7 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 ### 冻结为当前事实的部分
 
 - attachment-first Ask contract
-- planner-first runtime
+- agent-loop-first runtime（`planner_first` 仅作为历史 trace value 保留）
 - `conversation / turn_run / user_visible_output / eval_trace`
 - record-level 与 asset-level HITP
 - current run hydration 优先于 legacy metadata fallback

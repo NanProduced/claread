@@ -18,7 +18,6 @@ from app.llm.provider_factory import (
 from app.llm.router import resolve_model_config
 from app.llm.routes import (
     MODEL_ROUTE_READER_ASK,
-    MODEL_ROUTE_READER_ASK_PLANNER,
 )
 from app.llm.types import (
     ModelProviderConfig,
@@ -97,7 +96,6 @@ def _native_settings(api_key: str = "k") -> Settings:
                         "selection": {
                             "routes": {
                                 "reader_ask": {"profile": "ask-main-qwen37-max-native"},
-                                "reader_ask_planner": {"profile": "ask-planner-qwen36-plus"},
                                 "reader_ask_replan": {"profile": "ask-replan-qwen37-max-native"},
                             }
                         },
@@ -108,7 +106,6 @@ def _native_settings(api_key: str = "k") -> Settings:
                         "selection": {
                             "routes": {
                                 "reader_ask": {"profile": "ask-main-glm51-native"},
-                                "reader_ask_planner": {"profile": "ask-planner-qwen36-plus"},
                                 "reader_ask_replan": {"profile": "ask-replan-glm51-native"},
                             }
                         },
@@ -206,16 +203,9 @@ def test_resolve_ask_replan_routes_to_native_adapter() -> None:
     assert model.function is not None
 
 
-def test_resolve_ask_planner_stays_compat() -> None:
-    settings = _native_settings()
-    config = resolve_model_config(
-        settings,
-        MODEL_ROUTE_READER_ASK_PLANNER,
-        ModelSelection(default_profile="ask-planner-qwen36-plus"),
-    )
-    assert config is not None
-    assert config.adapter == "openai_compatible"
-    assert config.model_name == "qwen3.6-plus-2026-04-02"
+# Round 16: ``test_resolve_ask_planner_stays_compat`` has been removed along
+# with the deleted ``MODEL_ROUTE_READER_ASK_PLANNER`` route. The live
+# agent-loop-first path no longer resolves a planner LLM.
 
 
 def test_resolve_ask_glm_standard_routes_to_native_adapter() -> None:
