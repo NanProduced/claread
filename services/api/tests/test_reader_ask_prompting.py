@@ -187,3 +187,38 @@ def test_prompt_does_not_mention_reserved_tool_names() -> None:
             f"reader_ask prompt references reserved tool '{name}'; "
             "reserved tools must never appear in the prompt."
         )
+
+
+def test_reader_ask_prompt_documents_repair_hint_rule() -> None:
+    """Round 14: the prompt must contain a high-priority repair rule so
+    the model knows to obey ``repair_hint`` when the payload signals a
+    degenerate-answer repair retry.
+
+    Without this rule, the model sees the ``repair_hint`` JSON field but
+    has no system-prompt instruction to prioritize it — repair effectiveness
+    is unstable. The rule must:
+    - mention ``repair_hint`` and ``previous_answer_degenerate``
+    - require a direct re-answer (not a restatement of the failure)
+    - forbid empty / refusal / "insufficient info" output (unless context
+      is genuinely empty)
+    - place the rule above the tool-usage section so it has high priority
+    """
+    prompt = load_agent_instructions("reader_ask")
+
+    assert "repair_hint" in prompt
+    assert "previous_answer_degenerate" in prompt
+    # High-priority placement: the repair rule must appear BEFORE the
+    # tool-usage section (工具使用原则).
+    repair_idx = prompt.index("repair_hint")
+    tool_section_idx = prompt.index("工具使用原则")
+    assert repair_idx < tool_section_idx, (
+        "repair_hint rule must appear before the tool-usage section so it "
+        "has high priority"
+    )
+    # Must forbid empty/refusal/insufficient-info on repair.
+    assert "不输出空内容" in prompt or "不输出空" in prompt
+    assert "不拒答" in prompt
+    # Must require direct re-answer, not restating the failure.
+    assert "不复述失败原因" in prompt
+    # Must obey repair_hint.instruction with highest priority.
+    assert "repair_hint.instruction" in prompt

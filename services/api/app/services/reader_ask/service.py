@@ -27,6 +27,7 @@ from app.services.reader_ask.agent_invocation import (
     run_reader_ask_replan,
     stream_reader_ask_agent_run,
 )
+from app.services.reader_ask.agent_runner import is_degenerate_answer
 from app.services.reader_ask.planning_deps_factory import (
     build_reader_ask_resolve_planning_deps,
 )
@@ -1932,7 +1933,182 @@ def _metrics_json(
         base["follow_up_suggestions_count"] = len(runtime_state.latest_suggestions)
         base["action_proposals_count"] = len(runtime_state.action_requests)
 
+        # Round 14: agent-loop repair telemetry
+        base["repair_attempted"] = runtime_state.repair_attempted
+        base["repair_reason"] = runtime_state.repair_reason
+        base["repair_succeeded"] = runtime_state.repair_succeeded
+        base["repair_route"] = runtime_state.repair_route
+
     return base
+
+
+# ---------------------------------------------------------------------------
+# Round 14 — agent-loop repair helper
+# ---------------------------------------------------------------------------
+
+
+async def _run_agent_loop_repair(
+    *,
+    user_id: UUID,
+    record: Any,
+    body: Any,
+    attachments: list[ReaderAskAttachment],
+    resolved_anchors: list[ReaderAskAnchorRef],
+    history_messages: list[dict[str, Any]],
+    thread: dict[str, Any],
+    runtime_state: ReaderAskRuntimeState,
+    primary_anchor: ReaderAskAnchorRef | None,
+    submission_mode: str,
+    resolved_intent: str,
+    resolved_context_input: dict[str, Any],
+    reference_resolution: Any,
+    disambiguation: Any,
+    external_asset_disambiguation: Any,
+    trace_summary: Any,
+    context_plan: Any,
+    run_info: dict[str, Any] | None,
+    route_settings: RunModelSettings,
+    model_selection: Any,
+    runtime_budget_kwargs: dict[str, Any],
+    event_queue: asyncio.Queue,
+    query_seed: str,
+    get_record_context_cb: Any,
+    get_record_insights_cb: Any,
+    get_user_vocabulary_book_cb: Any,
+    resolve_known_reference_cb: Any,
+    load_explicit_attachment_context_cb: Any,
+    generate_sentence_annotation_cb: Any,
+    suggest_prompts_cb: Any,
+    degenerate_content_md: str,
+) -> tuple[str, ReaderAskRuntimeState]:
+    """Run a single agent-loop repair attempt and return the repaired content.
+
+    Round 14: when the agent_loop_first path produces a degenerate answer,
+    this helper re-runs the same answer agent with a repair hint injected
+    into the prompt payload. The repair reuses the canonical context /
+    runtime state / history — it does NOT call resolve_semantic_planning.
+
+    Returns a tuple of (repaired content_md, repair_runtime_state). The
+    content may still be degenerate if repair failed; the caller decides
+    whether to use it. The repair_runtime_state carries any citations /
+    tool_trace / suggestions produced during the repair run — the caller
+    MUST merge it into the canonical runtime_state when adopting repair
+    content, otherwise the completed payload will carry stale evidence
+    from the degenerate run.
+    """
+    repair_runtime_state = deepcopy(runtime_state)
+    # Reset degenerate flags on the repair state so the repair run is not
+    # itself flagged as degenerate before it produces output.
+    repair_runtime_state.degenerate_detected = False
+    repair_runtime_state.degenerate_reason = None
+
+    # Reuse the same payload construction as the main answer, then inject
+    # the repair hint so the agent knows the previous attempt failed.
+    repair_payload = runtime_contract_svc.build_prompt_payload(
+        runtime_contract_svc.ReaderAskAnswerRuntimeInput(
+            thread=thread,
+            record=record,
+            user_message=body.content,
+            history_messages=history_messages,
+            page_identity=body.page_identity,
+            attachments=attachments,
+            anchors=resolved_anchors,
+            resolved_intent=resolved_intent,
+            resolved_intent_label=_TASK_MODE_LABELS[resolved_intent],
+            entry_action=body.entry_action,
+            submission_mode=submission_mode,
+            cross_record_context_allowed=runtime_state.cross_record_context_allowed,
+            resolved_context_input=resolved_context_input,
+            quick_action_annotation=None,
+            reference_resolution=reference_resolution,
+            planning_snapshot=None,
+            followup_hint=runtime_state.deictic_clarification_hint,
+            cross_record_intent_hint=runtime_state.cross_record_intent_hint,
+            external_attachment_hint=runtime_state.external_attachment_hint,
+            dictionary_anchor_hint=runtime_state.dictionary_anchor_hint,
+            long_history_hint=runtime_state.long_history_hint,
+            max_history_messages=cfg.MAX_HISTORY_MESSAGES,
+            max_message_text=cfg.MAX_MESSAGE_TEXT,
+        )
+    )
+    repair_payload["repair_hint"] = {
+        "previous_answer_degenerate": True,
+        "previous_answer_preview": degenerate_content_md[:200],
+        "instruction": (
+            "Your previous answer was empty, a refusal, or otherwise degenerate. "
+            "Using the context already provided, produce a direct, substantive answer. "
+            "Do not refuse or claim lack of information unless the context is genuinely empty."
+        ),
+    }
+
+    # Prepare (compress) the payload using the same budget as the main run.
+    repair_payload, repair_max_output, _repair_compaction_audit, _repair_context_too_large = prompt_preparation_svc.prepare_prompt_payload(
+        repair_payload,
+        max_input_tokens=runtime_budget_kwargs["max_input_tokens"],
+        budget_buffer_tokens=runtime_budget_kwargs["prompt_buffer_tokens"],
+        default_max_output_tokens=route_settings.max_tokens or runtime_budget_kwargs["max_output_tokens"],
+        min_max_output_tokens=cfg.MIN_MAX_OUTPUT_TOKENS,
+    )
+    if _repair_context_too_large:
+        raise recovery_svc.ReplanContextTooLargeError()
+
+    repair_deps = build_reader_ask_agent_deps(
+        payload=repair_payload,
+        event_queue=event_queue,
+        state=repair_runtime_state,
+        query_seed=query_seed,
+        task_mode=resolved_intent,
+        entry_action=body.entry_action,
+        record_id=str(record.record_id),
+        record_title=record.title,
+        primary_anchor=primary_anchor,
+        get_record_context_fn=get_record_context_cb,
+        get_record_insights_fn=get_record_insights_cb,
+        get_user_vocabulary_book_fn=get_user_vocabulary_book_cb,
+        resolve_known_reference_fn=resolve_known_reference_cb,
+        load_explicit_attachment_context_fn=load_explicit_attachment_context_cb,
+        allowed_external_attachments=_build_allowed_external_attachments(attachments),
+        generate_sentence_annotation_fn=generate_sentence_annotation_cb,
+        suggest_prompts_fn=suggest_prompts_cb,
+        vocabulary_item_to_citation_fn=_vocabulary_item_to_citation,
+    )
+
+    repair_content = await run_reader_ask_replan(
+        replan_deps=repair_deps,
+        replan_max_output=repair_max_output,
+        route_settings=route_settings,
+        model_selection=model_selection,
+    )
+    return repair_content, repair_runtime_state
+
+
+def _merge_repair_runtime_state(
+    target: ReaderAskRuntimeState,
+    repair: ReaderAskRuntimeState,
+) -> None:
+    """Merge evidence-producing fields from repair state into target state.
+
+    Round 14: when a repair attempt succeeds, the citations / tool_trace /
+    suggestions / action_requests produced during the repair run must
+    replace the stale evidence from the degenerate run. Routing telemetry
+    fields (planner_route_used, repair_*, degenerate_*) on ``target`` are
+    preserved — only evidence fields are merged.
+    """
+    target.citations = repair.citations
+    target.tool_trace = repair.tool_trace
+    target.action_requests = repair.action_requests
+    target.source_labels = repair.source_labels
+    target.used_cross_record_context = repair.used_cross_record_context
+    target.tool_call_count = repair.tool_call_count
+    target.latest_record_context = repair.latest_record_context
+    target.latest_record_insights = repair.latest_record_insights
+    target.latest_article_overview = repair.latest_article_overview
+    target.latest_external_record_contexts = repair.latest_external_record_contexts
+    target.latest_external_asset_contexts = repair.latest_external_asset_contexts
+    target.latest_user_vocabulary = repair.latest_user_vocabulary
+    target.latest_resolved_references = repair.latest_resolved_references
+    target.latest_generated_annotations = repair.latest_generated_annotations
+    target.latest_suggestions = repair.latest_suggestions
 
 
 _TRACE_SUMMARY_METRIC_KEYS = (
@@ -3550,6 +3726,81 @@ async def stream_thread_message(
                 usage_summary = stream_outcome.usage_summary
                 stream_runtime = stream_item.stream_runtime
 
+        # Round 14: agent-loop repair — when the main answer is
+        # degenerate, attempt a single agent-loop repair (re-run answer
+        # agent with repair hint) instead of falling back to
+        # planner_runtime.resolve_semantic_planning(). Forced planner_first
+        # legacy path keeps the existing replan logic below.
+        _agent_loop_repair_eligible = (
+            planner_route == "agent_loop_first"
+            and is_degenerate_answer(final_content_md)
+            and not stream_outcome.interrupted
+        )
+        if _agent_loop_repair_eligible:
+            runtime_state.degenerate_detected = True
+            runtime_state.degenerate_reason = "degenerate_answer"
+            runtime_state.repair_attempted = True
+            runtime_state.repair_reason = runtime_state.degenerate_reason
+            runtime_state.repair_route = "agent_loop_repair"
+            try:
+                repair_content, repair_runtime_state = await _run_agent_loop_repair(
+                    user_id=user_id,
+                    record=record,
+                    body=body,
+                    attachments=attachments,
+                    resolved_anchors=resolved_anchors,
+                    history_messages=history_messages,
+                    thread=thread,
+                    runtime_state=runtime_state,
+                    primary_anchor=primary_anchor,
+                    submission_mode=submission_mode,
+                    resolved_intent=resolved_intent,
+                    resolved_context_input=resolved_context_input,
+                    reference_resolution=reference_resolution,
+                    disambiguation=disambiguation,
+                    external_asset_disambiguation=external_asset_disambiguation,
+                    trace_summary=trace_summary,
+                    context_plan=context_plan,
+                    run_info=run_info,
+                    route_settings=route_settings,
+                    model_selection=selected_model_option.selection,
+                    runtime_budget_kwargs=runtime_budget_kwargs,
+                    event_queue=event_queue,
+                    query_seed=query_seed,
+                    get_record_context_cb=get_record_context_cb,
+                    get_record_insights_cb=get_record_insights_cb,
+                    get_user_vocabulary_book_cb=get_user_vocabulary_book_cb,
+                    resolve_known_reference_cb=resolve_known_reference_cb,
+                    load_explicit_attachment_context_cb=load_explicit_attachment_context_cb,
+                    generate_sentence_annotation_cb=generate_sentence_annotation_cb,
+                    suggest_prompts_cb=suggest_prompts_cb,
+                    degenerate_content_md=final_content_md,
+                )
+                if repair_content and not is_degenerate_answer(repair_content):
+                    final_content_md = repair_content
+                    runtime_state.repair_succeeded = True
+                    # Merge evidence-producing fields (citations, tool_trace,
+                    # suggestions, etc.) from the repair run so the completed
+                    # payload reflects the repair's tool calls, not the stale
+                    # evidence from the degenerate run.
+                    _merge_repair_runtime_state(runtime_state, repair_runtime_state)
+                    logger.info(
+                        "reader_ask_agent_loop_repair_succeeded: repair produced non-degenerate answer (%d chars)",
+                        len(repair_content),
+                    )
+                else:
+                    runtime_state.repair_succeeded = False
+                    logger.warning(
+                        "reader_ask_agent_loop_repair_failed: repair still degenerate (%d chars), using original",
+                        len(repair_content or ""),
+                    )
+            except Exception:
+                runtime_state.repair_succeeded = False
+                logger.warning(
+                    "reader_ask_agent_loop_repair_exception: repair raised, using original answer",
+                    exc_info=True,
+                )
+
         # Bounded replan: if answer is degenerate (empty/refusal/invalid) and
         # not already clarified, attempt a single replan with expanded context
         replan_event = build_reader_ask_replan_event(
@@ -4773,6 +5024,81 @@ async def retry_thread_message(
                 final_content_md = stream_outcome.content_md
                 usage_summary = stream_outcome.usage_summary
                 stream_runtime = stream_item.stream_runtime
+
+        # Round 14: agent-loop repair — when the main answer is
+        # degenerate, attempt a single agent-loop repair (re-run answer
+        # agent with repair hint) instead of falling back to
+        # planner_runtime.resolve_semantic_planning(). Forced planner_first
+        # legacy path keeps the existing replan logic below.
+        _agent_loop_repair_eligible = (
+            planner_route == "agent_loop_first"
+            and is_degenerate_answer(final_content_md)
+            and not stream_outcome.interrupted
+        )
+        if _agent_loop_repair_eligible:
+            runtime_state.degenerate_detected = True
+            runtime_state.degenerate_reason = "degenerate_answer"
+            runtime_state.repair_attempted = True
+            runtime_state.repair_reason = runtime_state.degenerate_reason
+            runtime_state.repair_route = "agent_loop_repair"
+            try:
+                repair_content, repair_runtime_state = await _run_agent_loop_repair(
+                    user_id=user_id,
+                    record=record,
+                    body=body,
+                    attachments=attachments,
+                    resolved_anchors=resolved_anchors,
+                    history_messages=history_messages,
+                    thread=thread,
+                    runtime_state=runtime_state,
+                    primary_anchor=primary_anchor,
+                    submission_mode=submission_mode,
+                    resolved_intent=resolved_intent,
+                    resolved_context_input=resolved_context_input,
+                    reference_resolution=reference_resolution,
+                    disambiguation=disambiguation,
+                    external_asset_disambiguation=external_asset_disambiguation,
+                    trace_summary=trace_summary,
+                    context_plan=context_plan,
+                    run_info=run_info,
+                    route_settings=route_settings,
+                    model_selection=selected_model_option.selection,
+                    runtime_budget_kwargs=runtime_budget_kwargs,
+                    event_queue=event_queue,
+                    query_seed=query_seed,
+                    get_record_context_cb=get_record_context_cb,
+                    get_record_insights_cb=get_record_insights_cb,
+                    get_user_vocabulary_book_cb=get_user_vocabulary_book_cb,
+                    resolve_known_reference_cb=resolve_known_reference_cb,
+                    load_explicit_attachment_context_cb=load_explicit_attachment_context_cb,
+                    generate_sentence_annotation_cb=generate_sentence_annotation_cb,
+                    suggest_prompts_cb=suggest_prompts_cb,
+                    degenerate_content_md=final_content_md,
+                )
+                if repair_content and not is_degenerate_answer(repair_content):
+                    final_content_md = repair_content
+                    runtime_state.repair_succeeded = True
+                    # Merge evidence-producing fields (citations, tool_trace,
+                    # suggestions, etc.) from the repair run so the completed
+                    # payload reflects the repair's tool calls, not the stale
+                    # evidence from the degenerate run.
+                    _merge_repair_runtime_state(runtime_state, repair_runtime_state)
+                    logger.info(
+                        "reader_ask_agent_loop_repair_succeeded: repair produced non-degenerate answer (%d chars)",
+                        len(repair_content),
+                    )
+                else:
+                    runtime_state.repair_succeeded = False
+                    logger.warning(
+                        "reader_ask_agent_loop_repair_failed: repair still degenerate (%d chars), using original",
+                        len(repair_content or ""),
+                    )
+            except Exception:
+                runtime_state.repair_succeeded = False
+                logger.warning(
+                    "reader_ask_agent_loop_repair_exception: repair raised, using original answer",
+                    exc_info=True,
+                )
 
         # Bounded replan: if answer is degenerate (empty/refusal/invalid) and
         # not already clarified, attempt a single replan with expanded context

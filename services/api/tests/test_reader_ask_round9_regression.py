@@ -6,7 +6,7 @@ These tests verify:
 3. build_agent_loop_context sets cross_record_intent_hint
 4. cross_record_intent_hint flows to prompt payload without becoming followup_hint
 5. cross_record_context_allowed is correctly passed in agent_loop_first path
-6. planner_first fallbacks are preserved (dictionary, external attachments, long history)
+6. Former planner_first fallback scenarios now route to agent_loop_first
 7. resolve_known_reference is still agent-callable
 """
 
@@ -349,12 +349,12 @@ class TestCrossRecordContextAllowedInAgentLoopFirst:
 
 
 # ---------------------------------------------------------------------------
-# 6. planner_first fallbacks preserved
+# 6. Former planner_first fallback scenarios route to agent_loop_first
 # ---------------------------------------------------------------------------
 
 
-class TestPlannerFirstFallbacksPreserved:
-    """Verify that the remaining planner_first fallbacks are still intact."""
+class TestFormerPlannerFirstFallbacksNowAgentLoopFirst:
+    """Verify former planner_first fallback scenarios now use agent_loop_first."""
 
     def test_external_attachment_agent_loop_first(self) -> None:
         # Round 10: external attachments no longer trigger planner_first

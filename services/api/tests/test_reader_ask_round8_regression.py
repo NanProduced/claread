@@ -6,7 +6,7 @@ These tests verify:
 3. build_agent_loop_context sets deictic_clarification_hint
 4. followup_hint flows to prompt payload
 5. fast_path naming has been cleaned up (no stale references)
-6. Remaining planner_first fallbacks are preserved
+6. Former planner_first fallback scenarios now route to agent_loop_first
 7. MinimalPlanningSnapshot naming is correct
 """
 
@@ -326,12 +326,12 @@ class TestFastPathNamingCleanup:
 
 
 # ---------------------------------------------------------------------------
-# 6. Remaining planner_first fallbacks preserved
+# 6. Former planner_first fallback scenarios route to agent_loop_first
 # ---------------------------------------------------------------------------
 
 
-class TestPlannerFirstFallbacksPreserved:
-    """Verify that the remaining planner_first fallbacks are still intact."""
+class TestFormerPlannerFirstFallbacksNowAgentLoopFirst:
+    """Verify former planner_first fallback scenarios now use agent_loop_first."""
 
     def test_external_attachment_agent_loop_first(self) -> None:
         # Round 10: external attachments no longer trigger planner_first

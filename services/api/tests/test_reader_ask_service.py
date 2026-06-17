@@ -89,7 +89,7 @@ def test_service_agent_deps_wires_tool_availability_all_paths() -> None:
         if isinstance(node, ast.Call) and _call_name(node.func) == "build_reader_ask_agent_deps"
     ]
 
-    assert len(factory_calls) == 4
+    assert len(factory_calls) == 5
     for call in factory_calls:
         keyword_by_name = {keyword.arg: keyword.value for keyword in call.keywords}
         # Factory must receive entry_action (which it uses to build ToolAvailabilityInput)

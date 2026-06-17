@@ -76,19 +76,12 @@ PlannerRoute = Literal["agent_loop_first", "planner_first"]
 """
 
 # ---------------------------------------------------------------------------
-# Planner-first trigger conditions
+# Agent-loop hint predicates
 # ---------------------------------------------------------------------------
 
-# Attachment kinds that carry external references (records, analyses,
-# supplements). Round 10: these no longer trigger planner_first; the
-# agent-loop-first path handles them via load_explicit_attachment_context.
-_EXTERNAL_ATTACHMENT_KINDS: frozenset[str] = frozenset(
-    {"record_ref", "analysis_ref", "supplement_ref"}
-)
-
 # Substring keywords that, when present in the user's latest message, indicate
-# cross-article intent. When combined with cross_record_toggle, these trigger
-# the planner-first fallback.
+# cross-article intent. Used by `has_cross_record_intent` to detect
+# cross-article intent for the agent-loop-first hint (Round 9).
 _CROSS_RECORD_KEYWORDS: tuple[str, ...] = (
     "另一篇",
     "之前那篇",
@@ -120,8 +113,8 @@ _DEICTIC_PATTERNS: tuple[str, ...] = (
     "here",
 )
 
-# History length threshold beyond which the planner-first fallback is used.
-# Long threads have complex context that benefits from planner pre-resolution.
+# History length threshold beyond which `has_long_history` returns True,
+# triggering the `long_history_hint` in the agent-loop-first path (Round 12).
 _LONG_HISTORY_THRESHOLD: int = 10
 
 
@@ -247,16 +240,6 @@ def has_long_history(
     call needed.
     """
     return len(history_messages) > threshold
-
-
-def _has_planner_required_attachments(attachments: list[ReaderAskAttachment]) -> bool:
-    """Return True if any attachment requires planner-level resolution.
-
-    Round 10: this is kept for backward compatibility but no longer used
-    in route resolution. External attachments are now handled by the
-    agent-loop-first path via load_explicit_attachment_context.
-    """
-    return any(attachment.kind in _EXTERNAL_ATTACHMENT_KINDS for attachment in attachments)
 
 
 # ---------------------------------------------------------------------------

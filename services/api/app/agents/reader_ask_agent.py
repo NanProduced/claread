@@ -108,6 +108,18 @@ class ReaderAskRuntimeState:
     # model knows older messages have been summarized. This is NOT a
     # follow-up prompt — it is purely informational.
     long_history_hint: str | None = None
+    # Round 14 — agent-loop repair telemetry. When the agent_loop_first
+    # path produces a degenerate answer, a single repair attempt is made
+    # using the same answer agent with a repair hint injected into the
+    # prompt payload. ``repair_attempted`` is True when the repair was
+    # tried; ``repair_reason`` records why (currently always
+    # "degenerate_answer"); ``repair_succeeded`` is True when the repair
+    # produced a non-degenerate answer; ``repair_route`` is always
+    # "agent_loop_repair" and distinguishes this from planner replan.
+    repair_attempted: bool = False
+    repair_reason: str | None = None
+    repair_succeeded: bool = False
+    repair_route: str | None = None  # "agent_loop_repair" when attempted
     # Round 6 — observability: latency tracking.
     first_token_at: str | None = None  # ISO 8601, first text delta time
     run_started_at: str | None = None  # ISO 8601, run entry time

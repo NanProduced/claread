@@ -6,7 +6,7 @@ These tests verify:
 3. build_agent_loop_context sets external_attachment_hint
 4. external_attachment_hint flows to prompt payload
 5. load_explicit_attachment_context tool is agent-callable
-6. planner_first fallbacks preserved (dictionary, long history)
+6. Former planner_first fallback scenarios now route to agent_loop_first
 7. Tool registry invariants hold with new tool
 """
 
@@ -766,11 +766,11 @@ class TestLoadExplicitAttachmentContextAllowlist:
 
 
 # ---------------------------------------------------------------------------
-# 6. planner_first fallbacks preserved (dictionary, long history)
+# 6. Former planner_first fallback scenarios route to agent_loop_first
 # ---------------------------------------------------------------------------
 
 
-class TestPlannerFirstFallbacksPreserved:
+class TestFormerPlannerFirstFallbacksNowAgentLoopFirst:
     """Verify that long-history fallback now routes to agent_loop_first.
 
     Round 11: dictionary anchor/attachment no longer triggers planner_first.
