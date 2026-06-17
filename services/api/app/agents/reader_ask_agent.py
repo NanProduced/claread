@@ -76,12 +76,11 @@ class ReaderAskRuntimeState:
     latest_resolved_references: dict[str, Any] | None = None
     latest_generated_annotations: list[dict[str, Any]] = field(default_factory=list)
     latest_suggestions: list[dict[str, Any]] = field(default_factory=list)
-    # Round 1 — agent-loop-first routing telemetry. ``planner_skipped`` is True
-    # when the request was eligible for the agent-loop-first path and
-    # bypassed the legacy ``resolve_semantic_planning`` call.
-    # ``planner_route_used`` records which path actually ran for billing
-    # and eval: "planner_first" (legacy) or
-    # "agent_loop_first" (Round 3 agent-loop-first entry).
+    # Historical routing telemetry. Field names are retained for existing
+    # eval readers, but live service runtime is agent-loop-only. New eval
+    # payloads expose ``runtime_route="agent_loop"`` and
+    # ``trace_kind="agent_loop_trace_snapshot"`` next to these compatibility
+    # fields.
     planner_skipped: bool = False
     planner_route_used: str = "planner_first"
     # Round 3 — degenerate-loop detection telemetry.

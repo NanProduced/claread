@@ -1724,11 +1724,22 @@ def _planning_snapshot_json(
     *,
     planner_route_used: str = "planner_first",
 ) -> dict[str, Any]:
+    runtime_route = _runtime_route_from_planner_route(planner_route_used)
+    trace_kind = (
+        "agent_loop_trace_snapshot"
+        if runtime_route == "agent_loop"
+        else "legacy_planner_trace_snapshot"
+    )
+    base_trace_fields = {
+        "trace_kind": trace_kind,
+        "runtime_route": runtime_route,
+        "planner_removed": runtime_route == "agent_loop",
+        # Historical compatibility fields retained for existing eval readers.
+        "planner_skipped": planner_route_used == "agent_loop_first",
+        "planner_route_used": planner_route_used,
+    }
     if planning_snapshot is None:
-        return {
-            "planner_skipped": planner_route_used == "agent_loop_first",
-            "planner_route_used": planner_route_used,
-        }
+        return dict(base_trace_fields)
     # Round 1 — MinimalPlanningSnapshot is a lightweight dataclass that
     # does not carry planner_decision / reference_needs / structured_asset_*
     # fields. The legacy serializer assumes the full ReaderAskPlanningSnapshot
@@ -1762,10 +1773,10 @@ def _planning_snapshot_json(
             else None,
             "disambiguation_state": None,
             "external_asset_disambiguation_state": None,
-            "planner_skipped": True,
-            "planner_route_used": planner_route_used,
+            **base_trace_fields,
         }
     return {
+        **base_trace_fields,
         "resolved_intent": planning_snapshot.resolved_intent,
         "planner_decision": planning_snapshot.planner_decision.model_dump(mode="json"),
         "planner_validation_status": planning_snapshot.planner_validation_status,
@@ -1820,9 +1831,17 @@ def _planning_snapshot_json(
         "external_asset_disambiguation_state": planning_snapshot.external_asset_disambiguation_state.model_dump(mode="json")
         if planning_snapshot.external_asset_disambiguation_state
         else None,
-        "planner_skipped": planner_route_used == "agent_loop_first",
-        "planner_route_used": planner_route_used,
     }
+
+
+def _runtime_route_from_planner_route(planner_route: str | None) -> str:
+    if planner_route == "agent_loop_first":
+        return "agent_loop"
+    if planner_route == "planner_first":
+        return "legacy_planner"
+    if planner_route:
+        return planner_route
+    return "unknown"
 
 
 def _capability_trace_json(
@@ -1893,6 +1912,8 @@ def _metrics_json(
         "usage_event_id": str(usage_event_id) if usage_event_id else None,
         "prompt_version": get_prompt_version(),
         "planner_route": planner_route,
+        "runtime_route": _runtime_route_from_planner_route(planner_route),
+        "planner_removed": planner_route == "agent_loop_first",
         "degenerate_detected": degenerate_detected,
         "degenerate_reason": degenerate_reason,
     }

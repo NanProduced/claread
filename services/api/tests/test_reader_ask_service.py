@@ -1042,11 +1042,17 @@ def test_planning_snapshot_json_none_uses_planner_route_used() -> None:
     ``planner_route_used`` instead of being hardcoded to ``True``."""
     # agent_loop_first route — planner was skipped
     data_agent = _planning_snapshot_json(None, planner_route_used="agent_loop_first")
+    assert data_agent["trace_kind"] == "agent_loop_trace_snapshot"
+    assert data_agent["runtime_route"] == "agent_loop"
+    assert data_agent["planner_removed"] is True
     assert data_agent["planner_skipped"] is True
     assert data_agent["planner_route_used"] == "agent_loop_first"
 
     # planner_first route (e.g. snapshot is None due to an error, not agent-loop-first path)
     data_legacy = _planning_snapshot_json(None, planner_route_used="planner_first")
+    assert data_legacy["trace_kind"] == "legacy_planner_trace_snapshot"
+    assert data_legacy["runtime_route"] == "legacy_planner"
+    assert data_legacy["planner_removed"] is False
     assert data_legacy["planner_skipped"] is False
     assert data_legacy["planner_route_used"] == "planner_first"
 
@@ -1060,6 +1066,9 @@ def test_planning_snapshot_json_minimal_snapshot_includes_route() -> None:
     """``MinimalPlanningSnapshot`` trace includes ``planner_route_used``."""
     snap = planner_svc.MinimalPlanningSnapshot()
     data = _planning_snapshot_json(snap, planner_route_used="agent_loop_first")
+    assert data["trace_kind"] == "agent_loop_trace_snapshot"
+    assert data["runtime_route"] == "agent_loop"
+    assert data["planner_removed"] is True
     assert data["planner_skipped"] is True
     assert data["planner_route_used"] == "agent_loop_first"
 
@@ -1068,6 +1077,9 @@ def test_planning_snapshot_json_minimal_snapshot_agent_loop_first_route() -> Non
     """Round 3: ``MinimalPlanningSnapshot`` with ``agent_loop_first`` route."""
     snap = planner_svc.MinimalPlanningSnapshot()
     data = _planning_snapshot_json(snap, planner_route_used="agent_loop_first")
+    assert data["trace_kind"] == "agent_loop_trace_snapshot"
+    assert data["runtime_route"] == "agent_loop"
+    assert data["planner_removed"] is True
     assert data["planner_skipped"] is True
     assert data["planner_route_used"] == "agent_loop_first"
 
@@ -1089,6 +1101,8 @@ def test_metrics_json_includes_planner_route() -> None:
         planner_route="agent_loop_first",
     )
     assert data["planner_route"] == "agent_loop_first"
+    assert data["runtime_route"] == "agent_loop"
+    assert data["planner_removed"] is True
     assert data["degenerate_detected"] is False
     assert data["degenerate_reason"] is None
     assert data["planner_mode"] == "direct_answer"

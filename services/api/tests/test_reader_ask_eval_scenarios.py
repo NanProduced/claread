@@ -443,6 +443,8 @@ def test_eval_trace_upsert_runtime_only_metrics_preserves_existing_usage(monkeyp
     assert metrics["billed_points"] == 9
     assert metrics["usage_event_id"] == usage_id
     assert metrics["planner_route"] == "agent_loop_first"
+    assert metrics["runtime_route"] == "agent_loop"
+    assert metrics["planner_removed"] is True
     assert metrics["planner_skipped"] is True
     assert metrics["tool_call_count"] == 1
     assert metrics["ttft_ms"] == 250

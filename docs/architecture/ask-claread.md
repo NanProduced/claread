@@ -374,6 +374,16 @@ Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` �
 - `supplement_audit_json`
 - `metrics_json`
 
+`planning_snapshot_json` 是历史列名。Round 20 之后，新写入内容会显式带上：
+
+- `trace_kind="agent_loop_trace_snapshot"`：表示这是 agent loop runtime trace，而不是 planner LLM 输出
+- `runtime_route="agent_loop"`：供 eval / dashboard 使用的新语义字段
+- `planner_removed=true`：明确当前 live path 没有 planner
+
+旧兼容字段 `planner_skipped` / `planner_route_used` 暂时保留，便于历史测试和已有 eval reader 继续读取。新消费方应优先使用 `runtime_route` 与 `trace_kind`。
+
+`metrics_json` 同样保留 `planner_route` 兼容字段，但新消费方应优先使用 `runtime_route`。
+
 ### Message
 
 assistant message 当前只保留：
