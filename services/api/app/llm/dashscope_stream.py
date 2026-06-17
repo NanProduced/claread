@@ -45,6 +45,8 @@ _BASE_NATIVE_KWARGS: dict[str, object] = {
     "result_format": "message",
 }
 _INTERNAL_PROVIDER_OPTION_KEYS = {"profile"}
+_THINKING_VENDOR_PART_ID = 0
+_TOOL_VENDOR_PART_ID_OFFSET = 1
 
 
 def _convert_messages(messages: list[ModelMessage]) -> list[Message]:
@@ -94,7 +96,9 @@ def _convert_messages(messages: list[ModelMessage]) -> list[Message]:
     return out
 
 
-def _model_settings_payload(model_settings: RunModelSettings | dict[str, Any] | None) -> dict[str, Any]:
+def _model_settings_payload(
+    model_settings: RunModelSettings | dict[str, Any] | None,
+) -> dict[str, Any]:
     if model_settings is None:
         return {}
     if isinstance(model_settings, RunModelSettings):
@@ -198,7 +202,7 @@ def _usage_to_dict(usage: Any) -> dict[str, int]:
         for key, value in usage.items():
             if value is None:
                 continue
-            if isinstance(value, (int, float)):
+            if isinstance(value, int | float):
                 out[str(key)] = int(value)
             elif isinstance(value, str):
                 try:
@@ -209,7 +213,7 @@ def _usage_to_dict(usage: Any) -> dict[str, int]:
     out = {}
     for key in ("input_tokens", "output_tokens", "reasoning_tokens", "total_tokens"):
         value = getattr(usage, key, None)
-        if isinstance(value, (int, float)):
+        if isinstance(value, int | float):
             out[key] = int(value)
     return out
 
@@ -310,12 +314,18 @@ async def request_dashscope_chat(
     output = getattr(response, "output", None)
     choices = getattr(output, "choices", None) or []
     if not choices:
-        return ModelResponse(parts=[], usage=_usage_to_request_usage(getattr(response, "usage", None)))
+        return ModelResponse(
+            parts=[],
+            usage=_usage_to_request_usage(getattr(response, "usage", None)),
+        )
 
     choice = choices[0]
     message = _coerce_message(getattr(choice, "message", None))
     if message is None:
-        return ModelResponse(parts=[], usage=_usage_to_request_usage(getattr(response, "usage", None)))
+        return ModelResponse(
+            parts=[],
+            usage=_usage_to_request_usage(getattr(response, "usage", None)),
+        )
 
     return ModelResponse(
         parts=_message_to_response_parts(message),
@@ -372,7 +382,7 @@ async def stream_dashscope_chat(
 
             reasoning = _safe_get(message, "reasoning_content")
             if reasoning:
-                yield {0: DeltaThinkingPart(content=str(reasoning))}
+                yield {_THINKING_VENDOR_PART_ID: DeltaThinkingPart(content=str(reasoning))}
 
             tool_calls = _safe_get(message, "tool_calls")
             if tool_calls:
@@ -399,7 +409,7 @@ async def stream_dashscope_chat(
                     )
                     resolved_tool_call_id = str(tool_call_id) or f"dashscope_native_tool_{index}"
                     yield {
-                        index: DeltaToolCall(
+                        index + _TOOL_VENDOR_PART_ID_OFFSET: DeltaToolCall(
                             name=str(name),
                             json_args=str(arguments),
                             tool_call_id=resolved_tool_call_id,

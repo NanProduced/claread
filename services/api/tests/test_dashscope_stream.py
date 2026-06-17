@@ -1,13 +1,13 @@
 """Tests for the DashScope native streaming wrapper."""
 from __future__ import annotations
 
-import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic_ai.messages import (
     ModelRequest,
+    PartStartEvent,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -15,7 +15,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import DeltaThinkingPart, DeltaToolCall
+from pydantic_ai.models import ModelProfile, ModelRequestParameters
+from pydantic_ai.models.function import DeltaThinkingPart, DeltaToolCall, FunctionModel
 from pydantic_ai.tools import ToolDefinition
 
 from app.llm.dashscope_stream import (
@@ -298,6 +299,98 @@ async def test_stream_yields_tool_call_delta() -> None:
     assert delta.name == "lookup"
     assert delta.json_args == '{"q":"x"}'
     assert delta.tool_call_id == "c1"
+
+
+async def test_stream_uses_disjoint_part_ids_for_reasoning_then_tool_call() -> None:
+    chunks = [
+        _mock_chunk(reasoning="Let me inspect the article."),
+        _mock_chunk(
+            content=None,
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": '{"q":"x"}'},
+                }
+            ],
+        ),
+    ]
+    response = _FakeResponse(chunks)
+
+    with patch("app.llm.dashscope_stream.AioGeneration") as mock_gen:
+        mock_gen.call = AsyncMock(return_value=response)
+        yielded = [
+            part
+            async for part in stream_dashscope_chat(
+                model="glm-5.1",
+                messages=[],
+                api_key="k",
+                model_settings=RunModelSettings(extra_body={"enable_thinking": True}),
+                provider_options={},
+            )
+        ]
+
+    assert len(yielded) == 2
+    assert isinstance(yielded[0], dict)
+    assert isinstance(yielded[0][0], DeltaThinkingPart)
+    assert isinstance(yielded[1], dict)
+    assert isinstance(yielded[1][1], DeltaToolCall)
+
+
+async def test_function_model_consumes_reasoning_then_tool_stream_without_collision() -> None:
+    chunks = [
+        _mock_chunk(reasoning="The user wants a richer summary."),
+        _mock_chunk(
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": '{"q":"x"}'},
+                }
+            ],
+        ),
+    ]
+    response = _FakeResponse(chunks)
+    tool = ToolDefinition(
+        name="lookup",
+        description="Look up context",
+        parameters_json_schema={"type": "object", "properties": {}},
+    )
+
+    async def _stream(messages, agent_info):
+        async for part in stream_dashscope_chat(
+            model="glm-5.1",
+            messages=list(messages),
+            api_key="k",
+            model_settings=agent_info.model_settings,
+            provider_options={},
+            function_tools=agent_info.function_tools,
+            output_tools=agent_info.output_tools,
+            allow_text_output=agent_info.allow_text_output,
+        ):
+            yield part
+
+    model = FunctionModel(
+        stream_function=_stream,
+        model_name="glm-5.1",
+        profile=ModelProfile(supports_thinking=True),
+    )
+
+    with patch("app.llm.dashscope_stream.AioGeneration") as mock_gen:
+        mock_gen.call = AsyncMock(return_value=response)
+        async with model.request_stream(
+            [],
+            None,
+            ModelRequestParameters(function_tools=[tool], allow_text_output=True),
+        ) as stream:
+            events = [event async for event in stream]
+
+    start_parts = [event.part for event in events if isinstance(event, PartStartEvent)]
+    assert any(isinstance(part, ThinkingPart) for part in start_parts)
+    assert any(
+        isinstance(part, ToolCallPart) and part.tool_name == "lookup"
+        for part in start_parts
+    )
 
 
 async def test_request_builds_model_response_with_reasoning_and_tool_calls() -> None:
