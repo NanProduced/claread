@@ -42,11 +42,12 @@ def validate_vocab_highlight_business_rules(item: DraftVocabHighlight) -> list[s
 
 def validate_phrase_gloss_business_rules(item: DraftPhraseGloss) -> list[str]:
     warnings: list[str] = []
-    if is_single_token(item.label) and item.phrase_type not in {"proper_noun", "compound"}:
+    phrase_text = getattr(item, "label", None) or getattr(item, "text", "")
+    if is_single_token(phrase_text) and item.phrase_type not in {"proper_noun", "compound"}:
         warnings.append(
             "phrase_gloss: single-token label only allowed for proper_noun or compound"
         )
-    if item.phrase_type == "proper_noun" and is_likely_basic_english_word(item.label):
+    if item.phrase_type == "proper_noun" and is_likely_basic_english_word(phrase_text):
         warnings.append("phrase_gloss: proper_noun must not be a basic English word")
     return warnings
 

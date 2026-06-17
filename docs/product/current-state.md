@@ -23,7 +23,7 @@
 - `text_range` / `multi_text` 已稳定到同一套数据契约：Web 和小程序共享 `@claread/contracts` 常量，后端按 UTF-16 offset、`fnv1a32-utf16` hash、render scene sentence 切片和 sentence 顺序校验局部/多段选区。
 - AI 使用审计与结算底座已完成第一轮加固：`ai_usage_events`、capability code、usage scope 和 billing mode 已可承接后续词典 AI 与 Reader AI 能力。
 - `Ask Claread` 已完成 Reader 2.0 底座上的 agent-loop-only 重构主线，当前处于可运行基线状态（live service 不再调用 planner route resolver 或 semantic planner LLM；`planner_first` 仅作为历史 trace value 保留）。当前正式事实以 `docs/product/ask-claread.md` 与 `docs/architecture/ask-claread.md` 为准；已实现 turn-run/eval-trace 持久化、record/asset disambiguation、grammar_note supplement 生命周期、current-run hydration、follow-up suggestions、tool trace/citation 展示和单次 agent-loop repair。
-- workflow 解析主链路可跑通：learning / academic 双模式、grammar RAG 检索、prompt 策略和 canonical result 生成已形成完整链路。
+- workflow 解析主链路可跑通：learning / academic 双模式、grammar RAG 检索、prompt 策略和 canonical result 生成已形成完整链路；但当前 AI Workflow 形态已被判定不足以承接后续 Reader 产品目标，下一阶段主线是面向用户提交内容的 bounded agentic Reader orchestration。
 - Eval Center 已落地三个公开 mode：`node-lab`、`workflow-lab`、`run-history`。Node Lab 承载单节点评测与 judge，Workflow Lab 承载候选版本双跑 compare 与 review，Run History 承载统一只读回看。
 - Example Lab 按 Directus 原生 Collection `eval_example_lab_entries` 实现，不在 Eval Center module 导航内。grammar RAG / Example Lab 契约已收口：无 `teaching_goal`、无 `structure_signals`、无 `retrieval_version`；`variant` 是硬边界。
 - ReaderWorkbench 已拆出 Reader canvas、sentence row、annotation overlay 和 selection helper，后续 Reader UI 迭代应优先沿这些边界推进。
@@ -59,13 +59,19 @@ Claread 已从单一微信小程序开发转为多端产品开发。
 
 ## 当前主要方向
 
-### 主线：workflow 输出质量提升 / 评测治理
+### 主线：Reader agentic orchestration 调研与方案设计
 
-workflow 解析主链路已可跑通，当前重心转向输出质量提升和评测治理。Eval Center 已落地 node-lab / workflow-lab / run-history 三个 mode，后续重点是通过评测驱动 workflow 输出质量的持续改进，而不是继续扩展控制面功能。
+当前准备把用户提交内容的 `learning workflow` 与 `academic workflow` 从固定 AI Workflow 重构为 bounded agentic orchestration。正式实现前先完成产品与技术调研，重点回答成本/速度/负载、运行时框架、Stable Reading Base、Reading Units、Navigation Skeleton、Parsed Decision、增量渲染、Ask/RAG 接入、计费审计和 rollout / rollback。
 
-### 副线：Ask Claread 表现优化
+本轮不重构 `daily_reader_workflow`。Daily Reader 的场景是定时、定量、后台生产稳定公开阅读页面，固定 workflow 仍是合适形态；本轮只考虑它与新 Reader 契约的兼容边界和可复用经验。
 
-Ask Claread 已冻结到 agent-loop 可用正确状态，当前不再扩 planner/retrieval 架构面。后续按需优化回答质量、correctness、真实 LLM smoke/eval 和用户体验，但保持 article-bound、可回源、可确认写入、统一审计/结算的冻结边界。
+新架构的产品原则是：LLM / planner 承担更多策略判断，代码负责红线边界、结构契约、安全校验、审计、计费、限流和回退。高影响输入适配必须先给用户 Candidate Reading Base 预览、修改和确认；确认后才生成稳定阅读基座与稳定阅读单元，一经确认不可被后续增强改写。
+
+### 副线：Ask Claread baseline 维护与接入准备
+
+Ask Claread 已冻结到 agent-loop-only 可用 baseline，当前不再扩 planner/retrieval 架构面。后续按需优化回答质量、correctness、真实 LLM smoke/eval 和用户体验，但保持 article-bound、可回源、可确认写入、统一审计/结算的冻结边界。
+
+Reader orchestration 方案设计时，Ask Claread 应作为 consumer / sidecar integration 重新接入 Stable Reading Base 和 Reading Units，而不是把 Ask agent loop 提升为 Reader orchestration 控制中心。
 
 ### 副线：Web 次要功能补齐与页面设计收口
 
@@ -87,6 +93,8 @@ Claread Console 已进入可用控制面阶段，Eval Center、Render Scene Insp
 - 模型输出质量和结构化输出稳定性依赖 `services/api/.env` 中的模型 profile；更换模型后需要重新跑解析链路。
 - 旧脚本式 regression suite 不进入新仓库主线；当前评测控制面已落到 Directus / Eval Center，后续仍按 Directus + 自建 eval harness + LLM-as-a-Judge 的路线继续演进。
 - Ask Claread 当前的跨文章稳定主路径以 `record_ref / known title reference / external analysis/supplement asset` 为主；用户高亮与用户笔记只通过显式引用进入 Ask，不存在独立"用户学习资产自由查询"产品面。
+- Reader orchestration 当前只面向用户提交内容的 `learning workflow` 与 `academic workflow`。`daily_reader_workflow` 保持固定 workflow；全局用户资产整理、跨记录语义 RAG、知识库化不进入本轮范围。
+- Reader orchestration 的正式实现必须在 R0-R11 调研完成后再启动；调研前不拍板最终框架、schema、任务队列、迁移策略和 UI 流式事件模型。
 - Eval Center 当前公开主路径只有 node-lab、workflow-lab、run-history；judge / review 继续锚定 compare 或 trial，不把 Directus 变成执行面。Eval Center v1 是 learning-only，所有 eval adapter 入口均在 schema 层拒绝 `reading_goal="academic"`；academic graph 在后端主 workflow `/analyze` 中继续保留，但不属于当前 eval-center 公开评测面。
 - Example Lab 是 Directus Collection，不是 Eval Center 独立 mode；grammar RAG / Example Lab 契约已收口（无 teaching_goal、无 structure_signals、无 retrieval_version；variant 是硬边界）。
 

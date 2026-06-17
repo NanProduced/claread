@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -131,10 +132,16 @@ def fail_on_real_llm_attempts(monkeypatch: pytest.MonkeyPatch, request):
                 model_name=str(kwargs.get("model") or "unknown"),
             )
 
+    real_httpx = structured_completion.httpx
     monkeypatch.setattr(
-        structured_completion.httpx,
-        "AsyncClient",
-        _BlockedStructuredAsyncClient,
+        structured_completion,
+        "httpx",
+        SimpleNamespace(
+            AsyncClient=_BlockedStructuredAsyncClient,
+            HTTPStatusError=real_httpx.HTTPStatusError,
+            TimeoutException=real_httpx.TimeoutException,
+            RequestError=real_httpx.RequestError,
+        ),
     )
     monkeypatch.setattr(dashscope_stream, "AioGeneration", _BlockedAioGeneration)
     monkeypatch.setattr(

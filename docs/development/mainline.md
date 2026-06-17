@@ -14,7 +14,7 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 - Reader 词典 AI 已收口为 article-scoped 的前端缓存能力，不改变后端词典 truth layer。
 - AI 使用审计与结算底座已正式化：`ai_usage_events`、capability code、usage scope 与 billing mode 已可承接后续词典 AI、Ask Claread 和其他 Web AI 能力。
 - FastAPI 后端是通用 Claread API，承载小程序、Web 和后续客户端共享的用户、记录、任务、词典、用户资产、配额和反馈能力。
-- workflow 解析主链路可跑通：learning / academic 双模式、grammar RAG 检索、prompt 策略和 canonical result 生成已形成完整链路。
+- workflow 解析主链路可跑通：learning / academic 双模式、grammar RAG 检索、prompt 策略和 canonical result 生成已形成完整链路；但当前 AI Workflow 形态已被判定不足以承接后续 Reader 产品目标，下一阶段主线转向 bounded agentic Reader orchestration。
 - Claread Console 已进入可用控制面阶段：Eval Center（node-lab / workflow-lab / run-history）、Render Scene Inspector、Parse Run Observability 和 Example Lab 已有可用能力。
 - `@claread/contracts` 已先承载批注/收藏/text range 常量，后续再评估完整 OpenAPI DTO 生成。
 - 本地开发基线使用 PostgreSQL、Redis、词典数据和受控测试手机号链路。
@@ -23,24 +23,38 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 
 ## 当前主线
 
-### 主线：workflow 输出质量提升 / 评测治理
+### 主线：Reader agentic orchestration 调研与方案设计
 
-workflow 解析主链路已可跑通，当前重心转向输出质量提升和评测治理。Eval Center 已落地 node-lab / workflow-lab / run-history 三个 mode，后续重点是通过评测驱动 workflow 输出质量的持续改进，而不是继续扩展控制面功能。
+当前准备把用户提交内容的 `learning workflow` 与 `academic workflow` 从固定 AI Workflow 重构为 bounded agentic orchestration。重构目标不是把 Reader 页变成常驻 LLM 线程，而是以可审计、可中断、可确认、可回退的 event-triggered run / job 形态生成稳定阅读基座、稳定阅读单元和增量增强层。
 
 近期重点：
-- 利用 Eval Center 的 Node Lab 和 Workflow Lab 对 workflow 输出做系统性评测
-- 基于评测结果驱动 prompt 策略和解析链路的质量改进
-- grammar RAG 检索质量和 few-shot 样本质量的持续治理
+- 先完成 R0-R11 调研：产品参考、成本/速度/负载、Length Class、Parsed Decision、流式输出、Ask/RAG 边界、计费审计、运行时框架和迁移 rollout
+- 建立当前 workflow 的 token、latency、retry、服务器负载基线，再设计新 orchestration 成本模型
+- 验证 LangGraph、PydanticAI、自建 DB 状态机、worker、SSE / polling 和 observability 的职责边界
+- 明确 Stable Reading Base、Reading Units、Navigation Skeleton、Enhancement Layer 和用户确认流程
+- 用 Eval Center / Directus / trace 体系支撑 planner decision、parsed decision、coverage 和质量评测
 
-### 副线：Ask Claread 评测与表现优化
+范围边界：
+
+- In scope：用户提交内容的 `learning workflow` 与 `academic workflow`
+- Out of scope：`daily_reader_workflow` 及 Daily Reader 的文章发现、抽取、评分、定时生产和公开页面生成模式
+- 兼容对象：旧 `render_scene_json` 记录、Daily Reader 公共页面、Reader API、Library、Ask Claread 和 Eval Center
+
+设计原则：
+
+- LLM / planner 承担更多策略判断，代码负责红线边界、结构契约、安全校验、审计、计费、限流和回退。
+- 译文是最基础增强，但词汇、语法、长难句、outline 等是否生成以及生成到什么程度，应由 planner 基于 goal / variant / reading unit 价值评估决定，避免机械阈值。
+- 高影响输入适配必须先给用户 Candidate Reading Base 预览、修改和确认；确认后才生成稳定阅读基座和稳定阅读单元，一经确认不可被后续增强改写。
+
+### 副线：Ask Claread baseline 维护与接入准备
 
 Ask Claread 已完成从三段式 planner 编排到 agent-loop-only baseline 的重构。live service 不再调用 planner route resolver 或 semantic planner LLM；`planner_first`、`planning_snapshot_json` 等名称只作为历史 trace / DB 兼容面保留。当前稳定边界是 article-bound、可回源、可确认写入、统一审计/结算。
 
 近期重点：
-- 建立 opt-in 真实 LLM smoke 与小型 eval dataset，验证 tool selection、引用准确性和 repair 质量
-- 基于 eval trace 的 `runtime_route / trace_kind / tool_trace / evidence` 做可观测性与 dashboard 打磨
-- 持续修正 correctness 问题，确保 regenerate、supplement lifecycle、known reference resolution 和写动作边界符合当前规范
-- 清理剩余历史命名与迁移测试，但不恢复 planner-first live path
+- 作为稳定 baseline 合回主分支，后续不再扩大 Ask 自身架构面
+- 保持 article-bound、可回源、可确认写入、统一审计/结算边界
+- 后续 Reader orchestration 需要把 Ask 作为 consumer / sidecar integration 重新接入 Stable Reading Base 和 Reading Units
+- 按需补充真实 LLM smoke、小型 eval dataset 和 correctness 修正，但不恢复 planner-first live path
 
 ### 副线：Web 次要功能补齐与页面设计收口
 
@@ -72,11 +86,12 @@ Claread Console 已进入可用控制面阶段，后续重点转向控制面治�
 
 以下事项仍需产品、业务和技术评估，不在本文做决定性描述：
 
-- Ask Claread 在显式引用模型上是否还需要更强的跨文章扩展，以及 resolver / product contract 应如何继续演进。
-- Ask Claread semantic resolver / retrieval rerank 是否启用真实 LLM 或 embedding rerank；启用前必须先评估 timeout、candidate limit、成本、trace/eval 样本和 fallback。
-- Ask Claread 是否需要受限 multi-step reader loop；当前 baseline 是 single answer agent + controlled tools，是否开放多步 loop、最大 step 数和 retry 策略仍需单独拍板。
-- Ask Claread 是否继续把 repair 维持为自动单次修复，还是只保留显式 retry / 低频 fallback。
-- 多解析页 / 跨文章检索何时从当前受控扩展升级到 hybrid retrieval / RAG。
+- Reader orchestration 是否用一个共享 runtime 承载 learning / academic，再由 policy 区分，还是保留两个 orchestrator。
+- LangGraph、PydanticAI、自建 DB 状态机和 worker / SSE broker 的最终职责划分，以及是否升级或替换底层框架。
+- Stable Reading Base、Reading Units、Navigation Skeleton、Semantic Outline、Enhancement Layer、Parsed Decision 的最终 schema 和 API 版本化方式。
+- Article Ready、Initial Enhancement Ready、100% Parse Coverage、长文渐进 coverage 的计费、速度、默认推进和用户授权策略。
+- Ask Claread 接入新 Stable Reading Base 后，是否允许低频 sidecar action、如何授权、如何保存为用户资产。
+- 多解析页 / 跨文章检索何时从当前受控扩展升级到 hybrid retrieval / RAG；本轮不做全局用户资产整理或跨记录语义 RAG 产品化。
 - Grammar X-Ray、分享页、导出和其他 AI 能力的优先级。
 - 是否在 Ask Claread 之外单独产品化"AI 整合总结用户历史数据"能力，以及是否做跨文章/跨资产的长期学习画像。
 - Claread Console 下一阶段优先落哪条工作流：解析治理、RAG promotion、运营工作台，还是 feedback / usage 观察面板。
