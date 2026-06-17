@@ -2924,14 +2924,22 @@ export function AiWorkspacePanel({
     };
   }, [contextPickerOpen, contextSearch.query, recordId]);
 
+  // Set loading state when panel opens (before fetch starts)
+  const [prevOpenForLoading, setPrevOpenForLoading] = useState(open);
+  if (open !== prevOpenForLoading) {
+    setPrevOpenForLoading(open);
+    if (open) {
+      setModelOptionsLoading(true);
+      setModelOptionsError(null);
+    }
+  }
+
   useEffect(() => {
     if (!open) {
       return;
     }
 
     let cancelled = false;
-    setModelOptionsLoading(true);
-    setModelOptionsError(null);
 
     void fetchModelOptions()
       .then((payload) => {
@@ -2960,24 +2968,36 @@ export function AiWorkspacePanel({
     };
   }, [open]);
 
-  useEffect(() => {
-    if (modelOptions.length === 0) {
-      return;
-    }
-    setSelectedModelKey((current) => {
-      if (isKnownModelOptionKey(modelOptions, current)) {
+  // Sync selected model key when model options or thread defaults change
+  const [prevModelOptions, setPrevModelOptions] = useState(modelOptions);
+  const [prevThreadModelKey, setPrevThreadModelKey] = useState<string | null>(
+    activeThread?.selected_model?.key ?? null,
+  );
+  const [prevDefaultModelKey, setPrevDefaultModelKey] = useState(defaultModelKey);
+  const currentThreadModelKey = activeThread?.selected_model?.key ?? null;
+  if (
+    modelOptions !== prevModelOptions ||
+    currentThreadModelKey !== prevThreadModelKey ||
+    defaultModelKey !== prevDefaultModelKey
+  ) {
+    setPrevModelOptions(modelOptions);
+    setPrevThreadModelKey(currentThreadModelKey);
+    setPrevDefaultModelKey(defaultModelKey);
+    if (modelOptions.length > 0) {
+      setSelectedModelKey((current) => {
+        if (isKnownModelOptionKey(modelOptions, current)) {
+          return current;
+        }
+        if (isKnownModelOptionKey(modelOptions, currentThreadModelKey)) {
+          return currentThreadModelKey;
+        }
+        if (isKnownModelOptionKey(modelOptions, defaultModelKey)) {
+          return defaultModelKey;
+        }
         return current;
-      }
-      const threadKey = activeThread?.selected_model?.key ?? null;
-      if (isKnownModelOptionKey(modelOptions, threadKey)) {
-        return threadKey;
-      }
-      if (isKnownModelOptionKey(modelOptions, defaultModelKey)) {
-        return defaultModelKey;
-      }
-      return current;
-    });
-  }, [activeThread?.selected_model?.key, defaultModelKey, modelOptions]);
+      });
+    }
+  }
 
   async function ensureThreadReady(): Promise<string | null> {
     setLoading(true);
@@ -3006,6 +3026,16 @@ export function AiWorkspacePanel({
     }
   }
 
+  // Reset selected model key when panel opens or record changes
+  const [prevInitKey, setPrevInitKey] = useState(`${open}:${recordId}`);
+  const currentInitKey = `${open}:${recordId}`;
+  if (prevInitKey !== currentInitKey) {
+    setPrevInitKey(currentInitKey);
+    if (open && recordId) {
+      setSelectedModelKey(null);
+    }
+  }
+
   useEffect(() => {
     if (!open || !recordId) {
       return;
@@ -3013,7 +3043,6 @@ export function AiWorkspacePanel({
     hydrationRef.current += 1;
     const currentHydration = hydrationRef.current;
     initInProgressRef.current = true;
-    setSelectedModelKey(null);
     void (async () => {
       try {
         const threadId = await ensureThreadReady();

@@ -54,7 +54,7 @@ export const Plan = ({
 
   return (
     <PlanContext.Provider value={contextValue}>
-      <Collapsible asChild data-slot="plan" defaultOpen={defaultOpen} {...props} {...({} as any)}>
+      <Collapsible asChild data-slot="plan" defaultOpen={defaultOpen} {...props}>
         <Card className={cn("gap-0 shadow-none", className)}>{children}</Card>
       </Collapsible>
     </PlanContext.Provider>
@@ -122,7 +122,7 @@ export const PlanAction = (props: PlanActionProps) => (
 export type PlanContentProps = ComponentProps<typeof CardContent>;
 
 export const PlanContent = (props: PlanContentProps) => (
-  <CollapsibleContent asChild {...({} as any)}>
+  <CollapsibleContent asChild>
     <CardContent data-slot="plan-content" {...props} />
   </CollapsibleContent>
 );
@@ -136,7 +136,7 @@ export const PlanFooter = (props: PlanFooterProps) => (
 export type PlanTriggerProps = ComponentProps<typeof CollapsibleTrigger> & { className?: string; children?: React.ReactNode };
 
 export const PlanTrigger = ({ className, ...props }: PlanTriggerProps) => (
-  <CollapsibleTrigger asChild {...({} as any)}>
+  <CollapsibleTrigger asChild>
     <Button
       className={cn("size-7 rounded-full text-muted-foreground hover:bg-background hover:text-foreground", className)}
       data-slot="plan-trigger"

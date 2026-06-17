@@ -142,7 +142,7 @@ export const Reasoning = memo(
           className={cn("not-prose mb-4", className)}
           onOpenChange={handleOpenChange}
           open={isOpen}
-          {...(props as any)}
+          {...props}
         >
           {children}
         </Collapsible>
@@ -182,7 +182,7 @@ export const ReasoningTrigger = memo(
           "flex w-full items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground",
           className
         )}
-        {...(props as any)}
+        {...props}
       >
         {children ?? (
           <>
@@ -219,7 +219,7 @@ export const ReasoningContent = memo(
           "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-muted-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
           className
         )}
-        {...(props as any)}
+        {...props}
       >
         <div className="border-l border-border/60 pl-3">
           <Streamdown className="ask-reasoning-response" plugins={streamdownPlugins}>

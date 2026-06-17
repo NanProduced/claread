@@ -341,7 +341,10 @@ export const Lid = ({
           )}
           inert={isInteractive ? undefined : true}
         >
-          {(screenContent as any) ??
+          {/* Cast needed: motion/react resolves a different @types/react
+              version, making project ReactNode incompatible with motion.div's
+              children type. */}
+          {(screenContent as unknown as React.ComponentProps<typeof motion.div>["children"]) ??
             (src ? (
               <img
                 src={src}

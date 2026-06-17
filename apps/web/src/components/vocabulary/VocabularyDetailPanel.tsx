@@ -99,11 +99,14 @@ export function VocabularyDetailPanel({
   ].filter((tab) => tab.count > 0);
 
   // Sync active tab if current tab becomes empty
-  useEffect(() => {
+  const [prevItemKey, setPrevItemKey] = useState(`${item.id}:${activeTab}:${tabItems.map(t => t.id).join(",")}`);
+  const currentTabKey = `${item.id}:${activeTab}:${tabItems.map(t => t.id).join(",")}`;
+  if (prevItemKey !== currentTabKey) {
+    setPrevItemKey(currentTabKey);
     if (tabItems.length > 0 && !tabItems.some(t => t.id === activeTab)) {
       setActiveTab(tabItems[0].id as Tab);
     }
-  }, [item.id, activeTab, tabItems]);
+  }
 
   return (
     <ScrollArea className="h-full bg-surface">

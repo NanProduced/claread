@@ -46,7 +46,7 @@ export const Task = ({
   className,
   ...props
 }: TaskProps) => (
-  <Collapsible className={cn(className)} defaultOpen={defaultOpen} {...(props as any)} />
+  <Collapsible className={cn(className)} defaultOpen={defaultOpen} {...props} />
 );
 
 export type TaskTriggerProps = Omit<ComponentProps<typeof CollapsibleTrigger>, "children" | "className"> & {
@@ -61,7 +61,7 @@ export const TaskTrigger = ({
   title,
   ...props
 }: TaskTriggerProps) => (
-  <CollapsibleTrigger asChild className={cn("group", className)} {...(props as any)}>
+  <CollapsibleTrigger asChild className={cn("group", className)} {...props}>
     {children ?? (
       <div className="flex w-full cursor-pointer items-center gap-1.5 text-[12px] font-medium text-muted-foreground transition-colors hover:text-foreground">
         <SearchIcon className="size-3.5" />
@@ -87,7 +87,7 @@ export const TaskContent = ({
       "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-popover-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
       className
     )}
-    {...(props as any)}
+    {...props}
   >
     <div className="mt-2.5 space-y-1.5 pl-5">
       {children}

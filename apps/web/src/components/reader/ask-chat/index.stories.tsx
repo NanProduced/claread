@@ -115,7 +115,7 @@ export const ConversationState = () => {
           contextStrip={
             <>
               <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-hairline/70 bg-[rgba(255,255,255,0.82)] px-2.5 py-1.5 text-xs font-medium text-ink-soft shadow-[0_8px_18px_rgba(17,17,17,0.03)]">
-                "追随激情"职业建议的陷阱与社会不平等
+                &ldquo;追随激情&rdquo;职业建议的陷阱与社会不平等
               </span>
               <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-hairline/70 bg-[rgba(255,255,255,0.82)] px-2.5 py-1.5 text-xs font-medium text-ink-soft shadow-[0_8px_18px_rgba(17,17,17,0.03)]">
                 当前句子

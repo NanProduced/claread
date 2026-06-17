@@ -767,10 +767,12 @@ export function ReaderWorkbench({
   });
 
   useEffect(() => {
-    const storedSettings = readStoredReaderSettings();
-    skipNextReaderSettingsSyncRef.current = true;
-    setReaderSettings(storedSettings);
-    readerSettingsHydratedRef.current = true;
+    queueMicrotask(() => {
+      const storedSettings = readStoredReaderSettings();
+      skipNextReaderSettingsSyncRef.current = true;
+      setReaderSettings(storedSettings);
+      readerSettingsHydratedRef.current = true;
+    });
   }, []);
 
   useEffect(() => {
@@ -796,7 +798,7 @@ export function ReaderWorkbench({
 
   useEffect(() => {
     if (isWebPreferencesSyncReady()) {
-      setWebPreferencesSyncReady(true);
+      queueMicrotask(() => setWebPreferencesSyncReady(true));
       return;
     }
 

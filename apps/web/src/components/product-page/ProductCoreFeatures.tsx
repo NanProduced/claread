@@ -236,11 +236,7 @@ function VocabularyNotificationGraphic() {
   const isReduced = reducedMotion === true;
 
   useEffect(() => {
-    if (!isInView) return;
-    if (isReduced) {
-      setRevealedCount(VOCAB_CARDS.length);
-      return;
-    }
+    if (!isInView || isReduced) return;
 
     let cancelled = false;
     const runCycle = async () => {
@@ -276,9 +272,10 @@ function VocabularyNotificationGraphic() {
     };
   }, [isInView, reducedMotion, isReduced]);
 
-  const stackSize = Math.min(revealedCount, VOCAB_CARD_STACK_LIMIT);
+  const effectiveRevealedCount = isReduced ? VOCAB_CARDS.length : revealedCount;
+  const stackSize = Math.min(effectiveRevealedCount, VOCAB_CARD_STACK_LIMIT);
   const stackHeight = stackSize * VOCAB_CARD_HEIGHT_PX + Math.max(stackSize - 1, 0) * VOCAB_CARD_GAP_PX;
-  const stagedCards = VOCAB_CARDS.slice(Math.max(0, revealedCount - VOCAB_CARD_WINDOW_SIZE), revealedCount)
+  const stagedCards = VOCAB_CARDS.slice(Math.max(0, effectiveRevealedCount - VOCAB_CARD_WINDOW_SIZE), effectiveRevealedCount)
     .reverse();
 
   return (
@@ -303,7 +300,7 @@ function VocabularyNotificationGraphic() {
           transition={{ duration: 0.4, ease: "easeInOut" }}
         >
           {stagedCards.map((card) => {
-            const slot = revealedCount - (card.idx ?? 0) - 1;
+            const slot = effectiveRevealedCount - (card.idx ?? 0) - 1;
             const isExiting = slot >= VOCAB_CARD_STACK_LIMIT;
             const targetY = -stackHeight / 2 + Math.min(slot, VOCAB_CARD_STACK_LIMIT) * VOCAB_CARD_SLOT_PX;
 
@@ -390,21 +387,27 @@ function TypewriterText({
   onComplete?: () => void;
 }) {
   const [charCount, setCharCount] = useState(0);
+  const [prevActive, setPrevActive] = useState(active);
   const onCompleteRef = useRef(onComplete);
 
   useEffect(() => {
     onCompleteRef.current = onComplete;
   }, [onComplete]);
 
+  // Reset charCount when active becomes false (adjust state during render)
+  if (active !== prevActive) {
+    setPrevActive(active);
+    if (!active) {
+      setCharCount(0);
+    }
+  }
+
   const totalChars = useMemo(() => {
     return segments.reduce((acc, seg) => acc + seg.text.length, 0);
   }, [segments]);
 
   useEffect(() => {
-    if (!active) {
-      setCharCount(0);
-      return;
-    }
+    if (!active) return;
 
     let currentCount = 0;
     const interval = setInterval(() => {
@@ -419,26 +422,33 @@ function TypewriterText({
     return () => clearInterval(interval);
   }, [active, totalChars, speed]);
 
-  let renderedChars = 0;
+  const visibleSegments = useMemo(() => {
+    const result: Array<{ key: number; displayText: string; highlight: boolean }> = [];
+    let renderedChars = 0;
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      if (renderedChars >= charCount) break;
+      const charsToShow = Math.min(seg.text.length, charCount - renderedChars);
+      renderedChars += seg.text.length;
+      result.push({
+        key: i,
+        displayText: seg.text.slice(0, charsToShow),
+        highlight: seg.highlight ?? false,
+      });
+    }
+    return result;
+  }, [segments, charCount]);
+
   return (
     <>
-      {segments.map((seg, sIdx) => {
-        if (renderedChars >= charCount) return null;
-
-        const charsToShow = Math.min(seg.text.length, charCount - renderedChars);
-        renderedChars += seg.text.length;
-
-        const displayText = seg.text.slice(0, charsToShow);
-
-        return (
-          <span
-            key={sIdx}
-            className={seg.highlight ? "font-semibold text-grammar-violet font-reading" : ""}
-          >
-            {displayText}
-          </span>
-        );
-      })}
+      {visibleSegments.map(({ key, displayText, highlight }) => (
+        <span
+          key={key}
+          className={highlight ? "font-semibold text-grammar-violet font-reading" : ""}
+        >
+          {displayText}
+        </span>
+      ))}
     </>
   );
 }
@@ -464,6 +474,7 @@ function GrammarNoteGraphic() {
   const [hoverHold, setHoverHold] = useState(false);
   const [p1Active, setP1Active] = useState(false);
   const [p2Active, setP2Active] = useState(false);
+  const [prevResetKey, setPrevResetKey] = useState({ step, hoverHold });
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
@@ -493,12 +504,14 @@ function GrammarNoteGraphic() {
     };
   }, [isInView, reducedMotion, hoverHold]);
 
-  useEffect(() => {
+  // Reset active states when step < 3 and not hovering (adjust state during render)
+  if (prevResetKey.step !== step || prevResetKey.hoverHold !== hoverHold) {
+    setPrevResetKey({ step, hoverHold });
     if (step < 3 && !hoverHold) {
       setP1Active(false);
       setP2Active(false);
     }
-  }, [step, hoverHold]);
+  }
 
   const showUnderline = step >= 1 || hoverHold;
   const showHighlight = step >= 2 || hoverHold;
@@ -519,7 +532,7 @@ function GrammarNoteGraphic() {
       }}
     >
       <p className="reader-serif text-[1.05rem] leading-[1.8] text-ink/85 text-left">
-        <span className="block">At the IPO, he said: "Whoever you are watching this,</span>
+        <span className="block">At the IPO, he said: &ldquo;Whoever you are watching this,</span>
         <span className="block">SpaceX wants to be able to</span>
         <span className="block">
           <Highlighter
@@ -546,7 +559,7 @@ function GrammarNoteGraphic() {
           >
             ultimately beyond
           </Highlighter>
-          ."
+          .&rdquo;
         </span>
       </p>
 

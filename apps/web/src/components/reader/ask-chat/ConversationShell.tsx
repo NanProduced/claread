@@ -36,8 +36,11 @@ export function ConversationShell({
       <ConversationContent
         className={cn("ask-conversation-content min-h-full pb-5", contentClassName)}
         scrollClassName="ask-conversation-scroll"
-        children={children as React.ComponentProps<typeof ConversationContent>["children"]}
       >
+        {/* Cast needed: use-stick-to-bottom resolves a different @types/react
+            version, making project React.ReactNode incompatible with the
+            library's children prop type. */}
+        {children as unknown as React.ComponentProps<typeof ConversationContent>["children"]}
       </ConversationContent>
       <ConversationScrollButton aria-label="跳到最新消息" />
     </Conversation>

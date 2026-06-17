@@ -512,11 +512,12 @@ export function ProductStickerWall() {
     stickersRef.current.push(sticker);
 
     if (stickersRef.current.length > STICKER_CAP) {
-      for (const s of stickersRef.current) {
-        if (s.fadeStart === undefined) {
-          s.fadeStart = performance.now();
-          break;
-        }
+      const idx = stickersRef.current.findIndex(s => s.fadeStart === undefined);
+      if (idx !== -1) {
+        const now = performance.now();
+        stickersRef.current = stickersRef.current.map((s, i) =>
+          i === idx ? { ...s, fadeStart: now } : s
+        );
       }
     }
 

@@ -408,6 +408,7 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
 }: ReaderMarkLeafProps) {
   const leaf = props.leaf as Parameters<RenderLeaf>[0]["leaf"] & {
     readerMarkAnnotationType?: ReaderLookupIntent["annotationType"];
+    readerMarkAnchorText?: string;
     readerMarkClickable?: boolean;
     readerMarkGlossary?: ReaderLookupIntent["glossary"];
     readerMarkId?: string;
@@ -420,16 +421,16 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
     readerTextEndOffset?: number;
     readerMarkVisualTone?: Parameters<typeof readerMarkClassName>[0];
     readerMarks?: Array<{
-      annotationType: string;
+      annotationType: ReaderStructuredInspectIntent["annotationType"];
       anchorText: string;
       clickable: boolean;
-      glossary?: any;
+      glossary?: ReaderLookupIntent["glossary"];
       id: string;
       parentId?: string;
-      lookupKind?: string;
+      lookupKind?: ReaderStructuredInspectIntent["lookupKind"];
       lookupText?: string;
       renderType?: string;
-      visualTone: any;
+      visualTone: ReaderStructuredInspectIntent["visualTone"];
     }>;
   };
   const jumpFocusedSegments = useMemo(
@@ -534,17 +535,17 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
     : leaf.readerMarkVisualTone
       ? [
           {
-            annotationType: leaf.readerMarkAnnotationType,
-            anchorText: leaf.readerMarkAnchorText,
-            clickable: leaf.readerMarkClickable,
+            annotationType: leaf.readerMarkAnnotationType ?? "vocab_highlight",
+            anchorText: leaf.readerMarkAnchorText ?? "",
+            clickable: leaf.readerMarkClickable ?? false,
             glossary: leaf.readerMarkGlossary,
-            id: leaf.readerMarkId,
+            id: leaf.readerMarkId ?? "",
             parentId: leaf.readerMarkParentId,
             lookupKind: leaf.readerMarkLookupKind,
             lookupText: leaf.readerMarkLookupText,
             renderType: leaf.readerMarkRenderType,
             visualTone: leaf.readerMarkVisualTone,
-          } as any,
+          },
         ]
       : [];
 
@@ -789,7 +790,7 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
 
           if (isStructured) {
             const intent = inspectIntentFromStructuredMark({
-              mark: resolvedMark as any,
+              mark: resolvedMark,
               sentence,
               anchorText,
               sourceContext,
@@ -801,7 +802,7 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
           }
 
           const intent = lookupIntentFromMark({
-            mark: resolvedMark as any,
+            mark: resolvedMark,
             sentence,
             anchorText,
             sourceContext,

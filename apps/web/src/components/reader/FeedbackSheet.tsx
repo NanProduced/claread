@@ -183,13 +183,19 @@ export function FeedbackSheet({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
+  // Sync sentiment to prefillSentiment prop changes
+  const [prevPrefillSentiment, setPrevPrefillSentiment] = useState(prefillSentiment);
+  if (prefillSentiment !== prevPrefillSentiment) {
+    setPrevPrefillSentiment(prefillSentiment);
     if (prefillSentiment) setSentiment(prefillSentiment);
-  }, [prefillSentiment]);
+  }
 
-  useEffect(() => {
+  // Sync feedbackType to prefillType prop changes
+  const [prevPrefillType, setPrevPrefillType] = useState(prefillType);
+  if (prefillType !== prevPrefillType) {
+    setPrevPrefillType(prefillType);
     if (prefillType) setFeedbackType(prefillType);
-  }, [prefillType]);
+  }
 
   useEffect(() => {
     if (feedbackType === "other") {
@@ -205,36 +211,25 @@ export function FeedbackSheet({
         ? config.neutralOptions ?? []
         : [];
 
-  useEffect(() => {
+  // Recompute feedbackType when sentiment, prefillType, scope, or available options change
+  const feedbackTypeSyncKey = `${scope}:${sentiment ?? ""}:${prefillType ?? ""}:${activeOptions
+    .map((option) => option.value)
+    .join(",")}`;
+  const [prevFeedbackTypeSyncKey, setPrevFeedbackTypeSyncKey] = useState(feedbackTypeSyncKey);
+  if (feedbackTypeSyncKey !== prevFeedbackTypeSyncKey) {
+    setPrevFeedbackTypeSyncKey(feedbackTypeSyncKey);
     if (!sentiment) {
       setFeedbackType(null);
-      return;
+    } else {
+      if (prefillType && activeOptions.some((option) => option.value === prefillType)) {
+        setFeedbackType(prefillType);
+      } else if (activeOptions.length === 1) {
+        setFeedbackType(activeOptions[0].value);
+      } else {
+        setFeedbackType(null);
+      }
     }
-
-    const options = sentiment === "positive"
-      ? config.positiveOptions ?? []
-      : sentiment === "negative"
-        ? config.negativeOptions ?? []
-        : config.neutralOptions ?? [];
-
-    if (prefillType && options.some((option) => option.value === prefillType)) {
-      setFeedbackType(prefillType);
-      return;
-    }
-
-    if (options.length === 1) {
-      setFeedbackType(options[0].value);
-      return;
-    }
-
-    setFeedbackType(null);
-  }, [
-    config.negativeOptions,
-    config.neutralOptions,
-    config.positiveOptions,
-    prefillType,
-    sentiment,
-  ]);
+  }
 
   const requiresExplanation = config.requiresText || feedbackType === "other";
   const isImplicitPositiveType = sentiment === "positive" && activeOptions.length === 1;

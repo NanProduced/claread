@@ -1,27 +1,9 @@
 "use client";
 
 import { cn } from "@/lib/cn";
-import type { MotionProps } from "motion/react";
-import { motion } from "motion/react";
-import type { CSSProperties, ElementType, JSX } from "react";
+import type { CSSProperties, ElementType } from "react";
 import { memo, useMemo } from "react";
-
-type MotionHTMLProps = MotionProps & Record<string, unknown>;
-
-// Cache motion components at module level to avoid creating during render
-const motionComponentCache = new Map<
-  keyof JSX.IntrinsicElements,
-  React.ComponentType<MotionHTMLProps>
->();
-
-const getMotionComponent = (element: keyof JSX.IntrinsicElements) => {
-  let component = motionComponentCache.get(element);
-  if (!component) {
-    component = motion.create(element);
-    motionComponentCache.set(element, component);
-  }
-  return component;
-};
+import { motion } from "motion/react";
 
 export interface TextShimmerProps {
   children: string;
@@ -38,40 +20,43 @@ const ShimmerComponent = ({
   duration = 2,
   spread = 2,
 }: TextShimmerProps) => {
-  const MotionComponent = getMotionComponent(
-    Component as keyof JSX.IntrinsicElements
-  );
-
   const dynamicSpread = useMemo(
     () => (children?.length ?? 0) * spread,
     [children, spread]
   );
 
-  return (
-    <MotionComponent
-      animate={{ backgroundPosition: "0% center" }}
-      className={cn(
-        "relative inline-block bg-[length:250%_100%,auto] bg-clip-text text-transparent",
-        "[--bg:linear-gradient(90deg,#0000_calc(50%-var(--spread)),var(--color-background),#0000_calc(50%+var(--spread)))] [background-repeat:no-repeat,padding-box]",
-        className
-      )}
-      initial={{ backgroundPosition: "100% center" }}
-      style={
-        {
-          "--spread": `${dynamicSpread}px`,
-          backgroundImage:
-            "var(--bg), linear-gradient(var(--color-muted-foreground), var(--color-muted-foreground))",
-        } as CSSProperties
-      }
-      transition={{
-        duration,
-        ease: "linear",
-        repeat: Number.POSITIVE_INFINITY,
-      }}
-    >
-      {children}
-    </MotionComponent>
+  const shimmerClassName = cn(
+    "relative inline-block bg-[length:250%_100%,auto] bg-clip-text text-transparent",
+    "[--bg:linear-gradient(90deg,#0000_calc(50%-var(--spread)),var(--color-background),#0000_calc(50%+var(--spread)))] [background-repeat:no-repeat,padding-box]",
+    className
   );
+
+  const shimmerStyle = {
+    "--spread": `${dynamicSpread}px`,
+    backgroundImage:
+      "var(--bg), linear-gradient(var(--color-muted-foreground), var(--color-muted-foreground))",
+  } as CSSProperties;
+
+  const shimmerProps = {
+    animate: { backgroundPosition: "0% center" },
+    className: shimmerClassName,
+    initial: { backgroundPosition: "100% center" },
+    style: shimmerStyle,
+    transition: {
+      duration,
+      ease: "linear" as const,
+      repeat: Number.POSITIVE_INFINITY,
+    },
+  };
+
+  // Use pre-created motion components (motion.p, motion.span) instead of
+  // dynamically creating components during render. Only "p" and "span" are
+  // used in practice; other element types fall back to "p".
+  if (Component === "span") {
+    return <motion.span {...shimmerProps}>{children}</motion.span>;
+  }
+
+  return <motion.p {...shimmerProps}>{children}</motion.p>;
 };
 
 export const Shimmer = memo(ShimmerComponent);

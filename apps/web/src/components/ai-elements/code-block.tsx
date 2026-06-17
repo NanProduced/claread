@@ -391,14 +391,14 @@ export const CodeBlockContent = ({
 
   // Async highlighting result (populated after shiki loads)
   const [asyncTokens, setAsyncTokens] = useState<TokenizedCode | null>(null);
-  const asyncKeyRef = useRef({ code, language });
+  const [prevCode, setPrevCode] = useState(code);
+  const [prevLanguage, setPrevLanguage] = useState(language);
 
-  // Invalidate stale async tokens synchronously during render
-  if (
-    asyncKeyRef.current.code !== code ||
-    asyncKeyRef.current.language !== language
-  ) {
-    asyncKeyRef.current = { code, language };
+  // Reset async tokens when code/language changes (React-recommended pattern
+  // for adjusting state during render based on prop changes)
+  if (code !== prevCode || language !== prevLanguage) {
+    setPrevCode(code);
+    setPrevLanguage(language);
     setAsyncTokens(null);
   }
 

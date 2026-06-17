@@ -272,19 +272,24 @@ export function LibraryClient({
     );
   }, [activeRecords]);
 
-  useEffect(() => {
+  // Sync URL search params to filter state (adjust state during render).
+  const [prevSearchParamsKey, setPrevSearchParamsKey] = useState(currentSearch);
+  if (currentSearch !== prevSearchParamsKey) {
+    setPrevSearchParamsKey(currentSearch);
     const nextQuery = queryFromParams(searchParams);
     const nextFavorite = favoriteFromParams(searchParams);
     const nextGoal = goalFromParams(searchParams);
     const nextSort = sortFromParams(searchParams);
-
     setQuery((current) => (current === nextQuery ? current : nextQuery));
     setFavoriteFilter((current) => (current === nextFavorite ? current : nextFavorite));
     setGoalFilter((current) => (current === nextGoal ? current : nextGoal));
     setSortOption((current) => (current === nextSort ? current : nextSort));
-  }, [searchParams]);
+  }
 
-  useEffect(() => {
+  // Clean up stale favorite overrides and deleted IDs when records change
+  const [prevRecords, setPrevRecords] = useState(records);
+  if (records !== prevRecords) {
+    setPrevRecords(records);
     setFavoriteOverrides((current) => {
       const next: Record<string, boolean> = {};
 
@@ -304,11 +309,8 @@ export function LibraryClient({
 
       return next;
     });
-  }, [records]);
-
-  useEffect(() => {
     setDeletedRecordIds((current) => current.filter((recordId) => records.some((record) => record.id === recordId)));
-  }, [records]);
+  }
 
   useEffect(() => {
     if (typeof window === "undefined") {

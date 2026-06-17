@@ -3,23 +3,15 @@
 import * as React from "react"
 import { Collapsible as CollapsiblePrimitive } from "radix-ui"
 
-type CollapsibleProps = React.HTMLAttributes<HTMLDivElement> & {
-  asChild?: boolean
-  defaultOpen?: boolean
-  disabled?: boolean
-  open?: boolean
-  onOpenChange?: (open: boolean) => void
-}
+type CollapsibleProps = React.ComponentPropsWithoutRef<typeof CollapsiblePrimitive.Root>
 
 function Collapsible({
   ...props
 }: CollapsibleProps) {
-  return <CollapsiblePrimitive.Root data-slot="collapsible" {...(props as any)} />
+  return <CollapsiblePrimitive.Root data-slot="collapsible" {...props} />
 }
 
-type CollapsibleTriggerProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  asChild?: boolean
-}
+type CollapsibleTriggerProps = React.ComponentPropsWithoutRef<typeof CollapsiblePrimitive.CollapsibleTrigger>
 
 function CollapsibleTrigger({
   ...props
@@ -27,15 +19,12 @@ function CollapsibleTrigger({
   return (
     <CollapsiblePrimitive.CollapsibleTrigger
       data-slot="collapsible-trigger"
-      {...(props as any)}
+      {...props}
     />
   )
 }
 
-type CollapsibleContentProps = React.HTMLAttributes<HTMLDivElement> & {
-  asChild?: boolean
-  forceMount?: boolean
-}
+type CollapsibleContentProps = React.ComponentPropsWithoutRef<typeof CollapsiblePrimitive.CollapsibleContent>
 
 function CollapsibleContent({
   ...props
@@ -43,7 +32,7 @@ function CollapsibleContent({
   return (
     <CollapsiblePrimitive.CollapsibleContent
       data-slot="collapsible-content"
-      {...(props as any)}
+      {...props}
     />
   )
 }

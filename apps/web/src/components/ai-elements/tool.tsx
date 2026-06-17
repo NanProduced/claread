@@ -30,7 +30,7 @@ export const Tool = ({ className, defaultOpen, ...props }: ToolProps) => (
   <Collapsible
     className={cn("group not-prose mb-4 w-full rounded-[16px] border border-border/70 bg-background/72", className)}
     defaultOpen={defaultOpen}
-    {...(props as any)}
+    {...props}
   />
 );
 
@@ -93,7 +93,7 @@ export const ToolHeader = ({
         "flex w-full items-center justify-between gap-4 px-2.5 py-1.5",
         className
       )}
-      {...(props as any)}
+      {...props}
     >
       <div className="flex items-center gap-2">
         <WrenchIcon className="size-3.5 text-muted-foreground/80" />
@@ -116,7 +116,7 @@ export const ToolContent = ({ className, ...props }: ToolContentProps) => (
       "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 space-y-2 px-2.5 pb-2.5 text-popover-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
       className
     )}
-    {...(props as any)}
+    {...props}
   />
 );
 
