@@ -2643,7 +2643,6 @@ def _selected_model_payload(
         label=option.label,
         description=option.description,
         model_name=option.main_model_name,
-        planner_model_name=option.planner_model_name,
         replan_model_name=option.replan_model_name,
         price_multiplier=option.billing.price_multiplier,
     ).model_dump(mode="json")

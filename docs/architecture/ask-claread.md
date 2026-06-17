@@ -167,7 +167,7 @@ Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` �
 稳定 wiring 边界为：
 
 - `agent_deps_factory.py` 是 `ReaderAskAgentDeps` 的唯一 service 路径构造入口，并统一注入 `tool_availability`。
-- `agent_invocation.py` 负责 reader-ask agent/model resolution、non-streaming replan 调用、agent stream lifecycle facade 与 replan event facade。`reader_ask_planner` model route 已在 Round 16 彻底移除，不再有 planner model route callback。
+- `agent_invocation.py` 负责 reader-ask agent/model resolution、non-streaming replan 调用与 agent stream lifecycle facade。`reader_ask_planner` model route 已在 Round 16 彻底移除，`planner_model_name` DTO 字段已在 Round 18 从后端与 Web 契约中删除。
 - `ReaderAskAgentDeps.event_queue` 是 stream-wide event bus，类型语义为 `Queue[tuple[str, dict[str, Any]]]`；`ToolEventName` 只约束 tool runtime 内部 `_emit_tool_event(...)` 的 `tool.started / tool.completed / tool.failed`。
 
 `service.py` 不应重新直接调用：

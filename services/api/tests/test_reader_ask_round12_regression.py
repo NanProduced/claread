@@ -405,7 +405,6 @@ class TestPlannerNotCalledForLongHistory:
             billing=WeightedTokensBillingConfig(reserved_points=10),
             runtime_budget=model_options_svc.ReaderAskRuntimeBudgetConfig(),
             main_model_name="test-model",
-            planner_model_name=None,
             replan_model_name="test-replan",
             is_default=True,
             used_fallback=False,

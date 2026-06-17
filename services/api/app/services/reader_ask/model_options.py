@@ -21,12 +21,9 @@ from app.services.ai_usage.billing import (
 )
 from app.services.reader_ask import config as cfg
 
-# Round 16: ``MODEL_ROUTE_READER_ASK_PLANNER`` has been removed from
-# ``_ASK_MODEL_ROUTES``. The live agent-loop-first path no longer resolves
-# or invokes a planner LLM. ``planner_model_name`` is still emitted in the
-# resolved option (always ``None``) for backward-compatible DTO
-# serialization, but no route resolution or buildability check is performed
-# for a planner route.
+# Round 18: the planner LLM route and its selected-model DTO field have both
+# been removed. Ask model options only resolve/build the main answer and
+# repair/replan routes.
 _ASK_MODEL_ROUTES = (
     MODEL_ROUTE_READER_ASK,
     MODEL_ROUTE_READER_ASK_REPLAN,
@@ -78,10 +75,6 @@ class ResolvedReaderAskModelOption:
     billing: WeightedTokensBillingConfig
     runtime_budget: ReaderAskRuntimeBudgetConfig
     main_model_name: str | None
-    # Round 16: ``planner_model_name`` is deprecated. Retained for
-    # backward-compatible model-options serialization; the live path no
-    # longer resolves or invokes a planner LLM.
-    planner_model_name: str | None
     replan_model_name: str | None
     is_default: bool
     used_fallback: bool = False
@@ -264,8 +257,6 @@ def _resolve_option(
         billing=billing,
         runtime_budget=runtime_budget,
         main_model_name=_resolved_model_name(settings, MODEL_ROUTE_READER_ASK, option.selection),
-        # Round 16: planner LLM route removed; planner_model_name is always None.
-        planner_model_name=None,
         replan_model_name=_resolved_model_name(settings, MODEL_ROUTE_READER_ASK_REPLAN, option.selection),
         is_default=is_default,
         used_fallback=used_fallback,
@@ -275,8 +266,6 @@ def _resolve_option(
 
 def _fallback_default_option(settings: Settings) -> ResolvedReaderAskModelOption:
     main_model_name = _resolved_model_name(settings, MODEL_ROUTE_READER_ASK, None)
-    # Round 16: planner LLM route removed; planner_model_name is always None.
-    planner_model_name = None
     replan_model_name = _resolved_model_name(settings, MODEL_ROUTE_READER_ASK_REPLAN, None)
     label = main_model_name or "Default Ask model"
     return ResolvedReaderAskModelOption(
@@ -287,7 +276,6 @@ def _fallback_default_option(settings: Settings) -> ResolvedReaderAskModelOption
         billing=DEFAULT_READER_ASK_BILLING_CONFIG.model_copy(deep=True),
         runtime_budget=ReaderAskRuntimeBudgetConfig(),
         main_model_name=main_model_name,
-        planner_model_name=planner_model_name,
         replan_model_name=replan_model_name,
         is_default=True,
     )
@@ -392,7 +380,6 @@ def resolve_reader_ask_model_option(
         billing=fallback.billing.model_copy(deep=True),
         runtime_budget=fallback.runtime_budget.model_copy(deep=True),
         main_model_name=fallback.main_model_name,
-        planner_model_name=fallback.planner_model_name,
         replan_model_name=fallback.replan_model_name,
         is_default=True,
         used_fallback=True,

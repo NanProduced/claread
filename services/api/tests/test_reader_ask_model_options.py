@@ -98,8 +98,6 @@ def test_list_reader_ask_model_options_resolves_stage_model_names(monkeypatch) -
     assert default_key == "glm-fast"
     assert len(items) == 1
     assert items[0].main_model_name == "glm-5.1"
-    # Round 16: planner LLM route removed; planner_model_name is always None.
-    assert items[0].planner_model_name is None
     assert items[0].replan_model_name == "glm-5.1"
     assert items[0].billing.reserved_points == 12
     assert items[0].billing.price_multiplier == 1.5

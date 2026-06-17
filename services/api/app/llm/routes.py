@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from typing import Final, Literal
 
-# Round 16: ``reader_ask_planner`` route has been removed. The live
-# agent-loop-first path no longer resolves or invokes a planner LLM.
-# ``planner_model_name`` DTO field is retained for backward-compatible
-# serialization but always resolves to ``None``.
+# Round 18: ``reader_ask_planner`` route and its public DTO field have both
+# been removed. Ask Claread resolves only the main answer and repair/replan
+# routes.
 ModelRoute = Literal[
     "annotation_generation",
     "dict_ai",

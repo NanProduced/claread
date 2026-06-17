@@ -14,14 +14,11 @@ These tests lock down:
 4. ``prompts/agents/reader_ask_planner.yaml`` has been deleted.
 5. ``prompts/reader_ask/planner.yaml`` has been deleted.
 6. ``service.py`` does not call ``build_reader_ask_planner_model_route``.
-7. The deprecated ``planner_model_name`` DTO field is still present
-   (backward-compatible serialization) but carries a deprecation marker
-   in its source comment.
+7. Round 18 removed the deprecated ``planner_model_name`` DTO/dataclass
+   field after Web was updated to stop consuming it.
 8. ``MODEL_ROUTE_READER_ASK_PLANNER`` has been entirely removed from
    ``app/llm/routes.py``, ``app/llm/registry.py``,
    ``app/services/reader_ask/model_options.py``, and ``app/config/settings.py``.
-   The ``planner_model_name`` DTO field is retained for backward-compatible
-   serialization but always resolves to ``None``.
 
 All tests are static / AST-level — no real LLM is called.
 """
@@ -153,26 +150,25 @@ class TestPlannerPromptRegistryRemoved:
 
 
 # ---------------------------------------------------------------------------
-# 4. Deprecated planner_model_name DTO field retained for compatibility
+# 4. Deprecated planner_model_name DTO field removed
 # ---------------------------------------------------------------------------
 
-class TestPlannerModelNameDeprecatedButRetained:
-    def test_planner_model_name_field_still_present(self) -> None:
+class TestPlannerModelNameRemoved:
+    def test_planner_model_name_field_removed_from_selected_model_schema(self) -> None:
         from app.schemas.reader_ask import ReaderAskSelectedModel
         fields = ReaderAskSelectedModel.model_fields
-        assert "planner_model_name" in fields, (
-            "planner_model_name must remain in ReaderAskSelectedModel for "
-            "backward-compatible API/DTO serialization (Round 16 deprecation)"
+        assert "planner_model_name" not in fields, (
+            "Round 18 must remove planner_model_name from ReaderAskSelectedModel; "
+            "the planner LLM route no longer exists and Web no longer consumes it"
         )
 
-    def test_planner_model_name_has_deprecation_comment(self) -> None:
-        source = inspect.getsource(
-            __import__("app.schemas.reader_ask", fromlist=["reader_ask"])
-        )
-        assert "planner_model_name" in source
-        # The deprecation marker is in a comment immediately above the field.
-        assert "Round 16" in source and "deprecated" in source.lower(), (
-            "planner_model_name field should carry a Round 16 deprecation comment"
+    def test_planner_model_name_removed_from_resolved_option_dataclass(self) -> None:
+        from app.services.reader_ask.model_options import ResolvedReaderAskModelOption
+        import dataclasses
+        field_names = {f.name for f in dataclasses.fields(ResolvedReaderAskModelOption)}
+        assert "planner_model_name" not in field_names, (
+            "Round 18 must remove planner_model_name from ResolvedReaderAskModelOption; "
+            "model option resolution now only exposes main/replan model names"
         )
 
 
@@ -240,15 +236,4 @@ class TestPlannerRouteConstantRemoved:
         assert "reader_ask_planner_model_profile" not in fields, (
             "reader_ask_planner_model_profile must be removed from Settings; "
             "the planner LLM route has been entirely removed in Round 16"
-        )
-
-    def test_planner_model_name_always_none_in_resolved_option(self) -> None:
-        """planner_model_name DTO field is retained but always resolves to None."""
-        from app.services.reader_ask.model_options import ResolvedReaderAskModelOption
-        import dataclasses
-        # The field should still exist on the dataclass.
-        field_names = {f.name for f in dataclasses.fields(ResolvedReaderAskModelOption)}
-        assert "planner_model_name" in field_names, (
-            "planner_model_name field must remain on ResolvedReaderAskModelOption "
-            "for backward-compatible serialization"
         )

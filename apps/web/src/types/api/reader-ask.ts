@@ -498,7 +498,6 @@ export interface ReaderAskSelectedModelDto {
   label: string;
   description?: string | null;
   model_name?: string | null;
-  planner_model_name?: string | null;
   replan_model_name?: string | null;
   price_multiplier: number;
 }

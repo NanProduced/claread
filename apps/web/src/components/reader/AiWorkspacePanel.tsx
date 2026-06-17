@@ -477,7 +477,6 @@ function toSelectedModelSummary(
     label: option.label,
     description: option.description ?? null,
     model_name: option.model_name ?? null,
-    planner_model_name: option.planner_model_name ?? null,
     replan_model_name: option.replan_model_name ?? null,
     price_multiplier: option.price_multiplier,
   };

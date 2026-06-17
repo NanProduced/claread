@@ -3,7 +3,7 @@
     "这是字段说明版 example，不可直接作为运行时配置加载。",
     "复制到正式配置前，请删除所有以下划线开头的注释键。",
     "Ask Claread 面板可选模型由这里控制；这里的 selection 只应该覆盖 reader_ask / reader_ask_replan 两个 route。",
-    "Round 16: reader_ask_planner route 已移除，live path 不再调用 planner LLM；planner_model_name 字段保留但永远为 null。",
+    "Round 18: reader_ask_planner route 和 planner_model_name DTO 字段均已移除；配置只暴露主回答与 repair/replan route。",
     "reader-ask-model-options controls the Ask panel model selector, not the full profiles surface. Options can mix native and compat providers."
   ],
   "default_option": "glm-standard",
