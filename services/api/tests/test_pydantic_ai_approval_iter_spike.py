@@ -3,9 +3,9 @@
 
 **Decision: NOT adopted in Round 1.** ``DeferredToolResults`` requires keeping
 the agent run alive across an HTTP roundtrip, which conflicts with FastAPI
-request lifecycle. See
-``docs/tmp/ask-claread/TMP-ask-claread-agent-loop-refactor-task-tracker-2026-06-13.md``
-§9.1.
+request lifecycle. The current formal architecture keeps Ask writes on a
+proposal-only + user-confirmation path; see
+``docs/architecture/ask-claread.md``.
 
 This file exists so that the next refactor round can re-evaluate the decision
 without re-deriving the API surface. If these tests fail, that's a real version

@@ -3,7 +3,7 @@
 ## 文档状态
 
 - 状态：current implementation architecture
-- 日期：2026-06-10
+- 日期：2026-06-17
 - 适用范围：Claread Web Reader 内当前 Ask Claread 模块
 - 文档关系：
   - 当前产品边界见 `docs/product/ask-claread.md`
@@ -35,7 +35,7 @@ Ask Claread 当前采用四层真相源：
 - `conversation` 代表单文章 active conversation
 - `turn_run` 代表单次 assistant 运行
 - `user_visible_output` 代表当前 run 的正式产品输出
-- `eval_trace` 代表 planner、capability、action 与 supplement 的结构化审计
+- `eval_trace` 代表 runtime、capability、action 与 supplement 的结构化审计
 
 ## 当前主链
 
@@ -115,42 +115,41 @@ live service 不再调用 route resolver；`"planner_first"` 仅作为 `PlannerR
 
 `runtime_contract.py` 当前是 answer runtime 的唯一输入构造入口。answer runtime 只消费：
 
-- `planning_snapshot`
+- `planning_snapshot`（历史兼容字段；live agent-loop 路径通常为 `None`）
 - `resolved_context_input`
 - `response_contract`
 - 必要的 history / attachment / citation 摘要
 - `submission_mode`
 - `quick_action_annotation`
 
-planner schema 中的 `answer_policy` 当前属于可评估的后续输入，不等同于 answer prompt 的强约束。若要接入 answer agent，必须先明确它是硬约束、软偏好，还是可被 answer agent 覆盖的策略建议，并补对应 eval。
+历史 planner schema 中的 `answer_policy` 不再是 live answer prompt 的输入。若未来重新引入回答策略层，必须先明确它是硬约束、软偏好，还是可被 answer agent 覆盖的策略建议，并补对应 eval。
 
 ### Agent Tools / Write Gate
 
-Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` 统一定义。当前固定为 8 个 agent-callable 工具：
+Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` 统一定义。当前固定为 9 个 agent-callable 工具：
 
 - `get_record_context`
 - `get_record_insights`
 - `get_user_vocabulary_book`
 - `resolve_known_reference`
+- `load_explicit_attachment_context`
 - `generate_sentence_annotation`
 - `propose_save_note`
 - `propose_save_highlight`
 - `suggest_prompts`
 
-此外 registry 中还有 3 个 non-callable 工具：
+此外 registry 中还有 1 个 non-callable 工具：
 
 - `lookup_record_by_embedding` — reserved，未来 pgvector RAG 占位，`agent_callable=False`
-- `lookup_dictionary_entry` — deprecated，仍被 dictionary attachment 闭包调用，`agent_callable=False`
-- `run_dictionary_ai_context_explain` — deprecated，仍被 dictionary AI 闭包调用，`agent_callable=False`
 
-`search_user_vocabulary` 已在 Round 5 完全移除（零调用者，由 `get_user_vocabulary_book` 替代）。
+`search_user_vocabulary` 已在 Round 5 完全移除（零调用者，由 `get_user_vocabulary_book` 替代）。`lookup_dictionary_entry` 与 `run_dictionary_ai_context_explain` 已在 Round 7 从 registry 和 service runtime 中删除；dictionary anchor / attachment 现在通过 agent-loop hint 与当前文章语境处理，不再暴露 dictionary tool。
 
 工具契约的稳定边界：
 
 - tool name 必须来自 registry 常量；`@agent.tool(name=...)` 与 `run_tool(...)` 不允许回退为硬编码字符串。
 - tool observation 经 `reader_ask_tool_observation.py` 规范化为 `status`、`summary`、`next_actions`、`artifacts`。
 - `reader_ask_tool_runtime.py` 负责 budget、trace、SSE `tool.started / tool.completed / tool.failed` 事件，以及 availability hard enforcement。
-- `reader_ask_tool_policy.py` 负责构造 tool availability。当前默认 policy 仍允许全部 8 个 agent-callable tools，以保持生产行为不变；后续收紧可用工具必须经由该 policy，不由 planner 直接越权。
+- `reader_ask_tool_policy.py` 负责构造 tool availability。当前默认 policy 仍允许全部 9 个 agent-callable tools，以保持生产行为不变；后续收紧可用工具必须经由该 policy，不由 planner 直接越权。
 - `reader_ask_tool_registry.py` 中的 `output_kind` / `observation_statuses` 描述 tool implementation 自身的 IO contract；runtime wrapper 注入的 policy error 另由 runtime contract 测试覆盖。
 
 写动作采用 proposal-only 模型：
@@ -158,7 +157,8 @@ Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` �
 - `propose_save_note` / `propose_save_highlight` 只创建 runtime `action_request`，且 `requires_confirmation=True`。
 - 无 primary anchor 时由 write gate 直接返回稳定 error payload，不消耗 tool budget，也不创建 action request。
 - `note_text` 缺失属于 tool 内部校验，会经过 `run_tool`，消耗一次 tool budget，并返回稳定 error observation。
-- grammar supplement 的 `create_supplement_grammar_note` 仍是 confirmation path 的 action type，不是 agent-callable tool，不进入上述 8 个 tool registry。
+- grammar supplement 的 `create_supplement_grammar_note` 仍是 confirmation path 的 action type，不是 agent-callable tool，不进入上述 9 个 tool registry。
+- PydanticAI `Tool(requires_approval=True)` / `Agent.iter()` 暂不接入 live Ask：跨 HTTP roundtrip 保活 agent run 与当前 FastAPI 请求生命周期冲突。当前写动作继续采用 proposal-only + 用户确认模型。
 
 ### Facade / Invocation Wiring
 
@@ -315,7 +315,7 @@ Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` �
 
 当标题引用命中多个候选文章时：
 
-- planner 进入 `disambiguation_state`
+- resolver/runtime 进入 `disambiguation_state`
 - 当前 run 不走主回答生成
 - Ask 面板展示 record-level candidate cards
 
@@ -323,7 +323,7 @@ Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` �
 
 当 external record 已确定，但 asset 命中多个候选时：
 
-- planner 进入 `external_asset_disambiguation_state`
+- resolver/runtime 进入 `external_asset_disambiguation_state`
 - 当前 run 不走主回答生成
 - Ask 面板展示 asset-level candidate cards
 
@@ -434,7 +434,7 @@ Reader 标注体系完成重构后，Ask Claread 已不再依赖“用户学习�
 - resolver 的 future structured lookup 扩展点
 - agent tools 中是否需要新增受控的跨文章引用入口
 
-Ask Claread 当前已是 agent-loop-first harness：主回答 agent 直接消费 minimal payload，按需调用 controlled read tools 解析上下文，再生成回答并 stream/checkpoint/recovery。后续若评估受限 multi-step reader loop，必须先限定最大 step 数、稳定每步 tool observation、接入 eval trace，并保证 UI 只表达用户能理解的处理状态。下一轮重构方向（single agent loop / multi-step reader loop）见 `docs/development/mainline.md`。
+Ask Claread 当前已是 agent-loop-only harness：主回答 agent 直接消费 minimal payload，按需调用 controlled read tools 解析上下文，再生成回答并 stream/checkpoint/recovery。后续若评估受限 multi-step reader loop，必须先限定最大 step 数、稳定每步 tool observation、接入 eval trace，并保证 UI 只表达用户能理解的处理状态。
 
 ### 当前 Attachment 类型与 Anchor 类型
 

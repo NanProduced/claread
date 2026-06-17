@@ -2,8 +2,8 @@
 
 ## 文档状态
 
-- 状态：current frozen scope
-- 日期：2026-06-10
+- 状态：current agent-loop baseline
+- 日期：2026-06-17
 - 适用范围：Claread Web Reader 内当前 Ask Claread 模块
 - 事实基线：以当前代码、测试与可验证行为为准
 - 文档关系：
@@ -55,12 +55,12 @@ composer context chip 是“下一轮发送时会带入的上下文承诺”。�
 
 ### 状态文案产品化
 
-Ask 面板向用户展示“系统正在做什么”，不暴露 token budget、retrieval chunk、planner retry、checkpoint flush 等技术细节。
+Ask 面板向用户展示“系统正在做什么”，不暴露 token budget、retrieval chunk、agent repair、checkpoint flush 等技术细节。
 
 当前约定：
 
 - 普通生成：`正在生成`
-- planner / intent 理解：`正在理解问题`
+- 问题理解 / 意图归类：`正在理解问题`
 - 上下文整理：`正在整理上下文`
 - context compression：`上下文压缩中`
 - 词典查询：`正在查词典`
@@ -152,7 +152,8 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - 局部上下文窗口
 - 当前文章 stable record insights
 - 当前文章 article overview（若已有）
-- 词典与词典 AI 辅助
+- 生词本查询
+- dictionary anchor / dictionary attachment 的文章语境解释
 
 补充：
 
@@ -196,6 +197,7 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - `submission_mode`
 - `resolved_intent`
 - `citations`
+- `tool_trace`
 - `evidence`
 - `context_plan`
 - `resolved_context_input`
@@ -206,6 +208,7 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 - `action_proposals`
 - `supplement_candidates`
 - `persisted_supplements`
+- `follow_up_suggestions`
 - `run_info`
 - `usage_summary`
 - `billed_points`
@@ -221,6 +224,9 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 补充：
 
 - `context_plan / resolved_context_input / evidence / trace_summary` 在 Ask 面板中默认折叠展示
+- `tool_trace` 在 Ask 面板中以紧凑 tool chip row 呈现，不默认展开技术细节
+- `citations` 在消息底部以 citation badge / list 呈现，作为用户可见回源线索
+- `follow_up_suggestions` 在 assistant 消息尾部以可点击 chips 呈现，点击后作为下一轮 prompt 输入
 - `reasoning.*` 是 run-scoped 的正式输出字段
 - Ask 在流式阶段会按节流 checkpoint 持续回写当前 `turn_run.user_visible_output_json`
 - 刷新页面时会直接回显已持久化的正文与 thinking 快照，但不会自动恢复原 SSE 连接或继续跑同一个未完成 run
@@ -271,7 +277,7 @@ Ask 面板内也支持显式加入“我的另一篇文章”作为 `record_ref.
 ### 冻结为当前事实的部分
 
 - attachment-first Ask contract
-- agent-loop-first runtime（`planner_first` 仅作为历史 trace value 保留）
+- agent-loop-only runtime（`planner_first` 仅作为历史 trace value 保留，没有 live route）
 - `conversation / turn_run / user_visible_output / eval_trace`
 - record-level 与 asset-level HITP
 - current run hydration 优先于 legacy metadata fallback

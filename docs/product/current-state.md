@@ -1,6 +1,6 @@
 # 当前状态
 
-> **状态**: `CURRENT` | **最后验证**: 2026-06-06
+> **状态**: `CURRENT` | **最后验证**: 2026-06-17
 
 本文给新会话 agent 提供 Claread 当前事实。它不是迁移日志。
 
@@ -22,7 +22,7 @@
 - Web 已接入手机号登录、分析任务、Reader、历史记录、生词本、复习、文章收藏、用户高亮、用户笔记、Ask Claread、反馈和设置/配额；设置页已补齐昵称编辑、积分明细、默认透读和 Web 偏好云端同步，Library 已形成搜索/收藏筛选/排序的基础管理体验；公共区已覆盖首页、每日精读、示例文章和分享页；command palette 已实现。
 - `text_range` / `multi_text` 已稳定到同一套数据契约：Web 和小程序共享 `@claread/contracts` 常量，后端按 UTF-16 offset、`fnv1a32-utf16` hash、render scene sentence 切片和 sentence 顺序校验局部/多段选区。
 - AI 使用审计与结算底座已完成第一轮加固：`ai_usage_events`、capability code、usage scope 和 billing mode 已可承接后续词典 AI 与 Reader AI 能力。
-- `Ask Claread` 已完成 Reader 2.0 底座上的重构主线，当前处于可运行基线状态（live route 已迁移为 agent-loop-first，`planner_first` 仅作为历史 trace value 保留；下一轮重构方向见 `docs/development/mainline.md`）。当前正式事实以 `docs/product/ask-claread.md` 与 `docs/architecture/ask-claread.md` 为准；已实现 turn-run/eval-trace 持久化、record/asset disambiguation、grammar_note supplement 生命周期和 current-run hydration。
+- `Ask Claread` 已完成 Reader 2.0 底座上的 agent-loop-only 重构主线，当前处于可运行基线状态（live service 不再调用 planner route resolver 或 semantic planner LLM；`planner_first` 仅作为历史 trace value 保留）。当前正式事实以 `docs/product/ask-claread.md` 与 `docs/architecture/ask-claread.md` 为准；已实现 turn-run/eval-trace 持久化、record/asset disambiguation、grammar_note supplement 生命周期、current-run hydration、follow-up suggestions、tool trace/citation 展示和单次 agent-loop repair。
 - workflow 解析主链路可跑通：learning / academic 双模式、grammar RAG 检索、prompt 策略和 canonical result 生成已形成完整链路。
 - Eval Center 已落地三个公开 mode：`node-lab`、`workflow-lab`、`run-history`。Node Lab 承载单节点评测与 judge，Workflow Lab 承载候选版本双跑 compare 与 review，Run History 承载统一只读回看。
 - Example Lab 按 Directus 原生 Collection `eval_example_lab_entries` 实现，不在 Eval Center module 导航内。grammar RAG / Example Lab 契约已收口：无 `teaching_goal`、无 `structure_signals`、无 `retrieval_version`；`variant` 是硬边界。
@@ -65,7 +65,7 @@ workflow 解析主链路已可跑通，当前重心转向输出质量提升和�
 
 ### 副线：Ask Claread 表现优化
 
-Ask Claread 已冻结到可用正确状态，当前不再扩功能。后续按需优化回答质量、correctness 和用户体验，但保持 article-bound、可回源、可确认写入、统一审计/结算的冻结边界。
+Ask Claread 已冻结到 agent-loop 可用正确状态，当前不再扩 planner/retrieval 架构面。后续按需优化回答质量、correctness、真实 LLM smoke/eval 和用户体验，但保持 article-bound、可回源、可确认写入、统一审计/结算的冻结边界。
 
 ### 副线：Web 次要功能补齐与页面设计收口
 

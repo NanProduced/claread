@@ -25,9 +25,8 @@ there is no longer an executable branch that reaches
 asserted the legacy path was intact has been deleted.
 
 Round 13 only audits and small-scale cleans; it does NOT delete
-``planner.py`` / ``planner_runtime.py``. See
-``docs/tmp/ask-claread/TMP-ask-claread-round13-planner-cleanup-audit-2026-06-17.md``
-for the full dependency audit and Round 14 deletion candidates.
+``planner.py`` / ``planner_runtime.py``. The current formal dependency state
+is documented in ``docs/architecture/ask-claread.md``.
 """
 
 from __future__ import annotations

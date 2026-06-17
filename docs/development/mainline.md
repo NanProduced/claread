@@ -1,6 +1,6 @@
 # 开发主线
 
-> **状态**: `CURRENT` | **最后验证**: 2026-06-10
+> **状态**: `CURRENT` | **最后验证**: 2026-06-17
 
 本文说明 Claread 当前主线方向。它不是任务流水账；已完成的阶段只保留结论，具体实现细节回到代码、测试和对应目录文档。
 
@@ -32,14 +32,15 @@ workflow 解析主链路已可跑通，当前重心转向输出质量提升和�
 - 基于评测结果驱动 prompt 策略和解析链路的质量改进
 - grammar RAG 检索质量和 few-shot 样本质量的持续治理
 
-### 副线：Ask Claread 架构与表现优化
+### 副线：Ask Claread 评测与表现优化
 
-Ask Claread 当前实现仍是可运行基线，但已确认下一轮重构方向不再继续加固默认 `planner -> 主回答 agent -> 可选 replan` 的三段式编排。现阶段先完成 LLM 统一配置与 provider 兼容问题收口；随后再进入 Ask Claread 的再次重构，目标方向是默认 single agent loop，并保留 article-bound、可回源、可确认写入、统一审计/结算边界。
+Ask Claread 已完成从三段式 planner 编排到 agent-loop-only baseline 的重构。live service 不再调用 planner route resolver 或 semantic planner LLM；`planner_first`、`planning_snapshot_json` 等名称只作为历史 trace / DB 兼容面保留。当前稳定边界是 article-bound、可回源、可确认写入、统一审计/结算。
 
 近期重点：
-- 收口 DashScope / DeepSeek / GLM 等 provider 在 Ask 路径上的配置、streaming 与 reasoning 兼容问题
-- 修正 correctness 问题，确保 regenerate、supplement lifecycle、known reference resolution 和写动作边界符合当前规范
-- 为下一轮 Ask Claread 从 planner-first 迁移到默认 agent loop 的重构准备边界与问题清单
+- 建立 opt-in 真实 LLM smoke 与小型 eval dataset，验证 tool selection、引用准确性和 repair 质量
+- 基于 eval trace 的 `runtime_route / trace_kind / tool_trace / evidence` 做可观测性与 dashboard 打磨
+- 持续修正 correctness 问题，确保 regenerate、supplement lifecycle、known reference resolution 和写动作边界符合当前规范
+- 清理剩余历史命名与迁移测试，但不恢复 planner-first live path
 
 ### 副线：Web 次要功能补齐与页面设计收口
 
@@ -73,10 +74,8 @@ Claread Console 已进入可用控制面阶段，后续重点转向控制面治�
 
 - Ask Claread 在显式引用模型上是否还需要更强的跨文章扩展，以及 resolver / product contract 应如何继续演进。
 - Ask Claread semantic resolver / retrieval rerank 是否启用真实 LLM 或 embedding rerank；启用前必须先评估 timeout、candidate limit、成本、trace/eval 样本和 fallback。
-- Ask Claread 下一轮默认 agent loop 中，planner / resolver 是作为按需 tool、独立 sidecar route，还是其他受控能力接入。
-- Ask Claread planner 的 `answer_policy` 是否仍保留，以及若保留应作为硬约束、软偏好还是可覆盖策略。
-- Ask Claread 是否需要受限 multi-step reader loop；当前已不再假设长期维持 planner-first，但是否开放多步 loop、最大 step 数和 retry 策略仍需单独拍板。
-- Ask Claread auto replan 是否保留为默认兜底，还是降级为显式 retry / 低频 fallback。
+- Ask Claread 是否需要受限 multi-step reader loop；当前 baseline 是 single answer agent + controlled tools，是否开放多步 loop、最大 step 数和 retry 策略仍需单独拍板。
+- Ask Claread 是否继续把 repair 维持为自动单次修复，还是只保留显式 retry / 低频 fallback。
 - 多解析页 / 跨文章检索何时从当前受控扩展升级到 hybrid retrieval / RAG。
 - Grammar X-Ray、分享页、导出和其他 AI 能力的优先级。
 - 是否在 Ask Claread 之外单独产品化"AI 整合总结用户历史数据"能力，以及是否做跨文章/跨资产的长期学习画像。
