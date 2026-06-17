@@ -337,50 +337,6 @@ class TestAgentLoopFirstTraceSemantics:
         assert data["planner_skipped"] is True
         assert data["planner_route_used"] == "agent_loop_first"
 
-    def test_legacy_snapshot_trace(self) -> None:
-        """Legacy planner-first snapshot should have planner_route_used."""
-        from app.schemas.reader_ask import (
-            ReaderAskPlannerDecision,
-            ReaderAskPlannerReferenceRequest,
-            ReaderAskPlannerStructuredAssetRequest,
-            ReaderAskPlannerWorkingSetDecision,
-        )
-        from app.services.reader_ask.planner import plan_request
-
-        snapshot = plan_request(
-            content="explain this",
-            page_identity=ReaderAskPageIdentity(
-                record_id="00000000-0000-0000-0000-000000000001",
-                title="Test",
-                available_context_capabilities=["record_context"],
-                has_article_overview=True,
-                has_sentence_entries=True,
-                has_annotations=False,
-                has_reader_notes=False,
-            ),
-            entry_action="ask_about_this",
-            attachments=[],
-            anchors=[_anchor()],
-            planner_decision=ReaderAskPlannerDecision(
-                resolved_intent="explain",
-                clarification_only=False,
-                reference_request=ReaderAskPlannerReferenceRequest(
-                    requested=False,
-                ),
-                structured_asset_request=ReaderAskPlannerStructuredAssetRequest(
-                    requested=False,
-                ),
-                working_set=ReaderAskPlannerWorkingSetDecision(
-                    local_context_window_needed=True,
-                ),
-                rationale="test",
-            ),
-        )
-        data = service_svc._planning_snapshot_json(
-            snapshot, planner_route_used="planner_first"
-        )
-        assert data["planner_skipped"] is False
-        assert data["planner_route_used"] == "planner_first"
 
 
 # ---------------------------------------------------------------------------

@@ -74,6 +74,8 @@ Ask Claread 当前采用四层真相源：
 - context plan / trace summary 构造
 - resolved context helper
 
+`planner.plan_request(...)`、`build_planner_input(...)` 和基于 `ReaderAskPlannerDecision` 的 decision-consumption helper 已删除；旧 semantic planner 的 input / decision / fallback 组装逻辑不再作为可调用架构面存在。
+
 `ReaderAskPlanningSnapshot` 作为 typed dataclass 仍保留，用于 trace 与 eval 观测，但 `planner_decision` / `planner_validation_status` / `reference_needs` / `retrieval_needs` / `resolved_references` / `structured_asset_needs` / `structured_asset_resolution` / `working_set` / `disambiguation_state` / `external_asset_disambiguation_state` / `clarification_only` 等字段在 agent-loop-first 路径下不再由独立 planner LLM 产出，而是由主回答 agent 在 tool loop 内按需解析。
 
 `resolve_planner_route(...)` 始终返回 `"agent_loop_first"`；`"planner_first"` 仅作为 `PlannerRoute` Literal 与 trace value 保留，没有任何 live condition 触发它。
