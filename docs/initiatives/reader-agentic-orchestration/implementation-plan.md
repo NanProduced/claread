@@ -422,6 +422,39 @@ Focused tests 已通过：
 - `pnpm --filter=@claread/web test`
 - `pnpm --filter=@claread/web build`
 
+### D4-P4. Worker Runner Hardening + Web Smoke/Test Gap Closeout
+
+状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D4/TMP-D4-P4-worker-web-hardening-closeout.md`。
+
+Closeout 结论：
+
+- 已新增 `TranslationWorkerRunner`，作为 D4 内部 callable runner，封装 single tick 与 bounded drain。
+- Runner 不新增 public HTTP endpoint，不启动后台进程，不引入 LangGraph / MQ / Temporal / SSE。
+- Runner 使用 `ReaderOrchestrator.tick_translation_worker()`，并把 worker result 分类为 `no_job`、`succeeded`、`retry_later`、`failed_terminal`、`fence_rejected`。
+- Drain 遇到 retry / terminal failure / fence rejection 不立即停止，因为同一队列中可能仍有其他可处理 job；caller 通过 `WorkerDrainResult` 决定是否继续。
+- 已新增 orphan diagnostic：查找 published translation layer 但缺失 `parsed_decisions` 的记录。D4 单线程 tick 下应返回空；D5 若引入并发 tick 或 crash recovery，再决定是否把 parsed decision 写入 publisher transaction 或补 repair。
+- Web 侧补齐 Reader Plate BFF auth/error tests，覆盖 anonymous / mock phone 拒绝、上游 401/404/409/5xx/网络失败、空文本与成功提交。
+- Web 侧新增 reader-plate Playwright smoke，使用 mocked BFF routes 验证真实页面交互、只读 Plate surface 渲染 source text 和 translation、polling caught-up 无错误。
+- Web 页面与 polling 文案继续保持产品语义，不暴露 D4、Plate.js、Snapshot、cursor、sequence 等实现术语。
+
+D4-P4 不包含：
+
+- 真实后台 worker daemon。
+- Public 或 internal HTTP tick endpoint。
+- Crash-recovery repair job。
+- `projection_ops` incremental applier。
+- vocabulary、grammar bundle、Ask tools、RAG、SSE 或 LangGraph flow。
+- 真实后端/auth 的 browser E2E；当前 smoke 只验证浏览器渲染与交互路径。
+
+Focused tests 已通过：
+
+- `uv run ruff check app/services/reader_orchestration tests/test_reader_orchestration_worker_runner.py tests/test_reader_orchestration_orchestrator.py`
+- `uv run pytest tests/test_reader_orchestration_worker_runner.py tests/test_reader_orchestration_orchestrator.py tests/test_reader_orchestration_api.py tests/test_reader_orchestration_translation_worker.py tests/test_reader_orchestration_event_runtime.py -q`
+- `pnpm --filter=@claread/web typecheck`
+- `pnpm --filter=@claread/web test`
+- `pnpm --filter=@claread/web build`
+- `pnpm --filter=@claread/web test:e2e -- reader-plate-smoke.spec.ts`
+
 ## D4. 最小纵切
 
 流程：

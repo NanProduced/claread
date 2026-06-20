@@ -22,11 +22,19 @@ from .base_builder import (
 from .orchestrator import (
     TRANSLATION_PARSED_POLICY_CODE,
     TRANSLATION_PARSED_RATIONALE_CODE,
+    OrphanedTranslationDecision,
     ReaderOrchestrator,
     TranslationTickResult,
 )
 from .repository import LoadedReaderSnapshotFacts, ReaderOrchestrationRepository
 from .snapshot import build_reader_plate_snapshot
+from .worker_runner import (
+    DEFAULT_DRAIN_MAX_TICKS,
+    TranslationWorkerRunner,
+    WorkerDrainResult,
+    WorkerTickOutcome,
+    WorkerTickStatus,
+)
 
 __all__ = [
     "ArticleReadyPersistenceResult",
@@ -35,11 +43,13 @@ __all__ = [
     "BuiltReadingUnit",
     "DETERMINISTIC_READING_BASE_BUILDER_VERSION",
     "DETERMINISTIC_SEGMENTER_VERSION",
+    "DEFAULT_DRAIN_MAX_TICKS",
     "FALLBACK_WINDOW_WORD_COUNT",
     "LoadedReaderSnapshotFacts",
     "LOW_IMPACT_CANONICALIZER_VERSION",
     "LowImpactReadingBaseBuildInput",
     "NavigationUnitFact",
+    "OrphanedTranslationDecision",
     "PlainTextArticleReadySubmitRequest",
     "ReadingBaseBuildResult",
     "ReaderOrchestrationRepository",
@@ -48,6 +58,10 @@ __all__ = [
     "TRANSLATION_PARSED_POLICY_CODE",
     "TRANSLATION_PARSED_RATIONALE_CODE",
     "TranslationTickResult",
+    "TranslationWorkerRunner",
+    "WorkerDrainResult",
+    "WorkerTickOutcome",
+    "WorkerTickStatus",
     "build_low_impact_reading_base",
     "build_reader_plate_snapshot",
     "canonicalize_low_impact_text",

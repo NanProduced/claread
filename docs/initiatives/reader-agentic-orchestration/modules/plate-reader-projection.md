@@ -115,6 +115,8 @@ D4 Web slice：
 - Web Reader 只读 surface 使用 `ReaderPlateSnapshot.value` 渲染 article body。
 - D4 polling 收到 `layer_published`、`projection_reset_required` 或 server reload signal 后 reload snapshot；不应用 `projection_ops`。
 - 用户可见页面不暴露 Plate/Slate path、event cursor、sequence 或 snapshot internals。
+- BFF unit tests 覆盖 Reader Plate auth/error mapping；mock phone / anonymous session 不允许提交。
+- Browser smoke 可以使用 mocked BFF routes 验证 read-only surface、source text、translation 和 caught-up polling，但它不等价于真实 authenticated backend E2E。
 
 ### Base Node Seed
 

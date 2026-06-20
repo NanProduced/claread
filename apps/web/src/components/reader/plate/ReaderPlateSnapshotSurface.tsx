@@ -231,7 +231,7 @@ export function ReaderPlateSnapshotSurface({
   if (!hasContent) {
     return (
       <div className={`${containerClassName} ${columnClassName}`.trim()}>
-        <p className="font-sans text-sm text-muted">这条记录暂无可渲染的 Reader Plate 内容。</p>
+        <p className="font-sans text-sm text-muted">这篇文章还没有可显示的正文内容。</p>
       </div>
     );
   }

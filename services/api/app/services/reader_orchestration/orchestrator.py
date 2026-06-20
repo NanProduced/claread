@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
+from uuid import UUID
 
 import asyncpg
 
@@ -52,6 +53,25 @@ class TranslationTickResult:
 
     worker_result: TranslationJobProcessResult | None
     parsed_decision_written: bool
+
+
+@dataclass(frozen=True, slots=True)
+class OrphanedTranslationDecision:
+    """A published translation layer missing its parsed_decision row.
+
+    D4 risk: ``parsed_decisions`` are written in a separate transaction
+    from the layer publish. In single-thread tick mode this should never
+    happen, but a crash between the two transactions would leave an
+    orphaned layer. This diagnostic record supports detection and
+    future repair.
+    """
+
+    layer_id: UUID
+    reading_record_id: UUID
+    base_id: UUID
+    unit_id: str
+    generation: int
+    source_job_id: UUID | None
 
 
 class ReaderOrchestrator:
@@ -194,3 +214,60 @@ class ReaderOrchestrator:
                     source_job_id=context.job_id,
                     source_layer_id=published.layer_id,
                 )
+
+    async def diagnose_orphaned_translation_decisions(
+        self,
+        *,
+        reading_record_id: UUID | None = None,
+    ) -> list[OrphanedTranslationDecision]:
+        """Find published translation layers missing a parsed_decision row.
+
+        D4 risk: ``parsed_decisions`` are written in a separate
+        transaction from the layer publish. A crash between the two
+        transactions would leave an orphaned layer. In single-thread
+        tick mode this should return an empty list.
+
+        When ``reading_record_id`` is provided, the diagnostic is
+        scoped to that record; otherwise all records are scanned.
+        """
+        async with self.get_pool().acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    layer.id AS layer_id,
+                    layer.reading_record_id,
+                    layer.base_id,
+                    layer.target_key AS unit_id,
+                    layer.generation,
+                    evt.source_job_id
+                FROM enhancement_layers layer
+                LEFT JOIN parsed_decisions decision
+                  ON decision.reading_record_id = layer.reading_record_id
+                 AND decision.base_id = layer.base_id
+                 AND decision.unit_id = layer.target_key
+                 AND decision.policy_code = $1
+                LEFT JOIN reader_events evt
+                  ON evt.source_layer_id = layer.id
+                 AND evt.event_type = 'layer_published'
+                WHERE layer.layer_type = 'translation'
+                  AND layer.status = 'published'
+                  AND layer.target_scope = 'unit'
+                  AND decision.id IS NULL
+                  AND ($2::uuid IS NULL OR layer.reading_record_id = $2)
+                ORDER BY layer.created_at ASC
+                """,
+                TRANSLATION_PARSED_POLICY_CODE,
+                reading_record_id,
+            )
+
+        return [
+            OrphanedTranslationDecision(
+                layer_id=row["layer_id"],
+                reading_record_id=row["reading_record_id"],
+                base_id=row["base_id"],
+                unit_id=str(row["unit_id"]),
+                generation=int(row["generation"]),
+                source_job_id=row["source_job_id"],
+            )
+            for row in rows
+        ]

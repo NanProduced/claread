@@ -196,7 +196,7 @@ describe("ReaderPlateSnapshotSurface", () => {
   it("renders empty-state message when value is empty", () => {
     const { container } = render(<ReaderPlateSnapshotSurface value={[]} />);
 
-    expect(container.textContent).toContain("暂无可渲染的 Reader Plate 内容");
+    expect(container.textContent).toContain("还没有可显示的正文内容");
     expect(container.querySelector('[data-reader-node="unit"]')).toBeNull();
   });
 

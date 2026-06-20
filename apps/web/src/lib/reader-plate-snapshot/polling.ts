@@ -200,7 +200,7 @@ export function useReaderPlatePolling(
           const message =
             !payload.ok && payload.message
               ? payload.message
-              : "Polling 请求失败。";
+              : "批注更新请求失败。";
           setError(message);
           return;
         }
@@ -231,7 +231,7 @@ export function useReaderPlatePolling(
         setCursorBoth(decision.cursor);
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Polling 发生未知错误。");
+          setError(err instanceof Error ? err.message : "批注更新发生未知错误。");
         }
       } finally {
         if (!cancelled) {

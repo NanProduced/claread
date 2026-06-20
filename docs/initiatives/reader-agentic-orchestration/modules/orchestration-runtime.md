@@ -186,8 +186,10 @@ D4 orchestration integration：
 
 - `ReaderOrchestrator.submit_plain_text_and_bootstrap_translation()` 是后端 D4 submit facade：先复用 `ArticleReadyPersistenceService` 创建 record/base/unit/anchor/event facts，再复用 translation bootstrap 创建第一条 translation run/job。
 - `ReaderOrchestrator.tick_translation_worker()` 是 D4 最小 worker tick：复用 `TranslationWorkerService` claim/process/publish，成功后写最小 `parsed_decisions` 并发布 `parsed_decision_updated` event。
+- `TranslationWorkerRunner` 是 D4 内部 callable runner：封装 single tick 与 bounded drain，用 `WorkerDrainResult` 汇总 success / retry / terminal failure / fence rejection。
 - D4 tick 是 service/testable entry，不是公开 HTTP endpoint。若后续暴露内部 route，必须补 worker auth、权限边界和 focused tests。
-- D4 parsed decision 写入暂在 layer publish 后的独立事务。单线程 tick 下可接受；若未来要求 layer 与 parsed decision 强一致，应把 decision 写入收敛到 publisher transaction 或补 repair/diagnostic 策略。
+- D4 parsed decision 写入暂在 layer publish 后的独立事务。单线程 tick 下可接受；`diagnose_orphaned_translation_decisions()` 可检测 published translation layer 缺失 parsed decision 的异常状态。若未来要求 layer 与 parsed decision 强一致，应把 decision 写入收敛到 publisher transaction 或补 repair/diagnostic 策略。
+- Runner drain 遇到 retry / terminal failure / fence rejection 不停止，因为队列中可能仍有其他可处理 job；调用方根据 aggregate result 决定是否再次 drain、告警或进入 repair。
 
 不引入：
 

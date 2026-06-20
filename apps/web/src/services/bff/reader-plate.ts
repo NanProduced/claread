@@ -49,7 +49,7 @@ function upstreamError(status: number, message: string): ReaderPlateBffError {
       ok: false,
       status: 503,
       code: "upstream_unavailable",
-      message: "Reader 服务暂时不可用，请稍后重试。",
+      message: "透读服务暂时不可用，请稍后重试。",
     };
   }
   if (status === 401) {
@@ -79,8 +79,8 @@ async function requireSession(): Promise<
   if (session.kind === "anonymous" || session.kind === "mock_phone") {
     return authRequired(
       session.kind === "mock_phone"
-        ? "当前登录态不能访问 Reader Plate，请使用真实登录会话。"
-        : "请先登录后再打开 Reader Plate。",
+        ? "当前登录态无法提交文章，请使用完整登录会话。"
+        : "请先登录后再提交文章。",
     );
   }
 

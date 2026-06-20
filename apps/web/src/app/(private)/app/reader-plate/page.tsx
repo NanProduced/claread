@@ -40,6 +40,7 @@ export default function ReaderPlatePage() {
   const [text, setText] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>({ kind: "idle" });
   const [snapshotState, setSnapshotState] = useState<SnapshotState>({ kind: "idle" });
+  const [isReloading, setIsReloading] = useState(false);
 
   const recordId =
     snapshotState.kind === "loaded" ? snapshotState.recordId : null;
@@ -50,6 +51,7 @@ export default function ReaderPlatePage() {
   const reloadSnapshot = useCallback(
     async (reason: string) => {
       if (!recordId) return;
+      setIsReloading(true);
       try {
         const response = await fetch(
           `/api/web/reader-plate/${encodeURIComponent(recordId)}/snapshot`,
@@ -78,6 +80,8 @@ export default function ReaderPlatePage() {
           recordId,
           message: err instanceof Error ? err.message : "文章解析内容重新加载发生未知错误。",
         });
+      } finally {
+        setIsReloading(false);
       }
     },
     [recordId],
@@ -148,7 +152,16 @@ export default function ReaderPlatePage() {
           </h1>
         </header>
 
-        {snapshotState.kind === "idle" ? (
+        {submitState.kind === "pending" ? (
+          <section className="rounded-note border border-hairline bg-surface p-10 shadow-surface-quiet">
+            <div className="flex items-center gap-3 text-sm text-muted">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-lens-blue" />
+              正在解析文章结构，请稍候
+            </div>
+          </section>
+        ) : null}
+
+        {snapshotState.kind === "idle" && submitState.kind !== "pending" ? (
           <section className="rounded-note border border-hairline bg-surface p-6 shadow-surface-quiet">
             <label htmlFor="reader-plate-text" className="sr-only">
               粘贴英文内容
@@ -171,10 +184,10 @@ export default function ReaderPlatePage() {
               <button
                 type="button"
                 className="inline-flex h-10 items-center justify-center rounded-[10px] bg-ink px-5 font-sans text-sm font-semibold text-white transition-colors hover:bg-ink/90 disabled:opacity-50"
-                disabled={submitState.kind === "pending" || text.trim().length === 0}
+                disabled={text.trim().length === 0}
                 onClick={() => void handleSubmit()}
               >
-                {submitState.kind === "pending" ? "解析中..." : "开始解析"}
+                开始解析
               </button>
             </div>
 
@@ -188,7 +201,12 @@ export default function ReaderPlatePage() {
 
         {snapshotState.kind === "loaded" ? (
           <section>
-            {polling.isPolling ? (
+            {isReloading ? (
+              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-hairline/70 bg-surface/70 px-3 py-1.5 text-xs font-medium text-lens-blue">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-lens-blue" />
+                正在刷新译文
+              </div>
+            ) : polling.isPolling ? (
               <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-hairline/70 bg-surface/70 px-3 py-1.5 text-xs font-medium text-lens-blue">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-lens-blue" />
                 批注生成中
