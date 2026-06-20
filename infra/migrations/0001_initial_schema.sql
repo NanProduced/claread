@@ -8,6 +8,28 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION utf16_code_unit_length(input_text TEXT)
+RETURNS INTEGER AS $$
+DECLARE
+  total INTEGER := 0;
+  idx INTEGER := 1;
+  char_count INTEGER := char_length(input_text);
+  ch TEXT;
+BEGIN
+  IF input_text IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  WHILE idx <= char_count LOOP
+    ch := substring(input_text FROM idx FOR 1);
+    total := total + CASE WHEN ascii(ch) > 65535 THEN 2 ELSE 1 END;
+    idx := idx + 1;
+  END LOOP;
+
+  RETURN total;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE STRICT;
+
 -- ============================================================
 -- 用户与认证
 -- ============================================================
@@ -251,6 +273,10 @@ CREATE TABLE ai_usage_events (
   user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   task_id UUID REFERENCES analysis_tasks(id) ON DELETE SET NULL,
   record_id UUID REFERENCES analysis_records(id) ON DELETE SET NULL,
+  reading_record_id UUID,
+  reader_run_id UUID,
+  reader_job_id UUID,
+  enhancement_layer_id UUID,
   daily_reader_article_id TEXT,
   client_platform TEXT,
   request_id TEXT,
@@ -259,17 +285,29 @@ CREATE TABLE ai_usage_events (
   schema_version TEXT,
   prompt_version TEXT,
   model_route TEXT,
+  model_profile_id TEXT,
   model_profile TEXT,
   model_provider TEXT,
   model_name TEXT,
+  planner_kind TEXT,
+  policy_version TEXT,
+  cache_hit BOOLEAN,
+  cache_status TEXT,
+  cache_class TEXT,
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
   total_tokens INTEGER NOT NULL DEFAULT 0,
   cache_read_tokens INTEGER NOT NULL DEFAULT 0,
   cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  cached_input_tokens INTEGER,
+  cache_miss_input_tokens INTEGER,
+  cache_creation_input_tokens INTEGER,
+  token_budget_before INTEGER,
+  token_budget_after INTEGER,
   latency_ms INTEGER,
   billed_points INTEGER,
   billing_policy_version TEXT,
+  operation_fingerprint TEXT,
   error_code TEXT,
   error_message TEXT,
   metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -289,6 +327,21 @@ CREATE INDEX idx_ai_usage_events_task
 CREATE INDEX idx_ai_usage_events_record
   ON ai_usage_events(record_id)
   WHERE record_id IS NOT NULL;
+CREATE INDEX idx_ai_usage_events_reading_record
+  ON ai_usage_events(reading_record_id, created_at DESC)
+  WHERE reading_record_id IS NOT NULL;
+CREATE INDEX idx_ai_usage_events_reader_run
+  ON ai_usage_events(reader_run_id, created_at DESC)
+  WHERE reader_run_id IS NOT NULL;
+CREATE INDEX idx_ai_usage_events_reader_job
+  ON ai_usage_events(reader_job_id, created_at DESC)
+  WHERE reader_job_id IS NOT NULL;
+CREATE INDEX idx_ai_usage_events_enhancement_layer
+  ON ai_usage_events(enhancement_layer_id, created_at DESC)
+  WHERE enhancement_layer_id IS NOT NULL;
+CREATE INDEX idx_ai_usage_events_operation_fingerprint
+  ON ai_usage_events(operation_fingerprint, created_at DESC)
+  WHERE operation_fingerprint IS NOT NULL;
 CREATE INDEX idx_ai_usage_events_daily_reader
   ON ai_usage_events(daily_reader_article_id, created_at DESC)
   WHERE daily_reader_article_id IS NOT NULL;
@@ -312,6 +365,11 @@ CREATE TABLE user_credit_ledger (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   task_id UUID REFERENCES analysis_tasks(id) ON DELETE SET NULL,
+  subject_type TEXT,
+  subject_id TEXT,
+  reading_record_id UUID,
+  reader_run_id UUID,
+  reader_job_id UUID,
   entry_type TEXT NOT NULL
     CHECK (entry_type IN (
       'daily_grant', 'bonus_grant', 'analysis_deduct', 'ai_capability_deduct',
@@ -321,12 +379,25 @@ CREATE TABLE user_credit_ledger (
   bucket_type TEXT NOT NULL DEFAULT 'daily_free'
     CHECK (bucket_type IN ('daily_free', 'bonus')),
   balance_after INTEGER NOT NULL,
+  title_snapshot TEXT,
   metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_credit_ledger_user_created ON user_credit_ledger(user_id, created_at DESC);
 CREATE INDEX idx_credit_ledger_task ON user_credit_ledger(task_id) WHERE task_id IS NOT NULL;
+CREATE INDEX idx_credit_ledger_subject
+  ON user_credit_ledger(subject_type, subject_id, created_at DESC)
+  WHERE subject_type IS NOT NULL AND subject_id IS NOT NULL;
+CREATE INDEX idx_credit_ledger_reading_record
+  ON user_credit_ledger(reading_record_id, created_at DESC)
+  WHERE reading_record_id IS NOT NULL;
+CREATE INDEX idx_credit_ledger_reader_run
+  ON user_credit_ledger(reader_run_id, created_at DESC)
+  WHERE reader_run_id IS NOT NULL;
+CREATE INDEX idx_credit_ledger_reader_job
+  ON user_credit_ledger(reader_job_id, created_at DESC)
+  WHERE reader_job_id IS NOT NULL;
 
 CREATE TABLE anonymous_quotas (
   anonymous_id TEXT PRIMARY KEY,
@@ -626,6 +697,439 @@ ALTER TABLE reader_ask_messages
 CREATE INDEX idx_reader_ask_messages_current_turn_run
     ON reader_ask_messages (current_turn_run_id)
     WHERE current_turn_run_id IS NOT NULL;
+
+-- ============================================================
+-- Reader Agentic Orchestration
+-- ============================================================
+
+CREATE TABLE reading_records (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  client_record_id TEXT,
+  source_type TEXT NOT NULL CHECK (source_type IN (
+    'text', 'markdown', 'file', 'url', 'pdf', 'ocr', 'image'
+  )),
+  title TEXT,
+  language TEXT,
+  lifecycle_status TEXT NOT NULL DEFAULT 'active'
+    CHECK (lifecycle_status IN ('active', 'cancelled', 'superseded', 'deleted')),
+  product_state TEXT NOT NULL DEFAULT 'processing'
+    CHECK (product_state IN (
+      'processing',
+      'needs_confirmation',
+      'readable_enhancing',
+      'action_required',
+      'failed',
+      'deleted'
+    )),
+  readiness_state TEXT NOT NULL DEFAULT 'submitted'
+    CHECK (readiness_state IN (
+      'submitted',
+      'candidate_base_ready',
+      'article_ready',
+      'initial_enhancement_ready',
+      'coverage_complete'
+    )),
+  generation INTEGER NOT NULL DEFAULT 1 CHECK (generation >= 1),
+  active_base_id UUID,
+  superseded_by_record_id UUID REFERENCES reading_records(id) ON DELETE SET NULL,
+  deleted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX uq_reading_records_user_client_active
+  ON reading_records(user_id, client_record_id)
+  WHERE client_record_id IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX idx_reading_records_user_updated_at
+  ON reading_records(user_id, updated_at DESC);
+CREATE INDEX idx_reading_records_user_product_state_updated_at
+  ON reading_records(user_id, product_state, updated_at DESC);
+
+CREATE TABLE original_inputs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reading_record_id UUID NOT NULL REFERENCES reading_records(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  input_type TEXT NOT NULL CHECK (input_type IN (
+    'plain_text', 'markdown', 'file_ref', 'url', 'image_ref'
+  )),
+  source_text TEXT,
+  source_ref_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  content_sha256 TEXT NOT NULL CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT ck_original_inputs_has_source
+    CHECK (source_text IS NOT NULL OR source_ref_json <> '{}'::jsonb)
+);
+
+CREATE INDEX idx_original_inputs_record_created
+  ON original_inputs(reading_record_id, created_at DESC);
+
+CREATE TABLE reading_bases (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reading_record_id UUID NOT NULL REFERENCES reading_records(id) ON DELETE CASCADE,
+  base_version INTEGER NOT NULL CHECK (base_version >= 1),
+  record_generation INTEGER NOT NULL CHECK (record_generation >= 1),
+  text TEXT NOT NULL CHECK (text <> ''),
+  content_sha256 TEXT NOT NULL CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
+  content_utf16_length INTEGER NOT NULL CHECK (content_utf16_length >= 1),
+  canonicalizer_version TEXT NOT NULL,
+  builder_version TEXT NOT NULL,
+  segmenter_version TEXT NOT NULL,
+  language TEXT,
+  title_snapshot TEXT,
+  navigation_json JSONB NOT NULL DEFAULT '{"units":[]}'::jsonb,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'superseded')),
+  frozen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_reading_bases_record_base_version UNIQUE (reading_record_id, base_version),
+  CONSTRAINT uq_reading_bases_record_generation UNIQUE (reading_record_id, record_generation),
+  CONSTRAINT uq_reading_bases_id_record UNIQUE (id, reading_record_id),
+  CONSTRAINT uq_reading_bases_id_record_generation UNIQUE (id, reading_record_id, record_generation),
+  CONSTRAINT ck_reading_bases_content_utf16_length
+    CHECK (content_utf16_length = utf16_code_unit_length(text)),
+  CONSTRAINT ck_reading_bases_content_sha256
+    CHECK (content_sha256 = encode(digest(text, 'sha256'), 'hex'))
+);
+
+CREATE UNIQUE INDEX uq_reading_bases_active_record
+  ON reading_bases(reading_record_id)
+  WHERE status = 'active';
+
+ALTER TABLE reading_records
+  ADD CONSTRAINT fk_reading_records_active_base
+  FOREIGN KEY (active_base_id, id, generation)
+  REFERENCES reading_bases(id, reading_record_id, record_generation)
+  DEFERRABLE INITIALLY DEFERRED;
+
+CREATE TABLE reading_units (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reading_record_id UUID NOT NULL,
+  base_id UUID NOT NULL,
+  unit_id TEXT NOT NULL,
+  order_index INTEGER NOT NULL CHECK (order_index >= 1),
+  unit_type TEXT NOT NULL CHECK (unit_type IN (
+    'body', 'heading', 'list', 'quote', 'unknown', 'fallback'
+  )),
+  boundary_quality TEXT NOT NULL DEFAULT 'normal'
+    CHECK (boundary_quality IN ('normal', 'low')),
+  base_start_utf16 INTEGER NOT NULL,
+  base_end_utf16 INTEGER NOT NULL,
+  text_hash TEXT NOT NULL CHECK (text_hash ~ '^[0-9a-f]{8}$'),
+  metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  CONSTRAINT uq_reading_units_base_unit_id UNIQUE (base_id, unit_id),
+  CONSTRAINT uq_reading_units_base_order UNIQUE (base_id, order_index),
+  CONSTRAINT ck_reading_units_offsets
+    CHECK (base_start_utf16 >= 0 AND base_end_utf16 > base_start_utf16),
+  CONSTRAINT fk_reading_units_base_record
+    FOREIGN KEY (base_id, reading_record_id)
+    REFERENCES reading_bases(id, reading_record_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX idx_reading_units_record_base_order
+  ON reading_units(reading_record_id, base_id, order_index);
+
+CREATE TABLE anchor_segments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reading_record_id UUID NOT NULL,
+  base_id UUID NOT NULL,
+  unit_id TEXT NOT NULL,
+  anchor_segment_id TEXT NOT NULL,
+  sentence_id TEXT,
+  paragraph_id TEXT,
+  order_index INTEGER NOT NULL CHECK (order_index >= 1),
+  unit_order_index INTEGER NOT NULL CHECK (unit_order_index >= 1),
+  segment_type TEXT NOT NULL CHECK (segment_type IN (
+    'sentence', 'clause', 'fallback_window'
+  )),
+  base_start_utf16 INTEGER NOT NULL,
+  base_end_utf16 INTEGER NOT NULL,
+  unit_start_utf16 INTEGER NOT NULL,
+  unit_end_utf16 INTEGER NOT NULL,
+  text_hash TEXT NOT NULL CHECK (text_hash ~ '^[0-9a-f]{8}$'),
+  boundary_quality TEXT NOT NULL DEFAULT 'normal'
+    CHECK (boundary_quality IN ('normal', 'low')),
+  CONSTRAINT uq_anchor_segments_base_anchor UNIQUE (base_id, anchor_segment_id),
+  CONSTRAINT uq_anchor_segments_base_sentence UNIQUE (base_id, sentence_id),
+  CONSTRAINT uq_anchor_segments_unit_order UNIQUE (base_id, unit_id, unit_order_index),
+  CONSTRAINT ck_anchor_segments_offsets CHECK (
+    base_start_utf16 >= 0
+    AND base_end_utf16 > base_start_utf16
+    AND unit_start_utf16 >= 0
+    AND unit_end_utf16 > unit_start_utf16
+  ),
+  CONSTRAINT fk_anchor_segments_base_record
+    FOREIGN KEY (base_id, reading_record_id)
+    REFERENCES reading_bases(id, reading_record_id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_anchor_segments_unit
+    FOREIGN KEY (base_id, unit_id)
+    REFERENCES reading_units(base_id, unit_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX idx_anchor_segments_record_base_order
+  ON anchor_segments(reading_record_id, base_id, order_index);
+
+CREATE TABLE reader_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reading_record_id UUID NOT NULL REFERENCES reading_records(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  run_type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN (
+    'queued',
+    'running',
+    'waiting_user',
+    'waiting_quota',
+    'paused',
+    'completed',
+    'failed_retryable',
+    'failed_terminal',
+    'cancelled',
+    'superseded'
+  )),
+  record_generation INTEGER NOT NULL CHECK (record_generation >= 1),
+  envelope_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  policy_version TEXT NOT NULL,
+  trigger_kind TEXT NOT NULL,
+  failure_class TEXT,
+  failure_code TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_reader_runs_id_record UNIQUE (id, reading_record_id)
+);
+
+CREATE INDEX idx_reader_runs_record_created
+  ON reader_runs(reading_record_id, created_at DESC);
+CREATE INDEX idx_reader_runs_status_created
+  ON reader_runs(status, created_at);
+
+CREATE TABLE reader_jobs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reading_record_id UUID NOT NULL REFERENCES reading_records(id) ON DELETE CASCADE,
+  base_id UUID REFERENCES reading_bases(id) ON DELETE CASCADE,
+  run_id UUID NOT NULL,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  job_type TEXT NOT NULL CHECK (job_type IN ('build_base', 'translate_unit')),
+  target_type TEXT NOT NULL CHECK (target_type IN (
+    'record', 'unit', 'anchor_segment', 'unit_range'
+  )),
+  target_key TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN (
+    'queued',
+    'claimed',
+    'retry_later',
+    'paused',
+    'skipped',
+    'succeeded',
+    'failed_terminal',
+    'cancelled',
+    'superseded'
+  )),
+  priority INTEGER NOT NULL DEFAULT 0,
+  available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  lease_owner TEXT,
+  lease_token UUID,
+  lease_expires_at TIMESTAMPTZ,
+  claimed_at TIMESTAMPTZ,
+  pause_owner TEXT CHECK (pause_owner IN ('user', 'quota', 'system', 'policy')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  transient_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (transient_attempt_count >= 0),
+  repair_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (repair_attempt_count >= 0),
+  replan_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (replan_attempt_count >= 0),
+  max_attempts INTEGER NOT NULL DEFAULT 1 CHECK (max_attempts >= 1),
+  expected_generation INTEGER NOT NULL CHECK (expected_generation >= 1),
+  operation_fingerprint TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  input_hash TEXT,
+  input_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  output_ref_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  rationale_code TEXT,
+  failure_class TEXT,
+  failure_code TEXT,
+  failure_message TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_reader_jobs_run_idempotency UNIQUE (run_id, idempotency_key),
+  CONSTRAINT ck_reader_jobs_base_scope
+    CHECK (
+      (job_type = 'build_base' AND target_type = 'record' AND base_id IS NULL)
+      OR
+      (NOT (job_type = 'build_base' AND target_type = 'record') AND base_id IS NOT NULL)
+    ),
+  CONSTRAINT fk_reader_jobs_run_record
+    FOREIGN KEY (run_id, reading_record_id)
+    REFERENCES reader_runs(id, reading_record_id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_reader_jobs_base_record
+    FOREIGN KEY (base_id, reading_record_id, expected_generation)
+    REFERENCES reading_bases(id, reading_record_id, record_generation)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX idx_reader_jobs_claim_queue
+  ON reader_jobs(priority DESC, available_at ASC, created_at ASC, id ASC)
+  WHERE status IN ('queued', 'retry_later');
+CREATE INDEX idx_reader_jobs_claimed_lease
+  ON reader_jobs(lease_expires_at ASC)
+  WHERE status = 'claimed';
+CREATE UNIQUE INDEX uq_reader_jobs_active_fingerprint
+  ON reader_jobs(
+    reading_record_id,
+    COALESCE(base_id, '00000000-0000-0000-0000-000000000000'::uuid),
+    job_type,
+    target_type,
+    target_key,
+    expected_generation,
+    operation_fingerprint
+  )
+  WHERE status IN ('queued', 'claimed', 'retry_later', 'paused');
+
+CREATE TABLE reader_job_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reading_record_id UUID NOT NULL REFERENCES reading_records(id) ON DELETE CASCADE,
+  run_id UUID REFERENCES reader_runs(id) ON DELETE SET NULL,
+  job_id UUID NOT NULL REFERENCES reader_jobs(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_reader_job_events_job_created
+  ON reader_job_events(job_id, created_at DESC);
+CREATE INDEX idx_reader_job_events_record_created
+  ON reader_job_events(reading_record_id, created_at DESC);
+
+CREATE TABLE reader_event_sequences (
+  reading_record_id UUID PRIMARY KEY REFERENCES reading_records(id) ON DELETE CASCADE,
+  next_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_sequence >= 1),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE enhancement_layers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reading_record_id UUID NOT NULL,
+  base_id UUID NOT NULL,
+  layer_type TEXT NOT NULL CHECK (layer_type IN (
+    'translation', 'vocabulary', 'grammar_note', 'sentence_analysis'
+  )),
+  layer_subtype TEXT,
+  target_scope TEXT NOT NULL CHECK (target_scope IN (
+    'unit', 'anchor_segment', 'unit_range', 'record'
+  )),
+  target_key TEXT NOT NULL,
+  generation INTEGER NOT NULL CHECK (generation >= 1),
+  status TEXT NOT NULL CHECK (status IN (
+    'draft', 'published', 'superseded', 'failed', 'hidden'
+  )),
+  operation_fingerprint TEXT NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+  output_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  coverage_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  quality_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_run_id UUID REFERENCES reader_runs(id) ON DELETE SET NULL,
+  source_job_id UUID REFERENCES reader_jobs(id) ON DELETE SET NULL,
+  published_at TIMESTAMPTZ,
+  superseded_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_enhancement_layers_source_job_fingerprint
+    UNIQUE (source_job_id, operation_fingerprint),
+  CONSTRAINT fk_enhancement_layers_base_record
+    FOREIGN KEY (base_id, reading_record_id, generation)
+    REFERENCES reading_bases(id, reading_record_id, record_generation)
+    ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX uq_enhancement_layers_active_published
+  ON enhancement_layers(reading_record_id, base_id, layer_type, target_scope, target_key)
+  WHERE status = 'published';
+
+CREATE TABLE parsed_decisions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reading_record_id UUID NOT NULL,
+  base_id UUID NOT NULL,
+  unit_id TEXT NOT NULL,
+  policy_code TEXT NOT NULL,
+  parsed_state TEXT NOT NULL CHECK (parsed_state IN (
+    'not_started', 'partial', 'parsed', 'skipped', 'failed'
+  )),
+  rationale_code TEXT,
+  coverage_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_layer_id UUID REFERENCES enhancement_layers(id) ON DELETE SET NULL,
+  source_job_id UUID REFERENCES reader_jobs(id) ON DELETE SET NULL,
+  decision_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_parsed_decisions_record_base_unit_policy
+    UNIQUE (reading_record_id, base_id, unit_id, policy_code),
+  CONSTRAINT fk_parsed_decisions_base_record
+    FOREIGN KEY (base_id, reading_record_id)
+    REFERENCES reading_bases(id, reading_record_id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_parsed_decisions_unit
+    FOREIGN KEY (base_id, unit_id)
+    REFERENCES reading_units(base_id, unit_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX idx_parsed_decisions_record_state
+  ON parsed_decisions(reading_record_id, parsed_state);
+CREATE INDEX idx_parsed_decisions_source_layer
+  ON parsed_decisions(source_layer_id)
+  WHERE source_layer_id IS NOT NULL;
+
+CREATE TABLE reader_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reading_record_id UUID NOT NULL REFERENCES reading_records(id) ON DELETE CASCADE,
+  sequence BIGINT NOT NULL CHECK (sequence >= 1),
+  event_type TEXT NOT NULL CHECK (event_type IN (
+    'article_ready',
+    'layer_published',
+    'layer_failed',
+    'parsed_decision_updated',
+    'record_state_changed',
+    'action_required',
+    'run_completed',
+    'record_superseded',
+    'projection_ops',
+    'projection_reset_required'
+  )),
+  payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_run_id UUID REFERENCES reader_runs(id) ON DELETE SET NULL,
+  source_job_id UUID REFERENCES reader_jobs(id) ON DELETE SET NULL,
+  source_layer_id UUID REFERENCES enhancement_layers(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_reader_events_record_sequence UNIQUE (reading_record_id, sequence)
+);
+
+CREATE INDEX idx_reader_events_record_sequence
+  ON reader_events(reading_record_id, sequence ASC);
+CREATE INDEX idx_reader_events_record_created
+  ON reader_events(reading_record_id, created_at DESC);
+CREATE INDEX idx_reader_events_source_job
+  ON reader_events(source_job_id)
+  WHERE source_job_id IS NOT NULL;
+
+ALTER TABLE ai_usage_events
+  ADD CONSTRAINT fk_ai_usage_events_reading_record
+    FOREIGN KEY (reading_record_id) REFERENCES reading_records(id) ON DELETE SET NULL,
+  ADD CONSTRAINT fk_ai_usage_events_reader_run
+    FOREIGN KEY (reader_run_id) REFERENCES reader_runs(id) ON DELETE SET NULL,
+  ADD CONSTRAINT fk_ai_usage_events_reader_job
+    FOREIGN KEY (reader_job_id) REFERENCES reader_jobs(id) ON DELETE SET NULL,
+  ADD CONSTRAINT fk_ai_usage_events_enhancement_layer
+    FOREIGN KEY (enhancement_layer_id) REFERENCES enhancement_layers(id) ON DELETE SET NULL;
+
+ALTER TABLE user_credit_ledger
+  ADD CONSTRAINT fk_user_credit_ledger_reading_record
+    FOREIGN KEY (reading_record_id) REFERENCES reading_records(id) ON DELETE SET NULL,
+  ADD CONSTRAINT fk_user_credit_ledger_reader_run
+    FOREIGN KEY (reader_run_id) REFERENCES reader_runs(id) ON DELETE SET NULL,
+  ADD CONSTRAINT fk_user_credit_ledger_reader_job
+    FOREIGN KEY (reader_job_id) REFERENCES reader_jobs(id) ON DELETE SET NULL;
 
 -- ============================================================
 -- 反馈系统
@@ -1153,6 +1657,16 @@ COMMENT ON TABLE dict_ai_candidate_entries IS '词典 AI 未收录兜底候选�
 COMMENT ON COLUMN dict_ai_candidate_entries.generated_payload_json IS 'missing_fallback 结构化 AI 输出快照。';
 COMMENT ON COLUMN dict_ai_candidate_entries.review_status IS '审核状态：pending、accepted、rejected、ignored。';
 
+CREATE OR REPLACE FUNCTION initialize_reader_event_sequence()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO reader_event_sequences (reading_record_id)
+  VALUES (NEW.id)
+  ON CONFLICT (reading_record_id) DO NOTHING;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 -- ============================================================
 -- TRIGGER
 -- ============================================================
@@ -1175,6 +1689,26 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER trg_analysis_tasks_set_updated_at
 BEFORE UPDATE ON analysis_tasks
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_reading_records_set_updated_at
+BEFORE UPDATE ON reading_records
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_reading_records_initialize_event_sequence
+AFTER INSERT ON reading_records
+FOR EACH ROW EXECUTE FUNCTION initialize_reader_event_sequence();
+
+CREATE TRIGGER trg_reader_runs_set_updated_at
+BEFORE UPDATE ON reader_runs
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_reader_jobs_set_updated_at
+BEFORE UPDATE ON reader_jobs
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_enhancement_layers_set_updated_at
+BEFORE UPDATE ON enhancement_layers
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER trg_user_credit_accounts_set_updated_at

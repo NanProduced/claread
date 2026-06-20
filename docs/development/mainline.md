@@ -14,7 +14,7 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 - Reader 词典 AI 已收口为 article-scoped 的前端缓存能力，不改变后端词典 truth layer。
 - AI 使用审计与结算底座已正式化：`ai_usage_events`、capability code、usage scope 与 billing mode 已可承接后续词典 AI、Ask Claread 和其他 Web AI 能力。
 - FastAPI 后端是通用 Claread API，承载小程序、Web 和后续客户端共享的用户、记录、任务、词典、用户资产、配额和反馈能力。
-- workflow 解析主链路可跑通：learning / academic 双模式、grammar RAG 检索、prompt 策略和 canonical result 生成已形成完整链路；但当前 AI Workflow 形态已被判定不足以承接后续 Reader 产品目标，下一阶段主线转向 bounded agentic Reader orchestration。
+- workflow 解析主链路可跑通：learning / academic 双模式、grammar RAG 检索、prompt 策略和 canonical result 生成已形成完整链路；但当前 AI Workflow 形态已被判定不足以承接后续 Reader 产品目标，下一阶段先把 learning workflow 转向 bounded agentic Reader orchestration。
 - Claread Console 已进入可用控制面阶段：Eval Center（node-lab / workflow-lab / run-history）、Render Scene Inspector、Parse Run Observability 和 Example Lab 已有可用能力。
 - `@claread/contracts` 已先承载批注/收藏/text range 常量，后续再评估完整 OpenAPI DTO 生成。
 - 本地开发基线使用 PostgreSQL、Redis、词典数据和受控测试手机号链路。
@@ -23,12 +23,14 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 
 ## 当前主线
 
-### 主线：Reader agentic orchestration 调研与方案设计
+### 主线：Reader agentic orchestration 方案设计与重构准备
 
-当前准备把用户提交内容的 `learning workflow` 与 `academic workflow` 从固定 AI Workflow 重构为 bounded agentic orchestration。重构目标不是把 Reader 页变成常驻 LLM 线程，而是以可审计、可中断、可确认、可回退的 event-triggered run / job 形态生成稳定阅读基座、稳定阅读单元和增量增强层。
+当前准备把用户提交内容的 `learning workflow` 从固定 AI Workflow 重构为 bounded agentic orchestration。`academic workflow` 暂缓重构，待 learning workflow 验证稳定后再单独设计。重构目标不是把 Reader 页变成常驻 LLM 线程，而是以可审计、可中断、可确认、可回退的 event-triggered run / job 形态生成稳定阅读基座、稳定阅读单元和增量增强层。
+
+本重构的专项权威上下文在 `docs/initiatives/reader-agentic-orchestration/`。该目录在重构期间描述目标架构与实施计划；当前正式产品/架构文档仍描述已落地基线。
 
 近期重点：
-- 先完成 R0-R11 调研：产品参考、成本/速度/负载、Length Class、Parsed Decision、流式输出、Ask/RAG 边界、计费审计、运行时框架和迁移 rollout
+- 完成 D0-D1 方案收敛：learning-only、无旧开发数据迁移、Web 优先、小程序暂缓、Daily Reader 不进入本轮重构、PostgreSQL-backed bounded run/job 优先
 - 建立当前 workflow 的 token、latency、retry、服务器负载基线，再设计新 orchestration 成本模型
 - 验证 LangGraph、PydanticAI、自建 DB 状态机、worker、SSE / polling 和 observability 的职责边界
 - 明确 Stable Reading Base、Reading Units、Navigation Skeleton、Enhancement Layer 和用户确认流程
@@ -36,9 +38,10 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 
 范围边界：
 
-- In scope：用户提交内容的 `learning workflow` 与 `academic workflow`
-- Out of scope：`daily_reader_workflow` 及 Daily Reader 的文章发现、抽取、评分、定时生产和公开页面生成模式
-- 兼容对象：旧 `render_scene_json` 记录、Daily Reader 公共页面、Reader API、Library、Ask Claread 和 Eval Center
+- 本轮包含：用户提交内容的 `learning workflow`
+- 本轮不包含：`academic workflow`、`daily_reader_workflow` 及 Daily Reader 的文章发现、抽取、评分、定时生产和公开页面生成模式；本轮先不做小程序实现
+- 数据策略：项目未上线，本轮不做旧开发记录迁移；本地数据可重置，但保留 `dict_entries`、`dict_lookup_targets`、`dict_redirects`
+- 兼容对象：Daily Reader 公共页面、Reader API、Library、Ask Claread 和 Eval Center；旧开发数据不作为迁移约束
 
 设计原则：
 
@@ -86,7 +89,7 @@ Claread Console 已进入可用控制面阶段，后续重点转向控制面治�
 
 以下事项仍需产品、业务和技术评估，不在本文做决定性描述：
 
-- Reader orchestration 是否用一个共享 runtime 承载 learning / academic，再由 policy 区分，还是保留两个 orchestrator。
+- Academic workflow 后续是否复用 learning orchestration runtime，还是单独设计 academic orchestrator。
 - LangGraph、PydanticAI、自建 DB 状态机和 worker / SSE broker 的最终职责划分，以及是否升级或替换底层框架。
 - Stable Reading Base、Reading Units、Navigation Skeleton、Semantic Outline、Enhancement Layer、Parsed Decision 的最终 schema 和 API 版本化方式。
 - Article Ready、Initial Enhancement Ready、100% Parse Coverage、长文渐进 coverage 的计费、速度、默认推进和用户授权策略。

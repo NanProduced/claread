@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -10,6 +10,7 @@ from app.api.routes.vocabulary import _vocab_row_to_response
 from app.database.json_compat import ensure_json_array, ensure_json_object
 from app.schemas.internal.overview_hint import StoredOverviewHint
 from app.services.ai_usage.service import AIUsageEventCreate, record_ai_usage_event
+from app.services.analysis.credit_service import LedgerAttribution, deduct_points
 from app.services.analysis.overview_task_service import update_record_overview_hint
 from app.services.analysis.task_service import submit_task, update_task_status
 from app.services.auth.identity import get_or_create_user_by_identity
@@ -231,12 +232,22 @@ class TestJsonbWriteContracts:
 
         with (
             patch("app.services.user_assets.records.db_connection.DB_POOL", mock_pool),
-            patch("app.services.user_assets.records.get_record_by_id", AsyncMock(return_value={"id": record_id})),
+            patch(
+                "app.services.user_assets.records.get_record_by_id",
+                AsyncMock(return_value={"id": record_id}),
+            ),
         ):
-            await update_record(user_id, record_id, render_scene_json={"article": {"title": "Test"}})
+            await update_record(
+                user_id,
+                record_id,
+                render_scene_json={"article": {"title": "Test"}},
+            )
 
         execute_args = mock_conn.execute.await_args.args
-        assert any(isinstance(arg, dict) and arg["article"]["title"] == "Test" for arg in execute_args)
+        assert any(
+            isinstance(arg, dict) and arg["article"]["title"] == "Test"
+            for arg in execute_args
+        )
 
     @pytest.mark.anyio
     async def test_ai_usage_event_writes_native_metadata_json(self):
@@ -250,7 +261,7 @@ class TestJsonbWriteContracts:
                 AIUsageEventCreate(
                     usage_scope="user_billed",
                     capability_code="analysis",
-                    billing_mode="charged",
+                    billing_mode="user_points",
                     status="succeeded",
                     metadata_json=metadata_json,
                 )
@@ -258,6 +269,81 @@ class TestJsonbWriteContracts:
 
         fetchval_args = mock_conn.fetchval.await_args.args
         assert any(isinstance(arg, dict) and arg["source"] == "test" for arg in fetchval_args)
+
+    @pytest.mark.anyio
+    async def test_ai_usage_event_writes_reader_orchestration_attribution_fields(self):
+        reading_record_id = uuid4()
+        reader_run_id = uuid4()
+        reader_job_id = uuid4()
+        enhancement_layer_id = uuid4()
+        mock_conn = AsyncMock()
+        mock_conn.fetchval.return_value = uuid4()
+        mock_pool = _make_mock_pool(mock_conn)
+
+        with patch("app.services.ai_usage.service.db_connection.DB_POOL", mock_pool):
+            await record_ai_usage_event(
+                AIUsageEventCreate(
+                    usage_scope="user_billed",
+                    capability_code="reader_translation",
+                    billing_mode="user_points",
+                    status="succeeded",
+                    reading_record_id=reading_record_id,
+                    reader_run_id=reader_run_id,
+                    reader_job_id=reader_job_id,
+                    enhancement_layer_id=enhancement_layer_id,
+                    model_profile_id="reader_translation_default",
+                    cache_hit=True,
+                    cache_status="hit",
+                    cache_class="5m",
+                    operation_fingerprint="fp-1",
+                )
+            )
+
+        fetchval_args = mock_conn.fetchval.await_args.args
+        assert reading_record_id in fetchval_args
+        assert reader_job_id in fetchval_args
+        assert enhancement_layer_id in fetchval_args
+        assert "reader_translation_default" in fetchval_args
+        assert "fp-1" in fetchval_args
+
+    @pytest.mark.anyio
+    async def test_credit_service_writes_generic_ledger_attribution_fields(self):
+        reading_record_id = uuid4()
+        reader_run_id = uuid4()
+        reader_job_id = uuid4()
+        mock_conn = _make_mock_conn_with_tx()
+        mock_conn.fetchrow = AsyncMock(return_value={
+            "daily_free_points": 1000,
+            "daily_used_points": 0,
+            "bonus_points": 0,
+            "last_reset_on": date.today(),
+        })
+        mock_pool = _make_mock_pool(mock_conn)
+        user_id = uuid4()
+        task_id = uuid4()
+
+        with patch("app.services.analysis.credit_service.db_connection.DB_POOL", mock_pool):
+            await deduct_points(
+                user_id,
+                5,
+                task_id=task_id,
+                metadata={"capability_code": "reader_translation"},
+                attribution=LedgerAttribution(
+                    subject_type="reading_record",
+                    subject_id=str(reading_record_id),
+                    reading_record_id=reading_record_id,
+                    reader_run_id=reader_run_id,
+                    reader_job_id=reader_job_id,
+                    title_snapshot="Test Title",
+                ),
+            )
+
+        execute_args = mock_conn.execute.await_args_list[-1].args
+        assert "reading_record" in execute_args
+        assert str(reading_record_id) in execute_args
+        assert reading_record_id in execute_args
+        assert reader_job_id in execute_args
+        assert "Test Title" in execute_args
 
     @pytest.mark.anyio
     async def test_submit_feedback_writes_native_context_json(self):

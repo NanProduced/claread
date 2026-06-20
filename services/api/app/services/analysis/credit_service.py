@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -42,6 +42,67 @@ class CreditReservation:
     total_points: int
     deducted_from_daily: int
     deducted_from_bonus: int
+
+
+@dataclass(slots=True)
+class LedgerAttribution:
+    subject_type: str | None = None
+    subject_id: str | None = None
+    reading_record_id: UUID | None = None
+    reader_run_id: UUID | None = None
+    reader_job_id: UUID | None = None
+    title_snapshot: str | None = None
+
+
+async def _insert_ledger_entry(
+    conn,
+    *,
+    user_id: UUID,
+    task_id: UUID | None,
+    entry_type: str,
+    points: int,
+    bucket_type: str,
+    balance_after: int,
+    metadata: dict[str, Any] | None,
+    created_at: datetime,
+    attribution: LedgerAttribution | None,
+) -> None:
+    details = attribution or LedgerAttribution()
+    await conn.execute(
+        """
+        INSERT INTO user_credit_ledger (
+            user_id,
+            task_id,
+            subject_type,
+            subject_id,
+            reading_record_id,
+            reader_run_id,
+            reader_job_id,
+            entry_type,
+            points,
+            bucket_type,
+            balance_after,
+            title_snapshot,
+            metadata_json,
+            created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        """,
+        user_id,
+        task_id,
+        details.subject_type,
+        details.subject_id,
+        details.reading_record_id,
+        details.reader_run_id,
+        details.reader_job_id,
+        entry_type,
+        points,
+        bucket_type,
+        balance_after,
+        details.title_snapshot,
+        metadata or {},
+        created_at,
+    )
 
 
 async def ensure_credit_account(user_id: UUID) -> None:
@@ -120,7 +181,7 @@ async def check_quota(user_id: UUID) -> int:
                     """,
                     user_id,
                     today,
-                    datetime.now(timezone.utc),
+                    datetime.now(UTC),
                 )
                 daily_used = 0
 
@@ -134,6 +195,7 @@ async def deduct_points(
     task_id: UUID | None = None,
     entry_type: str = LEDGER_ENTRY_TYPE_ANALYSIS_DEDUCT,
     metadata: dict[str, Any] | None = None,
+    attribution: LedgerAttribution | None = None,
 ) -> int:
     """
     Deduct credits from user account after successful task completion.
@@ -159,7 +221,7 @@ async def deduct_points(
     if pool is None:
         raise RuntimeError("Database pool not initialized")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     today = date.today()
 
     async with pool.acquire() as conn:
@@ -223,35 +285,31 @@ async def deduct_points(
 
             # Write ledger entries — only for actual amounts deducted
             if deduct_from_daily > 0:
-                await conn.execute(
-                    """
-                    INSERT INTO user_credit_ledger
-                        (user_id, task_id, entry_type, points, bucket_type, balance_after, metadata_json, created_at)
-                    VALUES ($1, $2, $3, $4, 'daily_free', $5, $6, $7)
-                    """,
-                    user_id,
-                    task_id,
-                    entry_type,
-                    -deduct_from_daily,
-                    balance_after,
-                    metadata or {},
-                    now,
+                await _insert_ledger_entry(
+                    conn,
+                    user_id=user_id,
+                    task_id=task_id,
+                    entry_type=entry_type,
+                    points=-deduct_from_daily,
+                    bucket_type="daily_free",
+                    balance_after=balance_after,
+                    metadata=metadata,
+                    created_at=now,
+                    attribution=attribution,
                 )
 
             if deduct_from_bonus > 0:
-                await conn.execute(
-                    """
-                    INSERT INTO user_credit_ledger
-                        (user_id, task_id, entry_type, points, bucket_type, balance_after, metadata_json, created_at)
-                    VALUES ($1, $2, $3, $4, 'bonus', $5, $6, $7)
-                    """,
-                    user_id,
-                    task_id,
-                    entry_type,
-                    -deduct_from_bonus,
-                    balance_after,
-                    metadata or {},
-                    now,
+                await _insert_ledger_entry(
+                    conn,
+                    user_id=user_id,
+                    task_id=task_id,
+                    entry_type=entry_type,
+                    points=-deduct_from_bonus,
+                    bucket_type="bonus",
+                    balance_after=balance_after,
+                    metadata=metadata,
+                    created_at=now,
+                    attribution=attribution,
                 )
 
             logger.info(
@@ -270,6 +328,7 @@ async def reserve_points(
     task_id: UUID | None = None,
     entry_type: str = LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
     metadata: dict[str, Any] | None = None,
+    attribution: LedgerAttribution | None = None,
 ) -> CreditReservation | None:
     """
     Reserve a fixed amount of credits upfront.
@@ -285,7 +344,7 @@ async def reserve_points(
     if pool is None:
         raise RuntimeError("Database pool not initialized")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     today = date.today()
 
     async with pool.acquire() as conn:
@@ -343,35 +402,31 @@ async def reserve_points(
             balance_after = (daily_free - new_daily_used) + new_bonus
 
             if deduct_from_daily > 0:
-                await conn.execute(
-                    """
-                    INSERT INTO user_credit_ledger
-                        (user_id, task_id, entry_type, points, bucket_type, balance_after, metadata_json, created_at)
-                    VALUES ($1, $2, $3, $4, 'daily_free', $5, $6, $7)
-                    """,
-                    user_id,
-                    task_id,
-                    entry_type,
-                    -deduct_from_daily,
-                    balance_after,
-                    metadata or {},
-                    now,
+                await _insert_ledger_entry(
+                    conn,
+                    user_id=user_id,
+                    task_id=task_id,
+                    entry_type=entry_type,
+                    points=-deduct_from_daily,
+                    bucket_type="daily_free",
+                    balance_after=balance_after,
+                    metadata=metadata,
+                    created_at=now,
+                    attribution=attribution,
                 )
 
             if deduct_from_bonus > 0:
-                await conn.execute(
-                    """
-                    INSERT INTO user_credit_ledger
-                        (user_id, task_id, entry_type, points, bucket_type, balance_after, metadata_json, created_at)
-                    VALUES ($1, $2, $3, $4, 'bonus', $5, $6, $7)
-                    """,
-                    user_id,
-                    task_id,
-                    entry_type,
-                    -deduct_from_bonus,
-                    balance_after,
-                    metadata or {},
-                    now,
+                await _insert_ledger_entry(
+                    conn,
+                    user_id=user_id,
+                    task_id=task_id,
+                    entry_type=entry_type,
+                    points=-deduct_from_bonus,
+                    bucket_type="bonus",
+                    balance_after=balance_after,
+                    metadata=metadata,
+                    created_at=now,
+                    attribution=attribution,
                 )
 
             logger.info(
@@ -396,6 +451,7 @@ async def refund_reserved_points(
     *,
     task_id: UUID | None = None,
     metadata: dict[str, Any] | None = None,
+    attribution: LedgerAttribution | None = None,
 ) -> int:
     """Refund a prior fixed reservation back to the appropriate buckets."""
     if reservation.total_points <= 0:
@@ -405,7 +461,7 @@ async def refund_reserved_points(
     if pool is None:
         raise RuntimeError("Database pool not initialized")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     today = date.today()
 
     async with pool.acquire() as conn:
@@ -459,35 +515,31 @@ async def refund_reserved_points(
             balance_after = (daily_free - new_daily_used) + new_bonus
 
             if refund_to_daily > 0:
-                await conn.execute(
-                    """
-                    INSERT INTO user_credit_ledger
-                        (user_id, task_id, entry_type, points, bucket_type, balance_after, metadata_json, created_at)
-                    VALUES ($1, $2, $3, $4, 'daily_free', $5, $6, $7)
-                    """,
-                    user_id,
-                    task_id,
-                    LEDGER_ENTRY_TYPE_REFUND,
-                    refund_to_daily,
-                    balance_after,
-                    metadata or {},
-                    now,
+                await _insert_ledger_entry(
+                    conn,
+                    user_id=user_id,
+                    task_id=task_id,
+                    entry_type=LEDGER_ENTRY_TYPE_REFUND,
+                    points=refund_to_daily,
+                    bucket_type="daily_free",
+                    balance_after=balance_after,
+                    metadata=metadata,
+                    created_at=now,
+                    attribution=attribution,
                 )
 
             if bonus_refund > 0:
-                await conn.execute(
-                    """
-                    INSERT INTO user_credit_ledger
-                        (user_id, task_id, entry_type, points, bucket_type, balance_after, metadata_json, created_at)
-                    VALUES ($1, $2, $3, $4, 'bonus', $5, $6, $7)
-                    """,
-                    user_id,
-                    task_id,
-                    LEDGER_ENTRY_TYPE_REFUND,
-                    bonus_refund,
-                    balance_after,
-                    metadata or {},
-                    now,
+                await _insert_ledger_entry(
+                    conn,
+                    user_id=user_id,
+                    task_id=task_id,
+                    entry_type=LEDGER_ENTRY_TYPE_REFUND,
+                    points=bonus_refund,
+                    bucket_type="bonus",
+                    balance_after=balance_after,
+                    metadata=metadata,
+                    created_at=now,
+                    attribution=attribution,
                 )
 
             refunded_total = refund_to_daily + bonus_refund
@@ -507,6 +559,7 @@ async def deduct_credits(
     task_id: UUID,
     cost_points: int,
     metadata: dict[str, Any] | None = None,
+    attribution: LedgerAttribution | None = None,
 ) -> int:
     return await deduct_points(
         user_id,
@@ -514,6 +567,7 @@ async def deduct_credits(
         task_id=task_id,
         entry_type=LEDGER_ENTRY_TYPE_ANALYSIS_DEDUCT,
         metadata=metadata,
+        attribution=attribution,
     )
 
 
@@ -522,6 +576,7 @@ async def grant_bonus_credits(
     points: int,
     entry_type: str = "feedback_reward",
     metadata: dict[str, Any] | None = None,
+    attribution: LedgerAttribution | None = None,
 ) -> int:
     """
     Grant bonus points to a user account.
@@ -542,7 +597,7 @@ async def grant_bonus_credits(
     if pool is None:
         raise RuntimeError("Database pool not initialized")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -574,18 +629,17 @@ async def grant_bonus_credits(
                 now,
             )
 
-            await conn.execute(
-                """
-                INSERT INTO user_credit_ledger
-                    (user_id, task_id, entry_type, points, bucket_type, balance_after, metadata_json, created_at)
-                VALUES ($1, NULL, $2, $3, 'bonus', $4, $5, $6)
-                """,
-                user_id,
-                entry_type,
-                points,
-                balance_after,
-                metadata or {},
-                now,
+            await _insert_ledger_entry(
+                conn,
+                user_id=user_id,
+                task_id=None,
+                entry_type=entry_type,
+                points=points,
+                bucket_type="bonus",
+                balance_after=balance_after,
+                metadata=metadata,
+                created_at=now,
+                attribution=attribution,
             )
 
             logger.info(
