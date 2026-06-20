@@ -1,6 +1,6 @@
 # Schema And Domain Contract
 
-> 状态：`D3-P3 implemented`
+> 状态：`D4-P0 API implemented`
 > 最后更新：2026-06-20
 > 范围：Reader agentic orchestration 的后端 schema 边界、领域对象、运行时事实源、projection DTO、旧 workflow cutover 和 reset 约束。
 
@@ -44,6 +44,8 @@ D3 处于开发期，没有生产数据兼容需求。正式代码和文档使�
 | D3 Contract Review | `accepted_with_changes` | 固化 cutover matrix、reset manifest、状态机、usage 两阶段归因、snapshot 子类型和 vocabulary 三类 item subtype。 |
 | D3-P2 Implementation | `accepted` | 低影响纯文本 builder、UTF-16/hash、Base Plate Snapshot serializer 和最小 translation projection 已实现；D3-P3 必须复用现有 builder/snapshot，不重新定义 Unit/Anchor/Snapshot。 |
 | D3-P3 Implementation | `accepted` | 低风险纯文本 article_ready 持久化已实现；snapshot reload 使用 DB facts、consistent read 和公共 builder validator，不返回内存临时结果。 |
+| D3-P4 Implementation | `accepted` | Job runtime、event publisher 和 polling cursor 已实现；job fence 必须校验 record 当前 active base，polling cursor 不得在 caught-up / empty stream 时误报 reload。 |
+| D4-P0 Implementation | `accepted` | 最小 Reader API 已实现；plain text submit、snapshot reload 和 event polling 均复用 D3 services；新 API 不读取 `render_scene_json`；blank `client_record_id` 规范化为 `NULL`，重复 active `client_record_id` 返回 409。 |
 
 ## Schema Groups
 
@@ -495,6 +497,7 @@ Rules:
 - Skip, quota pause or future retry scheduling must not consume an attempt.
 - `operation_fingerprint` includes `base_id` and expresses business intent; it does not include transient fallback provider/model.
 - Only record-level `build_base` may have `base_id = null`; all other jobs must have `base_id`, including any non-`build_base` job whose `target_type = record`.
+- Claim and publish fence must reject stale generation, inactive target base, target base not owned by the record, and target base not equal to `reading_records.active_base_id`.
 
 ### `reader_job_events`
 
@@ -857,6 +860,8 @@ Rules:
 - `next_after_sequence` is the last returned event sequence.
 - If the response is truncated, client must not jump cursor to `last_event_sequence`.
 - If no events are returned, `next_after_sequence` remains `after_sequence`.
+- If `after_sequence == last_event_sequence`, return empty events and do not require reload.
+- If there are no committed events and `after_sequence = 0`, return empty events and do not require reload.
 - If `after_sequence > last_event_sequence`, return empty events and keep `next_after_sequence = after_sequence`; client may reload snapshot if this persists.
 - Client advances cursor only after applying events.
 - If a sequence gap appears, client reloads snapshot and resumes from snapshot `last_event_sequence`.

@@ -176,6 +176,8 @@ Polling cursor 规则：
 - response 可以包含 server 当前 `last_event_sequence` 作为观测值。
 - 客户端 cursor 只能前进到最后一个已经成功处理的 event sequence。
 - 如果 response 被 `limit` 截断，客户端不得直接把 cursor 跳到 server `last_event_sequence`，否则会跳过未处理事件。
+- 如果 `after=N` 等于 server 当前 `last_event_sequence`，返回空 events，不要求 reload。
+- 如果当前没有 committed events 且 `after=0`，返回空 events，不要求 reload。
 - 如果 `after=N` 大于 server 当前 `last_event_sequence`，返回空 events，并保持 `next_after_sequence = N`。客户端如果持续观察到该状态，应 reload snapshot，而不是猜测 sequence。
 
 ## Snapshot 策略

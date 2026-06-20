@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.contracts.annotation import (
     TEXT_RANGE_HASH_ALGORITHM,
@@ -194,3 +194,65 @@ class ReaderPlateSnapshot(BaseModel):
     user_assets: list[ReaderSnapshotUserAsset] = Field(default_factory=list)
     parsed_decisions: list[ReaderSnapshotParsedDecision] = Field(default_factory=list)
     value: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ReaderPlainTextSubmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plain_text: str = Field(min_length=1)
+    title: str | None = None
+    language: str | None = None
+    source_metadata: dict[str, Any] | None = None
+    client_record_id: str | None = Field(default=None, max_length=255)
+
+    @field_validator("plain_text")
+    @classmethod
+    def validate_plain_text_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("plain_text must not be blank")
+        return value
+
+    @field_validator("client_record_id")
+    @classmethod
+    def normalize_client_record_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class ReaderPlainTextSubmitResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: str = Field(min_length=1)
+    base_id: str = Field(min_length=1)
+    article_ready_sequence: int = Field(ge=1)
+    snapshot: ReaderPlateSnapshot
+
+
+class ReaderEventResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    reading_record_id: str = Field(min_length=1)
+    sequence: int = Field(ge=1)
+    event_type: str = Field(min_length=1)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    source_run_id: str | None = None
+    source_job_id: str | None = None
+    source_layer_id: str | None = None
+    created_at: datetime
+
+
+class ReaderEventPollResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reading_record_id: str = Field(min_length=1)
+    after_sequence: int = Field(ge=0)
+    next_after_sequence: int = Field(ge=0)
+    last_event_sequence: int = Field(ge=0)
+    has_more: bool = False
+    truncated: bool = False
+    reload_required: bool = False
+    reload_reason: str | None = None
+    events: list[ReaderEventResponse] = Field(default_factory=list)

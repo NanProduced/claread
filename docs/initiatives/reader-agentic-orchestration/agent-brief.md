@@ -70,7 +70,12 @@
 - D3-P3 Article Ready Persistence Service 已完成并通过 review。后续低风险纯文本 `article_ready` 内部路径应复用 `ArticleReadyPersistenceService`，不得另写一套 record/input/base/unit/anchor/event 持久化逻辑。
 - Snapshot reload 必须从 DB domain facts 重建，使用 read-only `repeatable_read` transaction 或等价 consistent read；`last_event_sequence` 与 snapshot facts 必须来自同一一致性视图。
 - DB hydration 后必须调用 `validate_reading_base_build_result` 校验 Reading Base / Unit / Anchor Segment 全局 invariant。后续新增 persisted facts 时也要接入同一校验链。
-- D3-P4 当前下一步是 runtime skeleton：run/job lease、heartbeat、stale recovery、`retry_later`、event publisher、polling cursor。不要在 D3-P4 实现实际 LLM translation worker 或 LangGraph flow。
+- D3-P4 Runtime Skeleton 已完成并通过 review。后续 job runtime 应复用 `ReaderJobRuntime`，event publish / polling 应复用 `ReaderEventRuntime`，不得另写 sequence/cursor/lease 控制面。
+- Job claim/publish fence 必须同时校验 record generation、target base generation、target base `status='active'`、record `active_base_id == job.base_id` 和 lease token。
+- Polling cursor 在 `after_sequence == last_event_sequence` 或 empty stream 时返回空 events，不要求 reload；只有发现 missing committed event / sequence gap 时才要求 reload。
+- D4-P0 Backend Reader API + Snapshot/Polling 纵切已完成并通过 review。新 API surface 是 `POST /reader/records/plain-text`、`GET /reader/records/{record_id}/snapshot`、`GET /reader/records/{record_id}/events`；不得让新 Web Reader 回到旧 `/scene` 或 `render_scene_json` 路径。
+- D4-P0 `client_record_id` blank 规范化为 `NULL`；同一用户重复 active `client_record_id` 返回 409。后续如果改为幂等 submit，必须显式更新 API contract 和测试。
+- 当前下一步是 D4-P1 Translation Layer Worker + Layer Publish 纵切。不要在 D4-P1 实现 Web UI、SSE 纵切、vocabulary、grammar bundle、Ask tools、RAG 或 LangGraph flow。
 - D4 worker 实现中不得临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK；如 D3-P4 runtime tests 暴露缺口，先形成单独 closeout/update，再改依赖。
 - LangGraph 1.x 的 typed streaming、per-node timeout、error handler、graceful shutdown 和 DeltaChannel 只作为 D5+ 复杂 repair / branching / interrupt spike 候选，不改变 D4 PostgreSQL run/job/event 主控。
 - Grammar Bundle Worker 可以一次生成 `grammar_note` 与 `sentence_analysis`，但发布、存储、RAG、projection、policy、eval 必须按 subtype 独立处理。`long_sentence` 不是权威 layer type，只是触发 `sentence_analysis` 的适用场景。

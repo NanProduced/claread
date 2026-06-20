@@ -402,10 +402,12 @@ Plate fragment 只能来自 typed layer result、document tool result 或已 san
 | D3-004 | 2026-06-19 | D3-P1 schema baseline 已通过 review：`reader_jobs` 与 `enhancement_layers` 均通过 base/generation 复合 FK 防止 stale generation 写入；只有 `build_base + record` job 可无 `base_id`；`active_base_id -> reading_bases.status='active'` 暂作为 service/publisher invariant，不在 D3-P1 加 trigger。 |
 | D3-005 | 2026-06-19 | D3-P2 Reading Base Builder + Base Plate Snapshot 已通过 review：低影响纯文本 builder 使用 deterministic canonicalization、UTF-16 offsets、`fnv1a32-utf16` hash、sentence/clause/fallback Anchor Segment；当前 Unit baseline 是 `1 structure block -> 1 reading unit`。`ReaderPlateSnapshot` 从 domain facts 生成并校验所有 layers/assets/supplements/parsed facts 属于当前 base / unit / anchor；最小 translation projection 可用，但不代表通用 `projection_ops` 已端到端接入。 |
 | D3-006 | 2026-06-20 | D3-P3 Article Ready Persistence Service 已通过 review：低风险纯文本提交在一个事务内写入 record/input/base/units/anchors/active base/`article_ready` event；snapshot reload 从 DB facts 重建，并使用 read-only `repeatable_read` transaction 保证 `last_event_sequence` 与 facts 来自同一 consistent read；DB hydration 后必须调用 `validate_reading_base_build_result` 统一校验 Reading Base / Unit / Anchor Segment 全局 invariant。 |
+| D3-007 | 2026-06-20 | D3-P4 Runtime Skeleton 已通过 review：job runtime 支持 SKIP LOCKED claim、lease token、heartbeat、retry_later、stale recovery 和 transition guard；claim/publish fence 必须校验 target base 是 record 当前 `active_base_id`；event runtime 支持事务内 record-scoped sequence、rollback no-gap、concurrent publish、polling cursor、empty stream、cursor caught-up、gap reload 和 `Last-Event-ID` parser。D3-P4 不调用 LLM，不引入 LangGraph。 |
+| D4-001 | 2026-06-20 | D4-P0 Backend Reader API + Snapshot/Polling 已通过 review：`POST /reader/records/plain-text`、`GET /reader/records/{record_id}/snapshot` 和 `GET /reader/records/{record_id}/events` 复用 D3-P3/D3-P4 services；用户隔离走 `AuthUserDep`；blank `client_record_id` 规范化为 `NULL`，重复 active `client_record_id` 返回 409；新 API 不读取旧 `render_scene_json`。 |
 
 ## 待决问题
 
-- D3-P4 runtime skeleton：在新 schema 上验证 asyncpg job lease、record-scoped event counter、concurrent publish、polling cursor 和 FastAPI SSE `Last-Event-ID` 行为。rollback no-gap 已在 D3-P1 focused test 覆盖，D3-P4 仍需覆盖 publish transaction 场景。
+- D4-P1 Translation Layer Worker + Layer Publish：在不引入 LangGraph、不升级依赖的前提下，把 translation job、PydanticAI typed output、`enhancement_layers` publish、`layer_published` event 和 snapshot reload 串成最小增强纵切。
 - `article_ready` p50/p95 目标。
 - Length Class 数值边界和默认 Authorization Envelope 预算。
 - 第一版 worker 是仅开发期 in-process，还是一开始独立 worker process。

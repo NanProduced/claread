@@ -261,18 +261,17 @@ Focused tests 已通过：
 
 ### D3-P4. Runtime Skeleton
 
-状态：next。
+状态：completed on 2026-06-20，详细记录见 `docs/tmp/reader-orchestration/D3/TMP-D3-P4-runtime-skeleton-closeout.md`。
 
-目标：
+Closeout 结论：
 
-- 在新 D3 schema 上实现最小 Reader run/job/event runtime 骨架。
-- 实现 claimable `reader_jobs` repository/helper：`SELECT FOR UPDATE SKIP LOCKED`、lease token、lease expiry、attempt count、heartbeat。
-- 实现 stale claimed job recovery 和 `retry_later` 调度语义。
-- 实现 base/generation fence：claim/publish 必须拒绝 stale generation、非 active base 或 lease token mismatch。
-- 抽出 event publisher helper：在 publish transaction 内使用 `reader_event_sequences` 分配 committed UI sequence 并写入 `reader_events`。
-- 增加 polling event read model：`after_sequence`、`limit`、`last_event_sequence`、truncated response 和 gap/reload 语义。
-- 如新增 FastAPI SSE helper，必须支持 `Last-Event-ID`、heartbeat 和 disconnect handling；D3-P4 可以先以 service-level tests 覆盖合同。
-- 保持 D4 不引入 LangGraph；runtime 主控仍是 PostgreSQL run/job/event。
+- 已在新 D3 schema 上实现最小 Reader run/job/event runtime 骨架。
+- 已实现 claimable `reader_jobs` helper：`SELECT FOR UPDATE SKIP LOCKED`、lease token、lease expiry、attempt count、heartbeat。
+- 已实现 stale claimed job recovery 和 `retry_later` 调度语义。
+- 已实现 base/generation fence：claim/publish 拒绝 stale generation、非 active base、`active_base_id != job.base_id` 或 lease token mismatch。
+- 已抽出 event publisher helper：在 publish transaction 内使用 `reader_event_sequences` 分配 committed UI sequence 并写入 `reader_events`。
+- 已实现 polling event read model：`after_sequence`、`limit`、`last_event_sequence`、truncated response、empty stream、cursor already caught up 和 gap/reload 语义。
+- D3-P4 保持不引入 LangGraph；runtime 主控仍是 PostgreSQL run/job/event。
 
 D3-P4 不包含：
 
@@ -283,24 +282,67 @@ D3-P4 不包含：
 - `projection_ops` 端到端 applier。
 - LangGraph planner 或 branching flow。
 
-任务包：
+Focused tests 已通过：
 
-- 新增 runtime repository / service，复用现有 asyncpg patterns。
-- 新增 claim query，保证多 worker 并发下同一 job 只被一个 worker claim。
-- 新增 heartbeat / release / retry_later / terminal transition helpers。
-- 新增 stale lease recovery helper。
-- 新增 event publish helper，覆盖 rollback no-gap 和 concurrent publish sequence。
-- 新增 polling cursor helper，覆盖 limit 截断不跳 cursor、gap/reload、`after_sequence > last_event_sequence`。
-- 增加 focused tests 覆盖 job lease、stale recovery、retry_later、generation/base fence、event publisher、polling cursor。
+- `test_reader_orchestration_job_runtime.py`
+- `test_reader_orchestration_event_runtime.py`
+- `test_reader_orchestration_schema_baseline.py`
+- targeted `ruff check`
+- targeted `compileall`
 
-完成标准：
+### D4-P0. Backend Reader API + Snapshot/Polling Vertical Slice
 
-- D3-P4 focused tests 通过。
-- Claim / heartbeat / stale recovery 不会造成双 worker 同时拥有同一 job。
-- Publish transaction 中 event sequence committed 连续，rollback 无 gap。
-- Polling cursor 不会在 limit 截断时跳过未返回事件。
-- Stale generation、非 active base、lease mismatch 均被拒绝。
-- Runtime skeleton 不调用 LLM，不引入 LangGraph。
+状态：completed on 2026-06-20，详细记录见 `docs/tmp/reader-orchestration/D4/TMP-D4-P0-backend-reader-api-closeout.md`。
+
+Closeout 结论：
+
+- 已新增最小后端 Reader API surface，让 Web 可以走通 plain text submit、snapshot reload 和 event polling。
+- `POST /reader/records/plain-text` 调用 `ArticleReadyPersistenceService.submit_plain_text`，返回 record id、base id、`article_ready` event sequence 和 `ReaderPlateSnapshot`。
+- `GET /reader/records/{record_id}/snapshot` 调用 D3-P3 snapshot reload，从 DB facts 重建 `ReaderPlateSnapshot`。
+- `GET /reader/records/{record_id}/events` 调用 D3-P4 `ReaderEventRuntime.poll_events`，支持 `after_sequence`、`limit`、`last_event_sequence`、truncated response 和 reload-required signal。
+- 用户隔离复用 `AuthUserDep`；record 不存在或不属于当前 user 均返回 404。
+- `client_record_id` blank 会规范化为 `NULL`；同一用户重复 active `client_record_id` 返回 409。
+- 新 API 路径不读取旧 `render_scene_json`。
+
+D4-P0 不包含：
+
+- Translation Worker。
+- Layer Publisher 业务逻辑。
+- PydanticAI / LLM 调用。
+- Web Reader UI。
+- SSE endpoint 纵切；polling 先行。
+- `projection_ops` 端到端 applier。
+
+Focused tests 已通过：
+
+- `test_reader_orchestration_api.py`
+- `test_reader_orchestration_article_ready_service.py`
+- `test_reader_orchestration_event_runtime.py`
+- targeted `ruff check`
+- targeted `compileall`
+
+### D4-P1. Translation Layer Worker + Layer Publish Vertical Slice
+
+状态：next。
+
+目标：
+
+- 在 D4-P0 API 后补齐第一条增强层纵切：`article_ready` 后创建 translation job，worker 生成 translation layer，publish 后 snapshot reload 能看到译文。
+- 使用 deterministic policy/bootstrap 创建最小 `reader_runs` 与 base-scoped `reader_jobs`；不引入 LangGraph Planner。
+- Worker claim、heartbeat、retry、publish 必须复用 D3-P4 `ReaderJobRuntime`；事件发布必须复用 D3-P4 `ReaderEventRuntime`。
+- Translation worker 使用 PydanticAI typed output 和已锁定 provider/profile 入口，不在任务中临时升级依赖。
+- Published result 写 `enhancement_layers(layer_type='translation')`，并发布 `layer_published` event。
+- Snapshot reload 通过现有 `ReaderPlateSnapshot` projection 呈现 translation；D4-P1 仍允许 snapshot reload/simple refresh，不要求 `projection_ops` 端到端。
+
+D4-P1 不包含：
+
+- Web Plate Reader UI。
+- vocabulary、grammar_note、sentence_analysis。
+- SSE endpoint。
+- Ask Document Tools。
+- LangGraph flow。
+- RAG substrate。
+- URL / PDF / OCR / 文件上传。
 
 ## D4. 最小纵切
 
@@ -385,9 +427,9 @@ D3-P4 不包含：
 
 ## 当前下一步
 
-进入 D3-P4：
+进入 D4-P1：
 
-1. 实现 Reader runtime skeleton：run/job repository、claim、heartbeat、stale recovery、`retry_later`、lease token guard。
-2. 抽出 event publisher helper：publish transaction 内分配 record-scoped sequence 并写 `reader_events`，覆盖 rollback no-gap 和 concurrent publish。
-3. 实现 polling cursor helper：`after_sequence`、`limit`、`last_event_sequence`、truncated response、gap/reload 语义。
-4. 不实现 Translation Worker、Layer Publisher 业务逻辑、Web UI、LangGraph、PydanticAI worker、`projection_ops` 端到端。
+1. 实现最小 translation layer worker 和 layer publish path。
+2. 创建 deterministic run/job bootstrap，复用 `ReaderJobRuntime` claim/heartbeat/publish fence。
+3. 使用 PydanticAI typed output 生成 `TranslationLayerOutput`，写入 `enhancement_layers` 并发布 `layer_published` event。
+4. 通过 snapshot reload 验证 translation projection；不实现 Web UI、SSE、LangGraph、vocabulary、grammar bundle、RAG 或 `projection_ops` 端到端。
