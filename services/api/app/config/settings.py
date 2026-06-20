@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     annotation_model_profile: str = ""
     dict_ai_model_profile: str = ""
     ask_claread_profile: str = ""
+    reader_translation_model_profile: str = ""
     # Round 16: ``reader_ask_planner_model_profile`` has been removed.
     # The live agent-loop-first path no longer resolves a planner LLM.
     reader_ask_replan_model_profile: str = ""

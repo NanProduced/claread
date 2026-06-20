@@ -1,7 +1,7 @@
 # Schema And Domain Contract
 
-> 状态：`D4-P0 API implemented`
-> 最后更新：2026-06-20
+> 状态：`D4-P1 translation implemented`
+> 最后更新：2026-06-21
 > 范围：Reader agentic orchestration 的后端 schema 边界、领域对象、运行时事实源、projection DTO、旧 workflow cutover 和 reset 约束。
 
 ## 目标
@@ -46,6 +46,7 @@ D3 处于开发期，没有生产数据兼容需求。正式代码和文档使�
 | D3-P3 Implementation | `accepted` | 低风险纯文本 article_ready 持久化已实现；snapshot reload 使用 DB facts、consistent read 和公共 builder validator，不返回内存临时结果。 |
 | D3-P4 Implementation | `accepted` | Job runtime、event publisher 和 polling cursor 已实现；job fence 必须校验 record 当前 active base，polling cursor 不得在 caught-up / empty stream 时误报 reload。 |
 | D4-P0 Implementation | `accepted` | 最小 Reader API 已实现；plain text submit、snapshot reload 和 event polling 均复用 D3 services；新 API 不读取 `render_scene_json`；blank `client_record_id` 规范化为 `NULL`，重复 active `client_record_id` 返回 409。 |
+| D4-P1 Implementation | `accepted` | Translation bootstrap、worker、publisher、usage attribution 和 snapshot projection 已实现；worker claim 必须按 job type/target type 过滤；retry 后成功必须清理 run failure 字段。 |
 
 ## Schema Groups
 

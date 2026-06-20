@@ -13,6 +13,7 @@ from app.llm.routes import (
     MODEL_ROUTE_DICT_AI,
     MODEL_ROUTE_RAG_EMBEDDING,
     MODEL_ROUTE_RAG_RERANK,
+    MODEL_ROUTE_READER_LAYER_TRANSLATION,
     MODEL_ROUTE_READER_ASK,
     MODEL_ROUTE_READER_ASK_REPLAN,
 )
@@ -82,6 +83,7 @@ def _build_model_registry_cached(
     annotation_model_profile: str,
     dict_ai_model_profile: str,
     ask_claread_profile: str,
+    reader_translation_model_profile: str,
     reader_ask_replan_model_profile: str,
     daily_annotation_model_profile: str,
     daily_analysis_model_profile: str,
@@ -96,6 +98,7 @@ def _build_model_registry_cached(
         annotation_model_profile=annotation_model_profile,
         dict_ai_model_profile=dict_ai_model_profile,
         ask_claread_profile=ask_claread_profile,
+        reader_translation_model_profile=reader_translation_model_profile,
         reader_ask_replan_model_profile=reader_ask_replan_model_profile,
         daily_annotation_model_profile=daily_annotation_model_profile,
         daily_analysis_model_profile=daily_analysis_model_profile,
@@ -111,6 +114,10 @@ def _build_model_registry_cached(
             MODEL_ROUTE_ANNOTATION_GENERATION: settings.annotation_model_profile,
             MODEL_ROUTE_DICT_AI: (
                 settings.dict_ai_model_profile
+                or settings.annotation_model_profile
+            ),
+            MODEL_ROUTE_READER_LAYER_TRANSLATION: (
+                settings.reader_translation_model_profile
                 or settings.annotation_model_profile
             ),
             MODEL_ROUTE_READER_ASK: (
@@ -147,6 +154,7 @@ def build_model_registry(settings: Settings) -> ModelRegistry:
         annotation_model_profile=settings.annotation_model_profile,
         dict_ai_model_profile=settings.dict_ai_model_profile,
         ask_claread_profile=settings.ask_claread_profile,
+        reader_translation_model_profile=settings.reader_translation_model_profile,
         reader_ask_replan_model_profile=settings.reader_ask_replan_model_profile,
         daily_annotation_model_profile=settings.daily_annotation_model_profile,
         daily_analysis_model_profile=settings.daily_analysis_model_profile,

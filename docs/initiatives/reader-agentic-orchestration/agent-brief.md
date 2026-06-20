@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 执行简报
 
 > 状态：`权威简报`
-> 最后更新：2026-06-20
+> 最后更新：2026-06-21
 
 给 coding agent 分配 Reader agentic orchestration 重构任务时，使用本简报作为最小上下文。
 
@@ -75,7 +75,8 @@
 - Polling cursor 在 `after_sequence == last_event_sequence` 或 empty stream 时返回空 events，不要求 reload；只有发现 missing committed event / sequence gap 时才要求 reload。
 - D4-P0 Backend Reader API + Snapshot/Polling 纵切已完成并通过 review。新 API surface 是 `POST /reader/records/plain-text`、`GET /reader/records/{record_id}/snapshot`、`GET /reader/records/{record_id}/events`；不得让新 Web Reader 回到旧 `/scene` 或 `render_scene_json` 路径。
 - D4-P0 `client_record_id` blank 规范化为 `NULL`；同一用户重复 active `client_record_id` 返回 409。后续如果改为幂等 submit，必须显式更新 API contract 和测试。
-- 当前下一步是 D4-P1 Translation Layer Worker + Layer Publish 纵切。不要在 D4-P1 实现 Web UI、SSE 纵切、vocabulary、grammar bundle、Ask tools、RAG 或 LangGraph flow。
+- D4-P1 Translation Layer Worker + Layer Publish 纵切已完成并通过 review。Translation worker 必须使用 job-type filtered claim，不得 claim mixed queue 中的非 translation jobs；成功和失败路径必须写 `ai_usage_events` attribution；retry 后成功必须清空 run failure fields。
+- 当前下一步是 D4-P2 Backend Orchestration Integration + Parsed Decision。不要在 D4-P2 实现 Web UI、SSE 纵切、vocabulary、grammar bundle、Ask tools、RAG 或 LangGraph flow。
 - D4 worker 实现中不得临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK；如 D3-P4 runtime tests 暴露缺口，先形成单独 closeout/update，再改依赖。
 - LangGraph 1.x 的 typed streaming、per-node timeout、error handler、graceful shutdown 和 DeltaChannel 只作为 D5+ 复杂 repair / branching / interrupt spike 候选，不改变 D4 PostgreSQL run/job/event 主控。
 - Grammar Bundle Worker 可以一次生成 `grammar_note` 与 `sentence_analysis`，但发布、存储、RAG、projection、policy、eval 必须按 subtype 独立处理。`long_sentence` 不是权威 layer type，只是触发 `sentence_analysis` 的适用场景。

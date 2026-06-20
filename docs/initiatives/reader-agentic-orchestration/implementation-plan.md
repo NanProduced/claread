@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 实施计划
 
-> 状态：`D3 active`
-> 最后更新：2026-06-20
+> 状态：`D4 active`
+> 最后更新：2026-06-21
 
 ## 成功标准
 
@@ -323,16 +323,17 @@ Focused tests 已通过：
 
 ### D4-P1. Translation Layer Worker + Layer Publish Vertical Slice
 
-状态：next。
+状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D4/TMP-D4-P1-translation-layer-closeout.md`。
 
-目标：
+Closeout 结论：
 
-- 在 D4-P0 API 后补齐第一条增强层纵切：`article_ready` 后创建 translation job，worker 生成 translation layer，publish 后 snapshot reload 能看到译文。
-- 使用 deterministic policy/bootstrap 创建最小 `reader_runs` 与 base-scoped `reader_jobs`；不引入 LangGraph Planner。
-- Worker claim、heartbeat、retry、publish 必须复用 D3-P4 `ReaderJobRuntime`；事件发布必须复用 D3-P4 `ReaderEventRuntime`。
-- Translation worker 使用 PydanticAI typed output 和已锁定 provider/profile 入口，不在任务中临时升级依赖。
-- Published result 写 `enhancement_layers(layer_type='translation')`，并发布 `layer_published` event。
-- Snapshot reload 通过现有 `ReaderPlateSnapshot` projection 呈现 translation；D4-P1 仍允许 snapshot reload/simple refresh，不要求 `projection_ops` 端到端。
+- 已新增 deterministic translation run/job bootstrap，创建最小 `reader_runs` 与 base-scoped `reader_jobs`。
+- `ReaderJobRuntime.claim_next_job()` 支持 `job_type` / `target_type` 过滤，translation worker 不会 claim mixed queue 中的非 translation jobs。
+- Translation worker 使用 PydanticAI typed output 边界生成 `TranslationLayerOutput`；测试使用 fake translator，不调用真实 LLM。
+- Layer publisher 在一个事务内写 `enhancement_layers(layer_type='translation')`、发布 `layer_published` event、完成 job transition 和 run completion。
+- Snapshot reload 能看到 published translation layer，并在 Plate value 中投影 `reader_translation` node。
+- 成功和失败路径均写 `ai_usage_events`，带 record / run / job / layer attribution、model route/profile/provider/name 和 operation fingerprint。
+- retryable failure 后重新成功会清空 `reader_runs.failure_class` / `failure_code`，避免 completed run 带旧失败状态。
 
 D4-P1 不包含：
 
@@ -343,6 +344,38 @@ D4-P1 不包含：
 - LangGraph flow。
 - RAG substrate。
 - URL / PDF / OCR / 文件上传。
+
+Focused tests 已通过：
+
+- `test_reader_orchestration_translation_worker.py`
+- `test_reader_orchestration_layer_publisher.py`
+- `test_reader_orchestration_job_runtime.py`
+- `test_reader_orchestration_event_runtime.py`
+- `test_reader_orchestration_article_ready_service.py`
+- targeted `ruff check`
+- targeted `compileall`
+
+### D4-P2. Backend Orchestration Integration + Parsed Decision
+
+状态：next。
+
+目标：
+
+- 把 D4-P1 translation bootstrap 接入 D4-P0 article-ready 后端路径，使新 Reader API 能启动第一条 enhancement job。
+- 增加最小 orchestration tick / runner service：从 queued translation job 到 worker process 再到 `layer_published`，用于本地/API 测试纵切。
+- Translation layer published 后写最小 `parsed_decisions`，满足 D4 flow 的 parsed decision 门槛。
+- 保持 PostgreSQL run/job/event 作为 durable control plane；不引入 LangGraph。
+- Event polling 继续作为前端渐进信号；D4-P2 仍允许前端收到 event 后 snapshot reload，不要求 `projection_ops` 端到端。
+
+D4-P2 不包含：
+
+- Web Plate Reader UI。
+- SSE endpoint。
+- vocabulary、grammar_note、sentence_analysis。
+- Ask Document Tools。
+- RAG substrate。
+- URL / PDF / OCR / 文件上传。
+- LangGraph flow。
 
 ## D4. 最小纵切
 
@@ -427,9 +460,9 @@ D4-P1 不包含：
 
 ## 当前下一步
 
-进入 D4-P1：
+进入 D4-P2：
 
-1. 实现最小 translation layer worker 和 layer publish path。
-2. 创建 deterministic run/job bootstrap，复用 `ReaderJobRuntime` claim/heartbeat/publish fence。
-3. 使用 PydanticAI typed output 生成 `TranslationLayerOutput`，写入 `enhancement_layers` 并发布 `layer_published` event。
-4. 通过 snapshot reload 验证 translation projection；不实现 Web UI、SSE、LangGraph、vocabulary、grammar bundle、RAG 或 `projection_ops` 端到端。
+1. 把 translation bootstrap 接到 article-ready orchestration path，避免 D4-P1 只能靠测试手动调用 bootstrap。
+2. 增加最小 orchestration tick / runner service，复用 `TranslationWorkerService` 和 D3-P4 runtime。
+3. 发布 translation 后写 `parsed_decisions`，并通过 snapshot reload 验证 parsed decision 与 translation layer 同步可见。
+4. 不实现 Web UI、SSE、LangGraph、vocabulary、grammar bundle、RAG 或 `projection_ops` 端到端。

@@ -1,9 +1,11 @@
-version: "0.0.3"
+version: "0.0.4"
 agents:
   vocabulary:
     file: agents/vocabulary.yaml
   reader_ask:
     file: agents/reader_ask.yaml
+  reader_layer_translation:
+    file: agents/reader_layer_translation.yaml
   dict_context_explain:
     file: agents/dict_context_explain.yaml
   dict_missing_fallback:

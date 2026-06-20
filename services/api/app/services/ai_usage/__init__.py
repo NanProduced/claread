@@ -23,14 +23,15 @@ from .capabilities import (
     CAPABILITY_RAG_EMBEDDING,
     CAPABILITY_RAG_RERANK,
     CAPABILITY_READER_ASK,
+    CAPABILITY_READER_TRANSLATION,
 )
-from .service import AIUsageEventCreate, record_ai_usage_event
 from .helpers import (
     build_model_metadata,
     extract_request_id_from_render_scene,
     extract_schema_version_from_render_scene,
     resolve_model_metadata,
 )
+from .service import AIUsageEventCreate, record_ai_usage_event
 from .types import (
     BILLING_MODE_INTERNAL_ONLY,
     BILLING_MODE_NO_CHARGE,
@@ -69,6 +70,7 @@ __all__ = [
     "CAPABILITY_RAG_EMBEDDING",
     "CAPABILITY_RAG_RERANK",
     "CAPABILITY_READER_ASK",
+    "CAPABILITY_READER_TRANSLATION",
     "STATUS_FAILED",
     "STATUS_FALLBACK",
     "STATUS_SKIPPED",

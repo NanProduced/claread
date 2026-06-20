@@ -404,10 +404,11 @@ Plate fragment 只能来自 typed layer result、document tool result 或已 san
 | D3-006 | 2026-06-20 | D3-P3 Article Ready Persistence Service 已通过 review：低风险纯文本提交在一个事务内写入 record/input/base/units/anchors/active base/`article_ready` event；snapshot reload 从 DB facts 重建，并使用 read-only `repeatable_read` transaction 保证 `last_event_sequence` 与 facts 来自同一 consistent read；DB hydration 后必须调用 `validate_reading_base_build_result` 统一校验 Reading Base / Unit / Anchor Segment 全局 invariant。 |
 | D3-007 | 2026-06-20 | D3-P4 Runtime Skeleton 已通过 review：job runtime 支持 SKIP LOCKED claim、lease token、heartbeat、retry_later、stale recovery 和 transition guard；claim/publish fence 必须校验 target base 是 record 当前 `active_base_id`；event runtime 支持事务内 record-scoped sequence、rollback no-gap、concurrent publish、polling cursor、empty stream、cursor caught-up、gap reload 和 `Last-Event-ID` parser。D3-P4 不调用 LLM，不引入 LangGraph。 |
 | D4-001 | 2026-06-20 | D4-P0 Backend Reader API + Snapshot/Polling 已通过 review：`POST /reader/records/plain-text`、`GET /reader/records/{record_id}/snapshot` 和 `GET /reader/records/{record_id}/events` 复用 D3-P3/D3-P4 services；用户隔离走 `AuthUserDep`；blank `client_record_id` 规范化为 `NULL`，重复 active `client_record_id` 返回 409；新 API 不读取旧 `render_scene_json`。 |
+| D4-002 | 2026-06-21 | D4-P1 Translation Layer Worker + Layer Publish 已通过 review：translation run/job bootstrap、PydanticAI typed output boundary、layer publisher、`layer_published` event、snapshot translation projection 和 `ai_usage_events` attribution 已形成最小纵切；worker claim 必须按 `job_type='translate_unit'` / `target_type='unit'` 过滤，retry 后成功必须清空 run failure fields。 |
 
 ## 待决问题
 
-- D4-P1 Translation Layer Worker + Layer Publish：在不引入 LangGraph、不升级依赖的前提下，把 translation job、PydanticAI typed output、`enhancement_layers` publish、`layer_published` event 和 snapshot reload 串成最小增强纵切。
+- D4-P2 Backend Orchestration Integration + Parsed Decision：把 article-ready 后的 translation bootstrap、worker tick、`layer_published` event 和最小 `parsed_decisions` 串成完整后端 D4 path。
 - `article_ready` p50/p95 目标。
 - Length Class 数值边界和默认 Authorization Envelope 预算。
 - 第一版 worker 是仅开发期 in-process，还是一开始独立 worker process。

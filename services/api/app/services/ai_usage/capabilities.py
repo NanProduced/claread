@@ -5,6 +5,7 @@ from typing import Final
 CAPABILITY_ANALYSIS_FULL: Final[str] = "analysis_full"
 CAPABILITY_DICT_AI_LOOKUP: Final[str] = "dict_ai_lookup"
 CAPABILITY_READER_ASK: Final[str] = "reader_ask"
+CAPABILITY_READER_TRANSLATION: Final[str] = "reader_translation"
 CAPABILITY_GRAMMAR_XRAY: Final[str] = "grammar_xray"
 CAPABILITY_ARTIFACT_SUMMARY: Final[str] = "artifact_summary"
 CAPABILITY_ANALYSIS_OVERVIEW_HINT: Final[str] = "analysis_overview_hint"
