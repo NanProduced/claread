@@ -103,11 +103,18 @@ type ReaderPlateSnapshot = {
 
 开发期不创建 `ReaderPlateSnapshotV1` / `ReaderPlateSnapshotV2` 类型。未来如需要兼容转换，版本化类型只能存在于 serializer / adapter 边界，不能泄漏到 orchestration 核心逻辑。
 
-D4 translation 可通过 snapshot reload 或 simple projection refresh 呈现。`enhancement_layers` 在 D4 至少包含已发布的 translation layer；`ask_supplements`、`user_assets` 和 `parsed_decisions` 可以为空数组。
+D4 translation 可通过 snapshot reload 或 simple projection refresh 呈现。`enhancement_layers` 在 D4 至少包含已发布的 translation layer；D4-P2 起 snapshot reload 可包含最小 `parsed_decisions`。`ask_supplements` 和 `user_assets` 仍可以为空数组。
 
 D4 snapshot 不暴露 `projection_version`。客户端恢复 cursor 只使用 `last_event_sequence`；它表示 snapshot 序列化时同一次一致性读取到的 max committed Reader Event sequence。D5 如启用 projection cache 或增量 applier，再单独加入非 cursor 的 projection metadata。
 
 Snapshot wrapper 使用 `schema_kind`，不是 `schema_version`。`schema_version` 只保留给 layer output、fragment 等 serialized boundary payload。
+
+D4 Web slice：
+
+- Web BFF 通过 `/api/web/reader-plate/*` 调用后端 Reader API，不回退到旧 `/scene`。
+- Web Reader 只读 surface 使用 `ReaderPlateSnapshot.value` 渲染 article body。
+- D4 polling 收到 `layer_published`、`projection_reset_required` 或 server reload signal 后 reload snapshot；不应用 `projection_ops`。
+- 用户可见页面不暴露 Plate/Slate path、event cursor、sequence 或 snapshot internals。
 
 ### Base Node Seed
 

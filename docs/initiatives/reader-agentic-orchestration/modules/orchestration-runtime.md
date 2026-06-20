@@ -182,6 +182,13 @@ D3/D4 runtime baseline：
 - `reader_job_events`：claim、heartbeat lost、retry、diagnostics，不进入 SSE。
 - `enhancement_layers`：Layer Publisher 的 CAS winner。
 
+D4 orchestration integration：
+
+- `ReaderOrchestrator.submit_plain_text_and_bootstrap_translation()` 是后端 D4 submit facade：先复用 `ArticleReadyPersistenceService` 创建 record/base/unit/anchor/event facts，再复用 translation bootstrap 创建第一条 translation run/job。
+- `ReaderOrchestrator.tick_translation_worker()` 是 D4 最小 worker tick：复用 `TranslationWorkerService` claim/process/publish，成功后写最小 `parsed_decisions` 并发布 `parsed_decision_updated` event。
+- D4 tick 是 service/testable entry，不是公开 HTTP endpoint。若后续暴露内部 route，必须补 worker auth、权限边界和 focused tests。
+- D4 parsed decision 写入暂在 layer publish 后的独立事务。单线程 tick 下可接受；若未来要求 layer 与 parsed decision 强一致，应把 decision 写入收敛到 publisher transaction 或补 repair/diagnostic 策略。
+
 不引入：
 
 - External MQ / Temporal / DBOS / Prefect runtime。

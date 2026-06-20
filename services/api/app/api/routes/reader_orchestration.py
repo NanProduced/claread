@@ -18,6 +18,7 @@ from app.services.reader_orchestration.article_ready_service import (
     PlainTextArticleReadySubmitRequest,
 )
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
+from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
 
 router = APIRouter(prefix="/reader", tags=["reader"])
 
@@ -31,9 +32,9 @@ async def submit_reader_plain_text(
     body: ReaderPlainTextSubmitRequest,
     current_user: AuthUserDep,
 ) -> ReaderPlainTextSubmitResponse:
-    service = ArticleReadyPersistenceService()
+    orchestrator = ReaderOrchestrator()
     try:
-        result = await service.submit_plain_text(
+        result = await orchestrator.submit_plain_text_and_bootstrap_translation(
             PlainTextArticleReadySubmitRequest(
                 user_id=UUID(current_user.user_id),
                 plain_text=body.plain_text,

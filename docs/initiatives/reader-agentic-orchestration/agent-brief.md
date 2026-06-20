@@ -76,7 +76,10 @@
 - D4-P0 Backend Reader API + Snapshot/Polling 纵切已完成并通过 review。新 API surface 是 `POST /reader/records/plain-text`、`GET /reader/records/{record_id}/snapshot`、`GET /reader/records/{record_id}/events`；不得让新 Web Reader 回到旧 `/scene` 或 `render_scene_json` 路径。
 - D4-P0 `client_record_id` blank 规范化为 `NULL`；同一用户重复 active `client_record_id` 返回 409。后续如果改为幂等 submit，必须显式更新 API contract 和测试。
 - D4-P1 Translation Layer Worker + Layer Publish 纵切已完成并通过 review。Translation worker 必须使用 job-type filtered claim，不得 claim mixed queue 中的非 translation jobs；成功和失败路径必须写 `ai_usage_events` attribution；retry 后成功必须清空 run failure fields。
-- 当前下一步是 D4-P2 Backend Orchestration Integration + Parsed Decision。不要在 D4-P2 实现 Web UI、SSE 纵切、vocabulary、grammar bundle、Ask tools、RAG 或 LangGraph flow。
+- D4-P2 Backend Orchestration Integration + Parsed Decision 已完成并通过 review。`ReaderOrchestrator` 是 D4 后端最小 facade：submit path 创建 article-ready facts 并 bootstrap translation job，tick path 处理 translation job、发布 layer、写最小 parsed decision、发布 `parsed_decision_updated` event。
+- D4-P2 tick 目前是 service/testable entry，不是公开 HTTP endpoint。若后续需要 API 驱动 tick，必须补 route、auth、worker 权限和 focused tests。
+- D4-P3 Web Reader Plate Read-only Surface + BFF Polling 已完成并通过 review。Web D4 入口走真实 submit/snapshot/events，不走 demo record、旧 `/scene` 或 `render_scene_json`；polling 收到 layer/projection reset/reload signal 后 reload snapshot，不应用 `projection_ops`。
+- 当前下一步是 D4 closeout 后的两条并行线：Backend worker/internal trigger hardening 与 Web reader MVP polish/smoke。不要在下一轮顺手实现 vocabulary、grammar bundle、Ask tools、RAG、SSE 或 LangGraph flow。
 - D4 worker 实现中不得临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK；如 D3-P4 runtime tests 暴露缺口，先形成单独 closeout/update，再改依赖。
 - LangGraph 1.x 的 typed streaming、per-node timeout、error handler、graceful shutdown 和 DeltaChannel 只作为 D5+ 复杂 repair / branching / interrupt spike 候选，不改变 D4 PostgreSQL run/job/event 主控。
 - Grammar Bundle Worker 可以一次生成 `grammar_note` 与 `sentence_analysis`，但发布、存储、RAG、projection、policy、eval 必须按 subtype 独立处理。`long_sentence` 不是权威 layer type，只是触发 `sentence_analysis` 的适用场景。
@@ -85,7 +88,7 @@
 ## 渲染层与 Plate 不可违反规则（D1-012 ~ D1-017）
 
 - Reader Article Body 渲染层与交互引擎走 Plate.js（`platejs/react`），不是其他编辑器。
-- `apps/web/src/lib/reader-plate/` 是 Claread 对 Plate.js projection 的领域封装目录；实现必须显式基于 Plate.js（`platejs/react`），不能回到自建固定 UI scene。
+- `apps/web/src/lib/reader-plate*`、`apps/web/src/components/reader/plate/` 和相关 BFF/API client 是 Claread 对 Plate.js projection 的领域封装；实现必须显式基于 Plate.js（`platejs/react`），不能回到自建固定 UI scene。
 - **Plate document 不是 truth**，是 domain fact（Stable Reading Base / Reading Units / Anchor Segments / Enhancement Layers / User Editorial Assets / Ask Supplements）的 projection。`enhancement_layers` / `user_annotations` / `reader_notes` 等表结构**不改为 patch sequence**。
 - `reader_events.event_type` 必须支持 `projection_ops` 子类型。Projection op payload 使用稳定 domain target；不得把 raw Plate path / raw Slate path ops 作为后端持久合同。
 - D4 不要求 `projection_ops` 端到端；translation layer 可以先通过 snapshot reload 或 simple projection refresh 呈现，D5 再接增量 applier。

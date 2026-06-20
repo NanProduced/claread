@@ -429,6 +429,58 @@ class ReaderOrchestrationRepository:
             created_at,
         )
 
+    async def upsert_parsed_decision(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        reading_record_id: UUID,
+        base_id: UUID,
+        unit_id: str,
+        policy_code: str,
+        parsed_state: str,
+        rationale_code: str | None = None,
+        coverage_json: dict[str, Any] | None = None,
+        source_layer_id: UUID | None = None,
+        source_job_id: UUID | None = None,
+        decision_json: dict[str, Any] | None = None,
+    ) -> None:
+        await conn.execute(
+            """
+            INSERT INTO parsed_decisions (
+                reading_record_id,
+                base_id,
+                unit_id,
+                policy_code,
+                parsed_state,
+                rationale_code,
+                coverage_json,
+                source_layer_id,
+                source_job_id,
+                decision_json
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb)
+            ON CONFLICT (reading_record_id, base_id, unit_id, policy_code)
+            DO UPDATE SET
+                parsed_state = EXCLUDED.parsed_state,
+                rationale_code = EXCLUDED.rationale_code,
+                coverage_json = EXCLUDED.coverage_json,
+                source_layer_id = EXCLUDED.source_layer_id,
+                source_job_id = EXCLUDED.source_job_id,
+                decision_json = EXCLUDED.decision_json,
+                created_at = NOW()
+            """,
+            reading_record_id,
+            base_id,
+            unit_id,
+            policy_code,
+            parsed_state,
+            rationale_code,
+            jsonb_param(coverage_json or {}),
+            source_layer_id,
+            source_job_id,
+            jsonb_param(decision_json or {}),
+        )
+
     async def load_snapshot_facts(
         self,
         conn: asyncpg.Connection,

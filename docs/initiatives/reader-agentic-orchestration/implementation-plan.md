@@ -357,15 +357,18 @@ Focused tests 已通过：
 
 ### D4-P2. Backend Orchestration Integration + Parsed Decision
 
-状态：next。
+状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D4/TMP-D4-P2-orchestration-parsed-closeout.md`。
 
-目标：
+Closeout 结论：
 
-- 把 D4-P1 translation bootstrap 接入 D4-P0 article-ready 后端路径，使新 Reader API 能启动第一条 enhancement job。
-- 增加最小 orchestration tick / runner service：从 queued translation job 到 worker process 再到 `layer_published`，用于本地/API 测试纵切。
-- Translation layer published 后写最小 `parsed_decisions`，满足 D4 flow 的 parsed decision 门槛。
-- 保持 PostgreSQL run/job/event 作为 durable control plane；不引入 LangGraph。
-- Event polling 继续作为前端渐进信号；D4-P2 仍允许前端收到 event 后 snapshot reload，不要求 `projection_ops` 端到端。
+- 已新增 `ReaderOrchestrator` service，作为 D4 后端最小 orchestration facade。
+- `POST /reader/records/plain-text` 现在通过 `ReaderOrchestrator.submit_plain_text_and_bootstrap_translation()` 先创建 article-ready facts，再启动 translation run/job。
+- 已新增 testable tick path：`ReaderOrchestrator.tick_translation_worker()` 复用 D4-P1 `TranslationWorkerService`，从 queued translation job 推进到 `layer_published`。
+- Translation layer published 后写最小 `parsed_decisions`，并发布 `parsed_decision_updated` event。
+- Snapshot reload 可同时看到 translation layer 和 parsed decision；event polling 顺序覆盖 `layer_published` 后 `parsed_decision_updated`。
+- 保持 PostgreSQL run/job/event 作为 durable control plane；未引入 LangGraph。
+- D4-P2 没有新增 HTTP tick endpoint；worker tick 仍是 service/testable entry，后续是否暴露内部 route 另行设计。
+- Parsed decision 写入与 layer publish 暂不同事务。D4 单线程 tick 可接受；如果 D5 需要强一致，应把 decision 写入收敛到 publisher transaction 或明确 compensating repair。
 
 D4-P2 不包含：
 
@@ -376,6 +379,48 @@ D4-P2 不包含：
 - RAG substrate。
 - URL / PDF / OCR / 文件上传。
 - LangGraph flow。
+- `projection_ops` 端到端 applier。
+
+Focused tests 已通过：
+
+- `test_reader_orchestration_orchestrator.py`
+- `test_reader_orchestration_api.py`
+- `test_reader_orchestration_translation_worker.py`
+- `test_reader_orchestration_event_runtime.py`
+- targeted `ruff check`
+
+### D4-P3. Web Reader Plate Read-only Surface + BFF Polling Slice
+
+状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D4/TMP-D4-P3-web-reader-plate-closeout.md`。
+
+Closeout 结论：
+
+- 已新增 Web BFF routes：
+  - `POST /api/web/reader-plate/submit`
+  - `GET /api/web/reader-plate/{recordId}/snapshot`
+  - `GET /api/web/reader-plate/{recordId}/events`
+- BFF 复用当前 Web session token，拒绝 anonymous / mock phone session；缺失或跨用户 record 仍由后端映射为 404。
+- Web API client 只调用新 Reader API：`/reader/records/plain-text`、`/reader/records/{record_id}/snapshot`、`/reader/records/{record_id}/events`。
+- 已新增 `ReaderPlateSnapshot` DTO mirror、只读 `ReaderPlateSnapshotSurface`、polling decision hook 和 `/app/reader-plate` 最小真实提交入口。
+- Web polling 在 `layer_published`、`projection_reset_required` 或 server reload signal 时触发 snapshot reload；D4 不应用 `projection_ops`。
+- 页面用户可见文案不暴露 D4、Plate.js、Snapshot、cursor、sequence 等实现术语。
+- 新 Web 路径不读取旧 `/scene` 或 `render_scene_json`。
+
+D4-P3 不包含：
+
+- Rich Reader production UI polish。
+- Selection bridge / anchor adapter。
+- User highlights / notes。
+- Ask Document Tools。
+- `projection_ops` incremental applier。
+- SSE endpoint。
+- URL / PDF / OCR / 文件上传。
+
+Focused tests 已通过：
+
+- `pnpm --filter=@claread/web typecheck`
+- `pnpm --filter=@claread/web test`
+- `pnpm --filter=@claread/web build`
 
 ## D4. 最小纵切
 

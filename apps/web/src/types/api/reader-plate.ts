@@ -1,0 +1,337 @@
+/**
+ * Reader Plate Snapshot DTO types.
+ *
+ * Mirrors the backend schemas in
+ * `services/api/app/schemas/reader_orchestration.py`. These are the durable
+ * API contracts for the new Reader Plate vertical slice:
+ *   - POST /reader/records/plain-text
+ *   - GET  /reader/records/{record_id}/snapshot
+ *   - GET  /reader/records/{record_id}/events
+ *
+ * Do NOT reference the legacy `render_scene_json` / ReaderSceneDto contracts
+ * from `./reader-scene.ts`. The Plate snapshot is a separate contract.
+ */
+
+export const READER_PLATE_SNAPSHOT_SCHEMA_KIND = "reader_plate_snapshot" as const;
+export const READER_TEXT_RANGE_HASH_ALGORITHM = "fnv1a32-utf16" as const;
+export const READER_TEXT_RANGE_OFFSET_UNIT = "utf16" as const;
+
+export type ReaderUnitType =
+  | "body"
+  | "heading"
+  | "list"
+  | "quote"
+  | "unknown"
+  | "fallback";
+
+export type ReaderBoundaryQuality = "normal" | "low";
+
+export type ReaderLayerTargetScope =
+  | "unit"
+  | "anchor_segment"
+  | "unit_range"
+  | "record";
+
+export type ReaderLayerType =
+  | "translation"
+  | "vocabulary"
+  | "grammar_note"
+  | "sentence_analysis";
+
+export type AnchorSegmentType = "sentence" | "clause" | "fallback_window";
+
+export type ParsedDecisionState =
+  | "not_started"
+  | "partial"
+  | "parsed"
+  | "skipped"
+  | "failed";
+
+export type TranslationConfidence = "low" | "normal" | "high";
+
+export type ReaderPlateOwner =
+  | "stable"
+  | "system_ai"
+  | "ask_supplement"
+  | "user"
+  | "ephemeral";
+
+// ---------------------------------------------------------------------------
+// Plain-text submit
+// ---------------------------------------------------------------------------
+
+export interface ReaderPlainTextSubmitRequestDto {
+  plain_text: string;
+  title?: string | null;
+  language?: string | null;
+  source_metadata?: Record<string, unknown> | null;
+  client_record_id?: string | null;
+}
+
+export interface ReaderPlainTextSubmitResponseDto {
+  record_id: string;
+  base_id: string;
+  article_ready_sequence: number;
+  snapshot: ReaderPlateSnapshotDto;
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot wrapper
+// ---------------------------------------------------------------------------
+
+export interface ReaderSnapshotBaseDto {
+  base_id: string;
+  content_sha256: string;
+  canonicalizer_version: string;
+  builder_version: string;
+  segmenter_version: string;
+  text_length_utf16: number;
+  hash_algorithm: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
+}
+
+export interface ReaderSnapshotNavigationUnitDto {
+  unit_id: string;
+  order_index: number;
+  unit_type: ReaderUnitType;
+  boundary_quality: ReaderBoundaryQuality;
+  label?: string | null;
+  base_start_utf16: number;
+  base_end_utf16: number;
+}
+
+export interface ReaderSnapshotNavigationDto {
+  units: ReaderSnapshotNavigationUnitDto[];
+}
+
+export interface ReaderUnitAnchorDto {
+  anchor_type: "unit";
+  base_id: string;
+  unit_id: string;
+  text_hash: string;
+  hash_algorithm: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
+}
+
+export interface ReaderTextRangeAnchorDto {
+  anchor_type: "text_range";
+  base_id: string;
+  unit_id: string;
+  anchor_segment_id: string;
+  sentence_id?: string | null;
+  segment_type: AnchorSegmentType;
+  offset_unit: typeof READER_TEXT_RANGE_OFFSET_UNIT;
+  start_offset: number;
+  end_offset: number;
+  selected_text: string;
+  text_hash: string;
+  hash_algorithm: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
+}
+
+export type ReaderSnapshotAnchorDto = ReaderUnitAnchorDto | ReaderTextRangeAnchorDto;
+
+export interface TranslationLayerOutputDto {
+  schema_version: 1;
+  target_language: string;
+  translated_text: string;
+  notes: string[];
+  confidence: TranslationConfidence;
+}
+
+export interface ReaderSnapshotLayerDto {
+  layer_id: string;
+  layer_type: ReaderLayerType;
+  layer_subtype?: string | null;
+  base_id: string;
+  target_scope: ReaderLayerTargetScope;
+  target_key: string;
+  status: "published";
+  schema_version: number;
+  output: unknown;
+  published_at: string;
+}
+
+export interface ReaderSnapshotAskSupplementDto {
+  supplement_id: string;
+  owner: "ask_supplement";
+  anchor: ReaderSnapshotAnchorDto | null;
+  content: unknown;
+  created_at: string;
+}
+
+export interface ReaderSnapshotUserAssetDto {
+  asset_id: string;
+  asset_type: string;
+  owner: "user";
+  anchor: ReaderSnapshotAnchorDto;
+  deleted_at?: string | null;
+  updated_at: string;
+}
+
+export interface ReaderSnapshotParsedDecisionDto {
+  unit_id: string;
+  policy_code: string;
+  parsed_state: ParsedDecisionState;
+  rationale_code?: string | null;
+}
+
+export interface ReaderPlateSnapshotDto {
+  schema_kind: typeof READER_PLATE_SNAPSHOT_SCHEMA_KIND;
+  snapshot_id: string;
+  snapshot_taken_at: string;
+  last_event_sequence: number;
+  record_id: string;
+  base: ReaderSnapshotBaseDto;
+  navigation: ReaderSnapshotNavigationDto;
+  enhancement_layers: ReaderSnapshotLayerDto[];
+  ask_supplements: ReaderSnapshotAskSupplementDto[];
+  user_assets: ReaderSnapshotUserAssetDto[];
+  parsed_decisions: ReaderSnapshotParsedDecisionDto[];
+  value: ReaderPlateValueDto;
+}
+
+// ---------------------------------------------------------------------------
+// Plate value node tree (snapshot.value)
+// ---------------------------------------------------------------------------
+
+/**
+ * The Plate document value produced by the backend snapshot builder.
+ * It is a list of top-level `reader_unit` nodes.
+ */
+export type ReaderPlateValueDto = ReaderPlateValueNode[];
+
+export type ReaderPlateValueNode = ReaderUnitNodeDto;
+
+export interface ReaderUnitNodeDto {
+  type: "reader_unit";
+  owner: "stable";
+  base_id: string;
+  unit_id: string;
+  order_index: number;
+  unit_type: ReaderUnitType;
+  boundary_quality: ReaderBoundaryQuality;
+  base_start_utf16: number;
+  base_end_utf16: number;
+  text_hash: string;
+  hash_algorithm: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
+  children: ReaderUnitChildNodeDto[];
+}
+
+export type ReaderUnitChildNodeDto =
+  | ReaderSourceBlockNodeDto
+  | ReaderTranslationNodeDto;
+
+export interface ReaderSourceBlockNodeDto {
+  type: "reader_source_block";
+  owner: "stable";
+  base_id: string;
+  unit_id: string;
+  base_start_utf16: number;
+  base_end_utf16: number;
+  children: ReaderSourceBlockChildNodeDto[];
+}
+
+export type ReaderSourceBlockChildNodeDto =
+  | ReaderAnchorSegmentNodeDto
+  | ReaderStableSeparatorLeafDto;
+
+export interface ReaderAnchorSegmentNodeDto {
+  type: "reader_anchor_segment";
+  owner: "stable";
+  base_id: string;
+  unit_id: string;
+  anchor_segment_id: string;
+  sentence_id: string;
+  segment_type: AnchorSegmentType;
+  boundary_quality: ReaderBoundaryQuality;
+  base_start_utf16: number;
+  base_end_utf16: number;
+  unit_start_utf16: number;
+  unit_end_utf16: number;
+  text_hash: string;
+  hash_algorithm: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
+  children: ReaderStableSegmentTextLeafDto[];
+}
+
+export interface ReaderTranslationNodeDto {
+  type: "reader_translation";
+  owner: "system_ai";
+  layer_id: string;
+  layer_version: number;
+  base_id: string;
+  unit_id: string;
+  target_scope: "unit" | "anchor_segment";
+  target_key: string;
+  target_language: string;
+  confidence: TranslationConfidence;
+  notes: string[];
+  children: ReaderTranslationTextLeafDto[];
+  anchor_segment_id?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Stable leaves (no `type` field — Plate text leaves)
+// ---------------------------------------------------------------------------
+
+export interface ReaderStableSeparatorLeafDto {
+  text: string;
+  owner: "stable";
+  lock_source: true;
+  source_role: "separator";
+  base_start_utf16: number;
+  base_end_utf16: number;
+}
+
+export interface ReaderStableSegmentTextLeafDto {
+  text: string;
+  owner: "stable";
+  lock_source: true;
+  source_role: "segment_text";
+  base_start_utf16: number;
+  base_end_utf16: number;
+  anchor_segment_id: string;
+  segment_start_utf16: number;
+  segment_end_utf16: number;
+}
+
+export interface ReaderTranslationTextLeafDto {
+  text: string;
+}
+
+// ---------------------------------------------------------------------------
+// Events polling
+// ---------------------------------------------------------------------------
+
+export type ReaderEventType =
+  | "article_ready"
+  | "layer_published"
+  | "layer_failed"
+  | "parsed_decision_updated"
+  | "record_state_changed"
+  | "action_required"
+  | "run_completed"
+  | "record_superseded"
+  | "projection_ops"
+  | "projection_reset_required";
+
+export interface ReaderEventResponseDto {
+  id: string;
+  reading_record_id: string;
+  sequence: number;
+  event_type: ReaderEventType;
+  payload: Record<string, unknown>;
+  source_run_id?: string | null;
+  source_job_id?: string | null;
+  source_layer_id?: string | null;
+  created_at: string;
+}
+
+export interface ReaderEventPollResponseDto {
+  reading_record_id: string;
+  after_sequence: number;
+  next_after_sequence: number;
+  last_event_sequence: number;
+  has_more: boolean;
+  truncated: boolean;
+  reload_required: boolean;
+  reload_reason?: string | null;
+  events: ReaderEventResponseDto[];
+}
