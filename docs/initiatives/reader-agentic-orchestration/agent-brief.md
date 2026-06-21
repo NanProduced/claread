@@ -81,7 +81,8 @@
 - D4-P3 Web Reader Plate Read-only Surface + BFF Polling 已完成并通过 review。Web D4 入口走真实 submit/snapshot/events，不走 demo record、旧 `/scene` 或 `render_scene_json`；polling 收到 layer/projection reset/reload signal 后 reload snapshot，不应用 `projection_ops`。
 - D4-P4 Worker Runner Hardening + Web Smoke/Test Gap 已完成并通过 review。`TranslationWorkerRunner` 是内部 callable runner，不是 public HTTP endpoint；Web reader-plate smoke 使用 mocked BFF routes，只证明浏览器渲染/交互，不等价于真实 auth/backend E2E。
 - D5-V1 Vocabulary Layer Backend Slice 已完成并通过 review。Vocabulary 使用正式 `reader_jobs.job_type = 'build_vocabulary_layer'`，不是 `build_base`；worker 默认未配置时必须失败且不发布空 layer，只有显式 fake executor 才能发布空 output。
-- 当前下一步是 D5-V2 Vocabulary Projection / Web Read-only Rendering：把 published vocabulary layer 投影为只读 Plate marks/nodes，并在 Web 展示 `vocab_highlight`、`phrase_gloss`、`context_gloss`。不要在 D5-V2 顺手实现 grammar bundle、real vocabulary LLM executor、Ask tools、RAG、SSE、LangGraph flow 或 `projection_ops` incremental applier。
+- D5-V2 Vocabulary Projection / Web Read-only Rendering 已完成并通过 review。Published vocabulary layer 在 snapshot reload 时从 domain facts 重建为 stable source leaf 上的 `reader_vocabulary_marks`，Web 只读展示 `vocab_highlight`、`phrase_gloss`、`context_gloss`；不读取旧 `render_scene_json`，不持久化 Plate path/op，不启用 `projection_ops` incremental applier。
+- 当前下一步进入 D5-V3 选择点：优先实现 real PydanticAI vocabulary executor / prompt / eval sample，或先做 Grammar Bundle Worker schema+publisher 纵切。二者都不得改写 D5-V2 的 snapshot truth/projection 边界。
 - D4 worker 实现中不得临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK；如 D3-P4 runtime tests 暴露缺口，先形成单独 closeout/update，再改依赖。
 - LangGraph 1.x 的 typed streaming、per-node timeout、error handler、graceful shutdown 和 DeltaChannel 只作为 D5+ 复杂 repair / branching / interrupt spike 候选，不改变 D4 PostgreSQL run/job/event 主控。
 - Grammar Bundle Worker 可以一次生成 `grammar_note` 与 `sentence_analysis`，但发布、存储、RAG、projection、policy、eval 必须按 subtype 独立处理。`long_sentence` 不是权威 layer type，只是触发 `sentence_analysis` 的适用场景。
@@ -145,7 +146,7 @@ D4 默认实现边界：
 - PydanticAI 用于 LLM-backed workers。
 - LangGraph 不进入 D4 主路径。
 - 不继承旧“每用户一个 active task”产品约束；并发由 envelope 控制。
-- Text anchors 复用现有 UTF-16 offsets 和 `fnv1a32-utf16` hash contract；span anchor 使用 Anchor Segment local offsets。
+- Text anchors 复用现有 UTF-16 offsets 和 `fnv1a32-utf16` hash contract；span anchor 使用 `anchor_segment_id` + unit-local offsets，且 offset 必须落在对应 Anchor Segment range 内。Segment-local offsets 只作为 Plate leaf projection metadata 派生。
 - Stable Reading Base 是输入适配和必要用户确认后的可读英文正文；Unit Builder 不负责 OCR 修复、boilerplate 删除、多栏顺序修复或正文重写。
 - Anchor Segment 是 sentence-like segment，通常是句子；必要时可为 clause 或 fallback window，并通过 `segment_type` 标记。
 - D4 不启用 LLM Unit Builder；D5+ Unit Boundary Refiner 只能建议既有 Anchor Segments 的 split/merge，不能改写文本或生成坐标。

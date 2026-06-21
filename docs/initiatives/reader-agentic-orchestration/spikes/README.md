@@ -87,7 +87,7 @@
 | 验证 | UTF-16 offsets、`fnv1a32-utf16` hash、unit order、空行/长段落/Unicode 文本 |
 | 输出 | `spikes/D2-S1-reading-unit-builder-result.md`；`modules/reading-base-and-units.md` 与 `modules/enhancement-layers-and-parsed.md` 已修正 |
 | 通过标准 | D4 纯文本样本可生成 Stable Base + Units，并通过 anchor validation。 |
-| 结论 | 方向通过；必须新增 Anchor Segment，span offsets 保持 Anchor Segment local；segment 通常是 sentence，必要时可为 clause/fallback window。 |
+| 结论 | 方向通过；必须新增 Anchor Segment；segment 通常是 sentence，必要时可为 clause/fallback window。D5-V2 实现已将 span anchor offset 口径修订为 `anchor_segment_id` + unit-local offsets，并用 Anchor Segment range 约束。 |
 
 ## D2-S2 DB Job Lease / Publish Guard
 

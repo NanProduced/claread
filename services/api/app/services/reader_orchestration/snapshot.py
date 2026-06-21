@@ -17,6 +17,7 @@ from app.schemas.reader_orchestration import (
     ReaderTextRangeAnchor,
     ReaderUnitAnchor,
     TranslationLayerOutput,
+    VocabularyLayerOutput,
 )
 
 from .base_builder import (
@@ -103,8 +104,12 @@ def _validate_snapshot_inputs(
 ) -> None:
     base_id = build_result.base.base_id
     unit_ids = {unit.unit_id for unit in build_result.units}
+    units_by_id = {unit.unit_id: unit for unit in build_result.units}
     anchor_segment_to_unit = {
         segment.anchor_segment_id: segment.unit_id for segment in build_result.anchor_segments
+    }
+    anchor_segments_by_id = {
+        segment.anchor_segment_id: segment for segment in build_result.anchor_segments
     }
 
     for layer in enhancement_layers:
@@ -113,6 +118,14 @@ def _validate_snapshot_inputs(
                 f"snapshot layer {layer.layer_id} base_id must match current base {base_id}"
             )
         _validate_layer_target(layer, unit_ids, anchor_segment_to_unit)
+        if layer.layer_type == "vocabulary":
+            _validate_vocabulary_layer_output(
+                build_result,
+                layer,
+                units_by_id,
+                anchor_segment_to_unit,
+                anchor_segments_by_id,
+            )
 
     for supplement in ask_supplements:
         if supplement.anchor is None:
@@ -147,6 +160,17 @@ def _validate_layer_target(
     unit_ids: set[str],
     anchor_segment_to_unit: dict[str, str],
 ) -> None:
+    if layer.layer_type == "translation" and layer.target_scope not in {"unit", "anchor_segment"}:
+        raise ValueError(
+            "translation snapshot layer "
+            f"{layer.layer_id} must target a unit or anchor segment in D4"
+        )
+    if layer.layer_type == "vocabulary" and layer.target_scope != "unit":
+        raise ValueError(
+            "vocabulary snapshot layer "
+            f"{layer.layer_id} must target a unit in D5-V2"
+        )
+
     if layer.target_scope == "unit":
         if layer.target_key not in unit_ids:
             raise ValueError(
@@ -161,12 +185,6 @@ def _validate_layer_target(
                 f"{layer.layer_id} target anchor segment {layer.target_key} does not exist"
             )
         return
-
-    if layer.layer_type == "translation" and layer.target_scope not in {"unit", "anchor_segment"}:
-        raise ValueError(
-            "translation snapshot layer "
-            f"{layer.layer_id} must target a unit or anchor segment in D4"
-        )
 
 
 def _validate_snapshot_anchor(
@@ -227,11 +245,18 @@ def _build_plate_value(
 ) -> list[dict[str, object]]:
     segments_by_unit = _group_segments(build_result.anchor_segments)
     translation_layers_by_target = _group_translation_layers(enhancement_layers)
+    vocabulary_layers_by_unit = _group_vocabulary_layers(enhancement_layers)
     value: list[dict[str, object]] = []
 
     for unit in build_result.units:
         unit_segments = segments_by_unit[unit.unit_id]
-        unit_children: list[dict[str, object]] = [_build_source_block(unit, unit_segments)]
+        unit_children: list[dict[str, object]] = [
+            _build_source_block(
+                unit,
+                unit_segments,
+                vocabulary_layers=vocabulary_layers_by_unit.get(unit.unit_id, []),
+            )
+        ]
         unit_children.extend(
             _build_translation_nodes(
                 unit,
@@ -262,10 +287,17 @@ def _build_plate_value(
 def _build_source_block(
     unit: BuiltReadingUnit,
     unit_segments: Sequence[BuiltAnchorSegment],
+    *,
+    vocabulary_layers: Sequence[ReaderSnapshotLayer] = (),
 ) -> dict[str, object]:
     children: list[dict[str, object]] = []
     cursor = 0
     unit_utf16_length = result_length_utf16(unit.text)
+    vocabulary_marks_by_anchor = _build_vocabulary_marks_by_anchor(
+        unit,
+        unit_segments,
+        vocabulary_layers,
+    )
 
     for segment in unit_segments:
         if segment.unit_start_utf16 > cursor:
@@ -307,17 +339,13 @@ def _build_source_block(
                 "unit_end_utf16": segment.unit_end_utf16,
                 "text_hash": segment.text_hash,
                 "hash_algorithm": "fnv1a32-utf16",
-                "children": [
-                    _build_stable_leaf(
-                        text=segment.text,
-                        source_role="segment_text",
-                        base_start_utf16=segment.base_start_utf16,
-                        base_end_utf16=segment.base_end_utf16,
-                        anchor_segment_id=segment.anchor_segment_id,
-                        segment_start_utf16=0,
-                        segment_end_utf16=segment.unit_end_utf16 - segment.unit_start_utf16,
-                    )
-                ],
+                "children": _build_segment_text_leaves(
+                    segment,
+                    vocabulary_marks=vocabulary_marks_by_anchor.get(
+                        segment.anchor_segment_id,
+                        [],
+                    ),
+                ),
             }
         )
         cursor = segment.unit_end_utf16
@@ -359,6 +387,7 @@ def _build_stable_leaf(
     anchor_segment_id: str | None = None,
     segment_start_utf16: int | None = None,
     segment_end_utf16: int | None = None,
+    reader_vocabulary_marks: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     leaf: dict[str, object] = {
         "text": text,
@@ -374,6 +403,8 @@ def _build_stable_leaf(
         leaf["segment_start_utf16"] = segment_start_utf16
     if segment_end_utf16 is not None:
         leaf["segment_end_utf16"] = segment_end_utf16
+    if reader_vocabulary_marks:
+        leaf["reader_vocabulary_marks"] = reader_vocabulary_marks
     return leaf
 
 
@@ -444,6 +475,17 @@ def _group_translation_layers(
     return grouped
 
 
+def _group_vocabulary_layers(
+    layers: Sequence[ReaderSnapshotLayer],
+) -> dict[str, list[ReaderSnapshotLayer]]:
+    grouped: dict[str, list[ReaderSnapshotLayer]] = {}
+    for layer in layers:
+        if layer.layer_type != "vocabulary" or layer.target_scope != "unit":
+            continue
+        grouped.setdefault(layer.target_key, []).append(layer)
+    return grouped
+
+
 def _build_translation_nodes(
     unit: BuiltReadingUnit,
     translation_layers_by_target: dict[tuple[str, str], list[ReaderSnapshotLayer]],
@@ -469,6 +511,231 @@ def _build_translation_nodes(
             )
         )
     return nodes
+
+
+def _validate_vocabulary_layer_output(
+    build_result: ReadingBaseBuildResult,
+    layer: ReaderSnapshotLayer,
+    units_by_id: dict[str, BuiltReadingUnit],
+    anchor_segment_to_unit: dict[str, str],
+    anchor_segments_by_id: dict[str, BuiltAnchorSegment],
+) -> None:
+    output = VocabularyLayerOutput.model_validate(layer.output)
+    layer_unit = units_by_id.get(layer.target_key)
+    if layer_unit is None:
+        raise ValueError(
+            "vocabulary snapshot layer "
+            f"{layer.layer_id} target unit {layer.target_key} does not exist"
+        )
+
+    for index, item in enumerate(output.items):
+        anchor = item.anchor
+        context = (
+            f"vocabulary snapshot layer {layer.layer_id} item {index} ({item.item_type})"
+        )
+        _validate_snapshot_anchor(
+            anchor,
+            build_result.base.base_id,
+            set(units_by_id.keys()),
+            anchor_segment_to_unit,
+            context=context,
+        )
+        if anchor.unit_id != layer.target_key:
+            raise ValueError(
+                f"{context} anchor unit_id {anchor.unit_id} "
+                f"does not match target unit {layer.target_key}"
+            )
+
+        segment = anchor_segments_by_id.get(anchor.anchor_segment_id)
+        if segment is None:
+            raise ValueError(
+                f"{context} anchor segment {anchor.anchor_segment_id} does not exist"
+            )
+        if anchor.segment_type != segment.segment_type:
+            raise ValueError(
+                f"{context} segment_type {anchor.segment_type} "
+                f"does not match {segment.segment_type}"
+            )
+        if anchor.sentence_id is not None and anchor.sentence_id != segment.sentence_id:
+            raise ValueError(
+                f"{context} sentence_id {anchor.sentence_id} does not match {segment.sentence_id}"
+            )
+        if (
+            anchor.start_offset < segment.unit_start_utf16
+            or anchor.end_offset > segment.unit_end_utf16
+        ):
+            raise ValueError(
+                f"{context} offsets fall outside anchor segment {segment.anchor_segment_id}"
+            )
+
+        selected_text = slice_by_utf16_offsets(
+            layer_unit.text,
+            anchor.start_offset,
+            anchor.end_offset,
+        )
+        if selected_text is None:
+            raise ValueError(
+                f"{context} offsets do not slice target unit {layer.target_key}"
+            )
+        if selected_text != anchor.selected_text:
+            raise ValueError(
+                f"{context} selected_text does not match target unit {layer.target_key}"
+            )
+
+
+def _build_vocabulary_marks_by_anchor(
+    unit: BuiltReadingUnit,
+    unit_segments: Sequence[BuiltAnchorSegment],
+    layers: Sequence[ReaderSnapshotLayer],
+) -> dict[str, list[dict[str, object]]]:
+    marks_by_anchor = {segment.anchor_segment_id: [] for segment in unit_segments}
+    if not layers:
+        return marks_by_anchor
+
+    segments_by_id = {segment.anchor_segment_id: segment for segment in unit_segments}
+    for layer in layers:
+        output = VocabularyLayerOutput.model_validate(layer.output)
+        for index, item in enumerate(output.items):
+            anchor = item.anchor
+            segment = segments_by_id.get(anchor.anchor_segment_id)
+            if segment is None:
+                continue
+            marks_by_anchor[anchor.anchor_segment_id].append(
+                _project_vocabulary_mark(
+                    layer=layer,
+                    item=item,
+                    item_index=index,
+                    segment=segment,
+                )
+            )
+
+    for marks in marks_by_anchor.values():
+        marks.sort(key=_vocabulary_mark_sort_key)
+    return marks_by_anchor
+
+
+def _project_vocabulary_mark(
+    *,
+    layer: ReaderSnapshotLayer,
+    item: object,
+    item_index: int,
+    segment: BuiltAnchorSegment,
+) -> dict[str, object]:
+    anchor = item.anchor  # type: ignore[attr-defined]
+    mark: dict[str, object] = {
+        "mark_id": (
+            f"{layer.layer_id}:{item.item_type}:{item_index}"  # type: ignore[attr-defined]
+        ),
+        "layer_id": layer.layer_id,
+        "item_type": item.item_type,  # type: ignore[attr-defined]
+        "anchor_segment_id": anchor.anchor_segment_id,
+        "start_offset": anchor.start_offset,
+        "end_offset": anchor.end_offset,
+        "selected_text": anchor.selected_text,
+        "segment_start_utf16": anchor.start_offset - segment.unit_start_utf16,
+        "segment_end_utf16": anchor.end_offset - segment.unit_start_utf16,
+    }
+    item_type = item.item_type  # type: ignore[attr-defined]
+    if item_type == "vocab_highlight":
+        mark["headword"] = item.headword  # type: ignore[attr-defined]
+        mark["brief_explanation"] = item.brief_explanation  # type: ignore[attr-defined]
+        mark["reason"] = item.reason  # type: ignore[attr-defined]
+    elif item_type == "phrase_gloss":
+        mark["phrase"] = item.phrase  # type: ignore[attr-defined]
+        mark["phrase_type"] = item.phrase_type  # type: ignore[attr-defined]
+        mark["gloss"] = item.gloss  # type: ignore[attr-defined]
+        mark["example"] = item.example  # type: ignore[attr-defined]
+    elif item_type == "context_gloss":
+        mark["display"] = item.display  # type: ignore[attr-defined]
+        mark["gloss"] = item.gloss  # type: ignore[attr-defined]
+        mark["reason"] = item.reason  # type: ignore[attr-defined]
+    return mark
+
+
+def _build_segment_text_leaves(
+    segment: BuiltAnchorSegment,
+    *,
+    vocabulary_marks: Sequence[dict[str, object]],
+) -> list[dict[str, object]]:
+    if not vocabulary_marks:
+        return [
+            _build_stable_leaf(
+                text=segment.text,
+                source_role="segment_text",
+                base_start_utf16=segment.base_start_utf16,
+                base_end_utf16=segment.base_end_utf16,
+                anchor_segment_id=segment.anchor_segment_id,
+                segment_start_utf16=0,
+                segment_end_utf16=segment.unit_end_utf16 - segment.unit_start_utf16,
+            )
+        ]
+
+    segment_length = segment.unit_end_utf16 - segment.unit_start_utf16
+    boundaries = {0, segment_length}
+    for mark in vocabulary_marks:
+        boundaries.add(int(mark["segment_start_utf16"]))
+        boundaries.add(int(mark["segment_end_utf16"]))
+
+    leaves: list[dict[str, object]] = []
+    ordered_boundaries = sorted(boundaries)
+    for index in range(len(ordered_boundaries) - 1):
+        part_start = ordered_boundaries[index]
+        part_end = ordered_boundaries[index + 1]
+        if part_end <= part_start:
+            continue
+        part_text = slice_by_utf16_offsets(segment.text, part_start, part_end)
+        if part_text is None:
+            raise ValueError(
+                "segment "
+                f"{segment.anchor_segment_id} vocabulary slice "
+                f"{part_start}:{part_end} is invalid"
+            )
+        active_marks = [
+            _project_leaf_mark(mark, part_start=part_start, part_end=part_end)
+            for mark in vocabulary_marks
+            if int(mark["segment_start_utf16"]) < part_end
+            and int(mark["segment_end_utf16"]) > part_start
+        ]
+        leaves.append(
+            _build_stable_leaf(
+                text=part_text,
+                source_role="segment_text",
+                base_start_utf16=segment.base_start_utf16 + part_start,
+                base_end_utf16=segment.base_start_utf16 + part_end,
+                anchor_segment_id=segment.anchor_segment_id,
+                segment_start_utf16=part_start,
+                segment_end_utf16=part_end,
+                reader_vocabulary_marks=active_marks or None,
+            )
+        )
+    return leaves
+
+
+def _project_leaf_mark(
+    mark: dict[str, object],
+    *,
+    part_start: int,
+    part_end: int,
+) -> dict[str, object]:
+    leaf_mark = dict(mark)
+    leaf_mark["starts_here"] = int(mark["segment_start_utf16"]) == part_start
+    leaf_mark["ends_here"] = int(mark["segment_end_utf16"]) == part_end
+    return leaf_mark
+
+
+def _vocabulary_mark_sort_key(mark: dict[str, object]) -> tuple[int, int, int]:
+    item_type = str(mark["item_type"])
+    priority = {
+        "context_gloss": 0,
+        "phrase_gloss": 1,
+        "vocab_highlight": 2,
+    }.get(item_type, 99)
+    span_length = int(mark["segment_end_utf16"]) - int(mark["segment_start_utf16"])
+    return (
+        int(mark["segment_start_utf16"]),
+        -span_length,
+        priority,
+    )
 
 
 def _build_translation_nodes_for_layers(

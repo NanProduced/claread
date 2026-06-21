@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * Smoke test for the D4 Web Reader Plate readOnly slice.
+ * Smoke test for the D5 Web Reader Plate read-only slice.
  *
  * The page requires a real authenticated session to call the BFF, but the
  * BFF rejects `mock_phone` sessions. To keep this a self-contained browser
@@ -60,6 +60,25 @@ function makeSnapshotValue() {
                   anchor_segment_id: "s1",
                   segment_start_utf16: 0,
                   segment_end_utf16: 52,
+                  reader_vocabulary_marks: [
+                    {
+                      mark_id: "mark_smoke_vocab_1",
+                      layer_id: "layer_smoke_vocab_1",
+                      item_type: "phrase_gloss",
+                      anchor_segment_id: "s1",
+                      start_offset: 9,
+                      end_offset: 29,
+                      selected_text: "few can turn passion",
+                      segment_start_utf16: 9,
+                      segment_end_utf16: 29,
+                      starts_here: true,
+                      ends_here: true,
+                      phrase: "turn passion into",
+                      phrase_type: "collocation",
+                      gloss: "把热爱转成可持续结果",
+                      example: "turn passion into a career",
+                    },
+                  ],
                 },
               ],
             },
@@ -101,7 +120,45 @@ function makeSnapshot() {
       hash_algorithm: "fnv1a32-utf16",
     },
     navigation: { units: [] },
-    enhancement_layers: [],
+    enhancement_layers: [
+      {
+        layer_id: "layer_smoke_vocab_1",
+        layer_type: "vocabulary",
+        layer_subtype: null,
+        base_id: "base_smoke",
+        target_scope: "unit",
+        target_key: "u1",
+        status: "published",
+        schema_version: 1,
+        output: {
+          schema_version: 1,
+          items: [
+            {
+              item_type: "phrase_gloss",
+              anchor: {
+                anchor_type: "text_range",
+                base_id: "base_smoke",
+                unit_id: "u1",
+                anchor_segment_id: "s1",
+                sentence_id: "s1",
+                segment_type: "sentence",
+                offset_unit: "utf16",
+                start_offset: 9,
+                end_offset: 29,
+                selected_text: "few can turn passion",
+                text_hash: "abcd1234",
+                hash_algorithm: "fnv1a32-utf16",
+              },
+              phrase: "turn passion into",
+              phrase_type: "collocation",
+              gloss: "把热爱转成可持续结果",
+              example: "turn passion into a career",
+            },
+          ],
+        },
+        published_at: "2026-06-21T00:00:00Z",
+      },
+    ],
     ask_supplements: [],
     user_assets: [],
     parsed_decisions: [],
@@ -144,7 +201,7 @@ async function loginWithMockPhone(page: Page) {
   await page.waitForURL("**/app/reader-plate");
 }
 
-test("reader plate smoke: submit renders source text and translation, polling stays calm", async ({ page }) => {
+test("reader plate smoke: submit renders source text, translation, and vocabulary, polling stays calm", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
 
   // Mock the submit BFF route to return a valid snapshot.
@@ -206,10 +263,12 @@ test("reader plate smoke: submit renders source text and translation, polling st
   await expect(page.locator('[data-reader-node="source-block"]')).toBeVisible();
   await expect(page.locator('[data-reader-node="anchor-segment"]')).toBeVisible();
   await expect(page.locator('[data-reader-node="translation"]')).toBeVisible();
+  await expect(page.locator('[data-reader-vocabulary-chip="phrase_gloss"]')).toBeVisible();
 
-  // Source text and translation content should be present.
+  // Source text, translation, and vocabulary annotation should be present.
   await expect(page.getByText("A scarce few can turn passion into a stable income.")).toBeVisible();
   await expect(page.getByText("很少有人能把热爱变成稳定收入。")).toBeVisible();
+  await expect(page.getByText("搭配 · 把热爱转成可持续结果")).toBeVisible();
 
   // No error states should be visible after caught-up polling.
   await expect(page.getByText("批注更新暂时中断")).toHaveCount(0);

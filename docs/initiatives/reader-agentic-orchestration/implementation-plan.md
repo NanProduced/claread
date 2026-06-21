@@ -539,6 +539,36 @@ Focused tests 已通过：
 - `uv run ruff check app/schemas/reader_orchestration.py app/services/reader_orchestration tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_schema_models.py tests/test_reader_orchestration_schema_baseline.py`
 - `uv run pytest tests/test_reader_orchestration_schema_baseline.py tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_translation_worker.py tests/test_reader_orchestration_orchestrator.py tests/test_reader_orchestration_job_runtime.py tests/test_reader_orchestration_layer_publisher.py tests/test_reader_orchestration_schema_models.py -q`
 
+### D5-V2. Vocabulary Projection / Web Read-only Rendering
+
+状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-V2-vocabulary-projection-closeout.md`。
+
+Closeout 结论：
+
+- Published `vocabulary` layer 继续以 `VocabularyLayerOutput` 作为 domain truth；Plate marks 是 snapshot projection，不是持久事实。
+- Snapshot reload 会按当前 base/unit/anchor 重新校验 layer output，并把三类 item 投影为 stable source leaf 上的 `reader_vocabulary_marks`。
+- Vocabulary mark 使用 `anchor_segment_id` + unit-local UTF-16 `start_offset` / `end_offset`；serializer 派生 leaf 内 `segment_start_utf16` / `segment_end_utf16`、`starts_here`、`ends_here`。
+- Web read-only surface 已能区分展示 `vocab_highlight`、`phrase_gloss`、`context_gloss`；translation node 保持原有 projection 形态。
+- D5-V2 没有读取旧 `render_scene_json`，没有持久化 Plate path/op，也没有启用 `projection_ops` incremental applier。
+- Review 修正：vocabulary snapshot layer 必须 `target_scope='unit'`，不能投到 `anchor_segment` scope；测试已覆盖该边界。
+
+D5-V2 不包含：
+
+- real PydanticAI vocabulary executor / prompt。
+- grammar bundle。
+- Ask tools / user editable vocabulary interactions。
+- RAG、SSE 或 LangGraph flow。
+- `projection_ops` incremental applier。
+
+Focused tests 已通过：
+
+- `uv run ruff check app/services/reader_orchestration/snapshot.py tests/test_reader_orchestration_base_builder.py tests/test_reader_orchestration_vocabulary_worker.py`
+- `uv run pytest tests/test_reader_orchestration_base_builder.py tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_schema_models.py -q`
+- `pnpm --filter=@claread/web typecheck`
+- `pnpm --filter=@claread/web test`
+- `pnpm --filter=@claread/web build`（沙箱网络无法拉 Google Fonts 时会失败；联网重跑已通过）
+- `pnpm --filter=@claread/web test:e2e -- reader-plate-smoke.spec.ts`
+
 ## D6. 产品硬化
 
 任务包：
@@ -566,9 +596,9 @@ Focused tests 已通过：
 
 ## 当前下一步
 
-进入 D5-V2 Vocabulary Projection / Web Read-only Rendering：
+进入 D5-V3 选择点：
 
-1. 先把 published vocabulary layer 从 snapshot metadata 投影为 read-only Plate marks/nodes。
-2. Web 只读展示 `vocab_highlight`、`phrase_gloss`、`context_gloss`，不引入用户编辑或 Ask 修改。
-3. 继续使用 snapshot reload；不实现 `projection_ops` incremental applier。
-4. 不实现 grammar bundle、real vocabulary LLM executor、Ask tools、RAG、SSE 或 LangGraph flow。
+1. 推荐优先做 real PydanticAI vocabulary executor / prompt / eval sample，让 D5-V1/V2 的后端与 Web 投影有真实生成入口。
+2. 另一条可并行评估 Grammar Bundle Worker，但落地时必须保持 `grammar_note` 与 `sentence_analysis` 两个 layer type 独立发布和投影。
+3. 继续使用 snapshot reload；除非单独立项，不实现 `projection_ops` incremental applier。
+4. 不在下一轮顺手做 Ask tools、RAG、SSE 或 LangGraph flow。

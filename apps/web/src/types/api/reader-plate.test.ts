@@ -5,11 +5,12 @@ import {
   READER_TEXT_RANGE_HASH_ALGORITHM,
   READER_TEXT_RANGE_OFFSET_UNIT,
   type ReaderEventPollResponseDto,
+  type ReaderPhraseGlossMarkDto,
   type ReaderEventResponseDto,
+  type ReaderStableSegmentTextLeafDto,
   type ReaderPlateSnapshotDto,
   type ReaderPlateValueDto,
   type ReaderPlainTextSubmitResponseDto,
-  type ReaderStableSegmentTextLeafDto,
   type ReaderTranslationNodeDto,
   type ReaderUnitNodeDto,
 } from "@/types/api/reader-plate";
@@ -22,6 +23,23 @@ import {
  */
 
 function makeUnit(): ReaderUnitNodeDto {
+  const vocabularyMark: ReaderPhraseGlossMarkDto = {
+    mark_id: "mark_phrase_1",
+    layer_id: "layer_vocab_1",
+    item_type: "phrase_gloss",
+    anchor_segment_id: "s1",
+    start_offset: 9,
+    end_offset: 20,
+    selected_text: "few can turn",
+    segment_start_utf16: 9,
+    segment_end_utf16: 20,
+    starts_here: true,
+    ends_here: true,
+    phrase: "few can turn",
+    phrase_type: "collocation",
+    gloss: "少数人能做到",
+    example: "Only a few can turn talent into impact.",
+  };
   return {
     type: "reader_unit",
     owner: "stable",
@@ -69,6 +87,7 @@ function makeUnit(): ReaderUnitNodeDto {
                 anchor_segment_id: "s1",
                 segment_start_utf16: 0,
                 segment_end_utf16: 42,
+                reader_vocabulary_marks: [vocabularyMark],
               } satisfies ReaderStableSegmentTextLeafDto,
             ],
           },
@@ -129,6 +148,43 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
       ],
     },
     enhancement_layers: [
+      {
+        layer_id: "layer_vocab_1",
+        layer_type: "vocabulary",
+        layer_subtype: null,
+        base_id: "base_1",
+        target_scope: "unit",
+        target_key: "u1",
+        status: "published",
+        schema_version: 1,
+        output: {
+          schema_version: 1,
+          items: [
+            {
+              item_type: "phrase_gloss",
+              anchor: {
+                anchor_type: "text_range",
+                base_id: "base_1",
+                unit_id: "u1",
+                anchor_segment_id: "s1",
+                sentence_id: "s1",
+                segment_type: "sentence",
+                offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+                start_offset: 9,
+                end_offset: 20,
+                selected_text: "few can turn",
+                text_hash: "abcd1234",
+                hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+              },
+              phrase: "few can turn",
+              phrase_type: "collocation",
+              gloss: "少数人能做到",
+              example: "Only a few can turn talent into impact.",
+            },
+          ],
+        },
+        published_at: "2026-06-21T00:00:00Z",
+      },
       {
         layer_id: "layer_1",
         layer_type: "translation",
@@ -261,6 +317,32 @@ describe("Reader Plate DTO shapes", () => {
       expect(translation.confidence).toBe("normal");
       expect(translation.children[0].text).toContain("收入");
     }
+  });
+
+  it("stable source leaves may carry vocabulary marks with typed item metadata", () => {
+    const snapshot = makeSnapshot();
+    const unit = snapshot.value[0];
+    const sourceBlock = unit.children.find(
+      (child) => child.type === "reader_source_block",
+    );
+    if (sourceBlock?.type !== "reader_source_block") {
+      throw new Error("expected reader_source_block");
+    }
+    const anchor = sourceBlock.children.find(
+      (child) => "type" in child && child.type === "reader_anchor_segment",
+    );
+    if (!anchor || !("type" in anchor) || anchor.type !== "reader_anchor_segment") {
+      throw new Error("expected reader_anchor_segment");
+    }
+    const leaf = anchor.children[0];
+    const mark = leaf.reader_vocabulary_marks?.[0];
+    expect(mark).toBeDefined();
+    expect(mark?.item_type).toBe("phrase_gloss");
+    if (!mark || mark.item_type !== "phrase_gloss") {
+      throw new Error("expected phrase_gloss vocabulary mark");
+    }
+    expect(mark.gloss).toContain("少数人");
+    expect(mark.starts_here).toBe(true);
   });
 
   it("hash_algorithm is fnv1a32-utf16 on all anchor-bearing nodes", () => {

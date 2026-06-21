@@ -211,7 +211,7 @@ D4 默认：
 - Reading Record 是长期产品对象。
 - Stable Reading Base 在同一 record 内不可变。
 - Reading Units 在同一 record 内不可变。
-- Span anchors 使用 Anchor Segment local UTF-16 offsets；不得把 unit/base absolute offsets 写入 span local fields。
+- Span anchors 使用 `anchor_segment_id` + unit-local UTF-16 offsets；offset 必须落在目标 Anchor Segment 的 unit range 内。Segment-local offsets 只作为 Plate leaf projection metadata 派生，不作为 domain anchor 持久字段。
 - Stable Reading Base 是输入适配和必要用户确认后的可读英文正文；Unit Builder 不负责 OCR 修复、boilerplate 删除、多栏顺序修复或正文重写。
 - Unit Builder 默认 deterministic；D5+ LLM Unit Boundary Refiner 只能建议既有 Anchor Segments 的 split/merge，不能改写文本、生成坐标或绕过 validator。
 - 高影响输入适配必须先用户确认。
@@ -381,7 +381,7 @@ Plate fragment 只能来自 typed layer result、document tool result 或已 san
 | D1-017 | 2026-06-18 | Plate owner 权限层覆盖 `stable`、`system_ai`、`ask_supplement`、`user`、`ephemeral`。用户不能删除 system AI truth，只能隐藏/反馈/按策略 dismiss；Ask Supplement 和 User Editorial Assets 有独立生命周期。owner 校验双层：后端权威拒绝 + 前端 Plate UX 镜像。 |
 | D1-018 | 2026-06-18 | D2-P0 接受 Plate.js 作为 Article Body 底座；Web 依赖必须对齐到同一稳定 major 主线。当前验证通过的组合是 `platejs@53.2.1`、`@platejs/floating@53.0.0`、`@platejs/ai@53.2.2`、`@platejs/markdown@53.2.2`、`@platejs/suggestion@53.0.3`、`@platejs/selection@53.1.6`。不得再混用 `platejs@50` 与 `@platejs/*@53`。 |
 | D1-019 | 2026-06-18 | Plate Markdown / AI fragment 必须经过 typed schema、strict allowlist、length cap、source grounding 和 link protocol allowlist。D5 默认禁 image、table、inline HTML、math、frontmatter、definition 和 footnote；LLM 不得直出 arbitrary Plate JSON 或 raw Slate ops 作为持久事实。 |
-| D2-001 | 2026-06-18 | D2-S1 接受 Reading Unit Builder 方向，但新增 Anchor Segment；unit 使用 Stable Base absolute offsets，span anchor 使用 Anchor Segment local offsets。 |
+| D2-001 | 2026-06-18 | D2-S1 接受 Reading Unit Builder 方向，但新增 Anchor Segment；unit 使用 Stable Base absolute offsets。D5-V2 实现把 span anchor 固化为 `anchor_segment_id` + unit-local offsets，并用 Anchor Segment range 约束。 |
 | D2-002 | 2026-06-18 | Stable Base 被视为输入适配后的可读英文正文；低影响处理可直接冻结，高影响处理必须 Candidate Base preview/confirm 后冻结。 |
 | D2-003 | 2026-06-18 | Anchor Segment 从严格句子级修订为 sentence-like segment，必须记录 `segment_type = sentence | clause | fallback_window`；LLM 只能作为 D5+ 边界改良器提供受约束建议。 |
 | D2-004 | 2026-06-18 | D2-S2 接受 PostgreSQL-backed job lease / publish guard：`reader_jobs` claim 走 `SELECT FOR UPDATE SKIP LOCKED`，`lease_token` 必须是 UUID，`lease_expires_at` 是 per-job absolute timestamp。 |
@@ -407,6 +407,7 @@ Plate fragment 只能来自 typed layer result、document tool result 或已 san
 | D4-002 | 2026-06-21 | D4-P1 Translation Layer Worker + Layer Publish 已通过 review：translation run/job bootstrap、PydanticAI typed output boundary、layer publisher、`layer_published` event、snapshot translation projection 和 `ai_usage_events` attribution 已形成最小纵切；worker claim 必须按 `job_type='translate_unit'` / `target_type='unit'` 过滤，retry 后成功必须清空 run failure fields。 |
 | D4-003 | 2026-06-21 | D4 backend orchestration、worker runner hardening 和 Web read-only smoke 已通过 review：`ReaderOrchestrator` 串联 article-ready、translation bootstrap、tick、layer publish 和最小 parsed decision；`TranslationWorkerRunner` 是内部 callable runner，不是 public HTTP endpoint；Web reader-plate smoke 只证明浏览器渲染/交互，不等价于真实 auth/backend E2E。 |
 | D5-001 | 2026-06-21 | D5-V1 Vocabulary Layer Backend Slice 已通过 review：`vocab_highlight`、`phrase_gloss`、`context_gloss` 是同一 `vocabulary` layer 的 item subtype；vocabulary job 使用正式 `reader_jobs.job_type = 'build_vocabulary_layer'`，不得挪用 `build_base`；worker 默认未配置时失败且不发布空 layer，只有显式 fake executor 可发布空 output。 |
+| D5-002 | 2026-06-21 | D5-V2 Vocabulary Projection / Web Read-only Rendering 已通过 review：published `vocabulary` layer 从 domain facts 重建为 stable source leaf 上的 `reader_vocabulary_marks`，Web 只读展示三类 item；不持久化 Plate path/op，不读取旧 `render_scene_json`，仍通过 snapshot reload 承接，不启用 `projection_ops` incremental applier。 |
 
 ## 待决问题
 

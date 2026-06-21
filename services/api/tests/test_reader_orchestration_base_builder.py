@@ -15,6 +15,7 @@ from app.schemas.reader_orchestration import (
     ReaderSnapshotLayer,
     ReaderSnapshotParsedDecision,
     ReaderSnapshotUserAsset,
+    ReaderTextRangeAnchor,
     ReaderUnitAnchor,
 )
 from app.services.reader_orchestration import (
@@ -57,6 +58,88 @@ def _build_translation_layer(
             "translated_text": "示例译文",
             "notes": [],
             "confidence": "normal",
+        },
+        published_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    )
+
+
+def _build_vocabulary_layer(
+    result,
+    *,
+    selected_text: str,
+    item_type: str = "vocab_highlight",
+    layer_id: str = "vocab-layer-1",
+    base_id: str | None = None,
+    target_key: str | None = None,
+    anchor_segment_id: str | None = None,
+    anchor_unit_id: str | None = None,
+    anchor_sentence_id: str | None = None,
+    start_offset: int | None = None,
+    end_offset: int | None = None,
+    target_scope: str = "unit",
+) -> ReaderSnapshotLayer:
+    segment = next(
+        (
+            item
+            for item in result.anchor_segments
+            if anchor_segment_id is None or item.anchor_segment_id == anchor_segment_id
+        ),
+        result.anchor_segments[0],
+    )
+    unit_id = anchor_unit_id or segment.unit_id
+    segment_text = segment.text
+    selected_start = segment_text.index(selected_text)
+    computed_start = segment.unit_start_utf16 + utf16_code_unit_length(
+        segment_text[:selected_start]
+    )
+    computed_end = computed_start + utf16_code_unit_length(selected_text)
+    anchor = ReaderTextRangeAnchor(
+        base_id=base_id or result.base.base_id,
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id or segment.anchor_segment_id,
+        sentence_id=anchor_sentence_id or segment.sentence_id,
+        segment_type=segment.segment_type,  # type: ignore[arg-type]
+        start_offset=computed_start if start_offset is None else start_offset,
+        end_offset=computed_end if end_offset is None else end_offset,
+        selected_text=selected_text,
+        text_hash=compute_text_range_hash(selected_text),
+    )
+    output_item: dict[str, object]
+    if item_type == "vocab_highlight":
+        output_item = {
+            "item_type": item_type,
+            "anchor": anchor.model_dump(mode="json"),
+            "headword": selected_text.strip(),
+            "brief_explanation": "词义提示",
+            "reason": "useful_for_current_goal",
+        }
+    elif item_type == "phrase_gloss":
+        output_item = {
+            "item_type": item_type,
+            "anchor": anchor.model_dump(mode="json"),
+            "phrase": selected_text,
+            "phrase_type": "collocation",
+            "gloss": "短语释义",
+            "example": "示例用法",
+        }
+    else:
+        output_item = {
+            "item_type": item_type,
+            "anchor": anchor.model_dump(mode="json"),
+            "display": selected_text,
+            "gloss": "依赖语境的解释",
+            "reason": "这里依赖当前语境而不是词典常规义",
+        }
+    return ReaderSnapshotLayer(
+        layer_id=layer_id,
+        layer_type="vocabulary",
+        base_id=base_id or result.base.base_id,
+        target_scope=target_scope,  # type: ignore[arg-type]
+        target_key=target_key or segment.unit_id,
+        schema_version=1,
+        output={
+            "schema_version": 1,
+            "items": [output_item],
         },
         published_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
     )
@@ -287,6 +370,67 @@ def test_reader_plate_snapshot_projects_translation_layer_in_top_level_and_value
     assert translation_nodes[0]["base_id"] == result.base.base_id
 
 
+def test_reader_plate_snapshot_projects_vocabulary_marks_into_source_leaves() -> None:
+    result = _build_result("The results prompted the team to rethink their approach.")
+    layers = [
+        _build_vocabulary_layer(
+            result,
+            layer_id="vocab-layer-1",
+            item_type="vocab_highlight",
+            selected_text="prompted",
+        ),
+        _build_vocabulary_layer(
+            result,
+            layer_id="vocab-layer-2",
+            item_type="phrase_gloss",
+            selected_text="prompted the team",
+        ),
+        _build_vocabulary_layer(
+            result,
+            layer_id="vocab-layer-3",
+            item_type="context_gloss",
+            selected_text="prompted the team to rethink",
+        ),
+    ]
+
+    snapshot = build_reader_plate_snapshot(
+        result,
+        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        last_event_sequence=17,
+        enhancement_layers=layers,
+    )
+
+    source_block = snapshot.value[0]["children"][0]  # type: ignore[index]
+    anchor_node = next(
+        child
+        for child in source_block["children"]  # type: ignore[index]
+        if isinstance(child, dict) and child.get("type") == "reader_anchor_segment"
+    )
+    marked_leaves = [
+        leaf
+        for leaf in anchor_node["children"]  # type: ignore[index]
+        if isinstance(leaf, dict) and leaf.get("reader_vocabulary_marks")
+    ]
+    item_types = {
+        mark["item_type"]
+        for leaf in marked_leaves
+        for mark in leaf["reader_vocabulary_marks"]  # type: ignore[index]
+    }
+
+    assert _collect_stable_text(source_block["children"]) == result.units[0].text  # type: ignore[index]
+    assert item_types == {"vocab_highlight", "phrase_gloss", "context_gloss"}
+    assert any(
+        mark["item_type"] == "context_gloss" and mark["ends_here"] is True
+        for leaf in marked_leaves
+        for mark in leaf["reader_vocabulary_marks"]  # type: ignore[index]
+    )
+    assert any(
+        mark["item_type"] == "vocab_highlight" and mark["headword"] == "prompted"
+        for leaf in marked_leaves
+        for mark in leaf["reader_vocabulary_marks"]  # type: ignore[index]
+    )
+
+
 def test_reader_plate_snapshot_rejects_wrong_base_translation_layer() -> None:
     result = _build_result("First sentence.\n\nSecond paragraph.")
     layer = _build_translation_layer(
@@ -296,6 +440,58 @@ def test_reader_plate_snapshot_rejects_wrong_base_translation_layer() -> None:
     )
 
     with pytest.raises(ValueError, match="base_id must match current base"):
+        build_reader_plate_snapshot(
+            result,
+            snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+            last_event_sequence=17,
+            enhancement_layers=[layer],
+        )
+
+
+def test_reader_plate_snapshot_rejects_vocabulary_layer_for_wrong_target_unit() -> None:
+    result = _build_result("First sentence.\n\nSecond paragraph.")
+    layer = _build_vocabulary_layer(
+        result,
+        selected_text="First",
+        target_key=result.units[1].unit_id,
+    )
+
+    with pytest.raises(ValueError, match="anchor unit_id .* does not match target unit"):
+        build_reader_plate_snapshot(
+            result,
+            snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+            last_event_sequence=17,
+            enhancement_layers=[layer],
+        )
+
+
+def test_reader_plate_snapshot_rejects_vocabulary_layer_with_wrong_anchor_segment() -> None:
+    result = _build_result("First sentence only.")
+    layer = _build_vocabulary_layer(
+        result,
+        selected_text="First",
+        anchor_segment_id="missing-anchor",
+    )
+
+    with pytest.raises(ValueError, match="anchor_segment_id missing-anchor does not exist"):
+        build_reader_plate_snapshot(
+            result,
+            snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+            last_event_sequence=17,
+            enhancement_layers=[layer],
+        )
+
+
+def test_reader_plate_snapshot_rejects_vocabulary_layer_targeted_to_anchor_segment() -> None:
+    result = _build_result("First sentence only.")
+    layer = _build_vocabulary_layer(
+        result,
+        selected_text="First",
+        target_scope="anchor_segment",
+        target_key=result.anchor_segments[0].anchor_segment_id,
+    )
+
+    with pytest.raises(ValueError, match="vocabulary snapshot layer .* must target a unit"):
         build_reader_plate_snapshot(
             result,
             snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),

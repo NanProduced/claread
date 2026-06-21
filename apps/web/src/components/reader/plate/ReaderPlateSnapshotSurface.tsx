@@ -12,11 +12,12 @@ import type {
   ReaderStableSeparatorLeafDto,
   ReaderTranslationNodeDto,
   ReaderUnitNodeDto,
+  ReaderVocabularyMarkDto,
 } from "@/types/api/reader-plate";
 import { Editor, EditorContainer } from "../../ui/editor";
 
 /**
- * ReadOnly Plate surface for the D4 Reader Plate snapshot.
+ * ReadOnly Plate surface for the D5 Reader Plate snapshot.
  *
  * Renders `snapshot.value` (the new domain-first Plate projection built from
  * Stable Reading Base / Reading Units / Anchor Segments / Enhancement Layers)
@@ -30,6 +31,9 @@ import { Editor, EditorContainer } from "../../ui/editor";
  *       - stable `separator` leaf (whitespace between anchors)
  *     - `reader_translation` (system_ai translation projection)
  *       - translation text leaf
+ *
+ * Stable `segment_text` leaves may also carry `reader_vocabulary_marks`, which
+ * are rendered as inline highlight marks plus compact read-only gloss chips.
  *
  * Styling is intentionally minimal but distinguishes source text (serif /
  * reading font) from translation projection (sans-serif, muted).
@@ -58,6 +62,158 @@ function isStableLeaf(leaf: unknown): leaf is ReaderStableSegmentTextLeafDto | R
     "owner" in leaf &&
     (leaf as { owner: unknown }).owner === "stable" &&
     "lock_source" in leaf
+  );
+}
+
+function isVocabularyMarkedLeaf(
+  leaf: unknown,
+): leaf is ReaderStableSegmentTextLeafDto & {
+  reader_vocabulary_marks: ReaderVocabularyMarkDto[];
+} {
+  return (
+    isStableLeaf(leaf) &&
+    "reader_vocabulary_marks" in leaf &&
+    Array.isArray(
+      (leaf as ReaderStableSegmentTextLeafDto & {
+        reader_vocabulary_marks?: ReaderVocabularyMarkDto[];
+      }).reader_vocabulary_marks,
+    ) &&
+    ((leaf as ReaderStableSegmentTextLeafDto & {
+      reader_vocabulary_marks?: ReaderVocabularyMarkDto[];
+    }).reader_vocabulary_marks?.length ?? 0) > 0
+  );
+}
+
+function vocabularyTone(itemType: ReaderVocabularyMarkDto["item_type"]) {
+  if (itemType === "phrase_gloss") {
+    return "phrase";
+  }
+  if (itemType === "context_gloss") {
+    return "context";
+  }
+  return "vocab";
+}
+
+function vocabularyMarkClassName(itemType: ReaderVocabularyMarkDto["item_type"]) {
+  return `reader-mark reader-mark--${vocabularyTone(itemType)}`;
+}
+
+function vocabularyChipClassName(itemType: ReaderVocabularyMarkDto["item_type"]) {
+  if (itemType === "phrase_gloss") {
+    return "border-violet-200/80 bg-violet-50 text-violet-900";
+  }
+  if (itemType === "context_gloss") {
+    return "border-sky-200/80 bg-sky-50 text-sky-900";
+  }
+  return "border-amber-200/80 bg-amber-50 text-amber-900";
+}
+
+function phraseTypeLabel(phraseType: string) {
+  switch (phraseType) {
+    case "collocation":
+      return "搭配";
+    case "phrasal_verb":
+      return "短语动词";
+    case "idiom":
+      return "习语";
+    case "proper_noun":
+      return "专名";
+    case "compound":
+      return "复合词";
+    default:
+      return "短语";
+  }
+}
+
+function vocabularyChipLabel(mark: ReaderVocabularyMarkDto) {
+  if (mark.item_type === "vocab_highlight") {
+    return mark.brief_explanation?.trim()
+      ? `词义 · ${mark.brief_explanation}`
+      : `词汇 · ${mark.headword}`;
+  }
+  if (mark.item_type === "phrase_gloss") {
+    return `${phraseTypeLabel(mark.phrase_type)} · ${mark.gloss}`;
+  }
+  return `语境 · ${mark.gloss}`;
+}
+
+function vocabularyMarkTitle(mark: ReaderVocabularyMarkDto) {
+  if (mark.item_type === "vocab_highlight") {
+    return mark.brief_explanation?.trim()
+      ? `${mark.headword}: ${mark.brief_explanation}`
+      : mark.headword;
+  }
+  if (mark.item_type === "phrase_gloss") {
+    return `${mark.phrase} (${phraseTypeLabel(mark.phrase_type)})`;
+  }
+  return `${mark.display}: ${mark.reason}`;
+}
+
+function sortVocabularyMarks(marks: ReaderVocabularyMarkDto[]) {
+  const priority = {
+    context_gloss: 0,
+    phrase_gloss: 1,
+    vocab_highlight: 2,
+  } as const;
+  return [...marks].sort((left, right) => {
+    if (left.segment_start_utf16 !== right.segment_start_utf16) {
+      return left.segment_start_utf16 - right.segment_start_utf16;
+    }
+    const leftSpan = left.segment_end_utf16 - left.segment_start_utf16;
+    const rightSpan = right.segment_end_utf16 - right.segment_start_utf16;
+    if (leftSpan !== rightSpan) {
+      return rightSpan - leftSpan;
+    }
+    return priority[left.item_type] - priority[right.item_type];
+  });
+}
+
+function renderVocabularyContent(
+  leaf: ReaderStableSegmentTextLeafDto & {
+    reader_vocabulary_marks: ReaderVocabularyMarkDto[];
+  },
+  children: React.ReactNode,
+) {
+  const marks = sortVocabularyMarks(leaf.reader_vocabulary_marks);
+  let highlighted = children;
+  [...marks].reverse().forEach((mark) => {
+    highlighted = (
+      <span
+        className={vocabularyMarkClassName(mark.item_type)}
+        data-reader-mark-id={mark.mark_id}
+        data-reader-mark-tone={vocabularyTone(mark.item_type)}
+        data-reader-vocabulary-item-type={mark.item_type}
+        title={vocabularyMarkTitle(mark)}
+      >
+        {highlighted}
+      </span>
+    );
+  });
+
+  const chips = marks.filter((mark) => mark.ends_here);
+  if (chips.length === 0) {
+    return highlighted;
+  }
+
+  return (
+    <>
+      {highlighted}
+      <span
+        data-reader-node="vocabulary-inline"
+        className="ml-1 inline-flex flex-wrap items-center gap-1 align-middle"
+      >
+        {chips.map((mark) => (
+          <span
+            key={`${mark.mark_id}:${mark.item_type}`}
+            data-reader-vocabulary-chip={mark.item_type}
+            className={`inline-flex items-center rounded-full border px-2 py-0.5 font-sans text-[0.68rem] font-medium leading-none ${vocabularyChipClassName(mark.item_type)}`}
+            title={vocabularyMarkTitle(mark)}
+          >
+            {vocabularyChipLabel(mark)}
+          </span>
+        ))}
+      </span>
+    </>
   );
 }
 
@@ -209,6 +365,18 @@ export function ReaderPlateSnapshotSurface({
 
   const renderLeaf = useCallback((props: Parameters<RenderLeaf>[0]) => {
     const leaf = props.leaf as unknown as PlateLeaf;
+    if (isVocabularyMarkedLeaf(leaf)) {
+      return (
+        <span
+          {...props.attributes}
+          data-reader-leaf={leaf.source_role}
+          data-owner="stable"
+          data-anchor-segment-id={leaf.anchor_segment_id}
+        >
+          {renderVocabularyContent(leaf, props.children)}
+        </span>
+      );
+    }
     if (isStableLeaf(leaf)) {
       return (
         <span

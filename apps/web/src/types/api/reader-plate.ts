@@ -48,6 +48,17 @@ export type ParsedDecisionState =
   | "failed";
 
 export type TranslationConfidence = "low" | "normal" | "high";
+export type VocabularyItemType =
+  | "vocab_highlight"
+  | "phrase_gloss"
+  | "context_gloss";
+export type VocabularyPhraseType =
+  | "collocation"
+  | "phrasal_verb"
+  | "idiom"
+  | "proper_noun"
+  | "compound"
+  | "other";
 
 export type ReaderPlateOwner =
   | "stable"
@@ -136,7 +147,42 @@ export interface TranslationLayerOutputDto {
   confidence: TranslationConfidence;
 }
 
-export interface ReaderSnapshotLayerDto {
+export interface VocabularyHighlightItemDto {
+  item_type: "vocab_highlight";
+  anchor: ReaderTextRangeAnchorDto;
+  headword: string;
+  brief_explanation?: string | null;
+  reason?: string | null;
+}
+
+export interface VocabularyPhraseGlossItemDto {
+  item_type: "phrase_gloss";
+  anchor: ReaderTextRangeAnchorDto;
+  phrase: string;
+  phrase_type: VocabularyPhraseType;
+  gloss: string;
+  example?: string | null;
+}
+
+export interface VocabularyContextGlossItemDto {
+  item_type: "context_gloss";
+  anchor: ReaderTextRangeAnchorDto;
+  display: string;
+  gloss: string;
+  reason: string;
+}
+
+export type VocabularyLayerItemDto =
+  | VocabularyHighlightItemDto
+  | VocabularyPhraseGlossItemDto
+  | VocabularyContextGlossItemDto;
+
+export interface VocabularyLayerOutputDto {
+  schema_version: 1;
+  items: VocabularyLayerItemDto[];
+}
+
+interface ReaderSnapshotLayerBaseDto {
   layer_id: string;
   layer_type: ReaderLayerType;
   layer_subtype?: string | null;
@@ -145,9 +191,30 @@ export interface ReaderSnapshotLayerDto {
   target_key: string;
   status: "published";
   schema_version: number;
-  output: unknown;
   published_at: string;
 }
+
+export interface ReaderTranslationSnapshotLayerDto
+  extends ReaderSnapshotLayerBaseDto {
+  layer_type: "translation";
+  output: TranslationLayerOutputDto;
+}
+
+export interface ReaderVocabularySnapshotLayerDto
+  extends ReaderSnapshotLayerBaseDto {
+  layer_type: "vocabulary";
+  output: VocabularyLayerOutputDto;
+}
+
+export interface ReaderOtherSnapshotLayerDto extends ReaderSnapshotLayerBaseDto {
+  layer_type: Exclude<ReaderLayerType, "translation" | "vocabulary">;
+  output: unknown;
+}
+
+export type ReaderSnapshotLayerDto =
+  | ReaderTranslationSnapshotLayerDto
+  | ReaderVocabularySnapshotLayerDto
+  | ReaderOtherSnapshotLayerDto;
 
 export interface ReaderSnapshotAskSupplementDto {
   supplement_id: string;
@@ -290,11 +357,53 @@ export interface ReaderStableSegmentTextLeafDto {
   anchor_segment_id: string;
   segment_start_utf16: number;
   segment_end_utf16: number;
+  reader_vocabulary_marks?: ReaderVocabularyMarkDto[];
 }
 
 export interface ReaderTranslationTextLeafDto {
   text: string;
 }
+
+export interface ReaderVocabularyMarkBaseDto {
+  mark_id: string;
+  layer_id: string;
+  item_type: VocabularyItemType;
+  anchor_segment_id: string;
+  start_offset: number;
+  end_offset: number;
+  selected_text: string;
+  segment_start_utf16: number;
+  segment_end_utf16: number;
+  starts_here: boolean;
+  ends_here: boolean;
+}
+
+export interface ReaderVocabHighlightMarkDto extends ReaderVocabularyMarkBaseDto {
+  item_type: "vocab_highlight";
+  headword: string;
+  brief_explanation?: string | null;
+  reason?: string | null;
+}
+
+export interface ReaderPhraseGlossMarkDto extends ReaderVocabularyMarkBaseDto {
+  item_type: "phrase_gloss";
+  phrase: string;
+  phrase_type: VocabularyPhraseType;
+  gloss: string;
+  example?: string | null;
+}
+
+export interface ReaderContextGlossMarkDto extends ReaderVocabularyMarkBaseDto {
+  item_type: "context_gloss";
+  display: string;
+  gloss: string;
+  reason: string;
+}
+
+export type ReaderVocabularyMarkDto =
+  | ReaderVocabHighlightMarkDto
+  | ReaderPhraseGlossMarkDto
+  | ReaderContextGlossMarkDto;
 
 // ---------------------------------------------------------------------------
 // Events polling

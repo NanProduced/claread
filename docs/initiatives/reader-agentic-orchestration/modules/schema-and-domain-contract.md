@@ -290,8 +290,8 @@ Rules:
 - `paragraph_id` is grouping/debug metadata only and must not be the sole target for new facts.
 - `segment_type = clause` or `fallback_window` must not be presented as a real sentence.
 - `segment_type` describes shape. `boundary_quality` describes reliability.
-- Span-bound layers and user selections anchor to `anchor_segment_id` plus segment-local UTF-16 offsets.
-- `unit_start_utf16` / `unit_end_utf16` are segment position inside the unit. Span anchor `start_offset` / `end_offset` are positions inside the anchor segment text.
+- Span-bound layers and user selections anchor to `anchor_segment_id` plus unit-local UTF-16 offsets.
+- `unit_start_utf16` / `unit_end_utf16` are segment position inside the unit. Span anchor `start_offset` / `end_offset` are positions inside the unit text and must fall within that segment range. Segment-local offsets are derived projection metadata only.
 
 ## Builder Invariants
 
@@ -673,6 +673,7 @@ Rules:
 - Collision priority is `context_gloss > phrase_gloss > vocab_highlight`.
 - A vocabulary layer can contain mixed item types if they share target scope and schema version.
 - Anchors must pass the same `anchor_segment_id` and UTF-16 hash validation as grammar/user assets.
+- D5-V2 projects published vocabulary layers as `reader_vocabulary_marks` on stable source leaves during snapshot rebuild. The durable layer output remains `VocabularyLayerOutput`; Plate marks are projection payload, not truth.
 
 ### `parsed_decisions`
 
@@ -795,6 +796,13 @@ D4 values:
 - `parsed_decisions` may be empty or contain translation parsed decisions.
 - `value` contains Plate nodes for source and any published translation.
 
+D5-V2 values:
+
+- Published `vocabulary` layers remain present in top-level `enhancement_layers`.
+- Snapshot `value` may include `reader_vocabulary_marks` on stable source leaves.
+- A mark includes `mark_id`, `layer_id`, `item_type`, `anchor_segment_id`, unit-local `start_offset` / `end_offset`, `selected_text`, derived `segment_start_utf16` / `segment_end_utf16`, and `starts_here` / `ends_here` for split leaves.
+- Web renders these marks read-only; it does not persist or replay raw Plate/Slate operations.
+
 Rules:
 
 - D4 translation uses snapshot reload or simple projection refresh.
@@ -809,6 +817,7 @@ Rules:
 - DB-hydrated `ReadingBaseBuildResult` must pass `validate_reading_base_build_result` or an equivalent public builder invariant validator before snapshot serialization.
 - Top-level `enhancement_layers` and `value` must be produced by the same projection builder. Focused tests must verify a published translation layer appears both in `enhancement_layers` and in matching Plate nodes by `layer_id`.
 - D4 minimal translation projection only covers published `translation` layers whose output validates as `TranslationLayerOutput` and whose target scope is `unit` or `anchor_segment`.
+- D5-V2 vocabulary projection only covers published `vocabulary` layers whose output validates as `VocabularyLayerOutput`, whose layer target scope is `unit`, and whose item anchors belong to the current base/unit/anchor segment.
 - Non-translation `unit_range` / `record` membership checks are reserved for D5 Layer Publisher and must not be silently accepted into a D4 snapshot if they cannot be grounded to the current base.
 - D4 snapshot does not expose `projection_version`. D5 may add non-cursor projection metadata if projection cache or op applier needs it.
 

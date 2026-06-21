@@ -362,6 +362,26 @@ async def test_worker_process_publishes_vocabulary_layer_and_snapshot_reload_exp
         str(result.published_layer.layer_id)
     ]
     assert snapshot.enhancement_layers[0].layer_type == "vocabulary"
+    marked_snapshot_leaves = [
+        leaf
+        for unit_node in snapshot.value
+        for child in unit_node["children"]  # type: ignore[index]
+        if isinstance(child, dict) and child.get("type") == "reader_source_block"
+        for anchor_node in child["children"]  # type: ignore[index]
+        if isinstance(anchor_node, dict) and anchor_node.get("type") == "reader_anchor_segment"
+        for leaf in anchor_node["children"]  # type: ignore[index]
+        if isinstance(leaf, dict) and leaf.get("reader_vocabulary_marks")
+    ]
+    snapshot_item_types = {
+        mark["item_type"]
+        for leaf in marked_snapshot_leaves
+        for mark in leaf["reader_vocabulary_marks"]  # type: ignore[index]
+    }
+    assert snapshot_item_types == {
+        "vocab_highlight",
+        "phrase_gloss",
+        "context_gloss",
+    }
     assert all(
         child.get("type") != "reader_translation"
         for unit_node in snapshot.value

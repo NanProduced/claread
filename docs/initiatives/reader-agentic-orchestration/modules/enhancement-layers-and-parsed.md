@@ -99,8 +99,8 @@ Span anchors 必须复用 `app/contracts/annotation.py` 的 UTF-16 slicing 和 `
 Coordinate scope：
 
 - `unit` anchor 校验 `reading_units` 的 base-absolute offsets 和 unit text hash。
-- `text_range` anchor 的 `start_offset` / `end_offset` 是 Anchor Segment local offsets；多数 segment 是 sentence，少数可为 clause 或 fallback window。
-- `unit_id` 用于确认 segment 属于目标 unit；不能把 base-absolute offsets 写入 span anchor local fields。
+- `text_range` anchor 的 `start_offset` / `end_offset` 是 unit-local UTF-16 offsets；多数 segment 是 sentence，少数可为 clause 或 fallback window。
+- `anchor_segment_id` 用于确认 span 落在目标 segment 的 unit range 内；不能把 base-absolute offsets 或 Plate path 写入 span anchor fields。
 - Cross-segment selection 使用 `multi_text`，由多个 ordered Anchor Segment ranges 组成。
 
 ## Layer Content Schema
@@ -170,6 +170,14 @@ D5-V1 backend facts：
 - `VocabularyLayerPublisher` 发布 `enhancement_layers.layer_type = 'vocabulary'` 和 `reader_events.event_type = 'layer_published'`。
 - D5-V1 不写 vocabulary parsed decision；是否引入 parsed milestone 留给后续 eval/projection 设计。
 - D5-V1 snapshot reload 只暴露 top-level layer metadata；Plate marks/nodes 留给 D5-V2。
+
+D5-V2 snapshot / Web projection facts：
+
+- Published vocabulary layer 会在 snapshot reload 时从 domain facts 重建为 stable source leaf 上的 `reader_vocabulary_marks`。
+- Projection 不是 layer truth；`enhancement_layers.output` 仍是正式 `VocabularyLayerOutput` typed schema。
+- 三类 item 都作为 inline read-only AI marks 呈现：`vocab_highlight`、`phrase_gloss`、`context_gloss`。
+- `start_offset` / `end_offset` 在 layer output 中保持 unit-local；snapshot serializer 会换算出 leaf 内的 `segment_start_utf16` / `segment_end_utf16` 供 Web 渲染。
+- Web D5-V2 不实现用户编辑、Ask 修改、real vocabulary executor 或 `projection_ops` incremental applier。
 
 Grammar bundle 的输出必须拆成两个 subtype：
 

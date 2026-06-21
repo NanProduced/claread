@@ -9,7 +9,7 @@
 - Stable Reading Base 是同一 Reading Record 内不可变的正文。
 - Reading Units 是 Stable Base 上不可变的编排、渲染和 parsed coverage 单位。
 - Anchor Segments 是 Reading Unit 内 sentence-like 的文本锚点单位，用于用户选区、笔记、高亮和 span-bound layers；通常是句子，必要时可为 clause 或 fallback window。
-- 文本坐标分两层：unit 使用 Stable Base 绝对 UTF-16 offsets；span anchor 使用 Anchor Segment 局部 UTF-16 offsets。
+- 文本坐标分两层：unit/segment facts 使用 Stable Base 绝对 UTF-16 offsets；span anchor 使用 `anchor_segment_id` + unit-local UTF-16 offsets，并由 Anchor Segment range 约束。
 - Enhancement Layers 和 User Editorial Assets 只能引用 Stable Base / Reading Units / Anchor Segments，不能改写正文。
 - Planner 可以提供切分建议，但 deterministic builder 拥有最终 offsets/hash/order。
 - Base Plate Snapshot 只能从 Stable Base / Reading Units / Anchor Segments 投影生成，不是新的正文 truth。
@@ -62,12 +62,13 @@ Claread 已有前后端共享的 anchor 合同：
 | 坐标 | 字段 | 用途 |
 |---|---|---|
 | Stable Base absolute | `base_start_utf16` / `base_end_utf16` | Reading Unit、Anchor Segment 回源校验 |
-| Anchor Segment local | `start_offset` / `end_offset` | 用户选区、笔记、高亮、span-bound layers |
+| Unit local constrained by Anchor Segment | `start_offset` / `end_offset` + `anchor_segment_id` | 用户选区、笔记、高亮、span-bound layers |
 
 约束：
 
 - Unit / Anchor Segment 的 absolute offsets 基于 `reading_bases.text`。
-- Span-bound layer 的 local offsets 基于 `anchor_segments.text`；多数 segment 是 sentence，少数可为 clause 或 fallback window。
+- Span-bound layer 的 `start_offset` / `end_offset` 基于 `reading_units.text`，并且必须落在 `anchor_segment_id` 对应 Anchor Segment 的 unit range 内；多数 segment 是 sentence，少数可为 clause 或 fallback window。
+- Segment-local offsets 只作为 projection 阶段从 unit-local offsets 派生的 metadata，不作为持久 domain anchor。
 - Span-bound layer 必须保存 `selected_text` 和 raw 8-char `text_hash`。
 - `text_hash` 字段不带 `fnv1a32-utf16:` prefix；算法通过常量或 `hash_algorithm` 字段表达。
 - 发布前必须用 `slice_by_utf16_offsets` 和 `compute_text_range_hash` 重新校验。
@@ -194,14 +195,14 @@ Focused test 必须覆盖：
 - enhancement worker 不允许在 `article_ready` 前发布 layer。
 - Stable Base 冻结后正文不可改写。
 - Unit absolute offsets 能 slice 回 unit text。
-- Anchor Segment local span 能使用现有 UTF-16/hash contract 校验。
+- `anchor_segment_id` + unit-local span 能使用现有 UTF-16/hash contract 校验。
 
 ## D2-S1 结论
 
 D2-S1 已验证：
 
 - 英文 paragraph + sentence fallback 可以生成稳定 units，但必须记录 builder/segmenter version。
-- Web selection / anchor bridge 应继续使用 Anchor Segment local offsets；多数 segment 是 sentence，fallback segment 必须显式标记类型。
+- Web selection / anchor bridge 应输出 `anchor_segment_id` + unit-local offsets；多数 segment 是 sentence，fallback segment 必须显式标记类型。
 - `fnv1a32-utf16` 可复用为 unit、segment 和 selected text hash。
 - 旧 `prepare_input` 可拆件复用，但不能原样作为 Stable Base builder。
 

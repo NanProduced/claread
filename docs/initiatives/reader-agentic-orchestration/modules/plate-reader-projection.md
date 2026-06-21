@@ -118,6 +118,14 @@ D4 Web slice：
 - BFF unit tests 覆盖 Reader Plate auth/error mapping；mock phone / anonymous session 不允许提交。
 - Browser smoke 可以使用 mocked BFF routes 验证 read-only surface、source text、translation 和 caught-up polling，但它不等价于真实 authenticated backend E2E。
 
+D5-V2 vocabulary projection slice：
+
+- Published `vocabulary` layer 仍以 `VocabularyLayerOutput` 作为 domain truth；Plate marks 只在 snapshot rebuild 时生成。
+- Snapshot serializer 会把每个 validated vocabulary item 投影为 stable source leaf 上的 `reader_vocabulary_marks`。
+- Mark target 使用 `anchor_segment_id` + unit-local `start_offset` / `end_offset`；serializer 再派生 leaf 内 `segment_start_utf16` / `segment_end_utf16`、`starts_here`、`ends_here`。
+- 三类 item 均呈现为 read-only inline mark：`vocab_highlight`、`phrase_gloss`、`context_gloss`。
+- Web 只消费 snapshot value，不读取旧 `render_scene_json`，不持久化 Plate path/op，D5-V2 仍不启用 `projection_ops` incremental applier。
+
 ### Base Node Seed
 
 D4 最小 schema 使用三个 source node：

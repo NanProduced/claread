@@ -5,16 +5,26 @@ import { describe, expect, it } from "vitest";
 
 import { ReaderPlateSnapshotSurface } from "@/components/reader/plate/ReaderPlateSnapshotSurface";
 import type {
+  ReaderContextGlossMarkDto,
   ReaderPlateValueDto,
+  ReaderPhraseGlossMarkDto,
   ReaderTranslationNodeDto,
   ReaderUnitNodeDto,
+  ReaderVocabHighlightMarkDto,
+  ReaderVocabularyMarkDto,
 } from "@/types/api/reader-plate";
+
+type ReaderVocabularyMarkOverrides =
+  | ({ item_type: "vocab_highlight" } & Partial<ReaderVocabHighlightMarkDto>)
+  | ({ item_type: "phrase_gloss" } & Partial<ReaderPhraseGlossMarkDto>)
+  | ({ item_type: "context_gloss" } & Partial<ReaderContextGlossMarkDto>);
 
 function makeUnitWithTranslation(overrides: {
   unitId: string;
   sourceText: string;
   translationText?: string;
   anchorSegmentId?: string;
+  vocabularyMarks?: ReaderVocabularyMarkDto[];
 }): ReaderUnitNodeDto {
   const anchorSegmentId = overrides.anchorSegmentId ?? "s1";
   const unit: ReaderUnitNodeDto = {
@@ -64,6 +74,7 @@ function makeUnitWithTranslation(overrides: {
                 anchor_segment_id: anchorSegmentId,
                 segment_start_utf16: 0,
                 segment_end_utf16: overrides.sourceText.length,
+                reader_vocabulary_marks: overrides.vocabularyMarks,
               },
             ],
           },
@@ -91,6 +102,57 @@ function makeUnitWithTranslation(overrides: {
   }
 
   return unit;
+}
+
+function makeVocabularyMark(
+  overrides: ReaderVocabularyMarkOverrides,
+): ReaderVocabularyMarkDto {
+  const { item_type, ...markOverrides } = overrides;
+  const base = {
+    mark_id: "mark_1",
+    layer_id: "layer_vocab_1",
+    anchor_segment_id: "s1",
+    start_offset: 0,
+    end_offset: 5,
+    selected_text: "Hello",
+    segment_start_utf16: 0,
+    segment_end_utf16: 5,
+    starts_here: true,
+    ends_here: true,
+  };
+
+  if (item_type === "vocab_highlight") {
+    const highlightOverrides = markOverrides as Partial<ReaderVocabHighlightMarkDto>;
+    return {
+      ...base,
+      item_type,
+      headword: "Hello",
+      brief_explanation: "问候语",
+      reason: "common word",
+      ...highlightOverrides,
+    };
+  }
+  if (item_type === "phrase_gloss") {
+    const phraseOverrides = markOverrides as Partial<ReaderPhraseGlossMarkDto>;
+    return {
+      ...base,
+      item_type,
+      phrase: "turn into",
+      phrase_type: "collocation",
+      gloss: "转化成",
+      example: "turn effort into progress",
+      ...phraseOverrides,
+    };
+  }
+  const contextOverrides = markOverrides as Partial<ReaderContextGlossMarkDto>;
+  return {
+    ...base,
+    item_type,
+    display: "turn into",
+    gloss: "在这里表示逐步转成",
+    reason: "依赖当前上下文，不是静态词典义",
+    ...contextOverrides,
+  };
 }
 
 describe("ReaderPlateSnapshotSurface", () => {
@@ -215,5 +277,85 @@ describe("ReaderPlateSnapshotSurface", () => {
     expect(anchor?.getAttribute("data-anchor-segment-id")).toBe("anchor_42");
     expect(anchor?.getAttribute("data-sentence-id")).toBe("anchor_42");
     expect(anchor?.getAttribute("data-segment-type")).toBe("sentence");
+  });
+
+  it("renders vocab_highlight as a marked source span with a read-only chip", () => {
+    const value: ReaderPlateValueDto = [
+      makeUnitWithTranslation({
+        unitId: "u1",
+        sourceText: "Hello world.",
+        vocabularyMarks: [
+          makeVocabularyMark({
+            item_type: "vocab_highlight",
+            mark_id: "mark_vocab_1",
+            selected_text: "Hello",
+            headword: "Hello",
+            brief_explanation: "问候语",
+          }),
+        ],
+      }),
+    ];
+
+    const { container } = render(<ReaderPlateSnapshotSurface value={value} />);
+
+    const mark = container.querySelector('[data-reader-mark-id="mark_vocab_1"]');
+    const chip = container.querySelector('[data-reader-vocabulary-chip="vocab_highlight"]');
+    expect(mark?.className).toContain("reader-mark--vocab");
+    expect(chip?.textContent).toContain("词义");
+    expect(chip?.textContent).toContain("问候语");
+  });
+
+  it("renders phrase_gloss with phrase styling and subtype-aware chip text", () => {
+    const value: ReaderPlateValueDto = [
+      makeUnitWithTranslation({
+        unitId: "u1",
+        sourceText: "turn effort into progress",
+        vocabularyMarks: [
+          makeVocabularyMark({
+            item_type: "phrase_gloss",
+            mark_id: "mark_phrase_1",
+            selected_text: "turn effort into",
+            phrase: "turn into",
+            phrase_type: "collocation",
+            gloss: "转化成",
+          }),
+        ],
+      }),
+    ];
+
+    const { container } = render(<ReaderPlateSnapshotSurface value={value} />);
+
+    const mark = container.querySelector('[data-reader-mark-id="mark_phrase_1"]');
+    const chip = container.querySelector('[data-reader-vocabulary-chip="phrase_gloss"]');
+    expect(mark?.className).toContain("reader-mark--phrase");
+    expect(chip?.textContent).toContain("搭配");
+    expect(chip?.textContent).toContain("转化成");
+  });
+
+  it("renders context_gloss with context styling and contextual chip text", () => {
+    const value: ReaderPlateValueDto = [
+      makeUnitWithTranslation({
+        unitId: "u1",
+        sourceText: "The results prompted the team to rethink.",
+        vocabularyMarks: [
+          makeVocabularyMark({
+            item_type: "context_gloss",
+            mark_id: "mark_context_1",
+            selected_text: "prompted the team to rethink",
+            display: "prompt sb to do sth",
+            gloss: "这里强调引发后续动作",
+            reason: "依赖当前上下文，不是普通词典义",
+          }),
+        ],
+      }),
+    ];
+
+    const { container } = render(<ReaderPlateSnapshotSurface value={value} />);
+
+    const mark = container.querySelector('[data-reader-mark-id="mark_context_1"]');
+    const chip = container.querySelector('[data-reader-vocabulary-chip="context_gloss"]');
+    expect(mark?.className).toContain("reader-mark--context");
+    expect(chip?.textContent).toContain("语境");
+    expect(chip?.textContent).toContain("引发后续动作");
   });
 });

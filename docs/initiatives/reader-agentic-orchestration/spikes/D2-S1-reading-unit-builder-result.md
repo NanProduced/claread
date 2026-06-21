@@ -10,7 +10,7 @@ Reading Unit Builder 方向成立，可以进入 D3/D4。
 
 必须修正两点后实施：
 
-- Reading Unit 不等于用户选区锚点坐标。新增 sentence-like Anchor Segment，保留现有 `sentence_id` 兼容字段和 segment-local UTF-16 offset 合同。
+- Reading Unit 不等于用户选区锚点坐标。新增 sentence-like Anchor Segment，保留现有 `sentence_id` 兼容字段。D5-V2 实现已把 span anchor offset 固化为 unit-local UTF-16 offsets，并用 `anchor_segment_id` 约束到具体 segment。
 - 旧 `prepare_input` 可以拆件复用，但不能原样作为 Stable Base builder。Stable Base canonicalizer 必须更保守，避免默认改写 smart quotes、dash、大小写等可见作者文本。
 
 ## Checked Evidence
@@ -31,7 +31,7 @@ Reading Unit Builder 方向成立，可以进入 D3/D4。
 ## Key Findings
 
 1. Claread 已有稳定的跨端 anchor 合同：offset unit 是 JavaScript UTF-16 code units，hash 是 `fnv1a32-utf16`，前后端实现一致。
-2. 当前旧实现的用户高亮、笔记、Ask anchor 主要依赖 `sentence_id` 和句内局部 offsets，不是全文 offset；新合同将其推广为 Anchor Segment local offsets。
+2. 当前旧实现的用户高亮、笔记、Ask anchor 主要依赖 `sentence_id` 和句内局部 offsets，不是全文 offset；新合同以 `anchor_segment_id` 保留句/segment 归属，并使用 unit-local offsets 作为持久 span anchor 坐标。
 3. 当前 projection 已经有 fail-closed 的 UTF-16 range validation，可以复用思路。
 4. 旧 `prepare_input` 包含有价值资产：HTML/Markdown/URL 清理、Unicode space/invisible character 处理、PDF 软换行、段落/句子 span、spaCy/regex 降级、质量信号。
 5. 旧 `prepare_input` 也有不适合作为 Stable Base 默认行为的部分：会把 smart quotes 变 straight quotes、dash 变 hyphen、删除 URL/email/code/chinese parenthetical。它们适合作为 extraction/sanitization policy，不适合作为低风险 Stable Base 的无条件文本改写。
@@ -45,7 +45,9 @@ D3/D4 采用三层文本坐标：
 |---|---|---|
 | Stable Base | record 内唯一正文事实源 | `reading_bases.text` |
 | Reading Unit | 编排、translation、parsed coverage、navigation | base-absolute UTF-16 offsets |
-| Anchor Segment | 用户选区、span layer、笔记/高亮/Ask anchor | segment-local UTF-16 offsets，通常 sentence；必要时 clause/fallback window |
+| Anchor Segment | 用户选区、span layer、笔记/高亮/Ask anchor | `anchor_segment_id` + unit-local UTF-16 offsets，通常 sentence；必要时 clause/fallback window |
+
+D5-V2 implementation note：segment-local offsets 仍会出现在 Plate source leaf projection metadata 中，例如 `segment_start_utf16` / `segment_end_utf16`，但它们是从 unit-local anchor offsets 派生的渲染坐标，不是持久 domain anchor。
 
 Reading Unit Builder 输出：
 
@@ -91,12 +93,12 @@ D4 builder：
 - Builder emits 1-based `u1`/`p1`/`s1` and monotonic `order_index`.
 - Unit absolute UTF-16 offsets slice back to exact unit text.
 - Anchor Segment absolute UTF-16 offsets slice back to exact segment text.
-- Span anchor with emoji uses Anchor Segment local UTF-16 offsets and validates selected text/hash.
+- Span anchor with emoji uses `anchor_segment_id` + unit-local UTF-16 offsets and validates selected text/hash.
 - Cross-segment selection is represented as `multi_text` over ordered Anchor Segments.
 - Long paragraph split never cuts inside a word and leaves only whitespace gaps between units.
 - No-newline long text produces sentence/clause/fallback Anchor Segments with explicit `segment_type` and valid coverage.
 - Python `compute_text_range_hash` equals JS `computeUtf16FNV1a` on ASCII, CJK, emoji, smart quotes, and dash samples.
-- Worker/publisher rejects span anchors that use base-absolute offsets in an Anchor Segment local field.
+- Worker/publisher rejects span anchors whose unit-local offsets fall outside the target Anchor Segment range, or whose selected text/hash fails source grounding.
 
 ## D3/D4 Impact
 
