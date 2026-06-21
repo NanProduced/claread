@@ -13,12 +13,17 @@
 ## Serena 使用约定
 
 - 本仓库是 monorepo，不把仓库根目录注册或激活为单一 TypeScript / Python Serena 项目。
+- 在单一子项目内进行代码阅读、符号定位、引用分析、重构或批量改名时，优先使用 Serena tools，而不是先退回到纯 shell / `rg` / 整文件通读。
 - 使用 Serena 做符号级检索、引用分析或重构时，按当前任务激活对应子项目。
 - `services/api/`：Python 后端项目，Serena 项目名 `claread-api`。
 - `evals/`：Python 评测项目，Serena 项目名 `claread-evals`。
 - `apps/web/`：Web TypeScript 项目，Serena 项目名 `claread-web`。
 - `apps/miniprogram/`：微信小程序 TypeScript 项目，Serena 项目名 `claread-miniprogram`。
 - `apps/directus/`：Directus TypeScript 项目，Serena 项目名 `claread-directus`；如任务只涉及具体 extension package，可进一步收窄范围。
+- 优先顺序：已知目标文件时先用 Serena `get_symbols_overview`、`find_declaration`、`find_referencing_symbols`、`find_implementations`；需要符号级修改时优先 `rename_symbol`、`replace_symbol_body`、`insert_before_symbol`、`safe_delete_symbol`。
+- 目标落点尚不明确时，先用 Serena `search_for_pattern` 做项目内粗搜，再进入符号工具；只有跨多个子项目、处理非代码文件、或 Serena 当前不支持该文件类型时，才优先用 RTK / shell / `rg`。
+- TypeScript 子项目如果需要跨 sibling package 的符号引用，优先考虑在 Serena project 配置 `additional_workspace_folders`，不要默认把仓库根目录当成单一 Serena 项目。
+- 只有在以下情况优先不用 Serena：跨多个子项目做仓库级摸排；处理非代码文档或配置文本；不知道目标大致落点，需要先用 RTK / shell / `rg` 粗搜；或 Serena 当前未覆盖该文件类型。
 - 跨多个子项目的任务，优先用 RTK / shell / git diff 做仓库级检索；只有确实需要跨项目符号能力时，才专门配置 root Serena monorepo project，并显式配置多语言，不使用自动推断出的单一语言项目。
 - 未经用户明确要求，不写 Serena memory；需要沉淀长期事实时更新正式文档或对应 `AGENTS.md`。如果 Serena memory 与代码、测试或正式文档冲突，以后者为准，并删除或覆盖过期 memory。
 
