@@ -1,7 +1,7 @@
 # Enhancement Layers 与 Parsed Decision
 
-> 状态：`D2-S1 修订`
-> 最后更新：2026-06-18
+> 状态：`D5 修订`
+> 最后更新：2026-06-21
 > 范围：增强层 schema、anchor 合同、发布门禁和 parsed coverage。
 
 ## Layer 原则
@@ -21,7 +21,7 @@ D4 只实现：
 - unit-level anchor
 - Parsed Decision 最低门槛：该 unit 的 translation 已 published
 
-D5-V1 已实现 vocabulary backend slice。Grammar bundle 和 summary 仍后置：Grammar bundle 可由一个 worker 生成，但发布、存储、RAG、eval 和 projection 必须区分 `grammar_note` 与 `sentence_analysis` 两个 layer subtype。Semantic Outline 延后到 D6 或更晚评估。
+D5-V1/V2/V3 已实现 vocabulary backend slice、snapshot/Web projection 和 real PydanticAI executor。Grammar bundle 和 summary 仍后置：Grammar bundle 可由一个 worker 生成，但发布、存储、RAG、eval 和 projection 必须区分 `grammar_note` 与 `sentence_analysis` 两个 layer subtype。Semantic Outline 延后到 D6 或更晚评估。
 
 ## System Annotation Layer
 
@@ -179,11 +179,20 @@ D5-V2 snapshot / Web projection facts：
 - `start_offset` / `end_offset` 在 layer output 中保持 unit-local；snapshot serializer 会换算出 leaf 内的 `segment_start_utf16` / `segment_end_utf16` 供 Web 渲染。
 - Web D5-V2 不实现用户编辑、Ask 修改、real vocabulary executor 或 `projection_ops` incremental applier。
 
+D5-V3 real vocabulary executor facts：
+
+- `reader_layer_vocabulary` route 必须显式配置 `reader_vocabulary_model_profile`；不得 fallback 到 annotation profile。
+- LLM 只输出内部 candidate schema；正式 `VocabularyLayerOutput` 由后端 postprocess 生成。
+- LLM 不输出 offsets、hash、raw Plate JSON 或 raw Slate ops。
+- 后端在 `anchor_segment_id` 指定的 segment 内 exact-match `selected_text`，再生成 unit-local UTF-16 offsets 和 `fnv1a32-utf16` hash。
+- 同一 span 冲突按 `context_gloss > phrase_gloss > vocab_highlight` 仲裁；candidate 数量、字段长度和 diagnostics 都必须有上限。
+- 空有效 vocabulary output 可以发布，但必须保留 diagnostics 解释 skipped / no-op 原因。
+
 Grammar bundle 的输出必须拆成两个 subtype：
 
 | Subtype | Anchor | 内容形态 | 说明 |
 |---|---|---|---|
-| `grammar_note` | span-bound `text_range` / `multi_text` | 语法点、pattern、说明 fragment | 必须锚定到原文连续片段；适合 inline mark + note。 |
+| `grammar_note` | 1..4 个同 unit 内 `text_range` spans | 语法点、pattern、说明 fragment | 必须锚定到原文片段；适合 inline mark + note。跨 segment 语法关系先用多个同 unit spans 表达，不在 D5-V4 新增通用 `multi_text` contract。 |
 | `sentence_analysis` | sentence/unit-bound，通常指向 Anchor Segment 或 Unit | 句型概述、analysis、chunks | 用于长难句或复杂结构拆解；不要求每句都有。 |
 
 D5 初版可以保留一个 `grammar_bundle_worker` 同时产出两类 subtype，减少重复上下文和成本。若后续发现 sentence analysis 的触发条件、成本或质量目标与 grammar note 明显不同，再拆为独立 worker；拆 worker 不改变 layer subtype 合同。

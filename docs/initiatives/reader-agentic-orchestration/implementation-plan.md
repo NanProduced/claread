@@ -1,6 +1,6 @@
 # Reader Agentic Orchestration 实施计划
 
-> 状态：`D4 active`
+> 状态：`D5 active`
 > 最后更新：2026-06-21
 
 ## 成功标准
@@ -569,6 +569,38 @@ Focused tests 已通过：
 - `pnpm --filter=@claread/web build`（沙箱网络无法拉 Google Fonts 时会失败；联网重跑已通过）
 - `pnpm --filter=@claread/web test:e2e -- reader-plate-smoke.spec.ts`
 
+### D5-V3. Real Vocabulary Executor / Prompt
+
+状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-V3-real-vocabulary-executor-closeout.md`。
+
+Closeout 结论：
+
+- 已新增 `reader_layer_vocabulary` model route、`reader_vocabulary_model_profile` 配置和 prompt registry 入口。
+- `reader_layer_vocabulary` 必须显式配置 `reader_vocabulary_model_profile` 才会注册；不得 fallback 到 annotation model profile。
+- `PydanticAIVocabularyExecutor` 让模型输出内部候选 schema，不让 LLM 直接输出正式 `VocabularyLayerOutput`、UTF-16 offsets、hash、Plate JSON 或 raw ops。
+- 后端 deterministic postprocess 只接收 `anchor_segment_id + selected_text`，在目标 Anchor Segment 内 exact-match 后生成 unit-local UTF-16 offsets、`selected_text` 和 `fnv1a32-utf16` hash。
+- 找不到文本、重复命中、unknown segment、重复 candidate 或结构化输出无效时 fail closed 或跳过对应 item，并把原因写入 `quality_json.diagnostics`；不会发布错误 anchor。
+- 同一 span 冲突按 `context_gloss > phrase_gloss > vocab_highlight` 保留，非冲突项保持稳定输入顺序。
+- Candidate output 有硬上限和字段长度限制；diagnostics 会裁剪数量和文本长度，防止坏模型撑大 payload。
+- 模型返回空 items 或全部候选被安全跳过时，允许发布空 `VocabularyLayerOutput(items=[])`，用于标记该 unit 已处理；跳过原因必须留在 diagnostics。
+- D5-V3 不改变 public `VocabularyLayerOutput` schema，不读取旧 `render_scene_json`，不启用 `projection_ops` incremental applier。
+
+D5-V3 不包含：
+
+- Grammar bundle。
+- vocabulary parsed decision / coverage policy。
+- Ask tools / user editable vocabulary interactions。
+- RAG、SSE 或 LangGraph flow。
+- `projection_ops` incremental applier。
+
+Focused tests 已通过：
+
+- `uv run ruff check app/config/settings.py app/llm/routes.py app/llm/registry.py app/services/reader_orchestration/vocabulary_worker.py tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_vocabulary_executor.py`
+- `uv run pytest tests/test_reader_orchestration_vocabulary_executor.py tests/test_reader_orchestration_vocabulary_worker.py -q`
+- `uv run pytest tests/test_reader_orchestration_translation_worker.py tests/test_reader_orchestration_orchestrator.py tests/test_reader_orchestration_layer_publisher.py tests/test_reader_orchestration_job_runtime.py -q`
+- `uv run pytest tests/test_reader_orchestration_schema_models.py tests/test_reader_orchestration_schema_baseline.py -q`
+- `uv run python -m compileall app/services/reader_orchestration/vocabulary_worker.py app/llm/routes.py app/llm/registry.py app/config/settings.py tests/test_reader_orchestration_vocabulary_executor.py tests/test_reader_orchestration_vocabulary_worker.py`
+
 ## D6. 产品硬化
 
 任务包：
@@ -596,9 +628,10 @@ Focused tests 已通过：
 
 ## 当前下一步
 
-进入 D5-V3 选择点：
+进入 D5-V4 / D5 evaluation 分流：
 
-1. 推荐优先做 real PydanticAI vocabulary executor / prompt / eval sample，让 D5-V1/V2 的后端与 Web 投影有真实生成入口。
-2. 另一条可并行评估 Grammar Bundle Worker，但落地时必须保持 `grammar_note` 与 `sentence_analysis` 两个 layer type 独立发布和投影。
-3. 继续使用 snapshot reload；除非单独立项，不实现 `projection_ops` incremental applier。
-4. 不在下一轮顺手做 Ask tools、RAG、SSE 或 LangGraph flow。
+1. 主线做 Grammar Bundle Backend Slice：一个 worker 可生成 `grammar_note` 与 `sentence_analysis` 候选，但必须发布为两个独立 `enhancement_layers` rows，且 layer fingerprint、projection、policy、eval 独立。
+2. 并行做 Vocabulary Eval Seed / Rubric：基于 D5-V3 real executor 的候选跳过、锚点解析、三类 item 质量建立最小评测样本和验收规则。
+3. D5-V5 再做 Grammar Projection / Web read-only rendering；D5-V4 不顺手实现 Web。
+4. 继续使用 snapshot reload；除非单独立项，不实现 `projection_ops` incremental applier。
+5. 不在下一轮顺手做 Ask tools、RAG、SSE 或 LangGraph flow。

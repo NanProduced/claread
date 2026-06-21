@@ -82,7 +82,9 @@
 - D4-P4 Worker Runner Hardening + Web Smoke/Test Gap 已完成并通过 review。`TranslationWorkerRunner` 是内部 callable runner，不是 public HTTP endpoint；Web reader-plate smoke 使用 mocked BFF routes，只证明浏览器渲染/交互，不等价于真实 auth/backend E2E。
 - D5-V1 Vocabulary Layer Backend Slice 已完成并通过 review。Vocabulary 使用正式 `reader_jobs.job_type = 'build_vocabulary_layer'`，不是 `build_base`；worker 默认未配置时必须失败且不发布空 layer，只有显式 fake executor 才能发布空 output。
 - D5-V2 Vocabulary Projection / Web Read-only Rendering 已完成并通过 review。Published vocabulary layer 在 snapshot reload 时从 domain facts 重建为 stable source leaf 上的 `reader_vocabulary_marks`，Web 只读展示 `vocab_highlight`、`phrase_gloss`、`context_gloss`；不读取旧 `render_scene_json`，不持久化 Plate path/op，不启用 `projection_ops` incremental applier。
-- 当前下一步进入 D5-V3 选择点：优先实现 real PydanticAI vocabulary executor / prompt / eval sample，或先做 Grammar Bundle Worker schema+publisher 纵切。二者都不得改写 D5-V2 的 snapshot truth/projection 边界。
+- D5-V3 Real Vocabulary Executor / Prompt 已完成并通过 review。`reader_layer_vocabulary` route 必须显式配置 `reader_vocabulary_model_profile`，不得 fallback 到 annotation profile；LLM 只输出内部 candidate schema，后端确定性解析 `anchor_segment_id + selected_text` 为 unit-local UTF-16 offsets/hash。
+- D5-V3 vocabulary real executor 对同一 span 按 `context_gloss > phrase_gloss > vocab_highlight` 仲裁；candidate items 和文本字段有硬上限；空有效 output 可以发布，但 diagnostics 必须保留跳过原因。
+- 当前下一步进入 D5-V4 Grammar Bundle Backend Slice，同时可并行做 Vocabulary Eval Seed / Rubric。二者都不得改写 D5-V2/D5-V3 的 snapshot truth/projection 边界。
 - D4 worker 实现中不得临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK；如 D3-P4 runtime tests 暴露缺口，先形成单独 closeout/update，再改依赖。
 - LangGraph 1.x 的 typed streaming、per-node timeout、error handler、graceful shutdown 和 DeltaChannel 只作为 D5+ 复杂 repair / branching / interrupt spike 候选，不改变 D4 PostgreSQL run/job/event 主控。
 - Grammar Bundle Worker 可以一次生成 `grammar_note` 与 `sentence_analysis`，但发布、存储、RAG、projection、policy、eval 必须按 subtype 独立处理。`long_sentence` 不是权威 layer type，只是触发 `sentence_analysis` 的适用场景。

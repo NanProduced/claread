@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 目标架构
 
-> 状态：`D3 active`
-> 最后更新：2026-06-20
+> 状态：`D5 active`
+> 最后更新：2026-06-21
 > 范围：用户提交内容的 `learning` Reader 解析。
 
 ## 目标
@@ -408,6 +408,7 @@ Plate fragment 只能来自 typed layer result、document tool result 或已 san
 | D4-003 | 2026-06-21 | D4 backend orchestration、worker runner hardening 和 Web read-only smoke 已通过 review：`ReaderOrchestrator` 串联 article-ready、translation bootstrap、tick、layer publish 和最小 parsed decision；`TranslationWorkerRunner` 是内部 callable runner，不是 public HTTP endpoint；Web reader-plate smoke 只证明浏览器渲染/交互，不等价于真实 auth/backend E2E。 |
 | D5-001 | 2026-06-21 | D5-V1 Vocabulary Layer Backend Slice 已通过 review：`vocab_highlight`、`phrase_gloss`、`context_gloss` 是同一 `vocabulary` layer 的 item subtype；vocabulary job 使用正式 `reader_jobs.job_type = 'build_vocabulary_layer'`，不得挪用 `build_base`；worker 默认未配置时失败且不发布空 layer，只有显式 fake executor 可发布空 output。 |
 | D5-002 | 2026-06-21 | D5-V2 Vocabulary Projection / Web Read-only Rendering 已通过 review：published `vocabulary` layer 从 domain facts 重建为 stable source leaf 上的 `reader_vocabulary_marks`，Web 只读展示三类 item；不持久化 Plate path/op，不读取旧 `render_scene_json`，仍通过 snapshot reload 承接，不启用 `projection_ops` incremental applier。 |
+| D5-003 | 2026-06-21 | D5-V3 Real Vocabulary Executor / Prompt 已通过 review：`reader_layer_vocabulary` route 必须显式配置 `reader_vocabulary_model_profile`，不得 fallback 到 annotation profile；LLM 只输出内部 candidate schema，后端确定性解析 `anchor_segment_id + selected_text` 为 unit-local UTF-16 offsets/hash；同一 span 按 `context_gloss > phrase_gloss > vocab_highlight` 仲裁；不改变 public `VocabularyLayerOutput` schema，不读取旧 `render_scene_json`，不启用 `projection_ops`。 |
 
 ## 待决问题
 

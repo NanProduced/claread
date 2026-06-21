@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import asyncpg
 import pytest
 
+from app.config.settings import Settings
 from app.contracts.annotation import compute_text_range_hash, utf16_code_unit_length
 from app.database import connection as db_connection
 from app.schemas.reader_orchestration import (
@@ -16,6 +18,7 @@ from app.schemas.reader_orchestration import (
     VocabularyLayerOutput,
     VocabularyPhraseGlossItem,
 )
+from app.services.reader_orchestration import vocabulary_worker as vocabulary_worker_module
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
@@ -26,6 +29,7 @@ from app.services.reader_orchestration.job_bootstrap import (
 from app.services.reader_orchestration.job_runtime import FenceViolationError
 from app.services.reader_orchestration.vocabulary_worker import (
     FakeVocabularyExecutor,
+    PydanticAIVocabularyExecutor,
     VocabularyExecutionError,
     VocabularyExecutionResult,
     VocabularyJobContext,
@@ -78,6 +82,25 @@ class _FailingVocabularyExecutor:
 
     async def generate(self, context: VocabularyJobContext) -> VocabularyExecutionResult:
         raise self.error
+
+
+class _StubAgentResult:
+    def __init__(self, output: object) -> None:
+        self.output = output
+
+
+class _StubPydanticAIVocabularyExecutor(PydanticAIVocabularyExecutor):
+    def __init__(self, output: object) -> None:
+        self._output = output
+        super().__init__(
+            settings=Settings(reader_vocabulary_model_profile="reader_vocabulary")
+        )
+
+    def _build_agent(self, *, model: object):  # type: ignore[override]
+        return object()
+
+    async def _run_agent(self, agent: object, prompt: str) -> _StubAgentResult:  # type: ignore[override]
+        return _StubAgentResult(self._output)
 
 
 @pytest.fixture
@@ -390,6 +413,119 @@ async def test_worker_process_publishes_vocabulary_layer_and_snapshot_reload_exp
     )
 
 
+async def test_real_executor_path_publishes_vocabulary_layer_and_snapshot_marks(
+    vocabulary_worker_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = await insert_user(vocabulary_worker_env)
+    article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
+    await VocabularyJobBootstrapService(pool=vocabulary_worker_env).bootstrap_vocabulary_run(
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+
+    monkeypatch.setattr(
+        vocabulary_worker_module,
+        "build_model_for_route",
+        lambda settings, route: (
+            object(),
+            SimpleNamespace(
+                profile_name="reader-vocab-profile",
+                provider="stub-provider",
+                model_name="stub-model",
+                api_key="",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        vocabulary_worker_module,
+        "extract_run_usage",
+        lambda result: {
+            "aggregate": {
+                "input_tokens": 15,
+                "output_tokens": 11,
+                "total_tokens": 26,
+            }
+        },
+    )
+
+    executor = _StubPydanticAIVocabularyExecutor(
+        {
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "prompted",
+                    "headword": "prompted",
+                    "brief_explanation": "促使",
+                    "reason": "useful_for_current_goal",
+                },
+                {
+                    "item_type": "phrase_gloss",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "prompted the team",
+                    "phrase": "prompt sb to do sth",
+                    "phrase_type": "phrasal_verb",
+                    "gloss": "促使某人做某事",
+                    "example": None,
+                },
+                {
+                    "item_type": "context_gloss",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "prompted the team to rethink",
+                    "display": "prompt sb to do sth",
+                    "gloss": "促使团队重新思考",
+                    "reason": "当前语境强调引发后续动作，不是普通词典义",
+                },
+            ],
+        }
+    )
+    worker = VocabularyWorkerService(
+        pool=vocabulary_worker_env,
+        executor=executor,
+    )
+
+    result = await worker.process_next_vocabulary_job(
+        lease_owner="vocabulary-worker-real-executor",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None
+    assert result.status == "succeeded"
+    assert result.output is not None
+    assert [item.item_type for item in result.output.items] == [
+        "vocab_highlight",
+        "phrase_gloss",
+        "context_gloss",
+    ]
+
+    snapshot = await ArticleReadyPersistenceService(pool=vocabulary_worker_env).load_snapshot(
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    marked_snapshot_leaves = [
+        leaf
+        for unit_node in snapshot.value
+        for child in unit_node["children"]  # type: ignore[index]
+        if isinstance(child, dict) and child.get("type") == "reader_source_block"
+        for anchor_node in child["children"]  # type: ignore[index]
+        if isinstance(anchor_node, dict) and anchor_node.get("type") == "reader_anchor_segment"
+        for leaf in anchor_node["children"]  # type: ignore[index]
+        if isinstance(leaf, dict) and leaf.get("reader_vocabulary_marks")
+    ]
+    snapshot_item_types = {
+        mark["item_type"]
+        for leaf in marked_snapshot_leaves
+        for mark in leaf["reader_vocabulary_marks"]  # type: ignore[index]
+    }
+    assert snapshot_item_types == {
+        "vocab_highlight",
+        "phrase_gloss",
+        "context_gloss",
+    }
+
+
 async def test_worker_without_executor_fails_terminal_and_does_not_publish_vocabulary_layer(
     vocabulary_worker_env: asyncpg.Pool,
 ) -> None:
@@ -558,9 +694,9 @@ async def test_worker_retryable_failure_moves_job_to_retry_later_and_records_fai
     assert usage_row["status"] == "failed"
     assert usage_row["capability_code"] == "reader_vocabulary"
     assert usage_row["model_route"] == "reader_layer_vocabulary"
-    assert usage_row["model_profile_id"] == "fake-reader-layer-vocabulary"
-    assert usage_row["model_provider"] == "fake-provider"
-    assert usage_row["model_name"] == "fake-vocabulary-model"
+    assert usage_row["model_profile_id"] is None
+    assert usage_row["model_provider"] is None
+    assert usage_row["model_name"] is None
     assert usage_row["enhancement_layer_id"] is None
 
     async with vocabulary_worker_env.acquire() as conn:
@@ -651,9 +787,9 @@ async def test_worker_terminal_failure_moves_job_to_failed_terminal_and_records_
     assert usage_row["status"] == "failed"
     assert usage_row["capability_code"] == "reader_vocabulary"
     assert usage_row["model_route"] == "reader_layer_vocabulary"
-    assert usage_row["model_profile_id"] == "fake-reader-layer-vocabulary"
-    assert usage_row["model_provider"] == "fake-provider"
-    assert usage_row["model_name"] == "fake-vocabulary-model"
+    assert usage_row["model_profile_id"] is None
+    assert usage_row["model_provider"] is None
+    assert usage_row["model_name"] is None
     assert usage_row["enhancement_layer_id"] is None
 
     async with vocabulary_worker_env.acquire() as conn:

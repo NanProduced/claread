@@ -9,6 +9,7 @@ ModelRoute = Literal[
     "annotation_generation",
     "dict_ai",
     "reader_layer_translation",
+    "reader_layer_vocabulary",
     "reader_ask",
     "reader_ask_replan",
     "daily_annotation",
@@ -21,6 +22,7 @@ ModelRoute = Literal[
 MODEL_ROUTE_ANNOTATION_GENERATION: Final[ModelRoute] = "annotation_generation"
 MODEL_ROUTE_DICT_AI: Final[ModelRoute] = "dict_ai"
 MODEL_ROUTE_READER_LAYER_TRANSLATION: Final[ModelRoute] = "reader_layer_translation"
+MODEL_ROUTE_READER_LAYER_VOCABULARY: Final[ModelRoute] = "reader_layer_vocabulary"
 MODEL_ROUTE_READER_ASK: Final[ModelRoute] = "reader_ask"
 MODEL_ROUTE_READER_ASK_REPLAN: Final[ModelRoute] = "reader_ask_replan"
 MODEL_ROUTE_DAILY_ANNOTATION: Final[ModelRoute] = "daily_annotation"
@@ -33,6 +35,7 @@ ALL_MODEL_ROUTES: tuple[ModelRoute, ...] = (
     MODEL_ROUTE_ANNOTATION_GENERATION,
     MODEL_ROUTE_DICT_AI,
     MODEL_ROUTE_READER_LAYER_TRANSLATION,
+    MODEL_ROUTE_READER_LAYER_VOCABULARY,
     MODEL_ROUTE_READER_ASK,
     MODEL_ROUTE_READER_ASK_REPLAN,
     MODEL_ROUTE_DAILY_ANNOTATION,

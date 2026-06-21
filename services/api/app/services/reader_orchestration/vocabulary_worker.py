@@ -1,15 +1,29 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Annotated, Any, Literal, Protocol
 from uuid import UUID
 
 import asyncpg
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic_ai import Agent
 
+from app.config.settings import Settings, get_settings
 from app.contracts.annotation import compute_text_range_hash, slice_by_utf16_offsets
 from app.database import connection as db_connection
-from app.schemas.reader_orchestration import VocabularyLayerOutput
+from app.llm.agent_runner import extract_run_usage
+from app.llm.call_guard import assert_real_llm_allowed
+from app.llm.router import build_model_for_route
+from app.llm.routes import MODEL_ROUTE_READER_LAYER_VOCABULARY
+from app.schemas.reader_orchestration import (
+    ReaderTextRangeAnchor,
+    VocabularyContextGlossItem,
+    VocabularyHighlightItem,
+    VocabularyLayerOutput,
+    VocabularyPhraseGlossItem,
+)
 from app.services.ai_usage import (
     BILLING_MODE_INTERNAL_ONLY,
     CAPABILITY_READER_VOCABULARY,
@@ -18,6 +32,10 @@ from app.services.ai_usage import (
     USAGE_SCOPE_SYSTEM_INTERNAL,
     AIUsageEventCreate,
     record_ai_usage_event,
+)
+from app.services.analysis.prompting.prompt_loader import (
+    get_prompt_version,
+    load_agent_instructions,
 )
 
 from .job_bootstrap import (
@@ -29,12 +47,17 @@ from .job_runtime import ClaimResult, FenceViolationError, ReaderJobRuntime
 from .layer_publisher import PublishedVocabularyLayer, VocabularyLayerPublisher
 
 DEFAULT_VOCABULARY_RETRY_DELAY = timedelta(minutes=5)
-VOCABULARY_WORKFLOW_VERSION = "d5-v1-vocabulary-worker"
-MODEL_ROUTE_READER_LAYER_VOCABULARY = "reader_layer_vocabulary"
+VOCABULARY_WORKFLOW_VERSION = "d5-v3-vocabulary-worker"
+VOCABULARY_PROMPT_AGENT_NAME = "reader_layer_vocabulary"
 FAKE_VOCABULARY_PROMPT_VERSION = "fake-vocabulary-worker-v1"
 FAKE_VOCABULARY_MODEL_PROFILE = "fake-reader-layer-vocabulary"
 FAKE_VOCABULARY_MODEL_PROVIDER = "fake-provider"
 FAKE_VOCABULARY_MODEL_NAME = "fake-vocabulary-model"
+MAX_VOCABULARY_ITEMS = 5
+MAX_VOCABULARY_CANDIDATE_TEXT_LENGTH = 160
+MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH = 240
+MAX_VOCABULARY_DIAGNOSTIC_ITEMS = 8
+MAX_VOCABULARY_DIAGNOSTIC_TEXT_LENGTH = 80
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +88,75 @@ class VocabularyJobContext:
     anchor_segments: tuple[VocabularyAnchorSegmentContext, ...]
 
 
+class VocabularyCandidateItemBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    anchor_segment_id: str = Field(min_length=1)
+    selected_text: str = Field(
+        min_length=1,
+        max_length=MAX_VOCABULARY_CANDIDATE_TEXT_LENGTH,
+    )
+
+
+class VocabularyHighlightCandidateItem(VocabularyCandidateItemBase):
+    item_type: Literal["vocab_highlight"] = "vocab_highlight"
+    headword: str = Field(min_length=1, max_length=64)
+    brief_explanation: str | None = Field(
+        default=None,
+        max_length=MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH,
+    )
+    reason: str | None = Field(
+        default=None,
+        max_length=MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH,
+    )
+
+
+class VocabularyPhraseGlossCandidateItem(VocabularyCandidateItemBase):
+    item_type: Literal["phrase_gloss"] = "phrase_gloss"
+    phrase: str = Field(min_length=1, max_length=MAX_VOCABULARY_CANDIDATE_TEXT_LENGTH)
+    phrase_type: Literal[
+        "collocation",
+        "phrasal_verb",
+        "idiom",
+        "proper_noun",
+        "compound",
+        "other",
+    ]
+    gloss: str = Field(min_length=1, max_length=MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH)
+    example: str | None = Field(
+        default=None,
+        max_length=MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH,
+    )
+
+
+class VocabularyContextGlossCandidateItem(VocabularyCandidateItemBase):
+    item_type: Literal["context_gloss"] = "context_gloss"
+    display: str = Field(
+        min_length=1,
+        max_length=MAX_VOCABULARY_CANDIDATE_TEXT_LENGTH,
+    )
+    gloss: str = Field(min_length=1, max_length=MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH)
+    reason: str = Field(min_length=1, max_length=MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH)
+
+
+VocabularyCandidateItem = Annotated[
+    VocabularyHighlightCandidateItem
+    | VocabularyPhraseGlossCandidateItem
+    | VocabularyContextGlossCandidateItem,
+    Field(discriminator="item_type"),
+]
+
+
+class VocabularyCandidateOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    items: list[VocabularyCandidateItem] = Field(
+        default_factory=list,
+        max_length=MAX_VOCABULARY_ITEMS,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class VocabularyExecutionResult:
     output: VocabularyLayerOutput
@@ -74,6 +166,7 @@ class VocabularyExecutionResult:
     model_profile: str | None = FAKE_VOCABULARY_MODEL_PROFILE
     model_provider: str | None = FAKE_VOCABULARY_MODEL_PROVIDER
     model_name: str | None = FAKE_VOCABULARY_MODEL_NAME
+    diagnostics: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,12 +193,37 @@ class VocabularyExecutionError(RuntimeError):
         failure_class: str,
         failure_code: str,
         rationale_code: str | None = None,
+        prompt_version: str | None = None,
+        model_route: str = MODEL_ROUTE_READER_LAYER_VOCABULARY,
+        model_profile: str | None = None,
+        model_provider: str | None = None,
+        model_name: str | None = None,
     ) -> None:
         super().__init__(message)
         self.retryable = retryable
         self.failure_class = failure_class
         self.failure_code = failure_code
         self.rationale_code = rationale_code or failure_code
+        self.prompt_version = prompt_version
+        self.model_route = model_route
+        self.model_profile = model_profile
+        self.model_provider = model_provider
+        self.model_name = model_name
+
+
+@dataclass(slots=True)
+class _ResolvedVocabularyCandidate:
+    order_index: int
+    item_index: int
+    item_type: str
+    anchor_segment_id: str
+    selected_text: str
+    priority: int
+    resolved_item: (
+        VocabularyHighlightItem
+        | VocabularyPhraseGlossItem
+        | VocabularyContextGlossItem
+    )
 
 
 class VocabularyExecutor(Protocol):
@@ -113,6 +231,128 @@ class VocabularyExecutor(Protocol):
         self,
         context: VocabularyJobContext,
     ) -> VocabularyExecutionResult: ...
+
+
+class PydanticAIVocabularyExecutor:
+    def __init__(self, *, settings: Settings | None = None) -> None:
+        self._settings = settings
+
+    def _build_agent(self, *, model: Any) -> Agent:
+        return Agent(
+            model=model,
+            output_type=VocabularyCandidateOutput,
+            instructions=load_agent_instructions(VOCABULARY_PROMPT_AGENT_NAME),
+            name="reader_layer_vocabulary_agent",
+            retries=1,
+            output_retries=2,
+            instrument=False,
+        )
+
+    async def _run_agent(self, agent: Agent, prompt: str) -> Any:
+        return await agent.run(prompt)
+
+    async def generate(
+        self,
+        context: VocabularyJobContext,
+    ) -> VocabularyExecutionResult:
+        settings = self._settings or get_settings()
+        prompt_version = get_prompt_version()
+        if not str(settings.reader_vocabulary_model_profile or "").strip():
+            raise VocabularyExecutionError(
+                (
+                    "vocabulary executor is not configured; set "
+                    "reader_vocabulary_model_profile or inject an explicit fake "
+                    "executor for tests"
+                ),
+                retryable=False,
+                failure_class="configuration",
+                failure_code="vocabulary_executor_unconfigured",
+                prompt_version=prompt_version,
+            )
+        model, model_config = build_model_for_route(
+            settings,
+            MODEL_ROUTE_READER_LAYER_VOCABULARY,
+        )
+        if model is None:
+            raise VocabularyExecutionError(
+                "reader_layer_vocabulary model route is not configured",
+                retryable=False,
+                failure_class="configuration",
+                failure_code="model_route_unavailable",
+                prompt_version=prompt_version,
+            )
+
+        assert_real_llm_allowed(
+            (
+                "app.services.reader_orchestration.vocabulary_worker."
+                "PydanticAIVocabularyExecutor"
+            ),
+            model_config=model_config,
+        )
+
+        agent = self._build_agent(model=model)
+        try:
+            result = await self._run_agent(agent, _build_vocabulary_prompt(context))
+        except VocabularyExecutionError:
+            raise
+        except Exception as exc:
+            raise VocabularyExecutionError(
+                f"reader_layer_vocabulary agent execution failed: {exc}",
+                retryable=True,
+                failure_class="provider",
+                failure_code=type(exc).__name__,
+                prompt_version=prompt_version,
+                model_profile=(
+                    str(model_config.profile_name) if model_config is not None else None
+                ),
+                model_provider=(
+                    str(model_config.provider) if model_config is not None else None
+                ),
+                model_name=(
+                    str(model_config.model_name) if model_config is not None else None
+                ),
+            ) from exc
+
+        try:
+            candidate_output = VocabularyCandidateOutput.model_validate(result.output)
+        except ValidationError as exc:
+            raise VocabularyExecutionError(
+                f"reader_layer_vocabulary produced invalid structured output: {exc}",
+                retryable=False,
+                failure_class="validation",
+                failure_code="model_output_invalid",
+                prompt_version=prompt_version,
+                model_profile=(
+                    str(model_config.profile_name) if model_config is not None else None
+                ),
+                model_provider=(
+                    str(model_config.provider) if model_config is not None else None
+                ),
+                model_name=(
+                    str(model_config.model_name) if model_config is not None else None
+                ),
+            ) from exc
+
+        output, diagnostics = _build_vocabulary_output_from_candidates(
+            context,
+            candidate_output,
+        )
+        usage_data = extract_run_usage(result)
+        return VocabularyExecutionResult(
+            output=output,
+            usage_data=usage_data,
+            prompt_version=prompt_version,
+            model_profile=(
+                str(model_config.profile_name) if model_config is not None else None
+            ),
+            model_provider=(
+                str(model_config.provider) if model_config is not None else None
+            ),
+            model_name=(
+                str(model_config.model_name) if model_config is not None else None
+            ),
+            diagnostics=diagnostics,
+        )
 
 
 class FakeVocabularyExecutor:
@@ -160,7 +400,7 @@ class VocabularyWorkerService:
         self._pool = pool
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
         self._layer_publisher = layer_publisher or VocabularyLayerPublisher(pool=pool)
-        self._executor = executor or UnconfiguredVocabularyExecutor()
+        self._executor = executor or PydanticAIVocabularyExecutor()
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -299,6 +539,11 @@ class VocabularyWorkerService:
                     context=context,
                     error_code=exc.failure_code,
                     error_message=str(exc),
+                    prompt_version=exc.prompt_version,
+                    model_route=exc.model_route,
+                    model_profile=exc.model_profile,
+                    model_provider=exc.model_provider,
+                    model_name=exc.model_name,
                 )
                 return VocabularyJobProcessResult(
                     claim=claim,
@@ -326,6 +571,11 @@ class VocabularyWorkerService:
                 context=context,
                 error_code=exc.failure_code,
                 error_message=str(exc),
+                prompt_version=exc.prompt_version,
+                model_route=exc.model_route,
+                model_profile=exc.model_profile,
+                model_provider=exc.model_provider,
+                model_name=exc.model_name,
             )
             return VocabularyJobProcessResult(
                 claim=claim,
@@ -592,6 +842,11 @@ class VocabularyWorkerService:
         context: VocabularyJobContext | None,
         error_code: str,
         error_message: str,
+        prompt_version: str | None = None,
+        model_route: str = MODEL_ROUTE_READER_LAYER_VOCABULARY,
+        model_profile: str | None = None,
+        model_provider: str | None = None,
+        model_name: str | None = None,
     ) -> None:
         if context is None:
             return
@@ -607,12 +862,12 @@ class VocabularyWorkerService:
                 reader_job_id=context.job_id,
                 workflow_name="reader_orchestration",
                 workflow_version=VOCABULARY_WORKFLOW_VERSION,
-                prompt_version=FAKE_VOCABULARY_PROMPT_VERSION,
-                model_route=MODEL_ROUTE_READER_LAYER_VOCABULARY,
-                model_profile_id=FAKE_VOCABULARY_MODEL_PROFILE,
-                model_profile=FAKE_VOCABULARY_MODEL_PROFILE,
-                model_provider=FAKE_VOCABULARY_MODEL_PROVIDER,
-                model_name=FAKE_VOCABULARY_MODEL_NAME,
+                prompt_version=prompt_version,
+                model_route=model_route,
+                model_profile_id=model_profile,
+                model_profile=model_profile,
+                model_provider=model_provider,
+                model_name=model_name,
                 planner_kind="llm_worker",
                 operation_fingerprint=context.operation_fingerprint,
                 error_code=error_code,
@@ -625,6 +880,313 @@ class VocabularyWorkerService:
                 },
             )
         )
+
+
+def _build_vocabulary_prompt(context: VocabularyJobContext) -> str:
+    anchor_segments = [
+        {
+            "anchor_segment_id": segment.anchor_segment_id,
+            "sentence_id": segment.sentence_id,
+            "segment_type": segment.segment_type,
+            "unit_start_utf16": segment.unit_start_utf16,
+            "unit_end_utf16": segment.unit_end_utf16,
+            "text": segment.text,
+        }
+        for segment in context.anchor_segments
+    ]
+    return (
+        "Generate high-value vocabulary annotations for a single reading unit.\n"
+        f"source_language: {context.source_language}\n"
+        f"unit_id: {context.unit_id}\n"
+        f"max_items: {MAX_VOCABULARY_ITEMS}\n"
+        "Return only the structured candidate output.\n"
+        "<source_text>\n"
+        f"{context.source_text}\n"
+        "</source_text>\n"
+        "<anchor_segments_json>\n"
+        f"{json.dumps(anchor_segments, ensure_ascii=False)}\n"
+        "</anchor_segments_json>"
+    )
+
+
+def _build_vocabulary_output_from_candidates(
+    context: VocabularyJobContext,
+    candidate_output: VocabularyCandidateOutput,
+) -> tuple[VocabularyLayerOutput, dict[str, Any]]:
+    segments_by_id = {
+        segment.anchor_segment_id: segment
+        for segment in context.anchor_segments
+    }
+    skipped_items: list[dict[str, Any]] = []
+    resolved_spans: dict[tuple[str, int, int], _ResolvedVocabularyCandidate] = {}
+
+    for item_index, item in enumerate(candidate_output.items):
+        segment = segments_by_id.get(item.anchor_segment_id)
+        if segment is None:
+            skipped_items.append(
+                _build_skip_diagnostic(
+                    item_index=item_index,
+                    item_type=item.item_type,
+                    anchor_segment_id=item.anchor_segment_id,
+                    selected_text=item.selected_text,
+                    reason_code="anchor_segment_unknown",
+                )
+            )
+            continue
+
+        occurrences = _find_unique_segment_occurrences(segment.text, item.selected_text)
+        if not occurrences:
+            skipped_items.append(
+                _build_skip_diagnostic(
+                    item_index=item_index,
+                    item_type=item.item_type,
+                    anchor_segment_id=item.anchor_segment_id,
+                    selected_text=item.selected_text,
+                    reason_code="selected_text_not_found",
+                )
+            )
+            continue
+        if len(occurrences) > 1:
+            skipped_items.append(
+                _build_skip_diagnostic(
+                    item_index=item_index,
+                    item_type=item.item_type,
+                    anchor_segment_id=item.anchor_segment_id,
+                    selected_text=item.selected_text,
+                    reason_code="selected_text_ambiguous",
+                )
+            )
+            continue
+
+        segment_start, segment_end = occurrences[0]
+        start_offset = segment.unit_start_utf16 + segment_start
+        end_offset = segment.unit_start_utf16 + segment_end
+        if start_offset < segment.unit_start_utf16 or end_offset > segment.unit_end_utf16:
+            skipped_items.append(
+                _build_skip_diagnostic(
+                    item_index=item_index,
+                    item_type=item.item_type,
+                    anchor_segment_id=item.anchor_segment_id,
+                    selected_text=item.selected_text,
+                    reason_code="selected_text_outside_segment",
+                )
+            )
+            continue
+
+        resolved_text = slice_by_utf16_offsets(
+            context.source_text,
+            start_offset,
+            end_offset,
+        )
+        if resolved_text != item.selected_text:
+            skipped_items.append(
+                _build_skip_diagnostic(
+                    item_index=item_index,
+                    item_type=item.item_type,
+                    anchor_segment_id=item.anchor_segment_id,
+                    selected_text=item.selected_text,
+                    reason_code="selected_text_slice_mismatch",
+                )
+            )
+            continue
+
+        span_key = (
+            item.anchor_segment_id,
+            start_offset,
+            end_offset,
+        )
+        item_priority = _vocabulary_item_priority(item.item_type)
+        existing_resolution = resolved_spans.get(span_key)
+        if existing_resolution is not None:
+            if item_priority < existing_resolution.priority:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=existing_resolution.item_index,
+                        item_type=existing_resolution.item_type,
+                        anchor_segment_id=existing_resolution.anchor_segment_id,
+                        selected_text=existing_resolution.selected_text,
+                        reason_code="span_conflict_higher_priority_kept",
+                    )
+                )
+            else:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=item_index,
+                        item_type=item.item_type,
+                        anchor_segment_id=item.anchor_segment_id,
+                        selected_text=item.selected_text,
+                        reason_code="span_conflict_higher_priority_kept",
+                    )
+                )
+                continue
+
+        elif len(resolved_spans) >= MAX_VOCABULARY_ITEMS:
+            skipped_items.append(
+                _build_skip_diagnostic(
+                    item_index=item_index,
+                    item_type=item.item_type,
+                    anchor_segment_id=item.anchor_segment_id,
+                    selected_text=item.selected_text,
+                    reason_code="candidate_limit_exceeded",
+                )
+            )
+            continue
+
+        anchor = ReaderTextRangeAnchor(
+            base_id=str(context.base_id),
+            unit_id=context.unit_id,
+            anchor_segment_id=segment.anchor_segment_id,
+            sentence_id=segment.sentence_id,
+            segment_type=segment.segment_type,  # type: ignore[arg-type]
+            start_offset=start_offset,
+            end_offset=end_offset,
+            selected_text=resolved_text,
+            text_hash=compute_text_range_hash(resolved_text),
+        )
+
+        try:
+            resolved_item = _build_resolved_vocabulary_item(item, anchor)
+        except ValidationError:
+            skipped_items.append(
+                _build_skip_diagnostic(
+                    item_index=item_index,
+                    item_type=item.item_type,
+                    anchor_segment_id=item.anchor_segment_id,
+                    selected_text=item.selected_text,
+                    reason_code="resolved_item_invalid",
+                )
+            )
+            continue
+
+        if existing_resolution is not None and item_priority < existing_resolution.priority:
+            resolved_spans[span_key] = _ResolvedVocabularyCandidate(
+                order_index=existing_resolution.order_index,
+                item_index=item_index,
+                item_type=item.item_type,
+                anchor_segment_id=item.anchor_segment_id,
+                selected_text=item.selected_text,
+                priority=item_priority,
+                resolved_item=resolved_item,
+            )
+            continue
+
+        if existing_resolution is not None:
+            continue
+
+        resolved_spans[span_key] = _ResolvedVocabularyCandidate(
+            order_index=item_index,
+            item_index=item_index,
+            item_type=item.item_type,
+            anchor_segment_id=item.anchor_segment_id,
+            selected_text=item.selected_text,
+            priority=item_priority,
+            resolved_item=resolved_item,
+        )
+
+    resolved_items = [
+        candidate.resolved_item
+        for candidate in sorted(
+            resolved_spans.values(),
+            key=lambda candidate: candidate.order_index,
+        )
+    ]
+
+    trimmed_skipped_items = _trim_skipped_diagnostics(skipped_items)
+    return VocabularyLayerOutput(items=resolved_items), {
+        "candidate_item_count": len(candidate_output.items),
+        "resolved_item_count": len(resolved_items),
+        "skipped_item_count": len(skipped_items),
+        "skipped_items": trimmed_skipped_items,
+        "skipped_items_truncated_count": max(
+            0,
+            len(skipped_items) - len(trimmed_skipped_items),
+        ),
+    }
+
+
+def _build_resolved_vocabulary_item(
+    item: VocabularyCandidateItem,
+    anchor: ReaderTextRangeAnchor,
+) -> VocabularyHighlightItem | VocabularyPhraseGlossItem | VocabularyContextGlossItem:
+    if item.item_type == "vocab_highlight":
+        return VocabularyHighlightItem(
+            anchor=anchor,
+            headword=item.headword,
+            brief_explanation=item.brief_explanation,
+            reason=item.reason,
+        )
+    if item.item_type == "phrase_gloss":
+        return VocabularyPhraseGlossItem(
+            anchor=anchor,
+            phrase=item.phrase,
+            phrase_type=item.phrase_type,
+            gloss=item.gloss,
+            example=item.example,
+        )
+    return VocabularyContextGlossItem(
+        anchor=anchor,
+        display=item.display,
+        gloss=item.gloss,
+        reason=item.reason,
+    )
+
+
+def _find_unique_segment_occurrences(
+    segment_text: str,
+    selected_text: str,
+) -> list[tuple[int, int]]:
+    occurrences: list[tuple[int, int]] = []
+    search_start = 0
+    selected_text_length = len(selected_text)
+    while True:
+        index = segment_text.find(selected_text, search_start)
+        if index < 0:
+            break
+        start_offset = len(
+            segment_text[:index].encode("utf-16-le", "surrogatepass")
+        ) // 2
+        end_offset = start_offset + len(
+            selected_text.encode("utf-16-le", "surrogatepass")
+        ) // 2
+        occurrences.append((start_offset, end_offset))
+        search_start = index + max(1, selected_text_length)
+    return occurrences
+
+
+def _vocabulary_item_priority(item_type: str) -> int:
+    priority = {
+        "context_gloss": 0,
+        "phrase_gloss": 1,
+        "vocab_highlight": 2,
+    }
+    return priority.get(item_type, 99)
+
+
+def _build_skip_diagnostic(
+    *,
+    item_index: int,
+    item_type: str,
+    anchor_segment_id: str,
+    selected_text: str,
+    reason_code: str,
+) -> dict[str, Any]:
+    return {
+        "item_index": item_index,
+        "item_type": item_type,
+        "anchor_segment_id": anchor_segment_id,
+        "selected_text": _truncate_diagnostic_text(selected_text),
+        "reason_code": reason_code,
+    }
+
+
+def _trim_skipped_diagnostics(skipped_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return skipped_items[:MAX_VOCABULARY_DIAGNOSTIC_ITEMS]
+
+
+def _truncate_diagnostic_text(text: str) -> str:
+    if len(text) <= MAX_VOCABULARY_DIAGNOSTIC_TEXT_LENGTH:
+        return text
+    return text[: MAX_VOCABULARY_DIAGNOSTIC_TEXT_LENGTH - 3] + "..."
 
 
 def _build_quality_json(
@@ -645,4 +1207,6 @@ def _build_quality_json(
         quality_json["model_provider"] = execution.model_provider
     if execution.model_name is not None:
         quality_json["model_name"] = execution.model_name
+    if execution.diagnostics is not None:
+        quality_json["diagnostics"] = execution.diagnostics
     return quality_json
