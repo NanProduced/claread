@@ -203,13 +203,14 @@ class ReaderJobRuntime:
         lease_duration: timedelta,
         job_type: str | None = None,
         target_type: str | None = None,
+        operation_fingerprint: str | None = None,
     ) -> ClaimResult | None:
         """Atomically claim the next available job.
 
         Picks jobs with ``status IN ('queued', 'retry_later')`` and
-        ``available_at <= NOW()``. Optional ``job_type`` / ``target_type``
-        filters narrow the claim domain for specialized workers. Jobs are
-        ordered by
+        ``available_at <= NOW()``. Optional ``job_type`` / ``target_type`` /
+        ``operation_fingerprint`` filters narrow the claim domain for
+        specialized workers. Jobs are ordered by
         ``priority DESC, available_at ASC, created_at ASC, id ASC``.
 
         Before claiming, validates the base/generation fence. If the fence
@@ -233,12 +234,14 @@ class ReaderJobRuntime:
                           AND available_at <= NOW()
                           AND ($1::text IS NULL OR job_type = $1)
                           AND ($2::text IS NULL OR target_type = $2)
+                          AND ($3::text IS NULL OR operation_fingerprint = $3)
                         ORDER BY priority DESC, available_at ASC, created_at ASC, id ASC
                         LIMIT 1
                         FOR UPDATE SKIP LOCKED
                         """,
                         job_type,
                         target_type,
+                        operation_fingerprint,
                     )
                     if row is None:
                         return None

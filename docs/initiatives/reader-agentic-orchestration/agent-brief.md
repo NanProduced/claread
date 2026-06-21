@@ -80,7 +80,8 @@
 - D4-P2 tick 目前是 service/testable entry，不是公开 HTTP endpoint。若后续需要 API 驱动 tick，必须补 route、auth、worker 权限和 focused tests。
 - D4-P3 Web Reader Plate Read-only Surface + BFF Polling 已完成并通过 review。Web D4 入口走真实 submit/snapshot/events，不走 demo record、旧 `/scene` 或 `render_scene_json`；polling 收到 layer/projection reset/reload signal 后 reload snapshot，不应用 `projection_ops`。
 - D4-P4 Worker Runner Hardening + Web Smoke/Test Gap 已完成并通过 review。`TranslationWorkerRunner` 是内部 callable runner，不是 public HTTP endpoint；Web reader-plate smoke 使用 mocked BFF routes，只证明浏览器渲染/交互，不等价于真实 auth/backend E2E。
-- 当前下一步是 D5 前置评审：决定先落 `vocabulary` layer 还是 `grammar bundle` layer，并为被选中的 layer 编写 worker/schema/publisher/projection 任务。不要在 D5 前置评审前顺手实现 Ask tools、RAG、SSE、LangGraph flow 或 `projection_ops` incremental applier。
+- D5-V1 Vocabulary Layer Backend Slice 已完成并通过 review。Vocabulary 使用正式 `reader_jobs.job_type = 'build_vocabulary_layer'`，不是 `build_base`；worker 默认未配置时必须失败且不发布空 layer，只有显式 fake executor 才能发布空 output。
+- 当前下一步是 D5-V2 Vocabulary Projection / Web Read-only Rendering：把 published vocabulary layer 投影为只读 Plate marks/nodes，并在 Web 展示 `vocab_highlight`、`phrase_gloss`、`context_gloss`。不要在 D5-V2 顺手实现 grammar bundle、real vocabulary LLM executor、Ask tools、RAG、SSE、LangGraph flow 或 `projection_ops` incremental applier。
 - D4 worker 实现中不得临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK；如 D3-P4 runtime tests 暴露缺口，先形成单独 closeout/update，再改依赖。
 - LangGraph 1.x 的 typed streaming、per-node timeout、error handler、graceful shutdown 和 DeltaChannel 只作为 D5+ 复杂 repair / branching / interrupt spike 候选，不改变 D4 PostgreSQL run/job/event 主控。
 - Grammar Bundle Worker 可以一次生成 `grammar_note` 与 `sentence_analysis`，但发布、存储、RAG、projection、policy、eval 必须按 subtype 独立处理。`long_sentence` 不是权威 layer type，只是触发 `sentence_analysis` 的适用场景。

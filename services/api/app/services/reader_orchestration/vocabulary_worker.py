@@ -6,45 +6,50 @@ from typing import Any, Protocol
 from uuid import UUID
 
 import asyncpg
-from pydantic_ai import Agent
 
-from app.config.settings import Settings, get_settings
 from app.contracts.annotation import compute_text_range_hash, slice_by_utf16_offsets
 from app.database import connection as db_connection
-from app.llm.agent_runner import extract_run_usage
-from app.llm.call_guard import assert_real_llm_allowed
-from app.llm.router import build_model_for_route
-from app.llm.routes import MODEL_ROUTE_READER_LAYER_TRANSLATION
-from app.schemas.reader_orchestration import TranslationLayerOutput
+from app.schemas.reader_orchestration import VocabularyLayerOutput
 from app.services.ai_usage import (
     BILLING_MODE_INTERNAL_ONLY,
-    CAPABILITY_READER_TRANSLATION,
+    CAPABILITY_READER_VOCABULARY,
     STATUS_FAILED,
     STATUS_SUCCEEDED,
     USAGE_SCOPE_SYSTEM_INTERNAL,
     AIUsageEventCreate,
     record_ai_usage_event,
 )
-from app.services.analysis.prompting.prompt_loader import (
-    get_prompt_version,
-    load_agent_instructions,
-)
 
 from .job_bootstrap import (
-    DEFAULT_TRANSLATION_TARGET_LANGUAGE,
-    TRANSLATION_JOB_TYPE,
-    TRANSLATION_OPERATION_FINGERPRINT,
-    TRANSLATION_TARGET_SCOPE,
+    VOCABULARY_JOB_TYPE,
+    VOCABULARY_OPERATION_FINGERPRINT,
+    VOCABULARY_TARGET_SCOPE,
 )
 from .job_runtime import ClaimResult, FenceViolationError, ReaderJobRuntime
-from .layer_publisher import PublishedTranslationLayer, TranslationLayerPublisher
+from .layer_publisher import PublishedVocabularyLayer, VocabularyLayerPublisher
 
-DEFAULT_TRANSLATION_RETRY_DELAY = timedelta(minutes=5)
-TRANSLATION_PROMPT_AGENT_NAME = "reader_layer_translation"
+DEFAULT_VOCABULARY_RETRY_DELAY = timedelta(minutes=5)
+VOCABULARY_WORKFLOW_VERSION = "d5-v1-vocabulary-worker"
+MODEL_ROUTE_READER_LAYER_VOCABULARY = "reader_layer_vocabulary"
+FAKE_VOCABULARY_PROMPT_VERSION = "fake-vocabulary-worker-v1"
+FAKE_VOCABULARY_MODEL_PROFILE = "fake-reader-layer-vocabulary"
+FAKE_VOCABULARY_MODEL_PROVIDER = "fake-provider"
+FAKE_VOCABULARY_MODEL_NAME = "fake-vocabulary-model"
 
 
 @dataclass(frozen=True, slots=True)
-class TranslationJobContext:
+class VocabularyAnchorSegmentContext:
+    anchor_segment_id: str
+    sentence_id: str
+    segment_type: str
+    unit_start_utf16: int
+    unit_end_utf16: int
+    text_hash: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class VocabularyJobContext:
     job_id: UUID
     run_id: UUID
     reading_record_id: UUID
@@ -55,29 +60,29 @@ class TranslationJobContext:
     expected_generation: int
     operation_fingerprint: str
     source_language: str
-    target_language: str
     source_text: str
     text_hash: str
+    anchor_segments: tuple[VocabularyAnchorSegmentContext, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class TranslationExecutionResult:
-    output: TranslationLayerOutput
+class VocabularyExecutionResult:
+    output: VocabularyLayerOutput
     usage_data: dict[str, Any] | None = None
-    prompt_version: str | None = None
-    model_route: str = MODEL_ROUTE_READER_LAYER_TRANSLATION
-    model_profile: str | None = None
-    model_provider: str | None = None
-    model_name: str | None = None
+    prompt_version: str | None = FAKE_VOCABULARY_PROMPT_VERSION
+    model_route: str = MODEL_ROUTE_READER_LAYER_VOCABULARY
+    model_profile: str | None = FAKE_VOCABULARY_MODEL_PROFILE
+    model_provider: str | None = FAKE_VOCABULARY_MODEL_PROVIDER
+    model_name: str | None = FAKE_VOCABULARY_MODEL_NAME
 
 
 @dataclass(frozen=True, slots=True)
-class TranslationJobProcessResult:
+class VocabularyJobProcessResult:
     claim: ClaimResult
-    context: TranslationJobContext | None
+    context: VocabularyJobContext | None
     status: str
-    output: TranslationLayerOutput | None = None
-    published_layer: PublishedTranslationLayer | None = None
+    output: VocabularyLayerOutput | None = None
+    published_layer: PublishedVocabularyLayer | None = None
     usage_data: dict[str, Any] | None = None
     prompt_version: str | None = None
     model_route: str | None = None
@@ -86,7 +91,7 @@ class TranslationJobProcessResult:
     model_name: str | None = None
 
 
-class TranslationExecutionError(RuntimeError):
+class VocabularyExecutionError(RuntimeError):
     def __init__(
         self,
         message: str,
@@ -103,81 +108,59 @@ class TranslationExecutionError(RuntimeError):
         self.rationale_code = rationale_code or failure_code
 
 
-class TranslationExecutor(Protocol):
-    async def translate(
+class VocabularyExecutor(Protocol):
+    async def generate(
         self,
-        context: TranslationJobContext,
-    ) -> TranslationExecutionResult: ...
+        context: VocabularyJobContext,
+    ) -> VocabularyExecutionResult: ...
 
 
-class PydanticAITranslationExecutor:
-    def __init__(self, *, settings: Settings | None = None) -> None:
-        self._settings = settings
-
-    async def translate(
+class FakeVocabularyExecutor:
+    async def generate(
         self,
-        context: TranslationJobContext,
-    ) -> TranslationExecutionResult:
-        settings = self._settings or get_settings()
-        model, model_config = build_model_for_route(
-            settings,
-            MODEL_ROUTE_READER_LAYER_TRANSLATION,
-        )
-        if model is None:
-            raise TranslationExecutionError(
-                "reader_layer_translation model route is not configured",
-                retryable=False,
-                failure_class="configuration",
-                failure_code="model_route_unavailable",
-            )
-
-        assert_real_llm_allowed(
-            "app.services.reader_orchestration.translation_worker.PydanticAITranslationExecutor",
-            model_config=model_config,
+        context: VocabularyJobContext,
+    ) -> VocabularyExecutionResult:
+        return VocabularyExecutionResult(
+            output=VocabularyLayerOutput(),
+            usage_data={
+                "aggregate": {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                }
+            },
         )
 
-        agent = Agent(
-            model=model,
-            output_type=TranslationLayerOutput,
-            instructions=load_agent_instructions(TRANSLATION_PROMPT_AGENT_NAME),
-            name="reader_layer_translation_agent",
-            retries=1,
-            output_retries=2,
-            instrument=False,
-        )
-        result = await agent.run(_build_translation_prompt(context))
-        output = TranslationLayerOutput.model_validate(result.output)
-        usage_data = extract_run_usage(result)
 
-        return TranslationExecutionResult(
-            output=output,
-            usage_data=usage_data,
-            prompt_version=get_prompt_version(),
-            model_profile=(
-                str(model_config.profile_name) if model_config is not None else None
+class UnconfiguredVocabularyExecutor:
+    async def generate(
+        self,
+        context: VocabularyJobContext,
+    ) -> VocabularyExecutionResult:
+        raise VocabularyExecutionError(
+            (
+                "vocabulary executor is not configured; inject an explicit fake "
+                "executor for tests or wire a real executor for production"
             ),
-            model_provider=(
-                str(model_config.provider) if model_config is not None else None
-            ),
-            model_name=(
-                str(model_config.model_name) if model_config is not None else None
-            ),
+            retryable=False,
+            failure_class="configuration",
+            failure_code="vocabulary_executor_unconfigured",
         )
 
 
-class TranslationWorkerService:
+class VocabularyWorkerService:
     def __init__(
         self,
         *,
         pool: asyncpg.Pool | None = None,
         job_runtime: ReaderJobRuntime | None = None,
-        layer_publisher: TranslationLayerPublisher | None = None,
-        translator: TranslationExecutor | None = None,
+        layer_publisher: VocabularyLayerPublisher | None = None,
+        executor: VocabularyExecutor | None = None,
     ) -> None:
         self._pool = pool
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
-        self._layer_publisher = layer_publisher or TranslationLayerPublisher(pool=pool)
-        self._translator = translator or PydanticAITranslationExecutor()
+        self._layer_publisher = layer_publisher or VocabularyLayerPublisher(pool=pool)
+        self._executor = executor or UnconfiguredVocabularyExecutor()
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -185,7 +168,7 @@ class TranslationWorkerService:
             raise RuntimeError("Database pool not initialized")
         return pool
 
-    async def claim_translation_job(
+    async def claim_vocabulary_job(
         self,
         *,
         lease_owner: str,
@@ -194,21 +177,25 @@ class TranslationWorkerService:
         claim = await self._job_runtime.claim_next_job(
             lease_owner=lease_owner,
             lease_duration=lease_duration,
-            job_type=TRANSLATION_JOB_TYPE,
-            target_type=TRANSLATION_TARGET_SCOPE,
-            operation_fingerprint=TRANSLATION_OPERATION_FINGERPRINT,
+            job_type=VOCABULARY_JOB_TYPE,
+            target_type=VOCABULARY_TARGET_SCOPE,
+            operation_fingerprint=VOCABULARY_OPERATION_FINGERPRINT,
         )
         if claim is None:
             return None
-        if claim.job_type != TRANSLATION_JOB_TYPE or claim.target_type != TRANSLATION_TARGET_SCOPE:
+        if (
+            claim.job_type != VOCABULARY_JOB_TYPE
+            or claim.target_type != VOCABULARY_TARGET_SCOPE
+            or claim.operation_fingerprint != VOCABULARY_OPERATION_FINGERPRINT
+        ):
             raise RuntimeError(
-                "translation worker claimed unsupported job "
-                f"{claim.job_type}/{claim.target_type}"
+                "vocabulary worker claimed unsupported job "
+                f"{claim.job_type}/{claim.target_type}/{claim.operation_fingerprint}"
             )
         await self._mark_run_running(claim.run_id)
         return claim
 
-    async def heartbeat_translation_job(
+    async def heartbeat_vocabulary_job(
         self,
         *,
         job_id: UUID,
@@ -221,37 +208,37 @@ class TranslationWorkerService:
             lease_duration=lease_duration,
         )
 
-    async def process_next_translation_job(
+    async def process_next_vocabulary_job(
         self,
         *,
         lease_owner: str,
         lease_duration: timedelta,
-        retry_delay: timedelta = DEFAULT_TRANSLATION_RETRY_DELAY,
-    ) -> TranslationJobProcessResult | None:
-        claim = await self.claim_translation_job(
+        retry_delay: timedelta = DEFAULT_VOCABULARY_RETRY_DELAY,
+    ) -> VocabularyJobProcessResult | None:
+        claim = await self.claim_vocabulary_job(
             lease_owner=lease_owner,
             lease_duration=lease_duration,
         )
         if claim is None:
             return None
-        return await self.process_claimed_translation_job(
+        return await self.process_claimed_vocabulary_job(
             claim=claim,
             retry_delay=retry_delay,
         )
 
-    async def process_claimed_translation_job(
+    async def process_claimed_vocabulary_job(
         self,
         *,
         claim: ClaimResult,
-        retry_delay: timedelta = DEFAULT_TRANSLATION_RETRY_DELAY,
-    ) -> TranslationJobProcessResult:
-        context: TranslationJobContext | None = None
+        retry_delay: timedelta = DEFAULT_VOCABULARY_RETRY_DELAY,
+    ) -> VocabularyJobProcessResult:
+        context: VocabularyJobContext | None = None
 
         try:
             context = await self._load_job_context(claim.job_id)
-            execution = await self._translator.translate(context)
-            output = TranslationLayerOutput.model_validate(execution.output)
-            published_layer = await self._layer_publisher.publish_unit_translation(
+            execution = await self._executor.generate(context)
+            output = VocabularyLayerOutput.model_validate(execution.output)
+            published_layer = await self._layer_publisher.publish_unit_vocabulary(
                 job_id=claim.job_id,
                 lease_token=claim.lease_token,
                 output=output,
@@ -263,7 +250,7 @@ class TranslationWorkerService:
                 published_layer=published_layer,
                 status=STATUS_SUCCEEDED,
             )
-            return TranslationJobProcessResult(
+            return VocabularyJobProcessResult(
                 claim=claim,
                 context=context,
                 status="succeeded",
@@ -291,7 +278,7 @@ class TranslationWorkerService:
                 finished_at=datetime.now(UTC),
             )
             raise
-        except TranslationExecutionError as exc:
+        except VocabularyExecutionError as exc:
             if exc.retryable:
                 available_at = datetime.now(UTC) + retry_delay
                 await self._job_runtime.transition(
@@ -313,7 +300,7 @@ class TranslationWorkerService:
                     error_code=exc.failure_code,
                     error_message=str(exc),
                 )
-                return TranslationJobProcessResult(
+                return VocabularyJobProcessResult(
                     claim=claim,
                     context=context,
                     status="retry_later",
@@ -340,7 +327,7 @@ class TranslationWorkerService:
                 error_code=exc.failure_code,
                 error_message=str(exc),
             )
-            return TranslationJobProcessResult(
+            return VocabularyJobProcessResult(
                 claim=claim,
                 context=context,
                 status="failed_terminal",
@@ -350,15 +337,15 @@ class TranslationWorkerService:
                 job_id=claim.job_id,
                 target_status="failed_terminal",
                 lease_token=claim.lease_token,
-                failure_class="translation_execution",
+                failure_class="vocabulary_execution",
                 failure_code=type(exc).__name__,
                 failure_message=str(exc),
-                rationale_code="translation_execution_failed",
+                rationale_code="vocabulary_execution_failed",
             )
             await self._mark_run_status(
                 claim.run_id,
                 status="failed_terminal",
-                failure_class="translation_execution",
+                failure_class="vocabulary_execution",
                 failure_code=type(exc).__name__,
                 finished_at=datetime.now(UTC),
             )
@@ -367,13 +354,13 @@ class TranslationWorkerService:
                 error_code=type(exc).__name__,
                 error_message=str(exc),
             )
-            return TranslationJobProcessResult(
+            return VocabularyJobProcessResult(
                 claim=claim,
                 context=context,
                 status="failed_terminal",
             )
 
-    async def _load_job_context(self, job_id: UUID) -> TranslationJobContext:
+    async def _load_job_context(self, job_id: UUID) -> VocabularyJobContext:
         async with self.get_pool().acquire() as conn:
             row = await conn.fetchrow(
                 """
@@ -385,7 +372,6 @@ class TranslationWorkerService:
                        job.target_key,
                        job.expected_generation,
                        job.operation_fingerprint,
-                       COALESCE(job.input_json->>'target_language', $2) AS target_language,
                        base.language AS source_language,
                        base.text AS base_text,
                        unit.order_index,
@@ -403,38 +389,106 @@ class TranslationWorkerService:
                 WHERE job.id = $1
                 """,
                 job_id,
-                DEFAULT_TRANSLATION_TARGET_LANGUAGE,
             )
-        if row is None:
-            raise LookupError(f"reader job {job_id} not found")
+            if row is None:
+                raise LookupError(f"reader job {job_id} not found")
 
-        base_text = str(row["base_text"])
-        source_text = slice_by_utf16_offsets(
-            base_text,
-            int(row["base_start_utf16"]),
-            int(row["base_end_utf16"]),
-        )
-        if source_text is None or not source_text:
-            raise TranslationExecutionError(
-                f"translation unit {row['target_key']} could not be sliced from base text",
+            base_text = str(row["base_text"])
+            source_text = slice_by_utf16_offsets(
+                base_text,
+                int(row["base_start_utf16"]),
+                int(row["base_end_utf16"]),
+            )
+            if source_text is None or not source_text:
+                raise VocabularyExecutionError(
+                    f"vocabulary unit {row['target_key']} could not be sliced from base text",
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code="unit_slice_failed",
+                )
+            expected_hash = str(row["text_hash"])
+            actual_hash = compute_text_range_hash(source_text)
+            if actual_hash != expected_hash:
+                raise VocabularyExecutionError(
+                    (
+                        f"vocabulary unit {row['target_key']} hash mismatch: "
+                        f"{actual_hash} != {expected_hash}"
+                    ),
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code="unit_hash_mismatch",
+                )
+
+            segment_rows = await conn.fetch(
+                """
+                SELECT anchor_segment_id,
+                       sentence_id,
+                       segment_type,
+                       unit_start_utf16,
+                       unit_end_utf16,
+                       text_hash
+                FROM anchor_segments
+                WHERE reading_record_id = $1
+                  AND base_id = $2
+                  AND unit_id = $3
+                ORDER BY order_index ASC
+                """,
+                row["reading_record_id"],
+                row["base_id"],
+                row["target_key"],
+            )
+
+        anchor_segments: list[VocabularyAnchorSegmentContext] = []
+        for segment_row in segment_rows:
+            segment_text = slice_by_utf16_offsets(
+                source_text,
+                int(segment_row["unit_start_utf16"]),
+                int(segment_row["unit_end_utf16"]),
+            )
+            if segment_text is None or not segment_text:
+                raise VocabularyExecutionError(
+                    (
+                        f"vocabulary anchor segment {segment_row['anchor_segment_id']} "
+                        "could not be sliced from unit text"
+                    ),
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code="anchor_segment_slice_failed",
+                )
+            segment_hash = str(segment_row["text_hash"])
+            if compute_text_range_hash(segment_text) != segment_hash:
+                raise VocabularyExecutionError(
+                    (
+                        f"vocabulary anchor segment {segment_row['anchor_segment_id']} "
+                        "hash mismatch"
+                    ),
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code="anchor_segment_hash_mismatch",
+                )
+            anchor_segments.append(
+                VocabularyAnchorSegmentContext(
+                    anchor_segment_id=str(segment_row["anchor_segment_id"]),
+                    sentence_id=str(
+                        segment_row["sentence_id"] or segment_row["anchor_segment_id"]
+                    ),
+                    segment_type=str(segment_row["segment_type"]),
+                    unit_start_utf16=int(segment_row["unit_start_utf16"]),
+                    unit_end_utf16=int(segment_row["unit_end_utf16"]),
+                    text_hash=segment_hash,
+                    text=segment_text,
+                )
+            )
+
+        if not anchor_segments:
+            raise VocabularyExecutionError(
+                f"vocabulary unit {row['target_key']} has no anchor segments",
                 retryable=False,
                 failure_class="validation",
-                failure_code="unit_slice_failed",
-            )
-        actual_hash = compute_text_range_hash(source_text)
-        expected_hash = str(row["text_hash"])
-        if actual_hash != expected_hash:
-            raise TranslationExecutionError(
-                (
-                    f"translation unit {row['target_key']} hash mismatch: "
-                    f"{actual_hash} != {expected_hash}"
-                ),
-                retryable=False,
-                failure_class="validation",
-                failure_code="unit_hash_mismatch",
+                failure_code="missing_anchor_segments",
             )
 
-        return TranslationJobContext(
+        return VocabularyJobContext(
             job_id=row["id"],
             run_id=row["run_id"],
             reading_record_id=row["reading_record_id"],
@@ -445,9 +499,9 @@ class TranslationWorkerService:
             expected_generation=int(row["expected_generation"]),
             operation_fingerprint=str(row["operation_fingerprint"]),
             source_language=str(row["source_language"] or "en"),
-            target_language=str(row["target_language"] or DEFAULT_TRANSLATION_TARGET_LANGUAGE),
             source_text=source_text,
             text_hash=expected_hash,
+            anchor_segments=tuple(anchor_segments),
         )
 
     async def _mark_run_running(self, run_id: UUID) -> None:
@@ -496,15 +550,15 @@ class TranslationWorkerService:
     async def _record_usage_event(
         self,
         *,
-        context: TranslationJobContext,
-        execution: TranslationExecutionResult,
-        published_layer: PublishedTranslationLayer,
+        context: VocabularyJobContext,
+        execution: VocabularyExecutionResult,
+        published_layer: PublishedVocabularyLayer,
         status: str,
     ) -> None:
         await record_ai_usage_event(
             AIUsageEventCreate(
                 usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
-                capability_code=CAPABILITY_READER_TRANSLATION,
+                capability_code=CAPABILITY_READER_VOCABULARY,
                 billing_mode=BILLING_MODE_INTERNAL_ONLY,
                 status=status,
                 user_id=context.user_id,
@@ -513,7 +567,7 @@ class TranslationWorkerService:
                 reader_job_id=context.job_id,
                 enhancement_layer_id=published_layer.layer_id,
                 workflow_name="reader_orchestration",
-                workflow_version="d4-p1-translation-worker",
+                workflow_version=VOCABULARY_WORKFLOW_VERSION,
                 prompt_version=execution.prompt_version,
                 model_route=execution.model_route,
                 model_profile_id=execution.model_profile,
@@ -526,8 +580,8 @@ class TranslationWorkerService:
                 metadata_json={
                     "base_id": str(context.base_id),
                     "unit_id": context.unit_id,
-                    "target_language": context.target_language,
                     "source_language": context.source_language,
+                    "anchor_segment_count": len(context.anchor_segments),
                 },
             )
         )
@@ -535,7 +589,7 @@ class TranslationWorkerService:
     async def _record_failed_usage_event(
         self,
         *,
-        context: TranslationJobContext | None,
+        context: VocabularyJobContext | None,
         error_code: str,
         error_message: str,
     ) -> None:
@@ -544,7 +598,7 @@ class TranslationWorkerService:
         await record_ai_usage_event(
             AIUsageEventCreate(
                 usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
-                capability_code=CAPABILITY_READER_TRANSLATION,
+                capability_code=CAPABILITY_READER_VOCABULARY,
                 billing_mode=BILLING_MODE_INTERNAL_ONLY,
                 status=STATUS_FAILED,
                 user_id=context.user_id,
@@ -552,8 +606,13 @@ class TranslationWorkerService:
                 reader_run_id=context.run_id,
                 reader_job_id=context.job_id,
                 workflow_name="reader_orchestration",
-                workflow_version="d4-p1-translation-worker",
-                model_route=MODEL_ROUTE_READER_LAYER_TRANSLATION,
+                workflow_version=VOCABULARY_WORKFLOW_VERSION,
+                prompt_version=FAKE_VOCABULARY_PROMPT_VERSION,
+                model_route=MODEL_ROUTE_READER_LAYER_VOCABULARY,
+                model_profile_id=FAKE_VOCABULARY_MODEL_PROFILE,
+                model_profile=FAKE_VOCABULARY_MODEL_PROFILE,
+                model_provider=FAKE_VOCABULARY_MODEL_PROVIDER,
+                model_name=FAKE_VOCABULARY_MODEL_NAME,
                 planner_kind="llm_worker",
                 operation_fingerprint=context.operation_fingerprint,
                 error_code=error_code,
@@ -561,33 +620,20 @@ class TranslationWorkerService:
                 metadata_json={
                     "base_id": str(context.base_id),
                     "unit_id": context.unit_id,
-                    "target_language": context.target_language,
                     "source_language": context.source_language,
+                    "anchor_segment_count": len(context.anchor_segments),
                 },
             )
         )
 
 
-def _build_translation_prompt(context: TranslationJobContext) -> str:
-    return (
-        "Translate the following reading unit.\n"
-        f"source_language: {context.source_language}\n"
-        f"target_language: {context.target_language}\n"
-        f"unit_id: {context.unit_id}\n"
-        "Return only the structured TranslationLayerOutput.\n"
-        "<source_text>\n"
-        f"{context.source_text}\n"
-        "</source_text>"
-    )
-
-
 def _build_quality_json(
-    output: TranslationLayerOutput,
-    execution: TranslationExecutionResult,
+    output: VocabularyLayerOutput,
+    execution: VocabularyExecutionResult,
 ) -> dict[str, Any]:
     quality_json: dict[str, Any] = {
-        "confidence": output.confidence,
-        "notes_count": len(output.notes),
+        "item_count": len(output.items),
+        "item_types": [item.item_type for item in output.items],
     }
     if execution.prompt_version is not None:
         quality_json["prompt_version"] = execution.prompt_version

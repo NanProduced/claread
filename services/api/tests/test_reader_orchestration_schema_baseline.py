@@ -564,6 +564,32 @@ async def test_reader_jobs_base_scope_and_active_fingerprint(reader_schema: str)
                 str(record_id),
             )
 
+        with pytest.raises(asyncpg.CheckViolationError):
+            await conn.execute(
+                """
+                INSERT INTO reader_jobs (
+                    reading_record_id,
+                    base_id,
+                    run_id,
+                    user_id,
+                    job_type,
+                    target_type,
+                    target_key,
+                    status,
+                    expected_generation,
+                    operation_fingerprint,
+                    idempotency_key
+                )
+                VALUES (
+                    $1, NULL, $2, $3, 'build_vocabulary_layer', 'unit', 'u-vocab', 'queued', 1,
+                    'fp-vocab-missing-base', 'id-vocab-0'
+                )
+                """,
+                record_id,
+                run_id,
+                user_id,
+            )
+
         await conn.execute(
             """
             INSERT INTO reader_jobs (
@@ -580,6 +606,32 @@ async def test_reader_jobs_base_scope_and_active_fingerprint(reader_schema: str)
                 idempotency_key
             )
             VALUES ($1, $2, $3, $4, 'translate_unit', 'unit', 'u1', 'queued', 1, 'fp-unit', 'id-1')
+            """,
+            record_id,
+            base_id,
+            run_id,
+            user_id,
+        )
+
+        await conn.execute(
+            """
+            INSERT INTO reader_jobs (
+                reading_record_id,
+                base_id,
+                run_id,
+                user_id,
+                job_type,
+                target_type,
+                target_key,
+                status,
+                expected_generation,
+                operation_fingerprint,
+                idempotency_key
+            )
+            VALUES (
+                $1, $2, $3, $4, 'build_vocabulary_layer', 'unit', 'u-vocab', 'queued', 1,
+                'fp-vocab', 'id-vocab-1'
+            )
             """,
             record_id,
             base_id,

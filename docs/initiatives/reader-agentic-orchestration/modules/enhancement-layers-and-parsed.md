@@ -21,7 +21,7 @@ D4 只实现：
 - unit-level anchor
 - Parsed Decision 最低门槛：该 unit 的 translation 已 published
 
-D5+ 再实现 vocabulary、grammar bundle、summary。Grammar bundle 可由一个 worker 生成，但发布、存储、RAG、eval 和 projection 必须区分 `grammar_note` 与 `sentence_analysis` 两个 layer subtype。Semantic Outline 延后到 D6 或更晚评估。
+D5-V1 已实现 vocabulary backend slice。Grammar bundle 和 summary 仍后置：Grammar bundle 可由一个 worker 生成，但发布、存储、RAG、eval 和 projection 必须区分 `grammar_note` 与 `sentence_analysis` 两个 layer subtype。Semantic Outline 延后到 D6 或更晚评估。
 
 ## System Annotation Layer
 
@@ -161,7 +161,15 @@ Collision priority:
 context_gloss > phrase_gloss > vocab_highlight
 ```
 
-`phrase_gloss` 可使用 `phrase_type = collocation | phrasal_verb | idiom | proper_noun | compound | other`。`context_gloss` 必须说明上下文依赖原因。三类 item 都必须通过相同的 `anchor_segment_id`、UTF-16 offset 和 text hash 校验。
+`phrase_gloss` 可使用 `phrase_type = collocation | phrasal_verb | idiom | proper_noun | compound | other`。`context_gloss` 必须说明上下文依赖原因。三类 item 都必须通过相同的 `anchor_segment_id`、UTF-16 offset、selected text 和 text hash 校验。
+
+D5-V1 backend facts：
+
+- `reader_jobs.job_type = 'build_vocabulary_layer'`，`target_type = 'unit'`。
+- `VocabularyWorkerService` 默认未配置时失败，不发布空 layer；测试 fake 必须显式注入。
+- `VocabularyLayerPublisher` 发布 `enhancement_layers.layer_type = 'vocabulary'` 和 `reader_events.event_type = 'layer_published'`。
+- D5-V1 不写 vocabulary parsed decision；是否引入 parsed milestone 留给后续 eval/projection 设计。
+- D5-V1 snapshot reload 只暴露 top-level layer metadata；Plate marks/nodes 留给 D5-V2。
 
 Grammar bundle 的输出必须拆成两个 subtype：
 

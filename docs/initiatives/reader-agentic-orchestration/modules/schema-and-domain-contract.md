@@ -422,7 +422,7 @@ Required fields:
 | `base_id` | Stable Base for base-scoped jobs; null only for record-level jobs before base exists |
 | `run_id` | owning run |
 | `user_id` | owner |
-| `job_type` | D4 at least `build_base`, `translate_unit` |
+| `job_type` | `build_base`, `translate_unit`, `build_vocabulary_layer` |
 | `target_type` | `record`, `unit`, `anchor_segment`, `unit_range` |
 | `target_key` | domain target id |
 | `status` | job status |

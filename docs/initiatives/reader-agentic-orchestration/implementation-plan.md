@@ -511,6 +511,34 @@ Focused tests 已通过：
   - owner 权限层覆盖 `stable`、`system_ai`、`ask_supplement`、`user`、`ephemeral`，前端镜像后端拒绝逻辑。
   - 增强层（vocab / grammar_note / sentence_analysis / summary）以 typed layer result + sanitized fragment 投影为 Plate marks/nodes；是否使用 Plate AI/suggestion 插件取决于 D2-P0 license/API 结论。
 
+### D5-V1. Vocabulary Layer Backend Slice
+
+状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-V1-vocabulary-backend-closeout.md`。
+
+Closeout 结论：
+
+- 已新增 `VocabularyLayerOutput` typed schema，保留旧 AI Workflow 的三类 item subtype：`vocab_highlight`、`phrase_gloss`、`context_gloss`。
+- 三类 item 属于同一个 `enhancement_layers.layer_type = 'vocabulary'`；不拆成三个顶层 layer type。
+- Vocabulary anchor 使用 `anchor_segment_id`、UTF-16 range、`selected_text` 和 FNV text hash；`sentence_id` 只作为可选兼容 alias，不是权威锚点。
+- DB baseline 正式支持 `reader_jobs.job_type = 'build_vocabulary_layer'`；不再挪用 `build_base`，也不把 job 语义藏在 `input_json.job_intent`。
+- 已新增 `VocabularyJobBootstrapService`、`VocabularyWorkerService`、`VocabularyLayerPublisher` 与 focused tests。
+- Worker 默认 executor 是未配置失败路径，会把 job/run 标为 `failed_terminal` 且不发布空 layer；只有显式注入 `FakeVocabularyExecutor()` 时才允许发布空 `VocabularyLayerOutput(items=[])`。
+- Publisher 在事务内校验 unit、anchor segment、UTF-16 range、selected text 和 hash，成功后写 `enhancement_layers(layer_type='vocabulary')` 与 `reader_events(event_type='layer_published')`。
+- Snapshot reload 目前只暴露 top-level `enhancement_layers` metadata；D5-V1 不实现 Plate vocabulary marks/nodes。
+
+D5-V1 不包含：
+
+- Web Plate vocabulary projection / rendering。
+- `projection_ops` incremental applier。
+- real PydanticAI vocabulary executor / prompt。
+- parsed decision for vocabulary。
+- grammar bundle、Ask tools、RAG、SSE 或 LangGraph flow。
+
+Focused tests 已通过：
+
+- `uv run ruff check app/schemas/reader_orchestration.py app/services/reader_orchestration tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_schema_models.py tests/test_reader_orchestration_schema_baseline.py`
+- `uv run pytest tests/test_reader_orchestration_schema_baseline.py tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_translation_worker.py tests/test_reader_orchestration_orchestrator.py tests/test_reader_orchestration_job_runtime.py tests/test_reader_orchestration_layer_publisher.py tests/test_reader_orchestration_schema_models.py -q`
+
 ## D6. 产品硬化
 
 任务包：
@@ -538,9 +566,9 @@ Focused tests 已通过：
 
 ## 当前下一步
 
-进入 D4-P2：
+进入 D5-V2 Vocabulary Projection / Web Read-only Rendering：
 
-1. 把 translation bootstrap 接到 article-ready orchestration path，避免 D4-P1 只能靠测试手动调用 bootstrap。
-2. 增加最小 orchestration tick / runner service，复用 `TranslationWorkerService` 和 D3-P4 runtime。
-3. 发布 translation 后写 `parsed_decisions`，并通过 snapshot reload 验证 parsed decision 与 translation layer 同步可见。
-4. 不实现 Web UI、SSE、LangGraph、vocabulary、grammar bundle、RAG 或 `projection_ops` 端到端。
+1. 先把 published vocabulary layer 从 snapshot metadata 投影为 read-only Plate marks/nodes。
+2. Web 只读展示 `vocab_highlight`、`phrase_gloss`、`context_gloss`，不引入用户编辑或 Ask 修改。
+3. 继续使用 snapshot reload；不实现 `projection_ops` incremental applier。
+4. 不实现 grammar bundle、real vocabulary LLM executor、Ask tools、RAG、SSE 或 LangGraph flow。

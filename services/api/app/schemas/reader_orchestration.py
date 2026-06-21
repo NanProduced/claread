@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.contracts.annotation import (
     TEXT_RANGE_HASH_ALGORITHM,
     TEXT_RANGE_OFFSET_UNIT,
+    compute_text_range_hash,
     utf16_code_unit_length,
 )
 
@@ -52,6 +53,14 @@ ReaderJobStatus = Literal[
 ]
 ReaderLayerType = Literal["translation", "vocabulary", "grammar_note", "sentence_analysis"]
 VocabularyItemType = Literal["vocab_highlight", "phrase_gloss", "context_gloss"]
+VocabularyPhraseType = Literal[
+    "collocation",
+    "phrasal_verb",
+    "idiom",
+    "proper_noun",
+    "compound",
+    "other",
+]
 ParsedDecisionState = Literal["not_started", "partial", "parsed", "skipped", "failed"]
 AnchorSegmentType = Literal["sentence", "clause", "fallback_window"]
 ReaderBoundaryQuality = Literal["normal", "low"]
@@ -91,6 +100,8 @@ class ReaderTextRangeAnchor(BaseModel):
             raise ValueError("end_offset must be greater than start_offset")
         if utf16_code_unit_length(self.selected_text) != self.end_offset - self.start_offset:
             raise ValueError("selected_text UTF-16 length must match offset span")
+        if compute_text_range_hash(self.selected_text) != self.text_hash:
+            raise ValueError("text_hash must match selected_text")
         return self
 
 
@@ -102,6 +113,57 @@ class TranslationLayerOutput(BaseModel):
     translated_text: str = Field(min_length=1)
     notes: list[str] = Field(default_factory=list)
     confidence: Literal["low", "normal", "high"] = "normal"
+
+
+class VocabularyHighlightItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_type: Literal["vocab_highlight"] = "vocab_highlight"
+    anchor: ReaderTextRangeAnchor
+    headword: str = Field(min_length=1)
+    brief_explanation: str | None = None
+    reason: str | None = None
+
+    @field_validator("headword")
+    @classmethod
+    def validate_headword(cls, value: str) -> str:
+        if any(char.isspace() for char in value):
+            raise ValueError("headword must be a single token without spaces")
+        return value
+
+
+class VocabularyPhraseGlossItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_type: Literal["phrase_gloss"] = "phrase_gloss"
+    anchor: ReaderTextRangeAnchor
+    phrase: str = Field(min_length=1)
+    phrase_type: VocabularyPhraseType
+    gloss: str = Field(min_length=1)
+    example: str | None = None
+
+
+class VocabularyContextGlossItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_type: Literal["context_gloss"] = "context_gloss"
+    anchor: ReaderTextRangeAnchor
+    display: str = Field(min_length=1)
+    gloss: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+VocabularyLayerItem = Annotated[
+    VocabularyHighlightItem | VocabularyPhraseGlossItem | VocabularyContextGlossItem,
+    Field(discriminator="item_type"),
+]
+
+
+class VocabularyLayerOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    items: list[VocabularyLayerItem] = Field(default_factory=list)
 
 
 class ReaderSnapshotBase(BaseModel):
