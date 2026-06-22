@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "schema_kind": "vocabulary_seed_baseline",
+  "run_id": "vocabulary-baseline-2026-06",
+  "dataset_id": "vocabulary-seed-v1",
+  "dataset_dir": "datasets/vocabulary-seed-v1",
+  "workflow_version": "d5-v3-vocabulary-worker",
+  "prompt_version": "vocabulary-baseline-2026-06",
+  "grader_names": [
+    "anchor_resolution",
+    "bounds_compliance",
+    "diagnostics_coverage",
+    "span_conflict_arb"
+  ],
+  "total_cases": 13,
+  "passed": 12,
+  "failed": 0,
+  "skipped": 1,
+  "hard_failure_case_ids": [],
+  "soft_failure_case_ids": [],
+  "verdict_counts": {
+    "pass": 48,
+    "skip": 4
+  },
+  "grader_pass_counts": {
+    "anchor_resolution": 12,
+    "bounds_compliance": 12,
+    "diagnostics_coverage": 12,
+    "span_conflict_arb": 12
+  }
+}

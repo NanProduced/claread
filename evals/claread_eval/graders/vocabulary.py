@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Iterable
+from typing import Protocol
 
 from claread_eval.schemas.vocabulary import (
     ALLOWED_ITEM_TYPES,
@@ -25,6 +26,24 @@ from claread_eval.schemas.vocabulary import (
     VocabularyGraderResult,
     VocabularyResolvedCandidate,
 )
+
+
+class VocabularyGrader(Protocol):
+    """Protocol for deterministic vocabulary seed graders.
+
+    Implementations expose a `name` and a `grade(case, snapshot)` method
+    returning a `VocabularyGraderResult`. Concrete graders below conform
+    to this protocol but are not bound to it (so call sites can pass any
+    object exposing the same shape).
+    """
+
+    name: str
+
+    def grade(
+        self,
+        case: VocabularyEvalCase,
+        snapshot: VocabularyExecutionSnapshot,
+    ) -> VocabularyGraderResult: ...
 
 ITEM_PRIORITY: dict[str, int] = {
     "context_gloss": 0,

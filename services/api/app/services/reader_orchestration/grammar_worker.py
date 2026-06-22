@@ -1,19 +1,28 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from uuid import UUID
 
 import asyncpg
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic_ai import Agent
 
+from app.config.settings import Settings, get_settings
 from app.contracts.annotation import compute_text_range_hash, slice_by_utf16_offsets
 from app.database import connection as db_connection
+from app.llm.agent_runner import extract_run_usage
+from app.llm.call_guard import assert_real_llm_allowed
+from app.llm.router import build_model_for_route
+from app.llm.routes import MODEL_ROUTE_READER_LAYER_GRAMMAR_BUNDLE
 from app.schemas.reader_orchestration import (
     GrammarBundleOutput,
     GrammarNoteItem,
     GrammarNoteLayerOutput,
+    ReaderTextRangeAnchor,
+    SentenceAnalysisChunk,
     SentenceAnalysisItem,
     SentenceAnalysisLayerOutput,
 )
@@ -26,6 +35,10 @@ from app.services.ai_usage import (
     AIUsageEventCreate,
     record_ai_usage_event,
 )
+from app.services.analysis.prompting.prompt_loader import (
+    get_prompt_version,
+    load_agent_instructions,
+)
 
 from .job_bootstrap import (
     GRAMMAR_JOB_TYPE,
@@ -36,13 +49,23 @@ from .job_runtime import ClaimResult, FenceViolationError, ReaderJobRuntime
 from .layer_publisher import GrammarBundleLayerPublisher, PublishedGrammarBundle
 
 DEFAULT_GRAMMAR_RETRY_DELAY = timedelta(minutes=5)
-GRAMMAR_WORKFLOW_VERSION = "d5-v4-grammar-worker"
-GRAMMAR_MODEL_ROUTE = "reader_layer_grammar_bundle"
+GRAMMAR_WORKFLOW_VERSION = "d5-v6-grammar-worker"
+GRAMMAR_PROMPT_AGENT_NAME = "reader_layer_grammar_bundle"
+GRAMMAR_MODEL_ROUTE = MODEL_ROUTE_READER_LAYER_GRAMMAR_BUNDLE
 FAKE_GRAMMAR_PROMPT_VERSION = "fake-grammar-worker-v1"
 FAKE_GRAMMAR_MODEL_PROFILE = "fake-reader-layer-grammar-bundle"
 FAKE_GRAMMAR_MODEL_PROVIDER = "fake-provider"
 FAKE_GRAMMAR_MODEL_NAME = "fake-grammar-model"
+MAX_GRAMMAR_NOTE_ITEMS = 4
+MAX_SENTENCE_ANALYSIS_ITEMS = 3
+MAX_GRAMMAR_SPANS_PER_NOTE = 4
+MAX_GRAMMAR_SPAN_TEXT_LENGTH = 240
+MAX_SENTENCE_ANALYSIS_TEXT_LENGTH = 640
+MAX_GRAMMAR_LABEL_LENGTH = 120
+MAX_GRAMMAR_FIELD_LENGTH = 360
+MAX_GRAMMAR_CHUNKS_PER_ANALYSIS = 8
 MAX_GRAMMAR_DIAGNOSTIC_ITEMS = 8
+MAX_GRAMMAR_DIAGNOSTIC_TEXT_LENGTH = 80
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +94,64 @@ class GrammarJobContext:
     source_text: str
     text_hash: str
     anchor_segments: tuple[GrammarAnchorSegmentContext, ...]
+
+
+class GrammarCandidateSpan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    anchor_segment_id: str = Field(min_length=1)
+    selected_text: str = Field(min_length=1, max_length=MAX_GRAMMAR_SPAN_TEXT_LENGTH)
+
+
+class GrammarNoteCandidateItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_type: Literal["grammar_note"] = "grammar_note"
+    spans: list[GrammarCandidateSpan] = Field(
+        min_length=1,
+        max_length=MAX_GRAMMAR_SPANS_PER_NOTE,
+    )
+    grammar_point: str = Field(min_length=1, max_length=MAX_GRAMMAR_LABEL_LENGTH)
+    pattern: str | None = Field(default=None, max_length=MAX_GRAMMAR_LABEL_LENGTH)
+    note: str = Field(min_length=1, max_length=MAX_GRAMMAR_FIELD_LENGTH)
+
+
+class SentenceAnalysisChunkCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=MAX_GRAMMAR_LABEL_LENGTH)
+    text: str = Field(min_length=1, max_length=MAX_GRAMMAR_SPAN_TEXT_LENGTH)
+
+
+class SentenceAnalysisCandidateItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_type: Literal["sentence_analysis"] = "sentence_analysis"
+    anchor_segment_id: str = Field(min_length=1)
+    selected_text: str = Field(
+        min_length=1,
+        max_length=MAX_SENTENCE_ANALYSIS_TEXT_LENGTH,
+    )
+    label: str = Field(min_length=1, max_length=MAX_GRAMMAR_LABEL_LENGTH)
+    analysis: str = Field(min_length=1, max_length=MAX_GRAMMAR_FIELD_LENGTH)
+    chunks: list[SentenceAnalysisChunkCandidate] = Field(
+        min_length=1,
+        max_length=MAX_GRAMMAR_CHUNKS_PER_ANALYSIS,
+    )
+
+
+class GrammarBundleCandidateOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    grammar_notes: list[GrammarNoteCandidateItem] = Field(
+        default_factory=list,
+        max_length=MAX_GRAMMAR_NOTE_ITEMS,
+    )
+    sentence_analyses: list[SentenceAnalysisCandidateItem] = Field(
+        default_factory=list,
+        max_length=MAX_SENTENCE_ANALYSIS_ITEMS,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +215,128 @@ class GrammarBundleExecutor(Protocol):
     ) -> GrammarExecutionResult: ...
 
 
+class PydanticAIGrammarBundleExecutor:
+    def __init__(self, *, settings: Settings | None = None) -> None:
+        self._settings = settings
+
+    def _build_agent(self, *, model: Any) -> Agent:
+        return Agent(
+            model=model,
+            output_type=GrammarBundleCandidateOutput,
+            instructions=load_agent_instructions(GRAMMAR_PROMPT_AGENT_NAME),
+            name="reader_layer_grammar_bundle_agent",
+            retries=1,
+            output_retries=2,
+            instrument=False,
+        )
+
+    async def _run_agent(self, agent: Agent, prompt: str) -> Any:
+        return await agent.run(prompt)
+
+    async def generate(
+        self,
+        context: GrammarJobContext,
+    ) -> GrammarExecutionResult:
+        settings = self._settings or get_settings()
+        prompt_version = get_prompt_version()
+        if not str(settings.reader_grammar_bundle_model_profile or "").strip():
+            raise GrammarExecutionError(
+                (
+                    "grammar bundle executor is not configured; set "
+                    "reader_grammar_bundle_model_profile or inject an explicit fake "
+                    "executor for tests"
+                ),
+                retryable=False,
+                failure_class="configuration",
+                failure_code="grammar_bundle_executor_unconfigured",
+                prompt_version=prompt_version,
+            )
+        model, model_config = build_model_for_route(
+            settings,
+            MODEL_ROUTE_READER_LAYER_GRAMMAR_BUNDLE,
+        )
+        if model is None:
+            raise GrammarExecutionError(
+                "reader_layer_grammar_bundle model route is not configured",
+                retryable=False,
+                failure_class="configuration",
+                failure_code="model_route_unavailable",
+                prompt_version=prompt_version,
+            )
+
+        assert_real_llm_allowed(
+            (
+                "app.services.reader_orchestration.grammar_worker."
+                "PydanticAIGrammarBundleExecutor"
+            ),
+            model_config=model_config,
+        )
+
+        agent = self._build_agent(model=model)
+        try:
+            result = await self._run_agent(agent, _build_grammar_prompt(context))
+        except GrammarExecutionError:
+            raise
+        except Exception as exc:
+            raise GrammarExecutionError(
+                f"reader_layer_grammar_bundle agent execution failed: {exc}",
+                retryable=True,
+                failure_class="provider",
+                failure_code=type(exc).__name__,
+                prompt_version=prompt_version,
+                model_profile=(
+                    str(model_config.profile_name) if model_config is not None else None
+                ),
+                model_provider=(
+                    str(model_config.provider) if model_config is not None else None
+                ),
+                model_name=(
+                    str(model_config.model_name) if model_config is not None else None
+                ),
+            ) from exc
+
+        try:
+            candidate_output = GrammarBundleCandidateOutput.model_validate(result.output)
+        except ValidationError as exc:
+            raise GrammarExecutionError(
+                f"reader_layer_grammar_bundle produced invalid structured output: {exc}",
+                retryable=False,
+                failure_class="validation",
+                failure_code="model_output_invalid",
+                prompt_version=prompt_version,
+                model_profile=(
+                    str(model_config.profile_name) if model_config is not None else None
+                ),
+                model_provider=(
+                    str(model_config.provider) if model_config is not None else None
+                ),
+                model_name=(
+                    str(model_config.model_name) if model_config is not None else None
+                ),
+            ) from exc
+
+        output, diagnostics = _build_grammar_output_from_candidates(
+            context,
+            candidate_output,
+        )
+        usage_data = extract_run_usage(result)
+        return GrammarExecutionResult(
+            output=output,
+            usage_data=usage_data,
+            prompt_version=prompt_version,
+            model_profile=(
+                str(model_config.profile_name) if model_config is not None else None
+            ),
+            model_provider=(
+                str(model_config.provider) if model_config is not None else None
+            ),
+            model_name=(
+                str(model_config.model_name) if model_config is not None else None
+            ),
+            diagnostics=diagnostics,
+        )
+
+
 class FakeGrammarBundleExecutor:
     async def generate(
         self,
@@ -179,7 +382,7 @@ class GrammarBundleWorkerService:
         self._pool = pool
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
         self._layer_publisher = layer_publisher or GrammarBundleLayerPublisher(pool=pool)
-        self._executor = executor or UnconfiguredGrammarBundleExecutor()
+        self._executor = executor or PydanticAIGrammarBundleExecutor()
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -714,6 +917,284 @@ class GrammarBundleWorkerService:
                 },
             )
         )
+
+
+def _build_grammar_prompt(context: GrammarJobContext) -> str:
+    anchor_segments = [
+        {
+            "anchor_segment_id": segment.anchor_segment_id,
+            "sentence_id": segment.sentence_id,
+            "segment_type": segment.segment_type,
+            "unit_start_utf16": segment.unit_start_utf16,
+            "unit_end_utf16": segment.unit_end_utf16,
+            "text": segment.text,
+        }
+        for segment in context.anchor_segments
+    ]
+    return (
+        "Generate high-value grammar bundle annotations for a single reading unit.\n"
+        f"source_language: {context.source_language}\n"
+        f"unit_id: {context.unit_id}\n"
+        f"max_grammar_notes: {MAX_GRAMMAR_NOTE_ITEMS}\n"
+        f"max_sentence_analyses: {MAX_SENTENCE_ANALYSIS_ITEMS}\n"
+        "Return only the structured candidate output.\n"
+        "<source_text>\n"
+        f"{context.source_text}\n"
+        "</source_text>\n"
+        "<anchor_segments_json>\n"
+        f"{json.dumps(anchor_segments, ensure_ascii=False)}\n"
+        "</anchor_segments_json>"
+    )
+
+
+def _build_grammar_output_from_candidates(
+    context: GrammarJobContext,
+    candidate_output: GrammarBundleCandidateOutput,
+) -> tuple[GrammarBundleOutput, dict[str, Any]]:
+    segments_by_id = {
+        segment.anchor_segment_id: segment
+        for segment in context.anchor_segments
+    }
+    grammar_notes: list[GrammarNoteItem] = []
+    sentence_analyses: list[SentenceAnalysisItem] = []
+    skipped_items: list[dict[str, Any]] = []
+
+    for item_index, item in enumerate(candidate_output.grammar_notes):
+        resolved_spans: list[ReaderTextRangeAnchor] = []
+        note_rejected = False
+        for span_index, span in enumerate(item.spans):
+            segment = segments_by_id.get(span.anchor_segment_id)
+            if segment is not None and segment.segment_type == "fallback_window":
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=item_index,
+                        item_type=item.item_type,
+                        anchor_segment_id=span.anchor_segment_id,
+                        selected_text=span.selected_text,
+                        reason_code="boundary_low_fallback_window",
+                        span_index=span_index,
+                    )
+                )
+                note_rejected = True
+                break
+            resolved_anchor, reason_code = _resolve_candidate_anchor(
+                context=context,
+                segments_by_id=segments_by_id,
+                anchor_segment_id=span.anchor_segment_id,
+                selected_text=span.selected_text,
+            )
+            if resolved_anchor is None:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=item_index,
+                        item_type=item.item_type,
+                        anchor_segment_id=span.anchor_segment_id,
+                        selected_text=span.selected_text,
+                        reason_code=reason_code,
+                        span_index=span_index,
+                    )
+                )
+                note_rejected = True
+                break
+            resolved_spans.append(resolved_anchor)
+
+        if note_rejected:
+            continue
+
+        try:
+            grammar_notes.append(
+                GrammarNoteItem(
+                    spans=resolved_spans,
+                    grammar_point=item.grammar_point,
+                    pattern=item.pattern,
+                    note=item.note,
+                )
+            )
+        except ValidationError:
+            skipped_items.append(
+                _build_skip_diagnostic(
+                    item_index=item_index,
+                    item_type=item.item_type,
+                    anchor_segment_id=item.spans[0].anchor_segment_id,
+                    selected_text=item.spans[0].selected_text,
+                    reason_code="resolved_item_invalid",
+                )
+            )
+
+    for item_index, item in enumerate(candidate_output.sentence_analyses):
+        segment = segments_by_id.get(item.anchor_segment_id)
+        if segment is not None and segment.segment_type == "fallback_window":
+            skipped_items.append(
+                _build_skip_diagnostic(
+                    item_index=item_index,
+                    item_type=item.item_type,
+                    anchor_segment_id=item.anchor_segment_id,
+                    selected_text=item.selected_text,
+                    reason_code="boundary_low_fallback_window",
+                )
+            )
+            continue
+        resolved_anchor, reason_code = _resolve_candidate_anchor(
+            context=context,
+            segments_by_id=segments_by_id,
+            anchor_segment_id=item.anchor_segment_id,
+            selected_text=item.selected_text,
+        )
+        if resolved_anchor is None:
+            skipped_items.append(
+                _build_skip_diagnostic(
+                    item_index=item_index,
+                    item_type=item.item_type,
+                    anchor_segment_id=item.anchor_segment_id,
+                    selected_text=item.selected_text,
+                    reason_code=reason_code,
+                )
+            )
+            continue
+
+        try:
+            sentence_analyses.append(
+                SentenceAnalysisItem(
+                    anchor=resolved_anchor,
+                    label=item.label,
+                    analysis=item.analysis,
+                    chunks=[
+                        SentenceAnalysisChunk(
+                            order=chunk_index + 1,
+                            label=chunk.label,
+                            text=chunk.text,
+                        )
+                        for chunk_index, chunk in enumerate(item.chunks)
+                    ],
+                )
+            )
+        except ValidationError:
+            skipped_items.append(
+                _build_skip_diagnostic(
+                    item_index=item_index,
+                    item_type=item.item_type,
+                    anchor_segment_id=item.anchor_segment_id,
+                    selected_text=item.selected_text,
+                    reason_code="resolved_item_invalid",
+                )
+            )
+
+    trimmed_skipped_items = _trim_skipped_diagnostics(skipped_items)
+    return GrammarBundleOutput(
+        grammar_notes=grammar_notes,
+        sentence_analyses=sentence_analyses,
+    ), {
+        "candidate_grammar_note_count": len(candidate_output.grammar_notes),
+        "candidate_sentence_analysis_count": len(candidate_output.sentence_analyses),
+        "resolved_grammar_note_count": len(grammar_notes),
+        "resolved_sentence_analysis_count": len(sentence_analyses),
+        "skipped_item_count": len(skipped_items),
+        "skipped_items": trimmed_skipped_items,
+        "skipped_items_truncated_count": max(
+            0,
+            len(skipped_items) - len(trimmed_skipped_items),
+        ),
+    }
+
+
+def _resolve_candidate_anchor(
+    *,
+    context: GrammarJobContext,
+    segments_by_id: dict[str, GrammarAnchorSegmentContext],
+    anchor_segment_id: str,
+    selected_text: str,
+) -> tuple[ReaderTextRangeAnchor | None, str]:
+    segment = segments_by_id.get(anchor_segment_id)
+    if segment is None:
+        return None, "anchor_segment_unknown"
+
+    occurrences = _find_unique_segment_occurrences(segment.text, selected_text)
+    if not occurrences:
+        return None, "selected_text_not_found"
+    if len(occurrences) > 1:
+        return None, "selected_text_ambiguous"
+
+    segment_start, segment_end = occurrences[0]
+    start_offset = segment.unit_start_utf16 + segment_start
+    end_offset = segment.unit_start_utf16 + segment_end
+    if start_offset < segment.unit_start_utf16 or end_offset > segment.unit_end_utf16:
+        return None, "selected_text_outside_segment"
+
+    resolved_text = slice_by_utf16_offsets(
+        context.source_text,
+        start_offset,
+        end_offset,
+    )
+    if resolved_text is None or resolved_text != selected_text:
+        return None, "selected_text_slice_mismatch"
+
+    return (
+        ReaderTextRangeAnchor(
+            base_id=str(context.base_id),
+            unit_id=context.unit_id,
+            anchor_segment_id=segment.anchor_segment_id,
+            sentence_id=segment.sentence_id,
+            segment_type=segment.segment_type,  # type: ignore[arg-type]
+            start_offset=start_offset,
+            end_offset=end_offset,
+            selected_text=resolved_text,
+            text_hash=compute_text_range_hash(resolved_text),
+        ),
+        "",
+    )
+
+
+def _find_unique_segment_occurrences(
+    segment_text: str,
+    selected_text: str,
+) -> list[tuple[int, int]]:
+    occurrences: list[tuple[int, int]] = []
+    search_start = 0
+    selected_text_length = len(selected_text)
+    while True:
+        index = segment_text.find(selected_text, search_start)
+        if index < 0:
+            break
+        start_offset = len(
+            segment_text[:index].encode("utf-16-le", "surrogatepass")
+        ) // 2
+        end_offset = start_offset + len(
+            selected_text.encode("utf-16-le", "surrogatepass")
+        ) // 2
+        occurrences.append((start_offset, end_offset))
+        search_start = index + max(1, selected_text_length)
+    return occurrences
+
+
+def _build_skip_diagnostic(
+    *,
+    item_index: int,
+    item_type: str,
+    anchor_segment_id: str,
+    selected_text: str,
+    reason_code: str,
+    span_index: int | None = None,
+) -> dict[str, Any]:
+    diagnostic = {
+        "item_index": item_index,
+        "item_type": item_type,
+        "anchor_segment_id": anchor_segment_id,
+        "selected_text": _truncate_diagnostic_text(selected_text),
+        "reason_code": reason_code,
+    }
+    if span_index is not None:
+        diagnostic["span_index"] = span_index
+    return diagnostic
+
+
+def _trim_skipped_diagnostics(skipped_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return skipped_items[:MAX_GRAMMAR_DIAGNOSTIC_ITEMS]
+
+
+def _truncate_diagnostic_text(text: str) -> str:
+    if len(text) <= MAX_GRAMMAR_DIAGNOSTIC_TEXT_LENGTH:
+        return text
+    return text[: MAX_GRAMMAR_DIAGNOSTIC_TEXT_LENGTH - 3] + "..."
 
 
 def _sanitize_grammar_bundle_output(

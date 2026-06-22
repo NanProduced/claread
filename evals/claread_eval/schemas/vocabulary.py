@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -202,4 +203,59 @@ class VocabularyEvalDataset(BaseModel):
 
 
 CandidateItemCount = Annotated[int, Field(ge=0, le=MAX_VOCABULARY_ITEMS)]
+
+
+class VocabularyCaseSummary(BaseModel):
+    """Per-case summary produced by the local deterministic runner."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    case_id: str
+    case_verdict: VocabularyVerdict
+    hard_failures: int = 0
+    soft_failures: int = 0
+    skip_count: int = 0
+    grader_results: list[VocabularyGraderResult] = Field(default_factory=list)
+
+
+class VocabularySeedReport(BaseModel):
+    """Aggregate report produced by `run_vocabulary_seed`.
+
+    Intentionally distinct from `EvalReport` so vocabulary seed runs do not
+    pollute the article-analysis contract.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    run_id: str = Field(min_length=1)
+    dataset_id: str = Field(min_length=1)
+    dataset_dir: str = Field(min_length=1)
+    grader_names: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.now)
+    total_cases: int = 0
+    passed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    hard_failure_case_ids: list[str] = Field(default_factory=list)
+    soft_failure_case_ids: list[str] = Field(default_factory=list)
+    verdict_counts: dict[str, int] = Field(default_factory=dict)
+    grader_pass_counts: dict[str, int] = Field(default_factory=dict)
+    case_summaries: list[VocabularyCaseSummary] = Field(default_factory=list)
+
+
+class VocabularyRunConfig(BaseModel):
+    """Runner config for vocabulary seed runs.
+
+    Mirrors the shape of `EvalRunConfig` but is intentionally separate to
+    keep the article-analysis contract untouched.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str = Field(min_length=1)
+    dataset_dir: str = Field(min_length=1)
+    prompt_version: str | None = None
+    workflow_version: str = "d5-v3-vocabulary-worker"
+    note: str | None = None
 ResolvedItemCount = Annotated[int, Field(ge=0, le=MAX_VOCABULARY_ITEMS)]
