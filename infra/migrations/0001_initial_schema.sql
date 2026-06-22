@@ -914,7 +914,12 @@ CREATE TABLE reader_jobs (
   run_id UUID NOT NULL,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   job_type TEXT NOT NULL CHECK (
-    job_type IN ('build_base', 'translate_unit', 'build_vocabulary_layer')
+    job_type IN (
+      'build_base',
+      'translate_unit',
+      'build_vocabulary_layer',
+      'build_grammar_bundle'
+    )
   ),
   target_type TEXT NOT NULL CHECK (target_type IN (
     'record', 'unit', 'anchor_segment', 'unit_range'

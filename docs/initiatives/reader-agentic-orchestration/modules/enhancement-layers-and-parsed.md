@@ -197,6 +197,22 @@ Grammar bundle 的输出必须拆成两个 subtype：
 
 D5 初版可以保留一个 `grammar_bundle_worker` 同时产出两类 subtype，减少重复上下文和成本。若后续发现 sentence analysis 的触发条件、成本或质量目标与 grammar note 明显不同，再拆为独立 worker；拆 worker 不改变 layer subtype 合同。
 
+D5-V4 grammar bundle backend facts：
+
+- `reader_jobs.job_type = 'build_grammar_bundle'`，`target_type = 'unit'`。
+- Worker output 可以同时包含 `grammar_note` 与 `sentence_analysis`，但 persisted truth 必须是两个独立 `enhancement_layers` rows。
+- Layer fingerprints 必须独立：`grammar_note_unit_v1` 与 `sentence_analysis_unit_v1`，不得复用 job-level `grammar_bundle_unit_v1`。
+- Empty sanitized output 是 no-op success：不写 layer、不写 `layer_published` event，但 job/run 可成功并记录 no-op diagnostics。
+- 单次 bundle usage 只记一条 job-level `ai_usage_events`；不得按两个 layer 重复计费。
+- `grammar_note` 任一 span 命中 `fallback_window` 时整条 item 跳过，不能部分保留 spans。
+- D5-V4 snapshot 只暴露 top-level layer metadata，不投影 grammar marks/nodes 到 `snapshot.value`。
+
+D5 vocabulary eval seed disposition：
+
+- 评估方向是 `accepted_with_changes`：本地 deterministic seed/graders/tests 先行。
+- 下一步不得按单文件 JSONL 落地；应匹配现有 `evals` dataset 目录形态，或新增专用 vocabulary loader。
+- LangSmith、LLM judge runner 泛化、vocabulary fallback-window policy 和 parsed/readiness policy 后置。
+
 Summary can be unit-level or section-level but must name its source units.
 
 ## Plate Projection

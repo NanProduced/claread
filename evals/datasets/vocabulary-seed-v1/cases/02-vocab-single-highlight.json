@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "id": "vocab-single-highlight",
+  "description": "Single vocab_highlight with AWL-ish word.",
+  "unit_id": "u2",
+  "unit_text": "The committee adjourned after lengthy debate.",
+  "anchor_segments": [
+    {
+      "anchor_segment_id": "s1",
+      "sentence_id": "s1",
+      "segment_type": "sentence",
+      "unit_start_utf16": 0,
+      "unit_end_utf16": 45,
+      "text": "The committee adjourned after lengthy debate.",
+      "boundary_quality": "normal"
+    }
+  ],
+  "gold_items": [
+    {
+      "item_type": "vocab_highlight",
+      "anchor_segment_id": "s1",
+      "selected_text": "adjourned",
+      "headword": "adjourned",
+      "gloss": "延期；休会",
+      "brief_explanation": "暂停会议",
+      "reason": "useful_for_current_goal"
+    }
+  ],
+  "expected_diagnostics": {
+    "candidate_item_count": 1,
+    "resolved_item_count": 1,
+    "skipped_item_count": 0,
+    "skipped_reason_codes": []
+  },
+  "unicode_pitfall": null,
+  "difficulty_band": "AWL",
+  "tags": [
+    "single_highlight",
+    "awl"
+  ],
+  "execution": {
+    "output": {
+      "schema_version": 1,
+      "items": [
+        {
+          "item_type": "vocab_highlight",
+          "anchor_segment_id": "s1",
+          "unit_start_utf16": 14,
+          "unit_end_utf16": 23,
+          "selected_text": "adjourned",
+          "text_hash": "b41fa5a3"
+        }
+      ]
+    },
+    "diagnostics": {
+      "candidate_item_count": 1,
+      "resolved_item_count": 1,
+      "skipped_item_count": 0,
+      "skipped_items": [],
+      "skipped_items_truncated_count": 0
+    },
+    "fail_closed": false,
+    "fail_closed_reason": null
+  }
+}

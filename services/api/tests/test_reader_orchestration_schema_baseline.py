@@ -590,6 +590,32 @@ async def test_reader_jobs_base_scope_and_active_fingerprint(reader_schema: str)
                 user_id,
             )
 
+        with pytest.raises(asyncpg.CheckViolationError):
+            await conn.execute(
+                """
+                INSERT INTO reader_jobs (
+                    reading_record_id,
+                    base_id,
+                    run_id,
+                    user_id,
+                    job_type,
+                    target_type,
+                    target_key,
+                    status,
+                    expected_generation,
+                    operation_fingerprint,
+                    idempotency_key
+                )
+                VALUES (
+                    $1, NULL, $2, $3, 'build_grammar_bundle', 'unit', 'u-grammar', 'queued', 1,
+                    'fp-grammar-missing-base', 'id-grammar-0'
+                )
+                """,
+                record_id,
+                run_id,
+                user_id,
+            )
+
         await conn.execute(
             """
             INSERT INTO reader_jobs (
@@ -631,6 +657,32 @@ async def test_reader_jobs_base_scope_and_active_fingerprint(reader_schema: str)
             VALUES (
                 $1, $2, $3, $4, 'build_vocabulary_layer', 'unit', 'u-vocab', 'queued', 1,
                 'fp-vocab', 'id-vocab-1'
+            )
+            """,
+            record_id,
+            base_id,
+            run_id,
+            user_id,
+        )
+
+        await conn.execute(
+            """
+            INSERT INTO reader_jobs (
+                reading_record_id,
+                base_id,
+                run_id,
+                user_id,
+                job_type,
+                target_type,
+                target_key,
+                status,
+                expected_generation,
+                operation_fingerprint,
+                idempotency_key
+            )
+            VALUES (
+                $1, $2, $3, $4, 'build_grammar_bundle', 'unit', 'u-grammar', 'queued', 1,
+                'fp-grammar', 'id-grammar-1'
             )
             """,
             record_id,
@@ -774,6 +826,7 @@ async def test_enhancement_layers_published_uniqueness(reader_schema: str) -> No
         user_id = await _insert_user(conn)
         record_id = await _insert_reading_record(conn, user_id)
         base_id = await _insert_reading_base(conn, record_id)
+        run_id = await _insert_reader_run(conn, record_id, user_id)
         other_base_id = await _insert_reading_base(
             conn,
             record_id,
@@ -879,6 +932,106 @@ async def test_enhancement_layers_published_uniqueness(reader_schema: str) -> No
             record_id,
             base_id,
         )
+
+        grammar_job_id = await conn.fetchval(
+            """
+            INSERT INTO reader_jobs (
+                reading_record_id,
+                base_id,
+                run_id,
+                user_id,
+                job_type,
+                target_type,
+                target_key,
+                status,
+                expected_generation,
+                operation_fingerprint,
+                idempotency_key
+            )
+            VALUES (
+                $1, $2, $3, $4, 'build_grammar_bundle', 'unit', 'u-grammar', 'succeeded', 1,
+                'grammar_bundle_unit_v1', 'grammar-job-1'
+            )
+            RETURNING id
+            """,
+            record_id,
+            base_id,
+            run_id,
+            user_id,
+        )
+
+        await conn.execute(
+            """
+            INSERT INTO enhancement_layers (
+                reading_record_id,
+                base_id,
+                layer_type,
+                target_scope,
+                target_key,
+                generation,
+                status,
+                operation_fingerprint,
+                schema_version,
+                source_job_id
+            )
+            VALUES (
+                $1, $2, 'grammar_note', 'unit', 'u-grammar', 1, 'published',
+                'grammar_note_unit_v1', 1, $3
+            )
+            """,
+            record_id,
+            base_id,
+            grammar_job_id,
+        )
+
+        await conn.execute(
+            """
+            INSERT INTO enhancement_layers (
+                reading_record_id,
+                base_id,
+                layer_type,
+                target_scope,
+                target_key,
+                generation,
+                status,
+                operation_fingerprint,
+                schema_version,
+                source_job_id
+            )
+            VALUES (
+                $1, $2, 'sentence_analysis', 'unit', 'u-grammar', 1, 'published',
+                'sentence_analysis_unit_v1', 1, $3
+            )
+            """,
+            record_id,
+            base_id,
+            grammar_job_id,
+        )
+
+        with pytest.raises(asyncpg.UniqueViolationError):
+            await conn.execute(
+                """
+                INSERT INTO enhancement_layers (
+                    reading_record_id,
+                    base_id,
+                    layer_type,
+                    target_scope,
+                    target_key,
+                    generation,
+                    status,
+                    operation_fingerprint,
+                    schema_version,
+                    source_job_id
+                )
+                VALUES (
+                    $1, $2, 'grammar_note', 'unit', 'u-grammar-copy', 1, 'published',
+                    'grammar_note_unit_v1', 1, $3
+                )
+                """,
+                record_id,
+                base_id,
+                grammar_job_id,
+            )
     finally:
         await conn.close()
 

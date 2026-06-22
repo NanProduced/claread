@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "id": "vocab-same-span-conflict",
+  "description": "Same span resolves to context_gloss; phrase + vocab skipped.",
+  "unit_id": "u8",
+  "unit_text": "The market rallied on the news.",
+  "anchor_segments": [
+    {
+      "anchor_segment_id": "s1",
+      "sentence_id": "s1",
+      "segment_type": "sentence",
+      "unit_start_utf16": 0,
+      "unit_end_utf16": 31,
+      "text": "The market rallied on the news.",
+      "boundary_quality": "normal"
+    }
+  ],
+  "gold_items": [
+    {
+      "item_type": "context_gloss",
+      "anchor_segment_id": "s1",
+      "selected_text": "rallied",
+      "display": "rallied",
+      "gloss": "此处依赖 market + news 语境",
+      "reason": "context-bound price move"
+    }
+  ],
+  "expected_diagnostics": {
+    "candidate_item_count": 3,
+    "resolved_item_count": 1,
+    "skipped_item_count": 2,
+    "skipped_reason_codes_at_least": [
+      "span_conflict_higher_priority_kept"
+    ],
+    "skipped_reason_codes": [
+      "span_conflict_higher_priority_kept"
+    ]
+  },
+  "unicode_pitfall": null,
+  "difficulty_band": "K2",
+  "tags": [
+    "same_span_conflict",
+    "priority"
+  ],
+  "execution": {
+    "output": {
+      "schema_version": 1,
+      "items": [
+        {
+          "item_type": "context_gloss",
+          "anchor_segment_id": "s1",
+          "unit_start_utf16": 11,
+          "unit_end_utf16": 18,
+          "selected_text": "rallied",
+          "text_hash": "36b067a6"
+        }
+      ]
+    },
+    "diagnostics": {
+      "candidate_item_count": 3,
+      "resolved_item_count": 1,
+      "skipped_item_count": 2,
+      "skipped_items": [
+        {
+          "item_index": 1,
+          "item_type": "phrase_gloss",
+          "anchor_segment_id": "s1",
+          "selected_text": "rallied",
+          "reason_code": "span_conflict_higher_priority_kept"
+        },
+        {
+          "item_index": 2,
+          "item_type": "vocab_highlight",
+          "anchor_segment_id": "s1",
+          "selected_text": "rallied",
+          "reason_code": "span_conflict_higher_priority_kept"
+        }
+      ],
+      "skipped_items_truncated_count": 0
+    },
+    "fail_closed": false,
+    "fail_closed_reason": null
+  }
+}

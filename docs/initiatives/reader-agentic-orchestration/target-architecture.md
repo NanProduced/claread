@@ -409,6 +409,8 @@ Plate fragment 只能来自 typed layer result、document tool result 或已 san
 | D5-001 | 2026-06-21 | D5-V1 Vocabulary Layer Backend Slice 已通过 review：`vocab_highlight`、`phrase_gloss`、`context_gloss` 是同一 `vocabulary` layer 的 item subtype；vocabulary job 使用正式 `reader_jobs.job_type = 'build_vocabulary_layer'`，不得挪用 `build_base`；worker 默认未配置时失败且不发布空 layer，只有显式 fake executor 可发布空 output。 |
 | D5-002 | 2026-06-21 | D5-V2 Vocabulary Projection / Web Read-only Rendering 已通过 review：published `vocabulary` layer 从 domain facts 重建为 stable source leaf 上的 `reader_vocabulary_marks`，Web 只读展示三类 item；不持久化 Plate path/op，不读取旧 `render_scene_json`，仍通过 snapshot reload 承接，不启用 `projection_ops` incremental applier。 |
 | D5-003 | 2026-06-21 | D5-V3 Real Vocabulary Executor / Prompt 已通过 review：`reader_layer_vocabulary` route 必须显式配置 `reader_vocabulary_model_profile`，不得 fallback 到 annotation profile；LLM 只输出内部 candidate schema，后端确定性解析 `anchor_segment_id + selected_text` 为 unit-local UTF-16 offsets/hash；同一 span 按 `context_gloss > phrase_gloss > vocab_highlight` 仲裁；不改变 public `VocabularyLayerOutput` schema，不读取旧 `render_scene_json`，不启用 `projection_ops`。 |
+| D5-004 | 2026-06-21 | D5-V4 Grammar Bundle Backend Slice 已通过 review：grammar bundle job 使用 `reader_jobs.job_type = 'build_grammar_bundle'`；一次 worker output 发布为独立 `grammar_note` 与 `sentence_analysis` layer rows，layer fingerprints 分别为 `grammar_note_unit_v1` / `sentence_analysis_unit_v1`；usage 只记 job-level attribution；no-op success 不发布 layer/event；D5-V4 不做 Web projection 或 real grammar executor。 |
+| D5-005 | 2026-06-21 | Vocabulary Eval Seed 评估结论为 `accepted_with_changes`：接受 deterministic seed/graders/rubric 方向，但下一步必须匹配现有 eval harness 的 dataset shape 或显式新增 vocabulary loader；LangSmith、LLM judge runner 泛化、vocabulary fallback-window policy 和 parsed/readiness policy 均后置。 |
 
 ## 待决问题
 
@@ -419,4 +421,4 @@ Plate fragment 只能来自 typed layer result、document tool result 或已 san
 - Candidate Reading Base Web 编辑器的最小形态。
 - RAG 第一版 provider 和 adapter 实现。
 - OCR 第一版是否只支持图片，还是同时支持 PDF 富文档。
-- Parsed Decision 的首批 eval dataset 和验收 rubric。
+- Vocabulary / Parsed Decision 的首批 eval dataset 和验收 rubric。

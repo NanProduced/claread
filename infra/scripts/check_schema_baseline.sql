@@ -348,3 +348,19 @@ BEGIN
     RAISE EXCEPTION 'missing index: uq_enhancement_layers_active_published';
   END IF;
 END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'reader_jobs'
+      AND c.contype = 'c'
+      AND pg_get_constraintdef(c.oid) LIKE '%build_grammar_bundle%'
+  ) THEN
+    RAISE EXCEPTION 'reader_jobs job_type check missing build_grammar_bundle';
+  END IF;
+END $$;

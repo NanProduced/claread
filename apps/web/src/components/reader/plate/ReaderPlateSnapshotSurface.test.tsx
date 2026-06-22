@@ -1,13 +1,18 @@
 /** @vitest-environment jsdom */
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { ReaderPlateSnapshotSurface } from "@/components/reader/plate/ReaderPlateSnapshotSurface";
 import type {
   ReaderContextGlossMarkDto,
+  ReaderGrammarNoteMarkDto,
   ReaderPlateValueDto,
   ReaderPhraseGlossMarkDto,
+  ReaderSentenceAnalysisNodeDto,
   ReaderTranslationNodeDto,
   ReaderUnitNodeDto,
   ReaderVocabHighlightMarkDto,
@@ -25,6 +30,8 @@ function makeUnitWithTranslation(overrides: {
   translationText?: string;
   anchorSegmentId?: string;
   vocabularyMarks?: ReaderVocabularyMarkDto[];
+  grammarNoteMarks?: ReaderGrammarNoteMarkDto[];
+  sentenceAnalysis?: ReaderSentenceAnalysisNodeDto;
 }): ReaderUnitNodeDto {
   const anchorSegmentId = overrides.anchorSegmentId ?? "s1";
   const unit: ReaderUnitNodeDto = {
@@ -75,6 +82,7 @@ function makeUnitWithTranslation(overrides: {
                 segment_start_utf16: 0,
                 segment_end_utf16: overrides.sourceText.length,
                 reader_vocabulary_marks: overrides.vocabularyMarks,
+                reader_grammar_note_marks: overrides.grammarNoteMarks,
               },
             ],
           },
@@ -99,6 +107,9 @@ function makeUnitWithTranslation(overrides: {
       children: [{ text: overrides.translationText }],
     };
     unit.children.push(translation);
+  }
+  if (overrides.sentenceAnalysis) {
+    unit.children.push(overrides.sentenceAnalysis);
   }
 
   return unit;
@@ -152,6 +163,59 @@ function makeVocabularyMark(
     gloss: "在这里表示逐步转成",
     reason: "依赖当前上下文，不是静态词典义",
     ...contextOverrides,
+  };
+}
+
+function makeGrammarNoteMark(
+  overrides: Partial<ReaderGrammarNoteMarkDto> = {},
+): ReaderGrammarNoteMarkDto {
+  return {
+    mark_id: "mark_grammar_1",
+    item_id: "grammar_note_item_1",
+    owner: "system_ai",
+    layer_id: "layer_grammar_note_1",
+    item_type: "grammar_note",
+    anchor_segment_id: "s1",
+    start_offset: 0,
+    end_offset: 8,
+    selected_text: "Not only",
+    segment_start_utf16: 0,
+    segment_end_utf16: 8,
+    starts_here: true,
+    ends_here: true,
+    span_index: 0,
+    span_count: 1,
+    show_note_chip: true,
+    grammar_point: "倒装触发",
+    pattern: "not only ... but also",
+    note: "前置否定结构触发助动词提前。",
+    ...overrides,
+  };
+}
+
+function makeSentenceAnalysisNode(
+  overrides: Partial<ReaderSentenceAnalysisNodeDto> = {},
+): ReaderSentenceAnalysisNodeDto {
+  return {
+    type: "reader_sentence_analysis",
+    owner: "system_ai",
+    analysis_id: "analysis_1",
+    layer_id: "layer_sentence_analysis_1",
+    layer_version: 1,
+    base_id: "base_1",
+    unit_id: "u1",
+    target_scope: "unit",
+    target_key: "u1",
+    anchor_segment_id: "s1",
+    selected_text: "Not only did the team revise the plan, but they also clarified the timeline.",
+    label: "fronted emphasis with inversion",
+    analysis: "前置的否定结构触发倒装，后半句补充并列结果。",
+    chunks: [
+      { order: 1, label: "cue", text: "Not only" },
+      { order: 2, label: "result", text: "but they also clarified the timeline" },
+    ],
+    children: [{ text: "前置的否定结构触发倒装，后半句补充并列结果。" }],
+    ...overrides,
   };
 }
 
@@ -357,5 +421,67 @@ describe("ReaderPlateSnapshotSurface", () => {
     expect(mark?.className).toContain("reader-mark--context");
     expect(chip?.textContent).toContain("语境");
     expect(chip?.textContent).toContain("引发后续动作");
+  });
+
+  it("renders grammar_note as a stable-source inline mark with a grammar chip", () => {
+    const value: ReaderPlateValueDto = [
+      makeUnitWithTranslation({
+        unitId: "u1",
+        sourceText: "Not only did the team revise the plan.",
+        grammarNoteMarks: [
+          makeGrammarNoteMark({
+            mark_id: "mark_grammar_focus_1",
+            item_id: "grammar_focus_1",
+            selected_text: "Not only",
+            grammar_point: "倒装触发",
+          }),
+        ],
+      }),
+    ];
+
+    const { container } = render(<ReaderPlateSnapshotSurface value={value} />);
+
+    const mark = container.querySelector('[data-reader-mark-id="mark_grammar_focus_1"]');
+    const chip = container.querySelector('[data-reader-grammar-note-chip="grammar_focus_1"]');
+    expect(mark?.getAttribute("data-reader-annotation-kind")).toBe("grammar_note");
+    expect(mark?.getAttribute("data-reader-mark-tone")).toBe("grammar");
+    expect(chip?.textContent).toContain("语法");
+    expect(chip?.textContent).toContain("倒装触发");
+  });
+
+  it("renders sentence_analysis as a distinct system_ai block with chunks", () => {
+    const value: ReaderPlateValueDto = [
+      makeUnitWithTranslation({
+        unitId: "u1",
+        sourceText: "Not only did the team revise the plan, but they also clarified the timeline.",
+        translationText: "团队不仅修改了计划，还澄清了时间线。",
+        sentenceAnalysis: makeSentenceAnalysisNode(),
+      }),
+    ];
+
+    const { container } = render(<ReaderPlateSnapshotSurface value={value} />);
+
+    const analysisNode = container.querySelector('[data-reader-node="sentence-analysis"]');
+    expect(analysisNode).not.toBeNull();
+    expect(analysisNode?.getAttribute("data-layer-id")).toBe("layer_sentence_analysis_1");
+    expect(analysisNode?.getAttribute("data-anchor-segment-id")).toBe("s1");
+    expect(analysisNode?.textContent).toContain("句式拆解");
+    expect(analysisNode?.textContent).toContain("fronted emphasis with inversion");
+    expect(analysisNode?.textContent).toContain("Not only");
+    expect(analysisNode?.textContent).toContain("but they also clarified the timeline");
+  });
+
+  it("snapshot surface files do not reference render_scene_json", () => {
+    const surfaceSource = readFileSync(
+      resolve(process.cwd(), "src/components/reader/plate/ReaderPlateSnapshotSurface.tsx"),
+      "utf-8",
+    );
+    const dtoSource = readFileSync(
+      resolve(process.cwd(), "src/types/api/reader-plate.ts"),
+      "utf-8",
+    );
+
+    expect(surfaceSource).not.toContain("render_scene_json");
+    expect(dtoSource).not.toContain("render_scene_json");
   });
 });

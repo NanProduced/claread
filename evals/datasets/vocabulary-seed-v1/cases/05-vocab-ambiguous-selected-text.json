@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "id": "vocab-ambiguous-selected-text",
+  "description": "selected_text appears twice; skip with selected_text_ambiguous.",
+  "unit_id": "u5",
+  "unit_text": "We can can the leftover vegetables tomorrow.",
+  "anchor_segments": [
+    {
+      "anchor_segment_id": "s1",
+      "sentence_id": "s1",
+      "segment_type": "sentence",
+      "unit_start_utf16": 0,
+      "unit_end_utf16": 44,
+      "text": "We can can the leftover vegetables tomorrow.",
+      "boundary_quality": "normal"
+    }
+  ],
+  "gold_items": [],
+  "expected_diagnostics": {
+    "candidate_item_count": 1,
+    "resolved_item_count": 0,
+    "skipped_item_count_at_least": 1,
+    "skipped_reason_codes_at_least": [
+      "selected_text_ambiguous"
+    ]
+  },
+  "unicode_pitfall": null,
+  "difficulty_band": "K2",
+  "tags": [
+    "ambiguous",
+    "skip_reason"
+  ],
+  "execution": {
+    "output": {
+      "schema_version": 1,
+      "items": []
+    },
+    "diagnostics": {
+      "candidate_item_count": 1,
+      "resolved_item_count": 0,
+      "skipped_item_count": 1,
+      "skipped_items": [
+        {
+          "item_index": 0,
+          "item_type": "vocab_highlight",
+          "anchor_segment_id": "s1",
+          "selected_text": "can",
+          "reason_code": "selected_text_ambiguous"
+        }
+      ],
+      "skipped_items_truncated_count": 0
+    },
+    "fail_closed": false,
+    "fail_closed_reason": null
+  }
+}

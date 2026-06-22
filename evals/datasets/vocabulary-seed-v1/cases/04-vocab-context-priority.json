@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "id": "vocab-context-priority",
+  "description": "Polysem depends on local context; context_gloss wins.",
+  "unit_id": "u4",
+  "unit_text": "She deposited the check at the local bank.",
+  "anchor_segments": [
+    {
+      "anchor_segment_id": "s1",
+      "sentence_id": "s1",
+      "segment_type": "sentence",
+      "unit_start_utf16": 0,
+      "unit_end_utf16": 42,
+      "text": "She deposited the check at the local bank.",
+      "boundary_quality": "normal"
+    }
+  ],
+  "gold_items": [
+    {
+      "item_type": "context_gloss",
+      "anchor_segment_id": "s1",
+      "selected_text": "bank",
+      "display": "bank",
+      "gloss": "金融机构，依赖 deposit / check 等上下文",
+      "reason": "polysem resolved by deposit + check context"
+    }
+  ],
+  "expected_diagnostics": {
+    "candidate_item_count": 1,
+    "resolved_item_count": 1,
+    "skipped_item_count": 0,
+    "skipped_reason_codes": []
+  },
+  "unicode_pitfall": null,
+  "difficulty_band": "K2",
+  "tags": [
+    "context_priority",
+    "polysem"
+  ],
+  "execution": {
+    "output": {
+      "schema_version": 1,
+      "items": [
+        {
+          "item_type": "context_gloss",
+          "anchor_segment_id": "s1",
+          "unit_start_utf16": 37,
+          "unit_end_utf16": 41,
+          "selected_text": "bank",
+          "text_hash": "3b952e97"
+        }
+      ]
+    },
+    "diagnostics": {
+      "candidate_item_count": 1,
+      "resolved_item_count": 1,
+      "skipped_item_count": 0,
+      "skipped_items": [],
+      "skipped_items_truncated_count": 0
+    },
+    "fail_closed": false,
+    "fail_closed_reason": null
+  }
+}

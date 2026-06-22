@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "id": "vocab-phrase-priority",
+  "description": "Idiomatic phrase; phrase_gloss wins over vocab_highlight.",
+  "unit_id": "u3",
+  "unit_text": "She kicked the bucket last winter.",
+  "anchor_segments": [
+    {
+      "anchor_segment_id": "s1",
+      "sentence_id": "s1",
+      "segment_type": "sentence",
+      "unit_start_utf16": 0,
+      "unit_end_utf16": 34,
+      "text": "She kicked the bucket last winter.",
+      "boundary_quality": "normal"
+    }
+  ],
+  "gold_items": [
+    {
+      "item_type": "phrase_gloss",
+      "anchor_segment_id": "s1",
+      "selected_text": "kicked the bucket",
+      "phrase": "kicked the bucket",
+      "phrase_type": "idiom",
+      "gloss": "俚语：去世",
+      "reason": "useful_for_current_goal"
+    }
+  ],
+  "expected_diagnostics": {
+    "candidate_item_count": 1,
+    "resolved_item_count": 1,
+    "skipped_item_count": 0,
+    "skipped_reason_codes": []
+  },
+  "unicode_pitfall": null,
+  "difficulty_band": "off-list",
+  "tags": [
+    "phrase_priority",
+    "idiom"
+  ],
+  "execution": {
+    "output": {
+      "schema_version": 1,
+      "items": [
+        {
+          "item_type": "phrase_gloss",
+          "anchor_segment_id": "s1",
+          "unit_start_utf16": 4,
+          "unit_end_utf16": 21,
+          "selected_text": "kicked the bucket",
+          "text_hash": "3d80fbb1"
+        }
+      ]
+    },
+    "diagnostics": {
+      "candidate_item_count": 1,
+      "resolved_item_count": 1,
+      "skipped_item_count": 0,
+      "skipped_items": [],
+      "skipped_items_truncated_count": 0
+    },
+    "fail_closed": false,
+    "fail_closed_reason": null
+  }
+}

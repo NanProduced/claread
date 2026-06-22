@@ -601,6 +601,48 @@ Focused tests 已通过：
 - `uv run pytest tests/test_reader_orchestration_schema_models.py tests/test_reader_orchestration_schema_baseline.py -q`
 - `uv run python -m compileall app/services/reader_orchestration/vocabulary_worker.py app/llm/routes.py app/llm/registry.py app/config/settings.py tests/test_reader_orchestration_vocabulary_executor.py tests/test_reader_orchestration_vocabulary_worker.py`
 
+### D5-V4. Grammar Bundle Backend Slice
+
+状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-V4-grammar-bundle-backend-closeout.md`。
+
+Closeout 结论：
+
+- 已新增正式 `reader_jobs.job_type = 'build_grammar_bundle'`，固定 `target_type = 'unit'` 和 `operation_fingerprint = 'grammar_bundle_unit_v1'`。
+- 已新增 grammar typed schema：`GrammarNoteItem`、`SentenceAnalysisChunk`、`SentenceAnalysisItem`、`GrammarNoteLayerOutput`、`SentenceAnalysisLayerOutput` 和 internal `GrammarBundleOutput`。
+- `GrammarJobBootstrapService` 会选择当前 active base 下最早未处理 unit，并避免重复 active/succeeded grammar bundle job。
+- `GrammarBundleWorkerService` 默认 unconfigured executor 失败且不发布 layer；显式 fake executor 可用于 focused tests。
+- `GrammarBundleLayerPublisher` 将一次 bundle 发布拆成两个独立 layer rows：`grammar_note_unit_v1` 与 `sentence_analysis_unit_v1`，并发布对应 `layer_published` events。
+- Empty sanitized output 采用 no-op success：不插入 layer，不发布 `layer_published` reader event，job/run 成功，`output_ref_json.no_op = true`。
+- Usage attribution 采用单条 job-level `ai_usage_events`，`enhancement_layer_id = NULL`，metadata 记录 produced layer ids/types 与 no-op，避免双 layer 重复计费。
+- fallback_window 处理：`sentence_analysis` 命中 fallback window 时跳过；`grammar_note` 任一 span 命中 fallback window 时整条 item 跳过，不发布部分 grounding。
+- Snapshot reload 保持 read-only；D5-V4 只暴露 top-level grammar layer metadata，不投影到 `snapshot.value`。
+
+D5-V4 不包含：
+
+- real PydanticAI grammar executor / prompt。
+- Web grammar projection / rendering。
+- grammar parsed decision / coverage policy。
+- Ask tools、RAG、SSE、LangGraph flow。
+- `projection_ops` incremental applier。
+
+Focused tests 已通过：
+
+- `uv run ruff check app/schemas/reader_orchestration.py app/services/reader_orchestration/grammar_worker.py app/services/reader_orchestration/job_bootstrap.py app/services/reader_orchestration/layer_publisher.py app/services/ai_usage tests/test_reader_orchestration_grammar_worker.py tests/test_reader_orchestration_schema_models.py tests/test_reader_orchestration_schema_baseline.py`
+- `uv run pytest tests/test_reader_orchestration_grammar_worker.py tests/test_reader_orchestration_schema_models.py tests/test_reader_orchestration_schema_baseline.py -q`
+
+### D5-E1. Vocabulary Eval Seed Disposition
+
+状态：accepted_with_changes on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-vocabulary-eval-seed-disposition.md`。
+
+结论：
+
+- 评估方向接受：优先建立 vocabulary deterministic eval seed，覆盖 anchor resolution、bounds compliance、diagnostics coverage、same-span arbitration 和 item quality。
+- 原调研中的单文件 `vocabulary_seed_v1.jsonl` 不采纳；实现必须匹配现有 `evals` harness 的 `dataset.yaml + cases/*.json` 目录形态，或显式新增 vocabulary seed loader。
+- 原调研中的 `evals/claread_eval/judge/judges/vocabulary_judge.yaml` 不采纳为下一步范围；当前 judge runner/rubric contract 仍是 article-analysis oriented，LLM judge 泛化单独后置。
+- LangSmith `evaluate()` 不进入下一步；先用本地 deterministic graders 和 pytest 验收。
+- 超过 5 个 candidate 的预期需按 D5-V3 真实实现修正：通常在 `VocabularyCandidateOutput` validation 阶段 fail closed，不作为普通 `candidate_limit_exceeded` diagnostics gate。
+- vocabulary `boundary_low_fallback_window` 不进入 D5 eval seed acceptance gate；当前 worker 不产生该 reason code。
+
 ## D6. 产品硬化
 
 任务包：
@@ -628,10 +670,10 @@ Focused tests 已通过：
 
 ## 当前下一步
 
-进入 D5-V4 / D5 evaluation 分流：
+进入 D5-V5 / D5 eval implementation 分流：
 
-1. 主线做 Grammar Bundle Backend Slice：一个 worker 可生成 `grammar_note` 与 `sentence_analysis` 候选，但必须发布为两个独立 `enhancement_layers` rows，且 layer fingerprint、projection、policy、eval 独立。
-2. 并行做 Vocabulary Eval Seed / Rubric：基于 D5-V3 real executor 的候选跳过、锚点解析、三类 item 质量建立最小评测样本和验收规则。
-3. D5-V5 再做 Grammar Projection / Web read-only rendering；D5-V4 不顺手实现 Web。
+1. 主线做 Grammar Projection / Web read-only rendering：从已发布 `grammar_note` / `sentence_analysis` domain facts 派生 Plate marks/nodes，不改变 layer truth。
+2. 并行做 Vocabulary Eval Seed Implementation：基于 `accepted_with_changes` disposition，先实现本地 deterministic seed/schema/graders/tests，不接 LangSmith，不泛化 LLM judge。
+3. 后续再评估 real grammar executor / prompt；D5-V5 只做 projection 和 Web read-only display。
 4. 继续使用 snapshot reload；除非单独立项，不实现 `projection_ops` incremental applier。
-5. 不在下一轮顺手做 Ask tools、RAG、SSE 或 LangGraph flow。
+5. 不在下一轮顺手做 Ask tools、RAG、SSE、LangGraph flow 或 parsed/readiness policy。

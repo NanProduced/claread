@@ -6,7 +6,9 @@ import type { RenderElement, RenderLeaf } from "platejs/react";
 
 import type {
   ReaderAnchorSegmentNodeDto,
+  ReaderGrammarNoteMarkDto,
   ReaderPlateValueDto,
+  ReaderSentenceAnalysisNodeDto,
   ReaderSourceBlockNodeDto,
   ReaderStableSegmentTextLeafDto,
   ReaderStableSeparatorLeafDto,
@@ -21,22 +23,27 @@ import { Editor, EditorContainer } from "../../ui/editor";
  *
  * Renders `snapshot.value` (the new domain-first Plate projection built from
  * Stable Reading Base / Reading Units / Anchor Segments / Enhancement Layers)
- * — NOT the legacy `render_scene_json` document.
+ * — not a legacy scene document contract.
  *
  * Node taxonomy handled here:
  *   - `reader_unit` (top-level block)
  *     - `reader_source_block` (source text container)
  *       - `reader_anchor_segment` (sentence-like inline anchor)
- *         - stable `segment_text` leaf
+ *         - stable `segment_text` leaf, optionally carrying:
+ *           - `reader_vocabulary_marks`
+ *           - `reader_grammar_note_marks`
  *       - stable `separator` leaf (whitespace between anchors)
  *     - `reader_translation` (system_ai translation projection)
  *       - translation text leaf
+ *     - `reader_sentence_analysis` (system_ai structured breakdown block)
  *
- * Stable `segment_text` leaves may also carry `reader_vocabulary_marks`, which
- * are rendered as inline highlight marks plus compact read-only gloss chips.
+ * Stable `segment_text` leaves may carry vocabulary and grammar-note marks,
+ * rendered as read-only inline highlights plus compact chips. Sentence
+ * analyses render as structured companion blocks below the source text.
  *
  * Styling is intentionally minimal but distinguishes source text (serif /
- * reading font) from translation projection (sans-serif, muted).
+ * reading font) from translation projection, grammar notes, and sentence
+ * analyses.
  */
 
 export interface ReaderPlateSnapshotSurfaceProps {
@@ -51,7 +58,8 @@ type PlateElement =
   | ReaderUnitNodeDto
   | ReaderSourceBlockNodeDto
   | ReaderAnchorSegmentNodeDto
-  | ReaderTranslationNodeDto;
+  | ReaderTranslationNodeDto
+  | ReaderSentenceAnalysisNodeDto;
 
 type PlateLeaf = ReaderStableSegmentTextLeafDto | ReaderStableSeparatorLeafDto | { text: string };
 
@@ -81,6 +89,25 @@ function isVocabularyMarkedLeaf(
     ((leaf as ReaderStableSegmentTextLeafDto & {
       reader_vocabulary_marks?: ReaderVocabularyMarkDto[];
     }).reader_vocabulary_marks?.length ?? 0) > 0
+  );
+}
+
+function isGrammarMarkedLeaf(
+  leaf: unknown,
+): leaf is ReaderStableSegmentTextLeafDto & {
+  reader_grammar_note_marks: ReaderGrammarNoteMarkDto[];
+} {
+  return (
+    isStableLeaf(leaf) &&
+    "reader_grammar_note_marks" in leaf &&
+    Array.isArray(
+      (leaf as ReaderStableSegmentTextLeafDto & {
+        reader_grammar_note_marks?: ReaderGrammarNoteMarkDto[];
+      }).reader_grammar_note_marks,
+    ) &&
+    ((leaf as ReaderStableSegmentTextLeafDto & {
+      reader_grammar_note_marks?: ReaderGrammarNoteMarkDto[];
+    }).reader_grammar_note_marks?.length ?? 0) > 0
   );
 }
 
@@ -149,6 +176,25 @@ function vocabularyMarkTitle(mark: ReaderVocabularyMarkDto) {
   return `${mark.display}: ${mark.reason}`;
 }
 
+function grammarNoteMarkClassName() {
+  return "reader-mark reader-mark--grammar rounded-sm bg-emerald-50/85 underline decoration-emerald-600/85 decoration-[1.5px] underline-offset-4";
+}
+
+function grammarNoteChipClassName() {
+  return "border-emerald-200/90 bg-emerald-50 text-emerald-900";
+}
+
+function grammarNoteChipLabel(mark: ReaderGrammarNoteMarkDto) {
+  return `语法 · ${mark.grammar_point}`;
+}
+
+function grammarNoteMarkTitle(mark: ReaderGrammarNoteMarkDto) {
+  if (mark.pattern?.trim()) {
+    return `${mark.grammar_point} (${mark.pattern}): ${mark.note}`;
+  }
+  return `${mark.grammar_point}: ${mark.note}`;
+}
+
 function sortVocabularyMarks(marks: ReaderVocabularyMarkDto[]) {
   const priority = {
     context_gloss: 0,
@@ -168,15 +214,38 @@ function sortVocabularyMarks(marks: ReaderVocabularyMarkDto[]) {
   });
 }
 
-function renderVocabularyContent(
+function sortGrammarNoteMarks(marks: ReaderGrammarNoteMarkDto[]) {
+  return [...marks].sort((left, right) => {
+    if (left.segment_start_utf16 !== right.segment_start_utf16) {
+      return left.segment_start_utf16 - right.segment_start_utf16;
+    }
+    const leftSpan = left.segment_end_utf16 - left.segment_start_utf16;
+    const rightSpan = right.segment_end_utf16 - right.segment_start_utf16;
+    if (leftSpan !== rightSpan) {
+      return rightSpan - leftSpan;
+    }
+    if (left.span_index !== right.span_index) {
+      return left.span_index - right.span_index;
+    }
+    return left.item_id.localeCompare(right.item_id);
+  });
+}
+
+function renderAnnotatedContent(
   leaf: ReaderStableSegmentTextLeafDto & {
-    reader_vocabulary_marks: ReaderVocabularyMarkDto[];
+    reader_vocabulary_marks?: ReaderVocabularyMarkDto[];
+    reader_grammar_note_marks?: ReaderGrammarNoteMarkDto[];
   },
   children: React.ReactNode,
 ) {
-  const marks = sortVocabularyMarks(leaf.reader_vocabulary_marks);
+  const vocabularyMarks = leaf.reader_vocabulary_marks
+    ? sortVocabularyMarks(leaf.reader_vocabulary_marks)
+    : [];
+  const grammarNoteMarks = leaf.reader_grammar_note_marks
+    ? sortGrammarNoteMarks(leaf.reader_grammar_note_marks)
+    : [];
   let highlighted = children;
-  [...marks].reverse().forEach((mark) => {
+  [...vocabularyMarks].reverse().forEach((mark) => {
     highlighted = (
       <span
         className={vocabularyMarkClassName(mark.item_type)}
@@ -189,9 +258,26 @@ function renderVocabularyContent(
       </span>
     );
   });
+  [...grammarNoteMarks].reverse().forEach((mark) => {
+    highlighted = (
+      <span
+        className={grammarNoteMarkClassName()}
+        data-reader-mark-id={mark.mark_id}
+        data-reader-mark-tone="grammar"
+        data-reader-annotation-kind="grammar_note"
+        data-reader-grammar-note-id={mark.item_id}
+        title={grammarNoteMarkTitle(mark)}
+      >
+        {highlighted}
+      </span>
+    );
+  });
 
-  const chips = marks.filter((mark) => mark.ends_here);
-  if (chips.length === 0) {
+  const grammarChips = grammarNoteMarks.filter(
+    (mark) => mark.ends_here && mark.show_note_chip,
+  );
+  const vocabularyChips = vocabularyMarks.filter((mark) => mark.ends_here);
+  if (grammarChips.length === 0 && vocabularyChips.length === 0) {
     return highlighted;
   }
 
@@ -199,10 +285,20 @@ function renderVocabularyContent(
     <>
       {highlighted}
       <span
-        data-reader-node="vocabulary-inline"
+        data-reader-node="annotation-inline"
         className="ml-1 inline-flex flex-wrap items-center gap-1 align-middle"
       >
-        {chips.map((mark) => (
+        {grammarChips.map((mark) => (
+          <span
+            key={mark.mark_id}
+            data-reader-grammar-note-chip={mark.item_id}
+            className={`inline-flex items-center rounded-full border px-2 py-0.5 font-sans text-[0.68rem] font-medium leading-none ${grammarNoteChipClassName()}`}
+            title={grammarNoteMarkTitle(mark)}
+          >
+            {grammarNoteChipLabel(mark)}
+          </span>
+        ))}
+        {vocabularyChips.map((mark) => (
           <span
             key={`${mark.mark_id}:${mark.item_type}`}
             data-reader-vocabulary-chip={mark.item_type}
@@ -308,6 +404,60 @@ function ReaderTranslationProjectionElement({
   );
 }
 
+function ReaderSentenceAnalysisProjectionElement({
+  props,
+  children,
+}: {
+  props: Parameters<RenderElement>[0];
+  children: React.ReactNode;
+}) {
+  const element = props.element as unknown as ReaderSentenceAnalysisNodeDto;
+  return (
+    <section
+      {...props.attributes}
+      data-reader-node="sentence-analysis"
+      data-analysis-id={element.analysis_id}
+      data-layer-id={element.layer_id}
+      data-target-scope={element.target_scope}
+      data-target-key={element.target_key}
+      data-anchor-segment-id={element.anchor_segment_id}
+      className="reader-plate-sentence-analysis rounded-2xl border border-teal-200/80 bg-[linear-gradient(180deg,rgba(240,253,250,0.96),rgba(236,253,245,0.76))] p-4 font-sans text-[0.92rem] leading-6 text-slate-800 shadow-sm shadow-teal-950/5"
+    >
+      <div className="flex items-center gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-teal-700">
+        <span>句式拆解</span>
+        <span className="h-px flex-1 bg-teal-200" />
+      </div>
+      <div className="mt-3 space-y-3">
+        <div className="space-y-1">
+          <h4 className="text-sm font-semibold text-slate-900">{element.label}</h4>
+          <p className="text-xs leading-5 text-slate-500">
+            聚焦片段：{element.selected_text}
+          </p>
+        </div>
+        <p className="text-sm leading-6 text-slate-800">{element.analysis}</p>
+        {element.chunks.length > 0 ? (
+          <ol className="grid gap-2">
+            {element.chunks.map((chunk) => (
+              <li
+                key={`${element.analysis_id}:${chunk.order}`}
+                className="rounded-xl border border-white/70 bg-white/80 px-3 py-2"
+              >
+                <div className="text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-teal-700">
+                  {chunk.label}
+                </div>
+                <div className="mt-1 text-sm text-slate-800">{chunk.text}</div>
+              </li>
+            ))}
+          </ol>
+        ) : null}
+      </div>
+      <span aria-hidden="true" className="hidden">
+        {children}
+      </span>
+    </section>
+  );
+}
+
 export function ReaderPlateSnapshotSurface({
   value,
   readingClassName = "reader-serif text-ink",
@@ -356,6 +506,12 @@ export function ReaderPlateSnapshotSurface({
               {props.children}
             </ReaderTranslationProjectionElement>
           );
+        case "reader_sentence_analysis":
+          return (
+            <ReaderSentenceAnalysisProjectionElement props={props}>
+              {props.children}
+            </ReaderSentenceAnalysisProjectionElement>
+          );
         default:
           return <div {...props.attributes}>{props.children}</div>;
       }
@@ -365,7 +521,7 @@ export function ReaderPlateSnapshotSurface({
 
   const renderLeaf = useCallback((props: Parameters<RenderLeaf>[0]) => {
     const leaf = props.leaf as unknown as PlateLeaf;
-    if (isVocabularyMarkedLeaf(leaf)) {
+    if (isVocabularyMarkedLeaf(leaf) || isGrammarMarkedLeaf(leaf)) {
       return (
         <span
           {...props.attributes}
@@ -373,7 +529,7 @@ export function ReaderPlateSnapshotSurface({
           data-owner="stable"
           data-anchor-segment-id={leaf.anchor_segment_id}
         >
-          {renderVocabularyContent(leaf, props.children)}
+          {renderAnnotatedContent(leaf, props.children)}
         </span>
       );
     }

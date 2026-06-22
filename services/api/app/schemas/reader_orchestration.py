@@ -166,6 +166,66 @@ class VocabularyLayerOutput(BaseModel):
     items: list[VocabularyLayerItem] = Field(default_factory=list)
 
 
+class GrammarNoteItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_type: Literal["grammar_note"] = "grammar_note"
+    spans: list[ReaderTextRangeAnchor] = Field(min_length=1, max_length=4)
+    grammar_point: str = Field(min_length=1)
+    pattern: str | None = None
+    note: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_same_unit_spans(self) -> GrammarNoteItem:
+        base_ids = {span.base_id for span in self.spans}
+        unit_ids = {span.unit_id for span in self.spans}
+        if len(base_ids) != 1:
+            raise ValueError("grammar_note spans must belong to the same base_id")
+        if len(unit_ids) != 1:
+            raise ValueError("grammar_note spans must belong to the same unit_id")
+        return self
+
+
+class SentenceAnalysisChunk(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order: int = Field(ge=1)
+    label: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+
+
+class SentenceAnalysisItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_type: Literal["sentence_analysis"] = "sentence_analysis"
+    anchor: ReaderTextRangeAnchor
+    label: str = Field(min_length=1)
+    analysis: str = Field(min_length=1)
+    chunks: list[SentenceAnalysisChunk] = Field(min_length=1)
+
+
+class GrammarNoteLayerOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    items: list[GrammarNoteItem] = Field(min_length=1)
+
+
+class SentenceAnalysisLayerOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    items: list[SentenceAnalysisItem] = Field(min_length=1)
+
+
+class GrammarBundleOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    grammar_notes: list[GrammarNoteItem] = Field(default_factory=list)
+    sentence_analyses: list[SentenceAnalysisItem] = Field(default_factory=list)
+
+
 class ReaderSnapshotBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

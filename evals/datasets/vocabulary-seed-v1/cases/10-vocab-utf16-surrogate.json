@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "id": "vocab-utf16-surrogate",
+  "description": "Emoji surrogate pair offsets must compute via utf-16-le (2 code units).",
+  "unit_id": "u10",
+  "unit_text": "We 📚 love reading every day.",
+  "anchor_segments": [
+    {
+      "anchor_segment_id": "s1",
+      "sentence_id": "s1",
+      "segment_type": "sentence",
+      "unit_start_utf16": 0,
+      "unit_end_utf16": 29,
+      "text": "We 📚 love reading every day.",
+      "boundary_quality": "normal"
+    }
+  ],
+  "gold_items": [
+    {
+      "item_type": "vocab_highlight",
+      "anchor_segment_id": "s1",
+      "selected_text": "📚",
+      "headword": "books",
+      "gloss": "书本（emoji 表达）",
+      "reason": "useful_for_current_goal"
+    }
+  ],
+  "expected_diagnostics": {
+    "candidate_item_count": 1,
+    "resolved_item_count": 1,
+    "skipped_item_count": 0
+  },
+  "unicode_pitfall": "surrogate_pair",
+  "difficulty_band": "K1",
+  "tags": [
+    "surrogate_pair",
+    "utf16"
+  ],
+  "execution": {
+    "output": {
+      "schema_version": 1,
+      "items": [
+        {
+          "item_type": "vocab_highlight",
+          "anchor_segment_id": "s1",
+          "unit_start_utf16": 3,
+          "unit_end_utf16": 5,
+          "selected_text": "📚",
+          "text_hash": "152f1336"
+        }
+      ]
+    },
+    "diagnostics": {
+      "candidate_item_count": 1,
+      "resolved_item_count": 1,
+      "skipped_item_count": 0,
+      "skipped_items": [],
+      "skipped_items_truncated_count": 0
+    },
+    "fail_closed": false,
+    "fail_closed_reason": null
+  }
+}

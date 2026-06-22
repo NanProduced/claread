@@ -79,6 +79,29 @@ function makeSnapshotValue() {
                       example: "turn passion into a career",
                     },
                   ],
+                  reader_grammar_note_marks: [
+                    {
+                      mark_id: "mark_smoke_grammar_1",
+                      item_id: "grammar_smoke_1",
+                      owner: "system_ai",
+                      layer_id: "layer_smoke_grammar_1",
+                      item_type: "grammar_note",
+                      anchor_segment_id: "s1",
+                      start_offset: 0,
+                      end_offset: 8,
+                      selected_text: "A scarce",
+                      segment_start_utf16: 0,
+                      segment_end_utf16: 8,
+                      starts_here: true,
+                      ends_here: true,
+                      span_index: 0,
+                      span_count: 1,
+                      show_note_chip: true,
+                      grammar_point: "前置强调",
+                      pattern: "a scarce ...",
+                      note: "先抬出稀少性，再引出真正动作。",
+                    },
+                  ],
                 },
               ],
             },
@@ -97,6 +120,34 @@ function makeSnapshotValue() {
           confidence: "normal",
           notes: [],
           children: [{ text: "很少有人能把热爱变成稳定收入。" }],
+        },
+        {
+          type: "reader_sentence_analysis",
+          owner: "system_ai",
+          analysis_id: "analysis_smoke_1",
+          layer_id: "layer_smoke_sentence_1",
+          layer_version: 1,
+          base_id: "base_smoke",
+          unit_id: "u1",
+          target_scope: "unit",
+          target_key: "u1",
+          anchor_segment_id: "s1",
+          selected_text: "A scarce few can turn passion into a stable income.",
+          label: "fronted focus and main action",
+          analysis: "先强调稀少性，再说明把热爱变成稳定收入这个核心动作。",
+          chunks: [
+            {
+              order: 1,
+              label: "focus",
+              text: "A scarce few",
+            },
+            {
+              order: 2,
+              label: "main action",
+              text: "can turn passion into a stable income",
+            },
+          ],
+          children: [{ text: "先强调稀少性，再说明把热爱变成稳定收入这个核心动作。" }],
         },
       ],
     },
@@ -121,6 +172,91 @@ function makeSnapshot() {
     },
     navigation: { units: [] },
     enhancement_layers: [
+      {
+        layer_id: "layer_smoke_grammar_1",
+        layer_type: "grammar_note",
+        layer_subtype: null,
+        base_id: "base_smoke",
+        target_scope: "unit",
+        target_key: "u1",
+        status: "published",
+        schema_version: 1,
+        output: {
+          schema_version: 1,
+          items: [
+            {
+              item_type: "grammar_note",
+              spans: [
+                {
+                  anchor_type: "text_range",
+                  base_id: "base_smoke",
+                  unit_id: "u1",
+                  anchor_segment_id: "s1",
+                  sentence_id: "s1",
+                  segment_type: "sentence",
+                  offset_unit: "utf16",
+                  start_offset: 0,
+                  end_offset: 8,
+                  selected_text: "A scarce",
+                  text_hash: "abcd1234",
+                  hash_algorithm: "fnv1a32-utf16",
+                },
+              ],
+              grammar_point: "前置强调",
+              pattern: "a scarce ...",
+              note: "先抬出稀少性，再引出真正动作。",
+            },
+          ],
+        },
+        published_at: "2026-06-21T00:00:00Z",
+      },
+      {
+        layer_id: "layer_smoke_sentence_1",
+        layer_type: "sentence_analysis",
+        layer_subtype: null,
+        base_id: "base_smoke",
+        target_scope: "unit",
+        target_key: "u1",
+        status: "published",
+        schema_version: 1,
+        output: {
+          schema_version: 1,
+          items: [
+            {
+              item_type: "sentence_analysis",
+              anchor: {
+                anchor_type: "text_range",
+                base_id: "base_smoke",
+                unit_id: "u1",
+                anchor_segment_id: "s1",
+                sentence_id: "s1",
+                segment_type: "sentence",
+                offset_unit: "utf16",
+                start_offset: 0,
+                end_offset: 52,
+                selected_text: "A scarce few can turn passion into a stable income.",
+                text_hash: "abcd1234",
+                hash_algorithm: "fnv1a32-utf16",
+              },
+              label: "fronted focus and main action",
+              analysis: "先强调稀少性，再说明把热爱变成稳定收入这个核心动作。",
+              chunks: [
+                {
+                  order: 1,
+                  label: "focus",
+                  text: "A scarce few",
+                },
+                {
+                  order: 2,
+                  label: "main action",
+                  text: "can turn passion into a stable income",
+                },
+              ],
+            },
+          ],
+        },
+        published_at: "2026-06-21T00:00:00Z",
+      },
       {
         layer_id: "layer_smoke_vocab_1",
         layer_type: "vocabulary",
@@ -201,7 +337,7 @@ async function loginWithMockPhone(page: Page) {
   await page.waitForURL("**/app/reader-plate");
 }
 
-test("reader plate smoke: submit renders source text, translation, and vocabulary, polling stays calm", async ({ page }) => {
+test("reader plate smoke: submit renders source text, translation, vocabulary, and grammar projections, polling stays calm", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
 
   // Mock the submit BFF route to return a valid snapshot.
@@ -263,12 +399,31 @@ test("reader plate smoke: submit renders source text, translation, and vocabular
   await expect(page.locator('[data-reader-node="source-block"]')).toBeVisible();
   await expect(page.locator('[data-reader-node="anchor-segment"]')).toBeVisible();
   await expect(page.locator('[data-reader-node="translation"]')).toBeVisible();
+  await expect(page.locator('[data-reader-node="sentence-analysis"]')).toBeVisible();
   await expect(page.locator('[data-reader-vocabulary-chip="phrase_gloss"]')).toBeVisible();
+  await expect(page.locator('[data-reader-grammar-note-chip="grammar_smoke_1"]')).toBeVisible();
 
-  // Source text, translation, and vocabulary annotation should be present.
-  await expect(page.getByText("A scarce few can turn passion into a stable income.")).toBeVisible();
-  await expect(page.getByText("很少有人能把热爱变成稳定收入。")).toBeVisible();
-  await expect(page.getByText("搭配 · 把热爱转成可持续结果")).toBeVisible();
+  // Source text, translation, vocabulary, and grammar projections should be present.
+  await expect(
+    page
+      .locator('[data-reader-node="source-block"]')
+      .getByText("A scarce few can turn passion into a stable income.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('[data-reader-node="translation"]')).toContainText(
+    "很少有人能把热爱变成稳定收入。",
+  );
+  await expect(page.locator('[data-reader-node="annotation-inline"]')).toContainText(
+    "搭配 · 把热爱转成可持续结果",
+  );
+  await expect(page.locator('[data-reader-node="annotation-inline"]')).toContainText(
+    "语法 · 前置强调",
+  );
+  await expect(page.locator('[data-reader-node="sentence-analysis"]')).toContainText(
+    "句式拆解",
+  );
+  await expect(page.locator('[data-reader-node="sentence-analysis"]')).toContainText(
+    "fronted focus and main action",
+  );
 
   // No error states should be visible after caught-up polling.
   await expect(page.getByText("批注更新暂时中断")).toHaveCount(0);

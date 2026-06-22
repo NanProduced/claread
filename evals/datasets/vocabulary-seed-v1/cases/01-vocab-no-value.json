@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "id": "vocab-no-value",
+  "description": "All NGSL K1 words; worker must return empty output.",
+  "unit_id": "u1",
+  "unit_text": "She went to the store.",
+  "anchor_segments": [
+    {
+      "anchor_segment_id": "s1",
+      "sentence_id": "s1",
+      "segment_type": "sentence",
+      "unit_start_utf16": 0,
+      "unit_end_utf16": 22,
+      "text": "She went to the store.",
+      "boundary_quality": "normal"
+    }
+  ],
+  "gold_items": [],
+  "expected_diagnostics": {
+    "candidate_item_count": 0,
+    "resolved_item_count": 0,
+    "skipped_item_count": 0,
+    "skipped_reason_codes": [],
+    "skipped_items_truncated_count": 0
+  },
+  "unicode_pitfall": null,
+  "difficulty_band": "K1",
+  "tags": [
+    "no_value",
+    "empty_output"
+  ],
+  "execution": {
+    "output": {
+      "schema_version": 1,
+      "items": []
+    },
+    "diagnostics": {
+      "candidate_item_count": 0,
+      "resolved_item_count": 0,
+      "skipped_item_count": 0,
+      "skipped_items": [],
+      "skipped_items_truncated_count": 0
+    },
+    "fail_closed": false,
+    "fail_closed_reason": null
+  }
+}

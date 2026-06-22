@@ -6,11 +6,13 @@ import {
   READER_TEXT_RANGE_OFFSET_UNIT,
   type ReaderEventPollResponseDto,
   type ReaderPhraseGlossMarkDto,
+  type ReaderGrammarNoteMarkDto,
   type ReaderEventResponseDto,
   type ReaderStableSegmentTextLeafDto,
   type ReaderPlateSnapshotDto,
   type ReaderPlateValueDto,
   type ReaderPlainTextSubmitResponseDto,
+  type ReaderSentenceAnalysisNodeDto,
   type ReaderTranslationNodeDto,
   type ReaderUnitNodeDto,
 } from "@/types/api/reader-plate";
@@ -39,6 +41,27 @@ function makeUnit(): ReaderUnitNodeDto {
     phrase_type: "collocation",
     gloss: "少数人能做到",
     example: "Only a few can turn talent into impact.",
+  };
+  const grammarNoteMark: ReaderGrammarNoteMarkDto = {
+    mark_id: "mark_grammar_1",
+    item_id: "grammar_note_1",
+    owner: "system_ai",
+    layer_id: "layer_grammar_note_1",
+    item_type: "grammar_note",
+    anchor_segment_id: "s1",
+    start_offset: 0,
+    end_offset: 8,
+    selected_text: "A scarce",
+    segment_start_utf16: 0,
+    segment_end_utf16: 8,
+    starts_here: true,
+    ends_here: true,
+    span_index: 0,
+    span_count: 1,
+    show_note_chip: true,
+    grammar_point: "fronted emphasis",
+    pattern: "a scarce ...",
+    note: "前置结构先给读者设置强调焦点。",
   };
   return {
     type: "reader_unit",
@@ -88,6 +111,7 @@ function makeUnit(): ReaderUnitNodeDto {
                 segment_start_utf16: 0,
                 segment_end_utf16: 42,
                 reader_vocabulary_marks: [vocabularyMark],
+                reader_grammar_note_marks: [grammarNoteMark],
               } satisfies ReaderStableSegmentTextLeafDto,
             ],
           },
@@ -114,9 +138,33 @@ function makeTranslation(): ReaderTranslationNodeDto {
   };
 }
 
+function makeSentenceAnalysis(): ReaderSentenceAnalysisNodeDto {
+  return {
+    type: "reader_sentence_analysis",
+    owner: "system_ai",
+    analysis_id: "analysis_1",
+    layer_id: "layer_sentence_analysis_1",
+    layer_version: 1,
+    base_id: "base_1",
+    unit_id: "u1",
+    target_scope: "unit",
+    target_key: "u1",
+    anchor_segment_id: "s1",
+    selected_text: "A scarce few can turn passion into income.",
+    label: "fronted emphasis",
+    analysis: "先给强调对象，再交代真正动作。",
+    chunks: [
+      { order: 1, label: "focus", text: "A scarce few" },
+      { order: 2, label: "action", text: "can turn passion into income" },
+    ],
+    children: [{ text: "先给强调对象，再交代真正动作。" }],
+  };
+}
+
 function makeSnapshot(): ReaderPlateSnapshotDto {
   const unit = makeUnit();
   unit.children.push(makeTranslation());
+  unit.children.push(makeSentenceAnalysis());
   const value: ReaderPlateValueDto = [unit];
 
   return {
@@ -180,6 +228,83 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
               phrase_type: "collocation",
               gloss: "少数人能做到",
               example: "Only a few can turn talent into impact.",
+            },
+          ],
+        },
+        published_at: "2026-06-21T00:00:00Z",
+      },
+      {
+        layer_id: "layer_grammar_note_1",
+        layer_type: "grammar_note",
+        layer_subtype: null,
+        base_id: "base_1",
+        target_scope: "unit",
+        target_key: "u1",
+        status: "published",
+        schema_version: 1,
+        output: {
+          schema_version: 1,
+          items: [
+            {
+              item_type: "grammar_note",
+              spans: [
+                {
+                  anchor_type: "text_range",
+                  base_id: "base_1",
+                  unit_id: "u1",
+                  anchor_segment_id: "s1",
+                  sentence_id: "s1",
+                  segment_type: "sentence",
+                  offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+                  start_offset: 0,
+                  end_offset: 8,
+                  selected_text: "A scarce",
+                  text_hash: "abcd1234",
+                  hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+                },
+              ],
+              grammar_point: "fronted emphasis",
+              pattern: "a scarce ...",
+              note: "前置结构先给读者设置强调焦点。",
+            },
+          ],
+        },
+        published_at: "2026-06-21T00:00:00Z",
+      },
+      {
+        layer_id: "layer_sentence_analysis_1",
+        layer_type: "sentence_analysis",
+        layer_subtype: null,
+        base_id: "base_1",
+        target_scope: "unit",
+        target_key: "u1",
+        status: "published",
+        schema_version: 1,
+        output: {
+          schema_version: 1,
+          items: [
+            {
+              item_type: "sentence_analysis",
+              anchor: {
+                anchor_type: "text_range",
+                base_id: "base_1",
+                unit_id: "u1",
+                anchor_segment_id: "s1",
+                sentence_id: "s1",
+                segment_type: "sentence",
+                offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+                start_offset: 0,
+                end_offset: 42,
+                selected_text: "A scarce few can turn passion into income.",
+                text_hash: "abcd1234",
+                hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+              },
+              label: "fronted emphasis",
+              analysis: "先给强调对象，再交代真正动作。",
+              chunks: [
+                { order: 1, label: "focus", text: "A scarce few" },
+                { order: 2, label: "action", text: "can turn passion into income" },
+              ],
             },
           ],
         },
@@ -274,6 +399,7 @@ describe("Reader Plate DTO shapes", () => {
     const childTypes = unit.children.map((child) => child.type);
     expect(childTypes).toContain("reader_source_block");
     expect(childTypes).toContain("reader_translation");
+    expect(childTypes).toContain("reader_sentence_analysis");
   });
 
   it("reader_source_block contains reader_anchor_segment with stable segment_text leaf", () => {
@@ -343,6 +469,44 @@ describe("Reader Plate DTO shapes", () => {
     }
     expect(mark.gloss).toContain("少数人");
     expect(mark.starts_here).toBe(true);
+  });
+
+  it("stable source leaves may carry grammar_note marks with system_ai ownership", () => {
+    const snapshot = makeSnapshot();
+    const unit = snapshot.value[0];
+    const sourceBlock = unit.children.find(
+      (child) => child.type === "reader_source_block",
+    );
+    if (sourceBlock?.type !== "reader_source_block") {
+      throw new Error("expected reader_source_block");
+    }
+    const anchor = sourceBlock.children.find(
+      (child) => "type" in child && child.type === "reader_anchor_segment",
+    );
+    if (!anchor || !("type" in anchor) || anchor.type !== "reader_anchor_segment") {
+      throw new Error("expected reader_anchor_segment");
+    }
+    const mark = anchor.children[0].reader_grammar_note_marks?.[0];
+    expect(mark).toBeDefined();
+    expect(mark?.item_type).toBe("grammar_note");
+    expect(mark?.owner).toBe("system_ai");
+    expect(mark?.show_note_chip).toBe(true);
+  });
+
+  it("reader_sentence_analysis carries structured system_ai projection fields", () => {
+    const snapshot = makeSnapshot();
+    const unit = snapshot.value[0];
+    const analysisNode = unit.children.find(
+      (child) => child.type === "reader_sentence_analysis",
+    );
+    expect(analysisNode).toBeDefined();
+    if (analysisNode?.type !== "reader_sentence_analysis") {
+      throw new Error("expected reader_sentence_analysis");
+    }
+    expect(analysisNode.owner).toBe("system_ai");
+    expect(analysisNode.anchor_segment_id).toBe("s1");
+    expect(analysisNode.label).toBe("fronted emphasis");
+    expect(analysisNode.chunks[0]?.label).toBe("focus");
   });
 
   it("hash_algorithm is fnv1a32-utf16 on all anchor-bearing nodes", () => {

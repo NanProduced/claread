@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "id": "vocab-unknown-segment",
+  "description": "anchor_segment_id not present in unit; anchor_segment_unknown skip.",
+  "unit_id": "u7",
+  "unit_text": "They agreed on the proposal.",
+  "anchor_segments": [
+    {
+      "anchor_segment_id": "s1",
+      "sentence_id": "s1",
+      "segment_type": "sentence",
+      "unit_start_utf16": 0,
+      "unit_end_utf16": 28,
+      "text": "They agreed on the proposal.",
+      "boundary_quality": "normal"
+    }
+  ],
+  "gold_items": [],
+  "expected_diagnostics": {
+    "candidate_item_count": 1,
+    "resolved_item_count": 0,
+    "skipped_item_count_at_least": 1,
+    "skipped_reason_codes_at_least": [
+      "anchor_segment_unknown"
+    ]
+  },
+  "unicode_pitfall": null,
+  "difficulty_band": "K1",
+  "tags": [
+    "unknown_segment",
+    "skip_reason"
+  ],
+  "execution": {
+    "output": {
+      "schema_version": 1,
+      "items": []
+    },
+    "diagnostics": {
+      "candidate_item_count": 1,
+      "resolved_item_count": 0,
+      "skipped_item_count": 1,
+      "skipped_items": [
+        {
+          "item_index": 0,
+          "item_type": "vocab_highlight",
+          "anchor_segment_id": "s_ghost",
+          "selected_text": "agreed",
+          "reason_code": "anchor_segment_unknown"
+        }
+      ],
+      "skipped_items_truncated_count": 0
+    },
+    "fail_closed": false,
+    "fail_closed_reason": null
+  }
+}

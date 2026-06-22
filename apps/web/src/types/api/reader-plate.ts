@@ -8,8 +8,7 @@
  *   - GET  /reader/records/{record_id}/snapshot
  *   - GET  /reader/records/{record_id}/events
  *
- * Do NOT reference the legacy `render_scene_json` / ReaderSceneDto contracts
- * from `./reader-scene.ts`. The Plate snapshot is a separate contract.
+ * This Plate snapshot contract is independent from the legacy scene DTO path.
  */
 
 export const READER_PLATE_SNAPSHOT_SCHEMA_KIND = "reader_plate_snapshot" as const;
@@ -182,6 +181,38 @@ export interface VocabularyLayerOutputDto {
   items: VocabularyLayerItemDto[];
 }
 
+export interface GrammarNoteItemDto {
+  item_type: "grammar_note";
+  spans: ReaderTextRangeAnchorDto[];
+  grammar_point: string;
+  pattern?: string | null;
+  note: string;
+}
+
+export interface GrammarNoteLayerOutputDto {
+  schema_version: 1;
+  items: GrammarNoteItemDto[];
+}
+
+export interface ReaderSentenceAnalysisChunkDto {
+  order: number;
+  label: string;
+  text: string;
+}
+
+export interface SentenceAnalysisItemDto {
+  item_type: "sentence_analysis";
+  anchor: ReaderTextRangeAnchorDto;
+  label: string;
+  analysis: string;
+  chunks: ReaderSentenceAnalysisChunkDto[];
+}
+
+export interface SentenceAnalysisLayerOutputDto {
+  schema_version: 1;
+  items: SentenceAnalysisItemDto[];
+}
+
 interface ReaderSnapshotLayerBaseDto {
   layer_id: string;
   layer_type: ReaderLayerType;
@@ -206,15 +237,23 @@ export interface ReaderVocabularySnapshotLayerDto
   output: VocabularyLayerOutputDto;
 }
 
-export interface ReaderOtherSnapshotLayerDto extends ReaderSnapshotLayerBaseDto {
-  layer_type: Exclude<ReaderLayerType, "translation" | "vocabulary">;
-  output: unknown;
+export interface ReaderGrammarNoteSnapshotLayerDto
+  extends ReaderSnapshotLayerBaseDto {
+  layer_type: "grammar_note";
+  output: GrammarNoteLayerOutputDto;
+}
+
+export interface ReaderSentenceAnalysisSnapshotLayerDto
+  extends ReaderSnapshotLayerBaseDto {
+  layer_type: "sentence_analysis";
+  output: SentenceAnalysisLayerOutputDto;
 }
 
 export type ReaderSnapshotLayerDto =
   | ReaderTranslationSnapshotLayerDto
   | ReaderVocabularySnapshotLayerDto
-  | ReaderOtherSnapshotLayerDto;
+  | ReaderGrammarNoteSnapshotLayerDto
+  | ReaderSentenceAnalysisSnapshotLayerDto;
 
 export interface ReaderSnapshotAskSupplementDto {
   supplement_id: string;
@@ -284,7 +323,8 @@ export interface ReaderUnitNodeDto {
 
 export type ReaderUnitChildNodeDto =
   | ReaderSourceBlockNodeDto
-  | ReaderTranslationNodeDto;
+  | ReaderTranslationNodeDto
+  | ReaderSentenceAnalysisNodeDto;
 
 export interface ReaderSourceBlockNodeDto {
   type: "reader_source_block";
@@ -334,6 +374,24 @@ export interface ReaderTranslationNodeDto {
   anchor_segment_id?: string;
 }
 
+export interface ReaderSentenceAnalysisNodeDto {
+  type: "reader_sentence_analysis";
+  owner: "system_ai";
+  analysis_id: string;
+  layer_id: string;
+  layer_version: number;
+  base_id: string;
+  unit_id: string;
+  target_scope: "unit";
+  target_key: string;
+  anchor_segment_id: string;
+  selected_text: string;
+  label: string;
+  analysis: string;
+  chunks: ReaderSentenceAnalysisChunkDto[];
+  children: ReaderSentenceAnalysisTextLeafDto[];
+}
+
 // ---------------------------------------------------------------------------
 // Stable leaves (no `type` field — Plate text leaves)
 // ---------------------------------------------------------------------------
@@ -358,9 +416,14 @@ export interface ReaderStableSegmentTextLeafDto {
   segment_start_utf16: number;
   segment_end_utf16: number;
   reader_vocabulary_marks?: ReaderVocabularyMarkDto[];
+  reader_grammar_note_marks?: ReaderGrammarNoteMarkDto[];
 }
 
 export interface ReaderTranslationTextLeafDto {
+  text: string;
+}
+
+export interface ReaderSentenceAnalysisTextLeafDto {
   text: string;
 }
 
@@ -404,6 +467,28 @@ export type ReaderVocabularyMarkDto =
   | ReaderVocabHighlightMarkDto
   | ReaderPhraseGlossMarkDto
   | ReaderContextGlossMarkDto;
+
+export interface ReaderGrammarNoteMarkDto {
+  mark_id: string;
+  item_id: string;
+  owner: "system_ai";
+  layer_id: string;
+  item_type: "grammar_note";
+  anchor_segment_id: string;
+  start_offset: number;
+  end_offset: number;
+  selected_text: string;
+  segment_start_utf16: number;
+  segment_end_utf16: number;
+  starts_here: boolean;
+  ends_here: boolean;
+  span_index: number;
+  span_count: number;
+  show_note_chip: boolean;
+  grammar_point: string;
+  pattern?: string | null;
+  note: string;
+}
 
 // ---------------------------------------------------------------------------
 // Events polling

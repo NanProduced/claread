@@ -7,8 +7,14 @@ from pydantic import ValidationError
 
 from app.contracts.annotation import compute_text_range_hash
 from app.schemas.reader_orchestration import (
+    GrammarBundleOutput,
+    GrammarNoteItem,
+    GrammarNoteLayerOutput,
     ReaderPlateSnapshot,
     ReaderTextRangeAnchor,
+    SentenceAnalysisChunk,
+    SentenceAnalysisItem,
+    SentenceAnalysisLayerOutput,
     TranslationLayerOutput,
     VocabularyLayerOutput,
 )
@@ -72,6 +78,120 @@ def test_vocabulary_layer_output_accepts_empty_items() -> None:
 
     assert output.schema_version == 1
     assert output.items == []
+
+
+def test_grammar_note_item_requires_spans_from_same_unit() -> None:
+    span_one = ReaderTextRangeAnchor(
+        base_id="base-1",
+        unit_id="u1",
+        anchor_segment_id="s1",
+        sentence_id="s1",
+        start_offset=0,
+        end_offset=4,
+        selected_text="Only",
+        text_hash=compute_text_range_hash("Only"),
+    )
+    span_two = ReaderTextRangeAnchor(
+        base_id="base-1",
+        unit_id="u1",
+        anchor_segment_id="s2",
+        sentence_id="s2",
+        start_offset=5,
+        end_offset=9,
+        selected_text="once",
+        text_hash=compute_text_range_hash("once"),
+    )
+    item = GrammarNoteItem(
+        spans=[span_one, span_two],
+        grammar_point="paired focus",
+        pattern="only once",
+        note="同一 unit 内允许多个 grounded spans。",
+    )
+
+    assert len(item.spans) == 2
+
+    with pytest.raises(ValidationError, match="same unit"):
+        GrammarNoteItem(
+            spans=[
+                span_one,
+                ReaderTextRangeAnchor(
+                    base_id="base-1",
+                    unit_id="u2",
+                    anchor_segment_id="s3",
+                    sentence_id="s3",
+                    start_offset=0,
+                    end_offset=4,
+                    selected_text="else",
+                    text_hash=compute_text_range_hash("else"),
+                ),
+            ],
+            grammar_point="bad mix",
+            note="跨 unit 不允许。",
+        )
+
+    with pytest.raises(ValidationError, match="same base"):
+        GrammarNoteItem(
+            spans=[
+                span_one,
+                ReaderTextRangeAnchor(
+                    base_id="base-2",
+                    unit_id="u1",
+                    anchor_segment_id="s4",
+                    sentence_id="s4",
+                    start_offset=0,
+                    end_offset=4,
+                    selected_text="base",
+                    text_hash=compute_text_range_hash("base"),
+                ),
+            ],
+            grammar_point="bad base",
+            note="跨 base 不允许。",
+        )
+
+
+def test_grammar_bundle_output_accepts_empty_lists() -> None:
+    output = GrammarBundleOutput()
+
+    assert output.schema_version == 1
+    assert output.grammar_notes == []
+    assert output.sentence_analyses == []
+
+
+def test_persisted_grammar_layer_outputs_validate() -> None:
+    anchor = ReaderTextRangeAnchor(
+        base_id="base-1",
+        unit_id="u1",
+        anchor_segment_id="s1",
+        sentence_id="s1",
+        start_offset=0,
+        end_offset=4,
+        selected_text="Only",
+        text_hash=compute_text_range_hash("Only"),
+    )
+
+    grammar_output = GrammarNoteLayerOutput(
+        items=[
+            GrammarNoteItem(
+                spans=[anchor],
+                grammar_point="fronted focus",
+                pattern="only",
+                note="强调语气。",
+            )
+        ]
+    )
+    sentence_output = SentenceAnalysisLayerOutput(
+        items=[
+            SentenceAnalysisItem(
+                anchor=anchor,
+                label="focus cue",
+                analysis="前置副词起强调作用。",
+                chunks=[SentenceAnalysisChunk(order=1, label="cue", text="Only")],
+            )
+        ]
+    )
+
+    assert grammar_output.schema_version == 1
+    assert sentence_output.schema_version == 1
 
 
 def test_reader_plate_snapshot_rejects_projection_version() -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +25,8 @@ from app.services.reader_orchestration import (
     build_reader_plate_snapshot,
     result_length_utf16,
 )
+
+API_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _build_result(source_text: str):
@@ -140,6 +143,153 @@ def _build_vocabulary_layer(
         output={
             "schema_version": 1,
             "items": [output_item],
+        },
+        published_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    )
+
+
+def _build_grammar_note_layer(
+    result,
+    *,
+    selected_texts: list[str],
+    layer_id: str = "grammar-note-layer-1",
+    base_id: str | None = None,
+    target_key: str | None = None,
+    anchor_segment_ids: list[str] | None = None,
+    anchor_unit_id: str | None = None,
+    anchor_sentence_ids: list[str | None] | None = None,
+    target_scope: str = "unit",
+) -> ReaderSnapshotLayer:
+    spans: list[dict[str, object]] = []
+    for index, selected_text in enumerate(selected_texts):
+        segment = next(
+            (
+                item
+                for item in result.anchor_segments
+                if anchor_segment_ids is None
+                or anchor_segment_ids[index] == item.anchor_segment_id
+            ),
+            result.anchor_segments[min(index, len(result.anchor_segments) - 1)],
+        )
+        unit_id = anchor_unit_id or segment.unit_id
+        segment_text = segment.text
+        selected_start = segment_text.index(selected_text)
+        computed_start = segment.unit_start_utf16 + utf16_code_unit_length(
+            segment_text[:selected_start]
+        )
+        computed_end = computed_start + utf16_code_unit_length(selected_text)
+        anchor = ReaderTextRangeAnchor(
+            base_id=base_id or result.base.base_id,
+            unit_id=unit_id,
+            anchor_segment_id=(
+                anchor_segment_ids[index]
+                if anchor_segment_ids
+                else segment.anchor_segment_id
+            ),
+            sentence_id=(
+                anchor_sentence_ids[index]
+                if anchor_sentence_ids is not None
+                else segment.sentence_id
+            ),
+            segment_type=segment.segment_type,  # type: ignore[arg-type]
+            start_offset=computed_start,
+            end_offset=computed_end,
+            selected_text=selected_text,
+            text_hash=compute_text_range_hash(selected_text),
+        )
+        spans.append(anchor.model_dump(mode="json"))
+
+    target_unit_id = target_key or (anchor_unit_id or result.anchor_segments[0].unit_id)
+    return ReaderSnapshotLayer(
+        layer_id=layer_id,
+        layer_type="grammar_note",
+        base_id=base_id or result.base.base_id,
+        target_scope=target_scope,  # type: ignore[arg-type]
+        target_key=target_unit_id,
+        schema_version=1,
+        output={
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "grammar_note",
+                    "spans": spans,
+                    "grammar_point": "paired focus construction",
+                    "pattern": "not only ... but also",
+                    "note": "前后两段共同强调并列信息。",
+                }
+            ],
+        },
+        published_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    )
+
+
+def _build_sentence_analysis_layer(
+    result,
+    *,
+    selected_text: str,
+    layer_id: str = "sentence-analysis-layer-1",
+    base_id: str | None = None,
+    target_key: str | None = None,
+    anchor_segment_id: str | None = None,
+    anchor_unit_id: str | None = None,
+    anchor_sentence_id: str | None = None,
+    target_scope: str = "unit",
+) -> ReaderSnapshotLayer:
+    segment = next(
+        (
+            item
+            for item in result.anchor_segments
+            if anchor_segment_id is None or item.anchor_segment_id == anchor_segment_id
+        ),
+        result.anchor_segments[0],
+    )
+    unit_id = anchor_unit_id or segment.unit_id
+    segment_text = segment.text
+    selected_start = segment_text.index(selected_text)
+    computed_start = segment.unit_start_utf16 + utf16_code_unit_length(
+        segment_text[:selected_start]
+    )
+    computed_end = computed_start + utf16_code_unit_length(selected_text)
+    anchor = ReaderTextRangeAnchor(
+        base_id=base_id or result.base.base_id,
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id or segment.anchor_segment_id,
+        sentence_id=anchor_sentence_id or segment.sentence_id,
+        segment_type=segment.segment_type,  # type: ignore[arg-type]
+        start_offset=computed_start,
+        end_offset=computed_end,
+        selected_text=selected_text,
+        text_hash=compute_text_range_hash(selected_text),
+    )
+    return ReaderSnapshotLayer(
+        layer_id=layer_id,
+        layer_type="sentence_analysis",
+        base_id=base_id or result.base.base_id,
+        target_scope=target_scope,  # type: ignore[arg-type]
+        target_key=target_key or segment.unit_id,
+        schema_version=1,
+        output={
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "sentence_analysis",
+                    "anchor": anchor.model_dump(mode="json"),
+                    "label": "fronted emphasis with inversion",
+                    "analysis": "前置结构触发倒装，后半句补充并列结果。",
+                    "chunks": [
+                        {
+                            "order": 1,
+                            "label": "cue",
+                            "text": selected_text.split(",")[0],
+                        },
+                        {
+                            "order": 2,
+                            "label": "result",
+                            "text": "but they also clarified the timeline",
+                        },
+                    ],
+                }
+            ],
         },
         published_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
     )
@@ -431,6 +581,71 @@ def test_reader_plate_snapshot_projects_vocabulary_marks_into_source_leaves() ->
     )
 
 
+def test_reader_plate_snapshot_projects_grammar_note_marks_and_sentence_analysis_nodes() -> None:
+    result = _build_result(
+        "Not only did the team revise the plan, but they also clarified the timeline."
+    )
+    layers = [
+        _build_grammar_note_layer(
+            result,
+            layer_id="grammar-note-layer-1",
+            selected_texts=["Not only"],
+        ),
+        _build_sentence_analysis_layer(
+            result,
+            layer_id="sentence-analysis-layer-1",
+            selected_text=result.anchor_segments[0].text,
+        ),
+    ]
+
+    snapshot = build_reader_plate_snapshot(
+        result,
+        snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
+        last_event_sequence=23,
+        enhancement_layers=layers,
+    )
+
+    source_block = snapshot.value[0]["children"][0]  # type: ignore[index]
+    anchor_node = next(
+        child
+        for child in source_block["children"]  # type: ignore[index]
+        if isinstance(child, dict) and child.get("type") == "reader_anchor_segment"
+    )
+    grammar_marked_leaves = [
+        leaf
+        for leaf in anchor_node["children"]  # type: ignore[index]
+        if isinstance(leaf, dict) and leaf.get("reader_grammar_note_marks")
+    ]
+    grammar_marks = [
+        mark
+        for leaf in grammar_marked_leaves
+        for mark in leaf["reader_grammar_note_marks"]  # type: ignore[index]
+    ]
+    sentence_analysis_nodes = [
+        child
+        for child in snapshot.value[0]["children"]  # type: ignore[index]
+        if isinstance(child, dict) and child.get("type") == "reader_sentence_analysis"
+    ]
+
+    assert len(grammar_marks) == 1
+    assert grammar_marks[0]["owner"] == "system_ai"
+    assert grammar_marks[0]["item_type"] == "grammar_note"
+    assert grammar_marks[0]["grammar_point"] == "paired focus construction"
+    assert grammar_marks[0]["show_note_chip"] is True
+    assert _collect_stable_text(source_block["children"]) == result.units[0].text  # type: ignore[index]
+
+    assert len(sentence_analysis_nodes) == 1
+    assert sentence_analysis_nodes[0]["owner"] == "system_ai"
+    assert sentence_analysis_nodes[0]["layer_id"] == "sentence-analysis-layer-1"
+    assert (
+        sentence_analysis_nodes[0]["anchor_segment_id"]
+        == result.anchor_segments[0].anchor_segment_id
+    )
+    assert sentence_analysis_nodes[0]["selected_text"] == result.anchor_segments[0].text
+    assert sentence_analysis_nodes[0]["label"] == "fronted emphasis with inversion"
+    assert sentence_analysis_nodes[0]["chunks"][0]["label"] == "cue"
+
+
 def test_reader_plate_snapshot_rejects_wrong_base_translation_layer() -> None:
     result = _build_result("First sentence.\n\nSecond paragraph.")
     layer = _build_translation_layer(
@@ -443,6 +658,23 @@ def test_reader_plate_snapshot_rejects_wrong_base_translation_layer() -> None:
         build_reader_plate_snapshot(
             result,
             snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+            last_event_sequence=17,
+            enhancement_layers=[layer],
+        )
+
+
+def test_reader_plate_snapshot_rejects_wrong_base_grammar_note_layer() -> None:
+    result = _build_result("Not only did the team revise the plan.")
+    layer = _build_grammar_note_layer(
+        result,
+        base_id="base-other",
+        selected_texts=["Not only"],
+    )
+
+    with pytest.raises(ValueError, match="base_id must match current base"):
+        build_reader_plate_snapshot(
+            result,
+            snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
             last_event_sequence=17,
             enhancement_layers=[layer],
         )
@@ -465,6 +697,23 @@ def test_reader_plate_snapshot_rejects_vocabulary_layer_for_wrong_target_unit() 
         )
 
 
+def test_reader_plate_snapshot_rejects_grammar_note_layer_for_wrong_target_unit() -> None:
+    result = _build_result("Not only did the team revise the plan.\n\nSecond paragraph.")
+    layer = _build_grammar_note_layer(
+        result,
+        selected_texts=["Not only"],
+        target_key=result.units[1].unit_id,
+    )
+
+    with pytest.raises(ValueError, match="anchor unit_id .* does not match target unit"):
+        build_reader_plate_snapshot(
+            result,
+            snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
+            last_event_sequence=17,
+            enhancement_layers=[layer],
+        )
+
+
 def test_reader_plate_snapshot_rejects_vocabulary_layer_with_wrong_anchor_segment() -> None:
     result = _build_result("First sentence only.")
     layer = _build_vocabulary_layer(
@@ -477,6 +726,41 @@ def test_reader_plate_snapshot_rejects_vocabulary_layer_with_wrong_anchor_segmen
         build_reader_plate_snapshot(
             result,
             snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+            last_event_sequence=17,
+            enhancement_layers=[layer],
+        )
+
+
+def test_reader_plate_snapshot_rejects_sentence_analysis_layer_with_wrong_anchor_segment() -> None:
+    result = _build_result("Not only did the team revise the plan.")
+    layer = _build_sentence_analysis_layer(
+        result,
+        selected_text=result.anchor_segments[0].text,
+        anchor_segment_id="missing-anchor",
+    )
+
+    with pytest.raises(ValueError, match="anchor_segment_id missing-anchor does not exist"):
+        build_reader_plate_snapshot(
+            result,
+            snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
+            last_event_sequence=17,
+            enhancement_layers=[layer],
+        )
+
+
+def test_reader_plate_snapshot_rejects_grammar_note_layer_targeted_to_anchor_segment() -> None:
+    result = _build_result("Not only did the team revise the plan.")
+    layer = _build_grammar_note_layer(
+        result,
+        selected_texts=["Not only"],
+        target_scope="anchor_segment",
+        target_key=result.anchor_segments[0].anchor_segment_id,
+    )
+
+    with pytest.raises(ValueError, match="grammar_note snapshot layer .* must target a unit"):
+        build_reader_plate_snapshot(
+            result,
+            snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
             last_event_sequence=17,
             enhancement_layers=[layer],
         )
@@ -498,6 +782,12 @@ def test_reader_plate_snapshot_rejects_vocabulary_layer_targeted_to_anchor_segme
             last_event_sequence=17,
             enhancement_layers=[layer],
         )
+
+
+def test_snapshot_projection_modules_do_not_reference_render_scene_json() -> None:
+    snapshot_path = API_ROOT / "app" / "services" / "reader_orchestration" / "snapshot.py"
+
+    assert "render_scene_json" not in snapshot_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("owner_kind", ["supplement", "asset"])

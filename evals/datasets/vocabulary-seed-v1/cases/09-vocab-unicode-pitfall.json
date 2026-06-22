@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "id": "vocab-unicode-pitfall",
+  "description": "Smart quote never matches; expect selected_text_not_found.",
+  "unit_id": "u9",
+  "unit_text": "She said “yes” without hesitation.",
+  "anchor_segments": [
+    {
+      "anchor_segment_id": "s1",
+      "sentence_id": "s1",
+      "segment_type": "sentence",
+      "unit_start_utf16": 0,
+      "unit_end_utf16": 34,
+      "text": "She said “yes” without hesitation.",
+      "boundary_quality": "normal"
+    }
+  ],
+  "gold_items": [],
+  "expected_diagnostics": {
+    "candidate_item_count": 1,
+    "resolved_item_count": 0,
+    "skipped_item_count_at_least": 1,
+    "skipped_reason_codes_at_least": [
+      "selected_text_not_found"
+    ]
+  },
+  "unicode_pitfall": "smart_quote",
+  "difficulty_band": "K2",
+  "tags": [
+    "unicode_pitfall",
+    "smart_quote"
+  ],
+  "execution": {
+    "output": {
+      "schema_version": 1,
+      "items": []
+    },
+    "diagnostics": {
+      "candidate_item_count": 1,
+      "resolved_item_count": 0,
+      "skipped_item_count": 1,
+      "skipped_items": [
+        {
+          "item_index": 0,
+          "item_type": "vocab_highlight",
+          "anchor_segment_id": "s1",
+          "selected_text": "\"yes\"",
+          "reason_code": "selected_text_not_found"
+        }
+      ],
+      "skipped_items_truncated_count": 0
+    },
+    "fail_closed": false,
+    "fail_closed_reason": null
+  }
+}
