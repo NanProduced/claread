@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { appReaderPlateRoute } from "@/lib/routes";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 
 import ReaderPlatePage from "./page";
@@ -180,9 +181,7 @@ describe("ReaderPlatePage submit-to-record path", () => {
     expect(screen.getByTestId("reader-plate-snapshot").textContent).toBe(
       "snapshot units: 1",
     );
-    expect(navigationMock.replace).toHaveBeenCalledWith(
-      "/app/reader-plate?record_id=rec_submit_1",
-    );
+    expect(navigationMock.replace).toHaveBeenCalledWith(appReaderPlateRoute("rec_submit_1"));
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/web/reader-plate/submit",
       expect.objectContaining({

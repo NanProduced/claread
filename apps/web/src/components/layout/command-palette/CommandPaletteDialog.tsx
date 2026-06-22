@@ -13,7 +13,7 @@ import {
   CommandMenuEmpty,
   CommandMenuSeparator,
 } from "@/components/primitives/command-menu";
-import { appReaderRoute } from "@/lib/routes";
+import { legacyAppReaderRoute } from "@/lib/routes";
 import { formatShortcut } from "@/lib/shortcuts";
 import { useCommandPalette } from "./useCommandPalette";
 import { getPageCommands, getCommandCommands } from "./command-palette-items";
@@ -141,7 +141,7 @@ export function CommandPaletteDialog() {
       group: hasQuery ? "search" : "recent",
       onSelect: () => {
         setOpen(false);
-        router.push(appReaderRoute(record.id));
+        router.push(legacyAppReaderRoute(record.id));
       },
     }),
   );

@@ -53,8 +53,21 @@ export function dailyArticleRoute(articleId: string): Route {
   return `/daily/${encodeURIComponent(articleId)}` as Route;
 }
 
-export function appReaderRoute(recordId: string): Route {
+export function legacyAppReaderRoute(recordId: string): Route {
   return `/app/reader/${encodeURIComponent(recordId)}` as Route;
+}
+
+export function appReaderPlateRoute(recordId?: string | null): Route {
+  if (!recordId) {
+    return "/app/reader-plate" as Route;
+  }
+
+  return `/app/reader-plate?record_id=${encodeURIComponent(recordId)}` as Route;
+}
+
+/** @deprecated Use legacyAppReaderRoute for old ReaderWorkbench record ids only. */
+export function appReaderRoute(recordId: string): Route {
+  return legacyAppReaderRoute(recordId);
 }
 
 export function loginRoute(nextPath?: string | null, intent?: string | null): Route {

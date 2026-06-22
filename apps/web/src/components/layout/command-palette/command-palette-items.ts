@@ -4,6 +4,7 @@ import {
   appLibraryRoute,
   appVocabularyRoute,
   appSettingsRoute,
+  legacyAppReaderRoute,
 } from "@/lib/routes";
 import type { CommandPaletteCommand } from "./command-palette-types";
 
@@ -54,7 +55,7 @@ export function getCommandCommands(
       disabled: !lastRecordId,
       onSelect: () => {
         if (lastRecordId) {
-          navigate(`/app/reader/${encodeURIComponent(lastRecordId)}`);
+          navigate(legacyAppReaderRoute(lastRecordId));
         }
       },
     },

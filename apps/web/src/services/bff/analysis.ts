@@ -7,6 +7,7 @@ import {
   getUpstreamAnalysisTaskStatus,
   submitUpstreamAnalysisTask,
 } from "@/services/api/tasks";
+import { legacyAppReaderRoute } from "@/lib/routes";
 import { getWebSession } from "@/services/bff/session";
 import type {
   ReadingGoalDto,
@@ -142,7 +143,7 @@ function projectTaskStatus(task: TaskStatusResponseDto): WebAnalysisActiveTask {
     taskId: task.task_id,
     recordId,
     status: task.status,
-    readerUrl: `/app/reader/${recordId}`,
+    readerUrl: legacyAppReaderRoute(recordId),
     failureCode: task.failure_code,
     failureMessage: task.failure_message,
   };
@@ -264,7 +265,7 @@ export async function submitAnalysisFromWeb(input: {
           taskId,
           recordId,
           status,
-          readerUrl: `/app/reader/${recordId}`,
+          readerUrl: legacyAppReaderRoute(recordId),
           message: "有一篇文章正在透读，稍后可在记录页看到。",
         };
       }
@@ -297,7 +298,7 @@ export async function submitAnalysisFromWeb(input: {
     taskId: upstreamResult.data.task_id,
     recordId,
     status: upstreamResult.data.status,
-    readerUrl: `/app/reader/${recordId}`,
+    readerUrl: legacyAppReaderRoute(recordId),
     message:
       upstreamResult.data.status === "succeeded"
         ? "解析完成，正在打开 Reader。"
@@ -361,7 +362,7 @@ export async function getAnalysisTaskStatusFromWeb(
     taskId: upstreamResult.data.task_id,
     recordId,
     status: upstreamResult.data.status,
-    readerUrl: `/app/reader/${recordId}`,
+    readerUrl: legacyAppReaderRoute(recordId),
     failureCode: upstreamResult.data.failure_code,
     failureMessage: upstreamResult.data.failure_message,
   };

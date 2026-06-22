@@ -26,7 +26,7 @@ import {
 import { ApertureWatermark } from "@/components/brand/BrandMarks";
 import { Button } from "@/components/primitives/button";
 import { toast } from "@/components/primitives/toast";
-import { appReadRoute, appReaderRoute } from "@/lib/routes";
+import { appReadRoute, legacyAppReaderRoute } from "@/lib/routes";
 import type { RecordsBffStatus } from "@/services/bff/records";
 import type { RecordListItemVm } from "@/types/view/RecordListItemVm";
 import { DeleteRecordButton } from "./DeleteRecordButton";
@@ -591,7 +591,7 @@ export function LibraryClient({
 
                         {/* Article Title Linked to Reader */}
                         <Link
-                          href={appReaderRoute(record.id)}
+                          href={legacyAppReaderRoute(record.id)}
                           onClick={rememberLibraryScrollPosition}
                           className="focus-ring inline-block rounded-md outline-offset-4"
                         >
@@ -665,7 +665,7 @@ export function LibraryClient({
                             onDeleted={handleRecordDeleted}
                           />
                           <Link
-                            href={appReaderRoute(record.id)}
+                            href={legacyAppReaderRoute(record.id)}
                             onClick={rememberLibraryScrollPosition}
                             className="focus-ring group inline-flex items-center justify-center h-8 w-8 rounded-md text-muted transition-all duration-200 hover:text-ink hover:translate-x-[4px] active:translate-x-0 hover:scale-110"
                             title="继续阅读"
@@ -734,7 +734,7 @@ export function LibraryClient({
                   </h3>
                   {recentRecord ? (
                     <Link
-                      href={appReaderRoute(recentRecord.id)}
+                      href={legacyAppReaderRoute(recentRecord.id)}
                       onClick={rememberLibraryScrollPosition}
                       className="group block rounded-note focus-ring outline-offset-4"
                     >

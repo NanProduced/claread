@@ -22,7 +22,7 @@ import {
   type ReadingDefaultState,
   normalizeReadingDefaults,
 } from "@/lib/reading-defaults";
-import { appLibraryRoute, appReaderRoute } from "@/lib/routes";
+import { appLibraryRoute, legacyAppReaderRoute } from "@/lib/routes";
 import type { ReadingGoalDto, ReadingVariantDto, TaskStatusDto } from "@/types/api/tasks";
 
 type SubmitState =
@@ -574,7 +574,7 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
           setState({ kind: "success", message: "解析完成，正在打开 Reader。" });
           router.push(
             (payload.readerUrl as Route | undefined) ||
-              (payload.recordId ? appReaderRoute(payload.recordId) : libraryRoute),
+              (payload.recordId ? legacyAppReaderRoute(payload.recordId) : libraryRoute),
           );
           return;
         }
@@ -594,7 +594,7 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
             taskId: payload.taskId,
             recordId: payload.recordId,
             status: payload.status,
-            readerUrl: payload.readerUrl || appReaderRoute(payload.recordId),
+            readerUrl: payload.readerUrl || legacyAppReaderRoute(payload.recordId),
             failureCode: payload.failureCode,
             failureMessage: payload.failureMessage,
           });
@@ -660,7 +660,9 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
           taskId: payload.taskId,
           recordId: payload.recordId || "",
           status: payload.status,
-          readerUrl: payload.readerUrl || (payload.recordId ? appReaderRoute(payload.recordId) : libraryRoute),
+          readerUrl:
+            payload.readerUrl ||
+            (payload.recordId ? legacyAppReaderRoute(payload.recordId) : libraryRoute),
         });
         setState({ kind: "pending", message: "正在透读。" });
         return;
@@ -669,7 +671,7 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
       setState({ kind: "success", message: payload.message });
       router.push(
         (payload.readerUrl as Route | undefined) ||
-          (payload.recordId ? appReaderRoute(payload.recordId) : libraryRoute),
+          (payload.recordId ? legacyAppReaderRoute(payload.recordId) : libraryRoute),
       );
     } catch (error) {
       setState({
@@ -896,7 +898,7 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
             <button
               type="button"
               className="ml-4 text-[0.72rem] font-semibold underline decoration-hairline underline-offset-4 transition-colors hover:text-ink"
-              onClick={() => router.push(appReaderRoute(errorRecordId))}
+              onClick={() => router.push(legacyAppReaderRoute(errorRecordId))}
             >
               打开任务
             </button>

@@ -17,6 +17,7 @@ import {
   getUpstreamCurrentAnalysisTask,
   submitUpstreamAnalysisTask,
 } from "@/services/api/tasks";
+import { legacyAppReaderRoute } from "@/lib/routes";
 import {
   getCurrentAnalysisTaskFromWeb,
   submitAnalysisFromWeb,
@@ -64,7 +65,7 @@ describe("analysis BFF active task projection", () => {
         taskId: "task-1",
         recordId: "record-1",
         status: "running",
-        readerUrl: "/app/reader/record-1",
+        readerUrl: legacyAppReaderRoute("record-1"),
         failureCode: null,
         failureMessage: null,
       },
@@ -131,7 +132,7 @@ describe("analysis BFF active task projection", () => {
       taskId: "active-task",
       recordId: "active-record",
       status: "running",
-      readerUrl: "/app/reader/active-record",
+      readerUrl: legacyAppReaderRoute("active-record"),
     });
   });
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { ReaderPlateSnapshotSurface } from "@/components/reader/plate/ReaderPlateSnapshotSurface";
+import { appReaderPlateRoute } from "@/lib/routes";
 import { useReaderPlatePolling } from "@/lib/reader-plate-snapshot/polling";
 import type {
   ReaderPlateSnapshotDto,
@@ -200,7 +201,7 @@ export default function ReaderPlatePage() {
         snapshot: payload.snapshot,
       });
       autoLoadedRecordIdRef.current = payload.record_id;
-      router.replace(`/app/reader-plate?record_id=${encodeURIComponent(payload.record_id)}`);
+      router.replace(appReaderPlateRoute(payload.record_id));
     } catch (err) {
       setSubmitState({
         kind: "error",
@@ -316,7 +317,7 @@ export default function ReaderPlatePage() {
                   setText("");
                   setSubmitState({ kind: "idle" });
                   setSnapshotState({ kind: "idle" });
-                  router.replace("/app/reader-plate");
+                  router.replace(appReaderPlateRoute());
                 }}
               >
                 提交新内容

@@ -19,7 +19,7 @@ import {
 import { ScrollArea } from "@/components/primitives/scroll-area";
 import { Sheet, SheetContent } from "@/components/primitives/sheet";
 import { VocabularyDetailPanel } from "@/components/vocabulary/VocabularyDetailPanel";
-import { appReaderRoute, appReviewRoute } from "@/lib/routes";
+import { appReviewRoute, legacyAppReaderRoute } from "@/lib/routes";
 import type { VocabularyBffStatus } from "@/services/bff/vocabulary";
 import type { VocabularyItemVm } from "@/types/view/VocabularyItemVm";
 
@@ -398,7 +398,7 @@ export function VocabularyClient({
   }, [deleteTarget, selectedId, items]);
 
   const handleGoToSource = useCallback((recordId: string, sentenceId?: string) => {
-    let url = appReaderRoute(recordId);
+    let url = legacyAppReaderRoute(recordId);
     if (sentenceId) url += `?sentenceId=${sentenceId}`;
     window.location.href = url;
   }, []);
@@ -570,7 +570,7 @@ export function VocabularyClient({
                               onClick={(e) => e.stopPropagation()}
                             >
                               <Link
-                                href={appReaderRoute(item.sourceRecordId)}
+                                href={legacyAppReaderRoute(item.sourceRecordId)}
                                 className="text-lens-blue hover:underline"
                               >
                                 查看来源语境

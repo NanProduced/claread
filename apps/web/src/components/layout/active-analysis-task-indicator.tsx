@@ -9,7 +9,7 @@ import {
   isAnalysisTerminalStatus,
   type WebAnalysisTaskView,
 } from "@/lib/analysis-task-client";
-import { appLibraryRoute, appReaderRoute } from "@/lib/routes";
+import { appLibraryRoute, legacyAppReaderRoute } from "@/lib/routes";
 import { toast } from "@/components/primitives/toast";
 import { cn } from "@/lib/cn";
 
@@ -68,7 +68,7 @@ export function ActiveAnalysisTaskIndicator({
           toast.message("透读完成，打开阅读页", {
             action: {
               label: "打开阅读页",
-              onClick: () => router.push(appReaderRoute(recordId)),
+              onClick: () => router.push(legacyAppReaderRoute(recordId)),
             },
           });
           return;
@@ -87,7 +87,7 @@ export function ActiveAnalysisTaskIndicator({
             taskId: payload.taskId,
             recordId: payload.recordId,
             status: payload.status,
-            readerUrl: payload.readerUrl || appReaderRoute(payload.recordId),
+            readerUrl: payload.readerUrl || legacyAppReaderRoute(payload.recordId),
             failureCode: payload.failureCode,
             failureMessage: payload.failureMessage,
           });

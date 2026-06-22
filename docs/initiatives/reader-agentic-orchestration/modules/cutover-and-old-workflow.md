@@ -142,11 +142,11 @@ Web Reader 不再依赖旧 `render_scene_json`。Reader Article Body 的新路�
 | 新提交产品入口 | `/app/read` | `/api/web/analysis/*` -> 旧 `/analysis-tasks` | 旧 `cloud_record_id` / analysis record id | `AnalyzeSubmitForm.tsx`、`services/bff/analysis.ts`；成功后仍跳旧 `/app/reader/{recordId}` |
 | 新 Reader Plate 验证页 | `/app/reader-plate` + `?record_id=` | `/api/web/reader-plate/*` -> 新 `/reader/records/plain-text|snapshot|events` | 新 `Reading Record.record_id` | `reader-plate/page.tsx`；当前是 read-only validation surface，不是最终产品 UI |
 | 旧 Reader 产品页 | `/app/reader/{recordId}` | `getReaderRecord()` -> 旧 `/reader/records/{id}/scene` 或 `by-client-id/.../scene` | 旧 analysis record id 或 client record id | `reader/[recordId]/page.tsx`、`services/bff/reader.ts`、`services/api/reader-scene.ts`；仍承载 ReaderWorkbench、Ask、点词、笔记、高亮 |
-| Library record links | `appReaderRoute(record.id)` | `/records` -> `RecordResponseDto[]` | 旧 `RecordResponseDto.id` | `LibraryClient.tsx`、`services/bff/records.ts`；Library 当前拿到的是旧 record list，不是新 Reading Record list |
-| Vocabulary source links | `appReaderRoute(recordId)` / `appReaderRoute(item.sourceRecordId)` | vocabulary item source refs -> 旧 source record contract | 旧 source record id / `cloud_record_id` | `app/vocabulary/VocabularyClient.tsx`；点回原文仍跳旧 ReaderWorkbench，不能把 source record id 当新 `Reading Record.record_id` |
-| Command palette 最近记录 | `appReaderRoute(record.id)` / hardcoded `/app/reader/...` | recent/search record list | 旧 record id | `CommandPaletteDialog.tsx`、`command-palette-items.ts` |
-| Active analysis task indicator | toast action -> `appReaderRoute(recordId)` | `/api/web/analysis/current` + `/api/web/analysis/tasks/{taskId}` | 旧 `cloud_record_id` | `active-analysis-task-indicator.tsx`、`analysis-task-client.ts` |
-| `services/bff/analysis.ts` `readerUrl` | hardcoded `/app/reader/${recordId}` | 旧 analysis task submit/status projection | 旧 `cloud_record_id` | 是当前 cutover 最显式的旧产品路径投射点 |
+| Library record links | `legacyAppReaderRoute(record.id)` | `/records` -> `RecordResponseDto[]` | 旧 `RecordResponseDto.id` | `LibraryClient.tsx`、`services/bff/records.ts`；Library 当前拿到的是旧 record list，不是新 Reading Record list |
+| Vocabulary source links | `legacyAppReaderRoute(recordId)` / `legacyAppReaderRoute(item.sourceRecordId)` | vocabulary item source refs -> 旧 source record contract | 旧 source record id / `cloud_record_id` | `app/vocabulary/VocabularyClient.tsx`；点回原文仍跳旧 ReaderWorkbench，不能把 source record id 当新 `Reading Record.record_id` |
+| Command palette 最近记录 | `legacyAppReaderRoute(record.id)` / `legacyAppReaderRoute(lastRecordId)` | recent/search record list | 旧 record id | `CommandPaletteDialog.tsx`、`command-palette-items.ts` |
+| Active analysis task indicator | toast action -> `legacyAppReaderRoute(recordId)` | `/api/web/analysis/current` + `/api/web/analysis/tasks/{taskId}` | 旧 `cloud_record_id` | `active-analysis-task-indicator.tsx`、`analysis-task-client.ts` |
+| `services/bff/analysis.ts` `readerUrl` | `legacyAppReaderRoute(recordId)` | 旧 analysis task submit/status projection | 旧 `cloud_record_id` | 是当前 cutover 最显式的旧产品路径投射点 |
 | App shell route heuristics | `pathname.startsWith("/app/reader/") || pathname === "/app/read"` | 纯前端 route heuristic | 无 | `components/layout/app-shell/index.tsx`；未来新产品 route 进入后也要同步调整 sidebar collapse / active-task hiding 逻辑 |
 
 ## D5-W3 当前数据对象关系
@@ -206,14 +206,21 @@ Done criteria：
 - 在前端代码中显式区分 legacy reader route 与 new reading-record route。
 - 先消除“一个 helper 同时承载旧/new record 语义”的歧义。
 - 继续保留 `/app/reader-plate` 作为验证页，但为 query-string 直达补明确 helper。
+- 2026-06-22 已落地 `legacyAppReaderRoute()` / `appReaderPlateRoute()` helper split；本轮只做命名与调用点显式化，不切任何产品流量。
 
 Touched files：
 
 - `apps/web/src/lib/routes.ts`
+- `apps/web/src/app/(private)/app/read/AnalyzeSubmitForm.tsx`
+- `apps/web/src/app/(private)/app/library/LibraryClient.tsx`
+- `apps/web/src/app/(private)/app/vocabulary/VocabularyClient.tsx`
+- `apps/web/src/components/layout/active-analysis-task-indicator.tsx`
+- `apps/web/src/components/layout/command-palette/CommandPaletteDialog.tsx`
+- `apps/web/src/components/layout/command-palette/command-palette-items.ts`
+- `apps/web/src/services/bff/analysis.ts`
 - `apps/web/src/app/(private)/app/reader-plate/page.tsx`
 - `apps/web/src/app/(private)/app/reader-plate/page.test.tsx`
-- `apps/web/src/components/layout/app-shell/index.tsx`
-- `apps/web/src/app/(private)/app/vocabulary/VocabularyClient.tsx`
+- `apps/web/src/lib/routes.test.ts`
 
 Done criteria：
 
@@ -221,6 +228,7 @@ Done criteria：
 - new reader-plate validation route 有独立 helper，不再散落 hardcoded `?record_id=...`。
 - Vocabulary source links 显式选择 legacy reader helper，而不是复用 future reading-record helper。
 - 没有任何入口因为 helper 改名而被动切到新产品页。
+- `/app/read`、Library、Vocabulary、command palette、active task 与 `services/bff/analysis.ts` 仍输出旧 `/app/reader/{recordId}` URL。
 
 ### Phase W3-C: 确定新产品 Reader route
 
@@ -281,14 +289,13 @@ Done criteria：
 
 ## 下一轮最小编码任务建议
 
-下一轮最小可执行切片建议是 W3-B，而不是直接切产品路由：
+W3-B 已完成。下一轮最小可执行切片建议转向“只改一个产品入口”的 W3-C/W3-D 前置切片，而不是一次性切所有 consumer：
 
-- 在 `src/lib/routes.ts` 引入显式 legacy/new route helpers。
-- 把 `/app/reader-plate?record_id=...` 封装为明确 helper。
-- 更新 `reader-plate/page.tsx` 与静态 guard test 使用新 helper。
-- 保持 `/app/read`、Library、command palette、active task 的现有行为不变。
+- 先确定新 Reading Record 的产品 route 命名，例如是否新增 `/app/reader-record/{recordId}`。
+- 只改 `/app/read` submit 成功 landing 与对应 BFF/helper，保持 Library、Vocabulary、command palette、active task 继续停留在 legacy ReaderWorkbench。
+- 不做旧 `render_scene_json` / `/scene` 到新 snapshot path 的兼容映射。
 
-这样可以先把“route 语义分叉”编码化，降低后续把旧/new record id 混用的风险，而不提前切走旧 ReaderWorkbench 的产品能力。
+这样可以把第一次真实产品 cutover 限制在 submit 入口，先验证新 product route 的记录 id、BFF 和页面装配，再决定是否逐步迁移其他旧入口。
 
 ## 不允许事项
 
