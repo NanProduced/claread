@@ -139,9 +139,9 @@ Web Reader 不再依赖旧 `render_scene_json`。Reader Article Body 的新路�
 
 | Surface | 当前入口 / route | 当前 source of truth | 当前 id 语义 | 代码落点 / 说明 |
 |---|---|---|---|---|
-| 新提交产品入口 | `/app/read` | `/api/web/analysis/*` -> 旧 `/analysis-tasks` | 旧 `cloud_record_id` / analysis record id | `AnalyzeSubmitForm.tsx`、`services/bff/analysis.ts`；成功后仍跳旧 `/app/reader/{recordId}` |
+| 新提交产品入口 | `/app/read` | 默认 `/api/web/reading-record/submit` -> 新 `/reader/records/plain-text`；legacy mode 仍可回退到 `/api/web/analysis/submit` | 默认新 `Reading Record.record_id`；legacy mode 使用旧 `cloud_record_id` | `AnalyzeSubmitForm.tsx`、`submit-mode.ts`、`services/bff/reader-plate.ts`；W3-D1 起默认成功后跳 `/app/reader-record/{readingRecordId}` |
 | 新 Reader Plate 验证页 | `/app/reader-plate` + `?record_id=` | `/api/web/reader-plate/*` -> 新 `/reader/records/plain-text|snapshot|events` | 新 `Reading Record.record_id` | `reader-plate/page.tsx`；当前是 read-only validation surface，不是最终产品 UI |
-| 新 Reading Record 产品 route shell | `/app/reader-record/{recordId}` | `/api/web/reader-plate/{recordId}/snapshot` | 新 `Reading Record.record_id` | `reader-record/[recordId]/page.tsx`；W3-C3 起通过 snapshot adapter 渲染旧 Workbench 风格只读中心 Plate 区，当前未承接任何 submit / Library / command palette / active task 流量 |
+| 新 Reading Record 产品 route shell | `/app/reader-record/{recordId}` | `/api/web/reader-plate/{recordId}/snapshot` | 新 `Reading Record.record_id` | `reader-record/[recordId]/page.tsx`；W3-C3 起通过 snapshot adapter 渲染旧 Workbench 风格只读中心 Plate 区，W3-D1 起承接 `/app/read` 成功 landing；Library / command palette / active task 流量仍未切入 |
 | 旧 Reader 产品页 | `/app/reader/{recordId}` | `getReaderRecord()` -> 旧 `/reader/records/{id}/scene` 或 `by-client-id/.../scene` | 旧 analysis record id 或 client record id | `reader/[recordId]/page.tsx`、`services/bff/reader.ts`、`services/api/reader-scene.ts`；仍承载 ReaderWorkbench、Ask、点词、笔记、高亮 |
 | Library record links | `legacyAppReaderRoute(record.id)` | `/records` -> `RecordResponseDto[]` | 旧 `RecordResponseDto.id` | `LibraryClient.tsx`、`services/bff/records.ts`；Library 当前拿到的是旧 record list，不是新 Reading Record list |
 | Vocabulary source links | `legacyAppReaderRoute(recordId)` / `legacyAppReaderRoute(item.sourceRecordId)` | vocabulary item source refs -> 旧 source record contract | 旧 source record id / `cloud_record_id` | `app/vocabulary/VocabularyClient.tsx`；点回原文仍跳旧 ReaderWorkbench，不能把 source record id 当新 `Reading Record.record_id` |
@@ -167,10 +167,10 @@ Web Reader 不再依赖旧 `render_scene_json`。Reader Article Body 的新路�
 
 当前 Web 代码的现实情况：
 
-- `/app/read`、active task、command palette、Library、Vocabulary source links 仍主要围绕旧 `analysis task / source record id -> /app/reader/{recordId}` 工作。
+- `/app/read` 默认 submit 已围绕新 `Reading Record.record_id -> /app/reader-record/{recordId}` 工作；active task、command palette、Library、Vocabulary source links 仍主要围绕旧 `analysis task / source record id -> /app/reader/{recordId}` 工作。
 - `/app/reader/{recordId}` 仍走旧 scene adapter，把 `ReaderSceneResponseDto` 适配成 ReaderWorkbench VM。
 - `/app/reader-plate` 独立消费新 `ReaderPlateSnapshot`，其 `record_id` 是新 Reading Record id，不应回灌给旧 `/app/reader/{recordId}` helper。
-- `/app/reader-record/{recordId}` 现在提供新的 Reading Record product route，并复用 `IntensiveReaderSurface` / `ImmersiveReaderSurface` 渲染 Workbench-backed read-only 中心 Plate 区；Ask、notes/highlights、dictionary/user asset 写入仍未接通，也没有切任何旧入口流量。
+- `/app/reader-record/{recordId}` 现在提供新的 Reading Record product route，并复用 `IntensiveReaderSurface` / `ImmersiveReaderSurface` 渲染 Workbench-backed read-only 中心 Plate 区；Ask、notes/highlights、dictionary/user asset 写入仍未接通。
 - Library 当前列表来自旧 `/records`；即使页面本身不直接渲染 `render_scene_json`，它拿到的数据对象仍属于旧 record contract。
 
 UI / UX 方向：
@@ -280,7 +280,7 @@ W3-C3 结论：
 - `/app/reader-record/{recordId}` loaded 状态已从 `ReaderPlateSnapshotSurface` 验证视图切到 `ReaderRecordWorkbenchSurface`，输入仍只来自 `/api/web/reader-plate/{recordId}/snapshot`。
 - `ReaderRecordWorkbenchSurface` 通过 snapshot-to-reader-workbench adapter 生成旧 `ReaderPlateDocument`，复用 `IntensiveReaderSurface` / `ImmersiveReaderSurface`、阅读模式切换、阅读设置、本地分析展开、译文、inline marks、句式拆解和 DOM anchor contract。
 - 新 route 当前明确是 read-only product surface：Ask persistence、notes/highlights persistence、dictionary/user asset 写入禁用；没有接旧 `/scene`、旧 record adapter 或 `/analysis-tasks`。
-- `/app/read`、Library、Vocabulary、command palette、active task 仍未切到 `/app/reader-record/{recordId}`。
+- W3-C3 当时 `/app/read`、Library、Vocabulary、command palette、active task 仍未切到 `/app/reader-record/{recordId}`；W3-D1 只切了 `/app/read` submit landing。
 
 ### Phase W3-D: 逐步改线 submit / Library / command palette / active task / Vocabulary
 
@@ -288,6 +288,21 @@ W3-C3 结论：
 
 - 按入口逐块改线，避免一次性大迁移。
 - 每次只迁一个“产生 readerUrl 或 record link 的 surface”。
+
+W3-D0 结论：
+
+- Web BFF submit contract 已拆清：`submitAnalysisFromWeb()` 仍是 legacy analysis task submit，成功结果中的 `recordId` 表示旧 `cloud_record_id`，`readerUrl` 继续是 `legacyAppReaderRoute(recordId)`。
+- 新 Reading Record product submit adapter 是 `submitReadingRecordPlainTextFromWeb()`，成功结果使用 `readingRecordId`、`readerUrl = appReadingRecordRoute(readingRecordId)`、`baseId`、`articleReadySequence` 和 `snapshot`，不复用 legacy `recordId` 命名。
+- `/app/read` 在 W3-D0 时默认提交路径仍是 `/api/web/analysis/submit`；该前置阶段未切到新 Reading Record adapter。
+- Library、Vocabulary、command palette、active task 本轮未改线；新 reader submit BFF 不依赖 `/analysis-tasks`、`legacyAppReaderRoute` 或旧 `/app/reader/{recordId}`。
+
+W3-D1 结论：
+
+- `/app/read` 已通过 `READ_PAGE_SUBMIT_MODE = "reading-record"` 和 `submit-mode.ts` 形成明确切换点，默认调用 `/api/web/reading-record/submit`。
+- 新 route handler 调用 `submitReadingRecordPlainTextFromWeb()`，成功响应使用 `readingRecordId` 和 `readerUrl = appReadingRecordRoute(readingRecordId)`，不会把新 Reading Record id 写入 legacy `recordId` 或 active analysis task payload。
+- 成功 landing 已切到 `/app/reader-record/{readingRecordId}`，例如 `/app/reader-record/reading_record_1`。
+- legacy `/api/web/analysis/submit` 路径与 `submitAnalysisFromWeb()` 仍保留为显式回滚路径；active task polling 仍只服务 legacy analysis task。
+- Library、Vocabulary、command palette、active task 本轮未改线；这些入口仍保持旧 id / `legacyAppReaderRoute(...)` 边界。
 
 建议顺序：
 
@@ -298,14 +313,20 @@ W3-C3 结论：
 
 Touched files：
 
-- `apps/web/src/app/(private)/app/read/AnalyzeSubmitForm.tsx`
-- `apps/web/src/services/bff/analysis.ts` 或其替代新 BFF
-- `apps/web/src/components/layout/active-analysis-task-indicator.tsx`
-- `apps/web/src/components/layout/command-palette/command-palette-items.ts`
-- `apps/web/src/components/layout/command-palette/CommandPaletteDialog.tsx`
-- `apps/web/src/app/(private)/app/vocabulary/VocabularyClient.tsx`
-- `apps/web/src/app/(private)/app/library/LibraryClient.tsx`
-- `apps/web/src/services/bff/records.ts` 及后续 new record list source
+- W3-D0：
+  - `apps/web/src/services/bff/reader-plate.ts`
+  - `apps/web/src/services/bff/reader-plate.test.ts`
+  - `apps/web/src/services/bff/analysis.test.ts`
+  - `apps/web/src/lib/routes.test.ts`
+- W3-D1+：
+  - `apps/web/src/app/(private)/app/read/AnalyzeSubmitForm.tsx`
+  - `apps/web/src/services/bff/analysis.ts` 或其替代新 BFF
+  - `apps/web/src/components/layout/active-analysis-task-indicator.tsx`
+  - `apps/web/src/components/layout/command-palette/command-palette-items.ts`
+  - `apps/web/src/components/layout/command-palette/CommandPaletteDialog.tsx`
+  - `apps/web/src/app/(private)/app/vocabulary/VocabularyClient.tsx`
+  - `apps/web/src/app/(private)/app/library/LibraryClient.tsx`
+  - `apps/web/src/services/bff/records.ts` 及后续 new record list source
 
 Done criteria：
 
@@ -313,12 +334,12 @@ Done criteria：
 - 不再依赖 `services/bff/analysis.ts` 产出旧 `/app/reader/${recordId}` 作为默认产品 landing。
 - Library / command palette / active task / Vocabulary source links 不再隐式混用旧/new record id。
 
-## 下一轮最小编码任务建议
+## 当前下一步建议
 
-W3-B 已完成。下一轮最小可执行切片建议转向“只改一个产品入口”的 W3-C/W3-D 前置切片，而不是一次性切所有 consumer：
+W3-D1 已完成第一个产品入口的最小切换，后续不要一次性迁所有 consumer：
 
-- 先确定新 Reading Record 的产品 route 命名，例如是否新增 `/app/reader-record/{recordId}`。
-- 只改 `/app/read` submit 成功 landing 与对应 BFF/helper，保持 Library、Vocabulary、command palette、active task 继续停留在 legacy ReaderWorkbench。
+- 先观察 `/app/read -> /app/reader-record/{recordId}` 的新 Reading Record landing 稳定性。
+- 再逐个评估 active task、command palette、Vocabulary source links 和 Library 的 id 来源，只有能区分旧/new record id 后再改线。
 - 不做旧 `render_scene_json` / `/scene` 到新 snapshot path 的兼容映射。
 
 这样可以把第一次真实产品 cutover 限制在 submit 入口，先验证新 product route 的记录 id、BFF 和页面装配，再决定是否逐步迁移其他旧入口。

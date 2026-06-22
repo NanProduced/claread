@@ -7,6 +7,7 @@ import {
   pollUpstreamReaderEvents,
   submitUpstreamReaderPlainText,
 } from "@/services/api/reader-plate";
+import { appReadingRecordRoute } from "@/lib/routes";
 import { getWebSession } from "@/services/bff/session";
 import type {
   ReaderEventPollResponseDto,
@@ -29,6 +30,18 @@ export type ReaderPlateBffError = {
 
 export type ReaderPlateSubmitResult =
   | ({ ok: true } & ReaderPlainTextSubmitResponseDto)
+  | ReaderPlateBffError;
+
+export type ReadingRecordSubmitResult =
+  | {
+      ok: true;
+      message: string;
+      readingRecordId: string;
+      readerUrl: string;
+      baseId: string;
+      articleReadySequence: number;
+      snapshot: ReaderPlateSnapshotDto;
+    }
   | ReaderPlateBffError;
 
 export type ReaderPlateSnapshotResult =
@@ -127,6 +140,27 @@ export async function submitReaderPlainTextFromWeb(input: {
   }
 
   return { ok: true, ...upstreamResult.data };
+}
+
+export async function submitReadingRecordPlainTextFromWeb(input: {
+  plainText?: unknown;
+  title?: unknown;
+  language?: unknown;
+}): Promise<ReadingRecordSubmitResult> {
+  const result = await submitReaderPlainTextFromWeb(input);
+  if (!result.ok) {
+    return result;
+  }
+
+  return {
+    ok: true,
+    message: "阅读记录已创建，正在打开 Reader。",
+    readingRecordId: result.record_id,
+    readerUrl: appReadingRecordRoute(result.record_id),
+    baseId: result.base_id,
+    articleReadySequence: result.article_ready_sequence,
+    snapshot: result.snapshot,
+  };
 }
 
 export async function getReaderPlateSnapshotFromWeb(

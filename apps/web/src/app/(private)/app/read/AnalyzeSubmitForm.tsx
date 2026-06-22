@@ -22,8 +22,14 @@ import {
   type ReadingDefaultState,
   normalizeReadingDefaults,
 } from "@/lib/reading-defaults";
-import { appLibraryRoute, legacyAppReaderRoute } from "@/lib/routes";
+import { appLibraryRoute, appReadingRecordRoute, legacyAppReaderRoute } from "@/lib/routes";
 import type { ReadingGoalDto, ReadingVariantDto, TaskStatusDto } from "@/types/api/tasks";
+import {
+  READ_PAGE_SUBMIT_MODE,
+  readPageSubmitEndpoint,
+  readPageSubmitRequestBody,
+  type ReadPageSubmitMode,
+} from "./submit-mode";
 
 type SubmitState =
   | { kind: "idle" }
@@ -38,6 +44,13 @@ interface AnalysisSubmitResponse {
   status?: TaskStatusDto;
   readerUrl?: string;
   recordId?: string;
+}
+
+interface ReadingRecordSubmitResponse {
+  ok: boolean;
+  message?: string;
+  readingRecordId?: string;
+  readerUrl?: string;
 }
 
 const POLL_INTERVAL_MS = 2000;
@@ -636,42 +649,85 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
       return;
     }
 
-    setState({ kind: "pending", message: "正在提交解析任务..." });
+    const submitMode: ReadPageSubmitMode = READ_PAGE_SUBMIT_MODE;
+    setState({ kind: "pending", message: "正在提交透读任务..." });
 
     try {
-      const response = await fetch("/api/web/analysis/submit", {
+      const response = await fetch(readPageSubmitEndpoint(submitMode), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text, readingGoal, readingVariant }),
+        body: JSON.stringify(
+          readPageSubmitRequestBody(
+            { text, readingGoal, readingVariant },
+            submitMode,
+          ),
+        ),
       });
-      const payload = (await response.json()) as AnalysisSubmitResponse;
+      const payload = (await response.json()) as
+        | AnalysisSubmitResponse
+        | ReadingRecordSubmitResponse;
 
       if (!response.ok || !payload.ok) {
+        const legacyPayload =
+          submitMode === "legacy" ? (payload as AnalysisSubmitResponse) : null;
         setState({
           kind: "error",
           message: payload.message || "提交失败，请稍后重试。",
-          recordId: payload.recordId,
+          recordId: legacyPayload?.recordId,
         });
         return;
       }
 
-      if (payload.taskId && payload.status && payload.status !== "succeeded") {
+      if (submitMode === "reading-record") {
+        const readingRecordPayload = payload as ReadingRecordSubmitResponse;
+        const readerUrl =
+          (readingRecordPayload.readerUrl as Route | undefined) ||
+          (readingRecordPayload.readingRecordId
+            ? appReadingRecordRoute(readingRecordPayload.readingRecordId)
+            : null);
+
+        if (!readerUrl) {
+          setState({
+            kind: "error",
+            message: "阅读记录已创建，但返回结果缺少 readingRecordId。",
+          });
+          return;
+        }
+
+        setState({
+          kind: "success",
+          message: readingRecordPayload.message || "阅读记录已创建，正在打开 Reader。",
+        });
+        router.push(readerUrl);
+        return;
+      }
+
+      const legacyPayload = payload as AnalysisSubmitResponse;
+      if (
+        legacyPayload.taskId &&
+        legacyPayload.status &&
+        legacyPayload.status !== "succeeded"
+      ) {
         setActiveTask({
-          taskId: payload.taskId,
-          recordId: payload.recordId || "",
-          status: payload.status,
+          taskId: legacyPayload.taskId,
+          recordId: legacyPayload.recordId || "",
+          status: legacyPayload.status,
           readerUrl:
-            payload.readerUrl ||
-            (payload.recordId ? legacyAppReaderRoute(payload.recordId) : libraryRoute),
+            legacyPayload.readerUrl ||
+            (legacyPayload.recordId
+              ? legacyAppReaderRoute(legacyPayload.recordId)
+              : libraryRoute),
         });
         setState({ kind: "pending", message: "正在透读。" });
         return;
       }
 
-      setState({ kind: "success", message: payload.message });
+      setState({ kind: "success", message: legacyPayload.message });
       router.push(
-        (payload.readerUrl as Route | undefined) ||
-          (payload.recordId ? legacyAppReaderRoute(payload.recordId) : libraryRoute),
+        (legacyPayload.readerUrl as Route | undefined) ||
+          (legacyPayload.recordId
+            ? legacyAppReaderRoute(legacyPayload.recordId)
+            : libraryRoute),
       );
     } catch (error) {
       setState({

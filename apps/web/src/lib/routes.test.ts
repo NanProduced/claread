@@ -21,4 +21,18 @@ describe("reader route helpers", () => {
   it("builds the new reading-record product route", () => {
     expect(appReadingRecordRoute("rec 1")).toBe("/app/reader-record/rec%201");
   });
+
+  it("keeps legacy analysis record routes and new Reading Record routes disjoint", () => {
+    const readingRecordId = "reading record 1";
+
+    expect(appReadingRecordRoute(readingRecordId)).toBe(
+      "/app/reader-record/reading%20record%201",
+    );
+    expect(legacyAppReaderRoute(readingRecordId)).toBe(
+      "/app/reader/reading%20record%201",
+    );
+    expect(appReadingRecordRoute(readingRecordId)).not.toBe(
+      legacyAppReaderRoute(readingRecordId),
+    );
+  });
 });

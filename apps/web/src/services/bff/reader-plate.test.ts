@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -21,8 +24,10 @@ import {
 import {
   getReaderPlateSnapshotFromWeb,
   pollReaderEventsFromWeb,
+  submitReadingRecordPlainTextFromWeb,
   submitReaderPlainTextFromWeb,
 } from "./reader-plate";
+import { appReadingRecordRoute } from "@/lib/routes";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 
 const mockSession = {
@@ -201,6 +206,49 @@ describe("reader-plate BFF submit", () => {
       plain_text: "Hello.",
       client_record_id: expect.stringMatching(/^web-plate-/),
     });
+  });
+
+  it("returns a product submit contract with Reading Record id semantics", async () => {
+    const snapshot = makeSnapshot();
+    vi.mocked(submitUpstreamReaderPlainText).mockResolvedValue({
+      ok: true,
+      data: {
+        record_id: "reading_record_1",
+        base_id: "base_1",
+        article_ready_sequence: 1,
+        snapshot,
+      },
+    });
+
+    const result = await submitReadingRecordPlainTextFromWeb({
+      plainText: "Hello.",
+      title: "Test",
+      language: "en",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result).toMatchObject({
+        message: "阅读记录已创建，正在打开 Reader。",
+        readingRecordId: "reading_record_1",
+        readerUrl: appReadingRecordRoute("reading_record_1"),
+        baseId: "base_1",
+        articleReadySequence: 1,
+      });
+      expect("recordId" in result).toBe(false);
+      expect("record_id" in result).toBe(false);
+    }
+  });
+
+  it("keeps the new product submit BFF free of legacy analysis routing", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/services/bff/reader-plate.ts"),
+      "utf-8",
+    );
+
+    expect(source).not.toContain("legacyAppReaderRoute");
+    expect(source).not.toContain("/app/reader/");
+    expect(source).not.toContain("analysis-tasks");
   });
 });
 

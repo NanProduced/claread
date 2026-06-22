@@ -136,6 +136,35 @@ describe("analysis BFF active task projection", () => {
     });
   });
 
+  it("keeps legacy analysis submit landing on the legacy ReaderWorkbench route", async () => {
+    vi.mocked(submitUpstreamAnalysisTask).mockResolvedValue({
+      ok: true,
+      data: {
+        task_id: "legacy-task-1",
+        record_id: "legacy-record-row-1",
+        cloud_record_id: "legacy-cloud-record-1",
+        client_record_id: "client-1",
+        status: "succeeded",
+        created: true,
+      },
+    });
+
+    await expect(
+      submitAnalysisFromWeb({
+        text: "This is a short English article.",
+        readingGoal: "daily_reading",
+        readingVariant: "intermediate_reading",
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      taskId: "legacy-task-1",
+      recordId: "legacy-cloud-record-1",
+      status: "succeeded",
+      readerUrl: legacyAppReaderRoute("legacy-cloud-record-1"),
+      message: "解析完成，正在打开 Reader。",
+    });
+  });
+
   it("rejects current-task lookup for anonymous users", async () => {
     vi.mocked(getWebSession).mockResolvedValue({
       kind: "anonymous",
