@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 目标架构
 
 > 状态：`D5 active`
-> 最后更新：2026-06-21
+> 最后更新：2026-06-22
 > 范围：用户提交内容的 `learning` Reader 解析。
 
 ## 目标
@@ -182,8 +182,10 @@ D4 默认：
 
 - Planner 先用 deterministic policy function。
 - PydanticAI 用于 LLM-backed workers。
-- LangGraph 不作为 D4 默认依赖；D5+ 如需要 branching / interrupt / complex repair flow，再做单独引入。
+- LangGraph 不作为 D4/D5 默认依赖；D6+ 如需要 branching / interrupt / complex repair flow，再做单独隔离 spike。
 - 外部 MQ / Temporal 不作为 D1-D4 默认依赖。
+
+D5 LangGraph / orchestration 架构评估结论：D5 主链路 runner、vocabulary、grammar bundle、projection 和 eval 任务继续不引入或升级 LangGraph。PostgreSQL `reader_runs` / `reader_jobs` / `reader_events` / `enhancement_layers` 仍是 durable business control plane；PydanticAI 只负责 typed worker execution；LangGraph 只保留为 D6+ 隔离 spike 候选，适用场景必须是具体的 Ask Document Tools、human-in-the-loop、multi-branch repair 或类似复杂 flow，且不得替换 Reader durable control tables。
 
 ## 状态分层
 
@@ -411,6 +413,8 @@ Plate fragment 只能来自 typed layer result、document tool result 或已 san
 | D5-003 | 2026-06-21 | D5-V3 Real Vocabulary Executor / Prompt 已通过 review：`reader_layer_vocabulary` route 必须显式配置 `reader_vocabulary_model_profile`，不得 fallback 到 annotation profile；LLM 只输出内部 candidate schema，后端确定性解析 `anchor_segment_id + selected_text` 为 unit-local UTF-16 offsets/hash；同一 span 按 `context_gloss > phrase_gloss > vocab_highlight` 仲裁；不改变 public `VocabularyLayerOutput` schema，不读取旧 `render_scene_json`，不启用 `projection_ops`。 |
 | D5-004 | 2026-06-21 | D5-V4 Grammar Bundle Backend Slice 已通过 review：grammar bundle job 使用 `reader_jobs.job_type = 'build_grammar_bundle'`；一次 worker output 发布为独立 `grammar_note` 与 `sentence_analysis` layer rows，layer fingerprints 分别为 `grammar_note_unit_v1` / `sentence_analysis_unit_v1`；usage 只记 job-level attribution；no-op success 不发布 layer/event；D5-V4 不做 Web projection 或 real grammar executor。 |
 | D5-005 | 2026-06-21 | Vocabulary Eval Seed 评估结论为 `accepted_with_changes`：接受 deterministic seed/graders/rubric 方向，但下一步必须匹配现有 eval harness 的 dataset shape 或显式新增 vocabulary loader；LangSmith、LLM judge runner 泛化、vocabulary fallback-window policy 和 parsed/readiness policy 均后置。 |
+| D5-006 | 2026-06-22 | LangGraph / orchestration 架构双评审结论为 `accepted_with_changes`：当前 PostgreSQL run/job/event/layer 控制面方向正确，D5 主链路不引入、不升级 LangGraph；LangGraph 不得替换 durable business state，只能作为 D6+ 隔离 spike 候选，用于已证明需要 interrupt / human approval / multi-branch repair 的 worker-local 或 Ask flow。第一条 D5 页面可测主链路继续使用 snapshot reload，`projection_ops` incremental applier 不阻塞 smoke。 |
+| D5-007 | 2026-06-22 | D5 Main Chain Runner + Web Record Load 已通过 closeout：`ReaderEnhancementPipelineRunner` 复用现有 run/job/worker/publisher 控制面，record-scoped drain translation、vocabulary、grammar bundle jobs；Web `/app/reader-plate?record_id=...` 可通过 snapshot/events 加载已有 record。该路径不新增 public worker-control endpoint、不启动 daemon、不引入 LangGraph/MQ/SSE，也不把 smoke harness/fake executors 作为产品运行路径。 |
 
 ## 待决问题
 

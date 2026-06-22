@@ -160,6 +160,46 @@ class ReaderOrchestrator:
             parsed_decision_written=False,
         )
 
+    async def tick_translation_worker_for_record(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+        retry_delay: timedelta = DEFAULT_TRANSLATION_RETRY_DELAY,
+    ) -> TranslationTickResult:
+        worker_result = await self._worker_service.process_next_translation_job_for_record(
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            retry_delay=retry_delay,
+        )
+        if worker_result is None:
+            return TranslationTickResult(
+                worker_result=None,
+                parsed_decision_written=False,
+            )
+
+        if (
+            worker_result.status == "succeeded"
+            and worker_result.published_layer is not None
+            and worker_result.context is not None
+        ):
+            await self._write_parsed_decision_for_translation(worker_result)
+            return TranslationTickResult(
+                worker_result=worker_result,
+                parsed_decision_written=True,
+            )
+
+        return TranslationTickResult(
+            worker_result=worker_result,
+            parsed_decision_written=False,
+        )
+
     async def _write_parsed_decision_for_translation(
         self,
         result: TranslationJobProcessResult,

@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 执行简报
 
 > 状态：`权威简报`
-> 最后更新：2026-06-21
+> 最后更新：2026-06-22
 
 给 coding agent 分配 Reader agentic orchestration 重构任务时，使用本简报作为最小上下文。
 
@@ -87,9 +87,12 @@
 - D5-V4 Grammar Bundle Backend Slice 已完成并通过 review。Grammar bundle 使用正式 `reader_jobs.job_type = 'build_grammar_bundle'`，发布时拆成 `grammar_note` 与 `sentence_analysis` 两个独立 layer rows；usage 只记一条 job-level attribution，no-op success 不发布 layer/event。
 - D5-V4 fallback policy：`grammar_note` 任一 span 命中 `fallback_window` 时整条 item 跳过，不允许部分保留 span；`sentence_analysis` 命中 fallback window 时跳过。
 - D5 Vocabulary Eval Seed 评估结论是 `accepted_with_changes`。下一步只做本地 deterministic seed/schema/graders/tests；不得按 JSONL 单文件方案落地，不接 LangSmith，不新增 `evals/claread_eval/judge/judges/*` prompt catalog，不把 vocabulary `boundary_low_fallback_window` 作为 acceptance gate。
-- 当前下一步进入 D5-V5 Grammar Projection / Web read-only rendering，同时可并行做 Vocabulary Eval Seed Implementation。二者都不得改写 D5-V2/D5-V3/D5-V4 的 domain truth/projection 边界。
+- D5 LangGraph / orchestration 双评估结论是 `accepted_with_changes`：D5 主链路 runner、workers、snapshot projection 和 eval 不引入、不升级 LangGraph；LangGraph 不得替换 PostgreSQL run/job/event/layer durable control plane；D6-LG0 只作为隔离 spike 候选，且必须有具体 Ask HITL / multi-branch repair 需求。
+- D5-R2 Main Chain Runner + Web Record Load 已完成并通过 focused tests。`ReaderEnhancementPipelineRunner` 统一 bootstrap/drain translation、vocabulary、grammar bundle jobs；runner 使用 record-scoped claim，不会消费其他 Reading Record 的 queue；Web `/app/reader-plate?record_id=...` 可直达加载 snapshot。
+- D5-R2 仍不包含生产后台 worker loop、public worker-control endpoint、页面 submit 后同步跑完整真实 LLM、SSE、LangGraph 或 `projection_ops` incremental applier。
+- 当前下一步进入 D5 guardrails：parsed decision repair / same-tx decision、vocabulary boundary policy、正式 local worker loop / deployment worker 形态规划、projection ops consistency spike。
 - D4 worker 实现中不得临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK；如 D3-P4 runtime tests 暴露缺口，先形成单独 closeout/update，再改依赖。
-- LangGraph 1.x 的 typed streaming、per-node timeout、error handler、graceful shutdown 和 DeltaChannel 只作为 D5+ 复杂 repair / branching / interrupt spike 候选，不改变 D4 PostgreSQL run/job/event 主控。
+- LangGraph v1+ 的 persistence、streaming、interrupt/resume、subgraph 和 runtime observability 只作为 D6+ 隔离 spike 候选；具体版本能力和 breaking changes 必须在 spike 中用当时官方文档与 lockfile 实测确认，不改变 PostgreSQL run/job/event 主控。
 - Grammar Bundle Worker 可以一次生成 `grammar_note` 与 `sentence_analysis`，但发布、存储、RAG、projection、policy、eval 必须按 subtype 独立处理。`long_sentence` 不是权威 layer type，只是触发 `sentence_analysis` 的适用场景。
 - Vocabulary Worker 必须保留旧 workflow 的三类 item subtype：`vocab_highlight`、`phrase_gloss`、`context_gloss`。它们属于同一个 `vocabulary` layer 的 `output_json.items[].item_type`，不是三个顶层 layer type。
 
@@ -128,7 +131,7 @@ Web Reader
   -> worker abstraction
   -> typed execution units
   -> PydanticAI LLM-backed workers
-  -> optional LangGraph local flow in D5+ only after separate dependency spike
+  -> optional LangGraph local flow in D6+ only after isolated spike
   -> LangSmith + ai_usage_events
 ```
 

@@ -208,6 +208,35 @@ class TranslationWorkerService:
         await self._mark_run_running(claim.run_id)
         return claim
 
+    async def claim_translation_job_for_record(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+    ) -> ClaimResult | None:
+        claim = await self._job_runtime.claim_next_job(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            job_type=TRANSLATION_JOB_TYPE,
+            target_type=TRANSLATION_TARGET_SCOPE,
+            operation_fingerprint=TRANSLATION_OPERATION_FINGERPRINT,
+            reading_record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if claim is None:
+            return None
+        if claim.job_type != TRANSLATION_JOB_TYPE or claim.target_type != TRANSLATION_TARGET_SCOPE:
+            raise RuntimeError(
+                "translation worker claimed unsupported job "
+                f"{claim.job_type}/{claim.target_type}"
+            )
+        await self._mark_run_running(claim.run_id)
+        return claim
+
     async def heartbeat_translation_job(
         self,
         *,
@@ -229,6 +258,30 @@ class TranslationWorkerService:
         retry_delay: timedelta = DEFAULT_TRANSLATION_RETRY_DELAY,
     ) -> TranslationJobProcessResult | None:
         claim = await self.claim_translation_job(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if claim is None:
+            return None
+        return await self.process_claimed_translation_job(
+            claim=claim,
+            retry_delay=retry_delay,
+        )
+
+    async def process_next_translation_job_for_record(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+        retry_delay: timedelta = DEFAULT_TRANSLATION_RETRY_DELAY,
+    ) -> TranslationJobProcessResult | None:
+        claim = await self.claim_translation_job_for_record(
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
             lease_owner=lease_owner,
             lease_duration=lease_duration,
         )

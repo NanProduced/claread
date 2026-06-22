@@ -1,7 +1,7 @@
 # Orchestration Runtime
 
-> 状态：`D1 草案`
-> 最后更新：2026-06-18
+> 状态：`D5 active`
+> 最后更新：2026-06-22
 > 范围：bounded run/job、worker lease、Authorization Envelope、并发和框架边界。
 
 ## Runtime 形态
@@ -18,23 +18,23 @@ Web Reader
 
 PostgreSQL 拥有 durable business state。LLM framework 只是执行工具。
 
-## D4 Framework Posture
+## Framework Posture
 
-D4 默认收窄：
+D4/D5 默认收窄：
 
 - Planner 先用 deterministic policy function：`plan(state, envelope) -> typed plan`。
 - PydanticAI 用于 LLM-backed workers，例如 translator、annotator、judge。
-- LangGraph 不作为 D4 默认依赖；D5+ 如需要 branching、interrupt 或复杂 repair flow，再做单独引入和版本评估。
+- LangGraph 不作为 D4/D5 主路径依赖；D6+ 如需要 branching、interrupt 或复杂 repair flow，再做单独隔离 spike 和版本评估。
 
 这样避免 Planner、LangGraph、PydanticAI 三个控制面重叠。
 
 Planner、Skip Gate、Model Profile、Prompt Cache 和 Usage Bucket 的细节见 `policy-and-cost-control.md`。本文件只定义 runtime 执行边界。
 
-后端依赖版本必须在 D3 runtime skeleton 前完成 alignment spike。D4 不应在实现 Translation Worker 时临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK。
+后端依赖版本必须在 D3 runtime skeleton 前完成 alignment spike。D4/D5 worker、runner、projection 或 eval 任务不应临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK。
 
-## LangGraph 1.x 评估结论
+## LangGraph 评估结论
 
-当前 D4 不以 LangGraph 作为主控 runtime。LangGraph 1.0 官方定位是稳定性发布，核心 graph primitives 和 execution model 基本不变；主要迁移点是 prebuilt agent 相关 deprecation。1.1 / 1.2 新增的 typed streaming、typed invoke、per-node timeout、node-level error handler、graceful shutdown、DeltaChannel 等能力，对 D5+ 的复杂 repair、branching、interrupt 或长会话 checkpoint 优化有价值，但不是 D4 的最小硬依赖。
+当前 D4/D5 不以 LangGraph 作为主控 runtime。LangGraph v1+ 的 persistence、streaming、interrupt/resume、subgraph 和 runtime observability 对未来复杂 repair、branching、human-in-the-loop 或长会话 checkpoint 优化可能有价值，但不是 D5 主链路的硬依赖。具体版本能力、breaking changes、PostgresSaver schema 影响和旧 workflow 兼容性必须在单独 spike 中基于当时官方文档与 lockfile 实测确认，不在本合同中冻结。
 
 D4 仍以 PostgreSQL tables 持久化 business state 和 worker state：
 
@@ -42,12 +42,46 @@ D4 仍以 PostgreSQL tables 持久化 business state 和 worker state：
 - `reader_events` / `reader_event_sequences` 是 UI catch-up 的权威。
 - PydanticAI 只负责单个 LLM-backed typed worker 调用。
 
-D3-P0 不主动升级 LangGraph。若 D5+ 决定使用 LangGraph 1.x，必须单独 spike：
+D3-P0 不主动升级 LangGraph。若 D6+ 决定使用 LangGraph v1+，必须单独隔离 spike：
 
 - checkpoint 与 Claread `reader_runs` / `reader_jobs` 的边界。
 - interrupted / resumed graph state 与 record generation fence 的兼容。
 - node rename / state schema 变更的 backward compatibility。
 - graph streaming 与 `reader_events` / Plate projection event 的关系。
+
+D5 双评审 disposition 更新：
+
+- D5 主链路 runner、translation、vocabulary、grammar bundle、snapshot projection 和 eval 均不引入 LangGraph。
+- LangGraph persistence / checkpointer 可以保存 thread-scoped graph state，但不是 Claread 的业务事实源；不得替换 `reader_runs`、`reader_jobs`、`reader_events` 或 `enhancement_layers`。
+- LangGraph 的下一次评估点命名为 D6-LG0，且必须是隔离 spike：不修改生产依赖、不替换 durable control tables、不把 checkpoint 事件混入 Reader UI event truth。
+- D6-LG0 只有在出现具体 Ask Document Tools / human approval / multi-branch repair 需求时启动。Spike 必须验证 thread id 映射、record generation fence、side-effect idempotency、PostgresSaver schema impact、旧 workflow compatibility 和回滚路径。
+- `projection_ops` incremental applier 不阻塞 D5 第一条页面可测链路；D5 smoke 继续使用 snapshot reload。启用 projection ops 前再做 projection consistency / race spike。
+
+当前风险排序：
+
+| Priority | Risk | Posture |
+|---|---|---|
+| P1 | Translation `parsed_decisions` 在 layer publish 后单独事务写入。 | D4/D5 single tick 可接受；进入并发 crash recovery 或强 parsed coverage 前，移入 publisher transaction 或补 repair。 |
+| P1 | Vocabulary 尚未采用 grammar-style fallback window / boundary quality policy。 | 在依赖 vocabulary 低质量 segment 结果前补 boundary policy。 |
+| P1 | `projection_ops` incremental applier 未端到端启用。 | 不阻塞 D5 smoke；启用前做 projection consistency spike。 |
+| P2 | `active_base_id -> reading_bases.status='active'` 当前是 service / publisher invariant。 | 保持显式校验；主链路稳定后再评估 DB trigger / equivalent hardening。 |
+| P2 | Grammar bundle usage attribution 是 job-level。 | 保持 no-double-count；仅当成本视图需要时再定义 per-layer allocation policy。 |
+
+## D5 Main Chain Runner
+
+`ReaderEnhancementPipelineRunner` 是 D5 正式 runtime 组件，用于把当前 active base 的 enhancement jobs 作为一个 bounded batch 推进。它不是产品对象，也不是 public API。
+
+当前 closeout 口径：
+
+- runner 先通过 `EnhancementJobBootstrapService` 为当前 record/base/generation 创建缺失的 translation、vocabulary 和 grammar bundle jobs；
+- drain 顺序固定为 translation -> vocabulary -> grammar bundle；
+- worker claim 必须带 `reading_record_id`、`base_id`、`expected_generation` scope，防止某个 record 的 runner 消费另一个 record 的 queued jobs；
+- runner 只汇总 typed summary 和 attention outcome，不拥有 layer truth，不绕过 Layer Publisher；
+- 遇到 `retry_later`、`failed_terminal` 或 publish fence supersede 时返回 attention summary，由调用方决定继续、告警或 repair；
+- runner 不新增 public worker-control endpoint，不启动后台 daemon，不引入 LangGraph / MQ / Temporal / SSE；
+- Web 页面继续通过 snapshot reload 和 polling events 感知结果，D5 smoke 不要求 `projection_ops` incremental applier。
+
+当前尚未完成的是生产/本地 worker loop：一个独立运行形态从 eligible records 扫描并调用 runner。该 loop 属于后续 runtime deployment 任务，不应被实现为 public user-facing endpoint，也不应把 LLM execution 同步塞进 Web submit request。
 
 ## Run / Job
 

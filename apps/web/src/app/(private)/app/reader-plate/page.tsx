@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { ReaderPlateSnapshotSurface } from "@/components/reader/plate/ReaderPlateSnapshotSurface";
 import { useReaderPlatePolling } from "@/lib/reader-plate-snapshot/polling";
@@ -37,13 +38,25 @@ const SAMPLE_TEXT = `The future of reading is not about consuming more words. It
 A scarce few can turn their passion into a stable income. Most settle for comfort and call it wisdom.`;
 
 export default function ReaderPlatePage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [text, setText] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>({ kind: "idle" });
   const [snapshotState, setSnapshotState] = useState<SnapshotState>({ kind: "idle" });
   const [isReloading, setIsReloading] = useState(false);
+  const autoLoadedRecordIdRef = useRef<string | null>(null);
+
+  const requestedRecordIdParam =
+    searchParams.get("record_id") ?? searchParams.get("recordId");
+  const requestedRecordId =
+    typeof requestedRecordIdParam === "string" && requestedRecordIdParam.trim().length > 0
+      ? requestedRecordIdParam.trim()
+      : null;
 
   const recordId =
-    snapshotState.kind === "loaded" ? snapshotState.recordId : null;
+    snapshotState.kind === "loaded" || snapshotState.kind === "error"
+      ? snapshotState.recordId
+      : null;
   const snapshot =
     snapshotState.kind === "loaded" ? snapshotState.snapshot : null;
   const initialCursor = snapshot?.last_event_sequence ?? 0;
@@ -86,6 +99,62 @@ export default function ReaderPlatePage() {
     },
     [recordId],
   );
+
+  const loadSnapshotForRecord = useCallback(async (targetRecordId: string) => {
+    try {
+      const response = await fetch(
+        `/api/web/reader-plate/${encodeURIComponent(targetRecordId)}/snapshot`,
+        { method: "GET", headers: { accept: "application/json" } },
+      );
+      const payload = (await response.json()) as SnapshotResponse;
+      if (!response.ok || !payload.ok) {
+        setSnapshotState({
+          kind: "error",
+          recordId: targetRecordId,
+          message:
+            payload.ok === false ? payload.message : "文章解析内容加载失败，请稍后重试。",
+        });
+        return;
+      }
+
+      const { ok: _ok, ...snapshotData } = payload;
+      void _ok;
+      setSubmitState({ kind: "idle" });
+      setSnapshotState({
+        kind: "loaded",
+        recordId: targetRecordId,
+        snapshot: snapshotData,
+      });
+    } catch (err) {
+      setSnapshotState({
+        kind: "error",
+        recordId: targetRecordId,
+        message: err instanceof Error ? err.message : "文章解析内容加载发生未知错误。",
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!requestedRecordId) {
+      autoLoadedRecordIdRef.current = null;
+      return;
+    }
+
+    const currentRecordId =
+      snapshotState.kind === "loaded" || snapshotState.kind === "error"
+        ? snapshotState.recordId
+        : null;
+    if (currentRecordId === requestedRecordId) {
+      autoLoadedRecordIdRef.current = requestedRecordId;
+      return;
+    }
+    if (autoLoadedRecordIdRef.current === requestedRecordId) {
+      return;
+    }
+
+    autoLoadedRecordIdRef.current = requestedRecordId;
+    void loadSnapshotForRecord(requestedRecordId);
+  }, [loadSnapshotForRecord, requestedRecordId, snapshotState]);
 
   const polling = useReaderPlatePolling({
     recordId: recordId ?? "",
@@ -130,6 +199,8 @@ export default function ReaderPlatePage() {
         recordId: payload.record_id,
         snapshot: payload.snapshot,
       });
+      autoLoadedRecordIdRef.current = payload.record_id;
+      router.replace(`/app/reader-plate?record_id=${encodeURIComponent(payload.record_id)}`);
     } catch (err) {
       setSubmitState({
         kind: "error",
@@ -139,6 +210,10 @@ export default function ReaderPlatePage() {
   }
 
   const snapshotValue: ReaderPlateValueDto = snapshot?.value ?? [];
+  const isDirectRecordLoading =
+    requestedRecordId !== null &&
+    snapshotState.kind === "idle" &&
+    submitState.kind !== "pending";
 
   return (
     <main className="paper-grain min-h-screen text-ink">
@@ -161,7 +236,18 @@ export default function ReaderPlatePage() {
           </section>
         ) : null}
 
-        {snapshotState.kind === "idle" && submitState.kind !== "pending" ? (
+        {isDirectRecordLoading ? (
+          <section className="rounded-note border border-hairline bg-surface p-10 shadow-surface-quiet">
+            <div className="flex items-center gap-3 text-sm text-muted">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-lens-blue" />
+              正在加载阅读快照，请稍候
+            </div>
+          </section>
+        ) : null}
+
+        {snapshotState.kind === "idle" &&
+        submitState.kind !== "pending" &&
+        requestedRecordId === null ? (
           <section className="rounded-note border border-hairline bg-surface p-6 shadow-surface-quiet">
             <label htmlFor="reader-plate-text" className="sr-only">
               粘贴英文内容
@@ -226,9 +312,11 @@ export default function ReaderPlatePage() {
                 type="button"
                 className="inline-flex h-9 items-center justify-center rounded-[8px] border border-hairline bg-surface px-4 font-sans text-xs font-medium text-muted transition-colors hover:text-ink"
                 onClick={() => {
+                  autoLoadedRecordIdRef.current = null;
                   setText("");
                   setSubmitState({ kind: "idle" });
                   setSnapshotState({ kind: "idle" });
+                  router.replace("/app/reader-plate");
                 }}
               >
                 提交新内容

@@ -1,7 +1,7 @@
 # Policy 与 Cost Control
 
-> 状态：`D1 草案`
-> 最后更新：2026-06-18
+> 状态：`D5 active`
+> 最后更新：2026-06-22
 > 范围：Planner 最小化、Skip Gate、Prompt Cache、Model Profile、Usage Bucket 和 token economy。
 
 ## 目标
@@ -12,14 +12,14 @@ D4 默认：
 
 - Policy Planner 是 deterministic function。
 - PydanticAI 只用于 translation 等 LLM-backed workers。
-- LangGraph 不进入 D4 主路径；D5+ 如需要复杂 branching / interrupt / repair flow，再单独评估。
+- LangGraph 不进入 D4/D5 主路径；D6+ 如需要复杂 branching / interrupt / repair flow，再做隔离 spike。
 - 不启用 LLM Planner。
 
 D3-P0 依赖策略：
 
 - 主动升级 PydanticAI 到当前最新稳定 1.x，并验证 typed output、usage、retry、FunctionModel / provider adapter 行为。
 - DashScope SDK 跟随最新 patch；asyncpg 升级到 0.31.x 并验证 transaction counter / lease tests。
-- LangGraph 不为 D4 主动升级；现有旧 workflow 可继续保持当前锁定版本直到 cutover。LangGraph 1.x 的 typed streaming、per-node timeout、error handler、graceful shutdown 和 DeltaChannel 只作为 D5+ 复杂 repair / branching spike 候选。
+- LangGraph 不为 D4/D5 主动升级；现有旧 workflow 可继续保持当前锁定版本直到 cutover。LangGraph v1+ 只作为 D6+ 复杂 repair / branching / interrupt 隔离 spike 候选，具体能力和版本风险必须在 spike 时实测确认。
 - FastAPI、LangSmith 只在 focused tests 暴露缺口时升级，不作为 D4 主路径前置。
 
 ## Planner 角色拆分
@@ -253,7 +253,7 @@ D3-P0 已于 2026-06-18 完成 closeout，详细记录见 `docs/tmp/reader-orche
 - PydanticAI：已升级到 `1.107.0`，现有 structured completion、Reader Ask agent 和旧 workflow focused tests 通过。
 - DashScope SDK：已升级到 `1.25.23`，现有 native provider 与 stream tests 通过。
 - asyncpg：已升级到 `0.31.0`，作为 D3 job/event transaction tests 的实现基线。
-- LangGraph：保持 `0.6.11`；D4 不主动升级、不引入主路径。LangGraph 1.x 只作为 D5+ complex repair / branching / interrupt spike 候选。
+- LangGraph：保持 `0.6.11`；D4/D5 不主动升级、不引入主路径。LangGraph v1+ 只作为 D6+ complex repair / branching / interrupt 隔离 spike 候选。
 - LangSmith / tracing：保持当前锁定版本；现有 tracing isolation tests 通过。
 - Provider SDK / adapters：现有 focused tests 未暴露必须升级 OpenAI SDK 或 FastAPI 的缺口。
 - FastAPI SSE 与 asyncpg transaction semantics：在 D3-P4 新 schema/runtime skeleton 中补专门 tests，不能仅依赖 D3-P0 closeout。

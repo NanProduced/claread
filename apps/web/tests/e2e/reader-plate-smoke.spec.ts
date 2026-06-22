@@ -302,7 +302,7 @@ function makeSnapshot() {
   };
 }
 
-async function loginWithMockPhone(page: Page) {
+async function loginWithMockPhone(page: Page, nextPath = "/app/reader-plate") {
   await page.route("**/api/web/auth/phone/request-code", async (route) => {
     await route.fulfill({
       status: 200,
@@ -329,12 +329,41 @@ async function loginWithMockPhone(page: Page) {
     });
   });
 
-  await page.goto("/login?next=/app/reader-plate");
+  await page.goto(`/login?next=${encodeURIComponent(nextPath)}`);
   await page.getByLabel("手机号").fill("13800138000");
   await page.getByRole("button", { name: "发送验证码" }).click();
   await page.getByLabel("验证码").fill("888888");
   await page.getByRole("button", { name: "登录并继续" }).click();
-  await page.waitForURL("**/app/reader-plate");
+  await page.waitForURL(`**${nextPath}`);
+}
+
+async function mockReaderPlateRoutes(page: Page) {
+  await page.route("**/api/web/reader-plate/*/events**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        reading_record_id: RECORD_ID,
+        after_sequence: 1,
+        next_after_sequence: 1,
+        last_event_sequence: 1,
+        has_more: false,
+        truncated: false,
+        reload_required: false,
+        reload_reason: null,
+        events: [],
+      }),
+    });
+  });
+
+  await page.route("**/api/web/reader-plate/*/snapshot", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, ...makeSnapshot() }),
+    });
+  });
 }
 
 test("reader plate smoke: submit renders source text, translation, vocabulary, and grammar projections, polling stays calm", async ({ page }) => {
@@ -355,34 +384,7 @@ test("reader plate smoke: submit renders source text, translation, vocabulary, a
     });
   });
 
-  // Mock the events polling route to return caught-up (no reload, no events).
-  await page.route("**/api/web/reader-plate/*/events**", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        reading_record_id: RECORD_ID,
-        after_sequence: 1,
-        next_after_sequence: 1,
-        last_event_sequence: 1,
-        has_more: false,
-        truncated: false,
-        reload_required: false,
-        reload_reason: null,
-        events: [],
-      }),
-    });
-  });
-
-  // Mock the snapshot reload route (in case polling triggers a reload).
-  await page.route("**/api/web/reader-plate/*/snapshot", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ ok: true, ...makeSnapshot() }),
-    });
-  });
+  await mockReaderPlateRoutes(page);
 
   await loginWithMockPhone(page);
 
@@ -433,4 +435,41 @@ test("reader plate smoke: submit renders source text, translation, vocabulary, a
     path: "test-results/reader-plate-smoke.png",
     fullPage: false,
   });
+});
+
+test("reader plate smoke: record_id query loads an existing snapshot directly", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockReaderPlateRoutes(page);
+
+  await loginWithMockPhone(page, `/app/reader-plate?record_id=${RECORD_ID}`);
+
+  await expect(page.locator('[data-reader-node="unit"]')).toBeVisible();
+  await expect(page.locator('[data-reader-node="source-block"]')).toBeVisible();
+  await expect(page.locator('[data-reader-node="anchor-segment"]')).toBeVisible();
+  await expect(page.locator('[data-reader-node="translation"]')).toBeVisible();
+  await expect(page.locator('[data-reader-node="sentence-analysis"]')).toBeVisible();
+  await expect(page.locator('[data-reader-vocabulary-chip="phrase_gloss"]')).toBeVisible();
+  await expect(page.locator('[data-reader-grammar-note-chip="grammar_smoke_1"]')).toBeVisible();
+  await expect(page.getByPlaceholder("Paste an English article here")).toHaveCount(0);
+
+  await expect(
+    page
+      .locator('[data-reader-node="source-block"]')
+      .getByText("A scarce few can turn passion into a stable income.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('[data-reader-node="translation"]')).toContainText(
+    "很少有人能把热爱变成稳定收入。",
+  );
+  await expect(page.locator('[data-reader-node="annotation-inline"]')).toContainText(
+    "搭配 · 把热爱转成可持续结果",
+  );
+  await expect(page.locator('[data-reader-node="annotation-inline"]')).toContainText(
+    "语法 · 前置强调",
+  );
+  await expect(page.locator('[data-reader-node="sentence-analysis"]')).toContainText(
+    "句式拆解",
+  );
+  await expect(page.locator('[data-reader-node="sentence-analysis"]')).toContainText(
+    "fronted focus and main action",
+  );
 });

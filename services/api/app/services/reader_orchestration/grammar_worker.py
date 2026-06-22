@@ -417,6 +417,39 @@ class GrammarBundleWorkerService:
         await self._mark_run_running(claim.run_id)
         return claim
 
+    async def claim_grammar_job_for_record(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+    ) -> ClaimResult | None:
+        claim = await self._job_runtime.claim_next_job(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            job_type=GRAMMAR_JOB_TYPE,
+            target_type=GRAMMAR_TARGET_SCOPE,
+            operation_fingerprint=GRAMMAR_OPERATION_FINGERPRINT,
+            reading_record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if claim is None:
+            return None
+        if (
+            claim.job_type != GRAMMAR_JOB_TYPE
+            or claim.target_type != GRAMMAR_TARGET_SCOPE
+            or claim.operation_fingerprint != GRAMMAR_OPERATION_FINGERPRINT
+        ):
+            raise RuntimeError(
+                "grammar worker claimed unsupported job "
+                f"{claim.job_type}/{claim.target_type}/{claim.operation_fingerprint}"
+            )
+        await self._mark_run_running(claim.run_id)
+        return claim
+
     async def heartbeat_grammar_job(
         self,
         *,
@@ -438,6 +471,30 @@ class GrammarBundleWorkerService:
         retry_delay: timedelta = DEFAULT_GRAMMAR_RETRY_DELAY,
     ) -> GrammarJobProcessResult | None:
         claim = await self.claim_grammar_job(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if claim is None:
+            return None
+        return await self.process_claimed_grammar_job(
+            claim=claim,
+            retry_delay=retry_delay,
+        )
+
+    async def process_next_grammar_job_for_record(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+        retry_delay: timedelta = DEFAULT_GRAMMAR_RETRY_DELAY,
+    ) -> GrammarJobProcessResult | None:
+        claim = await self.claim_grammar_job_for_record(
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
             lease_owner=lease_owner,
             lease_duration=lease_duration,
         )

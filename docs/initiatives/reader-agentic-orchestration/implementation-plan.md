@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 实施计划
 
 > 状态：`D5 active`
-> 最后更新：2026-06-21
+> 最后更新：2026-06-22
 
 ## 成功标准
 
@@ -148,7 +148,7 @@ Closeout 结论：
 
 - 依赖升级已落到 `services/api/pyproject.toml` 与 `services/api/uv.lock`。
 - PydanticAI 升级到 `1.107.0`，DashScope SDK 升级到 `1.25.23`，asyncpg 升级到 `0.31.0`。
-- LangGraph 保持 `0.6.11`，D4 主路径不引入 LangGraph；LangGraph 1.x 仍只作为 D5+ complex repair / branching / interrupt spike 候选。
+- LangGraph 保持 `0.6.11`，D4/D5 主路径不引入 LangGraph；LangGraph v1+ 只作为 D6+ complex repair / branching / interrupt 隔离 spike 候选。
 - FastAPI、LangSmith、OpenAI SDK 未升级；focused tests 未暴露必须升级的缺口。
 - asyncpg job lease、record-scoped event counter、rollback no-gap、SSE `Last-Event-ID` 等运行时语义延后到 D3-P4 在新 schema 上测试。
 
@@ -160,7 +160,7 @@ Closeout 结论：
 - 升级 PydanticAI 到当前最新稳定 1.x；不使用 2.0 beta。验证 typed output、ToolOutput / native output fallback、usage limits、validator retry 和 provider usage extraction。
 - 升级 DashScope SDK 到当前最新 patch，验证 native streaming、`reasoning_content`、tool call、usage extraction 和错误分类。
 - 升级 asyncpg 到 0.31.x，验证 job lease、record-scoped transactional counter、transaction rollback no-gap 和 pool timeout 行为。
-- 明确 LangGraph posture：D4 不主动升级、不引入主路径；若保留 D5+ 入口，记录 LangGraph 1.x 的 typed streaming、per-node timeout、error handler、graceful shutdown、DeltaChannel 等能力边界和不进入 D4 的理由。
+- 明确 LangGraph posture：D4/D5 不主动升级、不引入主路径；若未来保留 D6+ 入口，必须在隔离 spike 中基于当时官方文档和 lockfile 实测记录 LangGraph v1+ 能力边界、breaking risk 和不进入 durable control plane 的理由。
 - 对齐 LangSmith / tracing SDK，确认 trace id 与 `ai_usage_events` / reader run/job/layer 的关联字段；只有 focused tests 需要时升级。
 - 验证 provider SDK / OpenAI-compatible adapters 的 structured output、tool calls、cache usage、provider request id 和 error classification。
 - 验证 FastAPI SSE response/helper、Last-Event-ID、heartbeat、disconnect handling。
@@ -643,6 +643,57 @@ Focused tests 已通过：
 - 超过 5 个 candidate 的预期需按 D5-V3 真实实现修正：通常在 `VocabularyCandidateOutput` validation 阶段 fail closed，不作为普通 `candidate_limit_exceeded` diagnostics gate。
 - vocabulary `boundary_low_fallback_window` 不进入 D5 eval seed acceptance gate；当前 worker 不产生该 reason code。
 
+### D5-R1. LangGraph / Orchestration Architecture Review Disposition
+
+状态：`accepted_with_changes` on 2026-06-22，详细记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-langgraph-orchestration-disposition.md`。
+
+结论：
+
+- 两份 LangGraph / orchestration 架构评估的大方向接受：当前 PostgreSQL durable control plane + PydanticAI typed worker + Plate snapshot projection 的三层架构符合本轮 Reader 重构目标。
+- D5 主链路 runner、translation、vocabulary、grammar bundle、snapshot projection 和 eval 任务不引入、不升级 LangGraph。
+- LangGraph 不得替换 `reader_runs`、`reader_jobs`、`reader_events`、`enhancement_layers` 或 Reader product state。
+- D6-LG0 仅作为隔离 spike 候选；触发条件必须是具体 Ask Document Tools / human approval / multi-branch repair flow 需求。
+- D5 第一条页面可测主链路继续使用 snapshot reload；`projection_ops` incremental applier 不阻塞 smoke。
+- 评估中被修正的风险排序：`parsed_decisions` 跨事务和 vocabulary boundary policy 是 P1；`active_base_id -> status='active'` 是 service / publisher invariant hardening，不是 D5 主线 P0；`projection_ops` race 只在启用 incremental applier 前需要 spike。
+
+下一步影响：
+
+- D5 主链路 runner 只做 deterministic bootstrap/drain，不引入 LangGraph / MQ / Temporal / SSE。
+- Runner review 后优先做页面 smoke，再进入 parsed decision repair、vocabulary boundary policy 和 projection ops consistency guardrails。
+
+### D5-R2. Main Chain Runner + Web Record Load Closeout
+
+状态：completed on 2026-06-22。
+
+Closeout 结论：
+
+- 已新增 `ReaderEnhancementPipelineRunner`，统一 bootstrap / drain `translation`、`vocabulary`、`grammar_bundle` jobs。
+- Runner 复用现有 `ArticleReadyPersistenceService`、`EnhancementJobBootstrapService`、`ReaderJobRuntime`、三类 worker 和 Layer Publisher，不另建 orchestration 控制面。
+- Runner drain 顺序为 translation -> vocabulary -> grammar bundle；遇到 `retry_later`、`failed_terminal` 或 publish fence supersede 时返回 attention summary。
+- `ReaderJobRuntime.claim_next_job()` 已支持可选 `reading_record_id`、`base_id`、`expected_generation` scope；三类 worker 增加 record-scoped claim/process 入口，runner 不会消费其他 Reading Record 的 queued jobs。
+- Runner 不新增 public HTTP endpoint，不启动后台 daemon，不引入 LangGraph / MQ / Temporal / SSE，也不启用 `projection_ops` incremental applier。
+- 已新增本地 D5 dev smoke harness / CLI，用于准备 record 和验证 snapshot reload；fake executors 默认禁用，必须显式 opt-in，且生产环境禁用。该 harness 不是产品运行路径。
+- Web `/app/reader-plate` 已支持 `record_id` / `recordId` query 直达加载已有 `ReaderPlateSnapshot`；提交成功后会把 URL replace 到 `?record_id=...`。
+- Web 页面继续通过现有 BFF snapshot/events 路径读取新 Reader API，不回退旧 `/scene` 或 `render_scene_json`。
+- 当前页面可测路径包括：已准备好的 record -> snapshot/events -> Reader Plate 渲染 source、translation、vocabulary、grammar_note、sentence_analysis。
+
+D5-R2 不包含：
+
+- 生产后台 worker loop / daemon。
+- public 或 internal HTTP worker-control endpoint。
+- 页面 submit 后自动同步执行真实 LLM 全链路。
+- `projection_ops` incremental applier。
+- parsed decision repair、vocabulary boundary policy 或 readiness/coverage policy。
+
+Focused tests 已通过：
+
+- `uv run ruff check app/services/reader_orchestration/smoke_harness.py scripts/prepare_reader_d5_smoke.py tests/test_reader_orchestration_smoke_harness.py`
+- `uv run pytest tests/test_reader_orchestration_smoke_harness.py tests/test_reader_orchestration_pipeline_runner.py -q`
+- `uv run pytest tests/test_reader_orchestration_smoke_harness.py tests/test_reader_orchestration_pipeline_runner.py tests/test_reader_orchestration_orchestrator.py tests/test_reader_orchestration_translation_worker.py tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_grammar_worker.py -q`
+- `pnpm --filter=@claread/web typecheck`
+- `pnpm --filter=@claread/web test`
+- `pnpm --filter=@claread/web test:e2e -- tests/e2e/reader-plate-smoke.spec.ts`
+
 ## D6. 产品硬化
 
 任务包：
@@ -670,10 +721,10 @@ Focused tests 已通过：
 
 ## 当前下一步
 
-进入 D5-V5 / D5 eval implementation 分流：
+进入 D5 guardrails 与运行形态收口：
 
-1. 主线做 Grammar Projection / Web read-only rendering：从已发布 `grammar_note` / `sentence_analysis` domain facts 派生 Plate marks/nodes，不改变 layer truth。
-2. 并行做 Vocabulary Eval Seed Implementation：基于 `accepted_with_changes` disposition，先实现本地 deterministic seed/schema/graders/tests，不接 LangSmith，不泛化 LLM judge。
-3. 后续再评估 real grammar executor / prompt；D5-V5 只做 projection 和 Web read-only display。
-4. 继续使用 snapshot reload；除非单独立项，不实现 `projection_ops` incremental applier。
-5. 不在下一轮顺手做 Ask tools、RAG、SSE、LangGraph flow 或 parsed/readiness policy。
+1. 先处理 parsed decision repair / same-transaction decision：解决 translation layer publish 后 parsed decision 独立事务的 crash-recovery 缺口。
+2. 并行评估 vocabulary boundary policy：是否采用 grammar-style fallback window skip 语义，以及 diagnostics / eval gate 如何对齐。
+3. 规划正式 local worker loop / deployment worker 形态：从 eligible records 扫描并调用 `ReaderEnhancementPipelineRunner`，但不新增 public worker-control endpoint。
+4. projection ops consistency spike 后置：D5 页面 smoke 继续使用 snapshot reload，只有启用 incremental applier 前才处理 race / replay / path adapter consistency。
+5. 保持 LangGraph D6+ 隔离 spike 口径，不在 D5 guardrails 中升级或引入。

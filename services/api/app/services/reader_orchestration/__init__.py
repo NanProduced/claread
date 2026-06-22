@@ -19,12 +19,26 @@ from .base_builder import (
     result_length_utf16,
     validate_reading_base_build_result,
 )
+from .job_bootstrap import (
+    EnhancementBootstrapJobCounts,
+    EnhancementBootstrapSummary,
+    EnhancementJobBootstrapService,
+)
 from .orchestrator import (
     TRANSLATION_PARSED_POLICY_CODE,
     TRANSLATION_PARSED_RATIONALE_CODE,
     OrphanedTranslationDecision,
     ReaderOrchestrator,
     TranslationTickResult,
+)
+from .pipeline_runner import (
+    DEFAULT_PIPELINE_MAX_JOBS,
+    DEFAULT_PIPELINE_MAX_TICKS,
+    EnhancementOutcomeCounts,
+    EnhancementWorkerTickCounts,
+    ReaderEnhancementPipelineRunner,
+    ReaderPipelineRunSummary,
+    ReaderPipelineWorkerAttempt,
 )
 from .repository import LoadedReaderSnapshotFacts, ReaderOrchestrationRepository
 from .snapshot import build_reader_plate_snapshot
@@ -44,7 +58,14 @@ __all__ = [
     "DETERMINISTIC_READING_BASE_BUILDER_VERSION",
     "DETERMINISTIC_SEGMENTER_VERSION",
     "DEFAULT_DRAIN_MAX_TICKS",
+    "DEFAULT_PIPELINE_MAX_JOBS",
+    "DEFAULT_PIPELINE_MAX_TICKS",
     "FALLBACK_WINDOW_WORD_COUNT",
+    "EnhancementBootstrapJobCounts",
+    "EnhancementBootstrapSummary",
+    "EnhancementJobBootstrapService",
+    "EnhancementOutcomeCounts",
+    "EnhancementWorkerTickCounts",
     "LoadedReaderSnapshotFacts",
     "LOW_IMPACT_CANONICALIZER_VERSION",
     "LowImpactReadingBaseBuildInput",
@@ -54,6 +75,9 @@ __all__ = [
     "ReadingBaseBuildResult",
     "ReaderOrchestrationRepository",
     "ReaderOrchestrator",
+    "ReaderEnhancementPipelineRunner",
+    "ReaderPipelineRunSummary",
+    "ReaderPipelineWorkerAttempt",
     "StableReadingBase",
     "TRANSLATION_PARSED_POLICY_CODE",
     "TRANSLATION_PARSED_RATIONALE_CODE",

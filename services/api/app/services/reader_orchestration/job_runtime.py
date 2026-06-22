@@ -204,13 +204,16 @@ class ReaderJobRuntime:
         job_type: str | None = None,
         target_type: str | None = None,
         operation_fingerprint: str | None = None,
+        reading_record_id: UUID | None = None,
+        base_id: UUID | None = None,
+        expected_generation: int | None = None,
     ) -> ClaimResult | None:
         """Atomically claim the next available job.
 
         Picks jobs with ``status IN ('queued', 'retry_later')`` and
         ``available_at <= NOW()``. Optional ``job_type`` / ``target_type`` /
-        ``operation_fingerprint`` filters narrow the claim domain for
-        specialized workers. Jobs are ordered by
+        ``operation_fingerprint`` / record scope filters narrow the claim
+        domain for specialized workers or record-scoped drains. Jobs are ordered by
         ``priority DESC, available_at ASC, created_at ASC, id ASC``.
 
         Before claiming, validates the base/generation fence. If the fence
@@ -235,6 +238,9 @@ class ReaderJobRuntime:
                           AND ($1::text IS NULL OR job_type = $1)
                           AND ($2::text IS NULL OR target_type = $2)
                           AND ($3::text IS NULL OR operation_fingerprint = $3)
+                          AND ($4::uuid IS NULL OR reading_record_id = $4)
+                          AND ($5::uuid IS NULL OR base_id = $5)
+                          AND ($6::integer IS NULL OR expected_generation = $6)
                         ORDER BY priority DESC, available_at ASC, created_at ASC, id ASC
                         LIMIT 1
                         FOR UPDATE SKIP LOCKED
@@ -242,6 +248,9 @@ class ReaderJobRuntime:
                         job_type,
                         target_type,
                         operation_fingerprint,
+                        reading_record_id,
+                        base_id,
+                        expected_generation,
                     )
                     if row is None:
                         return None
