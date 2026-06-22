@@ -2,11 +2,8 @@
 
 import { useEffect, useState } from "react";
 
-import { ReaderPlateSnapshotSurface } from "@/components/reader/plate/ReaderPlateSnapshotSurface";
-import type {
-  ReaderPlateSnapshotDto,
-  ReaderPlateValueDto,
-} from "@/types/api/reader-plate";
+import { ReaderRecordWorkbenchSurface } from "@/components/reader/ReaderRecordWorkbenchSurface";
+import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 
 type SnapshotState =
   | { kind: "loading"; recordId: string }
@@ -90,8 +87,9 @@ export default function ReadingRecordPage({
     };
   }, [recordId]);
 
-  const snapshotValue: ReaderPlateValueDto =
-    snapshotState.kind === "loaded" ? snapshotState.snapshot.value : [];
+  if (snapshotState.kind === "loaded") {
+    return <ReaderRecordWorkbenchSurface snapshot={snapshotState.snapshot} />;
+  }
 
   return (
     <main className="paper-grain min-h-screen text-ink">
@@ -121,9 +119,6 @@ export default function ReadingRecordPage({
           </section>
         ) : null}
 
-        {snapshotState.kind === "loaded" ? (
-          <ReaderPlateSnapshotSurface value={snapshotValue} />
-        ) : null}
       </div>
     </main>
   );
