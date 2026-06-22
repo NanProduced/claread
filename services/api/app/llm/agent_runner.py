@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic_ai.usage import RunUsage
+
 from app.config.settings import get_settings
 from app.llm.call_guard import assert_real_llm_allowed
 from app.llm.router import build_model_for_route
@@ -47,9 +49,11 @@ def extract_model_metadata(model_config: ResolvedModelConfig | None) -> dict[str
 
 
 def extract_run_usage(result: Any) -> dict[str, object] | None:
-    usage_fn = getattr(result, "usage", None)
-    if callable(usage_fn):
-        usage = usage_fn()
-        if usage is not None:
-            return build_usage_metadata(usage)
-    return None
+    usage = getattr(result, "usage", None)
+    if usage is None:
+        return None
+    if not isinstance(usage, RunUsage) and callable(usage):
+        usage = usage()
+    if usage is None:
+        return None
+    return build_usage_metadata(usage)

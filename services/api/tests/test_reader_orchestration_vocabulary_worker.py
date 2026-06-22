@@ -105,6 +105,37 @@ class _StubPydanticAIVocabularyExecutor(PydanticAIVocabularyExecutor):
     async def _run_agent(self, agent: object, prompt: str) -> _StubAgentResult:  # type: ignore[override]
         return _StubAgentResult(self._output)
 
+def test_real_executor_builds_agent_with_non_deprecated_retry_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    instructions = "stub vocabulary instructions"
+
+    class _CapturingAgent:
+        def __init__(self, *args, **kwargs) -> None:
+            captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(vocabulary_worker_module, "Agent", _CapturingAgent)
+    monkeypatch.setattr(
+        vocabulary_worker_module,
+        "load_agent_instructions",
+        lambda name: instructions,
+    )
+
+    executor = PydanticAIVocabularyExecutor(
+        settings=Settings(reader_vocabulary_model_profile="reader_vocabulary")
+    )
+    executor._build_agent(model=object())
+
+    agent_kwargs = captured["kwargs"]
+    assert isinstance(agent_kwargs, dict)
+    assert agent_kwargs["output_type"] is VocabularyCandidateOutput
+    assert agent_kwargs["instructions"] == instructions
+    assert agent_kwargs["name"] == "reader_layer_vocabulary_agent"
+    assert agent_kwargs["retries"] == {"tools": 1, "output": 2}
+    assert "output_retries" not in agent_kwargs
+    assert "instrument" not in agent_kwargs
+
 
 @pytest.fixture
 async def vocabulary_worker_env() -> asyncpg.Pool:
@@ -531,12 +562,18 @@ async def test_real_executor_path_publishes_vocabulary_layer_and_snapshot_marks(
 
 async def test_worker_without_executor_fails_terminal_and_does_not_publish_vocabulary_layer(
     vocabulary_worker_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user_id = await insert_user(vocabulary_worker_env)
     article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
     await VocabularyJobBootstrapService(pool=vocabulary_worker_env).bootstrap_vocabulary_run(
         record_id=article.record_id,
         user_id=user_id,
+    )
+    monkeypatch.setattr(
+        vocabulary_worker_module,
+        "get_settings",
+        lambda: Settings(reader_vocabulary_model_profile=""),
     )
     worker = VocabularyWorkerService(pool=vocabulary_worker_env)
 

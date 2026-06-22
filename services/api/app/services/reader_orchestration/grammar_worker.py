@@ -225,9 +225,7 @@ class PydanticAIGrammarBundleExecutor:
             output_type=GrammarBundleCandidateOutput,
             instructions=load_agent_instructions(GRAMMAR_PROMPT_AGENT_NAME),
             name="reader_layer_grammar_bundle_agent",
-            retries=1,
-            output_retries=2,
-            instrument=False,
+            retries={"tools": 1, "output": 2},
         )
 
     async def _run_agent(self, agent: Agent, prompt: str) -> Any:

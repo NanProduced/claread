@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import warnings
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import asyncpg
 import pytest
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.agent import AgentRunResult
 
 from app.database import connection as db_connection
+from app.llm.agent_runner import extract_run_usage
 from app.schemas.reader_orchestration import TranslationLayerOutput
+from app.services.reader_orchestration import translation_worker as translation_worker_module
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
@@ -17,8 +23,10 @@ from app.services.reader_orchestration.job_bootstrap import (
     TranslationJobBootstrapService,
 )
 from app.services.reader_orchestration.translation_worker import (
+    PydanticAITranslationExecutor,
     TranslationExecutionError,
     TranslationExecutionResult,
+    TranslationJobContext,
     TranslationWorkerService,
 )
 from tests.reader_orchestration_test_support import (
@@ -65,6 +73,22 @@ class _FailingTranslator:
     async def translate(self, context) -> TranslationExecutionResult:
         raise self.error
 
+class _FakeRunUsage:
+    def __init__(self, *, input_tokens: int, output_tokens: int) -> None:
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.cache_read_tokens = 0
+        self.cache_write_tokens = 0
+        self.details: dict[str, int] = {}
+
+class _FakeCallableUsageResult:
+    def __init__(self, output: object, usage: _FakeRunUsage) -> None:
+        self.output = output
+        self._usage = usage
+
+    def usage(self) -> _FakeRunUsage:
+        return self._usage
+
 
 @pytest.fixture
 async def translation_worker_env() -> asyncpg.Pool:
@@ -95,6 +119,23 @@ def _translation_output(text: str = "第一句。\n\n第二段。") -> Translati
         confidence="normal",
     )
 
+def _translation_context(source_text: str = "Translation source text.") -> TranslationJobContext:
+    return TranslationJobContext(
+        job_id=UUID("11111111-1111-1111-1111-111111111111"),
+        run_id=UUID("22222222-2222-2222-2222-222222222222"),
+        reading_record_id=UUID("33333333-3333-3333-3333-333333333333"),
+        user_id=UUID("44444444-4444-4444-4444-444444444444"),
+        base_id=UUID("55555555-5555-5555-5555-555555555555"),
+        unit_id="u1",
+        order_index=1,
+        expected_generation=1,
+        operation_fingerprint="translation_unit_v1",
+        source_language="en",
+        target_language="zh-CN",
+        source_text=source_text,
+        text_hash="translation-text-hash",
+    )
+
 
 def _translation_nodes(snapshot) -> list[dict[str, object]]:
     nodes: list[dict[str, object]] = []
@@ -103,6 +144,92 @@ def _translation_nodes(snapshot) -> list[dict[str, object]]:
             if isinstance(child, dict) and child.get("type") == "reader_translation":
                 nodes.append(child)
     return nodes
+
+def test_extract_run_usage_reads_agent_run_result_property_without_deprecation_warning() -> None:
+    result = AgentRunResult(output=_translation_output())
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        usage = extract_run_usage(result)
+
+    assert usage == {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+    assert not any(
+        issubclass(warning.category, PydanticAIDeprecationWarning)
+        and "AgentRunResult.usage" in str(warning.message)
+        for warning in caught
+    )
+
+def test_extract_run_usage_keeps_legacy_callable_usage_compatibility() -> None:
+    usage = extract_run_usage(
+        _FakeCallableUsageResult(
+            output=_translation_output(),
+            usage=_FakeRunUsage(input_tokens=7, output_tokens=5),
+        )
+    )
+
+    assert usage == {
+        "input_tokens": 7,
+        "output_tokens": 5,
+        "total_tokens": 12,
+    }
+
+@pytest.mark.anyio
+async def test_real_executor_uses_non_deprecated_agent_retry_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _CapturingAgent:
+        def __init__(self, *args, **kwargs) -> None:
+            captured["kwargs"] = kwargs
+
+        async def run(self, prompt: str) -> object:
+            return SimpleNamespace(output=_translation_output("通过捕获 agent 返回的译文"))
+
+    monkeypatch.setattr(
+        translation_worker_module,
+        "build_model_for_route",
+        lambda settings, route: (
+            object(),
+            SimpleNamespace(
+                profile_name="reader-translation-profile",
+                provider="stub-provider",
+                model_name="stub-model",
+                api_key="",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        translation_worker_module,
+        "assert_real_llm_allowed",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        translation_worker_module,
+        "load_agent_instructions",
+        lambda name: "stub translation instructions",
+    )
+    monkeypatch.setattr(translation_worker_module, "Agent", _CapturingAgent)
+
+    executor = PydanticAITranslationExecutor()
+    result = await executor.translate(_translation_context())
+
+    assert result.output.translated_text == "通过捕获 agent 返回的译文"
+    assert result.model_profile == "reader-translation-profile"
+    assert result.model_provider == "stub-provider"
+    assert result.model_name == "stub-model"
+    agent_kwargs = captured["kwargs"]
+    assert isinstance(agent_kwargs, dict)
+    assert agent_kwargs["output_type"] is TranslationLayerOutput
+    assert agent_kwargs["instructions"] == "stub translation instructions"
+    assert agent_kwargs["name"] == "reader_layer_translation_agent"
+    assert agent_kwargs["retries"] == {"tools": 1, "output": 2}
+    assert "output_retries" not in agent_kwargs
+    assert "instrument" not in agent_kwargs
 
 
 async def _insert_build_base_job(

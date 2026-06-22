@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import asyncpg
 import pytest
 
+from app.config.settings import Settings
 from app.contracts.annotation import compute_text_range_hash, utf16_code_unit_length
 from app.database import connection as db_connection
 from app.schemas.reader_orchestration import (
@@ -19,15 +20,18 @@ from app.schemas.reader_orchestration import (
     SentenceAnalysisItem,
     SentenceAnalysisLayerOutput,
 )
+from app.services.reader_orchestration import grammar_worker as grammar_worker_module
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
 from app.services.reader_orchestration.grammar_worker import (
     FakeGrammarBundleExecutor,
+    GrammarBundleCandidateOutput,
     GrammarBundleWorkerService,
     GrammarExecutionError,
     GrammarExecutionResult,
     GrammarJobContext,
+    PydanticAIGrammarBundleExecutor,
 )
 from app.services.reader_orchestration.job_bootstrap import (
     GRAMMAR_OPERATION_FINGERPRINT,
@@ -80,6 +84,37 @@ class _FailingGrammarExecutor:
 
     async def generate(self, context: GrammarJobContext) -> GrammarExecutionResult:
         raise self.error
+
+def test_real_executor_builds_agent_with_non_deprecated_retry_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    instructions = "stub grammar instructions"
+
+    class _CapturingAgent:
+        def __init__(self, *args, **kwargs) -> None:
+            captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(grammar_worker_module, "Agent", _CapturingAgent)
+    monkeypatch.setattr(
+        grammar_worker_module,
+        "load_agent_instructions",
+        lambda name: instructions,
+    )
+
+    executor = PydanticAIGrammarBundleExecutor(
+        settings=Settings(reader_grammar_bundle_model_profile="reader_grammar_bundle")
+    )
+    executor._build_agent(model=object())
+
+    agent_kwargs = captured["kwargs"]
+    assert isinstance(agent_kwargs, dict)
+    assert agent_kwargs["output_type"] is GrammarBundleCandidateOutput
+    assert agent_kwargs["instructions"] == instructions
+    assert agent_kwargs["name"] == "reader_layer_grammar_bundle_agent"
+    assert agent_kwargs["retries"] == {"tools": 1, "output": 2}
+    assert "output_retries" not in agent_kwargs
+    assert "instrument" not in agent_kwargs
 
 
 @pytest.fixture
@@ -577,12 +612,18 @@ async def test_worker_explicit_fake_executor_succeeds_noop_without_layers_or_rea
 @pytest.mark.anyio
 async def test_worker_without_executor_fails_terminal_and_does_not_publish_grammar_layers(
     grammar_worker_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user_id = await insert_user(grammar_worker_env)
     article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
     await GrammarJobBootstrapService(pool=grammar_worker_env).bootstrap_grammar_run(
         record_id=article.record_id,
         user_id=user_id,
+    )
+    monkeypatch.setattr(
+        grammar_worker_module,
+        "get_settings",
+        lambda: Settings(reader_grammar_bundle_model_profile=""),
     )
     worker = GrammarBundleWorkerService(pool=grammar_worker_env)
 

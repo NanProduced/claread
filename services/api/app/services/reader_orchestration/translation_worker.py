@@ -141,9 +141,7 @@ class PydanticAITranslationExecutor:
             output_type=TranslationLayerOutput,
             instructions=load_agent_instructions(TRANSLATION_PROMPT_AGENT_NAME),
             name="reader_layer_translation_agent",
-            retries=1,
-            output_retries=2,
-            instrument=False,
+            retries={"tools": 1, "output": 2},
         )
         result = await agent.run(_build_translation_prompt(context))
         output = TranslationLayerOutput.model_validate(result.output)
