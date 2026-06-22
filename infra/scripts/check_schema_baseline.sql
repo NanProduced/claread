@@ -231,9 +231,36 @@ BEGIN
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public'
       AND table_name = 'ai_usage_events'
+      AND column_name = 'reader_run_id'
+  ) THEN
+    RAISE EXCEPTION 'missing column: ai_usage_events.reader_run_id';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'ai_usage_events'
       AND column_name = 'reader_job_id'
   ) THEN
     RAISE EXCEPTION 'missing column: ai_usage_events.reader_job_id';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'ai_usage_events'
+      AND column_name = 'enhancement_layer_id'
+  ) THEN
+    RAISE EXCEPTION 'missing column: ai_usage_events.enhancement_layer_id';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'ai_usage_events'
+      AND column_name = 'operation_fingerprint'
+  ) THEN
+    RAISE EXCEPTION 'missing column: ai_usage_events.operation_fingerprint';
   END IF;
 
   IF NOT EXISTS (
@@ -243,6 +270,42 @@ BEGIN
       AND column_name = 'subject_type'
   ) THEN
     RAISE EXCEPTION 'missing column: user_credit_ledger.subject_type';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'user_credit_ledger'
+      AND column_name = 'subject_id'
+  ) THEN
+    RAISE EXCEPTION 'missing column: user_credit_ledger.subject_id';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'user_credit_ledger'
+      AND column_name = 'reading_record_id'
+  ) THEN
+    RAISE EXCEPTION 'missing column: user_credit_ledger.reading_record_id';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'user_credit_ledger'
+      AND column_name = 'reader_run_id'
+  ) THEN
+    RAISE EXCEPTION 'missing column: user_credit_ledger.reader_run_id';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'user_credit_ledger'
+      AND column_name = 'reader_job_id'
+  ) THEN
+    RAISE EXCEPTION 'missing column: user_credit_ledger.reader_job_id';
   END IF;
 
   IF NOT EXISTS (
@@ -276,6 +339,70 @@ BEGIN
     WHERE schemaname = 'public' AND indexname = 'idx_ai_usage_events_record'
   ) THEN
     RAISE EXCEPTION 'missing index: idx_ai_usage_events_record';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_ai_usage_events_reading_record'
+  ) THEN
+    RAISE EXCEPTION 'missing index: idx_ai_usage_events_reading_record';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_ai_usage_events_reader_run'
+  ) THEN
+    RAISE EXCEPTION 'missing index: idx_ai_usage_events_reader_run';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_ai_usage_events_reader_job'
+  ) THEN
+    RAISE EXCEPTION 'missing index: idx_ai_usage_events_reader_job';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_ai_usage_events_enhancement_layer'
+  ) THEN
+    RAISE EXCEPTION 'missing index: idx_ai_usage_events_enhancement_layer';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND indexname = 'idx_ai_usage_events_operation_fingerprint'
+  ) THEN
+    RAISE EXCEPTION 'missing index: idx_ai_usage_events_operation_fingerprint';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_credit_ledger_subject'
+  ) THEN
+    RAISE EXCEPTION 'missing index: idx_credit_ledger_subject';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_credit_ledger_reading_record'
+  ) THEN
+    RAISE EXCEPTION 'missing index: idx_credit_ledger_reading_record';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_credit_ledger_reader_run'
+  ) THEN
+    RAISE EXCEPTION 'missing index: idx_credit_ledger_reader_run';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_credit_ledger_reader_job'
+  ) THEN
+    RAISE EXCEPTION 'missing index: idx_credit_ledger_reader_job';
   END IF;
 
   IF NOT EXISTS (
@@ -351,6 +478,90 @@ END $$;
 
 DO $$
 BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'ai_usage_events'
+      AND c.conname = 'fk_ai_usage_events_reading_record'
+  ) THEN
+    RAISE EXCEPTION 'missing constraint: fk_ai_usage_events_reading_record';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'ai_usage_events'
+      AND c.conname = 'fk_ai_usage_events_reader_run'
+  ) THEN
+    RAISE EXCEPTION 'missing constraint: fk_ai_usage_events_reader_run';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'ai_usage_events'
+      AND c.conname = 'fk_ai_usage_events_reader_job'
+  ) THEN
+    RAISE EXCEPTION 'missing constraint: fk_ai_usage_events_reader_job';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'ai_usage_events'
+      AND c.conname = 'fk_ai_usage_events_enhancement_layer'
+  ) THEN
+    RAISE EXCEPTION 'missing constraint: fk_ai_usage_events_enhancement_layer';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'user_credit_ledger'
+      AND c.conname = 'fk_user_credit_ledger_reading_record'
+  ) THEN
+    RAISE EXCEPTION 'missing constraint: fk_user_credit_ledger_reading_record';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'user_credit_ledger'
+      AND c.conname = 'fk_user_credit_ledger_reader_run'
+  ) THEN
+    RAISE EXCEPTION 'missing constraint: fk_user_credit_ledger_reader_run';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'user_credit_ledger'
+      AND c.conname = 'fk_user_credit_ledger_reader_job'
+  ) THEN
+    RAISE EXCEPTION 'missing constraint: fk_user_credit_ledger_reader_job';
+  END IF;
+
   IF NOT EXISTS (
     SELECT 1
     FROM pg_constraint c

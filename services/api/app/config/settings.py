@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     reader_worker_batch_size: int = 10
     reader_worker_max_ticks: int = 24
     reader_worker_max_jobs: int = 24
+    reader_worker_lease_duration_seconds: int = 120
     reader_worker_lease_owner_prefix: str = "reader-enhancement-worker"
     # Round 16: ``reader_ask_planner_model_profile`` has been removed.
     # The live agent-loop-first path no longer resolves a planner LLM.

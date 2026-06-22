@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 from dataclasses import asdict
+from datetime import timedelta
 from typing import Any
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -53,6 +54,12 @@ def _parse_args(settings: Settings) -> argparse.Namespace:
         type=int,
         default=settings.reader_worker_max_jobs,
         help="Maximum claimed jobs per scoped pipeline run",
+    )
+    parser.add_argument(
+        "--lease-duration-seconds",
+        type=int,
+        default=settings.reader_worker_lease_duration_seconds,
+        help="Lease duration for claimed reader jobs",
     )
     parser.add_argument(
         "--lease-owner-prefix",
@@ -130,6 +137,7 @@ async def _run_once(
     return await service.run_once(
         batch_size=args.batch_size,
         lease_owner_prefix=args.lease_owner_prefix,
+        lease_duration=timedelta(seconds=args.lease_duration_seconds),
         max_ticks=args.max_ticks,
         max_jobs=args.max_jobs,
     )
@@ -142,6 +150,8 @@ async def _run_worker(args: argparse.Namespace, settings: Settings) -> None:
         raise ValueError("max_ticks must be >= 1")
     if args.max_jobs < 1:
         raise ValueError("max_jobs must be >= 1")
+    if args.lease_duration_seconds < 1:
+        raise ValueError("lease_duration_seconds must be >= 1")
     if not args.once and args.scan_interval_seconds < 1:
         raise ValueError("scan_interval_seconds must be >= 1 in loop mode")
 

@@ -22,7 +22,7 @@ from .pipeline_runner import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_READER_WORKER_LEASE_DURATION = timedelta(seconds=30)
+DEFAULT_READER_WORKER_LEASE_DURATION = timedelta(seconds=120)
 READER_WORKER_USER_ADVISORY_LOCK_NAMESPACE = 1_431_459_667
 _RUNNABLE_RECORD_READYNESS_STATES = ("article_ready", "initial_enhancement_ready")
 _RUNNABLE_RECORD_PRODUCT_STATES = ("processing", "readable_enhancing")

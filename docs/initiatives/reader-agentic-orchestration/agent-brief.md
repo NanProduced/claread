@@ -94,7 +94,14 @@
 - D5-W1 worker loop 评估结论为 `accepted_with_changes`：正式运行形态应是独立 worker process，本地用 CLI entrypoint，部署用独立 worker service；不得挂到 FastAPI lifespan，不得塞进 Web submit，不得新增 public worker-control endpoint，不得把 smoke harness / fake executors 作为产品路径。
 - Worker loop 扫描候选 record 时，粗筛可用 `product_state in ('processing','readable_enhancing')`、active base/generation/status 和 `readiness_state in ('article_ready','initial_enhancement_ready')`；exact missing work 仍由 `EnhancementJobBootstrapService` / `ReaderEnhancementPipelineRunner` 决定。
 - D5-W2 worker loop 已完成：`ReaderEnhancementWorkerLoopService` 通过 coarse scan + per-record / per-user advisory locks 调用 `ReaderEnhancementPipelineRunner`，CLI `scripts/run_reader_enhancement_worker.py` 支持 `--once` 与持续 loop。
-- 当前下一步进入 D5 worker/runtime hardening：projection ops consistency spike、真实本地链路配置/运行手册、页面输入到 worker 结果回刷路径；parsed decision same-tx、vocabulary boundary policy 与 worker loop 已完成。
+- 本地真实链路运行手册是 `docs/initiatives/reader-agentic-orchestration/modules/local-real-chain-runbook.md`；D5-R4 已用真实 DashScope provider 跑通短文本 `plain_text -> article_ready -> worker loop -> snapshot reload`，无 smoke harness / fake executor。
+- D5-R4 的限制：短文本未触发 `sentence_analysis`，长文本暴露 worker lease duration 风险；`ai_usage_events` 列缺失属于旧本地 DB schema drift，当前 repo baseline 已包含列/FK。
+- D5-R5 已完成运行态硬化：新增 `scripts/check_reader_schema_health.py`，并把 worker lease duration 提升为可配置项 `reader_worker_lease_duration_seconds` / `--lease-duration-seconds`，默认 120 秒。
+- D5-R5 不做旧本地 DB 自动迁移兼容；schema drift 的正确处理方式仍是 reset/rebuild 本地 DB 后重跑 baseline。
+- D5-V5 / D5-R6 已完成：deterministic 250+ 词长文本 fixture 和真实 DashScope `workflow-qwen37-max` provider 长文本链路均已跑通；grammar bundle 能发布 `grammar_note` + `sentence_analysis`，snapshot reload 稳定出现 `reader_sentence_analysis` node；本轮不启用 `projection_ops`，也不读取旧 `render_scene_json`。
+- Web 侧现有 `ReaderPlateSnapshotSurface` / `ReaderPlateSnapshotDto` focused tests 已覆盖 sentence_analysis 的只读渲染和 typed projection contract；R6 浏览器实渲染确认 `/app/reader-plate?record_id=34476538-c091-43ef-a395-009de7633a68` 出现 2 张 sentence analysis 卡片。
+- D5-R6 保留两个后续问题：worker stdout 仍有 PydanticAI deprecation warnings；250+ 词单段长文本仍只切成 1 个 `reader_unit` 且 `boundary_quality=low`，后续需单独评估 Boundary / Unit Builder v2 和 sentence_analysis coverage policy。
+- 当前下一步进入 D5 worker/runtime hardening尾项：PydanticAI deprecation cleanup、Boundary / Unit Builder v2 spike 与 Web cutover planning；parsed decision same-tx、vocabulary boundary policy、worker loop、schema health/check、lease duration setting 与 sentence_analysis 长文本真实验收已完成。
 - D4 worker 实现中不得临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK；如 D3-P4 runtime tests 暴露缺口，先形成单独 closeout/update，再改依赖。
 - LangGraph v1+ 的 persistence、streaming、interrupt/resume、subgraph 和 runtime observability 只作为 D6+ 隔离 spike 候选；具体版本能力和 breaking changes 必须在 spike 中用当时官方文档与 lockfile 实测确认，不改变 PostgreSQL run/job/event 主控。
 - Grammar Bundle Worker 可以一次生成 `grammar_note` 与 `sentence_analysis`，但发布、存储、RAG、projection、policy、eval 必须按 subtype 独立处理。`long_sentence` 不是权威 layer type，只是触发 `sentence_analysis` 的适用场景。

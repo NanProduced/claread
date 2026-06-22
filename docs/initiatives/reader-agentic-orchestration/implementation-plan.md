@@ -735,6 +735,7 @@ Closeout 结论：
 - `retry_later` 继续尊重 `available_at`；`failed_terminal` 只进入 summary / log，不修改 `product_state='action_required'`。
 - 已新增 `scripts/run_reader_enhancement_worker.py`，支持 `--once` 和 loop mode；本地和部署共用同一入口。
 - 已新增 settings：`reader_worker_scan_interval_seconds`、`reader_worker_batch_size`、`reader_worker_max_ticks`、`reader_worker_max_jobs`、`reader_worker_lease_owner_prefix`。
+- 本地真实链路运行手册已落到 `modules/local-real-chain-runbook.md`；D5-R4 已用真实 DashScope provider 跑通短文本主链路，D5-R6 已跑通 250+ 词长文本与 `sentence_analysis` 浏览器实渲染；旧本地 DB schema drift 通过 D5-R5 schema health check 暴露。
 - 未新增 public endpoint，未把 runner 放进 Web submit，未挂到 FastAPI lifespan，未引入 LangGraph / MQ / SSE / `projection_ops`。
 
 Focused tests 已通过：
@@ -760,6 +761,66 @@ Focused tests 已通过：
 - `uv run pytest tests/test_reader_orchestration_layer_publisher.py tests/test_reader_orchestration_orchestrator.py tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_worker_loop.py tests/test_reader_orchestration_pipeline_runner.py -q`
 - `uv run ruff check claread_eval/schemas/vocabulary.py claread_eval/graders/vocabulary.py scripts/build_vocabulary_seed.py tests/test_vocabulary_dataset.py tests/test_vocabulary_graders.py tests/test_vocabulary_seed_pipeline.py tests/test_vocabulary_runner.py tests/test_vocabulary_baseline.py`
 - `uv run pytest tests/test_vocabulary_dataset.py tests/test_vocabulary_graders.py tests/test_vocabulary_seed_pipeline.py tests/test_vocabulary_runner.py tests/test_vocabulary_baseline.py -q`
+
+### D5-R4. Real Provider Local Chain Validation
+
+状态：completed on 2026-06-22，详细记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-R4-real-provider-local-chain-validation.md`。
+
+Closeout 结论：
+
+- 真实 DashScope `workflow-qwen37-max` provider 下，D5 reader enhancement 短文本主链路端到端跑通：`plain_text -> article_ready -> worker loop -> snapshot reload`。
+- 验证没有使用 smoke harness 或 fake executor。
+- Worker `--once` 自动 bootstrap vocabulary / grammar_bundle jobs；translation、vocabulary、grammar_note 成功 publish，events 推进到 `article_ready + layer_published x3 + parsed_decision_updated`。
+- Snapshot projection 出现 `reader_translation` node、`reader_vocabulary_marks` 和 `reader_grammar_note_marks`。
+- `sentence_analysis` 未出现是短文本未触发句式拆解的真实 LLM 行为，不判为 bug。
+- 第二次 worker `--once` 扫描为空，说明当前 record/base/generation 不重复 publish。
+
+Follow-up 口径：
+
+- D5-R4 观察到的 `ai_usage_events` / `user_credit_ledger` 列缺失应按本地 DB schema drift 处理：当前仓库 `0001_initial_schema.sql` 已包含 D5 attribution 列和 FK；旧本地 DB 需要刷新/重建或后续提供 dev-only schema health/check。
+- 长文本 250+ 词可能超过默认 lease duration，需 D5-R5 单独评估 worker lease duration setting。
+- `sentence_analysis` 验收需要长文本 fixture 和 grammar bundle projection / boundary refiner 联合验证。
+
+### D5-R5. Schema Health Check + Worker Lease Duration Setting
+
+状态：completed on 2026-06-22。
+
+Closeout 结论：
+
+- 已新增 dev/admin schema health entrypoint：`services/api/scripts/check_reader_schema_health.py`。它显式检查 `ai_usage_events` / `user_credit_ledger` 的 D5 attribution columns、reader attribution FK 和 index，并在失败时输出 reset/rebuild 本地 DB 的明确指引。
+- `infra/scripts/check_schema_baseline.sql` 已同步扩展，覆盖同一批 D5 attribution columns / FK / index；没有重复向 baseline 添加已存在列，只增加 drift 检查。
+- worker loop 已新增 `reader_worker_lease_duration_seconds` setting 和 CLI `--lease-duration-seconds`；默认值从 30 秒提高到 120 秒。
+- 120 秒的取舍是：优先降低长文本真实 LLM 处理中途 `LeaseExpiredError` 的概率；代价是 worker 崩溃后的 stale lease 恢复最慢延后到约 2 分钟，仍由现有 stale lease recovery 处理。
+- `ReaderEnhancementWorkerLoopService.process_candidate()` / `run_once()` 继续只把 `lease_duration` 透传给现有 runner / runtime，不改变 claim、retry、publish fence 或 job runtime 语义。
+- 本轮没有新增 public endpoint，没有把 worker 挂到 FastAPI lifespan，没有把 Web submit 同步变成 LLM 执行，也没有引入 fake executor 产品路径。
+
+Focused tests 已通过：
+
+- `uv run ruff check app/config/settings.py app/services/reader_orchestration/worker_loop.py app/services/reader_orchestration/schema_health.py scripts/run_reader_enhancement_worker.py scripts/check_reader_schema_health.py tests/test_reader_orchestration_worker_loop.py tests/test_reader_orchestration_worker_cli.py tests/test_reader_orchestration_schema_health.py`
+- `uv run pytest tests/test_reader_orchestration_worker_cli.py tests/test_reader_orchestration_worker_loop.py tests/test_reader_orchestration_schema_health.py -q`
+
+### D5-V5 / D5-R6. Sentence Analysis Long-text Validation + Projection Consistency
+
+状态：completed on 2026-06-22，真实 provider 记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-V5-R6-local-long-text-runbook-validation-2026-06-22.md`。
+
+Closeout 结论：
+
+- 已新增 250+ 词英文长文本 deterministic fixture，覆盖复杂从句、插入语、转折和较长主干，用于 focused backend validation。
+- `ReaderEnhancementPipelineRunner` 在该长文本 fixture 下可完成 `article_ready -> bootstrap -> worker drain -> snapshot reload`，并成功发布 `grammar_note` 与 `sentence_analysis` 两类 layer。
+- `ArticleReadyPersistenceService.load_snapshot()` 在 reload 时可把 `sentence_analysis` layer 稳定投影为 `reader_sentence_analysis` node；snapshot reload 前后 `reader_events` / `reader_job_events` / `enhancement_layers` 计数不变，证明 reload 不写 projection side effects。
+- 本轮继续只使用 snapshot reload；未启用 `projection_ops` incremental applier，也未读旧 `render_scene_json`。
+- Web 侧未改动实现。现有 `ReaderPlateSnapshotSurface` 和 `ReaderPlateSnapshotDto` focused tests 已覆盖 `reader_sentence_analysis` 的只读渲染 contract，并在本轮复用通过。
+- 真实 DashScope `workflow-qwen37-max` provider 下，250+ 词长文本链路已通过 Web BFF submit、worker once 和浏览器实渲染验证；record `34476538-c091-43ef-a395-009de7633a68` 的 snapshot 同时包含 translation、vocabulary、grammar_note、sentence_analysis，`snapshot.value` 出现 2 个 `reader_sentence_analysis` nodes。
+- 真实 worker 命令 `uv run python scripts/run_reader_enhancement_worker.py --once --lease-duration-seconds 240 --max-ticks 24 --max-jobs 24` 完成 3 个 enhancement jobs，`last_event_sequence=6`，停止原因为 `all_workers_no_job`。
+- 真实 Web 页面 `/app/reader-plate?record_id=34476538-c091-43ef-a395-009de7633a68` 已渲染 2 张 sentence analysis 卡片，标题分别是 `Pseudo-cleft with colon-introduced parallel elaboration` 和 `Contrastive predicate with triple-verb modification`。
+- R6 真实验证未发现 `render_scene_json`、`projection_ops` 或 raw Plate path/op 回流到 truth 层。
+- R6 保留的后续问题：worker stdout 仍有 PydanticAI deprecation warnings；该 250+ 词单段正文仍只生成 1 个 `reader_unit` 且 `boundary_quality=low`，后续需要 Boundary / Unit Builder v2 与 sentence_analysis coverage policy 独立评估。
+
+Focused tests 已通过：
+
+- `uv run ruff check tests/test_reader_orchestration_pipeline_runner.py`
+- `uv run pytest tests/test_reader_orchestration_pipeline_runner.py -q`
+- `pnpm --filter=@claread/web test -- src/components/reader/plate/ReaderPlateSnapshotSurface.test.tsx src/types/api/reader-plate.test.ts`
 
 ## D6. 产品硬化
 
@@ -792,6 +853,8 @@ Focused tests 已通过：
 
 1. D5-G1 parsed decision same-transaction decision 已完成；保留 orphan diagnostic 只用于历史/人为 partial state 检测。
 2. D5-G2 vocabulary boundary policy 已完成；vocabulary 与 grammar 统一跳过 `fallback_window` 并记录 `boundary_low_fallback_window` diagnostics。
-3. projection ops consistency spike 后置：D5 页面 smoke 继续使用 snapshot reload，只有启用 incremental applier 前才处理 race / replay / path adapter consistency。
-4. D6 product hardening 再决定 `failed_terminal` 是否映射到 `action_required`、是否引入 coverage / rerun policy 和更细粒度调度 hint。
-5. 保持 LangGraph D6+ 隔离 spike 口径，不在 D5 guardrails 中升级或引入。
+3. D5-R5 schema health/check + worker lease duration setting 已完成；本地 DB schema drift 通过 health check 暴露，正确处理方式仍是 reset/rebuild 本地 DB。
+4. D5-V5 / D5-R6 已用 deterministic long-text fixture 和真实 provider 长文本链路完成 sentence_analysis projection consistency 验收；继续沿 snapshot reload 路径，不启用 incremental applier。
+5. 下一步优先清理 PydanticAI deprecation warnings，并单独评估 Boundary / Unit Builder v2 与 sentence_analysis coverage policy。
+6. D6 product hardening 再决定 `failed_terminal` 是否映射到 `action_required`、是否引入 coverage / rerun policy 和更细粒度调度 hint。
+7. 保持 LangGraph D6+ 隔离 spike 口径，不在 D5 guardrails 中升级或引入。

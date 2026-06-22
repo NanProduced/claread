@@ -38,6 +38,7 @@ from app.services.reader_orchestration.translation_worker import (
     TranslationWorkerService,
 )
 from app.services.reader_orchestration.vocabulary_worker import (
+    UnconfiguredVocabularyExecutor,
     VocabularyExecutionResult,
     VocabularyJobContext,
     VocabularyWorkerService,
@@ -278,6 +279,44 @@ def _plain_text(unit_count: int) -> str:
         "Third sentence for pipeline runner.",
     ]
     return "\n\n".join(paragraphs[:unit_count])
+
+
+def _long_plain_text() -> str:
+    text = (
+        "Although the committee, which had spent six months reviewing export data, "
+        "labor surveys, and municipal tax receipts that rarely lined up neatly, "
+        "claimed that the recovery was broad enough to justify ending the emergency "
+        "grant program, several shop owners warned that the headline numbers hid a "
+        "more fragile street-level reality, because customers were still delaying "
+        "purchases whenever wages, school fees, and transport costs rose in the same "
+        "week. "
+        "The chair, speaking in a tone that sounded patient even when the gallery "
+        "grew restless, argued that the city could not keep funding every pilot "
+        "forever, yet she also admitted that the report, which was drafted before "
+        "the latest shipping slowdown and revised after three agencies disputed one "
+        "another's forecasts, did not fully capture how quickly a small inventory "
+        "mistake, a delayed permit, or an unexpected customs check could turn a "
+        "promising quarter into a month of defensive bookkeeping. "
+        "What made the hearing difficult for new members, many of whom had expected "
+        "a simple choice between extending support and declaring success, was that "
+        "the witnesses described a chain of causes rather than a single crisis: "
+        "manufacturers were receiving orders, but not on predictable schedules; "
+        "managers were hiring trainees, but only if senior staff agreed to mentor "
+        "them; and families were willing to spend, but mainly after they had "
+        "confirmed, sometimes twice, that rent, medicine, and exam expenses were "
+        "already covered. "
+        "By the time the final vote arrived, the proposal that survived was not the "
+        "clean, decisive resolution the briefing memo had promised, but a narrower "
+        "plan that preserved training subsidies for districts with rising vacancy "
+        "rates, required monthly explanations whenever projected savings depended on "
+        "one-off asset sales, and ordered a follow-up review so that officials, "
+        "business groups, and neighborhood organizers could compare whether the "
+        "apparent improvement reflected durable demand, delayed reporting, or a "
+        "temporary calm created by firms quietly postponing the expenses they knew "
+        "would return in autumn."
+    )
+    assert len(WORD_RE.findall(text)) >= 250
+    return text
 
 
 def _make_runner(
@@ -701,6 +740,106 @@ async def test_run_with_fake_executors_publishes_all_layers_and_snapshot_reload_
 
 
 @pytest.mark.anyio
+async def test_run_with_long_text_fixture_projects_sentence_analysis_nodes_on_snapshot_reload(
+    pipeline_runner_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(pipeline_runner_env)
+    article = await submit_article_ready(
+        pipeline_runner_env,
+        user_id=user_id,
+        plain_text=_long_plain_text(),
+        title="Pipeline Long Sentence Analysis",
+    )
+    runner = _make_runner(
+        pipeline_runner_env,
+        translator=_StaticTranslator(),
+        vocabulary_executor=_StaticVocabularyExecutor(),
+        grammar_executor=_StaticGrammarExecutor(),
+    )
+
+    summary = await runner.run(
+        record_id=article.record_id,
+        user_id=user_id,
+        lease_owner="pipeline-long-text",
+        lease_duration=LEASE_DURATION,
+        max_ticks=18,
+        max_jobs=18,
+    )
+
+    unit_count = await _count_units(
+        pipeline_runner_env,
+        article.record_id,
+        article.base_id,
+    )
+    assert unit_count >= 1
+    assert summary.outcome_counts.failed_terminal == 0
+    assert summary.outcome_counts.retry_later == 0
+    assert summary.snapshot_reload_recommended is True
+    assert await _count_layers(
+        pipeline_runner_env,
+        article.record_id,
+        "grammar_note",
+    ) == unit_count
+    assert await _count_layers(
+        pipeline_runner_env,
+        article.record_id,
+        "sentence_analysis",
+    ) == unit_count
+
+    async with pipeline_runner_env.acquire() as conn:
+        before_counts = {
+            "reader_events": await conn.fetchval(
+                "SELECT COUNT(*) FROM reader_events WHERE reading_record_id = $1",
+                article.record_id,
+            ),
+            "reader_job_events": await conn.fetchval(
+                "SELECT COUNT(*) FROM reader_job_events WHERE reading_record_id = $1",
+                article.record_id,
+            ),
+            "enhancement_layers": await conn.fetchval(
+                "SELECT COUNT(*) FROM enhancement_layers WHERE reading_record_id = $1",
+                article.record_id,
+            ),
+        }
+
+    snapshot = await ArticleReadyPersistenceService(pool=pipeline_runner_env).load_snapshot(
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+
+    async with pipeline_runner_env.acquire() as conn:
+        after_counts = {
+            "reader_events": await conn.fetchval(
+                "SELECT COUNT(*) FROM reader_events WHERE reading_record_id = $1",
+                article.record_id,
+            ),
+            "reader_job_events": await conn.fetchval(
+                "SELECT COUNT(*) FROM reader_job_events WHERE reading_record_id = $1",
+                article.record_id,
+            ),
+            "enhancement_layers": await conn.fetchval(
+                "SELECT COUNT(*) FROM enhancement_layers WHERE reading_record_id = $1",
+                article.record_id,
+            ),
+        }
+
+    assert before_counts == after_counts
+    sentence_analysis_nodes = _sentence_analysis_nodes(snapshot)
+    assert len(sentence_analysis_nodes) == unit_count
+    assert all(
+        node["type"] == "reader_sentence_analysis" for node in sentence_analysis_nodes
+    )
+    assert all(node["owner"] == "system_ai" for node in sentence_analysis_nodes)
+    assert any(
+        len(WORD_RE.findall(str(node["selected_text"]))) >= 25
+        for node in sentence_analysis_nodes
+    )
+    assert sentence_analysis_nodes[0]["label"] == "main clause"
+    assert summary.last_event_sequence == snapshot.last_event_sequence
+    assert "render_scene_json" not in json.dumps(snapshot.value, ensure_ascii=False)
+
+
+@pytest.mark.anyio
 async def test_run_reports_superseded_when_publish_fence_fails(
     pipeline_runner_env: asyncpg.Pool,
 ) -> None:
@@ -756,6 +895,7 @@ async def test_run_fail_closed_on_unconfigured_vocabulary_executor(
     runner = _make_runner(
         pipeline_runner_env,
         translator=_StaticTranslator(),
+        vocabulary_executor=UnconfiguredVocabularyExecutor(),
     )
 
     summary = await runner.run(

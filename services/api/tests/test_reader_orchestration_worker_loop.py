@@ -43,6 +43,7 @@ from app.services.reader_orchestration.translation_worker import (
     TranslationWorkerService,
 )
 from app.services.reader_orchestration.vocabulary_worker import (
+    UnconfiguredVocabularyExecutor,
     VocabularyExecutionResult,
     VocabularyJobContext,
     VocabularyWorkerService,
@@ -552,6 +553,37 @@ async def test_process_candidate_is_record_scoped_and_does_not_consume_other_rec
     )
 
 
+async def test_process_candidate_forwards_custom_lease_duration_to_pipeline_runner(
+    worker_loop_env: asyncpg.Pool,
+) -> None:
+    runner = _CapturingRunner()
+    service = ReaderEnhancementWorkerLoopService(
+        pool=worker_loop_env,
+        pipeline_runner=runner,  # type: ignore[arg-type]
+    )
+    user_id = await insert_user(worker_loop_env)
+    article = await submit_article_ready(
+        worker_loop_env,
+        user_id=user_id,
+        title="Lease Duration",
+    )
+    candidate = await _find_candidate(service, article.record_id)
+    lease_duration = timedelta(seconds=120)
+
+    result = await service.process_candidate(
+        candidate=candidate,
+        lease_owner_prefix="worker-loop-lease",
+        lease_duration=lease_duration,
+        max_ticks=6,
+        max_jobs=6,
+    )
+
+    assert result.outcome == "processed"
+    assert result.pipeline_summary is not None
+    assert len(runner.calls) == 1
+    assert runner.calls[0]["lease_duration"] == lease_duration
+
+
 async def test_retry_later_records_are_not_hot_looped_until_available(
     worker_loop_env: asyncpg.Pool,
 ) -> None:
@@ -624,7 +656,11 @@ async def test_worker_loop_preserves_fail_closed_when_real_executor_is_unconfigu
         user_id=user_id,
         title="Fail Closed",
     )
-    runner = _make_runner(worker_loop_env, translator=_StaticTranslator())
+    runner = _make_runner(
+        worker_loop_env,
+        translator=_StaticTranslator(),
+        vocabulary_executor=UnconfiguredVocabularyExecutor(),
+    )
     service = ReaderEnhancementWorkerLoopService(
         pool=worker_loop_env,
         pipeline_runner=runner,
