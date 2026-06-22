@@ -857,5 +857,6 @@ Focused tests 已通过：
 3. D5-R5 schema health/check + worker lease duration setting 已完成；本地 DB schema drift 通过 health check 暴露，正确处理方式仍是 reset/rebuild 本地 DB。
 4. D5-V5 / D5-R6 已用 deterministic long-text fixture 和真实 provider 长文本链路完成 sentence_analysis projection consistency 验收；继续沿 snapshot reload 路径，不启用 incremental applier。
 5. 下一步优先清理 PydanticAI deprecation warnings；Boundary / Unit Builder v2 已扩展为 Input/Base Structure + Unit Builder 联合评估，D5 先维持 text-only Stable Base + deterministic baseline，不在未定 contract 前直接落生产 split。
-6. D6 product hardening 再决定 `failed_terminal` 是否映射到 `action_required`、是否引入 coverage / rerun policy 和更细粒度调度 hint。
-7. 保持 LangGraph D6+ 隔离 spike 口径，不在 D5 guardrails 中升级或引入。
+6. D5-W3 Web cutover planning 已确认当前双轨矩阵：`/app/read`、active task、Library、Vocabulary source links、command palette 与 `services/bff/analysis.ts` 仍指向旧 `/app/reader/{recordId}` / `/analysis-tasks`；`/app/reader-plate?record_id=` 独立消费 `ReaderPlateSnapshot`，只作为验证入口。后续推荐按 W3-A/W3-B/W3-C/W3-D 分阶段推进，并先做 route helper split，不直接切产品路由，也不做旧 `render_scene_json` 兼容映射。详细矩阵、touched files 与 done criteria 见 `modules/cutover-and-old-workflow.md`。
+7. D6 product hardening 再决定 `failed_terminal` 是否映射到 `action_required`、是否引入 coverage / rerun policy、Library 新 record list source 和更细粒度调度 hint。
+8. 保持 LangGraph D6+ 隔离 spike 口径，不在 D5 guardrails 中升级或引入。
