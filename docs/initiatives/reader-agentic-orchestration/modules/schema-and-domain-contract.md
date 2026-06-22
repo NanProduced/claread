@@ -339,7 +339,7 @@ Boundary mapping:
 Fallback layer policy:
 
 - D4 translation can run at unit scope even when some internal segments are low quality.
-- D5 `grammar_note` and `sentence_analysis` default to skip `fallback_window` spans with rationale `boundary_low_fallback_window`, unless a boundary refiner/reviewer produces acceptable segments.
+- D5 `grammar_note`, `sentence_analysis` and `vocabulary` default to skip `fallback_window` spans with rationale `boundary_low_fallback_window`, unless a boundary refiner/reviewer produces acceptable segments. Translation can still run on the parent unit even if some internal segments are low quality.
 
 Hash parity corpus must cover at least:
 

@@ -763,6 +763,60 @@ def case_13_too_many_candidates_fail_closed() -> dict[str, Any]:
     }
 
 
+def case_14_fallback_window_skip() -> dict[str, Any]:
+    """Vocabulary candidate on a fallback_window segment must be skipped with
+    reason_code=boundary_low_fallback_window, mirroring grammar bundle's
+    policy (D5 boundary alignment)."""
+    seg_text = "longlongword " * 24
+    seg_text = seg_text.strip()
+    seg_end = _utf16_code_units(seg_text)
+    target = "longlongword"
+    skipped_entries = [
+        {
+            "item_index": 0,
+            "item_type": "vocab_highlight",
+            "anchor_segment_id": "fb1",
+            "selected_text": target,
+            "reason_code": "boundary_low_fallback_window",
+        }
+    ]
+    return {
+        "schema_version": 1,
+        "id": "vocab-fallback-window-skip",
+        "description": (
+            "Candidate on fallback_window segment must skip with "
+            "boundary_low_fallback_window."
+        ),
+        "unit_id": "u14",
+        "unit_text": seg_text,
+        "anchor_segments": [
+            {
+                "anchor_segment_id": "fb1",
+                "sentence_id": "fb1",
+                "segment_type": "fallback_window",
+                "unit_start_utf16": 0,
+                "unit_end_utf16": seg_end,
+                "text": seg_text,
+                "boundary_quality": "low",
+            }
+        ],
+        "gold_items": [],
+        "expected_diagnostics": {
+            "candidate_item_count": 1,
+            "resolved_item_count": 0,
+            "skipped_item_count": 1,
+            "skipped_reason_codes": ["boundary_low_fallback_window"],
+        },
+        "unicode_pitfall": None,
+        "difficulty_band": "off-list",
+        "tags": ["fallback_window", "boundary_quality", "skip_reason"],
+        "execution": make_snapshot(
+            items=[],
+            diagnostics=diagnostics_for(candidate_count=1, skipped=skipped_entries),
+        ),
+    }
+
+
 CASES: list[tuple[str, dict[str, Any]]] = [
     ("01-vocab-no-value.json", case_01_no_value()),
     ("02-vocab-single-highlight.json", case_02_single_highlight()),
@@ -777,6 +831,7 @@ CASES: list[tuple[str, dict[str, Any]]] = [
     ("11-vocab-diagnostics-truncation.json", case_11_diagnostics_truncation()),
     ("12-vocab-empty-with-diagnostics.json", case_12_empty_with_diagnostics()),
     ("13-vocab-too-many-fail-closed.json", case_13_too_many_candidates_fail_closed()),
+    ("14-vocab-fallback-window-skip.json", case_14_fallback_window_skip()),
 ]
 
 

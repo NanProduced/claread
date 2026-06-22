@@ -641,7 +641,7 @@ Focused tests 已通过：
 - 原调研中的 `evals/claread_eval/judge/judges/vocabulary_judge.yaml` 不采纳为下一步范围；当前 judge runner/rubric contract 仍是 article-analysis oriented，LLM judge 泛化单独后置。
 - LangSmith `evaluate()` 不进入下一步；先用本地 deterministic graders 和 pytest 验收。
 - 超过 5 个 candidate 的预期需按 D5-V3 真实实现修正：通常在 `VocabularyCandidateOutput` validation 阶段 fail closed，不作为普通 `candidate_limit_exceeded` diagnostics gate。
-- vocabulary `boundary_low_fallback_window` 不进入 D5 eval seed acceptance gate；当前 worker 不产生该 reason code。
+- vocabulary `boundary_low_fallback_window` 在 D5-G2 后已成为 acceptance gate；vocabulary worker 在 `_build_vocabulary_output_from_candidates` 中显式拒绝 `segment_type=fallback_window` 的候选 item，reason_code 写入 `diagnostics.skipped_items[]`，与 grammar bundle 口径一致。
 
 ### D5-R1. LangGraph / Orchestration Architecture Review Disposition
 
@@ -694,6 +694,73 @@ Focused tests 已通过：
 - `pnpm --filter=@claread/web test`
 - `pnpm --filter=@claread/web test:e2e -- tests/e2e/reader-plate-smoke.spec.ts`
 
+### D5-W1. Local / Deployment Worker Loop Evaluation
+
+状态：`accepted_with_changes` on 2026-06-22，评估材料已移至 `docs/tmp/reader-orchestration/D5/TMP-D5-D6-worker-loop-evaluation-2026-06-22.md`。
+
+结论：
+
+- 接受独立 worker process 方向：本地用 CLI entrypoint 启动，部署时作为独立 worker service / process / container 运行。
+- Worker loop 复用 `ReaderEnhancementPipelineRunner`，不另建 orchestration 控制面。
+- API 服务保持 request-serving；worker loop 不挂到 FastAPI lifespan / startup task，避免 dev reload、多副本和 API 请求路径混杂。
+- Web submit 仍只负责创建 `article_ready` facts；不要把 runner 同步塞进 submit request。
+- 不新增 public 或 semi-public worker-control endpoint。
+- 不使用 smoke harness / fake executors 作为产品运行路径；fake 仍只能显式 opt-in 用于 dev/test。
+- 真实 model profile 缺失保持 fail-closed，不静默 fallback 到 fake 或 synthetic layer。
+
+修正口径：
+
+- 扫描条件不能只写死 `readiness_state = 'article_ready'`。因为 `readiness_state` 是单调 milestone，worker loop 初版应默认考虑 `article_ready` 与 `initial_enhancement_ready`，并把 `coverage_complete` 作为默认停止态；如后续有 repair / retry policy，再显式允许 coverage-complete records 回到 eligible set。
+- 粗筛只负责找候选 record；exact missing work 仍由 `EnhancementJobBootstrapService` / `ReaderEnhancementPipelineRunner` 决定，不在 scanner 复制每个 layer 的 eligibility 逻辑。
+- 初版并发保持保守：per-record advisory lock 必须有；per-user concurrency 和 per-worker concurrency 默认 `1`，后续再通过配置放宽。
+- `retry_later` 不应导致 hot-loop；worker loop 应尊重 job `available_at` 或通过 runnable-job 优先扫描减少空转。
+- `failed_terminal` 初版只进入 logs / metrics / summary；是否映射为 `product_state='action_required'` 留给 D6 product hardening。
+
+最小实现建议：
+
+1. `ReaderEnhancementWorkerLoopService`：扫描 eligible records、获取 advisory locks、调用 runner、解释 summary。
+2. `scripts/run_reader_enhancement_worker.py`：初始化 DB，按 scan interval / batch size / runner limits 循环。
+3. 新增 settings：`reader_worker_scan_interval_seconds`、`reader_worker_batch_size`、`reader_worker_max_ticks`、`reader_worker_max_jobs`、`reader_worker_lease_owner_prefix`。不新增 fake executor product config。
+4. Focused tests 覆盖 eligibility scan、record/user lock、record-scoped runner、retry_later backoff、missing profile fail-closed 和 stale base fence。
+
+### D5-W2. Local / Deployment Worker Loop Closeout
+
+状态：completed on 2026-06-22。
+
+Closeout 结论：
+
+- 已新增 `ReaderEnhancementWorkerLoopService`，使用 coarse eligibility scan + per-record / per-user advisory locks 调度 `ReaderEnhancementPipelineRunner`。
+- worker loop scanner 只筛 `reading_records` / `reading_bases` 的 coarse readiness，不复制 translation / vocabulary / grammar bundle 的 missing-work 判定。
+- scanner 会优先处理当前 active base / generation 下存在 runnable jobs 的 record；无 runnable jobs 时，仅对当前 generation 不存在 tracked jobs 的 record 允许重新进入 bootstrap，从而避免 `retry_later` hot-loop 和 `failed_terminal` 反复重建。
+- `retry_later` 继续尊重 `available_at`；`failed_terminal` 只进入 summary / log，不修改 `product_state='action_required'`。
+- 已新增 `scripts/run_reader_enhancement_worker.py`，支持 `--once` 和 loop mode；本地和部署共用同一入口。
+- 已新增 settings：`reader_worker_scan_interval_seconds`、`reader_worker_batch_size`、`reader_worker_max_ticks`、`reader_worker_max_jobs`、`reader_worker_lease_owner_prefix`。
+- 未新增 public endpoint，未把 runner 放进 Web submit，未挂到 FastAPI lifespan，未引入 LangGraph / MQ / SSE / `projection_ops`。
+
+Focused tests 已通过：
+
+- `uv run ruff check app/services/reader_orchestration app/config/settings.py tests/test_reader_orchestration_worker_loop.py scripts/run_reader_enhancement_worker.py`
+- `uv run pytest tests/test_reader_orchestration_worker_loop.py tests/test_reader_orchestration_pipeline_runner.py -q`
+
+### D5-G1/G2. Runtime Guardrails Closeout
+
+状态：completed on 2026-06-22。
+
+Closeout 结论：
+
+- D5-G1 已把 translation layer publish 与最小 `parsed_decisions` 写入收敛到同一 publisher transaction，消除 layer 已发布但 parsed decision 正常缺失的 crash gap。
+- `diagnose_orphaned_translation_decisions()` 保留为 diagnostic，用于发现 pre-D5 遗留数据或测试中人为制造的 partial state；snapshot reload 不做隐式 repair。
+- D5-G2 已统一 vocabulary 与 grammar bundle 的 fallback_window boundary policy：`segment_type = fallback_window` 的 anchor segment 不产出 vocabulary / grammar item。
+- Vocabulary fallback skip 使用 reason_code `boundary_low_fallback_window`，写入 worker diagnostics；空有效 vocabulary output 仍可发布，用于标记该 unit 已处理。
+- Vocabulary eval seed 已新增 fallback-window skip fixture，并更新 baseline。
+
+Focused tests 已通过：
+
+- `uv run ruff check app/services/reader_orchestration app/config/settings.py tests/test_reader_orchestration_layer_publisher.py tests/test_reader_orchestration_orchestrator.py tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_worker_loop.py scripts/run_reader_enhancement_worker.py`
+- `uv run pytest tests/test_reader_orchestration_layer_publisher.py tests/test_reader_orchestration_orchestrator.py tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_worker_loop.py tests/test_reader_orchestration_pipeline_runner.py -q`
+- `uv run ruff check claread_eval/schemas/vocabulary.py claread_eval/graders/vocabulary.py scripts/build_vocabulary_seed.py tests/test_vocabulary_dataset.py tests/test_vocabulary_graders.py tests/test_vocabulary_seed_pipeline.py tests/test_vocabulary_runner.py tests/test_vocabulary_baseline.py`
+- `uv run pytest tests/test_vocabulary_dataset.py tests/test_vocabulary_graders.py tests/test_vocabulary_seed_pipeline.py tests/test_vocabulary_runner.py tests/test_vocabulary_baseline.py -q`
+
 ## D6. 产品硬化
 
 任务包：
@@ -723,8 +790,8 @@ Focused tests 已通过：
 
 进入 D5 guardrails 与运行形态收口：
 
-1. 先处理 parsed decision repair / same-transaction decision：解决 translation layer publish 后 parsed decision 独立事务的 crash-recovery 缺口。
-2. 并行评估 vocabulary boundary policy：是否采用 grammar-style fallback window skip 语义，以及 diagnostics / eval gate 如何对齐。
-3. 规划正式 local worker loop / deployment worker 形态：从 eligible records 扫描并调用 `ReaderEnhancementPipelineRunner`，但不新增 public worker-control endpoint。
-4. projection ops consistency spike 后置：D5 页面 smoke 继续使用 snapshot reload，只有启用 incremental applier 前才处理 race / replay / path adapter consistency。
+1. D5-G1 parsed decision same-transaction decision 已完成；保留 orphan diagnostic 只用于历史/人为 partial state 检测。
+2. D5-G2 vocabulary boundary policy 已完成；vocabulary 与 grammar 统一跳过 `fallback_window` 并记录 `boundary_low_fallback_window` diagnostics。
+3. projection ops consistency spike 后置：D5 页面 smoke 继续使用 snapshot reload，只有启用 incremental applier 前才处理 race / replay / path adapter consistency。
+4. D6 product hardening 再决定 `failed_terminal` 是否映射到 `action_required`、是否引入 coverage / rerun policy 和更细粒度调度 hint。
 5. 保持 LangGraph D6+ 隔离 spike 口径，不在 D5 guardrails 中升级或引入。

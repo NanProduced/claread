@@ -30,10 +30,13 @@ from app.services.reader_orchestration.job_runtime import FenceViolationError
 from app.services.reader_orchestration.vocabulary_worker import (
     FakeVocabularyExecutor,
     PydanticAIVocabularyExecutor,
+    VocabularyAnchorSegmentContext,
+    VocabularyCandidateOutput,
     VocabularyExecutionError,
     VocabularyExecutionResult,
     VocabularyJobContext,
     VocabularyWorkerService,
+    _build_vocabulary_output_from_candidates,
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
@@ -986,3 +989,158 @@ def test_vocabulary_modules_do_not_reference_render_scene_json() -> None:
     assert "render_scene_json" not in job_bootstrap_path.read_text(encoding="utf-8")
     assert "render_scene_json" not in worker_path.read_text(encoding="utf-8")
     assert "render_scene_json" not in layer_publisher_path.read_text(encoding="utf-8")
+
+
+def _make_segment(
+    *,
+    anchor_segment_id: str,
+    text: str,
+    segment_type: str = "sentence",
+    boundary_quality: str = "normal",
+) -> VocabularyAnchorSegmentContext:
+    return VocabularyAnchorSegmentContext(
+        anchor_segment_id=anchor_segment_id,
+        sentence_id=anchor_segment_id,
+        segment_type=segment_type,
+        unit_start_utf16=0,
+        unit_end_utf16=len(text.encode("utf-16-le", "surrogatepass")) // 2,
+        text_hash=compute_text_range_hash(text),
+        text=text,
+        boundary_quality=boundary_quality,
+    )
+
+
+def _build_fallback_context(
+    *,
+    unit_text: str,
+    segments: list[VocabularyAnchorSegmentContext],
+) -> VocabularyJobContext:
+    return VocabularyJobContext(
+        job_id=UUID("11111111-1111-1111-1111-111111111111"),
+        run_id=UUID("22222222-2222-2222-2222-222222222222"),
+        reading_record_id=UUID("33333333-3333-3333-3333-333333333333"),
+        user_id=UUID("44444444-4444-4444-4444-444444444444"),
+        base_id=UUID("55555555-5555-5555-5555-555555555555"),
+        unit_id="u_fb",
+        order_index=1,
+        expected_generation=1,
+        operation_fingerprint="vocabulary_unit_v1",
+        source_language="en",
+        source_text=unit_text,
+        text_hash=compute_text_range_hash(unit_text),
+        anchor_segments=tuple(segments),
+    )
+
+
+def test_real_executor_skips_fallback_window_segment_with_boundary_reason() -> None:
+    fallback_text = "longword " * 24
+    context = _build_fallback_context(
+        unit_text=fallback_text,
+        segments=[
+            _make_segment(
+                anchor_segment_id="fb1",
+                text=fallback_text,
+                segment_type="fallback_window",
+                boundary_quality="low",
+            )
+        ],
+    )
+    candidate = VocabularyCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "fb1",
+                    "selected_text": "longword",
+                    "headword": "longword",
+                    "brief_explanation": "long",
+                    "reason": "common",
+                }
+            ],
+        }
+    )
+
+    output, diagnostics = _build_vocabulary_output_from_candidates(context, candidate)
+
+    assert output.items == []
+    reason_codes = [
+        entry.get("reason_code")
+        for entry in diagnostics.get("skipped_items", [])
+        if isinstance(entry, dict)
+    ]
+    assert reason_codes == ["boundary_low_fallback_window"]
+    assert diagnostics["resolved_item_count"] == 0
+    assert diagnostics["skipped_item_count"] == 1
+
+
+def test_real_executor_resolves_normal_segment_when_other_segment_is_fallback() -> None:
+    normal_text = "She bought a brand-new notebook."
+    fallback_text = "longword " * 24
+    unit_text = f"{normal_text} {fallback_text.strip()}"
+    context = _build_fallback_context(
+        unit_text=unit_text,
+        segments=[
+            _make_segment(
+                anchor_segment_id="s1",
+                text=normal_text,
+                segment_type="sentence",
+                boundary_quality="normal",
+            ),
+            _make_segment(
+                anchor_segment_id="fb1",
+                text=fallback_text,
+                segment_type="fallback_window",
+                boundary_quality="low",
+            ),
+        ],
+    )
+    candidate = VocabularyCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "bought",
+                    "headword": "bought",
+                    "brief_explanation": "买",
+                    "reason": "common",
+                },
+                {
+                    "item_type": "phrase_gloss",
+                    "anchor_segment_id": "fb1",
+                    "selected_text": "longword",
+                    "phrase": "longword",
+                    "phrase_type": "compound",
+                    "gloss": "长词",
+                },
+            ],
+        }
+    )
+
+    output, diagnostics = _build_vocabulary_output_from_candidates(context, candidate)
+
+    assert len(output.items) == 1
+    surviving = output.items[0]
+    assert surviving.item_type == "vocab_highlight"
+    assert surviving.anchor.anchor_segment_id == "s1"
+    reason_codes = [
+        entry.get("reason_code")
+        for entry in diagnostics.get("skipped_items", [])
+        if isinstance(entry, dict)
+    ]
+    assert reason_codes == ["boundary_low_fallback_window"]
+
+
+def test_vocabulary_anchor_segment_context_defaults_boundary_quality_to_normal() -> None:
+    seg = VocabularyAnchorSegmentContext(
+        anchor_segment_id="s1",
+        sentence_id="s1",
+        segment_type="sentence",
+        unit_start_utf16=0,
+        unit_end_utf16=10,
+        text_hash="abcd1234",
+        text="hello",
+    )
+    assert seg.boundary_quality == "normal"

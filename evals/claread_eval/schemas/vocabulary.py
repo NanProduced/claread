@@ -25,6 +25,7 @@ ALLOWED_REASON_CODES: tuple[str, ...] = (
     "span_conflict_higher_priority_kept",
     "candidate_limit_exceeded",
     "resolved_item_invalid",
+    "boundary_low_fallback_window",
 )
 
 ALLOWED_ITEM_TYPES: tuple[str, ...] = (
@@ -48,7 +49,7 @@ class VocabularyAnchorSegmentFixture(BaseModel):
 
     anchor_segment_id: str = Field(min_length=1)
     sentence_id: str | None = None
-    segment_type: Literal["sentence", "clause"] = "sentence"
+    segment_type: Literal["sentence", "clause", "fallback_window"] = "sentence"
     unit_start_utf16: int = Field(ge=0)
     unit_end_utf16: int = Field(gt=0)
     text: str = Field(min_length=1)

@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     reader_translation_model_profile: str = ""
     reader_vocabulary_model_profile: str = ""
     reader_grammar_bundle_model_profile: str = ""
+    reader_worker_scan_interval_seconds: int = 5
+    reader_worker_batch_size: int = 10
+    reader_worker_max_ticks: int = 24
+    reader_worker_max_jobs: int = 24
+    reader_worker_lease_owner_prefix: str = "reader-enhancement-worker"
     # Round 16: ``reader_ask_planner_model_profile`` has been removed.
     # The live agent-loop-first path no longer resolves a planner LLM.
     reader_ask_replan_model_profile: str = ""

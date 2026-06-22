@@ -86,11 +86,15 @@
 - D5-V3 vocabulary real executor 对同一 span 按 `context_gloss > phrase_gloss > vocab_highlight` 仲裁；candidate items 和文本字段有硬上限；空有效 output 可以发布，但 diagnostics 必须保留跳过原因。
 - D5-V4 Grammar Bundle Backend Slice 已完成并通过 review。Grammar bundle 使用正式 `reader_jobs.job_type = 'build_grammar_bundle'`，发布时拆成 `grammar_note` 与 `sentence_analysis` 两个独立 layer rows；usage 只记一条 job-level attribution，no-op success 不发布 layer/event。
 - D5-V4 fallback policy：`grammar_note` 任一 span 命中 `fallback_window` 时整条 item 跳过，不允许部分保留 span；`sentence_analysis` 命中 fallback window 时跳过。
-- D5 Vocabulary Eval Seed 评估结论是 `accepted_with_changes`。下一步只做本地 deterministic seed/schema/graders/tests；不得按 JSONL 单文件方案落地，不接 LangSmith，不新增 `evals/claread_eval/judge/judges/*` prompt catalog，不把 vocabulary `boundary_low_fallback_window` 作为 acceptance gate。
+- D5-G2 boundary policy：vocabulary worker 与 grammar bundle 统一 fallback_window 口径 — `segment_type=fallback_window` 的 anchor segment 不产出 vocabulary item，reason_code `boundary_low_fallback_window` 写入 `diagnostics.skipped_items[]`，与 grammar 一致。
+- D5 Vocabulary Eval Seed 评估结论是 `accepted_with_changes`。下一步只做本地 deterministic seed/schema/graders/tests；不得按 JSONL 单文件方案落地，不接 LangSmith，不新增 `evals/claread_eval/judge/judges/*` prompt catalog。vocabulary `boundary_low_fallback_window` 已成为 D5 eval seed acceptance gate（fixture `14-vocab-fallback-window-skip`）。
 - D5 LangGraph / orchestration 双评估结论是 `accepted_with_changes`：D5 主链路 runner、workers、snapshot projection 和 eval 不引入、不升级 LangGraph；LangGraph 不得替换 PostgreSQL run/job/event/layer durable control plane；D6-LG0 只作为隔离 spike 候选，且必须有具体 Ask HITL / multi-branch repair 需求。
 - D5-R2 Main Chain Runner + Web Record Load 已完成并通过 focused tests。`ReaderEnhancementPipelineRunner` 统一 bootstrap/drain translation、vocabulary、grammar bundle jobs；runner 使用 record-scoped claim，不会消费其他 Reading Record 的 queue；Web `/app/reader-plate?record_id=...` 可直达加载 snapshot。
-- D5-R2 仍不包含生产后台 worker loop、public worker-control endpoint、页面 submit 后同步跑完整真实 LLM、SSE、LangGraph 或 `projection_ops` incremental applier。
-- 当前下一步进入 D5 guardrails：parsed decision repair / same-tx decision、vocabulary boundary policy、正式 local worker loop / deployment worker 形态规划、projection ops consistency spike。
+- D5-R2 不包含页面 submit 后同步跑完整真实 LLM、SSE、LangGraph 或 `projection_ops` incremental applier。
+- D5-W1 worker loop 评估结论为 `accepted_with_changes`：正式运行形态应是独立 worker process，本地用 CLI entrypoint，部署用独立 worker service；不得挂到 FastAPI lifespan，不得塞进 Web submit，不得新增 public worker-control endpoint，不得把 smoke harness / fake executors 作为产品路径。
+- Worker loop 扫描候选 record 时，粗筛可用 `product_state in ('processing','readable_enhancing')`、active base/generation/status 和 `readiness_state in ('article_ready','initial_enhancement_ready')`；exact missing work 仍由 `EnhancementJobBootstrapService` / `ReaderEnhancementPipelineRunner` 决定。
+- D5-W2 worker loop 已完成：`ReaderEnhancementWorkerLoopService` 通过 coarse scan + per-record / per-user advisory locks 调用 `ReaderEnhancementPipelineRunner`，CLI `scripts/run_reader_enhancement_worker.py` 支持 `--once` 与持续 loop。
+- 当前下一步进入 D5 worker/runtime hardening：projection ops consistency spike、真实本地链路配置/运行手册、页面输入到 worker 结果回刷路径；parsed decision same-tx、vocabulary boundary policy 与 worker loop 已完成。
 - D4 worker 实现中不得临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK；如 D3-P4 runtime tests 暴露缺口，先形成单独 closeout/update，再改依赖。
 - LangGraph v1+ 的 persistence、streaming、interrupt/resume、subgraph 和 runtime observability 只作为 D6+ 隔离 spike 候选；具体版本能力和 breaking changes 必须在 spike 中用当时官方文档与 lockfile 实测确认，不改变 PostgreSQL run/job/event 主控。
 - Grammar Bundle Worker 可以一次生成 `grammar_note` 与 `sentence_analysis`，但发布、存储、RAG、projection、policy、eval 必须按 subtype 独立处理。`long_sentence` 不是权威 layer type，只是触发 `sentence_analysis` 的适用场景。

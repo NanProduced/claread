@@ -205,6 +205,15 @@ D5-V4 grammar bundle backend facts：
 - Empty sanitized output 是 no-op success：不写 layer、不写 `layer_published` event，但 job/run 可成功并记录 no-op diagnostics。
 - 单次 bundle usage 只记一条 job-level `ai_usage_events`；不得按两个 layer 重复计费。
 - `grammar_note` 任一 span 命中 `fallback_window` 时整条 item 跳过，不能部分保留 spans。
+
+D5 boundary policy（grammar + vocabulary 统一口径）：
+
+- `segment_type = fallback_window` 的 anchor segment 不产出 layer item：
+  - `grammar_note` 任一 span 落在 fallback_window → 整条 grammar_note 跳过，reason_code `boundary_low_fallback_window`。
+  - `sentence_analysis` anchor 落在 fallback_window → 整条 sentence_analysis 跳过，reason_code `boundary_low_fallback_window`。
+  - `vocabulary` 任一候选 item 落在 fallback_window → 整条 vocabulary item 跳过，reason_code `boundary_low_fallback_window`。
+- 跳过原因统一写入 worker `diagnostics.skipped_items[]`；被跳过的 item 不进入 `output.items`。Vocabulary 可以发布空 `VocabularyLayerOutput(items=[])` 并把 diagnostics 存为 layer quality metadata，用于标记该 unit 已处理。
+- 后续 boundary refiner / reviewer 可重新产出 acceptable segments；未发生前 fallback_window segment 在 UI / layer / RAG 中都不应被当作真实句子引用。
 - D5-V4 snapshot 只暴露 top-level layer metadata，不投影 grammar marks/nodes 到 `snapshot.value`。
 
 D5 vocabulary eval seed disposition：

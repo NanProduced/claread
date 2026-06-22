@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "id": "vocab-fallback-window-skip",
+  "description": "Candidate on fallback_window segment must skip with boundary_low_fallback_window.",
+  "unit_id": "u14",
+  "unit_text": "longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword",
+  "anchor_segments": [
+    {
+      "anchor_segment_id": "fb1",
+      "sentence_id": "fb1",
+      "segment_type": "fallback_window",
+      "unit_start_utf16": 0,
+      "unit_end_utf16": 311,
+      "text": "longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword longlongword",
+      "boundary_quality": "low"
+    }
+  ],
+  "gold_items": [],
+  "expected_diagnostics": {
+    "candidate_item_count": 1,
+    "resolved_item_count": 0,
+    "skipped_item_count": 1,
+    "skipped_reason_codes": [
+      "boundary_low_fallback_window"
+    ]
+  },
+  "unicode_pitfall": null,
+  "difficulty_band": "off-list",
+  "tags": [
+    "fallback_window",
+    "boundary_quality",
+    "skip_reason"
+  ],
+  "execution": {
+    "output": {
+      "schema_version": 1,
+      "items": []
+    },
+    "diagnostics": {
+      "candidate_item_count": 1,
+      "resolved_item_count": 0,
+      "skipped_item_count": 1,
+      "skipped_items": [
+        {
+          "item_index": 0,
+          "item_type": "vocab_highlight",
+          "anchor_segment_id": "fb1",
+          "selected_text": "longlongword",
+          "reason_code": "boundary_low_fallback_window"
+        }
+      ],
+      "skipped_items_truncated_count": 0
+    },
+    "fail_closed": false,
+    "fail_closed_reason": null
+  }
+}

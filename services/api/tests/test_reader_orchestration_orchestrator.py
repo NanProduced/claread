@@ -190,7 +190,7 @@ async def test_tick_publishes_translation_layer(
     assert layer_count == 1
 
 
-async def test_tick_writes_parsed_decision_after_publish(
+async def test_tick_keeps_parsed_decision_consistent_with_publish(
     orchestrator_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(orchestrator_env)
@@ -227,6 +227,49 @@ async def test_tick_writes_parsed_decision_after_publish(
     assert decision_row["source_job_id"] == tick_result.worker_result.context.job_id
 
 
+async def test_diagnose_orphaned_translation_decisions_detects_partial_state(
+    orchestrator_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(orchestrator_env)
+    translator = _StaticTranslator(_translation_output())
+    orchestrator = _make_orchestrator(orchestrator_env, translator=translator)
+
+    article = await orchestrator.submit_plain_text_and_bootstrap_translation(
+        _plain_text_request(user_id),
+    )
+    tick_result = await orchestrator.tick_translation_worker(
+        lease_owner="tick-orphan-diagnostic",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert tick_result.worker_result is not None
+    assert tick_result.worker_result.published_layer is not None
+    assert tick_result.worker_result.context is not None
+
+    async with orchestrator_env.acquire() as conn:
+        await conn.execute(
+            """
+            DELETE FROM parsed_decisions
+            WHERE reading_record_id = $1
+              AND policy_code = $2
+            """,
+            article.record_id,
+            TRANSLATION_PARSED_POLICY_CODE,
+        )
+
+    orphans = await orchestrator.diagnose_orphaned_translation_decisions(
+        reading_record_id=article.record_id,
+    )
+
+    assert len(orphans) == 1
+    orphan = orphans[0]
+    assert orphan.layer_id == tick_result.worker_result.published_layer.layer_id
+    assert orphan.reading_record_id == article.record_id
+    assert orphan.base_id == article.base_id
+    assert orphan.unit_id == tick_result.worker_result.published_layer.unit_id
+    assert orphan.generation == tick_result.worker_result.published_layer.generation
+    assert orphan.source_job_id == tick_result.worker_result.context.job_id
+
+
 async def test_snapshot_reload_contains_translation_layer_and_parsed_decision(
     orchestrator_env: asyncpg.Pool,
 ) -> None:
@@ -259,6 +302,49 @@ async def test_snapshot_reload_contains_translation_layer_and_parsed_decision(
     assert decision.policy_code == TRANSLATION_PARSED_POLICY_CODE
     assert decision.parsed_state == "parsed"
     assert decision.rationale_code == TRANSLATION_PARSED_RATIONALE_CODE
+
+
+async def test_snapshot_reload_does_not_repair_orphaned_translation_decision_state(
+    orchestrator_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(orchestrator_env)
+    translator = _StaticTranslator(_translation_output())
+    orchestrator = _make_orchestrator(orchestrator_env, translator=translator)
+
+    article = await orchestrator.submit_plain_text_and_bootstrap_translation(
+        _plain_text_request(user_id),
+    )
+    tick_result = await orchestrator.tick_translation_worker(
+        lease_owner="tick-snapshot-orphan",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert tick_result.worker_result is not None
+
+    async with orchestrator_env.acquire() as conn:
+        await conn.execute(
+            """
+            DELETE FROM parsed_decisions
+            WHERE reading_record_id = $1
+              AND policy_code = $2
+            """,
+            article.record_id,
+            TRANSLATION_PARSED_POLICY_CODE,
+        )
+
+    snapshot = await ArticleReadyPersistenceService(pool=orchestrator_env).load_snapshot(
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+
+    assert len(snapshot.enhancement_layers) == 1
+    assert len(snapshot.parsed_decisions) == 0
+    decision_count = await _count_parsed_decisions(orchestrator_env, article.record_id)
+    assert decision_count == 0
+
+    orphans = await orchestrator.diagnose_orphaned_translation_decisions(
+        reading_record_id=article.record_id,
+    )
+    assert len(orphans) == 1
 
 
 async def test_polling_after_article_ready_returns_layer_published_event(

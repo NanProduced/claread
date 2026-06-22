@@ -12,20 +12,20 @@
     "diagnostics_coverage",
     "span_conflict_arb"
   ],
-  "total_cases": 13,
-  "passed": 12,
+  "total_cases": 14,
+  "passed": 13,
   "failed": 0,
   "skipped": 1,
   "hard_failure_case_ids": [],
   "soft_failure_case_ids": [],
   "verdict_counts": {
-    "pass": 48,
+    "pass": 52,
     "skip": 4
   },
   "grader_pass_counts": {
-    "anchor_resolution": 12,
-    "bounds_compliance": 12,
-    "diagnostics_coverage": 12,
-    "span_conflict_arb": 12
+    "anchor_resolution": 13,
+    "bounds_compliance": 13,
+    "diagnostics_coverage": 13,
+    "span_conflict_arb": 13
   }
 }

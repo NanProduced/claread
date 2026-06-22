@@ -69,6 +69,7 @@ class VocabularyAnchorSegmentContext:
     unit_end_utf16: int
     text_hash: str
     text: str
+    boundary_quality: str = "normal"
 
 
 @dataclass(frozen=True, slots=True)
@@ -733,7 +734,8 @@ class VocabularyWorkerService:
                        segment_type,
                        unit_start_utf16,
                        unit_end_utf16,
-                       text_hash
+                       text_hash,
+                       boundary_quality
                 FROM anchor_segments
                 WHERE reading_record_id = $1
                   AND base_id = $2
@@ -784,6 +786,7 @@ class VocabularyWorkerService:
                     unit_end_utf16=int(segment_row["unit_end_utf16"]),
                     text_hash=segment_hash,
                     text=segment_text,
+                    boundary_quality=str(segment_row.get("boundary_quality") or "normal"),
                 )
             )
 
@@ -987,6 +990,18 @@ def _build_vocabulary_output_from_candidates(
                     anchor_segment_id=item.anchor_segment_id,
                     selected_text=item.selected_text,
                     reason_code="anchor_segment_unknown",
+                )
+            )
+            continue
+
+        if segment.segment_type == "fallback_window":
+            skipped_items.append(
+                _build_skip_diagnostic(
+                    item_index=item_index,
+                    item_type=item.item_type,
+                    anchor_segment_id=item.anchor_segment_id,
+                    selected_text=item.selected_text,
+                    reason_code="boundary_low_fallback_window",
                 )
             )
             continue

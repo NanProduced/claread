@@ -15,6 +15,10 @@ from app.services.reader_orchestration.job_runtime import (
     ReaderJobRuntime,
 )
 from app.services.reader_orchestration.layer_publisher import TranslationLayerPublisher
+from app.services.reader_orchestration.orchestrator import (
+    TRANSLATION_PARSED_POLICY_CODE,
+    TRANSLATION_PARSED_RATIONALE_CODE,
+)
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
@@ -97,6 +101,15 @@ async def test_publish_writes_translation_layer_and_layer_published_event(
             """,
             published.layer_id,
         )
+        decision_row = await conn.fetchrow(
+            """
+            SELECT policy_code, parsed_state, rationale_code, coverage_json,
+                   source_layer_id, source_job_id
+            FROM parsed_decisions
+            WHERE reading_record_id = $1
+            """,
+            article.record_id,
+        )
         event_row = await conn.fetchrow(
             """
             SELECT sequence, event_type, source_job_id, source_layer_id
@@ -104,6 +117,15 @@ async def test_publish_writes_translation_layer_and_layer_published_event(
             WHERE id = $1
             """,
             published.event.event_id,
+        )
+        parsed_event_row = await conn.fetchrow(
+            """
+            SELECT sequence, event_type, source_job_id, source_layer_id
+            FROM reader_events
+            WHERE reading_record_id = $1
+              AND event_type = 'parsed_decision_updated'
+            """,
+            article.record_id,
         )
 
     assert layer_row is not None
@@ -114,11 +136,25 @@ async def test_publish_writes_translation_layer_and_layer_published_event(
     assert layer_row["status"] == "published"
     assert layer_row["source_job_id"] == claim.job_id
 
+    assert decision_row is not None
+    assert decision_row["policy_code"] == TRANSLATION_PARSED_POLICY_CODE
+    assert decision_row["parsed_state"] == "parsed"
+    assert decision_row["rationale_code"] == TRANSLATION_PARSED_RATIONALE_CODE
+    assert decision_row["coverage_json"]["target_language"] == "zh-CN"
+    assert decision_row["source_layer_id"] == published.layer_id
+    assert decision_row["source_job_id"] == claim.job_id
+
     assert event_row is not None
     assert event_row["sequence"] == 2
     assert event_row["event_type"] == "layer_published"
     assert event_row["source_job_id"] == claim.job_id
     assert event_row["source_layer_id"] == published.layer_id
+
+    assert parsed_event_row is not None
+    assert parsed_event_row["sequence"] == 3
+    assert parsed_event_row["event_type"] == "parsed_decision_updated"
+    assert parsed_event_row["source_job_id"] == claim.job_id
+    assert parsed_event_row["source_layer_id"] == published.layer_id
 
 
 @pytest.mark.parametrize(

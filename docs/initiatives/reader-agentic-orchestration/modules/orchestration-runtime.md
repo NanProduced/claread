@@ -61,8 +61,8 @@ D5 双评审 disposition 更新：
 
 | Priority | Risk | Posture |
 |---|---|---|
-| P1 | Translation `parsed_decisions` 在 layer publish 后单独事务写入。 | D4/D5 single tick 可接受；进入并发 crash recovery 或强 parsed coverage 前，移入 publisher transaction 或补 repair。 |
-| P1 | Vocabulary 尚未采用 grammar-style fallback window / boundary quality policy。 | 在依赖 vocabulary 低质量 segment 结果前补 boundary policy。 |
+| P2 | Translation `parsed_decisions` 依赖 publisher transaction 与 diagnostic 同时成立。 | D5-G1 已移入 publisher transaction；保留 orphan diagnostic 用于发现历史或人为 partial state。 |
+| P2 | Vocabulary fallback window / boundary quality policy 需要和 grammar 保持一致。 | D5-G2 已实现：`segment_type=fallback_window` 的 vocabulary candidate 跳过并记录 `boundary_low_fallback_window` diagnostics。 |
 | P1 | `projection_ops` incremental applier 未端到端启用。 | 不阻塞 D5 smoke；启用前做 projection consistency spike。 |
 | P2 | `active_base_id -> reading_bases.status='active'` 当前是 service / publisher invariant。 | 保持显式校验；主链路稳定后再评估 DB trigger / equivalent hardening。 |
 | P2 | Grammar bundle usage attribution 是 job-level。 | 保持 no-double-count；仅当成本视图需要时再定义 per-layer allocation policy。 |
@@ -81,7 +81,55 @@ D5 双评审 disposition 更新：
 - runner 不新增 public worker-control endpoint，不启动后台 daemon，不引入 LangGraph / MQ / Temporal / SSE；
 - Web 页面继续通过 snapshot reload 和 polling events 感知结果，D5 smoke 不要求 `projection_ops` incremental applier。
 
-当前尚未完成的是生产/本地 worker loop：一个独立运行形态从 eligible records 扫描并调用 runner。该 loop 属于后续 runtime deployment 任务，不应被实现为 public user-facing endpoint，也不应把 LLM execution 同步塞进 Web submit request。
+当前 D5-W2 已补齐生产/本地 worker loop 的最小运行形态：独立 worker process 通过 CLI entrypoint 启动，扫描 eligible records 并调用 `ReaderEnhancementPipelineRunner`。该 loop 仍不是 public user-facing endpoint，也不会把 LLM execution 同步塞进 Web submit request。
+
+## D5/D6 Worker Loop Posture
+
+D5-W1 worker loop 评估结论为 `accepted_with_changes`。
+
+正式运行形态：
+
+- 使用独立 worker process。
+- 本地通过 CLI entrypoint 启动；部署通过独立 worker service / process / container 启动。
+- API 服务只负责 request-serving，不在 FastAPI lifespan / startup hook 中启动 worker loop。
+- Web submit 不同步执行 runner；submit 只创建 durable `article_ready` facts。
+- 不新增 public 或 semi-public worker-control endpoint。
+- 不使用 smoke harness 或 fake executors 作为产品 runtime。
+
+Eligible scan 初版口径：
+
+- coarse filter：
+  - `reading_records.deleted_at IS NULL`
+  - `reading_records.lifecycle_status = 'active'`
+  - `reading_records.product_state IN ('processing', 'readable_enhancing')`
+  - `reading_records.readiness_state IN ('article_ready', 'initial_enhancement_ready')`
+  - `reading_records.active_base_id IS NOT NULL`
+- active base join 必须校验：
+  - base belongs to the record
+  - `reading_bases.status = 'active'`
+  - `reading_bases.record_generation = reading_records.generation`
+- `coverage_complete` 默认不再进入普通 enhancement scan；如 D6 repair / rerun policy 需要，必须单独定义回流条件。
+- scanner 只做 coarse eligibility；不要复制 per-layer missing-work 判断。translation / vocabulary / grammar bundle 的 exact bootstrap 继续由 `EnhancementJobBootstrapService` 和 runner 决定。
+
+Concurrency / lock 初版口径：
+
+- per-record advisory lock 必须有，防止两个 worker 同时推进同一 record。
+- per-user concurrency 默认 `1`；可以通过后续配置放宽。
+- per-worker process concurrency 默认 `1`；先通过增加 worker process 数量扩吞吐。
+- `retry_later` 必须尊重 job `available_at`，不能 hot-loop 同一 record。
+- `failed_terminal` 初版作为 logs / metrics / summary 的 attention outcome；是否映射到 `product_state='action_required'` 留给 D6 product hardening。
+
+Model profile / executor 口径：
+
+- real worker loop 默认使用真实 executors。
+- profile 缺失保持 fail-closed。
+- 不静默 fallback 到 fake executors、annotation profile 或 synthetic layer。
+
+当前实现补充：
+
+- `ReaderEnhancementWorkerLoopService` 先做 coarse scan，再以 per-record / per-user advisory locks 串行推进单个 record 与单个用户。
+- scanner 会跳过 `coverage_complete`，并通过 runnable/tracked job gate 避免 `retry_later` hot-loop 与 `failed_terminal` 反复 bootstrap。
+- `scripts/run_reader_enhancement_worker.py` 提供 `--once` 和 loop mode，本地与部署共用同一入口。
 
 ## Run / Job
 
@@ -219,10 +267,10 @@ D3/D4 runtime baseline：
 D4 orchestration integration：
 
 - `ReaderOrchestrator.submit_plain_text_and_bootstrap_translation()` 是后端 D4 submit facade：先复用 `ArticleReadyPersistenceService` 创建 record/base/unit/anchor/event facts，再复用 translation bootstrap 创建第一条 translation run/job。
-- `ReaderOrchestrator.tick_translation_worker()` 是 D4 最小 worker tick：复用 `TranslationWorkerService` claim/process/publish，成功后写最小 `parsed_decisions` 并发布 `parsed_decision_updated` event。
+- `ReaderOrchestrator.tick_translation_worker()` 是 D4/D5 最小 worker tick：复用 `TranslationWorkerService` claim/process/publish；translation publish 成功时，publisher transaction 同时写最小 `parsed_decisions` 并发布 `parsed_decision_updated` event。
 - `TranslationWorkerRunner` 是 D4 内部 callable runner：封装 single tick 与 bounded drain，用 `WorkerDrainResult` 汇总 success / retry / terminal failure / fence rejection。
 - D4 tick 是 service/testable entry，不是公开 HTTP endpoint。若后续暴露内部 route，必须补 worker auth、权限边界和 focused tests。
-- D4 parsed decision 写入暂在 layer publish 后的独立事务。单线程 tick 下可接受；`diagnose_orphaned_translation_decisions()` 可检测 published translation layer 缺失 parsed decision 的异常状态。若未来要求 layer 与 parsed decision 强一致，应把 decision 写入收敛到 publisher transaction 或补 repair/diagnostic 策略。
+- D5-G1 已把 translation parsed decision 收敛到 layer publish transaction。`diagnose_orphaned_translation_decisions()` 继续保留，用于发现 pre-D5 遗留数据或测试中人为制造的 partial state；snapshot reload 不负责 repair。
 - Runner drain 遇到 retry / terminal failure / fence rejection 不停止，因为队列中可能仍有其他可处理 job；调用方根据 aggregate result 决定是否再次 drain、告警或进入 repair。
 
 不引入：

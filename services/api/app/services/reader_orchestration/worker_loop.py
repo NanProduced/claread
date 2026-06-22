@@ -1,0 +1,323 @@
+from __future__ import annotations
+
+import logging
+import os
+import socket
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Literal
+from uuid import UUID
+
+import asyncpg
+
+from app.database import connection as db_connection
+
+from .job_runtime import ReaderJobRuntime
+from .pipeline_runner import (
+    DEFAULT_PIPELINE_MAX_JOBS,
+    DEFAULT_PIPELINE_MAX_TICKS,
+    ReaderEnhancementPipelineRunner,
+    ReaderPipelineRunSummary,
+)
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_READER_WORKER_LEASE_DURATION = timedelta(seconds=30)
+READER_WORKER_USER_ADVISORY_LOCK_NAMESPACE = 1_431_459_667
+_RUNNABLE_RECORD_READYNESS_STATES = ("article_ready", "initial_enhancement_ready")
+_RUNNABLE_RECORD_PRODUCT_STATES = ("processing", "readable_enhancing")
+
+WorkerLoopRecordOutcome = Literal["processed", "lock_unavailable"]
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerLoopCandidateRecord:
+    record_id: UUID
+    user_id: UUID
+    base_id: UUID
+    expected_generation: int
+    runnable_job_count: int
+    tracked_job_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderEnhancementWorkerLoopRecordResult:
+    candidate: WorkerLoopCandidateRecord
+    outcome: WorkerLoopRecordOutcome
+    pipeline_summary: ReaderPipelineRunSummary | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderEnhancementWorkerLoopCycleSummary:
+    recovered_stale_leases: int
+    scanned_candidate_count: int
+    processed_count: int
+    lock_skipped_count: int
+    candidates: tuple[WorkerLoopCandidateRecord, ...]
+    results: tuple[ReaderEnhancementWorkerLoopRecordResult, ...]
+
+
+def record_advisory_lock_key(record_id: UUID) -> int:
+    return ((record_id.int >> 64) ^ record_id.int) & ((1 << 63) - 1)
+
+
+def user_advisory_lock_key(user_id: UUID) -> int:
+    raw = (
+        (user_id.int >> 96)
+        ^ (user_id.int >> 64)
+        ^ (user_id.int >> 32)
+        ^ user_id.int
+    ) & 0xFFFFFFFF
+    return raw - (1 << 32) if raw >= (1 << 31) else raw
+
+
+def build_reader_worker_lease_owner(*, lease_owner_prefix: str) -> str:
+    return f"{lease_owner_prefix}:{socket.gethostname()}:{os.getpid()}"
+
+
+class ReaderEnhancementWorkerLoopService:
+    def __init__(
+        self,
+        *,
+        pool: asyncpg.Pool | None = None,
+        pipeline_runner: ReaderEnhancementPipelineRunner | None = None,
+        job_runtime: ReaderJobRuntime | None = None,
+    ) -> None:
+        self._pool = pool
+        self._pipeline_runner = pipeline_runner or ReaderEnhancementPipelineRunner(pool=pool)
+        self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
+
+    def get_pool(self) -> asyncpg.Pool:
+        pool = self._pool or db_connection.DB_POOL
+        if pool is None:
+            raise RuntimeError("Database pool not initialized")
+        return pool
+
+    async def scan_eligible_records(
+        self,
+        *,
+        batch_size: int,
+    ) -> tuple[WorkerLoopCandidateRecord, ...]:
+        if batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
+
+        async with self.get_pool().acquire() as conn:
+            rows = await conn.fetch(
+                """
+                WITH scoped_records AS (
+                    SELECT
+                        record.id AS record_id,
+                        record.user_id,
+                        record.generation AS expected_generation,
+                        record.active_base_id AS base_id,
+                        COUNT(job.id) FILTER (
+                            WHERE job.status IN (
+                                'queued',
+                                'claimed',
+                                'retry_later',
+                                'paused',
+                                'succeeded',
+                                'failed_terminal',
+                                'skipped'
+                            )
+                        ) AS tracked_job_count,
+                        COUNT(job.id) FILTER (
+                            WHERE job.status = 'queued'
+                               OR (
+                                   job.status = 'retry_later'
+                                   AND job.available_at <= NOW()
+                               )
+                        ) AS runnable_job_count
+                    FROM reading_records record
+                    JOIN reading_bases base
+                      ON base.id = record.active_base_id
+                     AND base.reading_record_id = record.id
+                    LEFT JOIN reader_jobs job
+                      ON job.reading_record_id = record.id
+                     AND job.base_id = record.active_base_id
+                     AND job.expected_generation = record.generation
+                    WHERE record.deleted_at IS NULL
+                      AND record.lifecycle_status = 'active'
+                      AND record.product_state = ANY($1::text[])
+                      AND record.readiness_state = ANY($2::text[])
+                      AND record.active_base_id IS NOT NULL
+                      AND base.status = 'active'
+                      AND base.record_generation = record.generation
+                    GROUP BY
+                        record.id,
+                        record.user_id,
+                        record.generation,
+                        record.active_base_id
+                )
+                SELECT
+                    record_id,
+                    user_id,
+                    base_id,
+                    expected_generation,
+                    runnable_job_count,
+                    tracked_job_count
+                FROM scoped_records
+                WHERE runnable_job_count > 0
+                   OR tracked_job_count = 0
+                ORDER BY
+                    CASE WHEN runnable_job_count > 0 THEN 0 ELSE 1 END,
+                    record_id ASC
+                LIMIT $3
+                """,
+                list(_RUNNABLE_RECORD_PRODUCT_STATES),
+                list(_RUNNABLE_RECORD_READYNESS_STATES),
+                batch_size,
+            )
+
+        return tuple(
+            WorkerLoopCandidateRecord(
+                record_id=row["record_id"],
+                user_id=row["user_id"],
+                base_id=row["base_id"],
+                expected_generation=int(row["expected_generation"]),
+                runnable_job_count=int(row["runnable_job_count"] or 0),
+                tracked_job_count=int(row["tracked_job_count"] or 0),
+            )
+            for row in rows
+        )
+
+    async def process_candidate(
+        self,
+        *,
+        candidate: WorkerLoopCandidateRecord,
+        lease_owner_prefix: str,
+        lease_duration: timedelta = DEFAULT_READER_WORKER_LEASE_DURATION,
+        max_ticks: int = DEFAULT_PIPELINE_MAX_TICKS,
+        max_jobs: int = DEFAULT_PIPELINE_MAX_JOBS,
+    ) -> ReaderEnhancementWorkerLoopRecordResult:
+        lease_owner = build_reader_worker_lease_owner(
+            lease_owner_prefix=lease_owner_prefix
+        )
+        lock_key = record_advisory_lock_key(candidate.record_id)
+        user_lock_key = user_advisory_lock_key(candidate.user_id)
+
+        async with self.get_pool().acquire() as lock_conn:
+            locked = await lock_conn.fetchval(
+                "SELECT pg_try_advisory_lock($1)",
+                lock_key,
+            )
+            if not locked:
+                return ReaderEnhancementWorkerLoopRecordResult(
+                    candidate=candidate,
+                    outcome="lock_unavailable",
+                )
+
+            user_locked = False
+            try:
+                user_locked = await lock_conn.fetchval(
+                    "SELECT pg_try_advisory_lock($1, $2)",
+                    READER_WORKER_USER_ADVISORY_LOCK_NAMESPACE,
+                    user_lock_key,
+                )
+                if not user_locked:
+                    return ReaderEnhancementWorkerLoopRecordResult(
+                        candidate=candidate,
+                        outcome="lock_unavailable",
+                    )
+
+                summary = await self._pipeline_runner.run(
+                    record_id=candidate.record_id,
+                    user_id=candidate.user_id,
+                    lease_owner=lease_owner,
+                    lease_duration=lease_duration,
+                    max_ticks=max_ticks,
+                    max_jobs=max_jobs,
+                )
+            finally:
+                if user_locked:
+                    user_unlocked = await lock_conn.fetchval(
+                        "SELECT pg_advisory_unlock($1, $2)",
+                        READER_WORKER_USER_ADVISORY_LOCK_NAMESPACE,
+                        user_lock_key,
+                    )
+                    if user_unlocked is False:
+                        logger.warning(
+                            "reader enhancement worker failed to release user advisory lock",
+                            extra={
+                                "user_id": str(candidate.user_id),
+                                "lock_key": user_lock_key,
+                            },
+                        )
+                unlocked = await lock_conn.fetchval(
+                    "SELECT pg_advisory_unlock($1)",
+                    lock_key,
+                )
+                if unlocked is False:
+                    logger.warning(
+                        "reader enhancement worker failed to release advisory lock",
+                        extra={
+                            "record_id": str(candidate.record_id),
+                            "lock_key": lock_key,
+                        },
+                    )
+
+        log_method = (
+            logger.warning
+            if summary.stopped_reason == "attention_required"
+            else logger.info
+        )
+        log_method(
+            "reader enhancement worker processed record",
+            extra={
+                "record_id": str(summary.record_id),
+                "base_id": str(summary.base_id),
+                "expected_generation": summary.expected_generation,
+                "stopped_reason": summary.stopped_reason,
+                "stopped_worker_type": summary.stopped_worker_type,
+                "stopped_outcome": summary.stopped_outcome,
+                "attention_code": summary.attention_code,
+                "snapshot_reload_recommended": summary.snapshot_reload_recommended,
+                "total_ticks": summary.total_ticks,
+                "total_jobs": summary.total_jobs,
+            },
+        )
+        return ReaderEnhancementWorkerLoopRecordResult(
+            candidate=candidate,
+            outcome="processed",
+            pipeline_summary=summary,
+        )
+
+    async def run_once(
+        self,
+        *,
+        batch_size: int,
+        lease_owner_prefix: str,
+        lease_duration: timedelta = DEFAULT_READER_WORKER_LEASE_DURATION,
+        max_ticks: int = DEFAULT_PIPELINE_MAX_TICKS,
+        max_jobs: int = DEFAULT_PIPELINE_MAX_JOBS,
+    ) -> ReaderEnhancementWorkerLoopCycleSummary:
+        if batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
+        recovered_stale_leases = await self._job_runtime.recover_stale_leases(
+            batch_size=batch_size,
+        )
+        candidates = await self.scan_eligible_records(batch_size=batch_size)
+        results: list[ReaderEnhancementWorkerLoopRecordResult] = []
+        for candidate in candidates:
+            results.append(
+                await self.process_candidate(
+                    candidate=candidate,
+                    lease_owner_prefix=lease_owner_prefix,
+                    lease_duration=lease_duration,
+                    max_ticks=max_ticks,
+                    max_jobs=max_jobs,
+                )
+            )
+
+        processed_count = sum(1 for result in results if result.outcome == "processed")
+        lock_skipped_count = sum(
+            1 for result in results if result.outcome == "lock_unavailable"
+        )
+        return ReaderEnhancementWorkerLoopCycleSummary(
+            recovered_stale_leases=recovered_stale_leases,
+            scanned_candidate_count=len(candidates),
+            processed_count=processed_count,
+            lock_skipped_count=lock_skipped_count,
+            candidates=candidates,
+            results=tuple(results),
+        )

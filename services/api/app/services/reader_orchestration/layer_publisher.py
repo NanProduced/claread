@@ -32,6 +32,13 @@ from .job_runtime import (
     ReaderJobRuntime,
     _assert_lease_valid,
 )
+from .repository import ReaderOrchestrationRepository
+from .translation_parsed_decision import (
+    TRANSLATION_PARSED_POLICY_CODE,
+    TRANSLATION_PARSED_RATIONALE_CODE,
+    build_translation_parsed_decision_documents,
+    build_translation_parsed_decision_event_payload,
+)
 
 GRAMMAR_NOTE_LAYER_OPERATION_FINGERPRINT = "grammar_note_unit_v1"
 SENTENCE_ANALYSIS_LAYER_OPERATION_FINGERPRINT = "sentence_analysis_unit_v1"
@@ -93,10 +100,12 @@ class TranslationLayerPublisher:
         pool: asyncpg.Pool | None = None,
         job_runtime: ReaderJobRuntime | None = None,
         event_runtime: ReaderEventRuntime | None = None,
+        repository: ReaderOrchestrationRepository | None = None,
     ) -> None:
         self._pool = pool
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
         self._event_runtime = event_runtime or ReaderEventRuntime(pool=pool)
+        self._repository = repository or ReaderOrchestrationRepository(pool=pool)
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -146,11 +155,15 @@ class TranslationLayerPublisher:
 
                 unit_row = await conn.fetchrow(
                     """
-                    SELECT unit_id
-                    FROM reading_units
-                    WHERE reading_record_id = $1
-                      AND base_id = $2
-                      AND unit_id = $3
+                    SELECT unit.unit_id,
+                           base.language AS source_language
+                    FROM reading_units unit
+                    JOIN reading_bases base
+                      ON base.id = unit.base_id
+                     AND base.reading_record_id = unit.reading_record_id
+                    WHERE unit.reading_record_id = $1
+                      AND unit.base_id = $2
+                      AND unit.unit_id = $3
                     """,
                     reading_record_id,
                     base_id,
@@ -248,6 +261,43 @@ class TranslationLayerPublisher:
                         "target_key": unit_id,
                         "generation": generation,
                     },
+                    source_run_id=job_row["run_id"],
+                    source_job_id=job_id,
+                    source_layer_id=layer_row["id"],
+                    created_at=published_at,
+                )
+                source_language = str(unit_row["source_language"] or "en")
+                coverage_json, decision_json = build_translation_parsed_decision_documents(
+                    layer_id=layer_row["id"],
+                    unit_id=unit_id,
+                    generation=generation,
+                    source_language=source_language,
+                    target_language=output.target_language,
+                )
+                await self._repository.upsert_parsed_decision(
+                    conn,
+                    reading_record_id=reading_record_id,
+                    base_id=base_id,
+                    unit_id=unit_id,
+                    policy_code=TRANSLATION_PARSED_POLICY_CODE,
+                    parsed_state="parsed",
+                    rationale_code=TRANSLATION_PARSED_RATIONALE_CODE,
+                    coverage_json=coverage_json,
+                    source_layer_id=layer_row["id"],
+                    source_job_id=job_id,
+                    decision_json=decision_json,
+                )
+                await self._event_runtime.publish_event_in_transaction(
+                    conn,
+                    record_id=reading_record_id,
+                    event_type="parsed_decision_updated",
+                    payload_json=build_translation_parsed_decision_event_payload(
+                        reading_record_id=reading_record_id,
+                        base_id=base_id,
+                        unit_id=unit_id,
+                        source_layer_id=layer_row["id"],
+                        source_job_id=job_id,
+                    ),
                     source_run_id=job_row["run_id"],
                     source_job_id=job_id,
                     source_layer_id=layer_row["id"],

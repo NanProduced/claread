@@ -42,6 +42,17 @@ from .pipeline_runner import (
 )
 from .repository import LoadedReaderSnapshotFacts, ReaderOrchestrationRepository
 from .snapshot import build_reader_plate_snapshot
+from .worker_loop import (
+    DEFAULT_READER_WORKER_LEASE_DURATION,
+    READER_WORKER_USER_ADVISORY_LOCK_NAMESPACE,
+    ReaderEnhancementWorkerLoopCycleSummary,
+    ReaderEnhancementWorkerLoopRecordResult,
+    ReaderEnhancementWorkerLoopService,
+    WorkerLoopCandidateRecord,
+    build_reader_worker_lease_owner,
+    record_advisory_lock_key,
+    user_advisory_lock_key,
+)
 from .worker_runner import (
     DEFAULT_DRAIN_MAX_TICKS,
     TranslationWorkerRunner,
@@ -60,6 +71,8 @@ __all__ = [
     "DEFAULT_DRAIN_MAX_TICKS",
     "DEFAULT_PIPELINE_MAX_JOBS",
     "DEFAULT_PIPELINE_MAX_TICKS",
+    "DEFAULT_READER_WORKER_LEASE_DURATION",
+    "READER_WORKER_USER_ADVISORY_LOCK_NAMESPACE",
     "FALLBACK_WINDOW_WORD_COUNT",
     "EnhancementBootstrapJobCounts",
     "EnhancementBootstrapSummary",
@@ -76,6 +89,9 @@ __all__ = [
     "ReaderOrchestrationRepository",
     "ReaderOrchestrator",
     "ReaderEnhancementPipelineRunner",
+    "ReaderEnhancementWorkerLoopCycleSummary",
+    "ReaderEnhancementWorkerLoopRecordResult",
+    "ReaderEnhancementWorkerLoopService",
     "ReaderPipelineRunSummary",
     "ReaderPipelineWorkerAttempt",
     "StableReadingBase",
@@ -83,12 +99,16 @@ __all__ = [
     "TRANSLATION_PARSED_RATIONALE_CODE",
     "TranslationTickResult",
     "TranslationWorkerRunner",
+    "WorkerLoopCandidateRecord",
     "WorkerDrainResult",
     "WorkerTickOutcome",
     "WorkerTickStatus",
+    "build_reader_worker_lease_owner",
     "build_low_impact_reading_base",
     "build_reader_plate_snapshot",
     "canonicalize_low_impact_text",
+    "record_advisory_lock_key",
     "result_length_utf16",
+    "user_advisory_lock_key",
     "validate_reading_base_build_result",
 ]
