@@ -24,7 +24,9 @@ from app.services.reader_orchestration import (
     build_low_impact_reading_base,
     build_reader_plate_snapshot,
     result_length_utf16,
+    validate_reading_base_build_result,
 )
+from tests.reader_orchestration_test_support import long_plain_text_fixture
 
 API_ROOT = Path(__file__).resolve().parents[1]
 
@@ -435,6 +437,71 @@ def test_builder_marks_fallback_window_segments_low_quality() -> None:
     assert result.units[0].unit_type == "fallback"
     assert all(segment.segment_type == "fallback_window" for segment in result.anchor_segments)
     assert all(segment.boundary_quality == "low" for segment in result.anchor_segments)
+
+
+def test_builder_keeps_r6_long_single_block_fixture_as_one_low_quality_unit() -> None:
+    result = _build_result(long_plain_text_fixture())
+
+    assert len(result.units) == 1
+    unit = result.units[0]
+    assert unit.unit_type == "body"
+    assert unit.boundary_quality == "low"
+
+    segments = [segment for segment in result.anchor_segments if segment.unit_id == unit.unit_id]
+    assert len(segments) == 4
+    assert all(segment.unit_id == unit.unit_id for segment in segments)
+    assert [segment.segment_type for segment in segments] == ["sentence"] * 4
+    assert all(segment.boundary_quality == "low" for segment in segments)
+
+    validate_reading_base_build_result(result)
+
+
+def test_builder_propagates_low_sentence_boundary_quality_to_parent_unit() -> None:
+    long_sentence = (
+        "This second sentence keeps expanding with subordinate clauses, revised figures, "
+        "cross-check notes, delayed purchase plans, staffing caveats, and repeated "
+        "qualifications about how each small scheduling error compounds until the "
+        "paragraph becomes mechanically long enough to cross the deterministic "
+        "boundary quality threshold while still ending with a full stop."
+    )
+    assert len(long_sentence) > 280
+
+    result = _build_result(f"Short sentence. {long_sentence}")
+
+    assert len(result.units) == 1
+    assert result.units[0].unit_type == "body"
+    assert result.units[0].boundary_quality == "low"
+    assert len(result.anchor_segments) == 2
+    assert [segment.segment_type for segment in result.anchor_segments] == ["sentence", "sentence"]
+    assert result.anchor_segments[0].boundary_quality == "normal"
+    assert result.anchor_segments[1].boundary_quality == "low"
+
+
+def test_builder_uses_blank_lines_as_structure_block_boundaries() -> None:
+    single_block = _build_result("First sentence.\nSecond sentence.")
+    split_blocks = _build_result("First sentence.\n\nSecond sentence.")
+
+    assert len(single_block.units) == 1
+    assert [unit.text for unit in single_block.units] == ["First sentence.\nSecond sentence."]
+    assert len(split_blocks.units) == 2
+    assert [unit.text for unit in split_blocks.units] == ["First sentence.", "Second sentence."]
+    assert [unit.unit_type for unit in split_blocks.units] == ["body", "body"]
+
+
+def test_builder_preserves_markdown_markers_as_text_and_only_infers_unit_types() -> None:
+    source_text = "# Heading\n\n- first item\n- second item\n\n> quoted line\n> second quote"
+    result = _build_result(source_text)
+
+    assert result.base.text == source_text
+    assert [unit.unit_type for unit in result.units] == ["heading", "list", "quote"]
+    assert [unit.text for unit in result.units] == [
+        "# Heading",
+        "- first item\n- second item",
+        "> quoted line\n> second quote",
+    ]
+    assert result.units[0].text.startswith("# ")
+    assert result.units[1].text.startswith("- ")
+    assert result.units[2].text.startswith("> ")
 
 
 def test_reader_plate_snapshot_source_leaves_rebuild_stable_base_slices() -> None:

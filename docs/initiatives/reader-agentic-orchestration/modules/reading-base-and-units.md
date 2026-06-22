@@ -90,6 +90,12 @@ D4 默认 builder：
 
 默认 Unit 也不保证等于自然语义段落。它是 Claread 在 Stable Base 上用于渲染、translation scheduling、parsed coverage、progressive events 和成本控制的稳定工作单元。
 
+当前 D5 基线仍是 `1 structure block -> 1 reading unit`：
+
+- plain text 没有空行时，整段正文会先成为一个 structure block，再成为一个 unit。
+- sentence / clause / fallback 只生成 unit 内部 Anchor Segments，不会自动提升为独立 unit。
+- Markdown 标记（如 `#`、`-`、`>`）当前只作为 canonical text 的一部分保留，并影响 `heading` / `list` / `quote` 的 heuristic unit type；Stable Base contract 仍未持久化独立 block-level structure metadata。
+
 D4 ID 口径：
 
 - 采用 1-based IDs：`u1`、`p1`、`s1`。
@@ -109,7 +115,8 @@ Sentence segmentation：
 2. 优先按英文句末标点生成 sentence Anchor Segments。
 3. 若没有可靠句末标点，按分号、冒号、破折号、逗号连接词等 clause 边界降级。
 4. 若 clause 边界仍不可用，使用 word window 生成 `fallback_window` Anchor Segments，并标记 `boundary_quality = low`。
-5. 聚合相邻 Anchor Segments 形成 Reading Units，保证 coverage、order、offset/hash 正确。
+5. 当前 D5 生产基线仍保持单个 structure block -> 单个 Reading Unit；因此长单段正文可能出现一个 `body` unit 内含多个 sentence Anchors，且超长 sentence 的 `boundary_quality = low` 会向上传播到 unit。
+6. 如果后续实现 D5 production v2，只允许对超长 `body` structure block 按既有 Anchor Segment 边界做 deterministic regrouping；不得改写 Stable Base 文本，不得在 sentence / clause / fallback Anchor 内部切分，不得改变 worker / snapshot public contract。
 
 Planner suggestion：
 
@@ -149,6 +156,7 @@ Base Plate Snapshot 约束：
 - Plate node path 不持久化；只在前端作为当前 tree 的临时地址。
 - Snapshot 可以包含标题、段落、列表等低风险结构 metadata，但不得改写 Stable Base 文本。
 - 如果未来 `base_document` 保存 Markdown/HTML 结构，它仍必须可映射回 `canonical_text` 的 UTF-16 offsets。
+- D6+ 如需把 Markdown-like block structure 变成稳定 domain fact，应在 Input Adapter / Candidate Base / Base Composer 阶段生成 normalized block metadata，再冻结 Stable Base；不要把 Plate document 或 Unit Builder heuristic 当作结构真相源。
 
 最小 node metadata：
 

@@ -815,6 +815,7 @@ Closeout 结论：
 - 真实 Web 页面 `/app/reader-plate?record_id=34476538-c091-43ef-a395-009de7633a68` 已渲染 2 张 sentence analysis 卡片，标题分别是 `Pseudo-cleft with colon-introduced parallel elaboration` 和 `Contrastive predicate with triple-verb modification`。
 - R6 真实验证未发现 `render_scene_json`、`projection_ops` 或 raw Plate path/op 回流到 truth 层。
 - R6 保留的后续问题：worker stdout 仍有 PydanticAI deprecation warnings；该 250+ 词单段正文仍只生成 1 个 `reader_unit` 且 `boundary_quality=low`，后续需要 Boundary / Unit Builder v2 与 sentence_analysis coverage policy 独立评估。
+- D5-B1 追加评估确认：R6 长文本 `1 unit` 的直接原因是当前 low-impact plain text path 只持久化 canonical text，plain text 无空行时会形成 `1 structure block -> 1 unit`；现有 sentence Anchors 已可在 unit 内生成，但 Stable Base contract 仍无独立 block-level structure metadata。D5 最小策略仍是不改 Stable Base text / worker / snapshot contract；如需生产 v2，只允许对超长 `body` block 按既有 Anchor Segment 边界做 deterministic regrouping。D6+ 正式策略再把 richer structure retention 前移到 Input Adapter / Candidate Base / Base Composer。
 
 Focused tests 已通过：
 
@@ -855,6 +856,6 @@ Focused tests 已通过：
 2. D5-G2 vocabulary boundary policy 已完成；vocabulary 与 grammar 统一跳过 `fallback_window` 并记录 `boundary_low_fallback_window` diagnostics。
 3. D5-R5 schema health/check + worker lease duration setting 已完成；本地 DB schema drift 通过 health check 暴露，正确处理方式仍是 reset/rebuild 本地 DB。
 4. D5-V5 / D5-R6 已用 deterministic long-text fixture 和真实 provider 长文本链路完成 sentence_analysis projection consistency 验收；继续沿 snapshot reload 路径，不启用 incremental applier。
-5. 下一步优先清理 PydanticAI deprecation warnings，并单独评估 Boundary / Unit Builder v2 与 sentence_analysis coverage policy。
+5. 下一步优先清理 PydanticAI deprecation warnings；Boundary / Unit Builder v2 已扩展为 Input/Base Structure + Unit Builder 联合评估，D5 先维持 text-only Stable Base + deterministic baseline，不在未定 contract 前直接落生产 split。
 6. D6 product hardening 再决定 `failed_terminal` 是否映射到 `action_required`、是否引入 coverage / rerun policy 和更细粒度调度 hint。
 7. 保持 LangGraph D6+ 隔离 spike 口径，不在 D5 guardrails 中升级或引入。

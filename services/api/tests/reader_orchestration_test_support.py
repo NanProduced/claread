@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from uuid import UUID
 
 import asyncpg
@@ -18,6 +19,45 @@ from tests.test_reader_orchestration_schema_baseline import (
 )
 
 BASELINE_SQL = _BASELINE_SQL
+_WORD_RE = re.compile(r"[A-Za-z]+")
+
+
+def long_plain_text_fixture() -> str:
+    text = (
+        "Although the committee, which had spent six months reviewing export data, "
+        "labor surveys, and municipal tax receipts that rarely lined up neatly, "
+        "claimed that the recovery was broad enough to justify ending the emergency "
+        "grant program, several shop owners warned that the headline numbers hid a "
+        "more fragile street-level reality, because customers were still delaying "
+        "purchases whenever wages, school fees, and transport costs rose in the same "
+        "week. "
+        "The chair, speaking in a tone that sounded patient even when the gallery "
+        "grew restless, argued that the city could not keep funding every pilot "
+        "forever, yet she also admitted that the report, which was drafted before "
+        "the latest shipping slowdown and revised after three agencies disputed one "
+        "another's forecasts, did not fully capture how quickly a small inventory "
+        "mistake, a delayed permit, or an unexpected customs check could turn a "
+        "promising quarter into a month of defensive bookkeeping. "
+        "What made the hearing difficult for new members, many of whom had expected "
+        "a simple choice between extending support and declaring success, was that "
+        "the witnesses described a chain of causes rather than a single crisis: "
+        "manufacturers were receiving orders, but not on predictable schedules; "
+        "managers were hiring trainees, but only if senior staff agreed to mentor "
+        "them; and families were willing to spend, but mainly after they had "
+        "confirmed, sometimes twice, that rent, medicine, and exam expenses were "
+        "already covered. "
+        "By the time the final vote arrived, the proposal that survived was not the "
+        "clean, decisive resolution the briefing memo had promised, but a narrower "
+        "plan that preserved training subsidies for districts with rising vacancy "
+        "rates, required monthly explanations whenever projected savings depended on "
+        "one-off asset sales, and ordered a follow-up review so that officials, "
+        "business groups, and neighborhood organizers could compare whether the "
+        "apparent improvement reflected durable demand, delayed reporting, or a "
+        "temporary calm created by firms quietly postponing the expenses they knew "
+        "would return in autumn."
+    )
+    assert len(_WORD_RE.findall(text)) >= 250
+    return text
 
 
 async def make_pool(schema_name: str) -> asyncpg.Pool:

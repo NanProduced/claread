@@ -111,6 +111,10 @@ Markdown / HTML / OCR / PDF 转 Plate fragment 前必须：
 - 对 raw HTML、links、media、tables 做 allowlist 或 risk flag。
 - 在高影响时进入 Candidate Base preview。
 
+当前 D5 低风险 plain-text 路径仍只冻结 canonical text。Markdown 标记可以作为文本字符保留，并帮助 Unit Builder 推断 `heading` / `list` / `quote`，但这些 heuristic 结果还不是独立的 stable block facts。
+
+D6+ 正式方向应是：Candidate Base / Base Composer 在确认前保留 normalized block metadata（或 extraction structure），用户确认后再把 canonical text 与 stable structure 一起冻结为 domain facts；Plate projection 继续只消费这些 facts，不把 Plate document 当 truth。
+
 ## 外部服务边界
 
 阶段性建议：

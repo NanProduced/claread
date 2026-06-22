@@ -47,6 +47,7 @@ from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
     insert_user,
+    long_plain_text_fixture,
     make_pool,
     submit_article_ready,
 )
@@ -279,44 +280,6 @@ def _plain_text(unit_count: int) -> str:
         "Third sentence for pipeline runner.",
     ]
     return "\n\n".join(paragraphs[:unit_count])
-
-
-def _long_plain_text() -> str:
-    text = (
-        "Although the committee, which had spent six months reviewing export data, "
-        "labor surveys, and municipal tax receipts that rarely lined up neatly, "
-        "claimed that the recovery was broad enough to justify ending the emergency "
-        "grant program, several shop owners warned that the headline numbers hid a "
-        "more fragile street-level reality, because customers were still delaying "
-        "purchases whenever wages, school fees, and transport costs rose in the same "
-        "week. "
-        "The chair, speaking in a tone that sounded patient even when the gallery "
-        "grew restless, argued that the city could not keep funding every pilot "
-        "forever, yet she also admitted that the report, which was drafted before "
-        "the latest shipping slowdown and revised after three agencies disputed one "
-        "another's forecasts, did not fully capture how quickly a small inventory "
-        "mistake, a delayed permit, or an unexpected customs check could turn a "
-        "promising quarter into a month of defensive bookkeeping. "
-        "What made the hearing difficult for new members, many of whom had expected "
-        "a simple choice between extending support and declaring success, was that "
-        "the witnesses described a chain of causes rather than a single crisis: "
-        "manufacturers were receiving orders, but not on predictable schedules; "
-        "managers were hiring trainees, but only if senior staff agreed to mentor "
-        "them; and families were willing to spend, but mainly after they had "
-        "confirmed, sometimes twice, that rent, medicine, and exam expenses were "
-        "already covered. "
-        "By the time the final vote arrived, the proposal that survived was not the "
-        "clean, decisive resolution the briefing memo had promised, but a narrower "
-        "plan that preserved training subsidies for districts with rising vacancy "
-        "rates, required monthly explanations whenever projected savings depended on "
-        "one-off asset sales, and ordered a follow-up review so that officials, "
-        "business groups, and neighborhood organizers could compare whether the "
-        "apparent improvement reflected durable demand, delayed reporting, or a "
-        "temporary calm created by firms quietly postponing the expenses they knew "
-        "would return in autumn."
-    )
-    assert len(WORD_RE.findall(text)) >= 250
-    return text
 
 
 def _make_runner(
@@ -747,7 +710,7 @@ async def test_run_with_long_text_fixture_projects_sentence_analysis_nodes_on_sn
     article = await submit_article_ready(
         pipeline_runner_env,
         user_id=user_id,
-        plain_text=_long_plain_text(),
+        plain_text=long_plain_text_fixture(),
         title="Pipeline Long Sentence Analysis",
     )
     runner = _make_runner(
