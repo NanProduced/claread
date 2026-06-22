@@ -14,6 +14,7 @@ from app.contracts.annotation import (
     utf16_code_unit_length,
 )
 from app.database.connection import init_connection
+from app.schemas.reader_orchestration import ReaderSnapshotRecord
 from app.services.reader_orchestration import (
     ArticleReadyPersistenceService,
     LoadedReaderSnapshotFacts,
@@ -264,12 +265,16 @@ async def test_submit_plain_text_persists_article_ready_domain_facts(
     assert result.snapshot.record_id == str(result.record_id)
     assert result.snapshot.base.base_id == str(result.base_id)
     assert result.snapshot.last_event_sequence == 1
+    assert result.snapshot.record.title == "Persistence Example"
+    assert result.snapshot.record.source_type == "text"
+    assert result.snapshot.record.source_metadata == {"source_kind": "manual_submit"}
+    assert result.snapshot.record.product_state == "readable_enhancing"
 
     async with reader_service_env.acquire() as conn:
         record_row = await conn.fetchrow(
             """
-            SELECT user_id, client_record_id, title, language, lifecycle_status,
-                   product_state, readiness_state, generation, active_base_id
+            SELECT user_id, client_record_id, source_type, title, language, lifecycle_status,
+                   product_state, readiness_state, generation, active_base_id, created_at
             FROM reading_records
             WHERE id = $1
             """,
@@ -285,6 +290,8 @@ async def test_submit_plain_text_persists_article_ready_domain_facts(
         assert record_row["readiness_state"] == "article_ready"
         assert record_row["generation"] == 1
         assert record_row["active_base_id"] == result.base_id
+        assert record_row["source_type"] == "text"
+        assert result.snapshot.record.created_at == record_row["created_at"]
 
         input_row = await conn.fetchrow(
             """
@@ -365,6 +372,13 @@ async def test_load_snapshot_uses_repeatable_read_readonly_transaction() -> None
     )
     facts = LoadedReaderSnapshotFacts(
         build_result=build_result,
+        record=ReaderSnapshotRecord(
+            title="Repeatable Read",
+            created_at=datetime(2026, 6, 22, 12, 0, tzinfo=UTC),
+            source_type="text",
+            source_metadata={"source_kind": "fake"},
+            product_state="readable_enhancing",
+        ),
         last_event_sequence=1,
         snapshot_taken_at=datetime.now(UTC),
         enhancement_layers=(),
@@ -517,6 +531,7 @@ async def test_snapshot_reloads_from_db_facts_equivalent_to_builder(
         expected_build_result,
         snapshot_taken_at=result.snapshot.snapshot_taken_at,
         last_event_sequence=result.article_ready_sequence,
+        record=result.snapshot.record,
     )
 
     assert result.snapshot.model_dump(mode="json") == expected_snapshot.model_dump(mode="json")

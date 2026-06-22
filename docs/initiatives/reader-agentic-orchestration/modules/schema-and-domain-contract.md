@@ -1,7 +1,7 @@
 # Schema And Domain Contract
 
 > 状态：`D4-P1 translation implemented`
-> 最后更新：2026-06-21
+> 最后更新：2026-06-22
 > 范围：Reader agentic orchestration 的后端 schema 边界、领域对象、运行时事实源、projection DTO、旧 workflow cutover 和 reset 约束。
 
 ## 目标
@@ -138,6 +138,7 @@ Rules:
 
 - `readiness_state` is monotonic for an active generation, except supersede/delete.
 - `product_state` may move forward or backward when quota, user action, or retry state changes.
+- `failed_terminal` on a run or job is runtime state, not direct UI state. D6 product mapping must classify user-remediable terminal failures to `action_required`; non-remediable terminal failures map to `failed`.
 - Workers do not write `coverage_complete` directly. Coverage aggregates from `parsed_decisions`.
 
 ### `original_inputs`
@@ -720,6 +721,19 @@ type ReaderPlateSnapshot = {
   snapshot_taken_at: string;
   last_event_sequence: number;
   record_id: string;
+  record: {
+    title: string;
+    created_at: string;
+    source_type: string;
+    source_metadata: Record<string, unknown>;
+    product_state:
+      | "processing"
+      | "needs_confirmation"
+      | "readable_enhancing"
+      | "action_required"
+      | "failed"
+      | "deleted";
+  };
   base: {
     base_id: string;
     content_sha256: string;
@@ -738,8 +752,26 @@ type ReaderPlateSnapshot = {
       label?: string;
       base_start_utf16: number;
       base_end_utf16: number;
+      text_hash: string;
+      hash_algorithm: "fnv1a32-utf16";
     }>;
   };
+  anchor_segments: Array<{
+    anchor_segment_id: string;
+    sentence_id: string;
+    paragraph_id: string;
+    unit_id: string;
+    order_index: number;
+    unit_order_index: number;
+    segment_type: "sentence" | "clause" | "fallback_window";
+    boundary_quality?: "normal" | "low";
+    base_start_utf16: number;
+    base_end_utf16: number;
+    unit_start_utf16: number;
+    unit_end_utf16: number;
+    text_hash: string;
+    hash_algorithm: "fnv1a32-utf16";
+  }>;
   enhancement_layers: Array<ReaderSnapshotLayer>;
   ask_supplements: Array<ReaderSnapshotAskSupplement>;
   user_assets: Array<ReaderSnapshotUserAsset>;
@@ -751,6 +783,7 @@ type ReaderSnapshotLayer = {
   layer_id: string;
   layer_type: "translation" | "vocabulary" | "grammar_note" | "sentence_analysis" | string;
   layer_subtype?: string | null;
+  owner: "system_ai";
   base_id: string;
   target_scope: "unit" | "anchor_segment" | "unit_range" | "record";
   target_key: string;
@@ -803,6 +836,14 @@ D5-V2 values:
 - A mark includes `mark_id`, `layer_id`, `item_type`, `anchor_segment_id`, unit-local `start_offset` / `end_offset`, `selected_text`, derived `segment_start_utf16` / `segment_end_utf16`, and `starts_here` / `ends_here` for split leaves.
 - Web renders these marks read-only; it does not persist or replay raw Plate/Slate operations.
 
+W3-C2 alignment additions:
+
+- Snapshot top-level `record` is the minimum ReaderWorkbench shell metadata contract for title, created time, source metadata and current `product_state`.
+- Snapshot top-level `anchor_segments` and `navigation.units[*].text_hash` are stable interaction anchors. Frontends must not infer them only from Plate tree shape.
+- `enhancement_layers.owner`, `ask_supplements.owner` and `user_assets.owner` distinguish projection ownership. Only `enhancement_layers` uses `target_scope` / `target_key` as publish targeting; ask supplements and user assets continue to ground themselves through explicit anchors.
+- `reading_goal` is intentionally not in `ReaderPlateSnapshot` yet. The new Reader orchestration domain does not have a first-class persisted `reading_goal` truth owner, so adding a nullable placeholder now would create false contract stability.
+- `summary` / `semantic_outline` are intentionally not formalized as typed snapshot layer schemas in D5-W3-C2. `layer_type: string` keeps room for future experimentation, but production layer contracts must wait until owner, target scope, publish policy and ReaderWorkbench rendering shape are decided.
+
 Rules:
 
 - D4 translation uses snapshot reload or simple projection refresh.
@@ -816,6 +857,7 @@ Rules:
 - Snapshot serializer must reject facts that do not belong to the current base / unit / anchor. This applies to enhancement layers, parsed decisions, ask supplements and user assets.
 - DB-hydrated `ReadingBaseBuildResult` must pass `validate_reading_base_build_result` or an equivalent public builder invariant validator before snapshot serialization.
 - Top-level `enhancement_layers` and `value` must be produced by the same projection builder. Focused tests must verify a published translation layer appears both in `enhancement_layers` and in matching Plate nodes by `layer_id`.
+- Snapshot reload remains the source of truth for `record`, `base`, `navigation`, `anchor_segments`, published layers, ask supplements, user assets and parsed decisions. Future `projection_ops` must not become an alternate truth source for these facts.
 - D4 minimal translation projection only covers published `translation` layers whose output validates as `TranslationLayerOutput` and whose target scope is `unit` or `anchor_segment`.
 - D5-V2 vocabulary projection only covers published `vocabulary` layers whose output validates as `VocabularyLayerOutput`, whose layer target scope is `unit`, and whose item anchors belong to the current base/unit/anchor segment.
 - Non-translation `unit_range` / `record` membership checks are reserved for D5 Layer Publisher and must not be silently accepted into a D4 snapshot if they cannot be grounded to the current base.

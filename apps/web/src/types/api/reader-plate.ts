@@ -46,6 +46,14 @@ export type ParsedDecisionState =
   | "skipped"
   | "failed";
 
+export type ReadingRecordProductState =
+  | "processing"
+  | "needs_confirmation"
+  | "readable_enhancing"
+  | "action_required"
+  | "failed"
+  | "deleted";
+
 export type TranslationConfidence = "low" | "normal" | "high";
 export type VocabularyItemType =
   | "vocab_highlight"
@@ -99,6 +107,14 @@ export interface ReaderSnapshotBaseDto {
   hash_algorithm: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
 }
 
+export interface ReaderSnapshotRecordDto {
+  title: string;
+  created_at: string;
+  source_type: string;
+  source_metadata: Record<string, unknown>;
+  product_state: ReadingRecordProductState;
+}
+
 export interface ReaderSnapshotNavigationUnitDto {
   unit_id: string;
   order_index: number;
@@ -107,6 +123,8 @@ export interface ReaderSnapshotNavigationUnitDto {
   label?: string | null;
   base_start_utf16: number;
   base_end_utf16: number;
+  text_hash: string;
+  hash_algorithm: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
 }
 
 export interface ReaderSnapshotNavigationDto {
@@ -137,6 +155,23 @@ export interface ReaderTextRangeAnchorDto {
 }
 
 export type ReaderSnapshotAnchorDto = ReaderUnitAnchorDto | ReaderTextRangeAnchorDto;
+
+export interface ReaderSnapshotAnchorSegmentDto {
+  anchor_segment_id: string;
+  sentence_id: string;
+  paragraph_id: string;
+  unit_id: string;
+  order_index: number;
+  unit_order_index: number;
+  segment_type: AnchorSegmentType;
+  boundary_quality: ReaderBoundaryQuality;
+  base_start_utf16: number;
+  base_end_utf16: number;
+  unit_start_utf16: number;
+  unit_end_utf16: number;
+  text_hash: string;
+  hash_algorithm: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
+}
 
 export interface TranslationLayerOutputDto {
   schema_version: 1;
@@ -217,6 +252,7 @@ interface ReaderSnapshotLayerBaseDto {
   layer_id: string;
   layer_type: ReaderLayerType;
   layer_subtype?: string | null;
+  owner: "system_ai";
   base_id: string;
   target_scope: ReaderLayerTargetScope;
   target_key: string;
@@ -285,8 +321,10 @@ export interface ReaderPlateSnapshotDto {
   snapshot_taken_at: string;
   last_event_sequence: number;
   record_id: string;
+  record: ReaderSnapshotRecordDto;
   base: ReaderSnapshotBaseDto;
   navigation: ReaderSnapshotNavigationDto;
+  anchor_segments: ReaderSnapshotAnchorSegmentDto[];
   enhancement_layers: ReaderSnapshotLayerDto[];
   ask_supplements: ReaderSnapshotAskSupplementDto[];
   user_assets: ReaderSnapshotUserAssetDto[];

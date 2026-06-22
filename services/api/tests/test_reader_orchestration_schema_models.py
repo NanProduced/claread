@@ -202,6 +202,13 @@ def test_reader_plate_snapshot_rejects_projection_version() -> None:
                 "snapshot_taken_at": datetime.now(UTC),
                 "last_event_sequence": 1,
                 "record_id": "record-1",
+                "record": {
+                    "title": "Snapshot Example",
+                    "created_at": datetime.now(UTC),
+                    "source_type": "text",
+                    "source_metadata": {},
+                    "product_state": "readable_enhancing",
+                },
                 "base": {
                     "base_id": "base-1",
                     "content_sha256": "a" * 64,

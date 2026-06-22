@@ -8,12 +8,14 @@ from app.contracts.annotation import slice_by_utf16_offsets
 from app.schemas.reader_orchestration import (
     GrammarNoteLayerOutput,
     ReaderPlateSnapshot,
+    ReaderSnapshotAnchorSegment,
     ReaderSnapshotAskSupplement,
     ReaderSnapshotBase,
     ReaderSnapshotLayer,
     ReaderSnapshotNavigation,
     ReaderSnapshotNavigationUnit,
     ReaderSnapshotParsedDecision,
+    ReaderSnapshotRecord,
     ReaderSnapshotUserAsset,
     ReaderTextRangeAnchor,
     ReaderUnitAnchor,
@@ -35,6 +37,7 @@ def build_reader_plate_snapshot(
     *,
     snapshot_taken_at: datetime,
     last_event_sequence: int,
+    record: ReaderSnapshotRecord | None = None,
     enhancement_layers: Sequence[ReaderSnapshotLayer] | None = None,
     ask_supplements: Sequence[ReaderSnapshotAskSupplement] | None = None,
     user_assets: Sequence[ReaderSnapshotUserAsset] | None = None,
@@ -58,6 +61,7 @@ def build_reader_plate_snapshot(
         key=lambda item: (item.updated_at, item.asset_id),
     )
     decisions = _sort_parsed_decisions(build_result, parsed_decisions or [])
+    units_by_id = {unit.unit_id: unit for unit in build_result.units}
 
     return ReaderPlateSnapshot(
         snapshot_id=(
@@ -67,6 +71,7 @@ def build_reader_plate_snapshot(
         snapshot_taken_at=snapshot_taken_at,
         last_event_sequence=last_event_sequence,
         record_id=build_result.base.reading_record_id,
+        record=record or _build_default_snapshot_record(build_result, snapshot_taken_at),
         base=ReaderSnapshotBase(
             base_id=build_result.base.base_id,
             content_sha256=build_result.base.content_sha256,
@@ -78,17 +83,36 @@ def build_reader_plate_snapshot(
         navigation=ReaderSnapshotNavigation(
             units=[
                 ReaderSnapshotNavigationUnit(
-                    unit_id=unit.unit_id,
-                    order_index=unit.order_index,
-                    unit_type=unit.unit_type,
-                    boundary_quality=unit.boundary_quality,
-                    label=unit.label,
-                    base_start_utf16=unit.base_start_utf16,
-                    base_end_utf16=unit.base_end_utf16,
+                    unit_id=navigation_unit.unit_id,
+                    order_index=navigation_unit.order_index,
+                    unit_type=navigation_unit.unit_type,
+                    boundary_quality=navigation_unit.boundary_quality,
+                    label=navigation_unit.label,
+                    base_start_utf16=navigation_unit.base_start_utf16,
+                    base_end_utf16=navigation_unit.base_end_utf16,
+                    text_hash=units_by_id[navigation_unit.unit_id].text_hash,
                 )
-                for unit in build_result.navigation_units
+                for navigation_unit in build_result.navigation_units
             ]
         ),
+        anchor_segments=[
+            ReaderSnapshotAnchorSegment(
+                anchor_segment_id=segment.anchor_segment_id,
+                sentence_id=segment.sentence_id,
+                paragraph_id=segment.paragraph_id,
+                unit_id=segment.unit_id,
+                order_index=segment.order_index,
+                unit_order_index=segment.unit_order_index,
+                segment_type=segment.segment_type,
+                boundary_quality=segment.boundary_quality,
+                base_start_utf16=segment.base_start_utf16,
+                base_end_utf16=segment.base_end_utf16,
+                unit_start_utf16=segment.unit_start_utf16,
+                unit_end_utf16=segment.unit_end_utf16,
+                text_hash=segment.text_hash,
+            )
+            for segment in build_result.anchor_segments
+        ],
         enhancement_layers=list(layers),
         ask_supplements=list(supplements),
         user_assets=list(assets),
@@ -268,6 +292,19 @@ def _build_snapshot_id(
     )
     fingerprint = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
     return f"reader_snapshot_{fingerprint}"
+
+
+def _build_default_snapshot_record(
+    build_result: ReadingBaseBuildResult,
+    snapshot_taken_at: datetime,
+) -> ReaderSnapshotRecord:
+    return ReaderSnapshotRecord(
+        title=build_result.base.title_snapshot or "Untitled Reading",
+        created_at=snapshot_taken_at,
+        source_type="text",
+        source_metadata={},
+        product_state="readable_enhancing",
+    )
 
 
 def _build_plate_value(

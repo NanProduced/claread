@@ -43,6 +43,13 @@ function makeSnapshot(recordId = "rec_submit_1"): ReaderPlateSnapshotDto {
     snapshot_taken_at: "2026-06-22T00:00:00Z",
     last_event_sequence: 1,
     record_id: recordId,
+    record: {
+      title: "Reader Plate Page Fixture",
+      created_at: "2026-06-22T00:00:00Z",
+      source_type: "plain_text",
+      source_metadata: {},
+      product_state: "readable_enhancing",
+    },
     base: {
       base_id: "base_1",
       content_sha256: "sha256_1",
@@ -61,9 +68,12 @@ function makeSnapshot(recordId = "rec_submit_1"): ReaderPlateSnapshotDto {
           boundary_quality: "normal",
           base_start_utf16: 0,
           base_end_utf16: 16,
+          text_hash: "hash_1",
+          hash_algorithm: "fnv1a32-utf16",
         },
       ],
     },
+    anchor_segments: [],
     value: [
       {
         type: "reader_unit",

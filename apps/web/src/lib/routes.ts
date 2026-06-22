@@ -65,6 +65,10 @@ export function appReaderPlateRoute(recordId?: string | null): Route {
   return `/app/reader-plate?record_id=${encodeURIComponent(recordId)}` as Route;
 }
 
+export function appReadingRecordRoute(recordId: string): Route {
+  return `/app/reader-record/${encodeURIComponent(recordId)}` as Route;
+}
+
 /** @deprecated Use legacyAppReaderRoute for old ReaderWorkbench record ids only. */
 export function appReaderRoute(recordId: string): Route {
   return legacyAppReaderRoute(recordId);

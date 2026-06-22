@@ -238,6 +238,16 @@ class ReaderSnapshotBase(BaseModel):
     hash_algorithm: Literal["fnv1a32-utf16"] = TEXT_RANGE_HASH_ALGORITHM
 
 
+class ReaderSnapshotRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1)
+    created_at: datetime
+    source_type: str = Field(min_length=1)
+    source_metadata: dict[str, Any] = Field(default_factory=dict)
+    product_state: ReadingRecordProductState
+
+
 class ReaderSnapshotNavigationUnit(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -248,6 +258,8 @@ class ReaderSnapshotNavigationUnit(BaseModel):
     label: str | None = None
     base_start_utf16: int = Field(ge=0)
     base_end_utf16: int = Field(gt=0)
+    text_hash: str = Field(pattern=r"^[0-9a-f]{8}$")
+    hash_algorithm: Literal["fnv1a32-utf16"] = TEXT_RANGE_HASH_ALGORITHM
 
 
 class ReaderSnapshotNavigation(BaseModel):
@@ -256,12 +268,32 @@ class ReaderSnapshotNavigation(BaseModel):
     units: list[ReaderSnapshotNavigationUnit] = Field(default_factory=list)
 
 
+class ReaderSnapshotAnchorSegment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    anchor_segment_id: str = Field(min_length=1)
+    sentence_id: str = Field(min_length=1)
+    paragraph_id: str = Field(min_length=1)
+    unit_id: str = Field(min_length=1)
+    order_index: int = Field(ge=1)
+    unit_order_index: int = Field(ge=1)
+    segment_type: AnchorSegmentType
+    boundary_quality: ReaderBoundaryQuality = "normal"
+    base_start_utf16: int = Field(ge=0)
+    base_end_utf16: int = Field(gt=0)
+    unit_start_utf16: int = Field(ge=0)
+    unit_end_utf16: int = Field(gt=0)
+    text_hash: str = Field(pattern=r"^[0-9a-f]{8}$")
+    hash_algorithm: Literal["fnv1a32-utf16"] = TEXT_RANGE_HASH_ALGORITHM
+
+
 class ReaderSnapshotLayer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     layer_id: str = Field(min_length=1)
     layer_type: str = Field(min_length=1)
     layer_subtype: str | None = None
+    owner: Literal["system_ai"] = "system_ai"
     base_id: str = Field(min_length=1)
     target_scope: ReaderLayerTargetScope
     target_key: str = Field(min_length=1)
@@ -309,8 +341,10 @@ class ReaderPlateSnapshot(BaseModel):
     snapshot_taken_at: datetime
     last_event_sequence: int = Field(ge=0)
     record_id: str = Field(min_length=1)
+    record: ReaderSnapshotRecord
     base: ReaderSnapshotBase
     navigation: ReaderSnapshotNavigation
+    anchor_segments: list[ReaderSnapshotAnchorSegment] = Field(default_factory=list)
     enhancement_layers: list[ReaderSnapshotLayer] = Field(default_factory=list)
     ask_supplements: list[ReaderSnapshotAskSupplement] = Field(default_factory=list)
     user_assets: list[ReaderSnapshotUserAsset] = Field(default_factory=list)

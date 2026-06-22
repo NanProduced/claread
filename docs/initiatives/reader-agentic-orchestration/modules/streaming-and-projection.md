@@ -1,7 +1,7 @@
 # Streaming 与 Projection
 
 > 状态：`D1 草案`
-> 最后更新：2026-06-18
+> 最后更新：2026-06-22
 > 范围：Reader Events、snapshot、SSE、polling fallback、Plate projection operations 和刷新恢复。
 
 ## 目标
@@ -195,9 +195,11 @@ D2-S5 结论：D4 默认使用实时聚合。`reader_snapshots` cache、write-th
 
 ```text
 reading_record product state
++ reading_record shell metadata (title, created_at, source_type, source_metadata)
 + stable base metadata
 + reading_units
 + anchor_segments
++ stable interaction anchor descriptors (unit text hash, anchor text hash, UTF-16 offsets)
 + base_plate_snapshot
 + latest published enhancement_layers per unit/layer_type
 + ask_supplements
@@ -213,6 +215,8 @@ Snapshot is rebuilt from domain facts. It is not persisted Plate editor state un
 D3-P3 snapshot reload uses a read-only `repeatable_read` transaction so `last_event_sequence` and all snapshot facts come from the same consistent view. Future cached projection or materialized read-model implementations must preserve the same rebuild-equivalence and cursor semantics.
 
 D4 snapshot wrapper 使用 `schema_kind = "reader_plate_snapshot"` 和 `last_event_sequence`。D4 不在 snapshot 上暴露 `projection_version`；`last_event_sequence` 是唯一恢复 cursor。`projection_ops.payload.projection_version` 如在 D5 启用，只能用于 projection cache/applier 内部一致性，不替代 Reader Event sequence。
+
+W3-C2-BE 进一步固定：snapshot reload 仍是 `record` 元数据、`product_state`、`navigation`、`anchor_segments` 和已发布 layer ownership/targeting 的唯一 truth reload path。即使未来启用 `projection_ops`，它也只能增量更新前端投影，不得单独定义或修补这些顶层事实。
 
 ## Plate Recovery
 

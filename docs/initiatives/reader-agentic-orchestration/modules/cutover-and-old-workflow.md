@@ -141,6 +141,7 @@ Web Reader 不再依赖旧 `render_scene_json`。Reader Article Body 的新路�
 |---|---|---|---|---|
 | 新提交产品入口 | `/app/read` | `/api/web/analysis/*` -> 旧 `/analysis-tasks` | 旧 `cloud_record_id` / analysis record id | `AnalyzeSubmitForm.tsx`、`services/bff/analysis.ts`；成功后仍跳旧 `/app/reader/{recordId}` |
 | 新 Reader Plate 验证页 | `/app/reader-plate` + `?record_id=` | `/api/web/reader-plate/*` -> 新 `/reader/records/plain-text|snapshot|events` | 新 `Reading Record.record_id` | `reader-plate/page.tsx`；当前是 read-only validation surface，不是最终产品 UI |
+| 新 Reading Record 产品 route shell | `/app/reader-record/{recordId}` | `/api/web/reader-plate/{recordId}/snapshot` | 新 `Reading Record.record_id` | `reader-record/[recordId]/page.tsx`；W3-C1 新增的 read-only product route shell，当前未承接任何 submit / Library / command palette / active task 流量 |
 | 旧 Reader 产品页 | `/app/reader/{recordId}` | `getReaderRecord()` -> 旧 `/reader/records/{id}/scene` 或 `by-client-id/.../scene` | 旧 analysis record id 或 client record id | `reader/[recordId]/page.tsx`、`services/bff/reader.ts`、`services/api/reader-scene.ts`；仍承载 ReaderWorkbench、Ask、点词、笔记、高亮 |
 | Library record links | `legacyAppReaderRoute(record.id)` | `/records` -> `RecordResponseDto[]` | 旧 `RecordResponseDto.id` | `LibraryClient.tsx`、`services/bff/records.ts`；Library 当前拿到的是旧 record list，不是新 Reading Record list |
 | Vocabulary source links | `legacyAppReaderRoute(recordId)` / `legacyAppReaderRoute(item.sourceRecordId)` | vocabulary item source refs -> 旧 source record contract | 旧 source record id / `cloud_record_id` | `app/vocabulary/VocabularyClient.tsx`；点回原文仍跳旧 ReaderWorkbench，不能把 source record id 当新 `Reading Record.record_id` |
@@ -169,7 +170,15 @@ Web Reader 不再依赖旧 `render_scene_json`。Reader Article Body 的新路�
 - `/app/read`、active task、command palette、Library、Vocabulary source links 仍主要围绕旧 `analysis task / source record id -> /app/reader/{recordId}` 工作。
 - `/app/reader/{recordId}` 仍走旧 scene adapter，把 `ReaderSceneResponseDto` 适配成 ReaderWorkbench VM。
 - `/app/reader-plate` 独立消费新 `ReaderPlateSnapshot`，其 `record_id` 是新 Reading Record id，不应回灌给旧 `/app/reader/{recordId}` helper。
+- `/app/reader-record/{recordId}` 现在提供了新的 Reading Record product route shell，但当前只复用现有 reader-plate snapshot BFF 做 read-only 直达加载，还没有切任何旧入口流量。
 - Library 当前列表来自旧 `/records`；即使页面本身不直接渲染 `render_scene_json`，它拿到的数据对象仍属于旧 record contract。
+
+UI / UX 方向：
+
+- W3-C1 的 `/app/reader-record/{recordId}` 是新 Reading Record 的产品 route shell，不是最终 Reader UI 重做方案。
+- 最终 cutover 不应另起一套解析页框架；应保留当前 `/app/reader/{recordId}` ReaderWorkbench 的页面框架、标题区、阅读设置、查词、笔记、高亮、Ask Claread 和浮层能力。
+- 后续产品化改线的核心是把中心文章正文与标注显示区域从旧 `renderSceneToPlateDocument(reader)` 数据面迁到新 `ReaderPlateSnapshot` / Plate projection，并补齐 `unit / anchor_segment / text_range` 到现有选择、查词、笔记、Ask 附件和跳转桥的兼容层。
+- `/app/reader-plate` 仍是验证入口；不要把它的单列 read-only surface 当作最终产品页视觉基线。
 
 因此，D5-W3 不允许：
 
@@ -237,6 +246,7 @@ Done criteria：
 - 在 Ask、dictionary click lookup、user notes/highlights 仍留在旧 ReaderWorkbench 的前提下，不要立刻把 `/app/reader/{recordId}` 切到新 Reader Plate。
 - 先保留旧 `/app/reader/{recordId}` 给 legacy record contract。
 - 为新 Reading Record 新增明确产品 route，例如 `/app/reader-record/{recordId}`，或等价的新命名。
+- 2026-06-22 已落地 W3-C1：新增 `/app/reader-record/{recordId}` route shell、`appReadingRecordRoute()` helper 和 direct-load page test，但没有切 `/app/read`、Library、Vocabulary、active task 或 command palette 流量。
 
 不推荐当前直接做的事：
 
@@ -246,15 +256,23 @@ Done criteria：
 Touched files：
 
 - `apps/web/src/lib/routes.ts`
-- `apps/web/src/app/(private)/app/reader-plate/page.tsx` 或提炼后的新 reader-record page
+- `apps/web/src/app/(private)/app/reader-record/[recordId]/page.tsx`
+- `apps/web/src/app/(private)/app/reader-record/[recordId]/page.test.tsx`
 - `apps/web/src/components/layout/app-shell/index.tsx`
-- 相关 auth/BFF wiring 与 page-level tests
+- `apps/web/src/lib/routes.test.ts`
 
 Done criteria：
 
 - 新 Reading Record 有明确产品路由，不再依赖验证页 query path 作为唯一入口。
-- 新 route 仍只消费 snapshot/events，不读取旧 `/scene`。
+- 新 route 当前复用 `/api/web/reader-plate/{recordId}/snapshot`，不读取旧 `/scene`。
 - 旧 ReaderWorkbench 仍保留给未迁移能力，直到产品级替换完成。
+- `/app/read`、Library、Vocabulary、active task 与 command palette 本轮不改线。
+
+W3-C2 结论：
+
+- 新 `ReaderPlateSnapshot` 可以先投影成旧 `ReaderMockVm` / `ReaderPlateDocument`，复用 `IntensiveReaderSurface` / `ImmersiveReaderSurface` 的中心正文、译文、inline mark、句式拆解和 Workbench DOM anchor contract。
+- 最小 adapter 以 `snapshot.value` 为输入，把 `reader_unit` 当段落、`reader_anchor_segment` 当 sentence-like anchor、translation / vocabulary / grammar / sentence_analysis 投影为旧 surface 已支持的节点和 mark；Plate path 仍只作瞬时渲染地址。
+- 本阶段不切产品流量，不改旧 `/app/reader/{recordId}` 数据源，也不承诺新 Reading Record 的 notes / highlights / Ask supplements persistence 已完成。
 
 ### Phase W3-D: 逐步改线 submit / Library / command palette / active task / Vocabulary
 

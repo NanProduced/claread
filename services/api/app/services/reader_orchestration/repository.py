@@ -18,6 +18,7 @@ from app.database.json_compat import ensure_json_array, ensure_json_object, json
 from app.schemas.reader_orchestration import (
     ReaderSnapshotLayer,
     ReaderSnapshotParsedDecision,
+    ReaderSnapshotRecord,
 )
 
 from .base_builder import (
@@ -33,6 +34,7 @@ from .base_builder import (
 @dataclass(frozen=True, slots=True)
 class LoadedReaderSnapshotFacts:
     build_result: ReadingBaseBuildResult
+    record: ReaderSnapshotRecord
     last_event_sequence: int
     snapshot_taken_at: datetime
     enhancement_layers: tuple[ReaderSnapshotLayer, ...]
@@ -495,10 +497,13 @@ class ReaderOrchestrationRepository:
             SELECT
                 r.id,
                 r.user_id,
+                r.source_type,
                 r.title,
                 r.language,
+                r.product_state,
                 r.generation,
                 r.active_base_id,
+                r.created_at AS record_created_at,
                 r.updated_at AS record_updated_at,
                 b.id AS base_id,
                 b.record_generation,
@@ -552,6 +557,17 @@ class ReaderOrchestrationRepository:
             raise ValueError("active base generation does not match the reading record generation")
         if record_row["base_status"] != "active":
             raise ValueError("reader snapshot requires active_base_id to point to status='active'")
+
+        input_row = await conn.fetchrow(
+            """
+            SELECT metadata_json
+            FROM original_inputs
+            WHERE reading_record_id = $1
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            """,
+            record_id,
+        )
 
         latest_event_row = await conn.fetchrow(
             """
@@ -610,6 +626,9 @@ class ReaderOrchestrationRepository:
         navigation_map = _navigation_map_by_unit_id(record_row["navigation_json"])
         base_language = record_row["base_language"] or record_row["language"]
         title_snapshot = record_row["title_snapshot"] or record_row["title"]
+        source_metadata = (
+            ensure_json_object(input_row["metadata_json"]) if input_row is not None else {}
+        )
         stable_base = StableReadingBase(
             reading_record_id=str(record_id),
             base_id=str(base_id),
@@ -769,6 +788,13 @@ class ReaderOrchestrationRepository:
 
         return LoadedReaderSnapshotFacts(
             build_result=build_result,
+            record=ReaderSnapshotRecord(
+                title=str(title_snapshot) if title_snapshot is not None else "Untitled Reading",
+                created_at=record_row["record_created_at"],
+                source_type=str(record_row["source_type"]),
+                source_metadata=source_metadata,
+                product_state=str(record_row["product_state"]),
+            ),
             last_event_sequence=last_event_sequence,
             snapshot_taken_at=latest_event_row["created_at"],
             enhancement_layers=tuple(

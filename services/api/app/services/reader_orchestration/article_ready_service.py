@@ -174,6 +174,7 @@ class ArticleReadyPersistenceService:
             facts.build_result,
             snapshot_taken_at=facts.snapshot_taken_at,
             last_event_sequence=facts.last_event_sequence,
+            record=facts.record,
             enhancement_layers=facts.enhancement_layers,
             parsed_decisions=facts.parsed_decisions,
         )

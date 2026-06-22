@@ -173,6 +173,13 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
     snapshot_taken_at: "2026-06-21T00:00:00Z",
     last_event_sequence: 3,
     record_id: "rec_1",
+    record: {
+      title: "Reader Plate DTO Fixture",
+      created_at: "2026-06-21T00:00:00Z",
+      source_type: "plain_text",
+      source_metadata: {},
+      product_state: "readable_enhancing",
+    },
     base: {
       base_id: "base_1",
       content_sha256: "a".repeat(64),
@@ -192,14 +199,35 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
           label: null,
           base_start_utf16: 0,
           base_end_utf16: 42,
+          text_hash: "abcd1234",
+          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
         },
       ],
     },
+    anchor_segments: [
+      {
+        anchor_segment_id: "s1",
+        sentence_id: "s1",
+        paragraph_id: "u1",
+        unit_id: "u1",
+        order_index: 1,
+        unit_order_index: 1,
+        segment_type: "sentence",
+        boundary_quality: "normal",
+        base_start_utf16: 0,
+        base_end_utf16: 42,
+        unit_start_utf16: 0,
+        unit_end_utf16: 42,
+        text_hash: "abcd1234",
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+    ],
     enhancement_layers: [
       {
         layer_id: "layer_vocab_1",
         layer_type: "vocabulary",
         layer_subtype: null,
+        owner: "system_ai",
         base_id: "base_1",
         target_scope: "unit",
         target_key: "u1",
@@ -237,6 +265,7 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
         layer_id: "layer_grammar_note_1",
         layer_type: "grammar_note",
         layer_subtype: null,
+        owner: "system_ai",
         base_id: "base_1",
         target_scope: "unit",
         target_key: "u1",
@@ -275,6 +304,7 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
         layer_id: "layer_sentence_analysis_1",
         layer_type: "sentence_analysis",
         layer_subtype: null,
+        owner: "system_ai",
         base_id: "base_1",
         target_scope: "unit",
         target_key: "u1",
@@ -314,6 +344,7 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
         layer_id: "layer_1",
         layer_type: "translation",
         layer_subtype: null,
+        owner: "system_ai",
         base_id: "base_1",
         target_scope: "unit",
         target_key: "u1",
@@ -375,6 +406,27 @@ describe("Reader Plate DTO shapes", () => {
     const snapshot = makeSnapshot();
     expect(snapshot.schema_kind).toBe(READER_PLATE_SNAPSHOT_SCHEMA_KIND);
     expect(snapshot.schema_kind).toBe("reader_plate_snapshot");
+  });
+
+  it("ReaderPlateSnapshotDto exposes record metadata, navigation hashes, anchor segments, and layer owners", () => {
+    const snapshot = makeSnapshot();
+
+    expect(snapshot.record).toMatchObject({
+      title: "Reader Plate DTO Fixture",
+      source_type: "plain_text",
+      product_state: "readable_enhancing",
+    });
+    expect(snapshot.navigation.units[0]).toMatchObject({
+      text_hash: "abcd1234",
+      hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+    });
+    expect(snapshot.anchor_segments[0]).toMatchObject({
+      anchor_segment_id: "s1",
+      unit_id: "u1",
+      text_hash: "abcd1234",
+      hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+    });
+    expect(snapshot.enhancement_layers[0].owner).toBe("system_ai");
   });
 
   it("ReaderPlateSnapshotDto exposes last_event_sequence as the only recovery cursor", () => {

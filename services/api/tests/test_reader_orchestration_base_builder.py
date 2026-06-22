@@ -541,6 +541,31 @@ def test_reader_plate_snapshot_uses_schema_kind_and_last_event_sequence() -> Non
     assert "projection_version" not in payload
 
 
+def test_reader_plate_snapshot_exposes_record_navigation_and_anchor_contract() -> None:
+    result = _build_result("First sentence. Second sentence!")
+    snapshot_taken_at = datetime(2026, 6, 22, 12, 0, tzinfo=UTC)
+    snapshot = build_reader_plate_snapshot(
+        result,
+        snapshot_taken_at=snapshot_taken_at,
+        last_event_sequence=5,
+    )
+
+    assert snapshot.record.title == "Sample Title"
+    assert snapshot.record.created_at == snapshot_taken_at
+    assert snapshot.record.source_type == "text"
+    assert snapshot.record.source_metadata == {}
+    assert snapshot.record.product_state == "readable_enhancing"
+    assert [unit.text_hash for unit in snapshot.navigation.units] == [
+        unit.text_hash for unit in result.units
+    ]
+    assert [segment.anchor_segment_id for segment in snapshot.anchor_segments] == [
+        segment.anchor_segment_id for segment in result.anchor_segments
+    ]
+    assert [segment.text_hash for segment in snapshot.anchor_segments] == [
+        segment.text_hash for segment in result.anchor_segments
+    ]
+
+
 def test_reader_plate_snapshot_rebuild_is_stable_for_same_domain_facts() -> None:
     result = _build_result("Sentence one. Sentence two!\n\nAnother block for stability.")
     snapshot_taken_at = datetime(2026, 6, 19, 12, 0, tzinfo=UTC)
@@ -582,6 +607,7 @@ def test_reader_plate_snapshot_projects_translation_layer_in_top_level_and_value
     ]
 
     assert [layer.layer_id for layer in snapshot.enhancement_layers] == ["layer-1"]
+    assert snapshot.enhancement_layers[0].owner == "system_ai"
     assert [node["layer_id"] for node in translation_nodes] == ["layer-1"]
     assert translation_nodes[0]["unit_id"] == result.units[0].unit_id
     assert translation_nodes[0]["base_id"] == result.base.base_id

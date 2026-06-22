@@ -161,6 +161,13 @@ function makeSnapshot() {
     snapshot_taken_at: "2026-06-21T00:00:00Z",
     last_event_sequence: 1,
     record_id: RECORD_ID,
+    record: {
+      title: "Reader Plate Smoke Fixture",
+      created_at: "2026-06-21T00:00:00Z",
+      source_type: "plain_text",
+      source_metadata: {},
+      product_state: "readable_enhancing",
+    },
     base: {
       base_id: "base_smoke",
       content_sha256: "a".repeat(64),
@@ -171,11 +178,13 @@ function makeSnapshot() {
       hash_algorithm: "fnv1a32-utf16",
     },
     navigation: { units: [] },
+    anchor_segments: [],
     enhancement_layers: [
       {
         layer_id: "layer_smoke_grammar_1",
         layer_type: "grammar_note",
         layer_subtype: null,
+        owner: "system_ai",
         base_id: "base_smoke",
         target_scope: "unit",
         target_key: "u1",
@@ -214,6 +223,7 @@ function makeSnapshot() {
         layer_id: "layer_smoke_sentence_1",
         layer_type: "sentence_analysis",
         layer_subtype: null,
+        owner: "system_ai",
         base_id: "base_smoke",
         target_scope: "unit",
         target_key: "u1",
@@ -261,6 +271,7 @@ function makeSnapshot() {
         layer_id: "layer_smoke_vocab_1",
         layer_type: "vocabulary",
         layer_subtype: null,
+        owner: "system_ai",
         base_id: "base_smoke",
         target_scope: "unit",
         target_key: "u1",
