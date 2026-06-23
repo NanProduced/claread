@@ -109,3 +109,23 @@ describe("entry source matrix - the new Reading Record list BFF source", () => {
     expect(source).not.toContain(ANALYSIS_TASKS_WIRING);
   });
 });
+
+describe("entry source matrix - Library new Reading Record section (W3-D5)", () => {
+  it("ReadingRecordSection is free of legacy reader route, legacy path and analysis-tasks wiring", () => {
+    const source = readSource(
+      "src/app/(private)/app/library/ReadingRecordSection.tsx",
+    );
+
+    expect(source).not.toContain(LEGACY_ROUTE_HELPER);
+    expect(source).not.toContain(LEGACY_READER_PATH);
+    expect(source).not.toContain(ANALYSIS_TASKS_WIRING);
+  });
+
+  it("Library old record list still uses the legacy reader route helper", () => {
+    const source = readSource(
+      "src/app/(private)/app/library/LibraryClient.tsx",
+    );
+
+    expect(source).toContain(LEGACY_ROUTE_HELPER);
+  });
+});

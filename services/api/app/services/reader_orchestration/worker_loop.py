@@ -4,7 +4,7 @@ import logging
 import os
 import socket
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
@@ -19,6 +19,8 @@ from .pipeline_runner import (
     ReaderEnhancementPipelineRunner,
     ReaderPipelineRunSummary,
 )
+from .product_state import decide_product_state_for_pipeline_summary
+from .repository import ReaderOrchestrationRepository
 
 logger = logging.getLogger(__name__)
 
@@ -82,10 +84,12 @@ class ReaderEnhancementWorkerLoopService:
         pool: asyncpg.Pool | None = None,
         pipeline_runner: ReaderEnhancementPipelineRunner | None = None,
         job_runtime: ReaderJobRuntime | None = None,
+        repository: ReaderOrchestrationRepository | None = None,
     ) -> None:
         self._pool = pool
         self._pipeline_runner = pipeline_runner or ReaderEnhancementPipelineRunner(pool=pool)
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
+        self._repository = repository or ReaderOrchestrationRepository(pool=pool)
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -228,6 +232,18 @@ class ReaderEnhancementWorkerLoopService:
                     max_ticks=max_ticks,
                     max_jobs=max_jobs,
                 )
+                product_state_decision = decide_product_state_for_pipeline_summary(summary)
+                product_state_updated = False
+                if product_state_decision.should_update_record:
+                    product_state_updated = (
+                        await self._repository.update_record_product_state_if_active(
+                            lock_conn,
+                            record_id=candidate.record_id,
+                            expected_generation=candidate.expected_generation,
+                            next_product_state=product_state_decision.next_product_state,
+                            updated_at=datetime.now(UTC),
+                        )
+                    )
             finally:
                 if user_locked:
                     user_unlocked = await lock_conn.fetchval(
@@ -274,6 +290,10 @@ class ReaderEnhancementWorkerLoopService:
                 "snapshot_reload_recommended": summary.snapshot_reload_recommended,
                 "total_ticks": summary.total_ticks,
                 "total_jobs": summary.total_jobs,
+                "product_state_decision_reason": product_state_decision.reason_code,
+                "product_state_decision_user_visible": product_state_decision.user_visible,
+                "next_product_state": product_state_decision.next_product_state,
+                "product_state_updated": product_state_updated,
             },
         )
         return ReaderEnhancementWorkerLoopRecordResult(

@@ -31,6 +31,7 @@ import type { RecordsBffStatus } from "@/services/bff/records";
 import type { RecordListItemVm } from "@/types/view/RecordListItemVm";
 import { DeleteRecordButton } from "./DeleteRecordButton";
 import { LibraryFavoriteButton } from "./LibraryFavoriteButton";
+import { ReadingRecordSection } from "./ReadingRecordSection";
 import * as ScrollAreaPrimitive from "@radix-ui/react-scroll-area";
 import { ScrollBar } from "@/components/primitives/scroll-area";
 import {
@@ -463,6 +464,9 @@ export function LibraryClient({
   return (
     <div className="grid min-h-0 flex-1 gap-12 lg:gap-20 xl:gap-28 lg:grid-cols-[minmax(0,1fr)_280px] xl:grid-cols-[minmax(0,1fr)_320px]">
       <div className="flex h-full min-h-0 flex-col space-y-2 lg:py-12">
+        {/* New Reading Record discovery section (W3-D5) */}
+        <ReadingRecordSection />
+
         {/* Archive Header */}
         <div className="mb-6 shrink-0 flex flex-col sm:flex-row sm:items-end justify-between gap-4 pl-2 border-b border-hairline pb-5">
           <div>

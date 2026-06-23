@@ -19,6 +19,7 @@ from app.schemas.reader_orchestration import (
     ReaderSnapshotLayer,
     ReaderSnapshotParsedDecision,
     ReaderSnapshotRecord,
+    ReadingRecordProductState,
 )
 
 from .base_builder import (
@@ -374,6 +375,33 @@ class ReaderOrchestrationRepository:
         )
         if result != "UPDATE 1":
             raise ValueError("reading record generation mismatch while setting active base")
+
+    async def update_record_product_state_if_active(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        record_id: UUID,
+        expected_generation: int,
+        next_product_state: ReadingRecordProductState,
+        updated_at: datetime,
+    ) -> bool:
+        result = await conn.execute(
+            """
+            UPDATE reading_records
+            SET product_state = $3,
+                updated_at = $4
+            WHERE id = $1
+              AND generation = $2
+              AND deleted_at IS NULL
+              AND lifecycle_status = 'active'
+              AND product_state IN ('processing', 'readable_enhancing')
+            """,
+            record_id,
+            expected_generation,
+            next_product_state,
+            updated_at,
+        )
+        return result == "UPDATE 1"
 
     async def ensure_event_sequence_row(
         self,

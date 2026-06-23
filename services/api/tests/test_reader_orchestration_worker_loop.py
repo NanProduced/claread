@@ -19,6 +19,7 @@ from app.schemas.reader_orchestration import (
     VocabularyHighlightItem,
     VocabularyLayerOutput,
 )
+from app.services.reader_orchestration import product_state as product_state_module
 from app.services.reader_orchestration.grammar_worker import (
     GrammarBundleWorkerService,
     GrammarExecutionResult,
@@ -113,6 +114,23 @@ class _CapturingRunner:
             snapshot_reload_recommended=False,
             stopped_reason="all_workers_no_job",
         )
+
+
+class _StaticSummaryRunner:
+    def __init__(self, summary: ReaderPipelineRunSummary) -> None:
+        self.summary = summary
+
+    async def run(
+        self,
+        *,
+        record_id: UUID,
+        user_id: UUID,
+        lease_owner: str,
+        lease_duration: timedelta,
+        max_ticks: int,
+        max_jobs: int,
+    ) -> ReaderPipelineRunSummary:
+        return self.summary
 
 
 class _StaticTranslator:
@@ -351,6 +369,21 @@ async def _count_layers(
         )
 
 
+async def _load_product_state(pool: asyncpg.Pool, record_id: UUID) -> str:
+    async with pool.acquire() as conn:
+        value = await conn.fetchval(
+            """
+            SELECT product_state
+            FROM reading_records
+            WHERE id = $1
+            """,
+            record_id,
+        )
+    if value is None:
+        raise AssertionError(f"product_state for record {record_id} not found")
+    return str(value)
+
+
 async def test_scan_eligible_records_excludes_coverage_complete(
     worker_loop_env: asyncpg.Pool,
 ) -> None:
@@ -582,6 +615,7 @@ async def test_process_candidate_forwards_custom_lease_duration_to_pipeline_runn
     assert result.pipeline_summary is not None
     assert len(runner.calls) == 1
     assert runner.calls[0]["lease_duration"] == lease_duration
+    assert await _load_product_state(worker_loop_env, article.record_id) == "readable_enhancing"
 
 
 async def test_retry_later_records_are_not_hot_looped_until_available(
@@ -610,6 +644,7 @@ async def test_retry_later_records_are_not_hot_looped_until_available(
     assert result.pipeline_summary is not None
     assert result.pipeline_summary.stopped_reason == "attention_required"
     assert result.pipeline_summary.stopped_outcome == "retry_later"
+    assert await _load_product_state(worker_loop_env, article.record_id) == "readable_enhancing"
 
     candidates_after_retry = await service.scan_eligible_records(batch_size=20)
     candidate_ids_after_retry = {
@@ -681,6 +716,65 @@ async def test_worker_loop_preserves_fail_closed_when_real_executor_is_unconfigu
     assert result.pipeline_summary.attention_code == "vocabulary_executor_unconfigured"
     assert await _count_layers(worker_loop_env, article.record_id, "translation") == 1
     assert await _count_layers(worker_loop_env, article.record_id, "vocabulary") == 0
+    assert await _load_product_state(worker_loop_env, article.record_id) == "failed"
+
+
+async def test_worker_loop_updates_product_state_to_action_required_only_for_allowlisted_codes(
+    worker_loop_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = await insert_user(worker_loop_env)
+    article = await submit_article_ready(
+        worker_loop_env,
+        user_id=user_id,
+        title="Action Required",
+    )
+    summary = ReaderPipelineRunSummary(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        bootstrap=EnhancementBootstrapSummary(
+            record_id=article.record_id,
+            base_id=article.base_id,
+            expected_generation=1,
+            last_event_sequence=article.article_ready_sequence,
+            job_counts=EnhancementBootstrapJobCounts(),
+        ),
+        bootstrapped_job_counts=EnhancementBootstrapJobCounts(),
+        worker_tick_counts=EnhancementWorkerTickCounts(vocabulary=1),
+        outcome_counts=EnhancementOutcomeCounts(failed_terminal=1),
+        total_ticks=1,
+        total_jobs=1,
+        last_event_sequence=article.article_ready_sequence,
+        snapshot_reload_recommended=False,
+        stopped_reason="attention_required",
+        stopped_worker_type="vocabulary",
+        stopped_outcome="failed_terminal",
+        attention_code="reader_user_confirmation_required",
+    )
+    monkeypatch.setattr(
+        product_state_module,
+        "USER_ACTION_REQUIRED_ATTENTION_CODES",
+        frozenset({"reader_user_confirmation_required"}),
+    )
+    runner = _StaticSummaryRunner(summary)
+    service = ReaderEnhancementWorkerLoopService(
+        pool=worker_loop_env,
+        pipeline_runner=runner,  # type: ignore[arg-type]
+    )
+    candidate = await _find_candidate(service, article.record_id)
+
+    result = await service.process_candidate(
+        candidate=candidate,
+        lease_owner_prefix="worker-loop-action-required",
+        max_ticks=6,
+        max_jobs=6,
+    )
+
+    assert result.outcome == "processed"
+    assert result.pipeline_summary is not None
+    assert result.pipeline_summary.attention_code == "reader_user_confirmation_required"
+    assert await _load_product_state(worker_loop_env, article.record_id) == "action_required"
 
 
 def test_worker_loop_module_does_not_reference_render_scene_or_projection_ops() -> None:

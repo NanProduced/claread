@@ -138,7 +138,14 @@ Rules:
 
 - `readiness_state` is monotonic for an active generation, except supersede/delete.
 - `product_state` may move forward or backward when quota, user action, or retry state changes.
-- `failed_terminal` on a run or job is runtime state, not direct UI state. D6 product mapping must classify user-remediable terminal failures to `action_required`; non-remediable terminal failures map to `failed`.
+- `failed_terminal` on a run or job is runtime state, not direct UI state.
+- D6-P0 product mapping is conservative and code-backed:
+  - `all_workers_no_job`, `max_ticks_reached`, `max_jobs_reached` do not change `reading_records.product_state`.
+  - `retry_later` does not change `reading_records.product_state`.
+  - `superseded` / publish-fence attention does not change `reading_records.product_state`.
+  - `failed_terminal` maps to `failed` by default.
+  - `action_required` is only allowed when `attention_code` is in an explicit user-action allowlist; v1 allowlist may stay empty until workers emit concrete user-remediable codes.
+- executor/profile missing、model route missing、publisher fence and other system failures must not be collapsed into `action_required`.
 - Workers do not write `coverage_complete` directly. Coverage aggregates from `parsed_decisions`.
 
 ### `original_inputs`

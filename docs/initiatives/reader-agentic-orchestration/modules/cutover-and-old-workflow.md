@@ -1,6 +1,6 @@
 # Cutover 与旧 AI Workflow 处理
 
-> 状态：`D5-W3 D4 done`
+> 状态：`D5-W3 D5 done`
 > 最后更新：2026-06-23
 > 范围：停服重构、旧 workflow 替换、旧表/旧 UI 清理边界，以及 Web cutover 迁移顺序。
 
@@ -404,7 +404,18 @@ W3-D4 结论：
 - 新 BFF source 不引用 `legacyAppReaderRoute`、`/app/reader/` 或 `analysis-tasks`；`entry-source-matrix.test.ts` 已新增 guard 锁定此边界。
 - 本轮没有切任何入口流量：Library、command palette、active task、Vocabulary source links 仍保持旧 id / `legacyAppReaderRoute(...)` 边界。
 - 后端 focused tests 覆盖 user scope、字段 shape、排序、limit 防御；Web BFF tests 覆盖 readerUrl、新 id 命名、无 legacy route。
-- 后续 W3-D5+ 可逐个入口改线：先 command palette recent / search，再 Library，最后 active task 和 Vocabulary source links。
+- 后续 W3-D5+ 可逐个入口改线；Library 已在 W3-D5 新增 Reading Record 发现 section，剩余入口按 command palette recent / search、active task、Vocabulary source links 继续迁移。
+
+W3-D5 结论：
+
+- Library 页面已新增 `ReadingRecordSection` 客户端组件，在现有 Library 页面框架内（Archive Header 上方）渲染一个明确的新 Reading Record 发现 section。
+- 新 section 从 `/api/web/reading-records` 获取数据，覆盖 loading、empty、error 三种状态；list 状态展示 title、createdAt、productState、readinessState 最小状态信息。
+- 新 section 使用 BFF 返回的 `readerUrl` 跳转，不在 Library 里手写 `/app/reader-record/` 路径，也不引用 `appReadingRecordRoute` / `legacyAppReaderRoute` route helper。
+- 旧 Library records 列表行为不变：仍使用 `legacyAppReaderRoute(record.id)` 跳转旧 `/app/reader/{recordId}`，仍从旧 `/records` BFF 获取数据。
+- `LibraryClient.tsx` 仍只引用 `legacyAppReaderRoute`，不引用 `appReadingRecordRoute`；新 section 是独立客户端组件 `ReadingRecordSection.tsx`，不引用任何 route helper。
+- `entry-source-matrix.test.ts` 已新增 guard：`ReadingRecordSection.tsx` 不引用 `legacyAppReaderRoute`、`/app/reader/` 或 `analysis-tasks`；`LibraryClient.tsx` 旧 record list 仍使用 `legacyAppReaderRoute`。
+- command palette、active task、Vocabulary source links 仍保持 legacy 边界，本轮未改线。
+- focused tests 覆盖 loading/empty/error/list 状态、readerUrl 使用、无 legacy route 引用。
 
 ## 不允许事项
 

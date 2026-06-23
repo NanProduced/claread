@@ -117,7 +117,12 @@ Concurrency / lock 初版口径：
 - per-user concurrency 默认 `1`；可以通过后续配置放宽。
 - per-worker process concurrency 默认 `1`；先通过增加 worker process 数量扩吞吐。
 - `retry_later` 必须尊重 job `available_at`，不能 hot-loop 同一 record。
-- `failed_terminal` 初版作为 logs / metrics / summary 的 attention outcome；是否映射到 `product_state='action_required'` 留给 D6 product hardening。
+- D6-P0 product-state classifier 保守收口：
+  - `all_workers_no_job` / `max_ticks_reached` / `max_jobs_reached` 不改 `product_state`
+  - `retry_later` 不改 `product_state`
+  - `failed_terminal` 默认映射到 `failed`
+  - `action_required` 只允许来自显式 user-action allowlist
+  - `publish_fence_failed`、executor/profile missing、model route missing 等 system failure 不映射成 `action_required`
 
 Model profile / executor 口径：
 

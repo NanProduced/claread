@@ -319,7 +319,12 @@ Invoke-RestMethod `
 
 ### failed_terminal 的产品状态
 
-当前 worker loop 只把 `failed_terminal` 记入 summary / logs；不会自动把 `product_state` 改成 `action_required`。
+D6-P0 起，worker loop 会通过保守 classifier 更新 `reading_records.product_state`：
+
+- `failed_terminal` 默认映射到 `failed`
+- `action_required` 只允许来自显式 user-action allowlist
+- `publish_fence_failed`、`model_route_unavailable`、`vocabulary_executor_unconfigured`、`grammar_bundle_executor_unconfigured` 等 system/config failure 不会映射成 `action_required`
+- `retry_later`、`all_workers_no_job`、`max_ticks_reached`、`max_jobs_reached` 继续不改 `product_state`
 
 ## 9. D5-R4 / D5-R6 实际验证到哪里
 
