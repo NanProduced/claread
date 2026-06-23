@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
+from app.contracts.anchor_validation import AnchorValidationError
 from app.contracts.annotation import (
     build_multi_text_target_key,
     build_sentence_target_key,
@@ -20,6 +21,13 @@ from app.schemas.user_annotations import (
     UserAnnotationSegment,
     UserAnnotationUpdateRequest,
 )
+from app.services.reader_orchestration.anchor_gate import (
+    ValidatedReadingRecordAnchor,
+    load_validated_reading_record_anchor,
+)
+from app.services.reader_orchestration.repository import (
+    ReaderOrchestrationRepository,
+)
 from app.services.text_anchors import (
     load_render_scene,
     sentence_map,
@@ -33,11 +41,70 @@ _ANNOTATION_FIELDS = (
     "text_hash, color, payload_json, created_at, updated_at"
 )
 
+# D6-A5 dual-contract spike status code for a request that validated cleanly
+# through the Reading Record anchor gate but whose persistence path is not yet
+# wired. Routes must surface this code so the Web side can show a stable
+# "accepted, not yet persisted" signal instead of treating it as a 5xx.
+USER_EDITORIAL_ASSET_WRITE_PENDING = "user_editorial_asset_write_pending"
+
 
 @dataclass(frozen=True, slots=True)
 class _SingleSentenceRange:
     start_offset: int
     end_offset: int
+
+
+async def _validate_reading_record_anchor_branch(
+    conn,
+    *,
+    user_id: UUID,
+    req: UserAnnotationCreateRequest,
+    repository: ReaderOrchestrationRepository | None,
+) -> None:
+    """D6-A5 dual-contract spike branch for `req.anchor is not None`.
+
+    The new anchor contract bypasses the legacy sentence / target_key /
+    render_scene path. It runs the request through the Reading Record
+    anchor gate. On gate failure we surface the typed error code as a
+    stable HTTP 400; on gate success we currently raise HTTP 409 with
+    `code = USER_EDITORIAL_ASSET_WRITE_PENDING` because persistence is not
+    yet wired into the legacy `user_annotations` table.
+    """
+    assert req.anchor is not None  # caller guards
+    repo = repository or ReaderOrchestrationRepository()
+
+    try:
+        validated: ValidatedReadingRecordAnchor = await load_validated_reading_record_anchor(
+            conn,
+            repository=repo,
+            user_id=user_id,
+            anchor=req.anchor,
+        )
+    except AnchorValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": exc.code,
+                "message": exc.message,
+                "field": "anchor",
+            },
+        ) from exc
+
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": USER_EDITORIAL_ASSET_WRITE_PENDING,
+            "message": (
+                "Reading Record anchor validated; persistence into "
+                "user_annotations is deferred until D6-A5 follow-up."
+            ),
+            "validated": True,
+            "record_id": str(validated.record_id),
+            "unit_id": validated.unit.unit_id,
+            "anchor_segment_id": validated.anchor_segment.anchor_segment_id,
+            "selected_text": validated.selected_text,
+        },
+    )
 
 
 def _range_from_annotation_row(row: dict) -> _SingleSentenceRange | None:
@@ -375,7 +442,30 @@ async def _resolve_single_sentence_conflict(
 async def create_user_annotation(
     user_id: UUID,
     req: UserAnnotationCreateRequest,
+    *,
+    repository: ReaderOrchestrationRepository | None = None,
 ) -> UserAnnotationResponse:
+    # D6-A5 dual-contract spike: when the new Reading Record anchor contract
+    # is supplied, run the request through the Reading Record anchor gate
+    # BEFORE doing any legacy target_key / scene / DB work. The branch
+    # either raises an HTTPException with a stable typed `code` (gate
+    # failure) or an HTTPException with `code =
+    # USER_EDITORIAL_ASSET_WRITE_PENDING` because persistence into the
+    # legacy `user_annotations` table is not yet wired.
+    if req.anchor is not None:
+        async with db_connect.acquire_connection() as conn:
+            await _validate_reading_record_anchor_branch(
+                conn,
+                user_id=user_id,
+                req=req,
+                repository=repository,
+            )
+        # Unreachable: _validate_reading_record_anchor_branch always raises.
+        raise HTTPException(
+            status_code=500,
+            detail="new anchor branch returned without raising",
+        )
+
     target_key = _build_target_key(req)
 
     async with db_connect.acquire_connection() as conn:

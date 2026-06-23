@@ -367,10 +367,11 @@ class TestServiceBehavior:
 
         assert [item.note_text for item in response] == ["Sentence note", "Range note"]
         query = conn.fetch.await_args.args[0]
+        normalized_query = " ".join(query.split())
         assert (
             "ORDER BY anchor_sentence_id ASC, start_offset ASC NULLS FIRST, "
             "end_offset ASC NULLS FIRST, created_at ASC"
-        ) in query
+        ) in normalized_query
         assert "ORDER BY paragraph_id" not in query
 
 

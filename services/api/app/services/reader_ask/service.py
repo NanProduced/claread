@@ -13,10 +13,114 @@ from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 
+from app.agents.grammar_agent import GrammarAgentDeps
 from app.agents.reader_ask_agent import (
     ReaderAskRuntimeActionRequest,
     ReaderAskRuntimeState,
 )
+from app.config.settings import get_settings
+from app.database import connection as db_connection
+from app.llm.agent_runner import extract_run_usage
+from app.llm.types import RunModelSettings
+from app.schemas.internal.analysis import ReadingGoal, ReadingVariant
+from app.schemas.internal.drafts import draft_to_annotation
+from app.schemas.reader_ask import (
+    ReaderAskActionConfirmRequest,
+    ReaderAskActionConfirmResponse,
+    ReaderAskActionConfirmResult,
+    ReaderAskActionProposal,
+    ReaderAskAnchorRef,
+    ReaderAskAssetDisambiguation,
+    ReaderAskAttachment,
+    ReaderAskAttachmentPayload,
+    ReaderAskCitation,
+    ReaderAskCompletedPayload,
+    ReaderAskContextPlan,
+    ReaderAskContextRecordSearchResponse,
+    ReaderAskCurrentRecordAffordances,
+    ReaderAskDeleteSupplementResponse,
+    ReaderAskDisambiguation,
+    ReaderAskEntryAction,
+    ReaderAskEvidenceItem,
+    ReaderAskGrammarNoteCard,
+    ReaderAskGrammarNoteCardSpan,
+    ReaderAskMessage,
+    ReaderAskMessageRetryRequest,
+    ReaderAskMessageStreamRequest,
+    ReaderAskModelOptionListResponse,
+    ReaderAskModelOptionSummary,
+    ReaderAskPageIdentity,
+    ReaderAskPersistedSupplement,
+    ReaderAskReadingRecordAnchor,
+    ReaderAskResolvedContextInput,
+    ReaderAskResolvedContextSummary,
+    ReaderAskResolvedIntent,
+    ReaderAskResponseCard,
+    ReaderAskRunInfo,
+    ReaderAskSelectedModel,
+    ReaderAskSentenceBreakdownCard,
+    ReaderAskSentenceBreakdownPart,
+    ReaderAskSubmissionMode,
+    ReaderAskSupplementCandidate,
+    ReaderAskTaskMode,
+    ReaderAskThreadCreateRequest,
+    ReaderAskThreadDetail,
+    ReaderAskThreadListResponse,
+    ReaderAskThreadSummary,
+    ReaderAskToolTraceEntry,
+    ReaderAskTraceSummary,
+    ReaderAskUserVisibleOutput,
+    ReaderAskWriteProposalPayload,
+)
+from app.schemas.reader_notes import ReaderNoteCreateRequest
+from app.schemas.user_annotations import UserAnnotationCreateRequest, UserAnnotationSegment
+from app.services import reader_notes as reader_notes_svc
+from app.services import user_annotations as user_annotations_svc
+from app.services.ai_usage import (
+    BILLING_MODE_USER_POINTS,
+    CAPABILITY_READER_ASK,
+    STATUS_FAILED,
+    STATUS_SUCCEEDED,
+    USAGE_SCOPE_USER_BILLED,
+    AIUsageEventCreate,
+    build_model_metadata,
+    build_reader_ask_billing_metadata,
+    compute_reader_ask_cost_points,
+    record_ai_usage_event,
+)
+from app.services.analysis.credit_service import (
+    LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
+    CreditReservation,
+    check_quota,
+    deduct_points,
+    ensure_credit_account,
+    refund_reserved_points,
+    reserve_points,
+)
+from app.services.analysis.planning.goal_planner import build_goal_execution_plan
+from app.services.analysis.postprocess.projection import (
+    _format_grammar_note_content,
+    _format_sentence_analysis_content,
+)
+from app.services.analysis.prompting.prompt_loader import get_prompt_version
+from app.services.analysis.prompting.strategy_builder import build_grammar_bundle_async
+from app.services.analysis.runtime.runners import run_grammar_agent
+from app.services.analysis.validators import validate_grammar_note, validate_sentence_analysis
+from app.services.reader_ask import capabilities as capabilities_svc
+from app.services.reader_ask import config as cfg
+from app.services.reader_ask import context_runtime as context_runtime_svc
+from app.services.reader_ask import model_options as model_options_svc
+from app.services.reader_ask import output_contract as output_contract_svc
+from app.services.reader_ask import planner, utils
+from app.services.reader_ask import planner_runtime as planner_runtime_svc
+from app.services.reader_ask import post_process as post_process_svc
+from app.services.reader_ask import prompt_preparation as prompt_preparation_svc
+from app.services.reader_ask import recovery as recovery_svc
+from app.services.reader_ask import repository as repo
+from app.services.reader_ask import runtime_contract as runtime_contract_svc
+from app.services.reader_ask import stream_checkpoint as stream_checkpoint_svc
+from app.services.reader_ask import stream_events as stream_events_svc
+from app.services.reader_ask import supplements as supplements_svc
 from app.services.reader_ask.agent_deps_factory import build_reader_ask_agent_deps
 from app.services.reader_ask.agent_invocation import (
     AgentStreamRuntime,
@@ -27,114 +131,12 @@ from app.services.reader_ask.agent_invocation import (
     stream_reader_ask_agent_run,
 )
 from app.services.reader_ask.agent_runner import is_degenerate_answer
-from app.config.settings import get_settings
-from app.database import connection as db_connection
-from app.llm.agent_runner import extract_run_usage
-from app.llm.types import RunModelSettings
-from app.agents.grammar_agent import GrammarAgentDeps
-from app.schemas.reader_ask import (
-    ReaderAskActionConfirmRequest,
-    ReaderAskActionConfirmResponse,
-    ReaderAskActionConfirmResult,
-    ReaderAskActionProposal,
-    ReaderAskAttachment,
-    ReaderAskAttachmentPayload,
-    ReaderAskAnchorRef,
-    ReaderAskCitation,
-    ReaderAskCompletedPayload,
-    ReaderAskContextRecordSearchResponse,
-    ReaderAskContextPlan,
-    ReaderAskCurrentRecordAffordances,
-    ReaderAskDeleteSupplementResponse,
-    ReaderAskAssetDisambiguation,
-    ReaderAskDisambiguation,
-    ReaderAskEvidenceItem,
-    ReaderAskEntryAction,
-    ReaderAskGrammarNoteCard,
-    ReaderAskGrammarNoteCardSpan,
-    ReaderAskMessage,
-    ReaderAskMessageStreamRequest,
-    ReaderAskModelOptionListResponse,
-    ReaderAskModelOptionSummary,
-    ReaderAskPageIdentity,
-    ReaderAskPersistedSupplement,
-    ReaderAskResolvedContextInput,
-    ReaderAskResolvedIntent,
-    ReaderAskResolvedContextSummary,
-    ReaderAskResponseCard,
-    ReaderAskRunInfo,
-    ReaderAskSentenceBreakdownCard,
-    ReaderAskSentenceBreakdownPart,
-    ReaderAskSelectedModel,
-    ReaderAskSubmissionMode,
-    ReaderAskSupplementCandidate,
-    ReaderAskThreadCreateRequest,
-    ReaderAskThreadDetail,
-    ReaderAskThreadListResponse,
-    ReaderAskThreadSummary,
-    ReaderAskTaskMode,
-    ReaderAskTraceSummary,
-    ReaderAskToolTraceEntry,
-    ReaderAskUserVisibleOutput,
-)
-from app.schemas.internal.analysis import ReadingGoal, ReadingVariant
-from app.schemas.internal.drafts import draft_to_annotation
-from app.services.analysis.planning.goal_planner import build_goal_execution_plan
-from app.services.analysis.postprocess.projection import (
-    _format_grammar_note_content,
-    _format_sentence_analysis_content,
-)
-from app.services.analysis.prompting.strategy_builder import build_grammar_bundle_async
-from app.services.analysis.runtime.runners import run_grammar_agent
-from app.services.analysis.validators import validate_grammar_note, validate_sentence_analysis
-from app.schemas.reader_notes import ReaderNoteCreateRequest
-from app.schemas.user_annotations import UserAnnotationCreateRequest, UserAnnotationSegment
-from app.services.ai_usage import (
-    AIUsageEventCreate,
-    BILLING_MODE_USER_POINTS,
-    CAPABILITY_READER_ASK,
-    STATUS_FAILED,
-    STATUS_SUCCEEDED,
-    USAGE_SCOPE_USER_BILLED,
-    build_model_metadata,
-    build_reader_ask_billing_metadata,
-    compute_reader_ask_cost_points,
-    record_ai_usage_event,
-)
-from app.services.analysis.credit_service import (
-    CreditReservation,
-    LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
-    check_quota,
-    deduct_points,
-    ensure_credit_account,
-    refund_reserved_points,
-    reserve_points,
-)
-from app.services.analysis.prompting.prompt_loader import get_prompt_version
-from app.services.reader_ask import capabilities as capabilities_svc
-from app.services.reader_ask import context_runtime as context_runtime_svc
-from app.services.reader_ask import output_contract as output_contract_svc
-from app.services.reader_ask import planner
-from app.services.reader_ask import post_process as post_process_svc
-from app.services.reader_ask import prompt_preparation as prompt_preparation_svc
-from app.services.reader_ask import recovery as recovery_svc
-from app.services.reader_ask import repository as repo
-from app.services.reader_ask import runtime_contract as runtime_contract_svc
-from app.services.reader_ask import stream_events as stream_events_svc
-from app.services.reader_ask import supplements as supplements_svc
-from app.services.reader_ask import planner_runtime as planner_runtime_svc
-from app.services.reader_ask import config as cfg
-from app.services.reader_ask import model_options as model_options_svc
-from app.services.reader_ask import stream_checkpoint as stream_checkpoint_svc
-from app.services.reader_ask import utils
-
-logger = logging.getLogger(__name__)
-
-
 from app.services.text_anchors import ensure_json_dict, sentence_map
 from app.services.user_assets import vocabulary as vocabulary_svc
-from app.services import reader_notes as reader_notes_svc
-from app.services import user_annotations as user_annotations_svc
+
+READING_RECORD_ANCHOR_CONFIRM_PENDING = "reader_ask_reading_record_anchor_confirm_pending"
+
+logger = logging.getLogger(__name__)
 
 
 _WORKFLOW_NAME = "reader_ask"
@@ -4892,8 +4894,26 @@ async def confirm_action(
     # The underlying business writes are idempotent (ON CONFLICT), so it is
     # safe to retry. Fall through to the normal confirm path.
 
-    message = ReaderAskMessage.model_validate(message_dict)
     proposal = ReaderAskActionProposal.model_validate(proposal_dict)
+    if body.confirmed and proposal.action_type in ("save_highlight", "save_note"):
+        write_payload = ReaderAskWriteProposalPayload.model_validate(proposal.payload_json)
+        if isinstance(write_payload.anchor, ReaderAskReadingRecordAnchor):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": READING_RECORD_ANCHOR_CONFIRM_PENDING,
+                    "message": (
+                        "Reading Record anchor action confirmation is not enabled yet; "
+                        "the proposal was not written."
+                    ),
+                    "validated": False,
+                    "record_id": write_payload.anchor.record_id,
+                    "unit_id": write_payload.anchor.unit_id,
+                    "anchor_segment_id": write_payload.anchor.anchor_segment_id,
+                },
+            )
+
+    message = ReaderAskMessage.model_validate(message_dict)
     run_history = message_dict.get("run_history") or None
     persisted_supplements = [
         item.model_dump(mode="json") for item in message.persisted_supplements

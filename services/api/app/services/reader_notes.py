@@ -1,8 +1,9 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException
 
+from app.contracts.anchor_validation import AnchorValidationError
 from app.contracts.annotation import (
     build_multi_text_target_key,
     build_sentence_target_key,
@@ -16,6 +17,13 @@ from app.schemas.reader_notes import (
     ReaderNoteUpdateRequest,
 )
 from app.schemas.user_annotations import UserAnnotationSegment
+from app.services.reader_orchestration.anchor_gate import (
+    ValidatedReadingRecordAnchor,
+    load_validated_reading_record_anchor,
+)
+from app.services.reader_orchestration.repository import (
+    ReaderOrchestrationRepository,
+)
 from app.services.text_anchors import (
     load_render_scene,
     sentence_map,
@@ -28,6 +36,61 @@ _NOTE_FIELDS = (
     "paragraph_id, sentence_id, selected_text, start_offset, end_offset, "
     "text_hash, note_text, payload_json, created_at, updated_at"
 )
+
+# Mirror of user_annotations.USER_EDITORIAL_ASSET_WRITE_PENDING — the new
+# anchor branch's stable typed code for "validated, persistence deferred".
+READER_NOTE_WRITE_PENDING = "user_editorial_asset_write_pending"
+
+
+async def _validate_reading_record_anchor_branch(
+    conn,
+    *,
+    user_id: UUID,
+    req: ReaderNoteCreateRequest,
+    repository: ReaderOrchestrationRepository | None,
+) -> None:
+    """D6-A5 dual-contract spike branch for `req.anchor is not None`.
+
+    Runs the request through the Reading Record anchor gate. Gate failure
+    -> HTTP 400 with the typed error code; gate success -> HTTP 409 with
+    `code = READER_NOTE_WRITE_PENDING`. Persistence into the legacy
+    `reader_notes` table is not yet wired for the new anchor path.
+    """
+    assert req.anchor is not None  # caller guards
+    repo = repository or ReaderOrchestrationRepository()
+
+    try:
+        validated: ValidatedReadingRecordAnchor = await load_validated_reading_record_anchor(
+            conn,
+            repository=repo,
+            user_id=user_id,
+            anchor=req.anchor,
+        )
+    except AnchorValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": exc.code,
+                "message": exc.message,
+                "field": "anchor",
+            },
+        ) from exc
+
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": READER_NOTE_WRITE_PENDING,
+            "message": (
+                "Reading Record anchor validated; persistence into "
+                "reader_notes is deferred until D6-A5 follow-up."
+            ),
+            "validated": True,
+            "record_id": str(validated.record_id),
+            "unit_id": validated.unit.unit_id,
+            "anchor_segment_id": validated.anchor_segment.anchor_segment_id,
+            "selected_text": validated.selected_text,
+        },
+    )
 
 
 def _row_to_response(row: dict) -> ReaderNoteResponse:
@@ -90,24 +153,45 @@ async def _validate_quote_against_record(
             [segment.model_dump(mode="python") for segment in req.segments],
         )
         if req.anchor_sentence_id != req.segments[0].sentence_id:
-            raise HTTPException(status_code=400, detail="anchor_sentence_id must match first segment sentence_id")
+            raise HTTPException(
+                status_code=400,
+                detail="anchor_sentence_id must match first segment sentence_id",
+            )
         return
     if not req.sentence_id:
-        raise HTTPException(status_code=400, detail="sentence_id is not present in render scene")
+        raise HTTPException(
+            status_code=400,
+            detail="sentence_id is not present in render scene",
+        )
     if req.quote_mode == "sentence":
         sentence = sentence_map(render_scene).get(req.sentence_id)
         if sentence is None:
-            raise HTTPException(status_code=400, detail="sentence_id is not present in render scene")
+            raise HTTPException(
+                status_code=400,
+                detail="sentence_id is not present in render scene",
+            )
         sentence_text = sentence.get("text")
         if not isinstance(sentence_text, str):
-            raise HTTPException(status_code=400, detail="sentence text is unavailable in render scene")
+            raise HTTPException(
+                status_code=400,
+                detail="sentence text is unavailable in render scene",
+            )
         if sentence_text != req.selected_text:
-            raise HTTPException(status_code=400, detail="selected_text does not match full sentence text")
+            raise HTTPException(
+                status_code=400,
+                detail="selected_text does not match full sentence text",
+            )
         if req.anchor_sentence_id != req.sentence_id:
-            raise HTTPException(status_code=400, detail="anchor_sentence_id must match sentence_id for sentence notes")
+            raise HTTPException(
+                status_code=400,
+                detail="anchor_sentence_id must match sentence_id for sentence notes",
+            )
         return
     if req.anchor_sentence_id != req.sentence_id:
-        raise HTTPException(status_code=400, detail="anchor_sentence_id must match sentence_id for single-sentence notes")
+        raise HTTPException(
+            status_code=400,
+            detail="anchor_sentence_id must match sentence_id for single-sentence notes",
+        )
     validate_text_range_against_render_scene(
         render_scene,
         {
@@ -121,7 +205,32 @@ async def _validate_quote_against_record(
     )
 
 
-async def create_reader_note(user_id: UUID, req: ReaderNoteCreateRequest) -> ReaderNoteResponse:
+async def create_reader_note(
+    user_id: UUID,
+    req: ReaderNoteCreateRequest,
+    *,
+    repository: ReaderOrchestrationRepository | None = None,
+) -> ReaderNoteResponse:
+    # D6-A5 dual-contract spike: when the new Reading Record anchor contract
+    # is supplied, route through the Reading Record anchor gate BEFORE
+    # touching legacy analysis_record_id / target_key / render scene / DB.
+    # The branch raises an HTTPException with a stable typed `code` (gate
+    # failure → 400) or `code = READER_NOTE_WRITE_PENDING` because
+    # persistence into the legacy `reader_notes` table is not yet wired.
+    if req.anchor is not None:
+        async with db_connect.acquire_connection() as conn:
+            await _validate_reading_record_anchor_branch(
+                conn,
+                user_id=user_id,
+                req=req,
+                repository=repository,
+            )
+        # Unreachable: _validate_reading_record_anchor_branch always raises.
+        raise HTTPException(
+            status_code=500,
+            detail="new anchor branch returned without raising",
+        )
+
     try:
         record_id = UUID(req.analysis_record_id)
     except ValueError as exc:
@@ -132,7 +241,9 @@ async def create_reader_note(user_id: UUID, req: ReaderNoteCreateRequest) -> Rea
         await _validate_quote_against_record(conn, user_id, record_id, req)
         payload_json = dict(req.payload_json)
         if req.quote_mode == "multi_text":
-            payload_json["segments"] = [segment.model_dump(mode="python") for segment in req.segments]
+            payload_json["segments"] = [
+                segment.model_dump(mode="python") for segment in req.segments
+            ]
         row = await conn.fetchrow(
             f"""
             INSERT INTO reader_notes (
@@ -153,8 +264,16 @@ async def create_reader_note(user_id: UUID, req: ReaderNoteCreateRequest) -> Rea
             req.anchor_sentence_id,
             req.quote_mode,
             target_key,
-            req.segments[0].paragraph_id if req.quote_mode == "multi_text" and req.segments else req.paragraph_id,
-            req.segments[0].sentence_id if req.quote_mode == "multi_text" and req.segments else req.sentence_id,
+            (
+                req.segments[0].paragraph_id
+                if req.quote_mode == "multi_text" and req.segments
+                else req.paragraph_id
+            ),
+            (
+                req.segments[0].sentence_id
+                if req.quote_mode == "multi_text" and req.segments
+                else req.sentence_id
+            ),
             req.selected_text,
             None if req.quote_mode == "multi_text" else req.start_offset,
             None if req.quote_mode == "multi_text" else req.end_offset,
@@ -178,7 +297,11 @@ async def list_reader_notes(user_id: UUID, record_id: str) -> list[ReaderNoteRes
             SELECT {_NOTE_FIELDS}
             FROM reader_notes
             WHERE user_id = $1 AND analysis_record_id = $2 AND deleted_at IS NULL
-            ORDER BY anchor_sentence_id ASC, start_offset ASC NULLS FIRST, end_offset ASC NULLS FIRST, created_at ASC
+            ORDER BY
+                anchor_sentence_id ASC,
+                start_offset ASC NULLS FIRST,
+                end_offset ASC NULLS FIRST,
+                created_at ASC
             """,
             user_id,
             parsed_record_id,
@@ -186,7 +309,11 @@ async def list_reader_notes(user_id: UUID, record_id: str) -> list[ReaderNoteRes
         return [_row_to_response(dict(row)) for row in rows]
 
 
-async def update_reader_note(user_id: UUID, note_id: UUID, req: ReaderNoteUpdateRequest) -> ReaderNoteResponse:
+async def update_reader_note(
+    user_id: UUID,
+    note_id: UUID,
+    req: ReaderNoteUpdateRequest,
+) -> ReaderNoteResponse:
     async with db_connect.acquire_connection() as conn:
         row = await conn.fetchrow(
             f"""
@@ -206,7 +333,7 @@ async def update_reader_note(user_id: UUID, note_id: UUID, req: ReaderNoteUpdate
 
 async def delete_reader_note(user_id: UUID, note_id: UUID) -> None:
     async with db_connect.acquire_connection() as conn:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = await conn.execute(
             """
             UPDATE reader_notes

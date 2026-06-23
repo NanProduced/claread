@@ -30,6 +30,7 @@ from app.agents.reader_ask_write_gate import (
 from app.schemas.reader_ask import (
     ReaderAskAnchorRef,
     ReaderAskCitation,
+    ReaderAskReadingRecordAnchor,
     ReaderAskToolTraceEntry,
 )
 from app.services.analysis.prompting.prompt_loader import load_agent_instructions
@@ -46,6 +47,7 @@ RecordContextScope = Literal["window", "paragraph", "full"]
 InsightKind = Literal["grammar_note", "sentence_analysis", "vocabulary"]
 VocabularySortBy = Literal["recent", "lemma_asc"]
 ReferenceResolutionStatus = Literal["resolved", "ambiguous", "not_found"]
+ReadingRecordAnchorInput = ReaderAskReadingRecordAnchor | dict[str, Any] | None
 
 
 @dataclass(slots=True)
@@ -168,6 +170,72 @@ class ReaderAskAgentDeps:
     # Round 10 fix: allowlist of external attachments the agent is permitted
     # to load. Each entry has tool_record_id and optional tool_asset_id.
     allowed_external_attachments: list[dict[str, str]] = field(default_factory=list)
+
+
+def _normalize_reading_record_anchor(
+    anchor: ReadingRecordAnchorInput,
+) -> ReaderAskReadingRecordAnchor | None:
+    if anchor is None:
+        return None
+    if isinstance(anchor, ReaderAskReadingRecordAnchor):
+        return anchor
+    if hasattr(anchor, "model_dump"):
+        anchor = anchor.model_dump(mode="json")
+    return ReaderAskReadingRecordAnchor.model_validate(anchor)
+
+
+def _write_proposal_anchor_artifact(
+    *,
+    legacy_anchor: ReaderAskAnchorRef | None,
+    reading_record_anchor: ReaderAskReadingRecordAnchor | None,
+) -> str:
+    if legacy_anchor is not None and legacy_anchor.target_key:
+        return f"anchor:{legacy_anchor.target_key}"
+    if reading_record_anchor is not None:
+        return f"anchor:{reading_record_anchor.anchor_segment_id}"
+    return "anchor:selected"
+
+
+def _reading_record_anchor_record_mismatch_payload(
+    *,
+    expected_record_id: str,
+    anchor_record_id: str,
+) -> dict[str, Any]:
+    return {
+        "status": "error",
+        "summary": "Reading Record anchor record_id mismatch",
+        "next_actions": ["Use an anchor from the current Reading Record before proposing a write."],
+        "artifacts": [
+            f"record:{expected_record_id}",
+            f"anchor_record:{anchor_record_id}",
+        ],
+    }
+
+
+def _write_proposal_payload(
+    *,
+    record_id: str,
+    legacy_anchor: ReaderAskAnchorRef | None,
+    reading_record_anchor: ReaderAskReadingRecordAnchor | None,
+    note_text: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"record_id": record_id}
+    if reading_record_anchor is not None:
+        payload["anchor"] = reading_record_anchor.model_dump(mode="json")
+        if legacy_anchor is not None:
+            payload["legacy_anchor"] = legacy_anchor.model_dump(mode="json")
+    else:
+        assert legacy_anchor is not None
+        payload["anchor"] = legacy_anchor.model_dump(mode="json")
+
+    if legacy_anchor is not None:
+        if legacy_anchor.target_key:
+            payload["target_key"] = legacy_anchor.target_key
+        if legacy_anchor.sentence_id:
+            payload["target_sentence_id"] = legacy_anchor.sentence_id
+    if note_text is not None:
+        payload["note_text"] = note_text
+    return payload
 
 
 def build_reader_ask_prompt(deps: ReaderAskAgentDeps) -> str:
@@ -564,6 +632,7 @@ async def _generate_sentence_annotation_tool(
 async def _propose_save_note_tool(
     ctx: RunContext[ReaderAskAgentDeps],
     note_text: str | None = None,
+    anchor: ReadingRecordAnchorInput = None,
 ) -> dict[str, Any]:
     """Agent tool: propose saving a note with write-gate precondition check.
 
@@ -571,15 +640,24 @@ async def _propose_save_note_tool(
     directly without consuming tool budget.  This is the backend protection
     layer.
     """
+    reading_record_anchor = _normalize_reading_record_anchor(anchor)
+    legacy_anchor = ctx.deps.primary_anchor
+    if (
+        reading_record_anchor is not None
+        and reading_record_anchor.record_id != ctx.deps.record_id
+    ):
+        return _reading_record_anchor_record_mismatch_payload(
+            expected_record_id=ctx.deps.record_id,
+            anchor_record_id=reading_record_anchor.record_id,
+        )
     precondition = check_write_proposal_precondition(
         TOOL_PROPOSE_SAVE_NOTE,
-        has_primary_anchor=ctx.deps.primary_anchor is not None,
+        has_primary_anchor=legacy_anchor is not None or reading_record_anchor is not None,
     )
     if not precondition.allowed:
         assert precondition.error_payload is not None
         return precondition.error_payload
-    anchor = ctx.deps.primary_anchor
-    assert anchor is not None
+    assert legacy_anchor is not None or reading_record_anchor is not None
 
     async def runner() -> dict[str, Any]:
         if not isinstance(note_text, str) or not note_text.strip():
@@ -589,11 +667,12 @@ async def _propose_save_note_tool(
                 action_type="save_note",
                 label="保存为笔记",
                 description="把当前解释或补充内容保存到当前锚点笔记",
-                payload_json={
-                    "record_id": ctx.deps.record_id,
-                    "anchor": anchor.model_dump(mode="json"),
-                    "note_text": note_text,
-                },
+                payload_json=_write_proposal_payload(
+                    record_id=ctx.deps.record_id,
+                    legacy_anchor=legacy_anchor,
+                    reading_record_anchor=reading_record_anchor,
+                    note_text=note_text,
+                ),
             )
         )
         return {
@@ -602,7 +681,10 @@ async def _propose_save_note_tool(
             "next_actions": ["Wait for user confirmation before writing the note."],
             "artifacts": [
                 f"record:{ctx.deps.record_id}",
-                f"anchor:{anchor.target_key or 'selected'}",
+                _write_proposal_anchor_artifact(
+                    legacy_anchor=legacy_anchor,
+                    reading_record_anchor=reading_record_anchor,
+                ),
             ],
             "ok": True,
             "action_type": "save_note",
@@ -616,6 +698,7 @@ async def _propose_save_note_tool(
 
 async def _propose_save_highlight_tool(
     ctx: RunContext[ReaderAskAgentDeps],
+    anchor: ReadingRecordAnchorInput = None,
 ) -> dict[str, Any]:
     """Agent tool: propose saving a highlight with write-gate precondition check.
 
@@ -623,15 +706,24 @@ async def _propose_save_highlight_tool(
     directly without consuming tool budget.  This is the backend protection
     layer.
     """
+    reading_record_anchor = _normalize_reading_record_anchor(anchor)
+    legacy_anchor = ctx.deps.primary_anchor
+    if (
+        reading_record_anchor is not None
+        and reading_record_anchor.record_id != ctx.deps.record_id
+    ):
+        return _reading_record_anchor_record_mismatch_payload(
+            expected_record_id=ctx.deps.record_id,
+            anchor_record_id=reading_record_anchor.record_id,
+        )
     precondition = check_write_proposal_precondition(
         TOOL_PROPOSE_SAVE_HIGHLIGHT,
-        has_primary_anchor=ctx.deps.primary_anchor is not None,
+        has_primary_anchor=legacy_anchor is not None or reading_record_anchor is not None,
     )
     if not precondition.allowed:
         assert precondition.error_payload is not None
         return precondition.error_payload
-    anchor = ctx.deps.primary_anchor
-    assert anchor is not None
+    assert legacy_anchor is not None or reading_record_anchor is not None
 
     async def runner() -> dict[str, Any]:
         ctx.deps.state.action_requests.append(
@@ -639,10 +731,11 @@ async def _propose_save_highlight_tool(
                 action_type="save_highlight",
                 label="保存为高亮",
                 description="把当前锚点保存成高亮/摘录",
-                payload_json={
-                    "record_id": ctx.deps.record_id,
-                    "anchor": anchor.model_dump(mode="json"),
-                },
+                payload_json=_write_proposal_payload(
+                    record_id=ctx.deps.record_id,
+                    legacy_anchor=legacy_anchor,
+                    reading_record_anchor=reading_record_anchor,
+                ),
             )
         )
         return {
@@ -651,7 +744,10 @@ async def _propose_save_highlight_tool(
             "next_actions": ["Wait for user confirmation before saving the highlight."],
             "artifacts": [
                 f"record:{ctx.deps.record_id}",
-                f"anchor:{anchor.target_key or 'selected'}",
+                _write_proposal_anchor_artifact(
+                    legacy_anchor=legacy_anchor,
+                    reading_record_anchor=reading_record_anchor,
+                ),
             ],
             "ok": True,
             "action_type": "save_highlight",
@@ -799,12 +895,16 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
     async def propose_save_note(
         ctx: RunContext[ReaderAskAgentDeps],
         note_text: str | None = None,
+        anchor: ReaderAskReadingRecordAnchor | None = None,
     ) -> dict[str, Any]:
-        return await _propose_save_note_tool(ctx, note_text)
+        return await _propose_save_note_tool(ctx, note_text, anchor)
 
     @agent.tool(name=TOOL_PROPOSE_SAVE_HIGHLIGHT)
-    async def propose_save_highlight(ctx: RunContext[ReaderAskAgentDeps]) -> dict[str, Any]:
-        return await _propose_save_highlight_tool(ctx)
+    async def propose_save_highlight(
+        ctx: RunContext[ReaderAskAgentDeps],
+        anchor: ReaderAskReadingRecordAnchor | None = None,
+    ) -> dict[str, Any]:
+        return await _propose_save_highlight_tool(ctx, anchor)
 
     @agent.tool(name=TOOL_SUGGEST_PROMPTS)
     async def suggest_prompts(

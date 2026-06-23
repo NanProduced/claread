@@ -1,29 +1,49 @@
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.user_annotations import UserAnnotationSegment
+from app.schemas.user_editorial_assets import UserEditorialAssetAnchor
 
 
 class ReaderNoteCreateRequest(BaseModel):
-    analysis_record_id: str
+    # D6-A5 dual-contract spike: `analysis_record_id` is now optional. When
+    # the new `anchor` contract is supplied, legacy sentence_id / offsets /
+    # text_hash are also optional and the request is routed to the Reading
+    # Record anchor gate. The legacy `analysis_record_id` is NEVER auto-filled
+    # from the new anchor — see schema-and-domain-contract.md D6-A5.
+    analysis_record_id: str | None = None
     quote_mode: str = Field(pattern="^(sentence|text_range|multi_text)$")
-    anchor_sentence_id: str
-    target_key: Optional[str] = None
-    paragraph_id: Optional[str] = None
-    sentence_id: Optional[str] = None
+    anchor_sentence_id: str | None = None
+    target_key: str | None = None
+    paragraph_id: str | None = None
+    sentence_id: str | None = None
     selected_text: str
-    start_offset: Optional[int] = None
-    end_offset: Optional[int] = None
-    text_hash: Optional[str] = None
+    start_offset: int | None = None
+    end_offset: int | None = None
+    text_hash: str | None = None
     segments: list[UserAnnotationSegment] = Field(default_factory=list)
     note_text: str = Field(min_length=1)
     payload_json: dict = Field(default_factory=dict)
+    anchor: UserEditorialAssetAnchor | None = None
 
     @model_validator(mode="after")
     def validate_quote_fields(self):
-        if not self.anchor_sentence_id.strip():
+        if self.anchor is not None:
+            # D6-A5 dual-contract path. Legacy fields become optional; the
+            # Reading Record anchor gate does the authoritative validation.
+            if not self.selected_text.strip():
+                raise ValueError("selected_text must not be empty")
+            if self.selected_text != self.anchor.selected_text:
+                raise ValueError("selected_text must match anchor.selected_text")
+            if not self.note_text.strip():
+                raise ValueError("note_text must not be empty")
+            return self
+
+        # Legacy single-contract path — unchanged from previous behaviour.
+        if not self.analysis_record_id:
+            raise ValueError("analysis_record_id is required")
+        if not self.anchor_sentence_id or not self.anchor_sentence_id.strip():
             raise ValueError("anchor_sentence_id is required")
         if not self.selected_text.strip():
             raise ValueError("selected_text must not be empty")
@@ -54,12 +74,12 @@ class ReaderNoteResponse(BaseModel):
     anchor_sentence_id: str
     quote_mode: str
     target_key: str
-    paragraph_id: Optional[str] = None
-    sentence_id: Optional[str] = None
+    paragraph_id: str | None = None
+    sentence_id: str | None = None
     selected_text: str
-    start_offset: Optional[int] = None
-    end_offset: Optional[int] = None
-    text_hash: Optional[str] = None
+    start_offset: int | None = None
+    end_offset: int | None = None
+    text_hash: str | None = None
     segments: list[UserAnnotationSegment] = Field(default_factory=list)
     note_text: str
     payload_json: dict

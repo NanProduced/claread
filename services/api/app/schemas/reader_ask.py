@@ -5,6 +5,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.user_assets.favorites import FavoriteTargetType
+from app.schemas.user_editorial_assets import UserEditorialAssetAnchor
 
 ReaderAskAnchorType = Literal[
     "sentence",
@@ -116,10 +117,48 @@ class ReaderAskAnchorRef(BaseModel):
                 self.selected_text,
                 self.text_hash,
             ]
-            if any(value is None or (isinstance(value, str) and not value.strip()) for value in required):
-                raise ValueError("text_range anchors require sentence_id, selected_text, and text_hash")
+            if any(
+                value is None or (isinstance(value, str) and not value.strip())
+                for value in required
+            ):
+                raise ValueError(
+                    "text_range anchors require sentence_id, selected_text, and text_hash"
+                )
         if self.anchor_type == "dictionary_entry" and self.dict_entry_id is None and not self.query:
             raise ValueError("dictionary_entry anchors require dict_entry_id or query")
+        return self
+
+
+class ReaderAskReadingRecordAnchor(UserEditorialAssetAnchor):
+    """D6-A3 Ask write-proposal anchor.
+
+    This intentionally inherits the UserEditorialAssetAnchor contract so Ask
+    proposals can carry the new Reading Record anchor payload without wiring it
+    into DB writes yet.
+    """
+
+
+ReaderAskWriteProposalAnchor = Annotated[
+    ReaderAskReadingRecordAnchor | ReaderAskAnchorRef,
+    Field(union_mode="left_to_right"),
+]
+
+
+class ReaderAskWriteProposalPayload(BaseModel):
+    model_config = ConfigDict(extra="allow", str_strip_whitespace=True)
+
+    record_id: str | None = None
+    anchor: ReaderAskWriteProposalAnchor | None = None
+    note_text: str | None = None
+    target_key: str | None = None
+    target_sentence_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_anchor_or_legacy_target(self) -> ReaderAskWriteProposalPayload:
+        if self.anchor is None and not (self.target_key or self.target_sentence_id):
+            raise ValueError(
+                "save_note/save_highlight proposals require anchor or legacy target fields"
+            )
         return self
 
 
@@ -163,13 +202,24 @@ class ReaderAskAttachmentPayload(BaseModel):
     segments: list[ReaderAskAnchorSegment] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_payload(self) -> "ReaderAskAttachmentPayload":
+    def validate_payload(self) -> ReaderAskAttachmentPayload:
         if self.anchor_type == "multi_text" and len(self.segments) < 2:
             raise ValueError("multi_text payloads require at least two segments")
         if self.anchor_type == "text_range":
-            required = [self.sentence_id, self.selected_text, self.text_hash, self.start_offset, self.end_offset]
-            if any(value is None or (isinstance(value, str) and not value.strip()) for value in required):
-                raise ValueError("text_range payloads require sentence_id, selected_text, offsets, and text_hash")
+            required = [
+                self.sentence_id,
+                self.selected_text,
+                self.text_hash,
+                self.start_offset,
+                self.end_offset,
+            ]
+            if any(
+                value is None or (isinstance(value, str) and not value.strip())
+                for value in required
+            ):
+                raise ValueError(
+                    "text_range payloads require sentence_id, selected_text, offsets, and text_hash"
+                )
         return self
 
 
@@ -230,6 +280,12 @@ class ReaderAskActionProposal(BaseModel):
     status: ReaderAskActionStatus = "pending"
     payload_json: dict[str, Any] = Field(default_factory=dict)
     result_json: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_action_payload(self) -> ReaderAskActionProposal:
+        if self.action_type in ("save_note", "save_highlight"):
+            ReaderAskWriteProposalPayload.model_validate(self.payload_json)
+        return self
 
 
 class ReaderAskToolTraceEntry(BaseModel):
@@ -457,11 +513,15 @@ class ReaderAskPlannerDecision(BaseModel):
     clarification_only: bool = False
     clarification_mode: ReaderAskClarificationMode = "none"
     clarification_reason: str | None = None
-    reference_request: ReaderAskPlannerReferenceRequest = Field(default_factory=ReaderAskPlannerReferenceRequest)
+    reference_request: ReaderAskPlannerReferenceRequest = Field(
+        default_factory=ReaderAskPlannerReferenceRequest
+    )
     structured_asset_request: ReaderAskPlannerStructuredAssetRequest = Field(
         default_factory=ReaderAskPlannerStructuredAssetRequest
     )
-    working_set: ReaderAskPlannerWorkingSetDecision = Field(default_factory=ReaderAskPlannerWorkingSetDecision)
+    working_set: ReaderAskPlannerWorkingSetDecision = Field(
+        default_factory=ReaderAskPlannerWorkingSetDecision
+    )
     rationale: str | None = None
     context_scope: ReaderAskContextScope | None = None
     decision_confidence: Literal["high", "medium", "low"] | None = None
@@ -478,7 +538,7 @@ class ReaderAskPlannerDecision(BaseModel):
         return _INTENT_ALIASES.get(normalized, value)
 
     @model_validator(mode="after")
-    def sync_clarification_fields(self) -> "ReaderAskPlannerDecision":
+    def sync_clarification_fields(self) -> ReaderAskPlannerDecision:
         # clarification_mode is the source of truth; sync clarification_only from it
         if self.clarification_mode == "must_clarify":
             self.clarification_only = True

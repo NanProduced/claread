@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+# This test lives at services/api/tests/test_d6_a0_static_boundary.py.
+# The Python package we want to audit lives at services/api/app/, so we
+# walk one parent up to reach services/api/, then descend into `app/`.
+# Walking two parents would land on services/ and miss every audit target.
+REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = REPO_ROOT / "app"
 
 
@@ -151,5 +155,61 @@ def test_reader_record_api_does_not_read_render_scene_json() -> None:
     assert offenders == [], (
         "new Reader Record path must not read legacy render_scene_json "
         "or ReaderSceneResponse as a fact source; offenders: "
+        + ", ".join(offenders)
+    )
+
+
+def test_legacy_services_only_import_allowlisted_reader_orchestration_modules() -> None:
+    """D6-A5 narrow allowlist guard.
+
+    The legacy `user_annotations.py` and `reader_notes.py` services must
+    NOT reach into the new `reader_orchestration` package broadly. D6-A5
+    intentionally introduces two narrow imports:
+
+    - `app.services.reader_orchestration.anchor_gate` — for the dual-
+      contract validation branch on the new `anchor` field.
+    - `app.services.reader_orchestration.repository` — for the lazy
+      `ReaderOrchestrationRepository` default constructor used by the
+      same branch.
+
+    Any other import from `app.services.reader_orchestration.*` would
+    silently broaden the cross-package coupling and is forbidden until a
+    follow-up explicitly widens this allowlist.
+    """
+    allowlist = {
+        "app.services.reader_orchestration.anchor_gate",
+        "app.services.reader_orchestration.repository",
+    }
+
+    legacy_paths = [
+        Path("services/user_annotations.py"),
+        Path("services/reader_notes.py"),
+    ]
+
+    offenders: list[str] = []
+    for relative in legacy_paths:
+        absolute = APP_DIR / relative
+        if not absolute.is_file():
+            continue
+        source = _read_text(absolute)
+        for raw_line in source.splitlines():
+            stripped = raw_line.strip()
+            if not (stripped.startswith("from app.services.reader_orchestration")
+                    or stripped.startswith("import app.services.reader_orchestration")):
+                continue
+            # Normalise to a module path; strip the leading `from ` and any
+            # trailing `import (...)` newline artefacts.
+            if stripped.startswith("from "):
+                module = stripped[len("from "):].split(" import ")[0].strip()
+            else:
+                module = stripped[len("import "):].split(" import ")[0].strip().rstrip(",")
+            if module not in allowlist:
+                offenders.append(f"{relative.as_posix()} -> {module}")
+
+    assert offenders == [], (
+        "user_annotations.py / reader_notes.py may only import the "
+        "narrow allowlist "
+        + ", ".join(sorted(allowlist))
+        + "; offenders: "
         + ", ".join(offenders)
     )

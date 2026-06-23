@@ -1,8 +1,8 @@
 # Cutover 与旧 AI Workflow 处理
 
-> 状态：`D6-A0 Ask / notes / highlights dependency audit`
+> 状态：`D6-A5 Notes / Highlights dual-contract spike`
 > 最后更新：2026-06-23
-> 范围：停服重构、旧 workflow 替换、旧表/旧 UI 清理边界，以及 Web cutover 迁移顺序；本轮 D6-A0 增加 Ask / notes / highlights / user asset 写入路径的依赖审计与迁移边界收口。
+> 范围：停服重构、旧 workflow 替换、旧表/旧 UI 清理边界，以及 Web cutover 迁移顺序；本轮 D6-A0 增加 Ask / notes / highlights / user asset 写入路径的依赖审计与迁移边界收口，D6-A5 在不切 UI / 不增 DB migration 的前提下完成 notes / highlights 双合同 schema + service 验证 spike。
 
 ## 基本立场
 
@@ -478,7 +478,7 @@ W3-D9 结论：
 
 | 入口 | 当前 route / surface | 当前数据源 / id 语义 | 当前 status | D6-A0 切线结论 |
 |---|---|---|---|---|
-| Ask Claread | `/app/reader/{recordId}` 内 `AiWorkspacePanel` + `ask-chat/*` | 旧 `analysis_record_id` + `target_key` + `render_scene_json`；`reader_ask_threads` / `reader_ask_supplements` 表 | legacy（runtime 不变） | D6-A1 read-only 接入 anchor_segment_id；D6-A3 切 tool signature；D6-A4 切 supplement 写；D6-A6 切 Web route；UI 切线必须等 Plate Surface |
+| Ask Claread | `/app/reader/{recordId}` 内 `AiWorkspacePanel` + `ask-chat/*` | 旧 `analysis_record_id` + `target_key` + `render_scene_json`；`reader_ask_threads` / `reader_ask_supplements` 表 | legacy（runtime 不变） | D6-A1 read-only 接入 anchor_segment_id；D6-A3 已完成 write-proposal anchor contract（不写 DB、不启用 UI）；D6-A4 切 supplement 写；D6-A6 切 Web route；UI 切线必须等 Plate Surface |
 | Reader notes | `/app/reader/{recordId}` 内 `ReaderNotePanel` + `/api/web/reader-notes` | 旧 `analysis_record_id` + `anchor_sentence_id` + `target_key`；`reader_notes` 表 | legacy（runtime 不变） | D6-A5 双轨：request body 引入 `UserEditorialAssetAnchor` 可选 anchor，旧 `target_key` deprecated optional |
 | Reader highlights | `/app/reader/{recordId}` 内 `SelectionToolbar` + `AnnotationGutter` + `/api/web/reader-annotations` | 旧 `analysis_record_id` + `sentence_id` / `target_key`；`user_annotations` 表 | legacy（runtime 不变） | D6-A5 双轨：与 notes 同样引入 anchor_segment_id 可选 anchor |
 | Ask action confirm (`save_note` / `save_highlight`) | `/api/web/reader-ask/threads/{threadId}/actions/{actionId}/confirm` | 旧 `analysis_record_id` + `record_id` 两种，按 action 类型 | legacy（runtime 不变） | D6-A6 新增 Reading Record id 入口；旧 confirm 路径保留 |
@@ -504,6 +504,24 @@ W3-D9 结论：
 - helper 只产出 draft shape（`ReaderRecordAnchorDraft`），不调用任何写 API；UI 写入口（`AiWorkspacePanel` / `ReaderNotePanel` / `AnnotationGutter` / `SelectionToolbar` 的 ask/highlight/note/feedback）保持 disabled；`/app/reader-record/{recordId}` 仍未启用 Ask / notes / highlights / user asset 写入。
 - D6-A0 boundary guard 已扩展覆盖该 helper 不引入 legacy 字符串或 legacy route helper；snapshot DTO 的 `record.generation` 已暴露 `reading_records.generation`，helper 输出真实 generation fence，后续可直接交给后端 anchor gate 校验。
 - D6-A1 未触及 `/app/reader-record/{recordId}` 的 UI、未接新 API、未改 runtime；下一步 D6-A5（user_annotations / reader_notes 双轨写入切线）和 D6-A6（Web BFF / route 切线）才会启用 helper 与写入路径的真实连接。
+
+### D6-A3 Ask tool signature / write-proposal anchor 结论
+
+- 已落地后端 proposal contract：`save_note` / `save_highlight` action proposal 的 `payload_json.anchor` 可携带 `UserEditorialAssetAnchor` 同形 Reading Record anchor payload。
+- legacy proposal payload 仍可用：旧 `ReaderAskAnchorRef`、`target_key`、`target_sentence_id` 不删除；未传入新 anchor 时 Ask agent 继续用 legacy `primary_anchor` 生成 proposal。
+- D6-A3 只生成 write proposal，不调用 `load_validated_reading_record_anchor(...)`，不写 `user_annotations` / `reader_notes` / `reader_ask_supplements`，不改变旧 `/api/web/reader-ask/*` route / action confirm 行为。
+- `/app/reader-record/{recordId}` 的 Ask 入口仍保持 disabled；启用 UI / BFF / route 仍归 D6-A6 与 Plate Surface UI 切线。
+
+### D6-A5 Notes / Highlights dual-contract spike 结论
+
+- 已为 `UserAnnotationCreateRequest` 与 `ReaderNoteCreateRequest` 增加 optional `anchor: UserEditorialAssetAnchor | None` 字段；当 `anchor` 存在时，legacy 必填字段（`analysis_record_id`、`sentence_id`、`start_offset`、`end_offset`、`text_hash` 等）放宽为可选，但外层 `selected_text` 必须与 `anchor.selected_text` 一致，避免两个文本事实源分叉；同时**绝不**从 `anchor.record_id` 自动回填 `analysis_record_id`，也不允许 schema 静默 remap —— `analysis_record_id` 与 anchor 是两条独立的 id 语义。
+- `create_user_annotation` / `create_reader_note` 新增显式分支：当 `req.anchor is not None` 时走 Reading Record anchor gate，绕过 legacy `target_key` / render scene / DB write。gate 失败 → HTTP 400，detail 中带 `code` = 锚定错误码（如 `unit_not_found`、`reading_record_not_found`、`anchor_segment_not_found`、`outside_anchor_segment_range`）；gate 成功 → HTTP 409，detail 中带 `code = "user_editorial_asset_write_pending"` 与 `validated: True` 摘要，明确表示写入已校验但落表仍需后续。
+- 本轮未新增 DB migration，未触碰 `user_annotations` / `reader_notes` / `analysis_records` 表；新分支下 legacy 表无任何 INSERT/UPDATE（通过 mock 断言 `mock_conn.fetchrow.assert_not_called()` / `mock_conn.execute.assert_not_called()` 锁定）。
+- legacy `analysis_record_id` 写入路径**完全保持现状**：未携带 `anchor` 的请求仍走 legacy `target_key` / render scene / INSERT 流程，已有的 41 个 legacy 测试全部仍 pass。
+- UI 写入口仍 disabled：`/app/reader-record/{recordId}` 未启用 Ask / notes / highlights / user asset 按钮；SelectionToolbar 的 `disabled.ask / .highlight / .note / .feedback = true` 契约不变。
+- 新增 narrow allowlist 静态 guard：`user_annotations.py` 与 `reader_notes.py` 只能 import `app.services.reader_orchestration.anchor_gate` 与 `app.services.reader_orchestration.repository`（用于 gate 调用与 lazy `ReaderOrchestrationRepository()`），不允许 import `reader_orchestration` 包内任何其他模块，避免跨包耦合静默扩散。Allowlist 在 `tests/test_d6_a0_static_boundary.py::test_legacy_services_only_import_allowlisted_reader_orchestration_modules` 锁定。
+- 同一 guard 文件修复了路径常量（`REPO_ROOT = parents[1]`，对应 `services/api/`），原先的 `parents[2]` 会落到 `services/`，导致 `_python_files` 走不存在的 `services/app/services/...`，原 4 个 guard 等于空跑；本次修复后所有 5 个 guard 真正扫到目标文件。
+- 下一步 D6-A5 follow-up：把 409 deferred 路径接到真正的 persistence（要么在 legacy `user_annotations` / `reader_notes` 表增加 `reading_record_id` + `anchor_segment_id` + unit-local offsets 列，要么引入新的 `user_editorial_assets` 统一表）；切线必须在 schema-and-domain-contract.md 中追加 D6-U1 schema migration + 表扩展的 contract 后再做。
 
 ### 暂不切的旧能力与原因（cutover 视角）
 

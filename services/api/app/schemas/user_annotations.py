@@ -1,10 +1,9 @@
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
 from app.contracts.annotation import compute_text_range_hash, utf16_code_unit_length
-
+from app.schemas.user_editorial_assets import UserEditorialAssetAnchor
 
 USER_ANNOTATION_COLOR_PATTERN = (
     "^(soft_green|soft_blue|soft_purple|warm_yellow|sage_green)$"
@@ -12,7 +11,7 @@ USER_ANNOTATION_COLOR_PATTERN = (
 
 
 class UserAnnotationSegment(BaseModel):
-    paragraph_id: Optional[str] = None
+    paragraph_id: str | None = None
     sentence_id: str
     selected_text: str
     start_offset: int
@@ -37,21 +36,38 @@ class UserAnnotationSegment(BaseModel):
 
 
 class UserAnnotationCreateRequest(BaseModel):
-    analysis_record_id: Optional[str] = None
+    analysis_record_id: str | None = None
     anchor_type: str = Field(default="sentence", pattern="^(sentence|text_range|multi_text)$")
-    target_key: Optional[str] = None
-    paragraph_id: Optional[str] = None
-    sentence_id: Optional[str] = None
+    target_key: str | None = None
+    paragraph_id: str | None = None
+    sentence_id: str | None = None
     selected_text: str
-    start_offset: Optional[int] = None
-    end_offset: Optional[int] = None
-    text_hash: Optional[str] = None
+    start_offset: int | None = None
+    end_offset: int | None = None
+    text_hash: str | None = None
     segments: list[UserAnnotationSegment] = Field(default_factory=list)
     color: str = Field(default="soft_green", pattern=USER_ANNOTATION_COLOR_PATTERN)
     payload_json: dict = Field(default_factory=dict)
+    # D6-A5 dual-contract spike. When set, the legacy sentence_id / offsets /
+    # text_hash fields become optional and the request is routed to the
+    # Reading Record anchor gate. The legacy `analysis_record_id` field is
+    # explicitly NOT auto-populated from the new anchor — legacy writes must
+    # never silently masquerade a Reading Record id as a `analysis_record_id`.
+    anchor: UserEditorialAssetAnchor | None = None
 
     @model_validator(mode="after")
     def validate_anchor_fields(self):
+        if self.anchor is not None:
+            # When the new anchor contract is supplied, the legacy fields are
+            # optional — service-side projection derives what it needs from
+            # `anchor`. selected_text is still required because the contract
+            # shape echoes it; the gate will re-validate hash and offsets.
+            if not self.selected_text.strip():
+                raise ValueError("selected_text must not be empty")
+            if self.selected_text != self.anchor.selected_text:
+                raise ValueError("selected_text must match anchor.selected_text")
+            return self
+
         if not self.selected_text.strip():
             raise ValueError("selected_text must not be empty")
 
@@ -92,15 +108,15 @@ class UserAnnotationUpdateRequest(BaseModel):
 
 class UserAnnotationResponse(BaseModel):
     id: UUID
-    analysis_record_id: Optional[UUID] = None
+    analysis_record_id: UUID | None = None
     anchor_type: str
     target_key: str
-    paragraph_id: Optional[str] = None
-    sentence_id: Optional[str] = None
+    paragraph_id: str | None = None
+    sentence_id: str | None = None
     selected_text: str
-    start_offset: Optional[int] = None
-    end_offset: Optional[int] = None
-    text_hash: Optional[str] = None
+    start_offset: int | None = None
+    end_offset: int | None = None
+    text_hash: str | None = None
     segments: list[UserAnnotationSegment] = Field(default_factory=list)
     color: str
     payload_json: dict
