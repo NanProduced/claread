@@ -12,6 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from app.api.router import api_router
 from app.database import connection as db_connection
 from app.database.connection import init_connection
+from app.database.json_compat import jsonb_param
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABASE_URL
 
@@ -92,6 +93,27 @@ async def _create_client(app: FastAPI) -> AsyncClient:
     )
 
 
+def _find_progress_layer(
+    snapshot: dict[str, object],
+    *,
+    capability: str,
+    **expected: object,
+) -> dict[str, object]:
+    progress = snapshot["enhancement_progress"]
+    assert isinstance(progress, dict)
+    layers = progress["layers"]
+    assert isinstance(layers, list)
+    for layer in layers:
+        assert isinstance(layer, dict)
+        if layer.get("capability") != capability:
+            continue
+        if all(layer.get(key) == value for key, value in expected.items()):
+            return layer
+    raise AssertionError(
+        f"progress layer not found for capability={capability!r}, expected={expected!r}"
+    )
+
+
 async def test_submit_plain_text_returns_article_ready_snapshot_and_snapshot_reload(
     reader_api_env: dict[str, object],
 ) -> None:
@@ -126,7 +148,7 @@ async def test_submit_plain_text_returns_article_ready_snapshot_and_snapshot_rel
                 f"/reader/records/{submitted['record_id']}/snapshot",
                 headers=AUTH_HEADERS,
             )
-            assert snapshot_response.status_code == 200
+            assert snapshot_response.status_code == 200, snapshot_response.text
             snapshot = snapshot_response.json()
             assert snapshot["schema_kind"] == "reader_plate_snapshot"
             assert snapshot["record_id"] == submitted["record_id"]
@@ -134,6 +156,353 @@ async def test_submit_plain_text_returns_article_ready_snapshot_and_snapshot_rel
             assert snapshot["last_event_sequence"] == 1
             assert snapshot["record"]["product_state"] == "readable_enhancing"
             assert snapshot["record"]["readiness_state"] == "article_ready"
+            progress = snapshot["enhancement_progress"]
+            assert progress["overall_status"] == "readable_enhancing"
+            translation_progress = _find_progress_layer(
+                snapshot,
+                capability="translation",
+                job_type="translate_unit",
+            )
+            assert translation_progress["status"] == "queued"
+            assert translation_progress["job_status"] == "queued"
+            assert isinstance(translation_progress["job_id"], str)
+            assert translation_progress["target_type"] == "unit"
+            assert isinstance(translation_progress["target_key"], str)
+            assert _find_progress_layer(
+                snapshot,
+                capability="vocabulary",
+                status="not_started",
+            )
+            assert _find_progress_layer(
+                snapshot,
+                capability="grammar",
+                status="not_started",
+            )
+
+
+async def test_snapshot_progress_marks_published_layer_succeeded(
+    reader_api_env: dict[str, object],
+) -> None:
+    pool = reader_api_env["pool"]
+    app = reader_api_env["app"]
+    assert isinstance(pool, asyncpg.Pool)
+    assert isinstance(app, FastAPI)
+    user_id = await _insert_user(pool)
+
+    with _mock_auth(user_id):
+        async with await _create_client(app) as client:
+            submit_response = await client.post(
+                "/reader/records/plain-text",
+                headers=AUTH_HEADERS,
+                json={"plain_text": "Publish progress example.", "title": "Published"},
+            )
+            assert submit_response.status_code == 200
+            submitted = submit_response.json()
+            record_id = UUID(submitted["record_id"])
+
+            async with pool.acquire() as conn:
+                job_row = await conn.fetchrow(
+                    """
+                    SELECT id, run_id, base_id, target_key
+                    FROM reader_jobs
+                    WHERE reading_record_id = $1
+                      AND job_type = 'translate_unit'
+                    ORDER BY created_at, id
+                    LIMIT 1
+                    """,
+                    record_id,
+                )
+                assert job_row is not None
+                await conn.execute(
+                    """
+                    UPDATE reader_jobs
+                    SET status = 'succeeded', updated_at = NOW()
+                    WHERE id = $1
+                    """,
+                    job_row["id"],
+                )
+                layer_id = await conn.fetchval(
+                    """
+                    INSERT INTO enhancement_layers (
+                        reading_record_id,
+                        base_id,
+                        layer_type,
+                        target_scope,
+                        target_key,
+                        generation,
+                        status,
+                        operation_fingerprint,
+                        schema_version,
+                        output_json,
+                        source_run_id,
+                        source_job_id,
+                        published_at
+                    )
+                    VALUES (
+                        $1,
+                        $2,
+                        'translation',
+                        'unit',
+                        $3,
+                        1,
+                        'published',
+                        'translation_unit_v1',
+                        1,
+                        $4::jsonb,
+                        $5,
+                        $6,
+                        NOW()
+                    )
+                    RETURNING id
+                    """,
+                    record_id,
+                    job_row["base_id"],
+                    job_row["target_key"],
+                    jsonb_param({
+                        "schema_version": 1,
+                        "target_language": "zh-CN",
+                        "translated_text": "已发布译文。",
+                        "notes": [],
+                        "confidence": "normal",
+                    }),
+                    job_row["run_id"],
+                    job_row["id"],
+                )
+
+            snapshot_response = await client.get(
+                f"/reader/records/{submitted['record_id']}/snapshot",
+                headers=AUTH_HEADERS,
+            )
+            assert snapshot_response.status_code == 200, snapshot_response.text
+            snapshot = snapshot_response.json()
+            translation_progress = _find_progress_layer(
+                snapshot,
+                capability="translation",
+                layer_type="translation",
+            )
+            assert translation_progress["status"] == "succeeded"
+            assert translation_progress["layer_id"] == str(layer_id)
+            assert translation_progress["job_id"] == str(job_row["id"])
+            assert translation_progress["job_status"] == "succeeded"
+
+
+async def test_snapshot_progress_ignores_stale_failed_job_after_newer_publish(
+    reader_api_env: dict[str, object],
+) -> None:
+    pool = reader_api_env["pool"]
+    app = reader_api_env["app"]
+    assert isinstance(pool, asyncpg.Pool)
+    assert isinstance(app, FastAPI)
+    user_id = await _insert_user(pool)
+
+    with _mock_auth(user_id):
+        async with await _create_client(app) as client:
+            submit_response = await client.post(
+                "/reader/records/plain-text",
+                headers=AUTH_HEADERS,
+                json={"plain_text": "Retry progress example.", "title": "Retry"},
+            )
+            assert submit_response.status_code == 200
+            submitted = submit_response.json()
+            record_id = UUID(submitted["record_id"])
+
+            async with pool.acquire() as conn:
+                stale_job_row = await conn.fetchrow(
+                    """
+                    SELECT id, run_id, base_id, target_key
+                    FROM reader_jobs
+                    WHERE reading_record_id = $1
+                      AND job_type = 'translate_unit'
+                    ORDER BY created_at, id
+                    LIMIT 1
+                    """,
+                    record_id,
+                )
+                assert stale_job_row is not None
+                await conn.execute(
+                    """
+                    UPDATE reader_jobs
+                    SET status = 'failed_terminal',
+                        failure_code = 'provider_timeout',
+                        failure_message = 'stale translation failure',
+                        updated_at = NOW()
+                    WHERE id = $1
+                    """,
+                    stale_job_row["id"],
+                )
+                newer_job_id = await conn.fetchval(
+                    """
+                    INSERT INTO reader_jobs (
+                        reading_record_id,
+                        base_id,
+                        run_id,
+                        user_id,
+                        job_type,
+                        target_type,
+                        target_key,
+                        status,
+                        priority,
+                        expected_generation,
+                        operation_fingerprint,
+                        idempotency_key,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        $1,
+                        $2,
+                        $3,
+                        $4,
+                        'translate_unit',
+                        'unit',
+                        $5,
+                        'succeeded',
+                        0,
+                        1,
+                        'translation_unit_v1',
+                        'translation_unit_v1:retry-progress',
+                        NOW() + INTERVAL '1 second',
+                        NOW() + INTERVAL '1 second'
+                    )
+                    RETURNING id
+                    """,
+                    record_id,
+                    stale_job_row["base_id"],
+                    stale_job_row["run_id"],
+                    user_id,
+                    stale_job_row["target_key"],
+                )
+                assert isinstance(newer_job_id, UUID)
+                layer_id = await conn.fetchval(
+                    """
+                    INSERT INTO enhancement_layers (
+                        reading_record_id,
+                        base_id,
+                        layer_type,
+                        target_scope,
+                        target_key,
+                        generation,
+                        status,
+                        operation_fingerprint,
+                        schema_version,
+                        output_json,
+                        source_run_id,
+                        source_job_id,
+                        published_at
+                    )
+                    VALUES (
+                        $1,
+                        $2,
+                        'translation',
+                        'unit',
+                        $3,
+                        1,
+                        'published',
+                        'translation_unit_v1',
+                        1,
+                        $4::jsonb,
+                        $5,
+                        $6,
+                        NOW() + INTERVAL '2 seconds'
+                    )
+                    RETURNING id
+                    """,
+                    record_id,
+                    stale_job_row["base_id"],
+                    stale_job_row["target_key"],
+                    jsonb_param({
+                        "schema_version": 1,
+                        "target_language": "zh-CN",
+                        "translated_text": "重试后发布的译文。",
+                        "notes": [],
+                        "confidence": "normal",
+                    }),
+                    stale_job_row["run_id"],
+                    newer_job_id,
+                )
+
+            snapshot_response = await client.get(
+                f"/reader/records/{submitted['record_id']}/snapshot",
+                headers=AUTH_HEADERS,
+            )
+            assert snapshot_response.status_code == 200, snapshot_response.text
+            snapshot = snapshot_response.json()
+            progress_layers = snapshot["enhancement_progress"]["layers"]
+            assert snapshot["enhancement_progress"]["overall_status"] != "failed"
+            assert all(
+                layer.get("failure_code") != "provider_timeout"
+                for layer in progress_layers
+            )
+            translation_progress = _find_progress_layer(
+                snapshot,
+                capability="translation",
+                layer_type="translation",
+            )
+            assert translation_progress["status"] == "succeeded"
+            assert translation_progress["layer_id"] == str(layer_id)
+            assert translation_progress["job_id"] == str(newer_job_id)
+
+
+async def test_snapshot_progress_reflects_failed_terminal_without_overwriting_product_state(
+    reader_api_env: dict[str, object],
+) -> None:
+    pool = reader_api_env["pool"]
+    app = reader_api_env["app"]
+    assert isinstance(pool, asyncpg.Pool)
+    assert isinstance(app, FastAPI)
+    user_id = await _insert_user(pool)
+
+    with _mock_auth(user_id):
+        async with await _create_client(app) as client:
+            submit_response = await client.post(
+                "/reader/records/plain-text",
+                headers=AUTH_HEADERS,
+                json={"plain_text": "Failure progress example.", "title": "Failed Job"},
+            )
+            assert submit_response.status_code == 200
+            submitted = submit_response.json()
+            record_id = UUID(submitted["record_id"])
+
+            async with pool.acquire() as conn:
+                job_id = await conn.fetchval(
+                    """
+                    SELECT id
+                    FROM reader_jobs
+                    WHERE reading_record_id = $1
+                      AND job_type = 'translate_unit'
+                    ORDER BY created_at, id
+                    LIMIT 1
+                    """,
+                    record_id,
+                )
+                assert isinstance(job_id, UUID)
+                await conn.execute(
+                    """
+                    UPDATE reader_jobs
+                    SET status = 'failed_terminal',
+                        failure_code = 'provider_timeout',
+                        failure_message = 'provider timed out while generating translation',
+                        updated_at = NOW()
+                    WHERE id = $1
+                    """,
+                    job_id,
+                )
+
+            snapshot_response = await client.get(
+                f"/reader/records/{submitted['record_id']}/snapshot",
+                headers=AUTH_HEADERS,
+            )
+            assert snapshot_response.status_code == 200
+            snapshot = snapshot_response.json()
+            assert snapshot["record"]["product_state"] == "readable_enhancing"
+            translation_progress = _find_progress_layer(
+                snapshot,
+                capability="translation",
+                job_type="translate_unit",
+            )
+            assert translation_progress["status"] == "failed"
+            assert translation_progress["job_status"] == "failed_terminal"
+            assert translation_progress["failure_code"] == "provider_timeout"
 
 
 async def test_polling_returns_article_ready_event_and_empty_page_after_cursor(
@@ -264,6 +633,78 @@ async def test_other_user_cannot_read_snapshot_or_events(
                 headers=AUTH_HEADERS,
             )
             assert events_response.status_code == 404
+
+
+async def test_snapshot_progress_does_not_leak_other_users_jobs(
+    reader_api_env: dict[str, object],
+) -> None:
+    pool = reader_api_env["pool"]
+    app = reader_api_env["app"]
+    assert isinstance(pool, asyncpg.Pool)
+    assert isinstance(app, FastAPI)
+    owner_id = await _insert_user(pool)
+    other_user_id = await _insert_user(pool)
+
+    with _mock_auth(owner_id):
+        async with await _create_client(app) as client:
+            owner_submit = await client.post(
+                "/reader/records/plain-text",
+                headers=AUTH_HEADERS,
+                json={"plain_text": "Owner progress record.", "title": "Owner"},
+            )
+            assert owner_submit.status_code == 200
+            owner_record_id = owner_submit.json()["record_id"]
+
+    with _mock_auth(other_user_id):
+        async with await _create_client(app) as client:
+            other_submit = await client.post(
+                "/reader/records/plain-text",
+                headers=AUTH_HEADERS,
+                json={"plain_text": "Other progress record.", "title": "Other"},
+            )
+            assert other_submit.status_code == 200
+            other_record_id = UUID(other_submit.json()["record_id"])
+
+    async with pool.acquire() as conn:
+        other_job_id = await conn.fetchval(
+            """
+            SELECT id
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND job_type = 'translate_unit'
+            ORDER BY created_at, id
+            LIMIT 1
+            """,
+            other_record_id,
+        )
+        assert isinstance(other_job_id, UUID)
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET status = 'failed_terminal',
+                failure_code = 'other_user_failure',
+                failure_message = 'other user failure must stay private',
+                updated_at = NOW()
+            WHERE id = $1
+            """,
+            other_job_id,
+        )
+
+    with _mock_auth(owner_id):
+        async with await _create_client(app) as client:
+            snapshot_response = await client.get(
+                f"/reader/records/{owner_record_id}/snapshot",
+                headers=AUTH_HEADERS,
+            )
+            assert snapshot_response.status_code == 200
+            snapshot = snapshot_response.json()
+            progress_layers = snapshot["enhancement_progress"]["layers"]
+            assert all(layer.get("job_id") != str(other_job_id) for layer in progress_layers)
+            assert all(
+                layer.get("failure_code") != "other_user_failure"
+                for layer in progress_layers
+            )
+            assert snapshot["enhancement_progress"]["overall_status"] == "readable_enhancing"
 
 
 async def test_empty_plain_text_submit_returns_validation_error(

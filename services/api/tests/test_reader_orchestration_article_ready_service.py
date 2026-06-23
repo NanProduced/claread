@@ -371,19 +371,27 @@ async def test_load_snapshot_uses_repeatable_read_readonly_transaction() -> None
             language="en",
         )
     )
+    snapshot_taken_at = datetime.now(UTC)
+    snapshot_record = ReaderSnapshotRecord(
+        title="Repeatable Read",
+        created_at=datetime(2026, 6, 22, 12, 0, tzinfo=UTC),
+        source_type="text",
+        source_metadata={"source_kind": "fake"},
+        product_state="readable_enhancing",
+        readiness_state="article_ready",
+    )
     facts = LoadedReaderSnapshotFacts(
         build_result=build_result,
-        record=ReaderSnapshotRecord(
-            title="Repeatable Read",
-            created_at=datetime(2026, 6, 22, 12, 0, tzinfo=UTC),
-            source_type="text",
-            source_metadata={"source_kind": "fake"},
-            product_state="readable_enhancing",
-            readiness_state="article_ready",
-        ),
+        record=snapshot_record,
         last_event_sequence=1,
-        snapshot_taken_at=datetime.now(UTC),
+        snapshot_taken_at=snapshot_taken_at,
         enhancement_layers=(),
+        enhancement_progress=build_reader_plate_snapshot(
+            build_result,
+            snapshot_taken_at=snapshot_taken_at,
+            last_event_sequence=1,
+            record=snapshot_record,
+        ).enhancement_progress,
         parsed_decisions=(),
     )
     conn = _FakeConnection()

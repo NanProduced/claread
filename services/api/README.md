@@ -49,6 +49,14 @@ uv run reader-enhancement-worker --once
 uv run reader-enhancement-worker
 ```
 
+新 Reading Record / agentic orchestration 本地页面验证至少需要三个进程同时运行：
+
+- API：`uv run uvicorn app.main:app --reload`
+- Web：仓库根目录运行 `pnpm web:dev` 或 `pnpm --dir apps/web run dev`
+- Worker：`uv run reader-enhancement-worker`；只想手动消费一次队列时用 `uv run reader-enhancement-worker --once`
+
+如果 `/app/read` 或 `/app/reader-plate` 提交后只看到 `article_ready`，而 `translate_unit` 等 `reader_jobs` 长时间停在 `queued`，页面持续显示“批注生成中”，通常不是解析失败，而是 reader enhancement worker 没有运行或没有消费队列。完整本地链路和诊断 SQL 见 `docs/initiatives/reader-agentic-orchestration/modules/local-real-chain-runbook.md`。
+
 运行测试：
 
 ```powershell

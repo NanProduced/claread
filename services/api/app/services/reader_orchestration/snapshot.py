@@ -7,6 +7,8 @@ from datetime import datetime
 from app.contracts.annotation import slice_by_utf16_offsets
 from app.schemas.reader_orchestration import (
     GrammarNoteLayerOutput,
+    ReaderEnhancementProgress,
+    ReaderEnhancementProgressLayer,
     ReaderPlateSnapshot,
     ReaderSnapshotAnchorSegment,
     ReaderSnapshotAskSupplement,
@@ -42,6 +44,7 @@ def build_reader_plate_snapshot(
     ask_supplements: Sequence[ReaderSnapshotAskSupplement] | None = None,
     user_assets: Sequence[ReaderSnapshotUserAsset] | None = None,
     parsed_decisions: Sequence[ReaderSnapshotParsedDecision] | None = None,
+    enhancement_progress: ReaderEnhancementProgress | None = None,
     snapshot_id: str | None = None,
 ) -> ReaderPlateSnapshot:
     _validate_snapshot_inputs(
@@ -114,6 +117,8 @@ def build_reader_plate_snapshot(
             for segment in build_result.anchor_segments
         ],
         enhancement_layers=list(layers),
+        enhancement_progress=enhancement_progress
+        or _build_default_enhancement_progress(layers),
         ask_supplements=list(supplements),
         user_assets=list(assets),
         parsed_decisions=list(decisions),
@@ -305,6 +310,48 @@ def _build_default_snapshot_record(
         source_metadata={},
         product_state="readable_enhancing",
         readiness_state="article_ready",
+    )
+
+
+def _build_default_enhancement_progress(
+    layers: Sequence[ReaderSnapshotLayer],
+) -> ReaderEnhancementProgress:
+    capability_order = ("translation", "vocabulary", "grammar")
+    progress_layers = [
+        ReaderEnhancementProgressLayer(
+            capability=(
+                "grammar"
+                if layer.layer_type in {"grammar_note", "sentence_analysis"}
+                else layer.layer_type
+            ),
+            layer_type=layer.layer_type,
+            status="succeeded",
+            layer_id=layer.layer_id,
+            target_scope=layer.target_scope,
+            target_key=layer.target_key,
+            created_at=layer.published_at,
+            updated_at=layer.published_at,
+        )
+        for layer in layers
+        if layer.layer_type in {"translation", "vocabulary", "grammar_note", "sentence_analysis"}
+    ]
+    capabilities_with_progress = {layer.capability for layer in progress_layers}
+    progress_layers.extend(
+        ReaderEnhancementProgressLayer(
+            capability=capability,
+            status="not_started",
+        )
+        for capability in capability_order
+        if capability not in capabilities_with_progress
+    )
+    return ReaderEnhancementProgress(
+        overall_status=(
+            "ready"
+            if progress_layers
+            and all(layer.status == "succeeded" for layer in progress_layers)
+            else "readable_enhancing"
+        ),
+        layers=progress_layers,
     )
 
 

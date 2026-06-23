@@ -14,6 +14,24 @@
 
 截至 D5-R6，本文操作路径已用真实 DashScope provider 跑通短文本与 250+ 词长文本主链路；详细验证记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-R4-real-provider-local-chain-validation.md` 和 `docs/tmp/reader-orchestration/D5/TMP-D5-V5-R6-local-long-text-runbook-validation-2026-06-22.md`。验证没有使用 smoke harness 或 fake executor。
 
+## 0. 本地进程与页面边界
+
+新 Reading Record / agentic orchestration 的页面内验证至少需要三个进程同时运行：
+
+| 进程 | 作用 | 常用命令 |
+| --- | --- | --- |
+| API | 接收 submit、写入 `reading_records` / `reader_jobs` / `reader_events`，提供 snapshot/events API | `uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000` |
+| Web | 提供 `/app/read`、`/app/reader-plate`、`/app/reader-record/{recordId}` 页面和 BFF | `pnpm web:dev` 或 `pnpm --dir apps/web run dev` |
+| Reader enhancement worker | 消费 `reader_jobs`，发布 translation / vocabulary / grammar layers 和后续 reader events | `uv run reader-enhancement-worker` |
+
+页面边界：
+
+- `/app/reader-plate` 是验证页，用于直接观察 `ReaderPlateSnapshot`、events polling 和 snapshot reload。
+- `/app/reader-record/{recordId}` 是新 Reading Record 产品页，使用 snapshot + Workbench-backed read-only center surface。
+- `/app/reader/{recordId}` 是 legacy ReaderWorkbench，仍服务旧 scene / legacy record contract。
+
+`/app/read` 或 `/app/reader-plate` 提交成功后，后端会先创建 durable `article_ready` facts；Web 后续只通过 events polling 和 snapshot reload 观察增强层。Web 不会自己消费 `reader_jobs`。如果没有启动 reader enhancement worker，页面会停留在“批注生成中”，这表示队列无人消费，不等于文章结构解析失败。
+
 ## 1. 关键 wiring
 
 | 能力 | Model route | Prompt agent | 推荐 env | 当前 fail-closed 行为 |
@@ -294,6 +312,90 @@ Invoke-RestMethod `
 - `/app/reader-plate` 会通过现有 BFF 调 `/api/web/reader-plate/{recordId}/snapshot` 和 `/api/web/reader-plate/{recordId}/events`
 - worker loop 推进后，页面应通过已有 polling/reload 看到新 layers
 - 不存在单独的 public worker-control route
+
+### 本地 DB 诊断：record 卡在“批注生成中”
+
+给定一个新 Reading Record id，先查四张 runtime truth 表：
+
+```powershell
+$recordId = "<record_id>"
+
+psql "$env:DATABASE_URL" -c "
+SELECT
+  id,
+  title,
+  source_type,
+  product_state,
+  readiness_state,
+  generation,
+  active_base_id,
+  created_at,
+  updated_at
+FROM reading_records
+WHERE id = '$recordId'::uuid;
+"
+
+psql "$env:DATABASE_URL" -c "
+SELECT
+  job_type,
+  target_type,
+  target_key,
+  status,
+  attempt_count,
+  available_at,
+  lease_owner,
+  lease_expires_at,
+  failure_class,
+  failure_code,
+  failure_message,
+  updated_at
+FROM reader_jobs
+WHERE reading_record_id = '$recordId'::uuid
+ORDER BY created_at ASC;
+"
+
+psql "$env:DATABASE_URL" -c "
+SELECT
+  sequence,
+  event_type,
+  source_job_id,
+  source_layer_id,
+  created_at,
+  payload_json
+FROM reader_events
+WHERE reading_record_id = '$recordId'::uuid
+ORDER BY sequence ASC;
+"
+
+psql "$env:DATABASE_URL" -c "
+SELECT
+  layer_type,
+  layer_subtype,
+  target_scope,
+  target_key,
+  status,
+  source_job_id,
+  published_at,
+  created_at
+FROM enhancement_layers
+WHERE reading_record_id = '$recordId'::uuid
+ORDER BY created_at ASC;
+"
+```
+
+判断表：
+
+| 现象 | 含义 | 下一步 |
+| --- | --- | --- |
+| `reading_records` 查不到 record | record id、数据库或环境变量不一致 | 确认 Web/API 指向同一个 `DATABASE_URL`，并确认使用的是新 Reading Record id |
+| `readiness_state = article_ready`，`reader_events` 只有 `article_ready`，`reader_jobs` 有 `translate_unit` 或后续 jobs 停在 `queued`，`enhancement_layers` 为空 | 文章结构已经落库；worker 未运行或未消费队列 | 在 `services/api` 运行 `uv run reader-enhancement-worker --once` 验证一次，或运行 `uv run reader-enhancement-worker` 持续消费 |
+| jobs 处于 `claimed` 且 `lease_expires_at` 未过期 | worker 已 claim，可能正在真实 LLM 调用中 | 看 worker 终端日志；长文本可能需要等待 |
+| jobs 处于 `claimed` 但 `lease_expires_at` 已过期 | 之前的 worker 退出或卡死，lease 等待恢复 | 再运行 `uv run reader-enhancement-worker --once`，worker 会先做 stale lease recovery |
+| jobs 为 `failed_terminal` | worker 已消费但 terminal fail-closed | 查 `failure_code` / `failure_message`，常见为 profile/route/schema/publish fence 问题 |
+| jobs 为 `retry_later` 且 `available_at` 在未来 | 暂时性失败，当前不应热循环 | 等到 `available_at` 后再让 worker 消费，或检查 provider/network 问题 |
+| `layer_published` events 和 `enhancement_layers.status = published` 已存在，但 Web 仍不更新 | worker 已发布，问题转向 Web/BFF polling 或 session | 刷新页面；再查 `/api/web/reader-plate/{recordId}/events` 和 `/snapshot` BFF 响应 |
+
+最常见的本地误判是第二行：`article_ready` 已经成功，`translate_unit` job 也已 queued，但没有 reader enhancement worker 进程。此时页面“批注生成中”只是 polling 等不到后续 events。
 
 ## 8. 常见 fail-closed / attention 情况
 

@@ -177,6 +177,7 @@ class ArticleReadyPersistenceService:
             record=facts.record,
             enhancement_layers=facts.enhancement_layers,
             parsed_decisions=facts.parsed_decisions,
+            enhancement_progress=facts.enhancement_progress,
         )
 
 

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { ReaderRecordWorkbenchSurface } from "@/components/reader/ReaderRecordWorkbenchSurface";
+import { useReaderPlatePolling } from "@/lib/reader-plate-snapshot/polling";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 
 type SnapshotState =
@@ -14,6 +15,45 @@ type SnapshotResponse =
   | ({ ok: true } & ReaderPlateSnapshotDto)
   | { ok: false; status: number; code: string; message: string };
 
+type SnapshotLoadResult =
+  | { ok: true; snapshot: ReaderPlateSnapshotDto }
+  | { ok: false; message: string };
+
+async function loadSnapshotForRecord(
+  recordId: string,
+  fallbackMessage: string,
+): Promise<SnapshotLoadResult> {
+  const response = await fetch(
+    `/api/web/reader-plate/${encodeURIComponent(recordId)}/snapshot`,
+    { method: "GET", headers: { accept: "application/json" } },
+  );
+  const payload = (await response.json()) as SnapshotResponse;
+
+  if (!response.ok || !payload.ok) {
+    return {
+      ok: false,
+      message: payload.ok === false ? payload.message : fallbackMessage,
+    };
+  }
+
+  const { ok: _ok, ...snapshot } = payload;
+  void _ok;
+  return { ok: true, snapshot };
+}
+
+function reloadStatusLabel(reason: string | null): string {
+  switch (reason) {
+    case "layer_published":
+      return "检测到新的增强层，正在刷新阅读内容。";
+    case "record_product_state_updated":
+      return "检测到阅读记录状态变化，正在刷新阅读内容。";
+    case "projection_reset_required":
+      return "检测到阅读投影重置请求，正在刷新阅读内容。";
+    default:
+      return "正在刷新阅读内容。";
+  }
+}
+
 export default function ReadingRecordPage({
   params,
 }: {
@@ -24,6 +64,48 @@ export default function ReadingRecordPage({
     kind: "loading",
     recordId,
   });
+  const [isReloading, setIsReloading] = useState(false);
+  const [reloadError, setReloadError] = useState<string | null>(null);
+
+  const snapshot = snapshotState.kind === "loaded" ? snapshotState.snapshot : null;
+  const initialCursor = snapshot?.last_event_sequence ?? 0;
+
+  const reloadSnapshot = useCallback(
+    async (reason: string) => {
+      if (!recordId || snapshotState.kind !== "loaded") {
+        return;
+      }
+
+      setIsReloading(true);
+      setReloadError(null);
+
+      try {
+        const result = await loadSnapshotForRecord(
+          recordId,
+          "阅读内容刷新失败，请稍后重试。",
+        );
+
+        if (!result.ok) {
+          setReloadError(result.message);
+          return;
+        }
+
+        void reason;
+        setSnapshotState({
+          kind: "loaded",
+          recordId,
+          snapshot: result.snapshot,
+        });
+      } catch (err) {
+        setReloadError(
+          err instanceof Error ? err.message : "阅读内容刷新发生未知错误。",
+        );
+      } finally {
+        setIsReloading(false);
+      }
+    },
+    [recordId, snapshotState.kind],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -38,34 +120,32 @@ export default function ReadingRecordPage({
         return;
       }
 
+      setIsReloading(false);
+      setReloadError(null);
       setSnapshotState({ kind: "loading", recordId });
 
       try {
-        const response = await fetch(
-          `/api/web/reader-plate/${encodeURIComponent(recordId)}/snapshot`,
-          { method: "GET", headers: { accept: "application/json" } },
+        const result = await loadSnapshotForRecord(
+          recordId,
+          "阅读内容加载失败，请稍后重试。",
         );
-        const payload = (await response.json()) as SnapshotResponse;
         if (cancelled) {
           return;
         }
 
-        if (!response.ok || !payload.ok) {
+        if (!result.ok) {
           setSnapshotState({
             kind: "error",
             recordId,
-            message:
-              payload.ok === false ? payload.message : "阅读内容加载失败，请稍后重试。",
+            message: result.message,
           });
           return;
         }
 
-        const { ok: _ok, ...snapshot } = payload;
-        void _ok;
         setSnapshotState({
           kind: "loaded",
           recordId,
-          snapshot,
+          snapshot: result.snapshot,
         });
       } catch (err) {
         if (cancelled) {
@@ -87,8 +167,50 @@ export default function ReadingRecordPage({
     };
   }, [recordId]);
 
+  const polling = useReaderPlatePolling({
+    recordId,
+    initialCursor,
+    enabled: snapshotState.kind === "loaded" && recordId.length > 0,
+    onReloadRequired: reloadSnapshot,
+  });
+
   if (snapshotState.kind === "loaded") {
-    return <ReaderRecordWorkbenchSurface snapshot={snapshotState.snapshot} />;
+    const inlinePollingError = reloadError ?? polling.error;
+    const showInlineStrip = isReloading || inlinePollingError !== null;
+
+    return (
+      <>
+        {showInlineStrip ? (
+          <div className="paper-grain border-b border-hairline/70 bg-background/90 backdrop-blur">
+            <div
+              aria-live="polite"
+              className="mx-auto flex max-w-[82ch] flex-col gap-2 px-3 py-2.5 sm:px-4 lg:px-5"
+            >
+              {isReloading ? (
+                <div
+                  className="inline-flex items-center gap-2 text-xs font-medium text-lens-blue"
+                  data-testid="reader-record-reload-status"
+                >
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-lens-blue" />
+                  {reloadStatusLabel(polling.lastReloadReason)}
+                </div>
+              ) : null}
+
+              {inlinePollingError ? (
+                <p
+                  className="text-xs font-medium text-amber-800"
+                  data-testid="reader-record-polling-error"
+                >
+                  自动刷新暂时中断：{inlinePollingError}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        <ReaderRecordWorkbenchSurface snapshot={snapshotState.snapshot} />
+      </>
+    );
   }
 
   return (

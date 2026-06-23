@@ -1,7 +1,7 @@
 # Orchestration Runtime
 
-> 状态：`D5 active`
-> 最后更新：2026-06-22
+> 状态：`D6-P7A backend progress snapshot contract`
+> 最后更新：2026-06-23
 > 范围：bounded run/job、worker lease、Authorization Envelope、并发和框架边界。
 
 ## Runtime 形态
@@ -95,6 +95,21 @@ D5-W1 worker loop 评估结论为 `accepted_with_changes`。
 - Web submit 不同步执行 runner；submit 只创建 durable `article_ready` facts。
 - 不新增 public 或 semi-public worker-control endpoint。
 - 不使用 smoke harness 或 fake executors 作为产品 runtime。
+
+D6-P6 本地验证合同：
+
+- `/app/read` 和 `/app/reader-plate` 提交成功只证明 API 写入了 `article_ready` facts，并不代表 enhancement worker 已运行。
+- Web 页面通过 `/api/web/reader-plate/{recordId}/events` polling 和 snapshot reload 等待后续 `layer_published` / `parsed_decision_updated` 等 events；Web 不消费 `reader_jobs`。
+- 本地页面内验证新链路时，API、Web 和 `uv run reader-enhancement-worker` 必须同时运行。
+- `uv run reader-enhancement-worker --once` 是诊断单次消费入口；`uv run reader-enhancement-worker` 是持续消费入口。
+- 如果 DB 中 `translate_unit` 或后续 jobs 长时间停在 `queued`，且 `reader_events` 只有 `article_ready`，这是 worker 未运行或未消费队列，不是 article parsing failure。具体排查 SQL 见 `local-real-chain-runbook.md`。
+
+D6-P7A Reader UI 可观察性合同：
+
+- `ReaderPlateSnapshot.enhancement_progress` 是 snapshot projection，只从 `reading_records`、当前 active base/generation 的 `reader_jobs` 和 `enhancement_layers` 推导；它不是新的业务事实源。
+- `enhancement_progress` 让 `/app/reader-record/{recordId}` 区分 enhancement work 的 `not_started`、`queued`、`processing`、`succeeded`、`failed` 和 `action_required`，避免只显示泛化的“批注生成中”。
+- 长时间 `queued` 且没有 `layer_published` / `parsed_decision_updated` events 表示 worker 未运行、未 claim 到 job、或被 lease/eligibility 条件挡住；这仍不是 article_ready 解析失败。
+- Published `translation` / `vocabulary` / `grammar_note` / `sentence_analysis` layers 在 progress 中显示 `succeeded`。`failed_terminal` job 会显示为 `failed` 或 D6-P4 user-actionable 的 `action_required`，但不会由 snapshot projection 改写 `reading_records.product_state`。
 
 Eligible scan 初版口径：
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -16,6 +17,8 @@ from app.contracts.annotation import (
 from app.database import connection as db_connection
 from app.database.json_compat import ensure_json_array, ensure_json_object, jsonb_param
 from app.schemas.reader_orchestration import (
+    ReaderEnhancementProgress,
+    ReaderEnhancementProgressLayer,
     ReaderSnapshotLayer,
     ReaderSnapshotParsedDecision,
     ReaderSnapshotRecord,
@@ -39,6 +42,7 @@ class LoadedReaderSnapshotFacts:
     last_event_sequence: int
     snapshot_taken_at: datetime
     enhancement_layers: tuple[ReaderSnapshotLayer, ...]
+    enhancement_progress: ReaderEnhancementProgress
     parsed_decisions: tuple[ReaderSnapshotParsedDecision, ...]
 
 
@@ -52,6 +56,26 @@ class ReaderRecordSummary:
     created_at: datetime
     source_metadata: dict[str, Any]
     last_event_sequence: int
+
+
+_PROGRESS_CAPABILITIES = ("translation", "vocabulary", "grammar")
+_JOB_CAPABILITY_BY_TYPE = {
+    "translate_unit": "translation",
+    "build_vocabulary_layer": "vocabulary",
+    "build_grammar_bundle": "grammar",
+}
+_JOB_LAYER_TYPE_BY_TYPE = {
+    "translate_unit": "translation",
+    "build_vocabulary_layer": "vocabulary",
+    "build_grammar_bundle": None,
+}
+_LAYER_CAPABILITY_BY_TYPE = {
+    "translation": "translation",
+    "vocabulary": "vocabulary",
+    "grammar_note": "grammar",
+    "sentence_analysis": "grammar",
+}
+_USER_ACTION_REQUIRED_FAILURE_CODES = frozenset({"reader_user_confirmation_required"})
 
 
 class ReaderOrchestrationRepository:
@@ -815,6 +839,43 @@ class ReaderOrchestrationRepository:
             base_id,
             record_generation,
         )
+        progress_layer_rows = await conn.fetch(
+            """
+            SELECT id, layer_type, layer_subtype, target_scope, target_key,
+                   status, source_job_id, created_at, updated_at, published_at
+            FROM enhancement_layers
+            WHERE reading_record_id = $1
+              AND base_id = $2
+              AND generation = $3
+              AND status IN ('draft', 'published', 'failed')
+            ORDER BY layer_type, target_scope, target_key, created_at, id
+            """,
+            record_id,
+            base_id,
+            record_generation,
+        )
+        progress_job_rows = await conn.fetch(
+            """
+            SELECT id, job_type, target_type, target_key, status,
+                   operation_fingerprint, failure_code, failure_message,
+                   created_at, updated_at
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND base_id = $2
+              AND expected_generation = $3
+              AND user_id = $4
+              AND job_type IN (
+                'translate_unit',
+                'build_vocabulary_layer',
+                'build_grammar_bundle'
+              )
+            ORDER BY created_at, id
+            """,
+            record_id,
+            base_id,
+            record_generation,
+            user_id,
+        )
         parsed_rows = await conn.fetch(
             """
             SELECT unit_id, policy_code, parsed_state, rationale_code
@@ -826,34 +887,41 @@ class ReaderOrchestrationRepository:
             record_id,
             base_id,
         )
+        snapshot_record = ReaderSnapshotRecord(
+            title=str(title_snapshot) if title_snapshot is not None else "Untitled Reading",
+            created_at=record_row["record_created_at"],
+            source_type=str(record_row["source_type"]),
+            source_metadata=source_metadata,
+            product_state=str(record_row["product_state"]),
+            readiness_state=str(record_row["readiness_state"]),
+        )
+        snapshot_layers = tuple(
+            ReaderSnapshotLayer(
+                layer_id=str(row["id"]),
+                layer_type=str(row["layer_type"]),
+                layer_subtype=(
+                    str(row["layer_subtype"]) if row["layer_subtype"] is not None else None
+                ),
+                base_id=str(base_id),
+                target_scope=str(row["target_scope"]),
+                target_key=str(row["target_key"]),
+                schema_version=int(row["schema_version"]),
+                output=row["output_json"],
+                published_at=row["published_at"],
+            )
+            for row in enhancement_rows
+        )
 
         return LoadedReaderSnapshotFacts(
             build_result=build_result,
-            record=ReaderSnapshotRecord(
-                title=str(title_snapshot) if title_snapshot is not None else "Untitled Reading",
-                created_at=record_row["record_created_at"],
-                source_type=str(record_row["source_type"]),
-                source_metadata=source_metadata,
-                product_state=str(record_row["product_state"]),
-                readiness_state=str(record_row["readiness_state"]),
-            ),
+            record=snapshot_record,
             last_event_sequence=last_event_sequence,
             snapshot_taken_at=latest_event_row["created_at"],
-            enhancement_layers=tuple(
-                ReaderSnapshotLayer(
-                    layer_id=str(row["id"]),
-                    layer_type=str(row["layer_type"]),
-                    layer_subtype=(
-                        str(row["layer_subtype"]) if row["layer_subtype"] is not None else None
-                    ),
-                    base_id=str(base_id),
-                    target_scope=str(row["target_scope"]),
-                    target_key=str(row["target_key"]),
-                    schema_version=int(row["schema_version"]),
-                    output=row["output_json"],
-                    published_at=row["published_at"],
-                )
-                for row in enhancement_rows
+            enhancement_layers=snapshot_layers,
+            enhancement_progress=_build_enhancement_progress(
+                product_state=snapshot_record.product_state,
+                layer_rows=progress_layer_rows,
+                job_rows=progress_job_rows,
             ),
             parsed_decisions=tuple(
                 ReaderSnapshotParsedDecision(
@@ -929,6 +997,231 @@ class ReaderOrchestrationRepository:
             for row in rows
         )
         return summaries, int(total)
+
+
+def _build_enhancement_progress(
+    *,
+    product_state: ReadingRecordProductState,
+    layer_rows: Sequence[asyncpg.Record],
+    job_rows: Sequence[asyncpg.Record],
+) -> ReaderEnhancementProgress:
+    effective_layer_rows = _effective_progress_layer_rows(layer_rows)
+    effective_job_rows = _effective_progress_job_rows(job_rows)
+    job_by_id = {str(row["id"]): row for row in effective_job_rows}
+    progress_layers: list[ReaderEnhancementProgressLayer] = []
+    layer_source_job_ids: set[str] = set()
+
+    for row in effective_layer_rows:
+        layer_type = str(row["layer_type"])
+        capability = _LAYER_CAPABILITY_BY_TYPE.get(layer_type)
+        if capability is None:
+            continue
+
+        source_job_id = _optional_str(row["source_job_id"])
+        if source_job_id is not None:
+            layer_source_job_ids.add(source_job_id)
+        job_row = job_by_id.get(source_job_id) if source_job_id is not None else None
+        failure_code = _optional_str(job_row["failure_code"]) if job_row is not None else None
+
+        progress_layers.append(
+            ReaderEnhancementProgressLayer(
+                capability=capability,
+                layer_type=layer_type,
+                status=_layer_progress_status(
+                    str(row["status"]),
+                    failure_code=failure_code,
+                    product_state=product_state,
+                ),
+                job_status=str(job_row["status"]) if job_row is not None else None,
+                job_type=str(job_row["job_type"]) if job_row is not None else None,
+                layer_id=str(row["id"]),
+                job_id=source_job_id,
+                target_type=str(job_row["target_type"]) if job_row is not None else None,
+                target_scope=str(row["target_scope"]),
+                target_key=str(row["target_key"]),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"] or row["published_at"],
+                failure_code=failure_code,
+                failure_message=(
+                    _sanitize_failure_message(job_row["failure_message"])
+                    if job_row is not None
+                    else None
+                ),
+            )
+        )
+
+    for row in effective_job_rows:
+        job_id = str(row["id"])
+        if job_id in layer_source_job_ids:
+            continue
+
+        job_type = str(row["job_type"])
+        capability = _JOB_CAPABILITY_BY_TYPE.get(job_type)
+        if capability is None:
+            continue
+        failure_code = _optional_str(row["failure_code"])
+
+        progress_layers.append(
+            ReaderEnhancementProgressLayer(
+                capability=capability,
+                layer_type=_JOB_LAYER_TYPE_BY_TYPE[job_type],
+                status=_job_progress_status(
+                    str(row["status"]),
+                    failure_code=failure_code,
+                    product_state=product_state,
+                ),
+                job_status=str(row["status"]),
+                job_type=job_type,
+                job_id=job_id,
+                target_type=str(row["target_type"]),
+                target_key=str(row["target_key"]),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+                failure_code=failure_code,
+                failure_message=_sanitize_failure_message(row["failure_message"]),
+            )
+        )
+
+    capabilities_with_progress = {layer.capability for layer in progress_layers}
+    for capability in _PROGRESS_CAPABILITIES:
+        if capability not in capabilities_with_progress:
+            progress_layers.append(
+                ReaderEnhancementProgressLayer(
+                    capability=capability,
+                    status="not_started",
+                )
+            )
+
+    return ReaderEnhancementProgress(
+        overall_status=_overall_progress_status(product_state, progress_layers),
+        layers=progress_layers,
+    )
+
+
+def _effective_progress_layer_rows(
+    layer_rows: Sequence[asyncpg.Record],
+) -> tuple[asyncpg.Record, ...]:
+    effective_by_key: dict[tuple[str, str, str], asyncpg.Record] = {}
+    for row in layer_rows:
+        key = (
+            str(row["layer_type"]),
+            str(row["target_scope"]),
+            str(row["target_key"]),
+        )
+        current = effective_by_key.get(key)
+        if current is None or _prefer_progress_layer_row(row, current):
+            effective_by_key[key] = row
+    return tuple(effective_by_key.values())
+
+
+def _prefer_progress_layer_row(
+    candidate: asyncpg.Record,
+    current: asyncpg.Record,
+) -> bool:
+    candidate_status = str(candidate["status"])
+    current_status = str(current["status"])
+    if candidate_status == "published" and current_status != "published":
+        return True
+    if current_status == "published" and candidate_status != "published":
+        return False
+    return _progress_row_timestamp(candidate) >= _progress_row_timestamp(current)
+
+
+def _effective_progress_job_rows(
+    job_rows: Sequence[asyncpg.Record],
+) -> tuple[asyncpg.Record, ...]:
+    effective_by_key: dict[tuple[str, str, str, str], asyncpg.Record] = {}
+    for row in job_rows:
+        effective_by_key[_progress_job_work_key(row)] = row
+    return tuple(effective_by_key.values())
+
+
+def _progress_job_work_key(row: asyncpg.Record) -> tuple[str, str, str, str]:
+    return (
+        str(row["job_type"]),
+        str(row["target_type"]),
+        str(row["target_key"]),
+        str(row["operation_fingerprint"]),
+    )
+
+
+def _progress_row_timestamp(row: asyncpg.Record) -> tuple[datetime, str]:
+    return (row["updated_at"] or row["created_at"], str(row["id"]))
+
+
+def _job_progress_status(
+    job_status: str,
+    *,
+    failure_code: str | None,
+    product_state: ReadingRecordProductState,
+) -> str:
+    if job_status in {"queued", "retry_later", "paused"}:
+        return "queued"
+    if job_status == "claimed":
+        return "processing"
+    if job_status in {"skipped", "succeeded"}:
+        return "succeeded"
+    return _failed_progress_status(failure_code, product_state)
+
+
+def _layer_progress_status(
+    layer_status: str,
+    *,
+    failure_code: str | None,
+    product_state: ReadingRecordProductState,
+) -> str:
+    if layer_status == "published":
+        return "succeeded"
+    if layer_status == "draft":
+        return "processing"
+    return _failed_progress_status(failure_code, product_state)
+
+
+def _failed_progress_status(
+    failure_code: str | None,
+    product_state: ReadingRecordProductState,
+) -> str:
+    if (
+        product_state in {"action_required", "needs_confirmation"}
+        or failure_code in _USER_ACTION_REQUIRED_FAILURE_CODES
+    ):
+        return "action_required"
+    return "failed"
+
+
+def _overall_progress_status(
+    product_state: ReadingRecordProductState,
+    progress_layers: Sequence[ReaderEnhancementProgressLayer],
+) -> str:
+    layer_statuses = {layer.status for layer in progress_layers}
+    if product_state in {"action_required", "needs_confirmation"}:
+        return "action_required"
+    if product_state in {"deleted", "failed"}:
+        return "failed"
+    if "action_required" in layer_statuses:
+        return "action_required"
+    if "failed" in layer_statuses:
+        return "failed"
+    if product_state == "processing":
+        return "processing"
+    if layer_statuses.intersection({"not_started", "queued", "processing"}):
+        return "readable_enhancing"
+    return "ready"
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _sanitize_failure_message(value: Any) -> str | None:
+    if value is None:
+        return None
+    message = " ".join(str(value).split())
+    if not message:
+        return None
+    return message[:240]
 
 
 def _navigation_json_from_build_result(

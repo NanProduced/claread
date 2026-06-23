@@ -786,6 +786,7 @@ type ReaderPlateSnapshot = {
     hash_algorithm: "fnv1a32-utf16";
   }>;
   enhancement_layers: Array<ReaderSnapshotLayer>;
+  enhancement_progress: ReaderEnhancementProgress;
   ask_supplements: Array<ReaderSnapshotAskSupplement>;
   user_assets: Array<ReaderSnapshotUserAsset>;
   parsed_decisions: Array<ReaderSnapshotParsedDecision>;
@@ -804,6 +805,49 @@ type ReaderSnapshotLayer = {
   schema_version: number;
   output: unknown;
   published_at: string;
+};
+
+type ReaderEnhancementProgress = {
+  overall_status:
+    | "processing"
+    | "readable_enhancing"
+    | "ready"
+    | "failed"
+    | "action_required";
+  layers: Array<ReaderEnhancementProgressLayer>;
+};
+
+type ReaderEnhancementProgressLayer = {
+  capability: "translation" | "vocabulary" | "grammar";
+  layer_type?: "translation" | "vocabulary" | "grammar_note" | "sentence_analysis" | null;
+  status:
+    | "not_started"
+    | "queued"
+    | "processing"
+    | "succeeded"
+    | "failed"
+    | "action_required";
+  job_status?:
+    | "queued"
+    | "claimed"
+    | "retry_later"
+    | "paused"
+    | "skipped"
+    | "succeeded"
+    | "failed_terminal"
+    | "cancelled"
+    | "superseded"
+    | null;
+  job_type?: "translate_unit" | "build_vocabulary_layer" | "build_grammar_bundle" | string | null;
+  layer_id?: string | null;
+  job_id?: string | null;
+  target_type?: "record" | "unit" | "anchor_segment" | "unit_range" | string | null;
+  target_scope?: "unit" | "anchor_segment" | "unit_range" | "record" | null;
+  target_key?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  failure_code?: string | null;
+  failure_message?: string | null;
 };
 
 type ReaderSnapshotParsedDecision = {
@@ -837,6 +881,7 @@ type ReaderPlateNode = Record<string, unknown>;
 D4 values:
 
 - `enhancement_layers` contains published translation layers after they exist.
+- `enhancement_progress` is a UI observability projection from current-base jobs and layers.
 - `ask_supplements` is empty.
 - `user_assets` is empty.
 - `parsed_decisions` may be empty or contain translation parsed decisions.
@@ -853,6 +898,11 @@ W3-C2 alignment additions:
 
 - Snapshot top-level `record` is the minimum ReaderWorkbench shell metadata contract for title, created time, source metadata, current `product_state`, and current `readiness_state`.
 - `/app/reader-record/{recordId}` may surface `product_state` as the primary reader-facing status and `readiness_state` as auxiliary milestone text after snapshot reloads.
+- D6-P7A adds `enhancement_progress` so Reader UI can distinguish queued, processing, published and failed enhancement work. It is derived from `reading_records`, current-base/current-generation `reader_jobs`, and `enhancement_layers`; it is not a new source of truth and does not create new DB tables.
+- `enhancement_progress.layers[*].capability` groups existing facts into `translation`, `vocabulary`, or `grammar`. Grammar jobs may have no single `layer_type`; published grammar outputs continue to use existing `grammar_note` and `sentence_analysis` layer types.
+- `reader_jobs.status` maps to progress as follows: `queued` / `retry_later` / `paused` -> `queued`, `claimed` -> `processing`, `succeeded` / `skipped` -> `succeeded`, terminal/cancelled/superseded states -> `failed` unless the D6-P4 user-actionable policy classifies the condition as `action_required`.
+- Published enhancement layers map to `succeeded`; draft layers map to `processing`; failed layers map to `failed` or `action_required` by the same D6-P4 rule.
+- `record.product_state` remains the record-level product state. Snapshot progress must not rewrite `product_state`; a `failed_terminal` job can be visible in `enhancement_progress` while `record.product_state` remains `readable_enhancing` until the worker product-state update path decides otherwise.
 - Snapshot top-level `anchor_segments` and `navigation.units[*].text_hash` are stable interaction anchors. Frontends must not infer them only from Plate tree shape.
 - `enhancement_layers.owner`, `ask_supplements.owner` and `user_assets.owner` distinguish projection ownership. Only `enhancement_layers` uses `target_scope` / `target_key` as publish targeting; ask supplements and user assets continue to ground themselves through explicit anchors.
 - `reading_goal` is intentionally not in `ReaderPlateSnapshot` yet. The new Reader orchestration domain does not have a first-class persisted `reading_goal` truth owner, so adding a nullable placeholder now would create false contract stability.

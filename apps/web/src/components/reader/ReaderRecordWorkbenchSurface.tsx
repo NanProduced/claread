@@ -54,6 +54,10 @@ import {
 import type { WebDictResult } from "@/types/api/dict";
 import type { DictionaryAIViewState } from "@/types/api/dict-ai";
 import type {
+  ReaderEnhancementCapability,
+  ReaderEnhancementProgressDto,
+  ReaderEnhancementProgressLayerStatus,
+  ReaderEnhancementProgressOverallStatus,
   ReaderPlateSnapshotDto,
   ReadingRecordProductState,
   ReadingRecordReadinessState,
@@ -146,6 +150,246 @@ function productStateBanner(productState: ReadingRecordProductState) {
     default:
       return null;
   }
+}
+
+function enhancementOverallLabel(status: ReaderEnhancementProgressOverallStatus) {
+  switch (status) {
+    case "processing":
+      return "增强准备中";
+    case "readable_enhancing":
+      return "批注/增强处理中";
+    case "ready":
+      return "增强已完成";
+    case "failed":
+      return "部分增强失败";
+    case "action_required":
+      return "需要处理";
+    default:
+      return "增强状态";
+  }
+}
+
+function enhancementOverallMessage(
+  status: ReaderEnhancementProgressOverallStatus,
+) {
+  switch (status) {
+    case "processing":
+      return "正在准备增强任务，正文仍可阅读。";
+    case "readable_enhancing":
+      return "译文、词汇或语法批注仍在排队或生成中。";
+    case "ready":
+      return "已发布的增强内容会随当前快照一起展示。";
+    case "failed":
+      return "部分增强任务未完成，正文和已发布内容仍可阅读。";
+    case "action_required":
+      return "该记录需要额外处理，本页暂不提供处理动作。";
+    default:
+      return "增强状态来自当前阅读快照。";
+  }
+}
+
+function enhancementStatusTone(
+  status:
+    | ReaderEnhancementProgressOverallStatus
+    | ReaderEnhancementProgressLayerStatus,
+) {
+  switch (status) {
+    case "ready":
+    case "succeeded":
+      return "border-emerald-200 bg-emerald-50/80 text-emerald-900";
+    case "failed":
+      return "border-amber-300/80 bg-amber-50/90 text-amber-950";
+    case "action_required":
+      return "border-orange-300/80 bg-orange-50/90 text-orange-950";
+    case "processing":
+    case "readable_enhancing":
+    case "queued":
+      return "border-lens-blue/25 bg-lens-blue-soft text-ink-soft";
+    default:
+      return "border-hairline bg-surface-warm text-muted";
+  }
+}
+
+type EnhancementCapabilitySummary = {
+  capability: ReaderEnhancementCapability;
+  label: string;
+  total: number;
+  succeeded: number;
+  queued: number;
+  processing: number;
+  failed: number;
+  actionRequired: number;
+  notStarted: number;
+  status: ReaderEnhancementProgressLayerStatus;
+};
+
+function summarizeEnhancementProgress(progress: ReaderEnhancementProgressDto) {
+  const summaries = new Map<
+    ReaderEnhancementCapability,
+    EnhancementCapabilitySummary
+  >([
+    [
+      "translation",
+      {
+        capability: "translation",
+        label: "译文",
+        total: 0,
+        succeeded: 0,
+        queued: 0,
+        processing: 0,
+        failed: 0,
+        actionRequired: 0,
+        notStarted: 0,
+        status: "not_started",
+      },
+    ],
+    [
+      "vocabulary",
+      {
+        capability: "vocabulary",
+        label: "词汇",
+        total: 0,
+        succeeded: 0,
+        queued: 0,
+        processing: 0,
+        failed: 0,
+        actionRequired: 0,
+        notStarted: 0,
+        status: "not_started",
+      },
+    ],
+    [
+      "grammar",
+      {
+        capability: "grammar",
+        label: "语法",
+        total: 0,
+        succeeded: 0,
+        queued: 0,
+        processing: 0,
+        failed: 0,
+        actionRequired: 0,
+        notStarted: 0,
+        status: "not_started",
+      },
+    ],
+  ]);
+
+  progress.layers.forEach((layer) => {
+    const summary = summaries.get(layer.capability);
+    if (!summary) {
+      return;
+    }
+
+    summary.total += layer.status === "not_started" ? 0 : 1;
+    if (layer.status === "succeeded") {
+      summary.succeeded += 1;
+    } else if (layer.status === "queued") {
+      summary.queued += 1;
+    } else if (layer.status === "processing") {
+      summary.processing += 1;
+    } else if (layer.status === "failed") {
+      summary.failed += 1;
+    } else if (layer.status === "action_required") {
+      summary.actionRequired += 1;
+    } else {
+      summary.notStarted += 1;
+    }
+  });
+
+  summaries.forEach((summary) => {
+    if (summary.actionRequired > 0) {
+      summary.status = "action_required";
+    } else if (summary.failed > 0) {
+      summary.status = "failed";
+    } else if (summary.processing > 0) {
+      summary.status = "processing";
+    } else if (summary.queued > 0) {
+      summary.status = "queued";
+    } else if (summary.total > 0 && summary.succeeded === summary.total) {
+      summary.status = "succeeded";
+    } else {
+      summary.status = "not_started";
+    }
+  });
+
+  return [...summaries.values()];
+}
+
+function enhancementSummaryText(summary: EnhancementCapabilitySummary) {
+  if (summary.status === "not_started") {
+    return "未开始";
+  }
+
+  const parts = [`${summary.succeeded}/${summary.total} 已完成`];
+  if (summary.processing > 0) {
+    parts.push(`${summary.processing} 处理中`);
+  }
+  if (summary.queued > 0) {
+    parts.push(`${summary.queued} 排队中`);
+  }
+  if (summary.failed > 0) {
+    parts.push(`${summary.failed} 失败`);
+  }
+  if (summary.actionRequired > 0) {
+    parts.push(`${summary.actionRequired} 需处理`);
+  }
+  return parts.join(" · ");
+}
+
+function ReaderRecordEnhancementProgress({
+  progress,
+}: {
+  progress?: ReaderEnhancementProgressDto;
+}) {
+  if (!progress) {
+    return null;
+  }
+
+  const summaries = summarizeEnhancementProgress(progress);
+
+  return (
+    <div
+      className={cn(
+        "mx-auto mt-1 rounded-[10px] border px-4 py-3 text-sm leading-6",
+        enhancementStatusTone(progress.overall_status),
+      )}
+      data-testid="reader-record-enhancement-progress"
+    >
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <p className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] opacity-70">
+            增强进度
+          </p>
+          <p className="mt-1 font-semibold">
+            {enhancementOverallLabel(progress.overall_status)}
+          </p>
+          <p className="text-[0.82rem] opacity-85">
+            {enhancementOverallMessage(progress.overall_status)}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {summaries.map((summary) => {
+            return (
+              <span
+                key={summary.capability}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[0.74rem] font-semibold leading-none",
+                  enhancementStatusTone(summary.status),
+                )}
+                data-testid="reader-record-enhancement-layer"
+              >
+                <span>{summary.label}</span>
+                <span className="opacity-70">·</span>
+                <span>{enhancementSummaryText(summary)}</span>
+              </span>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 const READ_ONLY_DICTIONARY_PANEL_BOTTOM =
@@ -971,6 +1215,10 @@ export function ReaderRecordWorkbenchSurface({
                 当前阶段：{readinessLabel}
               </p>
             )}
+
+            <ReaderRecordEnhancementProgress
+              progress={snapshot.enhancement_progress}
+            />
 
             <div className="reader-shell-message mx-auto mt-1 rounded-[10px] border border-lens-blue/20 bg-lens-blue-soft px-4 py-3 text-sm leading-6 text-ink-soft">
               当前只读预览中，可通过点击单词、点击标注或选中正文进行只读查词；Ask、笔记、高亮和词典写入暂不可用。

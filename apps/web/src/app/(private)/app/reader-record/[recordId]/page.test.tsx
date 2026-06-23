@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -13,7 +14,11 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
+import type {
+  ReaderEventPollResponseDto,
+  ReaderEventResponseDto,
+  ReaderPlateSnapshotDto,
+} from "@/types/api/reader-plate";
 import type { WebDictResult } from "@/types/api/dict";
 
 import ReadingRecordPage from "./page";
@@ -24,13 +29,18 @@ const TRANSLATION_TEXT = "制度记忆会塑造政策选择。";
 function makeSnapshot(
   recordId = "rec_product_1",
   recordOverrides: Partial<ReaderPlateSnapshotDto["record"]> = {},
-  options?: { withVocabularyMark?: boolean },
+  options?: {
+    enhancementProgress?: ReaderPlateSnapshotDto["enhancement_progress"];
+    lastEventSequence?: number;
+    translationText?: string;
+    withVocabularyMark?: boolean;
+  },
 ): ReaderPlateSnapshotDto {
   return {
     schema_kind: "reader_plate_snapshot",
     snapshot_id: "snap_1",
     snapshot_taken_at: "2026-06-22T00:00:00Z",
-    last_event_sequence: 1,
+    last_event_sequence: options?.lastEventSequence ?? 1,
     record_id: recordId,
     record: {
       title: "Reading Record Page Fixture",
@@ -82,6 +92,9 @@ function makeSnapshot(
         hash_algorithm: "fnv1a32-utf16",
       },
     ],
+    ...(options?.enhancementProgress
+      ? { enhancement_progress: options.enhancementProgress }
+      : {}),
     value: [
       {
         type: "reader_unit",
@@ -168,7 +181,7 @@ function makeSnapshot(
             target_language: "zh",
             confidence: "normal",
             notes: [],
-            children: [{ text: TRANSLATION_TEXT }],
+            children: [{ text: options?.translationText ?? TRANSLATION_TEXT }],
           },
         ],
       },
@@ -177,6 +190,46 @@ function makeSnapshot(
     parsed_decisions: [],
     user_assets: [],
     ask_supplements: [],
+  };
+}
+
+function makeEnhancementProgress(
+  overrides: Partial<
+    NonNullable<ReaderPlateSnapshotDto["enhancement_progress"]>
+  > = {},
+): NonNullable<ReaderPlateSnapshotDto["enhancement_progress"]> {
+  return {
+    overall_status: "readable_enhancing",
+    layers: [
+      {
+        capability: "translation",
+        layer_type: "translation",
+        status: "processing",
+        job_status: "claimed",
+        job_type: "translate_unit",
+        job_id: "job_translation_1",
+        target_type: "unit",
+        target_scope: "unit",
+        target_key: "unit_1",
+      },
+      {
+        capability: "vocabulary",
+        layer_type: "vocabulary",
+        status: "queued",
+        job_status: "queued",
+        job_type: "build_vocabulary_layer",
+        job_id: "job_vocabulary_1",
+        target_type: "unit",
+        target_scope: "unit",
+        target_key: "unit_1",
+      },
+      {
+        capability: "grammar",
+        layer_type: "grammar_note",
+        status: "not_started",
+      },
+    ],
+    ...overrides,
   };
 }
 
@@ -213,35 +266,124 @@ function makeDictionaryEntryResult(query = "memory"): WebDictResult {
   };
 }
 
+function makeReaderEvent(
+  recordId: string,
+  eventType: ReaderEventResponseDto["event_type"],
+  options?: {
+    payload?: Record<string, unknown>;
+    sequence?: number;
+  },
+): ReaderEventResponseDto {
+  return {
+    id: `event_${options?.sequence ?? 2}`,
+    reading_record_id: recordId,
+    sequence: options?.sequence ?? 2,
+    event_type: eventType,
+    payload: options?.payload ?? {},
+    source_run_id: null,
+    source_job_id: null,
+    source_layer_id: null,
+    created_at: "2026-06-22T00:00:00Z",
+  };
+}
+
+function makePollResponse(
+  recordId: string,
+  afterSequence: number,
+  overrides: Partial<ReaderEventPollResponseDto> = {},
+): { ok: true } & ReaderEventPollResponseDto {
+  const nextAfterSequence =
+    overrides.next_after_sequence ??
+    overrides.last_event_sequence ??
+    afterSequence;
+
+  return {
+    ok: true,
+    reading_record_id: recordId,
+    after_sequence: afterSequence,
+    next_after_sequence: nextAfterSequence,
+    last_event_sequence: overrides.last_event_sequence ?? afterSequence,
+    has_more: false,
+    truncated: false,
+    reload_required: false,
+    reload_reason: null,
+    events: [],
+    ...overrides,
+  };
+}
+
+type ReaderRecordFetchMockOptions = {
+  dictResult?: WebDictResult;
+  eventsResponder?: (url: URL) => Response | Promise<Response>;
+  snapshots?: ReaderPlateSnapshotDto[];
+};
+
 function installReaderRecordFetchMock(
   snapshot: ReaderPlateSnapshotDto,
-  dictResult: WebDictResult = makeDictionaryEntryResult(),
+  options: ReaderRecordFetchMockOptions = {},
 ) {
+  const dictResult = options.dictResult ?? makeDictionaryEntryResult();
+  const snapshots = options.snapshots ?? [snapshot];
+  let snapshotIndex = 0;
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-    const url = String(input);
+    const requestUrl = new URL(String(input), "http://localhost");
 
-    if (url === `/api/web/reader-plate/${snapshot.record_id}/snapshot`) {
-      return new Response(JSON.stringify({ ok: true, ...snapshot }), {
+    if (
+      requestUrl.pathname ===
+      `/api/web/reader-plate/${snapshot.record_id}/snapshot`
+    ) {
+      const nextSnapshot =
+        snapshots[Math.min(snapshotIndex, snapshots.length - 1)] ?? snapshot;
+      snapshotIndex += 1;
+
+      return new Response(JSON.stringify({ ok: true, ...nextSnapshot }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     }
 
-    if (url.startsWith("/api/web/dict/lookup?")) {
+    if (
+      requestUrl.pathname ===
+      `/api/web/reader-plate/${snapshot.record_id}/events`
+    ) {
+      if (options.eventsResponder) {
+        return await options.eventsResponder(requestUrl);
+      }
+
+      const afterSequence = Number(
+        requestUrl.searchParams.get("after_sequence") ??
+          String(snapshot.last_event_sequence),
+      );
+
+      return new Response(
+        JSON.stringify(
+          makePollResponse(snapshot.record_id, afterSequence, {
+            next_after_sequence: snapshot.last_event_sequence,
+            last_event_sequence: snapshot.last_event_sequence,
+          }),
+        ),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+
+    if (requestUrl.pathname === "/api/web/dict/lookup") {
       return new Response(JSON.stringify(dictResult), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     }
 
-    if (url.startsWith("/api/web/dict/entry?")) {
+    if (requestUrl.pathname === "/api/web/dict/entry") {
       return new Response(JSON.stringify(dictResult), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     }
 
-    throw new Error(`Unexpected fetch: ${url}`);
+    throw new Error(`Unexpected fetch: ${String(input)}`);
   });
 
   vi.stubGlobal("fetch", fetchMock);
@@ -251,6 +393,14 @@ function installReaderRecordFetchMock(
 function firstTextNode(element: HTMLElement): Text | null {
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   return walker.nextNode() as Text | null;
+}
+
+async function flushAsyncWork() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 }
 
 function installRangeGeometryStub(rect: DOMRect) {
@@ -334,6 +484,7 @@ afterEach(() => {
     document as unknown as Record<string, unknown>,
     "caretRangeFromPoint",
   );
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -371,6 +522,7 @@ describe("ReadingRecordPage direct load", () => {
     expect(screen.getByTestId("reader-record-readiness-state").textContent).toContain(
       "当前阶段：正文可读",
     );
+    expect(screen.queryByTestId("reader-record-enhancement-progress")).toBeNull();
     expect(
       container.querySelector(
         '[data-reader-anchor="sentence"][data-sentence-id="sent_1"]',
@@ -397,6 +549,254 @@ describe("ReadingRecordPage direct load", () => {
         expect.objectContaining({ method: "GET" }),
       );
     });
+  });
+
+  it("shows queued and processing enhancement progress without changing the workbench shell", async () => {
+    const snapshot = makeSnapshot(
+      "rec_progress_1",
+      {},
+      { enhancementProgress: makeEnhancementProgress() },
+    );
+    installReaderRecordFetchMock(snapshot);
+
+    render(<ReadingRecordPage params={{ recordId: "rec_progress_1" }} />);
+
+    await screen.findByTestId("reader-record-workbench-surface");
+    const progress = screen.getByTestId("reader-record-enhancement-progress");
+    expect(progress.textContent).toContain("增强进度");
+    expect(progress.textContent).toContain("批注/增强处理中");
+    expect(progress.textContent).toContain("译文");
+    expect(progress.textContent).toContain("处理中");
+    expect(progress.textContent).toContain("词汇");
+    expect(progress.textContent).toContain("排队中");
+    expect(screen.getAllByTestId("reader-record-enhancement-layer")).toHaveLength(3);
+    expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
+    expect(screen.getByText(TRANSLATION_TEXT)).toBeTruthy();
+  });
+
+  it("summarizes many enhancement rows into capability-level chips", async () => {
+    const snapshot = makeSnapshot(
+      "rec_many_progress_1",
+      {},
+      {
+        enhancementProgress: makeEnhancementProgress({
+          layers: [
+            ...Array.from({ length: 8 }, (_, index) => ({
+              capability: "translation" as const,
+              layer_type: "translation" as const,
+              status: "queued" as const,
+              job_status: "queued" as const,
+              job_type: "translate_unit",
+              job_id: `job_translation_${index}`,
+              target_type: "unit",
+              target_scope: "unit" as const,
+              target_key: `unit_${index}`,
+            })),
+            ...Array.from({ length: 3 }, (_, index) => ({
+              capability: "vocabulary" as const,
+              layer_type: "vocabulary" as const,
+              status: "processing" as const,
+              job_status: "claimed" as const,
+              job_type: "build_vocabulary_layer",
+              job_id: `job_vocabulary_${index}`,
+              target_type: "unit",
+              target_scope: "unit" as const,
+              target_key: `unit_${index}`,
+            })),
+            {
+              capability: "grammar",
+              layer_type: "sentence_analysis",
+              status: "failed",
+              job_status: "failed_terminal",
+              job_type: "build_grammar_bundle",
+              job_id: "job_grammar_failed",
+              target_type: "unit",
+              target_scope: "unit",
+              target_key: "unit_1",
+            },
+          ],
+        }),
+      },
+    );
+    installReaderRecordFetchMock(snapshot);
+
+    render(<ReadingRecordPage params={{ recordId: "rec_many_progress_1" }} />);
+
+    await screen.findByTestId("reader-record-workbench-surface");
+    const chips = screen.getAllByTestId("reader-record-enhancement-layer");
+    const progressText = screen.getByTestId(
+      "reader-record-enhancement-progress",
+    ).textContent;
+    expect(chips).toHaveLength(3);
+    expect(progressText).toContain("译文");
+    expect(progressText).toContain("8 排队中");
+    expect(progressText).toContain("词汇");
+    expect(progressText).toContain("3 处理中");
+    expect(progressText).toContain("语法");
+    expect(progressText).toContain("1 失败");
+  });
+
+  it("starts polling reader events after the direct-load snapshot is ready", async () => {
+    vi.useFakeTimers();
+    const snapshot = makeSnapshot();
+    const fetchMock = installReaderRecordFetchMock(snapshot);
+
+    render(<ReadingRecordPage params={{ recordId: "rec_product_1" }} />);
+
+    await flushAsyncWork();
+    expect(screen.getByTestId("reader-record-workbench-surface")).toBeTruthy();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    await flushAsyncWork();
+
+    const eventCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).includes("/api/web/reader-plate/rec_product_1/events"),
+    );
+    expect(eventCall).toBeTruthy();
+
+    const eventUrl = new URL(String(eventCall?.[0]), "http://localhost");
+    expect(eventUrl.pathname).toBe("/api/web/reader-plate/rec_product_1/events");
+    expect(eventUrl.searchParams.get("after_sequence")).toBe("1");
+    expect(eventUrl.searchParams.get("limit")).toBe("100");
+  });
+
+  it("reloads snapshot when a layer_published event arrives and updates the workbench-backed surface", async () => {
+    vi.useFakeTimers();
+    const initialSnapshot = makeSnapshot(
+      "rec_product_1",
+      {},
+      {
+        enhancementProgress: makeEnhancementProgress({
+          layers: [
+            {
+              capability: "translation",
+              layer_type: "translation",
+              status: "processing",
+              job_status: "claimed",
+              job_type: "translate_unit",
+              job_id: "job_translation_1",
+              target_type: "unit",
+              target_scope: "unit",
+              target_key: "unit_1",
+            },
+          ],
+        }),
+      },
+    );
+    const refreshedSnapshot = makeSnapshot(
+      "rec_product_1",
+      {},
+      {
+        enhancementProgress: makeEnhancementProgress({
+          overall_status: "ready",
+          layers: [
+            {
+              capability: "translation",
+              layer_type: "translation",
+              status: "succeeded",
+              job_status: "succeeded",
+              job_type: "translate_unit",
+              layer_id: "layer_translation_1",
+              job_id: "job_translation_1",
+              target_type: "unit",
+              target_scope: "unit",
+              target_key: "unit_1",
+            },
+          ],
+        }),
+        lastEventSequence: 2,
+        translationText: "制度记忆持续影响政策选择。",
+      },
+    );
+    const fetchMock = installReaderRecordFetchMock(initialSnapshot, {
+      snapshots: [initialSnapshot, refreshedSnapshot],
+      eventsResponder: (url) => {
+        const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
+        return new Response(
+          JSON.stringify(
+            makePollResponse(initialSnapshot.record_id, afterSequence, {
+              last_event_sequence: 2,
+              next_after_sequence: 2,
+              events: [
+                makeReaderEvent(initialSnapshot.record_id, "layer_published", {
+                  payload: { layer_type: "translation" },
+                }),
+              ],
+            }),
+          ),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      },
+    });
+
+    render(<ReadingRecordPage params={{ recordId: "rec_product_1" }} />);
+
+    await flushAsyncWork();
+    expect(screen.getByText(TRANSLATION_TEXT)).toBeTruthy();
+    expect(screen.getByTestId("reader-record-enhancement-progress").textContent).toContain(
+      "译文·0/1 已完成 · 1 处理中",
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    await flushAsyncWork();
+
+    expect(screen.getByText("制度记忆持续影响政策选择。")).toBeTruthy();
+    expect(screen.queryByText(TRANSLATION_TEXT)).toBeNull();
+    expect(screen.getByTestId("reader-record-enhancement-progress").textContent).toContain(
+      "增强已完成",
+    );
+    expect(screen.getByTestId("reader-record-enhancement-progress").textContent).toContain(
+      "译文·1/1 已完成",
+    );
+
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) =>
+          String(input) === "/api/web/reader-plate/rec_product_1/snapshot",
+      ).length,
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps the current reading surface visible when polling fails and shows a lightweight warning", async () => {
+    vi.useFakeTimers();
+    const snapshot = makeSnapshot();
+    installReaderRecordFetchMock(snapshot, {
+      eventsResponder: () =>
+        new Response(JSON.stringify({ ok: false, message: "事件轮询失败。" }), {
+          status: 503,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+
+    render(<ReadingRecordPage params={{ recordId: "rec_product_1" }} />);
+
+    await flushAsyncWork();
+    expect(screen.getByTestId("reader-record-workbench-surface")).toBeTruthy();
+    expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
+    expect(screen.getByText(TRANSLATION_TEXT)).toBeTruthy();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    await flushAsyncWork();
+
+    expect(screen.getByTestId("reader-record-polling-error")).toBeTruthy();
+    expect(screen.getByTestId("reader-record-polling-error").textContent).toContain(
+      "自动刷新暂时中断：事件轮询失败。",
+    );
+    expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
+    expect(screen.getByText(TRANSLATION_TEXT)).toBeTruthy();
+    expect(screen.getByTestId("reader-record-workbench-surface")).toBeTruthy();
   });
 
   it("supports token click lookup and renders a read-only quick peek result", async () => {
@@ -566,10 +966,32 @@ describe("ReadingRecordPage direct load", () => {
   });
 
   it("shows enhancement failure status while keeping the reading body available", async () => {
-    const snapshot = makeSnapshot("rec_failed_1", {
-      product_state: "failed",
-      readiness_state: "initial_enhancement_ready",
-    });
+    const snapshot = makeSnapshot(
+      "rec_failed_1",
+      {
+        product_state: "failed",
+        readiness_state: "initial_enhancement_ready",
+      },
+      {
+        enhancementProgress: makeEnhancementProgress({
+          overall_status: "failed",
+          layers: [
+            {
+              capability: "grammar",
+              layer_type: "sentence_analysis",
+              status: "failed",
+              job_status: "failed_terminal",
+              job_type: "build_grammar_bundle",
+              job_id: "job_grammar_1",
+              target_type: "unit",
+              target_scope: "unit",
+              target_key: "unit_1",
+              failure_code: "provider_timeout",
+            },
+          ],
+        }),
+      },
+    );
     installReaderRecordFetchMock(snapshot);
 
     const { container } = render(
@@ -586,6 +1008,12 @@ describe("ReadingRecordPage direct load", () => {
     expect(screen.getByTestId("reader-record-readiness-state").textContent).toContain(
       "当前阶段：初始增强已就绪",
     );
+    expect(screen.getByTestId("reader-record-enhancement-progress").textContent).toContain(
+      "部分增强失败",
+    );
+    expect(screen.getByTestId("reader-record-enhancement-progress").textContent).toContain(
+      "语法·0/1 已完成 · 1 失败",
+    );
     expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
     expect(screen.getByText(TRANSLATION_TEXT)).toBeTruthy();
     expect(
@@ -596,10 +1024,32 @@ describe("ReadingRecordPage direct load", () => {
   });
 
   it("shows action-required status without blocking the current snapshot render", async () => {
-    const snapshot = makeSnapshot("rec_action_1", {
-      product_state: "action_required",
-      readiness_state: "article_ready",
-    });
+    const snapshot = makeSnapshot(
+      "rec_action_1",
+      {
+        product_state: "action_required",
+        readiness_state: "article_ready",
+      },
+      {
+        enhancementProgress: makeEnhancementProgress({
+          overall_status: "action_required",
+          layers: [
+            {
+              capability: "translation",
+              layer_type: "translation",
+              status: "action_required",
+              job_status: "failed_terminal",
+              job_type: "translate_unit",
+              job_id: "job_translation_1",
+              target_type: "unit",
+              target_scope: "unit",
+              target_key: "unit_1",
+              failure_code: "reader_user_confirmation_required",
+            },
+          ],
+        }),
+      },
+    );
     installReaderRecordFetchMock(snapshot);
 
     render(<ReadingRecordPage params={{ recordId: "rec_action_1" }} />);
@@ -613,6 +1063,12 @@ describe("ReadingRecordPage direct load", () => {
     );
     expect(screen.getByTestId("reader-record-readiness-state").textContent).toContain(
       "当前阶段：正文可读",
+    );
+    expect(screen.getByTestId("reader-record-enhancement-progress").textContent).toContain(
+      "需要处理",
+    );
+    expect(screen.getByTestId("reader-record-enhancement-progress").textContent).toContain(
+      "译文·0/1 已完成 · 1 需处理",
     );
     expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
   });

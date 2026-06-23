@@ -61,6 +61,26 @@ export type ReadingRecordReadinessState =
   | "initial_enhancement_ready"
   | "coverage_complete";
 
+export type ReaderEnhancementProgressOverallStatus =
+  | "processing"
+  | "readable_enhancing"
+  | "ready"
+  | "failed"
+  | "action_required";
+
+export type ReaderEnhancementProgressLayerStatus =
+  | "not_started"
+  | "queued"
+  | "processing"
+  | "succeeded"
+  | "failed"
+  | "action_required";
+
+export type ReaderEnhancementCapability =
+  | "translation"
+  | "vocabulary"
+  | "grammar";
+
 export type TranslationConfidence = "low" | "normal" | "high";
 export type VocabularyItemType =
   | "vocab_highlight"
@@ -323,6 +343,38 @@ export interface ReaderSnapshotParsedDecisionDto {
   rationale_code?: string | null;
 }
 
+export interface ReaderEnhancementProgressLayerDto {
+  capability: ReaderEnhancementCapability;
+  layer_type?: ReaderLayerType | null;
+  status: ReaderEnhancementProgressLayerStatus;
+  job_status?:
+    | "queued"
+    | "claimed"
+    | "retry_later"
+    | "paused"
+    | "skipped"
+    | "succeeded"
+    | "failed_terminal"
+    | "cancelled"
+    | "superseded"
+    | null;
+  job_type?: string | null;
+  layer_id?: string | null;
+  job_id?: string | null;
+  target_type?: string | null;
+  target_scope?: ReaderLayerTargetScope | null;
+  target_key?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  failure_code?: string | null;
+  failure_message?: string | null;
+}
+
+export interface ReaderEnhancementProgressDto {
+  overall_status: ReaderEnhancementProgressOverallStatus;
+  layers: ReaderEnhancementProgressLayerDto[];
+}
+
 export interface ReaderPlateSnapshotDto {
   schema_kind: typeof READER_PLATE_SNAPSHOT_SCHEMA_KIND;
   snapshot_id: string;
@@ -334,6 +386,7 @@ export interface ReaderPlateSnapshotDto {
   navigation: ReaderSnapshotNavigationDto;
   anchor_segments: ReaderSnapshotAnchorSegmentDto[];
   enhancement_layers: ReaderSnapshotLayerDto[];
+  enhancement_progress?: ReaderEnhancementProgressDto;
   ask_supplements: ReaderSnapshotAskSupplementDto[];
   user_assets: ReaderSnapshotUserAssetDto[];
   parsed_decisions: ReaderSnapshotParsedDecisionDto[];

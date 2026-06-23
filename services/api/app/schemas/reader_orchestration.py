@@ -52,6 +52,22 @@ ReaderJobStatus = Literal[
     "superseded",
 ]
 ReaderLayerType = Literal["translation", "vocabulary", "grammar_note", "sentence_analysis"]
+ReaderEnhancementProgressOverallStatus = Literal[
+    "processing",
+    "readable_enhancing",
+    "ready",
+    "failed",
+    "action_required",
+]
+ReaderEnhancementProgressLayerStatus = Literal[
+    "not_started",
+    "queued",
+    "processing",
+    "succeeded",
+    "failed",
+    "action_required",
+]
+ReaderEnhancementCapability = Literal["translation", "vocabulary", "grammar"]
 VocabularyItemType = Literal["vocab_highlight", "phrase_gloss", "context_gloss"]
 VocabularyPhraseType = Literal[
     "collocation",
@@ -334,6 +350,32 @@ class ReaderSnapshotUserAsset(BaseModel):
     updated_at: datetime
 
 
+class ReaderEnhancementProgressLayer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    capability: ReaderEnhancementCapability
+    layer_type: ReaderLayerType | None = None
+    status: ReaderEnhancementProgressLayerStatus
+    job_status: ReaderJobStatus | None = None
+    job_type: str | None = Field(default=None, min_length=1)
+    layer_id: str | None = Field(default=None, min_length=1)
+    job_id: str | None = Field(default=None, min_length=1)
+    target_type: str | None = Field(default=None, min_length=1)
+    target_scope: ReaderLayerTargetScope | None = None
+    target_key: str | None = Field(default=None, min_length=1)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    failure_code: str | None = Field(default=None, min_length=1)
+    failure_message: str | None = Field(default=None, min_length=1, max_length=240)
+
+
+class ReaderEnhancementProgress(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    overall_status: ReaderEnhancementProgressOverallStatus
+    layers: list[ReaderEnhancementProgressLayer] = Field(default_factory=list)
+
+
 class ReaderPlateSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -347,6 +389,7 @@ class ReaderPlateSnapshot(BaseModel):
     navigation: ReaderSnapshotNavigation
     anchor_segments: list[ReaderSnapshotAnchorSegment] = Field(default_factory=list)
     enhancement_layers: list[ReaderSnapshotLayer] = Field(default_factory=list)
+    enhancement_progress: ReaderEnhancementProgress
     ask_supplements: list[ReaderSnapshotAskSupplement] = Field(default_factory=list)
     user_assets: list[ReaderSnapshotUserAsset] = Field(default_factory=list)
     parsed_decisions: list[ReaderSnapshotParsedDecision] = Field(default_factory=list)
