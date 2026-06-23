@@ -405,6 +405,15 @@ D6 最小分层只规定"按能力拆分、不可越层调用"，不规定具体
 4. **Ask Supplement Writer**（写 AI sidecar）：scope = "ask_supplement"；可与 user asset writer 共用 anchor 校验；可与 reader_ask_supplements 表共存直到旧 scene merge 路径被替换。
 5. **Anchor Validator**：集中校验 UTF-16 offsets、`fnv1a32-utf16` hash、`anchor_segment_id` ∈ 当前 base/units、`start_offset`/`end_offset` ⊂ unit 局部 span；校验失败必须 fail-fast 并返回 typed error，不静默 fallback 到 `target_key`。
 
+### D6-A2 Anchor Validator extraction
+
+- D6-A2 新增纯 backend 模块 `services/api/app/contracts/anchor_validation.py`，当前只提供纯函数和 focused tests，不接产品 runtime。
+- 当前 API 分两层：
+  - `validate_text_anchor_payload(...)`：只校验 payload 内部一致性，包括 `offset_unit == "utf16"`、`hash_algorithm == "fnv1a32-utf16"`、`end_offset > start_offset`、`selected_text` UTF-16 长度与 span 一致、`text_hash == fnv1a32-utf16(selected_text)`。
+  - `validate_text_anchor_against_unit(...)`：在前者基础上再校验 `start_offset` / `end_offset` 落在给定 `anchor_segment` 的 unit-local range 内，且 `selected_text` 等于 `unit_text` 对应 UTF-16 slice。
+- 异常类型为 `AnchorValidationError`，包含稳定 `code`，供后续 Ask / notes / highlights / user asset writer 映射成 typed API error。
+- `UserEditorialAssetAnchor` 仅在 schema-only 层复用 `validate_text_anchor_payload(...)`；D6-A2 不改 legacy `user_annotations` / `reader_notes` 写路径，也不改 vocabulary / grammar / reader_ask runtime consumer。
+
 ### D6-A0 哪些能力先 read-only、哪些必须等 Plate Surface UI 方案
 
 **先 read-only（不依赖 Plate Surface 视觉方案）**：

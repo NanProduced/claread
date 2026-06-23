@@ -4,11 +4,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.contracts.anchor_validation import validate_text_anchor_payload
 from app.contracts.annotation import (
     TEXT_RANGE_HASH_ALGORITHM,
     TEXT_RANGE_OFFSET_UNIT,
-    compute_text_range_hash,
-    utf16_code_unit_length,
 )
 
 UserEditorialAssetScope = Literal[
@@ -43,10 +42,12 @@ class UserEditorialAssetAnchor(BaseModel):
 
     @model_validator(mode="after")
     def validate_span(self) -> UserEditorialAssetAnchor:
-        if self.end_offset <= self.start_offset:
-            raise ValueError("end_offset must be greater than start_offset")
-        if utf16_code_unit_length(self.selected_text) != self.end_offset - self.start_offset:
-            raise ValueError("selected_text UTF-16 length must match offset span")
-        if compute_text_range_hash(self.selected_text) != self.text_hash:
-            raise ValueError("text_hash must match selected_text")
+        validate_text_anchor_payload(
+            offset_unit=self.offset_unit,
+            start_offset=self.start_offset,
+            end_offset=self.end_offset,
+            selected_text=self.selected_text,
+            text_hash=self.text_hash,
+            hash_algorithm=self.hash_algorithm,
+        )
         return self
