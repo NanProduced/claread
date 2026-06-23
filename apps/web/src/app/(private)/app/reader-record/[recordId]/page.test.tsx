@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
@@ -13,7 +13,10 @@ import ReadingRecordPage from "./page";
 const SOURCE_TEXT = "Institutional memory shapes policy choices.";
 const TRANSLATION_TEXT = "制度记忆会塑造政策选择。";
 
-function makeSnapshot(recordId = "rec_product_1"): ReaderPlateSnapshotDto {
+function makeSnapshot(
+  recordId = "rec_product_1",
+  recordOverrides: Partial<ReaderPlateSnapshotDto["record"]> = {},
+): ReaderPlateSnapshotDto {
   return {
     schema_kind: "reader_plate_snapshot",
     snapshot_id: "snap_1",
@@ -26,6 +29,8 @@ function makeSnapshot(recordId = "rec_product_1"): ReaderPlateSnapshotDto {
       source_type: "text",
       source_metadata: {},
       product_state: "readable_enhancing",
+      readiness_state: "article_ready",
+      ...recordOverrides,
     },
     base: {
       base_id: "base_1",
@@ -147,6 +152,7 @@ function makeSnapshot(recordId = "rec_product_1"): ReaderPlateSnapshotDto {
 }
 
 afterEach(() => {
+  cleanup();
   vi.unstubAllGlobals();
 });
 
@@ -185,6 +191,12 @@ describe("ReadingRecordPage direct load", () => {
     expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
     expect(screen.getByText(TRANSLATION_TEXT)).toBeTruthy();
     expect(screen.getByText("粘贴导入")).toBeTruthy();
+    expect(screen.getByTestId("reader-record-status-banner").textContent).toContain(
+      "可读增强中",
+    );
+    expect(screen.getByTestId("reader-record-readiness-state").textContent).toContain(
+      "当前阶段：正文可读",
+    );
     expect(
       container.querySelector(
         '[data-reader-anchor="sentence"][data-sentence-id="sent_1"]',
@@ -211,5 +223,73 @@ describe("ReadingRecordPage direct load", () => {
         expect.objectContaining({ method: "GET" }),
       );
     });
+  });
+
+  it("shows enhancement failure status while keeping the reading body available", async () => {
+    const snapshot = makeSnapshot("rec_failed_1", {
+      product_state: "failed",
+      readiness_state: "initial_enhancement_ready",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ ok: true, ...snapshot }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    const { container } = render(
+      <ReadingRecordPage params={{ recordId: "rec_failed_1" }} />,
+    );
+
+    await screen.findByTestId("reader-record-workbench-surface");
+    expect(screen.getByTestId("reader-record-status-banner").textContent).toContain(
+      "增强失败",
+    );
+    expect(screen.getByTestId("reader-record-status-banner").textContent).toContain(
+      "正文和已发布内容仍可继续阅读",
+    );
+    expect(screen.getByTestId("reader-record-readiness-state").textContent).toContain(
+      "当前阶段：初始增强已就绪",
+    );
+    expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
+    expect(screen.getByText(TRANSLATION_TEXT)).toBeTruthy();
+    expect(
+      container.querySelector(
+        '[data-reader-anchor="sentence"][data-sentence-id="sent_1"]',
+      ),
+    ).not.toBeNull();
+  });
+
+  it("shows action-required status without blocking the current snapshot render", async () => {
+    const snapshot = makeSnapshot("rec_action_1", {
+      product_state: "action_required",
+      readiness_state: "article_ready",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ ok: true, ...snapshot }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    render(<ReadingRecordPage params={{ recordId: "rec_action_1" }} />);
+
+    await screen.findByTestId("reader-record-workbench-surface");
+    expect(screen.getByTestId("reader-record-status-banner").textContent).toContain(
+      "需要处理",
+    );
+    expect(screen.getByTestId("reader-record-status-banner").textContent).toContain(
+      "本轮页面暂不提供处理动作",
+    );
+    expect(screen.getByTestId("reader-record-readiness-state").textContent).toContain(
+      "当前阶段：正文可读",
+    );
+    expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
   });
 });

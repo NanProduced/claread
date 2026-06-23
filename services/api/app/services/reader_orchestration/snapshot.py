@@ -304,6 +304,7 @@ def _build_default_snapshot_record(
         source_type="text",
         source_metadata={},
         product_state="readable_enhancing",
+        readiness_state="article_ready",
     )
 
 

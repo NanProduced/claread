@@ -740,6 +740,12 @@ type ReaderPlateSnapshot = {
       | "action_required"
       | "failed"
       | "deleted";
+    readiness_state:
+      | "submitted"
+      | "candidate_base_ready"
+      | "article_ready"
+      | "initial_enhancement_ready"
+      | "coverage_complete";
   };
   base: {
     base_id: string;
@@ -845,7 +851,8 @@ D5-V2 values:
 
 W3-C2 alignment additions:
 
-- Snapshot top-level `record` is the minimum ReaderWorkbench shell metadata contract for title, created time, source metadata and current `product_state`.
+- Snapshot top-level `record` is the minimum ReaderWorkbench shell metadata contract for title, created time, source metadata, current `product_state`, and current `readiness_state`.
+- `/app/reader-record/{recordId}` may surface `product_state` as the primary reader-facing status and `readiness_state` as auxiliary milestone text after snapshot reloads.
 - Snapshot top-level `anchor_segments` and `navigation.units[*].text_hash` are stable interaction anchors. Frontends must not infer them only from Plate tree shape.
 - `enhancement_layers.owner`, `ask_supplements.owner` and `user_assets.owner` distinguish projection ownership. Only `enhancement_layers` uses `target_scope` / `target_key` as publish targeting; ask supplements and user assets continue to ground themselves through explicit anchors.
 - `reading_goal` is intentionally not in `ReaderPlateSnapshot` yet. The new Reader orchestration domain does not have a first-class persisted `reading_goal` truth owner, so adding a nullable placeholder now would create false contract stability.

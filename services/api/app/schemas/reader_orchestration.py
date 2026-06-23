@@ -246,6 +246,7 @@ class ReaderSnapshotRecord(BaseModel):
     source_type: str = Field(min_length=1)
     source_metadata: dict[str, Any] = Field(default_factory=dict)
     product_state: ReadingRecordProductState
+    readiness_state: ReadingRecordReadinessState
 
 
 class ReaderSnapshotNavigationUnit(BaseModel):

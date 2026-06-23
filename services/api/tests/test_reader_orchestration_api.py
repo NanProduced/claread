@@ -132,6 +132,8 @@ async def test_submit_plain_text_returns_article_ready_snapshot_and_snapshot_rel
             assert snapshot["record_id"] == submitted["record_id"]
             assert snapshot["base"]["base_id"] == submitted["base_id"]
             assert snapshot["last_event_sequence"] == 1
+            assert snapshot["record"]["product_state"] == "readable_enhancing"
+            assert snapshot["record"]["readiness_state"] == "article_ready"
 
 
 async def test_polling_returns_article_ready_event_and_empty_page_after_cursor(

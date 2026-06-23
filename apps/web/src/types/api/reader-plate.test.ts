@@ -179,6 +179,7 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
       source_type: "plain_text",
       source_metadata: {},
       product_state: "readable_enhancing",
+      readiness_state: "article_ready",
     },
     base: {
       base_id: "base_1",
@@ -415,6 +416,7 @@ describe("Reader Plate DTO shapes", () => {
       title: "Reader Plate DTO Fixture",
       source_type: "plain_text",
       product_state: "readable_enhancing",
+      readiness_state: "article_ready",
     });
     expect(snapshot.navigation.units[0]).toMatchObject({
       text_hash: "abcd1234",

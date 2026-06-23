@@ -54,6 +54,13 @@ export type ReadingRecordProductState =
   | "failed"
   | "deleted";
 
+export type ReadingRecordReadinessState =
+  | "submitted"
+  | "candidate_base_ready"
+  | "article_ready"
+  | "initial_enhancement_ready"
+  | "coverage_complete";
+
 export type TranslationConfidence = "low" | "normal" | "high";
 export type VocabularyItemType =
   | "vocab_highlight"
@@ -113,6 +120,7 @@ export interface ReaderSnapshotRecordDto {
   source_type: string;
   source_metadata: Record<string, unknown>;
   product_state: ReadingRecordProductState;
+  readiness_state: ReadingRecordReadinessState;
 }
 
 export interface ReaderSnapshotNavigationUnitDto {

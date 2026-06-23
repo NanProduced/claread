@@ -5,6 +5,7 @@ import { useState } from "react";
 import { SidebarRail } from "../sidebar-rail";
 import { CommandPaletteProvider } from "../command-palette";
 import { ActiveAnalysisTaskIndicator } from "../active-analysis-task-indicator";
+import { ReadingRecordActivityIndicator } from "../reading-record-activity-indicator";
 
 import { ScrollArea } from "@/components/primitives/scroll-area";
 
@@ -24,6 +25,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <CommandPaletteProvider />
       <SidebarRail pathname={pathname} collapsed={collapsed} onToggle={() => setManualCollapsed((value) => !(value ?? collapsed))} />
       <ActiveAnalysisTaskIndicator pathname={pathname} />
+      <ReadingRecordActivityIndicator />
       <ScrollArea className={`${railWidth} h-full pb-20 md:pb-0`}>
         {children}
       </ScrollArea>

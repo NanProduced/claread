@@ -29,7 +29,11 @@ import {
   adaptReaderPlateSnapshotToPlateDocument,
   adaptReaderPlateSnapshotToReaderVm,
 } from "@/lib/reader-plate/projection";
-import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
+import type {
+  ReaderPlateSnapshotDto,
+  ReadingRecordProductState,
+  ReadingRecordReadinessState,
+} from "@/types/api/reader-plate";
 
 interface ReaderRecordWorkbenchSurfaceProps {
   snapshot: ReaderPlateSnapshotDto;
@@ -53,7 +57,7 @@ function sourceTypeLabel(sourceType: string) {
   return sourceType || "Reading Record";
 }
 
-function productStateLabel(productState: string) {
+function productStateLabel(productState: ReadingRecordProductState) {
   switch (productState) {
     case "processing":
       return "处理中";
@@ -62,13 +66,61 @@ function productStateLabel(productState: string) {
     case "readable_enhancing":
       return "可读增强中";
     case "action_required":
-      return "需要操作";
+      return "需要处理";
     case "failed":
       return "处理失败";
     case "deleted":
       return "已删除";
     default:
       return "只读快照";
+  }
+}
+
+function readinessStateLabel(readinessState: ReadingRecordReadinessState) {
+  switch (readinessState) {
+    case "submitted":
+      return "已提交";
+    case "candidate_base_ready":
+      return "候选底稿已就绪";
+    case "article_ready":
+      return "正文可读";
+    case "initial_enhancement_ready":
+      return "初始增强已就绪";
+    case "coverage_complete":
+      return "增强覆盖完成";
+    default:
+      return readinessState;
+  }
+}
+
+function productStateBanner(productState: ReadingRecordProductState) {
+  switch (productState) {
+    case "processing":
+      return {
+        title: "处理中",
+        body: "阅读记录已创建，系统正在准备增强内容；正文仍可继续阅读。",
+        className: "border-lens-blue/20 bg-lens-blue-soft text-ink-soft",
+      };
+    case "readable_enhancing":
+      return {
+        title: "可读增强中",
+        body: "正文已经可读，系统仍在补充译文、标注或其他增强内容。",
+        className: "border-lens-blue/20 bg-lens-blue-soft text-ink-soft",
+      };
+    case "failed":
+      return {
+        title: "增强失败",
+        body: "本次增强未成功完成，但正文和已发布内容仍可继续阅读。",
+        className: "border-amber-300/70 bg-amber-50/95 text-amber-950",
+      };
+    case "action_required":
+      return {
+        title: "需要处理",
+        body: "此阅读记录需要额外处理后才能继续增强；本轮页面暂不提供处理动作。",
+        className: "border-orange-300/80 bg-orange-50/95 text-orange-950",
+      };
+    default:
+      return null;
   }
 }
 
@@ -99,6 +151,8 @@ export function ReaderRecordWorkbenchSurface({
   const contentVisibility = modeVisibility(readerSettings.mode);
   const sentenceCount = readerVm.article.sentences.length;
   const formattedDate = formatDate(snapshot.record.created_at);
+  const readinessLabel = readinessStateLabel(snapshot.record.readiness_state);
+  const statusBanner = productStateBanner(snapshot.record.product_state);
   const shellModeClass = isImmersiveMode
     ? "reader-shell--immersive"
     : "reader-shell--intensive";
@@ -172,6 +226,13 @@ export function ReaderRecordWorkbenchSurface({
                 <div className="h-3.5 w-px bg-hairline" />
                 <span className="text-[0.8rem] font-semibold text-muted">
                   {productStateLabel(snapshot.record.product_state)}
+                </span>
+                <div className="h-3.5 w-px bg-hairline" />
+                <span
+                  className="text-[0.8rem] font-semibold text-muted"
+                  data-testid="reader-record-readiness-chip"
+                >
+                  {readinessLabel}
                 </span>
               </div>
 
@@ -322,6 +383,39 @@ export function ReaderRecordWorkbenchSurface({
                 />
               </div>
             ) : null}
+
+            {statusBanner ? (
+              <div
+                className={cn(
+                  "mx-auto mt-1 rounded-[10px] border px-4 py-3 text-sm leading-6",
+                  statusBanner.className,
+                )}
+                data-testid="reader-record-status-banner"
+              >
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                  <div>
+                    <p className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] opacity-70">
+                      记录状态
+                    </p>
+                    <p className="mt-1 font-semibold">{statusBanner.title}</p>
+                    <p>{statusBanner.body}</p>
+                  </div>
+                  <p
+                    className="text-[0.78rem] font-medium opacity-80"
+                    data-testid="reader-record-readiness-state"
+                  >
+                    当前阶段：{readinessLabel}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <p
+                className="mx-auto mt-1 text-[0.78rem] font-medium tracking-wide text-muted"
+                data-testid="reader-record-readiness-state"
+              >
+                当前阶段：{readinessLabel}
+              </p>
+            )}
 
             <div className="reader-shell-message mx-auto mt-1 rounded-[10px] border border-lens-blue/20 bg-lens-blue-soft px-4 py-3 text-sm leading-6 text-ink-soft">
               当前只读预览中，Ask、笔记、高亮和词典写入暂不可用。

@@ -269,6 +269,7 @@ async def test_submit_plain_text_persists_article_ready_domain_facts(
     assert result.snapshot.record.source_type == "text"
     assert result.snapshot.record.source_metadata == {"source_kind": "manual_submit"}
     assert result.snapshot.record.product_state == "readable_enhancing"
+    assert result.snapshot.record.readiness_state == "article_ready"
 
     async with reader_service_env.acquire() as conn:
         record_row = await conn.fetchrow(
@@ -378,6 +379,7 @@ async def test_load_snapshot_uses_repeatable_read_readonly_transaction() -> None
             source_type="text",
             source_metadata={"source_kind": "fake"},
             product_state="readable_enhancing",
+            readiness_state="article_ready",
         ),
         last_event_sequence=1,
         snapshot_taken_at=datetime.now(UTC),

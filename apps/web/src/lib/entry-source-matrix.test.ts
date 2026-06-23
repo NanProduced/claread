@@ -126,6 +126,22 @@ describe("entry source matrix - command palette new Reading Record source (W3-D6
   });
 });
 
+describe("entry source matrix - Reading Record activity indicator (W3-D7)", () => {
+  it("ReadingRecordActivityIndicator uses returned readerUrl and is free of legacy wiring", () => {
+    const source = readSource(
+      "src/components/layout/reading-record-activity-indicator.tsx",
+    );
+
+    expect(source).toContain("/api/web/reading-records");
+    expect(source).toContain("readerUrl");
+    expect(source).not.toContain(LEGACY_ROUTE_HELPER);
+    expect(source).not.toContain(NEW_ROUTE_HELPER);
+    expect(source).not.toContain(LEGACY_READER_PATH);
+    expect(source).not.toContain(NEW_READER_RECORD_PATH);
+    expect(source).not.toContain(ANALYSIS_TASKS_WIRING);
+  });
+});
+
 describe("entry source matrix - Library new Reading Record section (W3-D5)", () => {
   it("ReadingRecordSection is free of legacy reader route, legacy path and analysis-tasks wiring", () => {
     const source = readSource(

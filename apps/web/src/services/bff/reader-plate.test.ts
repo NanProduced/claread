@@ -49,6 +49,7 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
       source_type: "plain_text",
       source_metadata: {},
       product_state: "readable_enhancing",
+      readiness_state: "article_ready",
     },
     base: {
       base_id: "base_1",
