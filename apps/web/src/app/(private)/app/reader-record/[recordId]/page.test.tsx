@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { Suspense } from "react";
 import {
   act,
   cleanup,
@@ -18,6 +19,7 @@ import type {
   ReaderEventPollResponseDto,
   ReaderEventResponseDto,
   ReaderPlateSnapshotDto,
+  ReaderSentenceAnalysisNodeDto,
 } from "@/types/api/reader-plate";
 import type { WebDictResult } from "@/types/api/dict";
 
@@ -33,6 +35,8 @@ function makeSnapshot(
     enhancementProgress?: ReaderPlateSnapshotDto["enhancement_progress"];
     lastEventSequence?: number;
     translationText?: string;
+    withGrammarMark?: boolean;
+    withSentenceAnalysis?: boolean;
     withVocabularyMark?: boolean;
   },
 ): ReaderPlateSnapshotDto {
@@ -163,6 +167,31 @@ function makeSnapshot(
                           },
                         ]
                       : [],
+                    reader_grammar_note_marks: options?.withGrammarMark
+                      ? [
+                          {
+                            mark_id: "mark_grammar_memory",
+                            item_id: "grammar_entry_memory",
+                            owner: "system_ai",
+                            layer_id: "layer_grammar_1",
+                            item_type: "grammar_note",
+                            anchor_segment_id: "seg_1",
+                            start_offset: 0,
+                            end_offset: 20,
+                            selected_text: "Institutional memory",
+                            segment_start_utf16: 0,
+                            segment_end_utf16: 20,
+                            starts_here: true,
+                            ends_here: true,
+                            span_index: 0,
+                            span_count: 1,
+                            show_note_chip: true,
+                            grammar_point: "名词短语主语",
+                            pattern: "adjective + noun",
+                            note: "Institutional memory 是主语名词短语。",
+                          },
+                        ]
+                      : [],
                   },
                 ],
               },
@@ -183,6 +212,40 @@ function makeSnapshot(
             notes: [],
             children: [{ text: options?.translationText ?? TRANSLATION_TEXT }],
           },
+          ...(options?.withSentenceAnalysis
+            ? [
+                {
+                  type: "reader_sentence_analysis",
+                  owner: "system_ai",
+                  analysis_id: "analysis_seg_1",
+                  layer_id: "layer_sentence_analysis_1",
+                  layer_version: 1,
+                  base_id: "base_1",
+                  unit_id: "unit_1",
+                  target_scope: "unit",
+                  target_key: "unit_1",
+                  anchor_segment_id: "seg_1",
+                  selected_text: SOURCE_TEXT,
+                  label: "句子结构",
+                  analysis: "Institutional memory 是主语名词短语。",
+                  chunks: [
+                    {
+                      order: 1,
+                      label: "主语",
+                      text: "Institutional memory",
+                    },
+                    {
+                      order: 2,
+                      label: "谓语",
+                      text: "shapes policy choices",
+                    },
+                  ],
+                  children: [
+                    { text: "Institutional memory 是主语名词短语。" },
+                  ],
+                } satisfies ReaderSentenceAnalysisNodeDto,
+              ]
+            : []),
         ],
       },
     ],
@@ -403,6 +466,22 @@ async function flushAsyncWork() {
   });
 }
 
+function fulfilledRouteParams(recordId: string) {
+  const value = { recordId };
+  return Object.assign(Promise.resolve(value), {
+    status: "fulfilled" as const,
+    value,
+  });
+}
+
+function renderReadingRecordPage(recordId: string) {
+  return render(
+    <Suspense fallback={<div data-testid="reader-record-route-loading" />}>
+      <ReadingRecordPage params={fulfilledRouteParams(recordId)} />
+    </Suspense>,
+  );
+}
+
 function installRangeGeometryStub(rect: DOMRect) {
   const prototype = Range.prototype as Range & {
     getClientRects?: () => DOMRect[];
@@ -499,6 +578,7 @@ describe("ReadingRecordPage static contract", () => {
       expect(source).not.toContain("render_scene_json");
       expect(source).not.toContain("/scene");
       expect(source).not.toContain("analysis-tasks");
+      expect(source).not.toContain("legacyAppReaderRoute");
     });
   });
 });
@@ -508,9 +588,7 @@ describe("ReadingRecordPage direct load", () => {
     const snapshot = makeSnapshot();
     const fetchMock = installReaderRecordFetchMock(snapshot);
 
-    const { container } = render(
-      <ReadingRecordPage params={{ recordId: "rec_product_1" }} />,
-    );
+    const { container } = renderReadingRecordPage("rec_product_1");
 
     await screen.findByTestId("reader-record-workbench-surface");
     expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
@@ -559,7 +637,7 @@ describe("ReadingRecordPage direct load", () => {
     );
     installReaderRecordFetchMock(snapshot);
 
-    render(<ReadingRecordPage params={{ recordId: "rec_progress_1" }} />);
+    renderReadingRecordPage("rec_progress_1");
 
     await screen.findByTestId("reader-record-workbench-surface");
     const progress = screen.getByTestId("reader-record-enhancement-progress");
@@ -620,7 +698,7 @@ describe("ReadingRecordPage direct load", () => {
     );
     installReaderRecordFetchMock(snapshot);
 
-    render(<ReadingRecordPage params={{ recordId: "rec_many_progress_1" }} />);
+    renderReadingRecordPage("rec_many_progress_1");
 
     await screen.findByTestId("reader-record-workbench-surface");
     const chips = screen.getAllByTestId("reader-record-enhancement-layer");
@@ -641,7 +719,7 @@ describe("ReadingRecordPage direct load", () => {
     const snapshot = makeSnapshot();
     const fetchMock = installReaderRecordFetchMock(snapshot);
 
-    render(<ReadingRecordPage params={{ recordId: "rec_product_1" }} />);
+    renderReadingRecordPage("rec_product_1");
 
     await flushAsyncWork();
     expect(screen.getByTestId("reader-record-workbench-surface")).toBeTruthy();
@@ -735,7 +813,7 @@ describe("ReadingRecordPage direct load", () => {
       },
     });
 
-    render(<ReadingRecordPage params={{ recordId: "rec_product_1" }} />);
+    renderReadingRecordPage("rec_product_1");
 
     await flushAsyncWork();
     expect(screen.getByText(TRANSLATION_TEXT)).toBeTruthy();
@@ -766,6 +844,211 @@ describe("ReadingRecordPage direct load", () => {
     ).toBeGreaterThanOrEqual(2);
   });
 
+  it("smokes snapshot polling reload into enhanced Plate content and progress updates", async () => {
+    vi.useFakeTimers();
+    const recordId = "rec_smoke_chain_1";
+    const initialSnapshot = makeSnapshot(
+      recordId,
+      {
+        product_state: "readable_enhancing",
+        readiness_state: "article_ready",
+      },
+      {
+        enhancementProgress: makeEnhancementProgress({
+          overall_status: "readable_enhancing",
+          layers: [
+            {
+              capability: "translation",
+              layer_type: "translation",
+              status: "processing",
+              job_status: "claimed",
+              job_type: "translate_unit",
+              job_id: "job_translation_1",
+              target_type: "unit",
+              target_scope: "unit",
+              target_key: "unit_1",
+            },
+            {
+              capability: "vocabulary",
+              layer_type: "vocabulary",
+              status: "queued",
+              job_status: "queued",
+              job_type: "build_vocabulary_layer",
+              job_id: "job_vocabulary_1",
+              target_type: "unit",
+              target_scope: "unit",
+              target_key: "unit_1",
+            },
+            {
+              capability: "grammar",
+              layer_type: "grammar_note",
+              status: "processing",
+              job_status: "claimed",
+              job_type: "build_grammar_bundle",
+              job_id: "job_grammar_1",
+              target_type: "unit",
+              target_scope: "unit",
+              target_key: "unit_1",
+            },
+          ],
+        }),
+      },
+    );
+    const refreshedSnapshot = makeSnapshot(
+      recordId,
+      {
+        product_state: "readable_enhancing",
+        readiness_state: "initial_enhancement_ready",
+      },
+      {
+        enhancementProgress: makeEnhancementProgress({
+          overall_status: "failed",
+          layers: [
+            {
+              capability: "translation",
+              layer_type: "translation",
+              status: "succeeded",
+              job_status: "succeeded",
+              job_type: "translate_unit",
+              layer_id: "layer_translation_1",
+              job_id: "job_translation_1",
+              target_type: "unit",
+              target_scope: "unit",
+              target_key: "unit_1",
+            },
+            {
+              capability: "vocabulary",
+              layer_type: "vocabulary",
+              status: "succeeded",
+              job_status: "succeeded",
+              job_type: "build_vocabulary_layer",
+              layer_id: "layer_vocab_1",
+              job_id: "job_vocabulary_1",
+              target_type: "unit",
+              target_scope: "unit",
+              target_key: "unit_1",
+            },
+            {
+              capability: "grammar",
+              layer_type: "grammar_note",
+              status: "failed",
+              job_status: "failed_terminal",
+              job_type: "build_grammar_bundle",
+              job_id: "job_grammar_1",
+              target_type: "unit",
+              target_scope: "unit",
+              target_key: "unit_1",
+              failure_code: "grammar_generation_failed",
+              failure_message: "语法增强未完成。",
+            },
+          ],
+        }),
+        lastEventSequence: 3,
+        translationText: "制度记忆持续影响政策选择。",
+        withGrammarMark: true,
+        withSentenceAnalysis: true,
+        withVocabularyMark: true,
+      },
+    );
+    const fetchMock = installReaderRecordFetchMock(initialSnapshot, {
+      snapshots: [initialSnapshot, refreshedSnapshot],
+      eventsResponder: (url) => {
+        const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
+        return new Response(
+          JSON.stringify(
+            makePollResponse(recordId, afterSequence, {
+              last_event_sequence: 3,
+              next_after_sequence: 3,
+              events: [
+                makeReaderEvent(recordId, "layer_published", {
+                  payload: { layer_type: "translation" },
+                  sequence: 2,
+                }),
+                makeReaderEvent(recordId, "record_product_state_updated", {
+                  payload: { product_state: "readable_enhancing" },
+                  sequence: 3,
+                }),
+              ],
+            }),
+          ),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      },
+    });
+
+    const { container } = renderReadingRecordPage(recordId);
+
+    await flushAsyncWork();
+    expect(screen.getByTestId("reader-record-workbench-surface")).toBeTruthy();
+    expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
+    expect(screen.getByText(TRANSLATION_TEXT)).toBeTruthy();
+    expect(screen.getByTestId("reader-record-enhancement-progress").textContent).toContain(
+      "批注/增强处理中",
+    );
+    expect(screen.getByTestId("reader-record-enhancement-progress").textContent).toContain(
+      "词汇·0/1 已完成 · 1 排队中",
+    );
+    expect(screen.getByTestId("reader-record-enhancement-progress").textContent).toContain(
+      "语法·0/1 已完成 · 1 处理中",
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    await flushAsyncWork();
+
+    const sentenceAnchor = container.querySelector(
+      '[data-reader-anchor="sentence"][data-sentence-id="sent_1"]',
+    );
+    expect(sentenceAnchor?.textContent).toContain(SOURCE_TEXT);
+    expect(screen.getByText("制度记忆持续影响政策选择。")).toBeTruthy();
+    expect(screen.queryByText(TRANSLATION_TEXT)).toBeNull();
+    expect(
+      screen.getAllByText("Institutional memory 是主语名词短语。").length,
+    ).toBeGreaterThan(0);
+    expect(
+      container.querySelector('[data-reader-mark-id="mark_vocab_memory"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-reader-mark-id="mark_grammar_memory"]'),
+    ).not.toBeNull();
+
+    const progressText = screen.getByTestId(
+      "reader-record-enhancement-progress",
+    ).textContent;
+    expect(progressText).toContain("部分增强失败");
+    expect(progressText).toContain("译文·1/1 已完成");
+    expect(progressText).toContain("词汇·1/1 已完成");
+    expect(progressText).toContain("语法·0/1 已完成 · 1 失败");
+    expect(screen.getAllByTestId("reader-record-enhancement-layer")).toHaveLength(3);
+    expect(screen.getByRole("button", { name: /Ask Claread/ })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(screen.getByRole("button", { name: /笔记\/高亮/ })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(screen.getByRole("button", { name: /词典保存/ })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(
+      fetchMock.mock.calls.some(([input]) => {
+        const url = String(input);
+        return (
+          url.includes("/api/web/vocabulary") ||
+          url.includes("/api/web/reader-notes") ||
+          url.includes("/api/web/annotations")
+        );
+      }),
+    ).toBe(false);
+  });
+
   it("keeps the current reading surface visible when polling fails and shows a lightweight warning", async () => {
     vi.useFakeTimers();
     const snapshot = makeSnapshot();
@@ -777,7 +1060,7 @@ describe("ReadingRecordPage direct load", () => {
         }),
     });
 
-    render(<ReadingRecordPage params={{ recordId: "rec_product_1" }} />);
+    renderReadingRecordPage("rec_product_1");
 
     await flushAsyncWork();
     expect(screen.getByTestId("reader-record-workbench-surface")).toBeTruthy();
@@ -803,9 +1086,7 @@ describe("ReadingRecordPage direct load", () => {
     const snapshot = makeSnapshot("rec_lookup_1");
     const fetchMock = installReaderRecordFetchMock(snapshot);
 
-    const { container } = render(
-      <ReadingRecordPage params={{ recordId: "rec_lookup_1" }} />,
-    );
+    const { container } = renderReadingRecordPage("rec_lookup_1");
 
     await screen.findByTestId("reader-record-workbench-surface");
 
@@ -844,9 +1125,7 @@ describe("ReadingRecordPage direct load", () => {
     const snapshot = makeSnapshot("rec_mark_lookup_1", {}, { withVocabularyMark: true });
     const fetchMock = installReaderRecordFetchMock(snapshot);
 
-    const { container } = render(
-      <ReadingRecordPage params={{ recordId: "rec_mark_lookup_1" }} />,
-    );
+    const { container } = renderReadingRecordPage("rec_mark_lookup_1");
 
     await screen.findByTestId("reader-record-workbench-surface");
 
@@ -899,9 +1178,7 @@ describe("ReadingRecordPage direct load", () => {
     const snapshot = makeSnapshot("rec_selection_lookup_1");
     const fetchMock = installReaderRecordFetchMock(snapshot);
 
-    const { container } = render(
-      <ReadingRecordPage params={{ recordId: "rec_selection_lookup_1" }} />,
-    );
+    const { container } = renderReadingRecordPage("rec_selection_lookup_1");
 
     await screen.findByTestId("reader-record-workbench-surface");
 
@@ -994,9 +1271,7 @@ describe("ReadingRecordPage direct load", () => {
     );
     installReaderRecordFetchMock(snapshot);
 
-    const { container } = render(
-      <ReadingRecordPage params={{ recordId: "rec_failed_1" }} />,
-    );
+    const { container } = renderReadingRecordPage("rec_failed_1");
 
     await screen.findByTestId("reader-record-workbench-surface");
     expect(screen.getByTestId("reader-record-status-banner").textContent).toContain(
@@ -1052,7 +1327,7 @@ describe("ReadingRecordPage direct load", () => {
     );
     installReaderRecordFetchMock(snapshot);
 
-    render(<ReadingRecordPage params={{ recordId: "rec_action_1" }} />);
+    renderReadingRecordPage("rec_action_1");
 
     await screen.findByTestId("reader-record-workbench-surface");
     expect(screen.getByTestId("reader-record-status-banner").textContent).toContain(

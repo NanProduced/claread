@@ -1,8 +1,8 @@
 # Schema And Domain Contract
 
-> 状态：`D4-P1 translation implemented`
-> 最后更新：2026-06-22
-> 范围：Reader agentic orchestration 的后端 schema 边界、领域对象、运行时事实源、projection DTO、旧 workflow cutover 和 reset 约束。
+> 状态：`D6-A0 Ask / notes / highlights dependency audit`
+> 最后更新：2026-06-23
+> 范围：Reader agentic orchestration 的后端 schema 边界、领域对象、运行时事实源、projection DTO、旧 workflow cutover 和 reset 约束；本轮 D6-A0 在 `D6-U0 Draft: User Editorial Asset Anchor` 之后新增 `D6-A0 Ask / Notes / Highlights Dependency Audit` 子节，记录 Ask / notes / highlights / user asset 写入路径的依赖矩阵与 D6 最小实现顺序。
 
 ## 目标
 
@@ -300,6 +300,169 @@ Rules:
 - `segment_type` describes shape. `boundary_quality` describes reliability.
 - Span-bound layers and user selections anchor to `anchor_segment_id` plus unit-local UTF-16 offsets.
 - `unit_start_utf16` / `unit_end_utf16` are segment position inside the unit. Span anchor `start_offset` / `end_offset` are positions inside the unit text and must fall within that segment range. Segment-local offsets are derived projection metadata only.
+
+### D6-U0 Draft: User Editorial Asset Anchor
+
+> D6-U0 仅用于本次审计的特征化记录和 schema-only draft DTO；runtime 写入仍走 legacy `user_annotations` / `reader_notes`，直到 D6-U1 接线。本节不做产品 runtime 改动。
+
+Current legacy characterization:
+
+- `user_annotations` still anchors to legacy `analysis_record_id` + `target_key`.
+  - `sentence` target key: `record:{analysis_record_id}:sentence:{sentence_id}`.
+  - `text_range` target key: `record:{analysis_record_id}:range:{sentence_id}:{start_offset}:{end_offset}:{text_hash}`.
+  - `multi_text` target key hashes the ordered segment signature `(paragraph_id, sentence_id, start_offset, end_offset, text_hash)` and therefore still depends on legacy paragraph/sentence identifiers.
+  - `text_range` hash mismatch is rejected at request-schema validation time.
+  - render-scene quote mismatch fails later in service validation.
+- `reader_notes` uses the same legacy `target_key` family and validates against legacy `render_scene`.
+  - `sentence` quote mismatch fails with `selected_text does not match full sentence text`.
+  - `text_range` hash mismatch fails with `text_hash does not match selected_text`.
+  - `multi_text` segments must follow legacy article sentence order and cannot repeat `sentence_id`.
+- Current list ordering is also legacy-shaped.
+  - `user_annotations` list order is `created_at desc` only; it does not project new unit/segment order.
+  - `reader_notes` list order is `anchor_sentence_id`, then `start_offset`, then `end_offset`, then `created_at`; it still depends on legacy sentence anchoring rather than new `reading_units` / `anchor_segments`.
+
+Draft future DTO:
+
+| Field | Meaning |
+|---|---|
+| `record_id` | Reading Record id |
+| `base_id` | Stable Base id |
+| `generation` | owning record generation |
+| `unit_id` | target Reading Unit |
+| `anchor_segment_id` | authority span anchor |
+| `start_offset` / `end_offset` | unit-local UTF-16 offsets |
+| `selected_text` / `text_hash` | content identity |
+| `scope` | `stable_source`, `translation`, `system_ai_layer`, `ask_supplement` |
+
+Rules:
+
+- New User Editorial Asset anchors must not persist raw Plate path, Slate path or DOM range.
+- `scope` is reserved now so future Ask saves / translation-bound notes can share one anchor DTO without reviving legacy `target_key`.
+- D6-U0 only ships characterization tests, docs and a schema-only draft DTO; legacy `user_annotations` / `reader_notes` writes remain unchanged until D6-U1.
+- D6-U1 must keep `user_annotations` / `reader_notes` as runtime writes until a read migration + dual-write reconciliation pass lands; new Reading Record anchor writes are additive only.
+- The dependency inventory behind this D6-U0 characterization is recorded in `D6-A0 Ask / notes / highlights dependency audit` below. D6 product work that touches Ask / notes / highlights must update that matrix first, not after.
+
+## D6-A0 Ask / Notes / Highlights Dependency Audit
+
+> 本节是 D6 product hardening 进入 Ask / notes / highlights / user asset 写入前的依赖审计和迁移边界设计；不接新 Ask、不写新 API、不改产品 runtime。本节结论即 D6 最小实现顺序的输入。
+
+### D6-A0 范围与基本立场
+
+- 范围：`services/api/app/services/reader_ask/*`、`services/api/app/agents/reader_ask_*.py`、`services/api/app/services/user_annotations.py`、`services/api/app/services/reader_notes.py`、`services/api/app/services/reader_scene.py`、`apps/web/src/components/reader/` 中 Ask / notes / highlights / selection / citation 路径、`apps/web/src/lib/reader-plate/bridges/ask/*`，以及 D6-U0 schema-only draft `services/api/app/schemas/user_editorial_assets.py`。
+- 不做：`render_scene_json` → `ReaderPlateSnapshot` 的兼容映射；旧 `analysis_record_id` / `client_record_id` → 新 `Reading Record.record_id` 的字段别名；为旧 `/app/reader/{recordId}` 静默换数据源。
+- 允许：复用 `app/contracts/annotation.py` 的 UTF-16 offset + `fnv1a32-utf16` hash、`text_anchors.py` 的 anchor validation 思路、Ask "用户确认后写资产"产品约束、`reader_ask_supplements` 来源标记思路。
+
+### D6-A0 旧依赖审计矩阵
+
+| 路径 / 文件 | 旧 record id 语义 | 旧锚点 / scene 语义 | 写入 / 消费表 | 是否进入 D6 重写 | 备注 |
+|---|---|---|---|---|---|
+| `services/api/app/services/reader_ask/service.py`（约 5000 行） | `analysis_record_id` / `target_key` | `sentence_id`、`paragraph_id`、`target_key`、`render_scene` | `reader_ask_threads`、`reader_ask_turn_runs`、`reader_ask_supplements` | D6 必须重写；D6 不允许保留 service 作为 authoritative path | 旧 service 不能以"双轨长期兼容"形态继续承载新 Reading Record；D6 早期必须先冻结新写入路径并把 persistence 拆出独立层 |
+| `services/api/app/services/reader_ask/supplements.py` | 同上 | 直接以 `sentence_id` / `paragraph_id` / `target_key` 写 SQL | `reader_ask_supplements` | D6 重写为 anchor_segment_id + UTF-16；先 read-only 投影，再 enable write | Ask supplement 写入当前与 `user_annotations` / `reader_notes` 在 service 层耦合（L119），D6-U1 必须先解耦 |
+| `services/api/app/services/reader_ask/{repository,resolver,context_runtime,known_reference_resolver,utils}.py` | 同上 | `render_scene_json` / `render_scene` dict 作为事实源 | 仅读 | D6 重写为读 Stable Base / Reading Unit / Anchor Segment | 共享 `render_scene` 解析逻辑不能进入新 Reading Record path |
+| `services/api/app/services/reader_ask/{planner,planner_runtime,planner_route_policy,post_process,runtime_contract}.py` | 同上 | `ReaderAskAnchorRef` / `target_key` / `sentence_id` | 仅 LLM/tool 上下文 | D6 重写 | Agent tool signature 必须包含 `anchor_segment_id` + unit-local UTF-16 offsets |
+| `services/api/app/services/reader_ask/{capabilities,config,output_contract,stream_*}.py` | 同上 | 通过 anchor 结构传递 | 仅上下文 / 事件流 | D6 部分重写；D6 不重写 SSE / streaming 协议骨架 | streaming 协议本身可复用，只需换 anchor payload |
+| `services/api/app/services/reader_ask/agent_deps_factory.py` | 同上 | `ReaderAskAnchorRef` | runtime dep 注入 | D6 重写 | 必须把"读取 `render_scene`"替换为"读取 Stable Base / Reading Unit / Anchor Segment" |
+| `services/api/app/agents/reader_ask_agent.py` | `target_sentence_id` / `target_key` | `sentence_id`、`target_key` | agent tool policy | D6 重写 | 新 tool 必须接受 `anchor_segment_id` + unit-local UTF-16 offsets；旧的 `target_sentence_id` 仅可作为内部 alias |
+| `services/api/app/agents/daily_vocab_agent.py` | `paragraph_id` | `paragraph_id` | agent runtime | 不进入 D6 重写范围 | 旧 daily vocab 走 legacy path；本轮不切 |
+| `services/api/app/agents/repair_agent.py` | `sentence_id` | `sentence_id` | agent runtime | D6 重写为 anchor_segment_id | 与 D6-U1 anchor 切换同步 |
+| `services/api/app/services/user_annotations.py` | `analysis_record_id`（D6 schema 草案称 `record_id`） | `sentence_id` / `paragraph_id` / `target_key` | `user_annotations` | D6-U1 重写 validator；U2/U3 切写入路径 | 现网 entry：`create_user_annotation` / `list_user_annotations` / `update_user_annotation` / `delete_user_annotation`；`UserAnnotationResponse` DTO 在 API 表面硬编码旧 anchor |
+| `services/api/app/services/reader_notes.py` | `analysis_record_id` | `anchor_sentence_id` / `target_key` | `reader_notes` | D6-U1 重写 validator；U2/U3 切写入路径 | list 排序仍依赖 `anchor_sentence_id` + offset，D6-U1 必须重写排序键 |
+| `services/api/app/services/reader_scene.py` | `client_record_id` / UUID | `render_scene_json`、`ReaderSceneResponseDto` | `analysis_records`、`reader_ask_supplements` | D6 不再作为 authoritative service；可作为 legacy read-only adapter 存在 | `merge_record_with_reader_ask_supplements` 是 ask supplement 写入旧 scene 的耦合点，必须拆分 |
+| `services/api/app/schemas/user_editorial_assets.py` | `record_id: str`（Reading Record id） | `anchor_segment_id` + unit-local UTF-16 offsets + `scope` | schema-only draft | D6-U0 维持现状；D6-U1 开始接 writing path | 已含 `fnv1a32-utf16` hash + offset + selected_text 三方一致性校验，可直接作为 D6-U1 写入 DTO 的最小核心 |
+| `services/api/app/schemas/{reader_ask,user_annotations,reader_notes,reader_scene,analysis}.py` + `app/schemas/internal/*` | API surface 硬编码 `sentence_id` / `paragraph_id` / `target_key` | 同上 | DTO / request schema | D6 必须引入 anchor_segment_id 字段；旧字段保留为 deprecated optional | 旧 DTO 直接改字段会破坏 legacy API；D6 必须分版本 |
+| `apps/web/src/lib/reader-plate/bridges/ask/{adapters,types,index}.ts` | `targetKey` 字符串 | 通过 `targetKey` 反推 `recordId` / `sentence_id` / `paragraph_id` | Web Ask 桥接 | D6 必须改 anchor 序列化；本轮不动 | 中心 anchor serializer 是 D6 Web 切线的主要 hook |
+| `apps/web/src/lib/reader-plate/primitives/selection-targets.ts` | `targetKey` 字符串 | `ReaderTextSelection` → `targetKey` | Web selection bridge | D6 必须改 | 与 bridges/ask/adapters.ts 必须同步切换；不允许一个先切 |
+| `apps/web/src/types/api/{reader-ask,reader-notes,annotations,reader-scene}.ts` | `analysis_record_id` (UUID) | `sentence_id` / `paragraph_id` / `target_key` | Web DTO | D6-U1 起 DTO 加可选 anchor_segment_id；旧字段保留 | Web 端不能直接删除旧 DTO 字段，会破坏 library/command palette/Vocabulary source links |
+| `apps/web/src/services/bff/{reader-ask,reader-notes,annotations}.ts` | `analysis_record_id` (UUID) | 通过 DTO 间接带旧 anchor | BFF → 上游 | D6 必须新增 BFF；但本轮不切 | 旧 BFF 仍服务于 `/app/reader/{recordId}`，不能因为 `/app/reader-record/{recordId}` 出现而被静默替换 |
+| `apps/web/src/components/reader/{ReaderNotePanel,AnnotationGutter,SelectionToolbar,AiWorkspacePanel,ask-chat/*}.tsx` | UI 走旧 selection / anchor | 旧 selection / `targetKey` | UI | D6 暂不切 UI；必须等 Plate Surface UI 方案 | UI 切线依赖 Plate Surface 视觉方案，不在本轮审计范围内 |
+| `apps/web/src/app/api/web/reader-{notes,ask}/**` route handlers | `analysis_record_id` / `record_id`（按 Ask 类型） | DTO 间接带旧 anchor | Web API | D6-U1 起新增 `record_id` 为 Reading Record id 的 route；旧 route 保留 | 旧 route 是当前唯一 Ask / note 写入入口，新 route 必须先有 focused tests 才能 enable |
+
+### D6-A0 Reading Record id 进入 Ask context 的最小路径
+
+1. Ask request 入口接收 `Reading Record.record_id`（已是新 id）；旧 `analysis_record_id` 不出现在新 path 任何字段。
+2. Ask service 不再 `load_render_scene(record_id)`；改为从 `reader_plate_snapshot` 解析 record 上下文，调用 D3-P2/D3-P3 builder invariants 验证后投影 anchor。
+3. Ask tool signature 改为 `(anchor_segment_id, unit_local_start_offset, unit_local_end_offset, offset_unit = "utf16", text_hash, hash_algorithm)`；旧 `target_sentence_id` / `target_key` 不再出现在 tool call payload。
+4. Ask supplement 写入 (`reader_ask_supplements`) 在 D6-U1 后改为基于 `anchor_segment_id` + UTF-16 的写路径；`scope = "ask_supplement"` 与 `user_assets.scope` 共用 `UserEditorialAssetAnchor` 字段。
+5. Ask thread / message 主键仍是 `reader_ask_threads`；其 `record_id` 字段在 D6 schema 中改为 `reading_record_id` (FK → `reading_records.id`)；`analysis_record_id` 列保持 nullable deprecated 直到旧 data 清空。
+
+### D6-A0 anchor_segment_id + unit-local UTF-16 offsets 替代旧 sentence anchor 的契约
+
+- 旧 `target_key = "record:{analysis_record_id}:sentence:{sentence_id}"` 拆为 `(reading_record_id, anchor_segment_id)`；不再出现 `analysis_record_id`。
+- 旧 `target_key = "record:{analysis_record_id}:range:{sentence_id}:{start_offset}:{end_offset}:{text_hash}"` 拆为 `(reading_record_id, anchor_segment_id, start_offset, end_offset, text_hash, hash_algorithm)`，其中 `start_offset` / `end_offset` 改为 unit-local UTF-16 offsets（参考 `UserEditorialAssetAnchor`）；`base_id` + `generation` 通过 `reading_records.active_base_id` 推导，不直接出现在 anchor payload。
+- 旧 multi-text `target_key` 改为 `(reading_record_id, [ {anchor_segment_id, start_offset, end_offset, text_hash} ])`；segment signature hash 与 legacy multi-text hash 不保证相等，但 fallback 到逐 segment 校验。
+- 旧 `paragraph_id` 不再作为 anchor 主键；保留为 grouping / debug metadata，与 schema-and-domain-contract L298 的"paragraph_id is grouping/debug metadata only and must not be the sole target for new facts"一致。
+- 新 anchor 验证函数沿用 `app/contracts/annotation.py` 的 `compute_text_range_hash` + `utf16_code_unit_length` + `slice_by_utf16_offsets`；与 grammar bundle / vocabulary worker 的 anchor validator 共用。
+
+### D6-A0 Ask / propose_note / propose_highlight / write_ai_supplement 最小 D6 分层
+
+> 命名说明：`propose_*` 仅指 Ask 通过 tool call 提议的写动作；最终落地必须经过用户确认（已有 Ask write gate 约束）。`write_ai_supplement` 指 Ask 在不经过用户再次确认的情况下直接写入 AI sidecar 内容（`reader_ask_supplements`）；必须受 Ask write gate + scope = "ask_supplement" 双重约束。
+
+D6 最小分层只规定"按能力拆分、不可越层调用"，不规定具体文件路径：
+
+1. **Reader context projection**（读路径）：从 `reader_plate_snapshot` 解析 `record` / `base` / `navigation.units` / `anchor_segments` / `enhancement_layers` / `ask_supplements` / `user_assets`；不直接读 `render_scene_json`。D6 不允许 service 层保留 `load_render_scene` 入口作为新 path 的 fact source。
+2. **Ask Agent Tooling**（写提议）：tool signature 只接受 `(reading_record_id, anchor_segment_id, start_offset, end_offset, offset_unit, text_hash, hash_algorithm, scope)`；tool 返回值用 `UserEditorialAssetAnchor` 同形 DTO，不暴露 `target_key`。
+3. **User Editorial Asset Writer**（确认后写资产）：受 Ask write gate 控制；目标表在 D6-U1 后仍是 `user_annotations` / `reader_notes`（schema 双轨），但 anchor payload 已切到 `UserEditorialAssetAnchor` 形状；D6-U2 起允许新写入走 `user_editorial_assets` 统一表（如果引入）。本节不预先承诺新表存在。
+4. **Ask Supplement Writer**（写 AI sidecar）：scope = "ask_supplement"；可与 user asset writer 共用 anchor 校验；可与 reader_ask_supplements 表共存直到旧 scene merge 路径被替换。
+5. **Anchor Validator**：集中校验 UTF-16 offsets、`fnv1a32-utf16` hash、`anchor_segment_id` ∈ 当前 base/units、`start_offset`/`end_offset` ⊂ unit 局部 span；校验失败必须 fail-fast 并返回 typed error，不静默 fallback 到 `target_key`。
+
+### D6-A0 哪些能力先 read-only、哪些必须等 Plate Surface UI 方案
+
+**先 read-only（不依赖 Plate Surface 视觉方案）**：
+
+- Ask thread 创建、Ask message 发送、Ask citation 渲染（D6 仅改 anchor 序列化，不改 chat shell 视觉）。
+- Ask supplement 列表展示（read-only，不写）。
+- `user_annotations` / `reader_notes` 列表展示（read-only，不写）；按 `anchor_segment_id` + UTF-16 offsets 排序。
+- 旧 `user_annotations` / `reader_notes` 写入路径继续走 `/app/reader/{recordId}`；不切换为 `/app/reader-record/{recordId}` 写入入口。
+
+**必须等 Plate Surface UI 方案（D6 不在本轮实现）**：
+
+- `/app/reader-record/{recordId}` 内的 notes/highlights 写入入口（composer / inline mark）。
+- SelectionToolbar 的 ask / highlight / note 动作在 `/app/reader-record/{recordId}` 启用。
+- AnnotationGutter 在 `/app/reader-record/{recordId}` 内的交互。
+- AiWorkspacePanel 在 `/app/reader-record/{recordId}` 内的接入（含 action confirm UI）。
+- `/app/reader-record/{recordId}` 与 `/app/reader/{recordId}` 的并存策略或合并策略。
+
+理由：Plate Surface 视觉方案决定 selection-to-anchor、inline mark、right-rail、bottom-sheet、action confirmation 等 UX 形状；这些形状反过来决定 Ask / notes / highlights 写入的最小切面。在形状未确定前切写入只会做出"形状错位的中间态"。
+
+### D6-A0 D6 最小实现顺序
+
+按"读先于写、低风险先于高风险、独立 surface 先于耦合 surface"分组：
+
+1. **D6-A1 Read-only anchor 接入**：`UserEditorialAssetAnchor` schema 不动；先新增 legacy-to-new anchor adapter，把旧 `target_key` / `sentence_id` / sentence-local offsets 映射为 `anchor_segment_id` + unit-local UTF-16 anchor，再做只读 projection / grouping；旧 `user_annotations` / `reader_notes` / `reader_ask_supplements` 当前没有 `anchor_segment_id`，不能直接按新 anchor 读取；不写 DB。Touched areas：`services/api/app/services/reader_ask/{supplements,repository}.py`、`apps/web/src/lib/reader-plate/bridges/ask/adapters.ts`、`apps/web/src/lib/reader-plate/primitives/selection-targets.ts`（只读路径）；不接新 API。
+2. **D6-A2 Anchor Validator 抽离**：把现有 `app/services/text_anchors.py` 的 anchor validation 思路抽到 `app/contracts/anchor_validation.py`（或等价位置），使 Ask tool、user_annotations、reader_notes、grammar bundle、vocabulary worker 共用同一 validator；不引入新 contract 字段。
+3. **D6-A3 Ask tool signature 切换（write-proposal only）**：把 agent tool signature 改为接受 anchor_segment_id + UTF-16 offsets；tool 返回值改为 `UserEditorialAssetAnchor` 形状；tool 调用仍受 Ask write gate 控制，不写 DB；Ask message / citation / stream 协议不动。
+4. **D6-A4 Ask supplement 写入切线**：保留 `reader_ask_supplements` 表与现有 schema；把 `supplements.py` 中所有 `sentence_id` / `paragraph_id` / `target_key` 写 SQL 改为基于 anchor_segment_id + UTF-16；写前必须经过 Ask write gate + Anchor Validator；新写入不影响 `/scene` 旧读取。
+5. **D6-A5 `user_annotations` / `reader_notes` 写入切线（D6-U1）**：保留两张表；引入 `UserEditorialAssetAnchor` 作为 request body 的可选 `anchor` 字段；旧 `target_key` 字段 deprecated optional；`analysis_record_id` 改为 nullable deprecated optional；新增 `reading_record_id` 必填。Validator 在收到 anchor 时优先校验 anchor，回退到 target_key 时保留兼容。
+6. **D6-A6 Web BFF / route 切线**：新增 `/api/web/reader-records/{recordId}/reader-ask/threads` 等新 route handler；旧 `/api/web/reader-ask/threads` 与 `/api/web/reader-notes` 保留为 legacy；新 route 不复用 BFF `confirmReaderAskActionForWeb` 中旧 `target_key` 分支。
+7. **D6-A7 Plate Surface UI 接入（不在本轮审计范围）**：必须等 Plate Surface 视觉方案落地后再切；本轮不做。
+
+### D6-A0 暂不切的旧能力与原因
+
+- **`reader_scene.py` 作为 authoritative service**：D6 不替换；它仍是 `/app/reader/{recordId}` 的事实源；直到 Plate Surface 决定 `/app/reader-record/{recordId}` 是否合并 `/app/reader/{recordId}`，否则两个 service 并存。理由：合并策略取决于 UI 方案。
+- **`reader_ask_threads` 表 + Ask thread UI**：D6 不重写主键结构；Ask thread 仍是独立于 Reading Record 的子资源。理由：Ask thread 跨 Reading Record 的合并/迁移策略未确定。
+- **Ask "用户跨 Reading Record 引文"**：known_reference_resolver 仍以 `render_scene` 解析；D6 不在本轮重写。理由：跨 record citation 涉及 candidate base / RAG substrate，不属于 D6 切线范围。
+- **`daily_vocab_agent.py`**：daily vocab 走 legacy path，不进入 D6 切线。理由：daily vocab 与 Daily Reader 边界对齐，本轮 daily_reader_workflow 不进入 runtime conversion。
+- **`/app/reader/{recordId}` 路由与 ReaderWorkbench 视觉**：D6 不在本轮替换；旧 route 继续承载 Ask / notes / highlights / dictionary / user asset 写入。理由：本轮 D6-A0 明确不处理 Plate Surface 视觉改造。
+- **Ask supplement 旧 `/scene` merge 路径**：`merge_record_with_reader_ask_supplements` 暂时保留；Ask supplement 写入新路径 D6-A4 之后，旧 `/scene` merge 不再承担 Ask supplement 写入。理由：旧 `/scene` 仍有 library 与 command palette recent 等 consumer。
+- **`render_scene_json` 在旧 Directus / Eval 观察面**：D6 不切；观察面切换必须在 cutover matrix 中单独评估。理由：观察面是隔离 spike，不属于 D6 product hardening 主路径。
+- **`@target_sentence_id` 在 agent tool 内 alias**：D6 允许其作为内部 alias 存在，但禁止对外 DTO / persistence 出现。理由：避免一次大改引入回归。
+
+### D6-A0 Static Guard 建议
+
+本轮建议补的 static guard（不写新代码，只新增 guard 文件）：
+
+- `apps/web/src/lib/reader-plate/bridges/ask/` 不引用 `targetKey` 之外对旧 `target_key` / `sentence_id` / `paragraph_id` 的 hardcoded 字符串（仅允许在 `adapters.ts` 的 `targetKey` 兼容层内部出现）。
+- `services/api/app/services/reader_ask/service.py` 中任何新增文件不允许 `import render_scene`；现有 `load_render_scene` 调用逐步收口到 read-only legacy adapter。
+- `services/api/app/schemas/{user_annotations,reader_notes,reader_ask,reader_scene,analysis}.py` 在 D6 schema 演进中必须保留 deprecated optional 字段；不允许直接删除 `sentence_id` / `paragraph_id` / `target_key` / `analysis_record_id` / `client_record_id` 字段。
+- `apps/web/src/components/reader/{ReaderNotePanel,AnnotationGutter,SelectionToolbar,AiWorkspacePanel,ask-chat/*}.tsx` 暂不切 UI；本轮不允许把它们的 import / state / props 切到新 anchor schema。
+
+### D6-A0 Done Criteria
+
+- 本节矩阵、D6 最小分层、D6 最小实现顺序全部进入 tracked 正式文档。
+- 没有改任何产品 runtime；没有接新 Ask；没有写新 API；没有改 `/app/reader-record/{recordId}` 视觉。
+- 旧 `reader_ask.service`、`user_annotations`、`reader_notes`、`reader_scene` 行为保持不变；旧 ask supplement / annotation / note 写入路径仍走 `/app/reader/{recordId}`。
+- 新 `user_editorial_assets.py` schema-only draft 与本节 D6 最小分层一致；`UserEditorialAssetAnchor` 字段就是 D6 anchor 写入的最小核心。
+- D6-A1 / A2 / A3 后续任务以本节矩阵为起点；D6-A7 仍依赖 Plate Surface 视觉方案，不在本轮审计范围。
 
 ## Builder Invariants
 

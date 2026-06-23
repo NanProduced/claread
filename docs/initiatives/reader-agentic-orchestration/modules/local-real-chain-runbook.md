@@ -1,6 +1,6 @@
-# D5 Real Local Chain Runbook
+# D5/D6 Real Local Chain Runbook
 
-本文记录 D5 Reader enhancement 主链路的本地真实运行方式：
+本文记录 Reader enhancement 主链路的本地真实运行方式：
 
 `plain_text -> article_ready -> worker loop -> snapshot reload`
 
@@ -13,6 +13,8 @@
 - `ReaderPlateSnapshot` 是 projection，不读取旧 `render_scene_json`
 
 截至 D5-R6，本文操作路径已用真实 DashScope provider 跑通短文本与 250+ 词长文本主链路；详细验证记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-R4-real-provider-local-chain-validation.md` 和 `docs/tmp/reader-orchestration/D5/TMP-D5-V5-R6-local-long-text-runbook-validation-2026-06-22.md`。验证没有使用 smoke harness 或 fake executor。
+
+补充：后端 smoke 只证明 API / worker / snapshot / events 的数据链路成立，不等价于浏览器端页面轮询与渲染层面的 E2E 验证。
 
 ## 0. 本地进程与页面边界
 
@@ -224,9 +226,47 @@ uv run python scripts/check_reader_schema_health.py --json
 
 如果失败，当前正确处理方式是重置或重建本地 DB，然后重新应用 `infra/migrations/0001_initial_schema.sql`。D5-R5 没有增加“旧库自动迁移兼容层”。
 
-## 6. 提交英文文本
+## 6. 页面内提交、recordId 获取与产品页验证
 
-### 路径 A：从 Web 页面提交
+### 路径 A：从 `/app/read` 验证新产品链路
+
+D6-E3 的推荐本地验证路径是产品路径，不是验证页：
+
+1. 确保 API、Web、reader enhancement worker 三个进程都已启动：
+   - API：`uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`
+   - Web：`pnpm web:dev` 或 `pnpm --dir apps/web run dev`
+   - Worker：`uv run reader-enhancement-worker`，或先用 `uv run reader-enhancement-worker --once` 做单次诊断
+2. 打开 `http://127.0.0.1:3000/app/read`。
+3. 粘贴英文文本并提交。
+4. 用浏览器 DevTools Network 或 Web dev server log 确认提交请求是 `POST /api/web/reading-record/submit`。
+5. 不应出现默认产品提交到 `POST /api/web/analysis/submit`；如果出现，说明 submit mode 或环境不是当前 new Reading Record 路径。
+6. 成功后页面应跳转到：
+
+```text
+http://127.0.0.1:3000/app/reader-record/<recordId>
+```
+
+URL path 最后一段就是新 `Reading Record.record_id`。在 PowerShell 中可用：
+
+```powershell
+$readerUrl = "http://127.0.0.1:3000/app/reader-record/<recordId>"
+$recordId = ([uri]$readerUrl).Segments[-1].TrimEnd("/")
+```
+
+页面期望：
+
+- 初始进入 `/app/reader-record/{recordId}` 时，旧 Workbench shell 与 Plate read-only 中心正文可见。
+- header 内的 `enhancement_progress` 状态条可能先显示 queued / processing。
+- Worker 发布 layer 后，浏览器 Network 应看到 `/api/web/reader-plate/{recordId}/events` 返回 reload-required event，随后重新请求 `/api/web/reader-plate/{recordId}/snapshot`。
+- 新 snapshot 到达后，中心 Plate 区应出现已发布的译文、词汇 mark、语法 mark / sentence analysis，progress 摘要随 snapshot 更新。
+
+如果浏览器跳转失败或你稍后回到 `/app/read`，Web-only recent recovery 会提供最近 Reading Record 的“继续阅读”入口。它只是本地/前端恢复入口，不是长期 domain truth。
+
+### 路径 B：从 `/app/reader-plate` 验证 snapshot
+
+`/app/reader-plate` 仍是验证页，适合直接观察 raw-ish `ReaderPlateSnapshot`、events polling 和 snapshot reload。
+
+从验证页提交：
 
 1. 确保 Web 进程已经拿到完整 session 或 `CLAREAD_WEB_DEBUG_SESSION_TOKEN`
 2. 打开 `http://127.0.0.1:3000/app/reader-plate`
@@ -239,7 +279,7 @@ uv run python scripts/check_reader_schema_health.py --json
 http://127.0.0.1:3000/app/reader-plate?record_id=<record_id>
 ```
 
-### 路径 B：直接调后端 API
+### 路径 C：直接调后端 API
 
 ```powershell
 $headers = @{
@@ -293,7 +333,7 @@ Invoke-RestMethod `
 ### 重新加载 snapshot
 
 ```powershell
-Invoke-RestMethod `
+$snapshot = Invoke-RestMethod `
   -Uri "http://127.0.0.1:8000/reader/records/$recordId/snapshot" `
   -Headers $headers
 ```
@@ -304,12 +344,22 @@ Invoke-RestMethod `
 - translation layer
 - vocabulary layer
 - grammar bundle 对应的 `grammar_note` 与 `sentence_analysis`
+- `enhancement_progress.overall_status`
+- `enhancement_progress.layers[]` 中 translation / vocabulary / grammar 的 job/layer 状态
 
 这个 snapshot 是从 DB facts 重建的 projection，不依赖旧 `render_scene_json`。
 
+只看 progress：
+
+```powershell
+$snapshot.enhancement_progress | ConvertTo-Json -Depth 8
+$snapshot.enhancement_progress.layers |
+  Format-Table capability, layer_type, status, job_status, job_id, layer_id, target_key
+```
+
 ### 从 Web 观察 reload
 
-- `/app/reader-plate` 会通过现有 BFF 调 `/api/web/reader-plate/{recordId}/snapshot` 和 `/api/web/reader-plate/{recordId}/events`
+- `/app/reader-record/{recordId}` 和 `/app/reader-plate` 都会通过现有 BFF 调 `/api/web/reader-plate/{recordId}/snapshot` 和 `/api/web/reader-plate/{recordId}/events`
 - worker loop 推进后，页面应通过已有 polling/reload 看到新 layers
 - 不存在单独的 public worker-control route
 
@@ -392,8 +442,10 @@ ORDER BY created_at ASC;
 | jobs 处于 `claimed` 且 `lease_expires_at` 未过期 | worker 已 claim，可能正在真实 LLM 调用中 | 看 worker 终端日志；长文本可能需要等待 |
 | jobs 处于 `claimed` 但 `lease_expires_at` 已过期 | 之前的 worker 退出或卡死，lease 等待恢复 | 再运行 `uv run reader-enhancement-worker --once`，worker 会先做 stale lease recovery |
 | jobs 为 `failed_terminal` | worker 已消费但 terminal fail-closed | 查 `failure_code` / `failure_message`，常见为 profile/route/schema/publish fence 问题 |
+| jobs 为 `failed_terminal` 且 `failure_code` 是 `model_route_unavailable`、`vocabulary_executor_unconfigured` 或 `grammar_bundle_executor_unconfigured` | model route / profile 缺失或未配置 | 检查 `MODEL_PROFILES_JSON`、`MODEL_PRESETS_JSON`、`READER_TRANSLATION_MODEL_PROFILE`、`READER_VOCABULARY_MODEL_PROFILE`、`READER_GRAMMAR_BUNDLE_MODEL_PROFILE` 和 provider API key |
 | jobs 为 `retry_later` 且 `available_at` 在未来 | 暂时性失败，当前不应热循环 | 等到 `available_at` 后再让 worker 消费，或检查 provider/network 问题 |
 | `layer_published` events 和 `enhancement_layers.status = published` 已存在，但 Web 仍不更新 | worker 已发布，问题转向 Web/BFF polling 或 session | 刷新页面；再查 `/api/web/reader-plate/{recordId}/events` 和 `/snapshot` BFF 响应 |
+| `/app/reader-record/{recordId}` 出现 Web polling error，但 FastAPI `/events` 正常 | Web BFF session、base URL 或 dev server 问题 | 检查 `CLAREAD_FASTAPI_BASE_URL`、`CLAREAD_WEB_DEBUG_SESSION_TOKEN`、浏览器 cookie/session，并确认 Web dev server 指向同一个 API |
 
 最常见的本地误判是第二行：`article_ready` 已经成功，`translate_unit` job 也已 queued，但没有 reader enhancement worker 进程。此时页面“批注生成中”只是 polling 等不到后续 events。
 

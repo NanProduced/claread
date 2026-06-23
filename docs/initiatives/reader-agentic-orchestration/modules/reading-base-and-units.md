@@ -69,10 +69,12 @@ Claread 已有前后端共享的 anchor 合同：
 - Unit / Anchor Segment 的 absolute offsets 基于 `reading_bases.text`。
 - Span-bound layer 的 `start_offset` / `end_offset` 基于 `reading_units.text`，并且必须落在 `anchor_segment_id` 对应 Anchor Segment 的 unit range 内；多数 segment 是 sentence，少数可为 clause 或 fallback window。
 - Segment-local offsets 只作为 projection 阶段从 unit-local offsets 派生的 metadata，不作为持久 domain anchor。
+- D6-U0 draft `UserEditorialAssetAnchor` 采用 `record_id`、`base_id`、`generation`、`unit_id`、`anchor_segment_id`、unit-local `start_offset` / `end_offset`、`selected_text`、`text_hash` 和 `scope`。
 - Span-bound layer 必须保存 `selected_text` 和 raw 8-char `text_hash`。
 - `text_hash` 字段不带 `fnv1a32-utf16:` prefix；算法通过常量或 `hash_algorithm` 字段表达。
 - 发布前必须用 `slice_by_utf16_offsets` 和 `compute_text_range_hash` 重新校验。
 - 如果需要更强内容身份校验，新增 `content_sha256` 字段，不替代 `fnv1a32-utf16` anchor hash。
+- Plate path、Slate path 和 DOM range 只允许作为前端瞬时 projection state；User Editorial Assets 不得持久化这些路径。
 
 ## Reading Unit Builder
 

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import warnings
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     PartDeltaEvent,
     PartEndEvent,
@@ -17,6 +19,7 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ThinkingPartDelta,
 )
+from pydantic_ai.usage import RunUsage
 
 from app.services.reader_ask import agent_runner as agent_runner_svc
 from app.services.reader_ask import stream_events as stream_events_svc
@@ -226,7 +229,7 @@ class TestStartReaderAskAgentStream:
         with patch.object(agent_runner_svc, "build_reader_ask_prompt", return_value="prompt"):
             with patch.object(
                 agent_runner_svc,
-                "build_usage_metadata",
+                "extract_run_usage",
                 return_value={"total_tokens": 30},
             ):
                 task, runtime = agent_runner_svc.start_reader_ask_agent_stream(
@@ -313,7 +316,7 @@ class TestStartReaderAskAgentStream:
         with patch.object(agent_runner_svc, "build_reader_ask_prompt", return_value="prompt"):
             with patch.object(
                 agent_runner_svc,
-                "build_usage_metadata",
+                "extract_run_usage",
                 return_value={"total_tokens": 30},
             ):
                 task, runtime = agent_runner_svc.start_reader_ask_agent_stream(
@@ -507,10 +510,9 @@ class TestStreamResponsesBranchCompletion:
         import asyncio
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        from app.agents.reader_ask_agent import ReaderAskAgentDeps, ReaderAskRuntimeState
+        from app.agents.reader_ask_agent import ReaderAskAgentDeps
         from app.llm.types import RunModelSettings
 
-        runtime = ReaderAskRuntimeState()
         event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
 
         deps = MagicMock(spec=ReaderAskAgentDeps)
@@ -525,7 +527,9 @@ class TestStreamResponsesBranchCompletion:
         # pydantic-ai 1.73+ StreamedRunResult exposes get_output(), not
         # an output property.  We set up get_output() to return the
         # authoritative text.
-        mock_result = MagicMock(spec=["stream_responses", "usage", "response", "get_output", "_marked_completed"])
+        mock_result = MagicMock(
+            spec=["stream_responses", "usage", "response", "get_output", "_marked_completed"]
+        )
         mock_result.get_output = AsyncMock(return_value="Hello from snapshot")
         mock_result._marked_completed = AsyncMock()
         # Ensure _stream_response is None to force the stream_responses branch
@@ -555,7 +559,7 @@ class TestStreamResponsesBranchCompletion:
         with patch.object(agent_runner_svc, "build_reader_ask_prompt", return_value="prompt"):
             with patch.object(
                 agent_runner_svc,
-                "build_usage_metadata",
+                "extract_run_usage",
                 return_value={"total_tokens": 30},
             ):
                 task, stream_runtime = agent_runner_svc.start_reader_ask_agent_stream(
@@ -578,6 +582,71 @@ class TestStreamResponsesBranchCompletion:
             assistant_message_id="msg-test",
         )
         assert outcome.content_md == "Hello from snapshot"
+
+    @pytest.mark.asyncio
+    async def test_stream_responses_branch_reads_property_usage_without_deprecation_warning(
+        self,
+    ) -> None:
+        from app.agents.reader_ask_agent import ReaderAskAgentDeps
+        from app.llm.types import RunModelSettings
+
+        event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+
+        deps = MagicMock(spec=ReaderAskAgentDeps)
+        deps.event_queue = event_queue
+
+        mock_response = MagicMock()
+        mock_response.text = "Hello from snapshot"
+        mock_response.thinking = None
+
+        mock_result = MagicMock(
+            spec=["stream_responses", "usage", "response", "get_output", "_marked_completed"]
+        )
+        mock_result.get_output = AsyncMock(return_value="Hello from snapshot")
+        mock_result._marked_completed = AsyncMock()
+        mock_result.__dict__["_stream_response"] = None
+
+        async def _stream_responses(**kwargs):
+            yield (mock_response, True)
+
+        mock_result.stream_responses = _stream_responses
+        mock_result.usage = RunUsage(input_tokens=10, output_tokens=20)
+        mock_result.response = MagicMock()
+        mock_result.response.parts = []
+
+        class MockStreamContext:
+            async def __aenter__(self):
+                return mock_result
+
+            async def __aexit__(self, *args):
+                pass
+
+        mock_agent = MagicMock()
+        mock_agent.run_stream = MagicMock(return_value=MockStreamContext())
+
+        with patch.object(agent_runner_svc, "build_reader_ask_prompt", return_value="prompt"):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                task, stream_runtime = agent_runner_svc.start_reader_ask_agent_stream(
+                    agent=mock_agent,
+                    deps=deps,
+                    model=MagicMock(),
+                    route_settings=RunModelSettings(max_tokens=100, temperature=0.5),
+                    assistant_message_id="msg-test",
+                )
+
+                await task
+
+        assert stream_runtime.usage_summary == {
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "total_tokens": 30,
+        }
+        assert not any(
+            issubclass(warning.category, PydanticAIDeprecationWarning)
+            and "usage" in str(warning.message)
+            for warning in caught
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -713,7 +782,7 @@ class TestMarkStreamResultCompletedExceptionPropagation:
         with patch.object(agent_runner_svc, "build_reader_ask_prompt", return_value="prompt"):
             with patch.object(
                 agent_runner_svc,
-                "build_usage_metadata",
+                "extract_run_usage",
                 return_value={"total_tokens": 30},
             ):
                 task, runtime = agent_runner_svc.start_reader_ask_agent_stream(

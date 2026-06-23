@@ -1,6 +1,6 @@
 # Orchestration Runtime
 
-> 状态：`D6-P7A backend progress snapshot contract`
+> 状态：`D6-E3 real-chain verification closeout`
 > 最后更新：2026-06-23
 > 范围：bounded run/job、worker lease、Authorization Envelope、并发和框架边界。
 
@@ -103,6 +103,13 @@ D6-P6 本地验证合同：
 - 本地页面内验证新链路时，API、Web 和 `uv run reader-enhancement-worker` 必须同时运行。
 - `uv run reader-enhancement-worker --once` 是诊断单次消费入口；`uv run reader-enhancement-worker` 是持续消费入口。
 - 如果 DB 中 `translate_unit` 或后续 jobs 长时间停在 `queued`，且 `reader_events` 只有 `article_ready`，这是 worker 未运行或未消费队列，不是 article parsing failure。具体排查 SQL 见 `local-real-chain-runbook.md`。
+
+D6-E3 页面内验证 closeout：
+
+- 本地正常验证入口是 `/app/read -> /api/web/reading-record/submit -> /app/reader-record/{recordId}`，不是旧 `/api/web/analysis/submit` 或 `/app/reader/{recordId}`。
+- `/app/reader-record/{recordId}` 继续用 BFF snapshot/events polling 观察 worker 发布结果；页面应通过 snapshot reload 更新 Workbench-backed Plate read-only 中心区和 `enhancement_progress` 摘要。
+- 诊断仍以 `reading_records`、`reader_jobs`、`reader_events`、`enhancement_layers` 和 snapshot `enhancement_progress` 为准；完整本地 checklist、recordId 获取和 stuck 判断表见 `local-real-chain-runbook.md`。
+- Worker 独立进程是正式运行形态；不要为了本地页面验证把 worker 挂进 FastAPI lifespan 或 Web submit 请求。
 
 D6-P7A Reader UI 可观察性合同：
 

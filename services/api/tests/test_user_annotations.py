@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -22,6 +23,8 @@ from app.services.user_annotations import (
     _resolve_single_sentence_conflict,
     _row_to_response,
     _SingleSentenceRange,
+    create_user_annotation,
+    list_user_annotations,
 )
 
 client = TestClient(app)
@@ -95,6 +98,18 @@ class TestSchemaValidation:
         )
         assert req.text_hash == compute_text_range_hash(text)
 
+    def test_create_request_rejects_text_range_hash_mismatch(self):
+        with pytest.raises(ValidationError, match="text_hash must match selected_text"):
+            UserAnnotationCreateRequest(
+                analysis_record_id=RECORD_ID,
+                anchor_type="text_range",
+                sentence_id="s1",
+                selected_text="policy choices",
+                start_offset=0,
+                end_offset=14,
+                text_hash=compute_text_range_hash("policy choicex"),
+            )
+
     def test_create_request_rejects_incomplete_multi_text(self):
         with pytest.raises(ValidationError):
             UserAnnotationCreateRequest(
@@ -133,6 +148,49 @@ class TestHelpers:
         assert _build_target_key(req) == (
             f"record:{RECORD_ID}:range:s1:0:14:{compute_text_range_hash(text)}"
         )
+
+    def test_build_target_key_multi_text_uses_segment_signature(self):
+        req = UserAnnotationCreateRequest(
+            analysis_record_id=RECORD_ID,
+            anchor_type="multi_text",
+            selected_text="alpha ... beta",
+            segments=[
+                UserAnnotationSegment(
+                    paragraph_id="p1",
+                    sentence_id="s1",
+                    selected_text="alpha",
+                    start_offset=0,
+                    end_offset=5,
+                    text_hash=compute_text_range_hash("alpha"),
+                ),
+                UserAnnotationSegment(
+                    paragraph_id="p2",
+                    sentence_id="s2",
+                    selected_text="beta",
+                    start_offset=0,
+                    end_offset=4,
+                    text_hash=compute_text_range_hash("beta"),
+                ),
+            ],
+        )
+
+        expected_signature = (
+            f"0:p1:s1:0:5:{compute_text_range_hash('alpha')}"
+            f"|1:p2:s2:0:4:{compute_text_range_hash('beta')}"
+        )
+        assert _build_target_key(req) == (
+            f"record:{RECORD_ID}:multi_text:2:{compute_text_range_hash(expected_signature)}"
+        )
+
+        reversed_req = req.model_copy(
+            update={
+                "segments": [
+                    req.segments[1],
+                    req.segments[0],
+                ]
+            }
+        )
+        assert _build_target_key(reversed_req) != _build_target_key(req)
 
     def test_row_to_response_parses_multi_text_segments(self):
         row = _make_row(
@@ -686,3 +744,59 @@ class TestRoutes:
 
         assert response.status_code == 200
         assert response.json() == {"ok": True}
+
+
+@pytest.mark.asyncio
+class TestServiceCharacterization:
+    @patch("app.services.user_annotations.load_render_scene", new_callable=AsyncMock)
+    @patch("app.services.user_annotations.db_connect.DB_POOL")
+    async def test_create_text_range_annotation_rejects_scene_quote_mismatch(
+        self,
+        mock_pool,
+        mock_load_render_scene,
+    ):
+        pool, conn = _mock_db_pool()
+        mock_pool.acquire = pool.acquire
+        conn.fetch.return_value = []
+        mock_load_render_scene.return_value = {
+            "article": {
+                "sentences": [
+                    {
+                        "sentence_id": "s1",
+                        "paragraph_id": "p1",
+                        "text": "Institutional memory shapes policy choices.",
+                    }
+                ]
+            }
+        }
+        req = UserAnnotationCreateRequest(
+            analysis_record_id=RECORD_ID,
+            anchor_type="text_range",
+            sentence_id="s1",
+            paragraph_id="p1",
+            selected_text="policy",
+            start_offset=14,
+            end_offset=20,
+            text_hash=compute_text_range_hash("policy"),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_user_annotation(UUID(USER_ID), req)
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "selected_text does not match sentence offsets"
+        conn.fetchrow.assert_not_awaited()
+
+    @patch("app.services.user_annotations.db_connect.DB_POOL")
+    async def test_list_user_annotations_orders_by_created_at_desc(self, mock_pool):
+        pool, conn = _mock_db_pool()
+        mock_pool.acquire = pool.acquire
+        older = _make_row(sentence_id="s2", created_at=datetime(2024, 1, 1, tzinfo=UTC))
+        newer = _make_row(sentence_id="s1", created_at=datetime(2024, 1, 2, tzinfo=UTC))
+        conn.fetch.return_value = [newer, older]
+
+        response = await list_user_annotations(UUID(USER_ID), RECORD_ID)
+
+        assert [item.sentence_id for item in response] == ["s1", "s2"]
+        query = conn.fetch.await_args.args[0]
+        assert "ORDER BY created_at DESC" in query

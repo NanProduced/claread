@@ -29,10 +29,10 @@ from app.agents.reader_ask_agent import (
     ReaderAskRuntimeState,
     build_reader_ask_prompt,
 )
+from app.llm.agent_runner import extract_run_usage
 from app.llm.call_guard import assert_real_llm_allowed
 from app.llm.types import ResolvedModelConfig, RunModelSettings
 from app.services.reader_ask import stream_events as stream_events_svc
-from app.workflow.tracing import build_usage_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -602,7 +602,7 @@ def start_reader_ask_agent_stream(
                 )
                 if checkpoint_flush is not None:
                     await checkpoint_flush(runtime, force=True)
-                runtime.usage_summary = build_usage_metadata(result.usage())
+                runtime.usage_summary = extract_run_usage(result)
                 runtime.producer_result = result
         except Exception as exc:
             if checkpoint_flush is not None:

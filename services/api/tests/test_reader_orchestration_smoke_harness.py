@@ -12,6 +12,7 @@ from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
     PlainTextArticleReadySubmitRequest,
 )
+from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.pipeline_runner import (
     ReaderEnhancementPipelineRunner,
 )
@@ -96,6 +97,43 @@ async def _count_layers(pool: asyncpg.Pool, record_id: UUID, layer_type: str) ->
         )
 
 
+async def _poll_events_after(
+    pool: asyncpg.Pool,
+    *,
+    record_id: UUID,
+    user_id: UUID,
+    after_sequence: int,
+):
+    result = await ReaderEventRuntime(pool=pool).poll_events(
+        record_id=record_id,
+        user_id=user_id,
+        after_sequence=after_sequence,
+        limit=50,
+    )
+    return result.events
+
+
+def _find_progress_layer(
+    snapshot,
+    *,
+    capability: str,
+    status: str | None = None,
+    layer_type: str | None = None,
+):
+    for layer in snapshot.enhancement_progress.layers:
+        if layer.capability != capability:
+            continue
+        if status is not None and layer.status != status:
+            continue
+        if layer_type is not None and layer.layer_type != layer_type:
+            continue
+        return layer
+    raise AssertionError(
+        "progress layer not found for "
+        f"capability={capability!r}, status={status!r}, layer_type={layer_type!r}"
+    )
+
+
 @pytest.mark.anyio
 async def test_prepare_record_with_fake_executors_reloads_snapshot_without_render_scene_json(
     smoke_harness_env: asyncpg.Pool,
@@ -121,6 +159,32 @@ async def test_prepare_record_with_fake_executors_reloads_snapshot_without_rende
     assert result.layer_counts.sentence_analysis == 2
     assert result.snapshot.record_id == str(result.record_id)
     assert result.snapshot.last_event_sequence == result.pipeline_summary.last_event_sequence
+    assert result.snapshot.last_event_sequence > 1
+    assert result.snapshot.enhancement_progress.overall_status == "ready"
+    assert _find_progress_layer(
+        result.snapshot,
+        capability="translation",
+        status="succeeded",
+        layer_type="translation",
+    )
+    assert _find_progress_layer(
+        result.snapshot,
+        capability="vocabulary",
+        status="succeeded",
+        layer_type="vocabulary",
+    )
+    assert _find_progress_layer(
+        result.snapshot,
+        capability="grammar",
+        status="succeeded",
+    )
+    events = await _poll_events_after(
+        smoke_harness_env,
+        record_id=result.record_id,
+        user_id=user_id,
+        after_sequence=1,
+    )
+    assert any(event.event_type == "layer_published" for event in events)
     assert "render_scene_json" not in json.dumps(result.snapshot.value, ensure_ascii=False)
 
 

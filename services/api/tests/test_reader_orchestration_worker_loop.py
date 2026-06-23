@@ -409,11 +409,50 @@ async def _load_snapshot_product_state(
     record_id: UUID,
     user_id: UUID,
 ) -> str:
-    snapshot = await ArticleReadyPersistenceService(pool=pool).load_snapshot(
+    snapshot = await _load_snapshot(
+        pool,
         record_id=record_id,
         user_id=user_id,
     )
     return snapshot.record.product_state
+
+
+async def _load_snapshot(
+    pool: asyncpg.Pool,
+    *,
+    record_id: UUID,
+    user_id: UUID,
+):
+    snapshot = await ArticleReadyPersistenceService(pool=pool).load_snapshot(
+        record_id=record_id,
+        user_id=user_id,
+    )
+    return snapshot
+
+
+def _find_progress_layer(
+    snapshot,
+    *,
+    capability: str,
+    status: str | None = None,
+    layer_type: str | None = None,
+    job_type: str | None = None,
+):
+    for layer in snapshot.enhancement_progress.layers:
+        if layer.capability != capability:
+            continue
+        if status is not None and layer.status != status:
+            continue
+        if layer_type is not None and layer.layer_type != layer_type:
+            continue
+        if job_type is not None and layer.job_type != job_type:
+            continue
+        return layer
+    raise AssertionError(
+        "progress layer not found for "
+        f"capability={capability!r}, status={status!r}, "
+        f"layer_type={layer_type!r}, job_type={job_type!r}"
+    )
 
 
 async def test_scan_eligible_records_excludes_coverage_complete(
@@ -656,6 +695,98 @@ async def test_process_candidate_forwards_custom_lease_duration_to_pipeline_runn
             after_sequence=article.article_ready_sequence,
         )
         == ()
+    )
+
+
+async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload_events(
+    worker_loop_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(worker_loop_env)
+    article = await submit_article_ready(
+        worker_loop_env,
+        user_id=user_id,
+        title="Real Chain Smoke",
+    )
+    await ReaderEnhancementPipelineRunner(pool=worker_loop_env).bootstrap_missing_jobs(
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    initial_snapshot = await _load_snapshot(
+        worker_loop_env,
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    initial_translation = _find_progress_layer(
+        initial_snapshot,
+        capability="translation",
+        status="queued",
+        job_type="translate_unit",
+    )
+
+    assert initial_snapshot.record.readiness_state == "article_ready"
+    assert initial_snapshot.enhancement_progress.overall_status == "readable_enhancing"
+    assert initial_translation.job_status == "queued"
+
+    runner = _make_runner(
+        worker_loop_env,
+        translator=_StaticTranslator(),
+        vocabulary_executor=_StaticVocabularyExecutor(),
+        grammar_executor=_StaticGrammarExecutor(),
+    )
+    service = ReaderEnhancementWorkerLoopService(
+        pool=worker_loop_env,
+        pipeline_runner=runner,
+    )
+    candidate = await _find_candidate(service, article.record_id)
+
+    result = await service.process_candidate(
+        candidate=candidate,
+        lease_owner_prefix="worker-loop-real-chain",
+        max_ticks=12,
+        max_jobs=12,
+    )
+
+    assert result.outcome == "processed"
+    assert result.pipeline_summary is not None
+    assert result.pipeline_summary.record_id == article.record_id
+    assert await _count_layers(worker_loop_env, article.record_id, "translation") >= 1
+    assert await _count_layers(worker_loop_env, article.record_id, "vocabulary") >= 1
+    assert await _count_layers(worker_loop_env, article.record_id, "grammar_note") >= 1
+    assert await _count_layers(worker_loop_env, article.record_id, "sentence_analysis") >= 1
+
+    events = await _poll_events_after(
+        worker_loop_env,
+        record_id=article.record_id,
+        user_id=user_id,
+        after_sequence=article.article_ready_sequence,
+    )
+    event_types = [event.event_type for event in events]
+    assert "layer_published" in event_types
+
+    reloaded_snapshot = await _load_snapshot(
+        worker_loop_env,
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    assert reloaded_snapshot.last_event_sequence == result.pipeline_summary.last_event_sequence
+    assert reloaded_snapshot.record.product_state == "readable_enhancing"
+    assert reloaded_snapshot.enhancement_progress.overall_status == "ready"
+    assert _find_progress_layer(
+        reloaded_snapshot,
+        capability="translation",
+        status="succeeded",
+        layer_type="translation",
+    )
+    assert _find_progress_layer(
+        reloaded_snapshot,
+        capability="vocabulary",
+        status="succeeded",
+        layer_type="vocabulary",
+    )
+    assert _find_progress_layer(
+        reloaded_snapshot,
+        capability="grammar",
+        status="succeeded",
     )
 
 

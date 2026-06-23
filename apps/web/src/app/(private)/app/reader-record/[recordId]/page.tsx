@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 
 import { ReaderRecordWorkbenchSurface } from "@/components/reader/ReaderRecordWorkbenchSurface";
 import { useReaderPlatePolling } from "@/lib/reader-plate-snapshot/polling";
@@ -18,6 +18,19 @@ type SnapshotResponse =
 type SnapshotLoadResult =
   | { ok: true; snapshot: ReaderPlateSnapshotDto }
   | { ok: false; message: string };
+
+type ReadingRecordRouteParams = { recordId: string };
+type ReadingRecordRouteParamsInput =
+  | ReadingRecordRouteParams
+  | Promise<ReadingRecordRouteParams>;
+
+function useReadingRecordRouteParams(params: ReadingRecordRouteParamsInput) {
+  if (typeof (params as PromiseLike<ReadingRecordRouteParams>).then === "function") {
+    return use(params as Promise<ReadingRecordRouteParams>);
+  }
+
+  return params as ReadingRecordRouteParams;
+}
 
 async function loadSnapshotForRecord(
   recordId: string,
@@ -57,9 +70,10 @@ function reloadStatusLabel(reason: string | null): string {
 export default function ReadingRecordPage({
   params,
 }: {
-  params: { recordId: string };
+  params: ReadingRecordRouteParamsInput;
 }) {
-  const recordId = params.recordId.trim();
+  const routeParams = useReadingRecordRouteParams(params);
+  const recordId = routeParams.recordId.trim();
   const [snapshotState, setSnapshotState] = useState<SnapshotState>({
     kind: "loading",
     recordId,

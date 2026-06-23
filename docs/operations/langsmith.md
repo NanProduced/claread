@@ -7,7 +7,7 @@
 - LangSmith 用于 trace,不作为线上业务链路依赖。
 - 单一 project `claread-dev`(或操作者自配的同义命名),不再支持"每请求切 project"。所有真正会写 trace 的链路落在同一个 project,**通过 `surface` tag/metadata 区分**。
 - 真实模型调用通过 `@traceable(run_type="llm")` 包装,并在子 span 上回填 usage metadata。
-- PydanticAI agent 当前配置为 `instrument=False`,**不要依赖** PydanticAI 自动产出 trace。
+- PydanticAI agent 当前**不注册** `Instrumentation(...)` capability；runtime 也不再传 deprecated `instrument=` 参数，**不要依赖** PydanticAI 自动产出 trace。
 - eval-center 默认 **不** 写 trace(`trace_scope="off"`),需要把某次 eval 跑回放到 LangSmith 时显式改成 `trace_scope="inherit"`。
 
 ## 环境变量

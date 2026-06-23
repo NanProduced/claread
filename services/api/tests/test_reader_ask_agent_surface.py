@@ -64,3 +64,13 @@ def test_agent_module_only_imports_callable_constants() -> None:
         assert spec.agent_callable is True, (
             f"reader_ask_agent imports {const_name}='{tool_name}' which is not agent-callable"
         )
+
+
+def test_reader_ask_agent_module_avoids_deprecated_pydantic_ai_kwargs() -> None:
+    from pathlib import Path
+
+    agent_path = Path(__file__).resolve().parent.parent / "app" / "agents" / "reader_ask_agent.py"
+    source = agent_path.read_text(encoding="utf-8")
+
+    for token in ("output_retries=", "instrument="):
+        assert token not in source

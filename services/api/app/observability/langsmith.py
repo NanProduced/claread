@@ -13,9 +13,10 @@ def setup_langsmith(settings: Settings) -> bool:
 
     Uses LangGraph's built-in callback tracing (``LANGSMITH_TRACING=true``)
     plus ``@traceable``-decorated functions; these are the only two sources
-    of LangSmith spans in the API process. PydanticAI agents are configured
-    with ``instrument=False`` and do not emit traces (``LANGSMITH_OTEL_ENABLED``
-    is also kept ``"false"`` to make that explicit and avoid duplicates).
+    of LangSmith spans in the API process. PydanticAI agents do not register
+    the ``Instrumentation`` capability and therefore do not emit traces
+    (``LANGSMITH_OTEL_ENABLED`` is also kept ``"false"`` to make that
+    explicit and avoid duplicates).
 
     To disable tracing for a single in-process call (e.g. eval requests with
     ``trace_scope='off'``), use :func:`app.observability.disabled_tracing`

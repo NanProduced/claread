@@ -1,8 +1,8 @@
 # Cutover 与旧 AI Workflow 处理
 
-> 状态：`D6-P7B reader-record progress display`
+> 状态：`D6-A0 Ask / notes / highlights dependency audit`
 > 最后更新：2026-06-23
-> 范围：停服重构、旧 workflow 替换、旧表/旧 UI 清理边界，以及 Web cutover 迁移顺序。
+> 范围：停服重构、旧 workflow 替换、旧表/旧 UI 清理边界，以及 Web cutover 迁移顺序；本轮 D6-A0 增加 Ask / notes / highlights / user asset 写入路径的依赖审计与迁移边界收口。
 
 ## 基本立场
 
@@ -141,7 +141,7 @@ Web Reader 不再依赖旧 `render_scene_json`。Reader Article Body 的新路�
 |---|---|---|---|---|
 | 新提交产品入口 | `/app/read` | 默认 `/api/web/reading-record/submit` -> 新 `/reader/records/plain-text`；legacy mode 仍可回退到 `/api/web/analysis/submit` | 默认新 `Reading Record.record_id`；legacy mode 使用旧 `cloud_record_id` | `AnalyzeSubmitForm.tsx`、`submit-mode.ts`、`recent-reading-record.ts`、`services/bff/reader-plate.ts`；W3-D1 起默认成功后跳 `/app/reader-record/{readingRecordId}`，W3-D2 起提供 Web-only 最近 Reading Record 继续入口 |
 | 新 Reader Plate 验证页 | `/app/reader-plate` + `?record_id=` | `/api/web/reader-plate/*` -> 新 `/reader/records/plain-text|snapshot|events` | 新 `Reading Record.record_id` | `reader-plate/page.tsx`；当前是 read-only validation surface，不是最终产品 UI |
-| 新 Reading Record 产品 route shell | `/app/reader-record/{recordId}` | `/api/web/reader-plate/{recordId}/snapshot` | 新 `Reading Record.record_id` | `reader-record/[recordId]/page.tsx`；W3-C3 起通过 snapshot adapter 渲染旧 Workbench 风格只读中心 Plate 区，W3-D1 起承接 `/app/read` 成功 landing；D6-P7B 起在旧 Workbench header 内展示 snapshot `enhancement_progress` capability 级轻量进度条；W3-D5/D6/D7 起可由 Library 新 section、command palette 新分组和新 Reading Record indicator 发现；旧 active analysis task 流量仍未切入 |
+| 新 Reading Record 产品 route shell | `/app/reader-record/{recordId}` | `/api/web/reader-plate/{recordId}/snapshot` | 新 `Reading Record.record_id` | `reader-record/[recordId]/page.tsx`；W3-C3 起通过 snapshot adapter 渲染旧 Workbench 风格只读中心 Plate 区，W3-D1 起承接 `/app/read` 成功 landing；D6-P7B 起在旧 Workbench header 内展示 snapshot `enhancement_progress` capability 级轻量进度条；D6-E2B 起用 Web smoke test 锁定初始 snapshot -> reader_events polling -> snapshot reload 后，Plate 中心区可更新译文、词汇/语法标注和 progress；D6-E3 起 `local-real-chain-runbook.md` 固化 `/app/read -> /api/web/reading-record/submit -> /app/reader-record/{recordId}` 的本地真实链路验证 checklist；W3-D5/D6/D7 起可由 Library 新 section、command palette 新分组和新 Reading Record indicator 发现；旧 active analysis task 流量仍未切入 |
 | 旧 Reader 产品页 | `/app/reader/{recordId}` | `getReaderRecord()` -> 旧 `/reader/records/{id}/scene` 或 `by-client-id/.../scene` | 旧 analysis record id 或 client record id | `reader/[recordId]/page.tsx`、`services/bff/reader.ts`、`services/api/reader-scene.ts`；仍承载 ReaderWorkbench、Ask、点词、笔记、高亮 |
 | Library record links | `legacyAppReaderRoute(record.id)` | `/records` -> `RecordResponseDto[]` | 旧 `RecordResponseDto.id` | `LibraryClient.tsx`、`services/bff/records.ts`；Library 当前拿到的是旧 record list，不是新 Reading Record list |
 | Vocabulary source links | `legacyAppReaderRoute(recordId)` / `legacyAppReaderRoute(item.sourceRecordId)` | vocabulary item source refs -> 旧 source record contract | 旧 source record id / `cloud_record_id` / `client_record_id` | `app/vocabulary/VocabularyClient.tsx`；点回原文仍跳旧 ReaderWorkbench；W3-D9 已用 guard 锁定不能把 `sourceRecordId` 当新 `Reading Record.record_id`，后续必须等 BFF 提供 `sourceReadingRecordId` 或 `sourceReaderUrl` |
@@ -174,6 +174,8 @@ Web Reader 不再依赖旧 `render_scene_json`。Reader Article Body 的新路�
 - `/app/reader-plate` 独立消费新 `ReaderPlateSnapshot`，其 `record_id` 是新 Reading Record id，不应回灌给旧 `/app/reader/{recordId}` helper。
 - `/app/reader-record/{recordId}` 现在提供新的 Reading Record product route，并复用 `IntensiveReaderSurface` / `ImmersiveReaderSurface` 渲染 Workbench-backed read-only 中心 Plate 区；D6-P3 起只读 dictionary lookup 已恢复，Ask、notes/highlights、dictionary/user asset 写入仍未接通。
 - D6-P7B 起 `/app/reader-record/{recordId}` 会在旧 Workbench header 内紧凑展示 optional `snapshot.enhancement_progress` 的 capability 级摘要；缺失该字段时继续使用既有 `product_state` / `readiness_state` 提示，不影响正文 Plate read-only 渲染。
+- D6-E2B 起 Web focused smoke 覆盖 `/app/reader-record/{recordId}` 从 `readable_enhancing` 初始 snapshot，经 `layer_published` / `record_product_state_updated` events polling reload 到新 snapshot，并验证 Workbench-backed Plate 中心区的译文、词汇/语法 mark、句子分析和 progress 摘要同步更新；这是前端集成测试合同，不新增后端 schema 或运行时入口流量。
+- D6-E3 起本地真实链路验证入口收口为 `/app/read` 默认提交到 `/api/web/reading-record/submit`，成功 landing 到 `/app/reader-record/{recordId}` 后用 events polling / snapshot reload 观察增强内容；诊断以 `reader_jobs`、`reader_events`、`enhancement_layers` 和 snapshot `enhancement_progress` 为准，worker 仍是独立进程，不进入 FastAPI lifespan。
 - Library 当前列表来自旧 `/records`；即使页面本身不直接渲染 `render_scene_json`，它拿到的数据对象仍属于旧 record contract。
 
 UI / UX 方向：
@@ -343,6 +345,7 @@ W3-D3 结论：
   - `recent-reading-record.ts` 不引用 `legacyAppReaderRoute`、`/app/reader/` 或 `analysis-tasks`。
 - 已切到 new Reading Record 的入口：`/app/read` submit landing、`/app/read` recent recovery、Library 新 section、command palette 新分组、Reading Record activity indicator（仅非阅读/验证/read app shell 页面展示）。
 - 仍 legacy 的入口：active task、command palette legacy recent/search records、Vocabulary source links、`services/bff/analysis.ts` `readerUrl`、`services/bff/records.ts` record list。Vocabulary source links 的切换条件不是改 route helper，而是先让 BFF 返回新 source truth（`sourceReadingRecordId` 或 `sourceReaderUrl`）。
+- 仍 legacy 且 D6-A0 标记为"先 read-only、后写切换"的入口：旧 ReaderWorkbench 的 Ask / notes / highlights / user asset 写入（仍由 `/app/reader/{recordId}` 承载）；`/app/reader-record/{recordId}` 当前只恢复 read-only dictionary lookup 和只读 snapshot 渲染。Ask / notes / highlights 的写入路径切线依赖 `schema-and-domain-contract.md` 中 `D6-A0 Ask / notes / highlights dependency audit` 的 D6 最小实现顺序，且 UI 切线依赖 Plate Surface 视觉方案，本轮不切。
 
 建议顺序：
 
@@ -466,6 +469,42 @@ W3-D9 结论：
 `daily_reader_workflow` 不进入本轮 runtime conversion。
 
 如果旧表删除影响 Daily Reader，需要先标记为 keep 或重写 Daily Reader 依赖，不允许把 Daily Reader 语义混入 learning Reader orchestration。
+
+## D6-A0 Ask / Notes / Highlights Dependency Audit 结论
+
+> 本节是 D6 product hardening 进入 Ask / notes / highlights / user asset 写入前的迁移边界结论。完整依赖矩阵、最小分层、最小实现顺序、暂不切能力与原因已写入 `modules/schema-and-domain-contract.md` 的 `D6-A0 Ask / Notes / Highlights Dependency Audit` 子节；本节只收口 cutover 视角的结论与未切入口状态。
+
+### 当前 Ask / notes / highlights / user asset 写入入口状态
+
+| 入口 | 当前 route / surface | 当前数据源 / id 语义 | 当前 status | D6-A0 切线结论 |
+|---|---|---|---|---|
+| Ask Claread | `/app/reader/{recordId}` 内 `AiWorkspacePanel` + `ask-chat/*` | 旧 `analysis_record_id` + `target_key` + `render_scene_json`；`reader_ask_threads` / `reader_ask_supplements` 表 | legacy（runtime 不变） | D6-A1 read-only 接入 anchor_segment_id；D6-A3 切 tool signature；D6-A4 切 supplement 写；D6-A6 切 Web route；UI 切线必须等 Plate Surface |
+| Reader notes | `/app/reader/{recordId}` 内 `ReaderNotePanel` + `/api/web/reader-notes` | 旧 `analysis_record_id` + `anchor_sentence_id` + `target_key`；`reader_notes` 表 | legacy（runtime 不变） | D6-A5 双轨：request body 引入 `UserEditorialAssetAnchor` 可选 anchor，旧 `target_key` deprecated optional |
+| Reader highlights | `/app/reader/{recordId}` 内 `SelectionToolbar` + `AnnotationGutter` + `/api/web/reader-annotations` | 旧 `analysis_record_id` + `sentence_id` / `target_key`；`user_annotations` 表 | legacy（runtime 不变） | D6-A5 双轨：与 notes 同样引入 anchor_segment_id 可选 anchor |
+| Ask action confirm (`save_note` / `save_highlight`) | `/api/web/reader-ask/threads/{threadId}/actions/{actionId}/confirm` | 旧 `analysis_record_id` + `record_id` 两种，按 action 类型 | legacy（runtime 不变） | D6-A6 新增 Reading Record id 入口；旧 confirm 路径保留 |
+| Selection → Ask attachment | `apps/web/src/lib/reader-plate/bridges/ask/adapters.ts` + `primitives/selection-targets.ts` | 旧 `targetKey` / `sentence_id` | legacy（runtime 不变） | D6-A1 read-only 投影新 anchor；D6-A6 与新 BFF / route 同步切换 |
+| Dictionary / user asset 写入 | `/app/reader/{recordId}` 内 `DictionaryPopover` + 旧 asset 写入 | 旧 `analysis_record_id` | legacy（runtime 不变） | 不在 D6-A0 范围；`/app/reader-record/{recordId}` 已 read-only dictionary lookup 已恢复 |
+| Ask cross-record citation (`known_reference_resolver`) | `services/api/app/services/reader_ask/known_reference_resolver.py` | 旧 `render_scene` dict | legacy（runtime 不变） | D6-A0 暂不切；等 candidate base / RAG substrate 决策 |
+| `reader_scene.py` 作为 authoritative service | `/app/reader/{recordId}` 主路径 | 旧 `client_record_id` / UUID + `render_scene_json` | legacy（runtime 不变） | D6 不替换；`merge_record_with_reader_ask_supplements` 在 D6-A4 后不再承担 Ask supplement 写入 |
+| `daily_vocab_agent.py` | 旧 daily vocab path | 旧 `paragraph_id` | legacy，不在 D6 切线范围 | daily_reader_workflow 不进入 runtime conversion |
+
+### Cutover 边界声明
+
+- Ask / notes / highlights / user asset 的写入入口**仍由 `/app/reader/{recordId}` 承载**；本轮 D6-A0 不切 `/app/reader-record/{recordId}` 的写入路径。
+- `/app/reader-record/{recordId}` 的 Ask / notes / highlights UI 切线**必须等 Plate Surface 视觉方案**落地；本轮不做。
+- 旧 `reader_ask.service` / `user_annotations` / `reader_notes` / `reader_scene` runtime 行为**完全保持不变**；D6-A0 不引入兼容性修改、不引入字段别名、不引入双轨长期兼容。
+- D6-A1 起新写入切线以 `schema-and-domain-contract.md` 的 `D6-A0 Ask / Notes / Highlights Dependency Audit` 子节为起点；D6-A0 不在本轮做实现。
+- 旧 `reader_ask_threads` / `reader_ask_supplements` / `user_annotations` / `reader_notes` 表**保留至旧 data 清空**；cutover 不在本轮删表。
+
+### 暂不切的旧能力与原因（cutover 视角）
+
+- `reader_ask_threads` 主键不重写：跨 Reading Record 的 Ask thread 合并 / 迁移策略未确定。
+- `reader_scene.py` 不被替换为新 service：直到 Plate Surface 决定 `/app/reader-record/{recordId}` 与 `/app/reader/{recordId}` 是否合并，两个 service 并存。
+- `daily_vocab_agent.py` 不切：与 Daily Reader 边界对齐，本轮 daily_reader_workflow 不进入 runtime conversion。
+- `services/api/app/schemas/{user_annotations,reader_notes,reader_ask,reader_scene,analysis}.py` 旧 DTO 字段不直接删除：D6 schema 演进必须保留 deprecated optional 字段，避免破坏 library / command palette / Vocabulary source links 等 legacy consumer。
+- Ask cross-record citation (`known_reference_resolver`) 不切：依赖 candidate base / RAG substrate，不属于 D6 product hardening 主路径。
+- 旧 Directus / Eval 观察面不切：观察面切换属于隔离 spike，不在 D6-A0 cutover 范围。
+- `@target_sentence_id` 在 agent tool 内部允许保留为 alias，但禁止出现在对外 DTO / persistence；这是为避免一次大改引入回归。
 
 ## D2 / D3 要求
 

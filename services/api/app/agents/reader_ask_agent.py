@@ -22,17 +22,17 @@ from app.agents.reader_ask_tool_registry import (
     TOOL_SUGGEST_PROMPTS,
     agent_callable_tool_names,
 )
-from app.agents.reader_ask_tool_runtime import (
-    run_tool,
-    truncate_tool_arg,
-)
+from app.agents.reader_ask_tool_runtime import run_tool, truncate_tool_arg
 from app.agents.reader_ask_write_gate import (
     MISSING_NOTE_TEXT_PAYLOAD,
     check_write_proposal_precondition,
 )
-from app.schemas.reader_ask import ReaderAskAnchorRef, ReaderAskCitation, ReaderAskToolTraceEntry
+from app.schemas.reader_ask import (
+    ReaderAskAnchorRef,
+    ReaderAskCitation,
+    ReaderAskToolTraceEntry,
+)
 from app.services.analysis.prompting.prompt_loader import load_agent_instructions
-
 
 # ---------------------------------------------------------------------------
 # Round 2: tool IO contracts (stable, model-facing)
@@ -136,23 +136,23 @@ class ReaderAskAgentDeps:
     primary_anchor: ReaderAskAnchorRef | None
     # Round 2 tool contracts.
     get_record_context_fn: Callable[
-        ["ReaderAskAgentDeps" | None, RecordContextScope | None, str | None],
+        [ReaderAskAgentDeps | None, RecordContextScope | None, str | None],
         Awaitable[dict[str, Any]],
     ]
     get_record_insights_fn: Callable[
-        ["ReaderAskAgentDeps" | None, str | None, InsightKind | None, int | None],
+        [ReaderAskAgentDeps | None, str | None, InsightKind | None, int | None],
         Awaitable[list[dict[str, Any]]],
     ]
     get_user_vocabulary_book_fn: Callable[
-        ["ReaderAskAgentDeps" | None, str | None, int | None, VocabularySortBy | None],
+        [ReaderAskAgentDeps | None, str | None, int | None, VocabularySortBy | None],
         Awaitable[list[dict[str, Any]]],
     ]
     resolve_known_reference_fn: Callable[
-        ["ReaderAskAgentDeps" | None, str, int | None],
+        [ReaderAskAgentDeps | None, str, int | None],
         Awaitable[dict[str, Any]],
     ]
     load_explicit_attachment_context_fn: Callable[
-        ["ReaderAskAgentDeps" | None, str, str | None],
+        [ReaderAskAgentDeps | None, str, str | None],
         Awaitable[dict[str, Any]],
     ]
     generate_sentence_annotation_fn: Callable[
@@ -246,10 +246,16 @@ async def _get_record_insights_tool(
         return [
             {
                 "status": "error",
-                "summary": "get_record_insights requires at least one of target_sentence_id or kind.",
+                "summary": (
+                    "get_record_insights requires at least one of "
+                    "target_sentence_id or kind."
+                ),
                 "next_actions": [
                     "Pass target_sentence_id for a specific sentence.",
-                    "Pass kind='grammar_note' | 'sentence_analysis' | 'vocabulary' to filter by type.",
+                    (
+                        "Pass kind='grammar_note' | 'sentence_analysis' | "
+                        "'vocabulary' to filter by type."
+                    ),
                 ],
                 "artifacts": [],
                 "ok": False,
@@ -499,7 +505,10 @@ def _write_external_context_to_runtime_state(
             article_overview_source=result.get("article_overview_source"),
             article_overview_confidence=result.get("article_overview_confidence"),
             record_insights=result.get("record_insights", []),
-            source_labels=result.get("source_labels", ["external_attachment", "external_record_context"]),
+            source_labels=result.get(
+                "source_labels",
+                ["external_attachment", "external_record_context"],
+            ),
             reason="explicit_attachment_tool",
         )
         state.latest_external_record_contexts.append(ctx.model_dump(mode="json"))
@@ -734,9 +743,7 @@ def get_reader_ask_agent() -> Agent[ReaderAskAgentDeps, str]:
         deps_type=ReaderAskAgentDeps,
         instructions=load_agent_instructions("reader_ask"),
         name="reader_ask_agent",
-        retries=1,
-        output_retries=1,
-        instrument=False,
+        retries={"tools": 1, "output": 1},
     )
 
     @agent.tool(name=TOOL_GET_RECORD_CONTEXT)
