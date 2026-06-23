@@ -139,7 +139,7 @@ Web Reader 不再依赖旧 `render_scene_json`。Reader Article Body 的新路�
 
 | Surface | 当前入口 / route | 当前 source of truth | 当前 id 语义 | 代码落点 / 说明 |
 |---|---|---|---|---|
-| 新提交产品入口 | `/app/read` | 默认 `/api/web/reading-record/submit` -> 新 `/reader/records/plain-text`；legacy mode 仍可回退到 `/api/web/analysis/submit` | 默认新 `Reading Record.record_id`；legacy mode 使用旧 `cloud_record_id` | `AnalyzeSubmitForm.tsx`、`submit-mode.ts`、`services/bff/reader-plate.ts`；W3-D1 起默认成功后跳 `/app/reader-record/{readingRecordId}` |
+| 新提交产品入口 | `/app/read` | 默认 `/api/web/reading-record/submit` -> 新 `/reader/records/plain-text`；legacy mode 仍可回退到 `/api/web/analysis/submit` | 默认新 `Reading Record.record_id`；legacy mode 使用旧 `cloud_record_id` | `AnalyzeSubmitForm.tsx`、`submit-mode.ts`、`recent-reading-record.ts`、`services/bff/reader-plate.ts`；W3-D1 起默认成功后跳 `/app/reader-record/{readingRecordId}`，W3-D2 起提供 Web-only 最近 Reading Record 继续入口 |
 | 新 Reader Plate 验证页 | `/app/reader-plate` + `?record_id=` | `/api/web/reader-plate/*` -> 新 `/reader/records/plain-text|snapshot|events` | 新 `Reading Record.record_id` | `reader-plate/page.tsx`；当前是 read-only validation surface，不是最终产品 UI |
 | 新 Reading Record 产品 route shell | `/app/reader-record/{recordId}` | `/api/web/reader-plate/{recordId}/snapshot` | 新 `Reading Record.record_id` | `reader-record/[recordId]/page.tsx`；W3-C3 起通过 snapshot adapter 渲染旧 Workbench 风格只读中心 Plate 区，W3-D1 起承接 `/app/read` 成功 landing；Library / command palette / active task 流量仍未切入 |
 | 旧 Reader 产品页 | `/app/reader/{recordId}` | `getReaderRecord()` -> 旧 `/reader/records/{id}/scene` 或 `by-client-id/.../scene` | 旧 analysis record id 或 client record id | `reader/[recordId]/page.tsx`、`services/bff/reader.ts`、`services/api/reader-scene.ts`；仍承载 ReaderWorkbench、Ask、点词、笔记、高亮 |
@@ -167,7 +167,7 @@ Web Reader 不再依赖旧 `render_scene_json`。Reader Article Body 的新路�
 
 当前 Web 代码的现实情况：
 
-- `/app/read` 默认 submit 已围绕新 `Reading Record.record_id -> /app/reader-record/{recordId}` 工作；active task、command palette、Library、Vocabulary source links 仍主要围绕旧 `analysis task / source record id -> /app/reader/{recordId}` 工作。
+- `/app/read` 默认 submit 已围绕新 `Reading Record.record_id -> /app/reader-record/{recordId}` 工作；W3-D2 增加的 `claread:web:recent-reading-record` localStorage 只保存最近一次新 Reading Record 的最小恢复字段，不是长期事实源；active task、command palette、Library、Vocabulary source links 仍主要围绕旧 `analysis task / source record id -> /app/reader/{recordId}` 工作。
 - `/app/reader/{recordId}` 仍走旧 scene adapter，把 `ReaderSceneResponseDto` 适配成 ReaderWorkbench VM。
 - `/app/reader-plate` 独立消费新 `ReaderPlateSnapshot`，其 `record_id` 是新 Reading Record id，不应回灌给旧 `/app/reader/{recordId}` helper。
 - `/app/reader-record/{recordId}` 现在提供新的 Reading Record product route，并复用 `IntensiveReaderSurface` / `ImmersiveReaderSurface` 渲染 Workbench-backed read-only 中心 Plate 区；Ask、notes/highlights、dictionary/user asset 写入仍未接通。
@@ -304,6 +304,14 @@ W3-D1 结论：
 - legacy `/api/web/analysis/submit` 路径与 `submitAnalysisFromWeb()` 仍保留为显式回滚路径；active task polling 仍只服务 legacy analysis task。
 - Library、Vocabulary、command palette、active task 本轮未改线；这些入口仍保持旧 id / `legacyAppReaderRoute(...)` 边界。
 
+W3-D2 结论：
+
+- `/app/read` 新 Reading Record submit 成功后，会把最近记录最小字段写入 `localStorage["claread:web:recent-reading-record"]`：`readingRecordId`、`readerUrl`、`title`、`createdAt`。
+- `title` 优先来自 `payload.snapshot.record.title`，否则用输入首行兜底；不会把 snapshot 大对象写入 localStorage。
+- `/app/read` 加载时只读取通过 schema guard 的 recent payload；缺字段、非 string、非 `/app/reader-record/` URL 或非法日期都会忽略。
+- 页面展示的是轻量“继续阅读”入口，点击只跳 `readerUrl`；它不是 Library，不参与 command palette / active task / Vocabulary source links，也不接旧 `/scene`。
+- legacy submit mode 不写 recent Reading Record 缓存。
+
 建议顺序：
 
 1. 先改新 submit 产品入口及其 route helper。
@@ -320,6 +328,7 @@ Touched files：
   - `apps/web/src/lib/routes.test.ts`
 - W3-D1+：
   - `apps/web/src/app/(private)/app/read/AnalyzeSubmitForm.tsx`
+  - `apps/web/src/app/(private)/app/read/recent-reading-record.ts`
   - `apps/web/src/services/bff/analysis.ts` 或其替代新 BFF
   - `apps/web/src/components/layout/active-analysis-task-indicator.tsx`
   - `apps/web/src/components/layout/command-palette/command-palette-items.ts`
@@ -336,9 +345,10 @@ Done criteria：
 
 ## 当前下一步建议
 
-W3-D1 已完成第一个产品入口的最小切换，后续不要一次性迁所有 consumer：
+W3-D1/D2 已完成第一个产品入口的最小切换和 Web-only 最近记录恢复入口，后续不要一次性迁所有 consumer：
 
 - 先观察 `/app/read -> /app/reader-record/{recordId}` 的新 Reading Record landing 稳定性。
+- 继续把 recent localStorage 当临时恢复入口；正式最近记录列表应等 new Reading Record Library source 单独实现。
 - 再逐个评估 active task、command palette、Vocabulary source links 和 Library 的 id 来源，只有能区分旧/new record id 后再改线。
 - 不做旧 `render_scene_json` / `/scene` 到新 snapshot path 的兼容映射。
 

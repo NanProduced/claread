@@ -23,7 +23,15 @@ import {
   normalizeReadingDefaults,
 } from "@/lib/reading-defaults";
 import { appLibraryRoute, appReadingRecordRoute, legacyAppReaderRoute } from "@/lib/routes";
+import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 import type { ReadingGoalDto, ReadingVariantDto, TaskStatusDto } from "@/types/api/tasks";
+import {
+  extractReadingRecordIdFromReaderUrl,
+  readRecentReadingRecord,
+  recentReadingRecordTitleFromText,
+  saveRecentReadingRecordForSubmitMode,
+  type RecentReadingRecord,
+} from "./recent-reading-record";
 import {
   READ_PAGE_SUBMIT_MODE,
   readPageSubmitEndpoint,
@@ -51,6 +59,7 @@ interface ReadingRecordSubmitResponse {
   message?: string;
   readingRecordId?: string;
   readerUrl?: string;
+  snapshot?: Pick<ReaderPlateSnapshotDto, "record">;
 }
 
 const POLL_INTERVAL_MS = 2000;
@@ -525,6 +534,35 @@ export function AnalysisLoadingStatusBar({
   );
 }
 
+function RecentReadingRecordResume({
+  record,
+  onContinue,
+}: {
+  record: RecentReadingRecord;
+  onContinue: () => void;
+}) {
+  return (
+    <div className="mb-3 flex min-h-14 items-center justify-between gap-4 rounded-[8px] border border-hairline/65 bg-surface/45 px-4 py-3 font-sans">
+      <div className="min-w-0">
+        <p className="text-[0.7rem] font-semibold tracking-[0.12em] text-muted">
+          最近阅读记录
+        </p>
+        <p className="mt-1 truncate text-[0.86rem] font-semibold text-ink">
+          {record.title}
+        </p>
+      </div>
+      <button
+        type="button"
+        className="focus-ring inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-[8px] border border-ink/10 bg-reader-paper/58 px-3 text-[0.78rem] font-semibold text-ink transition-colors hover:border-lens-blue/32 hover:text-lens-blue"
+        onClick={onContinue}
+      >
+        <span>继续阅读</span>
+        <ArrowRight aria-hidden className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
 type AnalyzeSubmitFormProps = ReadingDefaultState;
 
 export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: initialVariant }: AnalyzeSubmitFormProps) {
@@ -536,7 +574,17 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
   const [readingVariant, setReadingVariant] = useState<ReadingVariantDto>(defaults.readingVariant);
   const [state, setState] = useState<SubmitState>({ kind: "idle" });
   const [activeTask, setActiveTask] = useState<WebAnalysisTaskView | null>(null);
+  const [recentReadingRecord, setRecentReadingRecord] =
+    useState<RecentReadingRecord | null>(null);
   const isWaiting = Boolean(activeTask) || state.kind === "pending";
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setRecentReadingRecord(readRecentReadingRecord());
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -686,12 +734,29 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
             ? appReadingRecordRoute(readingRecordPayload.readingRecordId)
             : null);
 
-        if (!readerUrl) {
+        const readingRecordId =
+          readingRecordPayload.readingRecordId ||
+          (readerUrl ? extractReadingRecordIdFromReaderUrl(readerUrl) : null);
+
+        if (!readerUrl || !readingRecordId) {
           setState({
             kind: "error",
             message: "阅读记录已创建，但返回结果缺少 readingRecordId。",
           });
           return;
+        }
+
+        const createdAt = new Date().toISOString();
+        const snapshotTitle = readingRecordPayload.snapshot?.record.title.trim();
+        const recentRecord = {
+          readingRecordId,
+          readerUrl,
+          title: snapshotTitle || recentReadingRecordTitleFromText(text),
+          createdAt,
+        };
+
+        if (saveRecentReadingRecordForSubmitMode(submitMode, recentRecord)) {
+          setRecentReadingRecord(recentRecord);
         }
 
         setState({
@@ -746,6 +811,14 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
 
   return (
     <div className="flex min-h-0 flex-1 w-full flex-col">
+      {recentReadingRecord && !isWaiting ? (
+        <RecentReadingRecordResume
+          record={recentReadingRecord}
+          onContinue={() => {
+            router.push(recentReadingRecord.readerUrl as Route);
+          }}
+        />
+      ) : null}
       <div className="flex min-h-0 flex-1 flex-col">
         <label htmlFor="analysis-text" className="sr-only">
           在此贴入或导入英文文章

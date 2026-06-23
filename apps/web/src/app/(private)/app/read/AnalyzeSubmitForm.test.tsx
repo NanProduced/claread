@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fetchCurrentAnalysisTask } from "@/lib/analysis-task-client";
@@ -14,6 +14,10 @@ import {
   readPageSubmitEndpoint,
   readPageSubmitRequestBody,
 } from "./submit-mode";
+import {
+  RECENT_READING_RECORD_STORAGE_KEY,
+  saveRecentReadingRecordForSubmitMode,
+} from "./recent-reading-record";
 
 const navigationMock = vi.hoisted(() => ({
   push: vi.fn(),
@@ -30,8 +34,37 @@ vi.mock("@/lib/analysis-task-client", () => ({
     ["succeeded", "failed", "cancelled", "expired"].includes(status),
 }));
 
+function createMemoryStorage(): Storage {
+  const store = new Map<string, string>();
+
+  return {
+    get length() {
+      return store.size;
+    },
+    clear() {
+      store.clear();
+    },
+    getItem(key: string) {
+      return store.get(key) ?? null;
+    },
+    key(index: number) {
+      return Array.from(store.keys())[index] ?? null;
+    },
+    removeItem(key: string) {
+      store.delete(key);
+    },
+    setItem(key: string, value: string) {
+      store.set(key, value);
+    },
+  };
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: createMemoryStorage(),
+  });
   vi.mocked(fetchCurrentAnalysisTask).mockResolvedValue({
     ok: true,
     hasActive: false,
@@ -40,6 +73,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
   vi.unstubAllGlobals();
 });
 
@@ -108,6 +142,11 @@ describe("AnalyzeSubmitForm submit cutover", () => {
           ok: true,
           readingRecordId: "reading_record_1",
           readerUrl: "/app/reader-record/reading_record_1",
+          snapshot: {
+            record: {
+              title: "Snapshot title from Reading Record",
+            },
+          },
           message: "阅读记录已创建，正在打开 Reader。",
         }),
         {
@@ -136,6 +175,95 @@ describe("AnalyzeSubmitForm submit cutover", () => {
       );
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const saved = JSON.parse(
+      window.localStorage.getItem(RECENT_READING_RECORD_STORAGE_KEY) ?? "null",
+    ) as Record<string, unknown>;
+    expect(saved).toMatchObject({
+      readingRecordId: "reading_record_1",
+      readerUrl: "/app/reader-record/reading_record_1",
+      title: "Snapshot title from Reading Record",
+      createdAt: expect.any(String),
+    });
+    expect(saved.snapshot).toBeUndefined();
+  });
+
+  it("loads a valid recent Reading Record from localStorage and continues reading", async () => {
+    window.localStorage.setItem(
+      RECENT_READING_RECORD_STORAGE_KEY,
+      JSON.stringify({
+        readingRecordId: "reading_record_recent",
+        readerUrl: "/app/reader-record/reading_record_recent",
+        title: "Saved recent article",
+        createdAt: "2026-06-22T12:00:00.000Z",
+      }),
+    );
+
+    render(
+      <AnalyzeSubmitForm
+        readingGoal="daily_reading"
+        readingVariant="intermediate_reading"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Saved recent article")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /继续阅读/ }));
+
+    expect(navigationMock.push).toHaveBeenCalledWith(
+      "/app/reader-record/reading_record_recent",
+    );
+  });
+
+  it("ignores invalid recent Reading Record localStorage payloads", async () => {
+    window.localStorage.setItem(
+      RECENT_READING_RECORD_STORAGE_KEY,
+      JSON.stringify({
+        readingRecordId: "legacy_record",
+        readerUrl: "/app/reader/legacy_record",
+        title: "Legacy record should not render",
+        createdAt: "2026-06-22T12:00:00.000Z",
+      }),
+    );
+
+    render(
+      <AnalyzeSubmitForm
+        readingGoal="daily_reading"
+        readingVariant="intermediate_reading"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Legacy record should not render")).toBeNull();
+    });
+    expect(screen.queryByRole("button", { name: /继续阅读/ })).toBeNull();
+  });
+
+  it("does not write the recent Reading Record cache for legacy submit mode", () => {
+    expect(
+      saveRecentReadingRecordForSubmitMode("legacy", {
+        readingRecordId: "reading_record_legacy_mode",
+        readerUrl: "/app/reader-record/reading_record_legacy_mode",
+        title: "Should not persist",
+      }),
+    ).toBe(false);
+
+    expect(
+      window.localStorage.getItem(RECENT_READING_RECORD_STORAGE_KEY),
+    ).toBeNull();
+  });
+
+  it("keeps the recent Reading Record helper free of legacy analysis wiring", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/app/(private)/app/read/recent-reading-record.ts"),
+      "utf-8",
+    );
+
+    expect(source).not.toContain("legacyAppReaderRoute");
+    expect(source).not.toContain("/app/reader/");
+    expect(source).not.toContain("analysis-tasks");
   });
 
   it("keeps the new Reading Record API route free of legacy analysis submit wiring", () => {
