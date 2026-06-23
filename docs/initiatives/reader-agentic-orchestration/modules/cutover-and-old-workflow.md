@@ -1,7 +1,7 @@
 # Cutover 与旧 AI Workflow 处理
 
-> 状态：`D5-W3 planning`
-> 最后更新：2026-06-22
+> 状态：`D5-W3 D3 done`
+> 最后更新：2026-06-23
 > 范围：停服重构、旧 workflow 替换、旧表/旧 UI 清理边界，以及 Web cutover 迁移顺序。
 
 ## 基本立场
@@ -309,8 +309,35 @@ W3-D2 结论：
 - `/app/read` 新 Reading Record submit 成功后，会把最近记录最小字段写入 `localStorage["claread:web:recent-reading-record"]`：`readingRecordId`、`readerUrl`、`title`、`createdAt`。
 - `title` 优先来自 `payload.snapshot.record.title`，否则用输入首行兜底；不会把 snapshot 大对象写入 localStorage。
 - `/app/read` 加载时只读取通过 schema guard 的 recent payload；缺字段、非 string、非 `/app/reader-record/` URL 或非法日期都会忽略。
-- 页面展示的是轻量“继续阅读”入口，点击只跳 `readerUrl`；它不是 Library，不参与 command palette / active task / Vocabulary source links，也不接旧 `/scene`。
+- 页面展示的是轻量"继续阅读"入口，点击只跳 `readerUrl`；它不是 Library，不参与 command palette / active task / Vocabulary source links，也不接旧 `/scene`。
 - legacy submit mode 不写 recent Reading Record 缓存。
+
+W3-D3 结论：
+
+- 已用 static guard tests 锁定当前 Web 入口来源矩阵，避免旧 record id 和新 Reading Record id 在改线前被混用。guard 文件：`apps/web/src/lib/entry-source-matrix.test.ts`。
+- 本轮没有切任何入口流量，没有新增 Reading Record list API，没有改后端，也没有改 Library / Vocabulary / command palette / active task 的运行时逻辑。
+- 当前每个入口的数据源、id 语义和 route 边界如下：
+
+| Surface | 当前数据源 | 当前 id 语义 | 当前 route | 当前状态 |
+|---|---|---|---|---|
+| `/app/read` recent recovery | Web-only `localStorage["claread:web:recent-reading-record"]` | 新 `Reading Record.record_id` | `appReadingRecordRoute(readingRecordId)` -> `/app/reader-record/{recordId}` | new（W3-D2 落地） |
+| active-analysis-task-indicator | `/api/web/analysis/current` + `/api/web/analysis/tasks/{taskId}` | 旧 `cloud_record_id` | `legacyAppReaderRoute(recordId)` -> `/app/reader/{recordId}` | legacy |
+| command palette recent / search | `/api/web/command-palette/records` | 旧 record id | `legacyAppReaderRoute(record.id)` -> `/app/reader/{recordId}` | legacy |
+| Library 列表 | `/records` -> `RecordResponseDto[]` | 旧 `RecordResponseDto.id` | `legacyAppReaderRoute(record.id)` -> `/app/reader/{recordId}` | legacy |
+| Vocabulary source links | vocabulary item `sourceRecordId` | 旧 source record id | `legacyAppReaderRoute(item.sourceRecordId)` -> `/app/reader/{recordId}` | legacy |
+| `services/bff/analysis.ts` `readerUrl` | 旧 analysis task submit/status projection | 旧 `cloud_record_id` | `legacyAppReaderRoute(recordId)` -> `/app/reader/{recordId}` | legacy |
+| `services/bff/records.ts` record list | `/records` upstream list | 旧 `RecordResponseDto.id` | 不直接产出 reader route；由 consumer `LibraryClient` 选择 `legacyAppReaderRoute` | legacy |
+
+- Static guards 覆盖：
+  - `active-analysis-task-indicator.tsx` 不引用 `appReadingRecordRoute`。
+  - `command-palette/CommandPaletteDialog.tsx` 和 `command-palette/command-palette-items.ts` 不引用 `appReadingRecordRoute`。
+  - `LibraryClient.tsx` 不引用 `appReadingRecordRoute`。
+  - `VocabularyClient.tsx` 不引用 `appReadingRecordRoute`。
+  - `services/bff/analysis.ts` 不引用 `appReadingRecordRoute`。
+  - `services/bff/records.ts` 不引用 `appReadingRecordRoute` 或 `/app/reader-record/`。
+  - `recent-reading-record.ts` 不引用 `legacyAppReaderRoute`、`/app/reader/` 或 `analysis-tasks`。
+- 已切到 new Reading Record 的入口：仅 `/app/read` submit landing + `/app/read` recent recovery。
+- 仍 legacy 的入口：active task、command palette、Library、Vocabulary source links、`services/bff/analysis.ts` `readerUrl`、`services/bff/records.ts` record list。
 
 建议顺序：
 
@@ -345,14 +372,30 @@ Done criteria：
 
 ## 当前下一步建议
 
-W3-D1/D2 已完成第一个产品入口的最小切换和 Web-only 最近记录恢复入口，后续不要一次性迁所有 consumer：
+W3-D1/D2 已完成第一个产品入口的最小切换和 Web-only 最近记录恢复入口；W3-D3 已用 static guard tests 锁定当前入口来源矩阵，后续不要一次性迁所有 consumer：
 
 - 先观察 `/app/read -> /app/reader-record/{recordId}` 的新 Reading Record landing 稳定性。
 - 继续把 recent localStorage 当临时恢复入口；正式最近记录列表应等 new Reading Record Library source 单独实现。
 - 再逐个评估 active task、command palette、Vocabulary source links 和 Library 的 id 来源，只有能区分旧/new record id 后再改线。
 - 不做旧 `render_scene_json` / `/scene` 到新 snapshot path 的兼容映射。
+- 迁移某个入口时，必须同步更新 `apps/web/src/lib/entry-source-matrix.test.ts` 和本矩阵表，避免 guard 与实际代码漂移。
 
 这样可以把第一次真实产品 cutover 限制在 submit 入口，先验证新 product route 的记录 id、BFF 和页面装配，再决定是否逐步迁移其他旧入口。
+
+### 推荐 W3-D4 最小实现切片
+
+当前最安全的下一步是**先实现 new Reading Record list source**，而不是先改 command palette recent record。理由：
+
+1. command palette、Library、active task 当前都依赖旧 `/records` 或 `/api/web/command-palette/records` 返回的旧 record id。在没有 new Reading Record list source 之前，这些入口即使改了 route helper 也拿不到新 `Reading Record.record_id`，改线没有意义。
+2. new Reading Record list source 实现后，command palette recent / search 和 Library 才有可消费的新 id 数据面；届时再逐个入口改线，每次只改一个 surface 并同步更新 static guard。
+3. active task 和 Vocabulary source links 的 id 来源更深（active task 来自 `/api/web/analysis/*`，Vocabulary source refs 来自 vocabulary item `sourceRecordId`），应等 new Reading Record list source 稳定后再单独评估。
+
+W3-D4 最小切片建议范围：
+
+- 新增 `services/bff/reading-records.ts`（或等价 BFF），调用后端 `GET /reader/records`（或等价 list endpoint）返回新 `Reading Record.record_id` 列表。
+- 不改 Library / command palette / active task / Vocabulary 运行时逻辑；只新增 BFF 和对应 focused tests。
+- 不新增 public Library UI 切换；先让 BFF contract 可用，再在 W3-D5+ 逐个入口改线。
+- 改线某个入口时，同步更新 `entry-source-matrix.test.ts` 的对应 guard 和本矩阵表。
 
 ## 不允许事项
 

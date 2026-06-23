@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 实施计划
 
 > 状态：`D5 active`
-> 最后更新：2026-06-22
+> 最后更新：2026-06-23
 
 ## 成功标准
 
@@ -857,6 +857,6 @@ Focused tests 已通过：
 3. D5-R5 schema health/check + worker lease duration setting 已完成；本地 DB schema drift 通过 health check 暴露，正确处理方式仍是 reset/rebuild 本地 DB。
 4. D5-V5 / D5-R6 已用 deterministic long-text fixture 和真实 provider 长文本链路完成 sentence_analysis projection consistency 验收；继续沿 snapshot reload 路径，不启用 incremental applier。
 5. 下一步优先清理 PydanticAI deprecation warnings；Boundary / Unit Builder v2 已扩展为 Input/Base Structure + Unit Builder 联合评估，D5 先维持 text-only Stable Base + deterministic baseline，不在未定 contract 前直接落生产 split。
-6. D5-W3 Web cutover 已进入 D2：W3-B 已落地 route helper split；W3-C1/C3 已新增 `/app/reader-record/{recordId}` product route、`appReadingRecordRoute(...)` helper 和 Workbench-backed read-only center Plate surface；W3-D0 已拆清 legacy / new submit BFF contract；W3-D1 已把 `/app/read` 默认 submit landing 最小切到新 Reading Record，成功后进入 `/app/reader-record/{readingRecordId}`；W3-D2 已在 `/app/read` 增加 Web-only 最近 Reading Record 恢复入口，localStorage 只保存 `readingRecordId`、`readerUrl`、`title`、`createdAt`，不作为长期 truth。legacy `submitAnalysisFromWeb()` 与 `/api/web/analysis/submit` 仍保留为显式回滚路径；Library、Vocabulary source links、active task 和 command palette 仍指向旧 `/app/reader/{recordId}` / `/analysis-tasks`，也没有做旧 `render_scene_json` 兼容映射。详细矩阵、touched files 与 done criteria 见 `modules/cutover-and-old-workflow.md`。
+6. D5-W3 Web cutover 已进入 D3：W3-B 已落地 route helper split；W3-C1/C3 已新增 `/app/reader-record/{recordId}` product route、`appReadingRecordRoute(...)` helper 和 Workbench-backed read-only center Plate surface；W3-D0 已拆清 legacy / new submit BFF contract；W3-D1 已把 `/app/read` 默认 submit landing 最小切到新 Reading Record，成功后进入 `/app/reader-record/{readingRecordId}`；W3-D2 已在 `/app/read` 增加 Web-only 最近 Reading Record 恢复入口，localStorage 只保存 `readingRecordId`、`readerUrl`、`title`、`createdAt`，不作为长期 truth；W3-D3 已用 static guard tests（`apps/web/src/lib/entry-source-matrix.test.ts`）锁定当前 Web 入口来源矩阵，明确 active task、command palette、Library、Vocabulary source links、`services/bff/analysis.ts` `readerUrl`、`services/bff/records.ts` 仍 legacy，`/app/read` recent recovery 是唯一 new Reading Record 恢复入口，本轮未切任何新入口流量。legacy `submitAnalysisFromWeb()` 与 `/api/web/analysis/submit` 仍保留为显式回滚路径；也没有做旧 `render_scene_json` 兼容映射。下一步推荐 W3-D4 先实现 new Reading Record list source BFF，再逐个入口改线。详细矩阵、touched files 与 done criteria 见 `modules/cutover-and-old-workflow.md`。
 7. D6 product hardening 再决定 `failed_terminal` 是否映射到 `action_required`、是否引入 coverage / rerun policy、Library 新 record list source 和更细粒度调度 hint。
 8. 保持 LangGraph D6+ 隔离 spike 口径，不在 D5 guardrails 中升级或引入。
