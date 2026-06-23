@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * W3-D3 Entry Source Matrix static guards.
+ * W3-D3+ Entry Source Matrix static guards.
  *
  * These tests lock down the current cutover boundary so that legacy record id
  * surfaces do not silently start emitting new Reading Record routes (or vice
@@ -35,7 +35,7 @@ describe("entry source matrix - legacy surfaces must not reference the new Readi
     expect(source).not.toContain(NEW_ROUTE_HELPER);
   });
 
-  it("command palette dialog only uses the legacy reader route helper", () => {
+  it("command palette legacy record source still uses the legacy reader route helper", () => {
     const source = readSource(
       "src/components/layout/command-palette/CommandPaletteDialog.tsx",
     );
@@ -106,6 +106,22 @@ describe("entry source matrix - the new Reading Record list BFF source", () => {
     expect(source).toContain(NEW_ROUTE_HELPER);
     expect(source).not.toContain(LEGACY_ROUTE_HELPER);
     expect(source).not.toContain(LEGACY_READER_PATH);
+    expect(source).not.toContain(ANALYSIS_TASKS_WIRING);
+  });
+});
+
+describe("entry source matrix - command palette new Reading Record source (W3-D6)", () => {
+  it("ReadingRecordCommandGroup uses returned readerUrl and is free of legacy wiring", () => {
+    const source = readSource(
+      "src/components/layout/command-palette/ReadingRecordCommandGroup.tsx",
+    );
+
+    expect(source).toContain("/api/web/reading-records");
+    expect(source).toContain("readerUrl");
+    expect(source).not.toContain(LEGACY_ROUTE_HELPER);
+    expect(source).not.toContain(NEW_ROUTE_HELPER);
+    expect(source).not.toContain(LEGACY_READER_PATH);
+    expect(source).not.toContain(NEW_READER_RECORD_PATH);
     expect(source).not.toContain(ANALYSIS_TASKS_WIRING);
   });
 });

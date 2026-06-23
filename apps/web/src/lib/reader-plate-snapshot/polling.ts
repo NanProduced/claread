@@ -11,8 +11,9 @@ import type {
  * Polling decision produced by {@link decidePollingAction}.
  *
  * - `reload`: snapshot must be reloaded (server flagged `reload_required`,
- *   a `layer_published` / `projection_reset_required` event arrived, or the
- *   cursor drifted ahead of the server).
+ *   a `layer_published` / `record_product_state_updated` /
+ *   `projection_reset_required` event arrived, or the cursor drifted ahead of
+ *   the server).
  * - `advance`: events were consumed without a reload trigger; the cursor
  *   should move to `next_after_sequence`. `hasMore` suggests an immediate
  *   follow-up poll.
@@ -27,6 +28,7 @@ export type PollingDecision =
 /** Event types that force a snapshot reload in the D4 polling-first slice. */
 export const RELOAD_TRIGGER_EVENT_TYPES: ReadonlySet<ReaderEventType> = new Set([
   "layer_published",
+  "record_product_state_updated",
   "projection_reset_required",
 ]);
 
@@ -37,7 +39,7 @@ export const RELOAD_TRIGGER_EVENT_TYPES: ReadonlySet<ReaderEventType> = new Set(
  * Contract reference: `docs/initiatives/reader-agentic-orchestration/modules/streaming-and-projection.md`
  * - `after_sequence == last_event_sequence` with empty events → caught up, no reload.
  * - `reload_required` → reload.
- * - `layer_published` / `projection_reset_required` → reload.
+ * - `layer_published` / `record_product_state_updated` / `projection_reset_required` → reload.
  * - `after_sequence > last_event_sequence` → cursor drift, reload.
  */
 export function decidePollingAction(input: {

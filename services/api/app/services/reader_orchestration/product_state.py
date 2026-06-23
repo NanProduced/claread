@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from app.schemas.reader_orchestration import ReadingRecordProductState
 
@@ -9,6 +10,8 @@ from .pipeline_runner import (
     PipelineStoppedReason,
     ReaderPipelineRunSummary,
 )
+
+PRODUCT_STATE_UPDATED_EVENT_TYPE = "record_product_state_updated"
 
 # D6-P0 keeps the initial mapping conservative. A terminal failure only becomes
 # action_required after the worker starts emitting a concrete, user-remediable
@@ -108,3 +111,23 @@ def decide_product_state_for_pipeline_summary(
         stopped_outcome=summary.stopped_outcome,
         attention_code=summary.attention_code,
     )
+
+
+def build_product_state_event_payload(
+    *,
+    decision: ProductStateDecision,
+    attention_code: str | None,
+    stopped_reason: PipelineStoppedReason,
+    stopped_outcome: PipelineAttemptOutcome | None,
+) -> dict[str, Any]:
+    if decision.next_product_state is None:
+        raise ValueError("product_state event payload requires next_product_state")
+
+    return {
+        "product_state": decision.next_product_state,
+        "reason_code": decision.reason_code,
+        "user_visible": decision.user_visible,
+        "attention_code": attention_code,
+        "stopped_reason": stopped_reason,
+        "stopped_outcome": stopped_outcome,
+    }

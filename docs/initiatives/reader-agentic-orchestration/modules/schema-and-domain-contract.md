@@ -941,6 +941,19 @@ Rules:
 - Heartbeat comments do not advance sequence.
 - Reconnect resumes with `sequence > Last-Event-ID`.
 
+Product-state event contract:
+
+- Worker-driven `product_state` changes publish `record_product_state_updated`.
+- Event payload must include:
+  - `product_state`
+  - `reason_code`
+  - `user_visible`
+  - `attention_code` (nullable)
+  - `stopped_reason`
+  - `stopped_outcome` (nullable)
+- D6-P1 minimal wiring publishes this event only when the `reading_records.product_state` update succeeds.
+- When the runtime already owns an open write connection for the state change, the `product_state` update and `record_product_state_updated` event must commit in the same transaction.
+
 ## Publish Guard Contract
 
 Layer Publisher writes domain truth and UI events in one transaction.

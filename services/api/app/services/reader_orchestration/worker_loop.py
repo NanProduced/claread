@@ -12,6 +12,7 @@ import asyncpg
 
 from app.database import connection as db_connection
 
+from .event_runtime import ReaderEventRuntime
 from .job_runtime import ReaderJobRuntime
 from .pipeline_runner import (
     DEFAULT_PIPELINE_MAX_JOBS,
@@ -19,7 +20,11 @@ from .pipeline_runner import (
     ReaderEnhancementPipelineRunner,
     ReaderPipelineRunSummary,
 )
-from .product_state import decide_product_state_for_pipeline_summary
+from .product_state import (
+    PRODUCT_STATE_UPDATED_EVENT_TYPE,
+    build_product_state_event_payload,
+    decide_product_state_for_pipeline_summary,
+)
 from .repository import ReaderOrchestrationRepository
 
 logger = logging.getLogger(__name__)
@@ -85,11 +90,13 @@ class ReaderEnhancementWorkerLoopService:
         pipeline_runner: ReaderEnhancementPipelineRunner | None = None,
         job_runtime: ReaderJobRuntime | None = None,
         repository: ReaderOrchestrationRepository | None = None,
+        event_runtime: ReaderEventRuntime | None = None,
     ) -> None:
         self._pool = pool
         self._pipeline_runner = pipeline_runner or ReaderEnhancementPipelineRunner(pool=pool)
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
         self._repository = repository or ReaderOrchestrationRepository(pool=pool)
+        self._event_runtime = event_runtime or ReaderEventRuntime(pool=pool)
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -234,16 +241,35 @@ class ReaderEnhancementWorkerLoopService:
                 )
                 product_state_decision = decide_product_state_for_pipeline_summary(summary)
                 product_state_updated = False
+                product_state_event_sequence: int | None = None
                 if product_state_decision.should_update_record:
-                    product_state_updated = (
-                        await self._repository.update_record_product_state_if_active(
-                            lock_conn,
-                            record_id=candidate.record_id,
-                            expected_generation=candidate.expected_generation,
-                            next_product_state=product_state_decision.next_product_state,
-                            updated_at=datetime.now(UTC),
+                    updated_at = datetime.now(UTC)
+                    async with lock_conn.transaction():
+                        product_state_updated = (
+                            await self._repository.update_record_product_state_if_active(
+                                lock_conn,
+                                record_id=candidate.record_id,
+                                expected_generation=candidate.expected_generation,
+                                next_product_state=product_state_decision.next_product_state,
+                                updated_at=updated_at,
+                            )
                         )
-                    )
+                        if product_state_updated:
+                            published_event = await (
+                                self._event_runtime.publish_event_in_transaction(
+                                    lock_conn,
+                                    record_id=candidate.record_id,
+                                    event_type=PRODUCT_STATE_UPDATED_EVENT_TYPE,
+                                    payload_json=build_product_state_event_payload(
+                                        decision=product_state_decision,
+                                        attention_code=summary.attention_code,
+                                        stopped_reason=summary.stopped_reason,
+                                        stopped_outcome=summary.stopped_outcome,
+                                    ),
+                                    created_at=updated_at,
+                                )
+                            )
+                            product_state_event_sequence = published_event.sequence
             finally:
                 if user_locked:
                     user_unlocked = await lock_conn.fetchval(
@@ -294,6 +320,7 @@ class ReaderEnhancementWorkerLoopService:
                 "product_state_decision_user_visible": product_state_decision.user_visible,
                 "next_product_state": product_state_decision.next_product_state,
                 "product_state_updated": product_state_updated,
+                "product_state_event_sequence": product_state_event_sequence,
             },
         )
         return ReaderEnhancementWorkerLoopRecordResult(

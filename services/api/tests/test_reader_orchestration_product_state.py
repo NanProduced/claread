@@ -157,3 +157,27 @@ def test_pipeline_summary_helper_uses_same_rules() -> None:
     assert decision.should_update_record is True
     assert decision.next_product_state == "failed"
     assert decision.reason_code == "model_route_unavailable"
+
+
+def test_build_product_state_event_payload_includes_contract_fields() -> None:
+    decision = product_state_module.decide_product_state_update(
+        stopped_reason="attention_required",
+        stopped_outcome="failed_terminal",
+        attention_code="model_route_unavailable",
+    )
+
+    payload = product_state_module.build_product_state_event_payload(
+        decision=decision,
+        attention_code="model_route_unavailable",
+        stopped_reason="attention_required",
+        stopped_outcome="failed_terminal",
+    )
+
+    assert payload == {
+        "product_state": "failed",
+        "reason_code": "model_route_unavailable",
+        "user_visible": False,
+        "attention_code": "model_route_unavailable",
+        "stopped_reason": "attention_required",
+        "stopped_outcome": "failed_terminal",
+    }

@@ -13,6 +13,7 @@ from app.database.json_compat import jsonb_param
 
 ReaderEventType = Literal[
     "article_ready",
+    "record_product_state_updated",
     "layer_published",
     "layer_failed",
     "parsed_decision_updated",

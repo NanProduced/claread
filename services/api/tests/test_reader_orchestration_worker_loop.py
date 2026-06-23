@@ -20,6 +20,10 @@ from app.schemas.reader_orchestration import (
     VocabularyLayerOutput,
 )
 from app.services.reader_orchestration import product_state as product_state_module
+from app.services.reader_orchestration.article_ready_service import (
+    ArticleReadyPersistenceService,
+)
+from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.grammar_worker import (
     GrammarBundleWorkerService,
     GrammarExecutionResult,
@@ -384,6 +388,35 @@ async def _load_product_state(pool: asyncpg.Pool, record_id: UUID) -> str:
     return str(value)
 
 
+async def _poll_events_after(
+    pool: asyncpg.Pool,
+    *,
+    record_id: UUID,
+    user_id: UUID,
+    after_sequence: int,
+):
+    result = await ReaderEventRuntime(pool=pool).poll_events(
+        record_id=record_id,
+        user_id=user_id,
+        after_sequence=after_sequence,
+        limit=20,
+    )
+    return result.events
+
+
+async def _load_snapshot_product_state(
+    pool: asyncpg.Pool,
+    *,
+    record_id: UUID,
+    user_id: UUID,
+) -> str:
+    snapshot = await ArticleReadyPersistenceService(pool=pool).load_snapshot(
+        record_id=record_id,
+        user_id=user_id,
+    )
+    return snapshot.record.product_state
+
+
 async def test_scan_eligible_records_excludes_coverage_complete(
     worker_loop_env: asyncpg.Pool,
 ) -> None:
@@ -616,6 +649,15 @@ async def test_process_candidate_forwards_custom_lease_duration_to_pipeline_runn
     assert len(runner.calls) == 1
     assert runner.calls[0]["lease_duration"] == lease_duration
     assert await _load_product_state(worker_loop_env, article.record_id) == "readable_enhancing"
+    assert (
+        await _poll_events_after(
+            worker_loop_env,
+            record_id=article.record_id,
+            user_id=user_id,
+            after_sequence=article.article_ready_sequence,
+        )
+        == ()
+    )
 
 
 async def test_retry_later_records_are_not_hot_looped_until_available(
@@ -645,6 +687,15 @@ async def test_retry_later_records_are_not_hot_looped_until_available(
     assert result.pipeline_summary.stopped_reason == "attention_required"
     assert result.pipeline_summary.stopped_outcome == "retry_later"
     assert await _load_product_state(worker_loop_env, article.record_id) == "readable_enhancing"
+    assert (
+        await _poll_events_after(
+            worker_loop_env,
+            record_id=article.record_id,
+            user_id=user_id,
+            after_sequence=article.article_ready_sequence,
+        )
+        == ()
+    )
 
     candidates_after_retry = await service.scan_eligible_records(batch_size=20)
     candidate_ids_after_retry = {
@@ -717,6 +768,34 @@ async def test_worker_loop_preserves_fail_closed_when_real_executor_is_unconfigu
     assert await _count_layers(worker_loop_env, article.record_id, "translation") == 1
     assert await _count_layers(worker_loop_env, article.record_id, "vocabulary") == 0
     assert await _load_product_state(worker_loop_env, article.record_id) == "failed"
+    assert (
+        await _load_snapshot_product_state(
+            worker_loop_env,
+            record_id=article.record_id,
+            user_id=user_id,
+        )
+        == "failed"
+    )
+    events = await _poll_events_after(
+        worker_loop_env,
+        record_id=article.record_id,
+        user_id=user_id,
+        after_sequence=article.article_ready_sequence,
+    )
+    product_state_events = [
+        event for event in events if event.event_type == "record_product_state_updated"
+    ]
+    assert len(product_state_events) == 1
+    event = product_state_events[0]
+    assert event.event_type == "record_product_state_updated"
+    assert event.payload_json == {
+        "product_state": "failed",
+        "reason_code": "vocabulary_executor_unconfigured",
+        "user_visible": False,
+        "attention_code": "vocabulary_executor_unconfigured",
+        "stopped_reason": "attention_required",
+        "stopped_outcome": "failed_terminal",
+    }
 
 
 async def test_worker_loop_updates_product_state_to_action_required_only_for_allowlisted_codes(
@@ -775,6 +854,31 @@ async def test_worker_loop_updates_product_state_to_action_required_only_for_all
     assert result.pipeline_summary is not None
     assert result.pipeline_summary.attention_code == "reader_user_confirmation_required"
     assert await _load_product_state(worker_loop_env, article.record_id) == "action_required"
+    assert (
+        await _load_snapshot_product_state(
+            worker_loop_env,
+            record_id=article.record_id,
+            user_id=user_id,
+        )
+        == "action_required"
+    )
+    events = await _poll_events_after(
+        worker_loop_env,
+        record_id=article.record_id,
+        user_id=user_id,
+        after_sequence=article.article_ready_sequence,
+    )
+    assert len(events) == 1
+    event = events[0]
+    assert event.event_type == "record_product_state_updated"
+    assert event.payload_json == {
+        "product_state": "action_required",
+        "reason_code": "reader_user_confirmation_required",
+        "user_visible": True,
+        "attention_code": "reader_user_confirmation_required",
+        "stopped_reason": "attention_required",
+        "stopped_outcome": "failed_terminal",
+    }
 
 
 def test_worker_loop_module_does_not_reference_render_scene_or_projection_ops() -> None:

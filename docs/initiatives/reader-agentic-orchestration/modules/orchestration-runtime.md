@@ -135,6 +135,7 @@ Model profile / executor 口径：
 - `ReaderEnhancementWorkerLoopService` 先做 coarse scan，再以 per-record / per-user advisory locks 串行推进单个 record 与单个用户。
 - scanner 会跳过 `coverage_complete`，并通过 runnable/tracked job gate 避免 `retry_later` hot-loop 与 `failed_terminal` 反复 bootstrap。
 - `services/api/pyproject.toml` 已注册 `reader-enhancement-worker = "scripts.run_reader_enhancement_worker:main"`，底层仍复用 `scripts/run_reader_enhancement_worker.py` 的 `--once` 和 loop mode，本地与部署共用同一入口。
+- D6-P1 起，worker loop 在成功更新 `reading_records.product_state` 时同步发布 `record_product_state_updated` reader event；D6-P0 的保守分类规则保持不变。
 
 ## Run / Job
 

@@ -17,6 +17,7 @@ import { legacyAppReaderRoute } from "@/lib/routes";
 import { formatShortcut } from "@/lib/shortcuts";
 import { useCommandPalette } from "./useCommandPalette";
 import { getPageCommands, getCommandCommands } from "./command-palette-items";
+import { ReadingRecordCommandGroup } from "./ReadingRecordCommandGroup";
 import type {
   CommandPaletteCommand,
   CommandPaletteRecordItem,
@@ -205,6 +206,12 @@ export function CommandPaletteDialog() {
             </CommandMenuGroup>
           </>
         )}
+
+        <ReadingRecordCommandGroup
+          open={open}
+          query={query}
+          onOpenReadingRecord={navigate}
+        />
 
         {/* Commands group */}
         <CommandMenuSeparator />

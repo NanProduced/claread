@@ -534,6 +534,7 @@ export interface ReaderGrammarNoteMarkDto {
 
 export type ReaderEventType =
   | "article_ready"
+  | "record_product_state_updated"
   | "layer_published"
   | "layer_failed"
   | "parsed_decision_updated"

@@ -1094,6 +1094,7 @@ CREATE TABLE reader_events (
   sequence BIGINT NOT NULL CHECK (sequence >= 1),
   event_type TEXT NOT NULL CHECK (event_type IN (
     'article_ready',
+    'record_product_state_updated',
     'layer_published',
     'layer_failed',
     'parsed_decision_updated',

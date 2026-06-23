@@ -632,9 +632,14 @@ describe("Reader Plate DTO shapes", () => {
   });
 
   it("reload-triggering event types are a subset of ReaderEventType", () => {
-    const reloadTypes: string[] = ["layer_published", "projection_reset_required"];
+    const reloadTypes: string[] = [
+      "layer_published",
+      "record_product_state_updated",
+      "projection_reset_required",
+    ];
     const allTypes: string[] = [
       "article_ready",
+      "record_product_state_updated",
       "layer_published",
       "layer_failed",
       "parsed_decision_updated",

@@ -136,6 +136,29 @@ describe("decidePollingAction", () => {
     });
   });
 
+  it("returns reload when a record_product_state_updated event arrives", () => {
+    const decision = decidePollingAction({
+      afterSequence: 1,
+      response: makeResponse({
+        after_sequence: 1,
+        next_after_sequence: 2,
+        last_event_sequence: 2,
+        events: [
+          makeEvent({
+            sequence: 2,
+            event_type: "record_product_state_updated",
+            payload: { product_state: "failed" },
+          }),
+        ],
+      }),
+    });
+
+    expect(decision).toEqual({
+      kind: "reload",
+      reason: "record_product_state_updated",
+    });
+  });
+
   it("returns advance when non-trigger events are consumed", () => {
     const decision = decidePollingAction({
       afterSequence: 1,
@@ -217,8 +240,9 @@ describe("decidePollingAction", () => {
     expect(decision).toEqual({ kind: "reload", reason: "counter mismatch" });
   });
 
-  it("RELOAD_TRIGGER_EVENT_TYPES contains layer_published and projection_reset_required", () => {
+  it("RELOAD_TRIGGER_EVENT_TYPES contains reload-worthy reader events", () => {
     expect(RELOAD_TRIGGER_EVENT_TYPES.has("layer_published")).toBe(true);
+    expect(RELOAD_TRIGGER_EVENT_TYPES.has("record_product_state_updated")).toBe(true);
     expect(RELOAD_TRIGGER_EVENT_TYPES.has("projection_reset_required")).toBe(true);
     expect(RELOAD_TRIGGER_EVENT_TYPES.has("article_ready")).toBe(false);
   });
