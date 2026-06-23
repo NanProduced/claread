@@ -497,6 +497,14 @@ W3-D9 结论：
 - 旧 `reader_ask_threads` / `reader_ask_supplements` / `user_annotations` / `reader_notes` 表**保留至旧 data 清空**；cutover 不在本轮删表。
 - D6-A0 静态 guard 已落地：Web `apps/web/src/lib/reader-record-boundary.test.ts` 锁定 `/app/reader-record/{recordId}` 不引用 legacy route / scene / write route / write surface，API `services/api/tests/test_d6_a0_static_boundary.py` 锁定 `user_editorial_assets` schema-only、`reader_orchestration` 不 import `reader_ask`、新 Reader Record 路径不读 `render_scene_json` 作为 fact source。
 
+### D6-A1 Web read-only anchor 结论
+
+- 已落地纯前端 helper `apps/web/src/lib/reader-plate/projection/reader-record-anchor-draft.ts`：把 `/app/reader-record/{recordId}` 内的 `ReaderTextSelection` 投影为新 Reading Record anchor draft shape（`record_id` + `base_id` + `generation` + `unit_id` + `anchor_segment_id` + unit-local UTF-16 offsets + `selected_text` + `text_hash` + `scope`），供后续 Ask / notes / highlights 接入使用。
+- 关键 fix：同一 unit 内第二个 anchor segment 的 unit-local offset 通过 `anchor_segment.unit_start_utf16` baseline 加上 segment-local offset 得出；不接受 segment-local offset 直接当 unit-local offset。
+- helper 只产出 draft shape（`ReaderRecordAnchorDraft`），不调用任何写 API；UI 写入口（`AiWorkspacePanel` / `ReaderNotePanel` / `AnnotationGutter` / `SelectionToolbar` 的 ask/highlight/note/feedback）保持 disabled；`/app/reader-record/{recordId}` 仍未启用 Ask / notes / highlights / user asset 写入。
+- D6-A0 boundary guard 已扩展覆盖该 helper 不引入 legacy 字符串或 legacy route helper；snapshot DTO 的 `record.generation` 已暴露 `reading_records.generation`，helper 输出真实 generation fence，后续可直接交给后端 anchor gate 校验。
+- D6-A1 未触及 `/app/reader-record/{recordId}` 的 UI、未接新 API、未改 runtime；下一步 D6-A5（user_annotations / reader_notes 双轨写入切线）和 D6-A6（Web BFF / route 切线）才会启用 helper 与写入路径的真实连接。
+
 ### 暂不切的旧能力与原因（cutover 视角）
 
 - `reader_ask_threads` 主键不重写：跨 Reading Record 的 Ask thread 合并 / 迁移策略未确定。

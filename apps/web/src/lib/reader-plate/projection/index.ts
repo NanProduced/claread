@@ -3,3 +3,9 @@ export {
   adaptReaderPlateSnapshotToPlateDocument,
   adaptReaderPlateSnapshotToReaderVm,
 } from "./snapshot-to-reader-workbench";
+export {
+  anchorDraftForSelectionSegment,
+  anchorDraftsForSelection,
+  type ReaderRecordAnchorDraft,
+  type ReaderRecordAnchorScope,
+} from "./reader-record-anchor-draft";

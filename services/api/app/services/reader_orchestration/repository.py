@@ -892,6 +892,7 @@ class ReaderOrchestrationRepository:
             created_at=record_row["record_created_at"],
             source_type=str(record_row["source_type"]),
             source_metadata=source_metadata,
+            generation=record_generation,
             product_state=str(record_row["product_state"]),
             readiness_state=str(record_row["readiness_state"]),
         )

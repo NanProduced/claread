@@ -18,6 +18,14 @@ TEXT_HASH_MISMATCH = "text_hash_mismatch"
 OUTSIDE_ANCHOR_SEGMENT_RANGE = "outside_anchor_segment_range"
 OFFSETS_DO_NOT_SLICE_UNIT_TEXT = "offsets_do_not_slice_unit_text"
 SELECTED_TEXT_MISMATCH = "selected_text_mismatch"
+INVALID_RECORD_ID = "invalid_record_id"
+INVALID_BASE_ID = "invalid_base_id"
+READING_RECORD_NOT_FOUND = "reading_record_not_found"
+STALE_BASE_OR_GENERATION = "stale_base_or_generation"
+READING_RECORD_SNAPSHOT_INVALID = "reading_record_snapshot_invalid"
+UNIT_NOT_FOUND = "unit_not_found"
+ANCHOR_SEGMENT_NOT_FOUND = "anchor_segment_not_found"
+ANCHOR_SEGMENT_UNIT_MISMATCH = "anchor_segment_unit_mismatch"
 
 
 class AnchorValidationError(ValueError):

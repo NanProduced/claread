@@ -30,22 +30,26 @@ def test_user_editorial_assets_is_schema_only_no_runtime_service_import() -> Non
 
     `app.schemas.user_editorial_assets` ships only the `UserEditorialAssetAnchor`
     DTO plus `UserEditorialAssetScope` literal. It must not be wired into any
-    runtime service (`app/services/*`) until D6-U1 lays down the new anchor
-    validator and write gate.
+    runtime service (`app/services/*`) except the dedicated Reading Record
+    anchor gate module added in D6-U1/D6-A1.
     """
     service_files = _python_files(Path("services"))
 
+    allowlist = {
+        "app/services/reader_orchestration/anchor_gate.py",
+    }
     offenders: list[str] = []
     target_module = "app.schemas.user_editorial_assets"
 
     for path in service_files:
         source = _read_text(path)
-        if _has_module_import(source, target_module):
-            offenders.append(str(path.relative_to(REPO_ROOT)))
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        if _has_module_import(source, target_module) and rel not in allowlist:
+            offenders.append(rel)
 
     assert offenders == [], (
-        "user_editorial_assets must remain schema-only; "
-        "the following runtime service files must not import it yet: "
+        "user_editorial_assets may only be imported by the dedicated "
+        "reader_orchestration anchor gate; offenders: "
         + ", ".join(offenders)
     )
 

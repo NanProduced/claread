@@ -51,6 +51,7 @@ function makeSnapshot(
       created_at: "2026-06-22T00:00:00Z",
       source_type: "text",
       source_metadata: {},
+      generation: 1,
       product_state: "readable_enhancing",
       readiness_state: "article_ready",
       ...recordOverrides,

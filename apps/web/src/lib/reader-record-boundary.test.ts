@@ -61,6 +61,14 @@ const READER_RECORD_PAGE =
   "src/app/(private)/app/reader-record/[recordId]/page.tsx";
 const READER_RECORD_SURFACE =
   "src/components/reader/ReaderRecordWorkbenchSurface.tsx";
+const READER_RECORD_ANCHOR_DRAFT =
+  "src/lib/reader-plate/projection/reader-record-anchor-draft.ts";
+
+const READER_RECORD_READ_ONLY_FILES = [
+  READER_RECORD_PAGE,
+  READER_RECORD_SURFACE,
+  READER_RECORD_ANCHOR_DRAFT,
+];
 
 describe("reader record boundary - /app/reader-record/{recordId} page must not reference legacy ask / notes / highlights / scene paths", () => {
   it("page.tsx does not import or reference the legacy reader route helper", () => {
@@ -159,6 +167,47 @@ describe("reader record boundary - bridge layer is not yet wired into /app/reade
     expect(source).not.toMatch(
       /from\s+["']@\/lib\/reader-plate\/bridges\/ask\/[^"']*["']/,
     );
+  });
+});
+
+describe("reader record boundary - D6-A1 anchor draft helper remains read-only", () => {
+  it("anchor draft helper does not reference legacy route, scene or write routes", () => {
+    const source = readSource(READER_RECORD_ANCHOR_DRAFT);
+
+    expect(source).not.toContain(LEGACY_ROUTE_HELPER);
+    for (const needle of LEGACY_SCENE_PATHS) {
+      expect(source).not.toContain(needle);
+    }
+    for (const route of LEGACY_WRITE_ROUTES) {
+      expect(source).not.toContain(route);
+    }
+  });
+
+  it("anchor draft helper does not import Ask bridge adapters or write surfaces", () => {
+    const source = readSource(READER_RECORD_ANCHOR_DRAFT);
+
+    expect(source).not.toMatch(
+      /from\s+["']@\/lib\/reader-plate\/bridges\/ask\/[^"']*["']/,
+    );
+    for (const surface of WRITE_SURFACES) {
+      expect(source).not.toMatch(
+        new RegExp(`from\\s+["'][^"']*${surface}["']`),
+      );
+    }
+  });
+
+  it("all read-only reader record entry files avoid legacy scene and write routes", () => {
+    for (const file of READER_RECORD_READ_ONLY_FILES) {
+      const source = readSource(file);
+
+      expect(source).not.toContain(LEGACY_ROUTE_HELPER);
+      for (const needle of LEGACY_SCENE_PATHS) {
+        expect(source).not.toContain(needle);
+      }
+      for (const route of LEGACY_WRITE_ROUTES) {
+        expect(source).not.toContain(route);
+      }
+    }
   });
 });
 

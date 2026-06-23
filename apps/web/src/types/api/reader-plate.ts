@@ -139,6 +139,7 @@ export interface ReaderSnapshotRecordDto {
   created_at: string;
   source_type: string;
   source_metadata: Record<string, unknown>;
+  generation: number;
   product_state: ReadingRecordProductState;
   readiness_state: ReadingRecordReadinessState;
 }

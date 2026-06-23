@@ -178,6 +178,7 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
       created_at: "2026-06-21T00:00:00Z",
       source_type: "plain_text",
       source_metadata: {},
+      generation: 1,
       product_state: "readable_enhancing",
       readiness_state: "article_ready",
     },

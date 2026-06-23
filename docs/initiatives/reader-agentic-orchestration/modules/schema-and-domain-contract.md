@@ -414,6 +414,23 @@ D6 最小分层只规定"按能力拆分、不可越层调用"，不规定具体
 - 异常类型为 `AnchorValidationError`，包含稳定 `code`，供后续 Ask / notes / highlights / user asset writer 映射成 typed API error。
 - `UserEditorialAssetAnchor` 仅在 schema-only 层复用 `validate_text_anchor_payload(...)`；D6-A2 不改 legacy `user_annotations` / `reader_notes` 写路径，也不改 vocabulary / grammar / reader_ask runtime consumer。
 
+### D6-U1 / D6-A1 Backend Reading Record anchor validation gate
+
+- D6-U1 / D6-A1 在 `services/api/app/services/reader_orchestration/anchor_gate.py` 新增只读 gate：`load_validated_reading_record_anchor(...)`。
+- gate 输入当前使用 `UserEditorialAssetAnchor`，但它仍然**不**接任何 DB 写入路径；只做 Reading Record anchor 属于当前用户 / 当前 active base 的校验。
+- `ReaderPlateSnapshot.record.generation` 暴露当前 `reading_records.generation`，Web read-only anchor draft 必须携带该 generation fence；后端 gate 不接受 unknown/null generation。
+- gate 复用 `ReaderOrchestrationRepository.load_snapshot_facts(...)` 读取当前 record/base/unit/anchor_segment facts，并在内存中继续校验：
+  - `record_id` 属于 `user_id`
+  - `base_id` / `generation` 与当前 active base 一致
+  - `unit_id` 属于当前 base
+  - `anchor_segment_id` 属于该 unit
+  - `start_offset` / `end_offset` 落在 anchor segment unit-local range 内
+  - `selected_text` 与 `unit_text` UTF-16 slice 一致
+  - `text_hash` 正确
+- 所有失败都统一为 `AnchorValidationError` + 稳定 `code`；D6-U1 / D6-A1 当前引入的 gate-level code 包括 record/base UUID 非法、record 不属于用户、stale base/generation、unit 缺失、anchor segment 缺失和 anchor segment 不属于目标 unit。
+- 本轮不新增 API route，不改变 `/app/reader-record` read-only 状态，也不切换 `user_annotations` / `reader_notes` / `reader_ask_supplements` 的 runtime 写路径。
+- static guard allowlist 仅放行 `app/services/reader_orchestration/anchor_gate.py` import `app.schemas.user_editorial_assets`。原因：这是一条专用只读 gate；除它之外，其他 runtime service 继续禁止直接依赖 schema-only draft，避免在 D6-U2 之前扩散成隐式写路径依赖。
+
 ### D6-A0 哪些能力先 read-only、哪些必须等 Plate Surface UI 方案
 
 **先 read-only（不依赖 Plate Surface 视觉方案）**：

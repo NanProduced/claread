@@ -377,6 +377,7 @@ async def test_load_snapshot_uses_repeatable_read_readonly_transaction() -> None
         created_at=datetime(2026, 6, 22, 12, 0, tzinfo=UTC),
         source_type="text",
         source_metadata={"source_kind": "fake"},
+        generation=1,
         product_state="readable_enhancing",
         readiness_state="article_ready",
     )

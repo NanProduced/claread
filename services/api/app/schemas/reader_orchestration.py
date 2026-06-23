@@ -261,6 +261,7 @@ class ReaderSnapshotRecord(BaseModel):
     created_at: datetime
     source_type: str = Field(min_length=1)
     source_metadata: dict[str, Any] = Field(default_factory=dict)
+    generation: int = Field(ge=1)
     product_state: ReadingRecordProductState
     readiness_state: ReadingRecordReadinessState
 
