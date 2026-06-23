@@ -25,7 +25,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <CommandPaletteProvider />
       <SidebarRail pathname={pathname} collapsed={collapsed} onToggle={() => setManualCollapsed((value) => !(value ?? collapsed))} />
       <ActiveAnalysisTaskIndicator pathname={pathname} />
-      <ReadingRecordActivityIndicator />
+      <ReadingRecordActivityIndicator pathname={pathname} />
       <ScrollArea className={`${railWidth} h-full pb-20 md:pb-0`}>
         {children}
       </ScrollArea>

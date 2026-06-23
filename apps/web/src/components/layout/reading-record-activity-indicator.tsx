@@ -5,6 +5,11 @@ import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/cn";
+import {
+  appReadRoute,
+  isAppReaderPlatePath,
+  isAppReadingRecordPath,
+} from "@/lib/routes";
 import type {
   ReadingRecordListItemVm,
   ReadingRecordListResult,
@@ -67,14 +72,34 @@ function selectReadingRecordActivity(
   );
 }
 
-export function ReadingRecordActivityIndicator() {
+function shouldShowReadingRecordActivityIndicator(pathname: string): boolean {
+  return (
+    pathname !== appReadRoute &&
+    !isAppReaderPlatePath(pathname) &&
+    !isAppReadingRecordPath(pathname)
+  );
+}
+
+export function ReadingRecordActivityIndicator({
+  pathname,
+}: {
+  pathname: string;
+}) {
   const router = useRouter();
   const [state, setState] = useState<ReadingRecordActivityState>({
     status: "loading",
     items: [],
   });
+  const shouldShow = useMemo(
+    () => shouldShowReadingRecordActivityIndicator(pathname),
+    [pathname],
+  );
 
   useEffect(() => {
+    if (!shouldShow) {
+      return;
+    }
+
     let cancelled = false;
     const controller = new AbortController();
 
@@ -88,14 +113,14 @@ export function ReadingRecordActivityIndicator() {
       cancelled = true;
       controller.abort();
     };
-  }, []);
+  }, [shouldShow]);
 
   const activity = useMemo(
     () => selectReadingRecordActivity(state.items),
     [state.items],
   );
 
-  if (state.status === "loading" || !activity) {
+  if (!shouldShow || state.status === "loading" || !activity) {
     return null;
   }
 

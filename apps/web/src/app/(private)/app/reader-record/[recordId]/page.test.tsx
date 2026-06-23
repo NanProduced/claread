@@ -3,10 +3,18 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
+import type { WebDictResult } from "@/types/api/dict";
 
 import ReadingRecordPage from "./page";
 
@@ -16,6 +24,7 @@ const TRANSLATION_TEXT = "制度记忆会塑造政策选择。";
 function makeSnapshot(
   recordId = "rec_product_1",
   recordOverrides: Partial<ReaderPlateSnapshotDto["record"]> = {},
+  options?: { withVocabularyMark?: boolean },
 ): ReaderPlateSnapshotDto {
   return {
     schema_kind: "reader_plate_snapshot",
@@ -121,6 +130,26 @@ function makeSnapshot(
                     anchor_segment_id: "seg_1",
                     segment_start_utf16: 0,
                     segment_end_utf16: SOURCE_TEXT.length,
+                    reader_vocabulary_marks: options?.withVocabularyMark
+                      ? [
+                          {
+                            mark_id: "mark_vocab_memory",
+                            layer_id: "layer_vocab_1",
+                            item_type: "vocab_highlight",
+                            anchor_segment_id: "seg_1",
+                            start_offset: 14,
+                            end_offset: 20,
+                            selected_text: "memory",
+                            segment_start_utf16: 14,
+                            segment_end_utf16: 20,
+                            starts_here: true,
+                            ends_here: true,
+                            headword: "memory",
+                            brief_explanation: "记忆；既有经验",
+                            reason: "key concept in context",
+                          },
+                        ]
+                      : [],
                   },
                 ],
               },
@@ -151,8 +180,160 @@ function makeSnapshot(
   };
 }
 
+function makeDictionaryEntryResult(query = "memory"): WebDictResult {
+  return {
+    kind: "entry",
+    query,
+    provider: "test-dict",
+    cached: false,
+    entry: {
+      id: 101,
+      word: query,
+      baseWord: query,
+      homographNo: 1,
+      phonetic: "/ˈmeməri/",
+      meanings: [
+        {
+          partOfSpeech: "noun",
+          definitions: [
+            {
+              meaning: "记忆；既有经验",
+              example: "Institutional memory shapes policy choices.",
+              exampleTranslation: "制度记忆会塑造政策选择。",
+            },
+          ],
+        },
+      ],
+      examples: [],
+      phrases: [],
+      entryKind: "entry",
+      exchange: [],
+      tags: [],
+    },
+  };
+}
+
+function installReaderRecordFetchMock(
+  snapshot: ReaderPlateSnapshotDto,
+  dictResult: WebDictResult = makeDictionaryEntryResult(),
+) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+
+    if (url === `/api/web/reader-plate/${snapshot.record_id}/snapshot`) {
+      return new Response(JSON.stringify({ ok: true, ...snapshot }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (url.startsWith("/api/web/dict/lookup?")) {
+      return new Response(JSON.stringify(dictResult), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (url.startsWith("/api/web/dict/entry?")) {
+      return new Response(JSON.stringify(dictResult), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+function firstTextNode(element: HTMLElement): Text | null {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  return walker.nextNode() as Text | null;
+}
+
+function installRangeGeometryStub(rect: DOMRect) {
+  const prototype = Range.prototype as Range & {
+    getClientRects?: () => DOMRect[];
+    getBoundingClientRect?: () => DOMRect;
+  };
+  const originalGetClientRects = prototype.getClientRects;
+  const originalGetBoundingClientRect = prototype.getBoundingClientRect;
+
+  Object.defineProperty(prototype, "getClientRects", {
+    configurable: true,
+    value() {
+      return [rect];
+    },
+  });
+  Object.defineProperty(prototype, "getBoundingClientRect", {
+    configurable: true,
+    value() {
+      return rect;
+    },
+  });
+
+  return () => {
+    if (originalGetClientRects) {
+      Object.defineProperty(prototype, "getClientRects", {
+        configurable: true,
+        value: originalGetClientRects,
+      });
+    } else {
+      Reflect.deleteProperty(
+        prototype as unknown as Record<string, unknown>,
+        "getClientRects",
+      );
+    }
+
+    if (originalGetBoundingClientRect) {
+      Object.defineProperty(prototype, "getBoundingClientRect", {
+        configurable: true,
+        value: originalGetBoundingClientRect,
+      });
+    } else {
+      Reflect.deleteProperty(
+        prototype as unknown as Record<string, unknown>,
+        "getBoundingClientRect",
+      );
+    }
+  };
+}
+
+function installElementScrollStub() {
+  const prototype = HTMLElement.prototype as HTMLElement & {
+    scrollTo?: (...args: unknown[]) => void;
+  };
+  const originalScrollTo = prototype.scrollTo;
+
+  Object.defineProperty(prototype, "scrollTo", {
+    configurable: true,
+    value: vi.fn(),
+  });
+
+  return () => {
+    if (originalScrollTo) {
+      Object.defineProperty(prototype, "scrollTo", {
+        configurable: true,
+        value: originalScrollTo,
+      });
+    } else {
+      Reflect.deleteProperty(
+        prototype as unknown as Record<string, unknown>,
+        "scrollTo",
+      );
+    }
+  };
+}
+
 afterEach(() => {
   cleanup();
+  window.getSelection()?.removeAllRanges();
+  Reflect.deleteProperty(
+    document as unknown as Record<string, unknown>,
+    "caretRangeFromPoint",
+  );
   vi.unstubAllGlobals();
 });
 
@@ -174,14 +355,7 @@ describe("ReadingRecordPage static contract", () => {
 describe("ReadingRecordPage direct load", () => {
   it("loads snapshot data from the reader-plate BFF and renders the Workbench-backed reading surface", async () => {
     const snapshot = makeSnapshot();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/web/reader-plate/rec_product_1/snapshot");
-      return new Response(JSON.stringify({ ok: true, ...snapshot }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = installReaderRecordFetchMock(snapshot);
 
     const { container } = render(
       <ReadingRecordPage params={{ recordId: "rec_product_1" }} />,
@@ -225,20 +399,178 @@ describe("ReadingRecordPage direct load", () => {
     });
   });
 
+  it("supports token click lookup and renders a read-only quick peek result", async () => {
+    const snapshot = makeSnapshot("rec_lookup_1");
+    const fetchMock = installReaderRecordFetchMock(snapshot);
+
+    const { container } = render(
+      <ReadingRecordPage params={{ recordId: "rec_lookup_1" }} />,
+    );
+
+    await screen.findByTestId("reader-record-workbench-surface");
+
+    const sentenceTextElement = container.querySelector<HTMLElement>(
+      '[data-reader-sentence-text="true"]',
+    );
+    const textNode = sentenceTextElement ? firstTextNode(sentenceTextElement) : null;
+    expect(sentenceTextElement).not.toBeNull();
+    expect(textNode).not.toBeNull();
+    if (!sentenceTextElement || !textNode) {
+      throw new Error("Expected sentence text node");
+    }
+
+    (
+      document as Document & {
+        caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      }
+    ).caretRangeFromPoint = () => {
+      const range = document.createRange();
+      range.setStart(textNode, 15);
+      range.collapse(true);
+      return range;
+    };
+
+    fireEvent.click(sentenceTextElement, { clientX: 8, clientY: 8 });
+
+    await screen.findByText("记忆；既有经验");
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).startsWith("/api/web/dict/lookup?"),
+      ),
+    ).toBe(true);
+  });
+
+  it("supports vocabulary mark click lookup and renders a read-only quick peek result", async () => {
+    const snapshot = makeSnapshot("rec_mark_lookup_1", {}, { withVocabularyMark: true });
+    const fetchMock = installReaderRecordFetchMock(snapshot);
+
+    const { container } = render(
+      <ReadingRecordPage params={{ recordId: "rec_mark_lookup_1" }} />,
+    );
+
+    await screen.findByTestId("reader-record-workbench-surface");
+
+    const mark = container.querySelector<HTMLElement>(
+      '[data-reader-mark-id="mark_vocab_memory"].reader-mark--interactive',
+    );
+    expect(mark).not.toBeNull();
+    if (!mark) {
+      throw new Error("Expected vocabulary mark");
+    }
+
+    const restoreRangeGeometry = installRangeGeometryStub({
+      x: 0,
+      y: 0,
+      width: 64,
+      height: 18,
+      top: 0,
+      left: 0,
+      right: 64,
+      bottom: 18,
+      toJSON() {
+        return this;
+      },
+    } as DOMRect);
+
+    try {
+      fireEvent.click(mark);
+
+      await waitFor(() => {
+        expect(
+          fetchMock.mock.calls.some(([input]) =>
+            String(input).startsWith("/api/web/dict/lookup?"),
+          ),
+        ).toBe(true);
+      });
+      const quickPeek = await screen.findByRole("dialog");
+      expect(within(quickPeek).getByText("memory")).toBeTruthy();
+      expect(within(quickPeek).getByText("/ˈmeməri/")).toBeTruthy();
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).includes("/api/web/vocabulary"),
+        ),
+      ).toBe(false);
+    } finally {
+      restoreRangeGeometry();
+    }
+  });
+
+  it("supports selection lookup without calling vocabulary or user-asset persistence", async () => {
+    const snapshot = makeSnapshot("rec_selection_lookup_1");
+    const fetchMock = installReaderRecordFetchMock(snapshot);
+
+    const { container } = render(
+      <ReadingRecordPage params={{ recordId: "rec_selection_lookup_1" }} />,
+    );
+
+    await screen.findByTestId("reader-record-workbench-surface");
+
+    const sentenceTextElement = container.querySelector<HTMLElement>(
+      '[data-reader-sentence-text="true"]',
+    );
+    const textNode = sentenceTextElement ? firstTextNode(sentenceTextElement) : null;
+    expect(sentenceTextElement).not.toBeNull();
+    expect(textNode).not.toBeNull();
+    if (!sentenceTextElement || !textNode) {
+      throw new Error("Expected sentence text node");
+    }
+
+    const restoreRangeGeometry = installRangeGeometryStub({
+      x: 0,
+      y: 0,
+      width: 64,
+      height: 18,
+      top: 0,
+      left: 0,
+      right: 64,
+      bottom: 18,
+      toJSON() {
+        return this;
+      },
+    } as DOMRect);
+    const restoreScrollTo = installElementScrollStub();
+
+    const range = document.createRange();
+    range.setStart(textNode, 14);
+    range.setEnd(textNode, 20);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    try {
+      const lookupButton = await screen.findByRole("button", { name: "查词" });
+      fireEvent.click(lookupButton);
+
+      await screen.findByTestId("reader-record-dictionary-panel");
+      expect(screen.getAllByText("memory").length).toBeGreaterThan(0);
+      expect(screen.getByText("记忆；既有经验")).toBeTruthy();
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).includes("/api/web/vocabulary"),
+        ),
+      ).toBe(false);
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).includes("/api/web/annotations"),
+        ),
+      ).toBe(false);
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).includes("/api/web/reader-notes"),
+        ),
+      ).toBe(false);
+    } finally {
+      restoreRangeGeometry();
+      restoreScrollTo();
+    }
+  });
+
   it("shows enhancement failure status while keeping the reading body available", async () => {
     const snapshot = makeSnapshot("rec_failed_1", {
       product_state: "failed",
       readiness_state: "initial_enhancement_ready",
     });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(JSON.stringify({ ok: true, ...snapshot }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      ),
-    );
+    installReaderRecordFetchMock(snapshot);
 
     const { container } = render(
       <ReadingRecordPage params={{ recordId: "rec_failed_1" }} />,
@@ -268,15 +600,7 @@ describe("ReadingRecordPage direct load", () => {
       product_state: "action_required",
       readiness_state: "article_ready",
     });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(JSON.stringify({ ok: true, ...snapshot }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      ),
-    );
+    installReaderRecordFetchMock(snapshot);
 
     render(<ReadingRecordPage params={{ recordId: "rec_action_1" }} />);
 

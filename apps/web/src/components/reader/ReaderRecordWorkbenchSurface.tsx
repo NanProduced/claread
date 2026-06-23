@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   Eye,
@@ -11,7 +11,16 @@ import {
   Sparkles,
 } from "lucide-react";
 
+import {
+  ReaderDictionaryRail,
+  ReaderQuickPeek,
+  dictionaryLookupHistoryKey,
+  type DictionaryLookupSnapshot,
+  type SaveState,
+} from "@/components/reader/dictionary";
 import { readerCommandControl } from "@/components/reader/interaction";
+import { useReaderFloatingLayer } from "@/components/reader/ReaderFloatingLayer";
+import { SelectionToolbar } from "@/components/reader/SelectionToolbar";
 import { ImmersiveReaderSurface } from "@/components/reader/plate/ImmersiveReaderSurface";
 import { IntensiveReaderSurface } from "@/components/reader/plate/IntensiveReaderSurface";
 import {
@@ -26,9 +35,24 @@ import {
 import type { ThemeName } from "@/lib/appearance";
 import { cn } from "@/lib/cn";
 import {
+  lookupIntentFromSelection,
+  lookupIntentFromStructuredInspect,
+  readPlateReaderSelection,
+  readerLookupSnapshotFromIntent,
+  rectForTextOffsets,
+  selectionToolbarRectForReaderSelection,
+  type ReaderJumpRangeSegment,
+  type ReaderLookupIntent,
+  type ReaderLookupPreviewAnchor,
+  type ReaderStructuredInspectIntent,
+  type ReaderTextSelection,
+} from "@/lib/reader-plate";
+import {
   adaptReaderPlateSnapshotToPlateDocument,
   adaptReaderPlateSnapshotToReaderVm,
 } from "@/lib/reader-plate/projection";
+import type { WebDictResult } from "@/types/api/dict";
+import type { DictionaryAIViewState } from "@/types/api/dict-ai";
 import type {
   ReaderPlateSnapshotDto,
   ReadingRecordProductState,
@@ -124,6 +148,78 @@ function productStateBanner(productState: ReadingRecordProductState) {
   }
 }
 
+const READ_ONLY_DICTIONARY_PANEL_BOTTOM =
+  "max(5.25rem, calc(env(safe-area-inset-bottom) + 4.25rem))";
+const READ_ONLY_DICTIONARY_AI_STATE = {
+  kind: "idle",
+} as const satisfies DictionaryAIViewState;
+const READ_ONLY_SAVE_STATE = {
+  kind: "idle",
+} as const satisfies SaveState;
+
+function escapeSelectorValue(value: string) {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return value.replace(/["\\]/g, "\\$&");
+}
+
+function zeroDomRect(): DOMRect {
+  if (typeof DOMRect === "function") {
+    return new DOMRect(0, 0, 0, 0);
+  }
+  return {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    toJSON() {
+      return this;
+    },
+  } as DOMRect;
+}
+
+function buildReaderRecordLookupSnapshot(
+  recordId: string,
+  intent: ReaderLookupIntent,
+  state: DictionaryLookupSnapshot["state"],
+): DictionaryLookupSnapshot {
+  const snapshot = readerLookupSnapshotFromIntent(recordId, intent, state);
+  return {
+    ...snapshot,
+    // Reader Record 当前只恢复只读查词，不暴露旧 Reader 的 AI/context-save 流程。
+    contextSentence: "",
+  };
+}
+
+function lookupPreviewAnchorWithFallback(
+  anchor: ReaderLookupPreviewAnchor | null,
+  intent: Pick<
+    ReaderLookupIntent | ReaderStructuredInspectIntent,
+    "anchorOffsets" | "anchorText" | "sentenceId"
+  >,
+  triggerEl?: HTMLElement | null,
+): ReaderLookupPreviewAnchor | null {
+  if (anchor) {
+    return anchor;
+  }
+
+  if (!triggerEl) {
+    return null;
+  }
+
+  return {
+    sentenceId: intent.sentenceId,
+    startOffset: intent.anchorOffsets?.startOffset ?? 0,
+    endOffset: intent.anchorOffsets?.endOffset ?? intent.anchorText.length,
+    fallbackRect: triggerEl.getBoundingClientRect?.() ?? zeroDomRect(),
+  };
+}
+
 export function ReaderRecordWorkbenchSurface({
   snapshot,
 }: ReaderRecordWorkbenchSurfaceProps) {
@@ -143,6 +239,25 @@ export function ReaderRecordWorkbenchSurface({
     string[]
   >([]);
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
+  const [textSelection, setTextSelection] = useState<ReaderTextSelection | null>(
+    null,
+  );
+  const [selectionToolbarVisible, setSelectionToolbarVisible] = useState(false);
+  const [activeLookup, setActiveLookup] =
+    useState<DictionaryLookupSnapshot | null>(null);
+  const [activeInspect, setActiveInspect] =
+    useState<ReaderStructuredInspectIntent | null>(null);
+  const [lookupPreviewOpen, setLookupPreviewOpen] = useState(false);
+  const [lookupPreviewAnchor, setLookupPreviewAnchor] =
+    useState<ReaderLookupPreviewAnchor | null>(null);
+  const [dictionaryPanelOpen, setDictionaryPanelOpen] = useState(false);
+  const [lookupHistory, setLookupHistory] = useState<DictionaryLookupSnapshot[]>(
+    [],
+  );
+  const [dictionaryQuery, setDictionaryQuery] = useState("");
+  const [dictionarySearchExpanded, setDictionarySearchExpanded] =
+    useState(false);
+  const readingStageRef = useRef<HTMLDivElement | null>(null);
 
   const isImmersiveMode = readerSettings.mode === "immersive";
   const typography = readerModeTypography(readerSettings);
@@ -153,9 +268,80 @@ export function ReaderRecordWorkbenchSurface({
   const formattedDate = formatDate(snapshot.record.created_at);
   const readinessLabel = readinessStateLabel(snapshot.record.readiness_state);
   const statusBanner = productStateBanner(snapshot.record.product_state);
+  const sentenceById = useMemo(
+    () =>
+      new Map(
+        readerVm.article.sentences.map((sentence) => [sentence.sentenceId, sentence]),
+      ),
+    [readerVm.article.sentences],
+  );
+  const sourceContextBySentence = useMemo(
+    () =>
+      new Map(
+        readerVm.translations.map((translation) => [
+          translation.sentenceId,
+          translation.translationZh,
+        ]),
+      ),
+    [readerVm.translations],
+  );
+  const selectionFocusRangesBySentence = useMemo(() => {
+    const map = new Map<string, ReaderJumpRangeSegment[]>();
+    if (!textSelection) {
+      return map;
+    }
+
+    textSelection.segments.forEach((segment) => {
+      const current = map.get(segment.sentenceId) ?? [];
+      map.set(segment.sentenceId, [
+        ...current,
+        {
+          paragraphId: segment.paragraphId ?? null,
+          sentenceId: segment.sentenceId,
+          selectedText: segment.selectedText,
+          startOffset: segment.startOffset,
+          endOffset: segment.endOffset,
+          textHash: segment.textHash,
+        },
+      ]);
+    });
+
+    return map;
+  }, [textSelection]);
+  const lookupPreviewVisible = Boolean(
+    lookupPreviewOpen &&
+      lookupPreviewAnchor &&
+      (activeLookup || activeInspect) &&
+      !dictionaryPanelOpen,
+  );
   const shellModeClass = isImmersiveMode
     ? "reader-shell--immersive"
     : "reader-shell--intensive";
+  const {
+    refs: {
+      setFloating: setSelectionToolbarFloating,
+      setPositionReference: setSelectionToolbarReference,
+    },
+    floatingStyles: selectionToolbarStyles,
+  } = useReaderFloatingLayer({
+    open: Boolean(textSelection && selectionToolbarVisible),
+    placement: "top-start",
+    offsetPx: 14,
+    crossAxisOffsetPx: 28,
+    strategy: "fixed",
+  });
+  const {
+    refs: {
+      setFloating: setLookupPreviewFloating,
+      setPositionReference: setLookupPreviewReference,
+    },
+    floatingStyles: lookupPreviewStyles,
+  } = useReaderFloatingLayer({
+    open: lookupPreviewVisible,
+    placement: "top",
+    offsetPx: 12,
+    strategy: "fixed",
+  });
 
   function updateReaderSettings(next: ReaderSettingsState) {
     setReaderSettings(next);
@@ -178,6 +364,375 @@ export function ReaderRecordWorkbenchSurface({
       return current === entryId ? null : current;
     });
   }
+
+  const clearDomSelection = useCallback(() => {
+    window.getSelection()?.removeAllRanges();
+  }, []);
+
+  const clearReaderSelection = useCallback(
+    (options?: { preserveDomSelection?: boolean }) => {
+      setTextSelection(null);
+      setSelectionToolbarVisible(false);
+      if (!options?.preserveDomSelection) {
+        clearDomSelection();
+      }
+    },
+    [clearDomSelection],
+  );
+
+  const dismissLookupPreview = useCallback(() => {
+    setLookupPreviewOpen(false);
+    setLookupPreviewAnchor(null);
+  }, []);
+
+  const handleLookupSnapshot = useCallback(
+    (nextSnapshot: DictionaryLookupSnapshot) => {
+      setActiveLookup(nextSnapshot);
+      setActiveInspect(null);
+      setDictionaryQuery(nextSnapshot.query);
+
+      if (nextSnapshot.state.kind === "ready") {
+        const nextHistoryKey = dictionaryLookupHistoryKey(nextSnapshot);
+        setLookupHistory((current) =>
+          [
+            nextSnapshot,
+            ...current.filter(
+              (item) => dictionaryLookupHistoryKey(item) !== nextHistoryKey,
+            ),
+          ].slice(0, 8),
+        );
+      }
+    },
+    [],
+  );
+
+  const lookupPlainText = useCallback(
+    async (
+      intent: ReaderLookupIntent,
+      options?: {
+        showPreview?: boolean;
+        anchor?: ReaderLookupPreviewAnchor | null;
+        openPanel?: boolean;
+      },
+    ) => {
+      const shouldOpenPanel = Boolean(options?.openPanel || dictionaryPanelOpen);
+      const shouldShowPreview =
+        !shouldOpenPanel && Boolean(options?.showPreview ?? true);
+
+      setSelectionToolbarVisible(false);
+      setDictionarySearchExpanded(false);
+      setDictionaryPanelOpen(shouldOpenPanel);
+      setLookupPreviewOpen(shouldShowPreview);
+      setLookupPreviewAnchor(shouldShowPreview ? (options?.anchor ?? null) : null);
+
+      handleLookupSnapshot(
+        buildReaderRecordLookupSnapshot(snapshot.record_id, intent, {
+          kind: "loading",
+        }),
+      );
+
+      try {
+        const params = new URLSearchParams({
+          word: intent.query,
+          type: intent.lookupType,
+          context: intent.contextSentence,
+          sentenceId: intent.sentenceId,
+        });
+        if (intent.occurrence !== undefined) {
+          params.set("occurrence", String(intent.occurrence));
+        }
+
+        const response = await fetch(`/api/web/dict/lookup?${params.toString()}`);
+        const payload = (await response.json().catch(() => null)) as
+          | WebDictResult
+          | null;
+        if (!payload) {
+          handleLookupSnapshot(
+            buildReaderRecordLookupSnapshot(snapshot.record_id, intent, {
+              kind: "error",
+              message: "词典查询失败。",
+            }),
+          );
+          return;
+        }
+
+        handleLookupSnapshot(
+          buildReaderRecordLookupSnapshot(snapshot.record_id, intent, {
+            kind: "ready",
+            result: payload,
+          }),
+        );
+
+        if (!response.ok && payload.kind !== "error") {
+          handleLookupSnapshot(
+            buildReaderRecordLookupSnapshot(snapshot.record_id, intent, {
+              kind: "error",
+              message: "词典查询失败。",
+            }),
+          );
+        }
+      } catch (error) {
+        handleLookupSnapshot(
+          buildReaderRecordLookupSnapshot(snapshot.record_id, intent, {
+            kind: "error",
+            message: error instanceof Error ? error.message : "词典查询失败。",
+          }),
+        );
+      }
+    },
+    [dictionaryPanelOpen, handleLookupSnapshot, snapshot.record_id],
+  );
+
+  const lookupDictionaryQuery = useCallback(
+    (query: string) => {
+      const trimmed = query.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      void lookupPlainText(
+        {
+          kind: "lexical_lookup",
+          query: trimmed,
+          lookupType: trimmed.includes(" ") ? "phrase" : "word",
+          contextSentence: "",
+          sourceContext: undefined,
+          sentenceId: "__manual__",
+          anchorText: trimmed,
+          title: "手动查词",
+          label: "手动查词",
+        },
+        { showPreview: false, openPanel: true },
+      );
+    },
+    [lookupPlainText],
+  );
+
+  const selectDictionaryCandidate = useCallback(
+    async (entryId: number) => {
+      if (!activeLookup) {
+        return;
+      }
+
+      const loadingSnapshot: DictionaryLookupSnapshot = {
+        ...activeLookup,
+        state: { kind: "loading" },
+      };
+      handleLookupSnapshot(loadingSnapshot);
+
+      try {
+        const response = await fetch(`/api/web/dict/entry?id=${entryId}`);
+        const payload = (await response.json().catch(() => null)) as
+          | WebDictResult
+          | null;
+        if (!payload) {
+          handleLookupSnapshot({
+            ...activeLookup,
+            state: { kind: "error", message: "词条加载失败。" },
+          });
+          return;
+        }
+
+        handleLookupSnapshot({
+          ...activeLookup,
+          state: { kind: "ready", result: payload },
+        });
+
+        if (!response.ok && payload.kind !== "error") {
+          handleLookupSnapshot({
+            ...activeLookup,
+            state: { kind: "error", message: "词条加载失败。" },
+          });
+        }
+      } catch (error) {
+        handleLookupSnapshot({
+          ...activeLookup,
+          state: {
+            kind: "error",
+            message: error instanceof Error ? error.message : "词条加载失败。",
+          },
+        });
+      }
+    },
+    [activeLookup, handleLookupSnapshot],
+  );
+
+  const selectLookupFromTrail = useCallback((lookup: DictionaryLookupSnapshot) => {
+    setActiveLookup(lookup);
+    setActiveInspect(null);
+    setDictionaryPanelOpen(true);
+    setLookupPreviewOpen(false);
+    setLookupPreviewAnchor(null);
+    setDictionaryQuery(lookup.query);
+    setDictionarySearchExpanded(false);
+  }, []);
+
+  const openDictionaryPanel = useCallback(() => {
+    if (!activeLookup && !activeInspect) {
+      return;
+    }
+    setDictionaryPanelOpen(true);
+    setLookupPreviewOpen(false);
+    setLookupPreviewAnchor(null);
+  }, [activeInspect, activeLookup]);
+
+  const handleLookupIntent = useCallback(
+    (
+      intent: ReaderLookupIntent,
+      anchor: ReaderLookupPreviewAnchor | null,
+      triggerEl?: HTMLElement | null,
+    ) => {
+      const previewAnchor = lookupPreviewAnchorWithFallback(
+        anchor,
+        intent,
+        triggerEl,
+      );
+      triggerEl?.focus({ preventScroll: true });
+      void lookupPlainText(intent, { showPreview: true, anchor: previewAnchor });
+    },
+    [lookupPlainText],
+  );
+
+  const handleInspectIntent = useCallback(
+    (
+      intent: ReaderStructuredInspectIntent,
+      anchor: ReaderLookupPreviewAnchor | null,
+      triggerEl?: HTMLElement | null,
+    ) => {
+      const previewAnchor = lookupPreviewAnchorWithFallback(
+        anchor,
+        intent,
+        triggerEl,
+      );
+      triggerEl?.focus({ preventScroll: true });
+      setActiveLookup(null);
+      setActiveInspect(intent);
+      setDictionaryQuery(intent.lookupText ?? intent.anchorText);
+      setDictionarySearchExpanded(false);
+
+      if (dictionaryPanelOpen) {
+        setLookupPreviewOpen(false);
+        setLookupPreviewAnchor(null);
+        return;
+      }
+
+      setLookupPreviewOpen(true);
+      setLookupPreviewAnchor(previewAnchor);
+    },
+    [dictionaryPanelOpen],
+  );
+
+  const lookupPhraseFromInspect = useCallback(
+    (intent: ReaderStructuredInspectIntent) => {
+      void lookupPlainText(lookupIntentFromStructuredInspect(intent), {
+        showPreview: false,
+        openPanel: true,
+      });
+    },
+    [lookupPlainText],
+  );
+
+  const lookupTextSelection = useCallback(() => {
+    if (!textSelection) {
+      return;
+    }
+
+    void lookupPlainText(
+      lookupIntentFromSelection(
+        textSelection,
+        sourceContextBySentence.get(textSelection.sentence.sentenceId),
+      ),
+      { showPreview: false, openPanel: true },
+    );
+  }, [lookupPlainText, sourceContextBySentence, textSelection]);
+
+  useEffect(() => {
+    function handleSelectionChange() {
+      const nativeSelection = window.getSelection();
+      if (
+        !nativeSelection ||
+        nativeSelection.isCollapsed ||
+        !nativeSelection.toString().trim()
+      ) {
+        clearReaderSelection({ preserveDomSelection: true });
+        return;
+      }
+
+      const readingStageElement = readingStageRef.current;
+      const anchorElement =
+        nativeSelection.anchorNode instanceof Element
+          ? nativeSelection.anchorNode
+          : nativeSelection.anchorNode?.parentElement ?? null;
+      const focusElement =
+        nativeSelection.focusNode instanceof Element
+          ? nativeSelection.focusNode
+          : nativeSelection.focusNode?.parentElement ?? null;
+
+      if (
+        !readingStageElement ||
+        !anchorElement ||
+        !focusElement ||
+        !readingStageElement.contains(anchorElement) ||
+        !readingStageElement.contains(focusElement)
+      ) {
+        clearReaderSelection({ preserveDomSelection: true });
+        return;
+      }
+
+      const nextSelection = readPlateReaderSelection(readingStageElement, sentenceById);
+      setTextSelection(nextSelection);
+      setSelectionToolbarVisible(Boolean(nextSelection));
+    }
+
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, [clearReaderSelection, sentenceById]);
+
+  useEffect(() => {
+    if (!textSelection) {
+      setSelectionToolbarReference(null);
+      return;
+    }
+
+    setSelectionToolbarReference({
+      getBoundingClientRect: () =>
+        selectionToolbarRectForReaderSelection(readingStageRef.current, textSelection),
+      contextElement: readingStageRef.current ?? undefined,
+    });
+  }, [setSelectionToolbarReference, textSelection]);
+
+  useEffect(() => {
+    if (!lookupPreviewVisible || !lookupPreviewAnchor || !readingStageRef.current) {
+      setLookupPreviewReference(null);
+      return;
+    }
+
+    setLookupPreviewReference({
+      getBoundingClientRect: () => {
+        const sentenceTextElement =
+          readingStageRef.current?.querySelector<HTMLElement>(
+            `[data-reader-anchor="sentence"][data-sentence-id="${escapeSelectorValue(
+              lookupPreviewAnchor.sentenceId,
+            )}"] [data-reader-sentence-text="true"]`,
+          ) ?? null;
+        const liveRect = sentenceTextElement
+          ? rectForTextOffsets(
+              sentenceTextElement,
+              lookupPreviewAnchor.startOffset,
+              lookupPreviewAnchor.endOffset,
+            )
+          : null;
+        return (
+          liveRect ??
+          lookupPreviewAnchor.fallbackRect ??
+          zeroDomRect()
+        );
+      },
+      contextElement: readingStageRef.current ?? undefined,
+    });
+  }, [lookupPreviewAnchor, lookupPreviewVisible, setLookupPreviewReference]);
 
   return (
     <main
@@ -418,12 +973,13 @@ export function ReaderRecordWorkbenchSurface({
             )}
 
             <div className="reader-shell-message mx-auto mt-1 rounded-[10px] border border-lens-blue/20 bg-lens-blue-soft px-4 py-3 text-sm leading-6 text-ink-soft">
-              当前只读预览中，Ask、笔记、高亮和词典写入暂不可用。
+              当前只读预览中，可通过点击单词、点击标注或选中正文进行只读查词；Ask、笔记、高亮和词典写入暂不可用。
             </div>
           </div>
         </header>
 
         <div
+          ref={readingStageRef}
           className={cn(
             "reader-reading-stage",
             isImmersiveMode
@@ -438,6 +994,10 @@ export function ReaderRecordWorkbenchSurface({
               columnClassName={typography.columnClassName}
               paragraphDensityClassName={typography.paragraphDensityClassName}
               themeClassName={canvasThemeClass}
+              selectionFocusRangesBySentence={selectionFocusRangesBySentence}
+              activeInlineMarkKey={activeInspect?.markId ?? null}
+              onLookupIntent={handleLookupIntent}
+              onInspectIntent={handleInspectIntent}
             />
           ) : (
             <IntensiveReaderSurface
@@ -449,14 +1009,112 @@ export function ReaderRecordWorkbenchSurface({
               paragraphDensityClassName={typography.paragraphDensityClassName}
               themeClassName={canvasThemeClass}
               annotationVisibilityGroups={contentVisibility}
+              selectionFocusRangesBySentence={selectionFocusRangesBySentence}
+              activeInlineMarkKey={activeInspect?.markId ?? null}
               activeAnalysisEntryId={activeEntryId}
               expandedAnalysisEntryIds={expandedAnalysisEntryIds}
               onAnalysisFocusChange={setAnalysisEntryFocus}
               onAnalysisToggle={toggleAnalysisEntry}
+              onLookupIntent={handleLookupIntent}
+              onInspectIntent={handleInspectIntent}
             />
           )}
         </div>
       </article>
+
+      {textSelection && selectionToolbarVisible ? (
+        <div
+          ref={setSelectionToolbarFloating}
+          style={selectionToolbarStyles}
+          className="z-50"
+          data-testid="reader-record-selection-toolbar"
+          onPointerDown={(event) => {
+            event.preventDefault();
+          }}
+        >
+          <SelectionToolbar
+            className={
+              isImmersiveMode
+                ? "reader-selection-toolbar reader-selection-toolbar--immersive"
+                : "reader-selection-toolbar"
+            }
+            selectedText={textSelection.selectedText}
+            selectionMode={textSelection.anchorType}
+            disabled={{
+              ask: true,
+              selectSentence: true,
+              highlight: true,
+              note: true,
+              clear: true,
+              feedback: true,
+            }}
+            onLookup={lookupTextSelection}
+          />
+        </div>
+      ) : null}
+
+      {lookupPreviewVisible ? (
+        <ReaderQuickPeek
+          lookup={activeLookup}
+          inspect={activeInspect}
+          className={
+            isImmersiveMode
+              ? "reader-tool-float reader-tool-float--immersive"
+              : "reader-tool-float"
+          }
+          floatingRef={setLookupPreviewFloating}
+          style={lookupPreviewStyles}
+          onDismiss={dismissLookupPreview}
+          onOpenDetail={openDictionaryPanel}
+          onLookupPhrase={
+            activeInspect ? () => lookupPhraseFromInspect(activeInspect) : undefined
+          }
+        />
+      ) : null}
+
+      {dictionaryPanelOpen ? (
+        <div
+          className={cn(
+            "reader-tool-surface reader-tool-surface--compact fixed inset-x-3 z-50 flex max-h-[72vh] flex-col md:bottom-6",
+            isImmersiveMode
+              ? "reader-tool-surface--immersive"
+              : "reader-tool-surface--intensive",
+          )}
+          style={{ bottom: READ_ONLY_DICTIONARY_PANEL_BOTTOM }}
+          data-testid="reader-record-dictionary-panel"
+        >
+          <ReaderDictionaryRail
+            lookup={activeLookup}
+            inspect={activeInspect}
+            history={lookupHistory}
+            readingGoal="daily_reading"
+            saveState={READ_ONLY_SAVE_STATE}
+            lookupSaveState="not_saved"
+            savedVocabularyMatch={null}
+            dictionaryAI={READ_ONLY_DICTIONARY_AI_STATE}
+            dictionaryAIPanelOpen={false}
+            dictionaryAINoteState={READ_ONLY_SAVE_STATE}
+            searchQuery={dictionaryQuery}
+            searchExpanded={dictionarySearchExpanded}
+            onSave={() => {}}
+            onRequestAI={() => {}}
+            onCreateAINote={() => {}}
+            onSelectAISuggestedQuery={() => {}}
+            onSearchQueryChange={setDictionaryQuery}
+            onSearchSubmit={lookupDictionaryQuery}
+            onSelectCandidate={selectDictionaryCandidate}
+            onToggleAIPanel={() => {}}
+            onToggleSearchExpanded={() =>
+              setDictionarySearchExpanded((value) => !value)
+            }
+            onDismiss={() => setDictionaryPanelOpen(false)}
+            canSaveVocabulary={false}
+            canCreateAINote={false}
+            onLookupPhraseFromInspect={lookupPhraseFromInspect}
+            onSelectHistory={selectLookupFromTrail}
+          />
+        </div>
+      ) : null}
     </main>
   );
 }

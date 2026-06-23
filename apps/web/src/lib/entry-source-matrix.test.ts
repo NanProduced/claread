@@ -126,13 +126,17 @@ describe("entry source matrix - command palette new Reading Record source (W3-D6
   });
 });
 
-describe("entry source matrix - Reading Record activity indicator (W3-D7)", () => {
-  it("ReadingRecordActivityIndicator uses returned readerUrl and is free of legacy wiring", () => {
+describe("entry source matrix - Reading Record activity indicator (W3-D7/D8)", () => {
+  it("ReadingRecordActivityIndicator gates by pathname, uses returned readerUrl, and is free of legacy wiring", () => {
     const source = readSource(
       "src/components/layout/reading-record-activity-indicator.tsx",
     );
 
     expect(source).toContain("/api/web/reading-records");
+    expect(source).toContain("pathname");
+    expect(source).toContain("appReadRoute");
+    expect(source).toContain("isAppReaderPlatePath");
+    expect(source).toContain("isAppReadingRecordPath");
     expect(source).toContain("readerUrl");
     expect(source).not.toContain(LEGACY_ROUTE_HELPER);
     expect(source).not.toContain(NEW_ROUTE_HELPER);

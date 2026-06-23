@@ -4,6 +4,8 @@ import {
   appReadingRecordRoute,
   appReaderPlateRoute,
   appReaderRoute,
+  isAppReaderPlatePath,
+  isAppReadingRecordPath,
   legacyAppReaderRoute,
 } from "./routes";
 
@@ -34,5 +36,15 @@ describe("reader route helpers", () => {
     expect(appReadingRecordRoute(readingRecordId)).not.toBe(
       legacyAppReaderRoute(readingRecordId),
     );
+  });
+
+  it("identifies Reading Record and reader-plate app routes for shell gating", () => {
+    expect(isAppReadingRecordPath("/app/reader-record/rec_1")).toBe(true);
+    expect(isAppReaderPlatePath("/app/reader-plate")).toBe(true);
+    expect(isAppReaderPlatePath("/app/reader-plate?record_id=rec_1")).toBe(
+      true,
+    );
+    expect(isAppReadingRecordPath("/app/reader/rec_1")).toBe(false);
+    expect(isAppReaderPlatePath("/app/read")).toBe(false);
   });
 });

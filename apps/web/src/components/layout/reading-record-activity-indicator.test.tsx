@@ -47,6 +47,10 @@ function stubReadingRecords(items: Array<Record<string, unknown>>) {
   return fetchMock;
 }
 
+function renderIndicator(pathname = "/app/library") {
+  return render(<ReadingRecordActivityIndicator pathname={pathname} />);
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
 });
@@ -57,6 +61,36 @@ afterEach(() => {
 });
 
 describe("ReadingRecordActivityIndicator", () => {
+  it.each([
+    ["/app/reader-record/reading_record_default"],
+    ["/app/reader-plate"],
+    ["/app/reader-plate?record_id=reading_record_default"],
+    ["/app/read"],
+  ])("hides on %s without fetching Reading Records", (pathname) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderIndicator(pathname);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("fetches and renders on regular app shell pages", async () => {
+    const fetchMock = stubReadingRecords([
+      makeReadingRecord({
+        title: "Visible from Library",
+        productState: "readable_enhancing",
+      }),
+    ]);
+
+    renderIndicator("/app/library");
+
+    expect(await screen.findByText("可读·增强中")).toBeTruthy();
+    expect(screen.getByText("Visible from Library")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("prioritizes action_required Reading Records and opens the returned readerUrl", async () => {
     stubReadingRecords([
       makeReadingRecord({
@@ -73,7 +107,7 @@ describe("ReadingRecordActivityIndicator", () => {
       }),
     ]);
 
-    render(<ReadingRecordActivityIndicator />);
+    renderIndicator();
 
     expect(await screen.findByText("需要处理")).toBeTruthy();
     expect(screen.getByText("Needs a decision")).toBeTruthy();
@@ -96,7 +130,7 @@ describe("ReadingRecordActivityIndicator", () => {
       }),
     ]);
 
-    render(<ReadingRecordActivityIndicator />);
+    renderIndicator();
 
     expect(await screen.findByText("处理失败")).toBeTruthy();
     expect(screen.getByText("Failed Reading Record")).toBeTruthy();
@@ -112,7 +146,7 @@ describe("ReadingRecordActivityIndicator", () => {
       }),
     ]);
 
-    render(<ReadingRecordActivityIndicator />);
+    renderIndicator();
 
     expect(await screen.findByText("待确认")).toBeTruthy();
     expect(screen.getByText("Recent Reading Record")).toBeTruthy();
