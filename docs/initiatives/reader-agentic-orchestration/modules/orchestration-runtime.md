@@ -121,7 +121,7 @@ Concurrency / lock 初版口径：
   - `all_workers_no_job` / `max_ticks_reached` / `max_jobs_reached` 不改 `product_state`
   - `retry_later` 不改 `product_state`
   - `failed_terminal` 默认映射到 `failed`
-  - `action_required` 只允许来自显式 user-action allowlist
+  - `action_required` 只允许来自 failed-terminal mapper 认定的 user-remediable `attention_code`；v1 仅提升 `reader_user_confirmation_required`
   - `publish_fence_failed`、executor/profile missing、model route missing 等 system failure 不映射成 `action_required`
 
 Model profile / executor 口径：

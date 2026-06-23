@@ -13,10 +13,12 @@ from .pipeline_runner import (
 
 PRODUCT_STATE_UPDATED_EVENT_TYPE = "record_product_state_updated"
 
-# D6-P0 keeps the initial mapping conservative. A terminal failure only becomes
-# action_required after the worker starts emitting a concrete, user-remediable
-# attention code and that code is explicitly allowlisted here.
-USER_ACTION_REQUIRED_ATTENTION_CODES: frozenset[str] = frozenset()
+# D6-P4 keeps terminal failure mapping fail-closed. Only explicit, user-remediable
+# attention codes may surface as action_required; worker/system/provider/tool/runtime
+# failures stay in failed.
+USER_ACTION_REQUIRED_ATTENTION_CODES: frozenset[str] = frozenset(
+    {"reader_user_confirmation_required"}
+)
 
 _NO_STATE_CHANGE_STOPPED_REASONS = frozenset(
     {
@@ -39,6 +41,25 @@ class ProductStateDecision:
     reason_code: str
     user_visible: bool
     should_update_record: bool
+
+
+def decide_failed_terminal_product_state(
+    attention_code: str | None,
+) -> ProductStateDecision:
+    if attention_code in USER_ACTION_REQUIRED_ATTENTION_CODES:
+        return ProductStateDecision(
+            next_product_state="action_required",
+            reason_code=attention_code,
+            user_visible=True,
+            should_update_record=True,
+        )
+
+    return ProductStateDecision(
+        next_product_state="failed",
+        reason_code=attention_code or "failed_terminal",
+        user_visible=False,
+        should_update_record=True,
+    )
 
 
 def decide_product_state_update(
@@ -87,20 +108,7 @@ def decide_product_state_update(
             should_update_record=False,
         )
 
-    if attention_code is not None and attention_code in USER_ACTION_REQUIRED_ATTENTION_CODES:
-        return ProductStateDecision(
-            next_product_state="action_required",
-            reason_code=attention_code,
-            user_visible=True,
-            should_update_record=True,
-        )
-
-    return ProductStateDecision(
-        next_product_state="failed",
-        reason_code=attention_code or "failed_terminal",
-        user_visible=False,
-        should_update_record=True,
-    )
+    return decide_failed_terminal_product_state(attention_code)
 
 
 def decide_product_state_for_pipeline_summary(

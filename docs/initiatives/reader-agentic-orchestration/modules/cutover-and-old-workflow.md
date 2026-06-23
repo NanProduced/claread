@@ -1,6 +1,6 @@
 # Cutover 与旧 AI Workflow 处理
 
-> 状态：`D5-W3 D8 done`
+> 状态：`D5-W3 D9 done`
 > 最后更新：2026-06-23
 > 范围：停服重构、旧 workflow 替换、旧表/旧 UI 清理边界，以及 Web cutover 迁移顺序。
 
@@ -144,7 +144,7 @@ Web Reader 不再依赖旧 `render_scene_json`。Reader Article Body 的新路�
 | 新 Reading Record 产品 route shell | `/app/reader-record/{recordId}` | `/api/web/reader-plate/{recordId}/snapshot` | 新 `Reading Record.record_id` | `reader-record/[recordId]/page.tsx`；W3-C3 起通过 snapshot adapter 渲染旧 Workbench 风格只读中心 Plate 区，W3-D1 起承接 `/app/read` 成功 landing；W3-D5/D6/D7 起可由 Library 新 section、command palette 新分组和新 Reading Record indicator 发现；旧 active analysis task 流量仍未切入 |
 | 旧 Reader 产品页 | `/app/reader/{recordId}` | `getReaderRecord()` -> 旧 `/reader/records/{id}/scene` 或 `by-client-id/.../scene` | 旧 analysis record id 或 client record id | `reader/[recordId]/page.tsx`、`services/bff/reader.ts`、`services/api/reader-scene.ts`；仍承载 ReaderWorkbench、Ask、点词、笔记、高亮 |
 | Library record links | `legacyAppReaderRoute(record.id)` | `/records` -> `RecordResponseDto[]` | 旧 `RecordResponseDto.id` | `LibraryClient.tsx`、`services/bff/records.ts`；Library 当前拿到的是旧 record list，不是新 Reading Record list |
-| Vocabulary source links | `legacyAppReaderRoute(recordId)` / `legacyAppReaderRoute(item.sourceRecordId)` | vocabulary item source refs -> 旧 source record contract | 旧 source record id / `cloud_record_id` | `app/vocabulary/VocabularyClient.tsx`；点回原文仍跳旧 ReaderWorkbench，不能把 source record id 当新 `Reading Record.record_id` |
+| Vocabulary source links | `legacyAppReaderRoute(recordId)` / `legacyAppReaderRoute(item.sourceRecordId)` | vocabulary item source refs -> 旧 source record contract | 旧 source record id / `cloud_record_id` / `client_record_id` | `app/vocabulary/VocabularyClient.tsx`；点回原文仍跳旧 ReaderWorkbench；W3-D9 已用 guard 锁定不能把 `sourceRecordId` 当新 `Reading Record.record_id`，后续必须等 BFF 提供 `sourceReadingRecordId` 或 `sourceReaderUrl` |
 | Command palette 最近记录 | `legacyAppReaderRoute(record.id)` / `legacyAppReaderRoute(lastRecordId)` | recent/search record list | 旧 record id | `CommandPaletteDialog.tsx`、`command-palette-items.ts` |
 | Command palette 新阅读记录分组 | BFF 返回的 `readerUrl` | 新 `Reading Record.record_id`，但前端只消费 `readerUrl` | `/api/web/reading-records` -> `/app/reader-record/{recordId}` | `ReadingRecordCommandGroup.tsx`；W3-D6 起独立新增，不替换旧 command palette recent/search records |
 | Active analysis task indicator | toast action -> `legacyAppReaderRoute(recordId)` | `/api/web/analysis/current` + `/api/web/analysis/tasks/{taskId}` | 旧 `cloud_record_id` | `active-analysis-task-indicator.tsx`、`analysis-task-client.ts` |
@@ -336,12 +336,12 @@ W3-D3 结论：
   - `active-analysis-task-indicator.tsx` 不引用 `appReadingRecordRoute`。
   - `command-palette/CommandPaletteDialog.tsx` 和 `command-palette/command-palette-items.ts` 不引用 `appReadingRecordRoute`。
   - `LibraryClient.tsx` 不引用 `appReadingRecordRoute`。
-  - `VocabularyClient.tsx` 不引用 `appReadingRecordRoute`。
+  - `VocabularyClient.tsx` 不引用 `appReadingRecordRoute` 或 `/app/reader-record/`，并明确用 `legacyAppReaderRoute(item.sourceRecordId)` 处理旧 vocabulary source refs。
   - `services/bff/analysis.ts` 不引用 `appReadingRecordRoute`。
   - `services/bff/records.ts` 不引用 `appReadingRecordRoute` 或 `/app/reader-record/`。
   - `recent-reading-record.ts` 不引用 `legacyAppReaderRoute`、`/app/reader/` 或 `analysis-tasks`。
 - 已切到 new Reading Record 的入口：`/app/read` submit landing、`/app/read` recent recovery、Library 新 section、command palette 新分组、Reading Record activity indicator（仅非阅读/验证/read app shell 页面展示）。
-- 仍 legacy 的入口：active task、command palette legacy recent/search records、Vocabulary source links、`services/bff/analysis.ts` `readerUrl`、`services/bff/records.ts` record list。
+- 仍 legacy 的入口：active task、command palette legacy recent/search records、Vocabulary source links、`services/bff/analysis.ts` `readerUrl`、`services/bff/records.ts` record list。Vocabulary source links 的切换条件不是改 route helper，而是先让 BFF 返回新 source truth（`sourceReadingRecordId` 或 `sourceReaderUrl`）。
 
 建议顺序：
 
@@ -376,7 +376,7 @@ Done criteria：
 
 ## 当前下一步建议
 
-W3-D1-D8 已完成 `/app/read` submit landing、Web-only 最近记录恢复、Reading Record list source、Library 新 section、command palette 新分组、Reading Record activity indicator 及其 route gating；W3-D3 起用 static guard tests 锁定当前入口来源矩阵，后续不要一次性迁所有 consumer：
+W3-D1-D9 已完成 `/app/read` submit landing、Web-only 最近记录恢复、Reading Record list source、Library 新 section、command palette 新分组、Reading Record activity indicator 及其 route gating，并收口 Vocabulary source links 的 legacy route-source 边界；W3-D3 起用 static guard tests 锁定当前入口来源矩阵，后续不要一次性迁所有 consumer：
 
 - 先观察 `/app/read -> /app/reader-record/{recordId}` 的新 Reading Record landing 稳定性。
 - 继续把 recent localStorage 当临时恢复入口；正式最近记录列表应等 new Reading Record Library source 单独实现。
@@ -444,6 +444,13 @@ W3-D8 结论：
 - `/app/read` 隐藏的原因是该页已有 W3-D2 recent recovery，避免同屏出现两个恢复入口；其他 app shell 页面继续展示轻量 active/recent indicator。
 - indicator 仍只使用 BFF 返回的 `readerUrl` 导航；组件源码不手写 `/app/reader-record/`，不引用 `legacyAppReaderRoute` 或 `appReadingRecordRoute`，不触碰 `analysis-tasks`。
 - 本轮未改旧 `ActiveAnalysisTaskIndicator`，也未改 Library、Vocabulary、command palette 或 submit 流量。
+
+W3-D9 结论：
+
+- Vocabulary source links 仍是 legacy 入口：`services/bff/vocabulary.ts` 当前从 `payload_json.source_refs[0].cloud_record_id ?? client_record_id` 投出 `sourceRecordId`，该字段不是新 Reading Record id。
+- `VocabularyClient.tsx` 继续用 `legacyAppReaderRoute(item.sourceRecordId)` 跳旧 `/app/reader/{recordId}`；本轮不改 Vocabulary 运行时数据源，不新增假 `readingRecordId`，不把 `sourceRecordId` 传给 `/app/reader-record`。
+- 后续切换条件是 Vocabulary BFF 拿到明确的新 source truth，例如 `sourceReadingRecordId` 或更直接的 `sourceReaderUrl`；只有到那时才能逐步把 source link 切到新 Reading Record route。
+- `entry-source-matrix.test.ts` 已新增 W3-D9 guard：Vocabulary client 不引用 `appReadingRecordRoute` 或 `/app/reader-record/`，BFF 不暴露 `sourceReadingRecordId` / `sourceReaderUrl`，并明确 `sourceRecordId` 来自旧 `cloud_record_id` / `client_record_id`。
 
 ## 不允许事项
 

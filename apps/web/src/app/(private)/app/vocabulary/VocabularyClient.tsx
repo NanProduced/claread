@@ -397,6 +397,8 @@ export function VocabularyClient({
     }
   }, [deleteTarget, selectedId, items]);
 
+  // Vocabulary sourceRecordId is still projected from legacy source refs
+  // (cloud_record_id/client_record_id), not a Reading Record id.
   const handleGoToSource = useCallback((recordId: string, sentenceId?: string) => {
     let url = legacyAppReaderRoute(recordId);
     if (sentenceId) url += `?sentenceId=${sentenceId}`;

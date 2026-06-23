@@ -19,7 +19,6 @@ from app.schemas.reader_orchestration import (
     VocabularyHighlightItem,
     VocabularyLayerOutput,
 )
-from app.services.reader_orchestration import product_state as product_state_module
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
@@ -798,9 +797,8 @@ async def test_worker_loop_preserves_fail_closed_when_real_executor_is_unconfigu
     }
 
 
-async def test_worker_loop_updates_product_state_to_action_required_only_for_allowlisted_codes(
+async def test_worker_loop_maps_user_actionable_terminal_failure_to_action_required(
     worker_loop_env: asyncpg.Pool,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user_id = await insert_user(worker_loop_env)
     article = await submit_article_ready(
@@ -830,11 +828,6 @@ async def test_worker_loop_updates_product_state_to_action_required_only_for_all
         stopped_worker_type="vocabulary",
         stopped_outcome="failed_terminal",
         attention_code="reader_user_confirmation_required",
-    )
-    monkeypatch.setattr(
-        product_state_module,
-        "USER_ACTION_REQUIRED_ATTENTION_CODES",
-        frozenset({"reader_user_confirmation_required"}),
     )
     runner = _StaticSummaryRunner(summary)
     service = ReaderEnhancementWorkerLoopService(

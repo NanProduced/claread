@@ -106,6 +106,8 @@ def test_decision_keeps_current_product_state_for_superseded_publish_fence() -> 
         "model_route_unavailable",
         "publish_fence_failed",
         "model_output_invalid",
+        "vocabulary_execution_failed",
+        "max_attempts_exceeded",
         None,
     ],
 )
@@ -124,15 +126,7 @@ def test_decision_maps_failed_terminal_to_failed_by_default(
     assert decision.user_visible is False
 
 
-def test_action_required_requires_explicit_allowlist(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        product_state_module,
-        "USER_ACTION_REQUIRED_ATTENTION_CODES",
-        frozenset({"reader_user_confirmation_required"}),
-    )
-
+def test_decision_maps_user_actionable_failed_terminal_to_action_required() -> None:
     decision = product_state_module.decide_product_state_update(
         stopped_reason="attention_required",
         stopped_outcome="failed_terminal",

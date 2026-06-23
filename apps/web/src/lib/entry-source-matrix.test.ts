@@ -67,8 +67,11 @@ describe("entry source matrix - legacy surfaces must not reference the new Readi
       "src/app/(private)/app/vocabulary/VocabularyClient.tsx",
     );
 
+    expect(source).toContain("sourceRecordId");
     expect(source).toContain(LEGACY_ROUTE_HELPER);
+    expect(source).toContain("legacyAppReaderRoute(item.sourceRecordId)");
     expect(source).not.toContain(NEW_ROUTE_HELPER);
+    expect(source).not.toContain(NEW_READER_RECORD_PATH);
   });
 
   it("services/bff/analysis.ts readerUrl projection only uses the legacy reader route helper", () => {
@@ -83,6 +86,30 @@ describe("entry source matrix - legacy surfaces must not reference the new Readi
 
     expect(source).not.toContain(NEW_ROUTE_HELPER);
     expect(source).not.toContain(NEW_READER_RECORD_PATH);
+  });
+});
+
+describe("entry source matrix - Vocabulary source links (W3-D9)", () => {
+  it("keeps legacy sourceRecordId on the legacy reader route until a new source truth exists", () => {
+    const clientSource = readSource(
+      "src/app/(private)/app/vocabulary/VocabularyClient.tsx",
+    );
+    const bffSource = readSource("src/services/bff/vocabulary.ts");
+
+    expect(clientSource).toContain("sourceRecordId");
+    expect(clientSource).toContain(LEGACY_ROUTE_HELPER);
+    expect(clientSource).toContain("legacyAppReaderRoute(item.sourceRecordId)");
+    expect(clientSource).not.toContain(NEW_ROUTE_HELPER);
+    expect(clientSource).not.toContain(NEW_READER_RECORD_PATH);
+    expect(clientSource).not.toContain(LEGACY_READER_PATH);
+
+    expect(bffSource).toContain("sourceRecordId");
+    expect(bffSource).toContain("cloud_record_id");
+    expect(bffSource).toContain("client_record_id");
+    expect(bffSource).not.toContain("sourceReadingRecordId");
+    expect(bffSource).not.toContain("sourceReaderUrl");
+    expect(bffSource).not.toContain(NEW_ROUTE_HELPER);
+    expect(bffSource).not.toContain(NEW_READER_RECORD_PATH);
   });
 });
 

@@ -144,7 +144,7 @@ Rules:
   - `retry_later` does not change `reading_records.product_state`.
   - `superseded` / publish-fence attention does not change `reading_records.product_state`.
   - `failed_terminal` maps to `failed` by default.
-  - `action_required` is only allowed when `attention_code` is in an explicit user-action allowlist; v1 allowlist may stay empty until workers emit concrete user-remediable codes.
+  - `action_required` is only allowed when the failed-terminal mapper classifies `attention_code` as user-remediable; v1 currently only promotes `reader_user_confirmation_required`.
 - executor/profile missing、model route missing、publisher fence and other system failures must not be collapsed into `action_required`.
 - Workers do not write `coverage_complete` directly. Coverage aggregates from `parsed_decisions`.
 
