@@ -11,6 +11,8 @@ from app.schemas.reader_orchestration import (
     ReaderPlainTextSubmitRequest,
     ReaderPlainTextSubmitResponse,
     ReaderPlateSnapshot,
+    ReaderRecordListItem,
+    ReaderRecordListResponse,
 )
 from app.services.auth.dependencies import AuthUserDep
 from app.services.reader_orchestration.article_ready_service import (
@@ -19,6 +21,7 @@ from app.services.reader_orchestration.article_ready_service import (
 )
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
+from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
 
 router = APIRouter(prefix="/reader", tags=["reader"])
 
@@ -136,4 +139,37 @@ async def poll_reader_events(
             )
             for event in result.events
         ],
+    )
+
+
+@router.get(
+    "/records",
+    response_model=ReaderRecordListResponse,
+    summary="List the current user's Reading Records",
+)
+async def list_reader_records(
+    current_user: AuthUserDep,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> ReaderRecordListResponse:
+    repository = ReaderOrchestrationRepository()
+    summaries, total = await repository.list_user_records(
+        user_id=UUID(current_user.user_id),
+        limit=limit,
+    )
+    return ReaderRecordListResponse(
+        items=[
+            ReaderRecordListItem(
+                record_id=str(summary.record_id),
+                title=summary.title,
+                created_at=summary.created_at,
+                source_type=summary.source_type,
+                source_metadata=summary.source_metadata,
+                product_state=summary.product_state,
+                readiness_state=summary.readiness_state,
+                last_event_sequence=summary.last_event_sequence,
+            )
+            for summary in summaries
+        ],
+        total=total,
+        limit=limit,
     )

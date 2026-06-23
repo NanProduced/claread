@@ -98,3 +98,14 @@ describe("entry source matrix - the new Reading Record recovery entry must not r
     expect(source).toContain(NEW_READER_RECORD_PATH);
   });
 });
+
+describe("entry source matrix - the new Reading Record list BFF source", () => {
+  it("reading-records BFF uses the new Reading Record route helper and is free of legacy wiring", () => {
+    const source = readSource("src/services/bff/reading-records.ts");
+
+    expect(source).toContain(NEW_ROUTE_HELPER);
+    expect(source).not.toContain(LEGACY_ROUTE_HELPER);
+    expect(source).not.toContain(LEGACY_READER_PATH);
+    expect(source).not.toContain(ANALYSIS_TASKS_WIRING);
+  });
+});

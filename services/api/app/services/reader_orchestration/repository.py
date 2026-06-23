@@ -41,6 +41,18 @@ class LoadedReaderSnapshotFacts:
     parsed_decisions: tuple[ReaderSnapshotParsedDecision, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ReaderRecordSummary:
+    record_id: UUID
+    title: str | None
+    source_type: str
+    product_state: str
+    readiness_state: str
+    created_at: datetime
+    source_metadata: dict[str, Any]
+    last_event_sequence: int
+
+
 class ReaderOrchestrationRepository:
     def __init__(self, *, pool: asyncpg.Pool | None = None) -> None:
         self._pool = pool
@@ -825,6 +837,68 @@ class ReaderOrchestrationRepository:
                 for row in parsed_rows
             ),
         )
+
+    async def list_user_records(
+        self,
+        *,
+        user_id: UUID,
+        limit: int = 20,
+    ) -> tuple[tuple[ReaderRecordSummary, ...], int]:
+        pool = self.get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    r.id,
+                    r.title,
+                    r.source_type,
+                    r.product_state,
+                    r.readiness_state,
+                    r.created_at,
+                    COALESCE(
+                        (SELECT metadata_json FROM original_inputs
+                         WHERE reading_record_id = r.id
+                         ORDER BY created_at ASC, id ASC
+                         LIMIT 1),
+                        '{}'::jsonb
+                    ) AS source_metadata,
+                    COALESCE(
+                        (SELECT (next_sequence - 1)::bigint FROM reader_event_sequences
+                         WHERE reading_record_id = r.id),
+                        0
+                    ) AS last_event_sequence
+                FROM reading_records r
+                WHERE r.user_id = $1
+                  AND r.deleted_at IS NULL
+                ORDER BY r.created_at DESC
+                LIMIT $2
+                """,
+                user_id,
+                limit,
+            )
+            total = await conn.fetchval(
+                """
+                SELECT COUNT(*)
+                FROM reading_records
+                WHERE user_id = $1
+                  AND deleted_at IS NULL
+                """,
+                user_id,
+            )
+        summaries = tuple(
+            ReaderRecordSummary(
+                record_id=row["id"],
+                title=row["title"],
+                source_type=str(row["source_type"]),
+                product_state=str(row["product_state"]),
+                readiness_state=str(row["readiness_state"]),
+                created_at=row["created_at"],
+                source_metadata=ensure_json_object(row["source_metadata"]),
+                last_event_sequence=int(row["last_event_sequence"]),
+            )
+            for row in rows
+        )
+        return summaries, int(total)
 
 
 def _navigation_json_from_build_result(

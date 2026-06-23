@@ -42,6 +42,13 @@ uv sync
 uv run uvicorn app.main:app --reload
 ```
 
+启动 Reader enhancement worker（独立进程，不挂到 FastAPI lifespan）：
+
+```powershell
+uv run reader-enhancement-worker --once
+uv run reader-enhancement-worker
+```
+
 运行测试：
 
 ```powershell

@@ -364,6 +364,159 @@ async def test_duplicate_client_record_id_returns_conflict(
     assert second.json()["detail"] == "client_record_id already exists for this user"
 
 
+async def test_list_reader_records_returns_user_scoped_records(
+    reader_api_env: dict[str, object],
+) -> None:
+    pool = reader_api_env["pool"]
+    app = reader_api_env["app"]
+    assert isinstance(pool, asyncpg.Pool)
+    assert isinstance(app, FastAPI)
+    user_id = await _insert_user(pool)
+
+    with _mock_auth(user_id):
+        async with await _create_client(app) as client:
+            first = await client.post(
+                "/reader/records/plain-text",
+                headers=AUTH_HEADERS,
+                json={
+                    "plain_text": "First reading record body.",
+                    "title": "First Record",
+                    "source_metadata": {"source_kind": "list_test_first"},
+                },
+            )
+            second = await client.post(
+                "/reader/records/plain-text",
+                headers=AUTH_HEADERS,
+                json={
+                    "plain_text": "Second reading record body.",
+                    "title": "Second Record",
+                    "source_metadata": {"source_kind": "list_test_second"},
+                },
+            )
+
+            assert first.status_code == 200
+            assert second.status_code == 200
+
+            list_response = await client.get(
+                "/reader/records?limit=10",
+                headers=AUTH_HEADERS,
+            )
+            assert list_response.status_code == 200
+            data = list_response.json()
+            assert data["total"] == 2
+            assert data["limit"] == 10
+            assert len(data["items"]) == 2
+
+            items = data["items"]
+            assert items[0]["title"] == "Second Record"
+            assert items[1]["title"] == "First Record"
+
+            for item in items:
+                assert "record_id" in item
+                assert isinstance(item["record_id"], str)
+                assert "created_at" in item
+                assert "source_type" in item
+                assert "source_metadata" in item
+                assert "product_state" in item
+                assert "readiness_state" in item
+                assert "last_event_sequence" in item
+                assert item["source_type"] == "text"
+                assert item["product_state"] == "readable_enhancing"
+                assert item["readiness_state"] == "article_ready"
+                assert item["last_event_sequence"] >= 1
+
+
+async def test_list_reader_records_isolates_by_user(
+    reader_api_env: dict[str, object],
+) -> None:
+    pool = reader_api_env["pool"]
+    app = reader_api_env["app"]
+    assert isinstance(pool, asyncpg.Pool)
+    assert isinstance(app, FastAPI)
+    owner_id = await _insert_user(pool)
+    other_user_id = await _insert_user(pool)
+
+    with _mock_auth(owner_id):
+        async with await _create_client(app) as client:
+            await client.post(
+                "/reader/records/plain-text",
+                headers=AUTH_HEADERS,
+                json={"plain_text": "Owner private record.", "title": "Owner"},
+            )
+
+    with _mock_auth(other_user_id):
+        async with await _create_client(app) as client:
+            await client.post(
+                "/reader/records/plain-text",
+                headers=AUTH_HEADERS,
+                json={"plain_text": "Other user record.", "title": "Other"},
+            )
+
+            list_response = await client.get(
+                "/reader/records",
+                headers=AUTH_HEADERS,
+            )
+            assert list_response.status_code == 200
+            data = list_response.json()
+            assert data["total"] == 1
+            assert len(data["items"]) == 1
+            assert data["items"][0]["title"] == "Other"
+
+
+async def test_list_reader_records_respects_limit(
+    reader_api_env: dict[str, object],
+) -> None:
+    pool = reader_api_env["pool"]
+    app = reader_api_env["app"]
+    assert isinstance(pool, asyncpg.Pool)
+    assert isinstance(app, FastAPI)
+    user_id = await _insert_user(pool)
+
+    with _mock_auth(user_id):
+        async with await _create_client(app) as client:
+            for index in range(3):
+                response = await client.post(
+                    "/reader/records/plain-text",
+                    headers=AUTH_HEADERS,
+                    json={"plain_text": f"Record {index} body.", "title": f"Record {index}"},
+                )
+                assert response.status_code == 200
+
+            list_response = await client.get(
+                "/reader/records?limit=2",
+                headers=AUTH_HEADERS,
+            )
+            assert list_response.status_code == 200
+            data = list_response.json()
+            assert data["total"] == 3
+            assert data["limit"] == 2
+            assert len(data["items"]) == 2
+
+
+async def test_list_reader_records_rejects_invalid_limit(
+    reader_api_env: dict[str, object],
+) -> None:
+    pool = reader_api_env["pool"]
+    app = reader_api_env["app"]
+    assert isinstance(pool, asyncpg.Pool)
+    assert isinstance(app, FastAPI)
+    user_id = await _insert_user(pool)
+
+    with _mock_auth(user_id):
+        async with await _create_client(app) as client:
+            response = await client.get(
+                "/reader/records?limit=0",
+                headers=AUTH_HEADERS,
+            )
+            assert response.status_code == 422
+
+            response = await client.get(
+                "/reader/records?limit=101",
+                headers=AUTH_HEADERS,
+            )
+            assert response.status_code == 422
+
+
 def test_reader_orchestration_api_route_does_not_reference_render_scene_json() -> None:
     path = API_ROOT / "app" / "api" / "routes" / "reader_orchestration.py"
     assert "render_scene_json" not in path.read_text(encoding="utf-8")

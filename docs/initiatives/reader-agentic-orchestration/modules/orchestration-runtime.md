@@ -90,7 +90,7 @@ D5-W1 worker loop 评估结论为 `accepted_with_changes`。
 正式运行形态：
 
 - 使用独立 worker process。
-- 本地通过 CLI entrypoint 启动；部署通过独立 worker service / process / container 启动。
+- 本地通过 `uv run reader-enhancement-worker` CLI entrypoint 启动；部署通过同一 entrypoint 作为独立 worker service / process / container 启动。
 - API 服务只负责 request-serving，不在 FastAPI lifespan / startup hook 中启动 worker loop。
 - Web submit 不同步执行 runner；submit 只创建 durable `article_ready` facts。
 - 不新增 public 或 semi-public worker-control endpoint。
@@ -129,7 +129,7 @@ Model profile / executor 口径：
 
 - `ReaderEnhancementWorkerLoopService` 先做 coarse scan，再以 per-record / per-user advisory locks 串行推进单个 record 与单个用户。
 - scanner 会跳过 `coverage_complete`，并通过 runnable/tracked job gate 避免 `retry_later` hot-loop 与 `failed_terminal` 反复 bootstrap。
-- `scripts/run_reader_enhancement_worker.py` 提供 `--once` 和 loop mode，本地与部署共用同一入口。
+- `services/api/pyproject.toml` 已注册 `reader-enhancement-worker = "scripts.run_reader_enhancement_worker:main"`，底层仍复用 `scripts/run_reader_enhancement_worker.py` 的 `--once` 和 loop mode，本地与部署共用同一入口。
 
 ## Run / Job
 

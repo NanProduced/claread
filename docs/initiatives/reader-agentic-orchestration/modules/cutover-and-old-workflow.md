@@ -1,6 +1,6 @@
 # Cutover 与旧 AI Workflow 处理
 
-> 状态：`D5-W3 D3 done`
+> 状态：`D5-W3 D4 done`
 > 最后更新：2026-06-23
 > 范围：停服重构、旧 workflow 替换、旧表/旧 UI 清理边界，以及 Web cutover 迁移顺序。
 
@@ -396,6 +396,15 @@ W3-D4 最小切片建议范围：
 - 不改 Library / command palette / active task / Vocabulary 运行时逻辑；只新增 BFF 和对应 focused tests。
 - 不新增 public Library UI 切换；先让 BFF contract 可用，再在 W3-D5+ 逐个入口改线。
 - 改线某个入口时，同步更新 `entry-source-matrix.test.ts` 的对应 guard 和本矩阵表。
+
+W3-D4 结论：
+
+- 后端新增 `GET /reader/records` 只读 list endpoint，返回 user-scoped Reading Record 列表，字段包含 `record_id`、`title`、`created_at`、`source_type`、`source_metadata`、`product_state`、`readiness_state`、`last_event_sequence`；支持 `limit`（默认 20，max 100），按 `created_at DESC` 排序，不返回 snapshot 全量内容。
+- Web 新增 `services/api/reading-records.ts` 上游客户端、`services/bff/reading-records.ts` BFF source、`/api/web/reading-records` Web API route；BFF 输出 `readingRecordId` 和 `readerUrl = appReadingRecordRoute(readingRecordId)`，不暴露 `recordId` / `record_id` 命名。
+- 新 BFF source 不引用 `legacyAppReaderRoute`、`/app/reader/` 或 `analysis-tasks`；`entry-source-matrix.test.ts` 已新增 guard 锁定此边界。
+- 本轮没有切任何入口流量：Library、command palette、active task、Vocabulary source links 仍保持旧 id / `legacyAppReaderRoute(...)` 边界。
+- 后端 focused tests 覆盖 user scope、字段 shape、排序、limit 防御；Web BFF tests 覆盖 readerUrl、新 id 命名、无 legacy route。
+- 后续 W3-D5+ 可逐个入口改线：先 command palette recent / search，再 Library，最后 active task 和 Vocabulary source links。
 
 ## 不允许事项
 

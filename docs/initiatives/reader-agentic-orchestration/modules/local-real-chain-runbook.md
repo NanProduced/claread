@@ -6,7 +6,7 @@
 
 范围约束：
 
-- 只使用现有 API、Web BFF 和 `scripts/run_reader_enhancement_worker.py`
+- 只使用现有 API、Web BFF 和 `reader-enhancement-worker` CLI entrypoint（底层复用 `scripts/run_reader_enhancement_worker.py`）
 - 不新增 public worker-control endpoint
 - 不把 runner 挂到 Web submit 或 FastAPI lifespan
 - 不使用 smoke harness / fake executor 作为产品路径
@@ -147,19 +147,19 @@ $env:CLAREAD_WEB_DEBUG_SESSION_TOKEN = "<session_token>"
 单次扫描并退出：
 
 ```powershell
-uv run python scripts/run_reader_enhancement_worker.py --once
+uv run reader-enhancement-worker --once
 ```
 
 持续 loop：
 
 ```powershell
-uv run python scripts/run_reader_enhancement_worker.py
+uv run reader-enhancement-worker
 ```
 
 常用参数：
 
 ```powershell
-uv run python scripts/run_reader_enhancement_worker.py `
+uv run reader-enhancement-worker `
   --scan-interval-seconds 5 `
   --batch-size 10 `
   --max-ticks 24 `
@@ -167,6 +167,8 @@ uv run python scripts/run_reader_enhancement_worker.py `
   --lease-duration-seconds 120 `
   --lease-owner-prefix reader-enhancement-worker
 ```
+
+该 CLI entrypoint 由 `services/api/pyproject.toml` 注册到 `scripts.run_reader_enhancement_worker:main`。如果需要核对底层实现或直接执行模块，仍然可以查看 `services/api/scripts/run_reader_enhancement_worker.py`，但本地/部署运行命令以 `uv run reader-enhancement-worker ...` 为准。
 
 `--once` 会输出 JSON summary。当前最有用的字段是：
 
@@ -325,7 +327,7 @@ Invoke-RestMethod `
 
 - `settings.py` 中 reader worker / model profile settings 存在
 - LLM routes / registry / prompts 的 translation、vocabulary、grammar bundle wiring 存在
-- `uv run python scripts/run_reader_enhancement_worker.py --help` 可以正常输出 CLI help
+- `uv run reader-enhancement-worker --help` 可以正常输出 CLI help
 - 真实 DashScope `workflow-qwen37-max` provider 下，短文本 `plain_text -> article_ready -> worker loop -> snapshot reload` 端到端跑通。
 - Worker 自动 bootstrap vocabulary / grammar bundle jobs，并发布 translation、vocabulary、grammar_note 三类 layer。
 - Snapshot projection 出现 `reader_translation` node、`reader_vocabulary_marks` 和 `reader_grammar_note_marks`。

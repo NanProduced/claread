@@ -400,6 +400,27 @@ class ReaderEventResponse(BaseModel):
     created_at: datetime
 
 
+class ReaderRecordListItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: str = Field(min_length=1)
+    title: str | None = None
+    created_at: datetime
+    source_type: str = Field(min_length=1)
+    source_metadata: dict[str, Any] = Field(default_factory=dict)
+    product_state: ReadingRecordProductState
+    readiness_state: ReadingRecordReadinessState
+    last_event_sequence: int = Field(ge=0)
+
+
+class ReaderRecordListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[ReaderRecordListItem] = Field(default_factory=list)
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1)
+
+
 class ReaderEventPollResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
