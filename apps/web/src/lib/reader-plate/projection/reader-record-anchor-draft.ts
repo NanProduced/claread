@@ -128,14 +128,27 @@ function buildDraft(
   segment: ReaderSelectionSegment,
   anchor: ReaderSnapshotAnchorSegmentDto,
 ): ReaderRecordAnchorDraft | null {
+  if (
+    !Number.isInteger(segment.startOffset) ||
+    !Number.isInteger(segment.endOffset)
+  ) {
+    return null;
+  }
+
   // Anchor segment's unit_start_utf16 is the absolute offset of the segment
   // inside the parent Reading Unit. The selection's start/end offsets are
   // relative to the segment text. Convert to unit-local UTF-16.
-  const start_offset =
-    anchor.unit_start_utf16 + Math.max(0, segment.startOffset);
-  const end_offset = anchor.unit_start_utf16 + Math.max(0, segment.endOffset);
+  const start_offset = anchor.unit_start_utf16 + segment.startOffset;
+  const end_offset = anchor.unit_start_utf16 + segment.endOffset;
 
   if (end_offset <= start_offset) {
+    return null;
+  }
+
+  if (
+    start_offset < anchor.unit_start_utf16 ||
+    end_offset > anchor.unit_end_utf16
+  ) {
     return null;
   }
 

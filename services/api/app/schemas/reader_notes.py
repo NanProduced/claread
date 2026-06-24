@@ -70,8 +70,8 @@ class ReaderNoteUpdateRequest(BaseModel):
 
 class ReaderNoteResponse(BaseModel):
     id: UUID
-    analysis_record_id: UUID
-    anchor_sentence_id: str
+    analysis_record_id: UUID | None = None
+    anchor_sentence_id: str | None = None
     quote_mode: str
     target_key: str
     paragraph_id: str | None = None
@@ -85,6 +85,15 @@ class ReaderNoteResponse(BaseModel):
     payload_json: dict
     created_at: str
     updated_at: str
+    # D6-U4 Reading Record anchor columns. Populated for new Reading Record
+    # rows; None for legacy analysis_record_id rows.
+    reading_record_id: UUID | None = None
+    base_id: UUID | None = None
+    generation: int | None = None
+    unit_id: str | None = None
+    anchor_segment_id: str | None = None
+    unit_start_utf16: int | None = None
+    unit_end_utf16: int | None = None
 
 
 class ReaderNoteListResponse(BaseModel):

@@ -38,14 +38,10 @@ from app.services.text_anchors import (
 _ANNOTATION_FIELDS = (
     "id, analysis_record_id, anchor_type, target_key, "
     "paragraph_id, sentence_id, selected_text, start_offset, end_offset, "
-    "text_hash, color, payload_json, created_at, updated_at"
+    "text_hash, color, payload_json, created_at, updated_at, "
+    "reading_record_id, base_id, generation, unit_id, anchor_segment_id, "
+    "unit_start_utf16, unit_end_utf16"
 )
-
-# D6-A5 dual-contract spike status code for a request that validated cleanly
-# through the Reading Record anchor gate but whose persistence path is not yet
-# wired. Routes must surface this code so the Web side can show a stable
-# "accepted, not yet persisted" signal instead of treating it as a 5xx.
-USER_EDITORIAL_ASSET_WRITE_PENDING = "user_editorial_asset_write_pending"
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,21 +50,41 @@ class _SingleSentenceRange:
     end_offset: int
 
 
-async def _validate_reading_record_anchor_branch(
+def _build_reading_record_target_key(
+    validated: ValidatedReadingRecordAnchor,
+    *,
+    unit_start_utf16: int,
+    unit_end_utf16: int,
+    text_hash: str,
+) -> str:
+    """Deterministic compatibility key for Reading Record anchor rows.
+
+    The key is NOT the authority — `reading_record_id` / `base_id` /
+    `anchor_segment_id` / unit-local offsets are. It exists only because
+    `user_annotations.target_key` is NOT NULL and carries a UNIQUE
+    constraint per user.
+    """
+    return (
+        f"reading-record:{validated.record_id}:base:{validated.base_id}:"
+        f"gen:{validated.generation}:unit:{validated.unit.unit_id}:"
+        f"segment:{validated.anchor_segment.anchor_segment_id}:"
+        f"range:{unit_start_utf16}:{unit_end_utf16}:{text_hash}"
+    )
+
+
+async def _persist_reading_record_anchor_branch(
     conn,
     *,
     user_id: UUID,
     req: UserAnnotationCreateRequest,
     repository: ReaderOrchestrationRepository | None,
-) -> None:
-    """D6-A5 dual-contract spike branch for `req.anchor is not None`.
+) -> UserAnnotationResponse:
+    """D6-U4 V1c single-range persistence for `req.anchor is not None`.
 
-    The new anchor contract bypasses the legacy sentence / target_key /
-    render_scene path. It runs the request through the Reading Record
-    anchor gate. On gate failure we surface the typed error code as a
-    stable HTTP 400; on gate success we currently raise HTTP 409 with
-    `code = USER_EDITORIAL_ASSET_WRITE_PENDING` because persistence is not
-    yet wired into the legacy `user_annotations` table.
+    Runs the request through the Reading Record anchor gate, then writes
+    a real row into `user_annotations` with the Reading Record anchor
+    columns populated and `analysis_record_id = NULL`. The legacy
+    `target_key` / `render_scene` path is never touched.
     """
     assert req.anchor is not None  # caller guards
     repo = repository or ReaderOrchestrationRepository()
@@ -90,21 +106,61 @@ async def _validate_reading_record_anchor_branch(
             },
         ) from exc
 
-    raise HTTPException(
-        status_code=409,
-        detail={
-            "code": USER_EDITORIAL_ASSET_WRITE_PENDING,
-            "message": (
-                "Reading Record anchor validated; persistence into "
-                "user_annotations is deferred until D6-A5 follow-up."
-            ),
-            "validated": True,
-            "record_id": str(validated.record_id),
-            "unit_id": validated.unit.unit_id,
-            "anchor_segment_id": validated.anchor_segment.anchor_segment_id,
-            "selected_text": validated.selected_text,
-        },
+    unit_start_utf16 = req.anchor.start_offset
+    unit_end_utf16 = req.anchor.end_offset
+    target_key = _build_reading_record_target_key(
+        validated,
+        unit_start_utf16=unit_start_utf16,
+        unit_end_utf16=unit_end_utf16,
+        text_hash=req.anchor.text_hash,
     )
+
+    row = await conn.fetchrow(
+        f"""
+        INSERT INTO user_annotations (
+            user_id, analysis_record_id, anchor_type, target_key,
+            paragraph_id, sentence_id, selected_text, start_offset, end_offset,
+            text_hash, color, payload_json,
+            reading_record_id, base_id, generation, unit_id, anchor_segment_id,
+            unit_start_utf16, unit_end_utf16
+        )
+        VALUES ($1, NULL, 'text_range', $2, NULL, NULL, $3, NULL, NULL, $4, $5, $6,
+                $7, $8, $9, $10, $11, $12, $13)
+        ON CONFLICT (user_id, target_key) DO UPDATE SET
+            anchor_type = EXCLUDED.anchor_type,
+            selected_text = EXCLUDED.selected_text,
+            text_hash = EXCLUDED.text_hash,
+            color = EXCLUDED.color,
+            payload_json = EXCLUDED.payload_json,
+            reading_record_id = EXCLUDED.reading_record_id,
+            base_id = EXCLUDED.base_id,
+            generation = EXCLUDED.generation,
+            unit_id = EXCLUDED.unit_id,
+            anchor_segment_id = EXCLUDED.anchor_segment_id,
+            unit_start_utf16 = EXCLUDED.unit_start_utf16,
+            unit_end_utf16 = EXCLUDED.unit_end_utf16,
+            deleted_at = NULL,
+            deleted_by = NULL,
+            updated_at = NOW()
+        RETURNING {_ANNOTATION_FIELDS}
+        """,
+        user_id,
+        target_key,
+        req.selected_text,
+        req.anchor.text_hash,
+        req.color,
+        jsonb_param(dict(req.payload_json)),
+        validated.record_id,
+        validated.base_id,
+        validated.generation,
+        validated.unit.unit_id,
+        validated.anchor_segment.anchor_segment_id,
+        unit_start_utf16,
+        unit_end_utf16,
+    )
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to create user annotation")
+    return _row_to_response(dict(row))
 
 
 def _range_from_annotation_row(row: dict) -> _SingleSentenceRange | None:
@@ -198,6 +254,13 @@ def _row_to_response(
         created_at=row["created_at"].isoformat(),
         updated_at=row["updated_at"].isoformat(),
         superseded_ids=superseded_ids or [],
+        reading_record_id=row.get("reading_record_id"),
+        base_id=row.get("base_id"),
+        generation=row.get("generation"),
+        unit_id=row.get("unit_id"),
+        anchor_segment_id=row.get("anchor_segment_id"),
+        unit_start_utf16=row.get("unit_start_utf16"),
+        unit_end_utf16=row.get("unit_end_utf16"),
     )
 
 
@@ -445,26 +508,19 @@ async def create_user_annotation(
     *,
     repository: ReaderOrchestrationRepository | None = None,
 ) -> UserAnnotationResponse:
-    # D6-A5 dual-contract spike: when the new Reading Record anchor contract
-    # is supplied, run the request through the Reading Record anchor gate
-    # BEFORE doing any legacy target_key / scene / DB work. The branch
-    # either raises an HTTPException with a stable typed `code` (gate
-    # failure) or an HTTPException with `code =
-    # USER_EDITORIAL_ASSET_WRITE_PENDING` because persistence into the
-    # legacy `user_annotations` table is not yet wired.
+    # D6-U4 V1c single-range persistence: when the new Reading Record
+    # anchor contract is supplied, run the request through the Reading
+    # Record anchor gate and persist a real row into user_annotations
+    # with analysis_record_id = NULL. The legacy target_key / render_scene
+    # path is never touched on this branch.
     if req.anchor is not None:
         async with db_connect.acquire_connection() as conn:
-            await _validate_reading_record_anchor_branch(
+            return await _persist_reading_record_anchor_branch(
                 conn,
                 user_id=user_id,
                 req=req,
                 repository=repository,
             )
-        # Unreachable: _validate_reading_record_anchor_branch always raises.
-        raise HTTPException(
-            status_code=500,
-            detail="new anchor branch returned without raising",
-        )
 
     target_key = _build_target_key(req)
 
@@ -596,6 +652,7 @@ async def list_user_annotations(
                 SELECT {_ANNOTATION_FIELDS}
                 FROM user_annotations
                 WHERE user_id = $1 AND deleted_at IS NULL
+                  AND analysis_record_id IS NOT NULL
                 ORDER BY created_at DESC
                 LIMIT $2 OFFSET $3
                 """,

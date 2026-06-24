@@ -10,7 +10,7 @@ from app.contracts.annotation import (
     build_text_range_target_key,
 )
 from app.database import connection as db_connect
-from app.database.json_compat import ensure_json_object
+from app.database.json_compat import ensure_json_object, jsonb_param
 from app.schemas.reader_notes import (
     ReaderNoteCreateRequest,
     ReaderNoteResponse,
@@ -34,27 +34,46 @@ from app.services.text_anchors import (
 _NOTE_FIELDS = (
     "id, analysis_record_id, anchor_sentence_id, quote_mode, target_key, "
     "paragraph_id, sentence_id, selected_text, start_offset, end_offset, "
-    "text_hash, note_text, payload_json, created_at, updated_at"
+    "text_hash, note_text, payload_json, created_at, updated_at, "
+    "reading_record_id, base_id, generation, unit_id, anchor_segment_id, "
+    "unit_start_utf16, unit_end_utf16"
 )
 
-# Mirror of user_annotations.USER_EDITORIAL_ASSET_WRITE_PENDING — the new
-# anchor branch's stable typed code for "validated, persistence deferred".
-READER_NOTE_WRITE_PENDING = "user_editorial_asset_write_pending"
+
+def _build_reading_record_target_key(
+    validated: ValidatedReadingRecordAnchor,
+    *,
+    unit_start_utf16: int,
+    unit_end_utf16: int,
+    text_hash: str,
+) -> str:
+    """Deterministic compatibility key for Reading Record anchor rows.
+
+    The key is NOT the authority — `reading_record_id` / `base_id` /
+    `anchor_segment_id` / unit-local offsets are. It exists only because
+    `reader_notes.target_key` is NOT NULL.
+    """
+    return (
+        f"reading-record:{validated.record_id}:base:{validated.base_id}:"
+        f"gen:{validated.generation}:unit:{validated.unit.unit_id}:"
+        f"segment:{validated.anchor_segment.anchor_segment_id}:"
+        f"range:{unit_start_utf16}:{unit_end_utf16}:{text_hash}"
+    )
 
 
-async def _validate_reading_record_anchor_branch(
+async def _persist_reading_record_anchor_branch(
     conn,
     *,
     user_id: UUID,
     req: ReaderNoteCreateRequest,
     repository: ReaderOrchestrationRepository | None,
-) -> None:
-    """D6-A5 dual-contract spike branch for `req.anchor is not None`.
+) -> ReaderNoteResponse:
+    """D6-U4 V1c single-range persistence for `req.anchor is not None`.
 
-    Runs the request through the Reading Record anchor gate. Gate failure
-    -> HTTP 400 with the typed error code; gate success -> HTTP 409 with
-    `code = READER_NOTE_WRITE_PENDING`. Persistence into the legacy
-    `reader_notes` table is not yet wired for the new anchor path.
+    Runs the request through the Reading Record anchor gate, then writes
+    a real row into `reader_notes` with the Reading Record anchor columns
+    populated and `analysis_record_id = NULL`. The legacy `target_key` /
+    `render_scene` path is never touched.
     """
     assert req.anchor is not None  # caller guards
     repo = repository or ReaderOrchestrationRepository()
@@ -76,21 +95,57 @@ async def _validate_reading_record_anchor_branch(
             },
         ) from exc
 
-    raise HTTPException(
-        status_code=409,
-        detail={
-            "code": READER_NOTE_WRITE_PENDING,
-            "message": (
-                "Reading Record anchor validated; persistence into "
-                "reader_notes is deferred until D6-A5 follow-up."
-            ),
-            "validated": True,
-            "record_id": str(validated.record_id),
-            "unit_id": validated.unit.unit_id,
-            "anchor_segment_id": validated.anchor_segment.anchor_segment_id,
-            "selected_text": validated.selected_text,
-        },
+    unit_start_utf16 = req.anchor.start_offset
+    unit_end_utf16 = req.anchor.end_offset
+    target_key = _build_reading_record_target_key(
+        validated,
+        unit_start_utf16=unit_start_utf16,
+        unit_end_utf16=unit_end_utf16,
+        text_hash=req.anchor.text_hash,
     )
+
+    row = await conn.fetchrow(
+        f"""
+        INSERT INTO reader_notes (
+            user_id, analysis_record_id, anchor_sentence_id, quote_mode, target_key,
+            paragraph_id, sentence_id, selected_text, start_offset, end_offset,
+            text_hash, note_text, payload_json,
+            reading_record_id, base_id, generation, unit_id, anchor_segment_id,
+            unit_start_utf16, unit_end_utf16
+        )
+        VALUES ($1, NULL, NULL, 'text_range', $2, NULL, NULL, $3, NULL, NULL, $4, $5, $6,
+                $7, $8, $9, $10, $11, $12, $13)
+        ON CONFLICT (user_id, reading_record_id, base_id, anchor_segment_id,
+                     unit_start_utf16, unit_end_utf16, text_hash)
+            WHERE reading_record_id IS NOT NULL AND deleted_at IS NULL
+        DO UPDATE SET
+            quote_mode = EXCLUDED.quote_mode,
+            selected_text = EXCLUDED.selected_text,
+            text_hash = EXCLUDED.text_hash,
+            note_text = EXCLUDED.note_text,
+            payload_json = EXCLUDED.payload_json,
+            deleted_at = NULL,
+            deleted_by = NULL,
+            updated_at = NOW()
+        RETURNING {_NOTE_FIELDS}
+        """,
+        user_id,
+        target_key,
+        req.selected_text,
+        req.anchor.text_hash,
+        req.note_text,
+        jsonb_param(dict(req.payload_json)),
+        validated.record_id,
+        validated.base_id,
+        validated.generation,
+        validated.unit.unit_id,
+        validated.anchor_segment.anchor_segment_id,
+        unit_start_utf16,
+        unit_end_utf16,
+    )
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to create reader note")
+    return _row_to_response(dict(row))
 
 
 def _row_to_response(row: dict) -> ReaderNoteResponse:
@@ -118,6 +173,13 @@ def _row_to_response(row: dict) -> ReaderNoteResponse:
         payload_json=payload_json,
         created_at=row["created_at"].isoformat(),
         updated_at=row["updated_at"].isoformat(),
+        reading_record_id=row.get("reading_record_id"),
+        base_id=row.get("base_id"),
+        generation=row.get("generation"),
+        unit_id=row.get("unit_id"),
+        anchor_segment_id=row.get("anchor_segment_id"),
+        unit_start_utf16=row.get("unit_start_utf16"),
+        unit_end_utf16=row.get("unit_end_utf16"),
     )
 
 
@@ -211,25 +273,19 @@ async def create_reader_note(
     *,
     repository: ReaderOrchestrationRepository | None = None,
 ) -> ReaderNoteResponse:
-    # D6-A5 dual-contract spike: when the new Reading Record anchor contract
-    # is supplied, route through the Reading Record anchor gate BEFORE
-    # touching legacy analysis_record_id / target_key / render scene / DB.
-    # The branch raises an HTTPException with a stable typed `code` (gate
-    # failure → 400) or `code = READER_NOTE_WRITE_PENDING` because
-    # persistence into the legacy `reader_notes` table is not yet wired.
+    # D6-U4 V1c single-range persistence: when the new Reading Record
+    # anchor contract is supplied, run the request through the Reading
+    # Record anchor gate and persist a real row into reader_notes with
+    # analysis_record_id = NULL. The legacy target_key / render_scene
+    # path is never touched on this branch.
     if req.anchor is not None:
         async with db_connect.acquire_connection() as conn:
-            await _validate_reading_record_anchor_branch(
+            return await _persist_reading_record_anchor_branch(
                 conn,
                 user_id=user_id,
                 req=req,
                 repository=repository,
             )
-        # Unreachable: _validate_reading_record_anchor_branch always raises.
-        raise HTTPException(
-            status_code=500,
-            detail="new anchor branch returned without raising",
-        )
 
     try:
         record_id = UUID(req.analysis_record_id)

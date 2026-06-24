@@ -1,6 +1,7 @@
-"""D6-A5 dual-contract spike characterization tests.
+"""D6-U4 V1c single-range persistence tests.
 
-These tests lock the current D6-A5 spike contract:
+These tests lock the D6-U4 persistence contract (superseding the D6-A5
+spike that returned 409 `write_pending`):
 
 - Legacy note / highlight create + list behaviour is unchanged when the
   request does NOT carry the new `anchor` field.
@@ -8,22 +9,23 @@ These tests lock the current D6-A5 spike contract:
   schema; the legacy required-field validator is relaxed.
 - The new-anchor path routes through `load_validated_reading_record_anchor`.
 - Gate failure surfaces as a stable HTTP 400 with the gate error code.
-- Gate success surfaces as a stable HTTP 409 with
-  `code = user_editorial_asset_write_pending` and a `validated: True`
-  payload; the legacy `user_annotations` / `reader_notes` table is NOT
-  written to on the new path (spike only — persistence deferred).
-- The Reading Record id from the new anchor is never silently copied into
-  the legacy `analysis_record_id` field.
+- Gate success now persists a real row into `user_annotations` /
+  `reader_notes` with `analysis_record_id = NULL` and the Reading Record
+  anchor columns populated. No 409 is returned.
+- The new-anchor branch never calls `load_render_scene` /
+  `validate_*_against_render_scene`.
+- The Reading Record id from the new anchor is never silently copied
+  into the legacy `analysis_record_id` field (the INSERT hardcodes NULL).
 
 DB writes are simulated by patching `db_connect.acquire_connection` to a
-mock that records any calls. The new-anchor branch must not perform any
-`fetchrow` / `execute` against the legacy tables.
+mock whose `fetchrow` returns a realistic inserted-row dict.
 """
 
 from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -44,20 +46,14 @@ from app.contracts.annotation import (
 from app.schemas.reader_notes import ReaderNoteCreateRequest
 from app.schemas.user_annotations import UserAnnotationCreateRequest
 from app.schemas.user_editorial_assets import UserEditorialAssetAnchor
-from app.services.reader_notes import (
-    READER_NOTE_WRITE_PENDING,
-    create_reader_note,
-)
+from app.services.reader_notes import create_reader_note
 from app.services.reader_orchestration.base_builder import (
     BuiltAnchorSegment,
     BuiltReadingUnit,
     ReadingBaseBuildResult,
     StableReadingBase,
 )
-from app.services.user_annotations import (
-    USER_EDITORIAL_ASSET_WRITE_PENDING,
-    create_user_annotation,
-)
+from app.services.user_annotations import create_user_annotation
 
 USER_ID = UUID("00000000-0000-0000-0000-0000000000a5")
 RECORD_ID = uuid4()
@@ -174,9 +170,74 @@ def _new_anchor(**overrides: object) -> UserEditorialAssetAnchor:
 def _mock_db_pool() -> tuple[MagicMock, AsyncMock]:
     mock_conn = AsyncMock()
     mock_pool = MagicMock()
-    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    # `acquire_connection()` is patched to return `mock_pool` directly, so
+    # `async with acquire_connection() as conn:` calls `mock_pool.__aenter__`.
+    mock_pool.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.__aexit__ = AsyncMock(return_value=False)
     return mock_pool, mock_conn
+
+
+def _make_inserted_annotation_row() -> dict:
+    """A realistic user_annotations row as returned by RETURNING."""
+    now = datetime(2026, 6, 24, 12, 0, 0)
+    return {
+        "id": uuid4(),
+        "analysis_record_id": None,
+        "anchor_type": "text_range",
+        "target_key": (
+            f"reading-record:{RECORD_ID}:base:{BASE_ID}:gen:2:"
+            f"unit:u1:segment:s1:range:6:8:{compute_text_range_hash('🧠')}"
+        ),
+        "paragraph_id": None,
+        "sentence_id": None,
+        "selected_text": "🧠",
+        "start_offset": None,
+        "end_offset": None,
+        "text_hash": compute_text_range_hash("🧠"),
+        "color": "soft_green",
+        "payload_json": {},
+        "created_at": now,
+        "updated_at": now,
+        "reading_record_id": RECORD_ID,
+        "base_id": BASE_ID,
+        "generation": 2,
+        "unit_id": "u1",
+        "anchor_segment_id": "s1",
+        "unit_start_utf16": 6,
+        "unit_end_utf16": 8,
+    }
+
+
+def _make_inserted_note_row() -> dict:
+    """A realistic reader_notes row as returned by RETURNING."""
+    now = datetime(2026, 6, 24, 12, 0, 0)
+    return {
+        "id": uuid4(),
+        "analysis_record_id": None,
+        "anchor_sentence_id": None,
+        "quote_mode": "text_range",
+        "target_key": (
+            f"reading-record:{RECORD_ID}:base:{BASE_ID}:gen:2:"
+            f"unit:u1:segment:s1:range:6:8:{compute_text_range_hash('🧠')}"
+        ),
+        "paragraph_id": None,
+        "sentence_id": None,
+        "selected_text": "🧠",
+        "start_offset": None,
+        "end_offset": None,
+        "text_hash": compute_text_range_hash("🧠"),
+        "note_text": "note",
+        "payload_json": {},
+        "created_at": now,
+        "updated_at": now,
+        "reading_record_id": RECORD_ID,
+        "base_id": BASE_ID,
+        "generation": 2,
+        "unit_id": "u1",
+        "anchor_segment_id": "s1",
+        "unit_start_utf16": 6,
+        "unit_end_utf16": 8,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -454,15 +515,15 @@ async def test_reader_note_new_anchor_400_on_outside_anchor_segment_range() -> N
 
 
 # ---------------------------------------------------------------------------
-# New-anchor branch: gate success -> HTTP 409 with write-pending code; no DB
-# write happens on the legacy tables.
+# New-anchor branch: gate success -> real INSERT, no 409.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_user_annotation_new_anchor_409_write_pending_no_db_write() -> None:
+async def test_user_annotation_new_anchor_persists_row_no_409() -> None:
     repository = _FakeRepository(facts=SimpleNamespace(build_result=_build_result()))
     pool, mock_conn = _mock_db_pool()
+    mock_conn.fetchrow.return_value = _make_inserted_annotation_row()
     req = UserAnnotationCreateRequest(
         anchor=_new_anchor(),
         selected_text="🧠",
@@ -471,19 +532,9 @@ async def test_user_annotation_new_anchor_409_write_pending_no_db_write() -> Non
         "app.services.user_annotations.db_connect.acquire_connection",
         return_value=pool,
     ):
-        with pytest.raises(HTTPException) as excinfo:
-            await create_user_annotation(USER_ID, req, repository=repository)
+        response = await create_user_annotation(USER_ID, req, repository=repository)
 
-    assert excinfo.value.status_code == 409
-    detail = excinfo.value.detail
-    assert detail["code"] == USER_EDITORIAL_ASSET_WRITE_PENDING
-    assert detail["validated"] is True
-    assert detail["record_id"] == str(RECORD_ID)
-    assert detail["unit_id"] == "u1"
-    assert detail["anchor_segment_id"] == "s1"
-    assert detail["selected_text"] == "🧠"
-
-    # Repository must have been invoked once with the right fences.
+    # Gate was invoked once with the right fences.
     assert len(repository.calls) == 1
     call = repository.calls[0]
     assert call["user_id"] == USER_ID
@@ -491,16 +542,28 @@ async def test_user_annotation_new_anchor_409_write_pending_no_db_write() -> Non
     assert call["expected_base_id"] == BASE_ID
     assert call["expected_generation"] == 2
 
-    # No legacy-table INSERT/UPDATE call. The mock conn was acquired but
-    # no fetchrow / execute targeted user_annotations on the new path.
-    mock_conn.fetchrow.assert_not_called()
-    mock_conn.execute.assert_not_called()
+    # A real INSERT was issued (fetchrow called once).
+    assert mock_conn.fetchrow.call_count == 1
+    sql_arg = mock_conn.fetchrow.call_args.args[0]
+    assert "INSERT INTO user_annotations" in sql_arg
+
+    # Response carries the Reading Record anchor columns.
+    assert response.analysis_record_id is None
+    assert response.reading_record_id == RECORD_ID
+    assert response.base_id == BASE_ID
+    assert response.generation == 2
+    assert response.unit_id == "u1"
+    assert response.anchor_segment_id == "s1"
+    assert response.unit_start_utf16 == 6
+    assert response.unit_end_utf16 == 8
+    assert response.selected_text == "🧠"
 
 
 @pytest.mark.asyncio
-async def test_reader_note_new_anchor_409_write_pending_no_db_write() -> None:
+async def test_reader_note_new_anchor_persists_row_no_409() -> None:
     repository = _FakeRepository(facts=SimpleNamespace(build_result=_build_result()))
     pool, mock_conn = _mock_db_pool()
+    mock_conn.fetchrow.return_value = _make_inserted_note_row()
     req = ReaderNoteCreateRequest(
         anchor=_new_anchor(),
         quote_mode="text_range",
@@ -511,16 +574,90 @@ async def test_reader_note_new_anchor_409_write_pending_no_db_write() -> None:
         "app.services.reader_notes.db_connect.acquire_connection",
         return_value=pool,
     ):
-        with pytest.raises(HTTPException) as excinfo:
-            await create_reader_note(USER_ID, req, repository=repository)
+        response = await create_reader_note(USER_ID, req, repository=repository)
 
-    assert excinfo.value.status_code == 409
-    detail = excinfo.value.detail
-    assert detail["code"] == READER_NOTE_WRITE_PENDING
-    assert detail["validated"] is True
+    # Gate was invoked once.
+    assert len(repository.calls) == 1
 
-    mock_conn.fetchrow.assert_not_called()
-    mock_conn.execute.assert_not_called()
+    # A real INSERT was issued.
+    assert mock_conn.fetchrow.call_count == 1
+    sql_arg = mock_conn.fetchrow.call_args.args[0]
+    assert "INSERT INTO reader_notes" in sql_arg
+
+    # Response carries the Reading Record anchor columns.
+    assert response.analysis_record_id is None
+    assert response.reading_record_id == RECORD_ID
+    assert response.base_id == BASE_ID
+    assert response.generation == 2
+    assert response.unit_id == "u1"
+    assert response.anchor_segment_id == "s1"
+    assert response.unit_start_utf16 == 6
+    assert response.unit_end_utf16 == 8
+    assert response.note_text == "note"
+
+
+@pytest.mark.asyncio
+async def test_user_annotation_new_anchor_branch_does_not_use_render_scene_validation() -> None:
+    repository = _FakeRepository(facts=SimpleNamespace(build_result=_build_result()))
+    pool, mock_conn = _mock_db_pool()
+    mock_conn.fetchrow.return_value = _make_inserted_annotation_row()
+    req = UserAnnotationCreateRequest(
+        anchor=_new_anchor(),
+        selected_text="🧠",
+    )
+
+    with (
+        patch(
+            "app.services.user_annotations.db_connect.acquire_connection",
+            return_value=pool,
+        ),
+        patch("app.services.user_annotations.load_render_scene") as load_render_scene,
+        patch(
+            "app.services.user_annotations.validate_text_range_against_render_scene"
+        ) as validate_text_range,
+        patch(
+            "app.services.user_annotations.validate_multi_text_against_render_scene"
+        ) as validate_multi_text,
+    ):
+        response = await create_user_annotation(USER_ID, req, repository=repository)
+
+    assert response.reading_record_id == RECORD_ID
+    load_render_scene.assert_not_called()
+    validate_text_range.assert_not_called()
+    validate_multi_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reader_note_new_anchor_branch_does_not_use_render_scene_validation() -> None:
+    repository = _FakeRepository(facts=SimpleNamespace(build_result=_build_result()))
+    pool, mock_conn = _mock_db_pool()
+    mock_conn.fetchrow.return_value = _make_inserted_note_row()
+    req = ReaderNoteCreateRequest(
+        anchor=_new_anchor(),
+        quote_mode="text_range",
+        selected_text="🧠",
+        note_text="note",
+    )
+
+    with (
+        patch(
+            "app.services.reader_notes.db_connect.acquire_connection",
+            return_value=pool,
+        ),
+        patch("app.services.reader_notes.load_render_scene") as load_render_scene,
+        patch(
+            "app.services.reader_notes.validate_text_range_against_render_scene"
+        ) as validate_text_range,
+        patch(
+            "app.services.reader_notes.validate_multi_text_against_render_scene"
+        ) as validate_multi_text,
+    ):
+        response = await create_reader_note(USER_ID, req, repository=repository)
+
+    assert response.reading_record_id == RECORD_ID
+    load_render_scene.assert_not_called()
+    validate_text_range.assert_not_called()
+    validate_multi_text.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -532,26 +669,34 @@ async def test_reader_note_new_anchor_409_write_pending_no_db_write() -> None:
 async def test_new_anchor_branch_never_populates_legacy_analysis_record_id() -> None:
     repository = _FakeRepository(facts=SimpleNamespace(build_result=_build_result()))
     pool, mock_conn = _mock_db_pool()
+    mock_conn.fetchrow.return_value = _make_inserted_annotation_row()
+    smuggled_record_id = str(uuid4())
     req = UserAnnotationCreateRequest(
         anchor=_new_anchor(),
         selected_text="🧠",
         # Deliberately set analysis_record_id to a *different* UUID so we
         # can detect any silent overwrite.
-        analysis_record_id=str(uuid4()),
+        analysis_record_id=smuggled_record_id,
     )
 
     with patch(
         "app.services.user_annotations.db_connect.acquire_connection",
         return_value=pool,
     ):
-        with pytest.raises(HTTPException) as excinfo:
-            await create_user_annotation(USER_ID, req, repository=repository)
+        response = await create_user_annotation(USER_ID, req, repository=repository)
 
-    assert excinfo.value.status_code == 409
-    # Even when the request smuggles in a legacy analysis_record_id, the
-    # spike never writes to user_annotations on the new anchor path.
-    mock_conn.fetchrow.assert_not_called()
-    mock_conn.execute.assert_not_called()
+    # The INSERT was issued and the returned row has analysis_record_id = None.
+    assert mock_conn.fetchrow.call_count == 1
+    assert response.analysis_record_id is None
+    assert response.reading_record_id == RECORD_ID
+
+    # The INSERT SQL must hardcode NULL for analysis_record_id rather than
+    # passing the smuggled UUID as a parameter.
+    sql_arg = mock_conn.fetchrow.call_args.args[0]
+    assert "analysis_record_id" in sql_arg
+    # The VALUES clause must contain literal NULL for analysis_record_id.
+    # The smuggled UUID must NOT appear in any positional parameter.
+    assert smuggled_record_id not in mock_conn.fetchrow.call_args.args
 
 
 def test_user_annotation_schema_does_not_silently_remap_anchor_record_id() -> None:
@@ -576,3 +721,54 @@ def test_reader_note_schema_does_not_silently_remap_anchor_record_id() -> None:
     )
     assert req.analysis_record_id is None
     assert req.anchor_sentence_id is None
+
+
+# ---------------------------------------------------------------------------
+# Legacy list isolation: list-all must not return Reading Record rows.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_user_annotations_without_record_id_excludes_reading_record_rows() -> None:
+    """The legacy list-all path must filter out Reading Record rows.
+
+    New Reading Record rows have analysis_record_id = NULL. The list-all
+    branch (record_id is None) must include `AND analysis_record_id IS NOT NULL`
+    so that legacy consumers don't see Reading Record highlights.
+    """
+    from app.services.user_annotations import list_user_annotations
+
+    pool, mock_conn = _mock_db_pool()
+    mock_conn.fetch.return_value = []
+
+    with patch(
+        "app.services.user_annotations.db_connect.acquire_connection",
+        return_value=pool,
+    ):
+        await list_user_annotations(USER_ID)
+
+    assert mock_conn.fetch.call_count == 1
+    sql_arg = mock_conn.fetch.call_args.args[0]
+    assert "analysis_record_id IS NOT NULL" in sql_arg
+
+
+@pytest.mark.asyncio
+async def test_list_reader_notes_filters_by_analysis_record_id() -> None:
+    """list_reader_notes always filters by analysis_record_id = $2, which
+    already excludes Reading Record rows (NULL != any value). This test
+    locks that the filter remains in place."""
+    from app.services.reader_notes import list_reader_notes
+
+    pool, mock_conn = _mock_db_pool()
+    mock_conn.fetch.return_value = []
+
+    legacy_record_id = str(uuid4())
+    with patch(
+        "app.services.reader_notes.db_connect.acquire_connection",
+        return_value=pool,
+    ):
+        await list_reader_notes(USER_ID, legacy_record_id)
+
+    assert mock_conn.fetch.call_count == 1
+    sql_arg = mock_conn.fetch.call_args.args[0]
+    assert "analysis_record_id = $2" in sql_arg

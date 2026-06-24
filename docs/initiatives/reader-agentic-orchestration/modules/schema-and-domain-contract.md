@@ -342,6 +342,121 @@ Rules:
 - D6-U1 must keep `user_annotations` / `reader_notes` as runtime writes until a read migration + dual-write reconciliation pass lands; new Reading Record anchor writes are additive only.
 - The dependency inventory behind this D6-U0 characterization is recorded in `D6-A0 Ask / notes / highlights dependency audit` below. D6 product work that touches Ask / notes / highlights must update that matrix first, not after.
 
+### D6-U2 Multi-anchor Contract Decision
+
+Audit result:
+
+- `UserEditorialAssetAnchor` is a single-range DTO: one `unit_id`, one `anchor_segment_id`, one unit-local UTF-16 `start_offset` / `end_offset`, one `selected_text` and one `text_hash`.
+- `load_validated_reading_record_anchor(...)` in `anchor_gate.py` accepts exactly one `UserEditorialAssetAnchor`; it resolves one Reading Unit and one Anchor Segment, then validates that single span against the unit text.
+- D6-A5 `UserAnnotationCreateRequest.anchor` and `ReaderNoteCreateRequest.anchor` are therefore single-range only. Their new-anchor branch correctly bypasses legacy `target_key` / `render_scene` validation and returns 409 write-pending after gate success.
+
+Decision:
+
+- V1c production writes are **single-range first**.
+- A full-sentence user asset is represented as a single `UserEditorialAssetAnchor` covering the full Anchor Segment range; it is not a separate legacy `sentence` authority.
+- `multi_text` must not be overloaded into `UserEditorialAssetAnchor` and must not fall back to legacy render-scene validation on `/app/reader-record`.
+- D6-U2 adds schema-only draft DTOs `UserEditorialAssetAnchorRange` and `UserEditorialAssetAnchorSet` for future multi-range assets. They are not accepted by production write requests, routes or services in this step.
+- No DB migration is introduced in D6-U2. Multi-range persistence requires a later contract covering storage shape, reload projection, ordering, conflict semantics and migration/dual-write behavior.
+
+### D6-U3 V1c Single-range Persistence Design
+
+> 本节是 design / contract only。当前轮次不新增 DB migration，不改 runtime 写入，不启用 `/app/reader-record` Web 写入口。
+
+Inputs from D6-A5 / D6-U2:
+
+- D6-A5 already adds optional `anchor: UserEditorialAssetAnchor` to `UserAnnotationCreateRequest` and `ReaderNoteCreateRequest`.
+- When `anchor` is present, services must bypass legacy `target_key` / `render_scene` validation and run the Reading Record anchor gate.
+- Gate success currently returns HTTP 409 `user_editorial_asset_write_pending`; no legacy table write happens yet.
+- D6-U2 fixes the V1c scope to single-range first. `multi_text` stays behind `UserEditorialAssetAnchorSet` and is not part of V1c production persistence.
+
+Candidate persistence paths:
+
+| Path | Shape | Pros | Risks / costs | V1c decision |
+|---|---|---|---|---|
+| Extend legacy `user_annotations` / `reader_notes` | Add nullable Reading Record anchor columns to both tables while keeping existing legacy columns. Suggested contract columns: `reading_record_id`, `base_id`, `generation`, `unit_id`, `anchor_segment_id`, `unit_start_utf16`, `unit_end_utf16`, plus existing `selected_text` / `text_hash`. | Minimal blast radius; reuses existing table ownership, update/delete/list services, note body storage, highlight color storage, and existing Web mental model. Allows legacy `/app/reader` rows and new `/app/reader-record` rows to coexist in the same domain tables while queries stay isolated by id family. | Requires making `reader_notes.analysis_record_id` nullable or adding a parallel new-record uniqueness path; existing `target_key` remains not-null and must become a deterministic compatibility key, not an authority. Needs partial indexes / constraints for the new id family. | **Recommended for V1c**. This is the smallest production path after the D6-A5 validation branch. |
+| Add new `user_editorial_assets` unified table | Store all user highlights/notes/comments under one new table with asset type, anchor payload, note body/color payload, lifecycle and projection metadata. | Cleaner long-term domain model; avoids continuing legacy column names; easier to generalize to multi-range, Ask save, translation-bound notes and future user asset types. | Higher migration cost; creates two read sources during cutover; requires new service, route, DTO, permission checks, reload projection, update/delete semantics, migration/backfill strategy and legacy compatibility adapters. Existing note/highlight UI and old route behavior would need broader coordination. | Defer. Revisit after V1c single-range write/read is stable or when multi-range / cross-scope asset unification becomes mandatory. |
+
+Recommended V1c table-extension contract:
+
+- `user_annotations` and `reader_notes` stay the persistence owners for quick highlights and comment/note bodies.
+- New Reading Record rows must carry `reading_record_id`, `base_id`, `generation`, `unit_id`, `anchor_segment_id`, `unit_start_utf16`, `unit_end_utf16`, `selected_text`, `text_hash` and hash metadata.
+- Legacy rows keep `analysis_record_id` and legacy `sentence_id` / `target_key` semantics. New rows must not auto-fill `analysis_record_id` from `anchor.record_id`.
+- Existing `target_key` may remain as a deterministic compatibility key because the current schema requires it, but `/app/reader-record` must never treat it as the authority. Suggested key family: `reading-record:{reading_record_id}:base:{base_id}:gen:{generation}:unit:{unit_id}:segment:{anchor_segment_id}:range:{unit_start_utf16}:{unit_end_utf16}:{text_hash}`.
+- `reader_notes.analysis_record_id` must become nullable or be split by a new partial uniqueness constraint before new Reading Record notes can be written.
+- Add new partial uniqueness / lookup indexes for the Reading Record family, for example `(user_id, reading_record_id, base_id, anchor_segment_id, unit_start_utf16, unit_end_utf16, text_hash)` where `deleted_at IS NULL`.
+- The service branch remains explicit: `req.anchor is not None` means Reading Record path; `req.anchor is None` means legacy path. The Reading Record path must not call `load_render_scene(...)`, `validate_text_range_against_render_scene(...)` or `validate_multi_text_against_render_scene(...)`.
+
+Reload projection for `/app/reader-record`:
+
+- Query user annotations / notes by `reading_record_id`, not `analysis_record_id`.
+- Filter by current active `base_id` + `generation` for normal display. Rows from stale bases should be hidden by default or returned with a typed stale-anchor state for future repair UI; they must not be revalidated through legacy render scene.
+- Project each row to Plate using `unit_id`, `anchor_segment_id`, and unit-local UTF-16 offsets against the current `ReaderPlateSnapshot`.
+- Sorting should use Reading Record order: Reading Unit order, Anchor Segment order, `unit_start_utf16`, `unit_end_utf16`, then `created_at`. Do not reuse `anchor_sentence_id` ordering for new rows.
+- Legacy `/app/reader/{recordId}` continues querying by `analysis_record_id`; new Reading Record rows with `analysis_record_id IS NULL` remain invisible to the legacy route.
+
+Legacy isolation rules:
+
+- Old `/app/reader/{recordId}` routes, BFFs and services continue to accept and write legacy payloads without requiring `anchor`.
+- New `/app/reader-record/{recordId}` write routes must be separate route/BFF entry points and must require `anchor`.
+- There is no silent id remap between `anchor.record_id` and `analysis_record_id`.
+- `render_scene_json` remains allowed only for legacy `/app/reader` behavior and old eval/directus observation surfaces. It is forbidden as a validation source for new Reading Record writes.
+- No production write is enabled until a migration adds the required columns, constraints and focused tests for the table-extension path.
+
+### D6-U4 V1c Single-range Persistence Implementation
+
+> 本节是 D6-U3 design 的落地实现。新增 DB migration，改 runtime 写入，但只做 single-range，仍不启用 `/app/reader-record` UI 写入口。
+
+Migration: `infra/migrations/0002_reader_record_anchor_columns.sql`
+
+新增列（`user_annotations` 和 `reader_notes` 两表对称）：
+
+- `reading_record_id UUID` (nullable)
+- `base_id UUID` (nullable)
+- `generation INTEGER` (nullable)
+- `unit_id TEXT` (nullable)
+- `anchor_segment_id TEXT` (nullable)
+- `unit_start_utf16 INTEGER` (nullable)
+- `unit_end_utf16 INTEGER` (nullable)
+
+`hash_algorithm` 不作为列新增：它是 code-level constant `fnv1a32-utf16`，不是 per-row data。
+
+`reader_notes.analysis_record_id` 和 `reader_notes.anchor_sentence_id` 安全迁移为 nullable。取舍说明：
+
+- 现有 `UNIQUE (user_id, analysis_record_id, target_key)` 约束在 `analysis_record_id = NULL` 时不会冲突（PostgreSQL NULLs are distinct），因此不需要删除现有约束。
+- 新 Reading Record rows 的 dedup 依赖新增 partial unique index `(user_id, reading_record_id, base_id, anchor_segment_id, unit_start_utf16, unit_end_utf16, text_hash) WHERE reading_record_id IS NOT NULL AND deleted_at IS NULL`。
+- 这比"新增并行列 + 新 constraint"方案风险更小：不改变现有 legacy rows 的约束行为，不引入双列歧义。
+
+`user_annotations` 的现有 CHECK `user_annotations_text_anchor_payload_check` 被替换：`anchor_type = 'text_range'` 现在接受 legacy path（`analysis_record_id IS NOT NULL` + 旧 offsets）或 Reading Record path（`analysis_record_id IS NULL` + anchor columns set）。
+
+新增 indexes（两表对称）：
+
+- `idx_{table}_reading_record` on `(user_id, reading_record_id, base_id, generation) WHERE reading_record_id IS NOT NULL AND deleted_at IS NULL` — lookup index
+- `uq_{table}_reading_record_anchor` on `(user_id, reading_record_id, base_id, anchor_segment_id, unit_start_utf16, unit_end_utf16, text_hash) WHERE reading_record_id IS NOT NULL AND deleted_at IS NULL` — partial unique index for dedup
+
+Runtime 写入分支（`create_user_annotation` / `create_reader_note`）：
+
+- `req.anchor is not None` → Reading Record path：gate 成功后真实 INSERT，`analysis_record_id = NULL`，anchor columns 填充，`target_key` 生成 deterministic compatibility key（不是 authority）。
+- `req.anchor is None` → legacy path：完全不变，仍走 `analysis_record_id` + `load_render_scene` + `validate_*_against_render_scene`。
+- Reading Record path 不调用 `load_render_scene` / `validate_text_range_against_render_scene` / `validate_multi_text_against_render_scene`。
+- Reading Record id 不会被静默映射到 `analysis_record_id`（INSERT SQL 硬编码 `NULL`）。
+- `user_annotations` 使用 `ON CONFLICT (user_id, target_key) DO UPDATE`（复用现有 UNIQUE 约束）。
+- `reader_notes` 使用 `ON CONFLICT (user_id, reading_record_id, base_id, anchor_segment_id, unit_start_utf16, unit_end_utf16, text_hash) WHERE reading_record_id IS NOT NULL AND deleted_at IS NULL DO UPDATE`（使用新增 partial unique index）。
+
+Legacy isolation：
+
+- Legacy list/update/delete 按 `analysis_record_id` 查询，新 Reading Record rows（`analysis_record_id IS NULL`）对 legacy route 不可见。
+- `list_user_annotations` 的 list-all 分支（`record_id is None`）显式过滤 `AND analysis_record_id IS NOT NULL`，防止新 Reading Record rows 泄漏到 legacy 全量列表。
+- Legacy `/app/reader/{recordId}` path 完全不变。
+- `/app/reader-record` UI 写入口仍未启用。
+
+FK 约束决策：
+
+- V1c 不为 `reading_record_id` / `base_id` / `generation` 新增 FK 到 `reading_bases`。
+- 原因 1：anchor gate（`load_validated_reading_record_anchor`）已在 runtime 校验 `reading_record_id` / `base_id` / `generation`，FK 是 defense-in-depth 而非 primary validation。
+- 原因 2：`reading_bases` 使用 `ON DELETE CASCADE` from `reading_records`，hard-delete Reading Record 会级联删除 bases。从 `user_annotations` / `reader_notes` 加 FK 会强制提前决定 cascade 语义（CASCADE 删用户数据、SET NULL 留孤儿、RESTRICT 阻止清理）。
+- 原因 3：Reading Record / Base 删除时 user assets 的归档/保留语义尚未最终确定。
+- Follow-up：删除/归档语义确定后 revisit FK。候选 target：`reading_bases(id, reading_record_id, record_generation)` via `uq_reading_bases_id_record_generation`。
+
 ## D6-A0 Ask / Notes / Highlights Dependency Audit
 
 > 本节是 D6 product hardening 进入 Ask / notes / highlights / user asset 写入前的依赖审计和迁移边界设计；不接新 Ask、不写新 API、不改产品 runtime。本节结论即 D6 最小实现顺序的输入。
@@ -401,7 +516,7 @@ D6 最小分层只规定"按能力拆分、不可越层调用"，不规定具体
 
 1. **Reader context projection**（读路径）：从 `reader_plate_snapshot` 解析 `record` / `base` / `navigation.units` / `anchor_segments` / `enhancement_layers` / `ask_supplements` / `user_assets`；不直接读 `render_scene_json`。D6 不允许 service 层保留 `load_render_scene` 入口作为新 path 的 fact source。
 2. **Ask Agent Tooling**（写提议）：tool signature 只接受 `(reading_record_id, anchor_segment_id, start_offset, end_offset, offset_unit, text_hash, hash_algorithm, scope)`；tool 返回值用 `UserEditorialAssetAnchor` 同形 DTO，不暴露 `target_key`。
-3. **User Editorial Asset Writer**（确认后写资产）：受 Ask write gate 控制；目标表在 D6-U1 后仍是 `user_annotations` / `reader_notes`（schema 双轨），但 anchor payload 已切到 `UserEditorialAssetAnchor` 形状；D6-U2 起允许新写入走 `user_editorial_assets` 统一表（如果引入）。本节不预先承诺新表存在。
+3. **User Editorial Asset Writer**（确认后写资产）：受 Ask write gate 控制；V1c 推荐先扩展 `user_annotations` / `reader_notes` 两张 legacy 表承载 single-range Reading Record anchor columns，anchor payload 使用 `UserEditorialAssetAnchor` 形状；`user_editorial_assets` 统一表保留为后续收敛选项，不作为 V1c 最小 persistence 路径。
 4. **Ask Supplement Writer**（写 AI sidecar）：scope = "ask_supplement"；可与 user asset writer 共用 anchor 校验；可与 reader_ask_supplements 表共存直到旧 scene merge 路径被替换。
 5. **Anchor Validator**：集中校验 UTF-16 offsets、`fnv1a32-utf16` hash、`anchor_segment_id` ∈ 当前 base/units、`start_offset`/`end_offset` ⊂ unit 局部 span；校验失败必须 fail-fast 并返回 typed error，不静默 fallback 到 `target_key`。
 
@@ -465,7 +580,7 @@ D6 最小分层只规定"按能力拆分、不可越层调用"，不规定具体
 2. **D6-A2 Anchor Validator 抽离**：把现有 `app/services/text_anchors.py` 的 anchor validation 思路抽到 `app/contracts/anchor_validation.py`（或等价位置），使 Ask tool、user_annotations、reader_notes、grammar bundle、vocabulary worker 共用同一 validator；不引入新 contract 字段。
 3. **D6-A3 Ask tool signature 切换（write-proposal only，已落地）**：agent tool signature 已可接受 `UserEditorialAssetAnchor` 同形 Reading Record anchor payload；tool 返回的 action proposal payload 可携带新 `anchor`，同时保留 legacy `ReaderAskAnchorRef` / `target_key` / `target_sentence_id` 兼容；tool 调用仍受 Ask write gate 控制，不写 DB；Ask message / citation / stream 协议不动。
 4. **D6-A4 Ask supplement 写入切线**：保留 `reader_ask_supplements` 表与现有 schema；把 `supplements.py` 中所有 `sentence_id` / `paragraph_id` / `target_key` 写 SQL 改为基于 anchor_segment_id + UTF-16；写前必须经过 Ask write gate + Anchor Validator；新写入不影响 `/scene` 旧读取。
-5. **D6-A5 `user_annotations` / `reader_notes` 双合同 spike（D6-U1 前置）**：保留两张表；引入 `UserEditorialAssetAnchor` 作为 request body 的可选 `anchor` 字段；旧 `target_key` 字段 deprecated optional；`analysis_record_id` 改为 nullable deprecated optional。当前 spike 不新增 DB migration，不写 legacy 表；收到 `anchor` 时先校验 `selected_text == anchor.selected_text`，再走 Reading Record anchor gate。gate 失败返回 typed HTTP 400；gate 成功返回 HTTP 409 + `code = "user_editorial_asset_write_pending"`，表示已验证但 persistence deferred。真正写入切线需要先确定是扩展 legacy 表还是引入统一 `user_editorial_assets` 表。
+5. **D6-A5 `user_annotations` / `reader_notes` 双合同 spike（D6-U1 前置，D6-U2 决策后收窄为 single-range first）**：保留两张表；引入 `UserEditorialAssetAnchor` 作为 request body 的可选 `anchor` 字段；旧 `target_key` 字段 deprecated optional；`analysis_record_id` 改为 nullable deprecated optional。当前 spike 不新增 DB migration，不写 legacy 表；收到 `anchor` 时先校验 `selected_text == anchor.selected_text`，再走 Reading Record anchor gate。gate 失败返回 typed HTTP 400；gate 成功返回 HTTP 409 + `code = "user_editorial_asset_write_pending"`，表示已验证但 persistence deferred。`multi_text` 不进入该 production branch；后续必须走 `UserEditorialAssetAnchorSet` / multi-range DTO。D6-U3 design 结论是 V1c 先扩展 `user_annotations` / `reader_notes`，不先引入统一 `user_editorial_assets` 表。
 6. **D6-A6 Web BFF / route 切线**：新增 `/api/web/reader-records/{recordId}/reader-ask/threads` 等新 route handler；旧 `/api/web/reader-ask/threads` 与 `/api/web/reader-notes` 保留为 legacy；新 route 不复用 BFF `confirmReaderAskActionForWeb` 中旧 `target_key` 分支。
 7. **D6-A7 Plate Surface UI 接入（不在本轮审计范围）**：必须等 Plate Surface 视觉方案落地后再切；本轮不做。
 

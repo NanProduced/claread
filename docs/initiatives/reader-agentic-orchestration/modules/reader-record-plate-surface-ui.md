@@ -1,7 +1,7 @@
 # Reader Record Plate Surface UI
 
 > 状态：目标方案草案
-> 最后更新：2026-06-23
+> 最后更新：2026-06-24
 > 范围：`/app/reader-record/{recordId}` 在 Agentic Orchestration 架构下的 Reader Record 解析页 UI/UX、Plate.js 文档表面、选择交互、词典/Ask 联动、用户高亮/笔记和第一版实现边界。
 
 ## 目标
@@ -85,7 +85,8 @@ Plate path 只能作为瞬时渲染地址。用户资产、AI layer 和 Ask supp
 新页面启用写入前，必须具备 Reading Record anchor gate：
 
 - 能确认 `recordId` 属于新的 Reading Record。
-- 能从 Stable Reading Base / Anchor Segment 校验 `text_range` / `multi_text`。
+- V1c first 只要求能从 Stable Reading Base / Anchor Segment 校验 single-range `UserEditorialAssetAnchor`。
+- `multi_text` 不复用旧 render_scene 校验；后续必须走 `UserEditorialAssetAnchorSet` / multi-range DTO 和对应 gate。
 - 能把旧 `sentence_id` 兼容字段解释为 anchor segment alias，而不是旧 render scene sentence。
 - 能返回足够错误信息，区分 anchor stale、hash mismatch、range invalid 和 record mismatch。
 
@@ -130,6 +131,99 @@ Plate path 只能作为瞬时渲染地址。用户资产、AI layer 和 Ask supp
 - raw Plate path / Slate path 持久化。
 
 实现上可以复用 Plate UI registry 代码，但这些组件必须被收敛为 Claread reader behavior。Plate UI 不是产品需求来源。
+
+## Projection Schema
+
+UI-D1 新增前端纯 projection helper：
+
+```ts
+projectReaderPlateSnapshotToReaderRecordPlateDocument(
+  snapshot: ReaderPlateSnapshotDto,
+): ReaderRecordPlateDocument
+```
+
+边界：
+
+- 只消费 `ReaderPlateSnapshotDto.value` 和 snapshot wrapper metadata。
+- 不调用 `adaptReaderPlateSnapshotToReaderVm`。
+- 不调用 `renderSceneToPlateDocument`。
+- 不接旧 `ReaderVm`。
+- 不读写 API，不启用 Ask / notes / highlights 写入。
+- 不持久化 Plate path / Slate path。
+
+`ReaderRecordPlateDocument` 是新 Reader Record Plate surface 的前端 projection schema。它保留 Plate-like `type` / `children` / `text` 结构，但所有可持久定位的信息都来自 domain ids。
+
+```ts
+type ReaderRecordPlateDocument = {
+  type: "reader_record_plate_document";
+  schemaVersion: "reader-record-plate-document/v1";
+  record: {
+    recordId: string;
+    title: string;
+    generation: number;
+    productState: string;
+    readinessState: string;
+  };
+  snapshot: {
+    snapshotId: string;
+    snapshotTakenAt: string;
+    lastEventSequence: number;
+  };
+  base: {
+    baseId: string;
+    contentSha256: string;
+    textLengthUtf16: number;
+    hashAlgorithm: "fnv1a32-utf16";
+  };
+  progress: ReaderRecordPlateProgress;
+  children: ReaderRecordPlateUnitNode[];
+};
+```
+
+映射规则：
+
+| Snapshot source | Projection target | 说明 |
+|---|---|---|
+| `reader_unit` | `reader_record_unit` | 保留 `unitId`、`baseId`、`orderIndex`、unit/base ranges、hash、parsed decision、unit progress |
+| `reader_source_block` | `reader_record_source_block` | 只承载稳定原文和 separator |
+| `reader_anchor_segment` | `reader_record_anchor_segment` | 保留 `anchorSegmentId`、`sentenceId`、segment/base/unit ranges、hash；作为 selection 和 marks/cues 的稳定锚点 |
+| stable segment leaf | `ReaderRecordPlateTextLeaf` | `text` + stable metadata + `marks[]`；不嵌入 translation 或 analysis block |
+| stable separator leaf | `ReaderRecordPlateSeparatorLeaf` | 保留 separator text 和 base range |
+| `reader_translation[target_scope="unit"]` | `reader_record_unit_translation` | V1 unit 级“本段译文”；作为 unit child，不能挂到第一个 anchor segment 后面 |
+| `reader_vocabulary_marks` | `ReaderRecordPlateVocabularyMark[]` | `vocab_highlight` / `phrase_gloss` / `context_gloss` 进入 text leaf marks |
+| `reader_grammar_note_marks` | `ReaderRecordPlateGrammarMark[]` + `reader_record_grammar_cue` | span 进入 text leaf mark；`show_note_chip` 的 span 生成 grammar cue |
+| `reader_sentence_analysis` | `reader_record_sentence_analysis_cue` | V1 只投影为 Structure Lens cue；不进入文档流卡片 |
+| `enhancement_progress` | `document.progress` + `unit.progress` | document 用于 header chip / slim strip；unit 匹配 unit 或 anchor_segment target 的 layer activity |
+
+Translation V1 约束：
+
+- `target_scope="unit"` 的译文只能生成 `reader_record_unit_translation`。
+- `reader_record_unit_translation.placement` 必须是 `"unit"`。
+- anchor segment 的 `children` 只能包含 stable source text leaves；不能包含 unit translation。
+- Characterization test 必须覆盖该行为，防止旧 adapter 再次把 unit 译文塞到首个 segment 后。
+
+Sentence Analysis V1 约束：
+
+- `reader_sentence_analysis` 不作为 `children` 中的 block/card 输出。
+- Projection 只生成 `reader_record_sentence_analysis_cue`。
+- cue 保留 `analysisId`、`layerId`、`anchorSegmentId`、`label`、`analysis` 和 `chunks`。
+- chunk underline 仍等 V1d best-effort 或 Sentence Analysis V2 offset schema。
+
+Progress projection：
+
+- `document.progress.overallStatus` 直接来自 `enhancement_progress.overall_status`；缺失时为 `"unknown"`。
+- `document.progress.layers[]` 使用 capability、target scope/key、layer id 或 job id 生成稳定 id。
+- `unit.progress[]` 只收录 target 为当前 unit，或 target 为当前 unit 内 anchor segment 的 progress layer。
+- record-level progress 只留在 document 层，不强行塞到某个 unit。
+
+Domain ids：
+
+- document 使用 `recordId`、`snapshotId`、`baseId`、`lastEventSequence`。
+- unit 使用 `unitId`。
+- source segment 使用 `anchorSegmentId` 和 `sentenceId`。
+- marks/cues 使用 `markId`、`itemId`、`analysisId`、`layerId`。
+- progress 使用 `capability + targetScope + targetKey + layerId/jobId`。
+- 不输出、不保存、不比较 raw Plate path / Slate path。
 
 ## 页面结构
 
@@ -185,7 +279,7 @@ type ReaderActiveAnchorState = {
     | "comment"
     | "user_highlight"
     | "rail";
-  domainAnchorDraft?: ReaderAnchorPayload | null;
+  domainAnchorDraft?: UserEditorialAssetAnchor | null;
   activeMarkId?: string | null;
   activeCueId?: string | null;
   activeCommentId?: string | null;
@@ -194,6 +288,46 @@ type ReaderActiveAnchorState = {
   pinned: boolean;
 };
 ```
+
+UI-D2 新增只读 active anchor adapter：
+
+```ts
+userEditorialAssetAnchorDraftForActiveAnchor(
+  document: ReaderRecordPlateDocument,
+  active: ReaderRecordActiveAnchorInput,
+): UserEditorialAssetAnchor | null
+```
+
+组装规则：
+
+| Field | 来源 |
+|---|---|
+| `record_id` | `ReaderRecordPlateDocument.record.recordId` |
+| `base_id` | `ReaderRecordPlateDocument.base.baseId` |
+| `generation` | `ReaderRecordPlateDocument.record.generation` |
+| `unit_id` | active source anchor |
+| `anchor_segment_id` | active source anchor |
+| `start_offset` / `end_offset` | active source anchor 的 unit-local UTF-16 offsets |
+| `selected_text` | active source anchor |
+| `text_hash` | active source anchor，且必须等于 `fnv1a32-utf16(selected_text)` |
+| `hash_algorithm` | active source anchor，必须是 `fnv1a32-utf16` |
+| `scope` | selection 使用自身 scope；system mark/cue 使用 `system_ai_layer` |
+
+active source 类型：
+
+- `selection`：来自 Plate selection 生成的 selection anchor draft。
+- `system_mark`：来自 `ReaderRecordPlateTextAnchor`，例如 vocab / phrase / context / grammar mark。
+- `system_cue`：来自 `ReaderRecordPlateTextAnchor`，例如 grammar cue；Structure Lens V1 如需发起 Ask，也应先落到同形 anchor。
+
+adapter 只生成 read-only draft，用于 Lookup、Copy、disabled Ask preview、popover/rail 上下文传递。它不调用 API，不打开 Ask/Highlight/Note 写入，也不持久化 Plate path / Slate path。
+
+返回 `null` 的情况：
+
+- document root 缺少 `recordId`、`baseId` 或有效 `generation`。
+- active source 缺少 `unit_id` / `anchor_segment_id`。
+- `end_offset <= start_offset`。
+- `selected_text` 为空或 UTF-16 长度与 offset span 不一致。
+- `text_hash` 与 `selected_text` 的 `fnv1a32-utf16` 不一致。
 
 规则：
 
@@ -488,7 +622,8 @@ toolbar 必须由 Plate selection 驱动。词典或 Ask 获焦后，中心文�
 用于快速标记。
 
 - 写入现有 `user_annotations`。
-- 支持 `sentence` / `text_range` / `multi_text`。
+- V1c single-range first：支持单个 `UserEditorialAssetAnchor` 表达的 sentence/full-segment 或 `text_range`。
+- `multi_text` 暂不作为 V1c production 写入；后续走 `UserEditorialAssetAnchorSet`。
 - 作为 user-owned mark 投影到 Plate surface。
 
 ### Comment Note
@@ -496,7 +631,8 @@ toolbar 必须由 Plate selection 驱动。词典或 Ask 获焦后，中心文�
 用于有正文的笔记和讨论。
 
 - 写入现有 `reader_notes`。
-- 支持 `sentence` / `text_range` / `multi_text`。
+- V1c single-range first：支持单个 `UserEditorialAssetAnchor` 表达的 sentence/full-segment 或 `text_range`。
+- `multi_text` 暂不作为 V1c production 写入；后续走 `UserEditorialAssetAnchorSet`。
 - 在 Plate surface 中表现为 comment/discussion projection。
 - Plate comment id 只是 Web projection key。
 
@@ -524,54 +660,60 @@ toolbar 必须由 Plate selection 驱动。词典或 Ask 获焦后，中心文�
 
 ## Anchor And Persistence
 
-V1c 复用现有 `user_annotations` / `reader_notes` API，但有前置条件。
+V1c 最小写入策略：**single-range first**。
 
 边界判断：
 
 - 旧表可复用：`user_annotations` 保存 quick highlight，`reader_notes` 保存 comment/note body。
-- 旧请求形态可短期兼容：`sentence` / `text_range` / `multi_text` 仍可作为 API contract。
+- `/app/reader-record/{recordId}` 新写入必须携带 `anchor: UserEditorialAssetAnchor`；没有 `anchor` 的请求只能属于旧 `/app/reader/{recordId}` legacy 路径。
+- D6-A5 当前代码已经把 `anchor` 做成 optional dual-contract：当 `anchor` 存在时，legacy 必填字段放宽，但服务层必须走 Reading Record anchor gate，绕过 legacy `target_key` / `render_scene` 校验。
+- 旧请求字段（`sentence_id`、`target_key`、`paragraph_id`、offset、hash）只能作为 deprecated compatibility metadata；不能重新成为 `/app/reader-record` 写入校验事实源。
 - 旧 `render_scene` 校验不可复用：新 Reading Record 的 source of truth 是 Stable Reading Base / Anchor Segment。
-- 旧 `sentence_id` 只能作为 compatibility alias，不能重新成为新架构主锚点。
 - Plate path / Slate path 不进入 API、不进入数据库、不进入 event log。
+- D6-U2 结论：`UserEditorialAssetAnchor` 和当前 `anchor_gate` 只表达 single range；`multi_text` 不挤进该 DTO。后续 multi-range 必须使用 schema-only 草案 `UserEditorialAssetAnchorSet`，并在引入 persistence/migration 前保持 disabled。
 
-Plate selection adapter 需要生成现有 API 需要的 payload：
+Plate selection adapter 需要生成的新写入 payload：
 
 ```ts
-type ReaderAnchorPayload = {
-  anchorType: "sentence" | "text_range" | "multi_text";
-  targetKey: string;
-  recordId: string;
-  paragraphId?: string | null;
-  sentenceId?: string | null;
-  selectedText: string;
-  startOffset?: number | null;
-  endOffset?: number | null;
-  textHash?: string | null;
-  segments?: Array<{
-    paragraphId?: string | null;
-    sentenceId: string;
-    selectedText?: string | null;
-    startOffset: number;
-    endOffset: number;
-    textHash?: string | null;
-  }>;
+type UserEditorialAssetAnchor = {
+  record_id: string;
+  base_id: string;
+  generation: number;
+  unit_id: string;
+  anchor_segment_id: string;
+  scope?: "stable_source" | "translation" | "system_ai_layer" | "ask_supplement";
+  offset_unit?: "utf16";
+  start_offset: number;
+  end_offset: number;
+  selected_text: string;
+  text_hash: string;
+  hash_algorithm?: "fnv1a32-utf16";
+};
+
+type ReaderRecordUserAssetWritePayload = {
+  anchor: UserEditorialAssetAnchor;
+  selected_text: string;
+  note_text?: string;
+  color?: string;
 };
 ```
 
 短期：
 
-- 新 Plate surface 必须继续生成兼容旧 API 的 `sentence_id`、offset、hash 和 segments。
-- 只有后端能够用新 Reading Record / Stable Base 校验这些 payload 时，才能在 `/app/reader-record/{recordId}` 启用写入。
+- 新 Plate surface 可继续生成 legacy alias metadata 供调试/兼容，但 write action 必须以 `anchor` 为唯一校验输入。
+- D6-A5 当前后端只完成 validation branch：gate 失败返回 typed HTTP 400，gate 成功返回 HTTP 409 `user_editorial_asset_write_pending`，不写 legacy 表。
+- 只有后续 persistence follow-up 把 validated `anchor` 接到表结构后，才能在 `/app/reader-record/{recordId}` 启用 Comment/Highlight 写入。
 - 不允许假设新 Reading Record id 一定能通过旧 `analysis_results.render_scene_json` 校验。
-- Web 可以在 V1a/V1b 生成 `ReaderAnchorPayload` draft 供 Lookup/Copy/Ask 预览使用，但不能把 write action 打开。
+- Web 可以在 V1a/V1b 生成 `UserEditorialAssetAnchor` draft 供 Lookup/Copy/Ask 预览使用，但不能把 write action 打开。
 
 中期：
 
-- `user_annotations` / `reader_notes` 的 text_range / multi_text 校验从旧 `render_scene` 迁到 Stable Reading Base / Anchor Segment。
+- `user_annotations` / `reader_notes` 的 single-range 校验从旧 `render_scene` 迁到 Stable Reading Base / Anchor Segment，并保持 legacy `/app/reader/{recordId}` 行为不变。
 - 对外 anchor 优先使用 `anchor_segment_id`，`sentence_id` 只保留兼容 alias。
+- `multi_text` 需要 `UserEditorialAssetAnchorSet` / multi-range gate、projection reload 规则和 persistence contract 后再启用。
 - API 错误模型需要区分 stale anchor、hash mismatch、range out of bounds、record mismatch 和 unsupported anchor mode。
 
-如果 Stable Base / Anchor Segment 校验尚未完成，V1a / V1b 可以先显示 Comment/Highlight 按钮的 disabled 或 coming-soon 状态，但不能调用旧 render scene 写入路径。
+如果 Stable Base / Anchor Segment 校验或 persistence 尚未完成，V1a / V1b 可以先显示 Comment/Highlight 按钮的 disabled 或 coming-soon 状态，但不能调用旧 render scene 写入路径。
 
 ## Ask Supplement
 
@@ -601,15 +743,27 @@ Ask Supplement 进入文档后不渲染为卡片。它应表现为文档注释 /
 
 必须包含：
 
-- `ReaderRecordPlateSurface` 直接消费 `ReaderPlateSnapshot.value`。
+- `ReaderRecordPlateSurface` 通过 `projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot)` 消费新 projection schema。
 - 使用 `Plate + readOnly`。
 - 不经过 `adaptReaderPlateSnapshotToReaderVm`。
+- 不经过 `renderSceneToPlateDocument`。
 - 沉浸 / 精读 visibility profile。
 - 文档式 vocab / phrase / context marks。
 - grammar cue。
 - sentence structure cue。
 - unit 级译文过渡展示为“本段译文”。
 - 不显示旧式 grammar / sentence analysis 卡片。
+
+当前实现状态（UI-D3 read-only scaffold）：
+
+- 已新增 `ReaderRecordPlateSurface` 组件，输入为 `ReaderPlateSnapshotDto`，内部直接调用 `projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot)`。
+- scaffold 使用 `Plate + readOnly` 渲染，不显示 editor formatting toolbar。
+- scaffold 最小展示 stable source text、unit-level translation block、vocab / grammar marks、grammar / sentence-analysis cues，以及 compact progress chip / slim strip / layer activity indicator。
+- scaffold 不经过 `adaptReaderPlateSnapshotToReaderVm`、不接旧 `ReaderVm`，也不经过 `renderSceneToPlateDocument`。
+- scaffold 仅作为组件级预览 / 后续切线基础；当前未替换 `/app/reader-record/{recordId}` 默认产品 surface，默认 route 仍是 Workbench-backed read-only surface。
+- Lookup / Copy 在 UI-D3 中可先保持本地只读或 disabled；当前 scaffold 选择全部 action disabled，避免误导用户认为选择桥已完成。
+- Ask / Highlight / Note / Feedback 在 UI-D3 必须 disabled / coming soon，不允许调用 `/api/web/reader-ask`、`/api/web/reader-notes`、`/api/web/reader-annotations`。
+- UI-D3 不持久化 Plate path / Slate path；所有 DOM data attribute 只暴露 stable domain id，供后续 active anchor adapter 与 selection bridge 使用。
 
 ### V1b: Plate Selection And Rails
 
@@ -626,7 +780,7 @@ Ask Supplement 进入文档后不渲染为卡片。它应表现为文档注释 /
 
 前置条件：
 
-- 后端支持用新 Reading Record / Stable Base / Anchor Segment 校验 `text_range` / `multi_text`。
+- 后端支持用新 Reading Record / Stable Base / Anchor Segment 校验 single-range `UserEditorialAssetAnchor`。
 - Web BFF 能把 Plate selection payload 转为现有 `user_annotations` / `reader_notes` request。
 
 必须包含：
@@ -635,6 +789,7 @@ Ask Supplement 进入文档后不渲染为卡片。它应表现为文档注释 /
 - 评论/笔记持久化到现有 `reader_notes`。
 - 高亮 / 笔记 reload 后能重新投影到正确 range。
 - Plate comment/discussion 只作为前端 projection。
+- `multi_text` 不属于 V1c first production 写入；必须等 `UserEditorialAssetAnchorSet` persistence contract。
 
 ### V1d: Structure Lens Enhancement
 
@@ -680,7 +835,7 @@ V2 schema 完成后：
 
 ### Anchor Validation Cutover
 
-把 `user_annotations` / `reader_notes` 的 text_range / multi_text 校验从旧 `render_scene` 迁到 Stable Reading Base / Anchor Segment。
+把 `user_annotations` / `reader_notes` 的 single-range 校验从旧 `render_scene` 迁到 Stable Reading Base / Anchor Segment；`multi_text` 另走 `UserEditorialAssetAnchorSet` contract。
 
 ### Ask Supplement Projection
 

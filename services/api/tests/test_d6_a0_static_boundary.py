@@ -32,10 +32,10 @@ def _has_module_import(source: str, module: str) -> bool:
 def test_user_editorial_assets_is_schema_only_no_runtime_service_import() -> None:
     """D6-A0 boundary guard.
 
-    `app.schemas.user_editorial_assets` ships only the `UserEditorialAssetAnchor`
-    DTO plus `UserEditorialAssetScope` literal. It must not be wired into any
-    runtime service (`app/services/*`) except the dedicated Reading Record
-    anchor gate module added in D6-U1/D6-A1.
+    `app.schemas.user_editorial_assets` ships only draft anchor DTOs plus
+    `UserEditorialAssetScope`. It must not be wired into any runtime service
+    (`app/services/*`) except the dedicated Reading Record anchor gate module
+    added in D6-U1/D6-A1.
     """
     service_files = _python_files(Path("services"))
 
@@ -78,6 +78,39 @@ def test_user_editorial_assets_is_schema_only_no_agent_import() -> None:
     assert offenders == [], (
         "user_editorial_assets must remain schema-only; "
         "the following agent files must not import it yet: "
+        + ", ".join(offenders)
+    )
+
+
+def test_user_editorial_asset_anchor_set_is_schema_only_no_runtime_import() -> None:
+    """D6-U2 multi-anchor decision guard.
+
+    `UserEditorialAssetAnchorSet` / `UserEditorialAssetAnchorRange` are
+    schema-only drafts for future multi_text writes. V1c production remains
+    single-range first, so runtime service/agent/route code must not import or
+    reference these symbols until a follow-up explicitly implements
+    persistence.
+    """
+    runtime_files = [
+        *_python_files(Path("services")),
+        *_python_files(Path("agents")),
+        *_python_files(Path("api/routes")),
+    ]
+    forbidden_symbols = (
+        "UserEditorialAssetAnchorSet",
+        "UserEditorialAssetAnchorRange",
+    )
+    offenders: list[str] = []
+
+    for path in runtime_files:
+        source = _read_text(path)
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        for symbol in forbidden_symbols:
+            if symbol in source:
+                offenders.append(f"{rel} -> {symbol}")
+
+    assert offenders == [], (
+        "multi-anchor DTOs are schema-only in D6-U2; runtime offenders: "
         + ", ".join(offenders)
     )
 

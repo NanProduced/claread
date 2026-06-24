@@ -123,6 +123,15 @@ class UserAnnotationResponse(BaseModel):
     created_at: str
     updated_at: str
     superseded_ids: list[UUID] = Field(default_factory=list)
+    # D6-U4 Reading Record anchor columns. Populated for new Reading Record
+    # rows; None for legacy analysis_record_id rows.
+    reading_record_id: UUID | None = None
+    base_id: UUID | None = None
+    generation: int | None = None
+    unit_id: str | None = None
+    anchor_segment_id: str | None = None
+    unit_start_utf16: int | None = None
+    unit_end_utf16: int | None = None
 
 
 class UserAnnotationListResponse(BaseModel):

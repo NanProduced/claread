@@ -326,6 +326,28 @@ describe("anchorDraftForSelectionSegment - rejection cases", () => {
     expect(anchorDraftForSelectionSegment(snapshot, segment)).toBeNull();
   });
 
+  it("returns null when selection offsets start before the anchor segment range", () => {
+    const snapshot = makeSnapshot(ANCHOR_SEGMENTS);
+    const segment = makeSegment({
+      selectedText: "memo",
+      startOffset: -1,
+      endOffset: 4,
+    });
+
+    expect(anchorDraftForSelectionSegment(snapshot, segment)).toBeNull();
+  });
+
+  it("returns null when selection offsets end after the anchor segment range", () => {
+    const snapshot = makeSnapshot(ANCHOR_SEGMENTS);
+    const segment = makeSegment({
+      selectedText: "memory",
+      startOffset: 20,
+      endOffset: 26,
+    });
+
+    expect(anchorDraftForSelectionSegment(snapshot, segment)).toBeNull();
+  });
+
   it("returns null when text_hash disagrees with selected_text", () => {
     const snapshot = makeSnapshot(ANCHOR_SEGMENTS);
     const segment = {
