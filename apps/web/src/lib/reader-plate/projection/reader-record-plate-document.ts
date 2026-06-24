@@ -281,6 +281,7 @@ export interface ReaderRecordPlateUserCommentCue {
   assetType: string;
   anchor: ReaderRecordPlateTextAnchor;
   label: string;
+  noteText?: string | null;
   createdAt?: string | null;
   updatedAt: string;
 }
@@ -596,6 +597,7 @@ function buildUserAssetsBySegment(snapshot: ReaderPlateSnapshotDto): {
         assetType: asset.asset_type,
         anchor,
         label: userAssetLabel(asset.asset_type),
+        noteText: asset.note_text,
         createdAt: asset.created_at,
         updatedAt: asset.updated_at,
       });

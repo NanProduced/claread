@@ -65,6 +65,8 @@ function reloadStatusLabel(reason: string | null): string {
       return "检测到阅读记录状态变化，正在刷新阅读内容。";
     case "projection_reset_required":
       return "检测到阅读投影重置请求，正在刷新阅读内容。";
+    case "user_asset_written":
+      return "已保存阅读标注，正在刷新阅读内容。";
     default:
       return "正在刷新阅读内容。";
   }
@@ -83,6 +85,7 @@ export default function ReadingRecordPage({
   });
   const [isReloading, setIsReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
+  const [activeReloadReason, setActiveReloadReason] = useState<string | null>(null);
   const [surfaceMode] = useState(getReaderRecordSurfaceMode);
 
   const snapshot = snapshotState.kind === "loaded" ? snapshotState.snapshot : null;
@@ -96,6 +99,7 @@ export default function ReadingRecordPage({
 
       setIsReloading(true);
       setReloadError(null);
+      setActiveReloadReason(reason);
 
       try {
         const result = await loadSnapshotForRecord(
@@ -108,7 +112,6 @@ export default function ReadingRecordPage({
           return;
         }
 
-        void reason;
         setSnapshotState({
           kind: "loaded",
           recordId,
@@ -120,6 +123,7 @@ export default function ReadingRecordPage({
         );
       } finally {
         setIsReloading(false);
+        setActiveReloadReason(null);
       }
     },
     [recordId, snapshotState.kind],
@@ -210,7 +214,7 @@ export default function ReadingRecordPage({
                   data-testid="reader-record-reload-status"
                 >
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-lens-blue" />
-                  {reloadStatusLabel(polling.lastReloadReason)}
+                  {reloadStatusLabel(activeReloadReason ?? polling.lastReloadReason)}
                 </div>
               ) : null}
 
@@ -227,7 +231,10 @@ export default function ReadingRecordPage({
         ) : null}
 
         {surfaceMode === "plate" ? (
-          <ReaderRecordPlateSurface snapshot={snapshotState.snapshot} />
+          <ReaderRecordPlateSurface
+            snapshot={snapshotState.snapshot}
+            onRequestSnapshotReload={() => reloadSnapshot("user_asset_written")}
+          />
         ) : (
           <ReaderRecordWorkbenchSurface snapshot={snapshotState.snapshot} />
         )}

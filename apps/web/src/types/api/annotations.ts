@@ -3,6 +3,7 @@ import type {
   UserAnnotationColor,
   UserAnnotationType,
 } from "@claread/contracts";
+import type { UserEditorialAssetAnchorDto } from "./reader-plate";
 
 export type UserAnnotationTypeDto = UserAnnotationType;
 export type UserAnnotationAnchorTypeDto = UserAnnotationAnchorType;
@@ -30,6 +31,7 @@ export interface UserAnnotationCreateRequestDto {
   segments?: UserAnchorSegmentDto[];
   color?: UserAnnotationColorDto;
   payload_json?: Record<string, unknown>;
+  anchor?: UserEditorialAssetAnchorDto | null;
 }
 
 export interface UserAnnotationUpdateRequestDto {
@@ -53,6 +55,13 @@ export interface UserAnnotationResponseDto {
   created_at: string;
   updated_at: string;
   superseded_ids?: string[];
+  reading_record_id?: string | null;
+  base_id?: string | null;
+  generation?: number | null;
+  unit_id?: string | null;
+  anchor_segment_id?: string | null;
+  unit_start_utf16?: number | null;
+  unit_end_utf16?: number | null;
 }
 
 export interface UserAnnotationListResponseDto {

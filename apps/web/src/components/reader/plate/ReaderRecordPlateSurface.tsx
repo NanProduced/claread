@@ -17,6 +17,7 @@ import {
   projectReaderPlateSnapshotToReaderRecordPlateDocument,
   type ReaderRecordPlateAnchorSegmentNode,
   type ReaderRecordPlateCue,
+  type ReaderRecordPlateMark,
   type ReaderRecordPlateProgress,
   type ReaderRecordPlateProgressLayer,
   type ReaderRecordPlateSeparatorLeaf,
@@ -24,11 +25,13 @@ import {
   type ReaderRecordPlateTextLeaf,
   type ReaderRecordPlateTranslationBlockNode,
   type ReaderRecordPlateUnitNode,
+  type ReaderRecordPlateVocabularyMark,
 } from "@/lib/reader-plate/projection/reader-record-plate-document";
 import {
   readReaderRecordSelectionAnchorDrafts,
   type ReaderRecordSelectionAnchorBridgeResult,
 } from "@/lib/reader-plate/projection/reader-record-dom-selection";
+import type { ReaderRecordAnchorDraft } from "@/lib/reader-plate/projection/reader-record-anchor-draft";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 
 import { Editor, EditorContainer } from "../../ui/editor";
@@ -38,6 +41,7 @@ export interface ReaderRecordPlateSurfaceProps {
   className?: string;
   columnClassName?: string;
   readingClassName?: string;
+  onRequestSnapshotReload?: () => void | Promise<void>;
 }
 
 type ReaderRecordPlateElement =
@@ -58,6 +62,26 @@ type ReaderRecordLookupState =
   | { kind: "error"; query: string; message: string };
 
 type ReaderRecordCopyStatus = "idle" | "copied" | "error";
+
+type ReaderRecordWriteAction = "highlight" | "note";
+
+type ReaderRecordWriteState =
+  | { kind: "idle" }
+  | { kind: "saving"; action: ReaderRecordWriteAction }
+  | { kind: "saved"; action: ReaderRecordWriteAction; message: string }
+  | { kind: "error"; action: ReaderRecordWriteAction; message: string };
+
+type ReaderRecordActiveAnchor =
+  | { source: "mark"; mark: ReaderRecordPlateMark; marks: ReaderRecordPlateMark[] }
+  | { source: "cue"; cue: ReaderRecordPlateCue };
+
+type ReaderRecordActiveAnchorState = {
+  snapshotKey: string;
+  activeAnchor: ReaderRecordActiveAnchor;
+};
+
+const ACTIVE_ANCHOR_INSPECTOR_ID =
+  "reader-record-plate-active-anchor-inspector";
 
 function overallProgressLabel(status: ReaderRecordPlateProgress["overallStatus"]) {
   switch (status) {
@@ -107,24 +131,35 @@ function layerToneClass(status: ReaderRecordPlateProgressLayer["status"]) {
 
 function CompactProgress({ progress }: { progress: ReaderRecordPlateProgress }) {
   const layers = progress.layers.slice(0, 6);
+  const statusLabel = overallProgressLabel(progress.overallStatus);
+  const layerCountLabel = layers.length > 0 ? `增强层 ${layers.length}` : "暂无增强层";
   return (
-    <div
+    <header
       data-testid="reader-record-plate-progress"
       data-reader-record-progress="compact"
-      className="mb-5 border-b border-border/70 pb-3"
+      data-reader-record-reading-header="compact"
+      className="mb-6 border-b border-border/60 pb-3"
+      role="status"
+      aria-label={`阅读状态：${statusLabel}，${layerCountLabel}`}
     >
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-        <span className="rounded-full border border-border bg-background px-2.5 py-1 font-medium text-foreground">
-          {overallProgressLabel(progress.overallStatus)}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+        <span className="inline-flex items-center gap-2">
+          <span className="h-1.5 w-1.5 rounded-full bg-lens-blue" />
+          <span
+            data-reader-record-progress-status={progress.overallStatus}
+            className="font-medium text-foreground"
+          >
+            {statusLabel}
+          </span>
         </span>
         {layers.length > 0 ? (
-          <span className="text-muted">增强层 {layers.length}</span>
+          <span className="text-muted">{layerCountLabel}</span>
         ) : null}
       </div>
       {layers.length > 0 ? (
         <div
           data-testid="reader-record-plate-progress-strip"
-          className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-muted"
+          className="mt-2 flex h-1 overflow-hidden rounded-full bg-muted"
           aria-label="增强层进度"
         >
           {layers.map((layer) => (
@@ -138,7 +173,7 @@ function CompactProgress({ progress }: { progress: ReaderRecordPlateProgress }) 
           ))}
         </div>
       ) : null}
-    </div>
+    </header>
   );
 }
 
@@ -146,36 +181,109 @@ function lookupTypeForSelection(text: string): DictLookupTypeDto {
   return /\s/.test(text.trim()) ? "phrase" : "word";
 }
 
+function singleRangeDraft(
+  selection: ReaderRecordSelectionAnchorBridgeResult | null,
+): ReaderRecordAnchorDraft | null {
+  return selection?.supportedSingleRange ? (selection.drafts[0] ?? null) : null;
+}
+
 function actionButtonClassName(enabled: boolean) {
+  const base =
+    "rounded-full border px-2.5 py-1 transition-colors focus:outline-none focus:ring-2 focus:ring-lens-blue/30";
   return enabled
-    ? "rounded-full border border-border bg-background px-2.5 py-1 text-foreground hover:bg-muted/30"
-    : "rounded-full border border-border bg-muted/40 px-2.5 py-1 text-muted";
+    ? `${base} border-border/80 bg-background/80 text-foreground hover:border-lens-blue/40 hover:bg-lens-blue/5`
+    : `${base} border-transparent bg-transparent text-muted/60`;
+}
+
+function writeStateLabel(writeState: ReaderRecordWriteState): string {
+  switch (writeState.kind) {
+    case "saving":
+      return writeState.action === "highlight" ? "Saving highlight" : "Saving note";
+    case "saved":
+    case "error":
+      return writeState.message;
+    default:
+      return "";
+  }
+}
+
+function writeStateClassName(writeState: ReaderRecordWriteState) {
+  if (writeState.kind === "error") {
+    return "text-rose-700";
+  }
+  if (writeState.kind === "saved") {
+    return "text-emerald-700";
+  }
+  return "text-muted";
+}
+
+async function postReadingRecordUserAsset(
+  endpoint: "/api/web/reading-record/highlights" | "/api/web/reading-record/notes",
+  body: Record<string, unknown>,
+): Promise<void> {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | { ok?: boolean; message?: string }
+    | null;
+
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.message ?? "Reading asset save failed.");
+  }
 }
 
 function SelectionActionStrip({
   copyStatus,
   lookupState,
   selection,
+  writeState,
+  noteComposerOpen,
   onCopy,
+  onHighlight,
   onLookup,
+  onOpenNoteComposer,
 }: {
   copyStatus: ReaderRecordCopyStatus;
   lookupState: ReaderRecordLookupState;
   selection: ReaderRecordSelectionAnchorBridgeResult | null;
+  writeState: ReaderRecordWriteState;
+  noteComposerOpen: boolean;
   onCopy: () => void;
+  onHighlight: () => void;
   onLookup: () => void;
+  onOpenNoteComposer: () => void;
 }) {
-  const draft = selection?.drafts[0] ?? null;
+  const draft = singleRangeDraft(selection);
   const singleRangeReady = Boolean(selection?.supportedSingleRange && draft);
+  const isSaving = writeState.kind === "saving";
   const copyDisabled = !singleRangeReady;
   const lookupDisabled = !singleRangeReady || lookupState.kind === "loading";
-  const disabledReason = selection
-    ? "Multi-segment selection is not supported yet"
-    : "Select stable source text to enable this action";
+  const highlightDisabled = !singleRangeReady || isSaving;
+  const noteDisabled = !singleRangeReady || isSaving || noteComposerOpen;
+  const disabledReason = !selection
+    ? "Select stable source text to enable this action"
+    : singleRangeReady
+      ? "Action is currently unavailable"
+      : "Multi-segment selection is not supported yet";
+  const writeStatus = writeStateLabel(writeState);
+  const actionMode = singleRangeReady ? "selection" : selection ? "unsupported" : "idle";
+  const actionHint = singleRangeReady
+    ? `Selected: ${draft?.selected_text ?? ""}`
+    : selection
+      ? "当前选区暂不支持操作"
+      : "划取原文后可查词、复制、标记或记录笔记";
 
   return (
     <div
       data-testid="reader-record-plate-disabled-actions"
+      data-reader-record-actions="selection-context"
+      data-reader-record-action-mode={actionMode}
       data-reader-record-selection-draft-count={selection?.drafts.length ?? 0}
       data-reader-record-selection-supported={singleRangeReady ? "true" : "false"}
       data-reader-record-selection-anchor-segment-id={
@@ -187,56 +295,89 @@ function SelectionActionStrip({
       data-reader-record-selection-end-offset={
         draft ? String(draft.end_offset) : undefined
       }
-      className="mb-4 flex flex-wrap items-center gap-2 text-xs"
+      className="mb-5 flex flex-wrap items-center gap-2 border-b border-border/50 pb-3 text-xs text-muted"
       aria-label="Reader Record Plate actions"
     >
-      <button
-        type="button"
-        disabled={lookupDisabled}
-        data-reader-record-action="lookup"
-        className={actionButtonClassName(!lookupDisabled)}
-        title={lookupDisabled ? disabledReason : "Lookup selected text"}
-        onPointerDown={(event) => event.preventDefault()}
-        onClick={onLookup}
+      <span
+        data-reader-record-action-hint
+        className={singleRangeReady ? "mr-1 font-medium text-foreground" : "mr-1"}
       >
-        {lookupState.kind === "loading" ? "Looking up" : "Lookup"}
-      </button>
-      <button
-        type="button"
-        disabled={copyDisabled}
-        data-reader-record-action="copy"
-        className={actionButtonClassName(!copyDisabled)}
-        title={copyDisabled ? disabledReason : "Copy selected text"}
-        onPointerDown={(event) => event.preventDefault()}
-        onClick={onCopy}
-      >
-        Copy
-      </button>
-      {copyStatus !== "idle" ? (
-        <span
-          data-testid="reader-record-plate-copy-status"
-          className={copyStatus === "copied" ? "text-emerald-700" : "text-rose-700"}
-        >
-          {copyStatus === "copied" ? "Copied" : "Copy failed"}
-        </span>
+        {actionHint}
+      </span>
+      {singleRangeReady ? (
+        <>
+          <button
+            type="button"
+            disabled={lookupDisabled}
+            data-reader-record-action="lookup"
+            className={actionButtonClassName(!lookupDisabled)}
+            title={lookupDisabled ? disabledReason : "Lookup selected text"}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onLookup}
+          >
+            {lookupState.kind === "loading" ? "Looking up" : "Lookup"}
+          </button>
+          <button
+            type="button"
+            disabled={copyDisabled}
+            data-reader-record-action="copy"
+            className={actionButtonClassName(!copyDisabled)}
+            title={copyDisabled ? disabledReason : "Copy selected text"}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onCopy}
+          >
+            Copy
+          </button>
+          <button
+            type="button"
+            disabled={highlightDisabled}
+            data-reader-record-action="highlight"
+            className={actionButtonClassName(!highlightDisabled)}
+            title={highlightDisabled ? disabledReason : "Save highlight"}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onHighlight}
+          >
+            {writeState.kind === "saving" && writeState.action === "highlight"
+              ? "Saving"
+              : "Highlight"}
+          </button>
+          <button
+            type="button"
+            disabled={noteDisabled}
+            data-reader-record-action="note"
+            className={actionButtonClassName(!noteDisabled)}
+            title={noteDisabled ? disabledReason : "Create note"}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onOpenNoteComposer}
+          >
+            Note
+          </button>
+          <span
+            data-reader-record-coming-soon-actions="ask-feedback"
+            className="text-muted/70"
+          >
+            Ask / Feedback coming soon
+          </span>
+          {copyStatus !== "idle" ? (
+            <span
+              data-testid="reader-record-plate-copy-status"
+              className={
+                copyStatus === "copied" ? "text-emerald-700" : "text-rose-700"
+              }
+            >
+              {copyStatus === "copied" ? "Copied" : "Copy failed"}
+            </span>
+          ) : null}
+          {writeStatus ? (
+            <span
+              data-testid="reader-record-plate-write-status"
+              className={writeStateClassName(writeState)}
+            >
+              {writeStatus}
+            </span>
+          ) : null}
+        </>
       ) : null}
-      {[
-        ["Ask", "ask"],
-        ["Highlight", "highlight"],
-        ["Note", "note"],
-        ["Feedback", "feedback"],
-      ].map(([label, action]) => (
-        <button
-          key={label}
-          type="button"
-          disabled
-          data-reader-record-action={action}
-          className={actionButtonClassName(false)}
-          title={`${label} is coming soon in this read-only surface`}
-        >
-          {label}
-        </button>
-      ))}
     </div>
   );
 }
@@ -319,6 +460,367 @@ function ReaderRecordLookupPanel({
   );
 }
 
+function ReaderRecordNoteComposer({
+  noteDraft,
+  saving,
+  onCancel,
+  onChange,
+  onSave,
+}: {
+  noteDraft: string;
+  saving: boolean;
+  onCancel: () => void;
+  onChange: (value: string) => void;
+  onSave: () => void;
+}) {
+  const saveDisabled = saving || noteDraft.trim().length === 0;
+
+  return (
+    <div
+      data-testid="reader-record-plate-note-composer"
+      className="mb-5 rounded-md border border-border bg-background px-3 py-3 text-sm shadow-sm"
+    >
+      <label
+        htmlFor="reader-record-plate-note-input"
+        className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted"
+      >
+        Note
+      </label>
+      <textarea
+        id="reader-record-plate-note-input"
+        data-testid="reader-record-plate-note-input"
+        value={noteDraft}
+        rows={3}
+        className="mt-2 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-lens-blue"
+        onChange={(event) => onChange(event.currentTarget.value)}
+      />
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          disabled={saveDisabled}
+          className={actionButtonClassName(!saveDisabled)}
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={onSave}
+        >
+          {saving ? "Saving" : "Save"}
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          className={actionButtonClassName(!saving)}
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function activeAnchorSegmentId(activeAnchor: ReaderRecordActiveAnchor) {
+  if (activeAnchor.source === "mark") {
+    return activeAnchor.mark.anchor.anchorSegmentId;
+  }
+  return cueAnchorSegmentId(activeAnchor.cue);
+}
+
+function activeAnchorSelectedText(activeAnchor: ReaderRecordActiveAnchor) {
+  if (activeAnchor.source === "mark") {
+    return activeAnchor.mark.anchor.selectedText;
+  }
+  if (activeAnchor.cue.type === "reader_record_sentence_analysis_cue") {
+    return activeAnchor.cue.selectedText;
+  }
+  return activeAnchor.cue.anchor.selectedText;
+}
+
+function activeMarkIsCurrent(
+  activeAnchor: ReaderRecordActiveAnchor | null,
+  mark: ReaderRecordPlateMark,
+) {
+  return (
+    activeAnchor?.source === "mark" &&
+    activeAnchor.marks.some((activeMark) => activeMark.id === mark.id)
+  );
+}
+
+function activeCueIsCurrent(
+  activeAnchor: ReaderRecordActiveAnchor | null,
+  cue: ReaderRecordPlateCue,
+) {
+  return activeAnchor?.source === "cue" && activeAnchor.cue.id === cue.id;
+}
+
+function isVocabularyMark(
+  mark: ReaderRecordPlateMark,
+): mark is ReaderRecordPlateVocabularyMark {
+  return mark.kind !== "grammar_note" && mark.kind !== "user_highlight";
+}
+
+function vocabularyTitle(mark: ReaderRecordPlateVocabularyMark) {
+  if (mark.vocabulary.itemType === "vocab_highlight") {
+    return mark.vocabulary.headword;
+  }
+  if (mark.vocabulary.itemType === "phrase_gloss") {
+    return mark.vocabulary.phrase;
+  }
+  return mark.vocabulary.display;
+}
+
+function VocabularyAnchorDetails({
+  mark,
+}: {
+  mark: ReaderRecordPlateVocabularyMark;
+}) {
+  const vocabulary = mark.vocabulary;
+  const gloss =
+    vocabulary.itemType === "vocab_highlight"
+      ? vocabulary.briefExplanation
+      : vocabulary.gloss;
+  const reason =
+    vocabulary.itemType === "vocab_highlight" ||
+    vocabulary.itemType === "context_gloss"
+      ? vocabulary.reason
+      : null;
+  const example =
+    vocabulary.itemType === "phrase_gloss" ? vocabulary.example : null;
+
+  return (
+    <>
+      <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
+        Vocabulary
+      </div>
+      <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
+        {vocabularyTitle(mark)}
+      </h3>
+      {gloss ? <p className="mt-3 leading-6 text-ink-soft">{gloss}</p> : null}
+      {example ? (
+        <p className="mt-2 leading-6 text-muted">Example: {example}</p>
+      ) : null}
+      {reason ? (
+        <p className="mt-2 leading-6 text-muted">Reason: {reason}</p>
+      ) : null}
+    </>
+  );
+}
+
+function GrammarAnchorDetails({
+  grammarPoint,
+  note,
+  pattern,
+}: {
+  grammarPoint: string;
+  note: string;
+  pattern?: string | null;
+}) {
+  return (
+    <>
+      <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
+        Grammar
+      </div>
+      <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
+        {grammarPoint}
+      </h3>
+      {pattern ? <p className="mt-3 leading-6 text-muted">{pattern}</p> : null}
+      <p className="mt-2 leading-6 text-ink-soft">{note}</p>
+    </>
+  );
+}
+
+function SentenceAnalysisAnchorDetails({
+  cue,
+}: {
+  cue: Extract<ReaderRecordPlateCue, { type: "reader_record_sentence_analysis_cue" }>;
+}) {
+  return (
+    <>
+      <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
+        Sentence Structure
+      </div>
+      <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
+        {cue.label}
+      </h3>
+      <p className="mt-3 leading-6 text-ink-soft">{cue.analysis}</p>
+      {cue.chunks.length > 0 ? (
+        <ul className="mt-3 space-y-2 text-sm leading-6 text-ink-soft">
+          {cue.chunks.slice(0, 5).map((chunk) => (
+            <li
+              key={`${chunk.order}:${chunk.label}:${chunk.text}`}
+              className="border-l border-border pl-3"
+            >
+              <span className="mr-2 font-medium text-foreground">
+                {chunk.order}. {chunk.label}
+              </span>
+              {chunk.text}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </>
+  );
+}
+
+function UserHighlightAnchorDetails({
+  mark,
+}: {
+  mark: Extract<ReaderRecordPlateMark, { kind: "user_highlight" }>;
+}) {
+  return (
+    <>
+      <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
+        User Highlight
+      </div>
+      <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
+        用户高亮
+      </h3>
+      <p className="mt-3 leading-6 text-ink-soft">{mark.anchor.selectedText}</p>
+      <p className="mt-2 text-xs text-muted">Asset {mark.assetId}</p>
+    </>
+  );
+}
+
+function UserCommentAnchorDetails({
+  cue,
+}: {
+  cue: Extract<ReaderRecordPlateCue, { type: "reader_record_user_comment_cue" }>;
+}) {
+  return (
+    <>
+      <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
+        Comment
+      </div>
+      <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
+        笔记/评论
+      </h3>
+      {cue.noteText ? (
+        <p className="mt-3 leading-6 text-ink-soft">{cue.noteText}</p>
+      ) : (
+        <p className="mt-3 leading-6 text-muted">该笔记暂未提供正文。</p>
+      )}
+      <p className="mt-2 text-xs text-muted">Asset {cue.assetId}</p>
+    </>
+  );
+}
+
+function MarkAnchorDetails({ mark }: { mark: ReaderRecordPlateMark }) {
+  if (mark.kind === "user_highlight") {
+    return <UserHighlightAnchorDetails mark={mark} />;
+  }
+  if (mark.kind === "grammar_note") {
+    return (
+      <GrammarAnchorDetails
+        grammarPoint={mark.grammarPoint}
+        note={mark.note}
+        pattern={mark.pattern}
+      />
+    );
+  }
+  if (isVocabularyMark(mark)) {
+    return <VocabularyAnchorDetails mark={mark} />;
+  }
+  return null;
+}
+
+function ActiveAnchorDetails({
+  activeAnchor,
+}: {
+  activeAnchor: ReaderRecordActiveAnchor;
+}) {
+  if (activeAnchor.source === "mark") {
+    return (
+      <div
+        data-reader-record-active-mark-stack-size={activeAnchor.marks.length}
+        className="space-y-4"
+      >
+        {activeAnchor.marks.length > 1 ? (
+          <p
+            data-reader-record-active-mark-stack="true"
+            className="text-xs text-muted"
+          >
+            {activeAnchor.marks.length} overlapping annotations
+          </p>
+        ) : null}
+        {activeAnchor.marks.map((mark) => (
+          <section
+            key={mark.id}
+            data-reader-record-active-stack-mark-id={mark.id}
+            data-reader-record-active-stack-mark-kind={mark.kind}
+            className={
+              activeAnchor.marks.length > 1
+                ? "border-b border-border/60 pb-4 last:border-b-0 last:pb-0"
+                : undefined
+            }
+          >
+            <MarkAnchorDetails mark={mark} />
+          </section>
+        ))}
+      </div>
+    );
+  }
+
+  const cue = activeAnchor.cue;
+  if (cue.type === "reader_record_grammar_cue") {
+    return (
+      <GrammarAnchorDetails
+        grammarPoint={cue.grammarPoint}
+        note={cue.note}
+        pattern={cue.pattern}
+      />
+    );
+  }
+  if (cue.type === "reader_record_sentence_analysis_cue") {
+    return <SentenceAnalysisAnchorDetails cue={cue} />;
+  }
+  return <UserCommentAnchorDetails cue={cue} />;
+}
+
+function ActiveAnchorInspector({
+  activeAnchor,
+  onClose,
+}: {
+  activeAnchor: ReaderRecordActiveAnchor | null;
+  onClose: () => void;
+}) {
+  if (!activeAnchor) {
+    return null;
+  }
+
+  const anchorSegmentId = activeAnchorSegmentId(activeAnchor);
+  const selectedText = activeAnchorSelectedText(activeAnchor);
+
+  return (
+    <aside
+      id={ACTIVE_ANCHOR_INSPECTOR_ID}
+      data-testid="reader-record-active-anchor-inspector"
+      data-reader-record-active-source={activeAnchor.source}
+      data-reader-record-active-anchor-segment-id={anchorSegmentId}
+      data-reader-record-active-selected-text={selectedText}
+      className="mb-5 rounded-md border border-border bg-background px-3 py-3 text-sm shadow-sm"
+      role="region"
+      aria-live="polite"
+      aria-label="Active anchor details"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <ActiveAnchorDetails activeAnchor={activeAnchor} />
+          <p className="mt-3 text-xs text-muted">
+            Anchor {anchorSegmentId} · {selectedText}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="rounded-sm px-2 py-1 text-xs text-muted hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-lens-blue/30"
+          aria-label="Close active anchor details"
+          onClick={onClose}
+        >
+          Close
+        </button>
+      </div>
+    </aside>
+  );
+}
+
 function cueLabel(cue: ReaderRecordPlateCue) {
   if (cue.type === "reader_record_grammar_cue") {
     return `语法 · ${cue.grammarPoint}`;
@@ -339,37 +841,80 @@ function cueAnchorSegmentId(cue: ReaderRecordPlateCue) {
   return cue.anchorSegmentId;
 }
 
-function cueClassName(cue: ReaderRecordPlateCue) {
+function cueMarkerLabel(cue: ReaderRecordPlateCue) {
   if (cue.type === "reader_record_user_comment_cue") {
-    return "rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-sans text-[0.68rem] font-medium leading-none text-amber-900";
+    return "笔记";
   }
-  return "rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-sans text-[0.68rem] font-medium leading-none text-emerald-900";
+  if (cue.type === "reader_record_grammar_cue") {
+    return "G";
+  }
+  return "S";
 }
 
-function CueChips({ cues }: { cues: ReaderRecordPlateCue[] }) {
+function cueMarkerClassName(cue: ReaderRecordPlateCue) {
+  if (cue.type === "reader_record_user_comment_cue") {
+    return "border-amber-200 bg-amber-50 text-amber-900";
+  }
+  if (cue.type === "reader_record_grammar_cue") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  }
+  return "border-sky-200 bg-sky-50 text-sky-800";
+}
+
+function CueMarkers({
+  activeAnchor,
+  cues,
+  onActivateCue,
+}: {
+  activeAnchor: ReaderRecordActiveAnchor | null;
+  cues: ReaderRecordPlateCue[];
+  onActivateCue: (cue: ReaderRecordPlateCue) => void;
+}) {
   if (cues.length === 0) {
     return null;
   }
+  const summary = cues.map(cueLabel).join("；");
   return (
     <span
       data-reader-record-cues="inline"
-      className="ml-2 inline-flex flex-wrap items-center gap-1 align-middle"
+      data-reader-record-cue-display="marker"
+      className="group relative ml-1 inline-flex items-center gap-0.5 align-super font-sans"
+      aria-label={`阅读提示：${summary}`}
     >
-      {cues.map((cue) => (
-        <span
-          key={cue.id}
-          data-reader-record-cue-id={cue.id}
-          data-reader-record-cue-type={cue.type}
-          data-reader-record-user-asset-id={
-            cue.type === "reader_record_user_comment_cue" ? cue.assetId : undefined
-          }
-          data-anchor-segment-id={cueAnchorSegmentId(cue)}
-          className={cueClassName(cue)}
-          title={cueLabel(cue)}
-        >
-          {cueLabel(cue)}
-        </span>
-      ))}
+      {cues.map((cue) => {
+        const active = activeCueIsCurrent(activeAnchor, cue);
+        return (
+          <button
+            key={cue.id}
+            type="button"
+            data-reader-record-cue-id={cue.id}
+            data-reader-record-cue-type={cue.type}
+            data-reader-record-cue-active={active ? "true" : undefined}
+            data-reader-record-user-asset-id={
+              cue.type === "reader_record_user_comment_cue" ? cue.assetId : undefined
+            }
+            data-anchor-segment-id={cueAnchorSegmentId(cue)}
+            className={`inline-flex min-h-4 min-w-4 items-center justify-center rounded-full border px-1 text-[0.58rem] font-semibold leading-none opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-lens-blue/30 ${
+              active ? "opacity-100 ring-2 ring-lens-blue/30" : ""
+            } ${cueMarkerClassName(cue)}`}
+            aria-controls={ACTIVE_ANCHOR_INSPECTOR_ID}
+            aria-expanded={active ? "true" : "false"}
+            aria-label={cueLabel(cue)}
+            title={cueLabel(cue)}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onActivateCue(cue);
+            }}
+            onFocus={(event) => {
+              event.stopPropagation();
+              onActivateCue(cue);
+            }}
+          >
+            {cueMarkerLabel(cue)}
+          </button>
+        );
+      })}
     </span>
   );
 }
@@ -390,6 +935,33 @@ function markLabel(mark: ReaderRecordPlateTextLeaf["marks"][number]) {
   return `语境 · ${mark.vocabulary.gloss}`;
 }
 
+function markPriority(mark: ReaderRecordPlateMark) {
+  if (mark.kind === "grammar_note") {
+    return 10;
+  }
+  if (mark.kind === "phrase_gloss") {
+    return 20;
+  }
+  if (mark.kind === "context_gloss") {
+    return 30;
+  }
+  if (mark.kind === "vocab_highlight") {
+    return 40;
+  }
+  return 50;
+}
+
+function sortedMarkStack(marks: ReaderRecordPlateMark[]) {
+  return [...marks].sort((left, right) => {
+    const priorityDelta = markPriority(left) - markPriority(right);
+    return priorityDelta === 0 ? left.id.localeCompare(right.id) : priorityDelta;
+  });
+}
+
+function markStackLabel(marks: ReaderRecordPlateMark[]) {
+  return marks.map(markLabel).join("；");
+}
+
 function markClassName(mark: ReaderRecordPlateTextLeaf["marks"][number]) {
   if (mark.kind === "user_highlight") {
     return "rounded-sm bg-amber-100/80 ring-1 ring-amber-200/80";
@@ -406,30 +978,76 @@ function markClassName(mark: ReaderRecordPlateTextLeaf["marks"][number]) {
   return "rounded-sm bg-amber-50";
 }
 
+function markStackClassName(marks: ReaderRecordPlateMark[]) {
+  return sortedMarkStack(marks).map(markClassName).join(" ");
+}
+
 function renderMarkedLeaf(
   leaf: ReaderRecordPlateTextLeaf,
   children: ReactNode,
+  activeAnchor: ReaderRecordActiveAnchor | null,
+  onActivateMarkStack: (marks: ReaderRecordPlateMark[]) => void,
 ) {
-  let content = children;
-  [...leaf.marks].reverse().forEach((mark) => {
-    content = (
-      <span
-        data-reader-record-mark-id={mark.id}
-        data-reader-record-mark-kind={mark.kind}
-        data-reader-record-mark-owner={mark.owner}
-        data-reader-record-user-asset-id={
-          mark.kind === "user_highlight" ? mark.assetId : undefined
+  if (leaf.marks.length === 0) {
+    return children;
+  }
+
+  const markStack = sortedMarkStack(leaf.marks);
+  const primaryMark = markStack[0];
+  const active = markStack.some((mark) => activeMarkIsCurrent(activeAnchor, mark));
+  const userAssetIds = markStack
+    .filter((mark) => mark.kind === "user_highlight")
+    .map((mark) => mark.assetId);
+
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      data-reader-record-mark-entry="stack"
+      data-reader-record-mark-id={primaryMark.id}
+      data-reader-record-mark-ids={markStack.map((mark) => mark.id).join(" ")}
+      data-reader-record-mark-kind={primaryMark.kind}
+      data-reader-record-mark-kinds={markStack.map((mark) => mark.kind).join(" ")}
+      data-reader-record-mark-owner={
+        markStack.every((mark) => mark.owner === primaryMark.owner)
+          ? primaryMark.owner
+          : "mixed"
+      }
+      data-reader-record-mark-active={active ? "true" : undefined}
+      data-reader-record-mark-stack-size={String(markStack.length)}
+      data-reader-record-user-asset-id={userAssetIds[0] ?? undefined}
+      data-reader-record-user-asset-ids={
+        userAssetIds.length > 0 ? userAssetIds.join(" ") : undefined
+      }
+      data-anchor-segment-id={primaryMark.anchor.anchorSegmentId}
+      data-selected-text={primaryMark.anchor.selectedText}
+      className={`${markStackClassName(markStack)} cursor-pointer focus:outline-none focus:ring-2 focus:ring-lens-blue/30 ${
+        active ? "ring-2 ring-lens-blue/30" : ""
+      }`}
+      aria-controls={ACTIVE_ANCHOR_INSPECTOR_ID}
+      aria-expanded={active ? "true" : "false"}
+      aria-label={markStackLabel(markStack)}
+      title={markStackLabel(markStack)}
+      onClick={(event) => {
+        event.stopPropagation();
+        onActivateMarkStack(markStack);
+      }}
+      onFocus={(event) => {
+        event.stopPropagation();
+        onActivateMarkStack(markStack);
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") {
+          return;
         }
-        data-anchor-segment-id={mark.anchor.anchorSegmentId}
-        data-selected-text={mark.anchor.selectedText}
-        className={markClassName(mark)}
-        title={markLabel(mark)}
-      >
-        {content}
-      </span>
-    );
-  });
-  return content;
+        event.preventDefault();
+        event.stopPropagation();
+        onActivateMarkStack(markStack);
+      }}
+    >
+      {children}
+    </span>
+  );
 }
 
 function LayerActivity({ layers }: { layers: ReaderRecordPlateProgressLayer[] }) {
@@ -499,11 +1117,15 @@ function SourceBlockElement({
 }
 
 function AnchorSegmentElement({
+  activeAnchor,
   props,
   children,
+  onActivateCue,
 }: {
+  activeAnchor: ReaderRecordActiveAnchor | null;
   props: Parameters<RenderElement>[0];
   children: ReactNode;
+  onActivateCue: (cue: ReaderRecordPlateCue) => void;
 }) {
   const element = props.element as unknown as ReaderRecordPlateAnchorSegmentNode;
   return (
@@ -517,7 +1139,11 @@ function AnchorSegmentElement({
       className="reader-record-plate-anchor-segment"
     >
       {children}
-      <CueChips cues={element.cues} />
+      <CueMarkers
+        activeAnchor={activeAnchor}
+        cues={element.cues}
+        onActivateCue={onActivateCue}
+      />
     </span>
   );
 }
@@ -535,11 +1161,12 @@ function UnitTranslationElement({
       {...props.attributes}
       data-reader-record-node="unit-translation"
       data-reader-record-unit-translation={element.unitId}
+      data-reader-record-translation-display="supporting-paragraph"
       data-layer-id={element.layerId}
-      className="mt-3 border-l-2 border-border/80 pl-4 font-sans text-[0.92rem] leading-7 text-muted"
+      className="mt-2 border-l border-border/70 pl-3 font-sans text-[0.95rem] leading-7 text-ink-soft"
     >
-      <span className="mr-2 text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-muted">
-        本段译文
+      <span className="mr-2 text-[0.72rem] font-medium text-muted">
+        译文
       </span>
       {children}
     </aside>
@@ -551,18 +1178,32 @@ export function ReaderRecordPlateSurface({
   className = "px-5 py-8 sm:px-8 lg:px-10",
   columnClassName = "mx-auto max-w-[72ch]",
   readingClassName = "reader-serif text-ink text-[1.2rem] leading-[1.9]",
+  onRequestSnapshotReload,
 }: ReaderRecordPlateSurfaceProps) {
   const surfaceRef = useRef<HTMLElement | null>(null);
   const [activeSelection, setActiveSelection] =
     useState<ReaderRecordSelectionAnchorBridgeResult | null>(null);
   const [copyStatus, setCopyStatus] = useState<ReaderRecordCopyStatus>("idle");
+  const [writeState, setWriteState] = useState<ReaderRecordWriteState>({
+    kind: "idle",
+  });
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteAnchorDraft, setNoteAnchorDraft] =
+    useState<ReaderRecordAnchorDraft | null>(null);
   const [lookupState, setLookupState] = useState<ReaderRecordLookupState>({
     kind: "idle",
   });
+  const [activeAnchorState, setActiveAnchorState] =
+    useState<ReaderRecordActiveAnchorState | null>(null);
   const plateDocument = useMemo(
     () => projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot),
     [snapshot],
   );
+  const snapshotKey = `${plateDocument.record.generation}:${plateDocument.snapshot.lastEventSequence}:${plateDocument.snapshot.snapshotId}`;
+  const activeAnchor =
+    activeAnchorState?.snapshotKey === snapshotKey
+      ? activeAnchorState.activeAnchor
+      : null;
   const value = plateDocument.children;
   const editor = usePlateEditor(
     {
@@ -585,6 +1226,7 @@ export function ReaderRecordPlateSurface({
       );
       setActiveSelection(nextSelection);
       setCopyStatus("idle");
+      setWriteState((current) => (current.kind === "saving" ? current : { kind: "idle" }));
     }
 
     window.document.addEventListener("selectionchange", handleSelectionChange);
@@ -593,9 +1235,55 @@ export function ReaderRecordPlateSurface({
     };
   }, [snapshot]);
 
+  useEffect(() => {
+    if (!activeAnchor) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setActiveAnchorState(null);
+      }
+    };
+
+    window.document.addEventListener("keydown", handleEscape);
+    return () => {
+      window.document.removeEventListener("keydown", handleEscape);
+    };
+  }, [activeAnchor]);
+
+  const handleActivateMarkStack = useCallback(
+    (marks: ReaderRecordPlateMark[]) => {
+      const markStack = sortedMarkStack(marks);
+      const primaryMark = markStack[0];
+      if (!primaryMark) {
+        return;
+      }
+      setActiveAnchorState({
+        snapshotKey,
+        activeAnchor: { source: "mark", mark: primaryMark, marks: markStack },
+      });
+    },
+    [snapshotKey],
+  );
+
+  const handleActivateCue = useCallback(
+    (cue: ReaderRecordPlateCue) => {
+      setActiveAnchorState({
+        snapshotKey,
+        activeAnchor: { source: "cue", cue },
+      });
+    },
+    [snapshotKey],
+  );
+
+  const handleCloseActiveAnchor = useCallback(() => {
+    setActiveAnchorState(null);
+  }, []);
+
   const handleCopy = useCallback(async () => {
-    const draft = activeSelection?.drafts[0];
-    if (!activeSelection?.supportedSingleRange || !draft) {
+    const draft = singleRangeDraft(activeSelection);
+    if (!draft) {
       return;
     }
 
@@ -608,8 +1296,9 @@ export function ReaderRecordPlateSurface({
   }, [activeSelection]);
 
   const handleLookup = useCallback(async () => {
-    const draft = activeSelection?.drafts[0];
-    if (!activeSelection?.supportedSingleRange || !draft) {
+    const selection = activeSelection;
+    const draft = singleRangeDraft(selection);
+    if (!selection || !draft) {
       return;
     }
 
@@ -624,8 +1313,8 @@ export function ReaderRecordPlateSurface({
       const params = new URLSearchParams({
         word: query,
         type: lookupTypeForSelection(query),
-        context: activeSelection.contextSentence,
-        sentenceId: activeSelection.sentenceId,
+        context: selection.contextSentence,
+        sentenceId: selection.sentenceId,
       });
       const response = await fetch(`/api/web/dict/lookup?${params.toString()}`);
       const payload = (await response.json().catch(() => null)) as
@@ -660,6 +1349,86 @@ export function ReaderRecordPlateSurface({
     }
   }, [activeSelection]);
 
+  const handleHighlight = useCallback(async () => {
+    const draft = singleRangeDraft(activeSelection);
+    if (!draft || writeState.kind === "saving") {
+      return;
+    }
+
+    setWriteState({ kind: "saving", action: "highlight" });
+
+    try {
+      await postReadingRecordUserAsset("/api/web/reading-record/highlights", {
+        anchor: draft,
+        selectedText: draft.selected_text,
+        color: "soft_green",
+      });
+      setWriteState({
+        kind: "saved",
+        action: "highlight",
+        message: "Highlight saved",
+      });
+      await onRequestSnapshotReload?.();
+    } catch (error) {
+      setWriteState({
+        kind: "error",
+        action: "highlight",
+        message: error instanceof Error ? error.message : "Highlight save failed.",
+      });
+    }
+  }, [activeSelection, onRequestSnapshotReload, writeState.kind]);
+
+  const handleOpenNoteComposer = useCallback(() => {
+    const draft = singleRangeDraft(activeSelection);
+    if (!draft || writeState.kind === "saving") {
+      return;
+    }
+
+    setNoteAnchorDraft(draft);
+    setNoteDraft("");
+    setWriteState({ kind: "idle" });
+  }, [activeSelection, writeState.kind]);
+
+  const handleCancelNote = useCallback(() => {
+    if (writeState.kind === "saving") {
+      return;
+    }
+    setNoteAnchorDraft(null);
+    setNoteDraft("");
+  }, [writeState.kind]);
+
+  const handleSaveNote = useCallback(async () => {
+    const draft = noteAnchorDraft;
+    const noteText = noteDraft.trim();
+    if (!draft || !noteText || writeState.kind === "saving") {
+      return;
+    }
+
+    setWriteState({ kind: "saving", action: "note" });
+
+    try {
+      await postReadingRecordUserAsset("/api/web/reading-record/notes", {
+        anchor: draft,
+        selectedText: draft.selected_text,
+        noteText,
+      });
+      setNoteAnchorDraft(null);
+      setNoteDraft("");
+      setWriteState({
+        kind: "saved",
+        action: "note",
+        message: "Note saved",
+      });
+      await onRequestSnapshotReload?.();
+    } catch (error) {
+      setWriteState({
+        kind: "error",
+        action: "note",
+        message: error instanceof Error ? error.message : "Note save failed.",
+      });
+    }
+  }, [noteAnchorDraft, noteDraft, onRequestSnapshotReload, writeState.kind]);
+
   const renderElement = useCallback(
     (props: Parameters<RenderElement>[0]) => {
       const element = props.element as unknown as ReaderRecordPlateElement;
@@ -674,7 +1443,11 @@ export function ReaderRecordPlateSurface({
           );
         case "reader_record_anchor_segment":
           return (
-            <AnchorSegmentElement props={props}>
+            <AnchorSegmentElement
+              activeAnchor={activeAnchor}
+              props={props}
+              onActivateCue={handleActivateCue}
+            >
               {props.children}
             </AnchorSegmentElement>
           );
@@ -688,37 +1461,49 @@ export function ReaderRecordPlateSurface({
           return <div {...props.attributes}>{props.children}</div>;
       }
     },
-    [readingClassName],
+    [activeAnchor, handleActivateCue, readingClassName],
   );
 
-  const renderLeaf = useCallback((props: Parameters<RenderLeaf>[0]) => {
-    const leaf = props.leaf as unknown as ReaderRecordPlateLeaf;
-    if ("sourceRole" in leaf && leaf.sourceRole === "segment_text" && "marks" in leaf) {
-      return (
-        <span
-          {...props.attributes}
-          data-reader-record-leaf="segment_text"
-          data-anchor-segment-id={leaf.anchorSegmentId}
-        >
-          {renderMarkedLeaf(leaf, props.children)}
-        </span>
-      );
-    }
-    if ("sourceRole" in leaf && leaf.sourceRole === "separator") {
-      return (
-        <span {...props.attributes} data-reader-record-leaf="separator">
-          {props.children}
-        </span>
-      );
-    }
-    return <span {...props.attributes}>{props.children}</span>;
-  }, []);
+  const renderLeaf = useCallback(
+    (props: Parameters<RenderLeaf>[0]) => {
+      const leaf = props.leaf as unknown as ReaderRecordPlateLeaf;
+      if (
+        "sourceRole" in leaf &&
+        leaf.sourceRole === "segment_text" &&
+        "marks" in leaf
+      ) {
+        return (
+          <span
+            {...props.attributes}
+            data-reader-record-leaf="segment_text"
+            data-anchor-segment-id={leaf.anchorSegmentId}
+          >
+            {renderMarkedLeaf(
+              leaf,
+              props.children,
+              activeAnchor,
+              handleActivateMarkStack,
+            )}
+          </span>
+        );
+      }
+      if ("sourceRole" in leaf && leaf.sourceRole === "separator") {
+        return (
+          <span {...props.attributes} data-reader-record-leaf="separator">
+            {props.children}
+          </span>
+        );
+      }
+      return <span {...props.attributes}>{props.children}</span>;
+    },
+    [activeAnchor, handleActivateMarkStack],
+  );
 
   return (
     <section
       ref={surfaceRef}
       data-testid="reader-record-plate-surface"
-      data-reader-record-surface="plate-readonly-scaffold"
+      data-reader-record-surface="plate-readonly-reading"
       className={className}
     >
       <div className={columnClassName}>
@@ -727,12 +1512,29 @@ export function ReaderRecordPlateSurface({
           copyStatus={copyStatus}
           lookupState={lookupState}
           selection={activeSelection}
+          writeState={writeState}
+          noteComposerOpen={noteAnchorDraft !== null}
           onCopy={handleCopy}
+          onHighlight={handleHighlight}
           onLookup={handleLookup}
+          onOpenNoteComposer={handleOpenNoteComposer}
         />
         <ReaderRecordLookupPanel
           lookupState={lookupState}
           onDismiss={() => setLookupState({ kind: "idle" })}
+        />
+        {noteAnchorDraft ? (
+          <ReaderRecordNoteComposer
+            noteDraft={noteDraft}
+            saving={writeState.kind === "saving" && writeState.action === "note"}
+            onCancel={handleCancelNote}
+            onChange={setNoteDraft}
+            onSave={handleSaveNote}
+          />
+        ) : null}
+        <ActiveAnchorInspector
+          activeAnchor={activeAnchor}
+          onClose={handleCloseActiveAnchor}
         />
         <Plate editor={editor} readOnly>
           <EditorContainer className="h-auto cursor-default overflow-visible rounded-none bg-transparent px-0 py-0 [&_.slate-selection-area]:hidden">

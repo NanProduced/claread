@@ -1,9 +1,10 @@
 import type { WebAnchorSegmentVm } from "./annotations";
+import type { UserEditorialAssetAnchorDto } from "./reader-plate";
 
 export interface ReaderNoteCreateRequestDto {
-  analysis_record_id: string;
+  analysis_record_id?: string | null;
   quote_mode: "sentence" | "text_range" | "multi_text";
-  anchor_sentence_id: string;
+  anchor_sentence_id?: string | null;
   target_key?: string | null;
   paragraph_id?: string | null;
   sentence_id?: string | null;
@@ -21,6 +22,7 @@ export interface ReaderNoteCreateRequestDto {
   }>;
   note_text: string;
   payload_json?: Record<string, unknown>;
+  anchor?: UserEditorialAssetAnchorDto | null;
 }
 
 export interface ReaderNoteUpdateRequestDto {
@@ -51,6 +53,13 @@ export interface ReaderNoteResponseDto {
   payload_json: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  reading_record_id?: string | null;
+  base_id?: string | null;
+  generation?: number | null;
+  unit_id?: string | null;
+  anchor_segment_id?: string | null;
+  unit_start_utf16?: number | null;
+  unit_end_utf16?: number | null;
 }
 
 export interface ReaderNoteListResponseDto {

@@ -203,9 +203,9 @@ uv run reader-enhancement-worker `
 - `results[].pipeline_summary.snapshot_reload_recommended`
 - `results[].pipeline_summary.stopped_reason`
 
-## 5.1 检查本地 D5 schema health
+## 5.1 检查本地 D5/D6 schema health
 
-如果 worker 或真实 provider 链路报错提示 `ai_usage_events` / `user_credit_ledger` attribution 列缺失，先跑：
+如果 worker、真实 provider 链路，或 `/app/reader-record/{recordId}` snapshot 查询报 schema 缺失，先跑：
 
 ```powershell
 uv run python scripts/check_reader_schema_health.py
@@ -223,8 +223,36 @@ uv run python scripts/check_reader_schema_health.py --json
 - `ai_usage_events` 的 reader attribution FK / index
 - `user_credit_ledger` 的 D5 attribution columns
 - `user_credit_ledger` 的 reader attribution FK / index
+- `user_annotations` 的 D6 Reading Record anchor columns：
+  `reading_record_id`、`base_id`、`generation`、`unit_id`、`anchor_segment_id`、`unit_start_utf16`、`unit_end_utf16`
+- `reader_notes` 的同一组 D6 Reading Record anchor columns
+- `reader_notes.analysis_record_id` 和 `reader_notes.anchor_sentence_id` 必须允许 `NULL`
+- `user_annotations` 的 `idx_user_annotations_reading_record` / `uq_user_annotations_reading_record_anchor`
+- `reader_notes` 的 `idx_reader_notes_reading_record` / `uq_reader_notes_reading_record_anchor`
+- `user_annotations_text_anchor_payload_check` 必须包含 Reading Record path，即允许 `anchor_type = 'text_range'` 时使用 `reading_record_id IS NOT NULL` 且 `analysis_record_id IS NULL`
 
-如果失败，当前正确处理方式是重置或重建本地 DB，然后重新应用 `infra/migrations/0001_initial_schema.sql`。D5-R5 没有增加“旧库自动迁移兼容层”。
+如果 D5 attribution 检查失败，当前正确处理方式是重置或重建本地 DB，然后重新应用 `infra/migrations/0001_initial_schema.sql`。D5-R5 没有增加“旧库自动迁移兼容层”。
+
+如果 D6 user asset schema 检查失败，脚本会明确提示需要执行 `infra/migrations/0002_reader_record_anchor_columns.sql`。脚本只做诊断，不会自动修改数据库。
+
+## 5.2 旧 volume 缺 D6 0002 migration 的处理方式
+
+D6-U4 新增了 `infra/migrations/0002_reader_record_anchor_columns.sql`，用于给 `user_annotations` 和 `reader_notes` 增加 Reading Record anchor columns。`infra/docker/docker-compose.local.yml` 已把该 migration 挂进 `/docker-entrypoint-initdb.d/`，因此新建 Postgres volume 时会自动执行。
+
+如果你复用的是旧的 `claread_postgres_data` volume，Docker entrypoint 不会重新执行新增 migration。此时打开 `/app/reader-record/{recordId}` 可能在 snapshot 查询阶段报：
+
+```text
+asyncpg.exceptions.UndefinedColumnError: column ua.reading_record_id does not exist
+```
+
+保留现有数据并补一次 migration：
+
+```powershell
+docker cp .\infra\migrations\0002_reader_record_anchor_columns.sql claread-postgres:/tmp/0002_reader_record_anchor_columns.sql
+docker exec claread-postgres psql -v ON_ERROR_STOP=1 -U claread -d claread -f /tmp/0002_reader_record_anchor_columns.sql
+```
+
+如果本地业务数据可丢弃，也可以重建 Postgres volume；重建后 compose 会按顺序执行 `0001_initial_schema.sql`、`0002_reader_record_anchor_columns.sql` 和 Eval Center `0001`。
 
 ## 6. 页面内提交、recordId 获取与产品页验证
 

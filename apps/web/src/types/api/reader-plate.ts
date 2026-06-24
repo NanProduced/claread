@@ -183,6 +183,27 @@ export interface ReaderTextRangeAnchorDto {
   hash_algorithm: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
 }
 
+export type UserEditorialAssetAnchorScope =
+  | "stable_source"
+  | "translation"
+  | "system_ai_layer"
+  | "ask_supplement";
+
+export interface UserEditorialAssetAnchorDto {
+  record_id: string;
+  base_id: string;
+  generation: number;
+  unit_id: string;
+  anchor_segment_id: string;
+  scope?: UserEditorialAssetAnchorScope;
+  offset_unit?: typeof READER_TEXT_RANGE_OFFSET_UNIT;
+  start_offset: number;
+  end_offset: number;
+  selected_text: string;
+  text_hash: string;
+  hash_algorithm?: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
+}
+
 export type ReaderSnapshotAnchorDto = ReaderUnitAnchorDto | ReaderTextRangeAnchorDto;
 
 export interface ReaderSnapshotAnchorSegmentDto {

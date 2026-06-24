@@ -1,6 +1,6 @@
 # Reader Record Plate Surface UI
 
-> 状态：目标方案草案；UI-D6A 默认 Plate 真实流程已验收
+> 状态：目标方案草案；UI-D6A 默认 Plate 真实流程已验收；UI-D4 阅读态打磨已落地；UI-D5 Active Anchor Inspector 已落地
 > 最后更新：2026-06-24
 > 范围：`/app/reader-record/{recordId}` 在 Agentic Orchestration 架构下的 Reader Record 解析页 UI/UX、Plate.js 文档表面、选择交互、词典/Ask 联动、用户高亮/笔记和第一版实现边界。
 
@@ -332,6 +332,16 @@ active source 类型：
 - `system_cue`：来自 `ReaderRecordPlateTextAnchor`，例如 grammar cue；Structure Lens V1 如需发起 Ask，也应先落到同形 anchor。
 
 adapter 只生成 read-only draft，用于 Lookup、Copy、disabled Ask preview、popover/rail 上下文传递。它不调用 API，不打开 Ask/Highlight/Note 写入，也不持久化 Plate path / Slate path。
+
+UI-D5 Active Anchor Inspector 已在 `ReaderRecordPlateSurface` 内落地为前端局部状态：
+
+- active mark 支持 vocabulary / grammar / user highlight；active cue 支持 grammar cue / sentence-analysis cue / user note/comment cue。
+- active state 只保存 projection 中的 domain id、`anchor_segment_id`、`selected_text` 与对应 domain anchor；不保存、不序列化、不持久化 Plate path / Slate path。
+- snapshot identity / event sequence / generation 变化时必须清空 active inspector，避免刷新后继续展示旧 layer 或旧 user asset 的陈旧 anchor。
+- 点击或键盘聚焦 mark / cue 后，在中心阅读列内显示 compact detail panel；panel 使用 `aria-live`，可通过 Close 按钮或 Escape 关闭。
+- vocabulary detail 显示 headword / phrase / gloss / example / reason；grammar detail 显示 grammar point / pattern / note；sentence-analysis detail 显示 label / analysis / chunks；user note/comment detail 显示“笔记/评论”、asset id 和已投影的 note text。
+- cue marker 使用真实 button；mark 使用单个带 `role="button"`、`tabIndex`、click / keydown / focus handler 的 inline stack entry，避免无 handler 的伪 button，也避免重叠 marks 形成嵌套可交互元素。
+- 同一 leaf 内 vocab / grammar / user highlight 重叠时，只暴露一个可聚焦 mark stack 入口；inspector 内按优先级展示 stack 中的全部 mark details。
 
 返回 `null` 的情况：
 
@@ -720,10 +730,10 @@ type ReaderRecordUserAssetWritePayload = {
 短期：
 
 - 新 Plate surface 可继续生成 legacy alias metadata 供调试/兼容，但 write action 必须以 `anchor` 为唯一校验输入。
-- D6-A5 当前后端只完成 validation branch：gate 失败返回 typed HTTP 400，gate 成功返回 HTTP 409 `user_editorial_asset_write_pending`，不写 legacy 表。
-- 只有后续 persistence follow-up 把 validated `anchor` 接到表结构后，才能在 `/app/reader-record/{recordId}` 启用 Comment/Highlight 写入。
+- D6-U7 当前后端已完成 Reading Record anchor gate + V1c persistence，Web Plate surface 可在 stable-source single-range selection 上启用 Highlight / Note 最小写入。
+- D6-U7 Web 写入口为 `/api/web/reading-record/highlights` 与 `/api/web/reading-record/notes`，请求必须携带 nested `anchor`；保存成功后触发 snapshot reload。
 - 不允许假设新 Reading Record id 一定能通过旧 `analysis_results.render_scene_json` 校验。
-- Web 可以在 V1a/V1b 生成 `UserEditorialAssetAnchor` draft 供 Lookup/Copy/Ask 预览使用，但不能把 write action 打开。
+- Web 可以继续生成 `UserEditorialAssetAnchor` draft 供 Lookup/Copy/Ask 预览使用；Ask / Feedback 写入口仍 disabled。
 
 中期：
 
@@ -777,7 +787,7 @@ Ask Supplement 进入文档后不渲染为卡片。它应表现为文档注释 /
 
 - 已新增 `ReaderRecordPlateSurface` 组件，输入为 `ReaderPlateSnapshotDto`，内部直接调用 `projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot)`。
 - scaffold 使用 `Plate + readOnly` 渲染，不显示 editor formatting toolbar。
-- scaffold 最小展示 stable source text、unit-level translation block、vocab / grammar marks、grammar / sentence-analysis cues，以及 compact progress chip / slim strip / layer activity indicator。
+- scaffold 最小展示 stable source text、unit-level translation block、vocab / grammar marks、grammar / sentence-analysis cues，以及 compact reading header / slim strip / layer activity indicator。
 - UI-D4 起 scaffold 只读渲染 `snapshot.user_assets`：quick highlight 作为 user highlight mark；note/comment 作为小型 comment indicator；二者都通过 domain anchor 投影，不使用 Plate path / Slate path。
 - scaffold 不经过 `adaptReaderPlateSnapshotToReaderVm`、不接旧 `ReaderVm`，也不经过 `renderSceneToPlateDocument`。
 - UI-D5 起 `/app/reader-record/{recordId}` loaded state 默认渲染 `ReaderRecordPlateSurface`，用于真实页面验证新 Plate.js 解析页。
@@ -786,8 +796,16 @@ Ask Supplement 进入文档后不渲染为卡片。它应表现为文档注释 /
 - UI-D6A 锁定 `/app/read -> /app/reader-record/{recordId}` 的默认真实阅读路径：默认 mode 为 `plate`；Workbench fallback 只能通过 helper/env/localStorage 显式选择，不改变默认产品页。
 - UI-D6A 已用 characterization tests 覆盖 Plate progressive loading：`processing` / `readable_enhancing` / `failed` / `action_required` 均保留正文并使用 compact progress，不回退到旧 Workbench 状态卡。
 - UI-D6A 静态 guard 锁定默认 Plate route / surface / projection 不引用 `/scene`、`render_scene_json`、`analysis-tasks`、legacy reader route 或 Ask/notes/annotations 写 API。
-- D6-U6 起 Lookup / Copy 在有效 stable-source single-range selection 上启用：Copy 使用浏览器 clipboard API 复制 `selected_text`；Lookup 复用 `/api/web/dict/lookup` 只读 BFF 并显示轻量结果面板；multi-segment / 非 stable-source selection 暂不暴露可执行动作。
-- Ask / Highlight / Note / Feedback 在 UI-D3 / UI-D4 / UI-D5 / UI-D6A 必须 disabled / coming soon，不允许调用 `/api/web/reader-ask`、`/api/web/reader-notes`、`/api/web/reader-annotations`。
+- D6-U6 起 Lookup / Copy 在有效 stable-source single-range selection 上启用：Copy 使用浏览器 clipboard API 复制 `selected_text`；Lookup 复用 `/api/web/dict/lookup` 只读 BFF 并显示轻量结果面板。
+- D6-U7 起 Highlight / Note 在有效 stable-source single-range selection 上启用最小写入：Web 入口为 `/api/web/reading-record/highlights` 和 `/api/web/reading-record/notes`，payload 必须携带 nested `anchor: UserEditorialAssetAnchor`；后端复用 `user_annotations` / `reader_notes` 的 Reading Record anchor gate + V1c persistence；写入成功后触发 snapshot reload 后再由 projection 显示用户资产。
+- UI-D4 阅读态打磨把顶部工程化 progress 改为 reading header：只显示产品态、增强层数量和细进度条；不再作为大块状态卡或调试面板。
+- UI-D4 阅读态打磨把固定按钮排收敛为 `selection-context` action strip：无选区或不支持的选区只给轻提示，不渲染整排 disabled action buttons；有 stable-source single-range selection 时才显示 Lookup / Copy / Highlight / Note 的上下文动作。Ask / Feedback 仍为 coming soon 次级提示，不作为可执行按钮出现。
+- UI-D4 阅读态打磨把 grammar / sentence-analysis cues 从正文内完整 chip 改为低干扰 marker（`G` / `S` / `笔记`）；默认阅读流中不再堆叠绿色 chip 文案。
+- UI-D5 Active Anchor Inspector 让 vocabulary / grammar / user highlight marks，以及 grammar / sentence-analysis / user note-comment cues 可点击或键盘聚焦后查看详情；详情面板在中心阅读列内轻量展示，可 Close 或 Escape 关闭。
+- UI-D5 review 收口：snapshot 刷新会清空 active inspector；重叠 marks 不再嵌套 button-like spans，而是合并为单个 focusable mark stack，inspector 内展示 stack 明细。
+- UI-D4 阅读态打磨把 unit translation 视觉改为 `supporting-paragraph` 辅助译文，保留段落下方轻量展示，仍不挂到 source segment 内。
+- multi-segment / 非 stable-source selection 暂不暴露可执行 Highlight / Note 写动作；`multi_text` 仍等待 `UserEditorialAssetAnchorSet` persistence contract。
+- Ask / Feedback 在 UI-D3 / UI-D4 / UI-D5 / UI-D6A / D6-U7 必须 disabled / coming soon，不允许调用 `/api/web/reader-ask`、`/api/web/reader-notes`、`/api/web/reader-annotations`。
 - UI-D3 / UI-D4 / UI-D5 / UI-D6A 不持久化 Plate path / Slate path；所有 DOM data attribute 只暴露 stable domain id，供后续 active anchor adapter 与 selection bridge 使用。
 - UI-D5 保留原有 snapshot polling / reload 行为；`layer_published`、`record_product_state_updated`、`projection_reset_required` 触发 reload 后，Plate surface 读取新的 `ReaderPlateSnapshotDto` 并重新 projection。
 
@@ -840,11 +858,11 @@ V2 schema 完成后：
 - projection_ops incremental applier。
 - fixed toolbar 或编辑器格式化能力。
 
-第一阶段必须 disabled / coming soon：
+第一阶段仍有限制 / disabled / coming soon：
 
 - Ask：直到 D6-A3/A6 新 route 和 contract 稳定。
-- Comment/Note：直到 V1c Reading Record anchor gate 完成。
-- Highlight：直到 V1c Reading Record anchor gate 完成。
+- Comment/Note：D6-U7 起仅 stable-source single-range selection 启用；multi-segment、非 stable-source 和 `multi_text` 继续 disabled。
+- Highlight：D6-U7 起仅 stable-source single-range selection 启用；multi-segment、非 stable-source 和 `multi_text` 继续 disabled。
 - Feedback：直到 AI mark/cue feedback contract 与新 route 稳定。
 - Ask supplement save-to-document：直到 Ask Supplement Projection 设计和 API 完成。
 - sentence_analysis chunk underlines：直到 V1d best-effort 或 Sentence Analysis V2；默认不显示。
@@ -896,7 +914,7 @@ V1b 验收：
 
 - 选中文本后 toolbar 显示 Lookup、Copy。
 - Ask 按钮可见但在 D6-A3/A6 稳定前明确 disabled 或 coming soon。
-- 如果 V1c 未完成，Comment/Note 和 Highlight 明确 disabled 或 coming soon。
+- D6-U7 起 Comment/Note 和 Highlight 对 stable-source single-range selection 可执行；multi-segment / 非 stable-source selection 明确 disabled。
 - 打开词典或 Ask 后，中心选区仍可见。
 - Dictionary 接收到的是 Plate selection 生成的 domain anchor draft。
 - D6-A3/A6 稳定后，Ask 接收到的是 Plate selection / active cue 生成的 domain anchor draft。

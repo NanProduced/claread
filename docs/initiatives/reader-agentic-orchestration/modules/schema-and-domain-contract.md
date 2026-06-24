@@ -516,6 +516,22 @@ Web types 和 `/app/reader-record` UI 不在本节范围；Web 类型由前端�
 
 Residual risk：被跳过的脏 rows 在 DB 中仍然存在，用户不可见。如果需要让用户感知到数据问题，后续可加 observability（log / metric），但当前不阻塞读路径。
 
+### D6-U7 Plate Highlight / Note Minimal Write Path
+
+> 本节是 D6-U4 / D6-U5 后的 Web 写入口收口：默认 `/app/reader-record/{recordId}` Plate surface 在 stable-source single-range selection 上启用 Highlight / Note，仍不启用 Ask / Feedback。
+
+Runtime contract：
+
+- Web 新增清晰命名的 Reading Record BFF：`/api/web/reading-record/highlights` 与 `/api/web/reading-record/notes`。
+- 请求 payload 使用 nested `anchor: UserEditorialAssetAnchor`；不得把 Reading Record id 映射成 legacy `analysis_record_id`。
+- BFF 只做 session、shape 校验和 selected text 一致性校验；持久化继续复用后端 `create_user_annotation` / `create_reader_note` 的 `req.anchor is not None` 分支。
+- 后端写入必须经过 `load_validated_reading_record_anchor`，成功后写入 V1c columns，`analysis_record_id = NULL`；失败返回 typed anchor error。
+- Plate path / Slate path 不进入 API、不进入 DB。
+- 写入成功后 Web 触发 snapshot reload，由 D6-U5 user asset read projection 显示 highlight / note。
+- `multi_text` / multi-segment selection 仍不写入；后续必须等 `UserEditorialAssetAnchorSet` persistence contract。
+- 不新增 DB migration。D6-U7 复用 D6-U4 已落地的 V1c persistence columns / indexes。
+- 不调用 `/scene`、`render_scene_json`、`analysis-tasks`、legacy Web reader notes/annotations routes 或 writer API。
+
 ## D6-A0 Ask / Notes / Highlights Dependency Audit
 
 > 本节是 D6 product hardening 进入 Ask / notes / highlights / user asset 写入前的依赖审计和迁移边界设计；不接新 Ask、不写新 API、不改产品 runtime。本节结论即 D6 最小实现顺序的输入。

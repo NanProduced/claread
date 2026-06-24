@@ -835,6 +835,46 @@ class ReaderAskFollowUpSuggestion(BaseModel):
     prompt: str
 
 
+class ReaderRecordAskMessageRequest(BaseModel):
+    """D6-A6: new Reading Record Ask message request contract.
+
+    This is intentionally separate from ``ReaderAskMessageStreamRequest``.
+    It accepts a Reading Record anchor and never accepts an
+    ``analysis_record_id`` disguised as ``record_id``.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    content: str = Field(min_length=1, max_length=5000)
+    entry_action: ReaderAskEntryAction = "ask_about_this"
+    anchor: ReaderAskReadingRecordAnchor | None = None
+    model: str | None = None
+
+
+class ReaderRecordAskActionConfirmRequest(BaseModel):
+    """D6-A6: confirm request for a Reading Record Ask action proposal."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirmed: bool = True
+
+
+class ReaderRecordAskPendingResponse(BaseModel):
+    """D6-A6: stable pending/disabled response for the new Reading Record Ask path.
+
+    The route returns HTTP 409 with this body while the execution / write
+    path remains disabled.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["pending"] = "pending"
+    code: str
+    message: str
+    reading_record_id: str
+    action_id: str | None = None
+
+
 class ReaderAskUserVisibleOutput(BaseModel):
     content_md: str
     submission_mode: ReaderAskSubmissionMode = "chat"

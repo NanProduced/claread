@@ -852,7 +852,11 @@ async def _insert_reading_record_user_annotation(
     sentence_id: str | None = None,
     start_offset: int | None = None,
     end_offset: int | None = None,
+    created_at: datetime | None = None,
+    updated_at: datetime | None = None,
 ) -> UUID:
+    effective_created_at = created_at or datetime.now(UTC)
+    effective_updated_at = updated_at or effective_created_at
     async with pool.acquire() as conn:
         annotation_id = await conn.fetchval(
             """
@@ -862,14 +866,16 @@ async def _insert_reading_record_user_annotation(
                 start_offset, end_offset, text_hash, color,
                 reading_record_id, base_id, generation,
                 unit_id, anchor_segment_id,
-                unit_start_utf16, unit_end_utf16
+                unit_start_utf16, unit_end_utf16,
+                created_at, updated_at
             ) VALUES (
                 $1, $2, 'text_range', $3,
                 NULL, $4, $5,
                 $6, $7, $8, $9,
                 $10, $11, $12,
                 $13, $14,
-                $15, $16
+                $15, $16,
+                $17, $18
             )
             RETURNING id
             """,
@@ -891,6 +897,8 @@ async def _insert_reading_record_user_annotation(
             anchor_segment_id,
             unit_start_utf16,
             unit_end_utf16,
+            effective_created_at,
+            effective_updated_at,
         )
     assert isinstance(annotation_id, UUID)
     return annotation_id
@@ -911,7 +919,11 @@ async def _insert_reading_record_reader_note(
     text_hash: str,
     note_text: str,
     analysis_record_id: UUID | None = None,
+    created_at: datetime | None = None,
+    updated_at: datetime | None = None,
 ) -> UUID:
+    effective_created_at = created_at or datetime.now(UTC)
+    effective_updated_at = updated_at or effective_created_at
     async with pool.acquire() as conn:
         note_id = await conn.fetchval(
             """
@@ -922,7 +934,8 @@ async def _insert_reading_record_reader_note(
                 note_text, payload_json,
                 reading_record_id, base_id, generation,
                 unit_id, anchor_segment_id,
-                unit_start_utf16, unit_end_utf16
+                unit_start_utf16, unit_end_utf16,
+                created_at, updated_at
             ) VALUES (
                 $1, $2, NULL, 'text_range',
                 $3, NULL, NULL,
@@ -930,7 +943,8 @@ async def _insert_reading_record_reader_note(
                 $6, '{}'::jsonb,
                 $7, $8, $9,
                 $10, $11,
-                $12, $13
+                $12, $13,
+                $14, $15
             )
             RETURNING id
             """,
@@ -949,6 +963,8 @@ async def _insert_reading_record_reader_note(
             anchor_segment_id,
             unit_start_utf16,
             unit_end_utf16,
+            effective_created_at,
+            effective_updated_at,
         )
     assert isinstance(note_id, UUID)
     return note_id
@@ -957,7 +973,7 @@ async def _insert_reading_record_reader_note(
 async def test_snapshot_includes_reading_record_user_assets(
     reader_service_env: asyncpg.Pool,
 ) -> None:
-    """D6-U5: snapshot.user_assets includes D6-U4 highlight + note rows."""
+    """D6-U8: snapshot.user_assets exposes stable highlight + note contracts."""
     user_id = await _insert_user(reader_service_env)
     service = ArticleReadyPersistenceService(pool=reader_service_env)
     request = PlainTextArticleReadySubmitRequest(
@@ -976,8 +992,7 @@ async def test_snapshot_includes_reading_record_user_assets(
         seg_row = await conn.fetchrow(
             """
             SELECT unit_id, anchor_segment_id,
-                   unit_start_utf16, unit_end_utf16,
-                   text_hash
+                   unit_start_utf16, unit_end_utf16
             FROM anchor_segments
             WHERE reading_record_id = $1 AND base_id = $2
             ORDER BY order_index ASC
@@ -986,26 +1001,33 @@ async def test_snapshot_includes_reading_record_user_assets(
             record_id,
             base_id,
         )
+        base_text = await conn.fetchval(
+            """
+            SELECT text
+            FROM reading_bases
+            WHERE id = $1
+            """,
+            base_id,
+        )
     assert seg_row is not None
+    assert isinstance(base_text, str) and base_text
     unit_id = str(seg_row["unit_id"])
     anchor_segment_id = str(seg_row["anchor_segment_id"])
     seg_start = int(seg_row["unit_start_utf16"])
     seg_end = int(seg_row["unit_end_utf16"])
-    # selected_text must match the offset span; slice it from the base text.
-    async with reader_service_env.acquire() as conn:
-        selected_text = await conn.fetchval(
-            """
-            SELECT substring(text from $1 + 1 for $2 - $1)
-            FROM reading_bases
-            WHERE id = $3
-            """,
-            seg_start,
-            seg_end,
-            base_id,
-        )
-    assert isinstance(selected_text, str) and selected_text
-    text_hash = str(seg_row["text_hash"])
+    target_prefix = "Hello 🧠 "
+    target_start = seg_start + utf16_code_unit_length(target_prefix)
+    target_end = target_start + utf16_code_unit_length("world")
+    assert target_start - seg_start == 9
+    assert seg_start < target_start < target_end < seg_end
+    selected_text = slice_by_utf16_offsets(base_text, target_start, target_end)
+    assert selected_text == "world"
+    text_hash = compute_text_range_hash(selected_text)
 
+    note_created_at = datetime(2026, 6, 24, 9, 0, tzinfo=UTC)
+    note_updated_at = datetime(2026, 6, 24, 9, 5, tzinfo=UTC)
+    highlight_created_at = datetime(2026, 6, 24, 10, 0, tzinfo=UTC)
+    highlight_updated_at = datetime(2026, 6, 24, 10, 5, tzinfo=UTC)
     highlight_id = await _insert_reading_record_user_annotation(
         reader_service_env,
         user_id=user_id,
@@ -1014,10 +1036,13 @@ async def test_snapshot_includes_reading_record_user_assets(
         generation=1,
         unit_id=unit_id,
         anchor_segment_id=anchor_segment_id,
-        unit_start_utf16=seg_start,
-        unit_end_utf16=seg_end,
+        unit_start_utf16=target_start,
+        unit_end_utf16=target_end,
         selected_text=selected_text,
         text_hash=text_hash,
+        color="warm_yellow",
+        created_at=highlight_created_at,
+        updated_at=highlight_updated_at,
     )
     note_id = await _insert_reading_record_reader_note(
         reader_service_env,
@@ -1027,11 +1052,13 @@ async def test_snapshot_includes_reading_record_user_assets(
         generation=1,
         unit_id=unit_id,
         anchor_segment_id=anchor_segment_id,
-        unit_start_utf16=seg_start,
-        unit_end_utf16=seg_end,
+        unit_start_utf16=target_start,
+        unit_end_utf16=target_end,
         selected_text=selected_text,
         text_hash=text_hash,
         note_text="remember this segment",
+        created_at=note_created_at,
+        updated_at=note_updated_at,
     )
 
     snapshot = await service.load_snapshot(
@@ -1042,24 +1069,52 @@ async def test_snapshot_includes_reading_record_user_assets(
     asset_ids = {asset.asset_id for asset in snapshot.user_assets}
     assert str(highlight_id) in asset_ids
     assert str(note_id) in asset_ids
+    assert [asset.asset_id for asset in snapshot.user_assets] == [
+        str(note_id),
+        str(highlight_id),
+    ]
 
     highlight = next(
         a for a in snapshot.user_assets if a.asset_id == str(highlight_id)
     )
+    assert highlight.asset_id == str(highlight_id)
     assert highlight.asset_type == "highlight"
+    assert highlight.owner == "user"
     assert highlight.reading_record_id == str(record_id)
     assert highlight.generation == 1
-    assert highlight.color == "soft_green"
+    assert highlight.color == "warm_yellow"
     assert highlight.note_text is None
+    assert highlight.created_at == highlight_created_at
+    assert highlight.updated_at == highlight_updated_at
+    assert highlight.deleted_at is None
+    assert highlight.anchor.base_id == str(base_id)
     assert highlight.anchor.unit_id == unit_id
     assert highlight.anchor.anchor_segment_id == anchor_segment_id
+    assert highlight.anchor.start_offset == target_start
+    assert highlight.anchor.end_offset == target_end
+    assert highlight.anchor.selected_text == selected_text
+    assert highlight.anchor.text_hash == text_hash
 
     note = next(
         a for a in snapshot.user_assets if a.asset_id == str(note_id)
     )
+    assert note.asset_id == str(note_id)
     assert note.asset_type == "note"
+    assert note.owner == "user"
+    assert note.reading_record_id == str(record_id)
+    assert note.generation == 1
     assert note.note_text == "remember this segment"
     assert note.color is None
+    assert note.created_at == note_created_at
+    assert note.updated_at == note_updated_at
+    assert note.deleted_at is None
+    assert note.anchor.base_id == str(base_id)
+    assert note.anchor.unit_id == unit_id
+    assert note.anchor.anchor_segment_id == anchor_segment_id
+    assert note.anchor.start_offset == target_start
+    assert note.anchor.end_offset == target_end
+    assert note.anchor.selected_text == selected_text
+    assert note.anchor.text_hash == text_hash
 
 
 async def test_snapshot_excludes_other_user_reading_record_user_assets(
@@ -1216,6 +1271,19 @@ async def test_snapshot_excludes_stale_base_generation_user_assets(
         selected_text=selected_text,
         text_hash=text_hash,
     )
+    stale_generation_highlight_id = await _insert_reading_record_user_annotation(
+        reader_service_env,
+        user_id=user_id,
+        record_id=record_id,
+        base_id=active_base_id,
+        generation=2,
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id,
+        unit_start_utf16=seg_start,
+        unit_end_utf16=seg_end,
+        selected_text=selected_text,
+        text_hash=text_hash,
+    )
 
     snapshot = await service.load_snapshot(
         record_id=record_id,
@@ -1225,6 +1293,9 @@ async def test_snapshot_excludes_stale_base_generation_user_assets(
     asset_ids = {asset.asset_id for asset in snapshot.user_assets}
     assert str(stale_highlight_id) not in asset_ids, (
         "stale base user asset must not appear in snapshot"
+    )
+    assert str(stale_generation_highlight_id) not in asset_ids, (
+        "stale generation user asset must not appear in snapshot"
     )
 
 
@@ -1302,6 +1373,21 @@ async def test_snapshot_excludes_legacy_analysis_record_id_user_assets(
         start_offset=seg_start,
         end_offset=seg_end,
     )
+    legacy_note_id = await _insert_reading_record_reader_note(
+        reader_service_env,
+        user_id=user_id,
+        record_id=record_id,
+        base_id=base_id,
+        generation=1,
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id,
+        unit_start_utf16=seg_start,
+        unit_end_utf16=seg_end,
+        selected_text=selected_text,
+        text_hash=text_hash,
+        note_text="legacy note should be hidden",
+        analysis_record_id=legacy_record_id,
+    )
 
     snapshot = await service.load_snapshot(
         record_id=record_id,
@@ -1311,6 +1397,9 @@ async def test_snapshot_excludes_legacy_analysis_record_id_user_assets(
     asset_ids = {asset.asset_id for asset in snapshot.user_assets}
     assert str(legacy_highlight_id) not in asset_ids, (
         "legacy analysis_record_id user asset must not appear in snapshot"
+    )
+    assert str(legacy_note_id) not in asset_ids, (
+        "legacy analysis_record_id note must not appear in snapshot"
     )
 
 
@@ -1381,6 +1470,7 @@ async def test_snapshot_excludes_user_asset_with_mismatched_text_hash(
         user_id=user_id,
     )
 
+    assert snapshot.record_id == str(record_id)
     asset_ids = {asset.asset_id for asset in snapshot.user_assets}
     assert str(dirty_highlight_id) not in asset_ids, (
         "user asset with mismatched text_hash must be defensively filtered"
@@ -1447,6 +1537,7 @@ async def test_snapshot_excludes_user_asset_with_offset_outside_segment(
         user_id=user_id,
     )
 
+    assert snapshot.record_id == str(record_id)
     asset_ids = {asset.asset_id for asset in snapshot.user_assets}
     assert str(dirty_highlight_id) not in asset_ids, (
         "user asset with offset outside anchor segment must be defensively filtered"

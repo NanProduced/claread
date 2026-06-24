@@ -295,6 +295,31 @@ function makeSnapshot(
   };
 }
 
+function makeOverlappingMarkSnapshot(): ReaderPlateSnapshotDto {
+  const snapshot = makeSnapshot();
+  const unit = snapshot.value[0] as ReaderUnitNodeDto;
+  const sourceBlock = unit.children[0] as ReaderSourceBlockNodeDto;
+  const segment = sourceBlock.children[0] as ReaderAnchorSegmentNodeDto;
+  const sourceLeaf = segment.children[0] as {
+    reader_grammar_note_marks?: ReaderGrammarNoteMarkDto[];
+  };
+
+  sourceLeaf.reader_grammar_note_marks = [
+    makeGrammarMark({
+      start_offset: 14,
+      end_offset: 20,
+      selected_text: "memory",
+      segment_start_utf16: 14,
+      segment_end_utf16: 20,
+      grammar_point: "nominal object",
+      pattern: "adjective + noun",
+      note: "memory is part of the noun phrase.",
+    }),
+  ];
+
+  return snapshot;
+}
+
 function makeAnchorSegmentNode(
   overrides: Partial<ReaderAnchorSegmentNodeDto> & {
     anchor_segment_id: string;
@@ -491,6 +516,28 @@ function selectAcrossElements(
   document.dispatchEvent(new Event("selectionchange"));
 }
 
+function expectedMemoryAnchor() {
+  return {
+    record_id: "record_1",
+    base_id: "base_1",
+    generation: 1,
+    unit_id: "unit_1",
+    anchor_segment_id: "seg_1",
+    start_offset: 14,
+    end_offset: 20,
+    offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+    selected_text: "memory",
+    text_hash: computeUtf16FNV1a("memory"),
+    hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+    scope: "stable_source",
+  };
+}
+
+function postedJsonBody(fetchMock: ReturnType<typeof vi.fn>) {
+  const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+  return JSON.parse(String(init?.body)) as Record<string, unknown>;
+}
+
 describe("ReaderRecordPlateSurface", () => {
   it("projects and renders stable source text", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
@@ -514,6 +561,9 @@ describe("ReaderRecordPlateSurface", () => {
 
     expect(translation).not.toBeNull();
     expect(translation?.textContent).toContain(TRANSLATION_TEXT);
+    expect(translation?.dataset.readerRecordTranslationDisplay).toBe(
+      "supporting-paragraph",
+    );
     expect(segment).not.toBeNull();
     expect(segment?.textContent).toContain(SOURCE_TEXT);
     expect(segment?.textContent).not.toContain(TRANSLATION_TEXT);
@@ -534,13 +584,209 @@ describe("ReaderRecordPlateSurface", () => {
     const sentenceCue = container.querySelector<HTMLElement>(
       '[data-reader-record-cue-id="sentence_analysis:analysis_1"]',
     );
+    const cueGroup = container.querySelector<HTMLElement>(
+      '[data-reader-record-cues="inline"]',
+    );
 
     expect(vocab?.dataset.readerRecordMarkKind).toBe("phrase_gloss");
     expect(grammar?.dataset.readerRecordMarkKind).toBe("grammar_note");
+    expect(cueGroup?.dataset.readerRecordCueDisplay).toBe("marker");
     expect(grammarCue?.dataset.readerRecordCueType).toBe("reader_record_grammar_cue");
+    expect(grammarCue?.textContent).toBe("G");
+    expect(grammarCue?.tagName).toBe("BUTTON");
+    expect(grammarCue?.getAttribute("aria-controls")).toBe(
+      "reader-record-plate-active-anchor-inspector",
+    );
+    expect(grammarCue?.getAttribute("aria-expanded")).toBe("false");
     expect(sentenceCue?.dataset.readerRecordCueType).toBe(
       "reader_record_sentence_analysis_cue",
     );
+    expect(sentenceCue?.textContent).toBe("S");
+    expect(sentenceCue?.tagName).toBe("BUTTON");
+    expect(sentenceCue?.getAttribute("aria-controls")).toBe(
+      "reader-record-plate-active-anchor-inspector",
+    );
+  });
+
+  it("clicking a vocabulary mark shows vocabulary details in the active anchor inspector", () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const vocab = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    expect(vocab).not.toBeNull();
+    if (!vocab) {
+      throw new Error("Expected vocabulary mark");
+    }
+
+    fireEvent.click(vocab);
+
+    const inspector = screen.getByTestId("reader-record-active-anchor-inspector");
+    expect(inspector.dataset.readerRecordActiveSource).toBe("mark");
+    expect(inspector.dataset.readerRecordActiveAnchorSegmentId).toBe("seg_1");
+    expect(inspector.dataset.readerRecordActiveSelectedText).toBe("memory");
+    expect(inspector.textContent).toContain("Vocabulary");
+    expect(inspector.textContent).toContain("memory");
+    expect(inspector.textContent).toContain("记忆");
+    expect(inspector.textContent).toContain(
+      "Institutional memory shapes choices.",
+    );
+  });
+
+  it("clears the active anchor inspector when a refreshed snapshot replaces the document", async () => {
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot()} />,
+    );
+    const vocab = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    expect(vocab).not.toBeNull();
+    if (!vocab) {
+      throw new Error("Expected vocabulary mark");
+    }
+
+    fireEvent.click(vocab);
+    expect(screen.getByTestId("reader-record-active-anchor-inspector")).toBeTruthy();
+
+    rerender(
+      <ReaderRecordPlateSurface
+        snapshot={{
+          ...makeSnapshot(),
+          snapshot_id: "snapshot_2",
+          last_event_sequence: 9,
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("reader-record-active-anchor-inspector")).toBeNull();
+    });
+  });
+
+  it("renders overlapping marks as one focusable mark stack", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeOverlappingMarkSnapshot()} />,
+    );
+
+    const vocabStack = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-ids~="vocab_mark_1"]',
+    );
+    const grammarStack = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-ids~="grammar_mark_1"]',
+    );
+    expect(vocabStack).not.toBeNull();
+    expect(grammarStack).not.toBeNull();
+    expect(vocabStack).toBe(grammarStack);
+    expect(vocabStack?.dataset.readerRecordMarkEntry).toBe("stack");
+    expect(vocabStack?.dataset.readerRecordMarkStackSize).toBe("2");
+    expect(vocabStack?.querySelector('[role="button"]')).toBeNull();
+    expect(
+      container.querySelectorAll('[data-reader-record-mark-entry="stack"]'),
+    ).toHaveLength(1);
+
+    if (!vocabStack) {
+      throw new Error("Expected overlapping mark stack");
+    }
+    fireEvent.click(vocabStack);
+
+    const inspector = screen.getByTestId("reader-record-active-anchor-inspector");
+    expect(inspector.dataset.readerRecordActiveSource).toBe("mark");
+    expect(
+      inspector
+        .querySelector('[data-reader-record-active-mark-stack-size]')
+        ?.getAttribute("data-reader-record-active-mark-stack-size"),
+    ).toBe("2");
+    expect(inspector.textContent).toContain("overlapping annotations");
+    expect(inspector.textContent).toContain("Vocabulary");
+    expect(inspector.textContent).toContain("Grammar");
+    expect(inspector.textContent).toContain("nominal object");
+  });
+
+  it("activates grammar details from both grammar mark and G marker", () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const grammar = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="grammar_mark_1"]',
+    );
+    expect(grammar).not.toBeNull();
+    if (!grammar) {
+      throw new Error("Expected grammar mark");
+    }
+
+    fireEvent.click(grammar);
+
+    let inspector = screen.getByTestId("reader-record-active-anchor-inspector");
+    expect(inspector.dataset.readerRecordActiveSource).toBe("mark");
+    expect(inspector.textContent).toContain("Grammar");
+    expect(inspector.textContent).toContain("predicate verb");
+    expect(inspector.textContent).toContain("subject + verb");
+    expect(inspector.textContent).toContain("shapes is the predicate verb.");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close active anchor details" }),
+    );
+    expect(screen.queryByTestId("reader-record-active-anchor-inspector")).toBeNull();
+
+    const grammarCue = container.querySelector<HTMLButtonElement>(
+      '[data-reader-record-cue-id="grammar_note:grammar_item_1"]',
+    );
+    expect(grammarCue).not.toBeNull();
+    if (!grammarCue) {
+      throw new Error("Expected grammar cue");
+    }
+    fireEvent.click(grammarCue);
+
+    inspector = screen.getByTestId("reader-record-active-anchor-inspector");
+    expect(inspector.dataset.readerRecordActiveSource).toBe("cue");
+    expect(inspector.textContent).toContain("predicate verb");
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[data-reader-record-cue-id="grammar_note:grammar_item_1"]',
+      )?.getAttribute("aria-expanded"),
+    ).toBe("true");
+  });
+
+  it("clicking the S marker shows sentence-analysis details", () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const sentenceCue = container.querySelector<HTMLButtonElement>(
+      '[data-reader-record-cue-id="sentence_analysis:analysis_1"]',
+    );
+    expect(sentenceCue).not.toBeNull();
+    if (!sentenceCue) {
+      throw new Error("Expected sentence analysis cue");
+    }
+
+    fireEvent.click(sentenceCue);
+
+    const inspector = screen.getByTestId("reader-record-active-anchor-inspector");
+    expect(inspector.dataset.readerRecordActiveSource).toBe("cue");
+    expect(inspector.dataset.readerRecordActiveAnchorSegmentId).toBe("seg_1");
+    expect(inspector.textContent).toContain("Sentence Structure");
+    expect(inspector.textContent).toContain("subject and predicate");
+    expect(inspector.textContent).toContain(
+      "Institutional memory is the subject.",
+    );
+    expect(inspector.textContent).toContain("subject");
+    expect(inspector.textContent).toContain("Institutional memory");
+  });
+
+  it("focusing a cue marker opens the active anchor inspector", () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const grammarCue = container.querySelector<HTMLButtonElement>(
+      '[data-reader-record-cue-id="grammar_note:grammar_item_1"]',
+    );
+    expect(grammarCue).not.toBeNull();
+    if (!grammarCue) {
+      throw new Error("Expected grammar cue");
+    }
+
+    fireEvent.focus(grammarCue);
+
+    const inspector = screen.getByTestId("reader-record-active-anchor-inspector");
+    expect(inspector.dataset.readerRecordActiveSource).toBe("cue");
+    expect(inspector.textContent).toContain("predicate verb");
   });
 
   it("renders user highlight marks with stable asset attributes", () => {
@@ -552,10 +798,33 @@ describe("ReaderRecordPlateSurface", () => {
       '[data-reader-record-user-asset-id="asset_highlight_1"]',
     );
 
-    expect(highlight?.dataset.readerRecordMarkKind).toBe("user_highlight");
-    expect(highlight?.dataset.readerRecordMarkOwner).toBe("user");
+    expect(highlight?.dataset.readerRecordMarkEntry).toBe("stack");
+    expect(highlight?.dataset.readerRecordMarkKinds).toContain("user_highlight");
+    expect(highlight?.dataset.readerRecordMarkOwner).toBe("mixed");
+    expect(highlight?.dataset.readerRecordUserAssetIds).toBe("asset_highlight_1");
     expect(highlight?.dataset.selectedText).toBe("memory");
     expect(highlight?.textContent).toBe("memory");
+  });
+
+  it("clicking a user highlight mark shows user-owned anchor details", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([makeUserAsset()])} />,
+    );
+
+    const highlight = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-asset-id="asset_highlight_1"]',
+    );
+    expect(highlight).not.toBeNull();
+    if (!highlight) {
+      throw new Error("Expected user highlight");
+    }
+
+    fireEvent.click(highlight);
+
+    const inspector = screen.getByTestId("reader-record-active-anchor-inspector");
+    expect(inspector.dataset.readerRecordActiveSource).toBe("mark");
+    expect(inspector.textContent).toContain("用户高亮");
+    expect(inspector.textContent).toContain("Asset asset_highlight_1");
   });
 
   it("renders note/comment indicators with stable asset attributes", () => {
@@ -579,6 +848,7 @@ describe("ReaderRecordPlateSurface", () => {
               text_hash: computeUtf16FNV1a("shapes"),
               hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
             },
+            note_text: "Remember shapes as predicate.",
           }),
         ])}
       />,
@@ -593,6 +863,53 @@ describe("ReaderRecordPlateSurface", () => {
     );
     expect(noteIndicator?.dataset.anchorSegmentId).toBe("seg_1");
     expect(noteIndicator?.textContent).toContain("笔记");
+  });
+
+  it("clicking a note/comment cue shows comment details and closes with Escape", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface
+        snapshot={makeSnapshot([
+          makeUserAsset({
+            asset_id: "asset_note_1",
+            asset_type: "note",
+            anchor: {
+              anchor_type: "text_range",
+              base_id: "base_1",
+              unit_id: "unit_1",
+              anchor_segment_id: "seg_1",
+              sentence_id: "sent_1",
+              segment_type: "sentence",
+              offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+              start_offset: 21,
+              end_offset: 27,
+              selected_text: "shapes",
+              text_hash: computeUtf16FNV1a("shapes"),
+              hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+            },
+            note_text: "Remember shapes as predicate.",
+          }),
+        ])}
+      />,
+    );
+
+    const noteIndicator = container.querySelector<HTMLButtonElement>(
+      '[data-reader-record-user-asset-id="asset_note_1"]',
+    );
+    expect(noteIndicator).not.toBeNull();
+    if (!noteIndicator) {
+      throw new Error("Expected note indicator");
+    }
+
+    fireEvent.click(noteIndicator);
+
+    const inspector = screen.getByTestId("reader-record-active-anchor-inspector");
+    expect(inspector.dataset.readerRecordActiveSource).toBe("cue");
+    expect(inspector.textContent).toContain("笔记/评论");
+    expect(inspector.textContent).toContain("Asset asset_note_1");
+    expect(inspector.textContent).toContain("Remember shapes as predicate.");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("reader-record-active-anchor-inspector")).toBeNull();
   });
 
   it("keeps system marks and user marks coexisting on the source text", () => {
@@ -612,7 +929,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     expect(source?.textContent).toContain(SOURCE_TEXT);
     expect(vocab?.dataset.readerRecordMarkKind).toBe("phrase_gloss");
-    expect(userHighlight?.dataset.readerRecordMarkKind).toBe("user_highlight");
+    expect(userHighlight?.dataset.readerRecordMarkKinds).toContain("user_highlight");
     expect(vocab?.dataset.anchorSegmentId).toBe("seg_1");
     expect(userHighlight?.dataset.anchorSegmentId).toBe("seg_1");
   });
@@ -626,26 +943,33 @@ describe("ReaderRecordPlateSurface", () => {
       '[data-reader-record-node="source-block"]',
     );
 
+    expect(progress.dataset.readerRecordReadingHeader).toBe("compact");
     expect(progress.textContent).toContain("解析生成中");
     expect(strip).toBeTruthy();
     expect(source?.textContent).toContain(SOURCE_TEXT);
   });
 
-  it("keeps read-only scaffold actions disabled", () => {
+  it("keeps context actions disabled until there is a valid selection", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const actions = screen.getByTestId("reader-record-plate-disabled-actions");
 
-    for (const action of ["lookup", "copy"]) {
-      const button = container.querySelector<HTMLButtonElement>(
-        `[data-reader-record-action="${action}"]`,
-      );
-      expect(button?.disabled).toBe(true);
-    }
+    expect(actions.dataset.readerRecordActions).toBe("selection-context");
+    expect(actions.dataset.readerRecordActionMode).toBe("idle");
+    expect(
+      actions.querySelector('[data-reader-record-action-hint]')?.textContent,
+    ).toContain("划取原文后");
 
-    for (const action of ["ask", "highlight", "note", "feedback"]) {
-      const button = container.querySelector<HTMLButtonElement>(
-        `[data-reader-record-action="${action}"]`,
-      );
-      expect(button?.disabled).toBe(true);
+    for (const action of [
+      "lookup",
+      "copy",
+      "ask",
+      "highlight",
+      "note",
+      "feedback",
+    ]) {
+      expect(
+        container.querySelector(`[data-reader-record-action="${action}"]`),
+      ).toBeNull();
     }
   });
 
@@ -669,6 +993,30 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actions.dataset.readerRecordSelectionAnchorSegmentId).toBe("seg_1");
     expect(actions.dataset.readerRecordSelectionStartOffset).toBe("14");
     expect(actions.dataset.readerRecordSelectionEndOffset).toBe("20");
+    expect(actions.dataset.readerRecordActionMode).toBe("selection");
+    expect(
+      actions.querySelector('[data-reader-record-action-hint]')?.textContent,
+    ).toContain("Selected: memory");
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[data-reader-record-action="highlight"]',
+      )?.disabled,
+    ).toBe(false);
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-reader-record-action="note"]')
+        ?.disabled,
+    ).toBe(false);
+    expect(
+      container.querySelector('[data-reader-record-action="ask"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-reader-record-action="feedback"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector(
+        '[data-reader-record-coming-soon-actions="ask-feedback"]',
+      )?.textContent,
+    ).toContain("Ask / Feedback coming soon");
   });
 
   it("maps selection in the second anchor segment of the same unit using the segment baseline", async () => {
@@ -709,7 +1057,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const copyButton = screen.getByRole<HTMLButtonElement>("button", {
+    const copyButton = await screen.findByRole<HTMLButtonElement>("button", {
       name: "Copy",
     });
     await waitFor(() => {
@@ -742,7 +1090,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const lookupButton = screen.getByRole<HTMLButtonElement>("button", {
+    const lookupButton = await screen.findByRole<HTMLButtonElement>("button", {
       name: "Lookup",
     });
     await waitFor(() => {
@@ -756,6 +1104,140 @@ describe("ReaderRecordPlateSurface", () => {
     expect(lookupUrl).toContain("/api/web/dict/lookup?");
     expect(lookupUrl).toContain("word=memory");
     expect(screen.getByText("the ability to remember information")).toBeTruthy();
+  });
+
+  it("saves highlight through the Reading Record write endpoint with nested anchor", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          status: "created",
+          item: {},
+          session: { state: "signed_in" },
+        }),
+        {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    const onRequestSnapshotReload = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(
+      <ReaderRecordPlateSurface
+        snapshot={makeSnapshot()}
+        onRequestSnapshotReload={onRequestSnapshotReload}
+      />,
+    );
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+
+    const highlightButton = await screen.findByRole<HTMLButtonElement>("button", {
+      name: "Highlight",
+    });
+    await waitFor(() => {
+      expect(highlightButton.disabled).toBe(false);
+    });
+    fireEvent.click(highlightButton);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "/api/web/reading-record/highlights",
+    );
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.method).toBe(
+      "POST",
+    );
+    const body = postedJsonBody(fetchMock);
+    expect(body.anchor).toEqual(expectedMemoryAnchor());
+    expect(body.selectedText).toBe("memory");
+    expect(body.color).toBe("soft_green");
+    await waitFor(() => {
+      expect(onRequestSnapshotReload).toHaveBeenCalledTimes(1);
+    });
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/api/web/annotations"),
+      ),
+    ).toBe(false);
+  });
+
+  it("saves note through the Reading Record write endpoint with nested anchor", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          status: "created",
+          item: {},
+          session: { state: "signed_in" },
+        }),
+        {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    const onRequestSnapshotReload = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(
+      <ReaderRecordPlateSurface
+        snapshot={makeSnapshot()}
+        onRequestSnapshotReload={onRequestSnapshotReload}
+      />,
+    );
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+
+    const noteButton = await screen.findByRole<HTMLButtonElement>("button", {
+      name: "Note",
+    });
+    await waitFor(() => {
+      expect(noteButton.disabled).toBe(false);
+    });
+    fireEvent.click(noteButton);
+
+    const noteInput = await screen.findByTestId<HTMLTextAreaElement>(
+      "reader-record-plate-note-input",
+    );
+    fireEvent.change(noteInput, {
+      target: { value: "Keep this policy concept for review." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/web/reading-record/notes");
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.method).toBe(
+      "POST",
+    );
+    const body = postedJsonBody(fetchMock);
+    expect(body.anchor).toEqual(expectedMemoryAnchor());
+    expect(body.selectedText).toBe("memory");
+    expect(body.noteText).toBe("Keep this policy concept for review.");
+    await waitFor(() => {
+      expect(onRequestSnapshotReload).toHaveBeenCalledTimes(1);
+    });
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/api/web/reader-notes"),
+      ),
+    ).toBe(false);
   });
 
   it("keeps lookup, copy, and write actions disabled for unsupported cross-segment selections", async () => {
@@ -785,13 +1267,10 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actions.dataset.readerRecordSelectionSupported).toBe("false");
 
     for (const action of ["lookup", "copy", "ask", "highlight", "note", "feedback"]) {
-      const button = container.querySelector<HTMLButtonElement>(
-        `[data-reader-record-action="${action}"]`,
-      );
-      expect(button?.disabled).toBe(true);
+      expect(
+        container.querySelector(`[data-reader-record-action="${action}"]`),
+      ).toBeNull();
     }
-
-    fireEvent.click(screen.getByRole("button", { name: "Lookup" }));
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -814,19 +1293,23 @@ describe("ReaderRecordPlateSurface", () => {
       expect(actions.dataset.readerRecordSelectionDraftCount).toBe("0");
     });
     expect(actions.dataset.readerRecordSelectionSupported).toBe("false");
-    expect(
-      container.querySelector<HTMLButtonElement>('[data-reader-record-action="lookup"]')
-        ?.disabled,
-    ).toBe(true);
+    for (const action of ["lookup", "copy", "highlight", "note", "ask", "feedback"]) {
+      expect(
+        container.querySelector(`[data-reader-record-action="${action}"]`),
+      ).toBeNull();
+    }
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("does not import legacy Workbench, ReaderVm, scene adapters, or write routes", () => {
+  it("does not import legacy Workbench, ReaderVm, scene adapters, or legacy write routes", () => {
     const sources = [
       "src/components/reader/plate/ReaderRecordPlateSurface.tsx",
       "src/lib/reader-plate/projection/reader-record-plate-document.ts",
       "src/lib/reader-plate/projection/reader-record-anchor-draft.ts",
       "src/lib/reader-plate/projection/reader-record-dom-selection.ts",
+      "src/services/bff/reading-record-user-assets.ts",
+      "src/app/api/web/reading-record/highlights/route.ts",
+      "src/app/api/web/reading-record/notes/route.ts",
     ].map((filePath) => readFileSync(resolve(process.cwd(), filePath), "utf8"));
 
     for (const source of sources) {
@@ -844,6 +1327,7 @@ describe("ReaderRecordPlateSurface", () => {
       expect(source).not.toMatch(/\/api\/web\/reader-ask/);
       expect(source).not.toMatch(/\/api\/web\/reader-notes/);
       expect(source).not.toMatch(/\/api\/web\/reader-annotations/);
+      expect(source).not.toMatch(/\/api\/web\/annotations/);
     }
   });
 });

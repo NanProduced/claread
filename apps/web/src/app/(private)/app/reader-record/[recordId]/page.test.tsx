@@ -695,10 +695,9 @@ describe("ReadingRecordPage direct load", () => {
       ),
     ).not.toBeNull();
     for (const action of ["ask", "highlight", "note", "feedback"]) {
-      const button = container.querySelector<HTMLButtonElement>(
-        `[data-reader-record-action="${action}"]`,
-      );
-      expect(button?.disabled).toBe(true);
+      expect(
+        container.querySelector(`[data-reader-record-action="${action}"]`),
+      ).toBeNull();
     }
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(

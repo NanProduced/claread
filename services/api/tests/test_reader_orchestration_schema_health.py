@@ -46,6 +46,9 @@ async def test_reader_d5_schema_health_passes_on_fresh_baseline(
     assert report.missing_columns == ()
     assert report.missing_indexes == ()
     assert report.missing_constraints == ()
+    assert report.invalid_constraints == ()
+    assert report.non_nullable_columns == ()
+    assert report.to_dict()["failure_codes"] == []
 
 
 async def test_reader_d5_schema_health_reports_drift_with_reset_guidance(
@@ -64,8 +67,123 @@ async def test_reader_d5_schema_health_reports_drift_with_reset_guidance(
     assert "ai_usage_events.reader_job_id" in report.missing_columns
     assert "idx_ai_usage_events_reader_job" in report.missing_indexes
     assert "fk_ai_usage_events_reader_job" in report.missing_constraints
-    assert "Reset or rebuild the local development database." in message
+    assert "Reset or rebuild the local development database" in message
     assert "infra/migrations/0001_initial_schema.sql" in message
+
+
+async def test_reader_schema_health_reports_missing_d6_anchor_column_with_0002_guidance(
+    schema_health_schema: tuple[asyncpg.Connection, str],
+) -> None:
+    admin, schema_name = schema_health_schema
+    await admin.execute(
+        f'ALTER TABLE "{schema_name}".user_annotations '
+        "DROP COLUMN reading_record_id CASCADE"
+    )
+
+    report = await check_reader_d5_schema_health(admin, schema_name=schema_name)
+    message = format_reader_d5_schema_health_failure(report)
+
+    assert report.ok is False
+    assert "reader_d6_anchor_migration_missing" in report.to_dict()["failure_codes"]
+    assert "user_annotations.reading_record_id" in report.missing_columns
+    assert "idx_user_annotations_reading_record" in report.missing_indexes
+    assert "uq_user_annotations_reading_record_anchor" in report.missing_indexes
+    assert "infra/migrations/0002_reader_record_anchor_columns.sql" in message
+    assert "Old Docker volumes do not automatically re-run" in message
+    assert "docker cp" in message
+    assert "docker exec" in message
+
+
+async def test_reader_schema_health_reports_reader_notes_legacy_columns_not_nullable(
+    schema_health_schema: tuple[asyncpg.Connection, str],
+) -> None:
+    admin, schema_name = schema_health_schema
+    await admin.execute(
+        f'ALTER TABLE "{schema_name}".reader_notes '
+        "ALTER COLUMN analysis_record_id SET NOT NULL"
+    )
+
+    report = await check_reader_d5_schema_health(admin, schema_name=schema_name)
+    message = format_reader_d5_schema_health_failure(report)
+
+    assert report.ok is False
+    assert "reader_d6_anchor_migration_missing" in report.to_dict()["failure_codes"]
+    assert "reader_notes.analysis_record_id" in report.non_nullable_columns
+    assert "column must allow NULL: reader_notes.analysis_record_id" in message
+    assert "infra/migrations/0002_reader_record_anchor_columns.sql" in message
+
+
+async def test_reader_schema_health_reports_missing_d6_anchor_index(
+    schema_health_schema: tuple[asyncpg.Connection, str],
+) -> None:
+    admin, schema_name = schema_health_schema
+    await admin.execute(
+        f'DROP INDEX "{schema_name}".uq_reader_notes_reading_record_anchor'
+    )
+
+    report = await check_reader_d5_schema_health(admin, schema_name=schema_name)
+    message = format_reader_d5_schema_health_failure(report)
+
+    assert report.ok is False
+    assert "reader_d6_anchor_migration_missing" in report.to_dict()["failure_codes"]
+    assert "uq_reader_notes_reading_record_anchor" in report.missing_indexes
+    assert "infra/migrations/0002_reader_record_anchor_columns.sql" in message
+
+
+async def test_reader_schema_health_reports_old_user_annotation_check_constraint(
+    schema_health_schema: tuple[asyncpg.Connection, str],
+) -> None:
+    admin, schema_name = schema_health_schema
+    await admin.execute(
+        f"""
+        ALTER TABLE "{schema_name}".user_annotations
+            DROP CONSTRAINT user_annotations_text_anchor_payload_check;
+
+        ALTER TABLE "{schema_name}".user_annotations
+            ADD CONSTRAINT user_annotations_text_anchor_payload_check
+                CHECK (
+                    (
+                        anchor_type <> 'text_range'
+                        OR (
+                            analysis_record_id IS NOT NULL
+                            AND sentence_id IS NOT NULL
+                            AND start_offset IS NOT NULL
+                            AND end_offset IS NOT NULL
+                            AND start_offset >= 0
+                            AND end_offset > start_offset
+                            AND text_hash IS NOT NULL
+                        )
+                    )
+                    AND (
+                        anchor_type <> 'multi_text'
+                        OR (
+                            analysis_record_id IS NOT NULL
+                            AND start_offset IS NULL
+                            AND end_offset IS NULL
+                            AND text_hash IS NULL
+                            AND payload_json ? 'segments'
+                            AND jsonb_typeof(payload_json->'segments') = 'array'
+                            AND jsonb_array_length(payload_json->'segments') >= 2
+                        )
+                    )
+                );
+        """
+    )
+
+    report = await check_reader_d5_schema_health(admin, schema_name=schema_name)
+    message = format_reader_d5_schema_health_failure(report)
+
+    assert report.ok is False
+    assert "reader_d6_anchor_migration_missing" in report.to_dict()["failure_codes"]
+    assert (
+        "user_annotations.user_annotations_text_anchor_payload_check"
+        in report.invalid_constraints
+    )
+    assert (
+        "invalid constraint: "
+        "user_annotations.user_annotations_text_anchor_payload_check"
+    ) in message
+    assert "infra/migrations/0002_reader_record_anchor_columns.sql" in message
 
 
 def test_check_schema_baseline_sql_covers_reader_d5_attribution_objects() -> None:
