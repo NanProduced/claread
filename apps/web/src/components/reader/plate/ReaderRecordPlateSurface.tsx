@@ -198,7 +198,7 @@ function actionButtonClassName(enabled: boolean) {
 function writeStateLabel(writeState: ReaderRecordWriteState): string {
   switch (writeState.kind) {
     case "saving":
-      return writeState.action === "highlight" ? "Saving highlight" : "Saving note";
+      return writeState.action === "highlight" ? "正在保存高亮" : "正在保存笔记";
     case "saved":
     case "error":
       return writeState.message;
@@ -234,7 +234,7 @@ async function postReadingRecordUserAsset(
     | null;
 
   if (!response.ok || payload?.ok === false) {
-    throw new Error(payload?.message ?? "Reading asset save failed.");
+    throw new Error(payload?.message ?? "阅读资产保存失败。");
   }
 }
 
@@ -267,14 +267,14 @@ function SelectionActionStrip({
   const highlightDisabled = !singleRangeReady || isSaving;
   const noteDisabled = !singleRangeReady || isSaving || noteComposerOpen;
   const disabledReason = !selection
-    ? "Select stable source text to enable this action"
+    ? "请选择稳定原文以启用此操作"
     : singleRangeReady
-      ? "Action is currently unavailable"
-      : "Multi-segment selection is not supported yet";
+      ? "操作当前不可用"
+      : "暂不支持跨段选区";
   const writeStatus = writeStateLabel(writeState);
   const actionMode = singleRangeReady ? "selection" : selection ? "unsupported" : "idle";
   const actionHint = singleRangeReady
-    ? `Selected: ${draft?.selected_text ?? ""}`
+    ? `已选：${draft?.selected_text ?? ""}`
     : selection
       ? "当前选区暂不支持操作"
       : "划取原文后可查词、复制、标记或记录笔记";
@@ -296,7 +296,7 @@ function SelectionActionStrip({
         draft ? String(draft.end_offset) : undefined
       }
       className="mb-5 flex flex-wrap items-center gap-2 border-b border-border/50 pb-3 text-xs text-muted"
-      aria-label="Reader Record Plate actions"
+      aria-label="Reader Record Plate 操作"
     >
       <span
         data-reader-record-action-hint
@@ -311,52 +311,52 @@ function SelectionActionStrip({
             disabled={lookupDisabled}
             data-reader-record-action="lookup"
             className={actionButtonClassName(!lookupDisabled)}
-            title={lookupDisabled ? disabledReason : "Lookup selected text"}
+            title={lookupDisabled ? disabledReason : "查词所选文本"}
             onPointerDown={(event) => event.preventDefault()}
             onClick={onLookup}
           >
-            {lookupState.kind === "loading" ? "Looking up" : "Lookup"}
+            {lookupState.kind === "loading" ? "查询中" : "查词"}
           </button>
           <button
             type="button"
             disabled={copyDisabled}
             data-reader-record-action="copy"
             className={actionButtonClassName(!copyDisabled)}
-            title={copyDisabled ? disabledReason : "Copy selected text"}
+            title={copyDisabled ? disabledReason : "复制所选文本"}
             onPointerDown={(event) => event.preventDefault()}
             onClick={onCopy}
           >
-            Copy
+            复制
           </button>
           <button
             type="button"
             disabled={highlightDisabled}
             data-reader-record-action="highlight"
             className={actionButtonClassName(!highlightDisabled)}
-            title={highlightDisabled ? disabledReason : "Save highlight"}
+            title={highlightDisabled ? disabledReason : "保存高亮"}
             onPointerDown={(event) => event.preventDefault()}
             onClick={onHighlight}
           >
             {writeState.kind === "saving" && writeState.action === "highlight"
-              ? "Saving"
-              : "Highlight"}
+              ? "保存中"
+              : "高亮"}
           </button>
           <button
             type="button"
             disabled={noteDisabled}
             data-reader-record-action="note"
             className={actionButtonClassName(!noteDisabled)}
-            title={noteDisabled ? disabledReason : "Create note"}
+            title={noteDisabled ? disabledReason : "创建笔记"}
             onPointerDown={(event) => event.preventDefault()}
             onClick={onOpenNoteComposer}
           >
-            Note
+            笔记
           </button>
           <span
             data-reader-record-coming-soon-actions="ask-feedback"
             className="text-muted/70"
           >
-            Ask / Feedback coming soon
+            Ask / 反馈 即将推出
           </span>
           {copyStatus !== "idle" ? (
             <span
@@ -365,7 +365,7 @@ function SelectionActionStrip({
                 copyStatus === "copied" ? "text-emerald-700" : "text-rose-700"
               }
             >
-              {copyStatus === "copied" ? "Copied" : "Copy failed"}
+              {copyStatus === "copied" ? "已复制" : "复制失败"}
             </span>
           ) : null}
           {writeStatus ? (
@@ -416,7 +416,7 @@ function ReaderRecordLookupPanel({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
-            Lookup
+            查词
           </div>
           <div className="mt-1 break-words reader-serif text-lg leading-tight text-ink">
             {entryResult?.entry.word ?? lookupState.query}
@@ -430,28 +430,28 @@ function ReaderRecordLookupPanel({
         <button
           type="button"
           className="rounded-sm px-2 py-1 text-xs text-muted hover:bg-muted/50"
-          aria-label="Dismiss lookup"
+          aria-label="关闭查词"
           onClick={onDismiss}
         >
-          Close
+          关闭
         </button>
       </div>
       {lookupState.kind === "loading" ? (
-        <p className="mt-3 text-muted">Looking up...</p>
+        <p className="mt-3 text-muted">查询中...</p>
       ) : null}
       {entryResult ? (
         <p className="mt-3 leading-6 text-ink-soft">
           {partOfSpeech ? <span className="mr-2 text-muted">{partOfSpeech}</span> : null}
-          {firstDefinition || "No concise definition is available for this entry."}
+          {firstDefinition || "该词条暂无简明释义。"}
         </p>
       ) : null}
       {disambiguationResult ? (
         <p className="mt-3 leading-6 text-muted">
-          Multiple dictionary candidates found: {disambiguationResult.candidates.length}
+          发现多个词典候选：{disambiguationResult.candidates.length}
         </p>
       ) : null}
       {notFoundResult ? (
-        <p className="mt-3 leading-6 text-muted">No dictionary entry found.</p>
+        <p className="mt-3 leading-6 text-muted">未找到词典条目。</p>
       ) : null}
       {errorMessage ? (
         <p className="mt-3 leading-6 text-rose-700">{errorMessage}</p>
@@ -484,7 +484,7 @@ function ReaderRecordNoteComposer({
         htmlFor="reader-record-plate-note-input"
         className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted"
       >
-        Note
+        笔记
       </label>
       <textarea
         id="reader-record-plate-note-input"
@@ -502,7 +502,7 @@ function ReaderRecordNoteComposer({
           onPointerDown={(event) => event.preventDefault()}
           onClick={onSave}
         >
-          {saving ? "Saving" : "Save"}
+          {saving ? "保存中" : "保存"}
         </button>
         <button
           type="button"
@@ -511,7 +511,7 @@ function ReaderRecordNoteComposer({
           onPointerDown={(event) => event.preventDefault()}
           onClick={onCancel}
         >
-          Cancel
+          取消
         </button>
       </div>
     </div>
@@ -589,17 +589,17 @@ function VocabularyAnchorDetails({
   return (
     <>
       <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
-        Vocabulary
+        词汇
       </div>
       <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
         {vocabularyTitle(mark)}
       </h3>
       {gloss ? <p className="mt-3 leading-6 text-ink-soft">{gloss}</p> : null}
       {example ? (
-        <p className="mt-2 leading-6 text-muted">Example: {example}</p>
+        <p className="mt-2 leading-6 text-muted">例句：{example}</p>
       ) : null}
       {reason ? (
-        <p className="mt-2 leading-6 text-muted">Reason: {reason}</p>
+        <p className="mt-2 leading-6 text-muted">原因：{reason}</p>
       ) : null}
     </>
   );
@@ -617,7 +617,7 @@ function GrammarAnchorDetails({
   return (
     <>
       <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
-        Grammar
+        语法
       </div>
       <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
         {grammarPoint}
@@ -636,7 +636,7 @@ function SentenceAnalysisAnchorDetails({
   return (
     <>
       <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
-        Sentence Structure
+        句子结构
       </div>
       <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
         {cue.label}
@@ -669,13 +669,13 @@ function UserHighlightAnchorDetails({
   return (
     <>
       <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
-        User Highlight
+        用户高亮
       </div>
       <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
         用户高亮
       </h3>
       <p className="mt-3 leading-6 text-ink-soft">{mark.anchor.selectedText}</p>
-      <p className="mt-2 text-xs text-muted">Asset {mark.assetId}</p>
+      <p className="mt-2 text-xs text-muted">资产 {mark.assetId}</p>
     </>
   );
 }
@@ -688,7 +688,7 @@ function UserCommentAnchorDetails({
   return (
     <>
       <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
-        Comment
+        笔记/评论
       </div>
       <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
         笔记/评论
@@ -698,7 +698,7 @@ function UserCommentAnchorDetails({
       ) : (
         <p className="mt-3 leading-6 text-muted">该笔记暂未提供正文。</p>
       )}
-      <p className="mt-2 text-xs text-muted">Asset {cue.assetId}</p>
+      <p className="mt-2 text-xs text-muted">资产 {cue.assetId}</p>
     </>
   );
 }
@@ -738,7 +738,7 @@ function ActiveAnchorDetails({
             data-reader-record-active-mark-stack="true"
             className="text-xs text-muted"
           >
-            {activeAnchor.marks.length} overlapping annotations
+            {activeAnchor.marks.length} 处重叠标注
           </p>
         ) : null}
         {activeAnchor.marks.map((mark) => (
@@ -799,22 +799,22 @@ function ActiveAnchorInspector({
       className="mb-5 rounded-md border border-border bg-background px-3 py-3 text-sm shadow-sm"
       role="region"
       aria-live="polite"
-      aria-label="Active anchor details"
+      aria-label="锚点详情"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <ActiveAnchorDetails activeAnchor={activeAnchor} />
           <p className="mt-3 text-xs text-muted">
-            Anchor {anchorSegmentId} · {selectedText}
+            锚点 {anchorSegmentId} · {selectedText}
           </p>
         </div>
         <button
           type="button"
           className="rounded-sm px-2 py-1 text-xs text-muted hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-lens-blue/30"
-          aria-label="Close active anchor details"
+          aria-label="关闭锚点详情"
           onClick={onClose}
         >
-          Close
+          关闭
         </button>
       </div>
     </aside>
@@ -1325,7 +1325,7 @@ export function ReaderRecordPlateSurface({
         setLookupState({
           kind: "error",
           query,
-          message: "Dictionary lookup failed.",
+          message: "词典查询失败。",
         });
         return;
       }
@@ -1334,17 +1334,18 @@ export function ReaderRecordPlateSurface({
         setLookupState({
           kind: "error",
           query,
-          message: "Dictionary lookup failed.",
+          message: "词典查询失败。",
         });
         return;
       }
 
       setLookupState({ kind: "ready", query, result: payload });
     } catch (error) {
+      console.warn("[ReaderRecordPlateSurface] dictionary lookup failed", error);
       setLookupState({
         kind: "error",
         query,
-        message: error instanceof Error ? error.message : "Dictionary lookup failed.",
+        message: "词典查询失败，请稍后重试。",
       });
     }
   }, [activeSelection]);
@@ -1366,14 +1367,15 @@ export function ReaderRecordPlateSurface({
       setWriteState({
         kind: "saved",
         action: "highlight",
-        message: "Highlight saved",
+        message: "高亮已保存",
       });
       await onRequestSnapshotReload?.();
     } catch (error) {
+      console.warn("[ReaderRecordPlateSurface] highlight save failed", error);
       setWriteState({
         kind: "error",
         action: "highlight",
-        message: error instanceof Error ? error.message : "Highlight save failed.",
+        message: "高亮保存失败，请稍后重试。",
       });
     }
   }, [activeSelection, onRequestSnapshotReload, writeState.kind]);
@@ -1417,14 +1419,15 @@ export function ReaderRecordPlateSurface({
       setWriteState({
         kind: "saved",
         action: "note",
-        message: "Note saved",
+        message: "笔记已保存",
       });
       await onRequestSnapshotReload?.();
     } catch (error) {
+      console.warn("[ReaderRecordPlateSurface] note save failed", error);
       setWriteState({
         kind: "error",
         action: "note",
-        message: error instanceof Error ? error.message : "Note save failed.",
+        message: "笔记保存失败，请稍后重试。",
       });
     }
   }, [noteAnchorDraft, noteDraft, onRequestSnapshotReload, writeState.kind]);

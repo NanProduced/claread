@@ -625,7 +625,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(inspector.dataset.readerRecordActiveSource).toBe("mark");
     expect(inspector.dataset.readerRecordActiveAnchorSegmentId).toBe("seg_1");
     expect(inspector.dataset.readerRecordActiveSelectedText).toBe("memory");
-    expect(inspector.textContent).toContain("Vocabulary");
+    expect(inspector.textContent).toContain("词汇");
     expect(inspector.textContent).toContain("memory");
     expect(inspector.textContent).toContain("记忆");
     expect(inspector.textContent).toContain(
@@ -696,9 +696,9 @@ describe("ReaderRecordPlateSurface", () => {
         .querySelector('[data-reader-record-active-mark-stack-size]')
         ?.getAttribute("data-reader-record-active-mark-stack-size"),
     ).toBe("2");
-    expect(inspector.textContent).toContain("overlapping annotations");
-    expect(inspector.textContent).toContain("Vocabulary");
-    expect(inspector.textContent).toContain("Grammar");
+    expect(inspector.textContent).toContain("处重叠标注");
+    expect(inspector.textContent).toContain("词汇");
+    expect(inspector.textContent).toContain("语法");
     expect(inspector.textContent).toContain("nominal object");
   });
 
@@ -717,13 +717,13 @@ describe("ReaderRecordPlateSurface", () => {
 
     let inspector = screen.getByTestId("reader-record-active-anchor-inspector");
     expect(inspector.dataset.readerRecordActiveSource).toBe("mark");
-    expect(inspector.textContent).toContain("Grammar");
+    expect(inspector.textContent).toContain("语法");
     expect(inspector.textContent).toContain("predicate verb");
     expect(inspector.textContent).toContain("subject + verb");
     expect(inspector.textContent).toContain("shapes is the predicate verb.");
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Close active anchor details" }),
+      screen.getByRole("button", { name: "关闭锚点详情" }),
     );
     expect(screen.queryByTestId("reader-record-active-anchor-inspector")).toBeNull();
 
@@ -762,7 +762,7 @@ describe("ReaderRecordPlateSurface", () => {
     const inspector = screen.getByTestId("reader-record-active-anchor-inspector");
     expect(inspector.dataset.readerRecordActiveSource).toBe("cue");
     expect(inspector.dataset.readerRecordActiveAnchorSegmentId).toBe("seg_1");
-    expect(inspector.textContent).toContain("Sentence Structure");
+    expect(inspector.textContent).toContain("句子结构");
     expect(inspector.textContent).toContain("subject and predicate");
     expect(inspector.textContent).toContain(
       "Institutional memory is the subject.",
@@ -824,7 +824,7 @@ describe("ReaderRecordPlateSurface", () => {
     const inspector = screen.getByTestId("reader-record-active-anchor-inspector");
     expect(inspector.dataset.readerRecordActiveSource).toBe("mark");
     expect(inspector.textContent).toContain("用户高亮");
-    expect(inspector.textContent).toContain("Asset asset_highlight_1");
+    expect(inspector.textContent).toContain("资产 asset_highlight_1");
   });
 
   it("renders note/comment indicators with stable asset attributes", () => {
@@ -905,7 +905,7 @@ describe("ReaderRecordPlateSurface", () => {
     const inspector = screen.getByTestId("reader-record-active-anchor-inspector");
     expect(inspector.dataset.readerRecordActiveSource).toBe("cue");
     expect(inspector.textContent).toContain("笔记/评论");
-    expect(inspector.textContent).toContain("Asset asset_note_1");
+    expect(inspector.textContent).toContain("资产 asset_note_1");
     expect(inspector.textContent).toContain("Remember shapes as predicate.");
 
     fireEvent.keyDown(document, { key: "Escape" });
@@ -996,7 +996,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actions.dataset.readerRecordActionMode).toBe("selection");
     expect(
       actions.querySelector('[data-reader-record-action-hint]')?.textContent,
-    ).toContain("Selected: memory");
+    ).toContain("已选：memory");
     expect(
       container.querySelector<HTMLButtonElement>(
         '[data-reader-record-action="highlight"]',
@@ -1016,7 +1016,7 @@ describe("ReaderRecordPlateSurface", () => {
       container.querySelector(
         '[data-reader-record-coming-soon-actions="ask-feedback"]',
       )?.textContent,
-    ).toContain("Ask / Feedback coming soon");
+    ).toContain("Ask / 反馈 即将推出");
   });
 
   it("maps selection in the second anchor segment of the same unit using the segment baseline", async () => {
@@ -1058,7 +1058,7 @@ describe("ReaderRecordPlateSurface", () => {
     selectTextInElement(memoryMark, 0, "memory".length);
 
     const copyButton = await screen.findByRole<HTMLButtonElement>("button", {
-      name: "Copy",
+      name: "复制",
     });
     await waitFor(() => {
       expect(copyButton.disabled).toBe(false);
@@ -1091,7 +1091,7 @@ describe("ReaderRecordPlateSurface", () => {
     selectTextInElement(memoryMark, 0, "memory".length);
 
     const lookupButton = await screen.findByRole<HTMLButtonElement>("button", {
-      name: "Lookup",
+      name: "查词",
     });
     await waitFor(() => {
       expect(lookupButton.disabled).toBe(false);
@@ -1140,7 +1140,7 @@ describe("ReaderRecordPlateSurface", () => {
     selectTextInElement(memoryMark, 0, "memory".length);
 
     const highlightButton = await screen.findByRole<HTMLButtonElement>("button", {
-      name: "Highlight",
+      name: "高亮",
     });
     await waitFor(() => {
       expect(highlightButton.disabled).toBe(false);
@@ -1204,7 +1204,7 @@ describe("ReaderRecordPlateSurface", () => {
     selectTextInElement(memoryMark, 0, "memory".length);
 
     const noteButton = await screen.findByRole<HTMLButtonElement>("button", {
-      name: "Note",
+      name: "笔记",
     });
     await waitFor(() => {
       expect(noteButton.disabled).toBe(false);
@@ -1217,7 +1217,7 @@ describe("ReaderRecordPlateSurface", () => {
     fireEvent.change(noteInput, {
       target: { value: "Keep this policy concept for review." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(1);

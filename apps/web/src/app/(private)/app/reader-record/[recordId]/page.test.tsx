@@ -659,6 +659,137 @@ describe("ReadingRecordPage static contract", () => {
       expect(source).not.toContain("/api/web/annotations");
     });
   });
+
+  it("ReaderRecordPlateSurface uses converged Chinese copy instead of legacy English UI labels", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
+      "utf-8",
+    );
+
+    // Action buttons must use Chinese labels matching the polished Workbench baseline.
+    // Checks cover quoted string literals, JSX bare text, and status messages.
+    const englishCopyPatterns = [
+      // Action button labels (quoted and bare JSX text)
+      '"Lookup"',
+      '"Copy"',
+      '"Highlight"',
+      '"Note"',
+      '"Save"',
+      '"Cancel"',
+      '"Close"',
+      '"Saving"',
+      '"Looking up"',
+      '"Copied"',
+      '"Copy failed"',
+      // Section labels
+      '"Vocabulary"',
+      '"Grammar"',
+      '"Sentence Structure"',
+      '"User Highlight"',
+      '"Comment"',
+      // Status text fragments
+      "overlapping annotations",
+      "coming soon",
+      "Dictionary lookup failed.",
+      "Highlight saved",
+      "Note saved",
+      "Highlight save failed.",
+      "Note save failed.",
+      "Reading asset save failed.",
+      "No concise definition is available for this entry.",
+      "Multiple dictionary candidates found:",
+      "No dictionary entry found.",
+      // Inline labels that were previously English (template literals and quoted strings)
+      "Example: ",
+      "Reason: ",
+      "Anchor ${",
+      "Asset ${",
+      "Selected: ",
+      "Looking up...",
+      // aria-labels and titles that were previously English
+      'aria-label="Reader Record Plate actions"',
+      'aria-label="Dismiss lookup"',
+      'aria-label="Close active anchor details"',
+      'aria-label="Active anchor details"',
+      // disabled reasons that were previously English
+      "Select stable source text to enable this action",
+      "Action is currently unavailable",
+      "Multi-segment selection is not supported yet",
+    ];
+    for (const pattern of englishCopyPatterns) {
+      expect(source).not.toContain(pattern);
+    }
+  });
+
+  it("ReaderRecordPlateSurface renders Chinese copy when vocabulary mark inspector is active", async () => {
+    const snapshot = makeSnapshot("rec_copy_guard_1", {}, {
+      translationScope: "unit",
+      withVocabularyMark: true,
+      withGrammarMark: true,
+      withSentenceAnalysis: true,
+      userAssets: [makeUserHighlightAsset()],
+    });
+    installReaderRecordFetchMock(snapshot);
+
+    const { container } = renderReadingRecordPage("rec_copy_guard_1");
+
+    await screen.findByTestId("reader-record-plate-surface");
+
+    // The action strip is always rendered; verify its visible text uses Chinese.
+    const actionStrip = container.querySelector<HTMLElement>(
+      '[data-reader-record-actions="selection-context"]',
+    );
+    expect(actionStrip).not.toBeNull();
+    if (actionStrip) {
+      // Chinese hint must be present when no selection is active.
+      expect(actionStrip.textContent).toContain("划取原文后可查词、复制、标记或记录笔记");
+      // English copy must NOT be present in the rendered output, even conditionally.
+      const englishLabels = [
+        "Lookup",
+        "Copy",
+        "Highlight",
+        "Note",
+        "Saving",
+        "Looking up",
+        "Copied",
+        "Copy failed",
+        "coming soon",
+        "Ask / Feedback coming soon",
+        "Select stable source text to enable this action",
+        "Action is currently unavailable",
+        "Multi-segment selection is not supported yet",
+        "Selected: ",
+      ];
+      for (const label of englishLabels) {
+        expect(actionStrip.textContent).not.toContain(label);
+      }
+    }
+
+    // Verify the full surface doesn't leak English section labels.
+    const surface = container.querySelector<HTMLElement>(
+      '[data-testid="reader-record-plate-surface"]',
+    );
+    expect(surface).not.toBeNull();
+    if (surface) {
+      const englishSurfaceLabels = [
+        "Vocabulary",
+        "Grammar",
+        "Sentence Structure",
+        "User Highlight",
+        "Comment",
+        "overlapping annotations",
+        "Looking up...",
+        "No concise definition is available for this entry.",
+        "Multiple dictionary candidates found:",
+        "No dictionary entry found.",
+        "Example: ",
+        "Reason: ",
+      ];
+      for (const label of englishSurfaceLabels) {
+        expect(surface.textContent).not.toContain(label);
+      }
+    }
+  });
 });
 
 describe("ReadingRecordPage direct load", () => {
