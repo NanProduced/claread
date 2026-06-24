@@ -178,6 +178,7 @@ class ArticleReadyPersistenceService:
             enhancement_layers=facts.enhancement_layers,
             parsed_decisions=facts.parsed_decisions,
             enhancement_progress=facts.enhancement_progress,
+            user_assets=facts.user_assets,
         )
 
 

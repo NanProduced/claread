@@ -148,14 +148,27 @@ function cueLabel(cue: ReaderRecordPlateCue) {
   if (cue.type === "reader_record_grammar_cue") {
     return `语法 · ${cue.grammarPoint}`;
   }
+  if (cue.type === "reader_record_user_comment_cue") {
+    return cue.label;
+  }
   return `结构 · ${cue.label}`;
 }
 
 function cueAnchorSegmentId(cue: ReaderRecordPlateCue) {
-  if (cue.type === "reader_record_grammar_cue") {
+  if (
+    cue.type === "reader_record_grammar_cue" ||
+    cue.type === "reader_record_user_comment_cue"
+  ) {
     return cue.anchor.anchorSegmentId;
   }
   return cue.anchorSegmentId;
+}
+
+function cueClassName(cue: ReaderRecordPlateCue) {
+  if (cue.type === "reader_record_user_comment_cue") {
+    return "rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-sans text-[0.68rem] font-medium leading-none text-amber-900";
+  }
+  return "rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-sans text-[0.68rem] font-medium leading-none text-emerald-900";
 }
 
 function CueChips({ cues }: { cues: ReaderRecordPlateCue[] }) {
@@ -172,8 +185,11 @@ function CueChips({ cues }: { cues: ReaderRecordPlateCue[] }) {
           key={cue.id}
           data-reader-record-cue-id={cue.id}
           data-reader-record-cue-type={cue.type}
+          data-reader-record-user-asset-id={
+            cue.type === "reader_record_user_comment_cue" ? cue.assetId : undefined
+          }
           data-anchor-segment-id={cueAnchorSegmentId(cue)}
-          className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-sans text-[0.68rem] font-medium leading-none text-emerald-900"
+          className={cueClassName(cue)}
           title={cueLabel(cue)}
         >
           {cueLabel(cue)}
@@ -184,6 +200,9 @@ function CueChips({ cues }: { cues: ReaderRecordPlateCue[] }) {
 }
 
 function markLabel(mark: ReaderRecordPlateTextLeaf["marks"][number]) {
+  if (mark.kind === "user_highlight") {
+    return "用户高亮";
+  }
   if (mark.kind === "grammar_note") {
     return `语法 · ${mark.grammarPoint}`;
   }
@@ -197,6 +216,9 @@ function markLabel(mark: ReaderRecordPlateTextLeaf["marks"][number]) {
 }
 
 function markClassName(mark: ReaderRecordPlateTextLeaf["marks"][number]) {
+  if (mark.kind === "user_highlight") {
+    return "rounded-sm bg-amber-100/80 ring-1 ring-amber-200/80";
+  }
   if (mark.kind === "grammar_note") {
     return "rounded-sm underline decoration-emerald-600/80 decoration-[1.5px] underline-offset-4";
   }
@@ -219,6 +241,10 @@ function renderMarkedLeaf(
       <span
         data-reader-record-mark-id={mark.id}
         data-reader-record-mark-kind={mark.kind}
+        data-reader-record-mark-owner={mark.owner}
+        data-reader-record-user-asset-id={
+          mark.kind === "user_highlight" ? mark.assetId : undefined
+        }
         data-anchor-segment-id={mark.anchor.anchorSegmentId}
         data-selected-text={mark.anchor.selectedText}
         className={markClassName(mark)}

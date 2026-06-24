@@ -344,11 +344,16 @@ class ReaderSnapshotUserAsset(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     asset_id: str = Field(min_length=1)
-    asset_type: str = Field(min_length=1)
+    asset_type: Literal["highlight", "note"]
     owner: Literal["user"] = "user"
+    reading_record_id: str = Field(min_length=1)
+    generation: int = Field(ge=1)
     anchor: ReaderUnitAnchor | ReaderTextRangeAnchor
-    deleted_at: datetime | None = None
+    note_text: str | None = None
+    color: str | None = None
+    created_at: datetime
     updated_at: datetime
+    deleted_at: datetime | None = None
 
 
 class ReaderEnhancementProgressLayer(BaseModel):

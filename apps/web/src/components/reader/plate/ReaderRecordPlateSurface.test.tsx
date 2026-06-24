@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { cleanup, render, screen } from "@testing-library/react";
+import { computeUtf16FNV1a } from "@claread/contracts";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,9 +9,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   READER_PLATE_SNAPSHOT_SCHEMA_KIND,
   READER_TEXT_RANGE_HASH_ALGORITHM,
+  READER_TEXT_RANGE_OFFSET_UNIT,
   type ReaderEnhancementProgressDto,
   type ReaderGrammarNoteMarkDto,
   type ReaderPlateSnapshotDto,
+  type ReaderSnapshotUserAssetDto,
   type ReaderUnitNodeDto,
   type ReaderVocabularyMarkDto,
 } from "@/types/api/reader-plate";
@@ -70,6 +73,35 @@ function makeGrammarMark(
     grammar_point: "predicate verb",
     pattern: "subject + verb",
     note: "shapes is the predicate verb.",
+    ...overrides,
+  };
+}
+
+function makeUserAsset(
+  overrides: Partial<ReaderSnapshotUserAssetDto> = {},
+): ReaderSnapshotUserAssetDto {
+  return {
+    asset_id: "asset_highlight_1",
+    asset_type: "highlight",
+    owner: "user",
+    reading_record_id: "record_1",
+    generation: 1,
+    anchor: {
+      anchor_type: "text_range",
+      base_id: "base_1",
+      unit_id: "unit_1",
+      anchor_segment_id: "seg_1",
+      sentence_id: "sent_1",
+      segment_type: "sentence",
+      offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+      start_offset: 14,
+      end_offset: 20,
+      selected_text: "memory",
+      text_hash: computeUtf16FNV1a("memory"),
+      hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+    },
+    created_at: "2026-06-24T01:00:00Z",
+    updated_at: "2026-06-24T01:00:00Z",
     ...overrides,
   };
 }
@@ -188,7 +220,9 @@ function makeProgress(): ReaderEnhancementProgressDto {
   };
 }
 
-function makeSnapshot(): ReaderPlateSnapshotDto {
+function makeSnapshot(
+  userAssets: ReaderSnapshotUserAssetDto[] = [],
+): ReaderPlateSnapshotDto {
   return {
     schema_kind: READER_PLATE_SNAPSHOT_SCHEMA_KIND,
     snapshot_id: "snapshot_1",
@@ -249,7 +283,7 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
     enhancement_layers: [],
     enhancement_progress: makeProgress(),
     ask_supplements: [],
-    user_assets: [],
+    user_assets: userAssets,
     parsed_decisions: [],
     value: [makeUnit()],
   };
@@ -257,9 +291,12 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
 
 describe("ReaderRecordPlateSurface", () => {
   it("projects and renders stable source text", () => {
-    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
-    expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
+    const source = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="source-block"]',
+    );
+    expect(source?.textContent).toContain(SOURCE_TEXT);
     expect(screen.getByTestId("reader-record-plate-surface")).toBeTruthy();
   });
 
@@ -304,6 +341,80 @@ describe("ReaderRecordPlateSurface", () => {
     );
   });
 
+  it("renders user highlight marks with stable asset attributes", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([makeUserAsset()])} />,
+    );
+
+    const highlight = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-asset-id="asset_highlight_1"]',
+    );
+
+    expect(highlight?.dataset.readerRecordMarkKind).toBe("user_highlight");
+    expect(highlight?.dataset.readerRecordMarkOwner).toBe("user");
+    expect(highlight?.dataset.selectedText).toBe("memory");
+    expect(highlight?.textContent).toBe("memory");
+  });
+
+  it("renders note/comment indicators with stable asset attributes", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface
+        snapshot={makeSnapshot([
+          makeUserAsset({
+            asset_id: "asset_note_1",
+            asset_type: "note",
+            anchor: {
+              anchor_type: "text_range",
+              base_id: "base_1",
+              unit_id: "unit_1",
+              anchor_segment_id: "seg_1",
+              sentence_id: "sent_1",
+              segment_type: "sentence",
+              offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+              start_offset: 21,
+              end_offset: 27,
+              selected_text: "shapes",
+              text_hash: computeUtf16FNV1a("shapes"),
+              hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+            },
+          }),
+        ])}
+      />,
+    );
+
+    const noteIndicator = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-asset-id="asset_note_1"]',
+    );
+
+    expect(noteIndicator?.dataset.readerRecordCueType).toBe(
+      "reader_record_user_comment_cue",
+    );
+    expect(noteIndicator?.dataset.anchorSegmentId).toBe("seg_1");
+    expect(noteIndicator?.textContent).toContain("笔记");
+  });
+
+  it("keeps system marks and user marks coexisting on the source text", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([makeUserAsset()])} />,
+    );
+
+    const source = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="source-block"]',
+    );
+    const vocab = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    const userHighlight = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-asset-id="asset_highlight_1"]',
+    );
+
+    expect(source?.textContent).toContain(SOURCE_TEXT);
+    expect(vocab?.dataset.readerRecordMarkKind).toBe("phrase_gloss");
+    expect(userHighlight?.dataset.readerRecordMarkKind).toBe("user_highlight");
+    expect(vocab?.dataset.anchorSegmentId).toBe("seg_1");
+    expect(userHighlight?.dataset.anchorSegmentId).toBe("seg_1");
+  });
+
   it("renders compact progress without replacing the document body", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
@@ -330,20 +441,22 @@ describe("ReaderRecordPlateSurface", () => {
   });
 
   it("does not import legacy Workbench, ReaderVm, scene adapters, or write routes", () => {
-    const source = readFileSync(
-      resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
-      "utf8",
-    );
+    const sources = [
+      "src/components/reader/plate/ReaderRecordPlateSurface.tsx",
+      "src/lib/reader-plate/projection/reader-record-plate-document.ts",
+    ].map((filePath) => readFileSync(resolve(process.cwd(), filePath), "utf8"));
 
-    expect(source).not.toMatch(/ReaderRecordWorkbenchSurface/);
-    expect(source).not.toMatch(/ReaderVm/);
-    expect(source).not.toMatch(/adaptReaderPlateSnapshotToReaderVm/);
-    expect(source).not.toMatch(/renderSceneToPlateDocument/);
-    expect(source).not.toMatch(/render_scene_json/);
-    expect(source).not.toMatch(/analysis-tasks/);
-    expect(source).not.toMatch(/\/scene/);
-    expect(source).not.toMatch(/\/api\/web\/reader-ask/);
-    expect(source).not.toMatch(/\/api\/web\/reader-notes/);
-    expect(source).not.toMatch(/\/api\/web\/reader-annotations/);
+    for (const source of sources) {
+      expect(source).not.toMatch(/ReaderRecordWorkbenchSurface/);
+      expect(source).not.toMatch(/ReaderVm/);
+      expect(source).not.toMatch(/adaptReaderPlateSnapshotToReaderVm/);
+      expect(source).not.toMatch(/renderSceneToPlateDocument/);
+      expect(source).not.toMatch(/render_scene_json/);
+      expect(source).not.toMatch(/analysis-tasks/);
+      expect(source).not.toMatch(/\/scene/);
+      expect(source).not.toMatch(/\/api\/web\/reader-ask/);
+      expect(source).not.toMatch(/\/api\/web\/reader-notes/);
+      expect(source).not.toMatch(/\/api\/web\/reader-annotations/);
+    }
   });
 });

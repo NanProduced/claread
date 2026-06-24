@@ -328,13 +328,27 @@ export interface ReaderSnapshotAskSupplementDto {
   created_at: string;
 }
 
+export type ReaderSnapshotUserAssetType =
+  | "quick_highlight"
+  | "highlight"
+  | "user_highlight"
+  | "comment"
+  | "note"
+  | "reader_note"
+  | (string & {});
+
 export interface ReaderSnapshotUserAssetDto {
   asset_id: string;
-  asset_type: string;
+  asset_type: ReaderSnapshotUserAssetType;
   owner: "user";
+  reading_record_id: string;
+  generation: number;
   anchor: ReaderSnapshotAnchorDto;
-  deleted_at?: string | null;
+  note_text?: string | null;
+  color?: string | null;
+  created_at: string;
   updated_at: string;
+  deleted_at?: string | null;
 }
 
 export interface ReaderSnapshotParsedDecisionDto {

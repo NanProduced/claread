@@ -27,6 +27,8 @@ export {
   type ReaderRecordPlateTextLeaf,
   type ReaderRecordPlateTranslationBlockNode,
   type ReaderRecordPlateUnitNode,
+  type ReaderRecordPlateUserCommentCue,
+  type ReaderRecordPlateUserHighlightMark,
   type ReaderRecordPlateVocabularyMark,
 } from "./reader-record-plate-document";
 export {

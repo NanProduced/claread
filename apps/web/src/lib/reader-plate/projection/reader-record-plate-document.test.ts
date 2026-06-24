@@ -7,6 +7,7 @@ import {
   READER_TEXT_RANGE_OFFSET_UNIT,
   type ReaderEnhancementProgressDto,
   type ReaderPlateSnapshotDto,
+  type ReaderSnapshotUserAssetDto,
   type ReaderUnitNodeDto,
   type ReaderVocabularyMarkDto,
   type ReaderGrammarNoteMarkDto,
@@ -34,10 +35,10 @@ function makeVocabularyMark(
     item_type: "phrase_gloss",
     anchor_segment_id: "seg_1",
     start_offset: 0,
-    end_offset: 22,
+    end_offset: 20,
     selected_text: "Institutional memory",
     segment_start_utf16: 0,
-    segment_end_utf16: 22,
+    segment_end_utf16: 20,
     starts_here: true,
     ends_here: true,
     phrase: "Institutional memory",
@@ -58,11 +59,11 @@ function makeGrammarMark(
     layer_id: "layer_grammar_1",
     item_type: "grammar_note",
     anchor_segment_id: "seg_1",
-    start_offset: 23,
-    end_offset: 29,
+    start_offset: 21,
+    end_offset: 27,
     selected_text: "shapes",
-    segment_start_utf16: 23,
-    segment_end_utf16: 29,
+    segment_start_utf16: 21,
+    segment_end_utf16: 27,
     starts_here: true,
     ends_here: true,
     span_index: 0,
@@ -71,6 +72,35 @@ function makeGrammarMark(
     grammar_point: "predicate verb",
     pattern: "subject + verb + object",
     note: "shapes acts as the predicate verb.",
+    ...overrides,
+  };
+}
+
+function makeUserAsset(
+  overrides: Partial<ReaderSnapshotUserAssetDto> = {},
+): ReaderSnapshotUserAssetDto {
+  return {
+    asset_id: "asset_highlight_1",
+    asset_type: "highlight",
+    owner: "user",
+    reading_record_id: "record_1",
+    generation: 1,
+    anchor: {
+      anchor_type: "text_range",
+      base_id: "base_1",
+      unit_id: "unit_1",
+      anchor_segment_id: "seg_1",
+      sentence_id: "sent_1",
+      segment_type: "sentence",
+      offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+      start_offset: 0,
+      end_offset: 20,
+      selected_text: "Institutional memory",
+      text_hash: computeUtf16FNV1a("Institutional memory"),
+      hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+    },
+    created_at: "2026-06-24T01:00:00Z",
+    updated_at: "2026-06-24T01:00:00Z",
     ...overrides,
   };
 }
@@ -211,6 +241,7 @@ function makeUnit(): ReaderUnitNodeDto {
 
 function makeSnapshot(
   progress?: ReaderEnhancementProgressDto,
+  userAssets: ReaderSnapshotUserAssetDto[] = [],
 ): ReaderPlateSnapshotDto {
   return {
     schema_kind: READER_PLATE_SNAPSHOT_SCHEMA_KIND,
@@ -288,7 +319,7 @@ function makeSnapshot(
     enhancement_layers: [],
     enhancement_progress: progress,
     ask_supplements: [],
-    user_assets: [],
+    user_assets: userAssets,
     parsed_decisions: [
       {
         unit_id: "unit_1",
@@ -357,14 +388,17 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
 
   it("projects vocabulary and grammar annotations as text marks plus cues", () => {
     const segment = firstSegment();
-    const leaf = segment.children[0];
+    const phraseLeaf = segment.children.find((leaf) =>
+      leaf.marks.some((mark) => mark.kind === "phrase_gloss"),
+    );
+    const grammarLeaf = segment.children.find((leaf) =>
+      leaf.marks.some((mark) => mark.kind === "grammar_note"),
+    );
 
-    expect(leaf.text).toBe(FIRST_TEXT);
-    expect(leaf.marks.map((mark) => mark.kind)).toEqual([
-      "phrase_gloss",
-      "grammar_note",
-    ]);
-    expect(leaf.marks[0]).toMatchObject({
+    expect(segment.children.map((leaf) => leaf.text).join("")).toBe(FIRST_TEXT);
+    expect(phraseLeaf?.text).toBe("Institutional memory");
+    expect(grammarLeaf?.text).toBe("shapes");
+    expect(phraseLeaf?.marks[0]).toMatchObject({
       id: "vocab_mark_1",
       layerId: "layer_vocab_1",
       anchor: {
@@ -372,19 +406,19 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
         unitId: "unit_1",
         anchorSegmentId: "seg_1",
         segmentStartOffset: 0,
-        segmentEndOffset: 22,
+        segmentEndOffset: 20,
       },
     });
-    expect(leaf.marks[0].anchor.selectedText).toBe("Institutional memory");
-    expect(leaf.marks[0].anchor.textHash).toBe(
+    expect(phraseLeaf?.marks[0].anchor.selectedText).toBe("Institutional memory");
+    expect(phraseLeaf?.marks[0].anchor.textHash).toBe(
       computeUtf16FNV1a("Institutional memory"),
     );
-    expect(leaf.marks[0].anchor.textHash).not.toBe(segment.textHash);
+    expect(phraseLeaf?.marks[0].anchor.textHash).not.toBe(segment.textHash);
 
-    expect(leaf.marks[1].kind).toBe("grammar_note");
-    expect(leaf.marks[1].anchor.selectedText).toBe("shapes");
-    expect(leaf.marks[1].anchor.textHash).toBe(computeUtf16FNV1a("shapes"));
-    expect(leaf.marks[1].anchor.textHash).not.toBe(segment.textHash);
+    expect(grammarLeaf?.marks[0].kind).toBe("grammar_note");
+    expect(grammarLeaf?.marks[0].anchor.selectedText).toBe("shapes");
+    expect(grammarLeaf?.marks[0].anchor.textHash).toBe(computeUtf16FNV1a("shapes"));
+    expect(grammarLeaf?.marks[0].anchor.textHash).not.toBe(segment.textHash);
 
     const grammarCue = segment.cues.find(
       (cue) => cue.type === "reader_record_grammar_cue",
@@ -393,6 +427,76 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
       id: "grammar_note:grammar_item_1",
       itemId: "grammar_item_1",
       grammarPoint: "predicate verb",
+    });
+  });
+
+  it("projects user assets as user-owned highlight marks and comment cues", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeSnapshot(undefined, [
+        makeUserAsset(),
+        makeUserAsset({
+          asset_id: "asset_note_1",
+          asset_type: "note",
+          anchor: {
+            anchor_type: "text_range",
+            base_id: "base_1",
+            unit_id: "unit_1",
+            anchor_segment_id: "seg_1",
+            sentence_id: "sent_1",
+            segment_type: "sentence",
+            offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+            start_offset: 21,
+            end_offset: 27,
+            selected_text: "shapes",
+            text_hash: computeUtf16FNV1a("shapes"),
+            hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+          },
+        }),
+      ]),
+    );
+    const segment = firstSegment(document);
+
+    const highlightedLeaf = segment.children.find((leaf) =>
+      leaf.marks.some((mark) => mark.kind === "user_highlight"),
+    );
+    const userHighlight = highlightedLeaf?.marks.find(
+      (mark) => mark.kind === "user_highlight",
+    );
+    expect(highlightedLeaf?.text).toBe("Institutional memory");
+    expect(userHighlight).toMatchObject({
+      id: "user_highlight:asset_highlight_1",
+      owner: "user",
+      assetId: "asset_highlight_1",
+      assetType: "highlight",
+      anchor: {
+        baseId: "base_1",
+        unitId: "unit_1",
+        anchorSegmentId: "seg_1",
+        unitStartOffset: 0,
+        unitEndOffset: 20,
+        segmentStartOffset: 0,
+        segmentEndOffset: 20,
+        selectedText: "Institutional memory",
+      },
+    });
+
+    const commentCue = segment.cues.find(
+      (cue) => cue.type === "reader_record_user_comment_cue",
+    );
+    expect(commentCue).toMatchObject({
+      id: "user_comment:asset_note_1",
+      owner: "user",
+      assetId: "asset_note_1",
+      assetType: "note",
+      label: "笔记",
+      anchor: {
+        anchorSegmentId: "seg_1",
+        unitStartOffset: 21,
+        unitEndOffset: 27,
+        segmentStartOffset: 21,
+        segmentEndOffset: 27,
+        selectedText: "shapes",
+      },
     });
   });
 
@@ -424,8 +528,10 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
     });
 
     const segment = firstSegment(document);
-    expect(segment.children).toHaveLength(1);
-    expect(segment.children[0].sourceRole).toBe("segment_text");
+    expect(segment.children.map((leaf) => leaf.text).join("")).toBe(FIRST_TEXT);
+    expect(segment.children.every((leaf) => leaf.sourceRole === "segment_text")).toBe(
+      true,
+    );
     expect(JSON.stringify(segment)).not.toContain("reader_record_unit_translation");
   });
 

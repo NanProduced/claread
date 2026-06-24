@@ -808,3 +808,420 @@ def test_article_ready_service_modules_do_not_reference_render_scene_json() -> N
         API_ROOT / "app" / "services" / "reader_orchestration" / "repository.py",
     ):
         assert "render_scene_json" not in path.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# D6-U5: user_assets read projection tests
+# ---------------------------------------------------------------------------
+
+
+async def _insert_analysis_record(
+    pool: asyncpg.Pool,
+    *,
+    user_id: UUID,
+) -> UUID:
+    """Insert a minimal analysis_records row for legacy FK references."""
+    async with pool.acquire() as conn:
+        record_id = await conn.fetchval(
+            """
+            INSERT INTO analysis_records (user_id, source_text, source_text_hash)
+            VALUES ($1, 'legacy source', 'legacy-hash')
+            RETURNING id
+            """,
+            user_id,
+        )
+    assert isinstance(record_id, UUID)
+    return record_id
+
+
+async def _insert_reading_record_user_annotation(
+    pool: asyncpg.Pool,
+    *,
+    user_id: UUID,
+    record_id: UUID,
+    base_id: UUID,
+    generation: int,
+    unit_id: str,
+    anchor_segment_id: str,
+    unit_start_utf16: int,
+    unit_end_utf16: int,
+    selected_text: str,
+    text_hash: str,
+    color: str = "soft_green",
+    analysis_record_id: UUID | None = None,
+    sentence_id: str | None = None,
+    start_offset: int | None = None,
+    end_offset: int | None = None,
+) -> UUID:
+    async with pool.acquire() as conn:
+        annotation_id = await conn.fetchval(
+            """
+            INSERT INTO user_annotations (
+                user_id, analysis_record_id, anchor_type, target_key,
+                paragraph_id, sentence_id, selected_text,
+                start_offset, end_offset, text_hash, color,
+                reading_record_id, base_id, generation,
+                unit_id, anchor_segment_id,
+                unit_start_utf16, unit_end_utf16
+            ) VALUES (
+                $1, $2, 'text_range', $3,
+                NULL, $4, $5,
+                $6, $7, $8, $9,
+                $10, $11, $12,
+                $13, $14,
+                $15, $16
+            )
+            RETURNING id
+            """,
+            user_id,
+            analysis_record_id,
+            f"reading-record:{record_id}:base:{base_id}:gen:{generation}:"
+            f"unit:{unit_id}:segment:{anchor_segment_id}:"
+            f"range:{unit_start_utf16}:{unit_end_utf16}:{text_hash}",
+            sentence_id,
+            selected_text,
+            start_offset,
+            end_offset,
+            text_hash,
+            color,
+            record_id,
+            base_id,
+            generation,
+            unit_id,
+            anchor_segment_id,
+            unit_start_utf16,
+            unit_end_utf16,
+        )
+    assert isinstance(annotation_id, UUID)
+    return annotation_id
+
+
+async def _insert_reading_record_reader_note(
+    pool: asyncpg.Pool,
+    *,
+    user_id: UUID,
+    record_id: UUID,
+    base_id: UUID,
+    generation: int,
+    unit_id: str,
+    anchor_segment_id: str,
+    unit_start_utf16: int,
+    unit_end_utf16: int,
+    selected_text: str,
+    text_hash: str,
+    note_text: str,
+    analysis_record_id: UUID | None = None,
+) -> UUID:
+    async with pool.acquire() as conn:
+        note_id = await conn.fetchval(
+            """
+            INSERT INTO reader_notes (
+                user_id, analysis_record_id, anchor_sentence_id, quote_mode,
+                target_key, paragraph_id, sentence_id,
+                selected_text, start_offset, end_offset, text_hash,
+                note_text, payload_json,
+                reading_record_id, base_id, generation,
+                unit_id, anchor_segment_id,
+                unit_start_utf16, unit_end_utf16
+            ) VALUES (
+                $1, $2, NULL, 'text_range',
+                $3, NULL, NULL,
+                $4, NULL, NULL, $5,
+                $6, '{}'::jsonb,
+                $7, $8, $9,
+                $10, $11,
+                $12, $13
+            )
+            RETURNING id
+            """,
+            user_id,
+            analysis_record_id,
+            f"reading-record:{record_id}:base:{base_id}:gen:{generation}:"
+            f"unit:{unit_id}:segment:{anchor_segment_id}:"
+            f"range:{unit_start_utf16}:{unit_end_utf16}:{text_hash}",
+            selected_text,
+            text_hash,
+            note_text,
+            record_id,
+            base_id,
+            generation,
+            unit_id,
+            anchor_segment_id,
+            unit_start_utf16,
+            unit_end_utf16,
+        )
+    assert isinstance(note_id, UUID)
+    return note_id
+
+
+async def test_snapshot_includes_reading_record_user_assets(
+    reader_service_env: asyncpg.Pool,
+) -> None:
+    """D6-U5: snapshot.user_assets includes D6-U4 highlight + note rows."""
+    user_id = await _insert_user(reader_service_env)
+    service = ArticleReadyPersistenceService(pool=reader_service_env)
+    request = PlainTextArticleReadySubmitRequest(
+        user_id=user_id,
+        plain_text="Hello 🧠 world.",
+        title="User Asset Projection",
+        language="en",
+    )
+    result = await service.submit_plain_text(request)
+    record_id = result.record_id
+    base_id = result.base_id
+
+    # Fetch the anchor segment to get valid unit_id / anchor_segment_id and
+    # use the segment's own text + offsets so the text_range anchor validates.
+    async with reader_service_env.acquire() as conn:
+        seg_row = await conn.fetchrow(
+            """
+            SELECT unit_id, anchor_segment_id,
+                   unit_start_utf16, unit_end_utf16,
+                   text_hash
+            FROM anchor_segments
+            WHERE reading_record_id = $1 AND base_id = $2
+            ORDER BY order_index ASC
+            LIMIT 1
+            """,
+            record_id,
+            base_id,
+        )
+    assert seg_row is not None
+    unit_id = str(seg_row["unit_id"])
+    anchor_segment_id = str(seg_row["anchor_segment_id"])
+    seg_start = int(seg_row["unit_start_utf16"])
+    seg_end = int(seg_row["unit_end_utf16"])
+    # selected_text must match the offset span; slice it from the base text.
+    async with reader_service_env.acquire() as conn:
+        selected_text = await conn.fetchval(
+            """
+            SELECT substring(text from $1 + 1 for $2 - $1)
+            FROM reading_bases
+            WHERE id = $3
+            """,
+            seg_start,
+            seg_end,
+            base_id,
+        )
+    assert isinstance(selected_text, str) and selected_text
+    text_hash = str(seg_row["text_hash"])
+
+    highlight_id = await _insert_reading_record_user_annotation(
+        reader_service_env,
+        user_id=user_id,
+        record_id=record_id,
+        base_id=base_id,
+        generation=1,
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id,
+        unit_start_utf16=seg_start,
+        unit_end_utf16=seg_end,
+        selected_text=selected_text,
+        text_hash=text_hash,
+    )
+    note_id = await _insert_reading_record_reader_note(
+        reader_service_env,
+        user_id=user_id,
+        record_id=record_id,
+        base_id=base_id,
+        generation=1,
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id,
+        unit_start_utf16=seg_start,
+        unit_end_utf16=seg_end,
+        selected_text=selected_text,
+        text_hash=text_hash,
+        note_text="remember this segment",
+    )
+
+    snapshot = await service.load_snapshot(
+        record_id=record_id,
+        user_id=user_id,
+    )
+
+    asset_ids = {asset.asset_id for asset in snapshot.user_assets}
+    assert str(highlight_id) in asset_ids
+    assert str(note_id) in asset_ids
+
+    highlight = next(
+        a for a in snapshot.user_assets if a.asset_id == str(highlight_id)
+    )
+    assert highlight.asset_type == "highlight"
+    assert highlight.reading_record_id == str(record_id)
+    assert highlight.generation == 1
+    assert highlight.color == "soft_green"
+    assert highlight.note_text is None
+    assert highlight.anchor.unit_id == unit_id
+    assert highlight.anchor.anchor_segment_id == anchor_segment_id
+
+    note = next(
+        a for a in snapshot.user_assets if a.asset_id == str(note_id)
+    )
+    assert note.asset_type == "note"
+    assert note.note_text == "remember this segment"
+    assert note.color is None
+
+
+async def test_snapshot_excludes_stale_base_generation_user_assets(
+    reader_service_env: asyncpg.Pool,
+) -> None:
+    """D6-U5: stale base/generation rows do not appear in snapshot."""
+    user_id = await _insert_user(reader_service_env)
+    service = ArticleReadyPersistenceService(pool=reader_service_env)
+    request = PlainTextArticleReadySubmitRequest(
+        user_id=user_id,
+        plain_text="Stale base test text.",
+        title="Stale Base",
+        language="en",
+    )
+    result = await service.submit_plain_text(request)
+    record_id = result.record_id
+    active_base_id = result.base_id
+
+    # Use a random UUID as the stale base_id. D6-U4 deliberately does not add
+    # FKs from user_annotations.base_id to reading_bases, so a row can carry a
+    # base_id that does not match the active base. The snapshot query filters
+    # by base_id = active_base_id, so this row must not appear.
+    stale_base_id = uuid4()
+
+    async with reader_service_env.acquire() as conn:
+        seg_row = await conn.fetchrow(
+            """
+            SELECT unit_id, anchor_segment_id,
+                   unit_start_utf16, unit_end_utf16, text_hash
+            FROM anchor_segments
+            WHERE reading_record_id = $1 AND base_id = $2
+            ORDER BY order_index ASC
+            LIMIT 1
+            """,
+            record_id,
+            active_base_id,
+        )
+        selected_text = await conn.fetchval(
+            """
+            SELECT substring(text from $1 + 1 for $2 - $1)
+            FROM reading_bases
+            WHERE id = $3
+            """,
+            int(seg_row["unit_start_utf16"]),
+            int(seg_row["unit_end_utf16"]),
+            active_base_id,
+        )
+    assert seg_row is not None
+    unit_id = str(seg_row["unit_id"])
+    anchor_segment_id = str(seg_row["anchor_segment_id"])
+    seg_start = int(seg_row["unit_start_utf16"])
+    seg_end = int(seg_row["unit_end_utf16"])
+    assert isinstance(selected_text, str) and selected_text
+    text_hash = str(seg_row["text_hash"])
+
+    # Insert a highlight on the stale base
+    stale_highlight_id = await _insert_reading_record_user_annotation(
+        reader_service_env,
+        user_id=user_id,
+        record_id=record_id,
+        base_id=stale_base_id,
+        generation=1,
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id,
+        unit_start_utf16=seg_start,
+        unit_end_utf16=seg_end,
+        selected_text=selected_text,
+        text_hash=text_hash,
+    )
+
+    snapshot = await service.load_snapshot(
+        record_id=record_id,
+        user_id=user_id,
+    )
+
+    asset_ids = {asset.asset_id for asset in snapshot.user_assets}
+    assert str(stale_highlight_id) not in asset_ids, (
+        "stale base user asset must not appear in snapshot"
+    )
+
+
+async def test_snapshot_excludes_legacy_analysis_record_id_user_assets(
+    reader_service_env: asyncpg.Pool,
+) -> None:
+    """D6-U5: legacy analysis_record_id rows do not appear in snapshot."""
+    user_id = await _insert_user(reader_service_env)
+    service = ArticleReadyPersistenceService(pool=reader_service_env)
+    request = PlainTextArticleReadySubmitRequest(
+        user_id=user_id,
+        plain_text="Legacy exclusion test.",
+        title="Legacy Exclusion",
+        language="en",
+    )
+    result = await service.submit_plain_text(request)
+    record_id = result.record_id
+    base_id = result.base_id
+
+    async with reader_service_env.acquire() as conn:
+        seg_row = await conn.fetchrow(
+            """
+            SELECT unit_id, anchor_segment_id,
+                   unit_start_utf16, unit_end_utf16, text_hash, sentence_id
+            FROM anchor_segments
+            WHERE reading_record_id = $1 AND base_id = $2
+            ORDER BY order_index ASC
+            LIMIT 1
+            """,
+            record_id,
+            base_id,
+        )
+        selected_text = await conn.fetchval(
+            """
+            SELECT substring(text from $1 + 1 for $2 - $1)
+            FROM reading_bases
+            WHERE id = $3
+            """,
+            int(seg_row["unit_start_utf16"]),
+            int(seg_row["unit_end_utf16"]),
+            base_id,
+        )
+    assert seg_row is not None
+    unit_id = str(seg_row["unit_id"])
+    anchor_segment_id = str(seg_row["anchor_segment_id"])
+    seg_start = int(seg_row["unit_start_utf16"])
+    seg_end = int(seg_row["unit_end_utf16"])
+    assert isinstance(selected_text, str) and selected_text
+    text_hash = str(seg_row["text_hash"])
+    sentence_id = str(seg_row["sentence_id"])
+    legacy_record_id = await _insert_analysis_record(
+        reader_service_env,
+        user_id=user_id,
+    )
+
+    # Insert a legacy highlight that carries analysis_record_id (NOT NULL)
+    # alongside the Reading Record anchor columns. The check constraint is
+    # satisfied via the legacy path (sentence_id + start_offset + end_offset).
+    # The snapshot query filters analysis_record_id IS NULL, so this row must
+    # not appear even though base_id and generation match the active base.
+    legacy_highlight_id = await _insert_reading_record_user_annotation(
+        reader_service_env,
+        user_id=user_id,
+        record_id=record_id,
+        base_id=base_id,
+        generation=1,
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id,
+        unit_start_utf16=seg_start,
+        unit_end_utf16=seg_end,
+        selected_text=selected_text,
+        text_hash=text_hash,
+        analysis_record_id=legacy_record_id,
+        sentence_id=sentence_id,
+        start_offset=seg_start,
+        end_offset=seg_end,
+    )
+
+    snapshot = await service.load_snapshot(
+        record_id=record_id,
+        user_id=user_id,
+    )
+
+    asset_ids = {asset.asset_id for asset in snapshot.user_assets}
+    assert str(legacy_highlight_id) not in asset_ids, (
+        "legacy analysis_record_id user asset must not appear in snapshot"
+    )

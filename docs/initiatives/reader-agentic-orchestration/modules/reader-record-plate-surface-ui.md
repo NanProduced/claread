@@ -193,6 +193,7 @@ type ReaderRecordPlateDocument = {
 | `reader_vocabulary_marks` | `ReaderRecordPlateVocabularyMark[]` | `vocab_highlight` / `phrase_gloss` / `context_gloss` 进入 text leaf marks |
 | `reader_grammar_note_marks` | `ReaderRecordPlateGrammarMark[]` + `reader_record_grammar_cue` | span 进入 text leaf mark；`show_note_chip` 的 span 生成 grammar cue |
 | `reader_sentence_analysis` | `reader_record_sentence_analysis_cue` | V1 只投影为 Structure Lens cue；不进入文档流卡片 |
+| `snapshot.user_assets` | `ReaderRecordPlateUserHighlightMark[]` + `reader_record_user_comment_cue` | quick highlight 投影为 user-owned text mark；note/comment 投影为小型 comment indicator，不进入文档流卡片 |
 | `enhancement_progress` | `document.progress` + `unit.progress` | document 用于 header chip / slim strip；unit 匹配 unit 或 anchor_segment target 的 layer activity |
 
 Translation V1 约束：
@@ -216,12 +217,23 @@ Progress projection：
 - `unit.progress[]` 只收录 target 为当前 unit，或 target 为当前 unit 内 anchor segment 的 progress layer。
 - record-level progress 只留在 document 层，不强行塞到某个 unit。
 
+User Asset projection（UI-D4）：
+
+- `snapshot.user_assets` 消费后端 D6-U5 的 nested anchor shape：`asset_id`、`asset_type`、`owner`、`reading_record_id`、`generation`、`anchor: ReaderTextRangeAnchor`、`note_text`、`color`、`created_at`、`updated_at`。
+- 前端 projection 不接受 raw Plate path / Slate path，也不再以 flat user asset DTO 作为目标合同；`base_id`、`unit_id`、`anchor_segment_id`、UTF-16 offsets、`selected_text` 和 `text_hash` 均从 `anchor` 读取。
+- `quick_highlight` / `highlight` / `user_highlight` 投影为 `ReaderRecordPlateUserHighlightMark`，owner 为 `user`，DOM 暴露 `data-reader-record-user-asset-id`。
+- `note` / `comment` / `reader_note` 投影为 `reader_record_user_comment_cue`，在原文旁显示小型 comment indicator，不显示大卡片。
+- projection 只显示能通过本地只读校验的 asset：record、base、generation、unit、anchor segment、UTF-16 range 和 `fnv1a32-utf16(selected_text)` 都必须匹配。
+- 用户高亮按 UTF-16 anchor range 切分 `segment_text` leaf 后再渲染；不得把一个词级 highlight 扩大成整句或整段背景。
+- UI-D4 只读渲染 reload 后的资产，不打开 Highlight / Note 写入口，不调用 `/api/web/reader-notes`、`/api/web/reader-annotations` 或 `/api/web/reader-ask`。
+- 不输出、不保存、不比较 raw Plate path / Slate path。
+
 Domain ids：
 
 - document 使用 `recordId`、`snapshotId`、`baseId`、`lastEventSequence`。
 - unit 使用 `unitId`。
 - source segment 使用 `anchorSegmentId` 和 `sentenceId`。
-- marks/cues 使用 `markId`、`itemId`、`analysisId`、`layerId`。
+- marks/cues 使用 `markId`、`itemId`、`analysisId`、`layerId`、`assetId`。
 - progress 使用 `capability + targetScope + targetKey + layerId/jobId`。
 - 不输出、不保存、不比较 raw Plate path / Slate path。
 
@@ -754,16 +766,17 @@ Ask Supplement 进入文档后不渲染为卡片。它应表现为文档注释 /
 - unit 级译文过渡展示为“本段译文”。
 - 不显示旧式 grammar / sentence analysis 卡片。
 
-当前实现状态（UI-D3 read-only scaffold）：
+当前实现状态（UI-D3 / UI-D4 read-only scaffold）：
 
 - 已新增 `ReaderRecordPlateSurface` 组件，输入为 `ReaderPlateSnapshotDto`，内部直接调用 `projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot)`。
 - scaffold 使用 `Plate + readOnly` 渲染，不显示 editor formatting toolbar。
 - scaffold 最小展示 stable source text、unit-level translation block、vocab / grammar marks、grammar / sentence-analysis cues，以及 compact progress chip / slim strip / layer activity indicator。
+- UI-D4 起 scaffold 只读渲染 `snapshot.user_assets`：quick highlight 作为 user highlight mark；note/comment 作为小型 comment indicator；二者都通过 domain anchor 投影，不使用 Plate path / Slate path。
 - scaffold 不经过 `adaptReaderPlateSnapshotToReaderVm`、不接旧 `ReaderVm`，也不经过 `renderSceneToPlateDocument`。
 - scaffold 仅作为组件级预览 / 后续切线基础；当前未替换 `/app/reader-record/{recordId}` 默认产品 surface，默认 route 仍是 Workbench-backed read-only surface。
 - Lookup / Copy 在 UI-D3 中可先保持本地只读或 disabled；当前 scaffold 选择全部 action disabled，避免误导用户认为选择桥已完成。
-- Ask / Highlight / Note / Feedback 在 UI-D3 必须 disabled / coming soon，不允许调用 `/api/web/reader-ask`、`/api/web/reader-notes`、`/api/web/reader-annotations`。
-- UI-D3 不持久化 Plate path / Slate path；所有 DOM data attribute 只暴露 stable domain id，供后续 active anchor adapter 与 selection bridge 使用。
+- Ask / Highlight / Note / Feedback 在 UI-D3 / UI-D4 必须 disabled / coming soon，不允许调用 `/api/web/reader-ask`、`/api/web/reader-notes`、`/api/web/reader-annotations`。
+- UI-D3 / UI-D4 不持久化 Plate path / Slate path；所有 DOM data attribute 只暴露 stable domain id，供后续 active anchor adapter 与 selection bridge 使用。
 
 ### V1b: Plate Selection And Rails
 

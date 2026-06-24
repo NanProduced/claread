@@ -17,6 +17,8 @@ API_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BASELINE_SQL = (
     REPO_ROOT / "infra" / "migrations" / "0001_initial_schema.sql"
+).read_text(encoding="utf-8") + "\n" + (
+    REPO_ROOT / "infra" / "migrations" / "0002_reader_record_anchor_columns.sql"
 ).read_text(encoding="utf-8")
 
 

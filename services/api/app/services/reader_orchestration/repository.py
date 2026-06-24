@@ -22,6 +22,8 @@ from app.schemas.reader_orchestration import (
     ReaderSnapshotLayer,
     ReaderSnapshotParsedDecision,
     ReaderSnapshotRecord,
+    ReaderSnapshotUserAsset,
+    ReaderTextRangeAnchor,
     ReadingRecordProductState,
 )
 
@@ -44,6 +46,7 @@ class LoadedReaderSnapshotFacts:
     enhancement_layers: tuple[ReaderSnapshotLayer, ...]
     enhancement_progress: ReaderEnhancementProgress
     parsed_decisions: tuple[ReaderSnapshotParsedDecision, ...]
+    user_assets: tuple[ReaderSnapshotUserAsset, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -913,6 +916,13 @@ class ReaderOrchestrationRepository:
             for row in enhancement_rows
         )
 
+        user_assets = await self._load_user_assets_for_snapshot(
+            conn,
+            record_id=record_id,
+            base_id=base_id,
+            generation=record_generation,
+        )
+
         return LoadedReaderSnapshotFacts(
             build_result=build_result,
             record=snapshot_record,
@@ -935,7 +945,98 @@ class ReaderOrchestrationRepository:
                 )
                 for row in parsed_rows
             ),
+            user_assets=user_assets,
         )
+
+    async def _load_user_assets_for_snapshot(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        generation: int,
+    ) -> tuple[ReaderSnapshotUserAsset, ...]:
+        """Load D6-U4 Reading Record user assets for the current snapshot.
+
+        Only rows matching the active base_id + generation are returned.
+        Legacy analysis_record_id rows are excluded. Stale base/generation
+        rows are excluded by the base_id + generation filter.
+        """
+        highlight_rows = await conn.fetch(
+            """
+            SELECT ua.id, ua.unit_id, ua.anchor_segment_id,
+                   ua.unit_start_utf16, ua.unit_end_utf16,
+                   ua.selected_text, ua.text_hash, ua.color,
+                   ua.created_at, ua.updated_at,
+                   seg.sentence_id, seg.segment_type
+            FROM user_annotations ua
+            LEFT JOIN anchor_segments seg
+              ON seg.reading_record_id = ua.reading_record_id
+             AND seg.base_id = ua.base_id
+             AND seg.anchor_segment_id = ua.anchor_segment_id
+            WHERE ua.reading_record_id = $1
+              AND ua.base_id = $2
+              AND ua.generation = $3
+              AND ua.deleted_at IS NULL
+              AND ua.analysis_record_id IS NULL
+            ORDER BY ua.created_at, ua.id
+            """,
+            record_id,
+            base_id,
+            generation,
+        )
+        note_rows = await conn.fetch(
+            """
+            SELECT rn.id, rn.unit_id, rn.anchor_segment_id,
+                   rn.unit_start_utf16, rn.unit_end_utf16,
+                   rn.selected_text, rn.text_hash, rn.note_text,
+                   rn.created_at, rn.updated_at,
+                   seg.sentence_id, seg.segment_type
+            FROM reader_notes rn
+            LEFT JOIN anchor_segments seg
+              ON seg.reading_record_id = rn.reading_record_id
+             AND seg.base_id = rn.base_id
+             AND seg.anchor_segment_id = rn.anchor_segment_id
+            WHERE rn.reading_record_id = $1
+              AND rn.base_id = $2
+              AND rn.generation = $3
+              AND rn.deleted_at IS NULL
+              AND rn.analysis_record_id IS NULL
+            ORDER BY rn.created_at, rn.id
+            """,
+            record_id,
+            base_id,
+            generation,
+        )
+
+        assets: list[ReaderSnapshotUserAsset] = []
+        for row in highlight_rows:
+            assets.append(
+                ReaderSnapshotUserAsset(
+                    asset_id=str(row["id"]),
+                    asset_type="highlight",
+                    reading_record_id=str(record_id),
+                    generation=generation,
+                    anchor=_build_user_asset_anchor(row, base_id),
+                    color=row["color"],
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                )
+            )
+        for row in note_rows:
+            assets.append(
+                ReaderSnapshotUserAsset(
+                    asset_id=str(row["id"]),
+                    asset_type="note",
+                    reading_record_id=str(record_id),
+                    generation=generation,
+                    anchor=_build_user_asset_anchor(row, base_id),
+                    note_text=row["note_text"],
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                )
+            )
+        return tuple(assets)
 
     async def list_user_records(
         self,
@@ -998,6 +1099,25 @@ class ReaderOrchestrationRepository:
             for row in rows
         )
         return summaries, int(total)
+
+
+def _build_user_asset_anchor(
+    row: asyncpg.Record,
+    base_id: UUID,
+) -> ReaderTextRangeAnchor:
+    """Build a ReaderTextRangeAnchor from a user_annotations / reader_notes row."""
+    segment_type = row["segment_type"] if row["segment_type"] is not None else "sentence"
+    return ReaderTextRangeAnchor(
+        base_id=str(base_id),
+        unit_id=str(row["unit_id"]),
+        anchor_segment_id=str(row["anchor_segment_id"]),
+        sentence_id=str(row["sentence_id"]) if row["sentence_id"] is not None else None,
+        segment_type=segment_type,
+        start_offset=int(row["unit_start_utf16"]),
+        end_offset=int(row["unit_end_utf16"]),
+        selected_text=str(row["selected_text"]),
+        text_hash=str(row["text_hash"]),
+    )
 
 
 def _build_enhancement_progress(

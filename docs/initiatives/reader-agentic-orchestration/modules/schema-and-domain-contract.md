@@ -457,6 +457,41 @@ FK 约束决策：
 - 原因 3：Reading Record / Base 删除时 user assets 的归档/保留语义尚未最终确定。
 - Follow-up：删除/归档语义确定后 revisit FK。候选 target：`reading_bases(id, reading_record_id, record_generation)` via `uq_reading_bases_id_record_generation`。
 
+### D6-U5 User Assets Read Projection
+
+> 本节是 D6-U4 写入落地后的读路径投影。`ReaderPlateSnapshot.user_assets` 从 D6-U4 写入的 `user_annotations` / `reader_notes` rows 投影 highlight 和 note，只做 read projection，不启用 Web 写入口。
+
+Schema shape（`ReaderSnapshotUserAsset`）：
+
+- `asset_id`：row primary key（`user_annotations.id` 或 `reader_notes.id`）。
+- `asset_type`：`"highlight"`（来自 `user_annotations`）或 `"note"`（来自 `reader_notes`）。
+- `owner`：固定 `"user"`。
+- `reading_record_id`：当前 snapshot 的 Reading Record id。
+- `generation`：当前 snapshot 的 record generation。
+- `anchor`：`ReaderTextRangeAnchor`，从 row 的 `base_id` / `unit_id` / `anchor_segment_id` / `unit_start_utf16` / `unit_end_utf16` / `selected_text` / `text_hash` 构建；`sentence_id` 和 `segment_type` 通过 LEFT JOIN `anchor_segments` 获取。
+- `note_text`：仅 `asset_type = "note"` 时非 NULL（来自 `reader_notes.note_text`）。
+- `color`：仅 `asset_type = "highlight"` 时可能非 NULL（来自 `user_annotations.color`）。
+- `created_at` / `updated_at`：row 时间戳。
+- `deleted_at`：软删标记，snapshot 只读 `deleted_at IS NULL` rows。
+
+查询过滤条件（`_load_user_assets_for_snapshot`）：
+
+- `reading_record_id = $1`（当前 record）
+- `base_id = $2`（active base）
+- `generation = $3`（record generation）
+- `deleted_at IS NULL`
+- `analysis_record_id IS NULL`（排除 legacy rows）
+
+Stale base / generation rows 默认不进入 snapshot：`base_id` 和 `generation` 过滤保证只有当前 active base + 当前 generation 的 rows 被投影。
+
+Legacy `analysis_record_id` rows 不进入 snapshot：`analysis_record_id IS NULL` 过滤保证 legacy rows（`analysis_record_id IS NOT NULL`）被排除，即使它们的 `reading_record_id` / `base_id` / `generation` 匹配当前 snapshot。
+
+Snapshot 不依赖 `render_scene_json`：`_load_user_assets_for_snapshot` 不调用 `load_render_scene` / `render_scene`；anchor 校验由 `build_reader_plate_snapshot` 的 `_validate_snapshot_anchor` 在构建时完成（检查 `base_id` / `unit_id` / `anchor_segment_id` 是否存在于当前 build_result）。
+
+`LoadedReaderSnapshotFacts.user_assets` 字段在 `load_snapshot_facts` 中填充，`build_reader_plate_snapshot` 接收 `user_assets` 参数并按 `(updated_at, asset_id)` 排序。
+
+Web types 和 `/app/reader-record` UI 不在本节范围；Web 类型由前端任务处理。
+
 ## D6-A0 Ask / Notes / Highlights Dependency Audit
 
 > 本节是 D6 product hardening 进入 Ask / notes / highlights / user asset 写入前的依赖审计和迁移边界设计；不接新 Ask、不写新 API、不改产品 runtime。本节结论即 D6 最小实现顺序的输入。
@@ -1178,11 +1213,16 @@ type ReaderSnapshotAskSupplement = {
 
 type ReaderSnapshotUserAsset = {
   asset_id: string;
-  asset_type: "highlight" | "reader_note" | "saved_ask_note" | "saved_ask_highlight" | string;
+  asset_type: "highlight" | "note";
   owner: "user";
-  anchor: DomainAnchor;
-  deleted_at?: string | null;
+  reading_record_id: string;
+  generation: number;
+  anchor: ReaderUnitAnchor | ReaderTextRangeAnchor;
+  note_text?: string | null;
+  color?: string | null;
+  created_at: string;
   updated_at: string;
+  deleted_at?: string | null;
 };
 
 type ReaderPlateValue = Array<ReaderPlateNode>;
@@ -1194,7 +1234,7 @@ D4 values:
 - `enhancement_layers` contains published translation layers after they exist.
 - `enhancement_progress` is a UI observability projection from current-base jobs and layers.
 - `ask_supplements` is empty.
-- `user_assets` is empty.
+- `user_assets` is empty in D4; D6-U5 populates it from D6-U4 Reading Record `user_annotations` / `reader_notes` rows (see D6-U5 section).
 - `parsed_decisions` may be empty or contain translation parsed decisions.
 - `value` contains Plate nodes for source and any published translation.
 

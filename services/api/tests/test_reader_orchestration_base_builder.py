@@ -906,8 +906,11 @@ def test_reader_plate_snapshot_rejects_wrong_base_anchor_inputs(owner_kind: str)
         kwargs["user_assets"] = [
             ReaderSnapshotUserAsset(
                 asset_id="asset-1",
-                asset_type="reader_note",
+                asset_type="highlight",
+                reading_record_id="record-1",
+                generation=1,
                 anchor=anchor,
+                created_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
                 updated_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
             )
         ]
