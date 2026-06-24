@@ -1062,6 +1062,93 @@ async def test_snapshot_includes_reading_record_user_assets(
     assert note.color is None
 
 
+async def test_snapshot_excludes_other_user_reading_record_user_assets(
+    reader_service_env: asyncpg.Pool,
+) -> None:
+    """D6-U5.2: snapshot.user_assets is scoped to the requesting user."""
+    user_id = await _insert_user(reader_service_env)
+    other_user_id = await _insert_user(reader_service_env)
+    service = ArticleReadyPersistenceService(pool=reader_service_env)
+    request = PlainTextArticleReadySubmitRequest(
+        user_id=user_id,
+        plain_text="Cross user asset filter.",
+        title="User Asset Isolation",
+        language="en",
+    )
+    result = await service.submit_plain_text(request)
+    record_id = result.record_id
+    base_id = result.base_id
+
+    async with reader_service_env.acquire() as conn:
+        seg_row = await conn.fetchrow(
+            """
+            SELECT unit_id, anchor_segment_id,
+                   unit_start_utf16, unit_end_utf16,
+                   text_hash
+            FROM anchor_segments
+            WHERE reading_record_id = $1 AND base_id = $2
+            ORDER BY order_index ASC
+            LIMIT 1
+            """,
+            record_id,
+            base_id,
+        )
+        selected_text = await conn.fetchval(
+            """
+            SELECT substring(text from $1 + 1 for $2 - $1)
+            FROM reading_bases
+            WHERE id = $3
+            """,
+            int(seg_row["unit_start_utf16"]),
+            int(seg_row["unit_end_utf16"]),
+            base_id,
+        )
+    assert seg_row is not None
+    unit_id = str(seg_row["unit_id"])
+    anchor_segment_id = str(seg_row["anchor_segment_id"])
+    seg_start = int(seg_row["unit_start_utf16"])
+    seg_end = int(seg_row["unit_end_utf16"])
+    assert isinstance(selected_text, str) and selected_text
+    text_hash = str(seg_row["text_hash"])
+
+    other_highlight_id = await _insert_reading_record_user_annotation(
+        reader_service_env,
+        user_id=other_user_id,
+        record_id=record_id,
+        base_id=base_id,
+        generation=1,
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id,
+        unit_start_utf16=seg_start,
+        unit_end_utf16=seg_end,
+        selected_text=selected_text,
+        text_hash=text_hash,
+    )
+    other_note_id = await _insert_reading_record_reader_note(
+        reader_service_env,
+        user_id=other_user_id,
+        record_id=record_id,
+        base_id=base_id,
+        generation=1,
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id,
+        unit_start_utf16=seg_start,
+        unit_end_utf16=seg_end,
+        selected_text=selected_text,
+        text_hash=text_hash,
+        note_text="other user note",
+    )
+
+    snapshot = await service.load_snapshot(
+        record_id=record_id,
+        user_id=user_id,
+    )
+
+    asset_ids = {asset.asset_id for asset in snapshot.user_assets}
+    assert str(other_highlight_id) not in asset_ids
+    assert str(other_note_id) not in asset_ids
+
+
 async def test_snapshot_excludes_stale_base_generation_user_assets(
     reader_service_env: asyncpg.Pool,
 ) -> None:
@@ -1224,4 +1311,143 @@ async def test_snapshot_excludes_legacy_analysis_record_id_user_assets(
     asset_ids = {asset.asset_id for asset in snapshot.user_assets}
     assert str(legacy_highlight_id) not in asset_ids, (
         "legacy analysis_record_id user asset must not appear in snapshot"
+    )
+
+
+async def test_snapshot_excludes_user_asset_with_mismatched_text_hash(
+    reader_service_env: asyncpg.Pool,
+) -> None:
+    """D6-U5.1: selected_text / text_hash mismatch rows are defensively filtered."""
+    user_id = await _insert_user(reader_service_env)
+    service = ArticleReadyPersistenceService(pool=reader_service_env)
+    request = PlainTextArticleReadySubmitRequest(
+        user_id=user_id,
+        plain_text="Hash mismatch test text.",
+        title="Hash Mismatch",
+        language="en",
+    )
+    result = await service.submit_plain_text(request)
+    record_id = result.record_id
+    base_id = result.base_id
+
+    async with reader_service_env.acquire() as conn:
+        seg_row = await conn.fetchrow(
+            """
+            SELECT unit_id, anchor_segment_id,
+                   unit_start_utf16, unit_end_utf16, text_hash
+            FROM anchor_segments
+            WHERE reading_record_id = $1 AND base_id = $2
+            ORDER BY order_index ASC
+            LIMIT 1
+            """,
+            record_id,
+            base_id,
+        )
+        selected_text = await conn.fetchval(
+            """
+            SELECT substring(text from $1 + 1 for $2 - $1)
+            FROM reading_bases
+            WHERE id = $3
+            """,
+            int(seg_row["unit_start_utf16"]),
+            int(seg_row["unit_end_utf16"]),
+            base_id,
+        )
+    assert seg_row is not None
+    unit_id = str(seg_row["unit_id"])
+    anchor_segment_id = str(seg_row["anchor_segment_id"])
+    seg_start = int(seg_row["unit_start_utf16"])
+    seg_end = int(seg_row["unit_end_utf16"])
+    assert isinstance(selected_text, str) and selected_text
+    # Tamper with text_hash so it no longer matches selected_text.
+    tampered_hash = compute_text_range_hash(selected_text + "tampered")
+
+    dirty_highlight_id = await _insert_reading_record_user_annotation(
+        reader_service_env,
+        user_id=user_id,
+        record_id=record_id,
+        base_id=base_id,
+        generation=1,
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id,
+        unit_start_utf16=seg_start,
+        unit_end_utf16=seg_end,
+        selected_text=selected_text,
+        text_hash=tampered_hash,
+    )
+
+    snapshot = await service.load_snapshot(
+        record_id=record_id,
+        user_id=user_id,
+    )
+
+    asset_ids = {asset.asset_id for asset in snapshot.user_assets}
+    assert str(dirty_highlight_id) not in asset_ids, (
+        "user asset with mismatched text_hash must be defensively filtered"
+    )
+
+
+async def test_snapshot_excludes_user_asset_with_offset_outside_segment(
+    reader_service_env: asyncpg.Pool,
+) -> None:
+    """D6-U5.1: offsets outside anchor_segment range are defensively filtered."""
+    user_id = await _insert_user(reader_service_env)
+    service = ArticleReadyPersistenceService(pool=reader_service_env)
+    request = PlainTextArticleReadySubmitRequest(
+        user_id=user_id,
+        plain_text="Offset outside segment test.",
+        title="Offset Outside",
+        language="en",
+    )
+    result = await service.submit_plain_text(request)
+    record_id = result.record_id
+    base_id = result.base_id
+
+    async with reader_service_env.acquire() as conn:
+        seg_row = await conn.fetchrow(
+            """
+            SELECT unit_id, anchor_segment_id,
+                   unit_start_utf16, unit_end_utf16
+            FROM anchor_segments
+            WHERE reading_record_id = $1 AND base_id = $2
+            ORDER BY order_index ASC
+            LIMIT 1
+            """,
+            record_id,
+            base_id,
+        )
+    assert seg_row is not None
+    unit_id = str(seg_row["unit_id"])
+    anchor_segment_id = str(seg_row["anchor_segment_id"])
+
+    # Use offsets far outside the anchor segment range. The selected_text and
+    # text_hash are internally consistent (so payload validation passes) but
+    # the offsets fall outside the anchor segment, so the row must be filtered.
+    outside_start = 999
+    outside_end = 1000
+    outside_text = "X"
+    outside_hash = compute_text_range_hash(outside_text)
+
+    dirty_highlight_id = await _insert_reading_record_user_annotation(
+        reader_service_env,
+        user_id=user_id,
+        record_id=record_id,
+        base_id=base_id,
+        generation=1,
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id,
+        unit_start_utf16=outside_start,
+        unit_end_utf16=outside_end,
+        selected_text=outside_text,
+        text_hash=outside_hash,
+    )
+
+    snapshot = await service.load_snapshot(
+        record_id=record_id,
+        user_id=user_id,
+    )
+
+    asset_ids = {asset.asset_id for asset in snapshot.user_assets}
+    assert str(dirty_highlight_id) not in asset_ids, (
+        "user asset with offset outside anchor segment must be defensively filtered"
     )

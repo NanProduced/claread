@@ -492,6 +492,30 @@ Snapshot 不依赖 `render_scene_json`：`_load_user_assets_for_snapshot` 不调
 
 Web types 和 `/app/reader-record` UI 不在本节范围；Web 类型由前端任务处理。
 
+### D6-U5.1 User Assets Read Projection Defensive Validation
+
+> 本节是 D6-U5 读路径的 defensive validation 合同。即使 DB 中存在脏数据（mismatched text_hash、offset 落在 anchor segment 外、unit/anchor_segment 不存在），也不能让错误 anchor 进入 snapshot，更不能让整个 snapshot load 失败。
+
+策略：read-side defensive filtering。`_load_user_assets_for_snapshot` 在构建 `ReaderSnapshotUserAsset` 之前，对每个 DB row 做以下校验：
+
+1. `unit_id` 存在于当前 `build_result.units`。
+2. `anchor_segment_id` 存在于当前 `build_result.anchor_segments`。
+3. 调用 `app/contracts/anchor_validation.py` 的 `validate_text_anchor_against_unit`，复用现有 anchor 校验合同：
+   - `offset_unit == "utf16"` / `hash_algorithm == "fnv1a32-utf16"`
+   - `end_offset > start_offset`
+   - `utf16_code_unit_length(selected_text) == end_offset - start_offset`
+   - `compute_text_range_hash(selected_text) == text_hash`
+   - offsets 落在 `anchor_segment.unit_start_utf16 / unit_end_utf16` 内
+   - `slice_by_utf16_offsets(unit_text, start_offset, end_offset) == selected_text`
+
+失败处理：校验失败的 row 被静默跳过（`_build_validated_user_asset` 返回 `None`），不进入 `snapshot.user_assets`。这是 read-side defensive filtering：一个坏 highlight 或 note 不应导致文章正文不可读。write-side validation 仍然是 source of truth。
+
+不使用 `render_scene_json` / `load_render_scene` / legacy `reader_scene` 校验。所有校验基于当前 active base 的 `ReadingBaseBuildResult`（unit texts + anchor segment ranges）。
+
+`build_reader_plate_snapshot` 中的 `_validate_snapshot_anchor` 仍然对进入 snapshot 的 assets 做 fail-fast 校验（base_id / unit_id / anchor_segment_id 存在性），但 D6-U5.1 在 repository 层已经过滤掉脏 rows，所以 snapshot builder 不会因脏 asset 失败。
+
+Residual risk：被跳过的脏 rows 在 DB 中仍然存在，用户不可见。如果需要让用户感知到数据问题，后续可加 observability（log / metric），但当前不阻塞读路径。
+
 ## D6-A0 Ask / Notes / Highlights Dependency Audit
 
 > 本节是 D6 product hardening 进入 Ask / notes / highlights / user asset 写入前的依赖审计和迁移边界设计；不接新 Ask、不写新 API、不改产品 runtime。本节结论即 D6 最小实现顺序的输入。

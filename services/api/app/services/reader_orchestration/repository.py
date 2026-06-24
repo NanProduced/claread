@@ -9,7 +9,13 @@ from uuid import UUID
 
 import asyncpg
 
+from app.contracts.anchor_validation import (
+    AnchorSegmentRange,
+    AnchorValidationError,
+    validate_text_anchor_against_unit,
+)
 from app.contracts.annotation import (
+    TEXT_RANGE_OFFSET_UNIT,
     compute_text_range_hash,
     slice_by_utf16_offsets,
     utf16_code_unit_length,
@@ -919,8 +925,10 @@ class ReaderOrchestrationRepository:
         user_assets = await self._load_user_assets_for_snapshot(
             conn,
             record_id=record_id,
+            user_id=user_id,
             base_id=base_id,
             generation=record_generation,
+            build_result=build_result,
         )
 
         return LoadedReaderSnapshotFacts(
@@ -953,15 +961,37 @@ class ReaderOrchestrationRepository:
         conn: asyncpg.Connection,
         *,
         record_id: UUID,
+        user_id: UUID,
         base_id: UUID,
         generation: int,
+        build_result: ReadingBaseBuildResult,
     ) -> tuple[ReaderSnapshotUserAsset, ...]:
         """Load D6-U4 Reading Record user assets for the current snapshot.
 
         Only rows matching the active base_id + generation are returned.
         Legacy analysis_record_id rows are excluded. Stale base/generation
         rows are excluded by the base_id + generation filter.
+
+        D6-U5.1 defensive validation: each row is validated against the
+        active base facts (unit_text, anchor_segment range, selected_text,
+        text_hash) before being admitted into the snapshot. Rows that fail
+        validation are silently skipped so that a single dirty highlight or
+        note does not make the article unreadable. This is read-side
+        defensive filtering only; write-side validation remains the source
+        of truth.
         """
+        unit_text_by_id: dict[str, str] = {
+            unit.unit_id: unit.text for unit in build_result.units
+        }
+        anchor_segment_by_id: dict[str, AnchorSegmentRange] = {
+            seg.anchor_segment_id: AnchorSegmentRange(
+                anchor_segment_id=seg.anchor_segment_id,
+                unit_start_utf16=seg.unit_start_utf16,
+                unit_end_utf16=seg.unit_end_utf16,
+            )
+            for seg in build_result.anchor_segments
+        }
+
         highlight_rows = await conn.fetch(
             """
             SELECT ua.id, ua.unit_id, ua.anchor_segment_id,
@@ -977,6 +1007,7 @@ class ReaderOrchestrationRepository:
             WHERE ua.reading_record_id = $1
               AND ua.base_id = $2
               AND ua.generation = $3
+              AND ua.user_id = $4
               AND ua.deleted_at IS NULL
               AND ua.analysis_record_id IS NULL
             ORDER BY ua.created_at, ua.id
@@ -984,6 +1015,7 @@ class ReaderOrchestrationRepository:
             record_id,
             base_id,
             generation,
+            user_id,
         )
         note_rows = await conn.fetch(
             """
@@ -1000,6 +1032,7 @@ class ReaderOrchestrationRepository:
             WHERE rn.reading_record_id = $1
               AND rn.base_id = $2
               AND rn.generation = $3
+              AND rn.user_id = $4
               AND rn.deleted_at IS NULL
               AND rn.analysis_record_id IS NULL
             ORDER BY rn.created_at, rn.id
@@ -1007,35 +1040,34 @@ class ReaderOrchestrationRepository:
             record_id,
             base_id,
             generation,
+            user_id,
         )
 
         assets: list[ReaderSnapshotUserAsset] = []
         for row in highlight_rows:
-            assets.append(
-                ReaderSnapshotUserAsset(
-                    asset_id=str(row["id"]),
-                    asset_type="highlight",
-                    reading_record_id=str(record_id),
-                    generation=generation,
-                    anchor=_build_user_asset_anchor(row, base_id),
-                    color=row["color"],
-                    created_at=row["created_at"],
-                    updated_at=row["updated_at"],
-                )
+            asset = _build_validated_user_asset(
+                row,
+                base_id=base_id,
+                record_id=record_id,
+                generation=generation,
+                unit_text_by_id=unit_text_by_id,
+                anchor_segment_by_id=anchor_segment_by_id,
+                asset_type="highlight",
             )
+            if asset is not None:
+                assets.append(asset)
         for row in note_rows:
-            assets.append(
-                ReaderSnapshotUserAsset(
-                    asset_id=str(row["id"]),
-                    asset_type="note",
-                    reading_record_id=str(record_id),
-                    generation=generation,
-                    anchor=_build_user_asset_anchor(row, base_id),
-                    note_text=row["note_text"],
-                    created_at=row["created_at"],
-                    updated_at=row["updated_at"],
-                )
+            asset = _build_validated_user_asset(
+                row,
+                base_id=base_id,
+                record_id=record_id,
+                generation=generation,
+                unit_text_by_id=unit_text_by_id,
+                anchor_segment_by_id=anchor_segment_by_id,
+                asset_type="note",
             )
+            if asset is not None:
+                assets.append(asset)
         return tuple(assets)
 
     async def list_user_records(
@@ -1101,22 +1133,84 @@ class ReaderOrchestrationRepository:
         return summaries, int(total)
 
 
-def _build_user_asset_anchor(
+def _build_validated_user_asset(
     row: asyncpg.Record,
+    *,
     base_id: UUID,
-) -> ReaderTextRangeAnchor:
-    """Build a ReaderTextRangeAnchor from a user_annotations / reader_notes row."""
+    record_id: UUID,
+    generation: int,
+    unit_text_by_id: dict[str, str],
+    anchor_segment_by_id: dict[str, AnchorSegmentRange],
+    asset_type: str,
+) -> ReaderSnapshotUserAsset | None:
+    """Build a validated ReaderSnapshotUserAsset from a DB row.
+
+    Returns None when the row fails defensive validation against the active
+    base facts. This is read-side defensive filtering: a dirty highlight or
+    note must not make the article unreadable.
+    """
+    unit_id = str(row["unit_id"])
+    anchor_segment_id = str(row["anchor_segment_id"])
+
+    unit_text = unit_text_by_id.get(unit_id)
+    if unit_text is None:
+        return None
+
+    anchor_segment = anchor_segment_by_id.get(anchor_segment_id)
+    if anchor_segment is None:
+        return None
+
+    start_offset = int(row["unit_start_utf16"])
+    end_offset = int(row["unit_end_utf16"])
+    selected_text = str(row["selected_text"])
+    text_hash = str(row["text_hash"])
+
+    try:
+        validate_text_anchor_against_unit(
+            offset_unit=TEXT_RANGE_OFFSET_UNIT,
+            start_offset=start_offset,
+            end_offset=end_offset,
+            selected_text=selected_text,
+            text_hash=text_hash,
+            unit_text=unit_text,
+            anchor_segment=anchor_segment,
+        )
+    except AnchorValidationError:
+        return None
+
     segment_type = row["segment_type"] if row["segment_type"] is not None else "sentence"
-    return ReaderTextRangeAnchor(
+    anchor = ReaderTextRangeAnchor(
         base_id=str(base_id),
-        unit_id=str(row["unit_id"]),
-        anchor_segment_id=str(row["anchor_segment_id"]),
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id,
         sentence_id=str(row["sentence_id"]) if row["sentence_id"] is not None else None,
         segment_type=segment_type,
-        start_offset=int(row["unit_start_utf16"]),
-        end_offset=int(row["unit_end_utf16"]),
-        selected_text=str(row["selected_text"]),
-        text_hash=str(row["text_hash"]),
+        start_offset=start_offset,
+        end_offset=end_offset,
+        selected_text=selected_text,
+        text_hash=text_hash,
+    )
+
+    if asset_type == "highlight":
+        return ReaderSnapshotUserAsset(
+            asset_id=str(row["id"]),
+            asset_type="highlight",
+            reading_record_id=str(record_id),
+            generation=generation,
+            anchor=anchor,
+            color=row["color"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+    return ReaderSnapshotUserAsset(
+        asset_id=str(row["id"]),
+        asset_type="note",
+        reading_record_id=str(record_id),
+        generation=generation,
+        anchor=anchor,
+        note_text=row["note_text"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )
 
 

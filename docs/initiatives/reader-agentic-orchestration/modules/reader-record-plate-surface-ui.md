@@ -766,17 +766,20 @@ Ask Supplement 进入文档后不渲染为卡片。它应表现为文档注释 /
 - unit 级译文过渡展示为“本段译文”。
 - 不显示旧式 grammar / sentence analysis 卡片。
 
-当前实现状态（UI-D3 / UI-D4 read-only scaffold）：
+当前实现状态（UI-D3 / UI-D4 / UI-D5 read-only scaffold）：
 
 - 已新增 `ReaderRecordPlateSurface` 组件，输入为 `ReaderPlateSnapshotDto`，内部直接调用 `projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot)`。
 - scaffold 使用 `Plate + readOnly` 渲染，不显示 editor formatting toolbar。
 - scaffold 最小展示 stable source text、unit-level translation block、vocab / grammar marks、grammar / sentence-analysis cues，以及 compact progress chip / slim strip / layer activity indicator。
 - UI-D4 起 scaffold 只读渲染 `snapshot.user_assets`：quick highlight 作为 user highlight mark；note/comment 作为小型 comment indicator；二者都通过 domain anchor 投影，不使用 Plate path / Slate path。
 - scaffold 不经过 `adaptReaderPlateSnapshotToReaderVm`、不接旧 `ReaderVm`，也不经过 `renderSceneToPlateDocument`。
-- scaffold 仅作为组件级预览 / 后续切线基础；当前未替换 `/app/reader-record/{recordId}` 默认产品 surface，默认 route 仍是 Workbench-backed read-only surface。
+- UI-D5 起 `/app/reader-record/{recordId}` loaded state 默认渲染 `ReaderRecordPlateSurface`，用于真实页面验证新 Plate.js 解析页。
+- Workbench-backed surface 仍保留为受控 fallback：设置 `NEXT_PUBLIC_READER_RECORD_SURFACE_MODE=workbench`，或在浏览器 localStorage 写入 `claread:reader-record-surface-mode=workbench` 可切回。
+- UI-D5 不影响 legacy `/app/reader/{recordId}`，不改 `/app/read` submit 逻辑，也不迁移 Library、Vocabulary source links、command palette legacy records 或 active analysis task。
 - Lookup / Copy 在 UI-D3 中可先保持本地只读或 disabled；当前 scaffold 选择全部 action disabled，避免误导用户认为选择桥已完成。
-- Ask / Highlight / Note / Feedback 在 UI-D3 / UI-D4 必须 disabled / coming soon，不允许调用 `/api/web/reader-ask`、`/api/web/reader-notes`、`/api/web/reader-annotations`。
-- UI-D3 / UI-D4 不持久化 Plate path / Slate path；所有 DOM data attribute 只暴露 stable domain id，供后续 active anchor adapter 与 selection bridge 使用。
+- Ask / Highlight / Note / Feedback 在 UI-D3 / UI-D4 / UI-D5 必须 disabled / coming soon，不允许调用 `/api/web/reader-ask`、`/api/web/reader-notes`、`/api/web/reader-annotations`。
+- UI-D3 / UI-D4 / UI-D5 不持久化 Plate path / Slate path；所有 DOM data attribute 只暴露 stable domain id，供后续 active anchor adapter 与 selection bridge 使用。
+- UI-D5 保留原有 snapshot polling / reload 行为；`layer_published`、`record_product_state_updated`、`projection_reset_required` 触发 reload 后，Plate surface 读取新的 `ReaderPlateSnapshotDto` 并重新 projection。
 
 ### V1b: Plate Selection And Rails
 

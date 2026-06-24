@@ -3,8 +3,11 @@
 import { use, useCallback, useEffect, useState } from "react";
 
 import { ReaderRecordWorkbenchSurface } from "@/components/reader/ReaderRecordWorkbenchSurface";
+import { ReaderRecordPlateSurface } from "@/components/reader/plate";
 import { useReaderPlatePolling } from "@/lib/reader-plate-snapshot/polling";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
+
+import { getReaderRecordSurfaceMode } from "./reader-record-surface-mode";
 
 type SnapshotState =
   | { kind: "loading"; recordId: string }
@@ -80,6 +83,7 @@ export default function ReadingRecordPage({
   });
   const [isReloading, setIsReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
+  const [surfaceMode] = useState(getReaderRecordSurfaceMode);
 
   const snapshot = snapshotState.kind === "loaded" ? snapshotState.snapshot : null;
   const initialCursor = snapshot?.last_event_sequence ?? 0;
@@ -222,7 +226,11 @@ export default function ReadingRecordPage({
           </div>
         ) : null}
 
-        <ReaderRecordWorkbenchSurface snapshot={snapshotState.snapshot} />
+        {surfaceMode === "plate" ? (
+          <ReaderRecordPlateSurface snapshot={snapshotState.snapshot} />
+        ) : (
+          <ReaderRecordWorkbenchSurface snapshot={snapshotState.snapshot} />
+        )}
       </>
     );
   }

@@ -1,8 +1,8 @@
 # Cutover 与旧 AI Workflow 处理
 
-> 状态：`D6-U4 V1c single-range persistence` + `UI-D3 Reader Record Plate Surface read-only scaffold`
+> 状态：`D6-U4 V1c single-range persistence` + `UI-D5 Reader Record Plate Surface default mode`
 > 最后更新：2026-06-24
-> 范围：停服重构、旧 workflow 替换、旧表/旧 UI 清理边界，以及 Web cutover 迁移顺序；本轮 D6-A0 增加 Ask / notes / highlights / user asset 写入路径的依赖审计与迁移边界收口，D6-A5 在不切 UI / 不增 DB migration 的前提下完成 notes / highlights 双合同 schema + service 验证 spike，D6-U4 把 D6-A5 的 409 deferred 路径推进到真实 single-range persistence（新增 migration + runtime 写入），但仍不启用 `/app/reader-record` UI 写入口；UI-D3 只新增 Reader Record Plate Surface read-only scaffold，不切默认产品 route，不启用 Ask / notes / highlights 写入。
+> 范围：停服重构、旧 workflow 替换、旧表/旧 UI 清理边界，以及 Web cutover 迁移顺序；本轮 D6-A0 增加 Ask / notes / highlights / user asset 写入路径的依赖审计与迁移边界收口，D6-A5 在不切 UI / 不增 DB migration 的前提下完成 notes / highlights 双合同 schema + service 验证 spike，D6-U4 把 D6-A5 的 409 deferred 路径推进到真实 single-range persistence（新增 migration + runtime 写入），但仍不启用 `/app/reader-record` UI 写入口；UI-D5 把 `/app/reader-record/{recordId}` 默认 surface mode 切到 Reader Record Plate Surface read-only，用于真实页面验证，不切 legacy `/app/reader/{recordId}`。
 
 ## 基本立场
 
@@ -141,7 +141,7 @@ Web Reader 不再依赖旧 `render_scene_json`。Reader Article Body 的新路�
 |---|---|---|---|---|
 | 新提交产品入口 | `/app/read` | 默认 `/api/web/reading-record/submit` -> 新 `/reader/records/plain-text`；legacy mode 仍可回退到 `/api/web/analysis/submit` | 默认新 `Reading Record.record_id`；legacy mode 使用旧 `cloud_record_id` | `AnalyzeSubmitForm.tsx`、`submit-mode.ts`、`recent-reading-record.ts`、`services/bff/reader-plate.ts`；W3-D1 起默认成功后跳 `/app/reader-record/{readingRecordId}`，W3-D2 起提供 Web-only 最近 Reading Record 继续入口 |
 | 新 Reader Plate 验证页 | `/app/reader-plate` + `?record_id=` | `/api/web/reader-plate/*` -> 新 `/reader/records/plain-text|snapshot|events` | 新 `Reading Record.record_id` | `reader-plate/page.tsx`；当前是 read-only validation surface，不是最终产品 UI |
-| 新 Reading Record 产品 route shell | `/app/reader-record/{recordId}` | `/api/web/reader-plate/{recordId}/snapshot` | 新 `Reading Record.record_id` | `reader-record/[recordId]/page.tsx`；W3-C3 起通过 snapshot adapter 渲染旧 Workbench 风格只读中心 Plate 区，W3-D1 起承接 `/app/read` 成功 landing；D6-P7B 起在旧 Workbench header 内展示 snapshot `enhancement_progress` capability 级轻量进度条；D6-E2B 起用 Web smoke test 锁定初始 snapshot -> reader_events polling -> snapshot reload 后，Plate 中心区可更新译文、词汇/语法标注和 progress；D6-E3 起 `local-real-chain-runbook.md` 固化 `/app/read -> /api/web/reading-record/submit -> /app/reader-record/{recordId}` 的本地真实链路验证 checklist；UI-D3 起新增 `ReaderRecordPlateSurface` read-only scaffold，但未替换默认 route surface、未启用 Ask / notes / highlights 写入；W3-D5/D6/D7 起可由 Library 新 section、command palette 新分组和新 Reading Record indicator 发现；旧 active analysis task 流量仍未切入 |
+| 新 Reading Record 产品 route shell | `/app/reader-record/{recordId}` | `/api/web/reader-plate/{recordId}/snapshot` | 新 `Reading Record.record_id` | `reader-record/[recordId]/page.tsx`；W3-D1 起承接 `/app/read` 成功 landing；D6-E3 起 `local-real-chain-runbook.md` 固化 `/app/read -> /api/web/reading-record/submit -> /app/reader-record/{recordId}` 的本地真实链路验证 checklist；UI-D5 起 loaded state 默认渲染 `ReaderRecordPlateSurface` read-only，用 `ReaderPlateSnapshotDto -> ReaderRecordPlateDocument` 直接 projection，并保留 `reader-record-surface-mode.ts` 受控 fallback 到 Workbench；Ask / notes / highlights 写入口仍未启用；W3-D5/D6/D7 起可由 Library 新 section、command palette 新分组和新 Reading Record indicator 发现；旧 active analysis task 流量仍未切入 |
 | 旧 Reader 产品页 | `/app/reader/{recordId}` | `getReaderRecord()` -> 旧 `/reader/records/{id}/scene` 或 `by-client-id/.../scene` | 旧 analysis record id 或 client record id | `reader/[recordId]/page.tsx`、`services/bff/reader.ts`、`services/api/reader-scene.ts`；仍承载 ReaderWorkbench、Ask、点词、笔记、高亮 |
 | Library record links | `legacyAppReaderRoute(record.id)` | `/records` -> `RecordResponseDto[]` | 旧 `RecordResponseDto.id` | `LibraryClient.tsx`、`services/bff/records.ts`；Library 当前拿到的是旧 record list，不是新 Reading Record list |
 | Vocabulary source links | `legacyAppReaderRoute(recordId)` / `legacyAppReaderRoute(item.sourceRecordId)` | vocabulary item source refs -> 旧 source record contract | 旧 source record id / `cloud_record_id` / `client_record_id` | `app/vocabulary/VocabularyClient.tsx`；点回原文仍跳旧 ReaderWorkbench；W3-D9 已用 guard 锁定不能把 `sourceRecordId` 当新 `Reading Record.record_id`，后续必须等 BFF 提供 `sourceReadingRecordId` 或 `sourceReaderUrl` |
@@ -172,18 +172,18 @@ Web Reader 不再依赖旧 `render_scene_json`。Reader Article Body 的新路�
 - `/app/read` 默认 submit 已围绕新 `Reading Record.record_id -> /app/reader-record/{recordId}` 工作；W3-D2 增加的 `claread:web:recent-reading-record` localStorage 只保存最近一次新 Reading Record 的最小恢复字段，不是长期事实源；Library 新 Reading Record section、command palette 新分组和 Reading Record activity indicator 已经可发现新 Reading Record；W3-D8 起 indicator 不覆盖 `/app/read`，因为 read 页已有 recent recovery；旧 active task、Vocabulary source links、command palette legacy recent/search records 仍主要围绕旧 `analysis task / source record id -> /app/reader/{recordId}` 工作。
 - `/app/reader/{recordId}` 仍走旧 scene adapter，把 `ReaderSceneResponseDto` 适配成 ReaderWorkbench VM。
 - `/app/reader-plate` 独立消费新 `ReaderPlateSnapshot`，其 `record_id` 是新 Reading Record id，不应回灌给旧 `/app/reader/{recordId}` helper。
-- `/app/reader-record/{recordId}` 现在提供新的 Reading Record product route，并复用 `IntensiveReaderSurface` / `ImmersiveReaderSurface` 渲染 Workbench-backed read-only 中心 Plate 区；D6-P3 起只读 dictionary lookup 已恢复，Ask、notes/highlights、dictionary/user asset 写入仍未接通。
-- D6-P7B 起 `/app/reader-record/{recordId}` 会在旧 Workbench header 内紧凑展示 optional `snapshot.enhancement_progress` 的 capability 级摘要；缺失该字段时继续使用既有 `product_state` / `readiness_state` 提示，不影响正文 Plate read-only 渲染。
-- D6-E2B 起 Web focused smoke 覆盖 `/app/reader-record/{recordId}` 从 `readable_enhancing` 初始 snapshot，经 `layer_published` / `record_product_state_updated` events polling reload 到新 snapshot，并验证 Workbench-backed Plate 中心区的译文、词汇/语法 mark、句子分析和 progress 摘要同步更新；这是前端集成测试合同，不新增后端 schema 或运行时入口流量。
+- `/app/reader-record/{recordId}` 现在提供新的 Reading Record product route；UI-D5 起默认 surface mode 为 `plate`，loaded state 渲染 `ReaderRecordPlateSurface` read-only，直接消费 `ReaderPlateSnapshotDto` 并投影 stable source、unit translation、system marks/cues、user asset read projection 和 compact progress。
+- Workbench-backed surface 仍可受控回退：设置 `NEXT_PUBLIC_READER_RECORD_SURFACE_MODE=workbench`，或在浏览器 localStorage 写入 `claread:reader-record-surface-mode=workbench`。该 fallback 用于比较/排查，不是默认产品 surface。
+- UI-D5 继承原有 events polling / snapshot reload：`layer_published`、`record_product_state_updated`、`projection_reset_required` 触发后重新拉取 snapshot，并由 Plate surface 重新 projection。
 - D6-E3 起本地真实链路验证入口收口为 `/app/read` 默认提交到 `/api/web/reading-record/submit`，成功 landing 到 `/app/reader-record/{recordId}` 后用 events polling / snapshot reload 观察增强内容；诊断以 `reader_jobs`、`reader_events`、`enhancement_layers` 和 snapshot `enhancement_progress` 为准，worker 仍是独立进程，不进入 FastAPI lifespan。
-- UI-D3 起新增 `apps/web/src/components/reader/plate/ReaderRecordPlateSurface.tsx`，它直接消费 `ReaderPlateSnapshotDto -> ReaderRecordPlateDocument`，作为 Plate read-only scaffold 渲染 stable source text、unit translation block、system marks/cues 和 compact progress；该组件当前不接 `/app/reader-record/{recordId}` 默认 route，不引用旧 Workbench / `ReaderVm` / scene adapter，不调用 Ask / notes / highlights 写 routes。
+- Ask、notes/highlights、feedback、dictionary/user asset 写入仍未接通；Plate mode 下相关按钮保持 disabled / coming soon，不调用 `/api/web/reader-ask`、`/api/web/reader-notes` 或 `/api/web/reader-annotations`。
 - Library 当前列表来自旧 `/records`；即使页面本身不直接渲染 `render_scene_json`，它拿到的数据对象仍属于旧 record contract。
 
 UI / UX 方向：
 
-- W3-C1 的 `/app/reader-record/{recordId}` 是新 Reading Record 的产品 route shell，不是最终 Reader UI 重做方案。
-- 最终 cutover 不应另起一套解析页框架；应保留当前 `/app/reader/{recordId}` ReaderWorkbench 的页面框架、标题区、阅读设置、查词、笔记、高亮、Ask Claread 和浮层能力。
-- 后续产品化改线的核心是把中心文章正文与标注显示区域从旧 `renderSceneToPlateDocument(reader)` 数据面迁到新 `ReaderPlateSnapshot` / Plate projection，并补齐 `unit / anchor_segment / text_range` 到现有选择、查词、笔记、Ask 附件和跳转桥的兼容层。
+- W3-C1 的 `/app/reader-record/{recordId}` 是新 Reading Record 的产品 route shell；UI-D5 起默认中心 surface 已切到 read-only `ReaderRecordPlateSurface`，但仍是受控验证切线。
+- Legacy `/app/reader/{recordId}` 继续保留 ReaderWorkbench、Ask、点词、笔记、高亮和浮层能力，直到对应新 Reading Record contract 和 UI 切线完成。
+- 后续产品化改线的核心是补齐 `unit / anchor_segment / text_range` 到 Plate selection、查词、笔记、Ask 附件和跳转桥的兼容层；不能把写入口提前接回旧 render scene。
 - `/app/reader-plate` 仍是验证入口；不要把它的单列 read-only surface 当作最终产品页视觉基线。
 
 因此，D5-W3 不允许：
@@ -493,7 +493,7 @@ W3-D9 结论：
 
 - Ask / notes / highlights / user asset 的写入入口**仍由 `/app/reader/{recordId}` 承载**；本轮 D6-A0 不切 `/app/reader-record/{recordId}` 的写入路径。
 - `/app/reader-record/{recordId}` 的 Ask / notes / highlights UI 切线**必须等 Plate Surface 视觉方案**落地；本轮不做。
-- UI-D3 已提供新的 Plate read-only scaffold 组件，但只是切线基础；默认产品 route 仍未替换，Ask / notes / highlights 仍未启用。
+- UI-D5 已把 `/app/reader-record/{recordId}` 默认 surface mode 切到新的 Plate read-only surface；这是读投影切换，不是写入口切换。Ask / notes / highlights 仍未启用。
 - 旧 `reader_ask.service` / `user_annotations` / `reader_notes` / `reader_scene` runtime 行为**完全保持不变**；D6-A0 不引入兼容性修改、不引入字段别名、不引入双轨长期兼容。
 - D6-A1 起新写入切线以 `schema-and-domain-contract.md` 的 `D6-A0 Ask / Notes / Highlights Dependency Audit` 子节为起点；D6-A0 不在本轮做实现。
 - 旧 `reader_ask_threads` / `reader_ask_supplements` / `user_annotations` / `reader_notes` 表**保留至旧 data 清空**；cutover 不在本轮删表。

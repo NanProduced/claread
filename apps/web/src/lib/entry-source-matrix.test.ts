@@ -126,6 +126,28 @@ describe("entry source matrix - the new Reading Record recovery entry must not r
   });
 });
 
+describe("entry source matrix - Reader Record route surface mode (UI-D5)", () => {
+  it("reader-record route defaults to Plate mode and stays free of legacy route wiring", () => {
+    const pageSource = readSource(
+      "src/app/(private)/app/reader-record/[recordId]/page.tsx",
+    );
+    const modeSource = readSource(
+      "src/app/(private)/app/reader-record/[recordId]/reader-record-surface-mode.ts",
+    );
+
+    expect(pageSource).toContain("ReaderRecordPlateSurface");
+    expect(pageSource).toContain("getReaderRecordSurfaceMode");
+    expect(modeSource).toContain("DEFAULT_READER_RECORD_SURFACE_MODE");
+    expect(modeSource).toContain('"plate"');
+    expect(pageSource).not.toContain(LEGACY_ROUTE_HELPER);
+    expect(pageSource).not.toContain(LEGACY_READER_PATH);
+    expect(pageSource).not.toContain(ANALYSIS_TASKS_WIRING);
+    expect(modeSource).not.toContain(LEGACY_ROUTE_HELPER);
+    expect(modeSource).not.toContain(LEGACY_READER_PATH);
+    expect(modeSource).not.toContain(ANALYSIS_TASKS_WIRING);
+  });
+});
+
 describe("entry source matrix - the new Reading Record list BFF source", () => {
   it("reading-records BFF uses the new Reading Record route helper and is free of legacy wiring", () => {
     const source = readSource("src/services/bff/reading-records.ts");

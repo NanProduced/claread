@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { Suspense } from "react";
+import { computeUtf16FNV1a } from "@claread/contracts";
 import {
   act,
   cleanup,
@@ -15,18 +16,56 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  READER_TEXT_RANGE_HASH_ALGORITHM,
+  READER_TEXT_RANGE_OFFSET_UNIT,
+} from "@/types/api/reader-plate";
 import type {
   ReaderEventPollResponseDto,
   ReaderEventResponseDto,
   ReaderPlateSnapshotDto,
+  ReaderSnapshotUserAssetDto,
   ReaderSentenceAnalysisNodeDto,
 } from "@/types/api/reader-plate";
 import type { WebDictResult } from "@/types/api/dict";
 
 import ReadingRecordPage from "./page";
+import {
+  DEFAULT_READER_RECORD_SURFACE_MODE,
+  type ReaderRecordSurfaceMode,
+} from "./reader-record-surface-mode";
 
 const SOURCE_TEXT = "Institutional memory shapes policy choices.";
 const TRANSLATION_TEXT = "制度记忆会塑造政策选择。";
+
+function makeUserHighlightAsset(
+  overrides: Partial<ReaderSnapshotUserAssetDto> = {},
+): ReaderSnapshotUserAssetDto {
+  return {
+    asset_id: "asset_highlight_1",
+    asset_type: "quick_highlight",
+    owner: "user",
+    reading_record_id: "rec_product_1",
+    generation: 1,
+    anchor: {
+      anchor_type: "text_range",
+      base_id: "base_1",
+      unit_id: "unit_1",
+      anchor_segment_id: "seg_1",
+      sentence_id: "sent_1",
+      segment_type: "sentence",
+      offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+      start_offset: 14,
+      end_offset: 20,
+      selected_text: "memory",
+      text_hash: computeUtf16FNV1a("memory"),
+      hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+    },
+    created_at: "2026-06-24T01:00:00Z",
+    updated_at: "2026-06-24T01:00:00Z",
+    ...overrides,
+  };
+}
 
 function makeSnapshot(
   recordId = "rec_product_1",
@@ -34,9 +73,11 @@ function makeSnapshot(
   options?: {
     enhancementProgress?: ReaderPlateSnapshotDto["enhancement_progress"];
     lastEventSequence?: number;
+    translationScope?: "unit" | "anchor_segment";
     translationText?: string;
     withGrammarMark?: boolean;
     withSentenceAnalysis?: boolean;
+    userAssets?: ReaderSnapshotUserAssetDto[];
     withVocabularyMark?: boolean;
   },
 ): ReaderPlateSnapshotDto {
@@ -205,9 +246,11 @@ function makeSnapshot(
             layer_version: 1,
             base_id: "base_1",
             unit_id: "unit_1",
-            target_scope: "anchor_segment",
-            target_key: "seg_1",
-            anchor_segment_id: "seg_1",
+            target_scope: options?.translationScope ?? "anchor_segment",
+            target_key:
+              options?.translationScope === "unit" ? "unit_1" : "seg_1",
+            anchor_segment_id:
+              options?.translationScope === "unit" ? undefined : "seg_1",
             target_language: "zh",
             confidence: "normal",
             notes: [],
@@ -252,7 +295,7 @@ function makeSnapshot(
     ],
     enhancement_layers: [],
     parsed_decisions: [],
-    user_assets: [],
+    user_assets: options?.userAssets ?? [],
     ask_supplements: [],
   };
 }
@@ -475,7 +518,16 @@ function fulfilledRouteParams(recordId: string) {
   });
 }
 
-function renderReadingRecordPage(recordId: string) {
+function renderReadingRecordPage(
+  recordId: string,
+  surfaceMode: ReaderRecordSurfaceMode | "default" = "workbench",
+) {
+  if (surfaceMode === "default") {
+    Reflect.deleteProperty(globalThis, "__CLAREAD_READER_RECORD_SURFACE_MODE__");
+  } else {
+    globalThis.__CLAREAD_READER_RECORD_SURFACE_MODE__ = surfaceMode;
+  }
+
   return render(
     <Suspense fallback={<div data-testid="reader-record-route-loading" />}>
       <ReadingRecordPage params={fulfilledRouteParams(recordId)} />
@@ -564,6 +616,7 @@ afterEach(() => {
     document as unknown as Record<string, unknown>,
     "caretRangeFromPoint",
   );
+  Reflect.deleteProperty(globalThis, "__CLAREAD_READER_RECORD_SURFACE_MODE__");
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -572,6 +625,7 @@ describe("ReadingRecordPage static contract", () => {
   it("page and Workbench-backed surface do not reference legacy scene or analysis task data planes", () => {
     const sources = [
       "src/app/(private)/app/reader-record/[recordId]/page.tsx",
+      "src/app/(private)/app/reader-record/[recordId]/reader-record-surface-mode.ts",
       "src/components/reader/ReaderRecordWorkbenchSurface.tsx",
     ].map((path) => readFileSync(resolve(process.cwd(), path), "utf-8"));
 
@@ -582,46 +636,67 @@ describe("ReadingRecordPage static contract", () => {
       expect(source).not.toContain("legacyAppReaderRoute");
     });
   });
+
+  it("default Plate mode stays free of legacy adapters and write routes", () => {
+    const sources = [
+      "src/app/(private)/app/reader-record/[recordId]/page.tsx",
+      "src/app/(private)/app/reader-record/[recordId]/reader-record-surface-mode.ts",
+      "src/components/reader/plate/ReaderRecordPlateSurface.tsx",
+      "src/lib/reader-plate/projection/reader-record-plate-document.ts",
+    ].map((path) => readFileSync(resolve(process.cwd(), path), "utf-8"));
+
+    sources.forEach((source) => {
+      expect(source).not.toContain("adaptReaderPlateSnapshotToReaderVm");
+      expect(source).not.toContain("renderSceneToPlateDocument");
+      expect(source).not.toContain("render_scene_json");
+      expect(source).not.toContain("analysis-tasks");
+      expect(source).not.toContain("/scene");
+      expect(source).not.toContain("/api/web/reader-ask");
+      expect(source).not.toContain("/api/web/reader-notes");
+      expect(source).not.toContain("/api/web/reader-annotations");
+    });
+  });
 });
 
 describe("ReadingRecordPage direct load", () => {
-  it("loads snapshot data from the reader-plate BFF and renders the Workbench-backed reading surface", async () => {
-    const snapshot = makeSnapshot();
+  it("loads snapshot data from the reader-plate BFF and renders the default Plate surface", async () => {
+    expect(DEFAULT_READER_RECORD_SURFACE_MODE).toBe("plate");
+
+    const snapshot = makeSnapshot("rec_product_1", {}, {
+      translationScope: "unit",
+      userAssets: [makeUserHighlightAsset()],
+    });
     const fetchMock = installReaderRecordFetchMock(snapshot);
 
-    const { container } = renderReadingRecordPage("rec_product_1");
+    const { container } = renderReadingRecordPage("rec_product_1", "default");
 
-    await screen.findByTestId("reader-record-workbench-surface");
-    expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
-    expect(screen.getByText(TRANSLATION_TEXT)).toBeTruthy();
-    expect(screen.getByText("粘贴导入")).toBeTruthy();
-    expect(screen.getByTestId("reader-record-status-banner").textContent).toContain(
-      "可读增强中",
+    await screen.findByTestId("reader-record-plate-surface");
+    expect(screen.queryByTestId("reader-record-workbench-surface")).toBeNull();
+    const sourceBlock = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="source-block"]',
     );
-    expect(screen.getByTestId("reader-record-readiness-state").textContent).toContain(
-      "当前阶段：正文可读",
+    const translationBlock = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="unit-translation"]',
     );
-    expect(screen.queryByTestId("reader-record-enhancement-progress")).toBeNull();
+    expect(sourceBlock?.textContent).toContain(SOURCE_TEXT);
+    expect(translationBlock?.textContent).toContain(TRANSLATION_TEXT);
+    expect(screen.getByTestId("reader-record-plate-progress")).toBeTruthy();
     expect(
       container.querySelector(
-        '[data-reader-anchor="sentence"][data-sentence-id="sent_1"]',
+        '[data-reader-record-node="anchor-segment"][data-anchor-segment-id="seg_1"]',
       ),
     ).not.toBeNull();
     expect(
-      container.querySelector('[data-reader-sentence-text="true"]'),
+      container.querySelector(
+        '[data-reader-record-user-asset-id="asset_highlight_1"]',
+      ),
     ).not.toBeNull();
-    expect(screen.getByRole("button", { name: /Ask Claread/ })).toHaveProperty(
-      "disabled",
-      true,
-    );
-    expect(screen.getByRole("button", { name: /笔记\/高亮/ })).toHaveProperty(
-      "disabled",
-      true,
-    );
-    expect(screen.getByRole("button", { name: /词典保存/ })).toHaveProperty(
-      "disabled",
-      true,
-    );
+    for (const action of ["ask", "highlight", "note", "feedback"]) {
+      const button = container.querySelector<HTMLButtonElement>(
+        `[data-reader-record-action="${action}"]`,
+      );
+      expect(button?.disabled).toBe(true);
+    }
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/web/reader-plate/rec_product_1/snapshot",
@@ -695,6 +770,7 @@ describe("ReadingRecordPage direct load", () => {
             },
           ],
         }),
+        translationScope: "unit",
       },
     );
     installReaderRecordFetchMock(snapshot);
@@ -742,7 +818,7 @@ describe("ReadingRecordPage direct load", () => {
     expect(eventUrl.searchParams.get("limit")).toBe("100");
   });
 
-  it("reloads snapshot when a layer_published event arrives and updates the workbench-backed surface", async () => {
+  it("reloads snapshot when a layer_published event arrives and updates the default Plate surface", async () => {
     vi.useFakeTimers();
     const initialSnapshot = makeSnapshot(
       "rec_product_1",
@@ -763,6 +839,7 @@ describe("ReadingRecordPage direct load", () => {
             },
           ],
         }),
+        translationScope: "unit",
       },
     );
     const refreshedSnapshot = makeSnapshot(
@@ -787,6 +864,7 @@ describe("ReadingRecordPage direct load", () => {
           ],
         }),
         lastEventSequence: 2,
+        translationScope: "unit",
         translationText: "制度记忆持续影响政策选择。",
       },
     );
@@ -814,12 +892,16 @@ describe("ReadingRecordPage direct load", () => {
       },
     });
 
-    renderReadingRecordPage("rec_product_1");
+    renderReadingRecordPage("rec_product_1", "default");
 
     await flushAsyncWork();
-    expect(screen.getByText(TRANSLATION_TEXT)).toBeTruthy();
-    expect(screen.getByTestId("reader-record-enhancement-progress").textContent).toContain(
-      "译文·0/1 已完成 · 1 处理中",
+    expect(screen.getByTestId("reader-record-plate-surface")).toBeTruthy();
+    expect(
+      document.querySelector('[data-reader-record-node="unit-translation"]')
+        ?.textContent,
+    ).toContain(TRANSLATION_TEXT);
+    expect(screen.getByTestId("reader-record-plate-progress").textContent).toContain(
+      "解析生成中",
     );
 
     await act(async () => {
@@ -828,13 +910,13 @@ describe("ReadingRecordPage direct load", () => {
 
     await flushAsyncWork();
 
-    expect(screen.getByText("制度记忆持续影响政策选择。")).toBeTruthy();
-    expect(screen.queryByText(TRANSLATION_TEXT)).toBeNull();
-    expect(screen.getByTestId("reader-record-enhancement-progress").textContent).toContain(
-      "增强已完成",
-    );
-    expect(screen.getByTestId("reader-record-enhancement-progress").textContent).toContain(
-      "译文·1/1 已完成",
+    expect(
+      document.querySelector('[data-reader-record-node="unit-translation"]')
+        ?.textContent,
+    ).toContain("制度记忆持续影响政策选择。");
+    expect(document.body.textContent).not.toContain(TRANSLATION_TEXT);
+    expect(screen.getByTestId("reader-record-plate-progress").textContent).toContain(
+      "解析完成",
     );
 
     expect(
