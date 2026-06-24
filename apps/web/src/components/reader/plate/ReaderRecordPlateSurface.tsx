@@ -129,7 +129,13 @@ function layerToneClass(status: ReaderRecordPlateProgressLayer["status"]) {
   }
 }
 
-function CompactProgress({ progress }: { progress: ReaderRecordPlateProgress }) {
+function CompactProgress({
+  progress,
+  title,
+}: {
+  progress: ReaderRecordPlateProgress;
+  title?: string;
+}) {
   const layers = progress.layers.slice(0, 6);
   const statusLabel = overallProgressLabel(progress.overallStatus);
   const layerCountLabel = layers.length > 0 ? `增强层 ${layers.length}` : "暂无增强层";
@@ -142,6 +148,14 @@ function CompactProgress({ progress }: { progress: ReaderRecordPlateProgress }) 
       role="status"
       aria-label={`阅读状态：${statusLabel}，${layerCountLabel}`}
     >
+      {title ? (
+        <h1
+          data-reader-record-reading-title
+          className="reader-serif mb-2 text-xl leading-tight text-ink sm:text-2xl"
+        >
+          {title}
+        </h1>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
         <span className="inline-flex items-center gap-2">
           <span className="h-1.5 w-1.5 rounded-full bg-lens-blue" />
@@ -1510,7 +1524,10 @@ export function ReaderRecordPlateSurface({
       className={className}
     >
       <div className={columnClassName}>
-        <CompactProgress progress={plateDocument.progress} />
+        <CompactProgress
+          progress={plateDocument.progress}
+          title={plateDocument.record.title}
+        />
         <SelectionActionStrip
           copyStatus={copyStatus}
           lookupState={lookupState}

@@ -949,6 +949,28 @@ describe("ReaderRecordPlateSurface", () => {
     expect(source?.textContent).toContain(SOURCE_TEXT);
   });
 
+  it("renders the article title in the compact progress header", () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const titleEl = container.querySelector<HTMLElement>(
+      "[data-reader-record-reading-title]",
+    );
+    expect(titleEl).not.toBeNull();
+    expect(titleEl?.tagName).toBe("H1");
+    expect(titleEl?.textContent).toBe("Reader Record Plate Surface Fixture");
+  });
+
+  it("omits the title element when snapshot.record.title is empty", () => {
+    const snapshot = makeSnapshot();
+    snapshot.record.title = "";
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+
+    const titleEl = container.querySelector<HTMLElement>(
+      "[data-reader-record-reading-title]",
+    );
+    expect(titleEl).toBeNull();
+  });
+
   it("keeps context actions disabled until there is a valid selection", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
     const actions = screen.getByTestId("reader-record-plate-disabled-actions");
