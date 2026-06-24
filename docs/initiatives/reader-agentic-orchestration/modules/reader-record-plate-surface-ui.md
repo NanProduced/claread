@@ -1,6 +1,6 @@
 # Reader Record Plate Surface UI
 
-> 状态：目标方案草案；UI-D6A 默认 Plate 真实流程已验收；UI-D4 阅读态打磨已落地；UI-D5 Active Anchor Inspector 已落地；UI-D6B 真实流程验收与 UI 收敛评估已落地（含三进程真实联调）；UI-D6C UI/UX polish 已落地
+> 状态：目标方案草案；UI-D4 阅读态打磨已落地；UI-D5 Active Anchor Inspector 已落地
 > 最后更新：2026-06-24
 > 范围：`/app/reader-record/{recordId}` 在 Agentic Orchestration 架构下的 Reader Record 解析页 UI/UX、Plate.js 文档表面、选择交互、词典/Ask 联动、用户高亮/笔记和第一版实现边界。
 
@@ -25,18 +25,6 @@ Reader Record 页面使用 Plate.js 作为中心阅读文档的交互底座。�
 - 不持久化 raw Plate path、raw Slate path 或 raw Slate operation。
 - 第一版不做 AI suggestion / revision。
 - 第一版不新建 comment backend。
-
-## 当前问题
-
-当前 `/app/reader-record/{recordId}` 已接入 `ReaderPlateSnapshot`，但中心 UI 仍是旧 Workbench 映射。
-
-主要问题：
-
-- 新 snapshot 先转成旧 `ReaderVm`，再走旧 Reader surface，导致旧 UI 假设继续主导体验。
-- unit 级译文被映射到第一个 anchor segment 后面，造成原文和译文错位。
-- 选择 toolbar 依赖 DOM selection 和旧 sentence DOM 标记，容易与行内标注、卡片、词典和 Ask 冲突。
-- 旧 `ReaderMarkLeaf` 同时处理多类 mark、hover、focus、active、selection overlap、notes overlap 和 analysis linkage，交互状态过重。
-- `grammar_note` / `sentence_analysis` 作为卡片/accordion 插入正文，打断阅读，并让正文选择与解析内容割裂。
 
 ## 设计原则
 
@@ -393,13 +381,6 @@ UI-D5 Active Anchor Inspector 已在 `ReaderRecordPlateSurface` 内落地为前�
 - layer 局部失败时，在对应 cue 或 header chip 提供 retry / status，不把失败消息插入正文流。
 - progress strip 必须有稳定高度，避免 CLS。
 - loading 动效遵守 `prefers-reduced-motion`。
-
-UI-D6A 验收结论：
-
-- `/app/reader-record/{recordId}` 默认 loaded surface 是 `ReaderRecordPlateSurface`，Workbench 只作为显式 fallback。
-- `processing`、`readable_enhancing`、`failed`、`action_required` 都使用 compact progress chip / slim strip 表达；正文和已投影译文不被状态 UI 替换。
-- Plate 默认路径不显示旧 Workbench 大状态卡：不出现 `reader-record-status-banner` 或 `reader-record-enhancement-progress`。
-- 当前组件已符合轻量状态目标，本轮不需要额外运行时视觉改动。
 
 ## 模式
 
@@ -783,32 +764,6 @@ Ask Supplement 进入文档后不渲染为卡片。它应表现为文档注释 /
 - unit 级译文过渡展示为“本段译文”。
 - 不显示旧式 grammar / sentence analysis 卡片。
 
-当前实现状态（UI-D3 / UI-D4 / UI-D5 / UI-D6A read-only scaffold）：
-
-- 已新增 `ReaderRecordPlateSurface` 组件，输入为 `ReaderPlateSnapshotDto`，内部直接调用 `projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot)`。
-- scaffold 使用 `Plate + readOnly` 渲染，不显示 editor formatting toolbar。
-- scaffold 最小展示 stable source text、unit-level translation block、vocab / grammar marks、grammar / sentence-analysis cues，以及 compact reading header / slim strip / layer activity indicator。
-- UI-D4 起 scaffold 只读渲染 `snapshot.user_assets`：quick highlight 作为 user highlight mark；note/comment 作为小型 comment indicator；二者都通过 domain anchor 投影，不使用 Plate path / Slate path。
-- scaffold 不经过 `adaptReaderPlateSnapshotToReaderVm`、不接旧 `ReaderVm`，也不经过 `renderSceneToPlateDocument`。
-- UI-D5 起 `/app/reader-record/{recordId}` loaded state 默认渲染 `ReaderRecordPlateSurface`，用于真实页面验证新 Plate.js 解析页。
-- Workbench-backed surface 仍保留为受控 fallback：设置 `NEXT_PUBLIC_READER_RECORD_SURFACE_MODE=workbench`，或在浏览器 localStorage 写入 `claread:reader-record-surface-mode=workbench` 可切回。
-- UI-D5 不影响 legacy `/app/reader/{recordId}`，不改 `/app/read` submit 逻辑，也不迁移 Library、Vocabulary source links、command palette legacy records 或 active analysis task。
-- UI-D6A 锁定 `/app/read -> /app/reader-record/{recordId}` 的默认真实阅读路径：默认 mode 为 `plate`；Workbench fallback 只能通过 helper/env/localStorage 显式选择，不改变默认产品页。
-- UI-D6A 已用 characterization tests 覆盖 Plate progressive loading：`processing` / `readable_enhancing` / `failed` / `action_required` 均保留正文并使用 compact progress，不回退到旧 Workbench 状态卡。
-- UI-D6A 静态 guard 锁定默认 Plate route / surface / projection 不引用 `/scene`、`render_scene_json`、`analysis-tasks`、legacy reader route 或 Ask/notes/annotations 写 API。
-- D6-U6 起 Lookup / Copy 在有效 stable-source single-range selection 上启用：Copy 使用浏览器 clipboard API 复制 `selected_text`；Lookup 复用 `/api/web/dict/lookup` 只读 BFF 并显示轻量结果面板。
-- D6-U7 起 Highlight / Note 在有效 stable-source single-range selection 上启用最小写入：Web 入口为 `/api/web/reading-record/highlights` 和 `/api/web/reading-record/notes`，payload 必须携带 nested `anchor: UserEditorialAssetAnchor`；后端复用 `user_annotations` / `reader_notes` 的 Reading Record anchor gate + V1c persistence；写入成功后触发 snapshot reload 后再由 projection 显示用户资产。
-- UI-D4 阅读态打磨把顶部工程化 progress 改为 reading header：只显示产品态、增强层数量和细进度条；不再作为大块状态卡或调试面板。
-- UI-D4 阅读态打磨把固定按钮排收敛为 `selection-context` action strip：无选区或不支持的选区只给轻提示，不渲染整排 disabled action buttons；有 stable-source single-range selection 时才显示 Lookup / Copy / Highlight / Note 的上下文动作。Ask / Feedback 仍为 coming soon 次级提示，不作为可执行按钮出现。
-- UI-D4 阅读态打磨把 grammar / sentence-analysis cues 从正文内完整 chip 改为低干扰 marker（`G` / `S` / `笔记`）；默认阅读流中不再堆叠绿色 chip 文案。
-- UI-D5 Active Anchor Inspector 让 vocabulary / grammar / user highlight marks，以及 grammar / sentence-analysis / user note-comment cues 可点击或键盘聚焦后查看详情；详情面板在中心阅读列内轻量展示，可 Close 或 Escape 关闭。
-- UI-D5 review 收口：snapshot 刷新会清空 active inspector；重叠 marks 不再嵌套 button-like spans，而是合并为单个 focusable mark stack，inspector 内展示 stack 明细。
-- UI-D4 阅读态打磨把 unit translation 视觉改为 `supporting-paragraph` 辅助译文，保留段落下方轻量展示，仍不挂到 source segment 内。
-- multi-segment / 非 stable-source selection 暂不暴露可执行 Highlight / Note 写动作；`multi_text` 仍等待 `UserEditorialAssetAnchorSet` persistence contract。
-- Ask / Feedback 在 UI-D3 / UI-D4 / UI-D5 / UI-D6A / D6-U7 必须 disabled / coming soon，不允许调用 `/api/web/reader-ask`、`/api/web/reader-notes`、`/api/web/reader-annotations`。
-- UI-D3 / UI-D4 / UI-D5 / UI-D6A 不持久化 Plate path / Slate path；所有 DOM data attribute 只暴露 stable domain id，供后续 active anchor adapter 与 selection bridge 使用。
-- UI-D5 保留原有 snapshot polling / reload 行为；`layer_published`、`record_product_state_updated`、`projection_reset_required` 触发 reload 后，Plate surface 读取新的 `ReaderPlateSnapshotDto` 并重新 projection。
-
 ### V1b: Plate Selection And Rails
 
 必须包含：
@@ -957,158 +912,6 @@ V1d 验收：
 - 不使用需要精确点击细下划线的唯一入口；grammar / structure cue 在移动端需要有足够命中的 cue target。
 - 横屏和窄屏不出现横向滚动；正文、toolbar、bottom sheet 不能互相覆盖。
 - iOS/Android selection handle 与 floating toolbar 冲突时，toolbar 应下移或转为 bottom action bar。
-
-## UI-D6B 真实流程验收与 UI 收敛评估
-
-> 验收时间：2026-06-24
-> 验收分支：`reader-agentic-orchestration`
-> 验收范围：`/app/read -> /api/web/reading-record/submit -> /app/reader-record/{recordId}` 默认 Plate surface 端到端流程与 UI/UX 收敛评估。
-
-### 验收方法
-
-本轮验收包含两阶段：
-
-1. **静态契约测试 + characterization 测试 + 源码审计**：覆盖 progressive loading 状态、selection action strip、lookup panel、note composer、active anchor inspector、user asset projection 和静态契约 guard，锁定 UI 收敛。
-2. **三进程真实联调**：按 `local-real-chain-runbook.md` 启动 API（uvicorn port 8000）、Worker（reader-enhancement-worker）、Web（Next.js port 3000），使用 mock phone auth + debug session token，从 `/app/read` 提交真实英文文章，验证端到端流程。
-
-### 三进程真实联调结论
-
-> 验收时间：2026-06-24
-> 验收分支：`reader-agentic-orchestration`
-> 真实 record_id：`a6621b52-3f51-49b0-9a5f-f630a6c5818a`
-> base_id：`7ffecbe1-8ce3-485c-af89-70a2381d8816`
-> 文章标题：Institutional Memory
-
-**三进程启动状态**：API、Worker、Web 三进程均成功启动并保持运行。API `/health` 返回 `status: ok`，`postgres: true`，`redis: true`，`worker: true`。
-
-**端到端流程验证**：
-
-1. ✅ 从 `/app/read` 提交英文文章，请求走 `/api/web/reading-record/submit`，成功 landing 到 `/app/reader-record/a6621b52-3f51-49b0-9a5f-f630a6c5818a`。
-2. ✅ Progressive loading 合理：header chip 显示状态（解析完成），slim strip 显示 4 个增强层进度，不替换正文，不显示旧 Workbench 状态卡。
-3. ✅ Translation / vocabulary / grammar / sentence-analysis 逐步出现：4 个增强层（translation、vocabulary、grammar_note、sentence_analysis）全部 succeeded，`overall_status: ready`。页面渲染译文块、词汇 marks（phrase_gloss）、语法 marks（grammar_note）、句式分析 cues（G/S markers）。
-4. ✅ Lookup / Copy / Highlight / Note 可用：`SelectionActionStrip` 在 stable-source single-range selection 时启用查词/复制/高亮/笔记按钮。
-5. ✅ 保存 highlight 后 snapshot reload 刷新到 user_assets projection：通过 Web BFF `POST /api/web/reading-record/highlights` 保存高亮（selected_text: "Institutional"，anchor 携带完整 Reading Record anchor），返回 201，`analysis_record_id: null`（正确，未映射到 legacy）。snapshot reload 后 `user_assets` 包含该高亮，`reading_record_id` 匹配当前 record，`asset_type: highlight`，`color: soft_green`。
-6. ✅ 保存 note 后 snapshot reload 刷新到 user_assets projection：通过 Web BFF `POST /api/web/reading-record/notes` 保存笔记（selected_text: "memory"，noteText: 测试笔记内容），返回 201，`analysis_record_id: null`。snapshot reload 后 `user_assets` 包含该笔记，`asset_type: note`，`note_text` 正确存储。
-7. ✅ Active anchor inspector 可用：点击词汇 mark（phrase_gloss）后 inspector 出现，显示中文标签（词汇、例句：、锚点、关闭）。
-8. ✅ Ask / Feedback 保持 coming soon：`SelectionActionStrip` 渲染静态文案"Ask / 反馈 即将推出"，不调用 `/api/web/reader-ask`、`/api/web/reader-notes`、`/api/web/reader-annotations`。
-9. ✅ 所有可见 UI 文案为中文（解析完成、增强层、划取原文后可查词、复制、标记或记录笔记、译文等）。
-10. ✅ 文章标题显示在 header 中（本轮修复项，见下文）。
-
-### 已修复内容
-
-**UI 文案收敛（状态文案错误修复）**：
-
-对比旧 AI Workflow 版本 `ReaderWorkbench.tsx`（经多轮优化、使用一致中文文案：查词、复制、高亮、笔记、精读、沉浸、阅读设置），新 `ReaderRecordPlateSurface.tsx` 存在明显中英文混排状态文案错误。本轮将所有英文 UI 文案收敛为中文，匹配旧 Workbench 基线：
-
-- 操作按钮：Lookup → 查词、Copy → 复制、Highlight → 高亮、Note → 笔记、Saving → 保存中、Looking up → 查询中
-- 写入状态：Saving highlight → 正在保存高亮、Saving note → 正在保存笔记、Highlight saved → 高亮已保存、Note saved → 笔记已保存、Highlight save failed → 高亮保存失败、Note save failed → 笔记保存失败
-- 复制状态：Copied → 已复制、Copy failed → 复制失败
-- Section 标签：Vocabulary → 词汇、Grammar → 语法、Sentence Structure → 句子结构、User Highlight → 用户高亮、Comment → 笔记/评论、Lookup → 查词、Note → 笔记
-- 状态文本：overlapping annotations → 处重叠标注、Anchor → 锚点、Asset → 资产、Example: → 例句：、Reason: → 原因：、Selected: → 已选：、Looking up... → 查询中...
-- 词典面板：No concise definition is available for this entry. → 该词条暂无简明释义。、Multiple dictionary candidates found: → 发现多个词典候选：、No dictionary entry found. → 未找到词典条目。、Dictionary lookup failed. → 词典查询失败。
-- 按钮标签：Save → 保存、Cancel → 取消、Close → 关闭
-- aria-label：Reader Record Plate actions → Reader Record Plate 操作、Dismiss lookup → 关闭查词、Close active anchor details → 关闭锚点详情、Active anchor details → 锚点详情
-- disabledReason：Select stable source text to enable this action → 请选择稳定原文以启用此操作、Action is currently unavailable → 操作当前不可用、Multi-segment selection is not supported yet → 暂不支持跨段选区
-- Ask / Feedback coming soon → Ask / 反馈 即将推出
-
-**异常分支中文 fallback（P2 修复）**：
-
-异常分支不再把 `error.message` 直接展示给用户，避免浏览器原始英文错误（如 `Failed to fetch`）绕过中文文案收敛。三处 catch 分支改为固定中文 fallback，原始 error 只用于 `console.warn` 日志：
-
-- 词典查询失败：`词典查询失败，请稍后重试。`
-- 高亮保存失败：`高亮保存失败，请稍后重试。`
-- 笔记保存失败：`笔记保存失败，请稍后重试。`
-
-**文章标题缺失修复（三进程联调发现）**：
-
-`CompactProgress` 组件原先只显示状态 + 进度条，不显示文章标题。三进程真实联调时发现 header 缺少标题，影响页面可读性。修复方式：
-
-- `CompactProgress` 新增 `title?: string` prop。
-- 当 `title` 存在时，在 header 顶部渲染 `<h1 data-reader-record-reading-title>` 元素，使用 `reader-serif` 字体和 `text-xl sm:text-2xl` 字号。
-- 调用点传入 `plateDocument.record.title` 作为 title。
-- 真实联调验证：页面 header 现在显示"Institutional Memory"标题。
-
-**Smoke guard**：
-
-在 `page.test.tsx` 静态契约 describe 中新增两层 guard：
-
-1. `ReaderRecordPlateSurface uses converged Chinese copy instead of legacy English UI labels`：源码静态扫描，覆盖引号字符串、模板字面量、aria-label、disabledReason 等模式，防止英文 UI 文案回归。
-2. `ReaderRecordPlateSurface renders Chinese copy when vocabulary mark inspector is active`：真实渲染断言，渲染含 vocabulary/grammar/sentence-analysis/user asset 的 fixture，验证 action strip 和 surface 不出现英文标签（`Vocabulary`、`Grammar`、`Lookup`、`Copy`、`coming soon`、`Example: `、`Reason: ` 等），同时确认中文 hint `划取原文后可查词、复制、标记或记录笔记` 存在。
-
-### 验收结论
-
-**已通过（静态契约 + 三进程真实联调）**：
-
-1. `/app/read` 默认提交走 `/api/web/reading-record/submit`，成功进入 `/app/reader-record/{recordId}`（真实联调验证 record_id `a6621b52-3f51-49b0-9a5f-f630a6c5818a`，由 `READ_PAGE_SUBMIT_MODE = "reading-record"` 和 `AnalyzeSubmitForm.tsx` 跳转逻辑保证，characterization 测试已锁定）。
-2. progressive loading 使用 compact chip / slim strip，不替换正文，不显示旧 Workbench 状态卡（真实联调验证 4 个增强层全部 succeeded，`overall_status: ready`；UI-D6A characterization 测试已覆盖 `processing`、`readable_enhancing`、`failed`、`action_required` 状态）。
-3. translation/vocabulary/grammar/sentence-analysis 通过 Plate document projection 逐步出现（真实联调验证页面渲染译文块、词汇 marks、语法 marks、句式分析 cues；projection schema 测试已覆盖）。
-4. Lookup / Copy / Highlight / Note 按 stable-source single-range selection 工作（真实联调验证 highlight 和 note 保存成功；`SelectionActionStrip` 在 `singleRangeReady` 时启用，多段选区和非 stable-source selection 明确 disabled，characterization 测试已覆盖）。
-5. 保存 highlight/note 后触发 snapshot reload 并出现在 user_assets projection（真实联调验证：highlight asset_id `601d2b1f-d310-4d56-8f5e-85eb647020c6`、note asset_id `dd63d85e-84b4-40c0-9298-c3a48715dc0a` 均出现在 snapshot `user_assets` 中，`reading_record_id` 匹配当前 record，`analysis_record_id: null`；`handleHighlight` / `handleSaveNote` 调用 `onRequestSnapshotReload`，projection 消费 `snapshot.user_assets`，characterization 测试已覆盖）。
-6. active anchor inspector 对 vocab/grammar/user highlight/note cue 的展示可用（真实联调验证点击词汇 mark 后 inspector 出现中文标签；`ActiveAnchorInspector` 渲染 `VocabularyAnchorDetails`、`GrammarAnchorDetails`、`SentenceAnalysisAnchorDetails`、`UserHighlightAnchorDetails`、`UserCommentAnchorDetails`，characterization 测试已覆盖）。
-7. Ask / Feedback 保持 coming soon，不调用旧 API（真实联调验证静态文案"Ask / 反馈 即将推出"；静态契约 guard 已锁定不引用 `/api/web/reader-ask`、`/api/web/reader-notes`、`/api/web/reader-annotations`、`/api/web/annotations`）。
-8. 没有接旧 `/scene`、`render_scene_json`、`analysis-tasks`：静态契约 guard 已锁定。
-9. UI 文案与旧 Workbench 基线一致，全部使用中文（真实联调验证所有可见文案为中文）。
-10. 文章标题显示在 header 中（三进程联调发现并修复，`CompactProgress` 现渲染 `<h1 data-reader-record-reading-title>`）。
-
-**未修复但建议后续做的 UI/UX 项**（不在本轮修复范围，记录为后续任务）：
-
-1. ~~**loaded state header 无文章标题**~~：**已修复（三进程联调）**。`CompactProgress` 现在接受 `title` prop 并渲染 `<h1>` 标题。
-2. **无阅读模式切换器**（精读/沉浸）：旧 Workbench 有 intensive/immersive mode switcher。Plate surface 当前是单一 readonly mode，by design for V1，后续按需补。
-3. **无词典 rail**：旧 Workbench 左侧有 `ReaderDictionaryRail`。Plate surface 使用 inline lookup panel，by design for V1，后续按需补。
-4. **无 Ask rail**：旧 Workbench 右侧有 `AiWorkspacePanel`。Plate surface 的 Ask 保持 coming soon，by design，后续按需补。
-5. **inline action strip vs floating toolbar**：旧 Workbench 使用 floating `SelectionToolbar`。Plate surface 使用 `SelectionActionStrip`（固定在正文上方），by design（UI-D4），后续按需评估。
-6. **无收藏按钮**：旧 Workbench header 有 favorite action。Plate surface 暂无，后续按需补。
-7. **无阅读设置**（排版、主题）：旧 Workbench 有 typography/theme settings。Plate surface 暂无，后续按需补。
-
-### 手动验证 checklist（三进程联调）
-
-如需真实浏览器验证，按以下步骤执行：
-
-1. 启动 API：`uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`（在 `services/api/` 下）
-2. 启动 Worker：`uv run reader-enhancement-worker`（在 `services/api/` 下）
-3. 启动 Web：`pnpm web:dev`（在仓库根目录）
-4. 访问 `/app/read`，粘贴一段英文文本，提交
-5. 确认跳转到 `/app/reader-record/{recordId}`
-6. 观察 progressive loading：header chip 显示状态，slim strip 显示 layer 进度
-7. 等待 translation/vocabulary/grammar/sentence-analysis 逐步出现
-8. 选中一段 stable source text，确认 `SelectionActionStrip` 出现查词/复制/高亮/笔记按钮
-9. 点击查词，确认 lookup panel 出现并显示词典结果
-10. 点击高亮，确认写入成功后 snapshot reload，高亮出现在 user_assets projection
-11. 点击笔记，输入笔记内容，保存后确认 snapshot reload，笔记 indicator 出现
-12. 点击 vocab/grammar mark 或 cue，确认 active anchor inspector 出现
-13. 确认 Ask / Feedback 显示"Ask / 反馈 即将推出"，不调用旧 API
-14. 确认所有 UI 文案为中文
-
-## UI-D6C UI/UX Polish
-
-### 已修复的 UI/UX 问题
-
-1. **Active inspector 重复标题**：`UserHighlightAnchorDetails` 和 `UserCommentAnchorDetails` 的 h3 标题原先与 label 重复（"用户高亮"/"笔记/评论"），现在 h3 显示有意义的文本（高亮显示选中文本，笔记显示笔记内容片段）。
-2. **Active inspector UUID 泄漏**：原先显示 `资产 {assetId}`（UUID），对用户无意义，已移除。改为显示 `原文：{selectedText}`，用 `truncate` 防止长文本溢出。
-3. **Active inspector 标题字号过大**：所有 inspector 内部 h3 从 `text-xl` 降为 `text-lg`，间距从 `mt-3`/`mt-2` 收紧为 `mt-2`/`mt-1.5`，减少阅读流干扰。
-4. **Translation block 间距和 label**：`mt-2` → `mt-3` 增加与正文的呼吸距离；`border-l` → `border-l-2` 加强视觉分隔；label `text-[0.72rem]` → `text-xs` 提升可读性。
-5. **Action strip saved/error 状态持久不清除**：新增 `useEffect` 在 `writeState` 为 `saved` 或 `error` 时启动 4 秒计时器，自动回退到 `idle`，避免过时消息残留。
-6. **Action strip hint 文本移动端溢出**：hint span 添加 `max-w-full truncate sm:max-w-[40ch]`，在窄屏下截断长选中文本，避免按钮被挤到下一行。
-7. **Action strip 缺少 write state data 属性**：新增 `data-reader-record-write-state` 属性，反映当前写入状态（idle/saving/saved/error），便于测试和自动化断言。
-8. **面板视觉区分度不足**：Lookup panel、Note composer、Active inspector 三个浮动面板原先使用相同的 `border border-border` 样式，现在各自添加 `border-l-2` 左侧 accent（lookup 蓝色、note 琥珀色、inspector 紫色），在不破坏阅读流的前提下提供视觉区分。
-9. **Header title 与 status 间距不足**：title `<h1>` 的 `mb-2` → `mb-3`，增加标题与状态行的呼吸距离。
-
-### 仍 deliberately deferred 的能力
-
-1. **阅读模式切换器**（精读/沉浸）：当前单一 readonly mode，后续按需补。
-2. **词典 rail**：当前使用 inline lookup panel，后续按需补。
-3. **Ask rail**：Ask/Feedback 保持 coming soon，不调用旧 API。
-4. **floating toolbar**：当前使用固定 action strip，后续按需评估。
-5. **收藏按钮**：暂无。
-6. **阅读设置**（排版、主题）：暂无。
-7. **Grammar/sentence cues 折叠**：当前 inline cue markers 已足够轻量（`opacity-70` + `text-[0.58rem]`），暂不需要折叠。
-
-### 验证
-
-- `pnpm --filter=@claread/web test`: 400 passed (49 test files)
-- `pnpm --filter=@claread/web typecheck`: 通过
-- `pnpm --filter=@claread/web lint`: 0 errors, 81 warnings（均为 pre-existing）
-- `git diff --check`: clean
 
 ## Open Questions
 

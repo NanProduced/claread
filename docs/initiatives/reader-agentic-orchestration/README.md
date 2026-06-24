@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 重构专项
 
-> 状态：`进行中专项`
-> 最后更新：2026-06-18
+> 状态：`进行中专项（D6 产品硬化阶段）`
+> 最后更新：2026-06-24
 > 权威性：本目录是 Reader AI Workflow -> agentic orchestration 重构期间的专项事实源。
 
 本目录用于管理 Reader agentic orchestration 重构的目标架构、阶段计划和 coding agent 上下文。它与当前稳定产品/架构文档分开，因为当前系统仍是旧 AI Workflow 形态，而本目录描述本轮重构的目标状态。

@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 实施计划
 
-> 状态：`D5 active`
-> 最后更新：2026-06-23
+> 状态：`D6 进行中`
+> 最后更新：2026-06-24
 
 ## 成功标准
 
@@ -21,16 +21,56 @@
 
 ## 阶段门禁
 
-| Phase | 名称 | 门禁 |
+| Phase | 名称 | 状态 | 门禁 |
+|---|---|---|---|
+| D0 | 边界决策 | ✅ 完成 | scope、数据重置、Web first、framework spike、queue posture 已记录 |
+| D0.5 | 接入边界确认 | ✅ 完成 | RAG、输入适配、orchestration 入口三类粗合同已写入目标架构 |
+| D1 | 架构 RFC | ✅ 完成 | schema、runtime、events、milestones、product states 可评审 |
+| D2 | 技术 spikes | ✅ 完成 | 依赖升级、DB job lease、SSE/polling、bounded worker、RAG/OCR/OSS、Length Class、成本基线有结果 |
+| D3 | 后端骨架 | ✅ 完成 | 新 schema、domain services、run/job 状态机、events、usage audit 编译并通过 focused tests |
+| D4 | 最小纵切 | ✅ 完成 | Web submit -> article_ready -> translation layer -> parsed decision -> progressive Reader display |
+| D5 | 增强扩展 | ✅ 完成 | vocabulary、grammar bundle（grammar_note + sentence_analysis）、summary/outline policy、anchor validation、repair、eval |
+| D6 | 产品硬化 | 🔄 进行中 | Candidate preview、Library states、quota/action_required、Ask sidecar actions、failure recovery |
+
+### D5 子阶段索引
+
+| 子阶段 | 内容 | 状态 |
 |---|---|---|
-| D0 | 边界决策 | scope、数据重置、Web first、framework spike、queue posture 已记录 |
-| D0.5 | 接入边界确认 | RAG、输入适配、orchestration 入口三类粗合同已写入目标架构 |
-| D1 | 架构 RFC | schema、runtime、events、milestones、product states 可评审 |
-| D2 | 技术 spikes | 依赖升级、DB job lease、SSE/polling、bounded worker、RAG/OCR/OSS、Length Class、成本基线有结果 |
-| D3 | 后端骨架 | 新 schema、domain services、run/job 状态机、events、usage audit 编译并通过 focused tests |
-| D4 | 最小纵切 | Web submit -> article_ready -> translation layer -> parsed decision -> progressive Reader display |
-| D5 | 增强扩展 | vocabulary、grammar bundle（grammar_note + sentence_analysis）、summary/outline policy、anchor validation、repair、eval |
-| D6 | 产品硬化 | Candidate preview、Library states、quota/action_required、Ask sidecar actions、failure recovery |
+| D5-V1 | Vocabulary Layer Backend Slice | ✅ 完成 |
+| D5-V2 | Vocabulary Projection / Web Read-only Rendering | ✅ 完成 |
+| D5-V3 | Real Vocabulary Executor / Prompt | ✅ 完成 |
+| D5-V4 | Grammar Bundle Backend Slice | ✅ 完成 |
+| D5-V5 | Sentence Analysis Long-text Validation | ✅ 完成 |
+| D5-E1 | Vocabulary Eval Seed Disposition | ✅ accepted_with_changes |
+| D5-R1 | LangGraph / Orchestration Architecture Review | ✅ accepted_with_changes |
+| D5-R2 | Main Chain Runner + Web Record Load | ✅ 完成 |
+| D5-R4 | Real Provider Local Chain Validation | ✅ 完成 |
+| D5-R5 | Schema Health Check + Worker Lease Duration | ✅ 完成 |
+| D5-R6 | Sentence Analysis Long-text Projection Consistency | ✅ 完成 |
+| D5-W1 | Local / Deployment Worker Loop Evaluation | ✅ accepted_with_changes |
+| D5-W2 | Local / Deployment Worker Loop | ✅ 完成 |
+| D5-G1/G2 | Runtime Guardrails（parsed decision same-tx + boundary policy） | ✅ 完成 |
+
+### D6 子阶段索引
+
+| 子阶段 | 内容 | 状态 |
+|---|---|---|
+| D6-A0 | Ask / Notes / Highlights Dependency Audit | ✅ 完成 |
+| D6-A1 | Web read-only anchor draft helper | ✅ 完成 |
+| D6-A3 | Ask tool signature / write-proposal anchor contract | ✅ 完成 |
+| D6-A5 | Notes / Highlights dual-contract spike | ✅ 完成 |
+| D6-A6 | Reading Record Ask minimal slice（FastAPI route only，UI 未启用） | ✅ 完成 |
+| D6-U2 | Multi-anchor contract decision（single-range first） | ✅ 完成 |
+| D6-U3 | V1c single-range persistence design | ✅ 完成 |
+| D6-U4 | V1c single-range persistence 实现（migration + runtime 写入） | ✅ 完成 |
+| D6-U5 | user_assets read projection into ReaderPlateSnapshot | ✅ 完成 |
+| D6 product-state | failed_terminal classifier（保守映射为 failed） | ✅ 完成 |
+| W3-D0~D9 | Web cutover：submit landing / recent recovery / list source / Library section / command palette / activity indicator / Vocabulary guard | ✅ 完成 |
+| UI-D4~D6C | ReaderRecordPlateSurface 阅读态打磨 / 默认 Plate mode / 真实流程验收 / UI polish | ✅ 完成 |
+| D6 后续 | 旧入口改线（Library/Vocabulary/active task 切新 Reading Record） | ⏳ 待做 |
+| D6 后续 | Ask 切线（依赖 reader_ask/service.py 拆分或 adapter 化） | ⏳ 待做 |
+| D6 后续 | 词典 AI / 词汇保存 / 阅读模式切换 / projection_ops 增量 applier | ⏳ 待做 |
+| D6 后续 | 删除 legacy analysis/ + reader_scene.py + ReaderWorkbench | ⏳ 待做 |
 
 ## D0. 边界决策
 
@@ -142,37 +182,11 @@
 
 ## D3-P0. Backend Dependency Alignment
 
-状态：completed on 2026-06-18，详细记录见 `docs/tmp/reader-orchestration/D3/TMP-D3-P0-backend-dependency-closeout.md`。
+状态：completed on 2026-06-18。
 
-Closeout 结论：
-
-- 依赖升级已落到 `services/api/pyproject.toml` 与 `services/api/uv.lock`。
-- PydanticAI 升级到 `1.107.0`，DashScope SDK 升级到 `1.25.23`，asyncpg 升级到 `0.31.0`。
-- LangGraph 保持 `0.6.11`，D4/D5 主路径不引入 LangGraph；LangGraph v1+ 只作为 D6+ complex repair / branching / interrupt 隔离 spike 候选。
-- FastAPI、LangSmith、OpenAI SDK 未升级；focused tests 未暴露必须升级的缺口。
+- PydanticAI 升级到 `1.107.0`，DashScope SDK 升级到 `1.25.23`，asyncpg 升级到 `0.31.0`；FastAPI、LangSmith、OpenAI SDK 未升级。
+- LangGraph 保持 `0.6.11`，D4/D5 主路径不引入 LangGraph；LangGraph v1+ 只作为 D6+ 隔离 spike 候选。
 - asyncpg job lease、record-scoped event counter、rollback no-gap、SSE `Last-Event-ID` 等运行时语义延后到 D3-P4 在新 schema 上测试。
-
-在 D3 后端骨架正式实现前，先完成后端依赖升级与能力验证。该任务不实现 Reader runtime 业务功能，只解决依赖版本、provider capability 和 lockfile 风险。
-
-任务包：
-
-- 盘点 `services/api` 当前 Python dependencies、lockfile 和 LLM/provider 相关封装。
-- 升级 PydanticAI 到当前最新稳定 1.x；不使用 2.0 beta。验证 typed output、ToolOutput / native output fallback、usage limits、validator retry 和 provider usage extraction。
-- 升级 DashScope SDK 到当前最新 patch，验证 native streaming、`reasoning_content`、tool call、usage extraction 和错误分类。
-- 升级 asyncpg 到 0.31.x，验证 job lease、record-scoped transactional counter、transaction rollback no-gap 和 pool timeout 行为。
-- 明确 LangGraph posture：D4/D5 不主动升级、不引入主路径；若未来保留 D6+ 入口，必须在隔离 spike 中基于当时官方文档和 lockfile 实测记录 LangGraph v1+ 能力边界、breaking risk 和不进入 durable control plane 的理由。
-- 对齐 LangSmith / tracing SDK，确认 trace id 与 `ai_usage_events` / reader run/job/layer 的关联字段；只有 focused tests 需要时升级。
-- 验证 provider SDK / OpenAI-compatible adapters 的 structured output、tool calls、cache usage、provider request id 和 error classification。
-- 验证 FastAPI SSE response/helper、Last-Event-ID、heartbeat、disconnect handling。
-- 验证 asyncpg / SQLAlchemy transaction helper、pool timeout、serializable/read committed 策略。
-
-完成标准：
-
-- 依赖版本和 lockfile 更新完成，或明确记录阻塞和降级方案。D3-P0 已完成，后续不得在 D4 worker 实现中临时升级核心 LLM/runtime 包。
-- focused tests 覆盖 PydanticAI structured output、usage extraction、provider cache normalization、route/profile resolution。
-- LangGraph 明确不进入 D4 主路径，代码中不得临时引入第三个 orchestration 控制面。
-- `app/llm/routes.py` 增加 Reader worker route 的设计确认，至少覆盖 `reader_layer_translation`，并为 D5 预留 `reader_layer_vocabulary` / `reader_layer_grammar_bundle`。
-- D3 runtime skeleton 可以基于已验证依赖实现，不需要中途升级核心 LLM/runtime 包。
 
 ## D3. 后端骨架
 
@@ -180,280 +194,76 @@ Schema / Domain Contract：见 `modules/schema-and-domain-contract.md`。D3-P1 �
 
 ### D3-P1. Schema Baseline
 
-状态：completed on 2026-06-19，详细记录见 `docs/tmp/reader-orchestration/D3/TMP-D3-P1-schema-baseline-closeout.md`。
+状态：completed on 2026-06-19。
 
-Closeout 结论：
-
-- Fresh baseline migration 已新增 D3-P1 最小 Reader tables：`reading_records`、`original_inputs`、`reading_bases`、`reading_units`、`anchor_segments`、`reader_runs`、`reader_jobs`、`reader_job_events`、`reader_event_sequences`、`reader_events`、`enhancement_layers`、`parsed_decisions`。
-- `ai_usage_events` 和 `user_credit_ledger` 已增加 nullable Reader attribution 字段。
-- `reader_jobs` 已用 `(base_id, reading_record_id, expected_generation)` 复合 FK 绑定 `reading_bases(id, reading_record_id, record_generation)`。
-- 只有 `job_type='build_base' AND target_type='record'` 可 `base_id IS NULL`；其他 job 必须带 base。
-- `enhancement_layers` 已用 `(base_id, reading_record_id, generation)` 复合 FK 绑定 base generation。
-- `reader_event_sequences` 使用 record-scoped counter，focused tests 覆盖 first sequence 和 rollback no-gap。
-- `check_schema_baseline.sql` 已覆盖 D3-P1 全部新表。
-- `active_base_id -> reading_bases.status='active'` 暂不做 DDL trigger，作为 service / publisher invariant。
-- Focused tests 已通过：`test_reader_orchestration_schema_baseline.py`、`test_reader_orchestration_schema_models.py`、`test_jsonb_storage_contract.py`。
+- Fresh baseline migration 新增 Reader 全部核心表（reading_records/bases/units/segments/runs/jobs/events/layers/parsed_decisions）。
+- `reader_jobs` 和 `enhancement_layers` 用复合 FK 绑定 base generation；`reader_event_sequences` 使用 record-scoped counter。
+- `active_base_id -> reading_bases.status='active'` 作为 service invariant，不做 DDL trigger。
 
 ### D3-P2. Reading Base Builder + Base Plate Snapshot
 
-状态：completed on 2026-06-19，详细记录见 `docs/tmp/reader-orchestration/D3/TMP-D3-P2-reading-base-builder-snapshot-closeout.md`。
+状态：completed on 2026-06-19。
 
-Closeout 结论：
-
-- 已实现低影响纯文本路径的 deterministic Reading Base Builder。
-- 已从 Stable Base 生成 Reading Units、Anchor Segments 和 Navigation Skeleton。
-- 已实现 D4 所需 `ReaderPlateSnapshot` serializer / Base Plate Snapshot builder。
-- Snapshot builder 只从 domain facts 生成 Plate `value`，不读取旧 `render_scene_json`。
-- Snapshot builder 会拒绝不属于当前 base / unit / anchor 的 layers、parsed decisions、ask supplements 和 user assets。
-- 已实现最小 published translation layer snapshot projection，并补充 top-level layer 与 Plate value 对齐测试。
+- 实现低影响纯文本路径的 deterministic Reading Base Builder，从 Stable Base 生成 Reading Units、Anchor Segments 和 Navigation Skeleton。
+- `ReaderPlateSnapshot` serializer / Base Plate Snapshot builder 只从 domain facts 生成 Plate `value`，不读取旧 `render_scene_json`，并拒绝不属于当前 base/unit/anchor 的 layers/decisions/supplements/assets。
 - 当前 Unit baseline 是 `1 structure block -> 1 reading unit`；target-length aggregation 留给 D5+ builder refinement。
-
-D3-P2 不包含：
-
-- Translation Worker。
-- 数据库持久化 service。
-- 公开 Reader API。
-- Layer Publisher。
-- `projection_ops` 端到端 applier。
-- Web Reader UI 接入。
-- LangGraph 或 LLM Planner。
-
-Focused tests 已通过：
-
-- `test_reader_orchestration_base_builder.py`
-- `test_reader_orchestration_schema_models.py`
-- `test_reader_orchestration_schema_baseline.py`
-- targeted `ruff check`
-- targeted `compileall`
 
 ### D3-P3. Article Ready Persistence Service
 
-状态：completed on 2026-06-20，详细记录见 `docs/tmp/reader-orchestration/D3/TMP-D3-P3-article-ready-persistence-closeout.md`。
+状态：completed on 2026-06-20。
 
-Closeout 结论：
-
-- 已把 D3-P2 builder / snapshot 接到 D3-P1 schema。
-- 已实现纯文本低风险提交的内部 application service。
-- 已在一个事务内创建 `reading_records`、`original_inputs`、`reading_bases`、`reading_units`、`anchor_segments`。
-- 已设置 `reading_records.active_base_id`，并显式校验 active base 属于同一 record、同一 generation 且 `status='active'`。
-- 已初始化 `reader_event_sequences` 并写入 `reader_events.event_type='article_ready'`；sequence 从 `1` 开始，rollback 不产生 gap。
-- 已将 `readiness_state` 推进到 `article_ready`，将 `product_state` 推进到 `readable_enhancing`。
-- 已从数据库 facts 重建 `ReaderPlateSnapshot`，而不是复用提交时的内存对象。
-- Snapshot reload 使用 read-only `repeatable_read` transaction，保证 `last_event_sequence` 与 domain facts 来自同一 consistent read。
-- DB hydration 后调用 `validate_reading_base_build_result` 作为 Reading Base / Unit / Anchor Segment 全局 invariant 校验入口。
-
-D3-P3 不包含：
-
-- Translation Worker。
-- run/job worker lease runtime。
-- Layer Publisher。
-- Web Reader UI 或 FastAPI 公开接口纵切。
-- LangGraph、LLM Planner 或 PydanticAI worker。
-- `projection_ops` 端到端 applier。
-
-Focused tests 已通过：
-
-- `test_reader_orchestration_article_ready_service.py`
-- `test_reader_orchestration_base_builder.py`
-- `test_reader_orchestration_schema_models.py`
-- targeted `ruff check`
-- targeted `compileall`
+- 实现纯文本低风险提交的内部 application service，单事务内创建 records/inputs/bases/units/segments，并推进 `readiness_state=article_ready`、`product_state=readable_enhancing`。
+- `active_base_id` 设置时显式校验 active base 属于同一 record、同一 generation 且 `status='active'`；`reader_event_sequences` 从 `1` 开始，rollback 不产生 gap。
+- Snapshot reload 使用 read-only `repeatable_read` transaction 从 DB facts 重建 `ReaderPlateSnapshot`，保证 `last_event_sequence` 与 domain facts 来自同一 consistent read。
 
 ### D3-P4. Runtime Skeleton
 
-状态：completed on 2026-06-20，详细记录见 `docs/tmp/reader-orchestration/D3/TMP-D3-P4-runtime-skeleton-closeout.md`。
+状态：completed on 2026-06-20。
 
-Closeout 结论：
-
-- 已在新 D3 schema 上实现最小 Reader run/job/event runtime 骨架。
-- 已实现 claimable `reader_jobs` helper：`SELECT FOR UPDATE SKIP LOCKED`、lease token、lease expiry、attempt count、heartbeat。
-- 已实现 stale claimed job recovery 和 `retry_later` 调度语义。
-- 已实现 base/generation fence：claim/publish 拒绝 stale generation、非 active base、`active_base_id != job.base_id` 或 lease token mismatch。
-- 已抽出 event publisher helper：在 publish transaction 内使用 `reader_event_sequences` 分配 committed UI sequence 并写入 `reader_events`。
-- 已实现 polling event read model：`after_sequence`、`limit`、`last_event_sequence`、truncated response、empty stream、cursor already caught up 和 gap/reload 语义。
-- D3-P4 保持不引入 LangGraph；runtime 主控仍是 PostgreSQL run/job/event。
-
-D3-P4 不包含：
-
-- 实际 Translation LLM Worker。
-- PydanticAI worker 调用。
-- Layer Publisher 业务发布完整逻辑。
-- Web Reader UI。
-- `projection_ops` 端到端 applier。
-- LangGraph planner 或 branching flow。
-
-Focused tests 已通过：
-
-- `test_reader_orchestration_job_runtime.py`
-- `test_reader_orchestration_event_runtime.py`
-- `test_reader_orchestration_schema_baseline.py`
-- targeted `ruff check`
-- targeted `compileall`
+- 在新 schema 上实现最小 Reader run/job/event runtime 骨架：claimable `reader_jobs`（`SELECT FOR UPDATE SKIP LOCKED` + lease token/expiry/heartbeat）、stale recovery、`retry_later` 调度。
+- base/generation fence：claim/publish 拒绝 stale generation、非 active base、`active_base_id != job.base_id` 或 lease token mismatch。
+- event publisher helper 在 publish transaction 内分配 committed UI sequence；polling event read model 支持 `after_sequence`/`limit`/`last_event_sequence`/truncated/gap-reload 语义。
+- 保持不引入 LangGraph；runtime 主控仍是 PostgreSQL run/job/event。
 
 ### D4-P0. Backend Reader API + Snapshot/Polling Vertical Slice
 
-状态：completed on 2026-06-20，详细记录见 `docs/tmp/reader-orchestration/D4/TMP-D4-P0-backend-reader-api-closeout.md`。
+状态：completed on 2026-06-20。
 
-Closeout 结论：
-
-- 已新增最小后端 Reader API surface，让 Web 可以走通 plain text submit、snapshot reload 和 event polling。
-- `POST /reader/records/plain-text` 调用 `ArticleReadyPersistenceService.submit_plain_text`，返回 record id、base id、`article_ready` event sequence 和 `ReaderPlateSnapshot`。
-- `GET /reader/records/{record_id}/snapshot` 调用 D3-P3 snapshot reload，从 DB facts 重建 `ReaderPlateSnapshot`。
-- `GET /reader/records/{record_id}/events` 调用 D3-P4 `ReaderEventRuntime.poll_events`，支持 `after_sequence`、`limit`、`last_event_sequence`、truncated response 和 reload-required signal。
-- 用户隔离复用 `AuthUserDep`；record 不存在或不属于当前 user 均返回 404。
-- `client_record_id` blank 会规范化为 `NULL`；同一用户重复 active `client_record_id` 返回 409。
-- 新 API 路径不读取旧 `render_scene_json`。
-
-D4-P0 不包含：
-
-- Translation Worker。
-- Layer Publisher 业务逻辑。
-- PydanticAI / LLM 调用。
-- Web Reader UI。
-- SSE endpoint 纵切；polling 先行。
-- `projection_ops` 端到端 applier。
-
-Focused tests 已通过：
-
-- `test_reader_orchestration_api.py`
-- `test_reader_orchestration_article_ready_service.py`
-- `test_reader_orchestration_event_runtime.py`
-- targeted `ruff check`
-- targeted `compileall`
+- 新增最小后端 Reader API surface：`POST /reader/records/plain-text`、`GET /reader/records/{record_id}/snapshot`、`GET /reader/records/{record_id}/events`，分别接入 article-ready service、D3-P3 snapshot reload 和 D3-P4 polling event read model。
+- 用户隔离复用 `AuthUserDep`，跨用户 record 返回 404；`client_record_id` 重复返回 409。
+- 新 API 路径不读取旧 `render_scene_json`；polling 先行，SSE 纵切后置。
 
 ### D4-P1. Translation Layer Worker + Layer Publish Vertical Slice
 
-状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D4/TMP-D4-P1-translation-layer-closeout.md`。
+状态：completed on 2026-06-21。
 
-Closeout 结论：
-
-- 已新增 deterministic translation run/job bootstrap，创建最小 `reader_runs` 与 base-scoped `reader_jobs`。
-- `ReaderJobRuntime.claim_next_job()` 支持 `job_type` / `target_type` 过滤，translation worker 不会 claim mixed queue 中的非 translation jobs。
-- Translation worker 使用 PydanticAI typed output 边界生成 `TranslationLayerOutput`；测试使用 fake translator，不调用真实 LLM。
-- Layer publisher 在一个事务内写 `enhancement_layers(layer_type='translation')`、发布 `layer_published` event、完成 job transition 和 run completion。
-- Snapshot reload 能看到 published translation layer，并在 Plate value 中投影 `reader_translation` node。
-- 成功和失败路径均写 `ai_usage_events`，带 record / run / job / layer attribution、model route/profile/provider/name 和 operation fingerprint。
-- retryable failure 后重新成功会清空 `reader_runs.failure_class` / `failure_code`，避免 completed run 带旧失败状态。
-
-D4-P1 不包含：
-
-- Web Plate Reader UI。
-- vocabulary、grammar_note、sentence_analysis。
-- SSE endpoint。
-- Ask Document Tools。
-- LangGraph flow。
-- RAG substrate。
-- URL / PDF / OCR / 文件上传。
-
-Focused tests 已通过：
-
-- `test_reader_orchestration_translation_worker.py`
-- `test_reader_orchestration_layer_publisher.py`
-- `test_reader_orchestration_job_runtime.py`
-- `test_reader_orchestration_event_runtime.py`
-- `test_reader_orchestration_article_ready_service.py`
-- targeted `ruff check`
-- targeted `compileall`
+- 新增 deterministic translation run/job bootstrap 和 base-scoped `reader_jobs`；`claim_next_job()` 支持 `job_type`/`target_type` 过滤，避免 worker 跨队列 claim。
+- Layer publisher 单事务内写 `enhancement_layers(layer_type='translation')`、发布 `layer_published` event、完成 job/run transition；snapshot reload 投影 `reader_translation` node。
+- 成功和失败路径均写 `ai_usage_events` 带 record/run/job/layer attribution；retryable failure 后重新成功会清空 run 旧失败状态。
 
 ### D4-P2. Backend Orchestration Integration + Parsed Decision
 
-状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D4/TMP-D4-P2-orchestration-parsed-closeout.md`。
+状态：completed on 2026-06-21。
 
-Closeout 结论：
-
-- 已新增 `ReaderOrchestrator` service，作为 D4 后端最小 orchestration facade。
-- `POST /reader/records/plain-text` 现在通过 `ReaderOrchestrator.submit_plain_text_and_bootstrap_translation()` 先创建 article-ready facts，再启动 translation run/job。
-- 已新增 testable tick path：`ReaderOrchestrator.tick_translation_worker()` 复用 D4-P1 `TranslationWorkerService`，从 queued translation job 推进到 `layer_published`。
-- Translation layer published 后写最小 `parsed_decisions`，并发布 `parsed_decision_updated` event。
-- Snapshot reload 可同时看到 translation layer 和 parsed decision；event polling 顺序覆盖 `layer_published` 后 `parsed_decision_updated`。
-- 保持 PostgreSQL run/job/event 作为 durable control plane；未引入 LangGraph。
-- D4-P2 没有新增 HTTP tick endpoint；worker tick 仍是 service/testable entry，后续是否暴露内部 route 另行设计。
-- Parsed decision 写入与 layer publish 暂不同事务。D4 单线程 tick 可接受；如果 D5 需要强一致，应把 decision 写入收敛到 publisher transaction 或明确 compensating repair。
-
-D4-P2 不包含：
-
-- Web Plate Reader UI。
-- SSE endpoint。
-- vocabulary、grammar_note、sentence_analysis。
-- Ask Document Tools。
-- RAG substrate。
-- URL / PDF / OCR / 文件上传。
-- LangGraph flow。
-- `projection_ops` 端到端 applier。
-
-Focused tests 已通过：
-
-- `test_reader_orchestration_orchestrator.py`
-- `test_reader_orchestration_api.py`
-- `test_reader_orchestration_translation_worker.py`
-- `test_reader_orchestration_event_runtime.py`
-- targeted `ruff check`
+- 新增 `ReaderOrchestrator` service 作为 D4 后端最小 orchestration facade；`POST /reader/records/plain-text` 先创建 article-ready facts，再启动 translation run/job。
+- Translation layer published 后写最小 `parsed_decisions` 并发布 `parsed_decision_updated` event；snapshot reload 和 event polling 顺序覆盖两者。
+- Parsed decision 写入与 layer publish 暂不同事务（D4 单线程 tick 可接受）；未新增 HTTP tick endpoint，未引入 LangGraph。
 
 ### D4-P3. Web Reader Plate Read-only Surface + BFF Polling Slice
 
-状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D4/TMP-D4-P3-web-reader-plate-closeout.md`。
+状态：completed on 2026-06-21。
 
-Closeout 结论：
-
-- 已新增 Web BFF routes：
-  - `POST /api/web/reader-plate/submit`
-  - `GET /api/web/reader-plate/{recordId}/snapshot`
-  - `GET /api/web/reader-plate/{recordId}/events`
-- BFF 复用当前 Web session token，拒绝 anonymous / mock phone session；缺失或跨用户 record 仍由后端映射为 404。
-- Web API client 只调用新 Reader API：`/reader/records/plain-text`、`/reader/records/{record_id}/snapshot`、`/reader/records/{record_id}/events`。
-- 已新增 `ReaderPlateSnapshot` DTO mirror、只读 `ReaderPlateSnapshotSurface`、polling decision hook 和 `/app/reader-plate` 最小真实提交入口。
+- 新增 Web BFF routes（submit/snapshot/events）和只读 `ReaderPlateSnapshotSurface` + `/app/reader-plate` 提交入口；BFF 复用 Web session token，拒绝 anonymous/mock phone。
 - Web polling 在 `layer_published`、`projection_reset_required` 或 server reload signal 时触发 snapshot reload；D4 不应用 `projection_ops`。
-- 页面用户可见文案不暴露 D4、Plate.js、Snapshot、cursor、sequence 等实现术语。
-- 新 Web 路径不读取旧 `/scene` 或 `render_scene_json`。
-
-D4-P3 不包含：
-
-- Rich Reader production UI polish。
-- Selection bridge / anchor adapter。
-- User highlights / notes。
-- Ask Document Tools。
-- `projection_ops` incremental applier。
-- SSE endpoint。
-- URL / PDF / OCR / 文件上传。
-
-Focused tests 已通过：
-
-- `pnpm --filter=@claread/web typecheck`
-- `pnpm --filter=@claread/web test`
-- `pnpm --filter=@claread/web build`
+- 新 Web 路径不读取旧 `/scene` 或 `render_scene_json`；页面文案不暴露 D4/Plate.js/Snapshot/cursor/sequence 等实现术语。
 
 ### D4-P4. Worker Runner Hardening + Web Smoke/Test Gap Closeout
 
-状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D4/TMP-D4-P4-worker-web-hardening-closeout.md`。
+状态：completed on 2026-06-21。
 
-Closeout 结论：
-
-- 已新增 `TranslationWorkerRunner`，作为 D4 内部 callable runner，封装 single tick 与 bounded drain。
-- Runner 不新增 public HTTP endpoint，不启动后台进程，不引入 LangGraph / MQ / Temporal / SSE。
-- Runner 使用 `ReaderOrchestrator.tick_translation_worker()`，并把 worker result 分类为 `no_job`、`succeeded`、`retry_later`、`failed_terminal`、`fence_rejected`。
-- Drain 遇到 retry / terminal failure / fence rejection 不立即停止，因为同一队列中可能仍有其他可处理 job；caller 通过 `WorkerDrainResult` 决定是否继续。
-- 已新增 orphan diagnostic：查找 published translation layer 但缺失 `parsed_decisions` 的记录。D4 单线程 tick 下应返回空；D5 若引入并发 tick 或 crash recovery，再决定是否把 parsed decision 写入 publisher transaction 或补 repair。
-- Web 侧补齐 Reader Plate BFF auth/error tests，覆盖 anonymous / mock phone 拒绝、上游 401/404/409/5xx/网络失败、空文本与成功提交。
-- Web 侧新增 reader-plate Playwright smoke，使用 mocked BFF routes 验证真实页面交互、只读 Plate surface 渲染 source text 和 translation、polling caught-up 无错误。
-- Web 页面与 polling 文案继续保持产品语义，不暴露 D4、Plate.js、Snapshot、cursor、sequence 等实现术语。
-
-D4-P4 不包含：
-
-- 真实后台 worker daemon。
-- Public 或 internal HTTP tick endpoint。
-- Crash-recovery repair job。
-- `projection_ops` incremental applier。
-- vocabulary、grammar bundle、Ask tools、RAG、SSE 或 LangGraph flow。
-- 真实后端/auth 的 browser E2E；当前 smoke 只验证浏览器渲染与交互路径。
-
-Focused tests 已通过：
-
-- `uv run ruff check app/services/reader_orchestration tests/test_reader_orchestration_worker_runner.py tests/test_reader_orchestration_orchestrator.py`
-- `uv run pytest tests/test_reader_orchestration_worker_runner.py tests/test_reader_orchestration_orchestrator.py tests/test_reader_orchestration_api.py tests/test_reader_orchestration_translation_worker.py tests/test_reader_orchestration_event_runtime.py -q`
-- `pnpm --filter=@claread/web typecheck`
-- `pnpm --filter=@claread/web test`
-- `pnpm --filter=@claread/web build`
-- `pnpm --filter=@claread/web test:e2e -- reader-plate-smoke.spec.ts`
+- 新增 `TranslationWorkerRunner` 作为 D4 内部 callable runner（single tick + bounded drain），不新增 public HTTP endpoint、不启动后台进程、不引入 LangGraph/MQ/Temporal/SSE。
+- Worker result 分类为 `no_job`/`succeeded`/`retry_later`/`failed_terminal`/`fence_rejected`；drain 遇到非成功不立即停止，由 caller 决定是否继续。
+- 新增 orphan diagnostic（published translation layer 缺失 `parsed_decisions`）；Web 侧补齐 BFF auth/error tests 和 reader-plate Playwright smoke（mocked BFF）。
 
 ## D4. 最小纵切
 
@@ -513,315 +323,107 @@ Focused tests 已通过：
 
 ### D5-V1. Vocabulary Layer Backend Slice
 
-状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-V1-vocabulary-backend-closeout.md`。
+状态：completed on 2026-06-21。
 
-Closeout 结论：
-
-- 已新增 `VocabularyLayerOutput` typed schema，保留旧 AI Workflow 的三类 item subtype：`vocab_highlight`、`phrase_gloss`、`context_gloss`。
-- 三类 item 属于同一个 `enhancement_layers.layer_type = 'vocabulary'`；不拆成三个顶层 layer type。
-- Vocabulary anchor 使用 `anchor_segment_id`、UTF-16 range、`selected_text` 和 FNV text hash；`sentence_id` 只作为可选兼容 alias，不是权威锚点。
-- DB baseline 正式支持 `reader_jobs.job_type = 'build_vocabulary_layer'`；不再挪用 `build_base`，也不把 job 语义藏在 `input_json.job_intent`。
-- 已新增 `VocabularyJobBootstrapService`、`VocabularyWorkerService`、`VocabularyLayerPublisher` 与 focused tests。
-- Worker 默认 executor 是未配置失败路径，会把 job/run 标为 `failed_terminal` 且不发布空 layer；只有显式注入 `FakeVocabularyExecutor()` 时才允许发布空 `VocabularyLayerOutput(items=[])`。
-- Publisher 在事务内校验 unit、anchor segment、UTF-16 range、selected text 和 hash，成功后写 `enhancement_layers(layer_type='vocabulary')` 与 `reader_events(event_type='layer_published')`。
-- Snapshot reload 目前只暴露 top-level `enhancement_layers` metadata；D5-V1 不实现 Plate vocabulary marks/nodes。
-
-D5-V1 不包含：
-
-- Web Plate vocabulary projection / rendering。
-- `projection_ops` incremental applier。
-- real PydanticAI vocabulary executor / prompt。
-- parsed decision for vocabulary。
-- grammar bundle、Ask tools、RAG、SSE 或 LangGraph flow。
-
-Focused tests 已通过：
-
-- `uv run ruff check app/schemas/reader_orchestration.py app/services/reader_orchestration tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_schema_models.py tests/test_reader_orchestration_schema_baseline.py`
-- `uv run pytest tests/test_reader_orchestration_schema_baseline.py tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_translation_worker.py tests/test_reader_orchestration_orchestrator.py tests/test_reader_orchestration_job_runtime.py tests/test_reader_orchestration_layer_publisher.py tests/test_reader_orchestration_schema_models.py -q`
+- 新增 `VocabularyLayerOutput` typed schema，三类 item subtype（`vocab_highlight`/`phrase_gloss`/`context_gloss`）同属 `layer_type='vocabulary'`；anchor 以 `anchor_segment_id`+UTF-16 range+`selected_text`+FNV hash 为权威，`sentence_id` 仅作兼容 alias。
+- DB baseline 正式支持 `reader_jobs.job_type='build_vocabulary_layer'`，不再挪用 `build_base`；worker 默认未配置 executor 走 `failed_terminal`，只有显式 fake executor 才允许发布空 items。
+- Publisher 事务内校验 unit/anchor/UTF-16/text/hash 后写 layer 与 `layer_published` event；snapshot reload 暂只暴露 top-level metadata，不投影 Plate marks。
 
 ### D5-V2. Vocabulary Projection / Web Read-only Rendering
 
-状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-V2-vocabulary-projection-closeout.md`。
+状态：completed on 2026-06-21。
 
-Closeout 结论：
-
-- Published `vocabulary` layer 继续以 `VocabularyLayerOutput` 作为 domain truth；Plate marks 是 snapshot projection，不是持久事实。
-- Snapshot reload 会按当前 base/unit/anchor 重新校验 layer output，并把三类 item 投影为 stable source leaf 上的 `reader_vocabulary_marks`。
-- Vocabulary mark 使用 `anchor_segment_id` + unit-local UTF-16 `start_offset` / `end_offset`；serializer 派生 leaf 内 `segment_start_utf16` / `segment_end_utf16`、`starts_here`、`ends_here`。
-- Web read-only surface 已能区分展示 `vocab_highlight`、`phrase_gloss`、`context_gloss`；translation node 保持原有 projection 形态。
-- D5-V2 没有读取旧 `render_scene_json`，没有持久化 Plate path/op，也没有启用 `projection_ops` incremental applier。
-- Review 修正：vocabulary snapshot layer 必须 `target_scope='unit'`，不能投到 `anchor_segment` scope；测试已覆盖该边界。
-
-D5-V2 不包含：
-
-- real PydanticAI vocabulary executor / prompt。
-- grammar bundle。
-- Ask tools / user editable vocabulary interactions。
-- RAG、SSE 或 LangGraph flow。
-- `projection_ops` incremental applier。
-
-Focused tests 已通过：
-
-- `uv run ruff check app/services/reader_orchestration/snapshot.py tests/test_reader_orchestration_base_builder.py tests/test_reader_orchestration_vocabulary_worker.py`
-- `uv run pytest tests/test_reader_orchestration_base_builder.py tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_schema_models.py -q`
-- `pnpm --filter=@claread/web typecheck`
-- `pnpm --filter=@claread/web test`
-- `pnpm --filter=@claread/web build`（沙箱网络无法拉 Google Fonts 时会失败；联网重跑已通过）
-- `pnpm --filter=@claread/web test:e2e -- reader-plate-smoke.spec.ts`
+- `VocabularyLayerOutput` 仍是 domain truth；Plate marks 是 snapshot projection，不是持久事实。Snapshot reload 按 base/unit/anchor 重新校验后投影为 stable source leaf 上的 `reader_vocabulary_marks`。
+- Vocabulary mark 使用 `anchor_segment_id` + unit-local UTF-16 offsets；serializer 派生 leaf 内 segment offsets 和 `starts_here`/`ends_here`。
+- Review 修正：vocabulary snapshot layer 必须 `target_scope='unit'`，不能投到 `anchor_segment` scope。未读旧 `render_scene_json`，未启用 `projection_ops`。
 
 ### D5-V3. Real Vocabulary Executor / Prompt
 
-状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-V3-real-vocabulary-executor-closeout.md`。
+状态：completed on 2026-06-21。
 
-Closeout 结论：
-
-- 已新增 `reader_layer_vocabulary` model route、`reader_vocabulary_model_profile` 配置和 prompt registry 入口。
-- `reader_layer_vocabulary` 必须显式配置 `reader_vocabulary_model_profile` 才会注册；不得 fallback 到 annotation model profile。
-- `PydanticAIVocabularyExecutor` 让模型输出内部候选 schema，不让 LLM 直接输出正式 `VocabularyLayerOutput`、UTF-16 offsets、hash、Plate JSON 或 raw ops。
-- 后端 deterministic postprocess 只接收 `anchor_segment_id + selected_text`，在目标 Anchor Segment 内 exact-match 后生成 unit-local UTF-16 offsets、`selected_text` 和 `fnv1a32-utf16` hash。
-- 找不到文本、重复命中、unknown segment、重复 candidate 或结构化输出无效时 fail closed 或跳过对应 item，并把原因写入 `quality_json.diagnostics`；不会发布错误 anchor。
-- 同一 span 冲突按 `context_gloss > phrase_gloss > vocab_highlight` 保留，非冲突项保持稳定输入顺序。
-- Candidate output 有硬上限和字段长度限制；diagnostics 会裁剪数量和文本长度，防止坏模型撑大 payload。
-- 模型返回空 items 或全部候选被安全跳过时，允许发布空 `VocabularyLayerOutput(items=[])`，用于标记该 unit 已处理；跳过原因必须留在 diagnostics。
-- D5-V3 不改变 public `VocabularyLayerOutput` schema，不读取旧 `render_scene_json`，不启用 `projection_ops` incremental applier。
-
-D5-V3 不包含：
-
-- Grammar bundle。
-- vocabulary parsed decision / coverage policy。
-- Ask tools / user editable vocabulary interactions。
-- RAG、SSE 或 LangGraph flow。
-- `projection_ops` incremental applier。
-
-Focused tests 已通过：
-
-- `uv run ruff check app/config/settings.py app/llm/routes.py app/llm/registry.py app/services/reader_orchestration/vocabulary_worker.py tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_vocabulary_executor.py`
-- `uv run pytest tests/test_reader_orchestration_vocabulary_executor.py tests/test_reader_orchestration_vocabulary_worker.py -q`
-- `uv run pytest tests/test_reader_orchestration_translation_worker.py tests/test_reader_orchestration_orchestrator.py tests/test_reader_orchestration_layer_publisher.py tests/test_reader_orchestration_job_runtime.py -q`
-- `uv run pytest tests/test_reader_orchestration_schema_models.py tests/test_reader_orchestration_schema_baseline.py -q`
-- `uv run python -m compileall app/services/reader_orchestration/vocabulary_worker.py app/llm/routes.py app/llm/registry.py app/config/settings.py tests/test_reader_orchestration_vocabulary_executor.py tests/test_reader_orchestration_vocabulary_worker.py`
+- 新增 `reader_layer_vocabulary` model route + `reader_vocabulary_model_profile` 配置；必须显式配置才注册，不得 fallback 到 annotation profile。
+- `PydanticAIVocabularyExecutor` 让 LLM 输出内部候选 schema，deterministic postprocess 在目标 Anchor Segment 内 exact-match 后生成 unit-local UTF-16 offsets + FNV hash；找不到文本/重复命中/结构化无效时 fail closed 或跳过，原因写入 `quality_json.diagnostics`。
+- 同一 span 冲突按 `context_gloss > phrase_gloss > vocab_highlight` 保留；candidate 有硬上限和字段长度限制；空 items 或全部跳过时允许发布空 output 标记 unit 已处理。
 
 ### D5-V4. Grammar Bundle Backend Slice
 
-状态：completed on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-V4-grammar-bundle-backend-closeout.md`。
+状态：completed on 2026-06-21。
 
-Closeout 结论：
-
-- 已新增正式 `reader_jobs.job_type = 'build_grammar_bundle'`，固定 `target_type = 'unit'` 和 `operation_fingerprint = 'grammar_bundle_unit_v1'`。
-- 已新增 grammar typed schema：`GrammarNoteItem`、`SentenceAnalysisChunk`、`SentenceAnalysisItem`、`GrammarNoteLayerOutput`、`SentenceAnalysisLayerOutput` 和 internal `GrammarBundleOutput`。
-- `GrammarJobBootstrapService` 会选择当前 active base 下最早未处理 unit，并避免重复 active/succeeded grammar bundle job。
-- `GrammarBundleWorkerService` 默认 unconfigured executor 失败且不发布 layer；显式 fake executor 可用于 focused tests。
-- `GrammarBundleLayerPublisher` 将一次 bundle 发布拆成两个独立 layer rows：`grammar_note_unit_v1` 与 `sentence_analysis_unit_v1`，并发布对应 `layer_published` events。
-- Empty sanitized output 采用 no-op success：不插入 layer，不发布 `layer_published` reader event，job/run 成功，`output_ref_json.no_op = true`。
-- Usage attribution 采用单条 job-level `ai_usage_events`，`enhancement_layer_id = NULL`，metadata 记录 produced layer ids/types 与 no-op，避免双 layer 重复计费。
-- fallback_window 处理：`sentence_analysis` 命中 fallback window 时跳过；`grammar_note` 任一 span 命中 fallback window 时整条 item 跳过，不发布部分 grounding。
-- Snapshot reload 保持 read-only；D5-V4 只暴露 top-level grammar layer metadata，不投影到 `snapshot.value`。
-
-D5-V4 不包含：
-
-- real PydanticAI grammar executor / prompt。
-- Web grammar projection / rendering。
-- grammar parsed decision / coverage policy。
-- Ask tools、RAG、SSE、LangGraph flow。
-- `projection_ops` incremental applier。
-
-Focused tests 已通过：
-
-- `uv run ruff check app/schemas/reader_orchestration.py app/services/reader_orchestration/grammar_worker.py app/services/reader_orchestration/job_bootstrap.py app/services/reader_orchestration/layer_publisher.py app/services/ai_usage tests/test_reader_orchestration_grammar_worker.py tests/test_reader_orchestration_schema_models.py tests/test_reader_orchestration_schema_baseline.py`
-- `uv run pytest tests/test_reader_orchestration_grammar_worker.py tests/test_reader_orchestration_schema_models.py tests/test_reader_orchestration_schema_baseline.py -q`
+- 新增 `reader_jobs.job_type='build_grammar_bundle'`（`target_type='unit'`、`operation_fingerprint='grammar_bundle_unit_v1'`）和 grammar typed schema（`GrammarNoteItem`/`SentenceAnalysisChunk`/`SentenceAnalysisItem` 等）。
+- `GrammarBundleLayerPublisher` 将一次 bundle 拆成 `grammar_note_unit_v1` 与 `sentence_analysis_unit_v1` 两个独立 layer rows；empty sanitized output 走 no-op success（不插 layer、不发布 event、`output_ref_json.no_op=true`）。
+- Usage attribution 用单条 job-level `ai_usage_events` 避免双 layer 重复计费；fallback_window 命中时 sentence_analysis 跳过、grammar_note 整条 item 跳过；snapshot reload 只暴露 top-level metadata。
 
 ### D5-E1. Vocabulary Eval Seed Disposition
 
-状态：accepted_with_changes on 2026-06-21，详细记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-vocabulary-eval-seed-disposition.md`。
+状态：accepted_with_changes on 2026-06-21。
 
-结论：
-
-- 评估方向接受：优先建立 vocabulary deterministic eval seed，覆盖 anchor resolution、bounds compliance、diagnostics coverage、same-span arbitration 和 item quality。
-- 原调研中的单文件 `vocabulary_seed_v1.jsonl` 不采纳；实现必须匹配现有 `evals` harness 的 `dataset.yaml + cases/*.json` 目录形态，或显式新增 vocabulary seed loader。
-- 原调研中的 `evals/claread_eval/judge/judges/vocabulary_judge.yaml` 不采纳为下一步范围；当前 judge runner/rubric contract 仍是 article-analysis oriented，LLM judge 泛化单独后置。
-- LangSmith `evaluate()` 不进入下一步；先用本地 deterministic graders 和 pytest 验收。
-- 超过 5 个 candidate 的预期需按 D5-V3 真实实现修正：通常在 `VocabularyCandidateOutput` validation 阶段 fail closed，不作为普通 `candidate_limit_exceeded` diagnostics gate。
-- vocabulary `boundary_low_fallback_window` 在 D5-G2 后已成为 acceptance gate；vocabulary worker 在 `_build_vocabulary_output_from_candidates` 中显式拒绝 `segment_type=fallback_window` 的候选 item，reason_code 写入 `diagnostics.skipped_items[]`，与 grammar bundle 口径一致。
+- 评估方向接受：优先建立 vocabulary deterministic eval seed，覆盖 anchor resolution、bounds compliance、diagnostics coverage、same-span arbitration 和 item quality；用本地 deterministic graders + pytest 验收，LangSmith `evaluate()` 不进入下一步。
+- 实现必须匹配现有 `evals` harness 的 `dataset.yaml + cases/*.json` 目录形态，不采纳单文件 `vocabulary_seed_v1.jsonl`；LLM judge 泛化单独后置。
+- vocabulary `boundary_low_fallback_window` 在 D5-G2 后已成为 acceptance gate，与 grammar bundle 口径一致。
 
 ### D5-R1. LangGraph / Orchestration Architecture Review Disposition
 
-状态：`accepted_with_changes` on 2026-06-22，详细记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-langgraph-orchestration-disposition.md`。
+状态：`accepted_with_changes` on 2026-06-22。
 
-结论：
-
-- 两份 LangGraph / orchestration 架构评估的大方向接受：当前 PostgreSQL durable control plane + PydanticAI typed worker + Plate snapshot projection 的三层架构符合本轮 Reader 重构目标。
-- D5 主链路 runner、translation、vocabulary、grammar bundle、snapshot projection 和 eval 任务不引入、不升级 LangGraph。
-- LangGraph 不得替换 `reader_runs`、`reader_jobs`、`reader_events`、`enhancement_layers` 或 Reader product state。
-- D6-LG0 仅作为隔离 spike 候选；触发条件必须是具体 Ask Document Tools / human approval / multi-branch repair flow 需求。
-- D5 第一条页面可测主链路继续使用 snapshot reload；`projection_ops` incremental applier 不阻塞 smoke。
-- 评估中被修正的风险排序：`parsed_decisions` 跨事务和 vocabulary boundary policy 是 P1；`active_base_id -> status='active'` 是 service / publisher invariant hardening，不是 D5 主线 P0；`projection_ops` race 只在启用 incremental applier 前需要 spike。
-
-下一步影响：
-
-- D5 主链路 runner 只做 deterministic bootstrap/drain，不引入 LangGraph / MQ / Temporal / SSE。
-- Runner review 后优先做页面 smoke，再进入 parsed decision repair、vocabulary boundary policy 和 projection ops consistency guardrails。
+- 接受当前三层架构（PostgreSQL durable control plane + PydanticAI typed worker + Plate snapshot projection）；D5 主链路不引入、不升级 LangGraph，LangGraph 不得替换 reader_runs/jobs/events/layers 或 product state。
+- D6-LG0 仅作为隔离 spike 候选，触发条件必须是具体 Ask/human approval/multi-branch repair 需求；D5 主链路继续用 snapshot reload，`projection_ops` 不阻塞 smoke。
+- 风险排序：`parsed_decisions` 跨事务和 vocabulary boundary policy 是 P1；`active_base_id -> status='active'` 是 invariant hardening 非 P0；`projection_ops` race 只在启用 incremental applier 前需 spike。
 
 ### D5-R2. Main Chain Runner + Web Record Load Closeout
 
 状态：completed on 2026-06-22。
 
-Closeout 结论：
-
-- 已新增 `ReaderEnhancementPipelineRunner`，统一 bootstrap / drain `translation`、`vocabulary`、`grammar_bundle` jobs。
-- Runner 复用现有 `ArticleReadyPersistenceService`、`EnhancementJobBootstrapService`、`ReaderJobRuntime`、三类 worker 和 Layer Publisher，不另建 orchestration 控制面。
-- Runner drain 顺序为 translation -> vocabulary -> grammar bundle；遇到 `retry_later`、`failed_terminal` 或 publish fence supersede 时返回 attention summary。
-- `ReaderJobRuntime.claim_next_job()` 已支持可选 `reading_record_id`、`base_id`、`expected_generation` scope；三类 worker 增加 record-scoped claim/process 入口，runner 不会消费其他 Reading Record 的 queued jobs。
-- Runner 不新增 public HTTP endpoint，不启动后台 daemon，不引入 LangGraph / MQ / Temporal / SSE，也不启用 `projection_ops` incremental applier。
-- 已新增本地 D5 dev smoke harness / CLI，用于准备 record 和验证 snapshot reload；fake executors 默认禁用，必须显式 opt-in，且生产环境禁用。该 harness 不是产品运行路径。
-- Web `/app/reader-plate` 已支持 `record_id` / `recordId` query 直达加载已有 `ReaderPlateSnapshot`；提交成功后会把 URL replace 到 `?record_id=...`。
-- Web 页面继续通过现有 BFF snapshot/events 路径读取新 Reader API，不回退旧 `/scene` 或 `render_scene_json`。
-- 当前页面可测路径包括：已准备好的 record -> snapshot/events -> Reader Plate 渲染 source、translation、vocabulary、grammar_note、sentence_analysis。
-
-D5-R2 不包含：
-
-- 生产后台 worker loop / daemon。
-- public 或 internal HTTP worker-control endpoint。
-- 页面 submit 后自动同步执行真实 LLM 全链路。
-- `projection_ops` incremental applier。
-- parsed decision repair、vocabulary boundary policy 或 readiness/coverage policy。
-
-Focused tests 已通过：
-
-- `uv run ruff check app/services/reader_orchestration/smoke_harness.py scripts/prepare_reader_d5_smoke.py tests/test_reader_orchestration_smoke_harness.py`
-- `uv run pytest tests/test_reader_orchestration_smoke_harness.py tests/test_reader_orchestration_pipeline_runner.py -q`
-- `uv run pytest tests/test_reader_orchestration_smoke_harness.py tests/test_reader_orchestration_pipeline_runner.py tests/test_reader_orchestration_orchestrator.py tests/test_reader_orchestration_translation_worker.py tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_grammar_worker.py -q`
-- `pnpm --filter=@claread/web typecheck`
-- `pnpm --filter=@claread/web test`
-- `pnpm --filter=@claread/web test:e2e -- tests/e2e/reader-plate-smoke.spec.ts`
+- 新增 `ReaderEnhancementPipelineRunner` 统一 bootstrap/drain translation/vocabulary/grammar_bundle jobs，复用现有 services/workers/publisher，不另建控制面；drain 顺序 translation -> vocabulary -> grammar bundle，遇 `retry_later`/`failed_terminal`/fence supersede 返回 attention summary。
+- `claim_next_job()` 支持可选 `reading_record_id`/`base_id`/`expected_generation` scope，runner 不会消费其他 record 的 queued jobs；不新增 public endpoint、不启动 daemon、不引入 LangGraph/MQ/Temporal/SSE、不启用 `projection_ops`。
+- 新增本地 D5 dev smoke harness/CLI（fake executors 默认禁用、生产禁用）；Web `/app/reader-plate` 支持 `record_id` query 直达加载已有 snapshot，不回退旧 `/scene`。
 
 ### D5-W1. Local / Deployment Worker Loop Evaluation
 
-状态：`accepted_with_changes` on 2026-06-22，评估材料已移至 `docs/tmp/reader-orchestration/D5/TMP-D5-D6-worker-loop-evaluation-2026-06-22.md`。
+状态：`accepted_with_changes` on 2026-06-22。
 
-结论：
-
-- 接受独立 worker process 方向：本地用 CLI entrypoint 启动，部署时作为独立 worker service / process / container 运行。
-- Worker loop 复用 `ReaderEnhancementPipelineRunner`，不另建 orchestration 控制面。
-- API 服务保持 request-serving；worker loop 不挂到 FastAPI lifespan / startup task，避免 dev reload、多副本和 API 请求路径混杂。
-- Web submit 仍只负责创建 `article_ready` facts；不要把 runner 同步塞进 submit request。
-- 不新增 public 或 semi-public worker-control endpoint。
-- 不使用 smoke harness / fake executors 作为产品运行路径；fake 仍只能显式 opt-in 用于 dev/test。
-- 真实 model profile 缺失保持 fail-closed，不静默 fallback 到 fake 或 synthetic layer。
-
-修正口径：
-
-- 扫描条件不能只写死 `readiness_state = 'article_ready'`。因为 `readiness_state` 是单调 milestone，worker loop 初版应默认考虑 `article_ready` 与 `initial_enhancement_ready`，并把 `coverage_complete` 作为默认停止态；如后续有 repair / retry policy，再显式允许 coverage-complete records 回到 eligible set。
-- 粗筛只负责找候选 record；exact missing work 仍由 `EnhancementJobBootstrapService` / `ReaderEnhancementPipelineRunner` 决定，不在 scanner 复制每个 layer 的 eligibility 逻辑。
-- 初版并发保持保守：per-record advisory lock 必须有；per-user concurrency 和 per-worker concurrency 默认 `1`，后续再通过配置放宽。
-- `retry_later` 不应导致 hot-loop；worker loop 应尊重 job `available_at` 或通过 runnable-job 优先扫描减少空转。
-- `failed_terminal` 初版只进入 logs / metrics / summary；是否映射为 `product_state='action_required'` 留给 D6 product hardening。
-
-最小实现建议：
-
-1. `ReaderEnhancementWorkerLoopService`：扫描 eligible records、获取 advisory locks、调用 runner、解释 summary。
-2. `scripts/run_reader_enhancement_worker.py`：初始化 DB，按 scan interval / batch size / runner limits 循环。
-3. 新增 settings：`reader_worker_scan_interval_seconds`、`reader_worker_batch_size`、`reader_worker_max_ticks`、`reader_worker_max_jobs`、`reader_worker_lease_owner_prefix`。不新增 fake executor product config。
-4. Focused tests 覆盖 eligibility scan、record/user lock、record-scoped runner、retry_later backoff、missing profile fail-closed 和 stale base fence。
+- 接受独立 worker process 方向：本地 CLI entrypoint，部署时独立 worker service/container；复用 `ReaderEnhancementPipelineRunner`，不挂到 FastAPI lifespan，不新增 worker-control endpoint。
+- Web submit 仍只创建 `article_ready` facts，不同步塞 runner；fake executors 不进产品路径，真实 model profile 缺失保持 fail-closed。
+- 扫描条件默认考虑 `article_ready` 与 `initial_enhancement_ready`，`coverage_complete` 为默认停止态；粗筛只找候选 record，exact missing work 交由 bootstrap/runner 决定；per-record advisory lock 必须有，per-user/per-worker concurrency 默认 `1`；`retry_later` 尊重 `available_at` 避免 hot-loop，`failed_terminal` 只进 logs/metrics/summary。
 
 ### D5-W2. Local / Deployment Worker Loop Closeout
 
 状态：completed on 2026-06-22。
 
-Closeout 结论：
-
-- 已新增 `ReaderEnhancementWorkerLoopService`，使用 coarse eligibility scan + per-record / per-user advisory locks 调度 `ReaderEnhancementPipelineRunner`。
-- worker loop scanner 只筛 `reading_records` / `reading_bases` 的 coarse readiness，不复制 translation / vocabulary / grammar bundle 的 missing-work 判定。
-- scanner 会优先处理当前 active base / generation 下存在 runnable jobs 的 record；无 runnable jobs 时，仅对当前 generation 不存在 tracked jobs 的 record 允许重新进入 bootstrap，从而避免 `retry_later` hot-loop 和 `failed_terminal` 反复重建。
-- `retry_later` 继续尊重 `available_at`；`failed_terminal` 只进入 summary / log，不修改 `product_state='action_required'`。
-- 已新增 `scripts/run_reader_enhancement_worker.py`，支持 `--once` 和 loop mode；本地和部署共用同一入口。
-- 已新增 settings：`reader_worker_scan_interval_seconds`、`reader_worker_batch_size`、`reader_worker_max_ticks`、`reader_worker_max_jobs`、`reader_worker_lease_owner_prefix`。
-- 本地真实链路运行手册已落到 `modules/local-real-chain-runbook.md`；D5-R4 已用真实 DashScope provider 跑通短文本主链路，D5-R6 已跑通 250+ 词长文本与 `sentence_analysis` 浏览器实渲染；旧本地 DB schema drift 通过 D5-R5 schema health check 暴露。
-- 未新增 public endpoint，未把 runner 放进 Web submit，未挂到 FastAPI lifespan，未引入 LangGraph / MQ / SSE / `projection_ops`。
-
-Focused tests 已通过：
-
-- `uv run ruff check app/services/reader_orchestration app/config/settings.py tests/test_reader_orchestration_worker_loop.py scripts/run_reader_enhancement_worker.py`
-- `uv run pytest tests/test_reader_orchestration_worker_loop.py tests/test_reader_orchestration_pipeline_runner.py -q`
+- 新增 `ReaderEnhancementWorkerLoopService`（coarse eligibility scan + per-record/per-user advisory locks 调度 runner）和 `scripts/run_reader_enhancement_worker.py`（`--once` + loop mode，本地/部署共用入口）。
+- scanner 只筛 coarse readiness，不复制 missing-work 判定；优先处理有 runnable jobs 的 record，无 runnable jobs 时仅对无 tracked jobs 的 record 允许重新 bootstrap，避免 `retry_later` hot-loop 和 `failed_terminal` 反复重建。
+- 新增 worker settings；本地真实链路 runbook 落到 `modules/local-real-chain-runbook.md`；未新增 public endpoint、未挂 FastAPI lifespan、未引入 LangGraph/MQ/SSE/`projection_ops`。
 
 ### D5-G1/G2. Runtime Guardrails Closeout
 
 状态：completed on 2026-06-22。
 
-Closeout 结论：
-
-- D5-G1 已把 translation layer publish 与最小 `parsed_decisions` 写入收敛到同一 publisher transaction，消除 layer 已发布但 parsed decision 正常缺失的 crash gap。
-- `diagnose_orphaned_translation_decisions()` 保留为 diagnostic，用于发现 pre-D5 遗留数据或测试中人为制造的 partial state；snapshot reload 不做隐式 repair。
-- D5-G2 已统一 vocabulary 与 grammar bundle 的 fallback_window boundary policy：`segment_type = fallback_window` 的 anchor segment 不产出 vocabulary / grammar item。
-- Vocabulary fallback skip 使用 reason_code `boundary_low_fallback_window`，写入 worker diagnostics；空有效 vocabulary output 仍可发布，用于标记该 unit 已处理。
-- Vocabulary eval seed 已新增 fallback-window skip fixture，并更新 baseline。
-
-Focused tests 已通过：
-
-- `uv run ruff check app/services/reader_orchestration app/config/settings.py tests/test_reader_orchestration_layer_publisher.py tests/test_reader_orchestration_orchestrator.py tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_worker_loop.py scripts/run_reader_enhancement_worker.py`
-- `uv run pytest tests/test_reader_orchestration_layer_publisher.py tests/test_reader_orchestration_orchestrator.py tests/test_reader_orchestration_vocabulary_worker.py tests/test_reader_orchestration_worker_loop.py tests/test_reader_orchestration_pipeline_runner.py -q`
-- `uv run ruff check claread_eval/schemas/vocabulary.py claread_eval/graders/vocabulary.py scripts/build_vocabulary_seed.py tests/test_vocabulary_dataset.py tests/test_vocabulary_graders.py tests/test_vocabulary_seed_pipeline.py tests/test_vocabulary_runner.py tests/test_vocabulary_baseline.py`
-- `uv run pytest tests/test_vocabulary_dataset.py tests/test_vocabulary_graders.py tests/test_vocabulary_seed_pipeline.py tests/test_vocabulary_runner.py tests/test_vocabulary_baseline.py -q`
+- D5-G1 把 translation layer publish 与最小 `parsed_decisions` 写入收敛到同一 publisher transaction，消除 crash gap；`diagnose_orphaned_translation_decisions()` 保留为 diagnostic，snapshot reload 不做隐式 repair。
+- D5-G2 统一 vocabulary 与 grammar bundle 的 fallback_window boundary policy：`segment_type=fallback_window` 的 anchor segment 不产出 vocabulary/grammar item；vocabulary skip reason_code 写入 diagnostics，空有效 output 仍可发布标记 unit 已处理。
+- Vocabulary eval seed 已新增 fallback-window skip fixture 并更新 baseline。
 
 ### D5-R4. Real Provider Local Chain Validation
 
-状态：completed on 2026-06-22，详细记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-R4-real-provider-local-chain-validation.md`。
+状态：completed on 2026-06-22。
 
-Closeout 结论：
-
-- 真实 DashScope `workflow-qwen37-max` provider 下，D5 reader enhancement 短文本主链路端到端跑通：`plain_text -> article_ready -> worker loop -> snapshot reload`。
-- 验证没有使用 smoke harness 或 fake executor。
-- Worker `--once` 自动 bootstrap vocabulary / grammar_bundle jobs；translation、vocabulary、grammar_note 成功 publish，events 推进到 `article_ready + layer_published x3 + parsed_decision_updated`。
-- Snapshot projection 出现 `reader_translation` node、`reader_vocabulary_marks` 和 `reader_grammar_note_marks`。
-- `sentence_analysis` 未出现是短文本未触发句式拆解的真实 LLM 行为，不判为 bug。
-- 第二次 worker `--once` 扫描为空，说明当前 record/base/generation 不重复 publish。
-
-Follow-up 口径：
-
-- D5-R4 观察到的 `ai_usage_events` / `user_credit_ledger` 列缺失应按本地 DB schema drift 处理：当前仓库 `0001_initial_schema.sql` 已包含 D5 attribution 列和 FK；旧本地 DB 需要刷新/重建或后续提供 dev-only schema health/check。
-- 长文本 250+ 词可能超过默认 lease duration，需 D5-R5 单独评估 worker lease duration setting。
-- `sentence_analysis` 验收需要长文本 fixture 和 grammar bundle projection / boundary refiner 联合验证。
+- 真实 DashScope `workflow-qwen37-max` provider 下短文本主链路端到端跑通（`plain_text -> article_ready -> worker loop -> snapshot reload`），未使用 smoke harness 或 fake executor；events 推进到 `article_ready + layer_published x3 + parsed_decision_updated`。
+- Snapshot projection 出现 `reader_translation`/`reader_vocabulary_marks`/`reader_grammar_note_marks`；`sentence_analysis` 未出现是短文本真实 LLM 行为，非 bug；第二次 `--once` 扫描为空证明不重复 publish。
+- Follow-up：`ai_usage_events`/`user_credit_ledger` 列缺失按本地 DB schema drift 处理（D5-R5）；长文本 lease duration 单独评估；`sentence_analysis` 验收需长文本 fixture。
 
 ### D5-R5. Schema Health Check + Worker Lease Duration Setting
 
 状态：completed on 2026-06-22。
 
-Closeout 结论：
-
-- 已新增 dev/admin schema health entrypoint：`services/api/scripts/check_reader_schema_health.py`。它显式检查 `ai_usage_events` / `user_credit_ledger` 的 D5 attribution columns、reader attribution FK 和 index，并在失败时输出 reset/rebuild 本地 DB 的明确指引。
-- `infra/scripts/check_schema_baseline.sql` 已同步扩展，覆盖同一批 D5 attribution columns / FK / index；没有重复向 baseline 添加已存在列，只增加 drift 检查。
-- worker loop 已新增 `reader_worker_lease_duration_seconds` setting 和 CLI `--lease-duration-seconds`；默认值从 30 秒提高到 120 秒。
-- 120 秒的取舍是：优先降低长文本真实 LLM 处理中途 `LeaseExpiredError` 的概率；代价是 worker 崩溃后的 stale lease 恢复最慢延后到约 2 分钟，仍由现有 stale lease recovery 处理。
-- `ReaderEnhancementWorkerLoopService.process_candidate()` / `run_once()` 继续只把 `lease_duration` 透传给现有 runner / runtime，不改变 claim、retry、publish fence 或 job runtime 语义。
-- 本轮没有新增 public endpoint，没有把 worker 挂到 FastAPI lifespan，没有把 Web submit 同步变成 LLM 执行，也没有引入 fake executor 产品路径。
-
-Focused tests 已通过：
-
-- `uv run ruff check app/config/settings.py app/services/reader_orchestration/worker_loop.py app/services/reader_orchestration/schema_health.py scripts/run_reader_enhancement_worker.py scripts/check_reader_schema_health.py tests/test_reader_orchestration_worker_loop.py tests/test_reader_orchestration_worker_cli.py tests/test_reader_orchestration_schema_health.py`
-- `uv run pytest tests/test_reader_orchestration_worker_cli.py tests/test_reader_orchestration_worker_loop.py tests/test_reader_orchestration_schema_health.py -q`
+- 新增 dev/admin schema health entrypoint `scripts/check_reader_schema_health.py`，显式检查 D5 attribution columns/FK/index 并在失败时输出 reset/rebuild 指引；`infra/scripts/check_schema_baseline.sql` 同步扩展 drift 检查。
+- worker loop 新增 `reader_worker_lease_duration_seconds` setting 和 CLI `--lease-duration-seconds`，默认从 30s 提高到 120s，优先降低长文本 `LeaseExpiredError`，代价是 stale lease 恢复最慢约 2 分钟。
+- `process_candidate()`/`run_once()` 只透传 `lease_duration`，不改变 claim/retry/publish fence 语义；未新增 public endpoint、未挂 FastAPI lifespan、未引入 fake executor 产品路径。
 
 ### D5-V5 / D5-R6. Sentence Analysis Long-text Validation + Projection Consistency
 
-状态：completed on 2026-06-22，真实 provider 记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-V5-R6-local-long-text-runbook-validation-2026-06-22.md`。
+状态：completed on 2026-06-22。
 
-Closeout 结论：
-
-- 已新增 250+ 词英文长文本 deterministic fixture，覆盖复杂从句、插入语、转折和较长主干，用于 focused backend validation。
-- `ReaderEnhancementPipelineRunner` 在该长文本 fixture 下可完成 `article_ready -> bootstrap -> worker drain -> snapshot reload`，并成功发布 `grammar_note` 与 `sentence_analysis` 两类 layer。
-- `ArticleReadyPersistenceService.load_snapshot()` 在 reload 时可把 `sentence_analysis` layer 稳定投影为 `reader_sentence_analysis` node；snapshot reload 前后 `reader_events` / `reader_job_events` / `enhancement_layers` 计数不变，证明 reload 不写 projection side effects。
-- 本轮继续只使用 snapshot reload；未启用 `projection_ops` incremental applier，也未读旧 `render_scene_json`。
-- Web 侧未改动实现。现有 `ReaderPlateSnapshotSurface` 和 `ReaderPlateSnapshotDto` focused tests 已覆盖 `reader_sentence_analysis` 的只读渲染 contract，并在本轮复用通过。
-- 真实 DashScope `workflow-qwen37-max` provider 下，250+ 词长文本链路已通过 Web BFF submit、worker once 和浏览器实渲染验证；record `34476538-c091-43ef-a395-009de7633a68` 的 snapshot 同时包含 translation、vocabulary、grammar_note、sentence_analysis，`snapshot.value` 出现 2 个 `reader_sentence_analysis` nodes。
-- 真实 worker 命令 `uv run python scripts/run_reader_enhancement_worker.py --once --lease-duration-seconds 240 --max-ticks 24 --max-jobs 24` 完成 3 个 enhancement jobs，`last_event_sequence=6`，停止原因为 `all_workers_no_job`。
-- 真实 Web 页面 `/app/reader-plate?record_id=34476538-c091-43ef-a395-009de7633a68` 已渲染 2 张 sentence analysis 卡片，标题分别是 `Pseudo-cleft with colon-introduced parallel elaboration` 和 `Contrastive predicate with triple-verb modification`。
-- R6 真实验证未发现 `render_scene_json`、`projection_ops` 或 raw Plate path/op 回流到 truth 层。
-- R6 保留的后续问题：worker stdout 仍有 PydanticAI deprecation warnings；该 250+ 词单段正文仍只生成 1 个 `reader_unit` 且 `boundary_quality=low`，后续需要 Boundary / Unit Builder v2 与 sentence_analysis coverage policy 独立评估。
-- D5-B1 追加评估确认：R6 长文本 `1 unit` 的直接原因是当前 low-impact plain text path 只持久化 canonical text，plain text 无空行时会形成 `1 structure block -> 1 unit`；现有 sentence Anchors 已可在 unit 内生成，但 Stable Base contract 仍无独立 block-level structure metadata。D5 最小策略仍是不改 Stable Base text / worker / snapshot contract；如需生产 v2，只允许对超长 `body` block 按既有 Anchor Segment 边界做 deterministic regrouping。D6+ 正式策略再把 richer structure retention 前移到 Input Adapter / Candidate Base / Base Composer。
-
-Focused tests 已通过：
-
-- `uv run ruff check tests/test_reader_orchestration_pipeline_runner.py`
-- `uv run pytest tests/test_reader_orchestration_pipeline_runner.py -q`
-- `pnpm --filter=@claread/web test -- src/components/reader/plate/ReaderPlateSnapshotSurface.test.tsx src/types/api/reader-plate.test.ts`
+- 新增 250+ 词英文长文本 deterministic fixture；`ReaderEnhancementPipelineRunner` 可完成 `article_ready -> bootstrap -> worker drain -> snapshot reload` 并发布 `grammar_note` + `sentence_analysis` 两类 layer；reload 不写 projection side effects。
+- 真实 DashScope provider 下长文本链路通过 Web BFF submit、worker once 和浏览器实渲染验证；snapshot 同时包含 translation/vocabulary/grammar_note/sentence_analysis，`snapshot.value` 出现 2 个 `reader_sentence_analysis` nodes。
+- 后续问题：worker stdout 仍有 PydanticAI deprecation warnings；250+ 词单段正文仍只生成 1 个 `reader_unit`（`boundary_quality=low`），需 Boundary/Unit Builder v2 与 sentence_analysis coverage policy 独立评估；D5 不改 Stable Base contract，D6+ 再把 richer structure retention 前移到 Input Adapter/Candidate Base/Base Composer。
 
 ## D6. 产品硬化
 
@@ -850,13 +452,29 @@ Focused tests 已通过：
 
 ## 当前下一步
 
-进入 D5 guardrails 与运行形态收口：
+### D5 已全部完成
 
-1. D5-G1 parsed decision same-transaction decision 已完成；保留 orphan diagnostic 只用于历史/人为 partial state 检测。
-2. D5-G2 vocabulary boundary policy 已完成；vocabulary 与 grammar 统一跳过 `fallback_window` 并记录 `boundary_low_fallback_window` diagnostics。
-3. D5-R5 schema health/check + worker lease duration setting 已完成；本地 DB schema drift 通过 health check 暴露，正确处理方式仍是 reset/rebuild 本地 DB。
-4. D5-V5 / D5-R6 已用 deterministic long-text fixture 和真实 provider 长文本链路完成 sentence_analysis projection consistency 验收；继续沿 snapshot reload 路径，不启用 incremental applier。
-5. PydanticAI deprecation warnings 已先清掉 reader_ask runtime 主路径；剩余 `app/agents` 其他 legacy/daily agents、`eval_adapter/*`、`services/daily_reader/scoring.py` 和 docs-only 文本后续再分域清理。Boundary / Unit Builder v2 已扩展为 Input/Base Structure + Unit Builder 联合评估，D5 先维持 text-only Stable Base + deterministic baseline，不在未定 contract 前直接落生产 split。
-6. D5-W3 Web cutover 已进入 D3：W3-B 已落地 route helper split；W3-C1/C3 已新增 `/app/reader-record/{recordId}` product route、`appReadingRecordRoute(...)` helper 和 Workbench-backed read-only center Plate surface；W3-D0 已拆清 legacy / new submit BFF contract；W3-D1 已把 `/app/read` 默认 submit landing 最小切到新 Reading Record，成功后进入 `/app/reader-record/{readingRecordId}`；W3-D2 已在 `/app/read` 增加 Web-only 最近 Reading Record 恢复入口，localStorage 只保存 `readingRecordId`、`readerUrl`、`title`、`createdAt`，不作为长期 truth；W3-D3 已用 static guard tests（`apps/web/src/lib/entry-source-matrix.test.ts`）锁定当前 Web 入口来源矩阵，明确 active task、command palette、Library、Vocabulary source links、`services/bff/analysis.ts` `readerUrl`、`services/bff/records.ts` 仍 legacy，`/app/read` recent recovery 是唯一 new Reading Record 恢复入口，本轮未切任何新入口流量。legacy `submitAnalysisFromWeb()` 与 `/api/web/analysis/submit` 仍保留为显式回滚路径；也没有做旧 `render_scene_json` 兼容映射。下一步推荐 W3-D4 先实现 new Reading Record list source BFF，再逐个入口改线。详细矩阵、touched files 与 done criteria 见 `modules/cutover-and-old-workflow.md`。
-7. D6 product hardening 已采用保守 `failed_terminal` product-state classifier：默认映射为 `failed`，只有显式 user-action allowlist 才提升为 `action_required`；后续继续收敛 coverage / rerun policy、Library state 细节和更细粒度调度 hint。
-8. 保持 LangGraph D6+ 隔离 spike 口径，不在 D5 guardrails 中升级或引入。
+D5 增强扩展（vocabulary / grammar bundle / worker loop / runtime guardrails / 真实链路验证）已全部完成。详细子阶段状态见上方 D5 子阶段索引表。
+
+### D6 已完成项
+
+- Ask / notes / highlights 依赖审计与边界声明（D6-A0）
+- Reading Record anchor gate + single-range persistence（D6-U4：migration + runtime 写入，不启用 UI 写入口）
+- user_assets read projection（D6-U5）
+- Web cutover：`/app/read` 默认提交到新 Reading Record，`/app/reader-record/{recordId}` 默认 Plate surface，Library/command palette/activity indicator 新增新 Reading Record 发现入口（W3-D0~D9）
+- ReaderRecordPlateSurface 真实流程验收与 UI polish（UI-D4~D6C）
+- failed_terminal 保守映射为 `failed` product state
+
+### D6 下一步（按优先级）
+
+1. **收敛新旧双轨**：逐个把 Library / Vocabulary source links / active task / command palette legacy records 切到新 Reading Record（前提：BFF 提供 `sourceReadingRecordId`）；评估删除 `ReaderRecordWorkbenchSurface` fallback 和 legacy `ReaderWorkbench` 的时点。
+2. **补齐 Plate surface 功能缺口**：Ask 切线（依赖 `reader_ask/service.py` 拆分或 adapter 化）、词典 AI、词汇保存、阅读模式切换、`projection_ops` 增量 applier。
+3. **架构深化（可选）**：提取 `BaseEnhancementWorker` 消除 worker/publisher 三重复制；拆分 `repository.py`（1471 行）和 `reader_ask/service.py`（222KB 巨石）。
+4. **清理 TMP 文档**：`docs/tmp/reader-orchestration/` 下 ~60 份 TMP closeout 的结论已回写本计划，按 AGENTS.md 规则删除或归档。
+
+### 仍保持的口径
+
+- LangGraph 只作为 D6+ 隔离 spike 候选，不进入主路径。
+- 不做旧 `render_scene_json` 兼容映射。
+- PydanticAI deprecation warnings 剩余 `app/agents` legacy/daily agents、`eval_adapter/*`、`services/daily_reader/scoring.py` 后续分域清理。
+- Boundary / Unit Builder v2 维持 D5 口径：text-only Stable Base + deterministic baseline，不在未定 contract 前落生产 split。

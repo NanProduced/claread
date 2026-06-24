@@ -1,7 +1,7 @@
 # Policy 与 Cost Control
 
-> 状态：`D5 active`
-> 最后更新：2026-06-22
+> 状态：`D5 完成，D6 进行中`
+> 最后更新：2026-06-24
 > 范围：Planner 最小化、Skip Gate、Prompt Cache、Model Profile、Usage Bucket 和 token economy。
 
 ## 目标
@@ -246,7 +246,7 @@ D2 必须验证：
 
 ## D3-P0 Backend Dependency Alignment
 
-D3-P0 已于 2026-06-18 完成 closeout，详细记录见 `docs/tmp/reader-orchestration/D3/TMP-D3-P0-backend-dependency-closeout.md`。
+D3-P0 已于 2026-06-18 完成 closeout。
 
 正式实现 D3 runtime skeleton 前必须完成后端依赖对齐：
 

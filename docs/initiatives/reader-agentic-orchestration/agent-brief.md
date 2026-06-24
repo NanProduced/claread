@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 执行简报
 
 > 状态：`权威简报`
-> 最后更新：2026-06-22
+> 最后更新：2026-06-24
 
 给 coding agent 分配 Reader agentic orchestration 重构任务时，使用本简报作为最小上下文。
 
@@ -27,104 +27,73 @@
 
 ## 不可违反的决策
 
+### 产品边界
+
 - Web 优先，小程序实现暂缓。
 - Academic workflow 暂缓重构；待 learning workflow 验证稳定后再单独设计。
-- 不做旧开发数据迁移，本地数据可清空，但必须保留词典三表。
-- 保护 `dict_entries`、`dict_lookup_targets`、`dict_redirects`。
-- 不做旧 `render_scene_json` 兼容映射；Web Reader UI 跟随新 contract 改写。
 - Daily Reader runtime 不进入本轮重构。
-- Reader 页面不是常驻 LLM 线程。
-- PostgreSQL 拥有 durable business state。
-- LangGraph / PydanticAI 是执行层，不是产品事实源。
+- 不做旧开发数据迁移，本地数据可清空，但必须保留词典三表（`dict_entries`、`dict_lookup_targets`、`dict_redirects`）。
+- 不做旧 `render_scene_json` 兼容映射；Web Reader UI 跟随新 contract 改写。
+
+### 架构原则
+
+- Reader 页面不是常驻 LLM 线程；产品对象是 `Reading Record`，不是 workflow run。
+- PostgreSQL 拥有 durable business state；LangGraph / PydanticAI 是执行层，不是产品事实源。
 - Stable Reading Base 和 Reading Units 在同一 Reading Record 内不可变。
 - 高影响输入适配必须先进行 Candidate Reading Base 预览与确认。
-- 译文是 parsed 的最低门槛。
-- 禁止用固定批注数量判断 parsed。
-- Ask Claread 是侧边助手；侧边动作必须走同一 Authorization Envelope。
+- 译文是 parsed 的最低门槛；禁止用固定批注数量判断 parsed。
+- 开发期核心类型和 DTO 不加 `V1` / `V2` 后缀。使用 `ReaderPlateSnapshot`，不创建 `ReaderPlateSnapshotV1` / `V2`。
+- `ReaderPlateSnapshot` wrapper 使用 `schema_kind = "reader_plate_snapshot"`；`schema_version` 只用于 layer output、fragment 等 serialized boundary payload。
+
+### 数据与状态
+
+- `reader_events.sequence` 必须是 per-record committed UI event sequence，从 `1` 开始；不能用 PostgreSQL global sequence 作为 UI catch-up sequence。
+- `reader_jobs` 中 base-scoped jobs 必须携带 `base_id`；只有 `build_base + record` job 可无 `base_id`。active job fingerprint 必须包含 `base_id + expected_generation + operation_fingerprint`。
+- `enhancement_layers.generation` 必须匹配 target base `record_generation`。
+- `active_base_id -> reading_bases.status='active'` 是 service / publisher invariant，不是 DDL trigger。设置 active base、supersede base、publish job/layer 时必须显式校验。
+- Job claim/publish fence 必须同时校验 record generation、target base generation、target base `status='active'`、record `active_base_id == job.base_id` 和 lease token。
+- Job 可重试调度状态统一为 `retry_later`；`failed_retryable` 不作为可 claim 的长期 job status。
+- Snapshot reload 必须从 DB domain facts 重建，使用 read-only `repeatable_read` transaction；`last_event_sequence` 与 snapshot facts 必须来自同一一致性视图。DB hydration 后必须调用 `validate_reading_base_build_result` 校验。
+- Polling cursor 在 `after_sequence == last_event_sequence` 或 empty stream 时返回空 events；只有发现 missing committed event / sequence gap 时才要求 reload。
+- Snapshot builder 必须拒绝不属于当前 base / unit / anchor 的 layers、parsed decisions、ask supplements 和 user assets。
+- `operation_fingerprint` 表示 business intent，不包含临时 fallback actual provider/model。
+
+### Worker 与执行
+
+- Worker loop 必须是独立 process（本地 CLI / 部署独立 service），不挂 FastAPI lifespan、不塞 Web submit、不新增 public worker-control endpoint。
+- Worker loop 扫描候选 record 时，粗筛可用 `product_state in ('processing','readable_enhancing')` + active base/generation/status + `readiness_state in ('article_ready','initial_enhancement_ready')`；exact missing work 由 bootstrap service / pipeline runner 决定。
+- Translation worker 必须使用 job-type filtered claim，不 claim mixed queue 中的非 translation jobs；成功和失败路径必须写 `ai_usage_events` attribution。
+- Vocabulary worker 保留三类 item subtype：`vocab_highlight`、`phrase_gloss`、`context_gloss`（同一 `vocabulary` layer 的 `output_json.items[].item_type`，不是三个顶层 layer type）。
+- Vocabulary worker 对同一 span 按 `context_gloss > phrase_gloss > vocab_highlight` 仲裁；`fallback_window` anchor segment 不产出 vocabulary item。
+- Grammar bundle worker 发布时拆成 `grammar_note` 与 `sentence_analysis` 两个独立 layer rows；`fallback_window` 命中时整条 item 跳过。
+- 模型选择走 Model Profile / route lookup，不由 planner 即兴决定。Vocabulary route 必须显式配置 `reader_vocabulary_model_profile`，不 fallback 到 annotation profile。
+- Worker 默认未配置时必须失败且不发布空 layer，只有显式 fake executor 才能发布空 output。
+
+### Plate 与渲染
+
+- Reader Article Body 渲染层走 Plate.js（`platejs/react`），不是其他编辑器。
+- Plate document 不是 truth，是 domain fact 的 projection。`enhancement_layers` / `user_annotations` / `reader_notes` 等表结构不改为 patch sequence。
+- 刷新恢复从 domain truth 重建 Plate Value，不从 Plate value 反推 domain。
+- `anchor_segment_id` 是新权威锚点；`sentence_id` 只作为兼容 alias。
+- owner 权限层覆盖 `stable` / `system_ai` / `ask_supplement` / `user` / `ephemeral`；后端权威拒绝 + 前端 Plate UX 镜像。
+- 所有 domain 回写必须经过 anchor/path adapter 输出 domain anchor，不直接走 node path。
+- `reader_events.event_type` 支持 `projection_ops` 子类型；projection op payload 使用稳定 domain target，不把 raw Plate/Slate path ops 作为后端持久合同。禁止使用 `plate_patches` 作为正式事件名。
+- 默认禁用 image / table / inline HTML / math / frontmatter / definition / footnote；启用前必须另做 spike。
+- 非 Web 客户端继续 polling snapshot，不订阅 Plate projection ops。
+
+### Ask 与 RAG
+
+- Ask Claread 是侧边助手；侧边动作走同一 Authorization Envelope。
+- Ask Sidecar 主路径工具集：`read_range` / `propose_highlight` / `propose_note` / `write_ai_supplement` / `revise_ai_annotation`。写 User Editorial Assets 必须用户确认。
+- Ask 不能直接覆盖 System Annotation Layer truth；系统层修订走 proposal 或 Layer Publisher/system worker。
+- LLM 不能直出 arbitrary Plate JSON 或 raw Slate ops 作为持久事实。
 - RAG 只服务当前 Reading Record，不做全局 User Editorial Assets RAG。
 - RAG/OCR/OSS 等外部服务必须 adapter 化，不能成为 Claread 业务事实源。
-- D4 最小纵切只做纯文本低风险路径和 translation layer。
-- D4 不使用 LLM Planner；Policy Planner 是 deterministic code。
-- D4 不使用 LangGraph Planner；LangGraph 不进入 D4 主路径。
-- D4 必须包含最小 `reader_runs` 和 immutable `envelope_json` snapshot；完整 envelope counters 可后置。
-- Semantic Reviewer 是 D5+ 的 typed LLM worker，不是默认 planner。
-- 模型选择走 Model Profile / route lookup，不由 planner 即兴决定。
-- `operation_fingerprint` 表示 business intent，不包含临时 fallback actual provider/model。
-- `reader_events.sequence` 必须是 per-record committed UI event sequence，从 `1` 开始；不能用 PostgreSQL global sequence 作为 UI catch-up sequence。
-- D4 snapshot 默认实时聚合；`reader_snapshots` cache、PG LISTEN/NOTIFY 和 event TTL 是 D5+ 优化。
-- D3 Schema / Domain Contract 的正式入口是 `modules/schema-and-domain-contract.md`；实现不以 TMP 报告中的临时 type 名或字段建议为准。
-- 开发期核心类型和 DTO 不加 `V1` / `V2` 后缀。使用 `ReaderPlateSnapshot`，不创建 `ReaderPlateSnapshotV1` / `ReaderPlateSnapshotV2`。
-- `ReaderPlateSnapshot` wrapper 使用 `schema_kind = "reader_plate_snapshot"`；`schema_version` 只用于 layer output、fragment 等 serialized boundary payload。
-- D4 snapshot 恢复 cursor 只使用 `last_event_sequence`，不暴露或依赖 snapshot-level `projection_version`。
-- `reader_jobs` 中 base-scoped jobs 必须携带 `base_id`；active job fingerprint 必须包含 `base_id + expected_generation + operation_fingerprint`。
-- job 可重试调度状态统一为 `retry_later`。`failed_retryable` 不作为可 claim 的长期 job status。
-- D3-P0 已完成后端依赖对齐：PydanticAI 1.107.0、DashScope 1.25.23、asyncpg 0.31.0；LangGraph/FastAPI/LangSmith/OpenAI 保持当前锁定版本。
-- D3-P1 schema baseline 已完成并通过 review。实现已新增 D3-P1 最小 Reader tables、usage/ledger attribution、record-scoped event counter 和 focused tests。
-- `reader_jobs` 必须用 base/generation fence 防止 stale worker：base-scoped jobs 绑定 `(base_id, reading_record_id, expected_generation)`；只有 `build_base + record` job 可无 `base_id`。
-- `enhancement_layers.generation` 必须匹配 target base `record_generation`。
-- `active_base_id -> reading_bases.status='active'` 当前是 service / publisher invariant，不是 D3-P1 trigger。设置 active base、supersede base、publish job/layer 时必须显式校验。
-- D3-P2 Reading Base Builder + Base Plate Snapshot 已完成并通过 review。后续任务必须复用 `services/api/app/services/reader_orchestration/base_builder.py` 和 `snapshot.py`，不得另起一套 Unit/Anchor/Snapshot 逻辑。
-- D3-P2 当前 Unit baseline 是 `1 structure block -> 1 reading unit`；不要在 D3-P3 临时加入 LLM semantic unit split 或 target-length aggregation。
-- Snapshot builder 必须拒绝不属于当前 base / unit / anchor 的 layers、parsed decisions、ask supplements 和 user assets；不能把 wrong-base facts 混入当前 Reader snapshot。
-- Published translation layer 的 D4 最小 snapshot projection 已可用；非 translation 的 `unit_range` / `record` 复杂 membership 校验留给 D5 Layer Publisher。
-- D3-P3 Article Ready Persistence Service 已完成并通过 review。后续低风险纯文本 `article_ready` 内部路径应复用 `ArticleReadyPersistenceService`，不得另写一套 record/input/base/unit/anchor/event 持久化逻辑。
-- Snapshot reload 必须从 DB domain facts 重建，使用 read-only `repeatable_read` transaction 或等价 consistent read；`last_event_sequence` 与 snapshot facts 必须来自同一一致性视图。
-- DB hydration 后必须调用 `validate_reading_base_build_result` 校验 Reading Base / Unit / Anchor Segment 全局 invariant。后续新增 persisted facts 时也要接入同一校验链。
-- D3-P4 Runtime Skeleton 已完成并通过 review。后续 job runtime 应复用 `ReaderJobRuntime`，event publish / polling 应复用 `ReaderEventRuntime`，不得另写 sequence/cursor/lease 控制面。
-- Job claim/publish fence 必须同时校验 record generation、target base generation、target base `status='active'`、record `active_base_id == job.base_id` 和 lease token。
-- Polling cursor 在 `after_sequence == last_event_sequence` 或 empty stream 时返回空 events，不要求 reload；只有发现 missing committed event / sequence gap 时才要求 reload。
-- D4-P0 Backend Reader API + Snapshot/Polling 纵切已完成并通过 review。新 API surface 是 `POST /reader/records/plain-text`、`GET /reader/records/{record_id}/snapshot`、`GET /reader/records/{record_id}/events`；不得让新 Web Reader 回到旧 `/scene` 或 `render_scene_json` 路径。
-- D4-P0 `client_record_id` blank 规范化为 `NULL`；同一用户重复 active `client_record_id` 返回 409。后续如果改为幂等 submit，必须显式更新 API contract 和测试。
-- D4-P1 Translation Layer Worker + Layer Publish 纵切已完成并通过 review。Translation worker 必须使用 job-type filtered claim，不得 claim mixed queue 中的非 translation jobs；成功和失败路径必须写 `ai_usage_events` attribution；retry 后成功必须清空 run failure fields。
-- D4-P2 Backend Orchestration Integration + Parsed Decision 已完成并通过 review。`ReaderOrchestrator` 是 D4 后端最小 facade：submit path 创建 article-ready facts 并 bootstrap translation job，tick path 处理 translation job、发布 layer、写最小 parsed decision、发布 `parsed_decision_updated` event。
-- D4-P2 tick 目前是 service/testable entry，不是公开 HTTP endpoint。若后续需要 API 驱动 tick，必须补 route、auth、worker 权限和 focused tests。
-- D4-P3 Web Reader Plate Read-only Surface + BFF Polling 已完成并通过 review。Web D4 入口走真实 submit/snapshot/events，不走 demo record、旧 `/scene` 或 `render_scene_json`；polling 收到 layer/projection reset/reload signal 后 reload snapshot，不应用 `projection_ops`。
-- D4-P4 Worker Runner Hardening + Web Smoke/Test Gap 已完成并通过 review。`TranslationWorkerRunner` 是内部 callable runner，不是 public HTTP endpoint；Web reader-plate smoke 使用 mocked BFF routes，只证明浏览器渲染/交互，不等价于真实 auth/backend E2E。
-- D5-V1 Vocabulary Layer Backend Slice 已完成并通过 review。Vocabulary 使用正式 `reader_jobs.job_type = 'build_vocabulary_layer'`，不是 `build_base`；worker 默认未配置时必须失败且不发布空 layer，只有显式 fake executor 才能发布空 output。
-- D5-V2 Vocabulary Projection / Web Read-only Rendering 已完成并通过 review。Published vocabulary layer 在 snapshot reload 时从 domain facts 重建为 stable source leaf 上的 `reader_vocabulary_marks`，Web 只读展示 `vocab_highlight`、`phrase_gloss`、`context_gloss`；不读取旧 `render_scene_json`，不持久化 Plate path/op，不启用 `projection_ops` incremental applier。
-- D5-V3 Real Vocabulary Executor / Prompt 已完成并通过 review。`reader_layer_vocabulary` route 必须显式配置 `reader_vocabulary_model_profile`，不得 fallback 到 annotation profile；LLM 只输出内部 candidate schema，后端确定性解析 `anchor_segment_id + selected_text` 为 unit-local UTF-16 offsets/hash。
-- D5-V3 vocabulary real executor 对同一 span 按 `context_gloss > phrase_gloss > vocab_highlight` 仲裁；candidate items 和文本字段有硬上限；空有效 output 可以发布，但 diagnostics 必须保留跳过原因。
-- D5-V4 Grammar Bundle Backend Slice 已完成并通过 review。Grammar bundle 使用正式 `reader_jobs.job_type = 'build_grammar_bundle'`，发布时拆成 `grammar_note` 与 `sentence_analysis` 两个独立 layer rows；usage 只记一条 job-level attribution，no-op success 不发布 layer/event。
-- D5-V4 fallback policy：`grammar_note` 任一 span 命中 `fallback_window` 时整条 item 跳过，不允许部分保留 span；`sentence_analysis` 命中 fallback window 时跳过。
-- D5-G2 boundary policy：vocabulary worker 与 grammar bundle 统一 fallback_window 口径 — `segment_type=fallback_window` 的 anchor segment 不产出 vocabulary item，reason_code `boundary_low_fallback_window` 写入 `diagnostics.skipped_items[]`，与 grammar 一致。
-- D5 Vocabulary Eval Seed 评估结论是 `accepted_with_changes`。下一步只做本地 deterministic seed/schema/graders/tests；不得按 JSONL 单文件方案落地，不接 LangSmith，不新增 `evals/claread_eval/judge/judges/*` prompt catalog。vocabulary `boundary_low_fallback_window` 已成为 D5 eval seed acceptance gate（fixture `14-vocab-fallback-window-skip`）。
-- D5 LangGraph / orchestration 双评估结论是 `accepted_with_changes`：D5 主链路 runner、workers、snapshot projection 和 eval 不引入、不升级 LangGraph；LangGraph 不得替换 PostgreSQL run/job/event/layer durable control plane；D6-LG0 只作为隔离 spike 候选，且必须有具体 Ask HITL / multi-branch repair 需求。
-- D5-R2 Main Chain Runner + Web Record Load 已完成并通过 focused tests。`ReaderEnhancementPipelineRunner` 统一 bootstrap/drain translation、vocabulary、grammar bundle jobs；runner 使用 record-scoped claim，不会消费其他 Reading Record 的 queue；Web `/app/reader-plate?record_id=...` 可直达加载 snapshot。
-- D5-R2 不包含页面 submit 后同步跑完整真实 LLM、SSE、LangGraph 或 `projection_ops` incremental applier。
-- D5-W1 worker loop 评估结论为 `accepted_with_changes`：正式运行形态应是独立 worker process，本地用 CLI entrypoint，部署用独立 worker service；不得挂到 FastAPI lifespan，不得塞进 Web submit，不得新增 public worker-control endpoint，不得把 smoke harness / fake executors 作为产品路径。
-- Worker loop 扫描候选 record 时，粗筛可用 `product_state in ('processing','readable_enhancing')`、active base/generation/status 和 `readiness_state in ('article_ready','initial_enhancement_ready')`；exact missing work 仍由 `EnhancementJobBootstrapService` / `ReaderEnhancementPipelineRunner` 决定。
-- D5-W2 worker loop 已完成：`ReaderEnhancementWorkerLoopService` 通过 coarse scan + per-record / per-user advisory locks 调用 `ReaderEnhancementPipelineRunner`，CLI `scripts/run_reader_enhancement_worker.py` 支持 `--once` 与持续 loop。
-- 本地真实链路运行手册是 `docs/initiatives/reader-agentic-orchestration/modules/local-real-chain-runbook.md`；D5-R4 已用真实 DashScope provider 跑通短文本 `plain_text -> article_ready -> worker loop -> snapshot reload`，无 smoke harness / fake executor。
-- D5-R4 的限制：短文本未触发 `sentence_analysis`，长文本暴露 worker lease duration 风险；`ai_usage_events` 列缺失属于旧本地 DB schema drift，当前 repo baseline 已包含列/FK。
-- D5-R5 已完成运行态硬化：新增 `scripts/check_reader_schema_health.py`，并把 worker lease duration 提升为可配置项 `reader_worker_lease_duration_seconds` / `--lease-duration-seconds`，默认 120 秒。
-- D5-R5 不做旧本地 DB 自动迁移兼容；schema drift 的正确处理方式仍是 reset/rebuild 本地 DB 后重跑 baseline。
-- D5-V5 / D5-R6 已完成：deterministic 250+ 词长文本 fixture 和真实 DashScope `workflow-qwen37-max` provider 长文本链路均已跑通；grammar bundle 能发布 `grammar_note` + `sentence_analysis`，snapshot reload 稳定出现 `reader_sentence_analysis` node；本轮不启用 `projection_ops`，也不读取旧 `render_scene_json`。
-- Web 侧现有 `ReaderPlateSnapshotSurface` / `ReaderPlateSnapshotDto` focused tests 已覆盖 sentence_analysis 的只读渲染和 typed projection contract；R6 浏览器实渲染确认 `/app/reader-plate?record_id=34476538-c091-43ef-a395-009de7633a68` 出现 2 张 sentence analysis 卡片。
-- D5-R6 保留两个后续问题：worker stdout 仍有 PydanticAI deprecation warnings；250+ 词单段长文本仍只切成 1 个 `reader_unit` 且 `boundary_quality=low`，后续需单独评估 Boundary / Unit Builder v2 和 sentence_analysis coverage policy。
-- 当前下一步进入 D5 worker/runtime hardening尾项：PydanticAI deprecation cleanup、Boundary / Unit Builder v2 spike 与 Web cutover planning；parsed decision same-tx、vocabulary boundary policy、worker loop、schema health/check、lease duration setting 与 sentence_analysis 长文本真实验收已完成。
-- D4 worker 实现中不得临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK；如 D3-P4 runtime tests 暴露缺口，先形成单独 closeout/update，再改依赖。
-- LangGraph v1+ 的 persistence、streaming、interrupt/resume、subgraph 和 runtime observability 只作为 D6+ 隔离 spike 候选；具体版本能力和 breaking changes 必须在 spike 中用当时官方文档与 lockfile 实测确认，不改变 PostgreSQL run/job/event 主控。
-- Grammar Bundle Worker 可以一次生成 `grammar_note` 与 `sentence_analysis`，但发布、存储、RAG、projection、policy、eval 必须按 subtype 独立处理。`long_sentence` 不是权威 layer type，只是触发 `sentence_analysis` 的适用场景。
-- Vocabulary Worker 必须保留旧 workflow 的三类 item subtype：`vocab_highlight`、`phrase_gloss`、`context_gloss`。它们属于同一个 `vocabulary` layer 的 `output_json.items[].item_type`，不是三个顶层 layer type。
 
-## 渲染层与 Plate 不可违反规则（D1-012 ~ D1-017）
+### LangGraph 口径
 
-- Reader Article Body 渲染层与交互引擎走 Plate.js（`platejs/react`），不是其他编辑器。
-- `apps/web/src/lib/reader-plate*`、`apps/web/src/components/reader/plate/` 和相关 BFF/API client 是 Claread 对 Plate.js projection 的领域封装；实现必须显式基于 Plate.js（`platejs/react`），不能回到自建固定 UI scene。
-- **Plate document 不是 truth**，是 domain fact（Stable Reading Base / Reading Units / Anchor Segments / Enhancement Layers / User Editorial Assets / Ask Supplements）的 projection。`enhancement_layers` / `user_annotations` / `reader_notes` 等表结构**不改为 patch sequence**。
-- `reader_events.event_type` 必须支持 `projection_ops` 子类型。Projection op payload 使用稳定 domain target；不得把 raw Plate path / raw Slate path ops 作为后端持久合同。
-- D4 不要求 `projection_ops` 端到端；translation layer 可以先通过 snapshot reload 或 simple projection refresh 呈现，D5 再接增量 applier。
-- 禁止使用 `plate_patches` 作为正式事件名或合同名；它只能作为已拒绝的 TMP 旧口径出现。
-- 刷新恢复**从 domain truth 重建 Plate Value**，不是从 Plate value 反推 domain。
-- D4 正式路径从 Stable Base / Reading Units / Anchor Segments 直接生成 Base Plate Snapshot；旧 `renderSceneToPlateDocument` 只能作为参考或 spike adapter，不是新 contract。
-- `anchor_segment_id` 是新权威锚点；`sentence_id` 只作为兼容 alias。新 target、projection op、Ask tool、RAG citation、User Editorial Asset 不得只依赖 `sentence_id`。
-- owner 权限层必须覆盖：`stable` / `system_ai` / `ask_supplement` / `user` / `ephemeral`。owner 校验双层：后端权威拒绝 + 前端 Plate UX 镜像。
-- 所有 domain 回写（user_highlight / reader_note / ai_supplement）必须经过 anchor/path adapter 输出 domain anchor，**不直接走 node path**。
-- Ask Sidecar 在 D5+ 改 document tools 模式，主路径工具集：`read_range` / `propose_highlight` / `propose_note` / `write_ai_supplement` / `revise_ai_annotation`。写 User Editorial Assets 必须用户确认。
-- Ask 不能直接覆盖 System Annotation Layer truth；系统层修订走 proposal 或 Layer Publisher/system worker。
-- LLM 不能直出 arbitrary Plate JSON 或 raw Slate ops 作为持久事实。AI / Markdown fragment 必须经过 typed schema、strict allowlist、length cap、source grounding 和 link protocol policy。
-- D5 默认禁用 image / table / inline HTML / math / frontmatter / definition / footnote；启用前必须另做 spike。
-- 非 Web 客户端继续 polling snapshot，不订阅 Plate projection ops。
+- LangGraph 不进入主路径 run/job/event/layer durable control plane。
+- LangGraph v1+ 的 persistence、streaming、interrupt/resume、subgraph 只作为 D6+ 隔离 spike 候选，且必须有具体 Ask HITL / multi-branch repair 需求。
 
 ## 当前外部服务假设
 
@@ -159,21 +128,16 @@ Web Reader
 - Ask Sidecar Bridge：Ask 动作进入同一 Authorization Envelope；保存 note/highlight 必须用户确认后写 User Editorial Assets，Ask Supplement 必须标记来源。
 - Policy / Cost Control：Skip Gate、Prompt Cache、Model Profile、Usage Bucket、cost baseline。
 
-D4 默认实现边界：
+实现边界：
 
-- Planner 先用 deterministic policy function。
-- PydanticAI 用于 LLM-backed workers。
-- LangGraph 不进入 D4 主路径。
-- 不继承旧“每用户一个 active task”产品约束；并发由 envelope 控制。
-- Text anchors 复用现有 UTF-16 offsets 和 `fnv1a32-utf16` hash contract；span anchor 使用 `anchor_segment_id` + unit-local offsets，且 offset 必须落在对应 Anchor Segment range 内。Segment-local offsets 只作为 Plate leaf projection metadata 派生。
+- PydanticAI 用于 LLM-backed workers；LangGraph 不进入主路径。
+- 不继承旧"每用户一个 active task"产品约束；并发由 envelope 控制。
+- Text anchors 复用现有 UTF-16 offsets 和 `fnv1a32-utf16` hash contract；span anchor 使用 `anchor_segment_id` + unit-local offsets，且 offset 必须落在对应 Anchor Segment range 内。
 - Stable Reading Base 是输入适配和必要用户确认后的可读英文正文；Unit Builder 不负责 OCR 修复、boilerplate 删除、多栏顺序修复或正文重写。
-- Anchor Segment 是 sentence-like segment，通常是句子；必要时可为 clause 或 fallback window，并通过 `segment_type` 标记。
-- D4 不启用 LLM Unit Builder；D5+ Unit Boundary Refiner 只能建议既有 Anchor Segments 的 split/merge，不能改写文本或生成坐标。
-- D4 Web Article Body 加载 Base Plate Snapshot，不经过旧 `render_scene_json`。
+- Anchor Segment 是 sentence-like segment，通常是句子；必要时可为 clause 或 fallback window，并通过 `segment_type` 标记。Unit Boundary Refiner 只能建议既有 Anchor Segments 的 split/merge，不能改写文本或生成坐标。
 - Translation worker 不携带 Ask history、planner trace 或整篇文章上下文。
 - System Annotation Layers 不得写入或覆盖 User Editorial Assets。
 - Usage audit 必须能按 record、job、layer、model profile、cache status 归因。
-- D5 grammar 初版可以保留一个 `reader_layer_grammar_bundle` route；后续如成本或质量目标分化，再拆 `grammar_note` / `sentence_analysis` worker，但不改变 layer subtype 合同。
 
 输入链路：
 

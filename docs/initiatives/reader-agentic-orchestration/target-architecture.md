@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 目标架构
 
-> 状态：`D5 active`
-> 最后更新：2026-06-22
+> 状态：`D6 进行中`
+> 最后更新：2026-06-24
 > 范围：用户提交内容的 `learning` Reader 解析。
 
 ## 目标

@@ -12,7 +12,7 @@
 - 不使用 smoke harness / fake executor 作为产品路径
 - `ReaderPlateSnapshot` 是 projection，不读取旧 `render_scene_json`
 
-截至 D5-R6，本文操作路径已用真实 DashScope provider 跑通短文本与 250+ 词长文本主链路；详细验证记录见 `docs/tmp/reader-orchestration/D5/TMP-D5-R4-real-provider-local-chain-validation.md` 和 `docs/tmp/reader-orchestration/D5/TMP-D5-V5-R6-local-long-text-runbook-validation-2026-06-22.md`。验证没有使用 smoke harness 或 fake executor。
+截至 D5-R6，本文操作路径已用真实 DashScope provider 跑通短文本与 250+ 词长文本主链路；验证没有使用 smoke harness 或 fake executor。
 
 补充：后端 smoke 只证明 API / worker / snapshot / events 的数据链路成立，不等价于浏览器端页面轮询与渲染层面的 E2E 验证。
 
