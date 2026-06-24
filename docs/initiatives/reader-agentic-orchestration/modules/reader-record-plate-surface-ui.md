@@ -1,6 +1,6 @@
 # Reader Record Plate Surface UI
 
-> 状态：目标方案草案；UI-D6A 默认 Plate 真实流程已验收；UI-D4 阅读态打磨已落地；UI-D5 Active Anchor Inspector 已落地；UI-D6B 真实流程验收与 UI 收敛评估已落地（含三进程真实联调）
+> 状态：目标方案草案；UI-D6A 默认 Plate 真实流程已验收；UI-D4 阅读态打磨已落地；UI-D5 Active Anchor Inspector 已落地；UI-D6B 真实流程验收与 UI 收敛评估已落地（含三进程真实联调）；UI-D6C UI/UX polish 已落地
 > 最后更新：2026-06-24
 > 范围：`/app/reader-record/{recordId}` 在 Agentic Orchestration 架构下的 Reader Record 解析页 UI/UX、Plate.js 文档表面、选择交互、词典/Ask 联动、用户高亮/笔记和第一版实现边界。
 
@@ -1078,6 +1078,37 @@ V1d 验收：
 12. 点击 vocab/grammar mark 或 cue，确认 active anchor inspector 出现
 13. 确认 Ask / Feedback 显示"Ask / 反馈 即将推出"，不调用旧 API
 14. 确认所有 UI 文案为中文
+
+## UI-D6C UI/UX Polish
+
+### 已修复的 UI/UX 问题
+
+1. **Active inspector 重复标题**：`UserHighlightAnchorDetails` 和 `UserCommentAnchorDetails` 的 h3 标题原先与 label 重复（"用户高亮"/"笔记/评论"），现在 h3 显示有意义的文本（高亮显示选中文本，笔记显示笔记内容片段）。
+2. **Active inspector UUID 泄漏**：原先显示 `资产 {assetId}`（UUID），对用户无意义，已移除。改为显示 `原文：{selectedText}`，用 `truncate` 防止长文本溢出。
+3. **Active inspector 标题字号过大**：所有 inspector 内部 h3 从 `text-xl` 降为 `text-lg`，间距从 `mt-3`/`mt-2` 收紧为 `mt-2`/`mt-1.5`，减少阅读流干扰。
+4. **Translation block 间距和 label**：`mt-2` → `mt-3` 增加与正文的呼吸距离；`border-l` → `border-l-2` 加强视觉分隔；label `text-[0.72rem]` → `text-xs` 提升可读性。
+5. **Action strip saved/error 状态持久不清除**：新增 `useEffect` 在 `writeState` 为 `saved` 或 `error` 时启动 4 秒计时器，自动回退到 `idle`，避免过时消息残留。
+6. **Action strip hint 文本移动端溢出**：hint span 添加 `max-w-full truncate sm:max-w-[40ch]`，在窄屏下截断长选中文本，避免按钮被挤到下一行。
+7. **Action strip 缺少 write state data 属性**：新增 `data-reader-record-write-state` 属性，反映当前写入状态（idle/saving/saved/error），便于测试和自动化断言。
+8. **面板视觉区分度不足**：Lookup panel、Note composer、Active inspector 三个浮动面板原先使用相同的 `border border-border` 样式，现在各自添加 `border-l-2` 左侧 accent（lookup 蓝色、note 琥珀色、inspector 紫色），在不破坏阅读流的前提下提供视觉区分。
+9. **Header title 与 status 间距不足**：title `<h1>` 的 `mb-2` → `mb-3`，增加标题与状态行的呼吸距离。
+
+### 仍 deliberately deferred 的能力
+
+1. **阅读模式切换器**（精读/沉浸）：当前单一 readonly mode，后续按需补。
+2. **词典 rail**：当前使用 inline lookup panel，后续按需补。
+3. **Ask rail**：Ask/Feedback 保持 coming soon，不调用旧 API。
+4. **floating toolbar**：当前使用固定 action strip，后续按需评估。
+5. **收藏按钮**：暂无。
+6. **阅读设置**（排版、主题）：暂无。
+7. **Grammar/sentence cues 折叠**：当前 inline cue markers 已足够轻量（`opacity-70` + `text-[0.58rem]`），暂不需要折叠。
+
+### 验证
+
+- `pnpm --filter=@claread/web test`: 400 passed (49 test files)
+- `pnpm --filter=@claread/web typecheck`: 通过
+- `pnpm --filter=@claread/web lint`: 0 errors, 81 warnings（均为 pre-existing）
+- `git diff --check`: clean
 
 ## Open Questions
 

@@ -6,6 +6,8 @@ from fastapi import HTTPException
 
 from app.contracts.anchor_validation import (
     ANCHOR_RECORD_ID_MISMATCH,
+    READING_RECORD_NOT_FOUND,
+    READING_RECORD_SNAPSHOT_INVALID,
     AnchorValidationError,
 )
 from app.database import connection as db_connect
@@ -36,6 +38,49 @@ def _parse_uuid(value: str, *, field: str) -> UUID:
         ) from exc
 
 
+def _reading_record_error(
+    *,
+    code: str,
+    field: str,
+    message: str,
+) -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={
+            "code": code,
+            "field": field,
+            "message": message,
+        },
+    )
+
+
+async def _ensure_reading_record_snapshot_access(
+    *,
+    conn,
+    repository: ReaderOrchestrationRepository,
+    user_id: UUID,
+    reading_record_id: UUID,
+) -> None:
+    try:
+        await repository.load_snapshot_facts(
+            conn,
+            record_id=reading_record_id,
+            user_id=user_id,
+        )
+    except LookupError as exc:
+        raise _reading_record_error(
+            code=READING_RECORD_NOT_FOUND,
+            field="reading_record_id",
+            message=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise _reading_record_error(
+            code=READING_RECORD_SNAPSHOT_INVALID,
+            field="reading_record_id",
+            message=str(exc),
+        ) from exc
+
+
 async def send_reading_record_ask_message(
     *,
     user_id: UUID,
@@ -49,42 +94,47 @@ async def send_reading_record_ask_message(
     ``analysis_record_id`` paths are never touched.
     """
     parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
-    parsed_user_id = _parse_uuid(str(user_id), field="user_id")
-
+    anchor_record_id: UUID | None = None
     if request.anchor is not None:
-        if request.anchor.record_id != reading_record_id:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "code": ANCHOR_RECORD_ID_MISMATCH,
-                    "field": "anchor.record_id",
-                    "message": (
-                        "anchor.record_id does not match the route reading_record_id"
-                    ),
-                },
+        anchor_record_id = _parse_uuid(
+            request.anchor.record_id,
+            field="anchor.record_id",
+        )
+        if anchor_record_id != parsed_record_id:
+            raise _reading_record_error(
+                code=ANCHOR_RECORD_ID_MISMATCH,
+                field="anchor.record_id",
+                message=(
+                    "anchor.record_id does not match the route reading_record_id"
+                ),
             )
 
-        async with db_connect.acquire_connection() as conn:
-            repository = ReaderOrchestrationRepository()
+    repository = ReaderOrchestrationRepository()
+
+    async with db_connect.acquire_connection() as conn:
+        if request.anchor is None:
+            await _ensure_reading_record_snapshot_access(
+                conn=conn,
+                repository=repository,
+                user_id=user_id,
+                reading_record_id=parsed_record_id,
+            )
+        else:
             try:
                 await load_validated_reading_record_anchor(
                     conn,
                     repository=repository,
-                    user_id=parsed_user_id,
+                    user_id=user_id,
                     anchor=request.anchor,
                 )
             except AnchorValidationError as exc:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "code": exc.code,
-                        "field": "anchor",
-                        "message": exc.message,
-                    },
+                raise _reading_record_error(
+                    code=exc.code,
+                    field="anchor",
+                    message=exc.message,
                 ) from exc
 
     # D6-A6 spike: execution is intentionally disabled.
-    del parsed_record_id
     return ReaderRecordAskPendingResponse(
         status="pending",
         code="reader_record_ask_execution_pending",

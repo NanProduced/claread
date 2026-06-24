@@ -151,7 +151,7 @@ function CompactProgress({
       {title ? (
         <h1
           data-reader-record-reading-title
-          className="reader-serif mb-2 text-xl leading-tight text-ink sm:text-2xl"
+          className="reader-serif mb-3 text-xl leading-tight text-ink sm:text-2xl"
         >
           {title}
         </h1>
@@ -309,12 +309,15 @@ function SelectionActionStrip({
       data-reader-record-selection-end-offset={
         draft ? String(draft.end_offset) : undefined
       }
+      data-reader-record-write-state={writeState.kind}
       className="mb-5 flex flex-wrap items-center gap-2 border-b border-border/50 pb-3 text-xs text-muted"
       aria-label="Reader Record Plate 操作"
     >
       <span
         data-reader-record-action-hint
-        className={singleRangeReady ? "mr-1 font-medium text-foreground" : "mr-1"}
+        className={`mr-1 max-w-full truncate sm:max-w-[40ch] ${
+          singleRangeReady ? "font-medium text-foreground" : ""
+        }`}
       >
         {actionHint}
       </span>
@@ -423,7 +426,7 @@ function ReaderRecordLookupPanel({
   return (
     <div
       data-testid="reader-record-plate-lookup-panel"
-      className="mb-5 rounded-md border border-border bg-background px-3 py-3 text-sm shadow-sm"
+      className="mb-5 rounded-md border border-border border-l-2 border-l-lens-blue/50 bg-background px-3.5 py-3 text-sm shadow-sm"
       role="status"
       aria-live="polite"
     >
@@ -492,7 +495,7 @@ function ReaderRecordNoteComposer({
   return (
     <div
       data-testid="reader-record-plate-note-composer"
-      className="mb-5 rounded-md border border-border bg-background px-3 py-3 text-sm shadow-sm"
+      className="mb-5 rounded-md border border-border border-l-2 border-l-amber-300/70 bg-background px-3.5 py-3 text-sm shadow-sm"
     >
       <label
         htmlFor="reader-record-plate-note-input"
@@ -605,15 +608,15 @@ function VocabularyAnchorDetails({
       <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
         词汇
       </div>
-      <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
+      <h3 className="mt-1 reader-serif text-lg leading-snug text-ink">
         {vocabularyTitle(mark)}
       </h3>
-      {gloss ? <p className="mt-3 leading-6 text-ink-soft">{gloss}</p> : null}
+      {gloss ? <p className="mt-2 leading-6 text-ink-soft">{gloss}</p> : null}
       {example ? (
-        <p className="mt-2 leading-6 text-muted">例句：{example}</p>
+        <p className="mt-1.5 leading-6 text-muted">例句：{example}</p>
       ) : null}
       {reason ? (
-        <p className="mt-2 leading-6 text-muted">原因：{reason}</p>
+        <p className="mt-1.5 leading-6 text-muted">原因：{reason}</p>
       ) : null}
     </>
   );
@@ -633,11 +636,11 @@ function GrammarAnchorDetails({
       <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
         语法
       </div>
-      <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
+      <h3 className="mt-1 reader-serif text-lg leading-snug text-ink">
         {grammarPoint}
       </h3>
-      {pattern ? <p className="mt-3 leading-6 text-muted">{pattern}</p> : null}
-      <p className="mt-2 leading-6 text-ink-soft">{note}</p>
+      {pattern ? <p className="mt-2 leading-6 text-muted">{pattern}</p> : null}
+      <p className="mt-1.5 leading-6 text-ink-soft">{note}</p>
     </>
   );
 }
@@ -652,12 +655,12 @@ function SentenceAnalysisAnchorDetails({
       <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
         句子结构
       </div>
-      <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
+      <h3 className="mt-1 reader-serif text-lg leading-snug text-ink">
         {cue.label}
       </h3>
-      <p className="mt-3 leading-6 text-ink-soft">{cue.analysis}</p>
+      <p className="mt-2 leading-6 text-ink-soft">{cue.analysis}</p>
       {cue.chunks.length > 0 ? (
-        <ul className="mt-3 space-y-2 text-sm leading-6 text-ink-soft">
+        <ul className="mt-2 space-y-1.5 text-sm leading-6 text-ink-soft">
           {cue.chunks.slice(0, 5).map((chunk) => (
             <li
               key={`${chunk.order}:${chunk.label}:${chunk.text}`}
@@ -685,11 +688,9 @@ function UserHighlightAnchorDetails({
       <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
         用户高亮
       </div>
-      <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
-        用户高亮
+      <h3 className="mt-1 reader-serif text-lg leading-snug text-ink">
+        {mark.anchor.selectedText}
       </h3>
-      <p className="mt-3 leading-6 text-ink-soft">{mark.anchor.selectedText}</p>
-      <p className="mt-2 text-xs text-muted">资产 {mark.assetId}</p>
     </>
   );
 }
@@ -699,20 +700,23 @@ function UserCommentAnchorDetails({
 }: {
   cue: Extract<ReaderRecordPlateCue, { type: "reader_record_user_comment_cue" }>;
 }) {
+  const noteSnippet =
+    cue.noteText && cue.noteText.trim().length > 0
+      ? cue.noteText.trim().slice(0, 40)
+      : null;
   return (
     <>
       <div className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
-        笔记/评论
+        笔记
       </div>
-      <h3 className="mt-1 reader-serif text-xl leading-tight text-ink">
-        笔记/评论
+      <h3 className="mt-1 reader-serif text-lg leading-snug text-ink">
+        {noteSnippet ?? cue.anchor.selectedText}
       </h3>
       {cue.noteText ? (
-        <p className="mt-3 leading-6 text-ink-soft">{cue.noteText}</p>
+        <p className="mt-2 leading-6 text-ink-soft">{cue.noteText}</p>
       ) : (
-        <p className="mt-3 leading-6 text-muted">该笔记暂未提供正文。</p>
+        <p className="mt-2 leading-6 text-muted">该笔记暂未提供正文。</p>
       )}
-      <p className="mt-2 text-xs text-muted">资产 {cue.assetId}</p>
     </>
   );
 }
@@ -810,7 +814,7 @@ function ActiveAnchorInspector({
       data-reader-record-active-source={activeAnchor.source}
       data-reader-record-active-anchor-segment-id={anchorSegmentId}
       data-reader-record-active-selected-text={selectedText}
-      className="mb-5 rounded-md border border-border bg-background px-3 py-3 text-sm shadow-sm"
+      className="mb-5 rounded-md border border-border border-l-2 border-l-violet-300/60 bg-background px-3.5 py-3 text-sm shadow-sm"
       role="region"
       aria-live="polite"
       aria-label="锚点详情"
@@ -818,13 +822,15 @@ function ActiveAnchorInspector({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <ActiveAnchorDetails activeAnchor={activeAnchor} />
-          <p className="mt-3 text-xs text-muted">
-            锚点 {anchorSegmentId} · {selectedText}
-          </p>
+          {selectedText ? (
+            <p className="mt-2 truncate text-xs text-muted" title={selectedText}>
+              原文：{selectedText}
+            </p>
+          ) : null}
         </div>
         <button
           type="button"
-          className="rounded-sm px-2 py-1 text-xs text-muted hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-lens-blue/30"
+          className="ml-2 shrink-0 rounded-sm px-2 py-1 text-xs text-muted hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-lens-blue/30"
           aria-label="关闭锚点详情"
           onClick={onClose}
         >
@@ -1177,9 +1183,9 @@ function UnitTranslationElement({
       data-reader-record-unit-translation={element.unitId}
       data-reader-record-translation-display="supporting-paragraph"
       data-layer-id={element.layerId}
-      className="mt-2 border-l border-border/70 pl-3 font-sans text-[0.95rem] leading-7 text-ink-soft"
+      className="mt-3 border-l-2 border-border/60 pl-3.5 font-sans text-[0.95rem] leading-7 text-ink-soft"
     >
-      <span className="mr-2 text-[0.72rem] font-medium text-muted">
+      <span className="mr-2 text-xs font-medium text-muted">
         译文
       </span>
       {children}
@@ -1265,6 +1271,18 @@ export function ReaderRecordPlateSurface({
       window.document.removeEventListener("keydown", handleEscape);
     };
   }, [activeAnchor]);
+
+  useEffect(() => {
+    if (writeState.kind !== "saved" && writeState.kind !== "error") {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setWriteState({ kind: "idle" });
+    }, 4000);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [writeState]);
 
   const handleActivateMarkStack = useCallback(
     (marks: ReaderRecordPlateMark[]) => {

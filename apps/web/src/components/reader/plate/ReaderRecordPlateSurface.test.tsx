@@ -824,7 +824,7 @@ describe("ReaderRecordPlateSurface", () => {
     const inspector = screen.getByTestId("reader-record-active-anchor-inspector");
     expect(inspector.dataset.readerRecordActiveSource).toBe("mark");
     expect(inspector.textContent).toContain("用户高亮");
-    expect(inspector.textContent).toContain("资产 asset_highlight_1");
+    expect(inspector.textContent).toContain("原文：memory");
   });
 
   it("renders note/comment indicators with stable asset attributes", () => {
@@ -904,8 +904,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     const inspector = screen.getByTestId("reader-record-active-anchor-inspector");
     expect(inspector.dataset.readerRecordActiveSource).toBe("cue");
-    expect(inspector.textContent).toContain("笔记/评论");
-    expect(inspector.textContent).toContain("资产 asset_note_1");
+    expect(inspector.textContent).toContain("笔记");
     expect(inspector.textContent).toContain("Remember shapes as predicate.");
 
     fireEvent.keyDown(document, { key: "Escape" });
@@ -1351,5 +1350,120 @@ describe("ReaderRecordPlateSurface", () => {
       expect(source).not.toMatch(/\/api\/web\/reader-annotations/);
       expect(source).not.toMatch(/\/api\/web\/annotations/);
     }
+  });
+
+  it("active anchor inspector shows selected text with Chinese prefix instead of raw anchor segment id", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([makeUserAsset()])} />,
+    );
+
+    const highlight = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-asset-id="asset_highlight_1"]',
+    );
+    expect(highlight).not.toBeNull();
+    if (!highlight) return;
+
+    fireEvent.click(highlight);
+
+    const inspector = screen.getByTestId("reader-record-active-anchor-inspector");
+    expect(inspector.textContent).toContain("原文：memory");
+    expect(inspector.textContent).not.toContain("资产");
+    expect(inspector.textContent).not.toContain("asset_highlight_1");
+  });
+
+  it("note/comment inspector shows note label without redundant title or asset id", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface
+        snapshot={makeSnapshot([
+          makeUserAsset({
+            asset_id: "asset_note_inspector",
+            asset_type: "note",
+            anchor: {
+              anchor_type: "text_range",
+              base_id: "base_1",
+              unit_id: "unit_1",
+              anchor_segment_id: "seg_1",
+              sentence_id: "sent_1",
+              segment_type: "sentence",
+              offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+              start_offset: 21,
+              end_offset: 27,
+              selected_text: "shapes",
+              text_hash: computeUtf16FNV1a("shapes"),
+              hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+            },
+            note_text: "Remember shapes as predicate.",
+          }),
+        ])}
+      />,
+    );
+
+    const noteIndicator = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-asset-id="asset_note_inspector"]',
+    );
+    expect(noteIndicator).not.toBeNull();
+    if (!noteIndicator) return;
+
+    fireEvent.click(noteIndicator);
+
+    const inspector = screen.getByTestId("reader-record-active-anchor-inspector");
+    expect(inspector.textContent).toContain("笔记");
+    expect(inspector.textContent).not.toContain("笔记/评论");
+    expect(inspector.textContent).not.toContain("资产");
+    expect(inspector.textContent).not.toContain("asset_note_inspector");
+  });
+
+  it("selection action strip exposes write state data attribute", () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const strip = container.querySelector<HTMLElement>(
+      '[data-reader-record-actions="selection-context"]',
+    );
+    expect(strip).not.toBeNull();
+    expect(strip?.dataset.readerRecordWriteState).toBe("idle");
+  });
+
+  it("translation block uses improved spacing and label size", () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const translation = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="unit-translation"]',
+    );
+    expect(translation).not.toBeNull();
+    expect(translation?.className).toContain("border-l-2");
+    expect(translation?.className).toContain("mt-3");
+
+    const label = translation?.querySelector("span");
+    expect(label?.className).toContain("text-xs");
+    expect(label?.textContent).toBe("译文");
+  });
+
+  it("surface source code includes left accent borders and auto-dismiss timer for UI polish", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
+      "utf-8",
+    );
+    expect(source).toContain("border-l-2 border-l-lens-blue");
+    expect(source).toContain("border-l-2 border-l-amber");
+    expect(source).toContain("border-l-2 border-l-violet");
+    expect(source).toContain('window.setTimeout(() => {\n      setWriteState({ kind: "idle" });\n    }, 4000)');
+  });
+
+  it("active anchor inspector has left accent border for visual distinction", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([makeUserAsset()])} />,
+    );
+
+    const highlight = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-asset-id="asset_highlight_1"]',
+    );
+    expect(highlight).not.toBeNull();
+    if (!highlight) return;
+
+    fireEvent.click(highlight);
+
+    const inspector = screen.getByTestId("reader-record-active-anchor-inspector");
+    expect(inspector.className).toContain("border-l-2");
+    expect(inspector.className).toContain("border-l-violet");
   });
 });

@@ -246,3 +246,43 @@ def test_legacy_services_only_import_allowlisted_reader_orchestration_modules() 
         + "; offenders: "
         + ", ".join(offenders)
     )
+
+
+def test_reader_record_ask_modules_do_not_import_legacy_runtime_or_scene() -> None:
+    """D6-A6 minimal-slice boundary guard.
+
+    The new Reading Record Ask modules may validate Reading Record snapshot
+    facts, but they must not import the legacy `reader_ask` runtime or the old
+    render-scene service as hidden fact sources.
+    """
+    target_files = [
+        APP_DIR / "services/reader_record_ask/service.py",
+        APP_DIR / "api/routes/reader_record_ask.py",
+    ]
+    forbidden_modules = (
+        "app.services.reader_ask",
+        "app.services.reader_scene",
+    )
+    forbidden_strings = (
+        "render_scene_json",
+        "load_render_scene",
+    )
+
+    offenders: list[str] = []
+    for path in target_files:
+        if not path.is_file():
+            continue
+        source = _read_text(path)
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        for module in forbidden_modules:
+            if _has_module_import(source, module):
+                offenders.append(f"{rel} -> {module}")
+        for forbidden in forbidden_strings:
+            if forbidden in source:
+                offenders.append(f"{rel} -> {forbidden}")
+
+    assert offenders == [], (
+        "reader_record_ask must stay off legacy reader_ask/runtime scene "
+        "fact sources; offenders: "
+        + ", ".join(offenders)
+    )

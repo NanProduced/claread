@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.api.routes.reader_record_ask import router as reader_record_ask_router
@@ -95,6 +95,33 @@ class TestReaderRecordAskRoute:
         )
 
         assert response.status_code == 422
+
+    @_mock_auth()
+    @_mock_db_connect()
+    @patch(
+        "app.services.reader_record_ask.service.ReaderOrchestrationRepository.load_snapshot_facts",
+        new_callable=AsyncMock,
+    )
+    def test_messages_without_anchor_still_validate_reading_record_snapshot(
+        self,
+        mock_load_snapshot_facts,
+        mock_db_connect,
+        mock_auth,
+    ) -> None:
+        client = create_client()
+        mock_load_snapshot_facts.return_value = MagicMock()
+
+        response = client.post(
+            f"/reader/records/{RECORD_ID}/ask/messages",
+            headers=AUTH_HEADERS,
+            json={"content": "Explain the article"},
+        )
+
+        assert response.status_code == 409
+        data = response.json()
+        assert data["code"] == "reader_record_ask_execution_pending"
+        assert data["reading_record_id"] == RECORD_ID
+        mock_load_snapshot_facts.assert_awaited_once()
 
     @_mock_auth()
     @_mock_db_connect()
@@ -228,7 +255,7 @@ class TestReaderRecordAskRoute:
 
 class TestReaderRecordAskService:
     @pytest.mark.asyncio
-    async def test_send_message_valid_anchor_pending(self) -> None:
+    async def test_send_message_without_anchor_pending_after_snapshot_validation(self) -> None:
         from app.services.reader_record_ask.service import (
             send_reading_record_ask_message,
         )
@@ -239,14 +266,55 @@ class TestReaderRecordAskService:
         request.entry_action = "ask_about_this"
         request.model = None
 
-        result = await send_reading_record_ask_message(
-            user_id=UUID(USER_ID),
-            reading_record_id=RECORD_ID,
-            request=request,
-        )
+        with (
+            _mock_db_connect(),
+            patch(
+                "app.services.reader_record_ask.service.ReaderOrchestrationRepository.load_snapshot_facts",
+                new_callable=AsyncMock,
+            ) as mock_load_snapshot_facts,
+        ):
+            mock_load_snapshot_facts.return_value = MagicMock()
+            result = await send_reading_record_ask_message(
+                user_id=UUID(USER_ID),
+                reading_record_id=RECORD_ID,
+                request=request,
+            )
 
         assert isinstance(result, ReaderRecordAskPendingResponse)
         assert result.code == "reader_record_ask_execution_pending"
+
+    @pytest.mark.asyncio
+    async def test_send_message_without_anchor_returns_not_found(self) -> None:
+        from app.services.reader_record_ask.service import (
+            send_reading_record_ask_message,
+        )
+
+        request = MagicMock()
+        request.anchor = None
+        request.content = "hello"
+        request.entry_action = "ask_about_this"
+        request.model = None
+
+        with (
+            _mock_db_connect(),
+            patch(
+                "app.services.reader_record_ask.service.ReaderOrchestrationRepository.load_snapshot_facts",
+                new_callable=AsyncMock,
+            ) as mock_load_snapshot_facts,
+        ):
+            mock_load_snapshot_facts.side_effect = LookupError(
+                "reading record not visible",
+            )
+            with pytest.raises(HTTPException) as excinfo:
+                await send_reading_record_ask_message(
+                    user_id=UUID(USER_ID),
+                    reading_record_id=RECORD_ID,
+                    request=request,
+                )
+
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail["code"] == READING_RECORD_NOT_FOUND
+        assert excinfo.value.detail["field"] == "reading_record_id"
 
     @pytest.mark.asyncio
     async def test_confirm_action_pending(self) -> None:

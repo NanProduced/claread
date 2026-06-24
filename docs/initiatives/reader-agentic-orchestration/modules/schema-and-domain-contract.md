@@ -656,8 +656,13 @@ D6 最小分层只规定"按能力拆分、不可越层调用"，不规定具体
 3. **D6-A3 Ask tool signature 切换（write-proposal only，已落地）**：agent tool signature 已可接受 `UserEditorialAssetAnchor` 同形 Reading Record anchor payload；tool 返回的 action proposal payload 可携带新 `anchor`，同时保留 legacy `ReaderAskAnchorRef` / `target_key` / `target_sentence_id` 兼容；tool 调用仍受 Ask write gate 控制，不写 DB；Ask message / citation / stream 协议不动。
 4. **D6-A4 Ask supplement 写入切线**：保留 `reader_ask_supplements` 表与现有 schema；把 `supplements.py` 中所有 `sentence_id` / `paragraph_id` / `target_key` 写 SQL 改为基于 anchor_segment_id + UTF-16；写前必须经过 Ask write gate + Anchor Validator；新写入不影响 `/scene` 旧读取。
 5. **D6-A5 `user_annotations` / `reader_notes` 双合同 spike（D6-U1 前置，D6-U2 决策后收窄为 single-range first）**：保留两张表；引入 `UserEditorialAssetAnchor` 作为 request body 的可选 `anchor` 字段；旧 `target_key` 字段 deprecated optional；`analysis_record_id` 改为 nullable deprecated optional。当前 spike 不新增 DB migration，不写 legacy 表；收到 `anchor` 时先校验 `selected_text == anchor.selected_text`，再走 Reading Record anchor gate。gate 失败返回 typed HTTP 400；gate 成功返回 HTTP 409 + `code = "user_editorial_asset_write_pending"`，表示已验证但 persistence deferred。`multi_text` 不进入该 production branch；后续必须走 `UserEditorialAssetAnchorSet` / multi-range DTO。D6-U3 design 结论是 V1c 先扩展 `user_annotations` / `reader_notes`，不先引入统一 `user_editorial_assets` 表。
-6. **D6-A6 Web BFF / route 切线**：新增 `/api/web/reader-records/{recordId}/reader-ask/threads` 等新 route handler；旧 `/api/web/reader-ask/threads` 与 `/api/web/reader-notes` 保留为 legacy；新 route 不复用 BFF `confirmReaderAskActionForWeb` 中旧 `target_key` 分支。
+6. **D6-A6 Reading Record Ask 最小切片**：先落 FastAPI-only 新 route `/reader/records/{reading_record_id}/ask/messages` 与 `/reader/records/{reading_record_id}/ask/actions/{action_id}/confirm`。`messages` path 只接受 `ReaderRecordAskMessageRequest`：route `reading_record_id` 必须先绑定真实 Reading Record snapshot；若携带 `anchor`，再经 `load_validated_reading_record_anchor(...)` 校验；成功后只返回 typed HTTP 409 `pending`，不创建 legacy `reader_ask_threads` / `reader_ask_turn_runs` / `reader_ask_supplements`。`confirm` path 只返回 stable `pending`，不调用 legacy `reader_ask.service.confirm_action`。本轮**不**新增 `/api/web/reader-record/.../ask` BFF / route，不启用 `/app/reader-record/{recordId}` Ask 按钮；旧 `/api/web/reader-ask/*` 与旧 `ReaderAskMessageStreamRequest` contract 保持 legacy。
 7. **D6-A7 Plate Surface UI 接入（不在本轮审计范围）**：必须等 Plate Surface 视觉方案落地后再切；本轮不做。
+
+补充边界：
+
+- legacy `/reader-ask/threads/{threadId}/messages/stream` 与新的 `/reader/records/{reading_record_id}/ask/messages` 继续使用**两套 request schema**。本轮不在旧 stream schema 内增加 “anchor kind discriminator”；旧 route 直接拒绝 top-level Reading Record `anchor` 字段，避免把 Reading Record id 混进 legacy Ask runtime。
+- Ask supplement 在 Reading Record path 的推荐落点仍是**独立 ask sidecar writer / projection**（现阶段沿 `ask_supplements` 视图与 `scope = "ask_supplement"` 语义前进），而不是 user asset，也不是直接并入通用 enhancement layer。原因：它是 assistant-authored、会话触发、可确认/可删除的 sidecar 内容，生命周期和 ownership 都不同于 user asset 与 pipeline enhancement。
 
 ### D6-A0 暂不切的旧能力与原因
 
@@ -676,6 +681,7 @@ D6 最小分层只规定"按能力拆分、不可越层调用"，不规定具体
 
 - `apps/web/src/lib/reader-plate/bridges/ask/` 不引用 `targetKey` 之外对旧 `target_key` / `sentence_id` / `paragraph_id` 的 hardcoded 字符串（仅允许在 `adapters.ts` 的 `targetKey` 兼容层内部出现）。
 - `services/api/app/services/reader_ask/service.py` 中任何新增文件不允许 `import render_scene`；现有 `load_render_scene` 调用逐步收口到 read-only legacy adapter。
+- `services/api/app/services/reader_record_ask/{service}.py` 与 `api/routes/reader_record_ask.py` 不允许 import legacy `app.services.reader_ask` / `app.services.reader_scene`，也不允许把 `render_scene_json` / `load_render_scene` 当事实源。
 - `services/api/app/schemas/{user_annotations,reader_notes,reader_ask,reader_scene,analysis}.py` 在 D6 schema 演进中必须保留 deprecated optional 字段；不允许直接删除 `sentence_id` / `paragraph_id` / `target_key` / `analysis_record_id` / `client_record_id` 字段。
 - `apps/web/src/components/reader/{ReaderNotePanel,AnnotationGutter,SelectionToolbar,AiWorkspacePanel,ask-chat/*}.tsx` 暂不切 UI；本轮不允许把它们的 import / state / props 切到新 anchor schema。
 
