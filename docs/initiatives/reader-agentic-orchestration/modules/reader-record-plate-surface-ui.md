@@ -1,6 +1,6 @@
 # Reader Record Plate Surface UI
 
-> 状态：目标方案草案
+> 状态：目标方案草案；UI-D6A 默认 Plate 真实流程已验收
 > 最后更新：2026-06-24
 > 范围：`/app/reader-record/{recordId}` 在 Agentic Orchestration 架构下的 Reader Record 解析页 UI/UX、Plate.js 文档表面、选择交互、词典/Ask 联动、用户高亮/笔记和第一版实现边界。
 
@@ -384,6 +384,13 @@ adapter 只生成 read-only draft，用于 Lookup、Copy、disabled Ask preview�
 - progress strip 必须有稳定高度，避免 CLS。
 - loading 动效遵守 `prefers-reduced-motion`。
 
+UI-D6A 验收结论：
+
+- `/app/reader-record/{recordId}` 默认 loaded surface 是 `ReaderRecordPlateSurface`，Workbench 只作为显式 fallback。
+- `processing`、`readable_enhancing`、`failed`、`action_required` 都使用 compact progress chip / slim strip 表达；正文和已投影译文不被状态 UI 替换。
+- Plate 默认路径不显示旧 Workbench 大状态卡：不出现 `reader-record-status-banner` 或 `reader-record-enhancement-progress`。
+- 当前组件已符合轻量状态目标，本轮不需要额外运行时视觉改动。
+
 ## 模式
 
 ### 沉浸模式
@@ -766,7 +773,7 @@ Ask Supplement 进入文档后不渲染为卡片。它应表现为文档注释 /
 - unit 级译文过渡展示为“本段译文”。
 - 不显示旧式 grammar / sentence analysis 卡片。
 
-当前实现状态（UI-D3 / UI-D4 / UI-D5 read-only scaffold）：
+当前实现状态（UI-D3 / UI-D4 / UI-D5 / UI-D6A read-only scaffold）：
 
 - 已新增 `ReaderRecordPlateSurface` 组件，输入为 `ReaderPlateSnapshotDto`，内部直接调用 `projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot)`。
 - scaffold 使用 `Plate + readOnly` 渲染，不显示 editor formatting toolbar。
@@ -776,9 +783,12 @@ Ask Supplement 进入文档后不渲染为卡片。它应表现为文档注释 /
 - UI-D5 起 `/app/reader-record/{recordId}` loaded state 默认渲染 `ReaderRecordPlateSurface`，用于真实页面验证新 Plate.js 解析页。
 - Workbench-backed surface 仍保留为受控 fallback：设置 `NEXT_PUBLIC_READER_RECORD_SURFACE_MODE=workbench`，或在浏览器 localStorage 写入 `claread:reader-record-surface-mode=workbench` 可切回。
 - UI-D5 不影响 legacy `/app/reader/{recordId}`，不改 `/app/read` submit 逻辑，也不迁移 Library、Vocabulary source links、command palette legacy records 或 active analysis task。
-- Lookup / Copy 在 UI-D3 中可先保持本地只读或 disabled；当前 scaffold 选择全部 action disabled，避免误导用户认为选择桥已完成。
-- Ask / Highlight / Note / Feedback 在 UI-D3 / UI-D4 / UI-D5 必须 disabled / coming soon，不允许调用 `/api/web/reader-ask`、`/api/web/reader-notes`、`/api/web/reader-annotations`。
-- UI-D3 / UI-D4 / UI-D5 不持久化 Plate path / Slate path；所有 DOM data attribute 只暴露 stable domain id，供后续 active anchor adapter 与 selection bridge 使用。
+- UI-D6A 锁定 `/app/read -> /app/reader-record/{recordId}` 的默认真实阅读路径：默认 mode 为 `plate`；Workbench fallback 只能通过 helper/env/localStorage 显式选择，不改变默认产品页。
+- UI-D6A 已用 characterization tests 覆盖 Plate progressive loading：`processing` / `readable_enhancing` / `failed` / `action_required` 均保留正文并使用 compact progress，不回退到旧 Workbench 状态卡。
+- UI-D6A 静态 guard 锁定默认 Plate route / surface / projection 不引用 `/scene`、`render_scene_json`、`analysis-tasks`、legacy reader route 或 Ask/notes/annotations 写 API。
+- D6-U6 起 Lookup / Copy 在有效 stable-source single-range selection 上启用：Copy 使用浏览器 clipboard API 复制 `selected_text`；Lookup 复用 `/api/web/dict/lookup` 只读 BFF 并显示轻量结果面板；multi-segment / 非 stable-source selection 暂不暴露可执行动作。
+- Ask / Highlight / Note / Feedback 在 UI-D3 / UI-D4 / UI-D5 / UI-D6A 必须 disabled / coming soon，不允许调用 `/api/web/reader-ask`、`/api/web/reader-notes`、`/api/web/reader-annotations`。
+- UI-D3 / UI-D4 / UI-D5 / UI-D6A 不持久化 Plate path / Slate path；所有 DOM data attribute 只暴露 stable domain id，供后续 active anchor adapter 与 selection bridge 使用。
 - UI-D5 保留原有 snapshot polling / reload 行为；`layer_published`、`record_product_state_updated`、`projection_reset_required` 触发 reload 后，Plate surface 读取新的 `ReaderPlateSnapshotDto` 并重新 projection。
 
 ### V1b: Plate Selection And Rails
@@ -835,6 +845,7 @@ V2 schema 完成后：
 - Ask：直到 D6-A3/A6 新 route 和 contract 稳定。
 - Comment/Note：直到 V1c Reading Record anchor gate 完成。
 - Highlight：直到 V1c Reading Record anchor gate 完成。
+- Feedback：直到 AI mark/cue feedback contract 与新 route 稳定。
 - Ask supplement save-to-document：直到 Ask Supplement Projection 设计和 API 完成。
 - sentence_analysis chunk underlines：直到 V1d best-effort 或 Sentence Analysis V2；默认不显示。
 - translation pair group：直到 Translation V2。

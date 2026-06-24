@@ -1,22 +1,25 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { computeUtf16FNV1a } from "@claread/contracts";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   READER_PLATE_SNAPSHOT_SCHEMA_KIND,
   READER_TEXT_RANGE_HASH_ALGORITHM,
   READER_TEXT_RANGE_OFFSET_UNIT,
+  type ReaderAnchorSegmentNodeDto,
   type ReaderEnhancementProgressDto,
   type ReaderGrammarNoteMarkDto,
   type ReaderPlateSnapshotDto,
+  type ReaderSourceBlockNodeDto,
   type ReaderSnapshotUserAssetDto,
   type ReaderUnitNodeDto,
   type ReaderVocabularyMarkDto,
 } from "@/types/api/reader-plate";
+import type { WebDictResult } from "@/types/api/dict";
 
 import { ReaderRecordPlateSurface } from "./ReaderRecordPlateSurface";
 
@@ -24,7 +27,10 @@ const SOURCE_TEXT = "Institutional memory shapes policy choices.";
 const TRANSLATION_TEXT = "制度记忆会塑造政策选择。";
 
 afterEach(() => {
+  window.getSelection()?.removeAllRanges();
   cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function makeVocabularyMark(
@@ -289,6 +295,202 @@ function makeSnapshot(
   };
 }
 
+function makeAnchorSegmentNode(
+  overrides: Partial<ReaderAnchorSegmentNodeDto> & {
+    anchor_segment_id: string;
+    sentence_id: string;
+    unit_start_utf16: number;
+    unit_end_utf16: number;
+    text: string;
+  },
+): ReaderAnchorSegmentNodeDto {
+  const {
+    text,
+    anchor_segment_id,
+    sentence_id,
+    unit_start_utf16,
+    unit_end_utf16,
+    ...rest
+  } = overrides;
+
+  return {
+    type: "reader_anchor_segment",
+    owner: "stable",
+    base_id: "base_1",
+    unit_id: "unit_1",
+    anchor_segment_id,
+    sentence_id,
+    segment_type: "sentence",
+    boundary_quality: "normal",
+    base_start_utf16: unit_start_utf16,
+    base_end_utf16: unit_end_utf16,
+    unit_start_utf16,
+    unit_end_utf16,
+    text_hash: computeUtf16FNV1a(text),
+    hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+    children: [
+      {
+        text,
+        owner: "stable",
+        lock_source: true,
+        source_role: "segment_text",
+        base_start_utf16: unit_start_utf16,
+        base_end_utf16: unit_end_utf16,
+        anchor_segment_id,
+        segment_start_utf16: 0,
+        segment_end_utf16: text.length,
+      },
+    ],
+    ...rest,
+  };
+}
+
+function makeSplitSegmentSnapshot(): ReaderPlateSnapshotDto {
+  const firstText = "Institutional memory ";
+  const secondText = "shapes policy choices.";
+  const firstSegment = makeAnchorSegmentNode({
+    anchor_segment_id: "seg_1",
+    sentence_id: "sent_1",
+    unit_start_utf16: 0,
+    unit_end_utf16: firstText.length,
+    text: firstText,
+  });
+  const secondSegment = makeAnchorSegmentNode({
+    anchor_segment_id: "seg_2",
+    sentence_id: "sent_2",
+    unit_start_utf16: firstText.length,
+    unit_end_utf16: firstText.length + secondText.length,
+    text: secondText,
+  });
+  const sourceBlock: ReaderSourceBlockNodeDto = {
+    type: "reader_source_block",
+    owner: "stable",
+    base_id: "base_1",
+    unit_id: "unit_1",
+    base_start_utf16: 0,
+    base_end_utf16: SOURCE_TEXT.length,
+    children: [firstSegment, secondSegment],
+  };
+  const unit: ReaderUnitNodeDto = {
+    ...makeUnit(),
+    children: [sourceBlock],
+  };
+
+  return {
+    ...makeSnapshot(),
+    anchor_segments: [
+      {
+        anchor_segment_id: "seg_1",
+        sentence_id: "sent_1",
+        paragraph_id: "unit_1",
+        unit_id: "unit_1",
+        order_index: 1,
+        unit_order_index: 1,
+        segment_type: "sentence",
+        boundary_quality: "normal",
+        base_start_utf16: 0,
+        base_end_utf16: firstText.length,
+        unit_start_utf16: 0,
+        unit_end_utf16: firstText.length,
+        text_hash: computeUtf16FNV1a(firstText),
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+      {
+        anchor_segment_id: "seg_2",
+        sentence_id: "sent_2",
+        paragraph_id: "unit_1",
+        unit_id: "unit_1",
+        order_index: 2,
+        unit_order_index: 2,
+        segment_type: "sentence",
+        boundary_quality: "normal",
+        base_start_utf16: firstText.length,
+        base_end_utf16: firstText.length + secondText.length,
+        unit_start_utf16: firstText.length,
+        unit_end_utf16: firstText.length + secondText.length,
+        text_hash: computeUtf16FNV1a(secondText),
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+    ],
+    value: [unit],
+  };
+}
+
+function makeDictionaryEntryResult(query = "memory"): WebDictResult {
+  return {
+    kind: "entry",
+    query,
+    provider: "test",
+    cached: true,
+    entry: {
+      id: 1,
+      word: query,
+      baseWord: query,
+      phonetic: "/memory/",
+      meanings: [
+        {
+          partOfSpeech: "noun",
+          definitions: [
+            {
+              meaning: "the ability to remember information",
+              example: "Institutional memory shapes choices.",
+            },
+          ],
+        },
+      ],
+      examples: [],
+      phrases: [],
+      entryKind: "entry",
+      exchange: [],
+      tags: [],
+    },
+  };
+}
+
+function installClipboardMock() {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+  return writeText;
+}
+
+function firstTextNode(element: HTMLElement): Text {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  const node = walker.nextNode();
+  if (!node) {
+    throw new Error("Expected text node");
+  }
+  return node as Text;
+}
+
+function selectTextInElement(element: HTMLElement, startOffset: number, endOffset: number) {
+  const textNode = firstTextNode(element);
+  const range = document.createRange();
+  range.setStart(textNode, startOffset);
+  range.setEnd(textNode, endOffset);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  document.dispatchEvent(new Event("selectionchange"));
+}
+
+function selectAcrossElements(
+  startElement: HTMLElement,
+  startOffset: number,
+  endElement: HTMLElement,
+  endOffset: number,
+) {
+  const range = document.createRange();
+  range.setStart(firstTextNode(startElement), startOffset);
+  range.setEnd(firstTextNode(endElement), endOffset);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  document.dispatchEvent(new Event("selectionchange"));
+}
+
 describe("ReaderRecordPlateSurface", () => {
   it("projects and renders stable source text", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
@@ -432,6 +634,13 @@ describe("ReaderRecordPlateSurface", () => {
   it("keeps read-only scaffold actions disabled", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
+    for (const action of ["lookup", "copy"]) {
+      const button = container.querySelector<HTMLButtonElement>(
+        `[data-reader-record-action="${action}"]`,
+      );
+      expect(button?.disabled).toBe(true);
+    }
+
     for (const action of ["ask", "highlight", "note", "feedback"]) {
       const button = container.querySelector<HTMLButtonElement>(
         `[data-reader-record-action="${action}"]`,
@@ -440,20 +649,198 @@ describe("ReaderRecordPlateSurface", () => {
     }
   });
 
+  it("maps a stable source selection to an anchor draft with unit-local UTF-16 offsets", async () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+
+    const actions = screen.getByTestId("reader-record-plate-disabled-actions");
+    await waitFor(() => {
+      expect(actions.dataset.readerRecordSelectionSupported).toBe("true");
+    });
+    expect(actions.dataset.readerRecordSelectionDraftCount).toBe("1");
+    expect(actions.dataset.readerRecordSelectionAnchorSegmentId).toBe("seg_1");
+    expect(actions.dataset.readerRecordSelectionStartOffset).toBe("14");
+    expect(actions.dataset.readerRecordSelectionEndOffset).toBe("20");
+  });
+
+  it("maps selection in the second anchor segment of the same unit using the segment baseline", async () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSplitSegmentSnapshot()} />,
+    );
+    const secondSegmentLeaf = container.querySelector<HTMLElement>(
+      '[data-anchor-segment-id="seg_2"] [data-reader-record-leaf="segment_text"]',
+    );
+    expect(secondSegmentLeaf).not.toBeNull();
+    if (!secondSegmentLeaf) {
+      throw new Error("Expected second segment leaf");
+    }
+
+    selectTextInElement(secondSegmentLeaf, 7, 13);
+
+    const actions = screen.getByTestId("reader-record-plate-disabled-actions");
+    await waitFor(() => {
+      expect(actions.dataset.readerRecordSelectionSupported).toBe("true");
+    });
+    expect(actions.dataset.readerRecordSelectionAnchorSegmentId).toBe("seg_2");
+    expect(actions.dataset.readerRecordSelectionStartOffset).toBe("28");
+    expect(actions.dataset.readerRecordSelectionEndOffset).toBe("34");
+  });
+
+  it("copies selected text through the Clipboard API without calling a backend", async () => {
+    const writeText = installClipboardMock();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+
+    const copyButton = screen.getByRole<HTMLButtonElement>("button", {
+      name: "Copy",
+    });
+    await waitFor(() => {
+      expect(copyButton.disabled).toBe(false);
+    });
+    fireEvent.click(copyButton);
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("memory");
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("runs dictionary lookup only for a valid single anchor draft", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(makeDictionaryEntryResult("memory")), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+
+    const lookupButton = screen.getByRole<HTMLButtonElement>("button", {
+      name: "Lookup",
+    });
+    await waitFor(() => {
+      expect(lookupButton.disabled).toBe(false);
+    });
+    fireEvent.click(lookupButton);
+
+    await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const lookupUrl = String(fetchMock.mock.calls[0]?.[0]);
+    expect(lookupUrl).toContain("/api/web/dict/lookup?");
+    expect(lookupUrl).toContain("word=memory");
+    expect(screen.getByText("the ability to remember information")).toBeTruthy();
+  });
+
+  it("keeps lookup, copy, and write actions disabled for unsupported cross-segment selections", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSplitSegmentSnapshot()} />,
+    );
+    const firstSegmentLeaf = container.querySelector<HTMLElement>(
+      '[data-anchor-segment-id="seg_1"] [data-reader-record-leaf="segment_text"]',
+    );
+    const secondSegmentLeaf = container.querySelector<HTMLElement>(
+      '[data-anchor-segment-id="seg_2"] [data-reader-record-leaf="segment_text"]',
+    );
+    expect(firstSegmentLeaf).not.toBeNull();
+    expect(secondSegmentLeaf).not.toBeNull();
+    if (!firstSegmentLeaf || !secondSegmentLeaf) {
+      throw new Error("Expected split segment leaves");
+    }
+
+    selectAcrossElements(firstSegmentLeaf, 14, secondSegmentLeaf, 13);
+
+    const actions = screen.getByTestId("reader-record-plate-disabled-actions");
+    await waitFor(() => {
+      expect(actions.dataset.readerRecordSelectionDraftCount).toBe("2");
+    });
+    expect(actions.dataset.readerRecordSelectionSupported).toBe("false");
+
+    for (const action of ["lookup", "copy", "ask", "highlight", "note", "feedback"]) {
+      const button = container.querySelector<HTMLButtonElement>(
+        `[data-reader-record-action="${action}"]`,
+      );
+      expect(button?.disabled).toBe(true);
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "Lookup" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not expose executable actions for selections outside stable source text", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const translation = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="unit-translation"]',
+    );
+    expect(translation).not.toBeNull();
+    if (!translation) {
+      throw new Error("Expected translation block");
+    }
+
+    selectTextInElement(translation, 0, 2);
+
+    const actions = screen.getByTestId("reader-record-plate-disabled-actions");
+    await waitFor(() => {
+      expect(actions.dataset.readerRecordSelectionDraftCount).toBe("0");
+    });
+    expect(actions.dataset.readerRecordSelectionSupported).toBe("false");
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-reader-record-action="lookup"]')
+        ?.disabled,
+    ).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("does not import legacy Workbench, ReaderVm, scene adapters, or write routes", () => {
     const sources = [
       "src/components/reader/plate/ReaderRecordPlateSurface.tsx",
       "src/lib/reader-plate/projection/reader-record-plate-document.ts",
+      "src/lib/reader-plate/projection/reader-record-anchor-draft.ts",
+      "src/lib/reader-plate/projection/reader-record-dom-selection.ts",
     ].map((filePath) => readFileSync(resolve(process.cwd(), filePath), "utf8"));
 
     for (const source of sources) {
       expect(source).not.toMatch(/ReaderRecordWorkbenchSurface/);
       expect(source).not.toMatch(/ReaderVm/);
+      expect(source).not.toMatch(/ReaderMockVm/);
+      expect(source).not.toMatch(/readPlateReaderSelection/);
       expect(source).not.toMatch(/adaptReaderPlateSnapshotToReaderVm/);
       expect(source).not.toMatch(/renderSceneToPlateDocument/);
       expect(source).not.toMatch(/render_scene_json/);
       expect(source).not.toMatch(/analysis-tasks/);
       expect(source).not.toMatch(/\/scene/);
+      expect(source).not.toMatch(/platePath|slatePath|plate_path|slate_path/);
+      expect(source).not.toMatch(/\/api\/web\/writer/);
       expect(source).not.toMatch(/\/api\/web\/reader-ask/);
       expect(source).not.toMatch(/\/api\/web\/reader-notes/);
       expect(source).not.toMatch(/\/api\/web\/reader-annotations/);

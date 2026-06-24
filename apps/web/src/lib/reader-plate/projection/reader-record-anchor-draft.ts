@@ -5,14 +5,11 @@ import type {
   ReaderSnapshotAnchorSegmentDto,
 } from "@/types/api/reader-plate";
 
-import type { ReaderSelectionSegment } from "../primitives/selection-types";
-
 /**
  * D6-A1 read-only anchor draft projection.
  *
  * The new `/app/reader-record/{recordId}` surface must be able to convert a
- * `ReaderTextSelection` produced by `readPlateReaderSelection` into the new
- * Reading Record anchor shape
+ * a read-only source selection into the new Reading Record anchor shape
  *   (record_id, base_id, generation, unit_id, anchor_segment_id,
  *    unit-local UTF-16 start/end, selected_text, text_hash, scope)
  * without touching any write API.
@@ -50,6 +47,15 @@ export interface ReaderRecordAnchorDraft {
   text_hash: string;
   hash_algorithm: "fnv1a32-utf16";
   scope: ReaderRecordAnchorScope;
+}
+
+export interface ReaderRecordAnchorDraftSelectionSegment {
+  paragraphId: string;
+  sentenceId: string;
+  selectedText: string;
+  startOffset: number;
+  endOffset: number;
+  textHash: string;
 }
 
 interface AnchorSegmentIndex {
@@ -104,7 +110,7 @@ function utf16Length(value: string): number {
 
 function resolveAnchorSegment(
   index: AnchorSegmentIndex,
-  segment: ReaderSelectionSegment,
+  segment: ReaderRecordAnchorDraftSelectionSegment,
 ): ReaderSnapshotAnchorSegmentDto | null {
   // Prefer (unit_id, sentence_id) — the projection sets
   // `paragraphId = unit_id`, so segment.paragraphId carries the unit id.
@@ -125,7 +131,7 @@ function resolveAnchorSegment(
 
 function buildDraft(
   snapshot: ReaderPlateSnapshotDto,
-  segment: ReaderSelectionSegment,
+  segment: ReaderRecordAnchorDraftSelectionSegment,
   anchor: ReaderSnapshotAnchorSegmentDto,
 ): ReaderRecordAnchorDraft | null {
   if (
@@ -188,7 +194,7 @@ function buildDraft(
 
 export function anchorDraftForSelectionSegment(
   snapshot: ReaderPlateSnapshotDto,
-  segment: ReaderSelectionSegment,
+  segment: ReaderRecordAnchorDraftSelectionSegment,
 ): ReaderRecordAnchorDraft | null {
   const index = buildAnchorSegmentIndex(snapshot.anchor_segments);
   const anchor = resolveAnchorSegment(index, segment);
@@ -200,7 +206,7 @@ export function anchorDraftForSelectionSegment(
 
 export function anchorDraftsForSelection(
   snapshot: ReaderPlateSnapshotDto,
-  selection: { segments: ReaderSelectionSegment[] },
+  selection: { segments: ReaderRecordAnchorDraftSelectionSegment[] },
 ): ReaderRecordAnchorDraft[] {
   const drafts: ReaderRecordAnchorDraft[] = [];
   for (const segment of selection.segments) {

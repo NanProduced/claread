@@ -520,7 +520,7 @@ function fulfilledRouteParams(recordId: string) {
 
 function renderReadingRecordPage(
   recordId: string,
-  surfaceMode: ReaderRecordSurfaceMode | "default" = "workbench",
+  surfaceMode: ReaderRecordSurfaceMode | "default" = "default",
 ) {
   if (surfaceMode === "default") {
     Reflect.deleteProperty(globalThis, "__CLAREAD_READER_RECORD_SURFACE_MODE__");
@@ -650,10 +650,13 @@ describe("ReadingRecordPage static contract", () => {
       expect(source).not.toContain("renderSceneToPlateDocument");
       expect(source).not.toContain("render_scene_json");
       expect(source).not.toContain("analysis-tasks");
+      expect(source).not.toContain("legacyAppReaderRoute");
+      expect(source).not.toContain("/app/reader/");
       expect(source).not.toContain("/scene");
       expect(source).not.toContain("/api/web/reader-ask");
       expect(source).not.toContain("/api/web/reader-notes");
       expect(source).not.toContain("/api/web/reader-annotations");
+      expect(source).not.toContain("/api/web/annotations");
     });
   });
 });
@@ -668,7 +671,7 @@ describe("ReadingRecordPage direct load", () => {
     });
     const fetchMock = installReaderRecordFetchMock(snapshot);
 
-    const { container } = renderReadingRecordPage("rec_product_1", "default");
+    const { container } = renderReadingRecordPage("rec_product_1");
 
     await screen.findByTestId("reader-record-plate-surface");
     expect(screen.queryByTestId("reader-record-workbench-surface")).toBeNull();
@@ -705,6 +708,115 @@ describe("ReadingRecordPage direct load", () => {
     });
   });
 
+  it("keeps Workbench fallback available without changing the default Plate page", async () => {
+    expect(DEFAULT_READER_RECORD_SURFACE_MODE).toBe("plate");
+
+    const snapshot = makeSnapshot("rec_surface_mode_1", {}, {
+      translationScope: "unit",
+    });
+    installReaderRecordFetchMock(snapshot);
+
+    renderReadingRecordPage("rec_surface_mode_1", "workbench");
+
+    await screen.findByTestId("reader-record-workbench-surface");
+    expect(screen.queryByTestId("reader-record-plate-surface")).toBeNull();
+
+    cleanup();
+    vi.unstubAllGlobals();
+    installReaderRecordFetchMock(snapshot);
+
+    renderReadingRecordPage("rec_surface_mode_1");
+
+    await screen.findByTestId("reader-record-plate-surface");
+    expect(screen.queryByTestId("reader-record-workbench-surface")).toBeNull();
+  });
+
+  it.each([
+    {
+      recordId: "rec_plate_processing_1",
+      overallStatus: "processing" as const,
+      productState: "processing" as const,
+      layerStatus: "processing" as const,
+      label: "解析生成中",
+    },
+    {
+      recordId: "rec_plate_readable_enhancing_1",
+      overallStatus: "readable_enhancing" as const,
+      productState: "readable_enhancing" as const,
+      layerStatus: "queued" as const,
+      label: "解析生成中",
+    },
+    {
+      recordId: "rec_plate_failed_1",
+      overallStatus: "failed" as const,
+      productState: "failed" as const,
+      layerStatus: "failed" as const,
+      label: "部分解析失败",
+    },
+    {
+      recordId: "rec_plate_action_required_1",
+      overallStatus: "action_required" as const,
+      productState: "action_required" as const,
+      layerStatus: "action_required" as const,
+      label: "需要确认",
+    },
+  ])(
+    "renders lightweight Plate progress for $overallStatus without replacing the body",
+    async ({ recordId, overallStatus, productState, layerStatus, label }) => {
+      const snapshot = makeSnapshot(
+        recordId,
+        {
+          product_state: productState,
+          readiness_state: "article_ready",
+        },
+        {
+          enhancementProgress: makeEnhancementProgress({
+            overall_status: overallStatus,
+            layers: [
+              {
+                capability: "translation",
+                layer_type: "translation",
+                status: layerStatus,
+                job_status:
+                  layerStatus === "failed" || layerStatus === "action_required"
+                    ? "failed_terminal"
+                    : layerStatus === "processing"
+                      ? "claimed"
+                      : "queued",
+                job_type: "translate_unit",
+                job_id: `job_${recordId}`,
+                target_type: "unit",
+                target_scope: "unit",
+                target_key: "unit_1",
+              },
+            ],
+          }),
+          translationScope: "unit",
+        },
+      );
+      installReaderRecordFetchMock(snapshot);
+
+      const { container } = renderReadingRecordPage(recordId);
+
+      await screen.findByTestId("reader-record-plate-surface");
+      const progress = screen.getByTestId("reader-record-plate-progress");
+      const source = container.querySelector<HTMLElement>(
+        '[data-reader-record-node="source-block"]',
+      );
+      const translation = container.querySelector<HTMLElement>(
+        '[data-reader-record-node="unit-translation"]',
+      );
+
+      expect(progress.getAttribute("data-reader-record-progress")).toBe("compact");
+      expect(progress.textContent).toContain(label);
+      expect(screen.getByTestId("reader-record-plate-progress-strip")).toBeTruthy();
+      expect(screen.queryByTestId("reader-record-status-banner")).toBeNull();
+      expect(screen.queryByTestId("reader-record-enhancement-progress")).toBeNull();
+      expect(source?.textContent).toContain(SOURCE_TEXT);
+      expect(translation?.textContent).toContain(TRANSLATION_TEXT);
+    },
+  );
+
   it("shows queued and processing enhancement progress without changing the workbench shell", async () => {
     const snapshot = makeSnapshot(
       "rec_progress_1",
@@ -713,7 +825,7 @@ describe("ReadingRecordPage direct load", () => {
     );
     installReaderRecordFetchMock(snapshot);
 
-    renderReadingRecordPage("rec_progress_1");
+    renderReadingRecordPage("rec_progress_1", "workbench");
 
     await screen.findByTestId("reader-record-workbench-surface");
     const progress = screen.getByTestId("reader-record-enhancement-progress");
@@ -775,7 +887,7 @@ describe("ReadingRecordPage direct load", () => {
     );
     installReaderRecordFetchMock(snapshot);
 
-    renderReadingRecordPage("rec_many_progress_1");
+    renderReadingRecordPage("rec_many_progress_1", "workbench");
 
     await screen.findByTestId("reader-record-workbench-surface");
     const chips = screen.getAllByTestId("reader-record-enhancement-layer");
@@ -796,7 +908,7 @@ describe("ReadingRecordPage direct load", () => {
     const snapshot = makeSnapshot();
     const fetchMock = installReaderRecordFetchMock(snapshot);
 
-    renderReadingRecordPage("rec_product_1");
+    renderReadingRecordPage("rec_product_1", "workbench");
 
     await flushAsyncWork();
     expect(screen.getByTestId("reader-record-workbench-surface")).toBeTruthy();
@@ -1062,7 +1174,7 @@ describe("ReadingRecordPage direct load", () => {
       },
     });
 
-    const { container } = renderReadingRecordPage(recordId);
+    const { container } = renderReadingRecordPage(recordId, "workbench");
 
     await flushAsyncWork();
     expect(screen.getByTestId("reader-record-workbench-surface")).toBeTruthy();
@@ -1143,7 +1255,7 @@ describe("ReadingRecordPage direct load", () => {
         }),
     });
 
-    renderReadingRecordPage("rec_product_1");
+    renderReadingRecordPage("rec_product_1", "workbench");
 
     await flushAsyncWork();
     expect(screen.getByTestId("reader-record-workbench-surface")).toBeTruthy();
@@ -1169,7 +1281,7 @@ describe("ReadingRecordPage direct load", () => {
     const snapshot = makeSnapshot("rec_lookup_1");
     const fetchMock = installReaderRecordFetchMock(snapshot);
 
-    const { container } = renderReadingRecordPage("rec_lookup_1");
+    const { container } = renderReadingRecordPage("rec_lookup_1", "workbench");
 
     await screen.findByTestId("reader-record-workbench-surface");
 
@@ -1208,7 +1320,10 @@ describe("ReadingRecordPage direct load", () => {
     const snapshot = makeSnapshot("rec_mark_lookup_1", {}, { withVocabularyMark: true });
     const fetchMock = installReaderRecordFetchMock(snapshot);
 
-    const { container } = renderReadingRecordPage("rec_mark_lookup_1");
+    const { container } = renderReadingRecordPage(
+      "rec_mark_lookup_1",
+      "workbench",
+    );
 
     await screen.findByTestId("reader-record-workbench-surface");
 
@@ -1261,7 +1376,10 @@ describe("ReadingRecordPage direct load", () => {
     const snapshot = makeSnapshot("rec_selection_lookup_1");
     const fetchMock = installReaderRecordFetchMock(snapshot);
 
-    const { container } = renderReadingRecordPage("rec_selection_lookup_1");
+    const { container } = renderReadingRecordPage(
+      "rec_selection_lookup_1",
+      "workbench",
+    );
 
     await screen.findByTestId("reader-record-workbench-surface");
 
@@ -1354,7 +1472,7 @@ describe("ReadingRecordPage direct load", () => {
     );
     installReaderRecordFetchMock(snapshot);
 
-    const { container } = renderReadingRecordPage("rec_failed_1");
+    const { container } = renderReadingRecordPage("rec_failed_1", "workbench");
 
     await screen.findByTestId("reader-record-workbench-surface");
     expect(screen.getByTestId("reader-record-status-banner").textContent).toContain(
@@ -1410,7 +1528,7 @@ describe("ReadingRecordPage direct load", () => {
     );
     installReaderRecordFetchMock(snapshot);
 
-    renderReadingRecordPage("rec_action_1");
+    renderReadingRecordPage("rec_action_1", "workbench");
 
     await screen.findByTestId("reader-record-workbench-surface");
     expect(screen.getByTestId("reader-record-status-banner").textContent).toContain(

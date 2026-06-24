@@ -7,7 +7,6 @@ export const DEFAULT_READER_RECORD_SURFACE_MODE: ReaderRecordSurfaceMode = "plat
 declare global {
   // Test-only escape hatch for exercising both render paths without rebuilding.
   // Runtime control should use env or localStorage.
-  // eslint-disable-next-line no-var
   var __CLAREAD_READER_RECORD_SURFACE_MODE__:
     | ReaderRecordSurfaceMode
     | undefined;
