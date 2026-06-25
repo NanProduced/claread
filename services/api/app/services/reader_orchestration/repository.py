@@ -25,6 +25,7 @@ from app.database.json_compat import ensure_json_array, ensure_json_object, json
 from app.schemas.reader_orchestration import (
     ReaderEnhancementProgress,
     ReaderEnhancementProgressLayer,
+    ReaderSnapshotAskSupplement,
     ReaderSnapshotLayer,
     ReaderSnapshotParsedDecision,
     ReaderSnapshotRecord,
@@ -53,6 +54,7 @@ class LoadedReaderSnapshotFacts:
     enhancement_progress: ReaderEnhancementProgress
     parsed_decisions: tuple[ReaderSnapshotParsedDecision, ...]
     user_assets: tuple[ReaderSnapshotUserAsset, ...] = ()
+    ask_supplements: tuple[ReaderSnapshotAskSupplement, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -931,6 +933,15 @@ class ReaderOrchestrationRepository:
             build_result=build_result,
         )
 
+        ask_supplements = await self._load_ask_supplements_for_snapshot(
+            conn,
+            record_id=record_id,
+            user_id=user_id,
+            base_id=base_id,
+            generation=record_generation,
+            build_result=build_result,
+        )
+
         return LoadedReaderSnapshotFacts(
             build_result=build_result,
             record=snapshot_record,
@@ -954,6 +965,7 @@ class ReaderOrchestrationRepository:
                 for row in parsed_rows
             ),
             user_assets=user_assets,
+            ask_supplements=ask_supplements,
         )
 
     async def _load_user_assets_for_snapshot(
@@ -1069,6 +1081,85 @@ class ReaderOrchestrationRepository:
             if asset is not None:
                 assets.append(asset)
         return tuple(assets)
+
+    async def _load_ask_supplements_for_snapshot(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        record_id: UUID,
+        user_id: UUID,
+        base_id: UUID,
+        generation: int,
+        build_result: ReadingBaseBuildResult,
+    ) -> tuple[ReaderSnapshotAskSupplement, ...]:
+        """Load Reading Record ask supplements for the current snapshot.
+
+        Mirrors the user_assets contract: only rows matching the active
+        base_id + generation with reading_record_id matching the current
+        record and deleted_at IS NULL are returned. Legacy
+        analysis_record_id rows are excluded so they do not leak into the
+        Reading Record Plate projection.
+
+        Defensive validation: each row's anchor is validated against the
+        active base facts (unit_text, anchor_segment range, selected_text,
+        text_hash). Rows that fail validation are silently skipped so a
+        single dirty supplement does not make the article unreadable.
+        """
+        unit_text_by_id: dict[str, str] = {
+            unit.unit_id: unit.text for unit in build_result.units
+        }
+        anchor_segment_by_id: dict[str, AnchorSegmentRange] = {
+            seg.anchor_segment_id: AnchorSegmentRange(
+                anchor_segment_id=seg.anchor_segment_id,
+                unit_start_utf16=seg.unit_start_utf16,
+                unit_end_utf16=seg.unit_end_utf16,
+            )
+            for seg in build_result.anchor_segments
+        }
+
+        rows = await conn.fetch(
+            """
+            SELECT s.id, s.supplement_type, s.target_key, s.sentence_id,
+                   s.paragraph_id, s.title, s.content_md, s.metadata_json,
+                   s.schema_version, s.created_from_turn_run_id,
+                   s.created_at, s.updated_at,
+                   s.base_id, s.generation, s.unit_id, s.anchor_segment_id,
+                   s.start_offset, s.end_offset, s.text_hash, s.hash_algorithm,
+                   s.anchor_payload_json,
+                   seg.sentence_id AS segment_sentence_id,
+                   seg.segment_type AS segment_type
+            FROM reader_ask_supplements s
+            LEFT JOIN anchor_segments seg
+              ON seg.reading_record_id = s.reading_record_id
+             AND seg.base_id = s.base_id
+             AND seg.anchor_segment_id = s.anchor_segment_id
+            WHERE s.reading_record_id = $1
+              AND s.base_id = $2
+              AND s.generation = $3
+              AND s.user_id = $4
+              AND s.deleted_at IS NULL
+              AND s.analysis_record_id IS NULL
+            ORDER BY s.created_at, s.id
+            """,
+            record_id,
+            base_id,
+            generation,
+            user_id,
+        )
+
+        supplements: list[ReaderSnapshotAskSupplement] = []
+        for row in rows:
+            supplement = _build_validated_ask_supplement(
+                row,
+                base_id=base_id,
+                record_id=record_id,
+                generation=generation,
+                unit_text_by_id=unit_text_by_id,
+                anchor_segment_by_id=anchor_segment_by_id,
+            )
+            if supplement is not None:
+                supplements.append(supplement)
+        return tuple(supplements)
 
     async def list_user_records(
         self,
@@ -1224,6 +1315,141 @@ def _build_validated_user_asset(
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _build_validated_ask_supplement(
+    row: asyncpg.Record,
+    *,
+    base_id: UUID,
+    record_id: UUID,
+    generation: int,
+    unit_text_by_id: dict[str, str],
+    anchor_segment_by_id: dict[str, AnchorSegmentRange],
+) -> ReaderSnapshotAskSupplement | None:
+    """Build a validated ReaderSnapshotAskSupplement from a DB row.
+
+    Returns None when the row fails defensive validation against the active
+    base facts, or when the row is missing the Reading Record anchor
+    columns required to project onto the current snapshot. Read-side
+    defensive filtering only; write-side validation remains the source of
+    truth.
+    """
+    unit_id = row["unit_id"]
+    anchor_segment_id = row["anchor_segment_id"]
+    if unit_id is None or anchor_segment_id is None:
+        return None
+
+    unit_id_str = str(unit_id)
+    anchor_segment_id_str = str(anchor_segment_id)
+
+    unit_text = unit_text_by_id.get(unit_id_str)
+    if unit_text is None:
+        return None
+
+    anchor_segment = anchor_segment_by_id.get(anchor_segment_id_str)
+    if anchor_segment is None:
+        return None
+
+    start_offset = row["start_offset"]
+    end_offset = row["end_offset"]
+    text_hash = row["text_hash"]
+    if (
+        start_offset is None
+        or end_offset is None
+        or text_hash is None
+    ):
+        return None
+
+    start_offset_int = int(start_offset)
+    end_offset_int = int(end_offset)
+    text_hash_str = str(text_hash)
+
+    selected_text = _extract_selected_text_from_anchor_payload(
+        row["anchor_payload_json"],
+    )
+    if selected_text is None:
+        return None
+
+    try:
+        validate_text_anchor_against_unit(
+            offset_unit=TEXT_RANGE_OFFSET_UNIT,
+            start_offset=start_offset_int,
+            end_offset=end_offset_int,
+            selected_text=selected_text,
+            text_hash=text_hash_str,
+            unit_text=unit_text,
+            anchor_segment=anchor_segment,
+        )
+    except AnchorValidationError:
+        return None
+
+    segment_type = row["segment_type"] if row["segment_type"] is not None else "sentence"
+    sentence_id_value = row["segment_sentence_id"]
+    anchor = ReaderTextRangeAnchor(
+        base_id=str(base_id),
+        unit_id=unit_id_str,
+        anchor_segment_id=anchor_segment_id_str,
+        sentence_id=str(sentence_id_value) if sentence_id_value is not None else None,
+        segment_type=segment_type,
+        start_offset=start_offset_int,
+        end_offset=end_offset_int,
+        selected_text=selected_text,
+        text_hash=text_hash_str,
+    )
+
+    content_payload = {
+        "supplement_type": str(row["supplement_type"] or "grammar_note"),
+        "title": str(row["title"] or "AI 补充语法旁注"),
+        "content_md": str(row["content_md"] or ""),
+        "target_key": str(row["target_key"]) if row["target_key"] is not None else None,
+        "sentence_id": str(row["sentence_id"]) if row["sentence_id"] is not None else None,
+        "paragraph_id": (
+            str(row["paragraph_id"]) if row["paragraph_id"] is not None else None
+        ),
+        "schema_version": str(row["schema_version"] or "reader-ask-supplement-v1"),
+        "created_from_turn_run_id": (
+            str(row["created_from_turn_run_id"])
+            if row["created_from_turn_run_id"] is not None
+            else ""
+        ),
+        "lifecycle_status": "persisted",
+        "record_id": str(record_id),
+        "base_id": str(base_id),
+        "generation": generation,
+    }
+
+    return ReaderSnapshotAskSupplement(
+        supplement_id=str(row["id"]),
+        anchor=anchor,
+        content=content_payload,
+        created_at=row["created_at"],
+    )
+
+
+def _extract_selected_text_from_anchor_payload(
+    anchor_payload_json: Any,
+) -> str | None:
+    """Extract selected_text from the persisted anchor_payload_json.
+
+    The anchor payload is the model_dump of the original
+    UserEditorialAssetAnchor / ReaderAskAnchorRef. Reading Record
+    supplements store the full anchor including selected_text.
+    """
+    if anchor_payload_json is None:
+        return None
+    if isinstance(anchor_payload_json, str):
+        try:
+            import json
+
+            anchor_payload_json = json.loads(anchor_payload_json)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(anchor_payload_json, dict):
+        return None
+    selected_text = anchor_payload_json.get("selected_text")
+    if not isinstance(selected_text, str) or not selected_text:
+        return None
+    return selected_text
 
 
 def _build_enhancement_progress(

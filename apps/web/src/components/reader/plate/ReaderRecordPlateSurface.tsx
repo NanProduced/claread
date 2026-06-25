@@ -28,6 +28,7 @@ import {
 } from "@/lib/reader-plate";
 import type { ReaderRecordAnchorDraft } from "@/lib/reader-plate/projection/reader-record-anchor-draft";
 import type { ReaderPlateSnapshotDto, ReaderSnapshotUserAssetDto } from "@/types/api/reader-plate";
+import type { ReaderAskActionConfirmResponseDto } from "@/types/api/reader-ask";
 import type { ThemeName } from "@/lib/appearance";
 import { FavoriteButton } from "@/components/reader/FavoriteButton";
 import {
@@ -516,16 +517,27 @@ function CalloutBlock({
   onFeedback: (block: ReaderRecordPlateCalloutBlock, anchor: HTMLElement) => void;
 }) {
   const isGrammar = block.variant === "grammar";
+  const isSupplement = block.variant === "supplement";
   const containerClass = isGrammar
     ? "reader-record-plate-callout reader-record-plate-callout--grammar mt-3 rounded-md border border-emerald-200/70 bg-emerald-50/60 px-4 py-3 text-sm leading-6 text-ink-soft"
-    : "reader-record-plate-callout reader-record-plate-callout--analysis mt-3 rounded-md border border-sky-200/70 bg-sky-50/60 px-4 py-3 text-sm leading-6 text-ink-soft";
+    : isSupplement
+      ? "reader-record-plate-callout reader-record-plate-callout--supplement mt-3 rounded-md border border-amber-200/70 bg-amber-50/60 px-4 py-3 text-sm leading-6 text-ink-soft"
+      : "reader-record-plate-callout reader-record-plate-callout--analysis mt-3 rounded-md border border-sky-200/70 bg-sky-50/60 px-4 py-3 text-sm leading-6 text-ink-soft";
   const labelClass = isGrammar
     ? "mb-1 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-emerald-700/80"
-    : "mb-1 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-sky-700/80";
-  const label = isGrammar ? "语法讲解" : "句子结构";
+    : isSupplement
+      ? "mb-1 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-amber-700/80"
+      : "mb-1 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-sky-700/80";
+  const label = isGrammar
+    ? "语法讲解"
+    : isSupplement
+      ? "AI 补充"
+      : "句子结构";
   const title = isGrammar
     ? block.data.grammarPoint ?? ""
-    : block.data.label ?? "";
+    : isSupplement
+      ? block.data.supplementTitle ?? ""
+      : block.data.label ?? "";
 
   return (
     <div
@@ -1136,7 +1148,7 @@ export function ReaderRecordPlateSurface({
   const [feedbackState, setFeedbackState] = useState<SaveState>({ kind: "idle" });
   const [feedbackTarget, setFeedbackTarget] = useState<{
     blockId: string;
-    variant: "grammar" | "analysis";
+    variant: "grammar" | "analysis" | "supplement";
     anchorSegmentId: string;
     title: string;
   } | null>(null);
@@ -1454,6 +1466,23 @@ export function ReaderRecordPlateSurface({
     );
   }, []);
 
+  const handleAskActionExecuted = useCallback(
+    (result: ReaderAskActionConfirmResponseDto["result"]) => {
+      if (
+        result.annotation_id ||
+        result.note_id ||
+        result.persisted_supplement
+      ) {
+        void onRequestSnapshotReload?.();
+      }
+    },
+    [onRequestSnapshotReload],
+  );
+
+  const handleAskSupplementDeleted = useCallback(() => {
+    void onRequestSnapshotReload?.();
+  }, [onRequestSnapshotReload]);
+
   const openAskPanel = useCallback((attachment?: ReaderAskAttachment | null) => {
     if (attachment === null) {
       setAskAttachments([]);
@@ -1690,7 +1719,9 @@ export function ReaderRecordPlateSurface({
         title:
           block.variant === "grammar"
             ? (block.data.grammarPoint ?? "")
-            : (block.data.label ?? ""),
+            : block.variant === "supplement"
+              ? (block.data.supplementTitle ?? "")
+              : (block.data.label ?? ""),
       });
       feedbackFloating.refs.setReference({
         getBoundingClientRect: () => anchor.getBoundingClientRect(),
@@ -1719,7 +1750,12 @@ export function ReaderRecordPlateSurface({
             targetId: target.blockId,
             sentiment,
             feedbackType: sentiment === "positive" ? "helpful" : "other",
-            annotationType: target.variant === "grammar" ? "grammar_note" : "sentence_analysis",
+            annotationType:
+              target.variant === "grammar"
+                ? "grammar_note"
+                : target.variant === "supplement"
+                  ? "ask_supplement"
+                  : "sentence_analysis",
             entryPoint: "reader_record_callout",
             contextSummary: target.title,
             clientPlatform: "web",
@@ -2487,6 +2523,8 @@ export function ReaderRecordPlateSurface({
         onRemoveAttachment={handleRemoveAskAttachment}
         onClearAttachments={() => setAskAttachments([])}
         onToggle={() => setAskOpen(false)}
+        onActionExecuted={handleAskActionExecuted}
+        onSupplementDeleted={handleAskSupplementDeleted}
       />
       {dictionaryOpen ? (
         <div

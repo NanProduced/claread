@@ -21,6 +21,8 @@ BASELINE_SQL = (
     REPO_ROOT / "infra" / "migrations" / "0002_reader_record_anchor_columns.sql"
 ).read_text(encoding="utf-8") + "\n" + (
     REPO_ROOT / "infra" / "migrations" / "0003_reader_ask_dual_scope.sql"
+).read_text(encoding="utf-8") + "\n" + (
+    REPO_ROOT / "infra" / "migrations" / "0006_reader_ask_supplements_nullable_analysis_record_id.sql"
 ).read_text(encoding="utf-8")
 
 

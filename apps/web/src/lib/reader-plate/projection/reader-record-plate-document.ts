@@ -13,11 +13,13 @@ import type {
   ReaderPlateSnapshotDto,
   ReaderSentenceAnalysisChunkDto,
   ReaderSentenceAnalysisNodeDto,
+  ReaderSnapshotAskSupplementDto,
   ReaderSourceBlockChildNodeDto,
   ReaderSourceBlockNodeDto,
   ReaderStableSegmentTextLeafDto,
   ReaderStableSeparatorLeafDto,
   ReaderSnapshotUserAssetDto,
+  ReaderTextRangeAnchorDto,
   ReaderTranslationNodeDto,
   ReaderUnitNodeDto,
   ReaderUnitType,
@@ -113,7 +115,7 @@ export interface ReaderRecordPlateBlockquoteData {
   notes: string[];
 }
 
-/** Callout 增强层块 — grammar_note 或 sentence_analysis */
+/** Callout 增强层块 — grammar_note / sentence_analysis / ask_supplement */
 export interface ReaderRecordPlateCalloutBlock {
   type: "callout";
   id: string;
@@ -123,7 +125,7 @@ export interface ReaderRecordPlateCalloutBlock {
   data: ReaderRecordPlateCalloutData;
 }
 
-export type ReaderRecordPlateCalloutVariant = "grammar" | "analysis";
+export type ReaderRecordPlateCalloutVariant = "grammar" | "analysis" | "supplement";
 
 export interface ReaderRecordPlateCalloutData {
   anchorSegmentId: string;
@@ -139,6 +141,14 @@ export interface ReaderRecordPlateCalloutData {
   label?: string;
   analysis?: string;
   chunks?: ReaderSentenceAnalysisChunkDto[];
+  // ask_supplement
+  supplementId?: string;
+  supplementType?: string;
+  supplementTitle?: string;
+  supplementContentMd?: string;
+  supplementCreatedAt?: string;
+  createdFromTurnRunId?: string;
+  lifecycleStatus?: string;
 }
 
 export interface ReaderRecordPlateCalloutTextLeaf {
@@ -289,7 +299,33 @@ interface UnitProjectionContext {
   >;
   userHighlightMarksBySegment: Map<string, ReaderRecordPlateUserHighlightMark[]>;
   userNoteMarksBySegment: Map<string, ReaderRecordPlateUserNoteMark[]>;
+  supplementsBySegment: Map<string, ReaderSnapshotAskSupplementDto[]>;
   progressByUnit: Map<string, ReaderRecordPlateProgressLayer[]>;
+}
+
+/** Typed shape of ReaderSnapshotAskSupplementDto.content from the backend. */
+interface ReaderAskSupplementContent {
+  supplement_type?: string;
+  title?: string;
+  content_md?: string;
+  target_key?: string | null;
+  sentence_id?: string | null;
+  paragraph_id?: string | null;
+  schema_version?: string;
+  created_from_turn_run_id?: string;
+  lifecycle_status?: string;
+  record_id?: string;
+  base_id?: string;
+  generation?: number;
+}
+
+function parseSupplementContent(
+  raw: unknown,
+): ReaderAskSupplementContent {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as ReaderAskSupplementContent;
+  }
+  return {};
 }
 
 // --- Type guards ---
@@ -833,6 +869,72 @@ function buildSentenceAnalysisCalloutBlocks(
   }));
 }
 
+function buildSupplementsBySegment(
+  snapshot: ReaderPlateSnapshotDto,
+): Map<string, ReaderSnapshotAskSupplementDto[]> {
+  const result = new Map<string, ReaderSnapshotAskSupplementDto[]>();
+  for (const supplement of snapshot.ask_supplements) {
+    const anchor = supplement.anchor;
+    if (!anchor || anchor.anchor_type !== "text_range") {
+      continue;
+    }
+    if (
+      anchor.base_id !== snapshot.base.base_id ||
+      anchor.end_offset <= anchor.start_offset ||
+      anchor.selected_text.length === 0 ||
+      anchor.end_offset - anchor.start_offset !== anchor.selected_text.length ||
+      anchor.text_hash !== computeUtf16FNV1a(anchor.selected_text)
+    ) {
+      continue;
+    }
+    const segment = snapshot.anchor_segments.find(
+      (seg) =>
+        seg.anchor_segment_id === anchor.anchor_segment_id &&
+        seg.unit_id === anchor.unit_id,
+    );
+    if (!segment) {
+      continue;
+    }
+    const list = result.get(anchor.anchor_segment_id) ?? [];
+    list.push(supplement);
+    result.set(anchor.anchor_segment_id, list);
+  }
+  return result;
+}
+
+function buildSupplementCalloutBlocks(
+  segment: Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }>,
+  context: UnitProjectionContext,
+): ReaderRecordPlateCalloutBlock[] {
+  const supplements =
+    context.supplementsBySegment.get(segment.anchor_segment_id) ?? [];
+
+  return supplements.map((supplement) => {
+    const content = parseSupplementContent(supplement.content);
+    const contentMd = content.content_md ?? "";
+    const title = content.title ?? "AI 补充语法旁注";
+    return {
+      type: "callout" as const,
+      id: `callout:supplement:${supplement.supplement_id}`,
+      variant: "supplement" as const,
+      icon: "💬",
+      children: [{ text: contentMd }],
+      data: {
+        anchorSegmentId: segment.anchor_segment_id,
+        unitId: segment.unit_id,
+        layerId: `ask_supplement:${supplement.supplement_id}`,
+        supplementId: supplement.supplement_id,
+        supplementType: content.supplement_type ?? "grammar_note",
+        supplementTitle: title,
+        supplementContentMd: contentMd,
+        supplementCreatedAt: supplement.created_at,
+        createdFromTurnRunId: content.created_from_turn_run_id ?? "",
+        lifecycleStatus: content.lifecycle_status ?? "persisted",
+      },
+    };
+  });
+}
+
 function mapUnitToBlocks(
   unit: ReaderUnitNodeDto,
   context: UnitProjectionContext,
@@ -849,6 +951,8 @@ function mapUnitToBlocks(
           blocks.push(...buildGrammarCalloutBlocks(sourceChild));
           // 3. sentence_analysis callout blocks
           blocks.push(...buildSentenceAnalysisCalloutBlocks(sourceChild, context));
+          // 4. ask_supplement callout blocks
+          blocks.push(...buildSupplementCalloutBlocks(sourceChild, context));
         }
       }
       continue;
@@ -874,6 +978,7 @@ export function projectReaderPlateSnapshotToReaderRecordPlateDocument(
     sentenceAnalysisBySegment: buildSentenceAnalysisBySegment(snapshot.value),
     userHighlightMarksBySegment: userAssetsBySegment.highlights,
     userNoteMarksBySegment: userAssetsBySegment.noteMarks,
+    supplementsBySegment: buildSupplementsBySegment(snapshot),
     progressByUnit: buildProgressByUnit(snapshot, progress),
   };
 

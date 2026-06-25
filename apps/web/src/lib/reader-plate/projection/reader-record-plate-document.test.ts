@@ -7,6 +7,7 @@ import {
   READER_TEXT_RANGE_OFFSET_UNIT,
   type ReaderEnhancementProgressDto,
   type ReaderPlateSnapshotDto,
+  type ReaderSnapshotAskSupplementDto,
   type ReaderSnapshotUserAssetDto,
   type ReaderUnitNodeDto,
   type ReaderVocabularyMarkDto,
@@ -240,9 +241,53 @@ function makeUnit(): ReaderUnitNodeDto {
   };
 }
 
+function makeSupplement(
+  overrides: Partial<ReaderSnapshotAskSupplementDto> & {
+    content?: Record<string, unknown>;
+  } = {},
+): ReaderSnapshotAskSupplementDto {
+  const selectedText = "Institutional memory";
+  const content: Record<string, unknown> = {
+    supplement_type: "grammar_note",
+    title: "关于 Institutional memory 的补充",
+    content_md: "Institutional memory 指组织内部积累的经验与习惯。",
+    target_key: "seg_1",
+    sentence_id: "sent_1",
+    schema_version: "reader_ask_supplement/v1",
+    created_from_turn_run_id: "turn_run_1",
+    lifecycle_status: "persisted",
+    record_id: "record_1",
+    base_id: "base_1",
+    generation: 1,
+    ...overrides.content,
+  };
+  return {
+    supplement_id: "supplement_1",
+    owner: "ask_supplement",
+    anchor: {
+      anchor_type: "text_range",
+      base_id: "base_1",
+      unit_id: "unit_1",
+      anchor_segment_id: "seg_1",
+      sentence_id: "sent_1",
+      segment_type: "sentence",
+      offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+      start_offset: 0,
+      end_offset: selectedText.length,
+      selected_text: selectedText,
+      text_hash: computeUtf16FNV1a(selectedText),
+      hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+    },
+    content,
+    created_at: "2026-06-24T02:00:00Z",
+    ...overrides,
+  };
+}
+
 function makeSnapshot(
   progress?: ReaderEnhancementProgressDto,
   userAssets: ReaderSnapshotUserAssetDto[] = [],
+  askSupplements: ReaderSnapshotAskSupplementDto[] = [],
 ): ReaderPlateSnapshotDto {
   return {
     schema_kind: READER_PLATE_SNAPSHOT_SCHEMA_KIND,
@@ -319,7 +364,7 @@ function makeSnapshot(
     ],
     enhancement_layers: [],
     enhancement_progress: progress,
-    ask_supplements: [],
+    ask_supplements: askSupplements,
     user_assets: userAssets,
     parsed_decisions: [
       {
@@ -344,7 +389,7 @@ function firstParagraph(
 }
 
 function firstCallout(
-  variant?: "grammar" | "analysis",
+  variant?: "grammar" | "analysis" | "supplement",
   document = projectReaderPlateSnapshotToReaderRecordPlateDocument(makeSnapshot()),
 ): ReaderRecordPlateCalloutBlock {
   const block = document.children.find(
@@ -631,5 +676,166 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
       expect(child.type).not.toBe("reader_record_unit_translation");
       expect(child.type).not.toBe("reader_sentence_analysis");
     }
+  });
+
+  it("projects ask supplements as callout blocks with supplement variant", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeSnapshot(undefined, [], [makeSupplement()]),
+    );
+    const supplementCallout = firstCallout("supplement", document);
+
+    expect(supplementCallout.id).toBe("callout:supplement:supplement_1");
+    expect(supplementCallout.variant).toBe("supplement");
+    expect(supplementCallout.icon).toBe("💬");
+    expect(supplementCallout.data).toMatchObject({
+      anchorSegmentId: "seg_1",
+      unitId: "unit_1",
+      layerId: "ask_supplement:supplement_1",
+      supplementId: "supplement_1",
+      supplementType: "grammar_note",
+      supplementTitle: "关于 Institutional memory 的补充",
+      supplementContentMd:
+        "Institutional memory 指组织内部积累的经验与习惯。",
+      supplementCreatedAt: "2026-06-24T02:00:00Z",
+      createdFromTurnRunId: "turn_run_1",
+      lifecycleStatus: "persisted",
+    });
+    expect(supplementCallout.children[0].text).toBe(
+      "Institutional memory 指组织内部积累的经验与习惯。",
+    );
+  });
+
+  it("emits supplement callout after analysis callout in block order", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeSnapshot(undefined, [], [makeSupplement()]),
+    );
+
+    const types = document.children.map((child) => child.type);
+    const supplementIndex = types.findIndex(
+      (t, i) =>
+        t === "callout" &&
+        (document.children[i] as ReaderRecordPlateCalloutBlock).variant ===
+          "supplement",
+    );
+    const analysisIndex = types.findIndex(
+      (t, i) =>
+        t === "callout" &&
+        (document.children[i] as ReaderRecordPlateCalloutBlock).variant ===
+          "analysis",
+    );
+
+    expect(supplementIndex).toBeGreaterThanOrEqual(0);
+    expect(analysisIndex).toBeGreaterThanOrEqual(0);
+    expect(supplementIndex).toBeGreaterThan(analysisIndex);
+  });
+
+  it("skips supplements whose anchor is null or unit-scoped", () => {
+    const nullAnchor = makeSupplement({ anchor: null });
+    const unitAnchor = makeSupplement({
+      anchor: {
+        anchor_type: "unit",
+        base_id: "base_1",
+        unit_id: "unit_1",
+        text_hash: "unit_hash",
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+    });
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeSnapshot(undefined, [], [nullAnchor, unitAnchor]),
+    );
+
+    const supplementCallouts = document.children.filter(
+      (child): child is ReaderRecordPlateCalloutBlock =>
+        child.type === "callout" &&
+        (child as ReaderRecordPlateCalloutBlock).variant === "supplement",
+    );
+    expect(supplementCallouts).toHaveLength(0);
+  });
+
+  it("skips supplements whose anchor text hash does not match selected_text", () => {
+    const mismatched = makeSupplement({
+      anchor: {
+        anchor_type: "text_range",
+        base_id: "base_1",
+        unit_id: "unit_1",
+        anchor_segment_id: "seg_1",
+        sentence_id: "sent_1",
+        segment_type: "sentence",
+        offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+        start_offset: 0,
+        end_offset: 5,
+        selected_text: "wrong",
+        text_hash: "deadbeef",
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+    });
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeSnapshot(undefined, [], [mismatched]),
+    );
+
+    const supplementCallouts = document.children.filter(
+      (child): child is ReaderRecordPlateCalloutBlock =>
+        child.type === "callout" &&
+        (child as ReaderRecordPlateCalloutBlock).variant === "supplement",
+    );
+    expect(supplementCallouts).toHaveLength(0);
+  });
+
+  it("skips supplements whose anchor_segment_id is not in snapshot.anchor_segments", () => {
+    const orphan = makeSupplement({
+      anchor: {
+        anchor_type: "text_range",
+        base_id: "base_1",
+        unit_id: "unit_1",
+        anchor_segment_id: "seg_orphan",
+        sentence_id: "sent_orphan",
+        segment_type: "sentence",
+        offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+        start_offset: 0,
+        end_offset: 5,
+        selected_text: "wrong",
+        text_hash: computeUtf16FNV1a("wrong"),
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+    });
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeSnapshot(undefined, [], [orphan]),
+    );
+
+    const supplementCallouts = document.children.filter(
+      (child): child is ReaderRecordPlateCalloutBlock =>
+        child.type === "callout" &&
+        (child as ReaderRecordPlateCalloutBlock).variant === "supplement",
+    );
+    expect(supplementCallouts).toHaveLength(0);
+  });
+
+  it("projects multiple supplements on the same segment in snapshot order", () => {
+    const first = makeSupplement({
+      supplement_id: "supplement_a",
+      created_at: "2026-06-24T02:00:00Z",
+    });
+    const second = makeSupplement({
+      supplement_id: "supplement_b",
+      created_at: "2026-06-24T03:00:00Z",
+      content: {
+        title: "第二个补充",
+        content_md: "第二条补充内容。",
+        supplement_type: "grammar_note",
+      },
+    });
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeSnapshot(undefined, [], [first, second]),
+    );
+
+    const supplementCallouts = document.children.filter(
+      (child): child is ReaderRecordPlateCalloutBlock =>
+        child.type === "callout" &&
+        (child as ReaderRecordPlateCalloutBlock).variant === "supplement",
+    );
+    expect(supplementCallouts.map((c) => c.data.supplementId)).toEqual([
+      "supplement_a",
+      "supplement_b",
+    ]);
   });
 });
