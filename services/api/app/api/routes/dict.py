@@ -282,6 +282,9 @@ async def dictionary_ai(
                 record_id=body.record_id,
                 sentence_id=body.sentence_id,
                 usage_event_id=usage_event_id,
+                reading_record_id=body.reading_record_id,
+                base_id=body.base_id,
+                generation=body.generation,
             )
 
         return run_result.response

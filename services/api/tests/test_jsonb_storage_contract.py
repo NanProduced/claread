@@ -453,6 +453,65 @@ class TestJsonbWriteContracts:
         assert any(isinstance(arg, dict) and arg == generated_payload_json for arg in fetchval_args)
 
     @pytest.mark.anyio
+    async def test_candidate_entry_writes_reading_record_anchor_columns(self):
+        """C4: insert_candidate_entry must write reading_record_id / base_id / generation."""
+        mock_conn = AsyncMock()
+        mock_conn.fetchval.return_value = uuid4()
+        mock_pool = _make_mock_pool(mock_conn)
+        reading_record_id = uuid4()
+        base_id = uuid4()
+        generation = 3
+
+        with patch("app.services.dictionary_ai.repository.db_connection.DB_POOL", mock_pool):
+            await insert_candidate_entry(
+                query="doomscrolling",
+                normalized_query="doomscrolling",
+                query_type="word",
+                classification="slang_or_informal",
+                result_kind="ai_entry",
+                confidence="medium",
+                generated_payload_json={"candidate": {"word": "doomscroll"}},
+                context_sentence="She spent the whole night doomscrolling.",
+                record_id=None,
+                sentence_id="sent-1",
+                usage_event_id=None,
+                reading_record_id=reading_record_id,
+                base_id=base_id,
+                generation=generation,
+            )
+
+        fetchval_args = mock_conn.fetchval.await_args.args
+        # reading_record_id, base_id, generation should appear as positional params ($12, $13, $14)
+        assert reading_record_id in fetchval_args
+        assert base_id in fetchval_args
+        assert generation in fetchval_args
+
+    @pytest.mark.anyio
+    async def test_candidate_entry_reading_record_anchor_defaults_to_none(self):
+        """C4: insert_candidate_entry must accept calls without reading_record anchor (legacy compat)."""
+        mock_conn = AsyncMock()
+        mock_conn.fetchval.return_value = uuid4()
+        mock_pool = _make_mock_pool(mock_conn)
+
+        with patch("app.services.dictionary_ai.repository.db_connection.DB_POOL", mock_pool):
+            await insert_candidate_entry(
+                query="doomscrolling",
+                normalized_query="doomscrolling",
+                query_type="word",
+                classification="slang_or_informal",
+                result_kind="ai_entry",
+                confidence="medium",
+                generated_payload_json={"candidate": {"word": "doomscroll"}},
+                context_sentence="She spent the whole night doomscrolling.",
+                record_id=None,
+                sentence_id=None,
+                usage_event_id=None,
+            )
+
+        # Should not raise; None values for reading_record_id/base_id/generation are valid
+        mock_conn.fetchval.assert_awaited_once()
+
+    @pytest.mark.anyio
     async def test_update_user_profile_merges_legacy_string_and_writes_native_jsonb(self):
         mock_conn = _make_mock_conn_with_tx()
         mock_conn.fetchval.return_value = '{"theme":"light"}'

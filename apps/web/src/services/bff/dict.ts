@@ -407,6 +407,14 @@ export function parseDictAIRequestBody(body: unknown): WebDictAIRequest | WebDic
   const occurrence =
     payload.occurrence === undefined ? undefined : Number.parseInt(String(payload.occurrence), 10);
   const recordId = typeof payload.recordId === "string" ? payload.recordId.trim() : undefined;
+  const readingRecordId =
+    typeof payload.readingRecordId === "string" ? payload.readingRecordId.trim() : undefined;
+  const baseId =
+    typeof payload.baseId === "string" ? payload.baseId.trim() : undefined;
+  const generation =
+    payload.generation === undefined
+      ? undefined
+      : Number.parseInt(String(payload.generation), 10);
   const sentenceId =
     typeof payload.sentenceId === "string" ? payload.sentenceId.trim() : undefined;
   const source = typeof payload.source === "string" ? payload.source : null;
@@ -497,6 +505,9 @@ export function parseDictAIRequestBody(body: unknown): WebDictAIRequest | WebDic
       contextSentence,
       occurrence,
       recordId: recordId || undefined,
+      readingRecordId: readingRecordId || undefined,
+      baseId: baseId || undefined,
+      generation: Number.isSafeInteger(generation) ? generation : undefined,
       sentenceId: sentenceId || undefined,
       source: source ?? undefined,
       entryId,
@@ -510,6 +521,9 @@ export function parseDictAIRequestBody(body: unknown): WebDictAIRequest | WebDic
     contextSentence,
     occurrence,
     recordId: recordId || undefined,
+    readingRecordId: readingRecordId || undefined,
+    baseId: baseId || undefined,
+    generation: Number.isSafeInteger(generation) ? generation : undefined,
     sentenceId: sentenceId || undefined,
     source: source ?? undefined,
   };

@@ -24,6 +24,9 @@ export interface WebDictAIContextExplainRequest {
   contextSentence: string;
   occurrence?: number;
   recordId?: string;
+  readingRecordId?: string;
+  baseId?: string;
+  generation?: number;
   sentenceId?: string;
   source?: DictAISourceDto;
   entryId: number;
@@ -36,6 +39,9 @@ export interface WebDictAIMissingFallbackRequest {
   contextSentence: string;
   occurrence?: number;
   recordId?: string;
+  readingRecordId?: string;
+  baseId?: string;
+  generation?: number;
   sentenceId?: string;
   source?: DictAISourceDto;
 }

@@ -23,6 +23,9 @@ async def insert_candidate_entry(
     record_id: UUID | None,
     sentence_id: str | None,
     usage_event_id: UUID | None,
+    reading_record_id: UUID | None = None,
+    base_id: UUID | None = None,
+    generation: int | None = None,
 ) -> UUID | None:
     pool = db_connection.DB_POOL
     if pool is None:
@@ -37,13 +40,15 @@ async def insert_candidate_entry(
                     query, normalized_query, query_type, classification, result_kind,
                     confidence, generated_payload_json, context_sentence,
                     record_id, sentence_id, usage_event_id,
+                    reading_record_id, base_id, generation,
                     review_status, created_at, updated_at
                 )
                 VALUES (
                     $1, $2, $3, $4, $5,
                     $6, $7::jsonb, $8,
                     $9, $10, $11,
-                    'pending', $12, $12
+                    $12, $13, $14,
+                    'pending', $15, $15
                 )
                 RETURNING id
                 """,
@@ -58,6 +63,9 @@ async def insert_candidate_entry(
                 record_id,
                 sentence_id,
                 usage_event_id,
+                reading_record_id,
+                base_id,
+                generation,
                 datetime.now(timezone.utc),
             )
         return inserted_id if isinstance(inserted_id, UUID) else None
