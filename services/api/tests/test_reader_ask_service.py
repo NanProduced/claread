@@ -1655,7 +1655,7 @@ def test_delete_supplement_marks_all_runs_deleted(monkeypatch) -> None:  # type:
     monkeypatch.setattr(reader_ask_service.repo, "list_turn_runs_for_message", fake_list_turn_runs_for_message)
     monkeypatch.setattr(reader_ask_service.repo, "update_turn_run", fake_update_turn_run)
     monkeypatch.setattr(reader_ask_service.repo, "get_eval_trace", fake_get_eval_trace)
-    monkeypatch.setattr(reader_ask_service, "_upsert_eval_trace_record", fake_upsert_eval_trace_record)
+    monkeypatch.setattr(reader_ask_service.repo, "upsert_eval_trace", fake_upsert_eval_trace_record)
 
     response = asyncio.run(reader_ask_service.delete_supplement(user_id, supplement_id))
 

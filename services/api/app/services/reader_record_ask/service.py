@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -12,16 +13,19 @@ from app.contracts.anchor_validation import (
 )
 from app.database import connection as db_connect
 from app.schemas.reader_ask import (
+    ReaderAskActionConfirmRequest,
+    ReaderAskActionConfirmResponse,
+    ReaderAskDeleteSupplementResponse,
+    ReaderAskMessageRetryRequest,
+    ReaderAskThreadDetail,
+    ReaderAskThreadListResponse,
+    ReaderAskThreadSummary,
     ReaderRecordAskActionConfirmRequest,
     ReaderRecordAskMessageRequest,
-    ReaderRecordAskPendingResponse,
 )
-from app.services.reader_orchestration.anchor_gate import (
-    load_validated_reading_record_anchor,
-)
-from app.services.reader_orchestration.repository import (
-    ReaderOrchestrationRepository,
-)
+from app.services.ask_runtime import action_service, stream_service, thread_service
+from app.services.reader_orchestration.anchor_gate import load_validated_reading_record_anchor
+from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
 
 
 def _parse_uuid(value: str, *, field: str) -> UUID:
@@ -54,18 +58,28 @@ def _reading_record_error(
     )
 
 
-async def _ensure_reading_record_snapshot_access(
+async def _load_snapshot_facts_raw(
     *,
-    conn,
-    repository: ReaderOrchestrationRepository,
     user_id: UUID,
     reading_record_id: UUID,
-) -> None:
-    try:
-        await repository.load_snapshot_facts(
+) -> object:
+    repository = ReaderOrchestrationRepository()
+    async with db_connect.acquire_connection() as conn:
+        return await repository.load_snapshot_facts(
             conn,
             record_id=reading_record_id,
             user_id=user_id,
+        )
+
+async def _load_snapshot_facts(
+    *,
+    user_id: UUID,
+    reading_record_id: UUID,
+) -> object:
+    try:
+        return await _load_snapshot_facts_raw(
+            user_id=user_id,
+            reading_record_id=reading_record_id,
         )
     except LookupError as exc:
         raise _reading_record_error(
@@ -81,66 +95,180 @@ async def _ensure_reading_record_snapshot_access(
         ) from exc
 
 
+async def _load_validated_anchor_raw(
+    *,
+    user_id: UUID,
+    anchor: object,
+) -> None:
+    repository = ReaderOrchestrationRepository()
+    async with db_connect.acquire_connection() as conn:
+        await load_validated_reading_record_anchor(
+            conn,
+            repository=repository,
+            user_id=user_id,
+            anchor=anchor,
+        )
+
+async def _validate_reading_record_anchor(
+    *,
+    user_id: UUID,
+    reading_record_id: UUID,
+    request: ReaderRecordAskMessageRequest,
+) -> None:
+    if request.anchor is None:
+        await _load_snapshot_facts(user_id=user_id, reading_record_id=reading_record_id)
+        return
+    anchor_record_id = _parse_uuid(request.anchor.record_id, field="anchor.record_id")
+    if anchor_record_id != reading_record_id:
+        raise _reading_record_error(
+            code=ANCHOR_RECORD_ID_MISMATCH,
+            field="anchor.record_id",
+            message="anchor.record_id does not match the route reading_record_id",
+        )
+    try:
+        await _load_validated_anchor_raw(
+            user_id=user_id,
+            anchor=request.anchor,
+        )
+    except AnchorValidationError as exc:
+        raise _reading_record_error(
+            code=exc.code,
+            field="anchor",
+            message=exc.message,
+        ) from exc
+
+
+async def _ensure_default_thread(
+    *,
+    user_id: UUID,
+    reading_record_id: UUID,
+) -> dict[str, str]:
+    facts = await _load_snapshot_facts(user_id=user_id, reading_record_id=reading_record_id)
+    thread = await thread_service.ensure_default_reading_record_thread(
+        user_id,
+        reading_record_id,
+        title=getattr(facts, "record").title or "Ask Claread",
+    )
+    return {"id": str(thread["id"]), "title": str(thread.get("title") or "Ask Claread")}
+
+
+async def list_reading_record_ask_threads(
+    *,
+    user_id: UUID,
+    reading_record_id: str,
+) -> ReaderAskThreadListResponse:
+    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
+    await _load_snapshot_facts(user_id=user_id, reading_record_id=parsed_record_id)
+    return await thread_service.list_reading_record_threads(user_id, parsed_record_id)
+
+
+async def create_default_reading_record_ask_thread(
+    *,
+    user_id: UUID,
+    reading_record_id: str,
+) -> ReaderAskThreadSummary:
+    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
+    facts = await _load_snapshot_facts(user_id=user_id, reading_record_id=parsed_record_id)
+    thread = await thread_service.ensure_default_reading_record_thread(
+        user_id,
+        parsed_record_id,
+        title=getattr(facts, "record").title or "Ask Claread",
+    )
+    return ReaderAskThreadSummary.model_validate(thread_service._thread_summary_payload(thread))
+
+
+async def get_reading_record_ask_thread(
+    *,
+    user_id: UUID,
+    reading_record_id: str,
+    thread_id: UUID,
+) -> ReaderAskThreadDetail:
+    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
+    return await thread_service.get_reading_record_thread_detail(
+        user_id,
+        thread_id,
+        reading_record_id=parsed_record_id,
+    )
+
+
+async def reset_reading_record_ask_thread(
+    *,
+    user_id: UUID,
+    reading_record_id: str,
+    thread_id: UUID,
+) -> ReaderAskThreadDetail:
+    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
+    facts = await _load_snapshot_facts(user_id=user_id, reading_record_id=parsed_record_id)
+    return await thread_service.reset_reading_record_thread(
+        user_id,
+        thread_id,
+        reading_record_id=parsed_record_id,
+        title=getattr(facts, "record").title or "Ask Claread",
+    )
+
+
 async def send_reading_record_ask_message(
     *,
     user_id: UUID,
     reading_record_id: str,
     request: ReaderRecordAskMessageRequest,
-) -> ReaderRecordAskPendingResponse:
-    """D6-A6: validate a Reading Record Ask message, but do not execute it.
-
-    The anchor is validated against the current Reading Record / base / unit /
-    anchor segment facts when provided. The legacy ``reader_ask_threads`` and
-    ``analysis_record_id`` paths are never touched.
-    """
+) -> AsyncIterator[str]:
     parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
-    anchor_record_id: UUID | None = None
-    if request.anchor is not None:
-        anchor_record_id = _parse_uuid(
-            request.anchor.record_id,
-            field="anchor.record_id",
-        )
-        if anchor_record_id != parsed_record_id:
-            raise _reading_record_error(
-                code=ANCHOR_RECORD_ID_MISMATCH,
-                field="anchor.record_id",
-                message=(
-                    "anchor.record_id does not match the route reading_record_id"
-                ),
-            )
-
-    repository = ReaderOrchestrationRepository()
-
-    async with db_connect.acquire_connection() as conn:
-        if request.anchor is None:
-            await _ensure_reading_record_snapshot_access(
-                conn=conn,
-                repository=repository,
-                user_id=user_id,
-                reading_record_id=parsed_record_id,
-            )
-        else:
-            try:
-                await load_validated_reading_record_anchor(
-                    conn,
-                    repository=repository,
-                    user_id=user_id,
-                    anchor=request.anchor,
-                )
-            except AnchorValidationError as exc:
-                raise _reading_record_error(
-                    code=exc.code,
-                    field="anchor",
-                    message=exc.message,
-                ) from exc
-
-    # D6-A6 spike: execution is intentionally disabled.
-    return ReaderRecordAskPendingResponse(
-        status="pending",
-        code="reader_record_ask_execution_pending",
-        message="Reading Record Ask execution is not enabled yet.",
-        reading_record_id=reading_record_id,
+    await _validate_reading_record_anchor(
+        user_id=user_id,
+        reading_record_id=parsed_record_id,
+        request=request,
     )
+    thread = await _ensure_default_thread(user_id=user_id, reading_record_id=parsed_record_id)
+    async for chunk in stream_service.stream_thread_message(
+        user_id=user_id,
+        reading_record_id=parsed_record_id,
+        thread_id=_parse_uuid(thread["id"], field="thread id is invalid"),
+        request=request,
+    ):
+        yield chunk
+
+
+async def stream_reading_record_ask_thread_message(
+    *,
+    user_id: UUID,
+    reading_record_id: str,
+    thread_id: UUID,
+    request: ReaderRecordAskMessageRequest,
+) -> AsyncIterator[str]:
+    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
+    await _validate_reading_record_anchor(
+        user_id=user_id,
+        reading_record_id=parsed_record_id,
+        request=request,
+    )
+    async for chunk in stream_service.stream_thread_message(
+        user_id=user_id,
+        reading_record_id=parsed_record_id,
+        thread_id=thread_id,
+        request=request,
+    ):
+        yield chunk
+
+
+async def retry_reading_record_ask_message(
+    *,
+    user_id: UUID,
+    reading_record_id: str,
+    thread_id: UUID,
+    message_id: UUID,
+    request: ReaderAskMessageRetryRequest,
+) -> AsyncIterator[str]:
+    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
+    await _load_snapshot_facts(user_id=user_id, reading_record_id=parsed_record_id)
+    async for chunk in stream_service.retry_thread_message(
+        user_id=user_id,
+        reading_record_id=parsed_record_id,
+        thread_id=thread_id,
+        message_id=message_id,
+        retry_body=request,
+    ):
+        yield chunk
 
 
 async def confirm_reading_record_ask_action(
@@ -149,20 +277,48 @@ async def confirm_reading_record_ask_action(
     reading_record_id: str,
     action_id: str,
     request: ReaderRecordAskActionConfirmRequest,
-) -> ReaderRecordAskPendingResponse:
-    """D6-A6: stable pending response for Reading Record Ask action confirm.
-
-    This intentionally does NOT call the legacy ``reader_ask.service``
-    ``confirm_action`` and does NOT write to ``reader_ask_threads``,
-    ``reader_ask_turn_runs`` or ``reader_ask_supplements``.
-    """
-    _ = user_id, request
-    _parse_uuid(reading_record_id, field="reading_record_id")
-
-    return ReaderRecordAskPendingResponse(
-        status="pending",
-        code="reader_record_ask_confirm_pending",
-        message="Reading Record Ask action confirmation is not enabled yet.",
-        reading_record_id=reading_record_id,
+) -> ReaderAskActionConfirmResponse:
+    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
+    threads = await thread_service.list_reading_record_threads(user_id, parsed_record_id)
+    target_thread_id = next((UUID(item.id) for item in threads.items if item.is_default), None)
+    if target_thread_id is None:
+        raise HTTPException(status_code=404, detail="Reader ask action proposal not found")
+    return await action_service.confirm_action(
+        user_id=user_id,
+        thread_id=target_thread_id,
         action_id=action_id,
+        body=ReaderAskActionConfirmRequest(confirmed=request.confirmed),
+        expected_reading_record_id=parsed_record_id,
+    )
+
+
+async def confirm_reading_record_ask_thread_action(
+    *,
+    user_id: UUID,
+    reading_record_id: str,
+    thread_id: UUID,
+    action_id: str,
+    request: ReaderRecordAskActionConfirmRequest,
+) -> ReaderAskActionConfirmResponse:
+    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
+    return await action_service.confirm_action(
+        user_id=user_id,
+        thread_id=thread_id,
+        action_id=action_id,
+        body=ReaderAskActionConfirmRequest(confirmed=request.confirmed),
+        expected_reading_record_id=parsed_record_id,
+    )
+
+
+async def delete_reading_record_ask_supplement(
+    *,
+    user_id: UUID,
+    reading_record_id: str,
+    supplement_id: UUID,
+) -> ReaderAskDeleteSupplementResponse:
+    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
+    return await action_service.delete_supplement(
+        user_id=user_id,
+        supplement_id=supplement_id,
+        expected_reading_record_id=parsed_record_id,
     )

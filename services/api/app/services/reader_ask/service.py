@@ -106,6 +106,8 @@ from app.services.analysis.prompting.prompt_loader import get_prompt_version
 from app.services.analysis.prompting.strategy_builder import build_grammar_bundle_async
 from app.services.analysis.runtime.runners import run_grammar_agent
 from app.services.analysis.validators import validate_grammar_note, validate_sentence_analysis
+from app.services.ask_runtime import action_service as ask_runtime_action_svc
+from app.services.ask_runtime import thread_service as ask_runtime_thread_svc
 from app.services.reader_ask import capabilities as capabilities_svc
 from app.services.reader_ask import config as cfg
 from app.services.reader_ask import context_runtime as context_runtime_svc
@@ -2793,12 +2795,7 @@ async def _resolve_thread_model_option(
 
 
 async def list_threads(user_id: UUID, record_id: str) -> ReaderAskThreadListResponse:
-    record_uuid = _parse_uuid(record_id, "record_id must be a UUID")
-    await repo.ensure_record_access(user_id, record_uuid)
-    items = await repo.list_threads(user_id, record_uuid)
-    return ReaderAskThreadListResponse(
-        items=[ReaderAskThreadSummary.model_validate(_thread_summary_payload(item)) for item in items]
-    )
+    return await ask_runtime_thread_svc.list_analysis_threads(user_id, record_id)
 
 
 async def list_model_options() -> ReaderAskModelOptionListResponse:
@@ -2855,59 +2852,15 @@ async def list_context_records(
 
 
 async def create_thread(user_id: UUID, body: ReaderAskThreadCreateRequest) -> ReaderAskThreadSummary:
-    record_uuid = _parse_uuid(body.record_id, "record_id must be a UUID")
-    record = await repo.ensure_record_access(user_id, record_uuid)
-    selected_option = _resolve_reader_ask_model_option_or_422(
-        selected_key=body.model,
-        strict=body.model is not None,
-    )
-    thread = await repo.get_or_create_default_thread(
-        user_id,
-        record_uuid,
-        title=body.title or record.get("title") or "Ask Claread",
-        selected_model_key=selected_option.key if body.model is not None else None,
-    )
-    if thread.get("selected_model_key") is None:
-        updated_thread = await repo.update_thread_selected_model(
-            user_id,
-            _parse_uuid(thread["id"], "thread id is invalid"),
-            selected_model_key=selected_option.key,
-        )
-        if updated_thread is not None:
-            thread = updated_thread
-    return ReaderAskThreadSummary.model_validate(_thread_summary_payload(thread))
+    return await ask_runtime_thread_svc.create_analysis_thread(user_id, body)
 
 
 async def get_thread_detail(user_id: UUID, thread_id: UUID) -> ReaderAskThreadDetail:
-    thread = await repo.get_thread(user_id, thread_id)
-    if thread is None:
-        raise HTTPException(status_code=404, detail="Reader ask thread not found")
-    messages = await repo.list_messages(thread_id, limit=100)
-    return ReaderAskThreadDetail.model_validate({**_thread_summary_payload(thread), "messages": messages})
+    return await ask_runtime_thread_svc.get_thread_detail(user_id, thread_id)
 
 
 async def reset_thread(user_id: UUID, thread_id: UUID) -> ReaderAskThreadDetail:
-    thread = await repo.get_thread(user_id, thread_id)
-    if thread is None:
-        raise HTTPException(status_code=404, detail="Reader ask thread not found")
-
-    record_id = _parse_uuid(thread["record_id"], "thread record_id is invalid")
-    archived = await repo.archive_thread(user_id, thread_id)
-    if archived is None:
-        raise HTTPException(status_code=404, detail="Reader ask thread not found")
-    next_thread_option = _resolve_reader_ask_model_option_or_422(
-        selected_key=cast(str | None, thread.get("selected_model_key")),
-        strict=False,
-    )
-
-    next_thread = await repo.get_or_create_default_thread(
-        user_id,
-        record_id,
-        title=thread.get("title") or "Ask Claread",
-        selected_model_key=next_thread_option.key,
-    )
-    messages = await repo.list_messages(_parse_uuid(next_thread["id"], "thread id is invalid"), limit=100)
-    return ReaderAskThreadDetail.model_validate({**_thread_summary_payload(next_thread), "messages": messages})
+    return await ask_runtime_thread_svc.reset_analysis_thread(user_id, thread_id)
 
 
 async def _record_failure_event(
@@ -4871,343 +4824,16 @@ async def confirm_action(
     action_id: str,
     body: ReaderAskActionConfirmRequest,
 ) -> ReaderAskActionConfirmResponse:
-    message_dict, proposal_dict = await repo.find_action_proposal(
+    return await ask_runtime_action_svc.confirm_action(
         user_id=user_id,
         thread_id=thread_id,
         action_id=action_id,
+        body=body,
     )
-    if message_dict is None or proposal_dict is None:
-        raise HTTPException(status_code=404, detail="Reader ask action proposal not found")
-
-    # Idempotency: if the proposal is already in a terminal state, return
-    # immediately without re-executing the side effect.
-    proposal_status = proposal_dict.get("status", "pending")
-    if proposal_status == "executed":
-        # Already executed — return stable result with the persisted result_json
-        # so the client can recover local state even after a lost response.
-        result_data = proposal_dict.get("result_json")
-        result = ReaderAskActionConfirmResult.model_validate(result_data) if result_data else ReaderAskActionConfirmResult()
-        return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="executed", result=result)
-    if proposal_status == "rejected":
-        raise HTTPException(status_code=409, detail="Action proposal has already been rejected")
-    # "executing" status: a previous request started but may not have completed.
-    # The underlying business writes are idempotent (ON CONFLICT), so it is
-    # safe to retry. Fall through to the normal confirm path.
-
-    proposal = ReaderAskActionProposal.model_validate(proposal_dict)
-    if body.confirmed and proposal.action_type in ("save_highlight", "save_note"):
-        write_payload = ReaderAskWriteProposalPayload.model_validate(proposal.payload_json)
-        if isinstance(write_payload.anchor, ReaderAskReadingRecordAnchor):
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": READING_RECORD_ANCHOR_CONFIRM_PENDING,
-                    "message": (
-                        "Reading Record anchor action confirmation is not enabled yet; "
-                        "the proposal was not written."
-                    ),
-                    "validated": False,
-                    "record_id": write_payload.anchor.record_id,
-                    "unit_id": write_payload.anchor.unit_id,
-                    "anchor_segment_id": write_payload.anchor.anchor_segment_id,
-                },
-            )
-
-    message = ReaderAskMessage.model_validate(message_dict)
-    run_history = message_dict.get("run_history") or None
-    persisted_supplements = [
-        item.model_dump(mode="json") for item in message.persisted_supplements
-    ]
-    turn_run_id = _current_turn_run_id(message_dict, message.run_info)
-    visible_output = _visible_output_from_message(message, message_dict)
-    if not body.confirmed:
-        updated_proposals = [
-            proposal_item.model_copy(update={"status": "rejected"}) if proposal_item.id == action_id else proposal_item
-            for proposal_item in message.action_proposals
-        ]
-        await repo.update_message(
-            message_id=_parse_uuid(message.id, "message id is invalid"),
-            status=message.status,
-            content_md=message.content_md,
-            context_anchors=[anchor.model_dump(mode="json") for anchor in message.context_anchors],
-            citations=[citation.model_dump(mode="json") for citation in message.citations],
-            action_proposals=[item.model_dump(mode="json") for item in updated_proposals],
-            tool_trace=[item.model_dump(mode="json") for item in message.tool_trace],
-            metadata=_assistant_message_metadata(
-                resolved_intent=message.resolved_intent,
-                run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
-                run_history=run_history,
-                resolved_context_input=message.resolved_context_input,
-            ),
-            usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
-            current_turn_run_id=turn_run_id,
-        )
-        if turn_run_id is not None:
-            visible_output["action_proposals"] = [item.model_dump(mode="json") for item in updated_proposals]
-            await repo.update_turn_run(
-                turn_run_id=turn_run_id,
-                status=message.status,
-                user_visible_output_json=visible_output,
-            )
-            existing_trace = await repo.get_eval_trace(turn_run_id)
-            action_audit = list((existing_trace or {}).get("action_audit_json") or [])
-            action_audit.append(
-                {
-                    "action_id": action_id,
-                    "action_type": proposal.action_type,
-                    "decision": "rejected",
-                    "timestamp": _iso_now(),
-                    "status_after_decision": "rejected",
-                }
-            )
-            await _upsert_eval_trace_record(
-                turn_run_id=turn_run_id,
-                planning_snapshot=None,
-                runtime_state=ReaderAskRuntimeState(),
-                context_plan=None,
-                action_audit_json=action_audit,
-            )
-        return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="rejected")
-
-    thread = await repo.get_thread(user_id, thread_id)
-    if thread is None:
-        raise HTTPException(status_code=404, detail="Reader ask thread not found")
-    record_id = _parse_uuid(thread["record_id"], "thread record_id is invalid")
-
-    # Mark proposal as "executing" before the business write, so that a
-    # partially-completed request (business write succeeded but
-    # update_message failed) can be safely retried.
-    executing_proposals = [
-        proposal_item.model_copy(update={"status": "executing"}) if proposal_item.id == action_id else proposal_item
-        for proposal_item in message.action_proposals
-    ]
-    await repo.update_message(
-        message_id=_parse_uuid(message.id, "message id is invalid"),
-        status=message.status,
-        content_md=message.content_md,
-        context_anchors=[anchor.model_dump(mode="json") for anchor in message.context_anchors],
-        citations=[citation.model_dump(mode="json") for citation in message.citations],
-        action_proposals=[item.model_dump(mode="json") for item in executing_proposals],
-        tool_trace=[item.model_dump(mode="json") for item in message.tool_trace],
-        metadata=_assistant_message_metadata(
-            resolved_intent=message.resolved_intent,
-            run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
-            run_history=run_history,
-            resolved_context_input=message.resolved_context_input,
-        ),
-        usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
-        current_turn_run_id=turn_run_id,
-    )
-
-    result = ReaderAskActionConfirmResult()
-    updated_trace_summary = message.trace_summary
-    updated_evidence = list(message.evidence)
-    if proposal.action_type == "create_supplement_grammar_note":
-        candidate_payload = proposal.payload_json.get("candidate")
-        if not isinstance(candidate_payload, dict):
-            raise HTTPException(status_code=400, detail="Action proposal is missing supplement candidate")
-        candidate = ReaderAskSupplementCandidate.model_validate(candidate_payload)
-        record_summary = await repo.ensure_record_access(user_id, record_id)
-        created = await supplements_svc.create_supplement(
-            user_id=user_id,
-            record_id=record_id,
-            candidate=candidate,
-        )
-        persisted_supplement = supplements_svc.row_to_persisted_supplement(
-            created,
-            record_title=record_summary.get("title"),
-        )
-        persisted_supplements = _upsert_persisted_supplement(persisted_supplements, persisted_supplement)
-        updated_evidence.append(
-            ReaderAskEvidenceItem(
-                kind="supplement_candidate",
-                label=persisted_supplement.title,
-                detail="已写入当前页",
-                scope="current_record",
-                record_id=persisted_supplement.record_id,
-                record_title=persisted_supplement.record_title,
-                reason="supplement_persisted",
-                target_key=persisted_supplement.target_key,
-                metadata_json={"supplement_id": persisted_supplement.supplement_id},
-            )
-        )
-        if updated_trace_summary is not None:
-            updated_trace_summary = updated_trace_summary.model_copy(
-                update={
-                    "supplement_persisted_count": len(
-                        [
-                            item
-                            for item in persisted_supplements
-                            if item.get("lifecycle_status") == "persisted"
-                        ]
-                    ),
-                }
-            )
-        result = ReaderAskActionConfirmResult(
-            record_id=str(created["record_id"]),
-            supplement_projection=supplements_svc.supplement_projection_entry(created),
-            persisted_supplement=persisted_supplement,
-        )
-    else:
-        anchor_payload = proposal.payload_json.get("anchor")
-        if not isinstance(anchor_payload, dict):
-            raise HTTPException(status_code=400, detail="Action proposal is missing anchor payload")
-        anchor = ReaderAskAnchorRef.model_validate(anchor_payload)
-
-        if proposal.action_type == "save_highlight":
-            annotation = await user_annotations_svc.create_user_annotation(
-                user_id,
-                _annotation_request_from_anchor(
-                    record_id=record_id,
-                    anchor=anchor,
-                ),
-            )
-            result = ReaderAskActionConfirmResult(
-                annotation_id=str(annotation.id),
-                annotation_type="highlight",
-                target_key=annotation.target_key,
-            )
-        elif proposal.action_type == "save_note":
-            note_text = proposal.payload_json.get("note_text")
-            if not isinstance(note_text, str) or not note_text.strip():
-                raise HTTPException(status_code=400, detail="Action proposal is missing note_text")
-            note = await reader_notes_svc.create_reader_note(
-                user_id,
-                _reader_note_request_from_anchor(
-                    record_id=record_id,
-                    anchor=anchor,
-                    note_text=note_text,
-                ),
-            )
-            result = ReaderAskActionConfirmResult(
-                target_key=note.target_key,
-                note_id=str(note.id),
-            )
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported action type: {proposal.action_type}")
-
-    updated_proposals = [
-        proposal_item.model_copy(update={"status": "executed", "result_json": result.model_dump(mode="json")})
-        if proposal_item.id == action_id
-        else proposal_item
-        for proposal_item in message.action_proposals
-    ]
-    await repo.update_message(
-        message_id=_parse_uuid(message.id, "message id is invalid"),
-        status=message.status,
-        content_md=message.content_md,
-        context_anchors=[anchor_item.model_dump(mode="json") for anchor_item in message.context_anchors],
-        citations=[citation.model_dump(mode="json") for citation in message.citations],
-        action_proposals=[item.model_dump(mode="json") for item in updated_proposals],
-        tool_trace=[item.model_dump(mode="json") for item in message.tool_trace],
-        metadata=_assistant_message_metadata(
-            resolved_intent=message.resolved_intent,
-            run_info=message.run_info.model_dump(mode="json") if message.run_info else None,
-            run_history=run_history,
-            resolved_context_input=message.resolved_context_input,
-        ),
-        usage_event_id=_parse_uuid(message.usage_event_id, "usage_event_id is invalid") if message.usage_event_id else None,
-        current_turn_run_id=turn_run_id,
-    )
-    if turn_run_id is not None:
-        visible_output["action_proposals"] = [item.model_dump(mode="json") for item in updated_proposals]
-        visible_output["evidence"] = [item.model_dump(mode="json") for item in updated_evidence]
-        visible_output["trace_summary"] = (
-            updated_trace_summary.model_dump(mode="json") if updated_trace_summary is not None else None
-        )
-        visible_output["persisted_supplements"] = persisted_supplements
-        await repo.update_turn_run(
-            turn_run_id=turn_run_id,
-            status=message.status,
-            user_visible_output_json=visible_output,
-        )
-        existing_trace = await repo.get_eval_trace(turn_run_id)
-        action_audit = list((existing_trace or {}).get("action_audit_json") or [])
-        action_audit.append(
-            {
-                "action_id": action_id,
-                "action_type": proposal.action_type,
-                "decision": "confirmed",
-                "timestamp": _iso_now(),
-                "status_after_decision": "executed",
-            }
-        )
-        supplement_audit = list((existing_trace or {}).get("supplement_audit_json") or [])
-        if result.persisted_supplement is not None:
-            supplement_audit.append(
-                {
-                    "event": "persisted",
-                    "supplement_id": result.persisted_supplement.supplement_id,
-                    "supplement_type": result.persisted_supplement.supplement_type,
-                    "created_from_turn_run_id": result.persisted_supplement.created_from_turn_run_id,
-                    "timestamp": _iso_now(),
-                }
-            )
-        await _upsert_eval_trace_record(
-            turn_run_id=turn_run_id,
-            planning_snapshot=None,
-            runtime_state=ReaderAskRuntimeState(),
-            context_plan=None,
-            action_audit_json=action_audit,
-            supplement_audit_json=supplement_audit,
-        )
-    return ReaderAskActionConfirmResponse(ok=True, action_id=action_id, status="executed", result=result)
 
 
 async def delete_supplement(user_id: UUID, supplement_id: UUID) -> ReaderAskDeleteSupplementResponse:
-    supplement = await supplements_svc.get_supplement_projection_or_404(user_id, supplement_id)
-    record_summary = await repo.ensure_record_access(user_id, _parse_uuid(str(supplement["record_id"]), "supplement record id is invalid"))
-    deleted = await supplements_svc.delete_supplement(user_id, supplement_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Reader ask supplement not found")
-    persisted_supplement = supplements_svc.row_to_persisted_supplement(
-        deleted,
-        record_title=record_summary.get("title"),
-        lifecycle_status="deleted",
-    )
-    source_turn_run_id = _parse_uuid(
-        persisted_supplement.created_from_turn_run_id,
-        "supplement created_from_turn_run_id is invalid",
-    )
-    source_turn_run = await repo.get_turn_run(source_turn_run_id)
-    if source_turn_run is not None:
-        source_message_id = _parse_uuid(source_turn_run["message_id"], "turn run message id is invalid")
-        turn_runs = await repo.list_turn_runs_for_message(source_message_id)
-        for turn_run in turn_runs:
-            turn_run_id = _parse_uuid(turn_run["id"], "turn run id is invalid")
-            output = dict(turn_run.get("user_visible_output_json") or {})
-            output["persisted_supplements"] = _mark_deleted_persisted_supplement(
-                list(output.get("persisted_supplements") or []),
-                persisted_supplement,
-            )
-            await repo.update_turn_run(
-                turn_run_id=turn_run_id,
-                status=turn_run["status"],
-                user_visible_output_json=output,
-            )
-        existing_trace = await repo.get_eval_trace(source_turn_run_id)
-        supplement_audit = list((existing_trace or {}).get("supplement_audit_json") or [])
-        supplement_audit.append(
-            {
-                "event": "deleted",
-                "supplement_id": persisted_supplement.supplement_id,
-                "supplement_type": persisted_supplement.supplement_type,
-                "created_from_turn_run_id": persisted_supplement.created_from_turn_run_id,
-                "timestamp": _iso_now(),
-            }
-        )
-        await _upsert_eval_trace_record(
-            turn_run_id=source_turn_run_id,
-            planning_snapshot=None,
-            runtime_state=ReaderAskRuntimeState(),
-            context_plan=None,
-            supplement_audit_json=supplement_audit,
-        )
-    return ReaderAskDeleteSupplementResponse(
-        deleted=True,
-        supplement_id=str(supplement_id),
-        record_id=str(supplement["record_id"]),
-        target_key=str(supplement.get("target_key")) if supplement.get("target_key") else None,
-        lifecycle_status="deleted",
-        persisted_supplement=persisted_supplement,
+    return await ask_runtime_action_svc.delete_supplement(
+        user_id=user_id,
+        supplement_id=supplement_id,
     )

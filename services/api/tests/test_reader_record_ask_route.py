@@ -1,7 +1,8 @@
-"""D6-A6: Reading Record Ask route / contract spike tests."""
+"""F1: Reading Record Ask backend route and service tests."""
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -16,11 +17,17 @@ from app.contracts.anchor_validation import (
     AnchorValidationError,
 )
 from app.contracts.annotation import compute_text_range_hash
-from app.schemas.reader_ask import ReaderRecordAskPendingResponse
+from app.schemas.reader_ask import (
+    ReaderAskActionConfirmResponse,
+    ReaderAskActionConfirmResult,
+    ReaderAskThreadListResponse,
+    ReaderAskThreadSummary,
+)
 
 USER_ID = "00000000-0000-0000-0000-000000000001"
 RECORD_ID = "00000000-0000-0000-0000-0000000000a6"
 BASE_ID = "00000000-0000-0000-0000-0000000000b6"
+THREAD_ID = "00000000-0000-0000-0000-0000000000c6"
 AUTH_HEADERS = {"Authorization": "Bearer test_token"}
 
 
@@ -40,15 +47,15 @@ def _mock_auth():
 
 
 def _anchor(**overrides: object) -> dict[str, object]:
-    selected = "🧠"
+    selected = "anthem"
     defaults: dict[str, object] = {
         "record_id": RECORD_ID,
         "base_id": BASE_ID,
         "generation": 1,
         "unit_id": "u1",
         "anchor_segment_id": "s1",
-        "start_offset": 6,
-        "end_offset": 8,
+        "start_offset": 0,
+        "end_offset": len(selected),
         "selected_text": selected,
         "text_hash": compute_text_range_hash(selected),
     }
@@ -56,15 +63,12 @@ def _anchor(**overrides: object) -> dict[str, object]:
     return defaults
 
 
-def _mock_db_connect():
-    mock_conn = AsyncMock()
-    mock_pool = MagicMock()
-    mock_pool.__aenter__ = AsyncMock(return_value=mock_conn)
-    mock_pool.__aexit__ = AsyncMock(return_value=False)
-    return patch(
-        "app.services.reader_record_ask.service.db_connect.acquire_connection",
-        return_value=mock_pool,
-    )
+def _stream_chunks(*chunks: str) -> AsyncIterator[str]:
+    async def _gen() -> AsyncIterator[str]:
+        for chunk in chunks:
+            yield chunk
+
+    return _gen()
 
 
 def create_client() -> TestClient:
@@ -97,19 +101,16 @@ class TestReaderRecordAskRoute:
         assert response.status_code == 422
 
     @_mock_auth()
-    @_mock_db_connect()
     @patch(
-        "app.services.reader_record_ask.service.ReaderOrchestrationRepository.load_snapshot_facts",
-        new_callable=AsyncMock,
+        "app.api.routes.reader_record_ask.rr_ask_svc.send_reading_record_ask_message",
+        return_value=_stream_chunks("event: message.completed\ndata: {}\n\n"),
     )
-    def test_messages_without_anchor_still_validate_reading_record_snapshot(
+    def test_message_alias_route_streams_service_chunks(
         self,
-        mock_load_snapshot_facts,
-        mock_db_connect,
+        mock_send,
         mock_auth,
     ) -> None:
         client = create_client()
-        mock_load_snapshot_facts.return_value = MagicMock()
 
         response = client.post(
             f"/reader/records/{RECORD_ID}/ask/messages",
@@ -117,126 +118,28 @@ class TestReaderRecordAskRoute:
             json={"content": "Explain the article"},
         )
 
-        assert response.status_code == 409
-        data = response.json()
-        assert data["code"] == "reader_record_ask_execution_pending"
-        assert data["reading_record_id"] == RECORD_ID
-        mock_load_snapshot_facts.assert_awaited_once()
-
-    @_mock_auth()
-    @_mock_db_connect()
-    @patch(
-        "app.services.reader_record_ask.service.load_validated_reading_record_anchor",
-        new_callable=AsyncMock,
-    )
-    def test_valid_anchor_returns_typed_pending(
-        self,
-        mock_load_anchor,
-        mock_db_connect,
-        mock_auth,
-    ) -> None:
-        client = create_client()
-        mock_load_anchor.return_value = MagicMock()
-
-        response = client.post(
-            f"/reader/records/{RECORD_ID}/ask/messages",
-            headers=AUTH_HEADERS,
-            json={"content": "Explain this", "anchor": _anchor()},
-        )
-
-        assert response.status_code == 409
-        data = response.json()
-        assert data["status"] == "pending"
-        assert data["code"] == "reader_record_ask_execution_pending"
-        assert data["reading_record_id"] == RECORD_ID
-        mock_load_anchor.assert_awaited_once()
-
-    @_mock_auth()
-    def test_anchor_record_id_mismatch_returns_stable_error(self, mock_auth) -> None:
-        client = create_client()
-
-        response = client.post(
-            f"/reader/records/{RECORD_ID}/ask/messages",
-            headers=AUTH_HEADERS,
-            json={"content": "Explain this", "anchor": _anchor(record_id=str(uuid4()))},
-        )
-
-        assert response.status_code == 400
-        detail = response.json()["detail"]
-        assert detail["code"] == ANCHOR_RECORD_ID_MISMATCH
-        assert detail["field"] == "anchor.record_id"
-
-    @_mock_auth()
-    @_mock_db_connect()
-    @patch(
-        "app.services.reader_record_ask.service.load_validated_reading_record_anchor",
-        new_callable=AsyncMock,
-    )
-    def test_legacy_analysis_record_id_not_accepted_as_record_id(
-        self,
-        mock_load_anchor,
-        mock_db_connect,
-        mock_auth,
-    ) -> None:
-        client = create_client()
-        legacy_analysis_record_id = str(uuid4())
-        mock_load_anchor.side_effect = AnchorValidationError(
-            READING_RECORD_NOT_FOUND,
-            "reading record not found",
-        )
-
-        response = client.post(
-            f"/reader/records/{legacy_analysis_record_id}/ask/messages",
-            headers=AUTH_HEADERS,
-            json={
-                "content": "Explain this",
-                "anchor": _anchor(record_id=legacy_analysis_record_id),
-            },
-        )
-
-        assert response.status_code == 400
-        detail = response.json()["detail"]
-        assert detail["code"] == READING_RECORD_NOT_FOUND
-
-    @_mock_auth()
-    @_mock_db_connect()
-    @patch(
-        "app.services.reader_record_ask.service.load_validated_reading_record_anchor",
-        new_callable=AsyncMock,
-    )
-    def test_anchor_gate_failure_returns_typed_error(
-        self,
-        mock_load_anchor,
-        mock_db_connect,
-        mock_auth,
-    ) -> None:
-        client = create_client()
-        mock_load_anchor.side_effect = AnchorValidationError(
-            "unit_not_found",
-            "unit does not exist",
-        )
-
-        response = client.post(
-            f"/reader/records/{RECORD_ID}/ask/messages",
-            headers=AUTH_HEADERS,
-            json={"content": "Explain this", "anchor": _anchor(unit_id="u99")},
-        )
-
-        assert response.status_code == 400
-        detail = response.json()["detail"]
-        assert detail["code"] == "unit_not_found"
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert "event: message.completed" in response.text
+        mock_send.assert_called_once()
 
     @_mock_auth()
     @patch(
-        "app.services.reader_ask.service.confirm_action",
+        "app.api.routes.reader_record_ask.rr_ask_svc.confirm_reading_record_ask_action",
         new_callable=AsyncMock,
     )
-    def test_confirm_returns_pending_without_touching_legacy_tables(
+    def test_confirm_alias_route_uses_real_response_contract(
         self,
-        mock_legacy_confirm,
+        mock_confirm,
         mock_auth,
     ) -> None:
         client = create_client()
+        mock_confirm.return_value = ReaderAskActionConfirmResponse(
+            ok=True,
+            action_id="act-1",
+            status="executed",
+            result=ReaderAskActionConfirmResult(note_id="note-1"),
+        )
 
         response = client.post(
             f"/reader/records/{RECORD_ID}/ask/actions/act-1/confirm",
@@ -244,21 +147,16 @@ class TestReaderRecordAskRoute:
             json={"confirmed": True},
         )
 
-        assert response.status_code == 409
-        data = response.json()
-        assert data["status"] == "pending"
-        assert data["code"] == "reader_record_ask_confirm_pending"
-        assert data["reading_record_id"] == RECORD_ID
-        assert data["action_id"] == "act-1"
-        mock_legacy_confirm.assert_not_awaited()
+        assert response.status_code == 200
+        assert response.json()["status"] == "executed"
+        assert response.json()["result"]["note_id"] == "note-1"
+        mock_confirm.assert_awaited_once()
 
 
 class TestReaderRecordAskService:
     @pytest.mark.asyncio
-    async def test_send_message_without_anchor_pending_after_snapshot_validation(self) -> None:
-        from app.services.reader_record_ask.service import (
-            send_reading_record_ask_message,
-        )
+    async def test_send_message_without_anchor_validates_snapshot_and_delegates(self) -> None:
+        from app.services.reader_record_ask.service import send_reading_record_ask_message
 
         request = MagicMock()
         request.anchor = None
@@ -267,27 +165,95 @@ class TestReaderRecordAskService:
         request.model = None
 
         with (
-            _mock_db_connect(),
             patch(
-                "app.services.reader_record_ask.service.ReaderOrchestrationRepository.load_snapshot_facts",
+                "app.services.reader_record_ask.service._load_snapshot_facts_raw",
                 new_callable=AsyncMock,
             ) as mock_load_snapshot_facts,
+            patch(
+                "app.services.reader_record_ask.service.thread_service.ensure_default_reading_record_thread",
+                new_callable=AsyncMock,
+                return_value={"id": THREAD_ID, "title": "Test"},
+            ),
+            patch(
+                "app.services.reader_record_ask.service.stream_service.stream_thread_message",
+                return_value=_stream_chunks("event: message.completed\ndata: {}\n\n"),
+            ) as mock_stream,
         ):
-            mock_load_snapshot_facts.return_value = MagicMock()
-            result = await send_reading_record_ask_message(
+            mock_load_snapshot_facts.return_value = MagicMock(
+                record=MagicMock(title="Test"),
+            )
+            generator = send_reading_record_ask_message(
                 user_id=UUID(USER_ID),
                 reading_record_id=RECORD_ID,
                 request=request,
             )
+            chunks = [chunk async for chunk in generator]
 
-        assert isinstance(result, ReaderRecordAskPendingResponse)
-        assert result.code == "reader_record_ask_execution_pending"
+        assert chunks == ["event: message.completed\ndata: {}\n\n"]
+        assert mock_load_snapshot_facts.await_count >= 1
+        mock_stream.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_send_message_without_anchor_returns_not_found(self) -> None:
-        from app.services.reader_record_ask.service import (
-            send_reading_record_ask_message,
+    async def test_send_message_anchor_record_mismatch_raises_typed_error(self) -> None:
+        from app.services.reader_record_ask.service import send_reading_record_ask_message
+
+        request = MagicMock()
+        request.anchor = MagicMock(record_id=str(uuid4()))
+        request.content = "hello"
+        request.entry_action = "ask_about_this"
+        request.model = None
+
+        generator = send_reading_record_ask_message(
+            user_id=UUID(USER_ID),
+            reading_record_id=RECORD_ID,
+            request=request,
         )
+
+        with pytest.raises(HTTPException) as excinfo:
+            await anext(generator)
+
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail["code"] == ANCHOR_RECORD_ID_MISMATCH
+
+    @pytest.mark.asyncio
+    async def test_send_message_anchor_gate_failure_raises_typed_error(self) -> None:
+        from app.services.reader_record_ask.service import send_reading_record_ask_message
+
+        request = MagicMock()
+        request.anchor = MagicMock(
+            record_id=RECORD_ID,
+            base_id=BASE_ID,
+            generation=1,
+            unit_id="u99",
+            anchor_segment_id="s1",
+            start_offset=0,
+            end_offset=2,
+            selected_text="hi",
+            text_hash=compute_text_range_hash("hi"),
+        )
+        request.content = "hello"
+        request.entry_action = "ask_about_this"
+        request.model = None
+
+        with patch(
+            "app.services.reader_record_ask.service._load_validated_anchor_raw",
+            new_callable=AsyncMock,
+            side_effect=AnchorValidationError("unit_not_found", "unit does not exist"),
+        ):
+            generator = send_reading_record_ask_message(
+                user_id=UUID(USER_ID),
+                reading_record_id=RECORD_ID,
+                request=request,
+            )
+            with pytest.raises(HTTPException) as excinfo:
+                await anext(generator)
+
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail["code"] == "unit_not_found"
+
+    @pytest.mark.asyncio
+    async def test_send_message_snapshot_not_found_raises_typed_error(self) -> None:
+        from app.services.reader_record_ask.service import send_reading_record_ask_message
 
         request = MagicMock()
         request.anchor = None
@@ -295,42 +261,64 @@ class TestReaderRecordAskService:
         request.entry_action = "ask_about_this"
         request.model = None
 
-        with (
-            _mock_db_connect(),
-            patch(
-                "app.services.reader_record_ask.service.ReaderOrchestrationRepository.load_snapshot_facts",
-                new_callable=AsyncMock,
-            ) as mock_load_snapshot_facts,
+        with patch(
+            "app.services.reader_record_ask.service._load_snapshot_facts_raw",
+            new_callable=AsyncMock,
+            side_effect=LookupError("reading record not visible"),
         ):
-            mock_load_snapshot_facts.side_effect = LookupError(
-                "reading record not visible",
+            generator = send_reading_record_ask_message(
+                user_id=UUID(USER_ID),
+                reading_record_id=RECORD_ID,
+                request=request,
             )
             with pytest.raises(HTTPException) as excinfo:
-                await send_reading_record_ask_message(
-                    user_id=UUID(USER_ID),
-                    reading_record_id=RECORD_ID,
-                    request=request,
-                )
+                await anext(generator)
 
         assert excinfo.value.status_code == 400
         assert excinfo.value.detail["code"] == READING_RECORD_NOT_FOUND
-        assert excinfo.value.detail["field"] == "reading_record_id"
 
     @pytest.mark.asyncio
-    async def test_confirm_action_pending(self) -> None:
-        from app.services.reader_record_ask.service import (
-            confirm_reading_record_ask_action,
-        )
+    async def test_confirm_action_uses_thread_scoped_runtime(self) -> None:
+        from app.services.reader_record_ask.service import confirm_reading_record_ask_action
 
-        request = MagicMock()
-        request.confirmed = True
+        with (
+            patch(
+                "app.services.reader_record_ask.service.thread_service.list_reading_record_threads",
+                new_callable=AsyncMock,
+                return_value=ReaderAskThreadListResponse(
+                    items=[
+                        ReaderAskThreadSummary(
+                            id=THREAD_ID,
+                            record_id=RECORD_ID,
+                            title="Test",
+                            is_default=True,
+                            selected_model=None,
+                            archived_at=None,
+                            created_at="2026-06-25T00:00:00Z",
+                            updated_at="2026-06-25T00:00:00Z",
+                            last_message_at=None,
+                        )
+                    ]
+                ),
+            ),
+            patch(
+                "app.services.reader_record_ask.service.action_service.confirm_action",
+                new_callable=AsyncMock,
+                return_value=ReaderAskActionConfirmResponse(
+                    ok=True,
+                    action_id="act-1",
+                    status="executed",
+                    result=ReaderAskActionConfirmResult(note_id="note-1"),
+                ),
+            ) as mock_confirm,
+        ):
+            result = await confirm_reading_record_ask_action(
+                user_id=UUID(USER_ID),
+                reading_record_id=RECORD_ID,
+                action_id="act-1",
+                request=MagicMock(confirmed=True),
+            )
 
-        result = await confirm_reading_record_ask_action(
-            user_id=UUID(USER_ID),
-            reading_record_id=RECORD_ID,
-            action_id="act-1",
-            request=request,
-        )
-
-        assert isinstance(result, ReaderRecordAskPendingResponse)
-        assert result.code == "reader_record_ask_confirm_pending"
+        assert result.status == "executed"
+        assert result.result.note_id == "note-1"
+        mock_confirm.assert_awaited_once()

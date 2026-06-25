@@ -245,25 +245,30 @@ def test_agent_tools_reject_cross_record_reading_record_anchor() -> None:
 
 
 @pytest.mark.asyncio
-async def test_confirm_reading_record_anchor_proposal_returns_pending_without_write() -> None:
+async def test_confirm_reading_record_anchor_proposal_writes_via_shared_runtime() -> None:
     action_id = "reading-record-anchor-action-1"
+    record_id = "00000000-0000-0000-0000-000000000001"
     proposal_dict = {
         "id": action_id,
         "action_type": "save_highlight",
         "label": "保存为高亮",
         "status": "pending",
         "payload_json": {
-            "record_id": "record-1",
-            "anchor": _reading_record_anchor_payload(),
+            "record_id": record_id,
+            "anchor": _reading_record_anchor_payload(record_id=record_id),
         },
     }
     message_dict = {
-        "id": "msg-1",
-        "thread_id": "thread-1",
+        "id": "00000000-0000-0000-0000-000000000101",
+        "thread_id": "00000000-0000-0000-0000-000000000102",
         "role": "assistant",
         "status": "completed",
         "content_md": "done",
+        "context_anchors": [],
+        "citations": [],
         "action_proposals": [proposal_dict],
+        "tool_trace": [],
+        "evidence": [],
         "created_at": "2026-06-23T00:00:00Z",
         "updated_at": "2026-06-23T00:00:00Z",
     }
@@ -278,7 +283,11 @@ async def test_confirm_reading_record_anchor_proposal_returns_pending_without_wr
             reader_ask_service.repo,
             "get_thread",
             new=AsyncMock(
-                return_value={"record_id": "00000000-0000-0000-0000-000000000001"}
+                return_value={
+                    "record_id": record_id,
+                    "record_scope": "reading_record",
+                    "reading_record_id": record_id,
+                }
             ),
         ),
         patch.object(
@@ -286,6 +295,16 @@ async def test_confirm_reading_record_anchor_proposal_returns_pending_without_wr
             "update_message",
             new=AsyncMock(),
         ) as update_message,
+        patch.object(
+            reader_ask_service.repo,
+            "get_eval_trace",
+            new=AsyncMock(return_value=None),
+        ),
+        patch.object(
+            reader_ask_service.repo,
+            "upsert_eval_trace",
+            new=AsyncMock(),
+        ),
         patch.object(
             reader_ask_service.user_annotations_svc,
             "create_user_annotation",
@@ -297,19 +316,23 @@ async def test_confirm_reading_record_anchor_proposal_returns_pending_without_wr
             new=AsyncMock(),
         ) as create_note,
     ):
-        with pytest.raises(HTTPException) as excinfo:
-            await reader_ask_service.confirm_action(
-                user_id=uuid4(),
-                thread_id=uuid4(),
-                action_id=action_id,
-                body=ReaderAskActionConfirmRequest(confirmed=True),
-            )
+        create_annotation.return_value = type(
+            "AnnotationResult",
+            (),
+            {
+                "id": uuid4(),
+                "target_key": "reading-record:u1",
+            },
+        )()
+        response = await reader_ask_service.confirm_action(
+            user_id=uuid4(),
+            thread_id=uuid4(),
+            action_id=action_id,
+            body=ReaderAskActionConfirmRequest(confirmed=True),
+        )
 
-    assert excinfo.value.status_code == 409
-    assert (
-        excinfo.value.detail["code"]
-        == reader_ask_service.READING_RECORD_ANCHOR_CONFIRM_PENDING
-    )
-    update_message.assert_not_called()
-    create_annotation.assert_not_called()
+    assert response.status == "executed"
+    assert response.result.annotation_type == "highlight"
+    update_message.assert_awaited()
+    create_annotation.assert_awaited_once()
     create_note.assert_not_called()

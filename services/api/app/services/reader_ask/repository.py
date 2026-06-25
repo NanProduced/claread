@@ -19,13 +19,35 @@ def _json_dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _record_scope(row: Any, *, prefix: str = "") -> str | None:
+    if row.get(f"{prefix}reading_record_id") is not None:
+        return "reading_record"
+    if row.get(f"{prefix}analysis_record_id") is not None or row.get(f"{prefix}record_id") is not None:
+        return "analysis"
+    return None
+
+
+def _canonical_record_id(row: Any, *, prefix: str = "") -> str | None:
+    value = (
+        row.get(f"{prefix}reading_record_id")
+        or row.get(f"{prefix}analysis_record_id")
+        or row.get(f"{prefix}record_id")
+    )
+    return str(value) if value is not None else None
+
+
+def _uuid_str(row: Any, key: str) -> str | None:
+    value = row.get(key)
+    return str(value) if value is not None else None
+
+
 def _message_row_to_dict(row: Any) -> dict[str, Any]:
     metadata = row["metadata_json"] or {}
     hydrated_output = row.get("user_visible_output_json")
     if not isinstance(hydrated_output, dict):
         hydrated_output = None
     visible = hydrated_output or {}
-    use_legacy_fallback = hydrated_output is None and row.get("current_turn_run_id") is None
+    use_legacy_fallback = hydrated_output is None and row.get("message_current_turn_run_id") is None
     status = row["status"]
     if row.get("current_turn_run_status") == "interrupted":
         status = "interrupted"
@@ -102,8 +124,8 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
         "reasoning_status": reasoning_status,
         "follow_up_suggestions": follow_up_suggestions,
         "usage_event_id": usage_event_id,
-        "current_turn_run_id": str(row["current_turn_run_id"]) if row.get("current_turn_run_id") else None,
-        "current_turn_run": _turn_run_row_to_dict(row) if row.get("current_turn_run_id") else None,
+        "current_turn_run_id": str(row["message_current_turn_run_id"]) if row.get("message_current_turn_run_id") else None,
+        "current_turn_run": _turn_run_row_to_dict(row) if row.get("message_current_turn_run_id") else None,
         "current_user_visible_output": hydrated_output,
         "current_eval_trace": row.get("current_eval_trace_json") or None,
         "created_at": _iso(row["created_at"]),
@@ -112,9 +134,13 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
 
 
 def _thread_row_to_dict(row: Any) -> dict[str, Any]:
+    record_id = _canonical_record_id(row)
     return {
         "id": str(row["id"]),
-        "record_id": str(row["record_id"]),
+        "record_id": record_id,
+        "record_scope": _record_scope(row),
+        "analysis_record_id": _uuid_str(row, "analysis_record_id"),
+        "reading_record_id": _uuid_str(row, "reading_record_id"),
         "title": row["title"],
         "is_default": bool(row["is_default"]),
         "selected_model_key": row.get("selected_model_key"),
@@ -126,27 +152,61 @@ def _thread_row_to_dict(row: Any) -> dict[str, Any]:
 
 
 def _turn_run_row_to_dict(row: Any) -> dict[str, Any]:
+    prefix = "current_turn_run_"
     return {
-        "id": str(row["current_turn_run_id"]),
+        "id": str(row[f"{prefix}id"]),
         "message_id": str(row["id"]),
         "thread_id": str(row["thread_id"]),
-        "user_id": str(row["current_turn_run_user_id"]) if row.get("current_turn_run_user_id") else None,
-        "record_id": str(row["current_turn_run_record_id"]) if row.get("current_turn_run_record_id") else None,
-        "turn_id": str(row["current_turn_run_turn_id"]) if row.get("current_turn_run_turn_id") else None,
-        "run_attempt": int(row["current_turn_run_attempt"]) if row.get("current_turn_run_attempt") is not None else 1,
-        "supersedes_run_id": str(row["current_turn_run_supersedes_run_id"])
-        if row.get("current_turn_run_supersedes_run_id")
+        "user_id": _uuid_str(row, f"{prefix}user_id"),
+        "record_id": _canonical_record_id(row, prefix=prefix),
+        "record_scope": _record_scope(row, prefix=prefix),
+        "analysis_record_id": _uuid_str(row, f"{prefix}analysis_record_id"),
+        "reading_record_id": _uuid_str(row, f"{prefix}reading_record_id"),
+        "base_id": _uuid_str(row, f"{prefix}base_id"),
+        "generation": int(row[f"{prefix}generation"]) if row.get(f"{prefix}generation") is not None else None,
+        "turn_id": _uuid_str(row, f"{prefix}turn_id"),
+        "run_attempt": int(row[f"{prefix}run_attempt"]) if row.get(f"{prefix}run_attempt") is not None else 1,
+        "supersedes_run_id": _uuid_str(row, f"{prefix}supersedes_run_id")
+        if row.get(f"{prefix}supersedes_run_id")
         else None,
-        "status": row["current_turn_run_status"],
-        "resolved_intent": row.get("current_turn_run_resolved_intent"),
+        "status": row[f"{prefix}status"],
+        "resolved_intent": row.get(f"{prefix}resolved_intent"),
         "user_visible_output_json": row.get("user_visible_output_json"),
         "usage_summary_json": row.get("usage_summary_json"),
-        "usage_event_id": str(row["current_turn_run_usage_event_id"]) if row.get("current_turn_run_usage_event_id") else None,
-        "started_at": _iso(row["current_turn_run_started_at"]),
-        "completed_at": _iso(row["current_turn_run_completed_at"]),
-        "failed_at": _iso(row["current_turn_run_failed_at"]),
-        "created_at": _iso(row["current_turn_run_created_at"]),
-        "updated_at": _iso(row["current_turn_run_updated_at"]),
+        "usage_event_id": _uuid_str(row, f"{prefix}usage_event_id"),
+        "started_at": _iso(row[f"{prefix}started_at"]),
+        "completed_at": _iso(row[f"{prefix}completed_at"]),
+        "failed_at": _iso(row[f"{prefix}failed_at"]),
+        "created_at": _iso(row[f"{prefix}created_at"]),
+        "updated_at": _iso(row[f"{prefix}updated_at"]),
+    }
+
+
+def _turn_run_row_explicit_to_dict(row: Any) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "message_id": str(row["message_id"]),
+        "thread_id": str(row["thread_id"]),
+        "user_id": _uuid_str(row, "user_id"),
+        "record_id": _canonical_record_id(row),
+        "record_scope": _record_scope(row),
+        "analysis_record_id": _uuid_str(row, "analysis_record_id"),
+        "reading_record_id": _uuid_str(row, "reading_record_id"),
+        "base_id": _uuid_str(row, "base_id"),
+        "generation": int(row["generation"]) if row.get("generation") is not None else None,
+        "turn_id": _uuid_str(row, "turn_id"),
+        "run_attempt": int(row["run_attempt"]),
+        "supersedes_run_id": _uuid_str(row, "supersedes_run_id"),
+        "status": row["status"],
+        "resolved_intent": row["resolved_intent"],
+        "user_visible_output_json": row["user_visible_output_json"],
+        "usage_summary_json": row["usage_summary_json"],
+        "usage_event_id": _uuid_str(row, "usage_event_id"),
+        "started_at": _iso(row["started_at"]),
+        "completed_at": _iso(row["completed_at"]),
+        "failed_at": _iso(row["failed_at"]),
+        "created_at": _iso(row["created_at"]),
+        "updated_at": _iso(row["updated_at"]),
     }
 
 
@@ -170,11 +230,15 @@ def _eval_trace_row_to_dict(row: Any) -> dict[str, Any] | None:
 _MESSAGE_SELECT = """
 SELECT m.id, m.thread_id, m.role, m.status, m.content_md,
        m.context_anchors_json, m.citations_json, m.action_proposals_json, m.tool_trace_json, m.metadata_json,
-       m.current_turn_run_id, m.usage_event_id, m.created_at, m.updated_at,
+       m.current_turn_run_id AS message_current_turn_run_id, m.usage_event_id, m.created_at, m.updated_at,
+       tr.id AS current_turn_run_id,
        tr.user_id AS current_turn_run_user_id,
-       tr.record_id AS current_turn_run_record_id,
+       tr.analysis_record_id AS current_turn_run_analysis_record_id,
+       tr.reading_record_id AS current_turn_run_reading_record_id,
+       tr.base_id AS current_turn_run_base_id,
+       tr.generation AS current_turn_run_generation,
        tr.turn_id AS current_turn_run_turn_id,
-       tr.run_attempt AS current_turn_run_attempt,
+       tr.run_attempt AS current_turn_run_run_attempt,
        tr.supersedes_run_id AS current_turn_run_supersedes_run_id,
        tr.status AS current_turn_run_status,
        tr.resolved_intent AS current_turn_run_resolved_intent,
@@ -320,13 +384,34 @@ async def list_threads(user_id: UUID, record_id: UUID) -> list[dict[str, Any]]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, record_id, title, is_default, selected_model_key, archived_at, created_at, updated_at, last_message_at
+            SELECT id, analysis_record_id, reading_record_id, title, is_default,
+                   selected_model_key, archived_at, created_at, updated_at, last_message_at
             FROM reader_ask_threads
-            WHERE user_id = $1 AND record_id = $2 AND archived_at IS NULL
+            WHERE user_id = $1 AND analysis_record_id = $2 AND archived_at IS NULL
             ORDER BY is_default DESC, COALESCE(last_message_at, created_at) DESC, created_at DESC
             """,
             user_id,
             record_id,
+        )
+    return [_thread_row_to_dict(row) for row in rows]
+
+
+async def list_reading_record_threads(user_id: UUID, reading_record_id: UUID) -> list[dict[str, Any]]:
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, analysis_record_id, reading_record_id, title, is_default,
+                   selected_model_key, archived_at, created_at, updated_at, last_message_at
+            FROM reader_ask_threads
+            WHERE user_id = $1 AND reading_record_id = $2 AND archived_at IS NULL
+            ORDER BY is_default DESC, COALESCE(last_message_at, created_at) DESC, created_at DESC
+            """,
+            user_id,
+            reading_record_id,
         )
     return [_thread_row_to_dict(row) for row in rows]
 
@@ -339,7 +424,8 @@ async def get_thread(user_id: UUID, thread_id: UUID) -> dict[str, Any] | None:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT id, record_id, title, is_default, selected_model_key, archived_at, created_at, updated_at, last_message_at
+            SELECT id, analysis_record_id, reading_record_id, title, is_default,
+                   selected_model_key, archived_at, created_at, updated_at, last_message_at
             FROM reader_ask_threads
             WHERE id = $1 AND user_id = $2 AND archived_at IS NULL
             """,
@@ -364,18 +450,60 @@ async def get_or_create_default_thread(
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO reader_ask_threads (user_id, record_id, title, selected_model_key, is_default, created_at, updated_at)
+            INSERT INTO reader_ask_threads (
+                user_id, analysis_record_id, title, selected_model_key, is_default, created_at, updated_at
+            )
             VALUES ($1, $2, $3, $4, TRUE, $5, $5)
-            ON CONFLICT (user_id, record_id)
+            ON CONFLICT (user_id, analysis_record_id)
             WHERE is_default = TRUE AND archived_at IS NULL
             DO UPDATE SET
                 title = COALESCE(reader_ask_threads.title, EXCLUDED.title),
                 selected_model_key = COALESCE(EXCLUDED.selected_model_key, reader_ask_threads.selected_model_key),
                 updated_at = EXCLUDED.updated_at
-            RETURNING id, record_id, title, is_default, selected_model_key, archived_at, created_at, updated_at, last_message_at
+            RETURNING id, analysis_record_id, reading_record_id, title, is_default,
+                      selected_model_key, archived_at, created_at, updated_at, last_message_at
             """,
             user_id,
             record_id,
+            title,
+            selected_model_key,
+            now,
+        )
+    assert row is not None
+    return _thread_row_to_dict(row)
+
+
+async def get_or_create_default_thread_for_reading_record(
+    user_id: UUID,
+    reading_record_id: UUID,
+    *,
+    title: str | None = None,
+    selected_model_key: str | None = None,
+) -> dict[str, Any]:
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    now = datetime.now(UTC)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO reader_ask_threads (
+                user_id, analysis_record_id, reading_record_id, title,
+                selected_model_key, is_default, created_at, updated_at
+            )
+            VALUES ($1, NULL, $2, $3, $4, TRUE, $5, $5)
+            ON CONFLICT (user_id, reading_record_id)
+            WHERE is_default = TRUE AND archived_at IS NULL
+            DO UPDATE SET
+                title = COALESCE(reader_ask_threads.title, EXCLUDED.title),
+                selected_model_key = COALESCE(EXCLUDED.selected_model_key, reader_ask_threads.selected_model_key),
+                updated_at = EXCLUDED.updated_at
+            RETURNING id, analysis_record_id, reading_record_id, title, is_default,
+                      selected_model_key, archived_at, created_at, updated_at, last_message_at
+            """,
+            user_id,
+            reading_record_id,
             title,
             selected_model_key,
             now,
@@ -396,7 +524,8 @@ async def archive_thread(user_id: UUID, thread_id: UUID) -> dict[str, Any] | Non
             UPDATE reader_ask_threads
             SET archived_at = $3, updated_at = $3
             WHERE id = $1 AND user_id = $2 AND archived_at IS NULL
-            RETURNING id, record_id, title, is_default, selected_model_key, archived_at, created_at, updated_at, last_message_at
+            RETURNING id, analysis_record_id, reading_record_id, title, is_default,
+                      selected_model_key, archived_at, created_at, updated_at, last_message_at
             """,
             thread_id,
             user_id,
@@ -423,7 +552,8 @@ async def update_thread_selected_model(
             SET selected_model_key = $3,
                 updated_at = $4
             WHERE id = $1 AND user_id = $2 AND archived_at IS NULL
-            RETURNING id, record_id, title, is_default, selected_model_key, archived_at, created_at, updated_at, last_message_at
+            RETURNING id, analysis_record_id, reading_record_id, title, is_default,
+                      selected_model_key, archived_at, created_at, updated_at, last_message_at
             """,
             thread_id,
             user_id,
@@ -640,12 +770,13 @@ async def create_turn_run(
         row = await conn.fetchrow(
             """
             INSERT INTO reader_ask_turn_runs (
-                message_id, thread_id, user_id, record_id, turn_id,
+                message_id, thread_id, user_id, analysis_record_id, turn_id,
                 run_attempt, supersedes_run_id, status, resolved_intent,
                 started_at, created_at, updated_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $10)
-            RETURNING id, message_id, thread_id, user_id, record_id, turn_id, run_attempt,
+            RETURNING id, message_id, thread_id, user_id, analysis_record_id, reading_record_id,
+                      base_id, generation, turn_id, run_attempt,
                       supersedes_run_id, status, resolved_intent, user_visible_output_json,
                       usage_summary_json, usage_event_id, started_at, completed_at, failed_at,
                       created_at, updated_at
@@ -662,26 +793,62 @@ async def create_turn_run(
             now,
         )
     assert row is not None
-    return {
-        "id": str(row["id"]),
-        "message_id": str(row["message_id"]),
-        "thread_id": str(row["thread_id"]),
-        "user_id": str(row["user_id"]),
-        "record_id": str(row["record_id"]),
-        "turn_id": str(row["turn_id"]),
-        "run_attempt": int(row["run_attempt"]),
-        "supersedes_run_id": str(row["supersedes_run_id"]) if row.get("supersedes_run_id") else None,
-        "status": row["status"],
-        "resolved_intent": row["resolved_intent"],
-        "user_visible_output_json": row["user_visible_output_json"],
-        "usage_summary_json": row["usage_summary_json"],
-        "usage_event_id": str(row["usage_event_id"]) if row.get("usage_event_id") else None,
-        "started_at": _iso(row["started_at"]),
-        "completed_at": _iso(row["completed_at"]),
-        "failed_at": _iso(row["failed_at"]),
-        "created_at": _iso(row["created_at"]),
-        "updated_at": _iso(row["updated_at"]),
-    }
+    return _turn_run_row_explicit_to_dict(row)
+
+
+async def create_turn_run_for_reading_record(
+    *,
+    message_id: UUID,
+    thread_id: UUID,
+    user_id: UUID,
+    reading_record_id: UUID,
+    base_id: UUID,
+    generation: int,
+    turn_id: UUID,
+    run_attempt: int,
+    supersedes_run_id: UUID | None,
+    status: str,
+    resolved_intent: str | None,
+) -> dict[str, Any]:
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    now = datetime.now(UTC)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO reader_ask_turn_runs (
+                message_id, thread_id, user_id, analysis_record_id, reading_record_id,
+                base_id, generation, turn_id, run_attempt, supersedes_run_id,
+                status, resolved_intent, started_at, created_at, updated_at
+            )
+            VALUES (
+                $1, $2, $3, NULL, $4,
+                $5, $6, $7, $8, $9,
+                $10, $11, $12, $12, $12
+            )
+            RETURNING id, message_id, thread_id, user_id, analysis_record_id, reading_record_id,
+                      base_id, generation, turn_id, run_attempt,
+                      supersedes_run_id, status, resolved_intent, user_visible_output_json,
+                      usage_summary_json, usage_event_id, started_at, completed_at, failed_at,
+                      created_at, updated_at
+            """,
+            message_id,
+            thread_id,
+            user_id,
+            reading_record_id,
+            base_id,
+            generation,
+            turn_id,
+            run_attempt,
+            supersedes_run_id,
+            status,
+            resolved_intent,
+            now,
+        )
+    assert row is not None
+    return _turn_run_row_explicit_to_dict(row)
 
 
 async def get_turn_run(turn_run_id: UUID) -> dict[str, Any] | None:
@@ -692,7 +859,8 @@ async def get_turn_run(turn_run_id: UUID) -> dict[str, Any] | None:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT id, message_id, thread_id, user_id, record_id, turn_id, run_attempt,
+            SELECT id, message_id, thread_id, user_id, analysis_record_id, reading_record_id,
+                   base_id, generation, turn_id, run_attempt,
                    supersedes_run_id, status, resolved_intent, user_visible_output_json,
                    usage_summary_json, usage_event_id, started_at, completed_at, failed_at,
                    created_at, updated_at
@@ -703,26 +871,7 @@ async def get_turn_run(turn_run_id: UUID) -> dict[str, Any] | None:
         )
     if row is None:
         return None
-    return {
-        "id": str(row["id"]),
-        "message_id": str(row["message_id"]),
-        "thread_id": str(row["thread_id"]),
-        "user_id": str(row["user_id"]),
-        "record_id": str(row["record_id"]),
-        "turn_id": str(row["turn_id"]),
-        "run_attempt": int(row["run_attempt"]),
-        "supersedes_run_id": str(row["supersedes_run_id"]) if row.get("supersedes_run_id") else None,
-        "status": row["status"],
-        "resolved_intent": row["resolved_intent"],
-        "user_visible_output_json": row["user_visible_output_json"],
-        "usage_summary_json": row["usage_summary_json"],
-        "usage_event_id": str(row["usage_event_id"]) if row.get("usage_event_id") else None,
-        "started_at": _iso(row["started_at"]),
-        "completed_at": _iso(row["completed_at"]),
-        "failed_at": _iso(row["failed_at"]),
-        "created_at": _iso(row["created_at"]),
-        "updated_at": _iso(row["updated_at"]),
-    }
+    return _turn_run_row_explicit_to_dict(row)
 
 
 async def update_turn_run(
@@ -754,7 +903,8 @@ async def update_turn_run(
                 failed_at = COALESCE($8, failed_at),
                 updated_at = $9
             WHERE id = $1
-            RETURNING id, message_id, thread_id, user_id, record_id, turn_id, run_attempt,
+            RETURNING id, message_id, thread_id, user_id, analysis_record_id, reading_record_id,
+                      base_id, generation, turn_id, run_attempt,
                       supersedes_run_id, status, resolved_intent, user_visible_output_json,
                       usage_summary_json, usage_event_id, started_at, completed_at, failed_at,
                       created_at, updated_at
@@ -771,26 +921,7 @@ async def update_turn_run(
         )
     if row is None:
         raise HTTPException(status_code=404, detail="Reader ask turn run not found")
-    return {
-        "id": str(row["id"]),
-        "message_id": str(row["message_id"]),
-        "thread_id": str(row["thread_id"]),
-        "user_id": str(row["user_id"]),
-        "record_id": str(row["record_id"]),
-        "turn_id": str(row["turn_id"]),
-        "run_attempt": int(row["run_attempt"]),
-        "supersedes_run_id": str(row["supersedes_run_id"]) if row.get("supersedes_run_id") else None,
-        "status": row["status"],
-        "resolved_intent": row["resolved_intent"],
-        "user_visible_output_json": row["user_visible_output_json"],
-        "usage_summary_json": row["usage_summary_json"],
-        "usage_event_id": str(row["usage_event_id"]) if row.get("usage_event_id") else None,
-        "started_at": _iso(row["started_at"]),
-        "completed_at": _iso(row["completed_at"]),
-        "failed_at": _iso(row["failed_at"]),
-        "created_at": _iso(row["created_at"]),
-        "updated_at": _iso(row["updated_at"]),
-    }
+    return _turn_run_row_explicit_to_dict(row)
 
 
 async def list_turn_runs_for_message(message_id: UUID) -> list[dict[str, Any]]:
@@ -801,7 +932,8 @@ async def list_turn_runs_for_message(message_id: UUID) -> list[dict[str, Any]]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, message_id, thread_id, user_id, record_id, turn_id, run_attempt,
+            SELECT id, message_id, thread_id, user_id, analysis_record_id, reading_record_id,
+                   base_id, generation, turn_id, run_attempt,
                    supersedes_run_id, status, resolved_intent, user_visible_output_json,
                    usage_summary_json, usage_event_id, started_at, completed_at, failed_at,
                    created_at, updated_at
@@ -811,29 +943,7 @@ async def list_turn_runs_for_message(message_id: UUID) -> list[dict[str, Any]]:
             """,
             message_id,
         )
-    return [
-        {
-            "id": str(row["id"]),
-            "message_id": str(row["message_id"]),
-            "thread_id": str(row["thread_id"]),
-            "user_id": str(row["user_id"]),
-            "record_id": str(row["record_id"]),
-            "turn_id": str(row["turn_id"]),
-            "run_attempt": int(row["run_attempt"]),
-            "supersedes_run_id": str(row["supersedes_run_id"]) if row.get("supersedes_run_id") else None,
-            "status": row["status"],
-            "resolved_intent": row["resolved_intent"],
-            "user_visible_output_json": row["user_visible_output_json"],
-            "usage_summary_json": row["usage_summary_json"],
-            "usage_event_id": str(row["usage_event_id"]) if row.get("usage_event_id") else None,
-            "started_at": _iso(row["started_at"]),
-            "completed_at": _iso(row["completed_at"]),
-            "failed_at": _iso(row["failed_at"]),
-            "created_at": _iso(row["created_at"]),
-            "updated_at": _iso(row["updated_at"]),
-        }
-        for row in rows
-    ]
+    return [_turn_run_row_explicit_to_dict(row) for row in rows]
 
 
 async def get_eval_trace(turn_run_id: UUID) -> dict[str, Any] | None:

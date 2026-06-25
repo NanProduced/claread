@@ -637,7 +637,7 @@ class ReaderAskSupplementCandidate(BaseModel):
     paragraph_id: str | None = None
     title: str
     content: str
-    anchor: ReaderAskAnchorRef
+    anchor: ReaderAskAnchorRef | ReaderAskReadingRecordAnchor
     schema_version: str
     created_from_turn_run_id: str
     label: str = "AI 补充语法旁注"
@@ -649,8 +649,8 @@ class ReaderAskPersistedSupplement(BaseModel):
     lifecycle_status: Literal["persisted", "deleted"] = "persisted"
     record_id: str
     record_title: str | None = None
-    target_key: str
-    sentence_id: str
+    target_key: str | None = None
+    sentence_id: str | None = None
     paragraph_id: str | None = None
     title: str
     content: str

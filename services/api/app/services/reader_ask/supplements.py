@@ -10,6 +10,7 @@ from app.database import connection as db_connection
 from app.schemas.reader_ask import (
     ReaderAskAnchorRef,
     ReaderAskPersistedSupplement,
+    ReaderAskReadingRecordAnchor,
     ReaderAskSupplementCandidate,
 )
 
@@ -22,6 +23,18 @@ def _iso_now() -> datetime:
 
 def _entry_id(supplement_id: str) -> str:
     return f"ask-supplement:{supplement_id}"
+
+
+def _canonical_row_record_id(row: dict[str, Any]) -> str:
+    record_id = row.get("reading_record_id") or row.get("analysis_record_id") or row.get("record_id")
+    return str(record_id)
+
+
+def _reading_record_target_key(anchor: ReaderAskReadingRecordAnchor) -> str:
+    return (
+        f"reading-record:{anchor.record_id}:segment:{anchor.anchor_segment_id}:"
+        f"{anchor.start_offset}:{anchor.end_offset}"
+    )
 
 
 def candidate_to_projection(candidate: ReaderAskSupplementCandidate) -> dict[str, Any]:
@@ -85,10 +98,10 @@ def row_to_persisted_supplement(
         supplement_id=str(row["id"]),
         supplement_type=str(row.get("supplement_type") or row.get("entry_type") or "grammar_note"),
         lifecycle_status=lifecycle_status,
-        record_id=str(row["record_id"]),
+        record_id=_canonical_row_record_id(row),
         record_title=record_title,
-        target_key=str(row["target_key"]),
-        sentence_id=str(row["sentence_id"]),
+        target_key=str(row["target_key"]) if row.get("target_key") is not None else None,
+        sentence_id=str(row["sentence_id"]) if row.get("sentence_id") is not None else None,
         paragraph_id=str(row["paragraph_id"]) if row.get("paragraph_id") else None,
         title=str(row.get("title") or "AI 补充语法旁注"),
         content=str(row.get("content_md") or ""),
@@ -101,7 +114,8 @@ def row_to_persisted_supplement(
 async def create_supplement(
     *,
     user_id: UUID,
-    record_id: UUID,
+    record_id: UUID | None = None,
+    reading_record_id: UUID | None = None,
     candidate: ReaderAskSupplementCandidate,
 ) -> dict[str, Any]:
     """Create a supplement. Idempotent: if a supplement with the same id already
@@ -113,30 +127,56 @@ async def create_supplement(
 
     now = _iso_now()
     supplement_id = UUID(candidate.candidate_id)
+    is_reading_record_candidate = isinstance(candidate.anchor, ReaderAskReadingRecordAnchor)
+    if is_reading_record_candidate:
+        anchor = candidate.anchor
+        assert isinstance(anchor, ReaderAskReadingRecordAnchor)
+        resolved_reading_record_id = reading_record_id or UUID(anchor.record_id)
+        target_key = candidate.target_key or _reading_record_target_key(anchor)
+        sentence_id = candidate.sentence_id or anchor.anchor_segment_id
+    else:
+        anchor = candidate.anchor
+        assert isinstance(anchor, ReaderAskAnchorRef)
+        if record_id is None:
+            raise HTTPException(status_code=400, detail="Legacy supplement persistence requires record_id")
+        resolved_reading_record_id = None
+        target_key = candidate.target_key
+        sentence_id = candidate.sentence_id
+
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO reader_ask_supplements (
-                id, user_id, record_id, supplement_type, target_key, sentence_id, paragraph_id,
+                id, user_id, analysis_record_id, reading_record_id, supplement_type,
+                target_key, sentence_id, paragraph_id,
                 title, content_md, anchor_payload_json, metadata_json, schema_version,
-                created_from_turn_run_id, created_at, updated_at
+                created_from_turn_run_id, created_at, updated_at,
+                base_id, generation, unit_id, anchor_segment_id,
+                start_offset, end_offset, text_hash, hash_algorithm
             )
             VALUES (
-                $1, $2, $3, $4, $5, $6, $7,
-                $8, $9, $10::jsonb, $11::jsonb, $12,
-                $13, $14, $14
+                $1, $2, $3, $4, $5,
+                $6, $7, $8,
+                $9, $10, $11::jsonb, $12::jsonb, $13,
+                $14, $15, $15,
+                $16, $17, $18, $19,
+                $20, $21, $22, $23
             )
             ON CONFLICT (id) DO NOTHING
-            RETURNING id, record_id, supplement_type, target_key, sentence_id, paragraph_id,
+            RETURNING id, analysis_record_id, reading_record_id, supplement_type,
+                      target_key, sentence_id, paragraph_id,
                       title, content_md, anchor_payload_json, metadata_json, schema_version,
-                      created_from_turn_run_id, created_at, updated_at, deleted_at
+                      created_from_turn_run_id, created_at, updated_at, deleted_at,
+                      base_id, generation, unit_id, anchor_segment_id,
+                      start_offset, end_offset, text_hash, hash_algorithm
             """,
             supplement_id,
             user_id,
-            record_id,
+            None if is_reading_record_candidate else record_id,
+            resolved_reading_record_id,
             candidate.supplement_type,
-            candidate.target_key,
-            candidate.sentence_id,
+            target_key,
+            sentence_id,
             candidate.paragraph_id,
             candidate.title,
             candidate.content,
@@ -145,14 +185,25 @@ async def create_supplement(
             candidate.schema_version,
             candidate.created_from_turn_run_id,
             now,
+            UUID(anchor.base_id) if is_reading_record_candidate else None,
+            anchor.generation if is_reading_record_candidate else None,
+            anchor.unit_id if is_reading_record_candidate else None,
+            anchor.anchor_segment_id if is_reading_record_candidate else None,
+            anchor.start_offset if is_reading_record_candidate else None,
+            anchor.end_offset if is_reading_record_candidate else None,
+            anchor.text_hash if is_reading_record_candidate else None,
+            anchor.hash_algorithm if is_reading_record_candidate else None,
         )
         # ON CONFLICT DO NOTHING returns None — fetch the existing row
         if row is None:
             row = await conn.fetchrow(
                 """
-                SELECT id, record_id, supplement_type, target_key, sentence_id, paragraph_id,
+                SELECT id, analysis_record_id, reading_record_id, supplement_type,
+                       target_key, sentence_id, paragraph_id,
                        title, content_md, anchor_payload_json, metadata_json, schema_version,
-                       created_from_turn_run_id, created_at, updated_at, deleted_at
+                       created_from_turn_run_id, created_at, updated_at, deleted_at,
+                       base_id, generation, unit_id, anchor_segment_id,
+                       start_offset, end_offset, text_hash, hash_algorithm
                 FROM reader_ask_supplements
                 WHERE id = $1
                 """,
@@ -170,15 +221,45 @@ async def list_supplements_for_record(user_id: UUID, record_id: UUID) -> list[di
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, record_id, supplement_type, target_key, sentence_id, paragraph_id,
+            SELECT id, analysis_record_id, reading_record_id, supplement_type,
+                   target_key, sentence_id, paragraph_id,
                    title, content_md, anchor_payload_json, metadata_json, schema_version,
-                   created_from_turn_run_id, created_at, updated_at, deleted_at
+                   created_from_turn_run_id, created_at, updated_at, deleted_at,
+                   base_id, generation, unit_id, anchor_segment_id,
+                   start_offset, end_offset, text_hash, hash_algorithm
             FROM reader_ask_supplements
-            WHERE user_id = $1 AND record_id = $2 AND deleted_at IS NULL
+            WHERE user_id = $1 AND analysis_record_id = $2 AND deleted_at IS NULL
             ORDER BY created_at ASC
             """,
             user_id,
             record_id,
+        )
+    return [dict(row) for row in rows]
+
+
+async def list_supplements_for_reading_record(
+    user_id: UUID,
+    reading_record_id: UUID,
+) -> list[dict[str, Any]]:
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, analysis_record_id, reading_record_id, supplement_type,
+                   target_key, sentence_id, paragraph_id,
+                   title, content_md, anchor_payload_json, metadata_json, schema_version,
+                   created_from_turn_run_id, created_at, updated_at, deleted_at,
+                   base_id, generation, unit_id, anchor_segment_id,
+                   start_offset, end_offset, text_hash, hash_algorithm
+            FROM reader_ask_supplements
+            WHERE user_id = $1 AND reading_record_id = $2 AND deleted_at IS NULL
+            ORDER BY created_at ASC
+            """,
+            user_id,
+            reading_record_id,
         )
     return [dict(row) for row in rows]
 
@@ -195,9 +276,12 @@ async def delete_supplement(user_id: UUID, supplement_id: UUID) -> dict[str, Any
             UPDATE reader_ask_supplements
             SET deleted_at = $3, updated_at = $3
             WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
-            RETURNING id, record_id, supplement_type, target_key, sentence_id, paragraph_id,
+            RETURNING id, analysis_record_id, reading_record_id, supplement_type,
+                      target_key, sentence_id, paragraph_id,
                       title, content_md, anchor_payload_json, metadata_json, schema_version,
-                      created_from_turn_run_id, created_at, updated_at, deleted_at
+                      created_from_turn_run_id, created_at, updated_at, deleted_at,
+                      base_id, generation, unit_id, anchor_segment_id,
+                      start_offset, end_offset, text_hash, hash_algorithm
             """,
             supplement_id,
             user_id,
@@ -210,7 +294,7 @@ def supplement_projection_entry(row: dict[str, Any]) -> dict[str, Any]:
     supplement_id = str(row["id"])
     return {
         "id": _entry_id(supplement_id),
-        "sentence_id": row["sentence_id"],
+        "sentence_id": row.get("sentence_id"),
         "entry_type": row["supplement_type"],
         "label": "AI 补充语法旁注",
         "title": row.get("title") or "AI 补充语法旁注",
@@ -251,20 +335,27 @@ def merge_supplements_into_render_scene(
 
 def build_grammar_note_candidate(
     *,
-    anchor: ReaderAskAnchorRef,
+    anchor: ReaderAskAnchorRef | ReaderAskReadingRecordAnchor,
     assistant_content_md: str,
     created_from_turn_run_id: str,
 ) -> ReaderAskSupplementCandidate | None:
-    sentence_id = anchor.sentence_id
-    target_key = anchor.target_key
-    if not sentence_id or not target_key:
-        return None
+    if isinstance(anchor, ReaderAskReadingRecordAnchor):
+        sentence_id = anchor.anchor_segment_id
+        target_key = _reading_record_target_key(anchor)
+        paragraph_id = None
+        title = anchor.selected_text or "AI 补充语法旁注"
+    else:
+        sentence_id = anchor.sentence_id
+        target_key = anchor.target_key
+        paragraph_id = anchor.paragraph_id
+        title = anchor.label or anchor.selected_text or "AI 补充语法旁注"
+        if not sentence_id or not target_key:
+            return None
 
     content = assistant_content_md.strip()
     if not content or len(content) < 60:
         return None
 
-    title = anchor.label or anchor.selected_text or "AI 补充语法旁注"
     if len(title) > 60:
         title = f"{title[:57]}..."
 
@@ -273,7 +364,7 @@ def build_grammar_note_candidate(
         supplement_type="grammar_note",
         target_key=target_key,
         sentence_id=sentence_id,
-        paragraph_id=anchor.paragraph_id,
+        paragraph_id=paragraph_id,
         title=title,
         content=content,
         anchor=anchor,
@@ -290,9 +381,12 @@ async def get_supplement_projection_or_404(user_id: UUID, supplement_id: UUID) -
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT id, record_id, supplement_type, target_key, sentence_id, paragraph_id,
+            SELECT id, analysis_record_id, reading_record_id, supplement_type,
+                   target_key, sentence_id, paragraph_id,
                    title, content_md, anchor_payload_json, metadata_json, schema_version,
-                   created_from_turn_run_id, created_at, updated_at, deleted_at
+                   created_from_turn_run_id, created_at, updated_at, deleted_at,
+                   base_id, generation, unit_id, anchor_segment_id,
+                   start_offset, end_offset, text_hash, hash_algorithm
             FROM reader_ask_supplements
             WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
             """,
