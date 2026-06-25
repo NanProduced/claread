@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import { AiWorkspacePanel } from "@/components/reader/AiWorkspacePanel";
 import type { DictLookupTypeDto, WebDictResult } from "@/types/api/dict";
 import {
   projectReaderPlateSnapshotToReaderRecordPlateDocument,
@@ -11,6 +12,7 @@ import {
   type ReaderRecordPlateParagraphBlock,
   type ReaderRecordPlateProgress,
   type ReaderRecordPlateTextLeaf,
+  type ReaderRecordPlateTextAnchor,
   type ReaderRecordPlateUserHighlightMark,
   type ReaderRecordPlateUserNoteMark,
   type ReaderRecordPlateVocabularyMark,
@@ -19,6 +21,11 @@ import {
   readReaderRecordSelectionAnchorDrafts,
   type ReaderRecordSelectionAnchorBridgeResult,
 } from "@/lib/reader-plate/projection/reader-record-dom-selection";
+import {
+  askAttachmentKey,
+  type ReaderAskAttachment,
+  type ReaderAskPageIdentity,
+} from "@/lib/reader-plate";
 import type { ReaderRecordAnchorDraft } from "@/lib/reader-plate/projection/reader-record-anchor-draft";
 import type { ReaderPlateSnapshotDto, ReaderSnapshotUserAssetDto } from "@/types/api/reader-plate";
 import type { ThemeName } from "@/lib/appearance";
@@ -112,6 +119,46 @@ function singleRangeDraft(
   selection: ReaderRecordSelectionAnchorBridgeResult | null,
 ): ReaderRecordAnchorDraft | null {
   return selection?.supportedSingleRange ? (selection.drafts[0] ?? null) : null;
+}
+
+function readingRecordAskAnchorFromDraft(
+  draft: ReaderRecordAnchorDraft,
+): Record<string, unknown> {
+  return {
+    record_id: draft.record_id,
+    base_id: draft.base_id,
+    generation: draft.generation,
+    unit_id: draft.unit_id,
+    anchor_segment_id: draft.anchor_segment_id,
+    start_offset: draft.start_offset,
+    end_offset: draft.end_offset,
+    offset_unit: draft.offset_unit,
+    selected_text: draft.selected_text,
+    text_hash: draft.text_hash,
+    hash_algorithm: draft.hash_algorithm,
+    scope: draft.scope,
+  };
+}
+
+function readingRecordAskAnchorFromTextAnchor(
+  recordId: string,
+  generation: number,
+  anchor: ReaderRecordPlateTextAnchor,
+): Record<string, unknown> {
+  return {
+    record_id: recordId,
+    base_id: anchor.baseId,
+    generation,
+    unit_id: anchor.unitId,
+    anchor_segment_id: anchor.anchorSegmentId,
+    start_offset: anchor.unitStartOffset,
+    end_offset: anchor.unitEndOffset,
+    offset_unit: anchor.offsetUnit,
+    selected_text: anchor.selectedText,
+    text_hash: anchor.textHash,
+    hash_algorithm: anchor.hashAlgorithm,
+    scope: "stable_source",
+  };
 }
 
 function actionButtonClassName(enabled: boolean) {
@@ -708,6 +755,7 @@ function SelectionActionStrip({
   selection,
   writeState,
   noteComposerOpen,
+  onAsk,
   onCopy,
   onHighlight,
   onLookup,
@@ -718,6 +766,7 @@ function SelectionActionStrip({
   selection: ReaderRecordSelectionAnchorBridgeResult | null;
   writeState: ReaderRecordWriteState;
   noteComposerOpen: boolean;
+  onAsk: () => void;
   onCopy: () => void;
   onHighlight: () => void;
   onLookup: () => void;
@@ -730,6 +779,7 @@ function SelectionActionStrip({
   const lookupDisabled = !singleRangeReady || lookupState.kind === "loading";
   const highlightDisabled = !singleRangeReady || isSaving;
   const noteDisabled = !singleRangeReady || isSaving || noteComposerOpen;
+  const askDisabled = !singleRangeReady;
   const disabledReason = !selection
     ? "请选择稳定原文以启用此操作"
     : singleRangeReady
@@ -821,11 +871,19 @@ function SelectionActionStrip({
           >
             笔记
           </button>
-          <span
-            data-reader-record-coming-soon-actions="ask-feedback"
-            className="text-muted/70"
+          <button
+            type="button"
+            disabled={askDisabled}
+            data-reader-record-action="ask"
+            className={actionButtonClassName(!askDisabled)}
+            title={askDisabled ? disabledReason : "Ask 关于所选内容"}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onAsk}
           >
-            Ask / 反馈 即将推出
+            Ask
+          </button>
+          <span data-reader-record-coming-soon-actions="feedback" className="text-muted/70">
+            反馈稍后开放
           </span>
           {copyStatus !== "idle" ? (
             <span
@@ -968,6 +1026,33 @@ export function ReaderRecordPlateSurface({
     () => ({ ...snapshot, user_assets: localUserAssets }),
     [snapshot, localUserAssets],
   );
+  const askPageIdentity = useMemo<ReaderAskPageIdentity>(
+    () => ({
+      recordId: snapshot.record_id,
+      recordTitle: snapshot.record.title,
+      surface: "reader",
+      source: "reader_2_0",
+      availableContextCapabilities: ["record_context"],
+      hasArticleOverview: false,
+      hasSentenceEntries: snapshot.anchor_segments.length > 0,
+      hasAnnotations: snapshot.enhancement_layers.some(
+        (layer) => layer.layer_type !== "translation",
+      ),
+      hasReaderNotes: projectedSnapshot.user_assets.some(
+        (asset) =>
+          asset.asset_type === "note" ||
+          asset.asset_type === "reader_note" ||
+          asset.asset_type === "comment",
+      ),
+    }),
+    [
+      projectedSnapshot.user_assets,
+      snapshot.anchor_segments.length,
+      snapshot.enhancement_layers,
+      snapshot.record.title,
+      snapshot.record_id,
+    ],
+  );
 
   const plateDocument = useMemo(
     () => projectReaderPlateSnapshotToReaderRecordPlateDocument(projectedSnapshot),
@@ -1046,6 +1131,8 @@ export function ReaderRecordPlateSurface({
   const [dictionaryAINoteState, setDictionaryAINoteState] = useState<SaveState>({
     kind: "idle",
   });
+  const [askOpen, setAskOpen] = useState(false);
+  const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
   const [feedbackState, setFeedbackState] = useState<SaveState>({ kind: "idle" });
   const [feedbackTarget, setFeedbackTarget] = useState<{
     blockId: string;
@@ -1316,6 +1403,32 @@ export function ReaderRecordPlateSurface({
     () => buildDictionaryLookupSnapshot(snapshot, lookupState),
     [snapshot, lookupState],
   );
+  const currentAskSelectionAttachment = useMemo<ReaderAskAttachment | null>(() => {
+    const selection = activeSelection;
+    const draft = singleRangeDraft(selection);
+    const segment = selection?.supportedSingleRange ? (selection.segments[0] ?? null) : null;
+    if (!selection || !draft || !segment) {
+      return null;
+    }
+
+    return {
+      kind: "text_selection",
+      subtype: selection.anchorType,
+      label: draft.selected_text,
+      selectedText: draft.selected_text,
+      targetKey: draft.anchor_segment_id,
+      metadata: {
+        pageIdentity: askPageIdentity,
+        sourceSurface: "selection_toolbar",
+        entryAction: "ask_about_this",
+        sentenceId: segment.sentenceId,
+        paragraphId: segment.paragraphId,
+        startOffset: draft.start_offset,
+        endOffset: draft.end_offset,
+        readingRecordAnchor: readingRecordAskAnchorFromDraft(draft),
+      },
+    };
+  }, [activeSelection, askPageIdentity]);
 
   const openDictionaryRail = useCallback(() => {
     setDictionaryOpen(true);
@@ -1335,22 +1448,71 @@ export function ReaderRecordPlateSurface({
     setDictionaryOpen(false);
   }, []);
 
-  const handleRequestAI = useCallback(() => {
-    setDictionaryAIPanelOpen(true);
-    setDictionaryAI({
-      kind: "error",
-      mode: "context_explain",
-      requestKey: `unavailable-${Date.now()}`,
-      error: {
-        kind: "error",
-        query: activeLookupSnapshot?.query ?? "",
-        mode: "context_explain",
-        status: 501,
-        code: "upstream_error",
-        message: "AI 词典功能暂未开放，敬请期待。",
+  const handleRemoveAskAttachment = useCallback((attachmentKey: string) => {
+    setAskAttachments((current) =>
+      current.filter((attachment) => askAttachmentKey(attachment) !== attachmentKey),
+    );
+  }, []);
+
+  const openAskPanel = useCallback((attachment?: ReaderAskAttachment | null) => {
+    if (attachment === null) {
+      setAskAttachments([]);
+    } else if (attachment) {
+      setAskAttachments([attachment]);
+    }
+    setAskOpen(true);
+    setToolbarOpen(false);
+    setDictionaryOpen(false);
+    setDictionaryAIPanelOpen(false);
+    setDictionaryAI({ kind: "idle" });
+    setLookupState({ kind: "idle" });
+    setHighlightMenu(null);
+    setNoteMenu(null);
+    setFeedbackTarget(null);
+    window.getSelection()?.removeAllRanges();
+  }, []);
+
+  const handleAskFromSelection = useCallback(() => {
+    if (!currentAskSelectionAttachment) {
+      return;
+    }
+    openAskPanel(currentAskSelectionAttachment);
+  }, [currentAskSelectionAttachment, openAskPanel]);
+
+  const handleAskFromNote = useCallback(() => {
+    const activeMenu = noteMenu;
+    if (!activeMenu) {
+      return;
+    }
+    const { anchor, assetId, assetType, noteText } = activeMenu.mark;
+    openAskPanel({
+      kind: "annotation_ref",
+      subtype: "reader_note",
+      label: noteText.trim() || anchor.selectedText,
+      selectedText: anchor.selectedText,
+      targetKey: anchor.anchorSegmentId,
+      metadata: {
+        pageIdentity: askPageIdentity,
+        sourceSurface: "note_menu",
+        entryAction: "ask_about_this",
+        assetId,
+        annotationType: assetType,
+        sentenceId: anchor.sentenceId,
+        paragraphId: anchor.unitId,
+        note: noteText,
+        title: "笔记",
+        readingRecordAnchor: readingRecordAskAnchorFromTextAnchor(
+          snapshot.record_id,
+          snapshot.record.generation,
+          anchor,
+        ),
       },
     });
-  }, [activeLookupSnapshot]);
+  }, [askPageIdentity, noteMenu, openAskPanel, snapshot.record.generation, snapshot.record_id]);
+
+  const handleRequestAI = useCallback(() => {
+    openAskPanel(currentAskSelectionAttachment);
+  }, [currentAskSelectionAttachment, openAskPanel]);
 
   const handleDictionarySearch = useCallback(
     async (query: string) => {
@@ -2045,6 +2207,7 @@ export function ReaderRecordPlateSurface({
           selection={activeSelection}
           writeState={writeState}
           noteComposerOpen={noteAnchorDraft !== null}
+          onAsk={handleAskFromSelection}
           onCopy={handleCopy}
           onHighlight={handleHighlight}
           onLookup={handleLookup}
@@ -2059,7 +2222,6 @@ export function ReaderRecordPlateSurface({
             <SelectionToolbar
               selectedText={singleRangeDraft(activeSelection)?.selected_text ?? ""}
               disabled={{
-                ask: true,
                 selectSentence: true,
                 clear: true,
                 feedback: true,
@@ -2076,6 +2238,7 @@ export function ReaderRecordPlateSurface({
                       ? "error"
                       : undefined
               }
+              onAsk={() => handleAskFromSelection()}
               onHighlight={() => handleHighlight()}
               onNote={() => handleOpenNoteComposer()}
               onLookup={() => handleLookup()}
@@ -2126,6 +2289,15 @@ export function ReaderRecordPlateSurface({
                 </span>
                 {noteMenu.mode === "view" ? (
                   <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      aria-label="Ask 关于这条笔记"
+                      data-reader-record-note-action="ask"
+                      onClick={handleAskFromNote}
+                      className="rounded-md px-2 py-0.5 text-xs text-lens-blue transition-colors hover:bg-lens-blue/5"
+                    >
+                      Ask
+                    </button>
                     <button
                       type="button"
                       aria-label="编辑笔记"
@@ -2303,6 +2475,19 @@ export function ReaderRecordPlateSurface({
           </div>
         ) : null}
       </div>
+      <AiWorkspacePanel
+        open={askOpen}
+        presentation={surfaceMode}
+        pageIdentity={askPageIdentity}
+        recordId={snapshot.record_id}
+        recordScope="reading_record"
+        hideClosedLauncher
+        recordTitle={snapshot.record.title}
+        attachments={askAttachments}
+        onRemoveAttachment={handleRemoveAskAttachment}
+        onClearAttachments={() => setAskAttachments([])}
+        onToggle={() => setAskOpen(false)}
+      />
       {dictionaryOpen ? (
         <div
           className="reader-tool-surface reader-tool-surface--rail fixed top-3 bottom-3 left-3 z-40 hidden xl:block w-[420px]"

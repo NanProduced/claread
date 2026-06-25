@@ -1,22 +1,22 @@
 # Reader Agentic Orchestration 实施计划
 
 > 状态：`D6 进行中`
-> 最后更新：2026-06-24
+> 最后更新：2026-06-25
 
 ## 成功标准
 
 当 Web 用户提交 learning 输入后，系统能够提供：
 
 - 长期存在的 Reading Record。
-- Stable Reading Base 和不可变 Reading Units。
+- Stable Reading Document、Stable Document Blocks、Canonical Text Layer 和不可变 Reading Units。
 - 早于完整增强完成的 `article_ready`。
 - 可恢复的渐进 Enhancement Layers。
 - 带 audit / eval hooks 的 Parsed Decisions。
 - 基于新 base 的 Ask Claread sidecar，且不成为 orchestrator。
 - run / step / layer 级 usage events。
 - 可重置的 baseline schema，并保留词典三表。
-- 当前记录内可构建和恢复的 RAG substrate。
-- 文本、URL、PDF、OCR、文件上传等输入模式的统一适配入口。
+- 当前记录内可构建和恢复的 RAG substrate，覆盖 Stable Reading Document 并支持 block-scoped citation。
+- 文本、URL、PDF、OCR、文件上传等输入模式的统一适配入口，产出 Candidate Document / Stable Reading Document。
 - 不依赖旧 `render_scene_json` contract 的新 Web Reader Plate projection。
 
 ## 阶段门禁
@@ -59,7 +59,7 @@
 | D6-A1 | Web read-only anchor draft helper | ✅ 完成 |
 | D6-A3 | Ask tool signature / write-proposal anchor contract | ✅ 完成 |
 | D6-A5 | Notes / Highlights dual-contract spike | ✅ 完成 |
-| D6-A6 | Reading Record Ask minimal slice（FastAPI route only，UI 未启用） | ✅ 完成 |
+| D6-A6 | Reading Record Ask minimal slice（F1 后端切线 + F2/B1 RR scope Web 接线） | ✅ 完成 |
 | D6-U2 | Multi-anchor contract decision（single-range first） | ✅ 完成 |
 | D6-U3 | V1c single-range persistence design | ✅ 完成 |
 | D6-U4 | V1c single-range persistence 实现（migration + runtime 写入） | ✅ 完成 |
@@ -67,6 +67,15 @@
 | D6 product-state | failed_terminal classifier（保守映射为 failed） | ✅ 完成 |
 | W3-D0~D9 | Web cutover：submit landing / recent recovery / list source / Library section / command palette / activity indicator / Vocabulary guard | ✅ 完成 |
 | UI-D4~D6C | ReaderRecordPlateSurface 阅读态打磨 / 默认 Plate mode / 真实流程验收 / UI polish | ✅ 完成 |
+| D6-I0 | Input / document model product decision：Candidate Document、Stable Reading Document、Stable Document Blocks、Canonical Text Layer、V1 输入范围、PDF/OCR gate、RAG source scope | ✅ 完成 |
+| D6-I1 | Stable Document Block contract + schema design | ⏳ 待做 |
+| D6-I2 | Candidate Document persistence + preview/confirm API | ⏳ 待做 |
+| D6-I3 | Upload / Source Artifact adapter（OSS + local dev） | ⏳ 待做 |
+| D6-I4 | Markdown/txt document parser + Input Suitability Gate | ⏳ 待做 |
+| D6-I5 | PDF parser + page quality gate + optional LLM reviewer | ⏳ 待做 |
+| D6-I6 | OCR provider adapter + multi-image Candidate Document | ⏳ 待做 |
+| D6-RAG1 | Block-scoped RAG substrate schema/chunker/citation validator | ⏳ 待做 |
+| D6-RAG2 | VectorStoreAdapter + record-scoped indexing worker | ⏳ 待做 |
 | D6 后续 | 旧入口改线（Library/Vocabulary/active task 切新 Reading Record） | ⏳ 待做 |
 | D6 后续 | Ask 切线（依赖 reader_ask/service.py 拆分或 adapter 化） | ⏳ 待做 |
 | D6 后续 | 词典 AI / 词汇保存 / 阅读模式切换 / projection_ops 增量 applier | ⏳ 待做 |
@@ -100,7 +109,7 @@
 - 测试阶段 RAG vector store 初步选择 Zilliz Cloud；上线前评估阿里云 RAG / 向量检索服务。
 - 所有 RAG 供应商通过 adapter 隔离。
 - 文本、URL、PDF、OCR、文件上传统一进入 Input Adapter。
-- OSS / OCR / 文档解析只产生 Source Artifact / Extraction Result / Candidate Base，不直接写 Stable Base。
+- OSS / OCR / 文档解析只产生 Source Artifact / Extraction Result / Candidate Reading Document，不直接写 Stable Reading Document / Blocks / Canonical Text。
 - 测试阶段文件上传使用阿里云 OSS；上线目标为 OSS + CDN。
 - OCR / 富文档解析优先评估阿里云百炼图像理解、Qwen OCR/VL 和文档解析能力。
 - Orchestration 入口必须是 bounded run/job，不是页面常驻 thread。
@@ -134,12 +143,12 @@
 - coding agent 不读 TMP research 也能基于 RFC 实现 backend skeleton。
 - 待决问题与已接受决策分离。
 - 硬约束都能转成测试或 schema 校验。
-- D2 spike 的输出只用于校准技术选型、版本和参数，不再改变 Reading Record / Stable Base / Event / RAG 的核心合同。
+- D2 spike 的输出只用于校准技术选型、版本和参数，不再改变 Reading Record / Stable Reading Document / Canonical Text / Event / RAG 的核心合同。
 
 评审重点：
 
 - Product state、run/job state、event/projection state 是否足够分离。
-- Candidate Reading Base 是否覆盖 PDF/OCR/网页抽取的 source loss 风险。
+- Candidate Reading Document 是否覆盖 PDF/OCR/网页抽取的 source loss 风险。
 - `article_ready` 是否足够轻，不被 RAG、全文增强或 Semantic Outline 阻塞。
 - API / BFF contract 是否能支持刷新恢复、渐进渲染和 Library states。
 - 旧 workflow 处理策略是否避免把 `analysis_tasks` 和 `render_scene_json` 语义带入新架构。
@@ -152,7 +161,7 @@
 
 | Spike | 输出 |
 |---|---|
-| Reading Unit Builder | Stable Base -> Reading Units 的 deterministic builder、UTF-16/hash 校验、focused tests |
+| Reading Unit Builder | D4 过渡 Stable Base / D6 Canonical Text Layer -> Reading Units 的 deterministic builder、UTF-16/hash 校验、focused tests |
 | 依赖基线 | D3-P0 已完成：PydanticAI 1.107.0、DashScope 1.25.23、asyncpg 0.31.0；LangGraph/FastAPI/LangSmith/OpenAI 保持当前锁定版本；现有 focused tests 通过 |
 | 当前成本基线 | 代表性 learning 样本的 token、latency、retry 数据 |
 | DB job lease 原型 | claim、heartbeat、stale recovery、幂等 resume、cancel/supersede |
@@ -161,15 +170,15 @@
 | SSE + polling 原型 | event log、Last-Event-ID/cursor 恢复、snapshot fallback |
 | Model Profile / Cost Baseline | 当前官方 model id、route lookup、fallback chain、translation benchmark |
 | Prompt Cache / Usage Bucket | cache hit/miss audit、usage_by_layer、usage_by_cache_status |
-| RAG substrate 原型 | Stable Base / Units -> chunk -> embedding -> Zilliz search -> cited units |
+| RAG substrate 原型 | Stable Reading Document / Blocks / Canonical Text / Units -> chunk -> embedding -> Zilliz search -> cited block/unit |
 | 阿里云 RAG 可替换性 spike | 验证百炼知识库或阿里云向量检索是否可通过 adapter 替换 Zilliz |
 | OSS 上传 spike | Web 直传/后端签名、对象 metadata、checksum、权限、过期清理 |
-| OCR / 文档解析 spike | 百炼 OCR/VL/文档解析输出能否稳定形成 Extraction Result 和 Candidate Base |
+| OCR / 文档解析 spike | 百炼 OCR/VL/文档解析输出能否稳定形成 Extraction Result 和 Candidate Reading Document |
 | Anchor validation 原型 | span-bound layer 发布前必须通过稳定 anchor validation |
 | Parsed Decision eval | human/LLM judge rubric 能识别“合理跳过”和“偷懒跳过” |
 | Length Class 与 envelope 预算 | 文本长度分类、默认 unit range、token/cost/continuation 策略 |
 | D2-P0 Plate dependency / API / license | Plate core、Markdown、comment/suggestion/AI 插件的 license、版本、API 可用性；不可默认依赖未验证商业能力 |
-| D2-P1 Base Plate Snapshot | Stable Base / Units / Anchor Segments -> Base Plate Snapshot，不经过旧 `render_scene_json` |
+| D2-P1 Base Plate Snapshot | D4 过渡 Stable Base / Units / Anchor Segments -> Base Plate Snapshot，不经过旧 `render_scene_json` |
 | D2-P2 Projection Operations / Replay | domain-targeted `projection_ops`、snapshot reload、event replay、gap recovery；不持久化 raw Slate path ops |
 | D2-P3 Selection / Anchor / Owner | Plate selection -> domain anchor，UTF-16/hash 校验，owner 权限拦截和后端 policy 对齐 |
 | D2-P4 Ask Document Tools | `read_range`、`propose_highlight`、`propose_note`、`write_ai_supplement`、`revise_ai_annotation` 的用户确认和事件投影 |
@@ -204,7 +213,7 @@ Schema / Domain Contract：见 `modules/schema-and-domain-contract.md`。D3-P1 �
 
 状态：completed on 2026-06-19。
 
-- 实现低影响纯文本路径的 deterministic Reading Base Builder，从 Stable Base 生成 Reading Units、Anchor Segments 和 Navigation Skeleton。
+- 实现低影响纯文本路径的 deterministic Reading Base Builder，从 D4 过渡 Stable Base 生成 Reading Units、Anchor Segments 和 Navigation Skeleton。
 - `ReaderPlateSnapshot` serializer / Base Plate Snapshot builder 只从 domain facts 生成 Plate `value`，不读取旧 `render_scene_json`，并拒绝不属于当前 base/unit/anchor 的 layers/decisions/supplements/assets。
 - 当前 Unit baseline 是 `1 structure block -> 1 reading unit`；target-length aggregation 留给 D5+ builder refinement。
 
@@ -271,7 +280,7 @@ Schema / Domain Contract：见 `modules/schema-and-domain-contract.md`。D3-P1 �
 
 1. Web 提交文本。
 2. 后端创建 Original Input 和 Reading Record。
-3. 低影响 base path 创建 Stable Reading Base。
+3. 低影响 base path 创建 D4 过渡 Stable Reading Base（D6 口径下为 Canonical Text Layer）。
 4. 创建 Reading Units、Anchor Segments 和 Navigation Skeleton。
 5. 创建 Base Plate Snapshot。
 6. Reader 到达 `article_ready`。
@@ -283,7 +292,7 @@ Schema / Domain Contract：见 `modules/schema-and-domain-contract.md`。D3-P1 �
 
 - 用户可在 full coverage 前开始阅读。
 - 刷新/恢复后状态正确。
-- Annotation layer 不修改 Stable Base source text；只通过 projection 呈现在 Plate Article Body。
+- Annotation layer 不修改 Stable Reading Document / Canonical Text source text；只通过 projection 呈现在 Plate Article Body。
 - LLM 调用有 usage event。
 - 旧 `render_scene_json` contract 不参与新 Web Reader 路径。
 - RAG substrate 可以在后台构建，不阻塞阅读。
@@ -293,7 +302,7 @@ Schema / Domain Contract：见 `modules/schema-and-domain-contract.md`。D3-P1 �
 明确不包含：
 
 - URL / PDF / OCR / 文件上传实现。
-- Candidate Base preview/edit/confirm UI。
+- Candidate Document preview/edit/confirm UI。
 - vocabulary、grammar_note、sentence_analysis、summary、Semantic Outline。
 - 小程序适配。
 - 旧 Reader scene 兼容映射。
@@ -423,18 +432,23 @@ Schema / Domain Contract：见 `modules/schema-and-domain-contract.md`。D3-P1 �
 
 - 新增 250+ 词英文长文本 deterministic fixture；`ReaderEnhancementPipelineRunner` 可完成 `article_ready -> bootstrap -> worker drain -> snapshot reload` 并发布 `grammar_note` + `sentence_analysis` 两类 layer；reload 不写 projection side effects。
 - 真实 DashScope provider 下长文本链路通过 Web BFF submit、worker once 和浏览器实渲染验证；snapshot 同时包含 translation/vocabulary/grammar_note/sentence_analysis，`snapshot.value` 出现 2 个 `reader_sentence_analysis` nodes。
-- 后续问题：worker stdout 仍有 PydanticAI deprecation warnings；250+ 词单段正文仍只生成 1 个 `reader_unit`（`boundary_quality=low`），需 Boundary/Unit Builder v2 与 sentence_analysis coverage policy 独立评估；D5 不改 Stable Base contract，D6+ 再把 richer structure retention 前移到 Input Adapter/Candidate Base/Base Composer。
+- 后续问题：worker stdout 仍有 PydanticAI deprecation warnings；250+ 词单段正文仍只生成 1 个 `reader_unit`（`boundary_quality=low`），需 Boundary/Unit Builder v2 与 sentence_analysis coverage policy 独立评估；D5 不改过渡 Stable Base contract，D6+ 再把 richer structure retention 前移到 Input Adapter / Candidate Document / Stable Document Blocks。
 
 ## D6. 产品硬化
 
 任务包：
 
-- 高影响适配的 Candidate Reading Base preview/edit/confirm。
+- 高影响适配的 Candidate Reading Document preview/edit/confirm。
 - Library states：processing、readable/enhancing、paused、needs_confirmation、failed、quota_required。
 - continuation、quota、retry、re-parse-as-new-record 的 action-required UX。
 - Ask sidecar action envelope：continue enhancement、save note、context expansion。
 - cost / credit decision surfaces。
 - 失败恢复和 support/debug details。
+- Stable Document Blocks / Canonical Text Layer contract：Reader 内容区是文档型 Plate projection，但后端 truth 不能是 Plate JSON。
+- V1 输入方式：粘贴文本、公开网页 URL、PDF 页码范围、多图 OCR；`.txt` / `.md` 作为上传文档低风险子类型。
+- Input Suitability Gate：所有输入先判断是否足够支撑 Claread 英语阅读解读，以及格式处理是否会改变关键含义。
+- PDF/OCR 输入：PDF text layer parser 优先，页级 quality gate 后可进入 LLM reviewer；OCR 通过 provider adapter 与 model route/profile 配置，不写死领域合同。
+- RAG substrate：必须在 Stable Document Block contract 之后实现，覆盖 table/image OCR/footnote/code 等 source scopes。
 
 完成标准：
 
@@ -464,17 +478,22 @@ D5 增强扩展（vocabulary / grammar bundle / worker loop / runtime guardrails
 - Web cutover：`/app/read` 默认提交到新 Reading Record，`/app/reader-record/{recordId}` 默认 Plate surface，Library/command palette/activity indicator 新增新 Reading Record 发现入口（W3-D0~D9）
 - ReaderRecordPlateSurface 真实流程验收与 UI polish（UI-D4~D6C）
 - failed_terminal 保守映射为 `failed` product state
+- Input / document model 产品决策：旧 Candidate Base 升级为 Candidate Document；旧 Stable Reading Base 语义拆为 Stable Reading Document、Stable Document Blocks 和 Canonical Text Layer；V1 输入范围、PDF/OCR quality gate、OCR provider adapter、RAG source scope 已确认。
 
 ### D6 下一步（按优先级）
 
-1. **收敛新旧双轨**：逐个把 Library / Vocabulary source links / active task / command palette legacy records 切到新 Reading Record（前提：BFF 提供 `sourceReadingRecordId`）；评估删除 `ReaderRecordWorkbenchSurface` fallback 和 legacy `ReaderWorkbench` 的时点。
-2. **补齐 Plate surface 功能缺口**：Ask 切线（依赖 `reader_ask/service.py` 拆分或 adapter 化）、词典 AI、词汇保存、阅读模式切换、`projection_ops` 增量 applier。
-3. **架构深化（可选）**：提取 `BaseEnhancementWorker` 消除 worker/publisher 三重复制；拆分 `repository.py`（1471 行）和 `reader_ask/service.py`（222KB 巨石）。
-4. **清理 TMP 文档**：`docs/tmp/reader-orchestration/` 下 ~60 份 TMP closeout 的结论已回写本计划，按 AGENTS.md 规则删除或归档。
+1. **先补 Stable Document Block contract**：定义 Stable Reading Document / Stable Document Blocks / Canonical Text Layer 的 schema、DTO、snapshot 投影边界和 block identity。RAG 与高级输入都依赖这一步。
+2. **打通 Candidate Document 纵切**：实现 Candidate Document persistence、preview/confirm API、`needs_confirmation` product state、确认后冻结 Stable Reading Document 并复用现有 article_ready / worker chain。
+3. **上线输入适配最小路径**：先做 Markdown/txt parser + Input Suitability Gate + Source Artifact adapter，再做 PDF parser/page quality gate，最后接 OCR provider adapter 与多图合并。
+4. **实现 block-scoped RAG**：在 Stable Document Blocks 已落地后，做 RAG substrate schema、chunker、citation validator、VectorStoreAdapter 和 indexing worker。不要先做只绑定线性文本的 RAG。
+5. **收敛新旧双轨**：逐个把 Library / Vocabulary source links / active task / command palette legacy records 切到新 Reading Record（前提：BFF 提供 `sourceReadingRecordId`）；评估删除 `ReaderRecordWorkbenchSurface` fallback 和 legacy `ReaderWorkbench` 的时点。
+6. **补齐 Plate surface 功能缺口**：Ask 切线（依赖 `reader_ask/service.py` 拆分或 adapter 化）、词典 AI、词汇保存、阅读模式切换、`projection_ops` 增量 applier。
+7. **架构深化（可选）**：提取 `BaseEnhancementWorker` 消除 worker/publisher 三重复制；拆分 `repository.py`（1471 行）和 `reader_ask/service.py`（222KB 巨石）。
+8. **清理 TMP 文档**：`docs/tmp/reader-orchestration/` 下 ~60 份 TMP closeout 的结论已回写本计划，按 AGENTS.md 规则删除或归档。
 
 ### 仍保持的口径
 
 - LangGraph 只作为 D6+ 隔离 spike 候选，不进入主路径。
 - 不做旧 `render_scene_json` 兼容映射。
 - PydanticAI deprecation warnings 剩余 `app/agents` legacy/daily agents、`eval_adapter/*`、`services/daily_reader/scoring.py` 后续分域清理。
-- Boundary / Unit Builder v2 维持 D5 口径：text-only Stable Base + deterministic baseline，不在未定 contract 前落生产 split。
+- Boundary / Unit Builder v2 维持 D5 过渡口径：text-only Canonical Text Layer + deterministic baseline，不在 Stable Document Block contract 落地前做生产 split。

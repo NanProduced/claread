@@ -648,15 +648,31 @@ describe("ReadingRecordPage static contract", () => {
     });
   });
 
-  it("default Plate mode stays free of legacy adapters and write routes", () => {
-    const sources = [
-      "src/app/(private)/app/reader-record/[recordId]/page.tsx",
-      "src/app/(private)/app/reader-record/[recordId]/reader-record-surface-mode.ts",
-      "src/components/reader/plate/ReaderRecordPlateSurface.tsx",
-      "src/lib/reader-plate/projection/reader-record-plate-document.ts",
-    ].map((path) => readFileSync(resolve(process.cwd(), path), "utf-8"));
+  it("default Plate mode stays free of legacy adapters while wiring RR Ask through AiWorkspacePanel", () => {
+    const pageSource = readFileSync(
+      resolve(process.cwd(), "src/app/(private)/app/reader-record/[recordId]/page.tsx"),
+      "utf-8",
+    );
+    const surfaceModeSource = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/app/(private)/app/reader-record/[recordId]/reader-record-surface-mode.ts",
+      ),
+      "utf-8",
+    );
+    const plateSurfaceSource = readFileSync(
+      resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
+      "utf-8",
+    );
+    const projectionSource = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/lib/reader-plate/projection/reader-record-plate-document.ts",
+      ),
+      "utf-8",
+    );
 
-    sources.forEach((source) => {
+    [pageSource, surfaceModeSource, plateSurfaceSource, projectionSource].forEach((source) => {
       expect(source).not.toContain("adaptReaderPlateSnapshotToReaderVm");
       expect(source).not.toContain("renderSceneToPlateDocument");
       expect(source).not.toContain("render_scene_json");
@@ -669,6 +685,9 @@ describe("ReadingRecordPage static contract", () => {
       expect(source).not.toContain("/api/web/reader-annotations");
       expect(source).not.toContain("/api/web/annotations");
     });
+
+    expect(plateSurfaceSource).toContain("AiWorkspacePanel");
+    expect(plateSurfaceSource).toContain('recordScope="reading_record"');
   });
 
   it("ReaderRecordPlateSurface uses converged Chinese copy instead of legacy English UI labels", () => {

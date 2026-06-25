@@ -532,6 +532,115 @@ function postedJsonBody(fetchMock: ReturnType<typeof vi.fn>) {
   return JSON.parse(String(init?.body)) as Record<string, unknown>;
 }
 
+function installReaderAskFetchMock(recordId = "record_1") {
+  const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+    const requestUrl = new URL(String(input), "https://example.test");
+    if (requestUrl.pathname.includes("/api/web/favorites")) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, favorited: false }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }
+
+    if (requestUrl.pathname === "/api/web/reader-ask/model-options") {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            default_key: "ask-clarity",
+            items: [
+              {
+                key: "ask-clarity",
+                label: "Qwen 3.7 Max",
+                description: "适合带 reasoning 的 Ask 问答。",
+                model_name: "qwen3.7-max",
+                replan_model_name: "qwen3.7-max",
+                price_multiplier: 1,
+                is_default: true,
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      );
+    }
+
+    if (
+      requestUrl.pathname === "/api/web/reader-ask/threads" &&
+      requestUrl.searchParams.get("record_scope") === "reading_record"
+    ) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: "thread-rr-1",
+                record_id: recordId,
+                title: "Ask Claread",
+                is_default: true,
+                selected_model: null,
+                archived_at: null,
+                created_at: "2026-06-25T00:00:00Z",
+                updated_at: "2026-06-25T00:00:00Z",
+                last_message_at: null,
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      );
+    }
+
+    if (
+      requestUrl.pathname === "/api/web/reader-ask/threads/thread-rr-1" &&
+      requestUrl.searchParams.get("record_scope") === "reading_record"
+    ) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: "thread-rr-1",
+            record_id: recordId,
+            title: "Ask Claread",
+            is_default: true,
+            selected_model: null,
+            archived_at: null,
+            created_at: "2026-06-25T00:00:00Z",
+            updated_at: "2026-06-25T00:00:00Z",
+            last_message_at: null,
+            messages: [],
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      );
+    }
+
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          message: `Unexpected fetch: ${requestUrl.pathname}`,
+        }),
+        {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
 describe("ReaderRecordPlateSurface", () => {
   it("projects and renders stable source text as paragraph blocks", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
@@ -729,16 +838,14 @@ describe("ReaderRecordPlateSurface", () => {
         ?.disabled,
     ).toBe(false);
     expect(
-      container.querySelector('[data-reader-record-action="ask"]'),
-    ).toBeNull();
+      container.querySelector<HTMLButtonElement>('[data-reader-record-action="ask"]')
+        ?.disabled,
+    ).toBe(false);
+    expect(container.querySelector('[data-reader-record-action="feedback"]')).toBeNull();
     expect(
-      container.querySelector('[data-reader-record-action="feedback"]'),
-    ).toBeNull();
-    expect(
-      container.querySelector(
-        '[data-reader-record-coming-soon-actions="ask-feedback"]',
-      )?.textContent,
-    ).toContain("Ask / 反馈 即将推出");
+      container.querySelector('[data-reader-record-coming-soon-actions="feedback"]')
+        ?.textContent,
+    ).toContain("反馈稍后开放");
   });
 
   it("maps selection in the second anchor segment of the same unit using the segment baseline", async () => {
@@ -995,6 +1102,96 @@ describe("ReaderRecordPlateSurface", () => {
     ).toBe(false);
   });
 
+  it("opens the RR Ask panel from a stable source selection and loads RR-scoped ask threads", async () => {
+    const fetchMock = installReaderAskFetchMock();
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+
+    const askButton = await screen.findByRole("button", {
+      name: "Ask Claread",
+    });
+    fireEvent.click(askButton);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "收起 AI 工作区" }),
+      ).toBeTruthy();
+    });
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes(
+          "/api/web/reader-ask/threads?record_id=record_1&record_scope=reading_record",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes(
+          "/api/web/reader-ask/threads/thread-rr-1?record_id=record_1&record_scope=reading_record",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/api/web/reader-ask/context-records"),
+      ),
+    ).toBe(false);
+  });
+
+  it("opens the RR Ask panel from a saved note in Reading Record scope", async () => {
+    const fetchMock = installReaderAskFetchMock();
+    const noteAsset = makeUserAsset({
+      asset_id: "asset_note_1",
+      asset_type: "note",
+      note_text: "Keep this policy concept for review.",
+    });
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([noteAsset])} />,
+    );
+    const noteMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-kind="user_note"]',
+    );
+    expect(noteMark).not.toBeNull();
+    if (!noteMark) {
+      throw new Error("Expected note mark");
+    }
+
+    fireEvent.click(noteMark);
+
+    const askButton = await screen.findByRole("button", {
+      name: "Ask 关于这条笔记",
+    });
+    fireEvent.click(askButton);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "收起 AI 工作区" }),
+      ).toBeTruthy();
+    });
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes(
+          "/api/web/reader-ask/threads?record_id=record_1&record_scope=reading_record",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes(
+          "/api/web/reader-ask/threads/thread-rr-1?record_id=record_1&record_scope=reading_record",
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it("keeps lookup, copy, and write actions disabled for unsupported cross-segment selections", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -1064,9 +1261,12 @@ describe("ReaderRecordPlateSurface", () => {
     ).toHaveLength(0);
   });
 
-  it("does not import legacy Workbench, ReaderVm, scene adapters, or legacy write routes", () => {
-    const sources = [
-      "src/components/reader/plate/ReaderRecordPlateSurface.tsx",
+  it("keeps Plate write paths on RR APIs and avoids legacy adapters or legacy note/annotation routes", () => {
+    const surfaceSource = readFileSync(
+      resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
+      "utf8",
+    );
+    const otherSources = [
       "src/lib/reader-plate/projection/reader-record-plate-document.ts",
       "src/lib/reader-plate/projection/reader-record-anchor-draft.ts",
       "src/lib/reader-plate/projection/reader-record-dom-selection.ts",
@@ -1075,7 +1275,13 @@ describe("ReaderRecordPlateSurface", () => {
       "src/app/api/web/reading-record/notes/route.ts",
     ].map((filePath) => readFileSync(resolve(process.cwd(), filePath), "utf8"));
 
-    for (const source of sources) {
+    expect(surfaceSource).toMatch(/AiWorkspacePanel/);
+    expect(surfaceSource).toMatch(/recordScope="reading_record"/);
+    expect(surfaceSource).not.toMatch(/\/api\/web\/reader-notes/);
+    expect(surfaceSource).not.toMatch(/\/api\/web\/reader-annotations/);
+    expect(surfaceSource).not.toMatch(/\/api\/web\/annotations/);
+
+    for (const source of [surfaceSource, ...otherSources]) {
       expect(source).not.toMatch(/ReaderRecordWorkbenchSurface/);
       expect(source).not.toMatch(/ReaderVm/);
       expect(source).not.toMatch(/ReaderMockVm/);
@@ -1087,7 +1293,9 @@ describe("ReaderRecordPlateSurface", () => {
       expect(source).not.toMatch(/\/scene/);
       expect(source).not.toMatch(/platePath|slatePath|plate_path|slate_path/);
       expect(source).not.toMatch(/\/api\/web\/writer/);
-      expect(source).not.toMatch(/\/api\/web\/reader-ask/);
+    }
+
+    for (const source of otherSources) {
       expect(source).not.toMatch(/\/api\/web\/reader-notes/);
       expect(source).not.toMatch(/\/api\/web\/reader-annotations/);
       expect(source).not.toMatch(/\/api\/web\/annotations/);
