@@ -4484,6 +4484,7 @@ export function ReaderWorkbench({
           open={aiOpen}
           presentation={isImmersiveMode ? "immersive" : "intensive"}
           recordId={record.id}
+          recordScope="analysis"
           recordTitle={record.title}
           pageIdentity={pageIdentity}
           attachments={askAttachments}

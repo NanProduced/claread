@@ -320,6 +320,7 @@ function serializeAttachment(attachment: ReaderAskAttachment): ReaderAskAttachme
       query: attachment.metadata.query ?? null,
       lookup_text: attachment.metadata.lookupText ?? null,
       visual_tone: attachment.metadata.visualTone ?? null,
+      reading_record_anchor: attachment.metadata.readingRecordAnchor ?? null,
     },
   };
 }
@@ -2706,6 +2707,8 @@ export interface AiWorkspacePanelProps {
   presentation?: "intensive" | "immersive";
   pageIdentity: ReaderAskPageIdentity;
   recordId: string;
+  recordScope?: "analysis" | "reading_record";
+  hideClosedLauncher?: boolean;
   recordTitle?: string | null;
   attachments: ReaderAskAttachment[];
   liveContextAttachment?: ReaderAskAttachment | null;
@@ -2736,6 +2739,8 @@ export function AiWorkspacePanel({
   presentation = "intensive",
   open,
   recordId,
+  recordScope = "analysis",
+  hideClosedLauncher = false,
   recordTitle,
   hideLauncherOnMobile = false,
   hideLauncherInCompactLayout = false,
@@ -2754,6 +2759,18 @@ export function AiWorkspacePanel({
   onAnnotationFeedback,
   analysisRecordId,
 }: AiWorkspacePanelProps) {
+  const isReadingRecordScope = recordScope === "reading_record";
+  const supportsRelatedRecordContext = !isReadingRecordScope;
+  const scopedReaderAskUrl = (pathname: string) => {
+    if (!isReadingRecordScope) {
+      return pathname;
+    }
+    const searchParams = new URLSearchParams({
+      record_id: recordId,
+      record_scope: "reading_record",
+    });
+    return `${pathname}?${searchParams.toString()}`;
+  };
   const launcherVisibilityClass = hideLauncherInCompactLayout
     ? "hidden 2xl:inline-flex"
     : hideLauncherOnMobile
@@ -2832,7 +2849,9 @@ export function AiWorkspacePanel({
     : visibleContextAttachments;
   async function fetchThreadList() {
     const payload = await fetchJson<{ items: ReaderAskThreadSummaryDto[] }>(
-      `/api/web/reader-ask/threads?record_id=${encodeURIComponent(recordId)}`,
+      isReadingRecordScope
+        ? `/api/web/reader-ask/threads?record_id=${encodeURIComponent(recordId)}&record_scope=reading_record`
+        : `/api/web/reader-ask/threads?record_id=${encodeURIComponent(recordId)}`,
       undefined,
       "Ask Claread 线程列表加载失败。",
     );
@@ -2841,13 +2860,16 @@ export function AiWorkspacePanel({
 
   async function fetchThreadDetail(threadId: string) {
     return fetchJson<ReaderAskThreadDetailDto>(
-      `/api/web/reader-ask/threads/${threadId}`,
+      scopedReaderAskUrl(`/api/web/reader-ask/threads/${threadId}`),
       undefined,
       "Ask Claread 加载失败。",
     );
   }
 
   async function fetchContextRecords(query: string) {
+    if (!supportsRelatedRecordContext) {
+      return { items: [] } satisfies ReaderAskContextRecordSearchResponseDto;
+    }
     return fetchJson<ReaderAskContextRecordSearchResponseDto>(
       `/api/web/reader-ask/context-records?query=${encodeURIComponent(query)}&exclude_record_id=${encodeURIComponent(recordId)}`,
       undefined,
@@ -2873,6 +2895,7 @@ export function AiWorkspacePanel({
           record_id: recordId,
           title,
           model: effectiveSelectedModelKey,
+          ...(isReadingRecordScope ? { record_scope: "reading_record" as const } : {}),
         }),
       },
       "Ask Claread 初始化失败。",
@@ -2890,7 +2913,7 @@ export function AiWorkspacePanel({
   }
 
   useEffect(() => {
-    if (!contextPickerOpen) {
+    if (!contextPickerOpen || !supportsRelatedRecordContext) {
       return;
     }
     const normalizedQuery = contextSearch.query.trim();
@@ -2922,7 +2945,7 @@ export function AiWorkspacePanel({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [contextPickerOpen, contextSearch.query, recordId]);
+  }, [contextPickerOpen, contextSearch.query, recordId, supportsRelatedRecordContext]);
 
   // Set loading state when panel opens (before fetch starts)
   const [prevOpenForLoading, setPrevOpenForLoading] = useState(open);
@@ -3080,7 +3103,7 @@ export function AiWorkspacePanel({
     setLoading(true);
     try {
       const detail = await fetchJson<ReaderAskThreadDetailDto>(
-        `/api/web/reader-ask/threads/${activeThreadId}/reset`,
+        scopedReaderAskUrl(`/api/web/reader-ask/threads/${activeThreadId}/reset`),
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -3111,7 +3134,7 @@ export function AiWorkspacePanel({
     setErrorMessage(null);
     try {
       const payload = await fetchJson<ReaderAskActionConfirmResponseDto>(
-        `/api/web/reader-ask/threads/${activeThreadId}/actions/${actionId}/confirm`,
+        scopedReaderAskUrl(`/api/web/reader-ask/threads/${activeThreadId}/actions/${actionId}/confirm`),
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -3178,7 +3201,7 @@ export function AiWorkspacePanel({
     setErrorMessage(null);
     try {
       const payload = await fetchJson<ReaderAskDeleteSupplementResponseDto>(
-        `/api/web/reader-ask/supplements/${supplementId}`,
+        scopedReaderAskUrl(`/api/web/reader-ask/supplements/${supplementId}`),
         {
           method: "DELETE",
           headers: { "content-type": "application/json" },
@@ -3402,7 +3425,7 @@ export function AiWorkspacePanel({
         entry_action: entryAction,
         model: effectiveSelectedModelKey,
       };
-      const response = await fetch(`/api/web/reader-ask/threads/${threadId}/messages/stream`, {
+      const response = await fetch(scopedReaderAskUrl(`/api/web/reader-ask/threads/${threadId}/messages/stream`), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(requestBody),
@@ -3494,7 +3517,7 @@ export function AiWorkspacePanel({
 
     try {
       const response = await fetch(
-        `/api/web/reader-ask/threads/${activeThreadId}/messages/${messageId}/retry/stream`,
+        scopedReaderAskUrl(`/api/web/reader-ask/threads/${activeThreadId}/messages/${messageId}/retry/stream`),
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -3543,6 +3566,9 @@ export function AiWorkspacePanel({
   }
 
   if (!open) {
+    if (hideClosedLauncher) {
+      return null;
+    }
     return (
       <button
         type="button"
@@ -3692,16 +3718,18 @@ export function AiWorkspacePanel({
           ) : undefined
         }
         actionMenu={
-          <RelatedRecordPicker
-            disabled={sending}
-            search={contextSearch}
-            onSearchChange={(value) => {
-              setContextSearch((current) => ({ ...current, query: value }));
-            }}
-            onAttachRelatedRecord={(item) => {
-              void handleAttachRelatedRecord(item);
-            }}
-          />
+          supportsRelatedRecordContext ? (
+            <RelatedRecordPicker
+              disabled={sending}
+              search={contextSearch}
+              onSearchChange={(value) => {
+                setContextSearch((current) => ({ ...current, query: value }));
+              }}
+              onAttachRelatedRecord={(item) => {
+                void handleAttachRelatedRecord(item);
+              }}
+            />
+          ) : undefined
         }
         actionMenuOpen={contextPickerOpen}
         onActionMenuOpenChange={setContextPickerOpen}

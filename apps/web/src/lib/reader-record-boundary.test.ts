@@ -4,12 +4,12 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * D6-A0 Reader Record boundary static guards.
+ * Reader Record boundary static guards.
  *
  * These tests lock down the current `/app/reader-record/{recordId}` boundary so
- * the new Reading Record product surface does not silently start importing
- * legacy ask / notes / highlights / scene / user-asset paths before D6-A1+ lays
- * down the new anchor schema, validator and write gate.
+ * the new Reading Record product surface does not silently reintroduce legacy
+ * scene / task / notes / highlights data paths while the RR Ask cutover keeps
+ * converging.
  *
  * Matrix and rationale are documented in
  *   docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md
@@ -51,11 +51,8 @@ const LEGACY_WRITE_ROUTES = [
   "/api/web/reader-notes",
   "/api/web/reader-annotations",
 ];
-const WRITE_SURFACES = [
-  "AiWorkspacePanel",
-  "ReaderNotePanel",
-  "AnnotationGutter",
-];
+const LEGACY_WRITE_SURFACES = ["ReaderNotePanel", "AnnotationGutter"];
+const RR_ASK_SURFACE = "AiWorkspacePanel";
 
 const READER_RECORD_PAGE =
   "src/app/(private)/app/reader-record/[recordId]/page.tsx";
@@ -96,7 +93,10 @@ describe("reader record boundary - /app/reader-record/{recordId} page must not r
   it("page.tsx does not import any Ask / notes / highlights write surface components", () => {
     const source = readSource(READER_RECORD_PAGE);
 
-    for (const surface of WRITE_SURFACES) {
+    expect(source).not.toMatch(
+      new RegExp(`from\\s+["'][^"']*${RR_ASK_SURFACE}["']`),
+    );
+    for (const surface of LEGACY_WRITE_SURFACES) {
       expect(source).not.toMatch(
         new RegExp(`from\\s+["'][^"']*${surface}["']`),
       );
@@ -127,25 +127,29 @@ describe("reader record boundary - ReaderRecordWorkbenchSurface must not referen
     }
   });
 
-  it("surface does not import the Ask / notes / highlights write surfaces", () => {
+  it("surface only imports the RR Ask surface and keeps note/highlight write surfaces out", () => {
     const source = readSource(READER_RECORD_SURFACE);
 
-    for (const surface of WRITE_SURFACES) {
+    expect(source).toMatch(
+      new RegExp(`from\\s+["'][^"']*${RR_ASK_SURFACE}["']`),
+    );
+    for (const surface of LEGACY_WRITE_SURFACES) {
       expect(source).not.toMatch(
         new RegExp(`from\\s+["'][^"']*${surface}["']`),
       );
     }
   });
 
-  it("surface keeps the floating SelectionToolbar in read-only mode for the reader-record route shell", () => {
+  it("surface enables RR Ask while keeping other SelectionToolbar write actions read-only", () => {
     const source = readSource(READER_RECORD_SURFACE);
     const selectionToolbar = extractSelectionToolbarInvocation(source);
     const disabledActions = extractDisabledActionsProp(selectionToolbar);
 
-    // The Toolbar may render in this surface, but every write action must be
-    // disabled so /app/reader-record/{recordId} cannot silently trigger legacy
-    // ask / highlight / note / feedback persistence while D6-A1..A6 are pending.
-    expect(disabledActions).toMatch(/\bask:\s*true/);
+    // RR Ask is now wired, but other user-write actions remain explicitly
+    // unavailable in the workbench shell until their RR persistence cutovers
+    // land.
+    expect(selectionToolbar).toContain("onAsk={handleAskFromSelection}");
+    expect(disabledActions).not.toMatch(/\bask:\s*true/);
     expect(disabledActions).toMatch(/\bhighlight:\s*true/);
     expect(disabledActions).toMatch(/\bnote:\s*true/);
     expect(disabledActions).toMatch(/\bfeedback:\s*true/);
@@ -189,7 +193,10 @@ describe("reader record boundary - D6-A1 anchor draft helper remains read-only",
     expect(source).not.toMatch(
       /from\s+["']@\/lib\/reader-plate\/bridges\/ask\/[^"']*["']/,
     );
-    for (const surface of WRITE_SURFACES) {
+    expect(source).not.toMatch(
+      new RegExp(`from\\s+["'][^"']*${RR_ASK_SURFACE}["']`),
+    );
+    for (const surface of LEGACY_WRITE_SURFACES) {
       expect(source).not.toMatch(
         new RegExp(`from\\s+["'][^"']*${surface}["']`),
       );

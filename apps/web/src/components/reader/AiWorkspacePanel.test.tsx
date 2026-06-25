@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReaderAskAttachment, ReaderAskPageIdentity } from "@/lib/reader-plate";
 import type { ReaderAskUiMessageDto } from "@/types/api/reader-ask";
 import { consumeReaderAskSse } from "./ask/sse";
-import { AiWorkspacePanel, createSseMessageHandler } from "./AiWorkspacePanel";
+import {
+  AiWorkspacePanel,
+  createSseMessageHandler,
+  type AiWorkspacePanelProps,
+} from "./AiWorkspacePanel";
 
 const completedPayload = {
   id: "msg-assistant-1",
@@ -191,8 +195,8 @@ function jsonResponse(payload: unknown, status = 200) {
 
 function mockFetch() {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    if (url.endsWith("/api/web/reader-ask/model-options")) {
+    const requestUrl = new URL(String(input), "http://localhost");
+    if (requestUrl.pathname === "/api/web/reader-ask/model-options") {
       return jsonResponse({
         default_key: "ask-clarity",
         items: [
@@ -217,7 +221,10 @@ function mockFetch() {
         ],
       });
     }
-    if (url.includes("/api/web/reader-ask/threads?record_id=")) {
+    if (
+      requestUrl.pathname === "/api/web/reader-ask/threads" &&
+      requestUrl.searchParams.get("record_id")
+    ) {
       return jsonResponse({
         items: [
           {
@@ -241,7 +248,7 @@ function mockFetch() {
         ],
       });
     }
-    if (url.endsWith("/api/web/reader-ask/threads/thread-1")) {
+    if (requestUrl.pathname === "/api/web/reader-ask/threads/thread-1") {
       return jsonResponse({
         id: "thread-1",
         record_id: "record-1",
@@ -262,7 +269,7 @@ function mockFetch() {
         messages: [],
       });
     }
-    if (url.endsWith("/api/web/reader-ask/threads/thread-1/reset")) {
+    if (requestUrl.pathname === "/api/web/reader-ask/threads/thread-1/reset") {
       return jsonResponse({
         id: "thread-1",
         record_id: "record-1",
@@ -283,7 +290,10 @@ function mockFetch() {
         messages: [],
       });
     }
-    if (url.endsWith("/api/web/reader-ask/threads/thread-1/actions/act-supplement-1/confirm")) {
+    if (
+      requestUrl.pathname ===
+      "/api/web/reader-ask/threads/thread-1/actions/act-supplement-1/confirm"
+    ) {
       return jsonResponse({
         ok: true,
         action_id: "act-supplement-1",
@@ -320,7 +330,7 @@ function mockFetch() {
         },
       });
     }
-    if (url.endsWith("/api/web/reader-ask/supplements/supp-1")) {
+    if (requestUrl.pathname === "/api/web/reader-ask/supplements/supp-1") {
       return jsonResponse({
         deleted: true,
         supplement_id: "supp-1",
@@ -345,7 +355,7 @@ function mockFetch() {
         },
       });
     }
-    if (url.includes("/api/web/reader-ask/context-records?")) {
+    if (requestUrl.pathname === "/api/web/reader-ask/context-records") {
       return jsonResponse({
         items: [
           {
@@ -356,13 +366,15 @@ function mockFetch() {
         ],
       });
     }
-    if (url.endsWith("/api/web/reader-ask/threads/thread-1/messages/stream")) {
+    if (requestUrl.pathname === "/api/web/reader-ask/threads/thread-1/messages/stream") {
       return new Response("", {
         status: 200,
         headers: { "content-type": "text/event-stream" },
       });
     }
-    throw new Error(`Unexpected fetch: ${url} ${init?.method ?? "GET"}`);
+    throw new Error(
+      `Unexpected fetch: ${requestUrl.pathname}${requestUrl.search} ${init?.method ?? "GET"}`,
+    );
   });
 }
 
@@ -429,19 +441,20 @@ function mockThreadMessages(messages: ReaderAskUiMessageDto[]) {
   });
 }
 
-function renderPanel() {
-  return render(
-    <AiWorkspacePanel
-      open
-      pageIdentity={pageIdentity}
-      recordId="record-1"
-      recordTitle="Test Reader"
-      attachments={[]}
-      onRemoveAttachment={vi.fn()}
-      onClearAttachments={vi.fn()}
-      onToggle={vi.fn()}
-    />,
-  );
+function renderPanel(overrides: Partial<AiWorkspacePanelProps> = {}) {
+  const props: AiWorkspacePanelProps = {
+    open: true,
+    pageIdentity,
+    recordId: "record-1",
+    recordTitle: "Test Reader",
+    attachments: [],
+    onRemoveAttachment: vi.fn(),
+    onClearAttachments: vi.fn(),
+    onToggle: vi.fn(),
+    ...overrides,
+  };
+
+  return render(<AiWorkspacePanel {...props} />);
 }
 
 describe("AiWorkspacePanel", () => {
@@ -822,6 +835,83 @@ describe("AiWorkspacePanel", () => {
     expect(screen.getByText("最近文章")).not.toBeNull();
     await waitFor(() => {
       expect(screen.getByText("Climate Policy")).not.toBeNull();
+    });
+  });
+
+  it("uses RR-scoped thread URLs and skips related-record search in reading_record scope", async () => {
+    const rrAttachment: ReaderAskAttachment = {
+      ...sentenceAttachment,
+      metadata: {
+        ...sentenceAttachment.metadata,
+        readingRecordAnchor: {
+          record_id: "reading-record-1",
+          base_id: "base-1",
+          generation: 3,
+          unit_id: "unit-1",
+          anchor_segment_id: "anchor-seg-1",
+          scope: "stable_source",
+          offset_unit: "utf16",
+          start_offset: 0,
+          end_offset: 6,
+          selected_text: "memory",
+          text_hash: "9fd7545a",
+          hash_algorithm: "fnv1a32-utf16",
+        },
+      },
+    };
+
+    renderPanel({
+      recordId: "reading-record-1",
+      recordScope: "reading_record",
+      recordTitle: "Reading Record",
+      attachments: [rrAttachment],
+    });
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释这段选中内容" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+    });
+
+    const calls = vi.mocked(global.fetch).mock.calls;
+    expect(
+      calls.some(([url]) =>
+        String(url).includes(
+          "/api/web/reader-ask/threads?record_id=reading-record-1&record_scope=reading_record",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      calls.some(([url]) =>
+        String(url).includes(
+          "/api/web/reader-ask/threads/thread-1?record_id=reading-record-1&record_scope=reading_record",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      calls.some(([url]) => String(url).includes("/api/web/reader-ask/context-records")),
+    ).toBe(false);
+
+    const streamCall = calls.findLast(([url]) => String(url).includes("/messages/stream"));
+    expect(String(streamCall?.[0])).toContain("record_scope=reading_record");
+    expect(String(streamCall?.[0])).toContain("record_id=reading-record-1");
+
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as {
+      attachments: Array<{ metadata: { reading_record_anchor?: Record<string, unknown> | null } }>;
+    };
+    expect(body.attachments[0]?.metadata.reading_record_anchor).toMatchObject({
+      record_id: "reading-record-1",
+      anchor_segment_id: "anchor-seg-1",
     });
   });
 

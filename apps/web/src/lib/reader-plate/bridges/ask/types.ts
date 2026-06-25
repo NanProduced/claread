@@ -62,6 +62,7 @@ export interface ReaderAskAttachmentMetadata {
   query?: string | null;
   lookupText?: string | null;
   visualTone?: string | null;
+  readingRecordAnchor?: Record<string, unknown> | null;
 }
 
 export interface ReaderAskAttachment {

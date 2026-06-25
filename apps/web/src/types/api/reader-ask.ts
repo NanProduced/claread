@@ -137,6 +137,7 @@ export interface ReaderAskAttachmentMetadataDto {
   query?: string | null;
   lookup_text?: string | null;
   visual_tone?: string | null;
+  reading_record_anchor?: Record<string, unknown> | null;
 }
 
 export interface ReaderAskAttachmentDto {

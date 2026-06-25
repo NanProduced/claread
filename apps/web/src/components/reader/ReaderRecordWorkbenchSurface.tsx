@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from "lucide-react";
 
+import { AiWorkspacePanel } from "@/components/reader/AiWorkspacePanel";
 import {
   ReaderDictionaryRail,
   ReaderQuickPeek,
@@ -35,12 +36,17 @@ import {
 import type { ThemeName } from "@/lib/appearance";
 import { cn } from "@/lib/cn";
 import {
+  anchorDraftsForSelection,
+  askAttachmentFromSelection,
+  askAttachmentKey,
   lookupIntentFromSelection,
   lookupIntentFromStructuredInspect,
   readPlateReaderSelection,
   readerLookupSnapshotFromIntent,
   rectForTextOffsets,
   selectionToolbarRectForReaderSelection,
+  type ReaderAskAttachment,
+  type ReaderAskPageIdentity,
   type ReaderJumpRangeSegment,
   type ReaderLookupIntent,
   type ReaderLookupPreviewAnchor,
@@ -501,6 +507,10 @@ export function ReaderRecordWorkbenchSurface({
   const [dictionaryQuery, setDictionaryQuery] = useState("");
   const [dictionarySearchExpanded, setDictionarySearchExpanded] =
     useState(false);
+  const [askOpen, setAskOpen] = useState(false);
+  const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>(
+    [],
+  );
   const readingStageRef = useRef<HTMLDivElement | null>(null);
 
   const isImmersiveMode = readerSettings.mode === "immersive";
@@ -512,6 +522,32 @@ export function ReaderRecordWorkbenchSurface({
   const formattedDate = formatDate(snapshot.record.created_at);
   const readinessLabel = readinessStateLabel(snapshot.record.readiness_state);
   const statusBanner = productStateBanner(snapshot.record.product_state);
+  const askPageIdentity = useMemo<ReaderAskPageIdentity>(
+    () => ({
+      recordId: snapshot.record_id,
+      recordTitle: snapshot.record.title,
+      surface: "reader",
+      source: "reader_2_0",
+      availableContextCapabilities: ["record_context"],
+      hasArticleOverview: false,
+      hasSentenceEntries: sentenceCount > 0,
+      hasAnnotations: snapshot.enhancement_layers.some(
+        (layer) => layer.layer_type !== "translation",
+      ),
+      hasReaderNotes: snapshot.user_assets.some((asset) =>
+        asset.asset_type === "note" ||
+        asset.asset_type === "reader_note" ||
+        asset.asset_type === "comment"
+      ),
+    }),
+    [
+      sentenceCount,
+      snapshot.enhancement_layers,
+      snapshot.record.title,
+      snapshot.record_id,
+      snapshot.user_assets,
+    ],
+  );
   const sentenceById = useMemo(
     () =>
       new Map(
@@ -558,6 +594,28 @@ export function ReaderRecordWorkbenchSurface({
       (activeLookup || activeInspect) &&
       !dictionaryPanelOpen,
   );
+  const currentAskSelectionAttachment = useMemo<ReaderAskAttachment | null>(() => {
+    if (!textSelection || textSelection.anchorType === "multi_text") {
+      return null;
+    }
+
+    const [anchorDraft] = anchorDraftsForSelection(snapshot, textSelection);
+    if (!anchorDraft) {
+      return null;
+    }
+
+    const attachment = askAttachmentFromSelection(askPageIdentity, textSelection, {
+      sourceSurface: "selection_toolbar",
+    });
+
+    return {
+      ...attachment,
+      metadata: {
+        ...attachment.metadata,
+        readingRecordAnchor: anchorDraft as unknown as Record<string, unknown>,
+      },
+    };
+  }, [askPageIdentity, snapshot, textSelection]);
   const shellModeClass = isImmersiveMode
     ? "reader-shell--immersive"
     : "reader-shell--intensive";
@@ -628,6 +686,41 @@ export function ReaderRecordWorkbenchSurface({
     setLookupPreviewOpen(false);
     setLookupPreviewAnchor(null);
   }, []);
+
+  const handleRemoveAskAttachment = useCallback((attachmentKey: string) => {
+    setAskAttachments((current) =>
+      current.filter((item) => askAttachmentKey(item) !== attachmentKey),
+    );
+  }, []);
+
+  const openAskPanel = useCallback(
+    (attachment?: ReaderAskAttachment | null) => {
+      if (attachment) {
+        setAskAttachments([attachment]);
+      }
+      setAskOpen(true);
+      setDictionaryPanelOpen(false);
+      setLookupPreviewOpen(false);
+      setLookupPreviewAnchor(null);
+      if (attachment) {
+        clearReaderSelection();
+      } else {
+        setSelectionToolbarVisible(false);
+      }
+    },
+    [clearReaderSelection],
+  );
+
+  const handleOpenAskPanel = useCallback(() => {
+    openAskPanel(currentAskSelectionAttachment);
+  }, [currentAskSelectionAttachment, openAskPanel]);
+
+  const handleAskFromSelection = useCallback(() => {
+    if (!currentAskSelectionAttachment) {
+      return;
+    }
+    openAskPanel(currentAskSelectionAttachment);
+  }, [currentAskSelectionAttachment, openAskPanel]);
 
   const handleLookupSnapshot = useCallback(
     (nextSnapshot: DictionaryLookupSnapshot) => {
@@ -1140,10 +1233,13 @@ export function ReaderRecordWorkbenchSurface({
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  disabled
-                  title="新 Reading Record 的 Ask persistence 尚未接通"
-                  className={cn(readerCommandControl, "h-8 rounded-md px-2.5")}
-                  data-reader-record-disabled="ask"
+                  onClick={handleOpenAskPanel}
+                  title="打开 Ask Claread"
+                  className={cn(
+                    readerCommandControl,
+                    "h-8 rounded-md px-2.5",
+                    askOpen ? "border-lens-blue/30 text-lens-blue" : null,
+                  )}
                 >
                   <MessageSquare aria-hidden="true" className="h-3.5 w-3.5" />
                   Ask Claread
@@ -1221,7 +1317,7 @@ export function ReaderRecordWorkbenchSurface({
             />
 
             <div className="reader-shell-message mx-auto mt-1 rounded-[10px] border border-lens-blue/20 bg-lens-blue-soft px-4 py-3 text-sm leading-6 text-ink-soft">
-              当前只读预览中，可通过点击单词、点击标注或选中正文进行只读查词；Ask、笔记、高亮和词典写入暂不可用。
+              当前可使用 Ask Claread、点击单词、点击标注或选中正文进行只读查词；笔记、高亮和词典写入暂不可用。
             </div>
           </div>
         </header>
@@ -1289,17 +1385,32 @@ export function ReaderRecordWorkbenchSurface({
             selectedText={textSelection.selectedText}
             selectionMode={textSelection.anchorType}
             disabled={{
-              ask: true,
+              ask: !currentAskSelectionAttachment,
               selectSentence: true,
               highlight: true,
               note: true,
               clear: true,
               feedback: true,
             }}
+            onAsk={handleAskFromSelection}
             onLookup={lookupTextSelection}
           />
         </div>
       ) : null}
+
+      <AiWorkspacePanel
+        open={askOpen}
+        presentation={isImmersiveMode ? "immersive" : "intensive"}
+        pageIdentity={askPageIdentity}
+        recordId={snapshot.record_id}
+        recordScope="reading_record"
+        hideClosedLauncher
+        recordTitle={snapshot.record.title}
+        attachments={askAttachments}
+        onRemoveAttachment={handleRemoveAskAttachment}
+        onClearAttachments={() => setAskAttachments([])}
+        onToggle={() => setAskOpen(false)}
+      />
 
       {lookupPreviewVisible ? (
         <ReaderQuickPeek

@@ -2,15 +2,23 @@ import "server-only";
 
 import {
   confirmUpstreamReaderAskAction,
+  confirmUpstreamReadingRecordAskAction,
   createUpstreamReaderAskStream,
   createUpstreamReaderAskThread,
+  createUpstreamReadingRecordAskDefaultThread,
+  createUpstreamReadingRecordAskStream,
   deleteUpstreamReaderAskSupplement,
+  deleteUpstreamReadingRecordAskSupplement,
   getUpstreamReaderAskThread,
+  getUpstreamReadingRecordAskThread,
   listUpstreamReaderAskContextRecords,
   listUpstreamReaderAskModelOptions,
   listUpstreamReaderAskThreads,
+  listUpstreamReadingRecordAskThreads,
   resetUpstreamReaderAskThread,
+  resetUpstreamReadingRecordAskThread,
   retryUpstreamReaderAskMessage,
+  retryUpstreamReadingRecordAskMessage,
 } from "@/services/api/reader-ask";
 import { getWebSession } from "@/services/bff/session";
 import type {
@@ -26,6 +34,12 @@ import type {
   ReaderAskThreadListResponseDto,
   ReaderAskThreadSummaryDto,
 } from "@/types/api/reader-ask";
+
+type ReaderAskRecordScope = "analysis" | "reading_record";
+
+type ReaderAskThreadTransportRequest = ReaderAskThreadCreateRequestDto & {
+  record_scope?: ReaderAskRecordScope | null;
+};
 
 function isDevelopmentRuntime() {
   return process.env.NODE_ENV !== "production";
@@ -66,6 +80,17 @@ function normalizeUpstreamError(
     return { code: fallbackCode, detail: payload.trim() };
   }
   return { code: fallbackCode, detail: fallbackDetail };
+}
+
+function normalizeReaderAskScope(scope?: string | null): ReaderAskRecordScope {
+  return scope === "reading_record" ? "reading_record" : "analysis";
+}
+
+function missingReadingRecordIdResponse() {
+  return new Response(JSON.stringify({ message: "Missing reading record id." }), {
+    status: 400,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 export async function listReaderAskModelOptionsForWeb(): Promise<Response> {
@@ -126,12 +151,17 @@ async function buildStreamErrorResponse(upstream: Response): Promise<Response> {
   );
 }
 
-export async function listReaderAskThreadsForWeb(recordId: string): Promise<ReaderAskThreadListResponseDto | Response> {
+export async function listReaderAskThreadsForWeb(
+  recordId: string,
+  recordScope: ReaderAskRecordScope = "analysis",
+): Promise<ReaderAskThreadListResponseDto | Response> {
   const session = await requireUpstreamSession();
   if (!session) {
     return authError("请先登录后再使用 Ask Claread。");
   }
-  const upstream = await listUpstreamReaderAskThreads(recordId, session.sessionToken);
+  const upstream = recordScope === "reading_record"
+    ? await listUpstreamReadingRecordAskThreads(recordId, session.sessionToken)
+    : await listUpstreamReaderAskThreads(recordId, session.sessionToken);
   if (!upstream.ok) {
     const message = upstream.message || "请求失败";
     return new Response(JSON.stringify({ message }), {
@@ -161,13 +191,26 @@ export async function listReaderAskContextRecordsForWeb(
 }
 
 export async function createReaderAskThreadForWeb(
-  body: ReaderAskThreadCreateRequestDto,
+  body: ReaderAskThreadTransportRequest,
 ): Promise<ReaderAskThreadSummaryDto | Response> {
   const session = await requireUpstreamSession();
   if (!session) {
     return authError("请先登录后再使用 Ask Claread。");
   }
-  const upstream = await createUpstreamReaderAskThread(body, session.sessionToken);
+  const recordScope = normalizeReaderAskScope(body.record_scope);
+  if (!body.record_id?.trim()) {
+    return missingReadingRecordIdResponse();
+  }
+  const upstream = recordScope === "reading_record"
+    ? await createUpstreamReadingRecordAskDefaultThread(body.record_id, session.sessionToken)
+    : await createUpstreamReaderAskThread(
+        {
+          record_id: body.record_id,
+          title: body.title,
+          model: body.model,
+        },
+        session.sessionToken,
+      );
   if (!upstream.ok) {
     return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
@@ -177,12 +220,23 @@ export async function createReaderAskThreadForWeb(
   return upstream.data;
 }
 
-export async function getReaderAskThreadForWeb(threadId: string): Promise<ReaderAskThreadDetailDto | Response> {
+export async function getReaderAskThreadForWeb(
+  threadId: string,
+  recordId?: string | null,
+  recordScope: ReaderAskRecordScope = "analysis",
+): Promise<ReaderAskThreadDetailDto | Response> {
   const session = await requireUpstreamSession();
   if (!session) {
     return authError("请先登录后再使用 Ask Claread。");
   }
-  const upstream = await getUpstreamReaderAskThread(threadId, session.sessionToken);
+  if (recordScope === "reading_record") {
+    if (!recordId?.trim()) {
+      return missingReadingRecordIdResponse();
+    }
+  }
+  const upstream = recordScope === "reading_record"
+    ? await getUpstreamReadingRecordAskThread(recordId!, threadId, session.sessionToken)
+    : await getUpstreamReaderAskThread(threadId, session.sessionToken);
   if (!upstream.ok) {
     return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
@@ -192,12 +246,23 @@ export async function getReaderAskThreadForWeb(threadId: string): Promise<Reader
   return upstream.data;
 }
 
-export async function resetReaderAskThreadForWeb(threadId: string): Promise<ReaderAskThreadDetailDto | Response> {
+export async function resetReaderAskThreadForWeb(
+  threadId: string,
+  recordId?: string | null,
+  recordScope: ReaderAskRecordScope = "analysis",
+): Promise<ReaderAskThreadDetailDto | Response> {
   const session = await requireUpstreamSession();
   if (!session) {
     return authError("请先登录后再使用 Ask Claread。");
   }
-  const upstream = await resetUpstreamReaderAskThread(threadId, session.sessionToken);
+  if (recordScope === "reading_record") {
+    if (!recordId?.trim()) {
+      return missingReadingRecordIdResponse();
+    }
+  }
+  const upstream = recordScope === "reading_record"
+    ? await resetUpstreamReadingRecordAskThread(recordId!, threadId, session.sessionToken)
+    : await resetUpstreamReaderAskThread(threadId, session.sessionToken);
   if (!upstream.ok) {
     return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
@@ -211,12 +276,21 @@ export async function confirmReaderAskActionForWeb(
   threadId: string,
   actionId: string,
   body: ReaderAskActionConfirmRequestDto,
+  recordId?: string | null,
+  recordScope: ReaderAskRecordScope = "analysis",
 ): Promise<ReaderAskActionConfirmResponseDto | Response> {
   const session = await requireUpstreamSession();
   if (!session) {
     return authError("请先登录后再使用 Ask Claread。");
   }
-  const upstream = await confirmUpstreamReaderAskAction(threadId, actionId, body, session.sessionToken);
+  if (recordScope === "reading_record") {
+    if (!recordId?.trim()) {
+      return missingReadingRecordIdResponse();
+    }
+  }
+  const upstream = recordScope === "reading_record"
+    ? await confirmUpstreamReadingRecordAskAction(recordId!, threadId, actionId, body, session.sessionToken)
+    : await confirmUpstreamReaderAskAction(threadId, actionId, body, session.sessionToken);
   if (!upstream.ok) {
     return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
@@ -228,12 +302,21 @@ export async function confirmReaderAskActionForWeb(
 
 export async function deleteReaderAskSupplementForWeb(
   supplementId: string,
+  recordId?: string | null,
+  recordScope: ReaderAskRecordScope = "analysis",
 ): Promise<ReaderAskDeleteSupplementResponseDto | Response> {
   const session = await requireUpstreamSession();
   if (!session) {
     return authError("请先登录后再使用 Ask Claread。");
   }
-  const upstream = await deleteUpstreamReaderAskSupplement(supplementId, session.sessionToken);
+  if (recordScope === "reading_record") {
+    if (!recordId?.trim()) {
+      return missingReadingRecordIdResponse();
+    }
+  }
+  const upstream = recordScope === "reading_record"
+    ? await deleteUpstreamReadingRecordAskSupplement(recordId!, supplementId, session.sessionToken)
+    : await deleteUpstreamReaderAskSupplement(supplementId, session.sessionToken);
   if (!upstream.ok) {
     return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
@@ -246,6 +329,8 @@ export async function deleteReaderAskSupplementForWeb(
 export async function createReaderAskStreamForWeb(
   threadId: string,
   body: ReaderAskMessageStreamRequestDto,
+  recordId?: string | null,
+  recordScope: ReaderAskRecordScope = "analysis",
 ): Promise<Response> {
   const session = await requireUpstreamSession();
   if (!session) {
@@ -262,7 +347,15 @@ export async function createReaderAskStreamForWeb(
     );
   }
 
-  const upstream = await createUpstreamReaderAskStream(threadId, body, session.sessionToken);
+  if (recordScope === "reading_record") {
+    if (!recordId?.trim()) {
+      return missingReadingRecordIdResponse();
+    }
+  }
+
+  const upstream = recordScope === "reading_record"
+    ? await createUpstreamReadingRecordAskStream(recordId!, threadId, body, session.sessionToken)
+    : await createUpstreamReaderAskStream(threadId, body, session.sessionToken);
   if (!upstream.ok || !upstream.body) {
     return buildStreamErrorResponse(upstream);
   }
@@ -283,6 +376,8 @@ export async function retryReaderAskMessageForWeb(
   threadId: string,
   messageId: string,
   body: ReaderAskMessageRetryRequestDto,
+  recordId?: string | null,
+  recordScope: ReaderAskRecordScope = "analysis",
 ): Promise<Response> {
   const session = await requireUpstreamSession();
   if (!session) {
@@ -299,7 +394,15 @@ export async function retryReaderAskMessageForWeb(
     );
   }
 
-  const upstream = await retryUpstreamReaderAskMessage(threadId, messageId, body, session.sessionToken);
+  if (recordScope === "reading_record") {
+    if (!recordId?.trim()) {
+      return missingReadingRecordIdResponse();
+    }
+  }
+
+  const upstream = recordScope === "reading_record"
+    ? await retryUpstreamReadingRecordAskMessage(recordId!, threadId, messageId, body, session.sessionToken)
+    : await retryUpstreamReaderAskMessage(threadId, messageId, body, session.sessionToken);
   if (!upstream.ok || !upstream.body) {
     return buildStreamErrorResponse(upstream);
   }
