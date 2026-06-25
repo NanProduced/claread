@@ -8,7 +8,6 @@ import {
   type ReaderRecordAnchorDraftSelectionSegment,
 } from "./reader-record-anchor-draft";
 
-const ANCHOR_SEGMENT_SELECTOR = '[data-reader-record-node="anchor-segment"]';
 const STABLE_SOURCE_LEAF_SELECTOR = '[data-reader-record-leaf="segment_text"]';
 
 export interface ReaderRecordSelectionAnchorBridgeResult {
@@ -19,6 +18,7 @@ export interface ReaderRecordSelectionAnchorBridgeResult {
   sentenceId: string;
   contextSentence: string;
   supportedSingleRange: boolean;
+  rect: DOMRect | null;
 }
 
 function elementFromNode(node: Node): Element | null {
@@ -32,42 +32,40 @@ function stableLeafForPoint(node: Node): HTMLElement | null {
   );
 }
 
-function isStableSourcePoint(segmentElement: HTMLElement, node: Node): boolean {
-  const leaf = stableLeafForPoint(node);
-  return Boolean(leaf && segmentElement.contains(leaf));
-}
-
-function stableTextNodes(segmentElement: HTMLElement): Text[] {
-  const nodes: Text[] = [];
-  const walker = document.createTreeWalker(segmentElement, NodeFilter.SHOW_TEXT);
-  let current = walker.nextNode();
-
-  while (current) {
-    const textNode = current as Text;
-    const parentElement = textNode.parentElement;
-    if (parentElement?.closest(STABLE_SOURCE_LEAF_SELECTOR)) {
-      nodes.push(textNode);
+function stableLeavesInRange(
+  rootElement: HTMLElement,
+  range: Range,
+): HTMLElement[] {
+  const leaves = Array.from(
+    rootElement.querySelectorAll<HTMLElement>(STABLE_SOURCE_LEAF_SELECTOR),
+  );
+  return leaves.filter((leaf) => {
+    try {
+      return range.intersectsNode(leaf);
+    } catch {
+      return false;
     }
-    current = walker.nextNode();
-  }
-
-  return nodes;
+  });
 }
 
-function stableText(segmentElement: HTMLElement): string {
-  return stableTextNodes(segmentElement)
-    .map((node) => node.textContent ?? "")
-    .join("");
+function leafText(leaf: HTMLElement): string {
+  return leaf.textContent ?? "";
 }
 
-function offsetWithinStableText(
-  segmentElement: HTMLElement,
+function offsetWithinLeaf(
+  leaf: HTMLElement,
   node: Node,
   offset: number,
 ): number | null {
-  const textNodes = stableTextNodes(segmentElement);
-  let cursor = 0;
+  const textNodes: Text[] = [];
+  const walker = document.createTreeWalker(leaf, NodeFilter.SHOW_TEXT);
+  let current = walker.nextNode();
+  while (current) {
+    textNodes.push(current as Text);
+    current = walker.nextNode();
+  }
 
+  let cursor = 0;
   for (const textNode of textNodes) {
     const textLength = textNode.textContent?.length ?? 0;
     if (textNode === node) {
@@ -110,36 +108,114 @@ function offsetWithinStableText(
   }
 }
 
-function anchorSegmentElementsInRange(
-  rootElement: HTMLElement,
-  range: Range,
-): HTMLElement[] {
-  return Array.from(
-    rootElement.querySelectorAll<HTMLElement>(ANCHOR_SEGMENT_SELECTOR),
-  ).filter((element) => {
-    try {
-      return range.intersectsNode(element);
-    } catch {
-      return false;
-    }
-  });
+function segmentStartOffset(leaf: HTMLElement): number {
+  const raw = leaf.dataset.segmentStartUtf16;
+  if (raw === undefined) {
+    return 0;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function segmentFromElement(
-  element: HTMLElement,
-  selectedText: string,
-  startOffset: number,
-  endOffset: number,
+function anchorSegmentId(leaf: HTMLElement): string | null {
+  return leaf.dataset.anchorSegmentId ?? null;
+}
+
+function lookupSegmentMetadata(
+  snapshot: ReaderPlateSnapshotDto,
+  anchorSegmentId: string,
+): { unitId: string; sentenceId: string } | null {
+  const segment = snapshot.anchor_segments.find(
+    (item) => item.anchor_segment_id === anchorSegmentId,
+  );
+  if (!segment) {
+    return null;
+  }
+  return { unitId: segment.unit_id, sentenceId: segment.sentence_id };
+}
+
+function groupLeavesBySegment(
+  leaves: HTMLElement[],
+): Map<string, HTMLElement[]> {
+  const groups = new Map<string, HTMLElement[]>();
+  for (const leaf of leaves) {
+    const segmentId = anchorSegmentId(leaf);
+    if (!segmentId) {
+      continue;
+    }
+    const list = groups.get(segmentId) ?? [];
+    list.push(leaf);
+    groups.set(segmentId, list);
+  }
+  return groups;
+}
+
+function buildSegmentFromGroup(
+  leaves: HTMLElement[],
+  startLeaf: HTMLElement,
+  endLeaf: HTMLElement,
+  range: Range,
+  snapshot: ReaderPlateSnapshotDto,
 ): ReaderRecordAnchorDraftSelectionSegment | null {
-  const unitId = element.dataset.unitId;
-  const sentenceId = element.dataset.sentenceId;
-  if (!unitId || !sentenceId || endOffset <= startOffset || !selectedText.trim()) {
+  if (leaves.length === 0) {
+    return null;
+  }
+
+  const segmentId = anchorSegmentId(startLeaf);
+  if (!segmentId) {
+    return null;
+  }
+
+  const metadata = lookupSegmentMetadata(snapshot, segmentId);
+  if (!metadata) {
+    return null;
+  }
+
+  const startLeafBase = segmentStartOffset(startLeaf);
+  const endLeafBase = segmentStartOffset(endLeaf);
+
+  const startOffsetInLeaf =
+    startLeaf === range.startContainer.parentElement ||
+    startLeaf.contains(range.startContainer)
+      ? offsetWithinLeaf(startLeaf, range.startContainer, range.startOffset)
+      : 0;
+  const endOffsetInLeaf =
+    endLeaf === range.endContainer.parentElement ||
+    endLeaf.contains(range.endContainer)
+      ? offsetWithinLeaf(endLeaf, range.endContainer, range.endOffset)
+      : leafText(endLeaf).length;
+
+  if (startOffsetInLeaf === null || endOffsetInLeaf === null) {
+    return null;
+  }
+
+  const startOffset = startLeafBase + startOffsetInLeaf;
+  const endOffset = endLeafBase + endOffsetInLeaf;
+
+  if (endOffset <= startOffset) {
+    return null;
+  }
+
+  const selectedText = leaves
+    .map((leaf) => {
+      const text = leafText(leaf);
+      const base = segmentStartOffset(leaf);
+      const leafStart = Math.max(startOffset, base) - base;
+      const leafEnd = Math.min(endOffset, base + text.length) - base;
+      if (leafEnd <= leafStart) {
+        return "";
+      }
+      return text.slice(leafStart, leafEnd);
+    })
+    .join("");
+
+  if (!selectedText.trim()) {
     return null;
   }
 
   return {
-    paragraphId: unitId,
-    sentenceId,
+    paragraphId: metadata.unitId,
+    sentenceId: metadata.sentenceId,
     selectedText,
     startOffset,
     endOffset,
@@ -161,63 +237,50 @@ export function readReaderRecordSelectionAnchorDrafts(
   }
 
   const range = selection.getRangeAt(0);
-  const startSegmentElement = elementFromNode(
-    range.startContainer,
-  )?.closest<HTMLElement>(ANCHOR_SEGMENT_SELECTOR);
-  const endSegmentElement = elementFromNode(
-    range.endContainer,
-  )?.closest<HTMLElement>(ANCHOR_SEGMENT_SELECTOR);
+  const startLeaf = stableLeafForPoint(range.startContainer);
+  const endLeaf = stableLeafForPoint(range.endContainer);
 
   if (
-    !startSegmentElement ||
-    !endSegmentElement ||
-    !rootElement.contains(startSegmentElement) ||
-    !rootElement.contains(endSegmentElement) ||
-    !isStableSourcePoint(startSegmentElement, range.startContainer) ||
-    !isStableSourcePoint(endSegmentElement, range.endContainer)
+    !startLeaf ||
+    !endLeaf ||
+    !rootElement.contains(startLeaf) ||
+    !rootElement.contains(endLeaf)
   ) {
     return null;
   }
 
-  const segmentElements = anchorSegmentElementsInRange(rootElement, range);
-  if (segmentElements.length === 0) {
+  const leaves = stableLeavesInRange(rootElement, range);
+  if (leaves.length === 0) {
     return null;
   }
 
+  const groupedLeaves = groupLeavesBySegment(leaves);
   const segments: ReaderRecordAnchorDraftSelectionSegment[] = [];
-  for (const segmentElement of segmentElements) {
-    const text = stableText(segmentElement);
-    const startOffset =
-      segmentElement === startSegmentElement
-        ? offsetWithinStableText(
-            segmentElement,
-            range.startContainer,
-            range.startOffset,
-          )
-        : 0;
-    const endOffset =
-      segmentElement === endSegmentElement
-        ? offsetWithinStableText(
-            segmentElement,
-            range.endContainer,
-            range.endOffset,
-          )
-        : text.length;
+  let contextSentenceText = "";
 
-    if (startOffset === null || endOffset === null || endOffset <= startOffset) {
-      return null;
-    }
+  for (const [segmentId, groupLeaves] of groupedLeaves) {
+    const firstLeaf = groupLeaves[0];
+    const lastLeaf = groupLeaves[groupLeaves.length - 1];
 
-    const segment = segmentFromElement(
-      segmentElement,
-      text.slice(startOffset, endOffset),
-      startOffset,
-      endOffset,
+    const segment = buildSegmentFromGroup(
+      groupLeaves,
+      firstLeaf,
+      lastLeaf,
+      range,
+      snapshot,
     );
     if (!segment) {
-      return null;
+      continue;
     }
     segments.push(segment);
+
+    if (segmentId === anchorSegmentId(startLeaf)) {
+      contextSentenceText = groupLeaves.map(leafText).join("");
+    }
+  }
+
+  if (segments.length === 0) {
+    return null;
   }
 
   const drafts = anchorDraftsForSelection(snapshot, { segments });
@@ -235,13 +298,16 @@ export function readReaderRecordSelectionAnchorDrafts(
     return null;
   }
 
+  const rect = range.getBoundingClientRect();
+
   return {
     drafts,
     selectedText,
     anchorType: segments.length === 1 ? "text_range" : "multi_text",
     segments,
     sentenceId: segments[0]?.sentenceId ?? "",
-    contextSentence: stableText(segmentElements[0]),
+    contextSentence: contextSentenceText,
     supportedSingleRange: drafts.length === 1,
+    rect,
   };
 }

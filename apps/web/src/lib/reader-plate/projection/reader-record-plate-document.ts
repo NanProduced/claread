@@ -34,6 +34,17 @@ export const READER_RECORD_PLATE_DOCUMENT_SCHEMA_VERSION =
 export type ReaderRecordPlateDocumentSchemaVersion =
   typeof READER_RECORD_PLATE_DOCUMENT_SCHEMA_VERSION;
 
+/**
+ * Reader Record Plate Document (V2 — standard Plate blocks).
+ *
+ * children is a flat array of standard Plate block types:
+ * - paragraph: 原文段落（anchor segment 文本）
+ * - blockquote: 译文引用块
+ * - callout: grammar_note / sentence_analysis 增强层
+ *
+ * anchor_segment_id 和 UTF-16 偏移作为 text leaf 的 metadata 保留，
+ * 选区读取从 leaf metadata 重建 anchor draft。
+ */
 export interface ReaderRecordPlateDocument {
   type: "reader_record_plate_document";
   schemaVersion: ReaderRecordPlateDocumentSchemaVersion;
@@ -56,7 +67,82 @@ export interface ReaderRecordPlateDocument {
     hashAlgorithm: ReaderPlateSnapshotDto["base"]["hash_algorithm"];
   };
   progress: ReaderRecordPlateProgress;
-  children: ReaderRecordPlateUnitNode[];
+  children: ReaderRecordPlateBlock[];
+}
+
+export type ReaderRecordPlateBlock =
+  | ReaderRecordPlateParagraphBlock
+  | ReaderRecordPlateBlockquoteBlock
+  | ReaderRecordPlateCalloutBlock;
+
+/** 原文段落块 — 一个 anchor segment 对应一个 paragraph */
+export interface ReaderRecordPlateParagraphBlock {
+  type: "paragraph";
+  id: string;
+  children: ReaderRecordPlateTextLeaf[];
+  data: ReaderRecordPlateParagraphData;
+}
+
+export interface ReaderRecordPlateParagraphData {
+  anchorSegmentId: string;
+  sentenceId: string;
+  unitId: string;
+  baseId: string;
+  baseRange: ReaderRecordPlateRange;
+  unitRange: ReaderRecordPlateRange;
+  textHash: string;
+  hashAlgorithm: ReaderUnitNodeDto["hash_algorithm"];
+  segmentType: AnchorSegmentType;
+  boundaryQuality: ReaderBoundaryQuality;
+}
+
+/** 译文引用块 — unit 级译文 */
+export interface ReaderRecordPlateBlockquoteBlock {
+  type: "blockquote";
+  id: string;
+  children: ReaderRecordPlateTranslationTextLeaf[];
+  data: ReaderRecordPlateBlockquoteData;
+}
+
+export interface ReaderRecordPlateBlockquoteData {
+  unitId: string;
+  layerId: string;
+  layerVersion: number;
+  targetLanguage: string;
+  confidence: TranslationConfidence;
+  notes: string[];
+}
+
+/** Callout 增强层块 — grammar_note 或 sentence_analysis */
+export interface ReaderRecordPlateCalloutBlock {
+  type: "callout";
+  id: string;
+  variant: ReaderRecordPlateCalloutVariant;
+  icon: string;
+  children: ReaderRecordPlateCalloutTextLeaf[];
+  data: ReaderRecordPlateCalloutData;
+}
+
+export type ReaderRecordPlateCalloutVariant = "grammar" | "analysis";
+
+export interface ReaderRecordPlateCalloutData {
+  anchorSegmentId: string;
+  unitId: string;
+  layerId: string;
+  // grammar
+  itemId?: string;
+  grammarPoint?: string;
+  pattern?: string | null;
+  note?: string;
+  // sentence_analysis
+  analysisId?: string;
+  label?: string;
+  analysis?: string;
+  chunks?: ReaderSentenceAnalysisChunkDto[];
+}
+
+export interface ReaderRecordPlateCalloutTextLeaf {
+  text: string;
 }
 
 export interface ReaderRecordPlateProgress {
@@ -83,71 +169,6 @@ export interface ReaderRecordPlateRange {
   endUtf16: number;
 }
 
-export interface ReaderRecordPlateUnitNode {
-  type: "reader_record_unit";
-  id: string;
-  baseId: string;
-  unitId: string;
-  orderIndex: number;
-  unitType: ReaderUnitType;
-  boundaryQuality: ReaderBoundaryQuality;
-  baseRange: ReaderRecordPlateRange;
-  textHash: string;
-  hashAlgorithm: ReaderUnitNodeDto["hash_algorithm"];
-  parsedDecision?: ReaderRecordPlateParsedDecision;
-  progress: ReaderRecordPlateProgressLayer[];
-  cues: ReaderRecordPlateCue[];
-  children: ReaderRecordPlateUnitChildNode[];
-}
-
-export interface ReaderRecordPlateParsedDecision {
-  state: ParsedDecisionState;
-  policyCode: string;
-  rationaleCode?: string | null;
-}
-
-export type ReaderRecordPlateUnitChildNode =
-  | ReaderRecordPlateSourceBlockNode
-  | ReaderRecordPlateTranslationBlockNode;
-
-export interface ReaderRecordPlateSourceBlockNode {
-  type: "reader_record_source_block";
-  id: string;
-  baseId: string;
-  unitId: string;
-  baseRange: ReaderRecordPlateRange;
-  children: ReaderRecordPlateSourceBlockChildNode[];
-}
-
-export type ReaderRecordPlateSourceBlockChildNode =
-  | ReaderRecordPlateAnchorSegmentNode
-  | ReaderRecordPlateSeparatorLeaf;
-
-export interface ReaderRecordPlateAnchorSegmentNode {
-  type: "reader_record_anchor_segment";
-  id: string;
-  baseId: string;
-  unitId: string;
-  anchorSegmentId: string;
-  sentenceId: string;
-  segmentType: AnchorSegmentType;
-  boundaryQuality: ReaderBoundaryQuality;
-  baseRange: ReaderRecordPlateRange;
-  unitRange: ReaderRecordPlateRange;
-  textHash: string;
-  hashAlgorithm: ReaderUnitNodeDto["hash_algorithm"];
-  cues: ReaderRecordPlateCue[];
-  children: ReaderRecordPlateTextLeaf[];
-}
-
-export interface ReaderRecordPlateSeparatorLeaf {
-  text: string;
-  owner: "stable";
-  lockSource: true;
-  sourceRole: "separator";
-  baseRange: ReaderRecordPlateRange;
-}
-
 export interface ReaderRecordPlateTextLeaf {
   text: string;
   owner: "stable";
@@ -162,7 +183,8 @@ export interface ReaderRecordPlateTextLeaf {
 export type ReaderRecordPlateMark =
   | ReaderRecordPlateVocabularyMark
   | ReaderRecordPlateGrammarMark
-  | ReaderRecordPlateUserHighlightMark;
+  | ReaderRecordPlateUserHighlightMark
+  | ReaderRecordPlateUserNoteMark;
 
 export interface ReaderRecordPlateTextAnchor {
   anchorType: "text_range";
@@ -239,68 +261,16 @@ export interface ReaderRecordPlateUserHighlightMark {
   updatedAt: string;
 }
 
-export type ReaderRecordPlateCue =
-  | ReaderRecordPlateGrammarCue
-  | ReaderRecordPlateSentenceAnalysisCue
-  | ReaderRecordPlateUserCommentCue;
-
-export interface ReaderRecordPlateGrammarCue {
-  type: "reader_record_grammar_cue";
+export interface ReaderRecordPlateUserNoteMark {
   id: string;
-  owner: "system_ai";
-  anchor: ReaderRecordPlateTextAnchor;
-  itemId: string;
-  grammarPoint: string;
-  pattern?: string | null;
-  note: string;
-}
-
-export interface ReaderRecordPlateSentenceAnalysisCue {
-  type: "reader_record_sentence_analysis_cue";
-  id: string;
-  owner: "system_ai";
-  layerId: string;
-  layerVersion: number;
-  analysisId: string;
-  baseId: string;
-  unitId: string;
-  targetScope: "unit";
-  targetKey: string;
-  anchorSegmentId: string;
-  selectedText: string;
-  label: string;
-  analysis: string;
-  chunks: ReaderSentenceAnalysisChunkDto[];
-}
-
-export interface ReaderRecordPlateUserCommentCue {
-  type: "reader_record_user_comment_cue";
-  id: string;
+  kind: "user_note";
   owner: "user";
   assetId: string;
   assetType: string;
+  noteText: string;
   anchor: ReaderRecordPlateTextAnchor;
-  label: string;
-  noteText?: string | null;
   createdAt?: string | null;
   updatedAt: string;
-}
-
-export interface ReaderRecordPlateTranslationBlockNode {
-  type: "reader_record_unit_translation";
-  id: string;
-  owner: "system_ai";
-  placement: "unit";
-  layerId: string;
-  layerVersion: number;
-  baseId: string;
-  unitId: string;
-  targetScope: "unit";
-  targetKey: string;
-  targetLanguage: string;
-  confidence: TranslationConfidence;
-  notes: string[];
-  children: ReaderRecordPlateTranslationTextLeaf[];
 }
 
 export interface ReaderRecordPlateTranslationTextLeaf {
@@ -309,14 +279,20 @@ export interface ReaderRecordPlateTranslationTextLeaf {
   sourceRole: "unit_translation_text";
 }
 
+// --- Projection context ---
+
 interface UnitProjectionContext {
   snapshot: ReaderPlateSnapshotDto;
-  sentenceAnalysisBySegment: Map<string, ReaderRecordPlateSentenceAnalysisCue[]>;
-  grammarCuesBySegment: Map<string, ReaderRecordPlateGrammarCue[]>;
+  sentenceAnalysisBySegment: Map<
+    string,
+    ReaderSentenceAnalysisNodeDto[]
+  >;
   userHighlightMarksBySegment: Map<string, ReaderRecordPlateUserHighlightMark[]>;
-  userCommentCuesBySegment: Map<string, ReaderRecordPlateUserCommentCue[]>;
+  userNoteMarksBySegment: Map<string, ReaderRecordPlateUserNoteMark[]>;
   progressByUnit: Map<string, ReaderRecordPlateProgressLayer[]>;
 }
+
+// --- Type guards ---
 
 function isSourceBlockNode(
   node: ReaderUnitNodeDto["children"][number],
@@ -341,6 +317,8 @@ function isAnchorSegmentNode(
 ): node is Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }> {
   return "type" in node && node.type === "reader_anchor_segment";
 }
+
+// --- Helpers ---
 
 function range(startUtf16: number, endUtf16: number): ReaderRecordPlateRange {
   return { startUtf16, endUtf16 };
@@ -420,52 +398,19 @@ function buildProgressByUnit(
 
 function buildSentenceAnalysisBySegment(
   value: ReaderPlateSnapshotDto["value"],
-): Map<string, ReaderRecordPlateSentenceAnalysisCue[]> {
-  const result = new Map<string, ReaderRecordPlateSentenceAnalysisCue[]>();
+): Map<string, ReaderSentenceAnalysisNodeDto[]> {
+  const result = new Map<string, ReaderSentenceAnalysisNodeDto[]>();
   for (const unit of value) {
     for (const child of unit.children) {
       if (!isSentenceAnalysisNode(child)) {
         continue;
       }
-      const cue = mapSentenceAnalysisCue(child);
-      const list = result.get(cue.anchorSegmentId) ?? [];
-      list.push(cue);
-      result.set(cue.anchorSegmentId, list);
+      const list = result.get(child.anchor_segment_id) ?? [];
+      list.push(child);
+      result.set(child.anchor_segment_id, list);
     }
   }
   return result;
-}
-
-function mapSentenceAnalysisCue(
-  node: ReaderSentenceAnalysisNodeDto,
-): ReaderRecordPlateSentenceAnalysisCue {
-  return {
-    type: "reader_record_sentence_analysis_cue",
-    id: `sentence_analysis:${node.analysis_id}`,
-    owner: "system_ai",
-    layerId: node.layer_id,
-    layerVersion: node.layer_version,
-    analysisId: node.analysis_id,
-    baseId: node.base_id,
-    unitId: node.unit_id,
-    targetScope: node.target_scope,
-    targetKey: node.target_key,
-    anchorSegmentId: node.anchor_segment_id,
-    selectedText: node.selected_text,
-    label: node.label,
-    analysis: node.analysis,
-    chunks: node.chunks,
-  };
-}
-
-function addCue<T extends ReaderRecordPlateCue>(
-  index: Map<string, T[]>,
-  anchorSegmentId: string,
-  cue: T,
-): void {
-  const list = index.get(anchorSegmentId) ?? [];
-  list.push(cue);
-  index.set(anchorSegmentId, list);
 }
 
 function isHighlightAssetType(assetType: string): boolean {
@@ -474,21 +419,6 @@ function isHighlightAssetType(assetType: string): boolean {
     assetType === "highlight" ||
     assetType === "user_highlight"
   );
-}
-
-function isCommentAssetType(assetType: string): boolean {
-  return (
-    assetType === "comment" ||
-    assetType === "note" ||
-    assetType === "reader_note"
-  );
-}
-
-function userAssetLabel(assetType: string): string {
-  if (assetType === "comment") {
-    return "评论";
-  }
-  return "笔记";
 }
 
 function segmentById(
@@ -561,10 +491,10 @@ function normalizedUserAssetAnchor(
 
 function buildUserAssetsBySegment(snapshot: ReaderPlateSnapshotDto): {
   highlights: Map<string, ReaderRecordPlateUserHighlightMark[]>;
-  comments: Map<string, ReaderRecordPlateUserCommentCue[]>;
+  noteMarks: Map<string, ReaderRecordPlateUserNoteMark[]>;
 } {
   const highlights = new Map<string, ReaderRecordPlateUserHighlightMark[]>();
-  const comments = new Map<string, ReaderRecordPlateUserCommentCue[]>();
+  const noteMarks = new Map<string, ReaderRecordPlateUserNoteMark[]>();
 
   for (const asset of snapshot.user_assets) {
     const anchor = normalizedUserAssetAnchor(snapshot, asset);
@@ -588,23 +518,28 @@ function buildUserAssetsBySegment(snapshot: ReaderPlateSnapshotDto): {
       continue;
     }
 
-    if (isCommentAssetType(asset.asset_type)) {
-      addCue(comments, anchor.anchorSegmentId, {
-        type: "reader_record_user_comment_cue",
-        id: `user_comment:${asset.asset_id}`,
+    if (
+      asset.asset_type === "comment" ||
+      asset.asset_type === "note" ||
+      asset.asset_type === "reader_note"
+    ) {
+      const list = noteMarks.get(anchor.anchorSegmentId) ?? [];
+      list.push({
+        id: `user_note:${asset.asset_id}`,
+        kind: "user_note",
         owner: "user",
         assetId: asset.asset_id,
         assetType: asset.asset_type,
+        noteText: asset.note_text ?? "",
         anchor,
-        label: userAssetLabel(asset.asset_type),
-        noteText: asset.note_text,
         createdAt: asset.created_at,
         updatedAt: asset.updated_at,
       });
+      noteMarks.set(anchor.anchorSegmentId, list);
     }
   }
 
-  return { highlights, comments };
+  return { highlights, noteMarks };
 }
 
 function marksForRange(
@@ -764,22 +699,6 @@ function mapGrammarMark(
   };
 }
 
-function mapGrammarCue(
-  segment: Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }>,
-  mark: ReaderGrammarNoteMarkDto,
-): ReaderRecordPlateGrammarCue {
-  return {
-    type: "reader_record_grammar_cue",
-    id: `grammar_note:${mark.item_id}`,
-    owner: "system_ai",
-    anchor: markAnchor(segment, mark),
-    itemId: mark.item_id,
-    grammarPoint: mark.grammar_point,
-    pattern: mark.pattern,
-    note: mark.note,
-  };
-}
-
 function mapTextLeaf(
   segment: Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }>,
   leaf: ReaderStableSegmentTextLeafDto,
@@ -789,106 +708,55 @@ function mapTextLeaf(
     leaf.reader_vocabulary_marks?.map((mark) => mapVocabularyMark(segment, mark)) ??
     [];
   const grammarMarks =
-    leaf.reader_grammar_note_marks?.map((mark) => {
-      const mapped = mapGrammarMark(segment, mark);
-      if (mark.show_note_chip) {
-        addCue(
-          context.grammarCuesBySegment,
-          mark.anchor_segment_id,
-          mapGrammarCue(segment, mark),
-        );
-      }
-      return mapped;
-    }) ?? [];
+    leaf.reader_grammar_note_marks?.map((mark) => mapGrammarMark(segment, mark)) ?? [];
   const userHighlightMarks =
     context.userHighlightMarksBySegment.get(segment.anchor_segment_id) ?? [];
-  const marks = [...vocabularyMarks, ...grammarMarks, ...userHighlightMarks];
+  const userNoteMarks =
+    context.userNoteMarksBySegment.get(segment.anchor_segment_id) ?? [];
+  const marks = [...vocabularyMarks, ...grammarMarks, ...userHighlightMarks, ...userNoteMarks];
 
   return splitTextLeafByMarks(leaf, marks);
 }
 
-function mapSeparatorLeaf(
-  leaf: ReaderStableSeparatorLeafDto,
-): ReaderRecordPlateSeparatorLeaf {
-  return {
-    text: leaf.text,
-    owner: "stable",
-    lockSource: true,
-    sourceRole: "separator",
-    baseRange: range(leaf.base_start_utf16, leaf.base_end_utf16),
-  };
-}
+// --- Block builders ---
 
-function mapAnchorSegment(
+function buildParagraphBlock(
   segment: Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }>,
   context: UnitProjectionContext,
-): ReaderRecordPlateAnchorSegmentNode {
+): ReaderRecordPlateParagraphBlock {
   const children = segment.children.flatMap((leaf) =>
     mapTextLeaf(segment, leaf, context),
   );
-  const grammarCues = context.grammarCuesBySegment.get(segment.anchor_segment_id) ?? [];
-  const sentenceAnalysisCues =
-    context.sentenceAnalysisBySegment.get(segment.anchor_segment_id) ?? [];
-  const userCommentCues =
-    context.userCommentCuesBySegment.get(segment.anchor_segment_id) ?? [];
 
   return {
-    type: "reader_record_anchor_segment",
-    id: `anchor_segment:${segment.anchor_segment_id}`,
-    baseId: segment.base_id,
-    unitId: segment.unit_id,
-    anchorSegmentId: segment.anchor_segment_id,
-    sentenceId: segment.sentence_id,
-    segmentType: segment.segment_type,
-    boundaryQuality: segment.boundary_quality,
-    baseRange: range(segment.base_start_utf16, segment.base_end_utf16),
-    unitRange: range(segment.unit_start_utf16, segment.unit_end_utf16),
-    textHash: segment.text_hash,
-    hashAlgorithm: segment.hash_algorithm,
-    cues: [...grammarCues, ...sentenceAnalysisCues, ...userCommentCues],
+    type: "paragraph",
+    id: `paragraph:${segment.anchor_segment_id}`,
     children,
+    data: {
+      anchorSegmentId: segment.anchor_segment_id,
+      sentenceId: segment.sentence_id,
+      unitId: segment.unit_id,
+      baseId: segment.base_id,
+      baseRange: range(segment.base_start_utf16, segment.base_end_utf16),
+      unitRange: range(segment.unit_start_utf16, segment.unit_end_utf16),
+      textHash: segment.text_hash,
+      hashAlgorithm: segment.hash_algorithm,
+      segmentType: segment.segment_type,
+      boundaryQuality: segment.boundary_quality,
+    },
   };
 }
 
-function mapSourceBlock(
-  node: ReaderSourceBlockNodeDto,
-  context: UnitProjectionContext,
-): ReaderRecordPlateSourceBlockNode {
-  return {
-    type: "reader_record_source_block",
-    id: `source_block:${node.unit_id}`,
-    baseId: node.base_id,
-    unitId: node.unit_id,
-    baseRange: range(node.base_start_utf16, node.base_end_utf16),
-    children: node.children.map((child) =>
-      isAnchorSegmentNode(child)
-        ? mapAnchorSegment(child, context)
-        : mapSeparatorLeaf(child),
-    ),
-  };
-}
-
-function mapTranslationBlock(
+function buildBlockquoteBlock(
   node: ReaderTranslationNodeDto,
-): ReaderRecordPlateTranslationBlockNode | null {
+): ReaderRecordPlateBlockquoteBlock | null {
   if (node.target_scope !== "unit") {
     return null;
   }
 
   return {
-    type: "reader_record_unit_translation",
-    id: `translation:${node.layer_id}:${node.target_key}`,
-    owner: "system_ai",
-    placement: "unit",
-    layerId: node.layer_id,
-    layerVersion: node.layer_version,
-    baseId: node.base_id,
-    unitId: node.unit_id,
-    targetScope: "unit",
-    targetKey: node.target_key,
-    targetLanguage: node.target_language,
-    confidence: node.confidence,
-    notes: node.notes,
+    type: "blockquote",
+    id: `blockquote:${node.layer_id}:${node.target_key}`,
     children: [
       {
         text: textFromTranslation(node),
@@ -896,65 +764,104 @@ function mapTranslationBlock(
         sourceRole: "unit_translation_text",
       },
     ],
+    data: {
+      unitId: node.unit_id,
+      layerId: node.layer_id,
+      layerVersion: node.layer_version,
+      targetLanguage: node.target_language,
+      confidence: node.confidence,
+      notes: node.notes,
+    },
   };
 }
 
-function mapUnit(
+function buildGrammarCalloutBlocks(
+  segment: Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }>,
+): ReaderRecordPlateCalloutBlock[] {
+  const callouts: ReaderRecordPlateCalloutBlock[] = [];
+
+  for (const leaf of segment.children) {
+    const grammarMarks = leaf.reader_grammar_note_marks ?? [];
+    for (const mark of grammarMarks) {
+      if (!mark.show_note_chip) {
+        continue;
+      }
+      callouts.push({
+        type: "callout",
+        id: `callout:grammar:${mark.item_id}`,
+        variant: "grammar",
+        icon: "📖",
+        children: [{ text: mark.note }],
+        data: {
+          anchorSegmentId: mark.anchor_segment_id,
+          unitId: segment.unit_id,
+          layerId: mark.layer_id,
+          itemId: mark.item_id,
+          grammarPoint: mark.grammar_point,
+          pattern: mark.pattern,
+          note: mark.note,
+        },
+      });
+    }
+  }
+
+  return callouts;
+}
+
+function buildSentenceAnalysisCalloutBlocks(
+  segment: Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }>,
+  context: UnitProjectionContext,
+): ReaderRecordPlateCalloutBlock[] {
+  const analyses =
+    context.sentenceAnalysisBySegment.get(segment.anchor_segment_id) ?? [];
+
+  return analyses.map((node) => ({
+    type: "callout" as const,
+    id: `callout:analysis:${node.analysis_id}`,
+    variant: "analysis" as const,
+    icon: "🔍",
+    children: [{ text: node.analysis }],
+    data: {
+      anchorSegmentId: node.anchor_segment_id,
+      unitId: node.unit_id,
+      layerId: node.layer_id,
+      analysisId: node.analysis_id,
+      label: node.label,
+      analysis: node.analysis,
+      chunks: node.chunks,
+    },
+  }));
+}
+
+function mapUnitToBlocks(
   unit: ReaderUnitNodeDto,
   context: UnitProjectionContext,
-): ReaderRecordPlateUnitNode {
-  const children: ReaderRecordPlateUnitChildNode[] = [];
+): ReaderRecordPlateBlock[] {
+  const blocks: ReaderRecordPlateBlock[] = [];
 
   for (const child of unit.children) {
     if (isSourceBlockNode(child)) {
-      children.push(mapSourceBlock(child, context));
+      for (const sourceChild of child.children) {
+        if (isAnchorSegmentNode(sourceChild)) {
+          // 1. 原文段落 paragraph block
+          blocks.push(buildParagraphBlock(sourceChild, context));
+          // 2. grammar_note callout blocks (showCue=true)
+          blocks.push(...buildGrammarCalloutBlocks(sourceChild));
+          // 3. sentence_analysis callout blocks
+          blocks.push(...buildSentenceAnalysisCalloutBlocks(sourceChild, context));
+        }
+      }
       continue;
     }
     if (isTranslationNode(child)) {
-      const translation = mapTranslationBlock(child);
-      if (translation) {
-        children.push(translation);
+      const blockquote = buildBlockquoteBlock(child);
+      if (blockquote) {
+        blocks.push(blockquote);
       }
     }
   }
 
-  const cues = children.flatMap((child) =>
-    child.type === "reader_record_source_block"
-      ? child.children.flatMap((sourceChild) =>
-          "type" in sourceChild &&
-          sourceChild.type === "reader_record_anchor_segment"
-            ? sourceChild.cues
-            : [],
-        )
-      : [],
-  );
-
-  const parsedDecision = context.snapshot.parsed_decisions.find(
-    (decision) => decision.unit_id === unit.unit_id,
-  );
-
-  return {
-    type: "reader_record_unit",
-    id: `unit:${unit.unit_id}`,
-    baseId: unit.base_id,
-    unitId: unit.unit_id,
-    orderIndex: unit.order_index,
-    unitType: unit.unit_type,
-    boundaryQuality: unit.boundary_quality,
-    baseRange: range(unit.base_start_utf16, unit.base_end_utf16),
-    textHash: unit.text_hash,
-    hashAlgorithm: unit.hash_algorithm,
-    parsedDecision: parsedDecision
-      ? {
-          state: parsedDecision.parsed_state,
-          policyCode: parsedDecision.policy_code,
-          rationaleCode: parsedDecision.rationale_code,
-        }
-      : undefined,
-    progress: context.progressByUnit.get(unit.unit_id) ?? [],
-    cues,
-    children,
-  };
+  return blocks;
 }
 
 export function projectReaderPlateSnapshotToReaderRecordPlateDocument(
@@ -965,11 +872,14 @@ export function projectReaderPlateSnapshotToReaderRecordPlateDocument(
   const context: UnitProjectionContext = {
     snapshot,
     sentenceAnalysisBySegment: buildSentenceAnalysisBySegment(snapshot.value),
-    grammarCuesBySegment: new Map<string, ReaderRecordPlateGrammarCue[]>(),
     userHighlightMarksBySegment: userAssetsBySegment.highlights,
-    userCommentCuesBySegment: userAssetsBySegment.comments,
+    userNoteMarksBySegment: userAssetsBySegment.noteMarks,
     progressByUnit: buildProgressByUnit(snapshot, progress),
   };
+
+  const children = snapshot.value.flatMap((unit) =>
+    mapUnitToBlocks(unit, context),
+  );
 
   return {
     type: "reader_record_plate_document",
@@ -993,6 +903,6 @@ export function projectReaderPlateSnapshotToReaderRecordPlateDocument(
       hashAlgorithm: snapshot.base.hash_algorithm,
     },
     progress,
-    children: snapshot.value.map((unit) => mapUnit(unit, context)),
+    children,
   };
 }

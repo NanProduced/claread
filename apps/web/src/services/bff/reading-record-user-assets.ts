@@ -5,17 +5,19 @@ import {
   READER_TEXT_RANGE_OFFSET_UNIT,
   type UserEditorialAssetAnchorDto,
 } from "@/types/api/reader-plate";
-import { createUserAnnotation } from "@/services/api/annotations";
-import { createReaderNote } from "@/services/api/reader-notes";
+import { createUserAnnotation, deleteUserAnnotation, updateUserAnnotation } from "@/services/api/annotations";
+import { createReaderNote, deleteReaderNote, updateReaderNote } from "@/services/api/reader-notes";
 import { getWebSession, projectSession, type WebSession } from "@/services/bff/session";
 import type {
   UserAnnotationColorDto,
   UserAnnotationCreateRequestDto,
   UserAnnotationResponseDto,
+  UserAnnotationUpdateRequestDto,
 } from "@/types/api/annotations";
 import type {
   ReaderNoteCreateRequestDto,
   ReaderNoteResponseDto,
+  ReaderNoteUpdateRequestDto,
 } from "@/types/api/reader-notes";
 
 type ReadingRecordUserAssetStatus =
@@ -34,7 +36,7 @@ type AuthenticatedWebSession =
 
 type ReadingRecordUserAssetSuccess<T> = {
   ok: true;
-  status: "created";
+  status: "created" | "updated" | "deleted";
   item: T;
   session: ReadingRecordProjectedSession;
 };
@@ -290,6 +292,178 @@ export async function createReadingRecordNote(
   return {
     ok: true,
     status: "created",
+    item: upstreamResult.data,
+    session: projectSession(session),
+  };
+}
+
+export async function deleteReadingRecordHighlight(
+  highlightId: string,
+): Promise<ReadingRecordUserAssetResult<{ ok: boolean }>> {
+  const sessionResult = await authenticatedSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const { session } = sessionResult;
+  const trimmedId = highlightId.trim();
+  if (!trimmedId) {
+    return invalidRequest(session, "highlightId 是必填项。");
+  }
+
+  const upstreamResult = await deleteUserAnnotation(
+    session.sessionToken,
+    trimmedId,
+  );
+
+  if (!upstreamResult.ok) {
+    return {
+      ok: false,
+      status: unavailableStatus(upstreamResult.status),
+      message: unavailableMessage(upstreamResult.status, upstreamResult.message),
+      session: projectSession(session),
+      httpStatus: upstreamResult.status === 0 ? 503 : upstreamResult.status,
+    };
+  }
+
+  return {
+    ok: true,
+    status: "deleted",
+    item: upstreamResult.data,
+    session: projectSession(session),
+  };
+}
+
+export async function updateReadingRecordHighlight(
+  highlightId: string,
+  body: unknown,
+): Promise<ReadingRecordUserAssetResult<UserAnnotationResponseDto>> {
+  const sessionResult = await authenticatedSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const { session } = sessionResult;
+  const trimmedId = highlightId.trim();
+  if (!trimmedId) {
+    return invalidRequest(session, "highlightId 是必填项。");
+  }
+
+  if (!isRecord(body)) {
+    return invalidRequest(session, "请求体格式不正确。");
+  }
+
+  const color = readString(body.color) as UserAnnotationColorDto | undefined;
+  if (!color) {
+    return invalidRequest(session, "color 是必填项。");
+  }
+
+  const upstreamBody: UserAnnotationUpdateRequestDto = { color };
+  const upstreamResult = await updateUserAnnotation(
+    session.sessionToken,
+    trimmedId,
+    upstreamBody,
+  );
+
+  if (!upstreamResult.ok) {
+    return {
+      ok: false,
+      status: unavailableStatus(upstreamResult.status),
+      message: unavailableMessage(upstreamResult.status, upstreamResult.message),
+      session: projectSession(session),
+      httpStatus: upstreamResult.status === 0 ? 503 : upstreamResult.status,
+    };
+  }
+
+  return {
+    ok: true,
+    status: "updated",
+    item: upstreamResult.data,
+    session: projectSession(session),
+  };
+}
+
+export async function deleteReadingRecordNote(
+  noteId: string,
+): Promise<ReadingRecordUserAssetResult<{ ok: boolean }>> {
+  const sessionResult = await authenticatedSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const { session } = sessionResult;
+  const trimmedId = noteId.trim();
+  if (!trimmedId) {
+    return invalidRequest(session, "noteId 是必填项。");
+  }
+
+  const upstreamResult = await deleteReaderNote(
+    session.sessionToken,
+    trimmedId,
+  );
+
+  if (!upstreamResult.ok) {
+    return {
+      ok: false,
+      status: unavailableStatus(upstreamResult.status),
+      message: unavailableMessage(upstreamResult.status, upstreamResult.message),
+      session: projectSession(session),
+      httpStatus: upstreamResult.status === 0 ? 503 : upstreamResult.status,
+    };
+  }
+
+  return {
+    ok: true,
+    status: "deleted",
+    item: upstreamResult.data,
+    session: projectSession(session),
+  };
+}
+
+export async function updateReadingRecordNote(
+  noteId: string,
+  body: unknown,
+): Promise<ReadingRecordUserAssetResult<ReaderNoteResponseDto>> {
+  const sessionResult = await authenticatedSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const { session } = sessionResult;
+  const trimmedId = noteId.trim();
+  if (!trimmedId) {
+    return invalidRequest(session, "noteId 是必填项。");
+  }
+
+  if (!isRecord(body)) {
+    return invalidRequest(session, "请求体格式不正确。");
+  }
+
+  const noteText = readString(body.noteText);
+  if (!noteText) {
+    return invalidRequest(session, "noteText 是必填项。");
+  }
+
+  const upstreamBody: ReaderNoteUpdateRequestDto = { note_text: noteText };
+  const upstreamResult = await updateReaderNote(
+    session.sessionToken,
+    trimmedId,
+    upstreamBody,
+  );
+
+  if (!upstreamResult.ok) {
+    return {
+      ok: false,
+      status: unavailableStatus(upstreamResult.status),
+      message: unavailableMessage(upstreamResult.status, upstreamResult.message),
+      session: projectSession(session),
+      httpStatus: upstreamResult.status === 0 ? 503 : upstreamResult.status,
+    };
+  }
+
+  return {
+    ok: true,
+    status: "updated",
     item: upstreamResult.data,
     session: projectSession(session),
   };

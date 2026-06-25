@@ -8,7 +8,7 @@ import {
 } from "./reader-record-active-anchor";
 import type {
   ReaderRecordPlateDocument,
-  ReaderRecordPlateGrammarCue,
+  ReaderRecordPlateGrammarMark,
   ReaderRecordPlateTextAnchor,
   ReaderRecordPlateVocabularyMark,
 } from "./reader-record-plate-document";
@@ -64,12 +64,18 @@ function makeDocument(
       example: null,
     },
   };
-  const grammarCue: ReaderRecordPlateGrammarCue = {
-    type: "reader_record_grammar_cue",
-    id: "grammar_note:grammar_item_1",
+  const grammarMark: ReaderRecordPlateGrammarMark = {
+    id: "grammar_mark_1",
+    layerId: "layer_grammar_1",
+    kind: "grammar_note",
     owner: "system_ai",
     anchor: grammarAnchor,
+    startsHere: true,
+    endsHere: true,
     itemId: "grammar_item_1",
+    spanIndex: 0,
+    spanCount: 1,
+    showCue: true,
     grammarPoint: "predicate verb",
     pattern: "subject + verb",
     note: "shapes is the predicate verb.",
@@ -102,56 +108,32 @@ function makeDocument(
     },
     children: [
       {
-        type: "reader_record_unit",
-        id: "unit:unit_1",
-        baseId: "base_1",
-        unitId: "unit_1",
-        orderIndex: 1,
-        unitType: "body",
-        boundaryQuality: "normal",
-        baseRange: { startUtf16: 0, endUtf16: 42 },
-        textHash: "unit_hash",
-        hashAlgorithm: "fnv1a32-utf16",
-        progress: [],
-        cues: [grammarCue],
+        type: "paragraph",
+        id: "paragraph:seg_1",
         children: [
           {
-            type: "reader_record_source_block",
-            id: "source_block:unit_1",
-            baseId: "base_1",
-            unitId: "unit_1",
+            text: "Institutional memory shapes policy choices.",
+            owner: "stable",
+            lockSource: true,
+            sourceRole: "segment_text",
             baseRange: { startUtf16: 0, endUtf16: 42 },
-            children: [
-              {
-                type: "reader_record_anchor_segment",
-                id: "anchor_segment:seg_1",
-                baseId: "base_1",
-                unitId: "unit_1",
-                anchorSegmentId: "seg_1",
-                sentenceId: "sent_1",
-                segmentType: "sentence",
-                boundaryQuality: "normal",
-                baseRange: { startUtf16: 0, endUtf16: 42 },
-                unitRange: { startUtf16: 0, endUtf16: 42 },
-                textHash: "segment_hash",
-                hashAlgorithm: "fnv1a32-utf16",
-                cues: [grammarCue],
-                children: [
-                  {
-                    text: "Institutional memory shapes policy choices.",
-                    owner: "stable",
-                    lockSource: true,
-                    sourceRole: "segment_text",
-                    baseRange: { startUtf16: 0, endUtf16: 42 },
-                    anchorSegmentId: "seg_1",
-                    segmentRange: { startUtf16: 0, endUtf16: 42 },
-                    marks: [vocabularyMark],
-                  },
-                ],
-              },
-            ],
+            anchorSegmentId: "seg_1",
+            segmentRange: { startUtf16: 0, endUtf16: 42 },
+            marks: [vocabularyMark, grammarMark],
           },
         ],
+        data: {
+          anchorSegmentId: "seg_1",
+          sentenceId: "sent_1",
+          unitId: "unit_1",
+          baseId: "base_1",
+          baseRange: { startUtf16: 0, endUtf16: 42 },
+          unitRange: { startUtf16: 0, endUtf16: 42 },
+          textHash: "segment_hash",
+          hashAlgorithm: "fnv1a32-utf16",
+          segmentType: "sentence",
+          boundaryQuality: "normal",
+        },
       },
     ],
   };
@@ -165,27 +147,32 @@ function makeDocument(
 function firstVocabularyMark(
   document: ReaderRecordPlateDocument,
 ): ReaderRecordPlateVocabularyMark {
-  const unit = document.children[0];
-  const source = unit.children[0];
-  if (source.type !== "reader_record_source_block") {
-    throw new Error("expected source block");
+  const paragraph = document.children.find((block) => block.type === "paragraph");
+  if (!paragraph || paragraph.type !== "paragraph") {
+    throw new Error("expected paragraph block");
   }
-  const segment = source.children[0];
-  if (!("type" in segment) || segment.type !== "reader_record_anchor_segment") {
-    throw new Error("expected anchor segment");
+  const leaf = paragraph.children[0];
+  const mark = leaf.marks.find((m) => m.kind !== "grammar_note" && m.kind !== "user_highlight");
+  if (!mark) {
+    throw new Error("expected vocabulary mark");
   }
-  const leaf = segment.children[0];
-  const mark = leaf.marks[0];
-  expect(mark?.kind).toBe("phrase_gloss");
+  expect(mark.kind).toBe("phrase_gloss");
   return mark as ReaderRecordPlateVocabularyMark;
 }
 
-function firstGrammarCue(
+function firstGrammarMark(
   document: ReaderRecordPlateDocument,
-): ReaderRecordPlateGrammarCue {
-  const cue = document.children[0].cues[0];
-  expect(cue.type).toBe("reader_record_grammar_cue");
-  return cue as ReaderRecordPlateGrammarCue;
+): ReaderRecordPlateGrammarMark {
+  const paragraph = document.children.find((block) => block.type === "paragraph");
+  if (!paragraph || paragraph.type !== "paragraph") {
+    throw new Error("expected paragraph block");
+  }
+  const leaf = paragraph.children[0];
+  const mark = leaf.marks.find((m) => m.kind === "grammar_note");
+  if (!mark) {
+    throw new Error("expected grammar mark");
+  }
+  return mark as ReaderRecordPlateGrammarMark;
 }
 
 function expectCommonRoot(anchor: UserEditorialAssetAnchorDraft): void {
@@ -281,13 +268,13 @@ describe("userEditorialAssetAnchorDraftForActiveAnchor", () => {
     });
   });
 
-  it("combines document root metadata with a grammar system cue anchor", () => {
+  it("combines document root metadata with a grammar system mark anchor", () => {
     const document = makeDocument();
-    const cue = firstGrammarCue(document);
+    const mark = firstGrammarMark(document);
 
     const anchor = userEditorialAssetAnchorDraftForActiveAnchor(document, {
       source: "system_cue",
-      anchor: cue.anchor,
+      anchor: mark.anchor,
     });
 
     expect(anchor).not.toBeNull();

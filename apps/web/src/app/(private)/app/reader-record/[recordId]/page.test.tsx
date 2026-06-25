@@ -421,6 +421,10 @@ function makePollResponse(
 
 type ReaderRecordFetchMockOptions = {
   dictResult?: WebDictResult;
+  askResponder?: (
+    url: URL,
+    init?: RequestInit,
+  ) => Response | Promise<Response> | null | undefined;
   eventsResponder?: (url: URL) => Response | Promise<Response>;
   snapshots?: ReaderPlateSnapshotDto[];
 };
@@ -432,8 +436,15 @@ function installReaderRecordFetchMock(
   const dictResult = options.dictResult ?? makeDictionaryEntryResult();
   const snapshots = options.snapshots ?? [snapshot];
   let snapshotIndex = 0;
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const requestUrl = new URL(String(input), "http://localhost");
+
+    if (options.askResponder) {
+      const askResponse = await options.askResponder(requestUrl, init);
+      if (askResponse) {
+        return askResponse;
+      }
+    }
 
     if (
       requestUrl.pathname ===
@@ -807,22 +818,22 @@ describe("ReadingRecordPage direct load", () => {
     await screen.findByTestId("reader-record-plate-surface");
     expect(screen.queryByTestId("reader-record-workbench-surface")).toBeNull();
     const sourceBlock = container.querySelector<HTMLElement>(
-      '[data-reader-record-node="source-block"]',
+      '[data-reader-record-node="paragraph"]',
     );
     const translationBlock = container.querySelector<HTMLElement>(
-      '[data-reader-record-node="unit-translation"]',
+      '[data-reader-record-node="blockquote"]',
     );
     expect(sourceBlock?.textContent).toContain(SOURCE_TEXT);
     expect(translationBlock?.textContent).toContain(TRANSLATION_TEXT);
-    expect(screen.getByTestId("reader-record-plate-progress")).toBeTruthy();
+    expect(screen.getByTestId("reader-record-plate-header")).toBeTruthy();
     expect(
       container.querySelector(
-        '[data-reader-record-node="anchor-segment"][data-anchor-segment-id="seg_1"]',
+        '[data-reader-record-node="paragraph"][data-anchor-segment-id="seg_1"]',
       ),
     ).not.toBeNull();
     expect(
       container.querySelector(
-        '[data-reader-record-user-asset-id="asset_highlight_1"]',
+        '[data-reader-record-mark-id="user_highlight:asset_highlight_1"]',
       ),
     ).not.toBeNull();
     for (const action of ["ask", "highlight", "note", "feedback"]) {
@@ -929,17 +940,19 @@ describe("ReadingRecordPage direct load", () => {
       const { container } = renderReadingRecordPage(recordId);
 
       await screen.findByTestId("reader-record-plate-surface");
-      const progress = screen.getByTestId("reader-record-plate-progress");
+      const progress = screen.getByTestId("reader-record-plate-header");
       const source = container.querySelector<HTMLElement>(
-        '[data-reader-record-node="source-block"]',
+        '[data-reader-record-node="paragraph"]',
       );
       const translation = container.querySelector<HTMLElement>(
-        '[data-reader-record-node="unit-translation"]',
+        '[data-reader-record-node="blockquote"]',
       );
 
-      expect(progress.getAttribute("data-reader-record-progress")).toBe("compact");
+      expect(progress.getAttribute("data-reader-record-reading-header")).toBe("intensive");
       expect(progress.textContent).toContain(label);
-      expect(screen.getByTestId("reader-record-plate-progress-strip")).toBeTruthy();
+      expect(
+        progress.querySelector('[data-reader-record-progress-status]'),
+      ).toBeTruthy();
       expect(screen.queryByTestId("reader-record-status-banner")).toBeNull();
       expect(screen.queryByTestId("reader-record-enhancement-progress")).toBeNull();
       expect(source?.textContent).toContain(SOURCE_TEXT);
@@ -1139,10 +1152,10 @@ describe("ReadingRecordPage direct load", () => {
     await flushAsyncWork();
     expect(screen.getByTestId("reader-record-plate-surface")).toBeTruthy();
     expect(
-      document.querySelector('[data-reader-record-node="unit-translation"]')
+      document.querySelector('[data-reader-record-node="blockquote"]')
         ?.textContent,
     ).toContain(TRANSLATION_TEXT);
-    expect(screen.getByTestId("reader-record-plate-progress").textContent).toContain(
+    expect(screen.getByTestId("reader-record-plate-header").textContent).toContain(
       "解析生成中",
     );
 
@@ -1153,11 +1166,11 @@ describe("ReadingRecordPage direct load", () => {
     await flushAsyncWork();
 
     expect(
-      document.querySelector('[data-reader-record-node="unit-translation"]')
+      document.querySelector('[data-reader-record-node="blockquote"]')
         ?.textContent,
     ).toContain("制度记忆持续影响政策选择。");
     expect(document.body.textContent).not.toContain(TRANSLATION_TEXT);
-    expect(screen.getByTestId("reader-record-plate-progress").textContent).toContain(
+    expect(screen.getByTestId("reader-record-plate-header").textContent).toContain(
       "解析完成",
     );
 
@@ -1352,7 +1365,7 @@ describe("ReadingRecordPage direct load", () => {
     expect(screen.getAllByTestId("reader-record-enhancement-layer")).toHaveLength(3);
     expect(screen.getByRole("button", { name: /Ask Claread/ })).toHaveProperty(
       "disabled",
-      true,
+      false,
     );
     expect(screen.getByRole("button", { name: /笔记\/高亮/ })).toHaveProperty(
       "disabled",
@@ -1371,6 +1384,120 @@ describe("ReadingRecordPage direct load", () => {
           url.includes("/api/web/annotations")
         );
       }),
+    ).toBe(false);
+  });
+
+  it("opens the RR Ask panel and loads RR-scoped ask threads from the web BFF", async () => {
+    const recordId = "record_ask_scope";
+    const snapshot = makeSnapshot(recordId);
+    const fetchMock = installReaderRecordFetchMock(snapshot, {
+      askResponder: (url) => {
+        if (url.pathname === "/api/web/reader-ask/model-options") {
+          return new Response(
+            JSON.stringify({
+              default_key: "ask-clarity",
+              items: [
+                {
+                  key: "ask-clarity",
+                  label: "Qwen 3.7 Max",
+                  description: "适合带 reasoning 的 Ask 问答。",
+                  model_name: "qwen3.7-max",
+                  replan_model_name: "qwen3.7-max",
+                  price_multiplier: 1,
+                  is_default: true,
+                },
+              ],
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        }
+
+        if (
+          url.pathname === "/api/web/reader-ask/threads" &&
+          url.searchParams.get("record_scope") === "reading_record"
+        ) {
+          return new Response(
+            JSON.stringify({
+              items: [
+                {
+                  id: "thread-rr-1",
+                  record_id: recordId,
+                  title: "Ask Claread",
+                  is_default: true,
+                  selected_model: null,
+                  archived_at: null,
+                  created_at: "2026-06-25T00:00:00Z",
+                  updated_at: "2026-06-25T00:00:00Z",
+                  last_message_at: null,
+                },
+              ],
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        }
+
+        if (
+          url.pathname === "/api/web/reader-ask/threads/thread-rr-1" &&
+          url.searchParams.get("record_scope") === "reading_record"
+        ) {
+          return new Response(
+            JSON.stringify({
+              id: "thread-rr-1",
+              record_id: recordId,
+              title: "Ask Claread",
+              is_default: true,
+              selected_model: null,
+              archived_at: null,
+              created_at: "2026-06-25T00:00:00Z",
+              updated_at: "2026-06-25T00:00:00Z",
+              last_message_at: null,
+              messages: [],
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        }
+
+        return null;
+      },
+    });
+
+    renderReadingRecordPage(recordId, "workbench");
+
+    await flushAsyncWork();
+
+    fireEvent.click(screen.getByRole("button", { name: /Ask Claread/ }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "收起 AI 工作区" })).toBeTruthy();
+    });
+
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes(
+          `/api/web/reader-ask/threads?record_id=${recordId}&record_scope=reading_record`,
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes(
+          `/api/web/reader-ask/threads/thread-rr-1?record_id=${recordId}&record_scope=reading_record`,
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/api/web/reader-ask/context-records"),
+      ),
     ).toBe(false);
   });
 

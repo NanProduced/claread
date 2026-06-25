@@ -16,9 +16,10 @@ import {
 import {
   READER_RECORD_PLATE_DOCUMENT_SCHEMA_VERSION,
   projectReaderPlateSnapshotToReaderRecordPlateDocument,
-  type ReaderRecordPlateAnchorSegmentNode,
-  type ReaderRecordPlateSourceBlockNode,
-  type ReaderRecordPlateTranslationBlockNode,
+  type ReaderRecordPlateBlock,
+  type ReaderRecordPlateBlockquoteBlock,
+  type ReaderRecordPlateCalloutBlock,
+  type ReaderRecordPlateParagraphBlock,
 } from "./reader-record-plate-document";
 
 const FIRST_TEXT = "Institutional memory shapes policy choices.";
@@ -332,23 +333,44 @@ function makeSnapshot(
   };
 }
 
-function sourceBlock(document = projectReaderPlateSnapshotToReaderRecordPlateDocument(makeSnapshot())) {
-  const child = document.children[0].children[0];
-  expect(child.type).toBe("reader_record_source_block");
-  return child as ReaderRecordPlateSourceBlockNode;
+function firstParagraph(
+  document = projectReaderPlateSnapshotToReaderRecordPlateDocument(makeSnapshot()),
+): ReaderRecordPlateParagraphBlock {
+  const block = document.children.find((child) => child.type === "paragraph");
+  if (!block) {
+    throw new Error("Expected a paragraph block");
+  }
+  return block as ReaderRecordPlateParagraphBlock;
 }
 
-function firstSegment(
+function firstCallout(
+  variant?: "grammar" | "analysis",
   document = projectReaderPlateSnapshotToReaderRecordPlateDocument(makeSnapshot()),
-) {
-  const source = sourceBlock(document);
-  const child = source.children[0];
-  expect("type" in child && child.type).toBe("reader_record_anchor_segment");
-  return child as ReaderRecordPlateAnchorSegmentNode;
+): ReaderRecordPlateCalloutBlock {
+  const block = document.children.find(
+    (child) =>
+      child.type === "callout" &&
+      (variant === undefined ||
+        (child as ReaderRecordPlateCalloutBlock).variant === variant),
+  );
+  if (!block) {
+    throw new Error(`Expected a ${variant ?? "callout"} block`);
+  }
+  return block as ReaderRecordPlateCalloutBlock;
+}
+
+function firstBlockquote(
+  document = projectReaderPlateSnapshotToReaderRecordPlateDocument(makeSnapshot()),
+): ReaderRecordPlateBlockquoteBlock {
+  const block = document.children.find((child) => child.type === "blockquote");
+  if (!block) {
+    throw new Error("Expected a blockquote block");
+  }
+  return block as ReaderRecordPlateBlockquoteBlock;
 }
 
 describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
-  it("projects snapshot metadata and stable unit/source/anchor ids", () => {
+  it("projects snapshot metadata and stable paragraph ids", () => {
     const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
       makeSnapshot(),
     );
@@ -371,31 +393,27 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
       },
     });
 
-    const unit = document.children[0];
-    expect(unit.id).toBe("unit:unit_1");
-    expect(unit.unitId).toBe("unit_1");
-    expect(unit.parsedDecision).toMatchObject({
-      state: "parsed",
-      policyCode: "parsed",
+    const paragraph = firstParagraph(document);
+    expect(paragraph.id).toBe("paragraph:seg_1");
+    expect(paragraph.data.anchorSegmentId).toBe("seg_1");
+    expect(paragraph.data.sentenceId).toBe("sent_1");
+    expect(paragraph.data.unitId).toBe("unit_1");
+    expect(paragraph.data.baseRange).toEqual({
+      startUtf16: 0,
+      endUtf16: FIRST_TEXT.length,
     });
-
-    const segment = firstSegment(document);
-    expect(segment.id).toBe("anchor_segment:seg_1");
-    expect(segment.anchorSegmentId).toBe("seg_1");
-    expect(segment.sentenceId).toBe("sent_1");
-    expect(segment.baseRange).toEqual({ startUtf16: 0, endUtf16: FIRST_TEXT.length });
   });
 
-  it("projects vocabulary and grammar annotations as text marks plus cues", () => {
-    const segment = firstSegment();
-    const phraseLeaf = segment.children.find((leaf) =>
+  it("projects vocabulary and grammar annotations as text marks", () => {
+    const paragraph = firstParagraph();
+    const phraseLeaf = paragraph.children.find((leaf) =>
       leaf.marks.some((mark) => mark.kind === "phrase_gloss"),
     );
-    const grammarLeaf = segment.children.find((leaf) =>
+    const grammarLeaf = paragraph.children.find((leaf) =>
       leaf.marks.some((mark) => mark.kind === "grammar_note"),
     );
 
-    expect(segment.children.map((leaf) => leaf.text).join("")).toBe(FIRST_TEXT);
+    expect(paragraph.children.map((leaf) => leaf.text).join("")).toBe(FIRST_TEXT);
     expect(phraseLeaf?.text).toBe("Institutional memory");
     expect(grammarLeaf?.text).toBe("shapes");
     expect(phraseLeaf?.marks[0]).toMatchObject({
@@ -413,50 +431,60 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
     expect(phraseLeaf?.marks[0].anchor.textHash).toBe(
       computeUtf16FNV1a("Institutional memory"),
     );
-    expect(phraseLeaf?.marks[0].anchor.textHash).not.toBe(segment.textHash);
 
     expect(grammarLeaf?.marks[0].kind).toBe("grammar_note");
     expect(grammarLeaf?.marks[0].anchor.selectedText).toBe("shapes");
     expect(grammarLeaf?.marks[0].anchor.textHash).toBe(computeUtf16FNV1a("shapes"));
-    expect(grammarLeaf?.marks[0].anchor.textHash).not.toBe(segment.textHash);
-
-    const grammarCue = segment.cues.find(
-      (cue) => cue.type === "reader_record_grammar_cue",
-    );
-    expect(grammarCue).toMatchObject({
-      id: "grammar_note:grammar_item_1",
-      itemId: "grammar_item_1",
-      grammarPoint: "predicate verb",
-    });
   });
 
-  it("projects user assets as user-owned highlight marks and comment cues", () => {
-    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
-      makeSnapshot(undefined, [
-        makeUserAsset(),
-        makeUserAsset({
-          asset_id: "asset_note_1",
-          asset_type: "note",
-          anchor: {
-            anchor_type: "text_range",
-            base_id: "base_1",
-            unit_id: "unit_1",
-            anchor_segment_id: "seg_1",
-            sentence_id: "sent_1",
-            segment_type: "sentence",
-            offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
-            start_offset: 21,
-            end_offset: 27,
-            selected_text: "shapes",
-            text_hash: computeUtf16FNV1a("shapes"),
-            hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
-          },
-        }),
-      ]),
-    );
-    const segment = firstSegment(document);
+  it("projects grammar notes as callout blocks with grammar variant", () => {
+    const grammarCallout = firstCallout("grammar");
 
-    const highlightedLeaf = segment.children.find((leaf) =>
+    expect(grammarCallout.id).toBe("callout:grammar:grammar_item_1");
+    expect(grammarCallout.variant).toBe("grammar");
+    expect(grammarCallout.icon).toBe("📖");
+    expect(grammarCallout.data).toMatchObject({
+      anchorSegmentId: "seg_1",
+      unitId: "unit_1",
+      layerId: "layer_grammar_1",
+      itemId: "grammar_item_1",
+      grammarPoint: "predicate verb",
+      pattern: "subject + verb + object",
+      note: "shapes acts as the predicate verb.",
+    });
+    expect(grammarCallout.children[0].text).toBe(
+      "shapes acts as the predicate verb.",
+    );
+  });
+
+  it("projects sentence analysis as callout blocks with analysis variant", () => {
+    const analysisCallout = firstCallout("analysis");
+
+    expect(analysisCallout.id).toBe("callout:analysis:analysis_seg_1");
+    expect(analysisCallout.variant).toBe("analysis");
+    expect(analysisCallout.icon).toBe("🔍");
+    expect(analysisCallout.data).toMatchObject({
+      anchorSegmentId: "seg_1",
+      unitId: "unit_1",
+      layerId: "layer_sentence_analysis_1",
+      analysisId: "analysis_seg_1",
+      label: "subject driving predicate",
+      analysis:
+        "Institutional memory is the subject; shapes is the predicate.",
+    });
+    expect(analysisCallout.data.chunks).toEqual([
+      { order: 1, label: "subject", text: "Institutional memory" },
+      { order: 2, label: "predicate", text: "shapes policy choices" },
+    ]);
+  });
+
+  it("projects user highlight assets as user-owned highlight marks", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeSnapshot(undefined, [makeUserAsset()]),
+    );
+    const paragraph = firstParagraph(document);
+
+    const highlightedLeaf = paragraph.children.find((leaf) =>
       leaf.marks.some((mark) => mark.kind === "user_highlight"),
     );
     const userHighlight = highlightedLeaf?.marks.find(
@@ -479,90 +507,62 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
         selectedText: "Institutional memory",
       },
     });
-
-    const commentCue = segment.cues.find(
-      (cue) => cue.type === "reader_record_user_comment_cue",
-    );
-    expect(commentCue).toMatchObject({
-      id: "user_comment:asset_note_1",
-      owner: "user",
-      assetId: "asset_note_1",
-      assetType: "note",
-      label: "笔记",
-      anchor: {
-        anchorSegmentId: "seg_1",
-        unitStartOffset: 21,
-        unitEndOffset: 27,
-        segmentStartOffset: 21,
-        segmentEndOffset: 27,
-        selectedText: "shapes",
-      },
-    });
   });
 
-  it("keeps unit translation as a unit translation block instead of hanging it under the first segment", () => {
+  it("projects unit translation as a blockquote block", () => {
     const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
       makeSnapshot(),
     );
-    const unit = document.children[0];
+    const blockquote = firstBlockquote(document);
 
-    expect(unit.children.map((child) => child.type)).toEqual([
-      "reader_record_source_block",
-      "reader_record_unit_translation",
-    ]);
-
-    const translation = unit.children[1] as ReaderRecordPlateTranslationBlockNode;
-    expect(translation).toMatchObject({
-      type: "reader_record_unit_translation",
-      id: "translation:layer_translation_1:unit_1",
-      placement: "unit",
-      targetScope: "unit",
-      targetKey: "unit_1",
+    expect(blockquote.id).toBe("blockquote:layer_translation_1:unit_1");
+    expect(blockquote.data).toMatchObject({
       unitId: "unit_1",
+      layerId: "layer_translation_1",
+      layerVersion: 1,
       targetLanguage: "zh",
+      confidence: "normal",
     });
-    expect(translation.children[0]).toEqual({
+    expect(blockquote.children[0]).toEqual({
       text: "制度记忆会塑造政策选择，这些选择会持续存在。",
       owner: "system_ai",
       sourceRole: "unit_translation_text",
     });
-
-    const segment = firstSegment(document);
-    expect(segment.children.map((leaf) => leaf.text).join("")).toBe(FIRST_TEXT);
-    expect(segment.children.every((leaf) => leaf.sourceRole === "segment_text")).toBe(
-      true,
-    );
-    expect(JSON.stringify(segment)).not.toContain("reader_record_unit_translation");
   });
 
-  it("projects sentence analysis as structure cues, not document-flow cards", () => {
+  it("emits blocks in order: paragraph, grammar callout, analysis callout, blockquote", () => {
     const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
       makeSnapshot(),
     );
-    const unit = document.children[0];
-    const segment = firstSegment(document);
 
-    expect(unit.children.map((child) => child.type)).not.toContain(
-      "reader_sentence_analysis",
+    const types = document.children.map((child) => child.type);
+    expect(types).toContain("paragraph");
+    expect(types).toContain("blockquote");
+    expect(types).toContain("callout");
+
+    const firstParagraphIndex = types.indexOf("paragraph");
+    const grammarCalloutIndex = types.findIndex(
+      (t, i) =>
+        t === "callout" &&
+        i > firstParagraphIndex &&
+        (document.children[i] as ReaderRecordPlateCalloutBlock).variant ===
+          "grammar",
     );
-    expect(unit.cues).toEqual(segment.cues);
-    expect(
-      segment.cues.find(
-        (cue) => cue.type === "reader_record_sentence_analysis_cue",
-      ),
-    ).toMatchObject({
-      id: "sentence_analysis:analysis_seg_1",
-      layerId: "layer_sentence_analysis_1",
-      anchorSegmentId: "seg_1",
-      label: "subject driving predicate",
-      chunks: [
-        { order: 1, label: "subject", text: "Institutional memory" },
-        { order: 2, label: "predicate", text: "shapes policy choices" },
-      ],
-    });
+    const analysisCalloutIndex = types.findIndex(
+      (t, i) =>
+        t === "callout" &&
+        i > firstParagraphIndex &&
+        (document.children[i] as ReaderRecordPlateCalloutBlock).variant ===
+          "analysis",
+    );
+    const blockquoteIndex = types.indexOf("blockquote");
+
+    expect(grammarCalloutIndex).toBeGreaterThan(firstParagraphIndex);
+    expect(analysisCalloutIndex).toBeGreaterThan(firstParagraphIndex);
+    expect(blockquoteIndex).toBeGreaterThan(firstParagraphIndex);
   });
 
-  it("projects enhancement progress to document and matching unit activity state", () => {
+  it("projects enhancement progress to document-level progress", () => {
     const progress: ReaderEnhancementProgressDto = {
       overall_status: "readable_enhancing",
       layers: [
@@ -617,9 +617,19 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
         },
       ],
     });
-    expect(document.children[0].progress.map((layer) => layer.id)).toEqual([
-      "progress:translation:unit:unit_1:job_translation_1",
-      "progress:vocabulary:anchor_segment:seg_2:job_vocab_1",
-    ]);
+  });
+
+  it("produces flat children array without unit or source block wrappers", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeSnapshot(),
+    );
+
+    for (const child of document.children) {
+      expect(child.type).not.toBe("reader_record_unit");
+      expect(child.type).not.toBe("reader_record_source_block");
+      expect(child.type).not.toBe("reader_record_anchor_segment");
+      expect(child.type).not.toBe("reader_record_unit_translation");
+      expect(child.type).not.toBe("reader_sentence_analysis");
+    }
   });
 });

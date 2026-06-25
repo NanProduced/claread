@@ -2,8 +2,8 @@ import { computeUtf16FNV1a } from "@claread/contracts";
 
 import type { ReaderRecordAnchorDraft, ReaderRecordAnchorScope } from "./reader-record-anchor-draft";
 import type {
-  ReaderRecordPlateAnchorSegmentNode,
   ReaderRecordPlateDocument,
+  ReaderRecordPlateParagraphBlock,
   ReaderRecordPlateTextAnchor,
 } from "./reader-record-plate-document";
 
@@ -95,27 +95,17 @@ function normalizeTextAnchor(anchor: ReaderRecordPlateTextAnchor): NormalizedAct
 function findAnchorSegment(
   document: ReaderRecordPlateDocument,
   anchor: Pick<NormalizedActiveAnchor, "unit_id" | "anchor_segment_id">,
-): ReaderRecordPlateAnchorSegmentNode | null {
-  for (const unit of document.children) {
-    if (unit.unitId !== anchor.unit_id) {
+): ReaderRecordPlateParagraphBlock | null {
+  for (const block of document.children) {
+    if (block.type !== "paragraph") {
       continue;
     }
 
-    for (const child of unit.children) {
-      if (child.type !== "reader_record_source_block") {
-        continue;
-      }
-
-      for (const sourceChild of child.children) {
-        if (
-          "type" in sourceChild &&
-          sourceChild.type === "reader_record_anchor_segment" &&
-          sourceChild.unitId === anchor.unit_id &&
-          sourceChild.anchorSegmentId === anchor.anchor_segment_id
-        ) {
-          return sourceChild;
-        }
-      }
+    if (
+      block.data.unitId === anchor.unit_id &&
+      block.data.anchorSegmentId === anchor.anchor_segment_id
+    ) {
+      return block;
     }
   }
 
@@ -163,13 +153,13 @@ function isInsideDocumentAnchorSegment(
   anchor: NormalizedActiveAnchor,
 ): boolean {
   const segment = findAnchorSegment(document, anchor);
-  if (!segment || segment.baseId !== document.base.baseId) {
+  if (!segment || segment.data.baseId !== document.base.baseId) {
     return false;
   }
 
   return (
-    anchor.start_offset >= segment.unitRange.startUtf16 &&
-    anchor.end_offset <= segment.unitRange.endUtf16
+    anchor.start_offset >= segment.data.unitRange.startUtf16 &&
+    anchor.end_offset <= segment.data.unitRange.endUtf16
   );
 }
 
