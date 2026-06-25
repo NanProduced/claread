@@ -5,7 +5,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { legacyAppReaderRoute } from "@/lib/routes";
+import { appReadingRecordRoute, legacyAppReaderRoute } from "@/lib/routes";
 import type { VocabularyItemVm } from "@/types/view/VocabularyItemVm";
 
 import { VocabularyClient } from "./VocabularyClient";
@@ -44,6 +44,7 @@ function makeVocabularyItem(
     shortMeaning: "记忆",
     contextSentence: "Institutional memory shapes choices.",
     contextTranslation: "制度记忆会塑造选择。",
+    sourceReadingRecordId: undefined,
     sourceRecordId: "legacy record 1",
     sourceRecordTitle: "Legacy Article",
     createdAt: "2026-06-22T00:00:00.000Z",
@@ -78,7 +79,31 @@ afterEach(() => {
 });
 
 describe("VocabularyClient source links", () => {
-  it("navigates legacy sourceRecordId to the legacy reader route", () => {
+  it("prefers sourceReadingRecordId when a Reading Record source exists", () => {
+    const item = makeVocabularyItem({
+      sourceReadingRecordId: "reading_record_1",
+    });
+
+    render(
+      <VocabularyClient
+        items={[item]}
+        status="ready"
+        dueCount={0}
+        learningCount={1}
+        masteredCount={0}
+        recentItems={[item]}
+        multiContextItems={[]}
+      />,
+    );
+
+    const sourceLink = screen.getByRole("link", { name: "查看来源语境" });
+
+    expect(sourceLink.getAttribute("href")).toBe(
+      appReadingRecordRoute("reading_record_1"),
+    );
+  });
+
+  it("falls back to the legacy reader route when only sourceRecordId exists", () => {
     const item = makeVocabularyItem();
 
     render(

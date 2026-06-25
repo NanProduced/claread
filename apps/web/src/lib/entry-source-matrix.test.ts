@@ -3,214 +3,112 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-/**
- * W3-D3+ Entry Source Matrix static guards.
- *
- * These tests lock down the current cutover boundary so that legacy record id
- * surfaces do not silently start emitting new Reading Record routes (or vice
- * versa) before the corresponding data source has been migrated.
- *
- * The matrix is documented in
- * docs/initiatives/reader-agentic-orchestration/modules/cutover-and-old-workflow.md.
- * Update that doc together with these guards when an entry point is migrated.
- */
-
 function readSource(relativePath: string): string {
   return readFileSync(resolve(process.cwd(), relativePath), "utf-8");
 }
 
-const LEGACY_ROUTE_HELPER = "legacyAppReaderRoute";
-const NEW_ROUTE_HELPER = "appReadingRecordRoute";
-const LEGACY_READER_PATH = "/app/reader/";
-const NEW_READER_RECORD_PATH = "/app/reader-record/";
-const ANALYSIS_TASKS_WIRING = "analysis-tasks";
+describe("entry source matrix - Track D convergence", () => {
+  it("AppShell only mounts the merged Reading Record activity indicator", () => {
+    const source = readSource("src/components/layout/app-shell/index.tsx");
 
-describe("entry source matrix - legacy surfaces must not reference the new Reading Record route", () => {
-  it("active-analysis-task-indicator only uses the legacy reader route helper", () => {
-    const source = readSource(
-      "src/components/layout/active-analysis-task-indicator.tsx",
-    );
-
-    expect(source).toContain(LEGACY_ROUTE_HELPER);
-    expect(source).not.toContain(NEW_ROUTE_HELPER);
+    expect(source).toContain("ReadingRecordActivityIndicator");
+    expect(source).not.toContain("ActiveAnalysisTaskIndicator");
   });
 
-  it("command palette legacy record source still uses the legacy reader route helper", () => {
-    const source = readSource(
+  it("command palette uses Reading Record list as the only recent/search source", () => {
+    const dialogSource = readSource(
       "src/components/layout/command-palette/CommandPaletteDialog.tsx",
     );
-
-    expect(source).toContain(LEGACY_ROUTE_HELPER);
-    expect(source).not.toContain(NEW_ROUTE_HELPER);
-  });
-
-  it("command palette items only use the legacy reader route helper", () => {
-    const source = readSource(
+    const itemsSource = readSource(
       "src/components/layout/command-palette/command-palette-items.ts",
     );
 
-    expect(source).toContain(LEGACY_ROUTE_HELPER);
-    expect(source).not.toContain(NEW_ROUTE_HELPER);
+    expect(dialogSource).toContain("/api/web/reading-records");
+    expect(dialogSource).toContain("readerUrl");
+    expect(dialogSource).not.toContain("/api/web/command-palette/records");
+    expect(dialogSource).not.toContain("ReadingRecordCommandGroup");
+    expect(dialogSource).not.toContain("legacyAppReaderRoute");
+
+    expect(itemsSource).toContain("lastReaderUrl");
+    expect(itemsSource).not.toContain("legacyAppReaderRoute");
   });
 
-  it("Library record links only use the legacy reader route helper", () => {
-    const source = readSource(
+  it("Library keeps Reading Records and legacy records in separate groups", () => {
+    const sectionSource = readSource(
+      "src/app/(private)/app/library/ReadingRecordSection.tsx",
+    );
+    const clientSource = readSource(
       "src/app/(private)/app/library/LibraryClient.tsx",
     );
 
-    expect(source).toContain(LEGACY_ROUTE_HELPER);
-    expect(source).not.toContain(NEW_ROUTE_HELPER);
+    expect(sectionSource).not.toContain("legacyAppReaderRoute");
+    expect(sectionSource).not.toContain("/app/reader/");
+
+    expect(clientSource).toContain("ReadingRecordSection");
+    expect(clientSource).toContain("Legacy Records");
+    expect(clientSource).toContain("legacyAppReaderRoute");
   });
 
-  it("Vocabulary source links only use the legacy reader route helper", () => {
-    const source = readSource(
-      "src/app/(private)/app/vocabulary/VocabularyClient.tsx",
-    );
-
-    expect(source).toContain("sourceRecordId");
-    expect(source).toContain(LEGACY_ROUTE_HELPER);
-    expect(source).toContain("legacyAppReaderRoute(item.sourceRecordId)");
-    expect(source).not.toContain(NEW_ROUTE_HELPER);
-    expect(source).not.toContain(NEW_READER_RECORD_PATH);
-  });
-
-  it("services/bff/analysis.ts readerUrl projection only uses the legacy reader route helper", () => {
-    const source = readSource("src/services/bff/analysis.ts");
-
-    expect(source).toContain(LEGACY_ROUTE_HELPER);
-    expect(source).not.toContain(NEW_ROUTE_HELPER);
-  });
-
-  it("services/bff/records.ts does not project new Reading Record routes", () => {
-    const source = readSource("src/services/bff/records.ts");
-
-    expect(source).not.toContain(NEW_ROUTE_HELPER);
-    expect(source).not.toContain(NEW_READER_RECORD_PATH);
-  });
-});
-
-describe("entry source matrix - Vocabulary source links (W3-D9)", () => {
-  it("keeps legacy sourceRecordId on the legacy reader route until a new source truth exists", () => {
+  it("Vocabulary source links prefer Reading Record ids with legacy fallback", () => {
     const clientSource = readSource(
       "src/app/(private)/app/vocabulary/VocabularyClient.tsx",
     );
     const bffSource = readSource("src/services/bff/vocabulary.ts");
 
-    expect(clientSource).toContain("sourceRecordId");
-    expect(clientSource).toContain(LEGACY_ROUTE_HELPER);
-    expect(clientSource).toContain("legacyAppReaderRoute(item.sourceRecordId)");
-    expect(clientSource).not.toContain(NEW_ROUTE_HELPER);
-    expect(clientSource).not.toContain(NEW_READER_RECORD_PATH);
-    expect(clientSource).not.toContain(LEGACY_READER_PATH);
+    expect(clientSource).toContain("sourceReadingRecordId");
+    expect(clientSource).toContain("appReadingRecordRoute");
+    expect(clientSource).toContain("legacyAppReaderRoute");
+    expect(clientSource).toContain("sourceHrefForItem");
 
+    expect(bffSource).toContain("sourceReadingRecordId");
+    expect(bffSource).toContain("reading_record_id");
     expect(bffSource).toContain("sourceRecordId");
-    expect(bffSource).toContain("cloud_record_id");
-    expect(bffSource).toContain("client_record_id");
-    expect(bffSource).not.toContain("sourceReadingRecordId");
     expect(bffSource).not.toContain("sourceReaderUrl");
-    expect(bffSource).not.toContain(NEW_ROUTE_HELPER);
-    expect(bffSource).not.toContain(NEW_READER_RECORD_PATH);
   });
-});
 
-describe("entry source matrix - the new Reading Record recovery entry must not reference legacy wiring", () => {
-  it("recent-reading-record helper is free of legacy reader route, legacy path and analysis-tasks wiring", () => {
-    const source = readSource(
+  it("read page submit flow is new-only and free of legacy analysis-task recovery", () => {
+    const formSource = readSource(
+      "src/app/(private)/app/read/AnalyzeSubmitForm.tsx",
+    );
+    const recentSource = readSource(
       "src/app/(private)/app/read/recent-reading-record.ts",
     );
-
-    expect(source).not.toContain(LEGACY_ROUTE_HELPER);
-    expect(source).not.toContain(LEGACY_READER_PATH);
-    expect(source).not.toContain(ANALYSIS_TASKS_WIRING);
-    expect(source).toContain(NEW_READER_RECORD_PATH);
-  });
-});
-
-describe("entry source matrix - Reader Record route surface mode (UI-D5)", () => {
-  it("reader-record route defaults to Plate mode and stays free of legacy route wiring", () => {
-    const pageSource = readSource(
-      "src/app/(private)/app/reader-record/[recordId]/page.tsx",
-    );
-    const modeSource = readSource(
-      "src/app/(private)/app/reader-record/[recordId]/reader-record-surface-mode.ts",
+    const submitModeSource = readSource(
+      "src/app/(private)/app/read/submit-mode.ts",
     );
 
-    expect(pageSource).toContain("ReaderRecordPlateSurface");
-    expect(pageSource).toContain("getReaderRecordSurfaceMode");
-    expect(modeSource).toContain("DEFAULT_READER_RECORD_SURFACE_MODE");
-    expect(modeSource).toContain('"plate"');
-    expect(pageSource).not.toContain(LEGACY_ROUTE_HELPER);
-    expect(pageSource).not.toContain(LEGACY_READER_PATH);
-    expect(pageSource).not.toContain(ANALYSIS_TASKS_WIRING);
-    expect(modeSource).not.toContain(LEGACY_ROUTE_HELPER);
-    expect(modeSource).not.toContain(LEGACY_READER_PATH);
-    expect(modeSource).not.toContain(ANALYSIS_TASKS_WIRING);
+    expect(formSource).not.toContain("fetchCurrentAnalysisTask");
+    expect(formSource).not.toContain("fetchAnalysisTaskStatus");
+    expect(formSource).not.toContain("legacyAppReaderRoute");
+    expect(formSource).not.toContain("saveRecentReadingRecordForSubmitMode");
+
+    expect(recentSource).not.toContain("/app/reader/");
+    expect(recentSource).toContain("/app/reader-record/");
+    expect(recentSource).not.toContain("saveRecentReadingRecordForSubmitMode");
+
+    expect(submitModeSource).toContain('export type ReadPageSubmitMode = "reading-record"');
+    expect(submitModeSource).not.toContain("/api/web/analysis/submit");
   });
-});
 
-describe("entry source matrix - the new Reading Record list BFF source", () => {
-  it("reading-records BFF uses the new Reading Record route helper and is free of legacy wiring", () => {
-    const source = readSource("src/services/bff/reading-records.ts");
-
-    expect(source).toContain(NEW_ROUTE_HELPER);
-    expect(source).not.toContain(LEGACY_ROUTE_HELPER);
-    expect(source).not.toContain(LEGACY_READER_PATH);
-    expect(source).not.toContain(ANALYSIS_TASKS_WIRING);
-  });
-});
-
-describe("entry source matrix - command palette new Reading Record source (W3-D6)", () => {
-  it("ReadingRecordCommandGroup uses returned readerUrl and is free of legacy wiring", () => {
-    const source = readSource(
-      "src/components/layout/command-palette/ReadingRecordCommandGroup.tsx",
-    );
-
-    expect(source).toContain("/api/web/reading-records");
-    expect(source).toContain("readerUrl");
-    expect(source).not.toContain(LEGACY_ROUTE_HELPER);
-    expect(source).not.toContain(NEW_ROUTE_HELPER);
-    expect(source).not.toContain(LEGACY_READER_PATH);
-    expect(source).not.toContain(NEW_READER_RECORD_PATH);
-    expect(source).not.toContain(ANALYSIS_TASKS_WIRING);
-  });
-});
-
-describe("entry source matrix - Reading Record activity indicator (W3-D7/D8)", () => {
-  it("ReadingRecordActivityIndicator gates by pathname, uses returned readerUrl, and is free of legacy wiring", () => {
+  it("the merged activity indicator uses Reading Records first and keeps explicit legacy fallback wiring", () => {
     const source = readSource(
       "src/components/layout/reading-record-activity-indicator.tsx",
     );
 
     expect(source).toContain("/api/web/reading-records");
-    expect(source).toContain("pathname");
-    expect(source).toContain("appReadRoute");
-    expect(source).toContain("isAppReaderPlatePath");
-    expect(source).toContain("isAppReadingRecordPath");
-    expect(source).toContain("readerUrl");
-    expect(source).not.toContain(LEGACY_ROUTE_HELPER);
-    expect(source).not.toContain(NEW_ROUTE_HELPER);
-    expect(source).not.toContain(LEGACY_READER_PATH);
-    expect(source).not.toContain(NEW_READER_RECORD_PATH);
-    expect(source).not.toContain(ANALYSIS_TASKS_WIRING);
-  });
-});
-
-describe("entry source matrix - Library new Reading Record section (W3-D5)", () => {
-  it("ReadingRecordSection is free of legacy reader route, legacy path and analysis-tasks wiring", () => {
-    const source = readSource(
-      "src/app/(private)/app/library/ReadingRecordSection.tsx",
-    );
-
-    expect(source).not.toContain(LEGACY_ROUTE_HELPER);
-    expect(source).not.toContain(LEGACY_READER_PATH);
-    expect(source).not.toContain(ANALYSIS_TASKS_WIRING);
+    expect(source).toContain("productState");
+    expect(source).toContain("fetchCurrentAnalysisTask");
+    expect(source).toContain("fetchAnalysisTaskStatus");
+    expect(source).toContain("legacyAppReaderRoute");
+    expect(source).toContain("旧任务");
   });
 
-  it("Library old record list still uses the legacy reader route helper", () => {
-    const source = readSource(
-      "src/app/(private)/app/library/LibraryClient.tsx",
-    );
+  it("the Reading Record list BFF stays free of legacy reader routing", () => {
+    const source = readSource("src/services/bff/reading-records.ts");
 
-    expect(source).toContain(LEGACY_ROUTE_HELPER);
+    expect(source).toContain("appReadingRecordRoute");
+    expect(source).not.toContain("legacyAppReaderRoute");
+    expect(source).not.toContain("/app/reader/");
+    expect(source).not.toContain("analysis-tasks");
   });
 });

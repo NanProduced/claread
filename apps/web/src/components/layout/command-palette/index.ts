@@ -3,6 +3,5 @@ export { CommandPaletteDialog } from "./CommandPaletteDialog";
 export { useCommandPalette } from "./useCommandPalette";
 export type {
   CommandPaletteCommand,
-  CommandPaletteRecordItem,
   CommandGroup,
 } from "./command-palette-types";

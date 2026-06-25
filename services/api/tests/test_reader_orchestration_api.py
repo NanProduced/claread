@@ -936,6 +936,84 @@ async def test_list_reader_records_respects_limit(
             assert len(data["items"]) == 2
 
 
+async def test_list_reader_records_filters_by_query(
+    reader_api_env: dict[str, object],
+) -> None:
+    pool = reader_api_env["pool"]
+    app = reader_api_env["app"]
+    assert isinstance(pool, asyncpg.Pool)
+    assert isinstance(app, FastAPI)
+    user_id = await _insert_user(pool)
+
+    with _mock_auth(user_id):
+        async with await _create_client(app) as client:
+            for title in ("Focus Alpha", "Background Note", "Focus Beta"):
+                response = await client.post(
+                    "/reader/records/plain-text",
+                    headers=AUTH_HEADERS,
+                    json={"plain_text": f"{title} body.", "title": title},
+                )
+                assert response.status_code == 200
+
+            list_response = await client.get(
+                "/reader/records?query=focus",
+                headers=AUTH_HEADERS,
+            )
+            assert list_response.status_code == 200
+            data = list_response.json()
+            assert data["total"] == 2
+            assert [item["title"] for item in data["items"]] == [
+                "Focus Beta",
+                "Focus Alpha",
+            ]
+
+
+async def test_list_reader_records_filters_by_product_state(
+    reader_api_env: dict[str, object],
+) -> None:
+    pool = reader_api_env["pool"]
+    app = reader_api_env["app"]
+    assert isinstance(pool, asyncpg.Pool)
+    assert isinstance(app, FastAPI)
+    user_id = await _insert_user(pool)
+
+    with _mock_auth(user_id):
+        async with await _create_client(app) as client:
+            failed_response = await client.post(
+                "/reader/records/plain-text",
+                headers=AUTH_HEADERS,
+                json={"plain_text": "Failed body.", "title": "Failed Record"},
+            )
+            ready_response = await client.post(
+                "/reader/records/plain-text",
+                headers=AUTH_HEADERS,
+                json={"plain_text": "Ready body.", "title": "Ready Record"},
+            )
+            assert failed_response.status_code == 200
+            assert ready_response.status_code == 200
+
+            failed_record_id = UUID(failed_response.json()["record_id"])
+            await pool.execute(
+                """
+                UPDATE reading_records
+                SET product_state = 'failed'
+                WHERE id = $1
+                """,
+                failed_record_id,
+            )
+
+            list_response = await client.get(
+                "/reader/records?product_state=failed",
+                headers=AUTH_HEADERS,
+            )
+            assert list_response.status_code == 200
+            data = list_response.json()
+            assert data["total"] == 1
+            assert len(data["items"]) == 1
+            assert data["items"][0]["title"] == "Failed Record"
+            assert data["items"][0]["product_state"] == "failed"
+
+
 async def test_list_reader_records_rejects_invalid_limit(
     reader_api_env: dict[str, object],
 ) -> None:
@@ -955,6 +1033,24 @@ async def test_list_reader_records_rejects_invalid_limit(
 
             response = await client.get(
                 "/reader/records?limit=101",
+                headers=AUTH_HEADERS,
+            )
+            assert response.status_code == 422
+
+
+async def test_list_reader_records_rejects_invalid_product_state(
+    reader_api_env: dict[str, object],
+) -> None:
+    pool = reader_api_env["pool"]
+    app = reader_api_env["app"]
+    assert isinstance(pool, asyncpg.Pool)
+    assert isinstance(app, FastAPI)
+    user_id = await _insert_user(pool)
+
+    with _mock_auth(user_id):
+        async with await _create_client(app) as client:
+            response = await client.get(
+                "/reader/records?product_state=unknown_state",
                 headers=AUTH_HEADERS,
             )
             assert response.status_code == 422

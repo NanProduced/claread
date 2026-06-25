@@ -6,18 +6,13 @@ import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { fetchCurrentAnalysisTask } from "@/lib/analysis-task-client";
-
 import { AnalysisLoadingStatusBar, AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
 import {
   READ_PAGE_SUBMIT_MODE,
   readPageSubmitEndpoint,
   readPageSubmitRequestBody,
 } from "./submit-mode";
-import {
-  RECENT_READING_RECORD_STORAGE_KEY,
-  saveRecentReadingRecordForSubmitMode,
-} from "./recent-reading-record";
+import { RECENT_READING_RECORD_STORAGE_KEY } from "./recent-reading-record";
 
 const navigationMock = vi.hoisted(() => ({
   push: vi.fn(),
@@ -25,13 +20,6 @@ const navigationMock = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({
   useRouter: () => navigationMock,
-}));
-
-vi.mock("@/lib/analysis-task-client", () => ({
-  fetchAnalysisTaskStatus: vi.fn(),
-  fetchCurrentAnalysisTask: vi.fn(),
-  isAnalysisTerminalStatus: (status: string) =>
-    ["succeeded", "failed", "cancelled", "expired"].includes(status),
 }));
 
 function createMemoryStorage(): Storage {
@@ -65,11 +53,6 @@ beforeEach(() => {
     configurable: true,
     value: createMemoryStorage(),
   });
-  vi.mocked(fetchCurrentAnalysisTask).mockResolvedValue({
-    ok: true,
-    hasActive: false,
-    task: null,
-  });
 });
 
 afterEach(() => {
@@ -87,7 +70,6 @@ describe("AnalysisLoadingStatusBar", () => {
 
     expect(screen.getByText("正在透读")).toBeTruthy();
     expect(screen.getByText("离开本页不会影响透读，完成后会保存到阅读记录")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "去记录页" })).toBeNull();
     expect(screen.getByText("正在梳理文章结构")).toBeTruthy();
 
     const renderedText = document.body.textContent ?? "";
@@ -99,7 +81,7 @@ describe("AnalysisLoadingStatusBar", () => {
 });
 
 describe("AnalyzeSubmitForm submit cutover", () => {
-  it("uses the new Reading Record submit mode by default while retaining explicit legacy mode", () => {
+  it("uses Reading Record submit mode only", () => {
     expect(READ_PAGE_SUBMIT_MODE).toBe("reading-record");
     expect(readPageSubmitEndpoint()).toBe("/api/web/reading-record/submit");
     expect(
@@ -109,25 +91,9 @@ describe("AnalyzeSubmitForm submit cutover", () => {
         readingVariant: "intermediate_reading",
       }),
     ).toEqual({ plainText: "This is a short English article." });
-
-    expect(readPageSubmitEndpoint("legacy")).toBe("/api/web/analysis/submit");
-    expect(
-      readPageSubmitRequestBody(
-        {
-          text: "This is a short English article.",
-          readingGoal: "daily_reading",
-          readingVariant: "intermediate_reading",
-        },
-        "legacy",
-      ),
-    ).toEqual({
-      text: "This is a short English article.",
-      readingGoal: "daily_reading",
-      readingVariant: "intermediate_reading",
-    });
   });
 
-  it("submits /app/read to the new Reading Record endpoint and lands on reader-record", async () => {
+  it("submits /app/read to the Reading Record endpoint and lands on reader-record", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe("/api/web/reading-record/submit");
       expect(init).toEqual(
@@ -241,18 +207,16 @@ describe("AnalyzeSubmitForm submit cutover", () => {
     expect(screen.queryByRole("button", { name: /继续阅读/ })).toBeNull();
   });
 
-  it("does not write the recent Reading Record cache for legacy submit mode", () => {
-    expect(
-      saveRecentReadingRecordForSubmitMode("legacy", {
-        readingRecordId: "reading_record_legacy_mode",
-        readerUrl: "/app/reader-record/reading_record_legacy_mode",
-        title: "Should not persist",
-      }),
-    ).toBe(false);
+  it("removes legacy analysis-task polling from AnalyzeSubmitForm", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/app/(private)/app/read/AnalyzeSubmitForm.tsx"),
+      "utf-8",
+    );
 
-    expect(
-      window.localStorage.getItem(RECENT_READING_RECORD_STORAGE_KEY),
-    ).toBeNull();
+    expect(source).not.toContain("fetchCurrentAnalysisTask");
+    expect(source).not.toContain("fetchAnalysisTaskStatus");
+    expect(source).not.toContain("saveRecentReadingRecordForSubmitMode");
+    expect(source).not.toContain("legacyAppReaderRoute");
   });
 
   it("keeps the recent Reading Record helper free of legacy analysis wiring", () => {
@@ -264,6 +228,7 @@ describe("AnalyzeSubmitForm submit cutover", () => {
     expect(source).not.toContain("legacyAppReaderRoute");
     expect(source).not.toContain("/app/reader/");
     expect(source).not.toContain("analysis-tasks");
+    expect(source).not.toContain("saveRecentReadingRecordForSubmitMode");
   });
 
   it("keeps the new Reading Record API route free of legacy analysis submit wiring", () => {

@@ -1075,7 +1075,11 @@ class ReaderOrchestrationRepository:
         *,
         user_id: UUID,
         limit: int = 20,
+        query: str | None = None,
+        product_states: tuple[str, ...] | None = None,
     ) -> tuple[tuple[ReaderRecordSummary, ...], int]:
+        normalized_query = query.strip() if query and query.strip() else None
+        normalized_product_states = product_states or None
         pool = self.get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
@@ -1102,11 +1106,15 @@ class ReaderOrchestrationRepository:
                 FROM reading_records r
                 WHERE r.user_id = $1
                   AND r.deleted_at IS NULL
+                  AND ($3::text IS NULL OR COALESCE(r.title, '') ILIKE '%' || $3 || '%')
+                  AND ($4::text[] IS NULL OR r.product_state::text = ANY($4::text[]))
                 ORDER BY r.created_at DESC
                 LIMIT $2
                 """,
                 user_id,
                 limit,
+                normalized_query,
+                normalized_product_states,
             )
             total = await conn.fetchval(
                 """
@@ -1114,8 +1122,12 @@ class ReaderOrchestrationRepository:
                 FROM reading_records
                 WHERE user_id = $1
                   AND deleted_at IS NULL
+                  AND ($2::text IS NULL OR COALESCE(title, '') ILIKE '%' || $2 || '%')
+                  AND ($3::text[] IS NULL OR product_state::text = ANY($3::text[]))
                 """,
                 user_id,
+                normalized_query,
+                normalized_product_states,
             )
         summaries = tuple(
             ReaderRecordSummary(

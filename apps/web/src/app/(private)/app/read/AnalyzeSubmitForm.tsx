@@ -8,12 +8,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/primitives/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/primitives/tooltip";
-import {
-  fetchAnalysisTaskStatus,
-  fetchCurrentAnalysisTask,
-  isAnalysisTerminalStatus,
-  type WebAnalysisTaskView,
-} from "@/lib/analysis-task-client";
 import { cn } from "@/lib/cn";
 import {
   READING_GOAL_OPTIONS,
@@ -22,37 +16,27 @@ import {
   type ReadingDefaultState,
   normalizeReadingDefaults,
 } from "@/lib/reading-defaults";
-import { appLibraryRoute, appReadingRecordRoute, legacyAppReaderRoute } from "@/lib/routes";
+import { appReadingRecordRoute } from "@/lib/routes";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
-import type { ReadingGoalDto, ReadingVariantDto, TaskStatusDto } from "@/types/api/tasks";
+import type { ReadingGoalDto, ReadingVariantDto } from "@/types/api/tasks";
 import {
   extractReadingRecordIdFromReaderUrl,
   readRecentReadingRecord,
   recentReadingRecordTitleFromText,
-  saveRecentReadingRecordForSubmitMode,
+  saveRecentReadingRecord,
   type RecentReadingRecord,
 } from "./recent-reading-record";
 import {
   READ_PAGE_SUBMIT_MODE,
   readPageSubmitEndpoint,
   readPageSubmitRequestBody,
-  type ReadPageSubmitMode,
 } from "./submit-mode";
 
 type SubmitState =
   | { kind: "idle" }
   | { kind: "pending"; message: string }
   | { kind: "success"; message: string }
-  | { kind: "error"; message: string; recordId?: string };
-
-interface AnalysisSubmitResponse {
-  ok: boolean;
-  message: string;
-  taskId?: string;
-  status?: TaskStatusDto;
-  readerUrl?: string;
-  recordId?: string;
-}
+  | { kind: "error"; message: string };
 
 interface ReadingRecordSubmitResponse {
   ok: boolean;
@@ -62,8 +46,6 @@ interface ReadingRecordSubmitResponse {
   snapshot?: Pick<ReaderPlateSnapshotDto, "record">;
 }
 
-const POLL_INTERVAL_MS = 2000;
-const libraryRoute = appLibraryRoute;
 const LOADING_MESSAGES = [
   "正在梳理文章结构",
   "正在识别关键表达",
@@ -573,10 +555,9 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
   const [readingGoal, setReadingGoal] = useState<ReadingGoalDto>(defaults.readingGoal);
   const [readingVariant, setReadingVariant] = useState<ReadingVariantDto>(defaults.readingVariant);
   const [state, setState] = useState<SubmitState>({ kind: "idle" });
-  const [activeTask, setActiveTask] = useState<WebAnalysisTaskView | null>(null);
   const [recentReadingRecord, setRecentReadingRecord] =
     useState<RecentReadingRecord | null>(null);
-  const isWaiting = Boolean(activeTask) || state.kind === "pending";
+  const isWaiting = state.kind === "pending";
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -585,107 +566,6 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
 
     return () => window.clearTimeout(timer);
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function restoreActiveTask() {
-      try {
-        const payload = await fetchCurrentAnalysisTask();
-        if (cancelled || !payload.hasActive || !payload.task) {
-          return;
-        }
-
-        if (isAnalysisTerminalStatus(payload.task.status)) {
-          return;
-        }
-
-        setActiveTask(payload.task);
-        setState({ kind: "pending", message: "有一篇文章正在透读。" });
-      } catch {
-        // Active task recovery is a convenience signal; avoid blocking fresh input.
-      }
-    }
-
-    void restoreActiveTask();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!activeTask || isAnalysisTerminalStatus(activeTask.status)) {
-      return;
-    }
-
-    const pollingTask = activeTask;
-    let cancelled = false;
-    let timer: number | undefined;
-
-    async function poll() {
-      try {
-        const payload = await fetchAnalysisTaskStatus(pollingTask.taskId);
-        if (cancelled) {
-          return;
-        }
-
-        if (payload.status === "succeeded") {
-          setActiveTask(null);
-          setState({ kind: "success", message: "解析完成，正在打开 Reader。" });
-          router.push(
-            (payload.readerUrl as Route | undefined) ||
-              (payload.recordId ? legacyAppReaderRoute(payload.recordId) : libraryRoute),
-          );
-          return;
-        }
-
-        if (payload.status === "failed" || payload.status === "cancelled" || payload.status === "expired") {
-          setActiveTask(null);
-          setState({
-            kind: "error",
-            message: payload.failureMessage || "解析任务未能完成，请稍后重试。",
-            recordId: payload.recordId || pollingTask.recordId,
-          });
-          return;
-        }
-
-        if (payload.status && payload.recordId && payload.taskId) {
-          setActiveTask({
-            taskId: payload.taskId,
-            recordId: payload.recordId,
-            status: payload.status,
-            readerUrl: payload.readerUrl || legacyAppReaderRoute(payload.recordId),
-            failureCode: payload.failureCode,
-            failureMessage: payload.failureMessage,
-          });
-        }
-
-        setState({ kind: "pending", message: "正在透读。" });
-      } catch (error) {
-        if (!cancelled) {
-          setState({
-            kind: "error",
-            message: error instanceof Error ? error.message : "查询任务状态失败。",
-            recordId: pollingTask.recordId,
-          });
-          setActiveTask(null);
-        }
-        return;
-      }
-
-      timer = window.setTimeout(poll, POLL_INTERVAL_MS);
-    }
-
-    timer = window.setTimeout(poll, POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) {
-        window.clearTimeout(timer);
-      }
-    };
-  }, [activeTask, router]);
 
   async function handleSubmit() {
     if (isWaiting) {
@@ -697,103 +577,65 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
       return;
     }
 
-    const submitMode: ReadPageSubmitMode = READ_PAGE_SUBMIT_MODE;
     setState({ kind: "pending", message: "正在提交透读任务..." });
 
     try {
-      const response = await fetch(readPageSubmitEndpoint(submitMode), {
+      const response = await fetch(readPageSubmitEndpoint(READ_PAGE_SUBMIT_MODE), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(
           readPageSubmitRequestBody(
             { text, readingGoal, readingVariant },
-            submitMode,
+            READ_PAGE_SUBMIT_MODE,
           ),
         ),
       });
-      const payload = (await response.json()) as
-        | AnalysisSubmitResponse
-        | ReadingRecordSubmitResponse;
+      const payload = (await response.json()) as ReadingRecordSubmitResponse;
 
       if (!response.ok || !payload.ok) {
-        const legacyPayload =
-          submitMode === "legacy" ? (payload as AnalysisSubmitResponse) : null;
         setState({
           kind: "error",
           message: payload.message || "提交失败，请稍后重试。",
-          recordId: legacyPayload?.recordId,
         });
         return;
       }
 
-      if (submitMode === "reading-record") {
-        const readingRecordPayload = payload as ReadingRecordSubmitResponse;
-        const readerUrl =
-          (readingRecordPayload.readerUrl as Route | undefined) ||
-          (readingRecordPayload.readingRecordId
-            ? appReadingRecordRoute(readingRecordPayload.readingRecordId)
-            : null);
+      const readerUrl =
+        (payload.readerUrl as Route | undefined) ||
+        (payload.readingRecordId
+          ? appReadingRecordRoute(payload.readingRecordId)
+          : null);
 
-        const readingRecordId =
-          readingRecordPayload.readingRecordId ||
-          (readerUrl ? extractReadingRecordIdFromReaderUrl(readerUrl) : null);
+      const readingRecordId =
+        payload.readingRecordId ||
+        (readerUrl ? extractReadingRecordIdFromReaderUrl(readerUrl) : null);
 
-        if (!readerUrl || !readingRecordId) {
-          setState({
-            kind: "error",
-            message: "阅读记录已创建，但返回结果缺少 readingRecordId。",
-          });
-          return;
-        }
-
-        const createdAt = new Date().toISOString();
-        const snapshotTitle = readingRecordPayload.snapshot?.record.title.trim();
-        const recentRecord = {
-          readingRecordId,
-          readerUrl,
-          title: snapshotTitle || recentReadingRecordTitleFromText(text),
-          createdAt,
-        };
-
-        if (saveRecentReadingRecordForSubmitMode(submitMode, recentRecord)) {
-          setRecentReadingRecord(recentRecord);
-        }
-
+      if (!readerUrl || !readingRecordId) {
         setState({
-          kind: "success",
-          message: readingRecordPayload.message || "阅读记录已创建，正在打开 Reader。",
+          kind: "error",
+          message: "阅读记录已创建，但返回结果缺少 readingRecordId。",
         });
-        router.push(readerUrl);
         return;
       }
 
-      const legacyPayload = payload as AnalysisSubmitResponse;
-      if (
-        legacyPayload.taskId &&
-        legacyPayload.status &&
-        legacyPayload.status !== "succeeded"
-      ) {
-        setActiveTask({
-          taskId: legacyPayload.taskId,
-          recordId: legacyPayload.recordId || "",
-          status: legacyPayload.status,
-          readerUrl:
-            legacyPayload.readerUrl ||
-            (legacyPayload.recordId
-              ? legacyAppReaderRoute(legacyPayload.recordId)
-              : libraryRoute),
-        });
-        setState({ kind: "pending", message: "正在透读。" });
-        return;
+      const createdAt = new Date().toISOString();
+      const snapshotTitle = payload.snapshot?.record.title.trim();
+      const recentRecord = {
+        readingRecordId,
+        readerUrl,
+        title: snapshotTitle || recentReadingRecordTitleFromText(text),
+        createdAt,
+      };
+
+      if (saveRecentReadingRecord(recentRecord)) {
+        setRecentReadingRecord(recentRecord);
       }
 
-      setState({ kind: "success", message: legacyPayload.message });
-      router.push(
-        (legacyPayload.readerUrl as Route | undefined) ||
-          (legacyPayload.recordId
-            ? legacyAppReaderRoute(legacyPayload.recordId)
-            : libraryRoute),
-      );
+      setState({
+        kind: "success",
+        message: payload.message || "阅读记录已创建，正在打开 Reader。",
+      });
+      router.push(readerUrl);
     } catch (error) {
       setState({
         kind: "error",
@@ -802,12 +644,11 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
     }
   }
 
-  const errorRecordId = state.kind === "error" ? state.recordId : undefined;
   const selectedGoalLabel = READING_GOAL_OPTIONS.find((option) => option.value === readingGoal)?.label;
   const selectedVariantLabel = READING_VARIANT_OPTIONS[readingGoal].find(
     (option) => option.value === readingVariant,
   )?.label;
-  const loadingStageTitle = activeTask ? "有一篇文章正在透读" : "正在透读这篇文章";
+  const loadingStageTitle = "正在透读这篇文章";
 
   return (
     <div className="flex min-h-0 flex-1 w-full flex-col">
@@ -880,7 +721,7 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
           <div className="relative z-20 mx-5 mb-4 shrink-0 border-t border-hairline/68 px-0 pt-3 sm:mx-10 xl:mx-14">
             {isWaiting ? (
               <AnalysisLoadingStatusBar
-                messagePrefix={activeTask ? "有一篇文章正在透读" : "正在透读"}
+                messagePrefix="正在透读"
               />
             ) : (
               <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
@@ -1023,15 +864,6 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
           }`}
         >
           {state.message}
-          {errorRecordId && (
-            <button
-              type="button"
-              className="ml-4 text-[0.72rem] font-semibold underline decoration-hairline underline-offset-4 transition-colors hover:text-ink"
-              onClick={() => router.push(legacyAppReaderRoute(errorRecordId))}
-            >
-              打开任务
-            </button>
-          )}
         </div>
       )}
     </div>

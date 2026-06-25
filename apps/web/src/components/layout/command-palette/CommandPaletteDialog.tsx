@@ -5,37 +5,43 @@ import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import {
   CommandMenuDialog,
-  CommandMenuInput,
-  CommandMenuList,
-  CommandMenuGroup,
-  CommandMenuItem,
-  CommandMenuShortcut,
   CommandMenuEmpty,
+  CommandMenuGroup,
+  CommandMenuInput,
+  CommandMenuItem,
+  CommandMenuList,
   CommandMenuSeparator,
+  CommandMenuShortcut,
 } from "@/components/primitives/command-menu";
-import { legacyAppReaderRoute } from "@/lib/routes";
-import { formatShortcut } from "@/lib/shortcuts";
-import { useCommandPalette } from "./useCommandPalette";
-import { getPageCommands, getCommandCommands } from "./command-palette-items";
-import { ReadingRecordCommandGroup } from "./ReadingRecordCommandGroup";
-import type {
-  CommandPaletteCommand,
-  CommandPaletteRecordItem,
-} from "./command-palette-types";
 import { Kbd } from "@/components/primitives/kbd";
+import { formatShortcut } from "@/lib/shortcuts";
+import type {
+  ReadingRecordListItemVm,
+  ReadingRecordListResult,
+} from "@/services/bff/reading-records";
+import { getCommandCommands, getPageCommands } from "./command-palette-items";
+import type { CommandPaletteCommand } from "./command-palette-types";
+import { useCommandPalette } from "./useCommandPalette";
 
-function fetchRecords(
+function fetchReadingRecords(
   query?: string,
   signal?: AbortSignal,
-): Promise<CommandPaletteRecordItem[]> {
+): Promise<ReadingRecordListItemVm[]> {
   const params = new URLSearchParams();
-  if (query) params.set("query", query);
-  return fetch(`/api/web/command-palette/records?${params.toString()}`, { signal })
+  params.set("limit", "8");
+
+  if (query?.trim()) {
+    params.set("query", query.trim());
+  }
+
+  return fetch(`/api/web/reading-records?${params.toString()}`, { signal })
     .then((res) => res.json())
-    .then((data: { items: CommandPaletteRecordItem[] }) => data.items)
+    .then((data: ReadingRecordListResult) => (data.ok ? data.items : []))
     .catch((err: unknown) => {
-      if (err instanceof DOMException && err.name === "AbortError") return [];
-      return [] as CommandPaletteRecordItem[];
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return [];
+      }
+      return [] as ReadingRecordListItemVm[];
     });
 }
 
@@ -57,8 +63,12 @@ export function CommandPaletteDialog() {
   const open = useCommandPalette((s) => s.open);
   const setOpen = useCommandPalette((s) => s.setOpen);
   const [query, setQuery] = useState("");
-  const [recentRecords, setRecentRecords] = useState<CommandPaletteRecordItem[]>([]);
-  const [searchedRecords, setSearchedRecords] = useState<CommandPaletteRecordItem[]>([]);
+  const [recentRecords, setRecentRecords] = useState<ReadingRecordListItemVm[]>(
+    [],
+  );
+  const [searchedRecords, setSearchedRecords] = useState<
+    ReadingRecordListItemVm[]
+  >([]);
   const [loading, setLoading] = useState(false);
   const [recordsLoaded, setRecordsLoaded] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -72,18 +82,18 @@ export function CommandPaletteDialog() {
     [router, setOpen],
   );
 
-  const lastRecordId = recentRecords.length > 0 ? recentRecords[0].id : undefined;
+  const lastReaderUrl = recentRecords[0]?.readerUrl;
   const pageCommands = getPageCommands(navigate);
-  const commandCommands = getCommandCommands(navigate, lastRecordId);
+  const commandCommands = getCommandCommands(navigate, lastReaderUrl);
 
-  // Load recent records when dialog opens
   useEffect(() => {
-    if (open && !recordsLoaded) {
+    if (open && !recordsLoaded && query.trim().length === 0) {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
       queueMicrotask(() => setLoading(true));
-      fetchRecords(undefined, controller.signal)
+
+      fetchReadingRecords(undefined, controller.signal)
         .then((items) => {
           if (!controller.signal.aborted) {
             setRecentRecords(items);
@@ -91,22 +101,25 @@ export function CommandPaletteDialog() {
           }
         })
         .finally(() => {
-          if (!controller.signal.aborted) setLoading(false);
+          if (!controller.signal.aborted) {
+            setLoading(false);
+          }
         });
     }
-  }, [open, recordsLoaded]);
+  }, [open, query, recordsLoaded]);
 
-  // Reset state when dialog closes
   useEffect(() => {
     if (!open) {
+      abortRef.current?.abort();
+      abortRef.current = null;
       queueMicrotask(() => {
+        setLoading(false);
         setQuery("");
         setSearchedRecords([]);
       });
     }
   }, [open]);
 
-  // Debounced search
   useEffect(() => {
     if (!query.trim()) {
       queueMicrotask(() => setSearchedRecords([]));
@@ -119,12 +132,18 @@ export function CommandPaletteDialog() {
       const controller = new AbortController();
       abortRef.current = controller;
       setLoading(true);
-      fetchRecords(query, controller.signal).then((items) => {
-        if (!controller.signal.aborted) {
-          setSearchedRecords(items);
-          setLoading(false);
-        }
-      });
+
+      fetchReadingRecords(query, controller.signal)
+        .then((items) => {
+          if (!controller.signal.aborted) {
+            setSearchedRecords(items);
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setLoading(false);
+          }
+        });
     }, 250);
 
     return () => {
@@ -134,22 +153,19 @@ export function CommandPaletteDialog() {
   }, [query]);
 
   const hasQuery = query.trim().length > 0;
-
-  const recordCommands: CommandPaletteCommand[] = (hasQuery ? searchedRecords : recentRecords).map(
-    (record) => ({
-      id: `record-${record.id}`,
-      label: record.title,
-      group: hasQuery ? "search" : "recent",
-      onSelect: () => {
-        setOpen(false);
-        router.push(legacyAppReaderRoute(record.id));
-      },
-    }),
-  );
-
-  const recordGroupHeading = hasQuery ? "搜索文章" : "最近文章";
+  const visibleRecords = hasQuery ? searchedRecords : recentRecords;
+  const recordCommands: CommandPaletteCommand[] = visibleRecords.map((record) => ({
+    id: `record-${record.readingRecordId}`,
+    label: record.title,
+    group: hasQuery ? "search" : "recent",
+    onSelect: () => {
+      setOpen(false);
+      router.push(record.readerUrl as Route);
+    },
+  }));
+  const recordGroupHeading = hasQuery ? "搜索阅读记录" : "最近阅读记录";
   const hasRecords = recordCommands.length > 0;
-  const showRecordGroup = !hasQuery || searchedRecords.length > 0;
+  const showRecordGroup = !hasQuery || loading || searchedRecords.length > 0;
 
   return (
     <CommandMenuDialog open={open} onOpenChange={setOpen}>
@@ -161,23 +177,23 @@ export function CommandPaletteDialog() {
       <CommandMenuList>
         <CommandMenuEmpty>未找到匹配结果</CommandMenuEmpty>
 
-        {/* Pages group - always shown */}
         <CommandMenuGroup heading="页面">
           {pageCommands.map((cmd) => {
             const Icon = cmd.icon;
             return (
-              <CommandMenuItem key={cmd.id} onSelect={cmd.onSelect}>
+              <CommandMenuItem key={cmd.id} onSelect={cmd.onSelect} value={cmd.label}>
                 {Icon && <Icon className="h-4 w-4 text-muted" />}
                 {cmd.label}
                 {cmd.shortcut ? (
-                  <CommandMenuShortcut>{formatShortcut(cmd.shortcut)}</CommandMenuShortcut>
+                  <CommandMenuShortcut>
+                    {formatShortcut(cmd.shortcut)}
+                  </CommandMenuShortcut>
                 ) : null}
               </CommandMenuItem>
             );
           })}
         </CommandMenuGroup>
 
-        {/* Recent / Search records */}
         {showRecordGroup && (
           <>
             <CommandMenuSeparator />
@@ -186,11 +202,12 @@ export function CommandPaletteDialog() {
                 <CommandMenuItem disabled>加载中...</CommandMenuItem>
               ) : (
                 recordCommands.map((cmd) => {
-                  const record = (hasQuery ? searchedRecords : recentRecords).find(
-                    (r) => `record-${r.id}` === cmd.id,
+                  const record = visibleRecords.find(
+                    (item) => `record-${item.readingRecordId}` === cmd.id,
                   );
+
                   return (
-                    <CommandMenuItem key={cmd.id} onSelect={cmd.onSelect}>
+                    <CommandMenuItem key={cmd.id} onSelect={cmd.onSelect} value={cmd.label}>
                       <div className="flex-1 truncate font-reading reader-serif text-[0.92rem] font-semibold text-ink">
                         {cmd.label}
                       </div>
@@ -207,17 +224,15 @@ export function CommandPaletteDialog() {
           </>
         )}
 
-        <ReadingRecordCommandGroup
-          open={open}
-          query={query}
-          onOpenReadingRecord={navigate}
-        />
-
-        {/* Commands group */}
         <CommandMenuSeparator />
         <CommandMenuGroup heading="命令">
           {commandCommands.map((cmd) => (
-            <CommandMenuItem key={cmd.id} onSelect={cmd.onSelect} disabled={cmd.disabled}>
+            <CommandMenuItem
+              key={cmd.id}
+              onSelect={cmd.onSelect}
+              disabled={cmd.disabled}
+              value={cmd.label}
+            >
               {cmd.label}
               {cmd.shortcut ? (
                 <CommandMenuShortcut>{formatShortcut(cmd.shortcut)}</CommandMenuShortcut>

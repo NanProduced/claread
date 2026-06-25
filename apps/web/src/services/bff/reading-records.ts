@@ -42,6 +42,8 @@ export type ReadingRecordListResult =
 
 export interface GetReadingRecordsOptions {
   limit?: number;
+  query?: string;
+  productStates?: ReadingRecordProductState[];
 }
 
 function authRequired(message: string): ReadingRecordsBffError {
@@ -83,7 +85,11 @@ export async function getReadingRecordListFromWeb(
 
   const upstreamResult = await listUpstreamReadingRecords(
     session.sessionToken,
-    { limit: options.limit },
+    {
+      limit: options.limit,
+      query: options.query,
+      productStates: options.productStates,
+    },
   );
 
   if (!upstreamResult.ok) {

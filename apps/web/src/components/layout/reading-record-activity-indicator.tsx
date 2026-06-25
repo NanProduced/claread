@@ -4,11 +4,19 @@ import { AlertTriangle, ArrowRight, BookOpenCheck } from "lucide-react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import {
+  fetchAnalysisTaskStatus,
+  fetchCurrentAnalysisTask,
+  isAnalysisTerminalStatus,
+  type WebAnalysisTaskView,
+} from "@/lib/analysis-task-client";
 import { cn } from "@/lib/cn";
 import {
   appReadRoute,
+  appLibraryRoute,
   isAppReaderPlatePath,
   isAppReadingRecordPath,
+  legacyAppReaderRoute,
 } from "@/lib/routes";
 import type {
   ReadingRecordListItemVm,
@@ -16,12 +24,21 @@ import type {
 } from "@/services/bff/reading-records";
 import type { ReadingRecordProductState } from "@/types/api/reading-records";
 
-const PRIORITY_PRODUCT_STATES: ReadingRecordProductState[] = [
+const ACTIVE_PRODUCT_STATES: ReadingRecordProductState[] = [
   "processing",
   "readable_enhancing",
   "action_required",
   "failed",
 ];
+
+const PRIORITY_PRODUCT_STATES: ReadingRecordProductState[] = [
+  "action_required",
+  "failed",
+  "processing",
+  "readable_enhancing",
+];
+
+const ACTIVE_TASK_POLL_INTERVAL_MS = 8000;
 
 type ReadingRecordActivityState =
   | { status: "loading"; items: [] }
@@ -49,7 +66,12 @@ function productStateLabel(state: ReadingRecordProductState): string {
 function fetchReadingRecords(
   signal?: AbortSignal,
 ): Promise<ReadingRecordListItemVm[]> {
-  return fetch("/api/web/reading-records?limit=8", { signal })
+  const params = new URLSearchParams({
+    limit: "8",
+    productState: ACTIVE_PRODUCT_STATES.join(","),
+  });
+
+  return fetch(`/api/web/reading-records?${params.toString()}`, { signal })
     .then((response) => response.json())
     .then((result: ReadingRecordListResult) => (result.ok ? result.items : []))
     .catch((error: unknown) => {
@@ -63,13 +85,14 @@ function fetchReadingRecords(
 function selectReadingRecordActivity(
   items: ReadingRecordListItemVm[],
 ): ReadingRecordListItemVm | null {
-  return (
-    items.find((item) =>
-      PRIORITY_PRODUCT_STATES.includes(item.productState),
-    ) ||
-    items[0] ||
-    null
-  );
+  for (const state of PRIORITY_PRODUCT_STATES) {
+    const match = items.find((item) => item.productState === state);
+    if (match) {
+      return match;
+    }
+  }
+
+  return items[0] || null;
 }
 
 function shouldShowReadingRecordActivityIndicator(pathname: string): boolean {
@@ -80,16 +103,26 @@ function shouldShowReadingRecordActivityIndicator(pathname: string): boolean {
   );
 }
 
+function legacyTaskRoute(task: WebAnalysisTaskView | null): string {
+  if (!task) {
+    return appLibraryRoute;
+  }
+
+  return task.readerUrl || legacyAppReaderRoute(task.recordId);
+}
+
 export function ReadingRecordActivityIndicator({
   pathname,
 }: {
   pathname: string;
 }) {
   const router = useRouter();
-  const [state, setState] = useState<ReadingRecordActivityState>({
-    status: "loading",
-    items: [],
-  });
+  const [readingRecordState, setReadingRecordState] =
+    useState<ReadingRecordActivityState>({
+      status: "loading",
+      items: [],
+    });
+  const [legacyTask, setLegacyTask] = useState<WebAnalysisTaskView | null>(null);
   const shouldShow = useMemo(
     () => shouldShowReadingRecordActivityIndicator(pathname),
     [pathname],
@@ -102,12 +135,40 @@ export function ReadingRecordActivityIndicator({
 
     let cancelled = false;
     const controller = new AbortController();
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setReadingRecordState({ status: "loading", items: [] });
+        setLegacyTask(null);
+      }
+    });
 
     fetchReadingRecords(controller.signal).then((items) => {
       if (!cancelled) {
-        setState({ status: "loaded", items });
+        setReadingRecordState({ status: "loaded", items });
       }
     });
+
+    fetchCurrentAnalysisTask()
+      .then((payload) => {
+        if (cancelled || !payload.hasActive || !payload.task) {
+          if (!cancelled) {
+            setLegacyTask(null);
+          }
+          return;
+        }
+
+        if (isAnalysisTerminalStatus(payload.task.status)) {
+          setLegacyTask(null);
+          return;
+        }
+
+        setLegacyTask(payload.task);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLegacyTask(null);
+        }
+      });
 
     return () => {
       cancelled = true;
@@ -115,19 +176,87 @@ export function ReadingRecordActivityIndicator({
     };
   }, [shouldShow]);
 
+  useEffect(() => {
+    if (!shouldShow || !legacyTask || isAnalysisTerminalStatus(legacyTask.status)) {
+      return;
+    }
+
+    const pollingTask = legacyTask;
+    let cancelled = false;
+    let timer: number | undefined;
+
+    async function poll() {
+      try {
+        const payload = await fetchAnalysisTaskStatus(pollingTask.taskId);
+        if (cancelled) {
+          return;
+        }
+
+        if (
+          payload.status === "succeeded" ||
+          payload.status === "failed" ||
+          payload.status === "cancelled" ||
+          payload.status === "expired"
+        ) {
+          setLegacyTask(null);
+          return;
+        }
+
+        if (payload.status && payload.recordId && payload.taskId) {
+          setLegacyTask({
+            taskId: payload.taskId,
+            recordId: payload.recordId,
+            status: payload.status,
+            readerUrl: payload.readerUrl || legacyAppReaderRoute(payload.recordId),
+            failureCode: payload.failureCode,
+            failureMessage: payload.failureMessage,
+          });
+        }
+      } catch {
+        return;
+      }
+
+      timer = window.setTimeout(poll, ACTIVE_TASK_POLL_INTERVAL_MS);
+    }
+
+    timer = window.setTimeout(poll, ACTIVE_TASK_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [legacyTask, shouldShow]);
+
   const activity = useMemo(
-    () => selectReadingRecordActivity(state.items),
-    [state.items],
+    () => selectReadingRecordActivity(readingRecordState.items),
+    [readingRecordState.items],
   );
 
-  if (!shouldShow || state.status === "loading" || !activity) {
+  if (
+    !shouldShow ||
+    (readingRecordState.status === "loading" && !legacyTask) ||
+    (!activity && !legacyTask)
+  ) {
     return null;
   }
 
-  const isAttention =
-    activity.productState === "action_required" ||
-    activity.productState === "failed";
-  const statusLabel = productStateLabel(activity.productState);
+  const isLegacyOnly = !activity && Boolean(legacyTask);
+  const isAttention = activity
+    ? activity.productState === "action_required" ||
+      activity.productState === "failed"
+    : false;
+  const statusLabel = activity
+    ? productStateLabel(activity.productState)
+    : "旧任务处理中";
+  const title = activity ? activity.title : "旧 Reader 任务仍在运行";
+  const secondaryText = activity
+    ? legacyTask
+      ? "另有旧任务仍在透读，可通过旧入口继续查看。"
+      : "打开当前阅读记录查看最新进展。"
+    : "该任务仍使用旧入口，仅保留过渡查看能力。";
+  const actionHref = activity ? activity.readerUrl : legacyTaskRoute(legacyTask);
 
   return (
     <div
@@ -139,10 +268,10 @@ export function ReadingRecordActivityIndicator({
       role="status"
       aria-live="polite"
     >
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-3">
         <span
           className={cn(
-            "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border",
+            "mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border",
             isAttention
               ? "border-amber-300 bg-amber-100 text-amber-800"
               : "border-lens-blue/20 bg-lens-blue/[0.04] text-lens-blue",
@@ -155,18 +284,31 @@ export function ReadingRecordActivityIndicator({
           )}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[0.8rem] font-semibold text-ink">
-            {statusLabel}
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-[0.8rem] font-semibold text-ink">{statusLabel}</p>
+            {legacyTask && activity ? (
+              <span className="rounded-full border border-hairline/70 bg-reader-paper/70 px-2 py-0.5 text-[0.64rem] font-semibold tracking-[0.08em] text-muted">
+                旧任务
+              </span>
+            ) : null}
+            {isLegacyOnly ? (
+              <span className="rounded-full border border-hairline/70 bg-reader-paper/70 px-2 py-0.5 text-[0.64rem] font-semibold tracking-[0.08em] text-muted">
+                Legacy
+              </span>
+            ) : null}
+          </div>
           <p className="mt-0.5 truncate text-[0.72rem] font-medium text-muted">
-            {activity.title}
+            {title}
+          </p>
+          <p className="mt-1 text-[0.7rem] leading-5 text-muted/90">
+            {secondaryText}
           </p>
         </div>
         <button
           type="button"
           className="focus-ring inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:bg-reader-paper/70 hover:text-ink"
-          onClick={() => router.push(activity.readerUrl as Route)}
-          aria-label="打开新阅读记录"
+          onClick={() => router.push(actionHref as Route)}
+          aria-label={activity ? "打开阅读记录" : "打开旧任务"}
         >
           <ArrowRight aria-hidden className="h-4 w-4" />
         </button>

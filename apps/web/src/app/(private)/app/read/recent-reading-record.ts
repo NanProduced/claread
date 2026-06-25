@@ -1,5 +1,3 @@
-import type { ReadPageSubmitMode } from "./submit-mode";
-
 export const RECENT_READING_RECORD_STORAGE_KEY =
   "claread:web:recent-reading-record";
 
@@ -121,15 +119,4 @@ export function saveRecentReadingRecord(input: RecentReadingRecordInput) {
   } catch {
     return false;
   }
-}
-
-export function saveRecentReadingRecordForSubmitMode(
-  mode: ReadPageSubmitMode,
-  input: RecentReadingRecordInput,
-) {
-  if (mode !== "reading-record") {
-    return false;
-  }
-
-  return saveRecentReadingRecord(input);
 }

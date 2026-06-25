@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CommandPaletteDialog } from "./CommandPaletteDialog";
@@ -14,41 +15,37 @@ vi.mock("next/navigation", () => ({
   useRouter: () => navigationMock,
 }));
 
-function stubCommandPaletteFetch({
-  legacyItems = [],
-  readingRecordItems = [],
-}: {
-  legacyItems?: Array<{
-    id: string;
-    title: string;
-    excerpt: string;
-    createdAt: string;
-  }>;
-  readingRecordItems?: Array<Record<string, unknown>>;
-}) {
+function makeReadingRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    readingRecordId: "reading_record_1",
+    readerUrl: "/app/reader-record/reading_record_1",
+    title: "New Reading Record",
+    createdAt: "2026-06-23T08:00:00.000Z",
+    sourceType: "text",
+    sourceMetadata: {},
+    productState: "readable_enhancing",
+    readinessState: "article_ready",
+    lastEventSequence: 1,
+    ...overrides,
+  };
+}
+
+function stubReadingRecordFetch(
+  responder: (url: string) => Array<Record<string, unknown>>,
+) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    const items = responder(url);
 
-    if (url.startsWith("/api/web/reading-records")) {
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          items: readingRecordItems,
-          total: readingRecordItems.length,
-          limit: 6,
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    }
-
-    if (url.startsWith("/api/web/command-palette/records")) {
-      return new Response(
-        JSON.stringify({ items: legacyItems }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    }
-
-    return new Response("Not found", { status: 404 });
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        items,
+        total: items.length,
+        limit: 8,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
   });
 
   vi.stubGlobal("fetch", fetchMock);
@@ -85,27 +82,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("CommandPaletteDialog Reading Record entries", () => {
-  it("shows new Reading Records from the BFF and opens the returned readerUrl", async () => {
-    const fetchMock = stubCommandPaletteFetch({
-      readingRecordItems: [
-        {
-          readingRecordId: "reading_record_1",
-          readerUrl: "/app/reader-record/reading_record_1",
-          title: "New Reading Record",
-          createdAt: "2026-06-23T08:00:00.000Z",
-          sourceType: "text",
-          sourceMetadata: {},
-          productState: "readable_enhancing",
-          readinessState: "article_ready",
-          lastEventSequence: 1,
-        },
-      ],
+describe("CommandPaletteDialog", () => {
+  it("shows recent Reading Records from /api/web/reading-records and opens readerUrl", async () => {
+    const fetchMock = stubReadingRecordFetch((url) => {
+      expect(url).toBe("/api/web/reading-records?limit=8");
+      return [makeReadingRecord()];
     });
 
     openCommandPalette();
 
-    expect(await screen.findByText("新阅读记录")).toBeTruthy();
+    expect(await screen.findByText("最近阅读记录")).toBeTruthy();
     expect(await screen.findByText("New Reading Record")).toBeTruthy();
 
     fireEvent.click(screen.getByText("New Reading Record"));
@@ -113,68 +99,88 @@ describe("CommandPaletteDialog Reading Record entries", () => {
     expect(navigationMock.push).toHaveBeenCalledWith(
       "/app/reader-record/reading_record_1",
     );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/web/reading-records?limit=6",
-      expect.any(Object),
-    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps legacy command palette records opening the legacy ReaderWorkbench route", async () => {
-    stubCommandPaletteFetch({
-      legacyItems: [
-        {
-          id: "legacy-record-1",
-          title: "Legacy Article",
-          excerpt: "Legacy excerpt",
-          createdAt: "2026-06-22T08:00:00.000Z",
-        },
-      ],
+  it("searches Reading Records through /api/web/reading-records?query=...", async () => {
+    const fetchMock = stubReadingRecordFetch((url) => {
+      if (url === "/api/web/reading-records?limit=8") {
+        return [makeReadingRecord({ title: "Recent Reading Record" })];
+      }
+
+      expect(url.startsWith("/api/web/reading-records?limit=8&query=")).toBe(true);
+      return [
+        makeReadingRecord({
+          readingRecordId: "reading_record_focus",
+          readerUrl: "/app/reader-record/reading_record_focus",
+          title: "Focus Reading Record",
+        }),
+      ];
     });
 
     openCommandPalette();
 
-    expect(await screen.findByText("最近文章")).toBeTruthy();
-    expect(await screen.findByText("Legacy Article")).toBeTruthy();
+    await userEvent.type(screen.getByRole("combobox"), "focus");
 
-    fireEvent.click(screen.getByText("Legacy Article"));
+    await waitFor(() => {
+      expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("focus");
+    });
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).includes("query=focus"),
+        ),
+      ).toBe(true);
+    });
+
+    expect(
+      await screen.findByText("Focus Reading Record", {}, { timeout: 3000 }),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Focus Reading Record"));
 
     expect(navigationMock.push).toHaveBeenCalledWith(
-      "/app/reader/legacy-record-1",
+      "/app/reader-record/reading_record_focus",
     );
   });
 
-  it("refetches new Reading Records after closing while the first request is pending", async () => {
-    const pendingReadingRecordResponses: Array<(response: Response) => void> = [];
+  it("opens the newest Reading Record from the command item", async () => {
+    stubReadingRecordFetch(() => [
+      makeReadingRecord({
+        readingRecordId: "reading_record_latest",
+        readerUrl: "/app/reader-record/reading_record_latest",
+        title: "Latest Reading Record",
+      }),
+    ]);
+
+    openCommandPalette();
+
+    expect(await screen.findByText("Latest Reading Record")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("打开最近文章"));
+
+    expect(navigationMock.push).toHaveBeenCalledWith(
+      "/app/reader-record/reading_record_latest",
+    );
+  });
+
+  it("refetches Reading Records after closing while the first request is pending", async () => {
+    const pendingResponses: Array<(response: Response) => void> = [];
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
+      expect(url).toBe("/api/web/reading-records?limit=8");
 
-      if (url.startsWith("/api/web/reading-records")) {
-        return new Promise<Response>((resolve) => {
-          pendingReadingRecordResponses.push(resolve);
-        });
-      }
-
-      if (url.startsWith("/api/web/command-palette/records")) {
-        return Promise.resolve(
-          new Response(JSON.stringify({ items: [] }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        );
-      }
-
-      return Promise.resolve(new Response("Not found", { status: 404 }));
+      return new Promise<Response>((resolve) => {
+        pendingResponses.push(resolve);
+      });
     });
     vi.stubGlobal("fetch", fetchMock);
 
     openCommandPalette();
 
     await waitFor(() => {
-      expect(
-        fetchMock.mock.calls.filter(([input]) =>
-          String(input).startsWith("/api/web/reading-records"),
-        ),
-      ).toHaveLength(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     act(() => {
@@ -185,17 +191,13 @@ describe("CommandPaletteDialog Reading Record entries", () => {
     });
 
     await waitFor(() => {
-      expect(
-        fetchMock.mock.calls.filter(([input]) =>
-          String(input).startsWith("/api/web/reading-records"),
-        ),
-      ).toHaveLength(2);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
     await act(async () => {
-      for (const resolve of pendingReadingRecordResponses) {
+      for (const resolve of pendingResponses) {
         resolve(
-          new Response(JSON.stringify({ ok: true, items: [], total: 0, limit: 6 }), {
+          new Response(JSON.stringify({ ok: true, items: [], total: 0, limit: 8 }), {
             status: 200,
             headers: { "content-type": "application/json" },
           }),

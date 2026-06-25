@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, BookOpen, Trash2, Calendar, Play, Pause, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { Check, BookOpen, Trash2, Calendar, Play, Pause, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/primitives/button";
 import { ScrollArea } from "@/components/primitives/scroll-area";
@@ -34,7 +34,11 @@ export interface VocabularyDetailPanelProps {
   item: VocabularyItemVm;
   onToggleMastery?: (item: VocabularyItemVm) => void;
   onDelete?: (item: VocabularyItemVm) => void;
-  onGoToSource?: (recordId: string, sentenceId?: string) => void;
+  onGoToSource?: (target: {
+    readingRecordId?: string | null;
+    recordId?: string | null;
+    sentenceId?: string;
+  }) => void;
   onClose?: () => void;
 }
 
@@ -45,7 +49,6 @@ export function VocabularyDetailPanel({
   onGoToSource,
   onClose,
 }: VocabularyDetailPanelProps) {
-  const [contextIndex, setContextIndex] = useState(0);
   const [audioPlaying, setAudioPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -80,9 +83,16 @@ export function VocabularyDetailPanel({
 
   const handleGoToRef = useCallback(
     (ref: (typeof sourceRefs)[number]) => {
-      const recordId = ref.cloud_record_id ?? ref.client_record_id;
-      if (!recordId) return;
-      onGoToSource?.(recordId, ref.source_sentence_id ?? undefined);
+      const readingRecordId = ref.reading_record_id ?? null;
+      const recordId = ref.cloud_record_id ?? ref.client_record_id ?? null;
+
+      if (!readingRecordId && !recordId) return;
+
+      onGoToSource?.({
+        readingRecordId,
+        recordId,
+        sentenceId: ref.source_sentence_id ?? undefined,
+      });
     },
     [onGoToSource],
   );
@@ -225,7 +235,7 @@ export function VocabularyDetailPanel({
               <div className="space-y-3">
                 {sourceRefs.map((ref, i) => (
                   <div key={i} className="group relative rounded-[12px] border border-hairline bg-[linear-gradient(to_bottom,color-mix(in_srgb,var(--reader-paper)_30%,transparent),transparent)] p-4 pr-12 shadow-[0_2px_8px_rgba(28,24,18,0.02)]">
-                    {(ref.cloud_record_id ?? ref.client_record_id) && (
+                    {(ref.reading_record_id ?? ref.cloud_record_id ?? ref.client_record_id) && (
                       <div className="absolute top-3 right-3">
                         <TooltipProvider>
                           <Tooltip>

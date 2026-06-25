@@ -11,10 +11,3 @@ export interface CommandPaletteCommand {
   group: CommandGroup;
   disabled?: boolean;
 }
-
-export interface CommandPaletteRecordItem {
-  id: string;
-  title: string;
-  excerpt: string;
-  createdAt: string;
-}

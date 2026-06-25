@@ -20,7 +20,10 @@ from app.services.dictionary_ai.repository import insert_candidate_entry
 from app.services.feedback.service import submit_feedback
 from app.services.user_annotations import _row_to_response as annotation_row_to_response
 from app.services.user_assets.records import update_record
-from app.services.user_assets.vocabulary import upsert_vocabulary
+from app.services.user_assets.vocabulary import (
+    _merge_payload_on_conflict,
+    upsert_vocabulary,
+)
 
 
 def _make_mock_conn_with_tx() -> AsyncMock:
@@ -112,6 +115,45 @@ class TestJsonCompatibilityReads:
 
 
 class TestJsonbWriteContracts:
+    def test_merge_payload_on_conflict_dedupes_source_refs_by_reading_record_id(self):
+        merged = _merge_payload_on_conflict(
+            existing_payload={
+                "source_refs": [
+                    {
+                        "reading_record_id": "reading-record-1",
+                        "client_record_id": "legacy-a",
+                        "source_sentence_id": "sent-a",
+                    }
+                ]
+            },
+            incoming_payload={
+                "source_refs": [
+                    {
+                        "reading_record_id": "reading-record-1",
+                        "client_record_id": "legacy-b",
+                        "source_sentence_id": "sent-b",
+                    },
+                    {
+                        "client_record_id": "legacy-c",
+                        "source_sentence_id": "sent-c",
+                    },
+                ]
+            },
+            incoming_display_word="test",
+        )
+
+        assert merged["source_refs"] == [
+            {
+                "reading_record_id": "reading-record-1",
+                "client_record_id": "legacy-a",
+                "source_sentence_id": "sent-a",
+            },
+            {
+                "client_record_id": "legacy-c",
+                "source_sentence_id": "sent-c",
+            }
+        ]
+
     @pytest.mark.anyio
     async def test_upsert_vocabulary_writes_native_jsonb(self):
         mock_conn = _make_mock_conn_with_tx()

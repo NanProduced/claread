@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class SourceRef(BaseModel):
     """单次收藏来源的语境记录，存储在 payload_json.source_refs 中。"""
 
+    reading_record_id: str | None = Field(default=None, max_length=128)
     client_record_id: str = Field(default="", max_length=128)
     cloud_record_id: str | None = Field(default=None, max_length=128)
     source_sentence: str | None = Field(default=None)

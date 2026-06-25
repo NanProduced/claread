@@ -31,8 +31,9 @@ def _merge_payload_on_conflict(
     """
     合并 payload_json：追加 source_refs 和 collected_forms，保留已有扩展字段。
 
-    - source_refs: 追加 incoming 中的新条目，去重按 client_record_id + source_sentence_id，
-      上限 SOURCE_REFS_MAX 条，超出时保留最近条目
+    - source_refs: 追加 incoming 中的新条目，去重按 reading_record_id 优先，
+      否则回退到 client_record_id + source_sentence_id，上限 SOURCE_REFS_MAX 条，
+      超出时保留最近条目
     - collected_forms: 追加 incoming_display_word（去重）
     - audio_url: 保留已有值，不覆盖
     - 其他字段: 保留已有值
@@ -50,11 +51,19 @@ def _merge_payload_on_conflict(
 
     existing_refs_map: dict[str, dict] = {}
     for ref in existing.source_refs:
-        key = f"{ref.client_record_id}|{ref.source_sentence_id or ''}"
+        key = (
+            f"reading_record:{ref.reading_record_id}"
+            if ref.reading_record_id
+            else f"legacy:{ref.client_record_id}|{ref.source_sentence_id or ''}"
+        )
         existing_refs_map[key] = ref.model_dump(exclude_none=True)
 
     for ref in incoming.source_refs:
-        key = f"{ref.client_record_id}|{ref.source_sentence_id or ''}"
+        key = (
+            f"reading_record:{ref.reading_record_id}"
+            if ref.reading_record_id
+            else f"legacy:{ref.client_record_id}|{ref.source_sentence_id or ''}"
+        )
         if key not in existing_refs_map:
             existing_refs_map[key] = ref.model_dump(exclude_none=True)
 

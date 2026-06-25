@@ -4,7 +4,6 @@ import {
   appLibraryRoute,
   appVocabularyRoute,
   appSettingsRoute,
-  legacyAppReaderRoute,
 } from "@/lib/routes";
 import type { CommandPaletteCommand } from "./command-palette-types";
 
@@ -45,17 +44,17 @@ export function getPageCommands(
 
 export function getCommandCommands(
   navigate: (href: string) => void,
-  lastRecordId?: string,
+  lastReaderUrl?: string,
 ): CommandPaletteCommand[] {
   return [
     {
       id: "cmd-open-recent",
       label: "打开最近文章",
       group: "commands",
-      disabled: !lastRecordId,
+      disabled: !lastReaderUrl,
       onSelect: () => {
-        if (lastRecordId) {
-          navigate(legacyAppReaderRoute(lastRecordId));
+        if (lastReaderUrl) {
+          navigate(lastReaderUrl);
         }
       },
     },

@@ -30,6 +30,7 @@ export interface VocabularyItemVm {
   contextSentence?: string
   contextTranslation?: string
   sourceRecordId?: string
+  sourceReadingRecordId?: string
   sourceRecordTitle?: string
   createdAt: string
   updatedAt?: string

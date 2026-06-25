@@ -1,13 +1,11 @@
 "use client";
 
-import { AlertTriangle, ArrowRight, Calendar, LoaderCircle } from "lucide-react";
+import { AlertTriangle, ArrowRight, Calendar } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import type { ReadingRecordListResult } from "@/services/bff/reading-records";
-
-type FetchState =
-  | { status: "loading" }
-  | { status: "loaded"; result: ReadingRecordListResult };
+import type {
+  ReadingRecordListItemVm,
+  ReadingRecordsBffError,
+} from "@/services/bff/reading-records";
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleDateString("zh-CN");
@@ -49,41 +47,17 @@ function readinessStateLabel(state: string): string {
   }
 }
 
-export function ReadingRecordSection() {
-  const [state, setState] = useState<FetchState>({ status: "loading" });
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function fetchReadingRecords() {
-      try {
-        const response = await fetch("/api/web/reading-records");
-        const result: ReadingRecordListResult = await response.json();
-        if (!cancelled) {
-          setState({ status: "loaded", result });
-        }
-      } catch {
-        if (!cancelled) {
-          setState({
-            status: "loaded",
-            result: {
-              ok: false,
-              status: 0,
-              code: "upstream_unavailable",
-              message: "无法加载新阅读记录，请稍后重试。",
-            },
-          });
-        }
-      }
-    }
-
-    fetchReadingRecords();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
+export function ReadingRecordSection({
+  readingRecords,
+  status,
+  message,
+  hasQuery = false,
+}: {
+  readingRecords: ReadingRecordListItemVm[];
+  status: "ready" | ReadingRecordsBffError["code"];
+  message?: string;
+  hasQuery?: boolean;
+}) {
   return (
     <section className="mb-8 shrink-0 border-b border-hairline pb-6">
       <div className="mb-4 flex items-center gap-3">
@@ -92,27 +66,22 @@ export function ReadingRecordSection() {
         </p>
         <div className="h-[1px] w-8 bg-hairline" />
       </div>
-      <h2 className="mb-4 font-headline text-[1.3rem] font-semibold leading-tight text-ink">
-        新阅读记录
-      </h2>
+      <h2 className="mb-4 font-headline text-[1.3rem] font-semibold leading-tight text-ink">阅读记录</h2>
 
-      {state.status === "loading" ? (
-        <div className="flex items-center gap-2 text-[0.85rem] text-muted">
-          <LoaderCircle className="h-4 w-4 animate-spin" />
-          <span>加载新阅读记录中…</span>
-        </div>
-      ) : !state.result.ok ? (
+      {status !== "ready" ? (
         <div className="flex items-center gap-2 text-[0.85rem] text-rose-800/90">
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>{state.result.message}</span>
+          <span>{message || "无法加载阅读记录，请稍后重试。"}</span>
         </div>
-      ) : state.result.items.length === 0 ? (
+      ) : readingRecords.length === 0 ? (
         <p className="text-[0.85rem] leading-6 text-muted">
-          还没有新阅读记录。提交一篇新解读后会在这里显示。
+          {hasQuery
+            ? "当前检索条件下还没有匹配的阅读记录。"
+            : "还没有阅读记录。提交一篇新解读后会在这里显示。"}
         </p>
       ) : (
         <ul className="space-y-1">
-          {state.result.items.map((item) => (
+          {readingRecords.map((item) => (
             <li key={item.readingRecordId}>
               <Link
                 href={item.readerUrl}

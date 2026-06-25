@@ -15,6 +15,8 @@ import type { ReadingRecordListResponseDto } from "@/types/api/reading-records";
 
 export interface ListReadingRecordsParams {
   limit?: number;
+  query?: string;
+  productStates?: string[];
 }
 
 export function listUpstreamReadingRecords(
@@ -25,6 +27,15 @@ export function listUpstreamReadingRecords(
 
   if (params.limit !== undefined) {
     searchParams.set("limit", String(params.limit));
+  }
+
+  const normalizedQuery = params.query?.trim();
+  if (normalizedQuery) {
+    searchParams.set("query", normalizedQuery);
+  }
+
+  if (params.productStates && params.productStates.length > 0) {
+    searchParams.set("product_state", params.productStates.join(","));
   }
 
   const query = searchParams.toString();

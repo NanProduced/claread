@@ -123,7 +123,11 @@ describe("reading-records BFF list", () => {
       data: makeListResponse(),
     });
 
-    const result = await getReadingRecordListFromWeb({ limit: 10 });
+    const result = await getReadingRecordListFromWeb({
+      limit: 10,
+      query: "focus",
+      productStates: ["processing", "failed"],
+    });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -148,7 +152,11 @@ describe("reading-records BFF list", () => {
 
     expect(vi.mocked(listUpstreamReadingRecords).mock.calls[0]).toEqual([
       "session-token",
-      { limit: 10 },
+      {
+        limit: 10,
+        query: "focus",
+        productStates: ["processing", "failed"],
+      },
     ]);
   });
 

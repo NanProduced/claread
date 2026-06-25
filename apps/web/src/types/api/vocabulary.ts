@@ -1,6 +1,7 @@
 export type VocabularyMasteryStatusDto = "new" | "learning" | "reviewing" | "mastered" | string;
 
 export interface VocabularySourceRefDto {
+  reading_record_id?: string | null;
   client_record_id?: string;
   cloud_record_id?: string | null;
   source_sentence?: string | null;

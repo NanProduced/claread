@@ -112,6 +112,10 @@ function firstSourceRecordId(item: VocabularyResponseDto): string | undefined {
   return firstRef?.cloud_record_id ?? firstRef?.client_record_id;
 }
 
+function firstSourceReadingRecordId(item: VocabularyResponseDto): string | undefined {
+  return item.payload_json?.source_refs?.[0]?.reading_record_id ?? undefined;
+}
+
 function parseDetailMeanings(value: unknown): DetailMeaning[] | undefined {
   if (!Array.isArray(value)) return undefined
 
@@ -196,6 +200,7 @@ function projectVocabularyItem(item: VocabularyResponseDto): VocabularyItemVm {
     contextSentence: item.source_sentence ?? undefined,
     contextTranslation: item.source_context ?? undefined,
     sourceRecordId: firstSourceRecordId(item),
+    sourceReadingRecordId: firstSourceReadingRecordId(item),
     createdAt: item.created_at,
     updatedAt: item.updated_at,
     mastered: item.mastery_status === "mastered",
@@ -288,6 +293,7 @@ function readSourceRefs(value: unknown): VocabularySourceRefDto[] {
   }
 
   return value.filter(isRecord).map((ref) => ({
+    reading_record_id: readNullableString(ref.reading_record_id),
     client_record_id: readString(ref.client_record_id) ?? "",
     cloud_record_id: readNullableString(ref.cloud_record_id),
     source_sentence: readNullableString(ref.source_sentence),
@@ -374,6 +380,7 @@ function normalizeCreateBody(body: unknown): VocabularyCreateRequestDto | AddVoc
 export async function getVocabularyList(
   options: GetVocabularyOptions = {},
 ): Promise<VocabularyBffResult> {
+  void options;
   const PAGE_LIMIT = 100
   const MAX_PAGES = 20
   const session = await getWebSession();

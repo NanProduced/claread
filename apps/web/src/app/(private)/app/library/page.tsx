@@ -1,8 +1,12 @@
 import { getRecordList } from "@/services/bff/records";
+import { getReadingRecordListFromWeb } from "@/services/bff/reading-records";
 import { LibraryClient } from "./LibraryClient";
 
 export default async function HistoryPage() {
-  const result = await getRecordList({ limit: 100 });
+  const [result, readingRecordsResult] = await Promise.all([
+    getRecordList({ limit: 100 }),
+    getReadingRecordListFromWeb({ limit: 100 }),
+  ]);
 
   return (
     <main className="flex h-dvh flex-col overflow-hidden bg-reader-paper px-4 py-6 text-ink sm:px-8 lg:px-16 xl:px-24">
@@ -11,6 +15,9 @@ export default async function HistoryPage() {
           records={result.records}
           status={result.status}
           message={result.message}
+          readingRecords={readingRecordsResult.ok ? readingRecordsResult.items : []}
+          readingRecordsStatus={readingRecordsResult.ok ? "ready" : readingRecordsResult.code}
+          readingRecordsMessage={readingRecordsResult.ok ? undefined : readingRecordsResult.message}
         />
       </div>
     </main>

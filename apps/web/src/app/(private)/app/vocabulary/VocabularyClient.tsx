@@ -19,7 +19,11 @@ import {
 import { ScrollArea } from "@/components/primitives/scroll-area";
 import { Sheet, SheetContent } from "@/components/primitives/sheet";
 import { VocabularyDetailPanel } from "@/components/vocabulary/VocabularyDetailPanel";
-import { appReviewRoute, legacyAppReaderRoute } from "@/lib/routes";
+import {
+  appReadingRecordRoute,
+  appReviewRoute,
+  legacyAppReaderRoute,
+} from "@/lib/routes";
 import type { VocabularyBffStatus } from "@/services/bff/vocabulary";
 import type { VocabularyItemVm } from "@/types/view/VocabularyItemVm";
 
@@ -56,6 +60,18 @@ function sourceCountLabel(item: VocabularyItemVm): string {
   if (item.totalSourceCount > 0) parts.push(`${item.totalSourceCount} 个语境`);
   if (item.totalSourceArticleCount > 0) parts.push(`${item.totalSourceArticleCount} 篇文章`);
   return parts.join(" / ");
+}
+
+function sourceHrefForItem(item: VocabularyItemVm): string | null {
+  if (item.sourceReadingRecordId) {
+    return appReadingRecordRoute(item.sourceReadingRecordId);
+  }
+
+  if (item.sourceRecordId) {
+    return legacyAppReaderRoute(item.sourceRecordId);
+  }
+
+  return null;
 }
 
 /* ---------- Bookmark Rail ---------- */
@@ -399,9 +415,23 @@ export function VocabularyClient({
 
   // Vocabulary sourceRecordId is still projected from legacy source refs
   // (cloud_record_id/client_record_id), not a Reading Record id.
-  const handleGoToSource = useCallback((recordId: string, sentenceId?: string) => {
-    let url = legacyAppReaderRoute(recordId);
-    if (sentenceId) url += `?sentenceId=${sentenceId}`;
+  const handleGoToSource = useCallback((target: {
+    readingRecordId?: string | null;
+    recordId?: string | null;
+    sentenceId?: string;
+  }) => {
+    const baseUrl = target.readingRecordId
+      ? appReadingRecordRoute(target.readingRecordId)
+      : target.recordId
+        ? legacyAppReaderRoute(target.recordId)
+        : null;
+
+    if (!baseUrl) {
+      return;
+    }
+
+    let url = baseUrl;
+    if (target.sentenceId) url += `?sentenceId=${target.sentenceId}`;
     window.location.href = url;
   }, []);
 
@@ -565,14 +595,14 @@ export function VocabularyClient({
                             <span>{sourceLabel}</span>
                           </>
                         )}
-                        {item.sourceRecordId && (
+                        {sourceHrefForItem(item) && (
                           <>
                             <span className="text-muted/30 select-none">·</span>
                             <span
                               onClick={(e) => e.stopPropagation()}
                             >
                               <Link
-                                href={legacyAppReaderRoute(item.sourceRecordId)}
+                                href={sourceHrefForItem(item)!}
                                 className="text-lens-blue hover:underline"
                               >
                                 查看来源语境

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import get_args
 from uuid import UUID
 
 import asyncpg
@@ -13,6 +14,7 @@ from app.schemas.reader_orchestration import (
     ReaderPlateSnapshot,
     ReaderRecordListItem,
     ReaderRecordListResponse,
+    ReadingRecordProductState,
 )
 from app.services.auth.dependencies import AuthUserDep
 from app.services.reader_orchestration.article_ready_service import (
@@ -150,11 +152,35 @@ async def poll_reader_events(
 async def list_reader_records(
     current_user: AuthUserDep,
     limit: int = Query(default=20, ge=1, le=100),
+    query: str | None = Query(default=None),
+    product_state: str | None = Query(default=None),
 ) -> ReaderRecordListResponse:
+    normalized_query = query.strip() if query and query.strip() else None
+    normalized_product_states: tuple[str, ...] | None = None
+    if product_state is not None:
+        raw_values = [value.strip() for value in product_state.split(",")]
+        product_states = tuple(value for value in raw_values if value)
+        if not product_states:
+            raise HTTPException(status_code=422, detail="product_state must not be empty")
+        allowed_product_states = set(get_args(ReadingRecordProductState))
+        invalid_product_states = sorted(
+            value for value in product_states if value not in allowed_product_states
+        )
+        if invalid_product_states:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "invalid product_state value(s): "
+                    + ", ".join(invalid_product_states)
+                ),
+            )
+        normalized_product_states = product_states
     repository = ReaderOrchestrationRepository()
     summaries, total = await repository.list_user_records(
         user_id=UUID(current_user.user_id),
         limit=limit,
+        query=normalized_query,
+        product_states=normalized_product_states,
     )
     return ReaderRecordListResponse(
         items=[
