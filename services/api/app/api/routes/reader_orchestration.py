@@ -16,6 +16,10 @@ from app.schemas.reader_orchestration import (
     ReaderPlainTextSubmitRequest,
     ReaderPlainTextSubmitResponse,
     ReaderPlateSnapshot,
+    ReaderSourceArtifactUploadCompleteRequest,
+    ReaderSourceArtifactUploadCompleteResponse,
+    ReaderSourceArtifactUploadInitRequest,
+    ReaderSourceArtifactUploadInitResponse,
     ReaderStableReadyInputSubmitRequest,
     ReaderStableReadyInputSubmitResponse,
     ReaderUnifiedInputSubmitCandidateResponse,
@@ -67,6 +71,14 @@ from app.services.reader_orchestration.stable_ready_input_application_service im
 from app.services.reader_orchestration.stable_document_query_service import (
     StableDocumentQueryError,
     StableDocumentQueryService,
+)
+from app.services.reader_orchestration.source_artifact_service import (
+    SourceArtifactCompletionResult,
+    SourceArtifactConflictError,
+    SourceArtifactError,
+    SourceArtifactNotFoundError,
+    SourceArtifactRegistrationResult,
+    SourceArtifactService,
 )
 
 router = APIRouter(prefix="/reader", tags=["reader"])
@@ -135,6 +147,14 @@ def _raise_candidate_document_creation_error(
     raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+def _raise_source_artifact_complete_error(exc: SourceArtifactError) -> None:
+    if isinstance(exc, SourceArtifactNotFoundError):
+        raise HTTPException(status_code=404, detail="source artifact not found") from exc
+    if isinstance(exc, SourceArtifactConflictError):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 def _build_stable_ready_submit_response(
     result: StableReadyInputApplicationResult,
 ) -> ReaderStableReadyInputSubmitResponse:
@@ -191,6 +211,63 @@ def _build_unified_candidate_submit_response(
         filename=result.filename,
         original_input_id=str(result.original_input_id),
         suitability=result.suitability,
+    )
+
+
+def _build_source_artifact_upload_headers(
+    *,
+    content_type: str | None,
+    content_sha256: str | None,
+) -> dict[str, str]:
+    headers = {"content-type": content_type or "application/octet-stream"}
+    if content_sha256 is not None:
+        headers["content-sha256"] = content_sha256
+    return headers
+
+
+def _build_source_artifact_upload_init_response(
+    *,
+    result: SourceArtifactRegistrationResult,
+    bucket: str,
+    endpoint: str,
+) -> ReaderSourceArtifactUploadInitResponse:
+    return ReaderSourceArtifactUploadInitResponse(
+        artifact_id=str(result.artifact_id),
+        artifact_kind=result.artifact_kind,
+        storage_provider=result.storage_provider,
+        bucket=result.bucket or bucket,
+        endpoint=endpoint,
+        object_key=result.object_key,
+        status=result.status,
+        content_type=result.content_type,
+        byte_size=result.byte_size,
+        content_sha256=result.content_sha256,
+        source_filename=result.source_filename,
+        upload_method="oss_put_object_pending_credentials",
+        headers=_build_source_artifact_upload_headers(
+            content_type=result.content_type,
+            content_sha256=result.content_sha256,
+        ),
+    )
+
+
+def _build_source_artifact_upload_complete_response(
+    result: SourceArtifactCompletionResult,
+) -> ReaderSourceArtifactUploadCompleteResponse:
+    return ReaderSourceArtifactUploadCompleteResponse(
+        artifact_id=str(result.artifact_id),
+        artifact_kind=result.artifact_kind,
+        storage_provider=result.storage_provider,
+        bucket=result.bucket,
+        endpoint=result.endpoint,
+        object_key=result.object_key,
+        status=result.status,
+        content_type=result.content_type,
+        byte_size=result.byte_size,
+        content_sha256=result.content_sha256,
+        source_filename=result.source_filename,
+        upload_completed=True,
+        idempotent_noop=result.idempotent_noop,
     )
 
 
@@ -290,6 +367,78 @@ async def submit_reader_input(
         outcome="input_rejected_or_action_required",
         suitability=suitability,
     )
+
+
+@router.post(
+    "/source-artifacts/init-upload",
+    response_model=ReaderSourceArtifactUploadInitResponse,
+    summary="Register source artifact upload metadata and return an OSS object target",
+)
+async def init_reader_source_artifact_upload(
+    body: ReaderSourceArtifactUploadInitRequest,
+    current_user: AuthUserDep,
+) -> ReaderSourceArtifactUploadInitResponse:
+    user_id = UUID(current_user.user_id)
+    service = SourceArtifactService()
+    try:
+        result = await service.register_source_artifact(
+            user_id=user_id,
+            artifact_kind=body.artifact_kind,
+            reading_record_id=body.reading_record_id,
+            original_input_id=body.original_input_id,
+            storage_provider="oss",
+            content_type=body.content_type,
+            byte_size=body.byte_size,
+            content_sha256=body.content_sha256,
+            source_filename=body.source_filename,
+            status="pending",
+            source_refs_json=body.source_refs or {},
+            metadata_json=body.metadata or {},
+            quality_json=body.quality or {},
+        )
+        object_ref = service.build_oss_object_ref(
+            user_id=user_id,
+            artifact_id=result.artifact_id,
+            source_filename=result.source_filename,
+            artifact_kind=result.artifact_kind,
+        )
+    except SourceArtifactError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return _build_source_artifact_upload_init_response(
+        result=result,
+        bucket=object_ref["bucket"],
+        endpoint=object_ref["endpoint"],
+    )
+
+
+@router.post(
+    "/source-artifacts/{artifact_id}/complete-upload",
+    response_model=ReaderSourceArtifactUploadCompleteResponse,
+    summary="Mark an OSS-backed original_upload source artifact as available",
+)
+async def complete_reader_source_artifact_upload(
+    artifact_id: UUID,
+    body: ReaderSourceArtifactUploadCompleteRequest,
+    current_user: AuthUserDep,
+) -> ReaderSourceArtifactUploadCompleteResponse:
+    user_id = UUID(current_user.user_id)
+    service = SourceArtifactService()
+    try:
+        result = await service.complete_source_artifact_upload(
+            user_id=user_id,
+            artifact_id=artifact_id,
+            content_type=body.content_type,
+            byte_size=body.byte_size,
+            content_sha256=body.content_sha256,
+            metadata_json=body.metadata,
+            quality_json=body.quality,
+        )
+    except SourceArtifactError as exc:
+        _raise_source_artifact_complete_error(exc)
+        raise AssertionError("unreachable")
+
+    return _build_source_artifact_upload_complete_response(result)
 
 
 @router.post(

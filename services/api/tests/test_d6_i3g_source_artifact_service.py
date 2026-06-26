@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,10 @@ from uuid import UUID
 import pytest
 
 from app.services.reader_orchestration.source_artifact_service import (
+    SourceArtifactCompletionResult,
+    SourceArtifactConflictError,
     SourceArtifactError,
+    SourceArtifactNotFoundError,
     SourceArtifactRegistrationResult,
     SourceArtifactService,
 )
@@ -18,7 +22,9 @@ _USER_ID = UUID("00000000-0000-0000-0000-000000000701")
 _READING_RECORD_ID = UUID("00000000-0000-0000-0000-000000000702")
 _ORIGINAL_INPUT_ID = UUID("00000000-0000-0000-0000-000000000703")
 _ARTIFACT_ID = UUID("00000000-0000-0000-0000-000000000704")
+_OTHER_READING_RECORD_ID = UUID("00000000-0000-0000-0000-000000000705")
 _NOW = datetime(2026, 6, 26, 12, 0, tzinfo=UTC)
+_UNSET = object()
 
 
 class _RecordedCall:
@@ -73,6 +79,9 @@ class _FakeConn:
         log: list[str] | None = None,
         fail_on_query_substring: str | None = None,
         fail_exception: Exception | None = None,
+        reading_record_lookup_result: Mapping[str, Any] | None | object = _UNSET,
+        original_input_lookup_result: Mapping[str, Any] | None | object = _UNSET,
+        source_artifact_lookup_result: Mapping[str, Any] | None | object = _UNSET,
     ) -> None:
         self.calls: list[_RecordedCall] = []
         self._in_transaction = False
@@ -80,6 +89,9 @@ class _FakeConn:
         self._last_transaction: _FakeTransaction | None = None
         self._fail_on_query_substring = fail_on_query_substring
         self._fail_exception = fail_exception or RuntimeError("db write failed")
+        self._reading_record_lookup_result = reading_record_lookup_result
+        self._original_input_lookup_result = original_input_lookup_result
+        self._source_artifact_lookup_result = source_artifact_lookup_result
 
     def transaction(
         self,
@@ -101,6 +113,8 @@ class _FakeConn:
         )
         if self._log is not None and "INSERT INTO source_artifacts" in query:
             self._log.append("insert_source_artifact")
+        if self._log is not None and "UPDATE source_artifacts" in query:
+            self._log.append("update_source_artifact")
         if (
             self._fail_on_query_substring is not None
             and self._fail_on_query_substring in query
@@ -108,12 +122,56 @@ class _FakeConn:
             raise self._fail_exception
         return "INSERT 0 1"
 
+    async def fetchrow(self, query: str, *args: Any) -> Mapping[str, Any] | None:
+        self.calls.append(
+            _RecordedCall(
+                "fetchrow",
+                query,
+                args,
+                in_transaction=self._in_transaction,
+            )
+        )
+        if self._log is not None and "FROM reading_records" in query:
+            self._log.append("validate_reading_record")
+        if self._log is not None and "FROM original_inputs" in query:
+            self._log.append("validate_original_input")
+        if self._log is not None and "FROM source_artifacts" in query:
+            self._log.append("select_source_artifact")
+        if (
+            self._fail_on_query_substring is not None
+            and self._fail_on_query_substring in query
+        ):
+            raise self._fail_exception
+        if "FROM reading_records" in query:
+            if self._reading_record_lookup_result is not _UNSET:
+                return self._reading_record_lookup_result
+            if args == (_READING_RECORD_ID, _USER_ID):
+                return {"id": _READING_RECORD_ID}
+            return None
+        if "FROM original_inputs" in query:
+            if self._original_input_lookup_result is not _UNSET:
+                return self._original_input_lookup_result
+            if args == (_ORIGINAL_INPUT_ID, _USER_ID):
+                return {"reading_record_id": _READING_RECORD_ID}
+            return None
+        if "FROM source_artifacts" in query:
+            if self._source_artifact_lookup_result is not _UNSET:
+                return self._source_artifact_lookup_result
+            if args == (_ARTIFACT_ID, _USER_ID):
+                return _build_source_artifact_row()
+            return None
+        raise AssertionError(f"unexpected fetchrow query: {query}")
+
     def is_in_transaction(self) -> bool:
         return self._in_transaction
 
     @property
     def execute_calls(self) -> list[_RecordedCall]:
         return [call for call in self.calls if call.kind == "execute"]
+
+    @property
+    def fetchrow_calls(self) -> list[_RecordedCall]:
+        return [call for call in self.calls if call.kind == "fetchrow"]
 
 
 class _FakePoolAcquireContext:
@@ -187,11 +245,67 @@ def _register(
     )
 
 
+def _complete(
+    service: SourceArtifactService,
+    *,
+    artifact_id: UUID = _ARTIFACT_ID,
+    content_type: str | None = None,
+    byte_size: int | None = None,
+    content_sha256: str | None = None,
+    metadata_json: Any = None,
+    quality_json: Any = None,
+) -> SourceArtifactCompletionResult:
+    return asyncio.run(
+        service.complete_source_artifact_upload(
+            user_id=_USER_ID,
+            artifact_id=artifact_id,
+            content_type=content_type,
+            byte_size=byte_size,
+            content_sha256=content_sha256,
+            metadata_json=metadata_json,
+            quality_json=quality_json,
+            now=_NOW,
+        )
+    )
+
+
 def _find_execute_call(conn: _FakeConn, fragment: str) -> _RecordedCall:
     for call in conn.execute_calls:
         if fragment in call.query:
             return call
     raise AssertionError(f"missing execute call containing {fragment!r}")
+
+
+def _build_source_artifact_row(
+    *,
+    artifact_kind: str = "original_upload",
+    storage_provider: str = "oss",
+    bucket: str | None = "claread-dev",
+    endpoint: str | None = "https://oss-cn-shenzhen.aliyuncs.com",
+    object_key: str = f"dev/original-inputs/{_USER_ID}/{_ARTIFACT_ID}/report.pdf",
+    status: str = "pending",
+    content_type: str | None = None,
+    byte_size: int | None = None,
+    content_sha256: str | None = None,
+    source_filename: str | None = "report.pdf",
+    metadata_json: dict[str, Any] | None = None,
+    quality_json: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": _ARTIFACT_ID,
+        "artifact_kind": artifact_kind,
+        "storage_provider": storage_provider,
+        "bucket": bucket,
+        "endpoint": endpoint,
+        "object_key": object_key,
+        "status": status,
+        "content_type": content_type,
+        "byte_size": byte_size,
+        "content_sha256": content_sha256,
+        "source_filename": source_filename,
+        "metadata_json": {"origin": "init"} if metadata_json is None else metadata_json,
+        "quality_json": {"dpi": 300} if quality_json is None else quality_json,
+    }
 
 
 def test_register_original_upload_writes_one_source_artifacts_row() -> None:
@@ -215,12 +329,14 @@ def test_register_original_upload_writes_one_source_artifacts_row() -> None:
 
     assert log == [
         "transaction_started",
+        "validate_reading_record",
+        "validate_original_input",
         "insert_source_artifact",
         "transaction_committed",
     ]
     assert conn._last_transaction is not None
     assert conn._last_transaction.committed is True
-    assert all(call.in_transaction for call in conn.execute_calls)
+    assert all(call.in_transaction for call in conn.calls)
 
     insert_call = _find_execute_call(conn, "INSERT INTO source_artifacts")
     assert insert_call.args[0] == _ARTIFACT_ID
@@ -360,6 +476,60 @@ def test_pre_record_upload_allows_null_reading_record_and_original_input() -> No
     assert insert_call.args[2] is None
 
 
+def test_rejects_reading_record_not_owned_by_user_before_insert() -> None:
+    conn = _FakeConn(
+        reading_record_lookup_result=None,
+    )
+    service = _build_service(conn)
+
+    with pytest.raises(SourceArtifactError, match="reading_record_id"):
+        _register(
+            service,
+            original_input_id=None,
+        )
+
+    assert conn.fetchrow_calls != []
+    assert conn.execute_calls == []
+    assert conn._last_transaction is not None
+    assert conn._last_transaction.rolled_back is True
+
+
+def test_rejects_original_input_not_owned_by_user_before_insert() -> None:
+    conn = _FakeConn(
+        original_input_lookup_result=None,
+    )
+    service = _build_service(conn)
+
+    with pytest.raises(SourceArtifactError, match="original_input_id"):
+        _register(
+            service,
+            reading_record_id=None,
+        )
+
+    assert conn.fetchrow_calls != []
+    assert conn.execute_calls == []
+    assert conn._last_transaction is not None
+    assert conn._last_transaction.rolled_back is True
+
+
+def test_rejects_original_input_that_does_not_belong_to_reading_record() -> None:
+    conn = _FakeConn(
+        original_input_lookup_result={"reading_record_id": _OTHER_READING_RECORD_ID},
+    )
+    service = _build_service(conn)
+
+    with pytest.raises(
+        SourceArtifactError,
+        match="does not belong to reading_record_id",
+    ):
+        _register(service)
+
+    assert len(conn.fetchrow_calls) == 2
+    assert conn.execute_calls == []
+    assert conn._last_transaction is not None
+    assert conn._last_transaction.rolled_back is True
+
+
 def test_local_provider_normalizes_bucket_and_endpoint_to_none() -> None:
     conn = _FakeConn()
     service = _build_service(conn)
@@ -378,6 +548,290 @@ def test_local_provider_normalizes_bucket_and_endpoint_to_none() -> None:
     assert insert_call.args[5] == "local"
     assert insert_call.args[6] is None
     assert insert_call.args[8] is None
+
+
+def test_complete_pending_upload_marks_artifact_available() -> None:
+    log: list[str] = []
+    conn = _FakeConn(
+        log=log,
+        source_artifact_lookup_result=_build_source_artifact_row(),
+    )
+    service = _build_service(conn)
+
+    result = _complete(
+        service,
+        content_type="application/pdf",
+        byte_size=4096,
+        content_sha256="b" * 64,
+        metadata_json={"scanner": "ios"},
+        quality_json={"confidence": "high"},
+    )
+
+    assert result.status == "available"
+    assert result.idempotent_noop is False
+    assert result.bucket == "claread-dev"
+    assert result.endpoint == "https://oss-cn-shenzhen.aliyuncs.com"
+    assert result.object_key == f"dev/original-inputs/{_USER_ID}/{_ARTIFACT_ID}/report.pdf"
+    assert result.content_type == "application/pdf"
+    assert result.byte_size == 4096
+    assert result.content_sha256 == "b" * 64
+    assert log == [
+        "transaction_started",
+        "select_source_artifact",
+        "update_source_artifact",
+        "transaction_committed",
+    ]
+    assert len(conn.fetchrow_calls) == 1
+    assert "FOR UPDATE" in conn.fetchrow_calls[0].query
+    update_call = _find_execute_call(conn, "UPDATE source_artifacts")
+    assert update_call.args[0] == _ARTIFACT_ID
+    assert update_call.args[1] == "available"
+    assert update_call.args[2] == "application/pdf"
+    assert update_call.args[3] == 4096
+    assert update_call.args[4] == "b" * 64
+    assert update_call.args[5] == {"origin": "init", "scanner": "ios"}
+    assert update_call.args[6] == {"dpi": 300, "confidence": "high"}
+    assert update_call.args[7] == _NOW
+
+
+def test_complete_upload_missing_or_wrong_user_fails_closed() -> None:
+    conn = _FakeConn(
+        source_artifact_lookup_result=None,
+    )
+    service = _build_service(conn)
+
+    with pytest.raises(SourceArtifactNotFoundError, match="source artifact not found"):
+        _complete(service)
+
+    assert len(conn.fetchrow_calls) == 1
+    assert conn.execute_calls == []
+    assert conn._last_transaction is not None
+    assert conn._last_transaction.rolled_back is True
+
+
+def test_complete_upload_rejects_non_original_upload_artifact() -> None:
+    conn = _FakeConn(
+        source_artifact_lookup_result=_build_source_artifact_row(
+            artifact_kind="ocr_result",
+        ),
+    )
+    service = _build_service(conn)
+
+    with pytest.raises(SourceArtifactConflictError, match="original_upload"):
+        _complete(service)
+
+    assert conn.execute_calls == []
+
+
+def test_complete_upload_rejects_non_oss_provider() -> None:
+    conn = _FakeConn(
+        source_artifact_lookup_result=_build_source_artifact_row(
+            storage_provider="local",
+            bucket=None,
+            endpoint=None,
+        ),
+    )
+    service = _build_service(conn)
+
+    with pytest.raises(SourceArtifactConflictError, match="only oss"):
+        _complete(service)
+
+    assert conn.execute_calls == []
+
+
+@pytest.mark.parametrize("status", ["failed", "deleted"])
+def test_complete_upload_rejects_terminal_statuses(status: str) -> None:
+    conn = _FakeConn(
+        source_artifact_lookup_result=_build_source_artifact_row(
+            status=status,
+        ),
+    )
+    service = _build_service(conn)
+
+    with pytest.raises(SourceArtifactConflictError, match="cannot be completed"):
+        _complete(service)
+
+    assert conn.execute_calls == []
+
+
+def test_complete_upload_available_same_fields_is_idempotent() -> None:
+    conn = _FakeConn(
+        source_artifact_lookup_result=_build_source_artifact_row(
+            status="available",
+            content_type="application/pdf",
+            byte_size=4096,
+            content_sha256="b" * 64,
+            metadata_json={"origin": "init", "scanner": "ios"},
+            quality_json={"dpi": 300, "confidence": "high"},
+        ),
+    )
+    service = _build_service(conn)
+
+    result = _complete(
+        service,
+        content_type="application/pdf",
+        byte_size=4096,
+        content_sha256="b" * 64,
+        metadata_json={"scanner": "ios"},
+        quality_json={"confidence": "high"},
+    )
+
+    assert result.status == "available"
+    assert result.idempotent_noop is True
+    assert conn.execute_calls == []
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_message"),
+    [
+        ({"content_sha256": "c" * 64}, "content_sha256"),
+        ({"byte_size": 2048}, "byte_size"),
+        ({"content_type": "text/plain"}, "content_type"),
+    ],
+)
+def test_complete_upload_available_mismatched_content_fields_fail_closed(
+    kwargs: dict[str, Any],
+    expected_message: str,
+) -> None:
+    conn = _FakeConn(
+        source_artifact_lookup_result=_build_source_artifact_row(
+            status="available",
+            content_type="application/pdf",
+            byte_size=4096,
+            content_sha256="b" * 64,
+        ),
+    )
+    service = _build_service(conn)
+
+    with pytest.raises(SourceArtifactConflictError, match=expected_message):
+        _complete(service, **kwargs)
+
+    assert conn.execute_calls == []
+
+
+@pytest.mark.parametrize(
+    ("row_kwargs", "complete_kwargs", "expected_message"),
+    [
+        (
+            {"content_sha256": "b" * 64},
+            {"content_sha256": "c" * 64},
+            "content_sha256",
+        ),
+        (
+            {"byte_size": 4096},
+            {"byte_size": 2048},
+            "byte_size",
+        ),
+        (
+            {"content_type": "application/pdf"},
+            {"content_type": "text/plain"},
+            "content_type",
+        ),
+    ],
+)
+def test_complete_upload_pending_rejects_initialized_content_mismatch(
+    row_kwargs: dict[str, Any],
+    complete_kwargs: dict[str, Any],
+    expected_message: str,
+) -> None:
+    conn = _FakeConn(
+        source_artifact_lookup_result=_build_source_artifact_row(
+            **row_kwargs,
+        ),
+    )
+    service = _build_service(conn)
+
+    with pytest.raises(SourceArtifactConflictError, match=expected_message):
+        _complete(service, **complete_kwargs)
+
+    assert conn.execute_calls == []
+
+
+def test_complete_upload_backfills_content_fields_when_init_left_them_empty() -> None:
+    conn = _FakeConn(
+        source_artifact_lookup_result=_build_source_artifact_row(
+            content_type=None,
+            byte_size=None,
+            content_sha256=None,
+        ),
+    )
+    service = _build_service(conn)
+
+    result = _complete(
+        service,
+        content_type="application/pdf",
+        byte_size=4096,
+        content_sha256="b" * 64,
+    )
+
+    assert result.status == "available"
+    assert result.content_type == "application/pdf"
+    assert result.byte_size == 4096
+    assert result.content_sha256 == "b" * 64
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_message"),
+    [
+        ({"metadata_json": ["bad"]}, "metadata_json"),
+        ({"quality_json": ["bad"]}, "quality_json"),
+    ],
+)
+def test_complete_upload_json_fields_must_be_objects(
+    kwargs: dict[str, Any],
+    expected_message: str,
+) -> None:
+    conn = _FakeConn()
+    service = _build_service(conn)
+
+    with pytest.raises(SourceArtifactError, match=expected_message):
+        _complete(service, **kwargs)
+
+    assert conn.fetchrow_calls == []
+    assert conn.execute_calls == []
+
+
+def test_complete_upload_metadata_and_quality_merge_without_losing_existing_fields() -> None:
+    conn = _FakeConn(
+        source_artifact_lookup_result=_build_source_artifact_row(
+            metadata_json={"origin": "init"},
+            quality_json={"dpi": 300},
+        ),
+    )
+    service = _build_service(conn)
+
+    result = _complete(
+        service,
+        metadata_json={"scanner": "ios"},
+        quality_json={"confidence": "high"},
+    )
+
+    assert result.status == "available"
+    update_call = _find_execute_call(conn, "UPDATE source_artifacts")
+    assert update_call.args[5] == {"origin": "init", "scanner": "ios"}
+    assert update_call.args[6] == {"dpi": 300, "confidence": "high"}
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_message"),
+    [
+        ({"metadata_json": {"origin": "other"}}, "metadata_json.origin"),
+        ({"quality_json": {"dpi": 200}}, "quality_json.dpi"),
+    ],
+)
+def test_complete_upload_metadata_conflicts_fail_closed(
+    kwargs: dict[str, Any],
+    expected_message: str,
+) -> None:
+    conn = _FakeConn(
+        source_artifact_lookup_result=_build_source_artifact_row(),
+    )
+    service = _build_service(conn)
+
+    with pytest.raises(SourceArtifactConflictError, match=expected_message):
+        _complete(service, **kwargs)
+
+    assert conn.execute_calls == []
 
 
 def test_db_error_rolls_back_and_wraps() -> None:

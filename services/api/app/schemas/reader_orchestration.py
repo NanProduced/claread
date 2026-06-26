@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -14,6 +15,9 @@ from app.contracts.annotation import (
 from app.schemas.reader_documents import CandidateReadingDocumentStatus
 from app.schemas.reader_input_adapter import (
     InputAdapterSourceType,
+    SourceArtifactKind,
+    SourceArtifactStatus,
+    SourceArtifactStorageProvider,
     InputSuitabilityResult,
 )
 
@@ -522,6 +526,76 @@ ReaderUnifiedInputSubmitResponse = Annotated[
     | ReaderUnifiedInputSubmitRejectedResponse,
     Field(discriminator="outcome"),
 ]
+
+
+class ReaderSourceArtifactUploadInitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_kind: SourceArtifactKind
+    source_filename: str | None = None
+    content_type: str | None = None
+    byte_size: int | None = Field(default=None, ge=0)
+    content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    reading_record_id: UUID | None = None
+    original_input_id: UUID | None = None
+    source_refs: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+    quality: dict[str, Any] | None = None
+
+    @field_validator("artifact_kind")
+    @classmethod
+    def validate_artifact_kind_for_upload_init(cls, value: SourceArtifactKind) -> SourceArtifactKind:
+        if value != "original_upload":
+            raise ValueError(
+                "artifact_kind must be original_upload for init-upload; derived artifacts are worker-managed"
+            )
+        return value
+
+
+class ReaderSourceArtifactUploadInitResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_id: str = Field(min_length=1)
+    artifact_kind: SourceArtifactKind
+    storage_provider: SourceArtifactStorageProvider
+    bucket: str = Field(min_length=1)
+    endpoint: str = Field(min_length=1)
+    object_key: str = Field(min_length=1)
+    status: SourceArtifactStatus
+    content_type: str | None = None
+    byte_size: int | None = Field(default=None, ge=0)
+    content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    source_filename: str = Field(min_length=1)
+    upload_method: Literal["oss_put_object_pending_credentials"]
+    headers: dict[str, str]
+
+
+class ReaderSourceArtifactUploadCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content_type: str | None = None
+    byte_size: int | None = Field(default=None, ge=0)
+    content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    metadata: dict[str, Any] | None = None
+    quality: dict[str, Any] | None = None
+
+
+class ReaderSourceArtifactUploadCompleteResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_id: str = Field(min_length=1)
+    artifact_kind: SourceArtifactKind
+    storage_provider: SourceArtifactStorageProvider
+    bucket: str = Field(min_length=1)
+    endpoint: str = Field(min_length=1)
+    object_key: str = Field(min_length=1)
+    status: SourceArtifactStatus
+    content_type: str | None = None
+    byte_size: int | None = Field(default=None, ge=0)
+    content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    source_filename: str = Field(min_length=1)
+    upload_completed: Literal[True]
+    idempotent_noop: bool
 
 
 class ReaderCandidateDocumentConfirmRequest(BaseModel):
