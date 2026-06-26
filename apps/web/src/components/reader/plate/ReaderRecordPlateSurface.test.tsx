@@ -1192,6 +1192,286 @@ describe("ReaderRecordPlateSurface", () => {
     ).toBe(true);
   });
 
+  it("edits an existing note through the Reading Record PATCH endpoint", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, status: "updated" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    const onRequestSnapshotReload = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const noteAsset = makeUserAsset({
+      asset_id: "asset_note_1",
+      asset_type: "note",
+      note_text: "Original note text for editing.",
+    });
+    const { container } = render(
+      <ReaderRecordPlateSurface
+        snapshot={makeSnapshot([noteAsset])}
+        onRequestSnapshotReload={onRequestSnapshotReload}
+      />,
+    );
+
+    const noteMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-kind="user_note"]',
+    );
+    expect(noteMark).not.toBeNull();
+    if (!noteMark) {
+      throw new Error("Expected note mark");
+    }
+
+    fireEvent.click(noteMark);
+
+    const editButton = await screen.findByRole("button", {
+      name: "编辑笔记",
+    });
+    fireEvent.click(editButton);
+
+    const editInput = await screen.findByLabelText<HTMLTextAreaElement>(
+      "编辑笔记内容",
+    );
+    fireEvent.change(editInput, {
+      target: { value: "Updated note text after editing." },
+    });
+
+    const saveButton = await screen.findByRole("button", {
+      name: "保存笔记",
+    });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find(
+        ([url]) =>
+          typeof url === "string" &&
+          url === "/api/web/reading-record/notes/asset_note_1",
+      );
+      expect(patchCall).toBeDefined();
+      expect(
+        (patchCall?.[1] as RequestInit | undefined)?.method,
+      ).toBe("PATCH");
+      const body = JSON.parse(
+        String((patchCall?.[1] as RequestInit | undefined)?.body),
+      ) as Record<string, unknown>;
+      expect(body.noteText).toBe("Updated note text after editing.");
+    });
+
+    await waitFor(() => {
+      expect(onRequestSnapshotReload).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("deletes an existing note through the Reading Record DELETE endpoint", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, status: "deleted" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    const onRequestSnapshotReload = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const noteAsset = makeUserAsset({
+      asset_id: "asset_note_1",
+      asset_type: "note",
+      note_text: "Note to be deleted.",
+    });
+    const { container } = render(
+      <ReaderRecordPlateSurface
+        snapshot={makeSnapshot([noteAsset])}
+        onRequestSnapshotReload={onRequestSnapshotReload}
+      />,
+    );
+
+    const noteMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-kind="user_note"]',
+    );
+    expect(noteMark).not.toBeNull();
+    if (!noteMark) {
+      throw new Error("Expected note mark");
+    }
+
+    fireEvent.click(noteMark);
+
+    const deleteButton = await screen.findByRole("button", {
+      name: "删除笔记",
+    });
+    fireEvent.click(deleteButton);
+
+    await waitFor(() => {
+      const deleteCall = fetchMock.mock.calls.find(
+        ([url]) =>
+          typeof url === "string" &&
+          url === "/api/web/reading-record/notes/asset_note_1",
+      );
+      expect(deleteCall).toBeDefined();
+      expect(
+        (deleteCall?.[1] as RequestInit | undefined)?.method,
+      ).toBe("DELETE");
+    });
+
+    await waitFor(() => {
+      expect(onRequestSnapshotReload).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("cancels a draft note without calling any write endpoint", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot()} />,
+    );
+
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+
+    const noteButton = await screen.findByRole<HTMLButtonElement>("button", {
+      name: "新建笔记",
+    });
+    await waitFor(() => {
+      expect(noteButton.disabled).toBe(false);
+    });
+    fireEvent.click(noteButton);
+
+    const noteInput = await screen.findByTestId<HTMLTextAreaElement>(
+      "reader-record-plate-note-input",
+    );
+    expect(noteInput).not.toBeNull();
+
+    const cancelButton = screen.getByRole("button", { name: "取消" });
+    fireEvent.click(cancelButton);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("reader-record-plate-note-input"),
+      ).toBeNull();
+    });
+
+    const nonFavoritesCalls = fetchMock.mock.calls.filter(
+      ([url]) => !(typeof url === "string" && url.includes("/api/web/favorites")),
+    );
+    expect(nonFavoritesCalls).toHaveLength(0);
+  });
+
+  it("cancels note editing and returns to view mode", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const noteAsset = makeUserAsset({
+      asset_id: "asset_note_1",
+      asset_type: "note",
+      note_text: "Original note for cancel-edit test.",
+    });
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([noteAsset])} />,
+    );
+
+    const noteMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-kind="user_note"]',
+    );
+    expect(noteMark).not.toBeNull();
+    if (!noteMark) {
+      throw new Error("Expected note mark");
+    }
+
+    fireEvent.click(noteMark);
+
+    const editButton = await screen.findByRole("button", {
+      name: "编辑笔记",
+    });
+    fireEvent.click(editButton);
+
+    const editInput = await screen.findByLabelText<HTMLTextAreaElement>(
+      "编辑笔记内容",
+    );
+    fireEvent.change(editInput, {
+      target: { value: "Modified text that should not be saved." },
+    });
+
+    const cancelEditButton = screen.getByRole("button", {
+      name: "取消编辑笔记",
+    });
+    fireEvent.click(cancelEditButton);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText("编辑笔记内容"),
+      ).toBeNull();
+    });
+
+    expect(
+      screen.getByText("Original note for cancel-edit test."),
+    ).toBeTruthy();
+
+    const nonFavoritesCalls = fetchMock.mock.calls.filter(
+      ([url]) => !(typeof url === "string" && url.includes("/api/web/favorites")),
+    );
+    expect(nonFavoritesCalls).toHaveLength(0);
+  });
+
   it("keeps lookup, copy, and write actions disabled for unsupported cross-segment selections", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
