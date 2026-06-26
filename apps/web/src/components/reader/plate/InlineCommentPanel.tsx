@@ -132,6 +132,7 @@ export function InlineCommentPanel(props: InlineCommentPanelProps) {
       className="w-[22rem] max-w-[calc(100vw-2rem)] rounded-lg border border-border/60 bg-background/95 p-3 shadow-md backdrop-blur-sm"
       data-testid="reader-record-inline-comment-panel"
       data-reader-record-floating-toolbar="note-menu"
+      data-plate-focus="true"
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="mb-2 flex items-center justify-between">
