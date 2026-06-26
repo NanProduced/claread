@@ -34,12 +34,13 @@ import {
 
 function vocabularyMarkClassName(mark: ReaderRecordPlateVocabularyMark): string {
   if (mark.vocabulary.itemType === "phrase_gloss") {
-    return "rounded-sm bg-violet-50 underline decoration-violet-500/70 underline-offset-4";
+    return "cursor-pointer rounded-sm bg-violet-50 underline decoration-violet-500/70 underline-offset-4 transition-colors hover:bg-violet-100";
   }
   if (mark.vocabulary.itemType === "context_gloss") {
-    return "rounded-sm bg-sky-50 underline decoration-sky-500/70 underline-offset-4";
+    return "cursor-pointer rounded-sm bg-sky-50 underline decoration-sky-500/70 underline-offset-4 transition-colors hover:bg-sky-100";
   }
-  return "rounded-sm bg-amber-50";
+  // vocab_highlight: 加下划线统一视觉语言，与 phrase/context gloss 一致
+  return "cursor-pointer rounded-sm bg-amber-50 underline decoration-amber-500/70 underline-offset-4 transition-colors hover:bg-amber-100";
 }
 
 function vocabularyMarkLabel(mark: ReaderRecordPlateVocabularyMark): string {
@@ -53,7 +54,7 @@ function vocabularyMarkLabel(mark: ReaderRecordPlateVocabularyMark): string {
 }
 
 function grammarMarkClassName(): string {
-  return "rounded-sm underline decoration-emerald-600/80 decoration-[1.5px] underline-offset-4";
+  return "rounded-sm underline decoration-emerald-600/80 decoration-[1.5px] underline-offset-4 transition-colors hover:bg-emerald-50";
 }
 
 function grammarMarkLabel(mark: ReaderRecordPlateGrammarMark): string {
@@ -61,7 +62,7 @@ function grammarMarkLabel(mark: ReaderRecordPlateGrammarMark): string {
 }
 
 function userHighlightMarkClassName(): string {
-  return "rounded-sm bg-amber-100/80 ring-1 ring-amber-200/80";
+  return "cursor-pointer rounded-sm bg-amber-100/80 ring-1 ring-amber-200/80 transition-colors hover:bg-amber-200/80";
 }
 
 function userHighlightMarkLabel(): string {
@@ -69,7 +70,7 @@ function userHighlightMarkLabel(): string {
 }
 
 function userNoteMarkClassName(): string {
-  return "rounded-sm bg-blue-50/60 underline decoration-blue-500/80 decoration-dashed underline-offset-4";
+  return "cursor-pointer rounded-sm bg-blue-50/60 underline decoration-blue-500/80 decoration-dashed underline-offset-4 transition-colors hover:bg-blue-100/60";
 }
 
 function userNoteMarkLabel(): string {
