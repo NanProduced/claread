@@ -739,6 +739,30 @@ select {
   font-family: var(--font-sans);
 }
 
+.reader-density-intensive > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0.85rem;
+}
+
+.reader-density-intensive
+  > :not([hidden])
+  ~ :not([hidden]):is(
+  [data-reader-record-node="callout"]
+) {
+  margin-top: 1rem;
+}
+
+.reader-density-immersive > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 1.1rem;
+}
+
+.reader-density-immersive
+  > :not([hidden])
+  ~ :not([hidden]):is(
+  [data-reader-record-node="callout"]
+) {
+  margin-top: 1.25rem;
+}
+
 .reader-serif[data-reader-sentence-text="true"] {
   text-wrap: pretty;
 }

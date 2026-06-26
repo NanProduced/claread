@@ -523,75 +523,6 @@ function BlockquoteBlock({
   );
 }
 
-function CalloutBlock({
-  block,
-  onFeedback,
-}: {
-  block: ReaderRecordPlateCalloutBlock;
-  onFeedback: (block: ReaderRecordPlateCalloutBlock, anchor: HTMLElement) => void;
-}) {
-  const isGrammar = block.variant === "grammar";
-  const isSupplement = block.variant === "supplement";
-  const containerClass = isGrammar
-    ? "reader-record-plate-callout reader-record-plate-callout--grammar mt-3 rounded-md border border-emerald-200/70 bg-emerald-50/60 px-4 py-3 text-sm leading-6 text-ink-soft"
-    : isSupplement
-      ? "reader-record-plate-callout reader-record-plate-callout--supplement mt-3 rounded-md border border-amber-200/70 bg-amber-50/60 px-4 py-3 text-sm leading-6 text-ink-soft"
-      : "reader-record-plate-callout reader-record-plate-callout--analysis mt-3 rounded-md border border-sky-200/70 bg-sky-50/60 px-4 py-3 text-sm leading-6 text-ink-soft";
-  const labelClass = isGrammar
-    ? "mb-1 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-emerald-700/80"
-    : isSupplement
-      ? "mb-1 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-amber-700/80"
-      : "mb-1 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-sky-700/80";
-  const label = isGrammar
-    ? "语法讲解"
-    : isSupplement
-      ? "AI 补充"
-      : "句子结构";
-  const title = isGrammar
-    ? block.data.grammarPoint ?? ""
-    : isSupplement
-      ? block.data.supplementTitle ?? ""
-      : block.data.label ?? "";
-
-  return (
-    <div
-      data-reader-record-node="callout"
-      data-callout-variant={block.variant}
-      data-anchor-segment-id={block.data.anchorSegmentId}
-      className={containerClass}
-    >
-      <div className="flex items-start gap-2">
-        <span className="text-base leading-none" aria-hidden="true">
-          {block.icon}
-        </span>
-        <div className="min-w-0 flex-1">
-          <span className={labelClass}>{label}</span>
-          {title ? (
-            <span className="reader-serif block text-[0.95rem] font-semibold leading-snug text-ink">
-              {title}
-            </span>
-          ) : null}
-          <div className="mt-1">
-            <CalloutMarkdownRenderer nodes={block.children} />
-          </div>
-        </div>
-        <button
-          type="button"
-          className="shrink-0 rounded-sm px-1.5 py-0.5 text-xs text-muted/70 hover:bg-muted/40 hover:text-muted"
-          aria-label="反馈"
-          data-reader-record-feedback-trigger={block.id}
-          onClick={(event) => {
-            event.stopPropagation();
-            onFeedback(block, event.currentTarget as HTMLElement);
-          }}
-        >
-          <span aria-hidden="true">⚑</span>
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function ReaderRecordHeader({
   snapshot,
   progress,
@@ -994,7 +925,7 @@ export function ReaderRecordPlateSurface({
   snapshot,
   className = "px-5 py-8 sm:px-8 lg:px-10",
   columnClassName = "mx-auto max-w-[72ch]",
-  readingClassName = "reader-serif text-ink text-[1.2rem] leading-[1.9]",
+  readingClassName = "reader-serif text-ink",
   onRequestSnapshotReload,
 }: ReaderRecordPlateSurfaceProps) {
   const surfaceRef = useRef<HTMLElement | null>(null);
@@ -2409,7 +2340,7 @@ export function ReaderRecordPlateSurface({
             <Plate editor={editor} readOnly>
               <CommentPluginBridge apiRef={commentApiRef} />
               <EditorContainer
-                className={`reader-record-plate-document space-y-3 px-0 py-0 outline-none cursor-default overflow-visible bg-transparent ${readingClassName} ${typography.bodyClassName}`.trim()}
+                className={`reader-record-plate-document space-y-3 px-0 py-0 outline-none cursor-default overflow-visible bg-transparent ${readingClassName} ${typography.bodyClassName} ${typography.paragraphDensityClassName}`.trim()}
                 data-reader-record-mode={surfaceMode}
               >
                 <Editor readOnly disableDefaultStyles renderLeaf={renderLeaf as never} />
