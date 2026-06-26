@@ -18,7 +18,6 @@ import {
   type ReaderRecordPlateVocabularyMark,
 } from "@/lib/reader-plate/projection/reader-record-plate-document";
 import {
-  readReaderRecordSelectionAnchorDrafts,
   type ReaderRecordSelectionAnchorBridgeResult,
 } from "@/lib/reader-plate/projection/reader-record-dom-selection";
 import {
@@ -61,6 +60,7 @@ import {
   InlineCommentPanel,
   type CommentPluginApi,
 } from "@/components/reader/plate/InlineCommentPanel";
+import { SelectionAnchorBridge } from "@/components/reader/plate/SelectionAnchorBridge";
 import {
   projectReaderRecordPlateToPlateValue,
   type PlateTextNode,
@@ -1141,22 +1141,54 @@ export function ReaderRecordPlateSurface({
     offsetPx: 4,
   });
 
+  // InlineCommentPanel 浮动层 — 锚定到当前选区 rect（draft）或笔记 mark DOM（existing）。
+  // 通过 FloatingPortal 渲染到 body，避免在文档流中挤压正文。
+  const commentPanelOpen =
+    noteAnchorDraft !== null || noteMenu !== null;
+  const commentFloating = useReaderFloatingLayer({
+    open: commentPanelOpen,
+    placement: "bottom",
+    offsetPx: 8,
+  });
+
+  // 选区或激活笔记变化时，更新浮动层的 reference 元素
   useEffect(() => {
-    function handleSelectionChange() {
-      const nextSelection = readReaderRecordSelectionAnchorDrafts(
-        surfaceRef.current,
-        snapshot,
-      );
+    if (!commentPanelOpen) return;
+
+    // draft 模式：用选区 rect
+    if (noteAnchorDraft && activeSelection?.rect) {
+      const rect = activeSelection.rect;
+      commentFloating.refs.setReference({
+        getBoundingClientRect: () => rect,
+      });
+      return;
+    }
+    // existing note 模式：用笔记 mark 的 DOM element
+    if (noteMenu?.anchor) {
+      const anchor = noteMenu.anchor;
+      commentFloating.refs.setReference({
+        getBoundingClientRect: () => anchor.getBoundingClientRect(),
+      });
+    }
+  }, [
+    commentPanelOpen,
+    noteAnchorDraft,
+    noteMenu,
+    activeSelection,
+    commentFloating.refs,
+  ]);
+
+  // SelectionAnchorBridge 在 <Plate> 内通过 useEditorSelection 订阅选区，
+  // 拿到 Plate editor.selection → ReaderRecordSelectionAnchorBridgeResult。
+  // 替代旧的 selectionchange DOM 监听 + readReaderRecordSelectionAnchorDrafts。
+  const handleSelectionChange = useCallback(
+    (nextSelection: ReaderRecordSelectionAnchorBridgeResult | null) => {
       setActiveSelection(nextSelection);
       setCopyStatus("idle");
       setWriteState((current) => (current.kind === "saving" ? current : { kind: "idle" }));
-    }
-
-    window.document.addEventListener("selectionchange", handleSelectionChange);
-    return () => {
-      window.document.removeEventListener("selectionchange", handleSelectionChange);
-    };
-  }, [snapshot]);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (lookupState.kind === "idle") {
@@ -2339,6 +2371,10 @@ export function ReaderRecordPlateSurface({
           <ReaderToolbarActionsProvider value={toolbarActions}>
             <Plate editor={editor} readOnly>
               <CommentPluginBridge apiRef={commentApiRef} />
+              <SelectionAnchorBridge
+                snapshot={snapshot}
+                onChange={handleSelectionChange}
+              />
               <EditorContainer
                 className={`reader-record-plate-document space-y-3 px-0 py-0 outline-none cursor-default overflow-visible bg-transparent ${readingClassName} ${typography.bodyClassName} ${typography.paragraphDensityClassName}`.trim()}
                 data-reader-record-mode={surfaceMode}
@@ -2362,6 +2398,8 @@ export function ReaderRecordPlateSurface({
                 isSaving={commentIsSaving}
                 statusMessage={commentStatusMessage}
                 onClose={handleCloseCommentPanel}
+                floatingRef={commentFloating.refs.setFloating}
+                floatingStyles={commentFloating.floatingStyles}
               />
             </Plate>
           </ReaderToolbarActionsProvider>

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * InlineCommentPanel — Plate CommentKit 驱动的 inline comment 面板
+ * InlineCommentPanel — Plate CommentKit 驱动的浮动 comment 面板
  *
  * 取代旧的 noteMenu 浮层 + ReaderRecordNoteComposer。
  * 通过 `usePluginOption(commentPlugin, 'activeId')` 读取 CommentKit 状态：
@@ -9,9 +9,16 @@
  * - activeId === getDraftCommentKey() → 显示新建笔记 composer
  * - activeId === note.assetId → 显示已有笔记 view/edit
  *
+ * 浮动定位：通过 ReaderFloatingSurface (FloatingPortal) 渲染到 body，
+ * floatingRef + floatingStyles 由父组件通过 useReaderFloatingLayer 计算，
+ * 锚定到当前选区 rect（draft 模式）或笔记 mark DOM（existing 模式）。
+ *
  * CommentPluginBridge 在 <Plate> 内部渲染，通过 ref 把 CommentKit 的
  * setOption / tf.comment.setDraft / tf.comment.removeMark 暴露给父组件。
  * 父组件（ReaderRecordPlateSurface）在 <Plate> 外部通过 ref 控制 activeId。
+ *
+ * 注意：虽然 FloatingPortal 会把 DOM 移到 document.body，但 React context
+ * 仍由 React tree 决定，所以 usePluginOption 仍能正确读取 editor state。
  */
 import * as React from "react";
 import { useEditorPlugin, usePluginOption } from "platejs/react";
@@ -20,6 +27,9 @@ import { X } from "lucide-react";
 
 import { commentPlugin } from "@/components/editor/plugins/comment-kit";
 import type { ReaderRecordPlateUserNoteMark } from "@/lib/reader-plate/projection/reader-record-plate-document";
+import {
+  ReaderFloatingSurface,
+} from "@/components/reader/ReaderFloatingLayer";
 
 // --- CommentPlugin Bridge ---
 
@@ -84,6 +94,10 @@ export interface InlineCommentPanelProps {
 
   // Close
   onClose: () => void;
+
+  // Floating layer — 父组件通过 useReaderFloatingLayer 计算
+  floatingRef?: (node: HTMLDivElement | null) => void;
+  floatingStyles?: React.CSSProperties;
 }
 
 function actionButtonClassName(enabled: boolean) {
@@ -112,10 +126,13 @@ export function InlineCommentPanel(props: InlineCommentPanelProps) {
   };
 
   return (
-    <div
+    <ReaderFloatingSurface
+      floatingRef={props.floatingRef}
+      style={props.floatingStyles}
+      className="w-[22rem] max-w-[calc(100vw-2rem)] rounded-lg border border-border/60 bg-background/95 p-3 shadow-md backdrop-blur-sm"
       data-testid="reader-record-inline-comment-panel"
       data-reader-record-floating-toolbar="note-menu"
-      className="mt-4 rounded-lg border border-border/60 bg-background/95 p-3 shadow-md backdrop-blur-sm"
+      onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="mb-2 flex items-center justify-between">
         <span className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
@@ -155,7 +172,7 @@ export function InlineCommentPanel(props: InlineCommentPanelProps) {
           statusMessage={props.statusMessage}
         />
       ) : null}
-    </div>
+    </ReaderFloatingSurface>
   );
 }
 
