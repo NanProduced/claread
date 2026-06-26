@@ -7,11 +7,17 @@ import asyncpg
 from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas.reader_orchestration import (
+    ReaderCandidateDocumentConfirmRequest,
+    ReaderCandidateDocumentConfirmResponse,
     ReaderEventPollResponse,
     ReaderEventResponse,
     ReaderPlainTextSubmitRequest,
     ReaderPlainTextSubmitResponse,
     ReaderPlateSnapshot,
+    ReaderStableDocumentBase,
+    ReaderStableDocumentBlock,
+    ReaderStableDocumentMetadata,
+    ReaderStableDocumentResponse,
     ReaderRecordListItem,
     ReaderRecordListResponse,
     ReadingRecordProductState,
@@ -21,9 +27,22 @@ from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
     PlainTextArticleReadySubmitRequest,
 )
+from app.services.reader_orchestration.base_builder import (
+    DETERMINISTIC_READING_BASE_BUILDER_VERSION,
+    DETERMINISTIC_SEGMENTER_VERSION,
+    EXACT_CANONICAL_TEXT_VERSION,
+)
+from app.services.reader_orchestration.candidate_document_confirm_application_service import (
+    CandidateDocumentConfirmApplicationError,
+    CandidateDocumentConfirmApplicationService,
+)
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
 from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
+from app.services.reader_orchestration.stable_document_query_service import (
+    StableDocumentQueryError,
+    StableDocumentQueryService,
+)
 
 router = APIRouter(prefix="/reader", tags=["reader"])
 
@@ -64,6 +83,112 @@ async def submit_reader_plain_text(
         base_id=str(result.base_id),
         article_ready_sequence=result.article_ready_sequence,
         snapshot=result.snapshot,
+    )
+
+
+@router.post(
+    "/records/{record_id}/candidate-documents/{candidate_document_id}/confirm",
+    response_model=ReaderCandidateDocumentConfirmResponse,
+    summary="Confirm a candidate document and reload the ReaderPlateSnapshot",
+)
+async def confirm_candidate_document(
+    record_id: UUID,
+    candidate_document_id: UUID,
+    body: ReaderCandidateDocumentConfirmRequest,
+    current_user: AuthUserDep,
+) -> ReaderCandidateDocumentConfirmResponse:
+    service = CandidateDocumentConfirmApplicationService()
+    try:
+        result = await service.confirm_candidate_document_and_load_snapshot(
+            candidate_document_id=candidate_document_id,
+            reading_record_id=record_id,
+            user_id=UUID(current_user.user_id),
+            canonicalizer_version=EXACT_CANONICAL_TEXT_VERSION,
+            builder_version=DETERMINISTIC_READING_BASE_BUILDER_VERSION,
+            segmenter_version=DETERMINISTIC_SEGMENTER_VERSION,
+            language=body.language,
+        )
+    except CandidateDocumentConfirmApplicationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return ReaderCandidateDocumentConfirmResponse(
+        reading_record_id=str(result.reading_record_id),
+        candidate_document_id=str(result.candidate_document_id),
+        stable_document_id=str(result.stable_document_id),
+        base_id=str(result.base_id),
+        record_generation=result.record_generation,
+        document_version=result.document_version,
+        content_sha256=result.content_sha256,
+        canonical_text_sha256=result.canonical_text_sha256,
+        block_count=result.block_count,
+        candidate_confirmed=result.candidate_confirmed,
+        freeze_idempotent_noop=result.freeze_idempotent_noop,
+        article_ready_event_id=str(result.article_ready_event_id),
+        article_ready_sequence=result.article_ready_sequence,
+        snapshot=result.snapshot,
+    )
+
+
+@router.get(
+    "/records/{record_id}/stable-document",
+    response_model=ReaderStableDocumentResponse,
+    summary="Load the active stable document facts for Plate projection",
+)
+async def get_reader_stable_document(
+    record_id: UUID,
+    current_user: AuthUserDep,
+) -> ReaderStableDocumentResponse:
+    service = StableDocumentQueryService()
+    try:
+        result = await service.load_active_stable_document(
+            record_id=record_id,
+            user_id=UUID(current_user.user_id),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Reader record not found") from exc
+    except StableDocumentQueryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return ReaderStableDocumentResponse(
+        reading_record_id=str(result.reading_record_id),
+        record_generation=result.record_generation,
+        active_base_id=str(result.active_base_id),
+        base=ReaderStableDocumentBase(
+            base_id=str(result.base.base_id),
+            content_sha256=result.base.content_sha256,
+            content_utf16_length=result.base.content_utf16_length,
+            canonicalizer_version=result.base.canonicalizer_version,
+            builder_version=result.base.builder_version,
+            segmenter_version=result.base.segmenter_version,
+            language=result.base.language,
+            title_snapshot=result.base.title_snapshot,
+            navigation=result.base.navigation,
+        ),
+        stable_document=ReaderStableDocumentMetadata(
+            stable_document_id=str(result.stable_document.stable_document_id),
+            document_version=result.stable_document.document_version,
+            title=result.stable_document.title,
+            language=result.stable_document.language,
+            source_profile=result.stable_document.source_profile,
+            content_sha256=result.stable_document.content_sha256,
+            status=result.stable_document.status,
+        ),
+        blocks=[
+            ReaderStableDocumentBlock(
+                block_id=block.block_id,
+                parent_block_id=block.parent_block_id,
+                order_index=block.order_index,
+                block_type=block.block_type,
+                text_content=block.text_content,
+                payload=block.payload,
+                source_refs=block.source_refs,
+                quality=block.quality,
+                canonical_text_start_utf16=block.canonical_text_start_utf16,
+                canonical_text_end_utf16=block.canonical_text_end_utf16,
+                interpretation_policy=block.interpretation_policy,
+            )
+            for block in result.blocks
+        ],
     )
 
 

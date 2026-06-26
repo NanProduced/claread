@@ -17,10 +17,18 @@ In-transaction steps (in order):
     1. Idempotency check: query for an existing
        ``stable_reading_documents`` row with the same
        ``(reading_record_id, record_generation)``.
-         * Same ``content_sha256`` -> idempotent no-op for the stable
-           document. Fails closed if ``reading_records.active_base_id``
-           is NULL (interrupted prior freeze). If
-           ``candidate_document_id`` is provided, still confirms the
+         * Same ``content_sha256`` -> first require the existing row's
+           ``status='active'`` (a same-hash match against a
+           'superseded'/'rejected' row is not idempotent). Then
+           validate that the prior freeze completed ALL steps (active
+           base row exists with matching record/generation/status,
+           content_sha256 and content_utf16_length match
+           plan.canonical_text, navigation_json.units is a non-empty
+           list, reading_units and anchor_segments rows exist). If ANY
+           check fails, fail closed WITHOUT confirming the candidate.
+           Only a complete state allows returning
+           ``idempotent_noop=True``. If ``candidate_document_id`` is
+           provided and the state is complete, still confirms the
            candidate via the state-machine-safe helper.
          * Different ``content_sha256`` -> fail closed.
     2. Supersede prior active ``stable_reading_documents`` for the same
@@ -36,22 +44,32 @@ In-transaction steps (in order):
        (set ``status='superseded'``). This MUST happen before the new
        INSERT to avoid violating ``uq_reading_bases_active_record``
        (only one active base per reading_record_id).
-    6. Insert ``reading_bases`` row as the V1 Canonical Text Layer
+    6. Build Reading Units / Anchor Segments / navigation_json from
+       ``plan.canonical_text`` via
+       :func:`build_reading_base_from_canonical_text`. The text is
+       NOT recanonicalized — D6 block offsets are bound to the exact
+       canonical text. Any validation failure raises
+       :class:`StableDocumentFreezePersistenceError`.
+    7. Insert ``reading_bases`` row as the V1 Canonical Text Layer
        carrier: ``text = plan.canonical_text``,
        ``content_sha256 = sha256(plan.canonical_text)`` (NOT
-       ``plan.content_sha256``, which is the block-level hash).
-    7. Set ``reading_records.active_base_id`` to the new base with a
-       generation fence (``WHERE generation = $N``).
-    8. If ``candidate_document_id`` is provided, confirm the candidate
-       via ``_confirm_candidate_document`` with state-machine safety:
+       ``plan.content_sha256``, which is the block-level hash), and
+       ``navigation_json`` from the build result's ``navigation_units``
+       (NOT ``{"units": []}``).
+    8. Insert ``reading_units`` rows from the build result's ``units``.
+    9. Insert ``anchor_segments`` rows from the build result's
+       ``anchor_segments``.
+    10. Set ``reading_records.active_base_id`` to the new base with a
+        generation fence (``WHERE generation = $N``).
+    11. If ``candidate_document_id`` is provided, confirm the candidate
+        via ``_confirm_candidate_document`` with state-machine safety:
          * ``ready`` -> ``confirmed`` (UPDATE with ``AND status='ready'``).
          * ``confirmed`` -> idempotent success (no write).
          * ``rejected`` / ``superseded`` -> fail closed.
-       Guarded by ``(reading_record_id, record_generation)`` and
-       ``user_id`` (when provided).
+        Guarded by ``(reading_record_id, record_generation)`` and
+        ``user_id`` (when provided).
 
-Out of scope (D6-I2C/I2D follow-up):
-    * Reading Units / Anchor Segments construction.
+Out of scope (D6-I2D follow-up):
     * API route / BFF / Web integration.
     * Reader event publication (the caller may publish a
       ``stable_document_frozen`` event after commit if desired).
@@ -60,8 +78,10 @@ Out of scope (D6-I2C/I2D follow-up):
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -69,6 +89,13 @@ import asyncpg
 from app.database.json_compat import jsonb_param
 from app.contracts.annotation import utf16_code_unit_length
 from app.schemas.reader_documents import StableDocumentBlock
+from app.services.reader_orchestration.base_builder import (
+    BuiltAnchorSegment,
+    BuiltReadingUnit,
+    NavigationUnitFact,
+    ReadingBaseBuildResult,
+    build_reading_base_from_canonical_text,
+)
 from app.services.reader_orchestration.document_freeze_plan import (
     StableDocumentFreezePlan,
 )
@@ -217,34 +244,47 @@ async def persist_stable_document_freeze_plan(
     if existing_row is not None:
         existing_sha = str(existing_row["content_sha256"])
         if existing_sha == content_sha256:
-            # Idempotent no-op for the stable document. Fetch the
-            # current active_base_id; if it is NULL, a prior freeze
-            # was interrupted before setting the active base. Fail
-            # closed rather than returning a partial result.
-            record_row = await conn.fetchrow(
-                """
-                SELECT active_base_id
-                FROM reading_records
-                WHERE id = $1 AND generation = $2
-                """,
-                reading_record_id,
-                record_generation,
-            )
-            if record_row is None or record_row["active_base_id"] is None:
+            # D6-I2C-H hardening: the existing stable document must be
+            # in status='active'. A same-hash match against a
+            # 'superseded' or 'rejected' row means the active document
+            # for this generation was already replaced or discarded;
+            # treating it as idempotent would be incorrect. Fail closed
+            # BEFORE any completeness validation or candidate
+            # confirmation.
+            existing_status = str(existing_row["status"])
+            if existing_status != "active":
                 raise StableDocumentFreezePersistenceError(
                     f"Idempotent stable document found for "
                     f"reading_record_id={reading_record_id} "
-                    f"record_generation={record_generation}, but "
-                    "reading_records.active_base_id is NULL. The prior "
-                    "freeze was interrupted before setting the active "
-                    "base; refusing to return a partial result."
+                    f"record_generation={record_generation} with "
+                    f"matching content_sha256, but its status is "
+                    f"{existing_status!r} (expected 'active'). The "
+                    "active document for this generation was "
+                    "superseded or rejected; refusing to treat it as "
+                    "idempotent."
                 )
-            existing_base_id = UUID(str(record_row["active_base_id"]))
 
-            # If candidate_document_id is provided, still confirm the
-            # candidate even though the stable document is idempotent.
-            # The candidate may not have been confirmed in the
-            # interrupted prior freeze.
+            # Idempotent no-op for the stable document. BEFORE returning
+            # a no-op result, validate that the prior freeze completed
+            # ALL steps: active base row exists with matching
+            # record/generation/status, content_sha256 and
+            # content_utf16_length match plan.canonical_text,
+            # navigation_json.units is a non-empty list, and
+            # reading_units / anchor_segments rows exist for the active
+            # base. If ANY check fails, fail closed WITHOUT confirming
+            # the candidate — the prior freeze was interrupted and the
+            # state is incomplete.
+            existing_base_id = await _validate_idempotent_freeze_completeness(
+                conn,
+                reading_record_id=reading_record_id,
+                record_generation=record_generation,
+                canonical_text_sha256=canonical_text_sha256,
+                canonical_text_utf16_length=canonical_text_utf16_length,
+            )
+
+            # Completeness validation passed. Confirm candidate if
+            # provided. The candidate may not have been confirmed in
+            # the prior freeze.
             candidate_confirmed = False
             if candidate_document_id is not None:
                 candidate_confirmed = await _confirm_candidate_document(
@@ -360,17 +400,50 @@ async def persist_stable_document_freeze_plan(
     )
 
     # ------------------------------------------------------------------
-    # (6) Insert reading_bases row as the V1 Canonical Text Layer
+    # (6) Build Reading Units / Anchor Segments / navigation_json from
+    # the EXACT canonical text.
+    #
+    # The text is NOT recanonicalized — D6 block offsets are bound to
+    # plan.canonical_text. We reuse base_builder's private split /
+    # segment / hash helpers via the public
+    # ``build_reading_base_from_canonical_text`` entry point. Any
+    # validation failure (empty units, non-round-tripping offsets,
+    # hash mismatch, etc.) is wrapped in
+    # StableDocumentFreezePersistenceError so the caller's
+    # transaction rolls back cleanly.
+    # ------------------------------------------------------------------
+    base_id = uuid4()
+    try:
+        build_result = build_reading_base_from_canonical_text(
+            reading_record_id=str(reading_record_id),
+            base_id=str(base_id),
+            canonical_text=canonical_text,
+            title=stable_doc.title,
+            language=language,
+            builder_version=builder_version,
+            segmenter_version=segmenter_version,
+            canonicalizer_version=canonicalizer_version,
+        )
+    except ValueError as exc:
+        raise StableDocumentFreezePersistenceError(
+            f"Failed to build reading base from canonical text for "
+            f"reading_record_id={reading_record_id} "
+            f"record_generation={record_generation}: {exc}"
+        ) from exc
+
+    navigation_json = _navigation_json_from_build_result(build_result)
+
+    # ------------------------------------------------------------------
+    # (7) Insert reading_bases row as the V1 Canonical Text Layer
     # carrier.
     #
     # reading_bases.content_sha256 hashes the canonical TEXT (not the
     # block-level hash), so existing snapshot validation that compares
     # sha256(base.text) continues to work.
     # base_version aligns with stable_document.document_version.
-    # navigation_json is empty — Reading Units / Anchor Segments are
-    # D6-I2C/I2D follow-up.
+    # navigation_json comes from the build result's navigation_units
+    # (NOT {"units": []}).
     # ------------------------------------------------------------------
-    base_id = uuid4()
     await conn.execute(
         """
         INSERT INTO reading_bases (
@@ -405,12 +478,37 @@ async def persist_stable_document_freeze_plan(
         segmenter_version,
         language,
         stable_doc.title,
-        jsonb_param({"units": []}),
+        jsonb_param(navigation_json),
         frozen_at,
     )
 
     # ------------------------------------------------------------------
-    # (7) Set reading_records.active_base_id with generation fence.
+    # (8) Insert reading_units rows.
+    #
+    # Order matters: anchor_segments have a FK to reading_units, so
+    # units must be inserted first.
+    # ------------------------------------------------------------------
+    for unit in build_result.units:
+        await _insert_reading_unit(
+            conn,
+            reading_record_id=reading_record_id,
+            base_id=base_id,
+            unit=unit,
+        )
+
+    # ------------------------------------------------------------------
+    # (9) Insert anchor_segments rows.
+    # ------------------------------------------------------------------
+    for segment in build_result.anchor_segments:
+        await _insert_anchor_segment(
+            conn,
+            reading_record_id=reading_record_id,
+            base_id=base_id,
+            segment=segment,
+        )
+
+    # ------------------------------------------------------------------
+    # (10) Set reading_records.active_base_id with generation fence.
     # ------------------------------------------------------------------
     fence_result = await conn.execute(
         """
@@ -435,7 +533,7 @@ async def persist_stable_document_freeze_plan(
         )
 
     # ------------------------------------------------------------------
-    # (8) Optionally confirm candidate_reading_documents with
+    # (11) Optionally confirm candidate_reading_documents with
     # state-machine safety.
     # ------------------------------------------------------------------
     candidate_confirmed = False
@@ -604,6 +702,209 @@ async def _confirm_candidate_document(
     return True
 
 
+async def _validate_idempotent_freeze_completeness(
+    conn: asyncpg.Connection,
+    *,
+    reading_record_id: UUID,
+    record_generation: int,
+    canonical_text_sha256: str,
+    canonical_text_utf16_length: int,
+) -> UUID:
+    """Validate that a prior same-hash freeze completed ALL steps.
+
+    Called from the idempotent branch when an existing
+    ``stable_reading_documents`` row has the same
+    ``(reading_record_id, record_generation, content_sha256)`` as the
+    plan. Before returning an idempotent no-op result, this helper
+    verifies the full freeze pipeline completed:
+
+        1. ``reading_records.active_base_id`` is non-NULL.
+        2. An active ``reading_bases`` row exists for that base_id
+           with matching ``(reading_record_id, record_generation,
+           status='active')``.
+        3. ``reading_bases.content_sha256`` equals
+           ``sha256(plan.canonical_text)``.
+        4. ``reading_bases.content_utf16_length`` equals the UTF-16
+           length of ``plan.canonical_text``.
+        5. ``reading_bases.navigation_json.units`` is non-empty.
+        6. At least one ``reading_units`` row exists for the base_id.
+        7. At least one ``anchor_segments`` row exists for the base_id.
+
+    If ANY check fails, raises :class:`StableDocumentFreezePersistenceError`.
+    The caller must NOT confirm the candidate when this raises — the
+    prior freeze was interrupted and the state is incomplete.
+
+    Args:
+        conn: The asyncpg connection (inside a transaction).
+        reading_record_id: The reading record id.
+        record_generation: The record generation.
+        canonical_text_sha256: ``sha256(plan.canonical_text)`` — the
+            expected hash for the active reading_bases row.
+        canonical_text_utf16_length: UTF-16 code unit length of
+            ``plan.canonical_text``.
+
+    Returns:
+        The validated ``active_base_id`` (UUID) on success.
+
+    Raises:
+        StableDocumentFreezePersistenceError: If any completeness
+            check fails.
+    """
+    # (1) Fetch reading_records.active_base_id (must be non-NULL).
+    record_row = await conn.fetchrow(
+        """
+        SELECT active_base_id
+        FROM reading_records
+        WHERE id = $1 AND generation = $2
+        """,
+        reading_record_id,
+        record_generation,
+    )
+    if record_row is None or record_row["active_base_id"] is None:
+        raise StableDocumentFreezePersistenceError(
+            f"Idempotent stable document found for "
+            f"reading_record_id={reading_record_id} "
+            f"record_generation={record_generation}, but "
+            "reading_records.active_base_id is NULL. The prior "
+            "freeze was interrupted before setting the active "
+            "base; refusing to return a partial result."
+        )
+    active_base_id = UUID(str(record_row["active_base_id"]))
+
+    # (2) Fetch the active reading_bases row. Must exist with matching
+    # (reading_record_id, record_generation, status='active').
+    base_row = await conn.fetchrow(
+        """
+        SELECT id, reading_record_id, record_generation, status,
+               content_sha256, content_utf16_length, navigation_json
+        FROM reading_bases
+        WHERE id = $1
+          AND reading_record_id = $2
+          AND record_generation = $3
+          AND status = 'active'
+        """,
+        active_base_id,
+        reading_record_id,
+        record_generation,
+    )
+    if base_row is None:
+        raise StableDocumentFreezePersistenceError(
+            f"Idempotent stable document found for "
+            f"reading_record_id={reading_record_id} "
+            f"record_generation={record_generation}, but the active "
+            f"reading_bases row (id={active_base_id}) does not exist "
+            "or does not match (record, generation, status='active'). "
+            "The prior freeze was interrupted before inserting the "
+            "reading base; refusing to return a partial result."
+        )
+
+    # (3) content_sha256 must match sha256(plan.canonical_text).
+    base_content_sha256 = str(base_row["content_sha256"])
+    if base_content_sha256 != canonical_text_sha256:
+        raise StableDocumentFreezePersistenceError(
+            f"Idempotent stable document found for "
+            f"reading_record_id={reading_record_id} "
+            f"record_generation={record_generation}, but the active "
+            f"reading_bases row (id={active_base_id}) has "
+            f"content_sha256={base_content_sha256!r} which differs "
+            f"from sha256(plan.canonical_text)="
+            f"{canonical_text_sha256!r}. The prior freeze may have "
+            "used a different canonical text; refusing to return a "
+            "partial result."
+        )
+
+    # (4) content_utf16_length must match.
+    base_utf16_length = int(base_row["content_utf16_length"])
+    if base_utf16_length != canonical_text_utf16_length:
+        raise StableDocumentFreezePersistenceError(
+            f"Idempotent stable document found for "
+            f"reading_record_id={reading_record_id} "
+            f"record_generation={record_generation}, but the active "
+            f"reading_bases row (id={active_base_id}) has "
+            f"content_utf16_length={base_utf16_length} which differs "
+            f"from utf16 length of plan.canonical_text="
+            f"{canonical_text_utf16_length}. The prior freeze may have "
+            "used a different canonical text; refusing to return a "
+            "partial result."
+        )
+
+    # (5) navigation_json.units must be a non-empty list. asyncpg's
+    # JSONB codec returns a parsed dict; handle str fallback for
+    # safety. D6-I2C-H hardening: a truthy but non-list value (dict,
+    # string, object) must fail-closed — only a non-empty list is
+    # acceptable. json.loads failures are wrapped as
+    # StableDocumentFreezePersistenceError rather than leaking
+    # JSONDecodeError.
+    raw_navigation = base_row["navigation_json"]
+    if isinstance(raw_navigation, str):
+        try:
+            navigation = json.loads(raw_navigation)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise StableDocumentFreezePersistenceError(
+                f"Idempotent stable document found for "
+                f"reading_record_id={reading_record_id} "
+                f"record_generation={record_generation}, but the "
+                f"active reading_bases row (id={active_base_id}) has "
+                f"navigation_json that is not valid JSON: "
+                f"{raw_navigation!r}. Refusing to return a partial "
+                f"result."
+            ) from exc
+    else:
+        navigation = raw_navigation
+    navigation_units = (
+        navigation.get("units") if isinstance(navigation, dict) else None
+    )
+    if not isinstance(navigation_units, list) or len(navigation_units) == 0:
+        raise StableDocumentFreezePersistenceError(
+            f"Idempotent stable document found for "
+            f"reading_record_id={reading_record_id} "
+            f"record_generation={record_generation}, but the active "
+            f"reading_bases row (id={active_base_id}) has "
+            "navigation_json.units that is not a non-empty list "
+            f"(got {type(navigation_units).__name__}). The prior "
+            "freeze was interrupted before building navigation units; "
+            "refusing to return a partial result."
+        )
+
+    # (6) At least one reading_units row must exist for the base_id.
+    units_count = await conn.fetchval(
+        """
+        SELECT COUNT(*) FROM reading_units WHERE base_id = $1
+        """,
+        active_base_id,
+    )
+    if not units_count or int(units_count) == 0:
+        raise StableDocumentFreezePersistenceError(
+            f"Idempotent stable document found for "
+            f"reading_record_id={reading_record_id} "
+            f"record_generation={record_generation}, but the active "
+            f"reading_bases row (id={active_base_id}) has 0 "
+            "reading_units. The prior freeze was interrupted before "
+            "inserting reading units; refusing to return a partial "
+            "result."
+        )
+
+    # (7) At least one anchor_segments row must exist for the base_id.
+    segments_count = await conn.fetchval(
+        """
+        SELECT COUNT(*) FROM anchor_segments WHERE base_id = $1
+        """,
+        active_base_id,
+    )
+    if not segments_count or int(segments_count) == 0:
+        raise StableDocumentFreezePersistenceError(
+            f"Idempotent stable document found for "
+            f"reading_record_id={reading_record_id} "
+            f"record_generation={record_generation}, but the active "
+            f"reading_bases row (id={active_base_id}) has 0 "
+            "anchor_segments. The prior freeze was interrupted before "
+            "inserting anchor segments; refusing to return a partial "
+            "result."
+        )
+
+    return active_base_id
+
+
 async def _insert_stable_document_block(
     conn: asyncpg.Connection,
     *,
@@ -655,4 +956,124 @@ async def _insert_stable_document_block(
         block.canonical_text_end_utf16,
         jsonb_param(policy_json),
         jsonb_param(block.quality_json),
+    )
+
+
+def _navigation_json_from_build_result(
+    build_result: ReadingBaseBuildResult,
+) -> dict[str, list[dict[str, Any]]]:
+    """Project ``navigation_units`` into the ``reading_bases.navigation_json``
+    shape.
+
+    The shape matches the existing repository helper:
+    ``{"units": [{unit_id, order_index, unit_type, boundary_quality,
+    label, base_start_utf16, base_end_utf16}, ...]}``.
+    """
+    return {
+        "units": [
+            {
+                "unit_id": unit.unit_id,
+                "order_index": unit.order_index,
+                "unit_type": unit.unit_type,
+                "boundary_quality": unit.boundary_quality,
+                "label": unit.label,
+                "base_start_utf16": unit.base_start_utf16,
+                "base_end_utf16": unit.base_end_utf16,
+            }
+            for unit in build_result.navigation_units
+        ]
+    }
+
+
+async def _insert_reading_unit(
+    conn: asyncpg.Connection,
+    *,
+    reading_record_id: UUID,
+    base_id: UUID,
+    unit: BuiltReadingUnit,
+) -> None:
+    """Insert one ``reading_units`` row.
+
+    The SQL column order mirrors the existing
+    ``repository.insert_reading_units`` so behavior and params stay
+    consistent. ``metadata_json`` is ``{}`` (no extra metadata is
+    produced by the deterministic builder).
+    """
+    await conn.execute(
+        """
+        INSERT INTO reading_units (
+            reading_record_id,
+            base_id,
+            unit_id,
+            order_index,
+            unit_type,
+            boundary_quality,
+            base_start_utf16,
+            base_end_utf16,
+            text_hash,
+            metadata_json
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+        """,
+        reading_record_id,
+        base_id,
+        unit.unit_id,
+        unit.order_index,
+        unit.unit_type,
+        unit.boundary_quality,
+        unit.base_start_utf16,
+        unit.base_end_utf16,
+        unit.text_hash,
+        jsonb_param({}),
+    )
+
+
+async def _insert_anchor_segment(
+    conn: asyncpg.Connection,
+    *,
+    reading_record_id: UUID,
+    base_id: UUID,
+    segment: BuiltAnchorSegment,
+) -> None:
+    """Insert one ``anchor_segments`` row.
+
+    The SQL column order mirrors the existing
+    ``repository.insert_anchor_segments``.
+    """
+    await conn.execute(
+        """
+        INSERT INTO anchor_segments (
+            reading_record_id,
+            base_id,
+            unit_id,
+            anchor_segment_id,
+            sentence_id,
+            paragraph_id,
+            order_index,
+            unit_order_index,
+            segment_type,
+            base_start_utf16,
+            base_end_utf16,
+            unit_start_utf16,
+            unit_end_utf16,
+            text_hash,
+            boundary_quality
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        """,
+        reading_record_id,
+        base_id,
+        segment.unit_id,
+        segment.anchor_segment_id,
+        segment.sentence_id,
+        segment.paragraph_id,
+        segment.order_index,
+        segment.unit_order_index,
+        segment.segment_type,
+        segment.base_start_utf16,
+        segment.base_end_utf16,
+        segment.unit_start_utf16,
+        segment.unit_end_utf16,
+        segment.text_hash,
+        segment.boundary_quality,
     )

@@ -14,6 +14,11 @@ LOW_IMPACT_CANONICALIZER_VERSION = "reader_base_low_impact_v1"
 DETERMINISTIC_READING_BASE_BUILDER_VERSION = "reading_base_builder_d3_p2_v1"
 DETERMINISTIC_SEGMENTER_VERSION = "regex_sentence_clause_window_v1"
 FALLBACK_WINDOW_WORD_COUNT = 24
+# Canonicalizer version label used when the caller supplies an EXACT
+# canonical text (already canonicalized by the stable document freeze
+# plan) and the base builder must NOT recanonicalize it. D6 block
+# offsets are bound to the exact canonical text.
+EXACT_CANONICAL_TEXT_VERSION = "exact_canonical_text_v1"
 
 _INVISIBLE_CHAR_PATTERN = re.compile(
     r"[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f"
@@ -175,23 +180,111 @@ def build_low_impact_reading_base(
     text = canonicalize_low_impact_text(build_input.source_text)
     if not text:
         raise ValueError("canonical low-impact text must not be empty")
+    return _build_reading_base_core(
+        reading_record_id=build_input.reading_record_id,
+        base_id=build_input.base_id,
+        text=text,
+        title=build_input.title,
+        language=build_input.language,
+        canonicalizer_version=build_input.canonicalizer_version,
+        builder_version=build_input.builder_version,
+        segmenter_version=build_input.segmenter_version,
+    )
 
+
+def build_reading_base_from_canonical_text(
+    *,
+    reading_record_id: str,
+    base_id: str,
+    canonical_text: str,
+    title: str | None = None,
+    language: str | None = None,
+    builder_version: str = DETERMINISTIC_READING_BASE_BUILDER_VERSION,
+    segmenter_version: str = DETERMINISTIC_SEGMENTER_VERSION,
+    canonicalizer_version: str = EXACT_CANONICAL_TEXT_VERSION,
+) -> ReadingBaseBuildResult:
+    """Build a reading base from an EXACT canonical text.
+
+    Unlike :func:`build_low_impact_reading_base`, this does NOT
+    recanonicalize the text. The ``canonical_text`` is used as-is for
+    unit/anchor segmentation and for ``content_sha256`` /
+    ``content_utf16_length`` computation. This is required for D6-I2C
+    where the stable document's block offsets are already bound to the
+    exact canonical text produced by the freeze plan; recanonicalizing
+    would invalidate those offsets.
+
+    The private split/segment/hash helpers are reused so segmentation
+    behavior is identical to the low-impact builder.
+
+    Args:
+        reading_record_id: The reading record id.
+        base_id: The base id (UUID string).
+        canonical_text: The EXACT canonical text from the stable
+            document freeze plan. Must not be empty.
+        title: Optional title snapshot.
+        language: Optional language code.
+        builder_version: Builder version label.
+        segmenter_version: Segmenter version label.
+        canonicalizer_version: Canonicalizer version label; defaults
+            to :data:`EXACT_CANONICAL_TEXT_VERSION` to mark that the
+            text was supplied exactly (not recanonicalized).
+
+    Returns:
+        A validated :class:`ReadingBaseBuildResult`.
+
+    Raises:
+        ValueError: If ``canonical_text`` is empty or the
+            segmentation/validation fails.
+    """
+    if not canonical_text:
+        raise ValueError("canonical_text must not be empty")
+    return _build_reading_base_core(
+        reading_record_id=reading_record_id,
+        base_id=base_id,
+        text=canonical_text,
+        title=title,
+        language=language,
+        canonicalizer_version=canonicalizer_version,
+        builder_version=builder_version,
+        segmenter_version=segmenter_version,
+    )
+
+
+def _build_reading_base_core(
+    *,
+    reading_record_id: str,
+    base_id: str,
+    text: str,
+    title: str | None,
+    language: str | None,
+    canonicalizer_version: str,
+    builder_version: str,
+    segmenter_version: str,
+) -> ReadingBaseBuildResult:
+    """Core builder shared by :func:`build_low_impact_reading_base` and
+    :func:`build_reading_base_from_canonical_text`.
+
+    The caller is responsible for ensuring ``text`` is the exact
+    canonical text (already canonicalized if needed). This helper does
+    NOT recanonicalize; it only segments the supplied text into units
+    and anchor segments and validates the result.
+    """
     utf16_prefix = _build_utf16_prefix(text)
     block_spans = _split_structure_blocks(text)
     if not block_spans:
         raise ValueError("non-empty canonical text must produce at least one structure block")
 
     base = StableReadingBase(
-        reading_record_id=build_input.reading_record_id,
-        base_id=build_input.base_id,
+        reading_record_id=reading_record_id,
+        base_id=base_id,
         text=text,
         content_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         content_utf16_length=utf16_prefix[-1],
-        canonicalizer_version=build_input.canonicalizer_version,
-        builder_version=build_input.builder_version,
-        segmenter_version=build_input.segmenter_version,
-        language=build_input.language,
-        title_snapshot=build_input.title,
+        canonicalizer_version=canonicalizer_version,
+        builder_version=builder_version,
+        segmenter_version=segmenter_version,
+        language=language,
+        title_snapshot=title,
     )
 
     units: list[BuiltReadingUnit] = []
@@ -219,8 +312,8 @@ def build_low_impact_reading_base(
             segment_base_start_utf16 = utf16_prefix[char_start + span.start_char]
             segment_base_end_utf16 = utf16_prefix[char_start + span.end_char]
             built_segment = BuiltAnchorSegment(
-                reading_record_id=build_input.reading_record_id,
-                base_id=build_input.base_id,
+                reading_record_id=reading_record_id,
+                base_id=base_id,
                 unit_id=unit_id,
                 anchor_segment_id=anchor_segment_id,
                 sentence_id=anchor_segment_id,
@@ -248,8 +341,8 @@ def build_low_impact_reading_base(
 
         unit_text_hash = compute_text_range_hash(block_text)
         built_unit = BuiltReadingUnit(
-            reading_record_id=build_input.reading_record_id,
-            base_id=build_input.base_id,
+            reading_record_id=reading_record_id,
+            base_id=base_id,
             unit_id=unit_id,
             order_index=len(units) + 1,
             unit_type=unit_type,

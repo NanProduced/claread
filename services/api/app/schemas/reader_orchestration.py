@@ -436,6 +436,84 @@ class ReaderPlainTextSubmitResponse(BaseModel):
     snapshot: ReaderPlateSnapshot
 
 
+class ReaderCandidateDocumentConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    language: str | None = None
+
+
+class ReaderCandidateDocumentConfirmResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reading_record_id: str = Field(min_length=1)
+    candidate_document_id: str = Field(min_length=1)
+    stable_document_id: str = Field(min_length=1)
+    base_id: str = Field(min_length=1)
+    record_generation: int = Field(ge=1)
+    document_version: int = Field(ge=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    canonical_text_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    block_count: int = Field(ge=1)
+    candidate_confirmed: bool
+    freeze_idempotent_noop: bool
+    article_ready_event_id: str = Field(min_length=1)
+    article_ready_sequence: int = Field(ge=1)
+    snapshot: ReaderPlateSnapshot
+
+
+class ReaderStableDocumentBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_id: str = Field(min_length=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    content_utf16_length: int = Field(ge=1)
+    canonicalizer_version: str = Field(min_length=1)
+    builder_version: str = Field(min_length=1)
+    segmenter_version: str = Field(min_length=1)
+    language: str | None = None
+    title_snapshot: str | None = None
+    navigation: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReaderStableDocumentMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stable_document_id: str = Field(min_length=1)
+    document_version: int = Field(ge=1)
+    title: str | None = None
+    language: str | None = None
+    source_profile: dict[str, Any] = Field(default_factory=dict)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: str = Field(min_length=1)
+
+
+class ReaderStableDocumentBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    block_id: str = Field(min_length=1)
+    parent_block_id: str | None = None
+    order_index: int = Field(ge=0)
+    block_type: str = Field(min_length=1)
+    text_content: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    source_refs: dict[str, Any] = Field(default_factory=dict)
+    quality: dict[str, Any] = Field(default_factory=dict)
+    canonical_text_start_utf16: int | None = Field(default=None, ge=0)
+    canonical_text_end_utf16: int | None = Field(default=None, ge=0)
+    interpretation_policy: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReaderStableDocumentResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reading_record_id: str = Field(min_length=1)
+    record_generation: int = Field(ge=1)
+    active_base_id: str = Field(min_length=1)
+    base: ReaderStableDocumentBase
+    stable_document: ReaderStableDocumentMetadata
+    blocks: list[ReaderStableDocumentBlock] = Field(min_length=1)
+
+
 class ReaderEventResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
