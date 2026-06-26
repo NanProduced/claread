@@ -91,6 +91,8 @@ AnchorSegmentType = Literal["sentence", "clause", "fallback_window"]
 ReaderBoundaryQuality = Literal["normal", "low"]
 ReaderUnitType = Literal["body", "heading", "list", "quote", "unknown", "fallback"]
 ReaderLayerTargetScope = Literal["unit", "anchor_segment", "unit_range", "record"]
+ReaderArtifactInputSourceType = Literal["file", "pdf", "image"]
+ReaderArtifactOriginalInputType = Literal["file_ref", "image_ref"]
 
 
 class ReaderUnitAnchor(BaseModel):
@@ -596,6 +598,62 @@ class ReaderSourceArtifactUploadCompleteResponse(BaseModel):
     source_filename: str = Field(min_length=1)
     upload_completed: Literal[True]
     idempotent_noop: bool
+
+
+class ReaderSourceArtifactSubmitInputRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    language: str | None = None
+    client_record_id: str | None = Field(default=None, max_length=255)
+    source_metadata: dict[str, Any] | None = None
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("language")
+    @classmethod
+    def normalize_language(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("client_record_id")
+    @classmethod
+    def normalize_client_record_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class ReaderSourceArtifactSubmitInputResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reading_record_id: str = Field(min_length=1)
+    original_input_id: str = Field(min_length=1)
+    artifact_id: str = Field(min_length=1)
+    record_generation: int = Field(ge=1)
+    source_type: ReaderArtifactInputSourceType
+    input_type: ReaderArtifactOriginalInputType
+    product_state: ReadingRecordProductState
+    readiness_state: ReadingRecordReadinessState
+    title: str = Field(min_length=1)
+    language: str | None = None
+    extraction_required: Literal[True]
+    bucket: str = Field(min_length=1)
+    endpoint: str = Field(min_length=1)
+    object_key: str = Field(min_length=1)
+    content_type: str | None = None
+    byte_size: int | None = Field(default=None, ge=0)
+    content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    source_filename: str = Field(min_length=1)
 
 
 class ReaderCandidateDocumentConfirmRequest(BaseModel):

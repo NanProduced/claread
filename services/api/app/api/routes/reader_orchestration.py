@@ -20,6 +20,8 @@ from app.schemas.reader_orchestration import (
     ReaderSourceArtifactUploadCompleteResponse,
     ReaderSourceArtifactUploadInitRequest,
     ReaderSourceArtifactUploadInitResponse,
+    ReaderSourceArtifactSubmitInputRequest,
+    ReaderSourceArtifactSubmitInputResponse,
     ReaderStableReadyInputSubmitRequest,
     ReaderStableReadyInputSubmitResponse,
     ReaderUnifiedInputSubmitCandidateResponse,
@@ -39,6 +41,13 @@ from app.services.auth.dependencies import AuthUserDep
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
     PlainTextArticleReadySubmitRequest,
+)
+from app.services.reader_orchestration.artifact_input_application_service import (
+    ArtifactInputApplicationConflictError,
+    ArtifactInputApplicationError,
+    ArtifactInputApplicationNotFoundError,
+    ArtifactInputApplicationResult,
+    ArtifactInputApplicationService,
 )
 from app.services.reader_orchestration.base_builder import (
     DETERMINISTIC_READING_BASE_BUILDER_VERSION,
@@ -151,6 +160,19 @@ def _raise_source_artifact_complete_error(exc: SourceArtifactError) -> None:
     if isinstance(exc, SourceArtifactNotFoundError):
         raise HTTPException(status_code=404, detail="source artifact not found") from exc
     if isinstance(exc, SourceArtifactConflictError):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _raise_artifact_input_application_error(exc: ArtifactInputApplicationError) -> None:
+    if isinstance(exc, ArtifactInputApplicationNotFoundError):
+        raise HTTPException(status_code=404, detail="source artifact not found") from exc
+    if _has_user_client_record_unique_violation(exc):
+        raise HTTPException(
+            status_code=409,
+            detail="client_record_id already exists for this user",
+        ) from exc
+    if isinstance(exc, ArtifactInputApplicationConflictError):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -268,6 +290,31 @@ def _build_source_artifact_upload_complete_response(
         source_filename=result.source_filename,
         upload_completed=True,
         idempotent_noop=result.idempotent_noop,
+    )
+
+
+def _build_source_artifact_submit_input_response(
+    result: ArtifactInputApplicationResult,
+) -> ReaderSourceArtifactSubmitInputResponse:
+    return ReaderSourceArtifactSubmitInputResponse(
+        reading_record_id=str(result.reading_record_id),
+        original_input_id=str(result.original_input_id),
+        artifact_id=str(result.artifact_id),
+        record_generation=result.record_generation,
+        source_type=result.source_type,
+        input_type=result.input_type,
+        product_state=result.product_state,
+        readiness_state=result.readiness_state,
+        title=result.title,
+        language=result.language,
+        extraction_required=True,
+        bucket=result.bucket,
+        endpoint=result.endpoint,
+        object_key=result.object_key,
+        content_type=result.content_type,
+        byte_size=result.byte_size,
+        content_sha256=result.content_sha256,
+        source_filename=result.source_filename,
     )
 
 
@@ -439,6 +486,33 @@ async def complete_reader_source_artifact_upload(
         raise AssertionError("unreachable")
 
     return _build_source_artifact_upload_complete_response(result)
+
+
+@router.post(
+    "/source-artifacts/{artifact_id}/submit-input",
+    response_model=ReaderSourceArtifactSubmitInputResponse,
+    summary="Bind an available uploaded source artifact into a reader input shell",
+)
+async def submit_reader_source_artifact_as_input(
+    artifact_id: UUID,
+    body: ReaderSourceArtifactSubmitInputRequest,
+    current_user: AuthUserDep,
+) -> ReaderSourceArtifactSubmitInputResponse:
+    service = ArtifactInputApplicationService()
+    try:
+        result = await service.submit_available_artifact_as_input(
+            user_id=UUID(current_user.user_id),
+            artifact_id=artifact_id,
+            title=body.title,
+            language=body.language,
+            client_record_id=body.client_record_id,
+            source_metadata=body.source_metadata,
+        )
+    except ArtifactInputApplicationError as exc:
+        _raise_artifact_input_application_error(exc)
+        raise AssertionError("unreachable")
+
+    return _build_source_artifact_submit_input_response(result)
 
 
 @router.post(
