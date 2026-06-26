@@ -1,7 +1,7 @@
 # Reader Record Plate Surface UI
 
-> 状态：目标方案草案；UI-D4 阅读态打磨已落地；UI-D5 Active Anchor Inspector 已落地
-> 最后更新：2026-06-24
+> 状态：目标方案草案；UI-D4 阅读态打磨已落地；UI-D5 Active Anchor Inspector 已落地；V2-Step-1（FloatingToolbarKit）+ V2-Step-2（CommentKit）已落地
+> 最后更新：2026-06-26
 > 范围：`/app/reader-record/{recordId}` 在 Agentic Orchestration 架构下的 Reader Record 解析页 UI/UX、Plate.js 文档表面、选择交互、词典/Ask 联动、用户高亮/笔记和第一版实现边界。
 
 ## 目标
@@ -25,6 +25,7 @@ Reader Record 页面使用 Plate.js 作为中心阅读文档的交互底座。�
 - 不持久化 raw Plate path、raw Slate path 或 raw Slate operation。
 - 第一版不做 AI suggestion / revision。
 - 第一版不新建 comment backend。
+- 原文 Stable Base 的结构化（Stable Document Blocks）属于阶段二，阶段一仅 callout 内容支持 Markdown；Canonical Text Layer（`reading_bases.text`）始终为纯文本，不被 Markdown 语法污染（见"Stable Document Blocks 与 Canonical Text Layer 分离"section）。
 
 ## 设计原则
 
@@ -57,7 +58,9 @@ Plate document 是 Web projection。
 
 持久事实仍是：
 
-- Stable Reading Base
+- Stable Reading Document
+- Stable Document Blocks
+- Canonical Text Layer（当前过渡实现仍使用 Stable Reading Base）
 - Reading Units
 - Anchor Segments
 - Enhancement Layers
@@ -73,7 +76,7 @@ Plate path 只能作为瞬时渲染地址。用户资产、AI layer 和 Ask supp
 新页面启用写入前，必须具备 Reading Record anchor gate：
 
 - 能确认 `recordId` 属于新的 Reading Record。
-- V1c first 只要求能从 Stable Reading Base / Anchor Segment 校验 single-range `UserEditorialAssetAnchor`。
+- V1c first 只要求能从 Canonical Text Layer / Anchor Segment 校验 single-range `UserEditorialAssetAnchor`；当前代码可继续通过过渡 Stable Reading Base 实现。
 - `multi_text` 不复用旧 render_scene 校验；后续必须走 `UserEditorialAssetAnchorSet` / multi-range DTO 和对应 gate。
 - 能把旧 `sentence_id` 兼容字段解释为 anchor segment alias，而不是旧 render scene sentence。
 - 能返回足够错误信息，区分 anchor stale、hash mismatch、range invalid 和 record mismatch。
@@ -119,6 +122,150 @@ Plate path 只能作为瞬时渲染地址。用户资产、AI layer 和 Ask supp
 - raw Plate path / Slate path 持久化。
 
 实现上可以复用 Plate UI registry 代码，但这些组件必须被收敛为 Claread reader behavior。Plate UI 不是产品需求来源。
+
+### Plugin Kit 清单（阶段一搭建）
+
+阶段一在 `apps/web/src/components/editor/plugins/` 下搭建以下 kit，作为 Reader Plate surface 的统一 plugin 入口：
+
+| Kit 文件 | 职责 | 包含的 plugin |
+|----------|------|---------------|
+| `basic-blocks-kit.ts` | 基础块级节点 | `ParagraphPlugin` / `HeadingPlugin` / `BlockquotePlugin` / `CodeBlockPlugin` / `ListPlugin` |
+| `basic-marks-kit.ts` | 基础行内 mark | `BoldPlugin` / `ItalicPlugin` / `StrikethroughPlugin` / `CodePlugin` / `UnderlinePlugin` |
+| `markdown-kit.ts` | Markdown deserialize | `MarkdownPlugin` + `remarkGfm`（GFM：表格、删除线、任务列表、脚注）；不加 `remarkMath` / `remarkMdx` |
+| `reader-plate-kit.ts` | 聚合入口 | 聚合上述 kit，作为 Reader Plate surface 的统一 plugin 入口 |
+
+这些 kit 用于：
+- callout children 的 markdown deserialize 后渲染（阶段一）
+- 后续 floating toolbar / CommentKit 接入时的 plugin 基础（阶段二）
+
+## Markdown 渲染
+
+### 设计目标
+
+让 callout 内容（`grammar_note.note` / `sentence_analysis.analysis` / `ask_supplement.content_md`）支持 Markdown 渲染，实现 Notion 文档形态的富文本讲解。
+
+### 数据模型变更
+
+`ReaderRecordPlateCalloutBlock.children` 类型从纯文本 leaf 改为 Plate 节点树：
+
+```ts
+// 阶段一变更前（纯文本）
+interface ReaderRecordPlateCalloutBlock {
+  type: "callout";
+  children: ReaderRecordPlateCalloutTextLeaf[];  // 只有 { text: string }
+}
+
+// 阶段一变更后（Plate 节点树）
+import type { Descendant } from 'platejs';
+
+interface ReaderRecordPlateCalloutBlock {
+  type: "callout";
+  children: Descendant[];  // 标准 Plate 节点树
+}
+```
+
+`ReaderRecordPlateCalloutTextLeaf` 保留为 deprecated 兼容别名。
+
+### Projection 层 deserialize
+
+Projection 层调用 `deserializeMarkdownToBlocks(markdown)` 把 LLM 输出的 markdown 字符串转为 Plate 节点树：
+
+```ts
+// apps/web/src/lib/reader-plate/markdown/deserialize.ts
+export function deserializeMarkdownToBlocks(markdown: string): Descendant[]
+```
+
+三个 callout builder 调用此 utility：
+- `buildGrammarCalloutBlocks`：`children: deserializeMarkdownToBlocks(note)`
+- `buildSentenceAnalysisCalloutBlocks`：`children: deserializeMarkdownToBlocks(analysis)`
+- `buildSupplementCalloutBlocks`：`children: deserializeMarkdownToBlocks(contentMd)`
+
+`sentence_analysis.chunks` 仍保持原有结构化数据形态（chunks 是结构化数据，不是 markdown 文本）。
+
+### 渲染层
+
+CalloutBlock 组件用轻量自定义递归渲染器 `CalloutMarkdownRenderer` 只读渲染 `block.children`：
+
+```tsx
+<CalloutMarkdownRenderer nodes={block.children} />
+```
+
+`CalloutMarkdownRenderer` 覆盖 paragraph / heading / blockquote / ul / ol / li / code_block / hr + bold / italic / strikethrough / code marks，不依赖 `@platejs/basic-*` 包，不使用 `PlateStatic`（项目未安装）。未知节点类型兜底为 `<div>` + 递归 children。
+
+### 支持的 Markdown 语法
+
+| 语法 | 渲染效果 | 用途 |
+|------|----------|------|
+| `**加粗**` | **加粗** | 强调关键词 |
+| `*斜体*` | *斜体* | 补充说明 |
+| `` `code` `` | `code` | 语法术语、代码片段 |
+| `- 列表项` | 无序列表 | 要点列举 |
+| `1. 有序项` | 有序列表 | 步骤说明 |
+| `> 引用` | 引用块 | 原文引用 |
+| ```` ``` ```` | 代码块 | 语法结构示例 |
+| `# 标题` | H1-H6 | 分级讲解 |
+
+### Stable Document Blocks 与 Canonical Text Layer 分离（架构定论）
+
+> 来源：与输入预处理 coding agent 对接确认（2026-06-26）。
+
+原文渲染的结构化与 anchor 的纯文本基准必须分离，不再有"Stable Base 是否 Markdown 化"的二选一问题：
+
+- **Stable Document Blocks**：结构 truth，包含 paragraph/heading/list/blockquote/code_block/table/image/footnote 等 block 类型和 `text_content`；给 Plate/Markdown 投影、RAG citation、table/image/footnote 保留用。
+- **Canonical Text Layer（`reading_bases.text`）**：从 main_reading blocks 的 `text_content` 派生的纯文本；给 UTF-16 offset、Reading Units、Anchor Segments、translation/vocabulary/grammar grounding 用。**不含 Markdown 语法字符**（`#`/`-`/`>`/代码围栏/GFM 表格/脚注语法不进入 offset 基准）。
+- **渲染投影**：前端从 Stable Document Blocks 投影出 Markdown/Plate 节点树渲染原文；translation/vocabulary 保持纯文本固定样式；grammar_note/sentence_analysis/ask_supplement 走 Markdown callout 渲染。
+
+正确派生顺序：`input artifact → normalized Stable Document Blocks → main_reading blocks.text_content → canonical plain text`。Markdown/Plate 是从 blocks 投影出来的渲染层，不是 canonical source。
+
+阶段一现状：D4 只冻结 `reading_bases.text`（纯文本），Stable Document Blocks 在 D6+ 实现。
+阶段二方向：Stable Document Blocks 冻结后，前端原文渲染从 blocks 投影，不再只依赖纯文本。
+
+**block type 与 payload_json 子契约（与输入预处理 agent 对接确认）**：
+
+block_type 枚举（与后端 schema/migration 一致）：`paragraph` / `heading` / `list_item` / `blockquote` / `table` / `table_row` / `table_cell` / `footnote` / `image` / `image_ocr` / `caption` / `code_block` / `unknown`。
+
+- `divider`：文档希望有但后端 schema/migration 待补，补上前用 `unknown` + payload_json 兜底。
+- `degraded block notice` / `page/source artifact reference`：不做正文 block，放入对应 block 的 payload_json / source_refs_json / quality_json。
+
+payload_json V1 子契约：
+- `list_item`：`{ list_id, ordered, ordinal, depth, marker }`，text_content 是项纯文本（不含 marker）；前端按 `list_id` + `ordered` 还原 `ul`/`ol` 容器。
+- `heading`：`{ level }`，范围 1..6，超过 6 降级到 6 并在 quality_json 标记；text_content 只放标题文本（不含 `#`）。
+- `code_block`：`{ language, info_string }`，text_content 是纯代码文本（不含 ``` 围栏）。
+
+canonical text 拼接规则：`interpretation_policy.default_route == "main_reading"` 的 block 用 `\n\n` 连接。默认进入：paragraph / heading / list_item / blockquote / caption。默认不进入：table / table_row / table_cell / image / image_ocr / footnote / code_block / unknown（除非 Candidate confirm 显式提升）。
+
+详见 [input-adapter.md](file:///c:/Users/nanpr/claread/claread/docs/initiatives/reader-agentic-orchestration/modules/input-adapter.md) 的"Stable Document Blocks 与 Plate Snapshot"section。
+
+## Plate Editors Demo 组件复用
+
+> 来源：`https://platejs.org/editors` 官方 Playground（2026-06-26 抓取）
+
+### 直接复用组件
+
+| 组件 | 来源 | 复用方式 | 阶段 |
+|------|------|----------|------|
+| `FloatingToolbarKit` | Plate editors demo（选中文本后浮现，含 "Ask AI" 按钮） | 定制按钮为 Claread action（Lookup / Ask / Comment / Highlight / Copy），移除格式化按钮 | 阶段二 V2-Step-1 ✅ 已落地 |
+| `CommentKit` + `CommentLeaf` | Plate editors demo（"overlapping annotations" 多段文本重叠评论） | mark 模型复用，`comment_<noteId>` 派生自 `reader_notes.id`；移除 draft → resolved 流转，简化为"选区即笔记" | 阶段二 V2-Step-2 ✅ 已落地 |
+| `CalloutElement` | `@plate/callout-node` registry | 组件外壳复用，children 用 Plate 节点树 | 阶段一 P0-Step-5 |
+| `MarkdownPlugin` + `remarkGfm` | `@platejs/markdown` | deserialize API 复用，不需要 serialize（阅读态不编辑） | 阶段一 P0-Step-3 |
+
+### 不复用组件
+
+| 组件 | 原因 |
+|------|------|
+| Suggestion | Claread 不做多用户协作流转 |
+| AI Menu（⌘+J / 空行 Space） | Ask Claread rail 已有独立实现 |
+| Slash Command | 阅读态 readOnly 不需要插入菜单 |
+| Drag Handle | 阅读态禁用 block 拖拽 |
+| Multi-select | 阅读态不需要 |
+| Collaboration (Yjs) | 单人阅读场景不需要 |
+| FixedToolbar | 明确不使用（见非目标） |
+
+### Demo 揭示的注意事项
+
+- Demo 中 comments 支持 "overlapping annotations"（重叠批注），`CommentLeaf` mark 模型天然支持，适合 Claread 多层 marks（vocab + grammar + user highlight）重叠场景
+- Demo 中 markdown blockquote "keep nested structure instead of flattening it"——译文 blockquote 需保留段落嵌套，不能 flatten
+- Demo 中 autoformatting 是输入态能力，阅读态 readOnly 不触发，但 deserialize 必须能解析这些语法
 
 ## Projection Schema
 
@@ -538,6 +685,14 @@ worker 仍读取完整 unit 以保证翻译质量，但输出 per-anchor-segment
 
 `grammar_note` 适合文档注释/脚注式心智，不适合大块解析面板。
 
+### Markdown 支持（阶段一）
+
+`grammar_note.note` 字段支持 Markdown 格式输出，projection 层通过 `deserializeMarkdownToBlocks(note)` 转为 Plate 节点树，由 CalloutBlock 用 `PlateStatic` 只读渲染。
+
+支持的 Markdown 语法：加粗、斜体、行内代码、无序/有序列表、引用块、代码块、H1-H6 标题（见"Markdown 渲染"section 完整清单）。
+
+Prompt 层面引导 LLM 输出 markdown 格式的讲解内容，提升可读性。
+
 ## Sentence Analysis Structure Lens
 
 `sentence_analysis` 是结构图层，不是普通注释。
@@ -584,6 +739,12 @@ type SentenceAnalysisChunkV2 = {
 
 这样 Plate surface 可以直接把 chunks 投影成 decorations / marks，避免重复子串和部分重叠造成定位错误。
 
+### Markdown 支持（阶段一）
+
+`sentence_analysis.analysis` 字段支持 Markdown 格式输出，projection 层通过 `deserializeMarkdownToBlocks(analysis)` 转为 Plate 节点树，由 CalloutBlock 用 `PlateStatic` 只读渲染。
+
+`sentence_analysis.chunks` 仍保持原有结构化数据形态（chunks 是结构化数据，不是 markdown 文本），不受 Markdown 化影响。
+
 ## Selection Toolbar
 
 selection toolbar 只承载当前选区的即时动作。
@@ -623,6 +784,20 @@ Ask disabled 时仍可显示按钮，但必须有明确 disabled semantics、too
 
 toolbar 必须由 Plate selection 驱动。词典或 Ask 获焦后，中心文档使用 Cursor Overlay 保持选区可见。
 
+### FloatingToolbarKit 接入（阶段二 V2-Step-1）✅ 已落地
+
+已用 Plate 官方 `FloatingToolbarKit` 替换手写 `SelectionToolbar` 浮动层：
+
+- 安装 `@plate/floating-toolbar-kit` + `@plate/floating-toolbar-buttons`
+- 新建 `apps/web/src/components/editor/plugins/floating-toolbar-kit.ts`，定制按钮为 Claread action
+- 修改 `ReaderRecordPlateSurface.tsx`，把 Plate surface 从纯 React 改为真正 `<Plate + readOnly>` + `FloatingToolbar`
+- 移除手写 `ReaderFloatingSurface` + `SelectionToolbar` 浮动层（保留旧版只读路径不动）
+
+关键约束：
+- toolbar 按钮只放 Claread action，不放编辑格式按钮
+- Ask / Comment / Highlight 按钮在 anchor gate 未满足时 disabled
+- 来源：Plate editors demo 验证 `FloatingToolbarKit` 支持选中文本后浮现（含 "Ask AI" 按钮，可定制）
+
 ## 用户资产
 
 用户资产采用双轨。
@@ -647,6 +822,25 @@ toolbar 必须由 Plate selection 驱动。词典或 Ask 获焦后，中心文�
 - Plate comment id 只是 Web projection key。
 
 第一版不新增 comment backend。后续如统一为 User Editorial Assets，可再做 schema migration。
+
+### CommentKit 改造（阶段二 V2-Step-2）✅ 已落地
+
+已用 Plate 官方 `CommentKit` + `CommentLeaf` mark 替换 `ReaderRecordNoteComposer`：
+
+- 安装 `@platejs/comment` + `comment-kit` registry
+- 新建 `apps/web/src/components/editor/plugins/comment-kit.ts`，改造 CommentKit：
+  - `CommentLeaf` 高亮样式改为 Reader 划线色
+  - 移除 draft → 正式评论的多用户流转，简化为"选区即笔记"
+  - `comment_<noteId>` mark 的 `<noteId>` 派生自 `reader_notes.id`
+  - 点击 mark 触发 `BlockDiscussion` popover（改造为笔记面板）
+- 改造 `BlockDiscussion` 为笔记 popover（显示笔记内容 + 标签 + 来源 metadata）
+- 修改 `ReaderRecordPlateSurface.tsx`，移除 `ReaderRecordNoteComposer`，改用 CommentKit 触发笔记写入
+- 保留 `/api/web/reading-record/notes` 端点，但前端走 Plate comment projection
+
+关键约束：
+- Plate comment id 只是 Web projection key，不持久化为业务事实
+- 持久化仍是 `reader_notes` 表
+- 来源：Plate editors demo 验证 `CommentKit` 支持 "overlapping annotations"（多段文本重叠评论），适合 Claread 多层 marks 重叠场景
 
 ### Comment Projection Contract
 
@@ -678,7 +872,7 @@ V1c 最小写入策略：**single-range first**。
 - `/app/reader-record/{recordId}` 新写入必须携带 `anchor: UserEditorialAssetAnchor`；没有 `anchor` 的请求只能属于旧 `/app/reader/{recordId}` legacy 路径。
 - D6-A5 当前代码已经把 `anchor` 做成 optional dual-contract：当 `anchor` 存在时，legacy 必填字段放宽，但服务层必须走 Reading Record anchor gate，绕过 legacy `target_key` / `render_scene` 校验。
 - 旧请求字段（`sentence_id`、`target_key`、`paragraph_id`、offset、hash）只能作为 deprecated compatibility metadata；不能重新成为 `/app/reader-record` 写入校验事实源。
-- 旧 `render_scene` 校验不可复用：新 Reading Record 的 source of truth 是 Stable Reading Base / Anchor Segment。
+- 旧 `render_scene` 校验不可复用：新 Reading Record 的 source of truth 是 Canonical Text Layer / Anchor Segment；当前过渡实现可继续通过 Stable Reading Base 校验。
 - Plate path / Slate path 不进入 API、不进入数据库、不进入 event log。
 - D6-U2 结论：`UserEditorialAssetAnchor` 和当前 `anchor_gate` 只表达 single range；`multi_text` 不挤进该 DTO。后续 multi-range 必须使用 schema-only 草案 `UserEditorialAssetAnchorSet`，并在引入 persistence/migration 前保持 disabled。
 
@@ -718,12 +912,12 @@ type ReaderRecordUserAssetWritePayload = {
 
 中期：
 
-- `user_annotations` / `reader_notes` 的 single-range 校验从旧 `render_scene` 迁到 Stable Reading Base / Anchor Segment，并保持 legacy `/app/reader/{recordId}` 行为不变。
+- `user_annotations` / `reader_notes` 的 single-range 校验从旧 `render_scene` 迁到 Canonical Text Layer / Anchor Segment，并保持 legacy `/app/reader/{recordId}` 行为不变。
 - 对外 anchor 优先使用 `anchor_segment_id`，`sentence_id` 只保留兼容 alias。
 - `multi_text` 需要 `UserEditorialAssetAnchorSet` / multi-range gate、projection reload 规则和 persistence contract 后再启用。
 - API 错误模型需要区分 stale anchor、hash mismatch、range out of bounds、record mismatch 和 unsupported anchor mode。
 
-如果 Stable Base / Anchor Segment 校验或 persistence 尚未完成，V1a / V1b 可以先显示 Comment/Highlight 按钮的 disabled 或 coming-soon 状态，但不能调用旧 render scene 写入路径。
+如果 Canonical Text Layer / Anchor Segment 校验或 persistence 尚未完成，V1a / V1b 可以先显示 Comment/Highlight 按钮的 disabled 或 coming-soon 状态，但不能调用旧 render scene 写入路径。
 
 ## Ask Supplement
 
@@ -835,7 +1029,7 @@ V2 schema 完成后：
 
 ### Anchor Validation Cutover
 
-把 `user_annotations` / `reader_notes` 的 single-range 校验从旧 `render_scene` 迁到 Stable Reading Base / Anchor Segment；`multi_text` 另走 `UserEditorialAssetAnchorSet` contract。
+把 `user_annotations` / `reader_notes` 的 single-range 校验从旧 `render_scene` 迁到 Canonical Text Layer / Anchor Segment；当前过渡实现可继续走 Stable Reading Base，`multi_text` 另走 `UserEditorialAssetAnchorSet` contract。
 
 ### Ask Supplement Projection
 
@@ -846,7 +1040,7 @@ V2 schema 完成后：
 后置到：
 
 - Ask 修订系统解析。
-- Candidate Base preview/edit。
+- Candidate Document preview/edit。
 - 用户笔记改写建议。
 - Ask Supplement 替换版本。
 
