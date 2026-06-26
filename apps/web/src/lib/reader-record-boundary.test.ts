@@ -60,6 +60,8 @@ const READER_RECORD_WORKBENCH_SURFACE =
   "src/components/reader/ReaderRecordWorkbenchSurface.tsx";
 const READER_RECORD_PLATE_SURFACE =
   "src/components/reader/plate/ReaderRecordPlateSurface.tsx";
+const INLINE_COMMENT_PANEL =
+  "src/components/reader/plate/InlineCommentPanel.tsx";
 const READER_RECORD_ANCHOR_DRAFT =
   "src/lib/reader-plate/projection/reader-record-anchor-draft.ts";
 
@@ -192,21 +194,38 @@ describe("reader record boundary - ReaderRecordPlateSurface must not reference l
 
   it("plate surface enables RR Ask, highlight and note while keeping feedback unavailable", () => {
     const source = readSource(READER_RECORD_PLATE_SURFACE);
-    const selectionToolbar = extractSelectionToolbarInvocation(source);
-    const disabledActions = extractDisabledActionsProp(selectionToolbar);
 
-    expect(selectionToolbar).toContain("onAsk={() => handleAskFromSelection()}");
-    expect(disabledActions).not.toMatch(/\bask:\s*true/);
-    expect(disabledActions).not.toMatch(/\bhighlight:\s*true/);
-    expect(disabledActions).not.toMatch(/\bnote:\s*true/);
-    expect(disabledActions).toMatch(/\bfeedback:\s*true/);
+    // The plate surface wires a ReaderToolbarActionsProvider that exposes
+    // Ask, highlight, note and lookup actions for the floating toolbar.
+    expect(source).toContain("ReaderToolbarActionsProvider");
+    expect(source).toContain("onAsk: () => handleAskFromSelection()");
+    expect(source).toContain("onHighlight: () => handleHighlight()");
+    expect(source).toContain("onNote: () => handleOpenNoteComposer()");
+    expect(source).toContain("onLookup: () => handleLookup()");
+
+    // Feedback stays out of the selection toolbar actions: there is no
+    // onFeedback callback wired into the toolbarActions memo.
+    expect(source).not.toMatch(/\bonFeedback:\s*\(\)\s*=>/);
+    // The selection action strip still marks feedback as coming-soon.
+    expect(source).toContain(
+      'data-reader-record-coming-soon-actions="feedback"',
+    );
   });
 
-  it("plate surface exposes a note-level RR Ask entry without importing legacy note panels", () => {
-    const source = readSource(READER_RECORD_PLATE_SURFACE);
+  it("plate surface delegates the note-level RR Ask entry to InlineCommentPanel without importing legacy note panels", () => {
+    const plateSurfaceSource = readSource(READER_RECORD_PLATE_SURFACE);
+    const inlineCommentPanelSource = readSource(INLINE_COMMENT_PANEL);
 
-    expect(source).toContain('data-reader-record-note-action="ask"');
-    expect(source).not.toContain("ReaderNotePanel");
+    // Plate surface wires InlineCommentPanel (CommentKit activeId driven)
+    // instead of rendering the note action strip inline.
+    expect(plateSurfaceSource).toContain("InlineCommentPanel");
+    // The note-level Ask action button now lives in InlineCommentPanel.
+    expect(inlineCommentPanelSource).toContain(
+      'data-reader-record-note-action="ask"',
+    );
+    // Neither file may import the legacy ReaderNotePanel.
+    expect(plateSurfaceSource).not.toContain("ReaderNotePanel");
+    expect(inlineCommentPanelSource).not.toContain("ReaderNotePanel");
   });
 });
 

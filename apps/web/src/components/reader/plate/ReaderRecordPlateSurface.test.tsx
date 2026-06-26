@@ -1116,7 +1116,7 @@ describe("ReaderRecordPlateSurface", () => {
     selectTextInElement(memoryMark, 0, "memory".length);
 
     const askButton = await screen.findByRole("button", {
-      name: "Ask Claread",
+      name: "Ask",
     });
     fireEvent.click(askButton);
 

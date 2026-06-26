@@ -497,9 +497,10 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
       pattern: "subject + verb + object",
       note: "shapes acts as the predicate verb.",
     });
-    expect(grammarCallout.children[0].text).toBe(
-      "shapes acts as the predicate verb.",
-    );
+    expect(grammarCallout.children[0]).toMatchObject({
+      type: "p",
+      children: [{ text: "shapes acts as the predicate verb." }],
+    });
   });
 
   it("projects sentence analysis as callout blocks with analysis variant", () => {
@@ -700,9 +701,10 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
       createdFromTurnRunId: "turn_run_1",
       lifecycleStatus: "persisted",
     });
-    expect(supplementCallout.children[0].text).toBe(
-      "Institutional memory 指组织内部积累的经验与习惯。",
-    );
+    expect(supplementCallout.children[0]).toMatchObject({
+      type: "p",
+      children: [{ text: "Institutional memory 指组织内部积累的经验与习惯。" }],
+    });
   });
 
   it("emits supplement callout after analysis callout in block order", () => {

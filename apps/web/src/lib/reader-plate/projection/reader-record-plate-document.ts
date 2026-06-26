@@ -29,6 +29,8 @@ import type {
   VocabularyPhraseType,
 } from "@/types/api/reader-plate";
 import { computeUtf16FNV1a } from "@claread/contracts";
+import type { Descendant } from "platejs";
+import { deserializeMarkdownToBlocks } from "@/lib/reader-plate/markdown/deserialize";
 
 export const READER_RECORD_PLATE_DOCUMENT_SCHEMA_VERSION =
   "reader-record-plate-document/v1" as const;
@@ -121,7 +123,8 @@ export interface ReaderRecordPlateCalloutBlock {
   id: string;
   variant: ReaderRecordPlateCalloutVariant;
   icon: string;
-  children: ReaderRecordPlateCalloutTextLeaf[];
+  /** Plate 节点树，由 projection 层 deserializeMarkdownToBlocks 生成 */
+  children: Descendant[];
   data: ReaderRecordPlateCalloutData;
 }
 
@@ -151,6 +154,10 @@ export interface ReaderRecordPlateCalloutData {
   lifecycleStatus?: string;
 }
 
+/**
+ * @deprecated 使用 `Descendant[]` 替代。保留为兼容别名。
+ * Callout children 现在是标准 Plate 节点树，由 deserializeMarkdownToBlocks 生成。
+ */
 export interface ReaderRecordPlateCalloutTextLeaf {
   text: string;
 }
@@ -827,7 +834,7 @@ function buildGrammarCalloutBlocks(
         id: `callout:grammar:${mark.item_id}`,
         variant: "grammar",
         icon: "📖",
-        children: [{ text: mark.note }],
+        children: deserializeMarkdownToBlocks(mark.note),
         data: {
           anchorSegmentId: mark.anchor_segment_id,
           unitId: segment.unit_id,
@@ -856,7 +863,7 @@ function buildSentenceAnalysisCalloutBlocks(
     id: `callout:analysis:${node.analysis_id}`,
     variant: "analysis" as const,
     icon: "🔍",
-    children: [{ text: node.analysis }],
+    children: deserializeMarkdownToBlocks(node.analysis),
     data: {
       anchorSegmentId: node.anchor_segment_id,
       unitId: node.unit_id,
@@ -918,7 +925,7 @@ function buildSupplementCalloutBlocks(
       id: `callout:supplement:${supplement.supplement_id}`,
       variant: "supplement" as const,
       icon: "💬",
-      children: [{ text: contentMd }],
+      children: deserializeMarkdownToBlocks(contentMd),
       data: {
         anchorSegmentId: segment.anchor_segment_id,
         unitId: segment.unit_id,

@@ -41,7 +41,8 @@ import {
   type ReaderSettingsState,
 } from "@/components/reader/settings";
 
-import { SelectionToolbar } from "../SelectionToolbar";
+import { ReaderToolbarActionsProvider } from "@/components/editor/plugins/reader-floating-toolbar-buttons";
+import { CalloutMarkdownRenderer } from "./CalloutMarkdownRenderer";
 import {
   ReaderFloatingSurface,
   useReaderFloatingLayer,
@@ -51,6 +52,19 @@ import { ReaderDictionaryRail } from "../dictionary/ReaderDictionaryRail";
 import type { DictionaryLookupSnapshot, SaveState } from "../dictionary/contracts";
 import { firstMeaning, meaningsJson } from "../dictionary/contracts";
 import type { DictionaryAIViewState } from "@/types/api/dict-ai";
+import { Plate, usePlateEditor, type RenderLeaf } from "platejs/react";
+import { Editor, EditorContainer } from "@/components/ui/editor";
+import { ReaderPlateKit } from "@/components/editor/plugins/reader-plate-kit";
+import { ReaderLeafActionsContext } from "@/components/editor/plugins/reader-leaf-kit";
+import {
+  CommentPluginBridge,
+  InlineCommentPanel,
+  type CommentPluginApi,
+} from "@/components/reader/plate/InlineCommentPanel";
+import {
+  projectReaderRecordPlateToPlateValue,
+  type PlateTextNode,
+} from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
 
 export interface ReaderRecordPlateSurfaceProps {
   snapshot: ReaderPlateSnapshotDto;
@@ -558,9 +572,7 @@ function CalloutBlock({
             </span>
           ) : null}
           <div className="mt-1">
-            {block.children.map((leaf, index) => (
-              <span key={index}>{leaf.text}</span>
-            ))}
+            <CalloutMarkdownRenderer nodes={block.children} />
           </div>
         </div>
         <button
@@ -823,8 +835,6 @@ function SelectionActionStrip({
       }
       data-reader-record-write-state={writeState.kind}
       className="sr-only"
-      aria-hidden="true"
-      inert
       aria-label="Reader Record Plate 操作"
     >
       <span
@@ -866,7 +876,7 @@ function SelectionActionStrip({
             className={actionButtonClassName(!highlightDisabled)}
             title={highlightDisabled ? disabledReason : "保存高亮"}
             onPointerDown={(event) => event.preventDefault()}
-            onClick={onHighlight}
+            onClick={() => onHighlight()}
           >
             {writeState.kind === "saving" && writeState.action === "highlight"
               ? "保存中"
@@ -878,8 +888,9 @@ function SelectionActionStrip({
             data-reader-record-action="note"
             className={actionButtonClassName(!noteDisabled)}
             title={noteDisabled ? disabledReason : "创建笔记"}
+            aria-label="新建笔记"
             onPointerDown={(event) => event.preventDefault()}
-            onClick={onOpenNoteComposer}
+            onClick={() => onOpenNoteComposer()}
           >
             笔记
           </button>
@@ -987,6 +998,7 @@ export function ReaderRecordPlateSurface({
   onRequestSnapshotReload,
 }: ReaderRecordPlateSurfaceProps) {
   const surfaceRef = useRef<HTMLElement | null>(null);
+  const commentApiRef = useRef<CommentPluginApi | null>(null);
   const [activeSelection, setActiveSelection] =
     useState<ReaderRecordSelectionAnchorBridgeResult | null>(null);
   const [copyStatus, setCopyStatus] = useState<ReaderRecordCopyStatus>("idle");
@@ -1082,6 +1094,55 @@ export function ReaderRecordPlateSurface({
     );
   }, [plateDocument.children, surfaceMode]);
 
+  // Plate editor value: 把 visibleBlocks 投影为 Plate Descendant[]。
+  // visibleBlocks 过滤在 projection 层完成，保证 editor 只渲染当前 surfaceMode 需要的 blocks。
+  const plateValue = useMemo(
+    () =>
+      projectReaderRecordPlateToPlateValue({
+        ...plateDocument,
+        children: visibleBlocks,
+      }),
+    [plateDocument, visibleBlocks],
+  );
+  const editor = usePlateEditor(
+    {
+      plugins: [...ReaderPlateKit],
+      value: plateValue as never[],
+    },
+    [],
+  );
+  // plateValue 变化时同步 editor 内容，避免重新创建 editor 实例。
+  useEffect(() => {
+    if (editor.children !== plateValue) {
+      editor.tf.setValue(plateValue as never[]);
+    }
+  }, [plateValue, editor]);
+
+  // renderLeaf：为每个 paragraph text leaf 输出选区锚点 data 属性，
+  // 保持与旧手动渲染（renderParagraphLeaf）一致的 DOM 结构，
+  // 让 readReaderRecordSelectionAnchorDrafts 选区逻辑无需改动。
+  const renderLeaf = useCallback(
+    (props: Parameters<RenderLeaf>[0]) => {
+      const leaf = props.leaf as unknown as PlateTextNode;
+      const anchorSegmentId = leaf.anchor_segment_id;
+      if (anchorSegmentId) {
+        return (
+          <span
+            {...props.attributes}
+            data-reader-record-leaf="segment_text"
+            data-anchor-segment-id={anchorSegmentId}
+            data-segment-start-utf16={leaf.segment_start_utf16}
+            data-segment-end-utf16={leaf.segment_end_utf16}
+          >
+            {props.children}
+          </span>
+        );
+      }
+      return <span {...props.attributes}>{props.children}</span>;
+    },
+    [],
+  );
+
   const handleSettingsChange = useCallback((next: ReaderSettingsState) => {
     setReaderSettings(next);
     persistReaderSettings(next);
@@ -1095,12 +1156,8 @@ export function ReaderRecordPlateSurface({
     },
     [readerSettings],
   );
-  const [toolbarOpen, setToolbarOpen] = useState(false);
-  const toolbarFloating = useReaderFloatingLayer({
-    open: toolbarOpen,
-    placement: "top",
-    offsetPx: 12,
-  });
+  // SelectionToolbar 已迁移为 Plate FloatingToolbar（由 FloatingToolbarKit 在 render.afterEditable 渲染），
+  // toolbarOpen / toolbarFloating 不再需要，FloatingToolbar 通过 Plate editor selection 自动管理显示。
   const [highlightMenu, setHighlightMenu] = useState<{
     mark: ReaderRecordPlateUserHighlightMark;
     anchor: HTMLElement;
@@ -1116,11 +1173,6 @@ export function ReaderRecordPlateSurface({
     mode: "view" | "edit";
     draft: string;
   } | null>(null);
-  const noteMenuFloating = useReaderFloatingLayer({
-    open: noteMenu !== null,
-    placement: "bottom",
-    offsetPx: 8,
-  });
   const quickPeekOpen = lookupState.kind !== "idle";
   const quickPeekFloating = useReaderFloatingLayer({
     open: quickPeekOpen,
@@ -1167,28 +1219,13 @@ export function ReaderRecordPlateSurface({
       setActiveSelection(nextSelection);
       setCopyStatus("idle");
       setWriteState((current) => (current.kind === "saving" ? current : { kind: "idle" }));
-
-      const selection = window.getSelection();
-      if (
-        nextSelection?.supportedSingleRange &&
-        selection &&
-        selection.rangeCount > 0
-      ) {
-        const range = selection.getRangeAt(0);
-        toolbarFloating.refs.setReference({
-          getBoundingClientRect: () => range.getBoundingClientRect(),
-        });
-        setToolbarOpen(true);
-      } else {
-        setToolbarOpen(false);
-      }
     }
 
     window.document.addEventListener("selectionchange", handleSelectionChange);
     return () => {
       window.document.removeEventListener("selectionchange", handleSelectionChange);
     };
-  }, [snapshot, toolbarFloating.refs]);
+  }, [snapshot]);
 
   useEffect(() => {
     if (lookupState.kind === "idle") {
@@ -1490,7 +1527,6 @@ export function ReaderRecordPlateSurface({
       setAskAttachments([attachment]);
     }
     setAskOpen(true);
-    setToolbarOpen(false);
     setDictionaryOpen(false);
     setDictionaryAIPanelOpen(false);
     setDictionaryAI({ kind: "idle" });
@@ -1882,6 +1918,9 @@ export function ReaderRecordPlateSurface({
     setNoteAnchorDraft(draft);
     setNoteDraft("");
     setWriteState({ kind: "idle" });
+    // 通过 CommentKit 的 setDraft 创建 draft comment mark 并设置 activeId，
+    // InlineCommentPanel 读取 activeId 后显示 composer。
+    commentApiRef.current?.setDraft();
   }, [activeSelection, writeState.kind]);
 
   const handleCancelNote = useCallback(() => {
@@ -1890,6 +1929,9 @@ export function ReaderRecordPlateSurface({
     }
     setNoteAnchorDraft(null);
     setNoteDraft("");
+    // 移除 draft comment mark 并清除 activeId，关闭 InlineCommentPanel。
+    commentApiRef.current?.removeMark();
+    commentApiRef.current?.setActiveId(null);
   }, [writeState.kind]);
 
   const handleSaveNote = useCallback(async () => {
@@ -1914,6 +1956,9 @@ export function ReaderRecordPlateSurface({
       });
       setNoteAnchorDraft(null);
       setNoteDraft("");
+      // 保存成功后清除 activeId 关闭 InlineCommentPanel；
+      // draft comment mark 会在 snapshot reload 后通过 editor.tf.setValue 自然清除。
+      commentApiRef.current?.setActiveId(null);
       setWriteState({
         kind: "saved",
         action: "note",
@@ -2068,11 +2113,31 @@ export function ReaderRecordPlateSurface({
   const handleActivateNote = useCallback(
     (mark: ReaderRecordPlateUserNoteMark, anchor: HTMLElement) => {
       setNoteMenu({ mark, anchor, mode: "view", draft: mark.noteText });
-      noteMenuFloating.refs.setReference({
-        getBoundingClientRect: () => anchor.getBoundingClientRect(),
-      });
+      // 设置 CommentKit activeId 为笔记 assetId，InlineCommentPanel 读取后显示 view 模式。
+      commentApiRef.current?.setActiveId(mark.assetId);
     },
-    [noteMenuFloating.refs],
+    [],
+  );
+
+  // 把 mark 点击回调打包为 Context value，供 Plate leaf plugin 消费。
+  const leafActions = useMemo(
+    () => ({
+      onActivateVocabulary: handleActivateVocabulary,
+      onActivateHighlight: handleActivateHighlight,
+      onActivateNote: handleActivateNote,
+    }),
+    [handleActivateVocabulary, handleActivateHighlight, handleActivateNote],
+  );
+
+  // 把选区工具栏回调打包为 Context value，供 ReaderFloatingToolbarButtons 消费。
+  const toolbarActions = useMemo(
+    () => ({
+      onAsk: () => handleAskFromSelection(),
+      onHighlight: () => handleHighlight(),
+      onNote: () => handleOpenNoteComposer(),
+      onLookup: () => handleLookup(),
+    }),
+    [handleAskFromSelection, handleHighlight, handleOpenNoteComposer, handleLookup],
   );
 
   const handleStartEditNote = useCallback(() => {
@@ -2086,6 +2151,34 @@ export function ReaderRecordPlateSurface({
       current ? { ...current, mode: "view", draft: current.mark.noteText } : null,
     );
   }, []);
+
+  // InlineCommentPanel 的笔记编辑草稿变更回调。
+  const handleNoteEditDraftChange = useCallback((value: string) => {
+    setNoteMenu((current) =>
+      current ? { ...current, draft: value } : null,
+    );
+  }, []);
+
+  // InlineCommentPanel 关闭回调（X 按钮）。
+  const handleCloseCommentPanel = useCallback(() => {
+    if (noteAnchorDraft) {
+      // draft 模式：取消新建笔记。
+      handleCancelNote();
+    } else if (noteMenu) {
+      // existing note 模式：退出编辑 + 清除 noteMenu。
+      setNoteMenu(null);
+    }
+  }, [noteAnchorDraft, noteMenu, handleCancelNote]);
+
+  // InlineCommentPanel 的状态消息。
+  const commentStatusMessage =
+    writeState.kind === "saved" && writeState.action === "note"
+      ? writeState.message
+      : writeState.kind === "error" && writeState.action === "note"
+        ? writeState.message
+        : null;
+  const commentIsSaving =
+    writeState.kind === "saving" && writeState.action === "note";
 
   const handleSaveNoteEdit = useCallback(async () => {
     const activeMenu = noteMenu;
@@ -2127,6 +2220,8 @@ export function ReaderRecordPlateSurface({
         throw new Error(payload?.message ?? "笔记更新失败。");
       }
       setNoteMenu(null);
+      // 编辑保存后清除 activeId 关闭 InlineCommentPanel。
+      commentApiRef.current?.setActiveId(null);
       setWriteState({
         kind: "saved",
         action: "note",
@@ -2153,6 +2248,8 @@ export function ReaderRecordPlateSurface({
     const deletedAssetId = activeMenu.mark.assetId;
     const previousAssets = localUserAssets;
     setNoteMenu(null);
+    // 删除后清除 activeId 关闭 InlineCommentPanel。
+    commentApiRef.current?.setActiveId(null);
     setLocalUserAssets((current) =>
       current.filter((asset) => asset.asset_id !== deletedAssetId),
     );
@@ -2185,30 +2282,6 @@ export function ReaderRecordPlateSurface({
       });
     }
   }, [noteMenu, localUserAssets, onRequestSnapshotReload, writeState.kind]);
-
-  useEffect(() => {
-    if (noteMenu === null) {
-      return;
-    }
-    const activeMenu = noteMenu;
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node | null;
-      if (!target) {
-        return;
-      }
-      if (noteMenuFloating.refs.floating.current?.contains(target)) {
-        return;
-      }
-      if (activeMenu.anchor.contains(target)) {
-        return;
-      }
-      setNoteMenu(null);
-    }
-    window.document.addEventListener("pointerdown", handlePointerDown);
-    return () => {
-      window.document.removeEventListener("pointerdown", handlePointerDown);
-    };
-  }, [noteMenu, noteMenuFloating.refs.floating]);
 
   return (
     <section
@@ -2249,38 +2322,6 @@ export function ReaderRecordPlateSurface({
           onLookup={handleLookup}
           onOpenNoteComposer={handleOpenNoteComposer}
         />
-        {toolbarOpen ? (
-          <ReaderFloatingSurface
-            floatingRef={toolbarFloating.refs.setFloating}
-            style={toolbarFloating.floatingStyles}
-            data-reader-record-floating-toolbar="selection"
-          >
-            <SelectionToolbar
-              selectedText={singleRangeDraft(activeSelection)?.selected_text ?? ""}
-              disabled={{
-                selectSentence: true,
-                clear: true,
-                feedback: true,
-              }}
-              statusMessage={
-                writeState.kind !== "idle" ? writeStateLabel(writeState) : undefined
-              }
-              statusKind={
-                writeState.kind === "saving"
-                  ? "saving"
-                  : writeState.kind === "saved"
-                    ? "saved"
-                    : writeState.kind === "error"
-                      ? "error"
-                      : undefined
-              }
-              onAsk={() => handleAskFromSelection()}
-              onHighlight={() => handleHighlight()}
-              onNote={() => handleOpenNoteComposer()}
-              onLookup={() => handleLookup()}
-            />
-          </ReaderFloatingSurface>
-        ) : null}
         {highlightMenu ? (
           <ReaderFloatingSurface
             floatingRef={highlightMenuFloating.refs.setFloating}
@@ -2312,100 +2353,7 @@ export function ReaderRecordPlateSurface({
             </div>
           </ReaderFloatingSurface>
         ) : null}
-        {noteMenu ? (
-          <ReaderFloatingSurface
-            floatingRef={noteMenuFloating.refs.setFloating}
-            style={noteMenuFloating.floatingStyles}
-            data-reader-record-floating-toolbar="note-menu"
-          >
-            <div className="w-72 rounded-lg border border-border/60 bg-background/95 p-3 shadow-md backdrop-blur-sm">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">
-                  笔记
-                </span>
-                {noteMenu.mode === "view" ? (
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      aria-label="Ask 关于这条笔记"
-                      data-reader-record-note-action="ask"
-                      onClick={handleAskFromNote}
-                      className="rounded-md px-2 py-0.5 text-xs text-lens-blue transition-colors hover:bg-lens-blue/5"
-                    >
-                      Ask
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="编辑笔记"
-                      data-reader-record-note-action="edit"
-                      onClick={handleStartEditNote}
-                      className="rounded-md px-2 py-0.5 text-xs text-lens-blue transition-colors hover:bg-lens-blue/5"
-                    >
-                      编辑
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="删除笔记"
-                      data-reader-record-note-action="delete"
-                      onClick={handleDeleteNote}
-                      className="rounded-md px-2 py-0.5 text-xs text-rose-600 transition-colors hover:bg-rose-50"
-                    >
-                      删除
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-              {noteMenu.mode === "view" ? (
-                <p
-                  data-reader-record-note-content="view"
-                  className="whitespace-pre-wrap break-words text-sm leading-6 text-ink"
-                >
-                  {noteMenu.mark.noteText}
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  <textarea
-                    aria-label="编辑笔记内容"
-                    data-reader-record-note-input="edit"
-                    value={noteMenu.draft}
-                    rows={3}
-                    onChange={(event) =>
-                      setNoteMenu((current) =>
-                        current ? { ...current, draft: event.currentTarget.value } : null,
-                      )
-                    }
-                    className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-1.5 text-sm leading-6 text-ink outline-none focus:border-lens-blue"
-                  />
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      aria-label="取消编辑笔记"
-                      data-reader-record-note-action="cancel-edit"
-                      onClick={handleCancelEditNote}
-                      className={actionButtonClassName(true)}
-                    >
-                      取消
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="保存笔记"
-                      data-reader-record-note-action="save"
-                      onClick={handleSaveNoteEdit}
-                      disabled={
-                        writeState.kind === "saving" || noteMenu.draft.trim().length === 0
-                      }
-                      className={actionButtonClassName(
-                        !(writeState.kind === "saving" || noteMenu.draft.trim().length === 0),
-                      )}
-                    >
-                      {writeState.kind === "saving" ? "保存中" : "保存"}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </ReaderFloatingSurface>
-        ) : null}
+        {/* noteMenu 浮层已迁移到 InlineCommentPanel（CommentKit activeId 驱动） */}
         {quickPeekOpen ? (
           <ReaderQuickPeek
             lookup={activeLookupSnapshot}
@@ -2455,41 +2403,38 @@ export function ReaderRecordPlateSurface({
             </button>
           </ReaderFloatingSurface>
         ) : null}
-        {noteAnchorDraft ? (
-          <ReaderRecordNoteComposer
-            noteDraft={noteDraft}
-            saving={writeState.kind === "saving" && writeState.action === "note"}
-            onCancel={handleCancelNote}
-            onChange={setNoteDraft}
-            onSave={handleSaveNote}
-          />
-        ) : null}
-        <div
-          className="reader-record-plate-document space-y-3 px-0 py-0 outline-none"
-          data-reader-record-mode={surfaceMode}
-        >
-          {visibleBlocks.map((block) => {
-            switch (block.type) {
-              case "paragraph":
-                return (
-                  <ParagraphBlock
-                    key={block.id}
-                    block={block}
-                    readingClassName={`${readingClassName} ${typography.bodyClassName}`}
-                    onActivateVocabulary={handleActivateVocabulary}
-                    onActivateHighlight={handleActivateHighlight}
-                    onActivateNote={handleActivateNote}
-                  />
-                );
-              case "blockquote":
-                return <BlockquoteBlock key={block.id} block={block} />;
-              case "callout":
-                return <CalloutBlock key={block.id} block={block} onFeedback={handleOpenFeedback} />;
-              default:
-                return null;
-            }
-          })}
-        </div>
+        {/* ReaderRecordNoteComposer 已迁移到 InlineCommentPanel（CommentKit activeId 驱动） */}
+        <ReaderLeafActionsContext.Provider value={leafActions}>
+          <ReaderToolbarActionsProvider value={toolbarActions}>
+            <Plate editor={editor} readOnly>
+              <CommentPluginBridge apiRef={commentApiRef} />
+              <EditorContainer
+                className={`reader-record-plate-document space-y-3 px-0 py-0 outline-none cursor-default overflow-visible bg-transparent ${readingClassName} ${typography.bodyClassName}`.trim()}
+                data-reader-record-mode={surfaceMode}
+              >
+                <Editor readOnly disableDefaultStyles renderLeaf={renderLeaf as never} />
+              </EditorContainer>
+              <InlineCommentPanel
+                draftText={noteDraft}
+                onDraftTextChange={setNoteDraft}
+                onSaveDraft={handleSaveNote}
+                onCancelDraft={handleCancelNote}
+                activeNote={noteMenu?.mark ?? null}
+                noteEditMode={noteMenu?.mode ?? "view"}
+                noteEditDraft={noteMenu?.draft ?? ""}
+                onNoteEditDraftChange={handleNoteEditDraftChange}
+                onStartEditNote={handleStartEditNote}
+                onCancelEditNote={handleCancelEditNote}
+                onSaveNoteEdit={handleSaveNoteEdit}
+                onDeleteNote={handleDeleteNote}
+                onAskFromNote={handleAskFromNote}
+                isSaving={commentIsSaving}
+                statusMessage={commentStatusMessage}
+                onClose={handleCloseCommentPanel}
+              />
+            </Plate>
+          </ReaderToolbarActionsProvider>
+        </ReaderLeafActionsContext.Provider>
         {feedbackState.kind !== "idle" ? (
           <div
             data-reader-record-feedback-status={feedbackState.kind}
