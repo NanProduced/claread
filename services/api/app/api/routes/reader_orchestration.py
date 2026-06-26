@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import get_args
 from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, HTTPException, Query
 
+from app.schemas.reader_input_adapter import InputSuitabilityRequest
 from app.schemas.reader_orchestration import (
     ReaderCandidateDocumentConfirmRequest,
     ReaderCandidateDocumentConfirmResponse,
@@ -14,6 +16,13 @@ from app.schemas.reader_orchestration import (
     ReaderPlainTextSubmitRequest,
     ReaderPlainTextSubmitResponse,
     ReaderPlateSnapshot,
+    ReaderStableReadyInputSubmitRequest,
+    ReaderStableReadyInputSubmitResponse,
+    ReaderUnifiedInputSubmitCandidateResponse,
+    ReaderUnifiedInputSubmitRejectedResponse,
+    ReaderUnifiedInputSubmitRequest,
+    ReaderUnifiedInputSubmitResponse,
+    ReaderUnifiedInputSubmitStableResponse,
     ReaderStableDocumentBase,
     ReaderStableDocumentBlock,
     ReaderStableDocumentMetadata,
@@ -32,19 +41,157 @@ from app.services.reader_orchestration.base_builder import (
     DETERMINISTIC_SEGMENTER_VERSION,
     EXACT_CANONICAL_TEXT_VERSION,
 )
+from app.services.reader_orchestration.candidate_document_creation_service import (
+    CandidateDocumentCreationError,
+    CandidateDocumentCreationResult,
+    CandidateDocumentCreationService,
+)
 from app.services.reader_orchestration.candidate_document_confirm_application_service import (
     CandidateDocumentConfirmApplicationError,
     CandidateDocumentConfirmApplicationService,
 )
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
+from app.services.reader_orchestration.input_document_normalizer import (
+    InputDocumentNormalizationError,
+)
+from app.services.reader_orchestration.input_suitability_gate import (
+    evaluate_input_suitability,
+)
 from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
 from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
+from app.services.reader_orchestration.stable_ready_input_application_service import (
+    StableReadyInputApplicationError,
+    StableReadyInputApplicationResult,
+    StableReadyInputApplicationService,
+)
 from app.services.reader_orchestration.stable_document_query_service import (
     StableDocumentQueryError,
     StableDocumentQueryService,
 )
 
 router = APIRouter(prefix="/reader", tags=["reader"])
+_CLIENT_RECORD_ID_UNIQUE_CONSTRAINT = "uq_reading_records_user_client_active"
+
+
+def _iter_exception_chain(exc: BaseException) -> Iterator[BaseException]:
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
+def _find_input_document_normalization_error(
+    exc: BaseException,
+) -> InputDocumentNormalizationError | None:
+    for cause in _iter_exception_chain(exc):
+        if isinstance(cause, InputDocumentNormalizationError):
+            return cause
+    return None
+
+
+def _has_user_client_record_unique_violation(exc: BaseException) -> bool:
+    for cause in _iter_exception_chain(exc):
+        if (
+            isinstance(cause, asyncpg.UniqueViolationError)
+            and getattr(cause, "constraint_name", None)
+            == _CLIENT_RECORD_ID_UNIQUE_CONSTRAINT
+        ):
+            return True
+    return False
+
+
+def _raise_stable_ready_input_application_error(
+    exc: StableReadyInputApplicationError,
+) -> None:
+    normalization_error = _find_input_document_normalization_error(exc)
+    if normalization_error is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Stable-ready input normalization failed: "
+                f"outcome={normalization_error.outcome}, "
+                f"flags={normalization_error.flags}, "
+                f"reasons={normalization_error.reasons}"
+            ),
+        ) from exc
+    if _has_user_client_record_unique_violation(exc):
+        raise HTTPException(
+            status_code=409,
+            detail="client_record_id already exists for this user",
+        ) from exc
+    raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _raise_candidate_document_creation_error(
+    exc: CandidateDocumentCreationError,
+) -> None:
+    if _has_user_client_record_unique_violation(exc):
+        raise HTTPException(
+            status_code=409,
+            detail="client_record_id already exists for this user",
+        ) from exc
+    raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _build_stable_ready_submit_response(
+    result: StableReadyInputApplicationResult,
+) -> ReaderStableReadyInputSubmitResponse:
+    return ReaderStableReadyInputSubmitResponse(
+        reading_record_id=str(result.reading_record_id),
+        stable_document_id=str(result.stable_document_id),
+        base_id=str(result.base_id),
+        record_generation=result.record_generation,
+        document_version=result.document_version,
+        title=result.title,
+        content_sha256=result.content_sha256,
+        canonical_text_sha256=result.canonical_text_sha256,
+        block_count=result.block_count,
+        article_ready_event_id=str(result.article_ready_event_id),
+        article_ready_sequence=result.article_ready_sequence,
+        suitability=result.suitability,
+        snapshot=result.snapshot,
+    )
+
+
+def _build_unified_stable_ready_submit_response(
+    result: StableReadyInputApplicationResult,
+) -> ReaderUnifiedInputSubmitStableResponse:
+    return ReaderUnifiedInputSubmitStableResponse(
+        outcome="stable_document_ready",
+        reading_record_id=str(result.reading_record_id),
+        stable_document_id=str(result.stable_document_id),
+        base_id=str(result.base_id),
+        record_generation=result.record_generation,
+        document_version=result.document_version,
+        title=result.title,
+        content_sha256=result.content_sha256,
+        canonical_text_sha256=result.canonical_text_sha256,
+        block_count=result.block_count,
+        article_ready_event_id=str(result.article_ready_event_id),
+        article_ready_sequence=result.article_ready_sequence,
+        suitability=result.suitability,
+        snapshot=result.snapshot,
+    )
+
+
+def _build_unified_candidate_submit_response(
+    result: CandidateDocumentCreationResult,
+) -> ReaderUnifiedInputSubmitCandidateResponse:
+    return ReaderUnifiedInputSubmitCandidateResponse(
+        outcome="candidate_document_required",
+        reading_record_id=str(result.reading_record_id),
+        candidate_document_id=str(result.candidate_document_id),
+        record_generation=result.record_generation,
+        status=result.status,
+        title=result.title,
+        block_count=result.block_count,
+        source_type=result.source_type,
+        filename=result.filename,
+        original_input_id=str(result.original_input_id),
+        suitability=result.suitability,
+    )
 
 
 @router.post(
@@ -84,6 +231,92 @@ async def submit_reader_plain_text(
         article_ready_sequence=result.article_ready_sequence,
         snapshot=result.snapshot,
     )
+
+
+@router.post(
+    "/records/input",
+    response_model=ReaderUnifiedInputSubmitResponse,
+    summary="Submit reader input and route it to stable freeze, candidate creation, or action-required",
+)
+async def submit_reader_input(
+    body: ReaderUnifiedInputSubmitRequest,
+    current_user: AuthUserDep,
+) -> ReaderUnifiedInputSubmitResponse:
+    user_id = UUID(current_user.user_id)
+    suitability = evaluate_input_suitability(
+        InputSuitabilityRequest(
+            source_type=body.source_type,
+            text=body.text,
+            filename=body.filename,
+            source_metadata=body.source_metadata or {},
+        )
+    )
+
+    if suitability.outcome == "stable_document_ready":
+        service = StableReadyInputApplicationService()
+        try:
+            result = await service.freeze_stable_ready_input_and_load_snapshot(
+                user_id=user_id,
+                source_type=body.source_type,
+                text=body.text,
+                filename=body.filename,
+                source_metadata=body.source_metadata,
+                client_record_id=body.client_record_id,
+                language=body.language,
+            )
+        except StableReadyInputApplicationError as exc:
+            _raise_stable_ready_input_application_error(exc)
+            raise AssertionError("unreachable")
+        return _build_unified_stable_ready_submit_response(result)
+
+    if suitability.outcome == "candidate_document_required":
+        service = CandidateDocumentCreationService()
+        try:
+            result = await service.create_candidate_document_from_input(
+                user_id=user_id,
+                source_type=body.source_type,
+                text=body.text,
+                filename=body.filename,
+                source_metadata=body.source_metadata,
+                client_record_id=body.client_record_id,
+                language=body.language,
+            )
+        except CandidateDocumentCreationError as exc:
+            _raise_candidate_document_creation_error(exc)
+            raise AssertionError("unreachable")
+        return _build_unified_candidate_submit_response(result)
+
+    return ReaderUnifiedInputSubmitRejectedResponse(
+        outcome="input_rejected_or_action_required",
+        suitability=suitability,
+    )
+
+
+@router.post(
+    "/records/stable-ready-input",
+    response_model=ReaderStableReadyInputSubmitResponse,
+    summary="Freeze stable-ready input into a reader record and reload the snapshot",
+)
+async def submit_reader_stable_ready_input(
+    body: ReaderStableReadyInputSubmitRequest,
+    current_user: AuthUserDep,
+) -> ReaderStableReadyInputSubmitResponse:
+    service = StableReadyInputApplicationService()
+    try:
+        result = await service.freeze_stable_ready_input_and_load_snapshot(
+            user_id=UUID(current_user.user_id),
+            source_type=body.source_type,
+            text=body.text,
+            filename=body.filename,
+            source_metadata=body.source_metadata,
+            client_record_id=body.client_record_id,
+            language=body.language,
+        )
+    except StableReadyInputApplicationError as exc:
+        _raise_stable_ready_input_application_error(exc)
+        raise AssertionError("unreachable")
+
+    return _build_stable_ready_submit_response(result)
 
 
 @router.post(

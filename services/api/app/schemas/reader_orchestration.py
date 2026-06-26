@@ -11,6 +11,11 @@ from app.contracts.annotation import (
     compute_text_range_hash,
     utf16_code_unit_length,
 )
+from app.schemas.reader_documents import CandidateReadingDocumentStatus
+from app.schemas.reader_input_adapter import (
+    InputAdapterSourceType,
+    InputSuitabilityResult,
+)
 
 ReadingRecordLifecycleStatus = Literal["active", "cancelled", "superseded", "deleted"]
 ReadingRecordProductState = Literal[
@@ -434,6 +439,89 @@ class ReaderPlainTextSubmitResponse(BaseModel):
     base_id: str = Field(min_length=1)
     article_ready_sequence: int = Field(ge=1)
     snapshot: ReaderPlateSnapshot
+
+
+class ReaderStableReadyInputSubmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: InputAdapterSourceType
+    text: str = Field(min_length=1)
+    filename: str | None = None
+    source_metadata: dict[str, Any] | None = None
+    client_record_id: str | None = Field(default=None, max_length=255)
+    language: str | None = None
+
+    @field_validator("text")
+    @classmethod
+    def validate_text_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("text must not be blank")
+        return value
+
+    @field_validator("client_record_id")
+    @classmethod
+    def normalize_client_record_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class ReaderStableReadyInputSubmitResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reading_record_id: str = Field(min_length=1)
+    stable_document_id: str = Field(min_length=1)
+    base_id: str = Field(min_length=1)
+    record_generation: int = Field(ge=1)
+    document_version: int = Field(ge=1)
+    title: str | None = None
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    canonical_text_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    block_count: int = Field(ge=1)
+    article_ready_event_id: str = Field(min_length=1)
+    article_ready_sequence: int = Field(ge=1)
+    suitability: InputSuitabilityResult
+    snapshot: ReaderPlateSnapshot
+
+
+class ReaderUnifiedInputSubmitRequest(ReaderStableReadyInputSubmitRequest):
+    pass
+
+
+class ReaderUnifiedInputSubmitStableResponse(ReaderStableReadyInputSubmitResponse):
+    outcome: Literal["stable_document_ready"]
+
+
+class ReaderUnifiedInputSubmitCandidateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: Literal["candidate_document_required"]
+    reading_record_id: str = Field(min_length=1)
+    candidate_document_id: str = Field(min_length=1)
+    record_generation: int = Field(ge=1)
+    status: CandidateReadingDocumentStatus
+    title: str | None = None
+    block_count: int = Field(ge=1)
+    source_type: InputAdapterSourceType
+    filename: str | None = None
+    original_input_id: str = Field(min_length=1)
+    suitability: InputSuitabilityResult
+
+
+class ReaderUnifiedInputSubmitRejectedResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: Literal["input_rejected_or_action_required"]
+    suitability: InputSuitabilityResult
+
+
+ReaderUnifiedInputSubmitResponse = Annotated[
+    ReaderUnifiedInputSubmitStableResponse
+    | ReaderUnifiedInputSubmitCandidateResponse
+    | ReaderUnifiedInputSubmitRejectedResponse,
+    Field(discriminator="outcome"),
+]
 
 
 class ReaderCandidateDocumentConfirmRequest(BaseModel):
