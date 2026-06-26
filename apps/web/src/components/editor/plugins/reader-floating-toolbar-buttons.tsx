@@ -34,6 +34,12 @@ export function useReaderToolbarActions(): ReaderToolbarActions | null {
   return useContext(ReaderToolbarActionsContext);
 }
 
+const preventFocusLoss = {
+  onPointerDown: (e: React.PointerEvent) => {
+    e.preventDefault();
+  },
+} as const;
+
 export function ReaderFloatingToolbarButtons() {
   const actions = useContext(ReaderToolbarActionsContext);
   const disabled = actions === null;
@@ -45,6 +51,7 @@ export function ReaderFloatingToolbarButtons() {
           tooltip="高亮"
           aria-label="高亮"
           disabled={disabled}
+          onPointerDown={preventFocusLoss.onPointerDown}
           onClick={actions?.onHighlight}
         >
           <Highlighter className="size-4" />
@@ -53,6 +60,7 @@ export function ReaderFloatingToolbarButtons() {
           tooltip="新建笔记"
           aria-label="新建笔记"
           disabled={disabled}
+          onPointerDown={preventFocusLoss.onPointerDown}
           onClick={actions?.onNote}
         >
           <NotebookPen className="size-4" />
@@ -66,6 +74,7 @@ export function ReaderFloatingToolbarButtons() {
           tooltip="查词"
           aria-label="查词"
           disabled={disabled}
+          onPointerDown={preventFocusLoss.onPointerDown}
           onClick={actions?.onLookup}
         >
           <Search className="size-4" />
@@ -74,6 +83,7 @@ export function ReaderFloatingToolbarButtons() {
           tooltip="Ask"
           aria-label="Ask"
           disabled={disabled}
+          onPointerDown={preventFocusLoss.onPointerDown}
           onClick={actions?.onAsk}
         >
           <MessageSquare className="size-4" />
