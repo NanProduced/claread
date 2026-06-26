@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 重构专项
 
 > 状态：`进行中专项（D6 产品硬化阶段）`
-> 最后更新：2026-06-24
+> 最后更新：2026-06-25
 > 权威性：本目录是 Reader AI Workflow -> agentic orchestration 重构期间的专项事实源。
 
 本目录用于管理 Reader agentic orchestration 重构的目标架构、阶段计划和 coding agent 上下文。它与当前稳定产品/架构文档分开，因为当前系统仍是旧 AI Workflow 形态，而本目录描述本轮重构的目标状态。
@@ -46,6 +46,7 @@
 - RAG 应用层：优先保持 Claread 自有 RAG contract，不直接把百炼知识库当业务事实源；百炼知识库可作为后续托管 RAG 候选。
 - OCR / 文档解析：优先评估阿里云百炼的图像理解、Qwen OCR / VL、文档解析能力。
 - 文件上传：测试阶段可使用阿里云 OSS；上线目标为阿里云 OSS + CDN。
+- 当前开发测试 OSS bucket 已开通：`claread-dev`，endpoint 为 `https://oss-cn-shenzhen.aliyuncs.com`；具体本地环境变量口径见 `docs/operations/local-dev.md`。
 
 ## 权威文档
 
@@ -62,15 +63,15 @@
 
 | 文档 | 内容 |
 |---|---|
-| `modules/input-adapter.md` | 输入适配、Source Artifact、Extraction Result、Candidate Base |
+| `modules/input-adapter.md` | 输入适配、Source Artifact、Extraction Result、Candidate Document、Input Suitability Gate |
 | `modules/schema-and-domain-contract.md` | D3 schema 边界、domain contract、运行时表、Plate snapshot DTO、reset/cutover 约束 |
-| `modules/reading-base-and-units.md` | Stable Base、Reading Units、Anchor Segments、UTF-16/hash、`article_ready` gate |
+| `modules/reading-base-and-units.md` | Stable Reading Document、Stable Document Blocks、Canonical Text Layer、Reading Units、Anchor Segments、UTF-16/hash、`article_ready` gate |
 | `modules/orchestration-runtime.md` | run/job、worker lease、并发、Authorization Envelope |
 | `modules/policy-and-cost-control.md` | Policy Planner、Skip Gate、Model Profile、Prompt Cache、Usage Bucket |
 | `modules/enhancement-layers-and-parsed.md` | Enhancement Layer schema、anchor、Parsed Decision |
 | `modules/streaming-and-projection.md` | Reader Events、snapshot、SSE、polling fallback |
 | `modules/plate-reader-projection.md` | Plate.js Article Body、projection operations、document tools、owner 权限、anchor bridge |
-| `modules/rag-substrate.md` | record-scoped RAG、citation DTO、provider adapter |
+| `modules/rag-substrate.md` | record-scoped RAG、block-scoped citation DTO、provider adapter |
 | `modules/cutover-and-old-workflow.md` | 停服重构、旧 workflow 移除、旧依赖审计 |
 
 `docs/tmp/reader-orchestration/` 下的研究材料只作为证据库。除非任务明确要求回看某份研究报告，否则 coding agent 不应默认读取 TMP 研究文档。

@@ -22,6 +22,32 @@ services/api/config/model-presets.example.json
 services/api/config/reader-ask-model-options.example.json
 ```
 
+## 阿里云 OSS dev bucket
+
+Reader 输入适配的文件类 Source Artifact 在开发测试阶段使用独立 OSS bucket。当前 dev bucket：
+
+```text
+bucket: claread-dev
+endpoint: https://oss-cn-shenzhen.aliyuncs.com
+bucket domain: claread-dev.oss-cn-shenzhen.aliyuncs.com
+```
+
+本地访问使用环境变量注入凭证，不提交真实 key：
+
+```text
+ALIBABA_CLOUD_ACCESS_KEY_ID
+ALIBABA_CLOUD_ACCESS_KEY_SECRET
+ALIYUN_OSS_BUCKET=claread-dev
+ALIYUN_OSS_ENDPOINT=https://oss-cn-shenzhen.aliyuncs.com
+```
+
+约束：
+
+- dev bucket 只用于开发测试，不存放生产用户数据。
+- bucket 必须保持 private；前端直传应走后端签发的临时凭证，不暴露长期 AK/SK。
+- OSS object 只作为 Source Artifact / derived artifact 的外部存储，不成为 Reader 业务事实源；事实仍落 PostgreSQL。
+- 后续正式上线单独创建 prod bucket，并重新评估 lifecycle、KMS、CDN、跨区域容灾和最小权限 RAM policy。
+
 ## pnpm workspace
 
 JS/TS 侧使用 pnpm workspace，范围由根目录 `pnpm-workspace.yaml` 管理：
