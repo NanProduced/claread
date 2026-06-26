@@ -36,6 +36,19 @@ SourceLossFlag = Literal[
     "markdown_complex_structure",
 ]
 
+SourceArtifactKind = Literal[
+    "original_upload",
+    "pdf_page_image",
+    "ocr_result",
+    "extracted_text",
+    "webpage_snapshot",
+    "derived_preview",
+]
+
+SourceArtifactStorageProvider = Literal["oss", "local"]
+
+SourceArtifactStatus = Literal["pending", "available", "failed", "deleted"]
+
 
 class InputSuitabilityRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
