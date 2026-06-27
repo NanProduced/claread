@@ -74,7 +74,34 @@ _PLAIN_CONTENT_TYPES: frozenset[str] = frozenset({"text/plain"})
 
 
 class ExtractedArtifactMaterializationError(ValueError):
-    """Typed error for materialization failures (validation, fence, persistence)."""
+    """Typed error for materialization failures (validation, fence, persistence).
+
+    ``reason_code`` is a stable identifier the worker switches on to map
+    failures to ``superseded`` vs ``failed_terminal`` job transitions.
+    Unset / ``"materialize_failed"`` defaults to ``failed_terminal``; the
+    three ``superseded`` reasons are:
+    ``stale_generation``, ``active_base_already_exists``,
+    ``materialization_already_run``.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code or "materialize_failed"
+
+
+# reason_codes that the materialization worker maps to ``superseded``:
+# the record has advanced past the materialization point, so the job is
+# no longer relevant. All other reason_codes map to ``failed_terminal``.
+MATERIALIZATION_SUPERSEDED_REASONS: frozenset[str] = frozenset({
+    "stale_generation",
+    "active_base_already_exists",
+    "materialization_already_run",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,191 +188,249 @@ class ExtractedArtifactMaterializationService:
         failures (stale generation, active_base already set, artifact not
         bound, empty source_text, etc.).
         """
-        now = datetime.now(UTC)
-
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
-                # 1. Lock and validate reading_records
-                record_row = await conn.fetchrow(
-                    """
-                    SELECT id, user_id, generation, active_base_id,
-                           lifecycle_status, deleted_at, product_state,
-                           readiness_state
-                    FROM reading_records
-                    WHERE id = $1
-                    FOR UPDATE
-                    """,
-                    reading_record_id,
+                return await self.materialize_extracted_artifact_in_transaction(
+                    conn,
+                    reading_record_id=reading_record_id,
+                    original_input_id=original_input_id,
+                    source_artifact_id=source_artifact_id,
+                    user_id=user_id,
+                    expected_generation=expected_generation,
                 )
-                if record_row is None:
-                    raise ExtractedArtifactMaterializationError(
-                        f"reading_record {reading_record_id} not found"
-                    )
-                if record_row["user_id"] != user_id:
-                    raise ExtractedArtifactMaterializationError(
-                        f"reading_record {reading_record_id} does not belong "
-                        f"to user {user_id}"
-                    )
-                if record_row["deleted_at"] is not None:
-                    raise ExtractedArtifactMaterializationError(
-                        f"reading_record {reading_record_id} is deleted"
-                    )
-                if record_row["lifecycle_status"] != "active":
-                    raise ExtractedArtifactMaterializationError(
-                        f"reading_record {reading_record_id} lifecycle_status "
-                        f"is {record_row['lifecycle_status']!r}, expected 'active'"
-                    )
-                if int(record_row["generation"]) != expected_generation:
-                    raise ExtractedArtifactMaterializationError(
-                        f"reading_record {reading_record_id} generation "
-                        f"is {record_row['generation']}, expected "
-                        f"{expected_generation}"
-                    )
-                if record_row["active_base_id"] is not None:
-                    raise ExtractedArtifactMaterializationError(
-                        f"reading_record {reading_record_id} already has "
-                        f"active_base_id {record_row['active_base_id']}; "
-                        f"materialization must run before any base exists"
-                    )
-                if (
-                    record_row["product_state"] != "processing"
-                    or record_row["readiness_state"] != "submitted"
-                ):
-                    raise ExtractedArtifactMaterializationError(
-                        f"reading_record {reading_record_id} is not in "
-                        f"processing/submitted state (got "
-                        f"product_state={record_row['product_state']!r}, "
-                        f"readiness_state={record_row['readiness_state']!r}); "
-                        f"materialization has already run or state was advanced"
-                    )
 
-                # 2. Lock and validate the SPECIFIC original_input
-                input_row = await conn.fetchrow(
-                    """
-                    SELECT id, reading_record_id, user_id, source_text,
-                           source_ref_json, metadata_json, content_sha256
-                    FROM original_inputs
-                    WHERE id = $1
-                      AND reading_record_id = $2
-                      AND user_id = $3
-                    FOR UPDATE
-                    """,
-                    original_input_id,
-                    reading_record_id,
-                    user_id,
-                )
-                if input_row is None:
-                    raise ExtractedArtifactMaterializationError(
-                        f"original_input {original_input_id} not found for "
-                        f"reading_record {reading_record_id} / user {user_id}"
-                    )
-                source_text = input_row["source_text"]
-                if source_text is None or not source_text.strip():
-                    raise ExtractedArtifactMaterializationError(
-                        f"original_input {input_row['id']} source_text is "
-                        f"empty; extraction must complete before materialization"
-                    )
+    async def materialize_extracted_artifact_in_transaction(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        reading_record_id: UUID,
+        original_input_id: UUID,
+        source_artifact_id: UUID,
+        user_id: UUID,
+        expected_generation: int,
+    ) -> MaterializationResult:
+        """Caller-managed transaction variant of materialize_extracted_artifact.
 
-                # 3. Lock and validate the SPECIFIC source_artifact
-                artifact_row = await conn.fetchrow(
-                    """
-                    SELECT id, reading_record_id, original_input_id, user_id,
-                           artifact_kind, storage_provider, bucket, object_key,
-                           endpoint, content_type, byte_size, content_sha256,
-                           source_filename, status
-                    FROM source_artifacts
-                    WHERE id = $1
-                      AND reading_record_id = $2
-                      AND original_input_id = $3
-                      AND user_id = $4
-                      AND deleted_at IS NULL
-                    FOR UPDATE
-                    """,
-                    source_artifact_id,
-                    reading_record_id,
-                    original_input_id,
-                    user_id,
-                )
-                if artifact_row is None:
-                    raise ExtractedArtifactMaterializationError(
-                        f"source_artifact {source_artifact_id} not found for "
-                        f"reading_record {reading_record_id} / original_input "
-                        f"{original_input_id} / user {user_id}"
-                    )
-                if artifact_row["status"] != "available":
-                    raise ExtractedArtifactMaterializationError(
-                        f"source_artifact {artifact_row['id']} status is "
-                        f"{artifact_row['status']!r}, expected 'available'"
-                    )
-                if artifact_row["artifact_kind"] != "original_upload":
-                    raise ExtractedArtifactMaterializationError(
-                        f"source_artifact {artifact_row['id']} artifact_kind is "
-                        f"{artifact_row['artifact_kind']!r}, expected "
-                        f"'original_upload'"
-                    )
-                if artifact_row["storage_provider"] != "oss":
-                    raise ExtractedArtifactMaterializationError(
-                        f"source_artifact {artifact_row['id']} storage_provider "
-                        f"is {artifact_row['storage_provider']!r}, expected 'oss'"
-                    )
+        The caller MUST already hold an open transaction on ``conn``. This
+        method runs the full validate → suitability → freeze/persist pipeline
+        within that transaction. Any failure raises
+        ``ExtractedArtifactMaterializationError`` (or the original exception)
+        and the caller's transaction rolls back.
 
-                # 4. Derive source_type and build suitability request
-                source_type = _derive_source_type(
-                    artifact_row["content_type"],
-                    artifact_row["source_filename"],
-                )
-                source_metadata = _build_source_metadata(artifact_row, input_row)
-                filename = artifact_row["source_filename"]
+        This is the entry point for the materialization worker, which needs
+        to run materialization + job transition in the same transaction to
+        avoid state drift (materialization succeeds but job transition fails).
 
-                suitability_request = InputSuitabilityRequest(
-                    source_type=source_type,
-                    text=source_text,
-                    filename=filename,
-                    source_metadata=source_metadata,
-                )
-                suitability = evaluate_input_suitability(suitability_request)
+        Fails closed with ``ExtractedArtifactMaterializationError`` if
+        ``conn`` is not in an active transaction, mirroring
+        ``persist_stable_document_freeze_plan`` and
+        ``confirm_candidate_document``. This prevents the multi-step
+        materialization pipeline from partially committing under autocommit.
+        """
+        if not conn.is_in_transaction():
+            raise ExtractedArtifactMaterializationError(
+                "materialize_extracted_artifact_in_transaction must be "
+                "called within an active transaction. Refusing to execute "
+                "outside a transaction to prevent half-materialized state.",
+                reason_code="caller_transaction_required",
+            )
 
-                # 5. Branch on outcome
-                if suitability.outcome == "stable_document_ready":
-                    return await self._materialize_stable(
-                        conn=conn,
-                        record_id=reading_record_id,
-                        user_id=user_id,
-                        input_id=input_row["id"],
-                        artifact_id=artifact_row["id"],
-                        generation=expected_generation,
-                        source_type=source_type,
-                        filename=filename,
-                        source_metadata=source_metadata,
-                        source_text=source_text,
-                        suitability=suitability,
-                        now=now,
-                    )
-                elif suitability.outcome == "candidate_document_required":
-                    return await self._materialize_candidate(
-                        conn=conn,
-                        record_id=reading_record_id,
-                        user_id=user_id,
-                        input_id=input_row["id"],
-                        artifact_id=artifact_row["id"],
-                        generation=expected_generation,
-                        source_type=source_type,
-                        filename=filename,
-                        source_metadata=source_metadata,
-                        source_text=source_text,
-                        suitability=suitability,
-                        now=now,
-                    )
-                else:
-                    return await self._materialize_rejected(
-                        conn=conn,
-                        record_id=reading_record_id,
-                        input_id=input_row["id"],
-                        artifact_id=artifact_row["id"],
-                        generation=expected_generation,
-                        suitability=suitability,
-                        now=now,
-                    )
+        now = datetime.now(UTC)
+
+        # 1. Lock and validate reading_records
+        record_row = await conn.fetchrow(
+            """
+            SELECT id, user_id, generation, active_base_id,
+                   lifecycle_status, deleted_at, product_state,
+                   readiness_state
+            FROM reading_records
+            WHERE id = $1
+            FOR UPDATE
+            """,
+            reading_record_id,
+        )
+        if record_row is None:
+            raise ExtractedArtifactMaterializationError(
+                f"reading_record {reading_record_id} not found",
+                reason_code="record_not_found",
+            )
+        if record_row["user_id"] != user_id:
+            raise ExtractedArtifactMaterializationError(
+                f"reading_record {reading_record_id} does not belong "
+                f"to user {user_id}",
+                reason_code="record_not_owned",
+            )
+        if record_row["deleted_at"] is not None:
+            raise ExtractedArtifactMaterializationError(
+                f"reading_record {reading_record_id} is deleted",
+                reason_code="record_deleted",
+            )
+        if record_row["lifecycle_status"] != "active":
+            raise ExtractedArtifactMaterializationError(
+                f"reading_record {reading_record_id} lifecycle_status "
+                f"is {record_row['lifecycle_status']!r}, expected 'active'",
+                reason_code="record_not_active",
+            )
+        if int(record_row["generation"]) != expected_generation:
+            raise ExtractedArtifactMaterializationError(
+                f"reading_record {reading_record_id} generation "
+                f"is {record_row['generation']}, expected "
+                f"{expected_generation}",
+                reason_code="stale_generation",
+            )
+        if record_row["active_base_id"] is not None:
+            raise ExtractedArtifactMaterializationError(
+                f"reading_record {reading_record_id} already has "
+                f"active_base_id {record_row['active_base_id']}; "
+                f"materialization must run before any base exists",
+                reason_code="active_base_already_exists",
+            )
+        if (
+            record_row["product_state"] != "processing"
+            or record_row["readiness_state"] != "submitted"
+        ):
+            raise ExtractedArtifactMaterializationError(
+                f"reading_record {reading_record_id} is not in "
+                f"processing/submitted state (got "
+                f"product_state={record_row['product_state']!r}, "
+                f"readiness_state={record_row['readiness_state']!r}); "
+                f"materialization has already run or state was advanced",
+                reason_code="materialization_already_run",
+            )
+
+        # 2. Lock and validate the SPECIFIC original_input
+        input_row = await conn.fetchrow(
+            """
+            SELECT id, reading_record_id, user_id, source_text,
+                   source_ref_json, metadata_json, content_sha256
+            FROM original_inputs
+            WHERE id = $1
+              AND reading_record_id = $2
+              AND user_id = $3
+            FOR UPDATE
+            """,
+            original_input_id,
+            reading_record_id,
+            user_id,
+        )
+        if input_row is None:
+            raise ExtractedArtifactMaterializationError(
+                f"original_input {original_input_id} not found for "
+                f"reading_record {reading_record_id} / user {user_id}",
+                reason_code="original_input_not_found",
+            )
+        source_text = input_row["source_text"]
+        if source_text is None or not source_text.strip():
+            raise ExtractedArtifactMaterializationError(
+                f"original_input {input_row['id']} source_text is "
+                f"empty; extraction must complete before materialization",
+                reason_code="source_text_empty",
+            )
+
+        # 3. Lock and validate the SPECIFIC source_artifact
+        artifact_row = await conn.fetchrow(
+            """
+            SELECT id, reading_record_id, original_input_id, user_id,
+                   artifact_kind, storage_provider, bucket, object_key,
+                   endpoint, content_type, byte_size, content_sha256,
+                   source_filename, status
+            FROM source_artifacts
+            WHERE id = $1
+              AND reading_record_id = $2
+              AND original_input_id = $3
+              AND user_id = $4
+              AND deleted_at IS NULL
+            FOR UPDATE
+            """,
+            source_artifact_id,
+            reading_record_id,
+            original_input_id,
+            user_id,
+        )
+        if artifact_row is None:
+            raise ExtractedArtifactMaterializationError(
+                f"source_artifact {source_artifact_id} not found for "
+                f"reading_record {reading_record_id} / original_input "
+                f"{original_input_id} / user {user_id}",
+                reason_code="source_artifact_not_found",
+            )
+        if artifact_row["status"] != "available":
+            raise ExtractedArtifactMaterializationError(
+                f"source_artifact {artifact_row['id']} status is "
+                f"{artifact_row['status']!r}, expected 'available'",
+                reason_code="artifact_not_available",
+            )
+        if artifact_row["artifact_kind"] != "original_upload":
+            raise ExtractedArtifactMaterializationError(
+                f"source_artifact {artifact_row['id']} artifact_kind is "
+                f"{artifact_row['artifact_kind']!r}, expected "
+                f"'original_upload'",
+                reason_code="artifact_kind_wrong",
+            )
+        if artifact_row["storage_provider"] != "oss":
+            raise ExtractedArtifactMaterializationError(
+                f"source_artifact {artifact_row['id']} storage_provider "
+                f"is {artifact_row['storage_provider']!r}, expected 'oss'",
+                reason_code="storage_provider_wrong",
+            )
+
+        # 4. Derive source_type and build suitability request
+        source_type = _derive_source_type(
+            artifact_row["content_type"],
+            artifact_row["source_filename"],
+        )
+        source_metadata = _build_source_metadata(artifact_row, input_row)
+        filename = artifact_row["source_filename"]
+
+        suitability_request = InputSuitabilityRequest(
+            source_type=source_type,
+            text=source_text,
+            filename=filename,
+            source_metadata=source_metadata,
+        )
+        suitability = evaluate_input_suitability(suitability_request)
+
+        # 5. Branch on outcome
+        if suitability.outcome == "stable_document_ready":
+            return await self._materialize_stable(
+                conn=conn,
+                record_id=reading_record_id,
+                user_id=user_id,
+                input_id=input_row["id"],
+                artifact_id=artifact_row["id"],
+                generation=expected_generation,
+                source_type=source_type,
+                filename=filename,
+                source_metadata=source_metadata,
+                source_text=source_text,
+                suitability=suitability,
+                now=now,
+            )
+        elif suitability.outcome == "candidate_document_required":
+            return await self._materialize_candidate(
+                conn=conn,
+                record_id=reading_record_id,
+                user_id=user_id,
+                input_id=input_row["id"],
+                artifact_id=artifact_row["id"],
+                generation=expected_generation,
+                source_type=source_type,
+                filename=filename,
+                source_metadata=source_metadata,
+                source_text=source_text,
+                suitability=suitability,
+                now=now,
+            )
+        else:
+            return await self._materialize_rejected(
+                conn=conn,
+                record_id=reading_record_id,
+                input_id=input_row["id"],
+                artifact_id=artifact_row["id"],
+                generation=expected_generation,
+                suitability=suitability,
+                now=now,
+            )
 
     # ------------------------------------------------------------------
     # Stable document path
@@ -411,7 +496,8 @@ class ExtractedArtifactMaterializationService:
         if freeze_result.base_id is None:
             raise ExtractedArtifactMaterializationError(
                 f"freeze persistence returned null base_id for record "
-                f"{record_id}"
+                f"{record_id}",
+                reason_code="freeze_persistence_failed",
             )
 
         await self._repository.set_active_base_and_mark_article_ready(
@@ -532,7 +618,8 @@ class ExtractedArtifactMaterializationService:
         if result != "UPDATE 1":
             raise ExtractedArtifactMaterializationError(
                 f"failed to advance reading_record {record_id} to "
-                f"candidate_base_ready (expected UPDATE 1, got {result!r})"
+                f"candidate_base_ready (expected UPDATE 1, got {result!r})",
+                reason_code="candidate_advance_failed",
             )
 
         return MaterializationResult(
@@ -580,7 +667,8 @@ class ExtractedArtifactMaterializationService:
         if result != "UPDATE 1":
             raise ExtractedArtifactMaterializationError(
                 f"failed to mark reading_record {record_id} as action_required "
-                f"(expected UPDATE 1, got {result!r})"
+                f"(expected UPDATE 1, got {result!r})",
+                reason_code="action_required_advance_failed",
             )
 
         return MaterializationResult(
@@ -629,13 +717,15 @@ def _derive_source_type(
         raise ExtractedArtifactMaterializationError(
             f"cannot derive source_type from application/octet-stream "
             f"artifact without .md/.txt filename extension "
-            f"(filename={source_filename!r})"
+            f"(filename={source_filename!r})",
+            reason_code="source_type_derivation_failed",
         )
     raise ExtractedArtifactMaterializationError(
         f"cannot derive source_type from unknown content_type "
         f"{content_type!r} (filename={source_filename!r}); supported: "
         f"text/plain, text/markdown, text/x-markdown, application/pdf, "
-        f"image/*, application/octet-stream+(.md|.txt)"
+        f"image/*, application/octet-stream+(.md|.txt)",
+        reason_code="source_type_derivation_failed",
     )
 
 

@@ -41,6 +41,16 @@ from .job_runtime import (
 DEFAULT_EXTRACTION_RETRY_DELAY = timedelta(minutes=5)
 EXTRACTION_WORKFLOW_VERSION = "d6-i3l-extraction-worker"
 
+# D6-I3O: Materialization job contract — enqueued after extraction succeeds.
+MATERIALIZATION_JOB_TYPE = "extracted_artifact_materialization"
+MATERIALIZATION_TARGET_TYPE = "record"
+MATERIALIZATION_OPERATION_FINGERPRINT = "extracted_artifact_materialization_v1"
+MATERIALIZATION_JOB_SOURCE = "artifact_extraction_worker"
+MATERIALIZATION_RUN_TYPE = "extracted_artifact_materialization"
+MATERIALIZATION_POLICY_VERSION = "reader_extracted_artifact_materialization_v1"
+MATERIALIZATION_TRIGGER_KIND = "system"
+DEFAULT_MATERIALIZATION_MAX_ATTEMPTS = 3
+
 FAILURE_CODE_EXTRACTION_EMPTY_TEXT = "extraction_empty_text"
 FAILURE_CODE_INPUT_JSON_INVALID = "input_json_invalid"
 FAILURE_CODE_RECORD_NOT_FOUND = "record_not_found"
@@ -592,6 +602,19 @@ class ArtifactExtractionWorkerService:
                     },
                 )
 
+                # D6-I3O: Enqueue materialization job in the same transaction
+                # so extraction success + materialization enqueue are atomic.
+                # If the enqueue fails, the whole extraction persist rolls back
+                # and the extraction job stays claimed (retryable later).
+                await _enqueue_materialization_job(
+                    conn,
+                    reading_record_id=context.reading_record_id,
+                    user_id=context.user_id,
+                    original_input_id=context.original_input_id,
+                    source_artifact_id=context.source_artifact_id,
+                    expected_generation=context.expected_generation,
+                )
+
         return content_sha256
 
     async def _fail_terminal(
@@ -736,3 +759,142 @@ def _merge_metadata_strict(
             )
         merged[key] = value
     return merged
+
+
+async def _enqueue_materialization_job(
+    conn: asyncpg.Connection,
+    *,
+    reading_record_id: UUID,
+    user_id: UUID,
+    original_input_id: UUID,
+    source_artifact_id: UUID,
+    expected_generation: int,
+) -> UUID:
+    """Enqueue an extracted_artifact_materialization job (D6-I3O).
+
+    Called from the extraction worker's persist transaction after
+    ``original_inputs.source_text`` is written and the extraction job is
+    transitioned to ``succeeded``. Runs in the SAME transaction so extraction
+    success + materialization enqueue are atomic.
+
+    The job reuses the existing ``reader_runs`` / ``reader_jobs`` tables.
+    Duplicate enqueue prevention is provided by the partial unique index
+    ``uq_reader_jobs_active_fingerprint`` on
+    ``(reading_record_id, COALESCE(base_id, zero), job_type, target_type,
+    target_key, expected_generation, operation_fingerprint)``
+    scoped to ``status IN ('queued','claimed','retry_later','paused')``.
+    Because this function creates a NEW ``reader_runs`` row per call, the
+    ``(run_id, idempotency_key)`` constraint cannot fire across runs — the
+    active-fingerprint index is what actually blocks a second active job with
+    the same semantics. Once the first job terminates
+    (succeeded/failed_terminal/superseded) the index no longer covers it, so
+    a re-enqueue after termination is allowed (correct for retry scenarios).
+    """
+    run_row = await conn.fetchrow(
+        """
+        INSERT INTO reader_runs (
+            reading_record_id,
+            user_id,
+            run_type,
+            status,
+            record_generation,
+            envelope_json,
+            policy_version,
+            trigger_kind
+        )
+        VALUES (
+            $1,
+            $2,
+            $3,
+            'queued',
+            $4,
+            $5::jsonb,
+            $6,
+            $7
+        )
+        RETURNING id
+        """,
+        reading_record_id,
+        user_id,
+        MATERIALIZATION_RUN_TYPE,
+        expected_generation,
+        jsonb_param(
+            {
+                "source": MATERIALIZATION_JOB_SOURCE,
+                "reading_record_id": str(reading_record_id),
+                "original_input_id": str(original_input_id),
+                "source_artifact_id": str(source_artifact_id),
+            }
+        ),
+        MATERIALIZATION_POLICY_VERSION,
+        MATERIALIZATION_TRIGGER_KIND,
+    )
+    if run_row is None:
+        raise RuntimeError("reader_runs insert did not return a row")
+
+    input_json = {
+        "source": MATERIALIZATION_JOB_SOURCE,
+        "reading_record_id": str(reading_record_id),
+        "original_input_id": str(original_input_id),
+        "source_artifact_id": str(source_artifact_id),
+        "expected_generation": expected_generation,
+    }
+    input_hash = hashlib.sha256(
+        f"{source_artifact_id}:{expected_generation}".encode("utf-8")
+    ).hexdigest()
+
+    job_row = await conn.fetchrow(
+        """
+        INSERT INTO reader_jobs (
+            reading_record_id,
+            base_id,
+            run_id,
+            user_id,
+            job_type,
+            target_type,
+            target_key,
+            status,
+            priority,
+            expected_generation,
+            operation_fingerprint,
+            idempotency_key,
+            input_hash,
+            input_json,
+            max_attempts
+        )
+        VALUES (
+            $1,
+            NULL,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6,
+            'queued',
+            0,
+            $7,
+            $8,
+            $9,
+            $10,
+            $11::jsonb,
+            $12
+        )
+        RETURNING id, status
+        """,
+        reading_record_id,
+        run_row["id"],
+        user_id,
+        MATERIALIZATION_JOB_TYPE,
+        MATERIALIZATION_TARGET_TYPE,
+        str(source_artifact_id),
+        expected_generation,
+        MATERIALIZATION_OPERATION_FINGERPRINT,
+        f"{MATERIALIZATION_OPERATION_FINGERPRINT}:{source_artifact_id}",
+        input_hash,
+        jsonb_param(input_json),
+        DEFAULT_MATERIALIZATION_MAX_ATTEMPTS,
+    )
+    if job_row is None:
+        raise RuntimeError("reader_jobs insert did not return a row")
+
+    return job_row["id"]

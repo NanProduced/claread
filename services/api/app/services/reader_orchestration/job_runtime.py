@@ -14,9 +14,11 @@ Key invariants enforced here:
   and a non-expired lease.
 - Base/generation fence is enforced at claim and at publish (transition to
   ``succeeded``): stale ``expected_generation``, non-active base, or missing
-  ``base_id`` for jobs other than ``build_base`` and ``input_artifact_extraction``
-  are rejected. ``input_artifact_extraction`` is also superseded if
-  ``active_base_id`` is already set (extraction must run before any base exists).
+  ``base_id`` for jobs other than ``build_base``, ``input_artifact_extraction``,
+  and ``extracted_artifact_materialization`` are rejected.
+  ``input_artifact_extraction`` and ``extracted_artifact_materialization`` are
+  also superseded if ``active_base_id`` is already set (they must run before
+  any base exists).
 - Stale claimed jobs (lease expired) are recovered to ``queued`` or
   ``failed_terminal`` when ``attempt_count >= max_attempts``.
 - Transition helper rejects illegal status jumps per the contract state machine.
@@ -600,20 +602,29 @@ class ReaderJobRuntime:
 
         base_id = job_row["base_id"]
         if base_id is None:
-            # build_base and input_artifact_extraction record-level jobs may
-            # have null base_id: build_base creates the first reading base,
-            # and input_artifact_extraction runs before any base exists (it
-            # extracts text from the uploaded artifact into original_inputs).
+            # build_base, input_artifact_extraction, and
+            # extracted_artifact_materialization record-level jobs may have
+            # null base_id: build_base creates the first reading base;
+            # input_artifact_extraction runs before any base exists (it
+            # extracts text from the uploaded artifact into original_inputs);
+            # extracted_artifact_materialization also runs before any base
+            # exists (the stable path itself creates the first base via
+            # persist_stable_document_freeze_plan).
             # All other non-build_base jobs require a base_id.
             job_type = job_row["job_type"]
             target_type = job_row["target_type"]
             if target_type == "record" and job_type == "build_base":
                 return None
-            if target_type == "record" and job_type == "input_artifact_extraction":
-                # Extraction runs before any base exists. If a base has already
-                # been built for this generation, the extraction job is stale —
-                # supersede it to prevent overwriting original_inputs.source_text
-                # after downstream consumers may have already read it.
+            if target_type == "record" and job_type in (
+                "input_artifact_extraction",
+                "extracted_artifact_materialization",
+            ):
+                # Extraction and materialization run before any base exists.
+                # If a base has already been built for this generation, the
+                # job is stale — supersede it to prevent overwriting
+                # original_inputs.source_text (extraction) or re-freezing a
+                # stable document (materialization) after downstream consumers
+                # may have already read it.
                 if record_row["active_base_id"] is not None:
                     return "active_base_already_exists"
                 return None

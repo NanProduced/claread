@@ -3,6 +3,10 @@ from .article_ready_service import (
     ArticleReadyPersistenceService,
     PlainTextArticleReadySubmitRequest,
 )
+from .artifact_pipeline_worker_service import (
+    ArtifactInputPipelineWorkerService,
+    ArtifactPipelineProcessResult,
+)
 from .base_builder import (
     DETERMINISTIC_READING_BASE_BUILDER_VERSION,
     DETERMINISTIC_SEGMENTER_VERSION,
@@ -66,6 +70,8 @@ from .worker_runner import (
 __all__ = [
     "ArticleReadyPersistenceResult",
     "ArticleReadyPersistenceService",
+    "ArtifactInputPipelineWorkerService",
+    "ArtifactPipelineProcessResult",
     "BuiltAnchorSegment",
     "BuiltReadingUnit",
     "DETERMINISTIC_READING_BASE_BUILDER_VERSION",

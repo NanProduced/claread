@@ -612,6 +612,42 @@ async def test_deleted_record_fail_closed(mat_env: asyncpg.Pool) -> None:
 
 
 # ===================================================================
+# Caller-managed transaction guard
+# ===================================================================
+
+
+async def test_in_transaction_variant_requires_active_transaction(
+    mat_env: asyncpg.Pool,
+) -> None:
+    """materialize_extracted_artifact_in_transaction must fail closed if the
+    caller forgot to open a transaction on ``conn``.
+
+    Mirrors the guard in ``persist_stable_document_freeze_plan`` and
+    ``confirm_candidate_document``. Without it, the multi-step materialization
+    pipeline could partially commit under autocommit.
+    """
+    await _seed_environment(mat_env, source_text=_STABLE_TEXT)
+    service = _build_service(mat_env)
+
+    async with mat_env.acquire() as conn:
+        # NOT inside conn.transaction() — autocommit mode
+        with pytest.raises(ExtractedArtifactMaterializationError) as exc_info:
+            await service.materialize_extracted_artifact_in_transaction(
+                conn,
+                reading_record_id=_RECORD_ID,
+                original_input_id=_ORIGINAL_INPUT_ID,
+                source_artifact_id=_ARTIFACT_ID,
+                user_id=_USER_ID,
+                expected_generation=1,
+            )
+        assert exc_info.value.reason_code == "caller_transaction_required"
+
+    # Verify NO materialization writes happened (no stable doc, no base)
+    assert await _count_stable_documents(mat_env) == 0
+    assert await _count_reading_bases(mat_env) == 0
+
+
+# ===================================================================
 # No new records/inputs invariant
 # ===================================================================
 
