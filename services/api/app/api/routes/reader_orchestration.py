@@ -315,6 +315,8 @@ def _build_source_artifact_submit_input_response(
         byte_size=result.byte_size,
         content_sha256=result.content_sha256,
         source_filename=result.source_filename,
+        extraction_job_id=str(result.extraction_job_id),
+        extraction_job_status=result.extraction_job_status,
     )
 
 

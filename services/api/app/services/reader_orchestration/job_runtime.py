@@ -14,7 +14,9 @@ Key invariants enforced here:
   and a non-expired lease.
 - Base/generation fence is enforced at claim and at publish (transition to
   ``succeeded``): stale ``expected_generation``, non-active base, or missing
-  ``base_id`` for non-``build_base`` jobs are rejected.
+  ``base_id`` for jobs other than ``build_base`` and ``input_artifact_extraction``
+  are rejected. ``input_artifact_extraction`` is also superseded if
+  ``active_base_id`` is already set (extraction must run before any base exists).
 - Stale claimed jobs (lease expired) are recovered to ``queued`` or
   ``failed_terminal`` when ``attempt_count >= max_attempts``.
 - Transition helper rejects illegal status jumps per the contract state machine.
@@ -598,10 +600,24 @@ class ReaderJobRuntime:
 
         base_id = job_row["base_id"]
         if base_id is None:
-            # Only build_base record-level jobs may have null base_id.
-            if job_row["job_type"] != "build_base" or job_row["target_type"] != "record":
-                return "missing_base"
-            return None
+            # build_base and input_artifact_extraction record-level jobs may
+            # have null base_id: build_base creates the first reading base,
+            # and input_artifact_extraction runs before any base exists (it
+            # extracts text from the uploaded artifact into original_inputs).
+            # All other non-build_base jobs require a base_id.
+            job_type = job_row["job_type"]
+            target_type = job_row["target_type"]
+            if target_type == "record" and job_type == "build_base":
+                return None
+            if target_type == "record" and job_type == "input_artifact_extraction":
+                # Extraction runs before any base exists. If a base has already
+                # been built for this generation, the extraction job is stale —
+                # supersede it to prevent overwriting original_inputs.source_text
+                # after downstream consumers may have already read it.
+                if record_row["active_base_id"] is not None:
+                    return "active_base_already_exists"
+                return None
+            return "missing_base"
 
         base_row = await conn.fetchrow(
             """

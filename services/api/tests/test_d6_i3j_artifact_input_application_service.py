@@ -22,6 +22,8 @@ _USER_ID = UUID("00000000-0000-0000-0000-000000000a01")
 _ARTIFACT_ID = UUID("00000000-0000-0000-0000-000000000a02")
 _READING_RECORD_ID = UUID("00000000-0000-0000-0000-000000000a03")
 _ORIGINAL_INPUT_ID = UUID("00000000-0000-0000-0000-000000000a04")
+_EXTRACTION_RUN_ID = UUID("00000000-0000-0000-0000-000000000a05")
+_EXTRACTION_JOB_ID = UUID("00000000-0000-0000-0000-000000000a06")
 _NOW = datetime(2026, 6, 26, 12, 0, tzinfo=UTC)
 _UNSET = object()
 
@@ -106,17 +108,25 @@ class _FakeConn:
                 in_transaction=self._in_transaction,
             )
         )
-        if self._log is not None and "FROM source_artifacts" in query:
-            self._log.append("select_source_artifact")
         if (
             self._fail_on_query_substring is not None
             and self._fail_on_query_substring in query
         ):
             raise self._fail_exception
+        if self._log is not None and "FROM source_artifacts" in query:
+            self._log.append("select_source_artifact")
+        if self._log is not None and "INSERT INTO reader_runs" in query:
+            self._log.append("insert_reader_run")
+        if self._log is not None and "INSERT INTO reader_jobs" in query:
+            self._log.append("insert_extraction_job")
         if "FROM source_artifacts" in query:
             if self._source_artifact_row is _UNSET:
                 return _build_source_artifact_row()
             return self._source_artifact_row
+        if "INSERT INTO reader_runs" in query:
+            return {"id": _EXTRACTION_RUN_ID}
+        if "INSERT INTO reader_jobs" in query:
+            return {"id": _EXTRACTION_JOB_ID, "status": "queued"}
         raise AssertionError(f"unexpected fetchrow query: {query}")
 
     async def execute(self, query: str, *args: Any) -> str:
@@ -259,12 +269,16 @@ def test_submit_available_pdf_artifact_happy_path() -> None:
     assert result.endpoint == "https://oss-cn-shenzhen.aliyuncs.com"
     assert result.object_key == f"dev/original-inputs/{_USER_ID}/{_ARTIFACT_ID}/report.pdf"
     assert result.content_sha256 == "a" * 64
+    assert result.extraction_job_id == _EXTRACTION_JOB_ID
+    assert result.extraction_job_status == "queued"
     assert log == [
         "transaction_started",
         "select_source_artifact",
         "insert_reading_record",
         "insert_original_input",
         "bind_source_artifact",
+        "insert_reader_run",
+        "insert_extraction_job",
         "transaction_committed",
     ]
     assert all(call.in_transaction for call in conn.calls)
@@ -358,6 +372,8 @@ def test_source_artifacts_update_happens_after_reading_record_and_original_input
     assert result.reading_record_id
     assert log.index("bind_source_artifact") > log.index("insert_reading_record")
     assert log.index("bind_source_artifact") > log.index("insert_original_input")
+    assert log.index("insert_extraction_job") > log.index("bind_source_artifact")
+    assert log.index("insert_reader_run") > log.index("bind_source_artifact")
     bind_call = _find_execute_call(conn, "UPDATE source_artifacts")
     assert bind_call.args[1] == result.reading_record_id
     assert bind_call.args[2] == result.original_input_id
@@ -455,10 +471,137 @@ def test_no_candidate_document_is_created_and_no_event_is_published() -> None:
 
     _submit(service)
 
-    queries = "\n".join(call.query for call in conn.execute_calls)
-    assert "candidate_reading_documents" not in queries
-    assert "reader_events" not in queries
-    assert "article_ready" not in queries
+    all_queries = "\n".join(call.query for call in conn.calls)
+    assert "candidate_reading_documents" not in all_queries
+    assert "reader_events" not in all_queries
+    assert "article_ready" not in all_queries
+
+
+def test_extraction_job_payload_contains_complete_artifact_reference() -> None:
+    conn = _FakeConn()
+    service = _build_service(conn)
+
+    result = _submit(service)
+
+    job_insert = next(
+        call for call in conn.fetchrow_calls if "INSERT INTO reader_jobs" in call.query
+    )
+    input_json_arg = job_insert.args[9]
+    assert input_json_arg == {
+        "source": "artifact_input",
+        "reading_record_id": str(result.reading_record_id),
+        "original_input_id": str(result.original_input_id),
+        "source_artifact_id": str(_ARTIFACT_ID),
+        "artifact_kind": "original_upload",
+        "storage_provider": "oss",
+        "bucket": "claread-dev",
+        "endpoint": "https://oss-cn-shenzhen.aliyuncs.com",
+        "object_key": f"dev/original-inputs/{_USER_ID}/{_ARTIFACT_ID}/report.pdf",
+        "content_type": "application/pdf",
+        "byte_size": 4096,
+        "content_sha256": "a" * 64,
+        "source_filename": "report.pdf",
+    }
+    assert job_insert.args[2] == _USER_ID
+    assert job_insert.args[3] == "input_artifact_extraction"
+    assert job_insert.args[4] == "record"
+    assert job_insert.args[5] == str(_ARTIFACT_ID)
+    assert job_insert.args[6] == "input_artifact_extraction_v1"
+    assert job_insert.args[7] == f"input_artifact_extraction_v1:{_ARTIFACT_ID}"
+
+
+def test_extraction_job_enqueued_after_record_input_and_artifact_binding() -> None:
+    log: list[str] = []
+    conn = _FakeConn(log=log)
+    service = _build_service(conn)
+
+    _submit(service)
+
+    ordering = {
+        "select_source_artifact": log.index("select_source_artifact"),
+        "insert_reading_record": log.index("insert_reading_record"),
+        "insert_original_input": log.index("insert_original_input"),
+        "bind_source_artifact": log.index("bind_source_artifact"),
+        "insert_reader_run": log.index("insert_reader_run"),
+        "insert_extraction_job": log.index("insert_extraction_job"),
+    }
+    assert ordering["select_source_artifact"] < ordering["insert_reading_record"]
+    assert ordering["insert_reading_record"] < ordering["insert_original_input"]
+    assert ordering["insert_original_input"] < ordering["bind_source_artifact"]
+    assert ordering["bind_source_artifact"] < ordering["insert_reader_run"]
+    assert ordering["insert_reader_run"] < ordering["insert_extraction_job"]
+
+
+def test_extraction_job_creation_failure_rolls_back_transaction() -> None:
+    log: list[str] = []
+    conn = _FakeConn(
+        log=log,
+        fail_on_query_substring="INSERT INTO reader_jobs",
+    )
+    service = _build_service(conn)
+
+    with pytest.raises(ArtifactInputApplicationError, match="Failed to persist"):
+        _submit(service)
+
+    assert "insert_extraction_job" not in log
+    assert "transaction_rolled_back" in log
+    assert conn._last_transaction is not None
+    assert conn._last_transaction.rolled_back is True
+
+
+def test_extraction_job_run_insert_failure_rolls_back_transaction() -> None:
+    log: list[str] = []
+    conn = _FakeConn(
+        log=log,
+        fail_on_query_substring="INSERT INTO reader_runs",
+    )
+    service = _build_service(conn)
+
+    with pytest.raises(ArtifactInputApplicationError, match="Failed to persist"):
+        _submit(service)
+
+    assert "insert_reader_run" not in log
+    assert "insert_extraction_job" not in log
+    assert "transaction_rolled_back" in log
+
+
+@pytest.mark.parametrize("status", ["pending", "failed", "deleted"])
+def test_non_available_status_does_not_create_extraction_job(status: str) -> None:
+    conn = _FakeConn(
+        source_artifact_row=_build_source_artifact_row(status=status),
+    )
+    service = _build_service(conn)
+
+    with pytest.raises(ArtifactInputApplicationConflictError, match="status must be 'available'"):
+        _submit(service)
+
+    job_fetchrow_calls = [
+        call for call in conn.fetchrow_calls
+        if "INSERT INTO reader_jobs" in call.query
+        or "INSERT INTO reader_runs" in call.query
+    ]
+    assert job_fetchrow_calls == []
+    assert conn.execute_calls == []
+
+
+def test_already_bound_artifact_does_not_create_extraction_job() -> None:
+    conn = _FakeConn(
+        source_artifact_row=_build_source_artifact_row(
+            reading_record_id=_READING_RECORD_ID,
+        ),
+    )
+    service = _build_service(conn)
+
+    with pytest.raises(ArtifactInputApplicationConflictError, match="already bound"):
+        _submit(service)
+
+    job_fetchrow_calls = [
+        call for call in conn.fetchrow_calls
+        if "INSERT INTO reader_jobs" in call.query
+        or "INSERT INTO reader_runs" in call.query
+    ]
+    assert job_fetchrow_calls == []
+    assert conn.execute_calls == []
 
 
 def test_source_metadata_conflict_fails_closed() -> None:

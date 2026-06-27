@@ -654,6 +654,8 @@ class ReaderSourceArtifactSubmitInputResponse(BaseModel):
     byte_size: int | None = Field(default=None, ge=0)
     content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     source_filename: str = Field(min_length=1)
+    extraction_job_id: str = Field(min_length=1)
+    extraction_job_status: str = Field(min_length=1)
 
 
 class ReaderCandidateDocumentConfirmRequest(BaseModel):

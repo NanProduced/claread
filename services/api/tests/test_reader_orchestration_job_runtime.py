@@ -1294,3 +1294,158 @@ async def test_transition_writes_job_event(
     event_types = [e["event_type"] for e in events]
     assert "job_claimed" in event_types
     assert "job_failed_terminal" in event_types
+
+
+async def test_claim_allows_input_artifact_extraction_job_with_null_base(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """Extraction jobs with null base_id can now be claimed (D6-I3L).
+
+    D6-I3K bootstraps ``input_artifact_extraction`` jobs with ``base_id IS NULL``
+    (the artifact has not been extracted into a reading base yet). D6-I3L updates
+    ``_validate_fence`` to allow ``input_artifact_extraction`` + ``record`` +
+    null ``base_id``, so the extraction worker can claim and execute the job.
+
+    The record has no active_base_id (extraction runs before any base exists).
+    """
+    user_id = await _insert_user(job_runtime_env)
+    record_id = await _insert_record(job_runtime_env, user_id)
+    # Deliberately do NOT create a reading base or set active_base_id — the
+    # extraction job runs before any base exists.
+    run_id = await _insert_run(job_runtime_env, record_id, user_id)
+    # I3K enqueue contract sets target_key=str(artifact_id); use a stand-in
+    # UUID to match the real job shape (runtime itself does not inspect it).
+    artifact_id = uuid4()
+
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=None,
+        job_type="input_artifact_extraction",
+        target_type="record",
+        target_key=str(artifact_id),
+        operation_fingerprint="input_artifact_extraction_v1",
+        idempotency_key="id-extraction-claim",
+    )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="extraction-worker",
+        lease_duration=timedelta(seconds=30),
+        job_type="input_artifact_extraction",
+    )
+    assert claimed is not None
+    assert claimed.job_id == job_id
+    assert claimed.base_id is None
+    assert claimed.job_type == "input_artifact_extraction"
+    assert claimed.target_type == "record"
+    assert claimed.operation_fingerprint == "input_artifact_extraction_v1"
+
+    row = await _fetch_job(job_runtime_env, job_id)
+    assert row["status"] == STATUS_CLAIMED
+    assert row["lease_owner"] == "extraction-worker"
+
+
+async def test_db_constraint_rejects_non_build_base_null_base_job_insert(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """DB constraint ck_reader_jobs_base_scope blocks non-extraction null-base jobs.
+
+    Only ``build_base`` and ``input_artifact_extraction`` record-level jobs may
+    have null base_id at the DB level. Attempting to insert a ``translate_unit``
+    job with null base_id raises ``CheckViolationError`` before the runtime
+    fence ever sees it.
+    """
+    user_id = await _insert_user(job_runtime_env)
+    record_id = await _insert_record(job_runtime_env, user_id)
+    run_id = await _insert_run(job_runtime_env, record_id, user_id)
+
+    with pytest.raises(asyncpg.CheckViolationError):
+        await _insert_job(
+            job_runtime_env,
+            record_id=record_id,
+            run_id=run_id,
+            user_id=user_id,
+            base_id=None,
+            job_type="translate_unit",
+            target_type="unit",
+            target_key="u1",
+            operation_fingerprint="translate_unit_v1",
+            idempotency_key="id-translate-null-base-constraint",
+        )
+
+
+async def test_validate_fence_supersedes_non_build_base_null_base_job_row(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """Runtime fence _validate_fence rejects non-extraction null-base jobs.
+
+    Defense-in-depth: even if a null-base ``translate_unit`` row somehow made
+    it into the DB (e.g. constraint relaxed in future), the runtime fence must
+    still return ``missing_base``. We call ``_validate_fence`` directly with a
+    dict-based fake job row because the DB constraint prevents inserting such a
+    row.
+    """
+    user_id = await _insert_user(job_runtime_env)
+    record_id = await _insert_record(job_runtime_env, user_id)
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    fake_job_row = {
+        "reading_record_id": record_id,
+        "expected_generation": 1,
+        "base_id": None,
+        "job_type": "translate_unit",
+        "target_type": "unit",
+    }
+
+    async with job_runtime_env.acquire() as conn:
+        rationale = await runtime._validate_fence(conn, fake_job_row)  # type: ignore[attr-defined]
+    assert rationale == "missing_base"
+
+
+async def test_claim_supersedes_extraction_job_when_active_base_already_exists(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """Extraction job is stale if a base already exists for this generation.
+
+    ``input_artifact_extraction`` runs before any base exists. If
+    ``reading_records.active_base_id`` is already set (e.g. build_base
+    completed), a lingering extraction job must be superseded with
+    ``active_base_already_exists`` to prevent overwriting
+    ``original_inputs.source_text`` after downstream consumers may have read it.
+    """
+    user_id = await _insert_user(job_runtime_env)
+    record_id = await _insert_record(job_runtime_env, user_id)
+    run_id = await _insert_run(job_runtime_env, record_id, user_id)
+    base_id = await _insert_base(job_runtime_env, record_id)
+    await _set_active_base(job_runtime_env, record_id=record_id, base_id=base_id)
+    artifact_id = uuid4()
+
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=None,
+        job_type="input_artifact_extraction",
+        target_type="record",
+        target_key=str(artifact_id),
+        operation_fingerprint="input_artifact_extraction_v1",
+        idempotency_key="id-extraction-stale-active-base",
+    )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="extraction-worker",
+        lease_duration=timedelta(seconds=30),
+        job_type="input_artifact_extraction",
+        target_type="record",
+        operation_fingerprint="input_artifact_extraction_v1",
+    )
+    assert claimed is None
+
+    row = await _fetch_job(job_runtime_env, job_id)
+    assert row["status"] == STATUS_SUPERSEDED
+    assert row["rationale_code"] == "active_base_already_exists"

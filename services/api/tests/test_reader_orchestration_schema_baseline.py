@@ -23,6 +23,8 @@ BASELINE_SQL = (
     REPO_ROOT / "infra" / "migrations" / "0003_reader_ask_dual_scope.sql"
 ).read_text(encoding="utf-8") + "\n" + (
     REPO_ROOT / "infra" / "migrations" / "0006_reader_ask_supplements_nullable_analysis_record_id.sql"
+).read_text(encoding="utf-8") + "\n" + (
+    REPO_ROOT / "infra" / "migrations" / "0008_reader_jobs_input_artifact_extraction.sql"
 ).read_text(encoding="utf-8")
 
 

@@ -22,6 +22,8 @@ USER_ID = UUID("00000000-0000-0000-0000-000000000b01")
 ARTIFACT_ID = UUID("00000000-0000-0000-0000-000000000b02")
 READING_RECORD_ID = UUID("00000000-0000-0000-0000-000000000b03")
 ORIGINAL_INPUT_ID = UUID("00000000-0000-0000-0000-000000000b04")
+EXTRACTION_JOB_ID = UUID("00000000-0000-0000-0000-000000000b05")
+EXTRACTION_JOB_STATUS = "queued"
 CONTENT_SHA256 = "a" * 64
 BUCKET = "claread-dev"
 ENDPOINT = "https://oss-cn-shenzhen.aliyuncs.com"
@@ -82,6 +84,8 @@ def _build_result(
         byte_size=4096,
         content_sha256=CONTENT_SHA256,
         source_filename=SOURCE_FILENAME,
+        extraction_job_id=EXTRACTION_JOB_ID,
+        extraction_job_status=EXTRACTION_JOB_STATUS,
     )
 
 
@@ -158,6 +162,8 @@ def test_submit_source_artifact_as_input_happy_path_calls_service_and_serializes
         "byte_size": 4096,
         "content_sha256": CONTENT_SHA256,
         "source_filename": SOURCE_FILENAME,
+        "extraction_job_id": str(EXTRACTION_JOB_ID),
+        "extraction_job_status": EXTRACTION_JOB_STATUS,
     }
 
 

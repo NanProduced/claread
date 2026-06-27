@@ -18,6 +18,8 @@ services:
       - ../migrations/0004_reader_document_blocks.sql:/docker-entrypoint-initdb.d/0004_reader_document_blocks.sql:ro
       - ../migrations/0005_dict_ai_candidate_reading_record_anchor.sql:/docker-entrypoint-initdb.d/0005_dict_ai_candidate_reading_record_anchor.sql:ro
       - ../migrations/0006_reader_ask_supplements_nullable_analysis_record_id.sql:/docker-entrypoint-initdb.d/0006_reader_ask_supplements_nullable_analysis_record_id.sql:ro
+      - ../migrations/0007_reader_source_artifacts.sql:/docker-entrypoint-initdb.d/0007_reader_source_artifacts.sql:ro
+      - ../migrations/0008_reader_jobs_input_artifact_extraction.sql:/docker-entrypoint-initdb.d/0008_reader_jobs_input_artifact_extraction.sql:ro
       - ../migrations/eval-center/0001_eval_center_control_plane.sql:/docker-entrypoint-initdb.d/0001_eval_center_control_plane.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-claread} -d ${POSTGRES_DB:-claread}"]

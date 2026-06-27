@@ -16,6 +16,15 @@ from app.services.reader_orchestration.repository import ReaderOrchestrationRepo
 ArtifactBoundReadingSourceType = Literal["file", "pdf", "image"]
 ArtifactBoundOriginalInputType = Literal["file_ref", "image_ref"]
 
+EXTRACTION_RUN_TYPE = "input_artifact_extraction"
+EXTRACTION_JOB_TYPE = "input_artifact_extraction"
+EXTRACTION_TARGET_TYPE = "record"
+EXTRACTION_TRIGGER_KIND = "system"
+EXTRACTION_POLICY_VERSION = "reader_input_artifact_extraction_v1"
+EXTRACTION_OPERATION_FINGERPRINT = "input_artifact_extraction_v1"
+EXTRACTION_JOB_SOURCE = "artifact_input"
+DEFAULT_EXTRACTION_MAX_ATTEMPTS = 3
+
 
 class ArtifactInputApplicationError(ValueError):
     """Raised when an available source artifact cannot be submitted as input."""
@@ -48,6 +57,8 @@ class ArtifactInputApplicationResult:
     byte_size: int | None
     content_sha256: str | None
     source_filename: str
+    extraction_job_id: UUID
+    extraction_job_status: str
 
 
 class ArtifactInputApplicationService:
@@ -165,6 +176,22 @@ class ArtifactInputApplicationService:
                             original_input_id=original_input_id,
                             updated_at=created_at,
                         )
+                        extraction_job = await _enqueue_artifact_extraction_job(
+                            conn,
+                            reading_record_id=reading_record_id,
+                            original_input_id=original_input_id,
+                            user_id=user_id,
+                            artifact_id=artifact_id,
+                            artifact_kind=artifact_row["artifact_kind"],
+                            storage_provider=artifact_row["storage_provider"],
+                            bucket=bucket_value,
+                            endpoint=endpoint_value,
+                            object_key=object_key_value,
+                            content_type=artifact_row["content_type"],
+                            byte_size=artifact_row["byte_size"],
+                            content_sha256=artifact_row["content_sha256"],
+                            source_filename=source_filename_value,
+                        )
                     except Exception as exc:
                         raise ArtifactInputApplicationError(
                             f"Failed to persist the artifact-backed input envelope: {exc}"
@@ -188,6 +215,8 @@ class ArtifactInputApplicationService:
                         byte_size=artifact_row["byte_size"],
                         content_sha256=artifact_row["content_sha256"],
                         source_filename=source_filename_value,
+                        extraction_job_id=extraction_job.job_id,
+                        extraction_job_status=extraction_job.status,
                     )
         except ArtifactInputApplicationError:
             raise
@@ -380,6 +409,198 @@ async def _bind_source_artifact_to_input(
         original_input_id,
         updated_at,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _ExtractionJobRef:
+    job_id: UUID
+    status: str
+
+
+async def _enqueue_artifact_extraction_job(
+    conn: asyncpg.Connection,
+    *,
+    reading_record_id: UUID,
+    original_input_id: UUID,
+    user_id: UUID,
+    artifact_id: UUID,
+    artifact_kind: str,
+    storage_provider: str,
+    bucket: str,
+    endpoint: str,
+    object_key: str,
+    content_type: str | None,
+    byte_size: int | None,
+    content_sha256: str | None,
+    source_filename: str,
+) -> _ExtractionJobRef:
+    """Enqueue an ``input_artifact_extraction`` reader_job in the current txn.
+
+    The job reuses the existing ``reader_runs`` + ``reader_jobs`` machinery so
+    that the worker loop / claim / heartbeat / transition runtime can pick it
+    up once worker execution is implemented. No OSS download, OCR, or LLM is
+    performed here — this is pure durable enqueue.
+    """
+    run_row = await conn.fetchrow(
+        """
+        INSERT INTO reader_runs (
+            reading_record_id,
+            user_id,
+            run_type,
+            status,
+            record_generation,
+            envelope_json,
+            policy_version,
+            trigger_kind
+        )
+        VALUES (
+            $1,
+            $2,
+            $3,
+            'queued',
+            1,
+            $4::jsonb,
+            $5,
+            $6
+        )
+        RETURNING id
+        """,
+        reading_record_id,
+        user_id,
+        EXTRACTION_RUN_TYPE,
+        jsonb_param(
+            {
+                "source": EXTRACTION_JOB_SOURCE,
+                "reading_record_id": str(reading_record_id),
+                "original_input_id": str(original_input_id),
+                "source_artifact_id": str(artifact_id),
+            }
+        ),
+        EXTRACTION_POLICY_VERSION,
+        EXTRACTION_TRIGGER_KIND,
+    )
+    if run_row is None:
+        raise RuntimeError("reader_runs insert did not return a row")
+
+    input_json = _extraction_job_input_json(
+        reading_record_id=reading_record_id,
+        original_input_id=original_input_id,
+        artifact_id=artifact_id,
+        artifact_kind=artifact_kind,
+        storage_provider=storage_provider,
+        bucket=bucket,
+        endpoint=endpoint,
+        object_key=object_key,
+        content_type=content_type,
+        byte_size=byte_size,
+        content_sha256=content_sha256,
+        source_filename=source_filename,
+    )
+    input_hash = _deterministic_extraction_input_hash(
+        artifact_id=artifact_id,
+        content_sha256=content_sha256,
+        object_key=object_key,
+    )
+
+    job_row = await conn.fetchrow(
+        """
+        INSERT INTO reader_jobs (
+            reading_record_id,
+            base_id,
+            run_id,
+            user_id,
+            job_type,
+            target_type,
+            target_key,
+            status,
+            priority,
+            expected_generation,
+            operation_fingerprint,
+            idempotency_key,
+            input_hash,
+            input_json,
+            max_attempts
+        )
+        VALUES (
+            $1,
+            NULL,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6,
+            'queued',
+            0,
+            1,
+            $7,
+            $8,
+            $9,
+            $10::jsonb,
+            $11
+        )
+        RETURNING id, status
+        """,
+        reading_record_id,
+        run_row["id"],
+        user_id,
+        EXTRACTION_JOB_TYPE,
+        EXTRACTION_TARGET_TYPE,
+        str(artifact_id),
+        EXTRACTION_OPERATION_FINGERPRINT,
+        f"{EXTRACTION_OPERATION_FINGERPRINT}:{artifact_id}",
+        input_hash,
+        jsonb_param(input_json),
+        DEFAULT_EXTRACTION_MAX_ATTEMPTS,
+    )
+    if job_row is None:
+        raise RuntimeError("reader_jobs insert did not return a row")
+
+    return _ExtractionJobRef(
+        job_id=job_row["id"],
+        status=job_row["status"],
+    )
+
+
+def _extraction_job_input_json(
+    *,
+    reading_record_id: UUID,
+    original_input_id: UUID,
+    artifact_id: UUID,
+    artifact_kind: str,
+    storage_provider: str,
+    bucket: str,
+    endpoint: str,
+    object_key: str,
+    content_type: str | None,
+    byte_size: int | None,
+    content_sha256: str | None,
+    source_filename: str,
+) -> dict[str, Any]:
+    return {
+        "source": EXTRACTION_JOB_SOURCE,
+        "reading_record_id": str(reading_record_id),
+        "original_input_id": str(original_input_id),
+        "source_artifact_id": str(artifact_id),
+        "artifact_kind": artifact_kind,
+        "storage_provider": storage_provider,
+        "bucket": bucket,
+        "endpoint": endpoint,
+        "object_key": object_key,
+        "content_type": _normalize_optional_text(content_type),
+        "byte_size": byte_size,
+        "content_sha256": content_sha256,
+        "source_filename": source_filename,
+    }
+
+
+def _deterministic_extraction_input_hash(
+    *,
+    artifact_id: UUID,
+    content_sha256: str | None,
+    object_key: str,
+) -> str:
+    signature = f"{artifact_id}:{object_key}:{content_sha256 or ''}"
+    return hashlib.sha256(signature.encode("utf-8")).hexdigest()
 
 
 def _source_type_and_input_type_from_content_type(
