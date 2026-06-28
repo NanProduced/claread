@@ -66,7 +66,7 @@ D4 builder：
 - 使用 deterministic builder，不调用 LLM。
 - Stable Base 默认只做低影响规范化：line endings、Unicode space/invisible character、首尾空白、重复空行。
 - 不默认改写 smart quotes、dash、ellipsis、大小写。
-- 不默认删除 URL/email/code/chinese parenthetical；这类内容应进入 source risk / Candidate Base 或被明确 policy 处理。
+- 不默认删除 URL/email/code/chinese parenthetical；这类内容应进入 source risk / Candidate Document 或被明确 policy 处理。
 - unit 默认以段落为主；过长段落按 sentence boundary 合并成 sentence groups。
 - 长文本缺少可靠句子边界时，按 clause boundary 降级；仍不可用时使用 word window，并标记 `segment_type = fallback_window` 与低 boundary quality。
 - sentence segmenter D4 默认使用 deterministic regex fallback；如果后续使用 spaCy，必须 pin model version 并记录 `segmenter_version`。

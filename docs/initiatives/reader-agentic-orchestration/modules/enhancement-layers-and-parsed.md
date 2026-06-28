@@ -1,14 +1,14 @@
 # Enhancement Layers 与 Parsed Decision
 
-> 状态：`D5 修订`
-> 最后更新：2026-06-21
+> 状态：`D6 输入与文档层口径同步`
+> 最后更新：2026-06-25
 > 范围：增强层 schema、anchor 合同、发布门禁和 parsed coverage。
 
 ## Layer 原则
 
-- Enhancement Layer 建立在 Stable Reading Base / Reading Units / Anchor Segments 上。
+- Enhancement Layer 建立在 Stable Reading Document / Canonical Text Layer / Reading Units / Anchor Segments 上；D4/D5 代码中的 Stable Reading Base 是 Canonical Text Layer 的过渡实现。
 - Layer 可再生、可局部重试。
-- Layer 不得修改 Stable Base。
+- Layer 不得修改 Stable Reading Document、Stable Document Blocks 或 Canonical Text Layer。
 - Layer 不得写入 User Editorial Assets。
 - Published layer 必须通过 schema validation 和 anchor validation。
 - Published layer 可以触发 Plate projection operations，但 projection 不是 layer truth。

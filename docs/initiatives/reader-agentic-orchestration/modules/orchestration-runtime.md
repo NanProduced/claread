@@ -39,9 +39,9 @@ Planner、Skip Gate、Model Profile、Prompt Cache 和 Usage Bucket 的细节见
 | 内容 | 当前状态 |
 |------|------|
 | `ReaderRecordPlateSurface` 使用 `<Plate readOnly>` + `usePlateEditor` + `ReaderPlateKit` | ✅ 默认 Reading Record 页面已接入 |
-| callout children 从纯文本 leaf 改为 Plate `Descendant[]`，用 `CalloutMarkdownRenderer` 递归渲染 | ✅ 完成；不使用 `PlateStatic` |
-| Reader block / leaf plugins | ✅ `reader-blocks-kit.tsx` 与 `reader-leaf-kit.tsx` 已注册；视觉 resolver 仍待统一 |
-| FloatingToolbar | 🔄 已使用 `@platejs/floating` 官方 hook；旧 `SelectionActionStrip` 仍在渲染路径，UI 需收敛 |
+| callout children 从纯文本 leaf 改为 Plate `Descendant[]`，由 Plate element/leaf plugins 渲染 `{children}` | ✅ 完成；`CalloutMarkdownRenderer` 已移除 |
+| Reader block / leaf plugins | ✅ `reader-blocks-kit.tsx` 与 `reader-leaf-kit.tsx` 已注册；含 `reader_sentence_analysis` 专用 block |
+| FloatingToolbar | ✅ 已使用 `@platejs/floating` 官方 hook；旧 `SelectionActionStrip` 不在新版 surface 生产路径 |
 | CommentKit | 🔄 `CommentPlugin` / `CommentLeaf` / draft activeId 已接入；未接 DiscussionKit，持久化和面板仍是 Claread 自定义 |
 | CursorOverlay | 🔄 `@platejs/selection` overlay 已接入；Structure Lens / block selection / chunk decoration 未接 |
 | Stable Document Blocks -> source document projection | 🔄 后端 schema/service 已推进；中心正文仍主要由过渡 Canonical Text / anchor segment 投影 |

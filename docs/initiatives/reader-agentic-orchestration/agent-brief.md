@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 执行简报
 
 > 状态：`权威简报`
-> 最后更新：2026-06-24
+> 最后更新：2026-06-25
 
 给 coding agent 分配 Reader agentic orchestration 重构任务时，使用本简报作为最小上下文。
 
@@ -39,8 +39,9 @@
 
 - Reader 页面不是常驻 LLM 线程；产品对象是 `Reading Record`，不是 workflow run。
 - PostgreSQL 拥有 durable business state；LangGraph / PydanticAI 是执行层，不是产品事实源。
-- Stable Reading Base 和 Reading Units 在同一 Reading Record 内不可变。
-- 高影响输入适配必须先进行 Candidate Reading Base 预览与确认。
+- Stable Reading Document、Stable Document Blocks、Canonical Text Layer 和 Reading Units 在同一 Reading Record 内不可变。
+- 高影响输入适配必须先进行 Candidate Reading Document 预览与确认。
+- Reader 内容区是文档型 read-only Plate projection；后端 truth 是 Stable Reading Document / Blocks / Canonical Text Layer，不是 Plate JSON。
 - 译文是 parsed 的最低门槛；禁止用固定批注数量判断 parsed。
 - 开发期核心类型和 DTO 不加 `V1` / `V2` 后缀。使用 `ReaderPlateSnapshot`，不创建 `ReaderPlateSnapshotV1` / `V2`。
 - `ReaderPlateSnapshot` wrapper 使用 `schema_kind = "reader_plate_snapshot"`；`schema_version` 只用于 layer output、fragment 等 serialized boundary payload。
@@ -78,7 +79,7 @@
 - owner 权限层覆盖 `stable` / `system_ai` / `ask_supplement` / `user` / `ephemeral`；后端权威拒绝 + 前端 Plate UX 镜像。
 - 所有 domain 回写必须经过 anchor/path adapter 输出 domain anchor，不直接走 node path。
 - `reader_events.event_type` 支持 `projection_ops` 子类型；projection op payload 使用稳定 domain target，不把 raw Plate/Slate path ops 作为后端持久合同。禁止使用 `plate_patches` 作为正式事件名。
-- 默认禁用 image / table / inline HTML / math / frontmatter / definition / footnote；启用前必须另做 spike。
+- table / image / footnote 不能静默丢弃；它们应作为 Stable Document Blocks 保留，并按 source scope 进入 RAG/Ask。raw HTML、math、frontmatter、definition 等复杂结构必须 sanitize、降级或进入 Candidate Document warning。
 - 非 Web 客户端继续 polling snapshot，不订阅 Plate projection ops。
 
 ### Ask 与 RAG
@@ -88,6 +89,7 @@
 - Ask 不能直接覆盖 System Annotation Layer truth；系统层修订走 proposal 或 Layer Publisher/system worker。
 - LLM 不能直出 arbitrary Plate JSON 或 raw Slate ops 作为持久事实。
 - RAG 只服务当前 Reading Record，不做全局 User Editorial Assets RAG。
+- RAG V1 覆盖整个 Stable Reading Document，按 `source_scope` 区分 main reading text、heading、table cell、image OCR、footnote、code block、published layer 等来源；citation 必须回到 block，主阅读文本还应能回到 unit / Anchor Segment。
 - RAG/OCR/OSS 等外部服务必须 adapter 化，不能成为 Claread 业务事实源。
 
 ### LangGraph 口径
@@ -99,8 +101,8 @@
 
 - RAG 测试阶段优先使用 Zilliz Cloud。
 - 上线前评估迁移到阿里云 RAG / 向量检索服务或百炼知识库。
-- OCR / 富文档解析优先评估阿里云百炼图像理解、Qwen OCR/VL、文档解析能力。
-- 文件上传测试阶段使用阿里云 OSS；上线目标为 OSS + CDN。
+- OCR / 富文档解析优先评估阿里云百炼图像理解、Qwen OCR/VL、文档解析能力；部署可通过 `reader_input_ocr` route/profile 选择 `qwen3.5-ocr`（如可用）或其他 Qwen VL / Omni profile，领域合同不绑定具体模型名。
+- 文件上传正式产品路径使用阿里云 OSS，开发环境可使用 local artifact adapter；二进制文件不写入 PostgreSQL。
 
 ## 预期架构形态
 
@@ -117,14 +119,14 @@ Web Reader
 
 模块边界：
 
-- Input Adapter：统一接收文本、URL、PDF、OCR、文件上传，产出 Original Input / Source Artifact / Extraction Result。
-- Reading Base Builder：生成 Candidate 或 Stable Reading Base，并冻结 Reading Units / Anchor Segments / Navigation Skeleton。
+- Input Adapter：统一接收文本、URL、PDF、OCR、文件上传，产出 Original Input / Source Artifact / Extraction Result，并通过 Input Suitability Gate 生成 Candidate Document 或 Stable Reading Document。
+- Reading Document Builder：冻结 Stable Reading Document / Stable Document Blocks，派生 Canonical Text Layer、Reading Units、Anchor Segments 和 Navigation Skeleton。
 - Orchestration Planner：基于持久状态和 Authorization Envelope 规划下一批 bounded jobs。
 - Guarded Executor：claim jobs、heartbeat、retry、cancel/supersede、usage audit。
 - Layer Workers / Publisher：生成并校验增强层和系统 AI 批注层，发布前做 schema、anchor、source grounding。
 - Event / Projection：持久 reader events、snapshot、SSE、polling fallback。
-- Plate Reader Projection：从 Stable Base / Units / Anchor Segments 和 layers 生成 Base Plate Snapshot 与 domain-targeted projection ops。
-- RAG Substrate：只服务当前 Reading Record，查询强制限定 Stable Base / Units。
+- Plate Reader Projection：从 Stable Reading Document / Blocks / Canonical Text Layer / Units / Anchor Segments 和 layers 生成 Base Plate Snapshot 与 domain-targeted projection ops。
+- RAG Substrate：只服务当前 Reading Record，查询强制限定当前 Stable Reading Document，并通过 block/source-scope citation 回源。
 - Ask Sidecar Bridge：Ask 动作进入同一 Authorization Envelope；保存 note/highlight 必须用户确认后写 User Editorial Assets，Ask Supplement 必须标记来源。
 - Policy / Cost Control：Skip Gate、Prompt Cache、Model Profile、Usage Bucket、cost baseline。
 
@@ -133,7 +135,7 @@ Web Reader
 - PydanticAI 用于 LLM-backed workers；LangGraph 不进入主路径。
 - 不继承旧"每用户一个 active task"产品约束；并发由 envelope 控制。
 - Text anchors 复用现有 UTF-16 offsets 和 `fnv1a32-utf16` hash contract；span anchor 使用 `anchor_segment_id` + unit-local offsets，且 offset 必须落在对应 Anchor Segment range 内。
-- Stable Reading Base 是输入适配和必要用户确认后的可读英文正文；Unit Builder 不负责 OCR 修复、boilerplate 删除、多栏顺序修复或正文重写。
+- Stable Reading Document 是输入适配和必要用户确认后的可读英文文档；Unit Builder 不负责 OCR 修复、boilerplate 删除、多栏顺序修复、文档块降级或正文重写。
 - Anchor Segment 是 sentence-like segment，通常是句子；必要时可为 clause 或 fallback window，并通过 `segment_type` 标记。Unit Boundary Refiner 只能建议既有 Anchor Segments 的 split/merge，不能改写文本或生成坐标。
 - Translation worker 不携带 Ask history、planner trace 或整篇文章上下文。
 - System Annotation Layers 不得写入或覆盖 User Editorial Assets。
@@ -145,15 +147,16 @@ Web Reader
 Input Adapter
   -> Original Input
   -> Source Artifact / Extraction Result
-  -> low-impact Stable Base 或 high-impact Candidate Base
-  -> Stable Reading Base
+  -> Input Suitability Gate
+  -> low-impact Stable Reading Document 或 high-impact Candidate Document
+  -> Stable Reading Document + Canonical Text Layer
   -> Reading Units + Anchor Segments
 ```
 
 RAG 链路：
 
 ```text
-Stable Reading Base / Reading Units / Anchor Segments
+Stable Reading Document / Stable Document Blocks / Canonical Text Layer / Reading Units / Anchor Segments
   -> RAG chunks
   -> embeddings
   -> VectorStoreAdapter / KnowledgeRetrievalAdapter

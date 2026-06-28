@@ -1,8 +1,10 @@
 # Plate Reader Projection
 
-> 状态：`D1 草案`
-> 最后更新：2026-06-18
+> 状态：`D6-I0 document projection decision merged; Plate integration status rebaselined`
+> 最后更新：2026-06-27
 > 范围：Web Reader Article Body 的 Plate.js 文档投影、projection operations、document tools、owner 权限和 anchor bridge。
+
+当前 Web 组件与 Plate.js / @platejs package 的真实接入状态见 [`reader-plate-component-integration.md`](./reader-plate-component-integration.md)。本文定义 projection contract；不要用 package 是否安装来判断产品能力是否已落地。
 
 ## 目标
 
@@ -10,7 +12,7 @@ Reader Article Body 使用 Plate.js 作为富文本文档和交互底座。
 
 Plate 负责：
 
-- 渲染 Stable Base 原文、译文、AI 批注、Ask Supplement、用户高亮和笔记。
+- 渲染 Stable Reading Document / Stable Document Blocks / Canonical Text Layer 的只读文档投影，以及译文、AI 批注、Ask Supplement、用户高亮和笔记。
 - 承载选区、点词查询、评论、高亮和 Ask 文档工具入口。
 - 渐进式接收 domain facts 的 projection operations。
 
@@ -27,7 +29,9 @@ Plate 不负责：
 后端 truth 保持 domain-first：
 
 ```text
-Stable Reading Base
+Stable Reading Document
+Stable Document Blocks
+Canonical Text Layer
 Reading Units / Anchor Segments
 Enhancement Layers
 User Editorial Assets
@@ -42,7 +46,7 @@ Plate document 是这些事实的 Web projection。刷新、断线恢复、重�
 D4 正式路径：
 
 ```text
-Stable Reading Base
+Stable Reading Base (D4 transitional Canonical Text Layer)
 -> Reading Units
 -> Anchor Segments
 -> Base Plate Snapshot
@@ -51,7 +55,7 @@ Stable Reading Base
 
 Base Plate Snapshot 至少包含：
 
-- Stable Base metadata。
+- Canonical Text / transitional Stable Base metadata。
 - Reading Unit nodes。
 - Anchor Segment nodes，携带 `unit_id`、`anchor_segment_id`、base absolute offsets、segment text hash。
 - Navigation Skeleton 所需 metadata。
@@ -59,6 +63,18 @@ Base Plate Snapshot 至少包含：
 D4 可以用 full snapshot reload 承接第一批 translation layer。D5 再验证增量 projection operations。
 
 旧 `renderSceneToPlateDocument` 只能作为迁移参考或 spike adapter。新 D4 contract 不经过旧 `render_scene_json`。
+
+D6+ 文档型 Reader 在 D4 路径上方新增：
+
+```text
+Stable Reading Document
+-> Stable Document Blocks
+-> Canonical Text Layer
+-> Reading Units / Anchor Segments
+-> ReaderPlateSnapshot.value
+```
+
+`reading_bases.text` 在迁移期可继续作为 Canonical Text Layer 存储；table、image、footnote、code 等结构事实必须来自 Stable Document Blocks，而不是从 Plate value 或线性文本反推。
 
 ### Snapshot DTO Seed
 
@@ -139,6 +155,23 @@ D4 最小 schema 使用三个 source node：
 Stable source leaf 必须携带 `owner=stable`、`lock_source=true`、base offsets 和可选 segment-local offsets。相邻 Anchor Segments 之间的空白必须作为 stable separator leaf 保留，不能静默丢失。
 
 `sentence_id` 只作为兼容 alias。新代码 target、projection op、Ask tool、RAG citation 和 user asset 均应优先使用 `anchor_segment_id`。
+
+### D6 Document Block Projection
+
+D6+ Reader 内容区应更接近 Notion 打开一篇文档后的只读页面：Plate 是文档渲染和交互表面，Claread 内部解析信息作为 marks、nodes 或 sidecar layers 投影到同一个文档表面。
+
+Stable Document Blocks 的投影规则：
+
+| Stable block | Plate projection | Main analysis default | RAG / Ask default |
+|---|---|---|---|
+| paragraph / heading / list_item / blockquote / caption | stable read-only block / inline anchors | include | include |
+| table / table_cell | read-only table or structured fallback block | exclude unless policy-selected | include with `source_scope=table_cell` |
+| footnote | read-only footnote block/link | low priority / policy-selected | include with `source_scope=footnote` |
+| image | read-only media block with source artifact ref | exclude | include metadata; OCR child text if available |
+| image_ocr | child text block or hidden searchable payload | exclude unless user marks as main reading | include with `source_scope=image_ocr` |
+| code_block | read-only code block | exclude | include with `source_scope=code_block` when query allows |
+
+Projection metadata must carry stable `block_id`, `block_type`, optional canonical text mapping and source refs. Plate node ids are projection ids; Stable Document Block ids are the durable authority.
 
 ## Projection Operation Contract
 
@@ -267,17 +300,19 @@ Markdown or Plate fragments must pass:
 
 Provider or Plate plugin AI features may be used only after D2 validates license and API availability. The architecture cannot depend on unverified commercial plugins.
 
-D5 default allowlist:
+D5 AI/Ask-generated fragment allowlist:
 
 | Feature | Policy |
 |---|---|
 | paragraph / heading / list / code block / inline code / blockquote / strong / em / text | allowed |
 | link | allowed only with `http:` / `https:` / `mailto:` and non-private host |
-| image / table / inline HTML / math / frontmatter / definition / footnote | denied |
+| image / table / inline HTML / math / frontmatter / definition / footnote | denied for AI-generated fragments in D5 |
 
 Implementation should prefer `allowedNodes` plus fine-grained `allowNode`; do not rely on broad defaults. `allowedNodes` and `disallowedNodes` should not both be treated as the primary safety mechanism.
 
 LLM output must not be persisted as arbitrary Plate JSON. Workers store typed layer results or sanitized fragment payloads that can be regenerated from domain facts.
+
+This fragment policy does not authorize dropping source-document table/image/footnote blocks. Source preservation is owned by Stable Document Blocks; AI/Ask fragments are a separate generated-content boundary.
 
 ## Ask Document Tools
 
@@ -291,7 +326,7 @@ Ask uses document tools to read and propose changes:
 | `write_ai_supplement` | Ask Supplement | Required unless explicitly pre-authorized |
 | `revise_ai_annotation` | Ask Supplement revision or System Annotation revision proposal | Required by policy for user-visible overwrite |
 
-Ask cannot directly edit Stable Base or overwrite User Editorial Assets.
+Ask cannot directly edit Stable Reading Document / Stable Document Blocks / Canonical Text Layer or overwrite User Editorial Assets.
 
 Ask cannot directly overwrite System Annotation Layer truth. If Ask identifies a bad system annotation, it may create a revision proposal or an Ask Supplement correction; a system worker / Layer Publisher path owns versioned replacement.
 

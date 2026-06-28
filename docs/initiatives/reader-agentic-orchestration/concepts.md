@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 概念定义
 
-> 状态：`D2-S1 修订`
-> 最后更新：2026-06-18
+> 状态：`D6 输入与文档型 Reader 术语修订`
+> 最后更新：2026-06-25
 > 用途：统一 Reader agentic orchestration 重构中的术语、边界和文档口径。
 
 ## 使用规则
@@ -24,17 +24,19 @@
 | Source Loss Risk | 来源损失风险；source loss flags | 输入抽取可能损失正文、顺序或结构的风险信号。 | 由 Input Adapter / extractor 产生；用于路由 low/high-impact adaptation。 | 目标：`extraction_results.source_loss_risk`。 | 不是 worker failure；不是 LLM confidence。 |
 | Low-impact Input Adaptation | 低影响输入适配；低风险清洗 | 不改变作者可见语义的确定性规范化，如 line endings、Unicode space/invisible character、首尾空白、重复空行。低影响路径可直接生成 Stable Reading Base。 | 由 Input Adapter / Reading Base Builder 执行；必须记录 policy/version。 | 目标：`canonicalizer_version`、`input_adaptation_policy.impact_level = low`。 | 不包含 OCR 修复、正文重写、boilerplate 删除、表格/代码丢弃。 |
 | High-impact Input Adaptation | 高影响输入适配；高风险正文适配 | 可能改变内容边界、阅读顺序或作者可见文本的处理，如 OCR 修复、多栏 PDF 顺序修复、网页正文抽取低置信、删除 boilerplate、表格/代码降级。必须先产出 Candidate Reading Base。 | 由 Input Adapter 触发；用户确认前不得冻结 Stable Reading Base。 | 目标：`candidate_reading_bases`、`reading_records.product_state = needs_confirmation`。 | 不等于 enhancement；不是后台 worker 可自动写入 Stable Base 的步骤。 |
-| Candidate Reading Base | 候选阅读正文；Candidate Base | 高影响适配后的候选英文正文，用户确认前可预览或编辑。 | 由 Input Adapter 生成；由用户确认后转为 Stable Reading Base。 | 目标：`candidate_reading_bases`。 | 不是临时 Stable Base；未确认时不进入 RAG truth layer。 |
-| Candidate Base Preview | 候选正文预览；确认预览 | 用户查看、编辑并确认 Candidate Reading Base 的产品步骤。 | Web Reader / Library UI 拥有交互；domain service 负责确认写入。 | 目标：`candidate_base_ready` milestone、confirm API。 | 不是 AI 批注预览；不是增强层发布。 |
-| Stable Reading Base | 稳定阅读正文；Stable Base | 已确认、可阅读、适合 Claread 英语阅读提升的英文正文，是同一 Reading Record 内的唯一正文事实源。 | 由 Reading Base Builder 冻结；同一 record 内不可变。 | 目标：`reading_bases.text`、`content_sha256`、`canonicalizer_version`。 | 不被 Enhancement Layer、Ask 或 Unit Builder 改写。 |
+| Candidate Reading Document | 候选阅读文档；Candidate Document；旧称 Candidate Base | 高影响适配或 suitability gate 需要确认时产生的候选文档，包含标题、blocks、source refs、canonical text mapping、warnings、table/image/footnote 等特殊块和解析策略。 | 由 Input Adapter / Document Parser 生成；用户确认或编辑后转为 Stable Reading Document。 | 目标：`candidate_reading_documents` 或当前过渡名 `candidate_reading_bases`。 | 不是临时 Stable Reading Document；未确认时不进入 RAG truth layer。 |
+| Candidate Document Preview | 候选文档预览；确认预览 | 用户查看、编辑并确认 Candidate Reading Document 的产品步骤。确认的是“这个阅读文档是否可冻结”，不是只确认纯文本。 | Web Reader / Library UI 拥有交互；domain service 负责确认写入。 | 目标：`candidate_document_ready` / 过渡 `candidate_base_ready` milestone、confirm API。 | 不是 AI 批注预览；不是增强层发布。 |
+| Stable Reading Document | 稳定阅读文档；Stable Document | 已确认、可阅读、适合 Claread 英语阅读提升的稳定文档，是同一 Reading Record 内的文档事实源，包含 stable blocks、source refs 和 canonical text mapping。 | 由 Reading Document Builder / Base Composer 冻结；同一 record 内不可变。 | 目标：后续 `reading_documents` / `reading_document_blocks`；当前过渡实现仍以 `reading_bases` 承载 canonical text。 | 不被 Enhancement Layer、Ask 或 Unit Builder 改写；不是 Plate document。 |
+| Stable Document Block | 稳定文档块；Document Block | Stable Reading Document 内不可变的结构块，如 heading、paragraph、list item、blockquote、code block、table、image、caption、footnote。 | 由 Input Adapter / Base Composer 冻结；同一 document 内不可变。 | 目标：`reading_document_blocks`；当前 D5 仅有 heuristic unit metadata。 | 不等于 Plate node；不等于 Reading Unit。 |
+| Canonical Text Layer | 规范文本层；Canonical Text | 从 Stable Reading Document 派生的线性文本层，用于 UTF-16 offsets、Reading Units、Anchor Segments、主解析 worker 和 text-range hash。 | 由 Reading Document Builder 派生并冻结；同一 document 内不可变。 | 当前：`reading_bases.text`；后续可作为 document-derived text layer。 | 不等于完整文档结构；table/image/footnote 可能以独立 block 进入 RAG/Ask，但不都进入主解析。 |
 | Supersede | 替代；重建记录 | 用新 Reading Record 替代旧记录的产品动作。 | 由用户或 domain service 发起；旧 record 标记 superseded。 | 目标：`reading_records.superseded_by_record_id`。 | 不是在原 record 内修改 Stable Base。 |
 
 ## 文本坐标与阅读单位
 
 | 术语名称 (Term) | 中文名称 & 别名 | 业务定义 (Definition) | 生命周期 & 所有权 | 代码映射 (Code Mapping) | 易混淆对比 (Distinct From) |
 |---|---|---|---|---|---|
-| Reading Base Builder | 阅读正文构建器；Base Builder | 把低影响输入或已确认 Candidate Base 冻结为 Stable Reading Base，并生成 Reading Units、Anchor Segments 和 Navigation Skeleton。 | Reader domain service 拥有；必须 deterministic。 | 目标 service：`reading_base_builder`；旧资产可拆件复用 `input_preparation.py`。 | 不是 OCR/parser；不负责高影响清洗。 |
-| Reading Unit | 阅读单元；Unit | Stable Base 上不可变、连续、非重叠的编排和渲染单位，用于 translation、parsed coverage、navigation 和渐进增强调度。 | 由 Reading Base Builder 生成；同一 base 内不可变。 | 目标：`reading_units`，字段含 `unit_id`、`order_index`、base absolute UTF-16 offsets、`text_hash`。 | 不等于自然段；不等于一句话；不是用户选区最小坐标单位。 |
+| Reading Document Builder | 阅读文档构建器；Base Composer；过渡名 Reading Base Builder | 把低影响输入或已确认 Candidate Document 冻结为 Stable Reading Document，并派生 Canonical Text Layer、Reading Units、Anchor Segments 和 Navigation Skeleton。 | Reader domain service 拥有；文本坐标派生必须 deterministic。 | 目标 service：`reading_document_builder` / 当前 `reading_base_builder`。 | 不是 OCR/parser；不负责高影响清洗；不把 Plate JSON 当 truth。 |
+| Reading Unit | 阅读单元；Unit | Canonical Text Layer 上不可变、连续、非重叠的编排和调度单位，用于 translation、parsed coverage、navigation 和渐进增强调度。 | 由 Reading Document Builder 从 Canonical Text Layer 生成；同一 base/document 内不可变。 | 目标：`reading_units`，字段含 `unit_id`、`order_index`、base absolute UTF-16 offsets、`text_hash`。 | 不等于自然段；不等于一句话；不等于 Stable Document Block；不是用户选区最小坐标单位。 |
 | Anchor Segment | 锚点片段；sentence-like segment | Reading Unit 内稳定的 span 锚点单位，通常是句子；在无可靠句子边界时可为 clause 或 fallback window。span-bound anchor 必须引用 `anchor_segment_id`，并且 unit-local UTF-16 offset 必须落在该 segment 范围内。 | 由 Reading Base Builder 生成；同一 base 内不可变。 | 目标：`anchor_segments`，字段含 `anchor_segment_id`/兼容 `sentence_id`、`segment_type`、base absolute offsets、unit offsets、`text_hash`。 | 不等于 Reading Unit；`segment_type = clause/fallback_window` 时不应称为真实句子。 |
 | Text Coordinate Scope | 文本坐标范围；坐标作用域 | 文本坐标的参照范围：Reading Unit/Anchor Segment 持久事实记录 Stable Base absolute UTF-16 offsets；`ReaderTextRangeAnchor.start_offset/end_offset` 使用 unit-local UTF-16 offsets，并由 `anchor_segment_id` 约束。Plate leaf `segment_start_utf16/segment_end_utf16` 是派生的 segment-local projection metadata。 | 由 contracts 强制；Publisher 和 User Editing Surface 必须校验。 | 现有：`services/api/app/contracts/annotation.py`、`packages/contracts`；算法 `fnv1a32-utf16`。 | 不允许把 Plate path 或全文 absolute offset 当作 span anchor 字段。 |
 | Navigation Skeleton | 基础导航骨架 | `article_ready` 所需的基础导航结构，基于 Reading Units 和可选 heading metadata 生成。 | 由 Reading Base Builder 生成；可由后续 Semantic Outline 增强。 | 目标：`navigation_skeleton` / Reader snapshot fragment。 | 不等于 Semantic Outline；不阻塞于 LLM summary。 |
@@ -45,8 +47,8 @@
 
 | 术语名称 (Term) | 中文名称 & 别名 | 业务定义 (Definition) | 生命周期 & 所有权 | 代码映射 (Code Mapping) | 易混淆对比 (Distinct From) |
 |---|---|---|---|---|---|
-| Reader Plate Document | Reader Plate 文档；Plate Article Body | Web Reader Article Body 的 Plate.js 文档投影，承载原文、译文、AI 批注、Ask Supplement 和用户资产的富文本呈现。 | Projection 层生成；可由后端 domain facts 重建；前端临时持有。 | 目标：`apps/web/src/lib/reader-plate` 下的新 Plate value/schema；`platejs/react` 渲染。 | 不是后端 truth；不是旧 `render_scene_json`。 |
-| Base Plate Snapshot | 基础 Plate 快照 | `article_ready` 时由 Stable Base、Reading Units 和 Anchor Segments 生成的基础 Plate document。 | Reader projection service 生成；刷新恢复时可重建。 | 目标：`ReaderPlateSnapshot` 中的 `value`。 | 不等于完整增强结果；不等待 RAG 或所有 layers。 |
+| Reader Plate Document | Reader Plate 文档；Plate Article Body | Web Reader Article Body 的 Plate.js read-only 文档投影，承载 Stable Reading Document、译文、AI 批注、Ask Supplement 和用户资产的富文本呈现。 | Projection 层生成；可由后端 domain facts 重建；前端临时持有。 | 目标：`apps/web/src/lib/reader-plate` 下的新 Plate value/schema；`platejs/react` 渲染。 | 不是后端 truth；不是旧 `render_scene_json`；不是 Stable Reading Document。 |
+| Base Plate Snapshot | 基础 Plate 快照 | `article_ready` 时由 Stable Reading Document、Stable Document Blocks、Canonical Text Layer、Reading Units 和 Anchor Segments 生成的基础 Plate document。 | Reader projection service 生成；刷新恢复时可重建。 | 目标：`ReaderPlateSnapshot` 中的 `value`。 | 不等于完整增强结果；不等待 RAG 或所有 layers。 |
 | Plate Projection | Plate 投影 | 将 domain facts 转为 Reader Plate Document、projection operations 和前端可应用 fragment 的过程。 | Projection 层拥有；不得改变 domain truth。 | 目标：`plate_projection` / `projection_operations` service。 | 不等于 Layer Publisher 的业务发布。 |
 | Projection Operation | 投影操作；projection op | 指向稳定 domain target 的增量投影操作，如对某 unit 插入译文、对某 Anchor Segment 添加 AI mark。 | 由 projection emitter 产生；可由 domain facts 重建；前端按事件顺序应用。 | 目标：`reader_events.event_type = projection_ops`。 | 不等于 raw Slate operation；不得持久化 Plate path。 |
 | Plate Fragment | Plate 片段 | 通过 allowlist 和 sanitize 后可插入 Plate Document 的局部富文本 fragment。 | 由 projection layer 或 frontend converter 生成；用于渲染，不作为业务事实。 | 目标：`fragment.format = plate_fragment`。 | 不等于 LLM 任意 JSON；不等于 Enhancement Layer truth。 |
@@ -101,8 +103,8 @@
 | Projection Event | 投影事件 | `reader_events` 中面向 Web Plate projection 的事件，如 `projection_ops`。 | Projection emitter 写入；可由 domain facts 重建。 | 目标：`reader_events.event_type = projection_ops`。 | 不等于业务事实本身；不等于 raw Slate operation。 |
 | Reader Job Event | Reader job 诊断事件 | worker 诊断事件，如 claim、heartbeat、attempt、requeue。 | Executor / Observability 拥有。 | 目标：`reader_job_events` 或 logs。 | 不进入 SSE 主流。 |
 | Reader Snapshot | Reader 快照；projection | 当前 Reader projection 的可恢复快照或 GET 聚合结果。 | Projection 层生成；可由业务事实重建。 | 目标：Reader BFF snapshot response。 | 不是唯一事实源。 |
-| `candidate_base_ready` | 候选正文可确认 | 高影响适配产生可预览 Candidate Base，等待用户确认或编辑。 | Product milestone；由 Input Adapter/domain gate 写入。 | 目标：product state / reader event。 | 不是 `article_ready`。 |
-| `article_ready` | 文章可读 | Stable Base、Reading Units、Anchor Segments 和基础导航已可用，用户可以开始阅读。 | Product milestone；由 domain gate 写入。 | 目标：product state / reader event。 | 不等全文解析完成；不等待 RAG 或增强层。 |
+| `candidate_document_ready` / 过渡 `candidate_base_ready` | 候选文档可确认 | 高影响适配产生可预览 Candidate Document，等待用户确认或编辑。 | Product milestone；由 Input Adapter/domain gate 写入。 | 目标：product state / reader event。 | 不是 `article_ready`。 |
+| `article_ready` | 文章可读 | Stable Reading Document、Stable Document Blocks、Canonical Text Layer、Reading Units、Anchor Segments 和基础导航已可用，用户可以开始阅读。 | Product milestone；由 domain gate 写入。 | 目标：product state / reader event。 | 不等全文解析完成；不等待 RAG 或增强层。 |
 | `initial_enhancement_ready` | 初始增强可用 | 第一批可见增强层已发布，通常是当前或起始 units 的译文。 | Product milestone；由 layer aggregate 推导。 | 目标：product state / reader event。 | 不是 coverage complete。 |
 | `coverage_complete` | 解析覆盖完成 | 当前策略下所有目标 units 都有 parsed decision。 | Aggregate 推导；planner 不直接写。 | 目标：product state / coverage view。 | 不是 worker run success。 |
 | `action_required` | 需要用户处理 | 需要确认、配额、继续、重试或修复的可见状态。 | Domain service 写入；Reader/Library 必须可发现。 | 目标：`reading_records.product_state`。 | 不是 terminal failure 的唯一表达。 |
@@ -112,8 +114,8 @@
 
 | 术语名称 (Term) | 中文名称 & 别名 | 业务定义 (Definition) | 生命周期 & 所有权 | 代码映射 (Code Mapping) | 易混淆对比 (Distinct From) |
 |---|---|---|---|---|---|
-| RAG Substrate | RAG 检索底座 | 当前 Reading Record 内的检索底座，基于 Stable Base、Reading Units、Anchor Segments 和已发布增强层构建。 | RAG worker 异步构建；`article_ready` 不等待。 | 目标：`rag_substrates`、vector metadata filter。 | 不是全局知识库；不是 Original Input 默认上下文。 |
-| RAG Citation | RAG 引用 | Ask 或解释结果返回的可校验引用，包含 substrate、base、unit、可选 Anchor Segment、hash、offset/snippet。 | RAG adapter 返回，Ask 接受前校验。 | 目标：citation DTO。 | 不是模型口头声称的引用。 |
+| RAG Substrate | RAG 检索底座 | 当前 Reading Record 内的检索底座，基于 Stable Reading Document、Stable Document Blocks、Canonical Text Layer、Reading Units、Anchor Segments 和已发布增强层构建。 | RAG worker 异步构建；`article_ready` 不等待。 | 目标：`rag_substrates`、`rag_chunks`、vector metadata filter。 | 不是全局知识库；不是 Original Input 默认上下文。 |
+| RAG Citation | RAG 引用 | Ask 或解释结果返回的可校验引用，包含 substrate、stable document/base、block、source scope、hash、snippet，必要时包含 unit / Anchor Segment / offsets。 | RAG adapter 返回，Ask 接受前校验。 | 目标：citation DTO。 | 不是模型口头声称的引用；不是只回到线性文本 offset。 |
 | Source Scope | 来源范围；allowed source scope | RAG/Ask 查询允许使用的来源边界，如 current unit、viewport units、published layers。 | Authorization Envelope 控制；query 必须显式携带。 | 目标：RAG query DTO `allowed_source_scope`。 | 不是 provider filter 的全部；业务层先约束。 |
 
 ## 状态口径
@@ -122,10 +124,10 @@
 |---|---|
 | “文章解析完成了” | 必须说明是 `article_ready`、`initial_enhancement_ready` 还是 `coverage_complete`。 |
 | “任务失败了” | 区分 run/job 执行失败，或 Product State 进入 `action_required` / terminal failure。 |
-| “RAG 已完成” | 说“当前 record 的 `rag_substrate` 达到 `substrate_ready`”。 |
+| “RAG 已完成” | 说“当前 record 的 `rag_substrate` 达到 `substrate_ready`”，并说明覆盖的 `source_scope`。 |
 | “Ask 写入批注” | Ask 请求 sidecar action，用户确认后写 User Editorial Asset 或 Ask Supplement。 |
-| “重新解析这篇文章” | 如果 Stable Base 已冻结，创建新 Reading Record 或 supersede 旧 record。 |
-| “LLM 切正文” | LLM 不生成 Stable Base 坐标；如启用 Unit Boundary Refiner，也只能建议既有 Anchor Segments 的 split/merge。 |
+| “重新解析这篇文章” | 如果 Stable Reading Document / Canonical Text 已冻结，创建新 Reading Record 或 supersede 旧 record。 |
+| “LLM 切正文” | LLM 不生成 Stable Reading Document / Canonical Text 坐标；如启用 Unit Boundary Refiner，也只能建议既有 Anchor Segments 的 split/merge。 |
 
 ## 与旧实现的关系
 
@@ -133,7 +135,7 @@
 |---|---|
 | `analysis_records` | `reading_records`，但本轮不做数据迁移兼容。 |
 | `analysis_tasks` | `reader_runs` + `reader_jobs`。 |
-| `analysis_results.render_scene_json` | 新 Web Reader projection / snapshot，不做旧 scene 映射。 |
+| `analysis_results.render_scene_json` | Stable Reading Document -> Reader Plate projection / snapshot，不做旧 scene 映射。 |
 | `learning_workflow` | bounded planner + typed jobs + layer publisher。 |
 | `parallel_agents_node` | layer workers。 |
 | `task succeeded` | 明确的 Reader milestone 或 Parsed coverage。 |

@@ -1,7 +1,7 @@
 # Schema And Domain Contract
 
-> 状态：`D6-A0 Ask / notes / highlights dependency audit`
-> 最后更新：2026-06-23
+> 状态：`D6-I0 input / document model decision merged`
+> 最后更新：2026-06-25
 > 范围：Reader agentic orchestration 的后端 schema 边界、领域对象、运行时事实源、projection DTO、旧 workflow cutover 和 reset 约束。
 
 ## 目标
@@ -74,8 +74,12 @@ D4 不阻塞以下表或能力，但 D3 schema 不得把它们设计死：
 
 - `source_artifacts`
 - `extraction_results`
-- `candidate_reading_bases`
+- `candidate_reading_documents`
+- `stable_reading_documents`
+- `stable_document_blocks`
+- `canonical_text_layers`
 - `rag_substrates`
+- `rag_chunks`
 - vector store adapter metadata
 - richer User Editorial Assets consolidation
 - Directus/Eval replacement views
@@ -83,7 +87,14 @@ D4 不阻塞以下表或能力，但 D3 schema 不得把它们设计死：
 - projection snapshot cache
 - independent outbox or DLQ
 
-## Core Record And Base
+## Core Record, Document And Base
+
+D3/D4 代码以 `reading_bases.text` 承担稳定文本事实、Unit 构建和 Plate Snapshot 投影。D6 文档型 Reader 口径下，这个字段不再代表完整文档事实，只是 **Canonical Text Layer 的过渡实现**。后续输入处理、PDF/OCR、Markdown、RAG 和 Plate read-only 文档页必须补出 Stable Reading Document / Stable Document Blocks / Canonical Text Layer 三层：
+
+- Stable Reading Document：用户确认后的阅读文档实体，包含标题、来源、文档结构版本和冻结 metadata。
+- Stable Document Blocks：段落、标题、列表、引用、table、footnote、image、code 等不可变 block truth。
+- Canonical Text Layer：从 Stable Reading Document / Blocks 派生的线性英文阅读文本，继续承载 UTF-16 offsets、Reading Units、Anchor Segments 和主解析链路。
+- `reading_bases` 在迁移期可继续作为 Canonical Text Layer 的存储表；新代码不得把 `reading_bases.text` 当成 table/image/footnote 等文档结构的唯一事实源。
 
 ### `reading_records`
 
@@ -103,7 +114,7 @@ Required fields:
 | `product_state` | Reader / Library visible state |
 | `readiness_state` | domain milestone state |
 | `generation` | current record generation fence |
-| `active_base_id` | current Stable Base |
+| `active_base_id` | current canonical text base; D6+ stable document identity is separate |
 | `superseded_by_record_id` | replacement record if superseded |
 | `deleted_at` | soft delete |
 | `created_at`, `updated_at` | audit timestamps |
@@ -119,8 +130,8 @@ Rules:
 
 - `reading_records.generation` owns the current generation.
 - `reader_runs.record_generation` and `reader_jobs.expected_generation` are snapshots.
-- `active_base_id` must point to a base owned by the same record and current generation.
-- Supersede creates or points to another Reading Record; it does not mutate an existing Stable Base.
+- `active_base_id` must point to a canonical text base owned by the same record and current generation.
+- Supersede creates or points to another Reading Record; it does not mutate an existing Stable Reading Document or canonical text base.
 - `active_base_id` can be enforced by nullable FK + transaction check, deferrable FK, or equivalent service-level invariant. The contract requires the invariant, not a single DDL shape.
 - D3-P1 does not require a DB trigger to enforce `active_base_id -> reading_bases.status = 'active'`. Service / publisher code must enforce this invariant when setting active base, superseding base, and publishing layers/jobs.
 
@@ -131,7 +142,7 @@ The three state layers must not collapse into one task status.
 | State field | Owner | Meaning | D4 allowed values |
 |---|---|---|---|
 | `lifecycle_status` | record lifecycle service | Long-lived existence and replacement status. | `active`, `cancelled`, `superseded`, `deleted` |
-| `readiness_state` | domain milestone aggregate | Stable milestones that downstream systems can rely on. | `submitted`, `candidate_base_ready`, `article_ready`, `initial_enhancement_ready`, `coverage_complete` |
+| `readiness_state` | domain milestone aggregate | Stable milestones that downstream systems can rely on. | `submitted`, `candidate_document_ready`（过渡 alias：`candidate_base_ready`）, `article_ready`, `initial_enhancement_ready`, `coverage_complete` |
 | `product_state` | Reader/Library domain gate | User-visible state derived from readiness plus action/error/quota needs. | `processing`, `needs_confirmation`, `readable_enhancing`, `action_required`, `failed`, `deleted` |
 
 Rules:
@@ -170,7 +181,7 @@ D4 pure text uses one row. Future URL/PDF/OCR may append artifacts and extractio
 
 ### `reading_bases`
 
-Stable Reading Base is the immutable text truth for a record generation.
+`reading_bases` is the D3/D4 immutable text truth for a record generation. In D6+ it should be treated as the persisted Canonical Text Layer, not the full Stable Reading Document.
 
 Required fields:
 
@@ -180,7 +191,7 @@ Required fields:
 | `reading_record_id` | parent record |
 | `base_version` | record-local base version |
 | `record_generation` | record generation this base belongs to |
-| `text` | stable readable English text |
+| `text` | canonical readable English text derived from the Stable Reading Document |
 | `content_sha256` | full text hash |
 | `content_utf16_length` | UTF-16 code unit length |
 | `canonicalizer_version` | low-impact adaptation policy version |
@@ -222,8 +233,80 @@ Required constraints:
 Rules:
 
 - Enhancement Layers, Ask and user assets never edit `reading_bases.text`.
-- High-impact input adaptation must go through Candidate Base before freezing.
-- D4 low-impact pure text path may freeze directly.
+- High-impact input adaptation must go through Candidate Reading Document before freezing Stable Reading Document / Blocks / Canonical Text.
+- D4 low-impact pure text path may freeze directly into this transitional canonical base; D6+ should still pass Input Suitability Gate before `article_ready`.
+
+### D6 Draft: `candidate_reading_documents`
+
+Candidate Reading Document 是高影响输入处理后的用户确认对象。它不是仅供 preview 的临时文本框，而是冻结 Stable Reading Document 前的可审查文档版本。
+
+Required draft fields:
+
+| Field | Meaning |
+|---|---|
+| `id` | candidate UUID |
+| `reading_record_id` | parent record |
+| `user_id` | owner |
+| `record_generation` | generation fence |
+| `title` | proposed title |
+| `blocks_json` | ordered candidate block tree with stable local ids |
+| `canonical_text_preview` | generated linear text preview for English reading |
+| `source_refs_json` | Source Artifact / Extraction Result refs per block |
+| `quality_json` | extraction confidence, warnings, OCR/text-layer decisions |
+| `status` | `ready`, `confirmed`, `rejected`, `superseded` |
+| `created_at`, `updated_at`, `confirmed_at` | audit timestamps |
+
+Rules:
+
+- `product_state=needs_confirmation` points the user to a Candidate Reading Document.
+- Users may edit text blocks, title, basic block types, delete/restore low-confidence blocks, choose PDF text-layer vs OCR variants, choose image OCR role, and choose table treatment.
+- Candidate confirmation freezes a Stable Reading Document, Stable Document Blocks and Canonical Text Layer in one service transaction before moving to `article_ready`.
+- Candidate edit history may be coarse-grained in V1; durable audit must at least preserve the confirmed candidate payload and source refs.
+- Candidate Document must not persist raw Plate editor state as truth. Plate may render the preview, but confirmed facts must be normalized domain blocks.
+
+### D6 Draft: Stable Reading Document And Blocks
+
+Stable Reading Document is the immutable document truth for a record generation. Stable Document Blocks are its ordered, addressable content blocks.
+
+Recommended draft fields for `stable_reading_documents`:
+
+| Field | Meaning |
+|---|---|
+| `id` | stable document UUID |
+| `reading_record_id` | parent record |
+| `record_generation` | generation fence |
+| `title` | frozen title |
+| `document_version` | record-local document version |
+| `source_profile_json` | input source summary and artifact refs |
+| `content_sha256` | hash of normalized document block payload |
+| `status` | `active`, `superseded` |
+| `frozen_at`, `created_at` | audit timestamps |
+
+Recommended draft fields for `stable_document_blocks`:
+
+| Field | Meaning |
+|---|---|
+| `id` | row UUID |
+| `stable_document_id` | parent stable document |
+| `block_id` | stable document-local id |
+| `parent_block_id` | optional hierarchy parent |
+| `order_index` | stable document order |
+| `block_type` | `paragraph`, `heading`, `list_item`, `blockquote`, `table`, `table_row`, `table_cell`, `footnote`, `image`, `image_ocr`, `caption`, `code_block`, `unknown` |
+| `text_content` | normalized readable text when applicable |
+| `payload_json` | structured table/image/footnote/code payload and metadata |
+| `source_refs_json` | source artifact/page/bbox/url refs |
+| `canonical_text_start_utf16`, `canonical_text_end_utf16` | optional mapping into Canonical Text Layer |
+| `interpretation_policy_json` | main-reading / RAG-only / ignore defaults |
+| `quality_json` | confidence and warning metadata |
+
+Rules:
+
+- Paragraph, heading, list, blockquote and caption text normally feed the main reading chain.
+- Table cells, image OCR, footnotes and code blocks are preserved as blocks; they may feed RAG/Ask, but should not automatically enter main grammar/sentence-analysis unless policy says so.
+- Image source artifacts are preserved; OCR text is a block payload or child block, not a replacement for the image artifact.
+- Table structure must not be silently flattened during source preservation. V1 may offer a user choice between preserving as table and converting a copy to reading text.
+- Footnotes must preserve backlink/source relation when extraction provides it; otherwise mark relation quality as low.
+- Plate Reader Document is generated from these facts and remains a read-only projection.
 
 ### `reading_units`
 

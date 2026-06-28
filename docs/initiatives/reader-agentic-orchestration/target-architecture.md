@@ -1,14 +1,14 @@
 # Reader Agentic Orchestration 目标架构
 
 > 状态：`D6 进行中`
-> 最后更新：2026-06-24
+> 最后更新：2026-06-25
 > 范围：用户提交内容的 `learning` Reader 解析。
 
 ## 目标
 
 把当前固定 AI Workflow 解析链路，重构为围绕长期 Reading Record 的 bounded agentic orchestration。
 
-新 Reader 的产品感知应是“有来源约束的稳定阅读产物 + 后台渐进增强”，不是 agent 工作台，也不是页面级常驻 LLM 线程。
+新 Reader 的产品感知应是“有来源约束的稳定阅读文档 + 后台渐进增强”，不是 agent 工作台，也不是页面级常驻 LLM 线程。
 
 ## 文档结构
 
@@ -17,8 +17,8 @@
 | 文档 | 内容 |
 |---|---|
 | `concepts.md` | 按模块分组的概念定义、生命周期、代码映射和易混淆对比 |
-| `modules/input-adapter.md` | 输入适配、Source Artifact、Extraction Result、Candidate Base |
-| `modules/reading-base-and-units.md` | Stable Base、Reading Units、Anchor Segments、UTF-16/hash、`article_ready` gate |
+| `modules/input-adapter.md` | 输入适配、Source Artifact、Extraction Result、Candidate Document、Input Suitability Gate |
+| `modules/reading-base-and-units.md` | Stable Reading Document、Stable Document Blocks、Canonical Text Layer、Reading Units、Anchor Segments、UTF-16/hash、`article_ready` gate |
 | `modules/orchestration-runtime.md` | run/job、worker lease、并发、Authorization Envelope、framework posture |
 | `modules/policy-and-cost-control.md` | Policy Planner、Skip Gate、Prompt Cache、Model Profile、Usage Bucket |
 | `modules/enhancement-layers-and-parsed.md` | Enhancement Layer、System Annotation Layer、User Editing Boundary、anchor、Parsed Decision |
@@ -34,7 +34,7 @@
 Reader 体验应符合：
 
 - 先出现稳定可读文章。
-- 有稳定 Reading Units、Anchor Segments 和基础导航。
+- 有稳定文档结构、Reading Units、Anchor Segments 和基础导航。
 - 译文和其他增强层渐进到达。
 - Ask Claread 是绑定当前文章的侧边助手。
 - 用户高亮、笔记和保存的 Ask 建议作为用户编辑资产叠加在稳定正文上。
@@ -74,7 +74,7 @@ service stop / parsing disabled
 -> reset schema baseline, preserve dictionary tables
 -> update Web Reader UI to new Reading Record API
 -> validate text parsing vertical slice
--> add Candidate Base / RAG / advanced layers
+-> add Candidate Document / RAG / advanced layers
 -> adapt or remove remaining old consumers
 -> delete old workflow code and tables
 ```
@@ -89,8 +89,8 @@ service stop / parsing disabled
 
 | 模块 | 职责 | 主要输出 |
 |---|---|---|
-| Input Adapter | 接收文本、URL、文件、PDF、OCR 图片；保存输入产物；判断低/高影响适配 | Original Input、Source Artifact、Extraction Result、Candidate/Stable Base |
-| Reading Base Builder | 生成、确认、冻结 Stable Reading Base；生成不可变 Reading Units、Anchor Segments 和基础导航 | Stable Base、Reading Units、Anchor Segments、Navigation Skeleton |
+| Input Adapter | 接收文本、URL、文件、PDF、OCR 图片；保存输入产物；执行 Input Suitability Gate；判断低/高影响适配 | Original Input、Source Artifact、Extraction Result、Candidate Document / Stable Reading Document |
+| Reading Document Builder | 生成、确认、冻结 Stable Reading Document；生成 Stable Document Blocks、Canonical Text Layer、不可变 Reading Units、Anchor Segments 和基础导航 | Stable Reading Document、Stable Document Blocks、Canonical Text Layer、Reading Units、Anchor Segments、Navigation Skeleton |
 | Orchestration Planner | 基于 record state 和 envelope 规划下一批 bounded jobs | typed plan |
 | Guarded Executor | claim jobs、heartbeat、retry、cancel/supersede、usage audit | Reader Runs / Jobs |
 | Policy / Cost Control | Skip Gate、model routing、prompt cache、usage bucket、cost baseline | policy decisions、model profiles、usage aggregates |
@@ -98,7 +98,7 @@ service stop / parsing disabled
 | Layer Publisher | 做 schema、anchor、source grounding、generation guard 和 CAS 发布 | published Enhancement Layers、System Annotation Layers、Parsed Decisions、Reader Events |
 | Event / Projection | 持久 reader events、snapshot、SSE、polling fallback、projection operations | Reader projection |
 | Plate Reader Projection | 将 domain facts 投影为 Plate.js Article Body 文档和稳定目标的 projection operations | Base Plate Snapshot、Projection Operations、Document Tools |
-| RAG Substrate | 基于 Stable Base / Units 构建当前记录内检索底座 | RAG chunks、citations |
+| RAG Substrate | 基于 Stable Reading Document / Blocks / Canonical Text / Units 构建当前记录内检索底座 | RAG chunks、citations |
 | Ask Sidecar Bridge | Ask 的继续增强、保存笔记/高亮、追加补充、扩大上下文等动作接入 envelope | sidecar actions、Ask Supplements、User Editorial Assets |
 | Eval / Observability | usage audit、trace correlation、eval sampling | usage events、eval samples |
 
@@ -109,16 +109,18 @@ service stop / parsing disabled
 | Reading Record | 用户面对的长期阅读对象 | 长期存在 |
 | Original Input | 用户提交的原始材料，用于审计、恢复和重新适配 | 保留；默认不作为 Reader/Ask truth |
 | Source Artifact | 文件、网页、OCR 图片、PDF 页面等输入产物及 metadata | 可追加处理结果 |
-| Extraction Result | 抽取文本、结构、置信度、source loss 风险 | 可重算 |
-| Candidate Reading Base | 高影响适配后的候选正文 | 确认前可编辑 |
-| Stable Reading Base | 已确认的稳定可读正文 | 同一 record 内不可变 |
-| Reading Units | 带 base-absolute offsets/hash/order 的稳定阅读单位 | 同一 record 内不可变 |
+| Extraction Result | 抽取文本、结构、页级质量、OCR 决策、source loss 风险 | 可重算 |
+| Candidate Reading Document | 高影响适配或 suitability gate 后的候选阅读文档，包含 blocks、source refs、warnings 和解析策略 | 确认前可编辑 |
+| Stable Reading Document | 已确认的稳定可读文档，是 record 内文档事实源 | 同一 record 内不可变 |
+| Stable Document Blocks | Stable Reading Document 内不可变结构块，如 paragraph、heading、table、image、footnote、code block | 同一 document 内不可变 |
+| Canonical Text Layer | 从 Stable Reading Document 派生的线性文本层，用于 UTF-16 offsets、Reading Units、Anchor Segments 和主解析 | 同一 document 内不可变 |
+| Reading Units | 带 canonical-text absolute offsets/hash/order 的稳定阅读单位 | 同一 record 内不可变 |
 | Anchor Segments | Reading Unit 内 sentence-like 的稳定锚点段，通常是句子；必要时可为 clause 或 fallback window | 同一 record 内不可变 |
 | Navigation Skeleton | 基于稳定 units 的基础导航 | `article_ready` 必需 |
 | Enhancement Layers | 译文、System Annotation Layers、summary、Semantic Outline 等 | 可再生、可局部重试 |
 | System Annotation Layers / AI Annotation Layers | 系统 worker 生成的 AI 批注层，如词汇、语法、长难句 | 可再生、不可直接编辑 |
 | Ask Supplements | Ask 经用户确认后追加到阅读页的 AI 补充入口 | 用户可删除；与系统层分源 |
-| RAG Substrate | 当前 record 内检索底座 | 可异步构建 |
+| RAG Substrate | 当前 record 内检索底座，覆盖 Stable Reading Document 并按 source scope 分层 | 可异步构建 |
 | Parsed Decisions | 单元级 parsed 判断与 rationale | 可审计 |
 | User Editorial Assets | 高亮、笔记、保存的 Ask note/highlight、生词动作 | 用户控制；不被系统层重写 |
 | Reader Runs / Jobs | bounded background execution | 执行事实，不是产品对象 |
@@ -130,8 +132,8 @@ service stop / parsing disabled
 
 | 里程碑 | 最小合同 | 用户含义 |
 |---|---|---|
-| `candidate_base_ready` | 高影响适配产生可预览候选正文 | 用户需要确认或编辑 |
-| `article_ready` | Stable Base、Reading Units、Anchor Segments、unit offsets/hash、标题/语言/source metadata、基础 Navigation Skeleton | 用户可以开始阅读 |
+| `candidate_document_ready` / 过渡 `candidate_base_ready` | 高影响适配产生可预览候选文档 | 用户需要确认或编辑 |
+| `article_ready` | Stable Reading Document、Stable Document Blocks、Canonical Text Layer、Reading Units、Anchor Segments、unit offsets/hash、标题/语言/source metadata、基础 Navigation Skeleton | 用户可以开始阅读 |
 | `substrate_ready` | 当前 record RAG / Ask 基础上下文可用 | Ask 和高级能力更可靠 |
 | `initial_enhancement_ready` | 第一批有用可见增强可用，通常是当前或起始 unit 译文 | 阅读辅助已可用 |
 | `coverage_complete` | 当前策略下应 parsed 的 units 都已有 Parsed Decisions | 普通文章进入完成态 |
@@ -146,7 +148,7 @@ D4 只做低风险纯文本路径：
 ```text
 POST text input
 -> Original Input
--> Stable Reading Base
+-> Stable Reading Document + Canonical Text Layer
 -> Reading Units + Anchor Segments
 -> Base Plate Snapshot
 -> Navigation Skeleton
@@ -159,7 +161,7 @@ POST text input
 D4 不做：
 
 - URL / PDF / OCR / 文件上传实现。
-- Candidate Base preview UX。
+- Candidate Document preview UX。
 - vocabulary / grammar_note / sentence_analysis / summary / Semantic Outline。
 - RAG 阻塞阅读。
 - 小程序适配。
@@ -197,26 +199,45 @@ D5 LangGraph / orchestration 架构评估结论：D5 主链路 runner、vocabula
 
 禁止用一个 task status 表达所有状态。
 
+## 输入与文档立场
+
+本轮 V1 输入方式承诺：
+
+- 粘贴文本。
+- 链接导入：公开网页文章 URL。
+- 上传 PDF：英文阅读材料，支持页码范围。
+- 上传图片 / 截图 OCR：支持多图合并为一个 Reading Record。
+- `.txt` / `.md` 作为上传文档的低风险子类型。
+
+V1 不承诺 Office、EPUB、批量导入、音视频转写或跨文件合并。
+
+所有输入都先经过 Input Suitability Gate。Stable Reading Document 的前提不是“来源低风险”，而是内容足够支撑 Claread 英语阅读解读，且格式处理不会改变关键含义。
+
+高影响输入适配输出 Candidate Reading Document，不是 Candidate Text。用户确认的是文档：标题、blocks、table/image/footnote/code 等特殊块、source refs、warnings、canonical text mapping，以及哪些 block 进入主解析、哪些只供 Ask/RAG。
+
+PDF V1 采用 deterministic text-layer parser 优先；页级质量阈值不达标时可进入 LLM reviewer，reviewer 只决定 `use_text_layer` / `run_ocr` / `run_ocr_and_compare` / `needs_user_confirmation`，不作为 runtime planner。OCR 通过 provider adapter 接入，部署层可配置首选模型 profile（如环境可用的 `qwen3.5-ocr`），领域合同不绑定具体模型名。
+
 ## RAG 立场
 
 本轮 RAG 只服务当前 Reading Record。
 
-- 默认 truth layer 是 Stable Base / Reading Units。
+- 默认 truth layer 是 Stable Reading Document / Stable Document Blocks / Canonical Text Layer / Reading Units。
 - `article_ready` 不等待 `substrate_ready`。
 - 默认 shared collection + metadata filter，不默认 collection-per-record。
 - RAG provider 必须 adapter 化。
-- Citation 必须可校验到 base、unit、可选 Anchor Segment、hash 和 snippet。
+- Citation 必须可校验到 stable document/base、block、source scope、hash 和 snippet；主阅读文本 citation 还应能回到 unit、可选 Anchor Segment 和 offsets。
 
 ## 硬约束
 
 - Reader 页面不是常驻 LLM 线程。
 - Reading Record 是长期产品对象。
-- Stable Reading Base 在同一 record 内不可变。
-- Reading Units 在同一 record 内不可变。
+- Stable Reading Document 在同一 record 内不可变。
+- Stable Document Blocks 在同一 document 内不可变。
+- Canonical Text Layer 和 Reading Units 在同一 record 内不可变。
 - Span anchors 使用 `anchor_segment_id` + unit-local UTF-16 offsets；offset 必须落在目标 Anchor Segment 的 unit range 内。Segment-local offsets 只作为 Plate leaf projection metadata 派生，不作为 domain anchor 持久字段。
-- Stable Reading Base 是输入适配和必要用户确认后的可读英文正文；Unit Builder 不负责 OCR 修复、boilerplate 删除、多栏顺序修复或正文重写。
+- Stable Reading Document 是输入适配和必要用户确认后的可读英文文档；Unit Builder 不负责 OCR 修复、boilerplate 删除、多栏顺序修复、文档块降级或正文重写。
 - Unit Builder 默认 deterministic；D5+ LLM Unit Boundary Refiner 只能建议既有 Anchor Segments 的 split/merge，不能改写文本、生成坐标或绕过 validator。
-- 高影响输入适配必须先用户确认。
+- 高影响输入适配必须先产生 Candidate Reading Document 并经用户确认。
 - `article_ready` 不等待增强层或 RAG。
 - 译文是 D4 parsed 的最低门槛。
 - 禁止用批注数量作为 parsed 阈值。
@@ -239,7 +260,7 @@ Reader Article Body 的渲染与交互走 Plate.js（`platejs/react`），D1-012
 
 ### 关键定位
 
-- **Plate document 不是 truth**，是 `reading_bases` / `reading_units` / `enhancement_layers` / `user_editorial_assets` / `ask_supplements` 的 Web projection。
+- **Plate document 不是 truth**，是 Stable Reading Document / Stable Document Blocks / Canonical Text Layer / Reading Units / Enhancement Layers / User Editorial Assets / Ask Supplements 的 Web projection。D4 代码中的 `reading_bases.text` 是 Canonical Text Layer 的过渡实现。
 - **Domain truth 不绑定 Plate**。后端 facts 必须能独立支撑 RAG citation、eval、非 Web 客户端和重新投影。
 - **Plate node path 只作前端临时缓存**。持久化合同不得保存 raw Plate path 或 raw Slate path operation。
 - **Reader Projection 与 Domain Event 共存**。Domain event 表达业务事实变化；projection event 表达 Web Reader 如何增量更新 Article Body。
@@ -251,7 +272,7 @@ Plate 只覆盖 Reader 内部 Article Body：
 
 | 区域 | 技术边界 |
 |---|---|
-| Stable Base 原文、Reading Units、Anchor Segments | Plate base nodes / marks |
+| Stable Reading Document、Stable Document Blocks、Canonical Text Layer、Reading Units、Anchor Segments | Plate read-only document nodes / marks |
 | Translation、vocabulary、grammar_note、sentence_analysis、Ask Supplement | Plate AI-owned projection nodes / marks |
 | 用户高亮、评论、笔记 | Plate user-owned projection nodes / marks |
 | Ask sidecar panel、Library、settings、quota、debug、navigation shell | 普通 React UI |
@@ -260,7 +281,7 @@ Plate 只覆盖 Reader 内部 Article Body：
 
 | Owner | 内容 | 用户权限 | 系统/AI 权限 |
 |---|---|---|---|
-| `stable` | Stable Base、Reading Unit、Anchor Segment source text | 不可编辑、不可删除；可选取、查询、评论、高亮 | 不可改写；如需修正，创建新 record 或 supersede |
+| `stable` | Stable Reading Document、Stable Document Blocks、Canonical Text、Reading Unit、Anchor Segment source text | 不可编辑、不可删除；可选取、查询、评论、高亮 | 不可改写；如需修正，创建新 record 或 supersede |
 | `system_ai` | 系统 worker 生成的 translation、vocabulary、grammar_note、sentence_analysis | 不可直接编辑；可隐藏、折叠、反馈；是否允许 dismiss 由产品策略决定 | 可通过 Layer Publisher 版本化替换 |
 | `ask_supplement` | Ask 经用户确认后追加的 AI 补充 | 可删除或撤销显示；保留审计 | 可由 Ask tool 追加或修订 |
 | `user` | 用户高亮、评论、笔记、保存的 Ask note/highlight | 可编辑、可删除 | AI 不可覆盖，只能提出建议 |
@@ -307,7 +328,8 @@ Owner 校验双层执行：后端 domain service / Layer Publisher 是权威；�
 D4 正式路径从新 domain facts 直接生成 Base Plate Snapshot：
 
 ```text
-Stable Base + Reading Units + Anchor Segments
+Stable Reading Document / Stable Document Blocks / Canonical Text Layer
+-> Reading Units + Anchor Segments
 -> Base Plate Snapshot
 -> Plate Reader Surface
 ```
@@ -336,7 +358,7 @@ D5+ Ask Sidecar 使用 document tools，但写入用户资产必须经过用户�
 | `write_ai_supplement` | `{anchor, body_markdown, parent_layer_type}` | 用户确认或授权后写 Ask Supplement | domain event + `projection_ops` |
 | `revise_ai_annotation` | `{target, revision_mode, body_markdown}` | 默认提出 System Annotation revision proposal；已发布 Ask Supplement 修订需确认 | domain event + `projection_ops` |
 
-AI 不能直接修改 Stable Base 或 User Editorial Asset。Markdown / Plate fragment 必须经过 sanitize、schema allowlist、anchor validation 和 Authorization Envelope。
+AI 不能直接修改 Stable Reading Document / Stable Document Blocks / Canonical Text Layer 或 User Editorial Asset。Markdown / Plate fragment 必须经过 sanitize、schema allowlist、anchor validation 和 Authorization Envelope。
 
 ### Fragment Sanitize
 
@@ -345,7 +367,7 @@ Plate fragment 只能来自 typed layer result、document tool result 或已 san
 - 后端先用 typed schema 约束 LLM 输出，不接受 arbitrary Plate JSON。
 - Markdown -> Plate 前使用 strict allowlist，D5 默认只允许 paragraph、heading、list、code block、inline code、blockquote、strong、em、text 和受控 link。
 - Link protocol 只允许 `http:`、`https:`、`mailto:`，并拒绝 localhost、private IP 和 internal host。
-- D5 默认禁止 image、table、inline HTML、math、frontmatter、definition 和 footnote。
+- D5 AI/Ask 生成 fragment 默认禁止 image、table、inline HTML、math、frontmatter、definition 和 footnote；这不代表丢弃输入文档中的 table/image/footnote。源文档结构由 Stable Document Blocks 保留并投影到 Plate。
 - 每类 fragment 必须有 length cap 和 source grounding；grammar_note / sentence_analysis / Ask Supplement 必须能回源到 Anchor Segment。
 
 ## 决策记录
@@ -362,7 +384,7 @@ Plate fragment 只能来自 typed layer result、document tool result 或已 san
 | D0-008 | 2026-06-18 | RAG、输入适配、orchestration 入口三类 D0.5 边界已进入正式架构。 |
 | D0-009 | 2026-06-18 | 测试阶段 RAG 优先接入 Zilliz Cloud；上线前评估阿里云 RAG/向量检索服务；代码必须 adapter 化。 |
 | D0-010 | 2026-06-18 | 文件上传测试阶段使用阿里云 OSS；上线目标为 OSS + CDN。 |
-| D0-011 | 2026-06-18 | OCR/富文档解析优先评估阿里云百炼图像理解、Qwen OCR/VL 和文档解析能力，但不得绕过 Candidate Base。 |
+| D0-011 | 2026-06-18 | OCR/富文档解析优先评估阿里云百炼图像理解、Qwen OCR/VL 和文档解析能力；D6 后不得绕过 Candidate Reading Document。 |
 | D0-012 | 2026-06-18 | 本轮重构收敛为 learning workflow only；academic workflow 暂缓。 |
 | D1-001 | 2026-06-18 | 正式设计拆分为概念表、目标总览和模块文档，避免单文档承载全部细节。 |
 | D1-002 | 2026-06-18 | 不做旧 `render_scene_json` 兼容映射；Web Reader UI 随新 contract 改写。 |
@@ -376,15 +398,15 @@ Plate fragment 只能来自 typed layer result、document tool result 或已 san
 | D1-010 | 2026-06-18 | 模型选择走 Model Profile / route lookup，不由 runtime planner 即兴选择模型。 |
 | D1-011 | 2026-06-18 | D2 前必须定义 Skip Gate、Prompt Cache、Usage Bucket 和成本基线合同。 |
 | D1-012 | 2026-06-18 | Reader 渲染层走 Plate.js（`platejs/react`），作为 long-lived Article Body 文档模型、渲染层和交互引擎。`apps/web/src/lib/reader-plate/` 是 Claread 对 Plate.js projection 的领域封装目录；阅读任务必须以 Plate.js 为实现底座。 |
-| D1-013 | 2026-06-18 | Plate document 不是 truth，是 domain truth（Stable Reading Base / Reading Units / Anchor Segments / Enhancement Layers / User Editorial Assets / Ask Supplements）的 projection。`enhancement_layers` / User Editorial Asset 表不改为 patch sequence；刷新恢复从 domain truth 重建 Plate snapshot，不从 Plate value 反推 domain。 |
+| D1-013 | 2026-06-18 | Plate document 不是 truth，是 domain truth 的 projection。D6 后 domain truth 包含 Stable Reading Document / Stable Document Blocks / Canonical Text Layer / Reading Units / Anchor Segments / Enhancement Layers / User Editorial Assets / Ask Supplements；刷新恢复从 domain truth 重建 Plate snapshot，不从 Plate value 反推 domain。 |
 | D1-014 | 2026-06-18 | `reader_events.event_type` 新增 `projection_ops` 子类型，与 domain events 并存。Projection ops 使用稳定 domain target（unit、Anchor Segment、layer、asset），不持久化 raw Slate path ops；前端再把 ops 转成 Plate transforms。非 Web 客户端继续 polling snapshot。 |
 | D1-015 | 2026-06-18 | Ask Sidecar 在 D5+ 改 document tools 模式：`read_range`、`propose_highlight`、`propose_note`、`write_ai_supplement`、`revise_ai_annotation`。写 User Editorial Assets 必须用户确认；每个工具经 Authorization Envelope、anchor validation 和 owner policy 校验后落 domain fact，再 emit projection ops。 |
-| D1-016 | 2026-06-18 | D4 正式路径从 Stable Base / Reading Units / Anchor Segments 直接生成 Base Plate Snapshot，不经过旧 `render_scene_json`。`renderSceneToPlateDocument` 只能作为迁移参考或 spike adapter，不作为新 contract 扩展。 |
+| D1-016 | 2026-06-18 | D4 正式路径从过渡 Stable Base / Reading Units / Anchor Segments 直接生成 Base Plate Snapshot，不经过旧 `render_scene_json`；D6 文档型 Reader 在其上新增 Stable Reading Document / Blocks / Canonical Text Layer。`renderSceneToPlateDocument` 只能作为迁移参考或 spike adapter，不作为新 contract 扩展。 |
 | D1-017 | 2026-06-18 | Plate owner 权限层覆盖 `stable`、`system_ai`、`ask_supplement`、`user`、`ephemeral`。用户不能删除 system AI truth，只能隐藏/反馈/按策略 dismiss；Ask Supplement 和 User Editorial Assets 有独立生命周期。owner 校验双层：后端权威拒绝 + 前端 Plate UX 镜像。 |
 | D1-018 | 2026-06-18 | D2-P0 接受 Plate.js 作为 Article Body 底座；Web 依赖必须对齐到同一稳定 major 主线。当前验证通过的组合是 `platejs@53.2.1`、`@platejs/floating@53.0.0`、`@platejs/ai@53.2.2`、`@platejs/markdown@53.2.2`、`@platejs/suggestion@53.0.3`、`@platejs/selection@53.1.6`。不得再混用 `platejs@50` 与 `@platejs/*@53`。 |
-| D1-019 | 2026-06-18 | Plate Markdown / AI fragment 必须经过 typed schema、strict allowlist、length cap、source grounding 和 link protocol allowlist。D5 默认禁 image、table、inline HTML、math、frontmatter、definition 和 footnote；LLM 不得直出 arbitrary Plate JSON 或 raw Slate ops 作为持久事实。 |
-| D2-001 | 2026-06-18 | D2-S1 接受 Reading Unit Builder 方向，但新增 Anchor Segment；unit 使用 Stable Base absolute offsets。D5-V2 实现把 span anchor 固化为 `anchor_segment_id` + unit-local offsets，并用 Anchor Segment range 约束。 |
-| D2-002 | 2026-06-18 | Stable Base 被视为输入适配后的可读英文正文；低影响处理可直接冻结，高影响处理必须 Candidate Base preview/confirm 后冻结。 |
+| D1-019 | 2026-06-18 | Plate Markdown / AI fragment 必须经过 typed schema、strict allowlist、length cap、source grounding 和 link protocol allowlist。D5 AI-generated fragment 默认禁 image、table、inline HTML、math、frontmatter、definition 和 footnote；D6 源文档中的 table/image/footnote 必须作为 Stable Document Blocks 保留。LLM 不得直出 arbitrary Plate JSON 或 raw Slate ops 作为持久事实。 |
+| D2-001 | 2026-06-18 | D2-S1 接受 Reading Unit Builder 方向，但新增 Anchor Segment；D4 unit 使用过渡 Stable Base absolute offsets，D6 后对应 Canonical Text Layer offsets。D5-V2 实现把 span anchor 固化为 `anchor_segment_id` + unit-local offsets，并用 Anchor Segment range 约束。 |
+| D2-002 | 2026-06-18 | D2 将 Stable Base 视为输入适配后的可读英文正文；D6 后升级为 Candidate Reading Document -> Stable Reading Document / Blocks / Canonical Text Layer。所有输入必须先过 Input Suitability Gate，高影响处理必须 Candidate Document preview/confirm 后冻结。 |
 | D2-003 | 2026-06-18 | Anchor Segment 从严格句子级修订为 sentence-like segment，必须记录 `segment_type = sentence | clause | fallback_window`；LLM 只能作为 D5+ 边界改良器提供受约束建议。 |
 | D2-004 | 2026-06-18 | D2-S2 接受 PostgreSQL-backed job lease / publish guard：`reader_jobs` claim 走 `SELECT FOR UPDATE SKIP LOCKED`，`lease_token` 必须是 UUID，`lease_expires_at` 是 per-job absolute timestamp。 |
 | D2-005 | 2026-06-18 | D4 最小纵切必须包含最小 `reader_runs` 与 immutable `envelope_json` snapshot；完整 envelope schema、runtime counters 和 DLQ 可后置，但 run/generation/envelope 不能后置到 D5。 |
@@ -420,6 +442,8 @@ Plate fragment 只能来自 typed layer result、document tool result 或已 san
 | D5-010 | 2026-06-22 | D5 Real Local Chain Runbook 已落地到 `modules/local-real-chain-runbook.md`：记录 API/Web/worker 三进程启动、model profile/env 配置、提交文本、events/snapshot 观察和 fail-closed 排查。D5-R4 已用真实 DashScope provider 跑通短文本主链路，无 smoke harness / fake executor；长文本 lease、`sentence_analysis` 验收和旧本地 DB schema drift 仍是 follow-up。 |
 | D5-011 | 2026-06-22 | D5-R5 运行态硬化已完成：新增 dev/admin schema health check，只检测 `ai_usage_events` / `user_credit_ledger` D5 attribution columns、FK 和 index，不做旧库自动迁移；worker lease duration 新增 setting / CLI 参数，默认 120 秒，以降低长文本真实 LLM 处理中的 lease expiry 风险。 |
 | D5-012 | 2026-06-22 | D5-V5/R6 长文本主链路已通过 deterministic fixture 和真实 DashScope `workflow-qwen37-max` provider 验证：Web BFF submit -> worker once -> snapshot reload -> `/app/reader-plate` 浏览器渲染均可产出 translation、vocabulary、grammar_note、sentence_analysis；继续坚持 snapshot reload，不启用 `projection_ops`，不读取旧 `render_scene_json`。后续风险收敛到 PydanticAI deprecation cleanup 与 Boundary / Unit Builder v2。 |
+| D6-001 | 2026-06-25 | Reader 输入产品口径升级为文档型 Reader：V1 支持粘贴文本、公开网页 URL、PDF 页码范围和多图 OCR；Candidate Base 升级为 Candidate Reading Document；Stable Reading Base 语义拆为 Stable Reading Document、Stable Document Blocks 和 Canonical Text Layer；table、image、footnote 不丢弃，保留为文档块并进入 RAG/Ask source scope。 |
+| D6-002 | 2026-06-25 | PDF/OCR 输入采用 provider adapter 与页/块级质量门禁：PDF text layer parser 优先，质量不达标时可由 LLM reviewer 决策是否 OCR；OCR 模型通过 `reader_input_ocr` route/profile 配置，领域合同不绑定具体模型名。 |
 
 ## 待决问题
 
@@ -427,7 +451,7 @@ Plate fragment 只能来自 typed layer result、document tool result 或已 san
 - Length Class 数值边界和默认 Authorization Envelope 预算。
 - 第一版 worker 是仅开发期 in-process，还是一开始独立 worker process。
 - 最终 DDL 表名、索引和 schema reset 程序。
-- Candidate Reading Base Web 编辑器的最小形态。
+- Candidate Reading Document Web 预览 / 编辑 / 确认的最小形态。
 - RAG 第一版 provider 和 adapter 实现。
 - OCR 第一版是否只支持图片，还是同时支持 PDF 富文档。
 - Vocabulary / Parsed Decision 的首批 eval dataset 和验收 rubric。
