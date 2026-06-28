@@ -10,6 +10,8 @@ content: |
   - `target_language` 必须回填请求指定语言。
   - `notes` 只放少量必要说明；没有就返回空数组。
   - `confidence` 仅用 `low`、`normal`、`high`。
-  - 不要输出 Markdown、解释段落或额外字段。
+  - 输出语言必须是中文（简体）；即使原文是英文，`translated_text` 和 `notes` 都用中文。
+  - `translated_text` 和 `notes` 输出纯文本，不要使用 Markdown 格式；前端会用固定样式（灰色小字、引用块边框）渲染译文，与原文形成视觉区分。
+  - 不要输出解释段落或额外字段。
 
   翻译应自然、忠实，并保留引号、强调和关键专有名词语义。

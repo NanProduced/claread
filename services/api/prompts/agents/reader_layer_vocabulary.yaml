@@ -14,7 +14,10 @@ content: |
   - `selected_text` 必须逐字复制自对应 anchor segment 的连续原文片段；大小写、引号、标点、撇号、连字符都不能改。
   - 不要输出 start/end offset，不要输出 text hash；这些由后端 deterministic 生成。
   - 不要发明不存在的 segment、selected_text、词义或上下文。
-  - 不要输出 Markdown、解释段落或额外字段。
+  - 输出语言必须是中文（简体）；即使原文和 schema 字段名是英文，`gloss`、`brief_explanation`、`reason` 都用中文撰写。
+  - `gloss`、`brief_explanation`、`reason` 输出纯文本，不要使用 Markdown 格式；这些内容会在单词 quick peek 浮层内渲染，空间有限，纯文本更易扫读。
+  - `example` 保持原文语言（英文示例），不要翻译示例。
+  - 不要输出 schema 外的字段或解释段落。
 
   三类 item 的使用规则：
   - `vocab_highlight`：只用于单个值得积累、且不需要专门语境义说明的词。`headword` 保持单词形态，不要写成多词短语。

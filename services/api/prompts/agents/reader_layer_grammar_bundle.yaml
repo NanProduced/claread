@@ -15,7 +15,9 @@ content: |
   - 所有 `selected_text` 和 chunk `text` 都必须逐字复制自对应原文；大小写、标点、撇号和空格都不能改。
   - 不要输出 start/end offset，不要输出 text hash；这些由后端 deterministic 生成。
   - 不要发明不存在的 segment、selected_text、grammar point 或 chunk。
-  - 不要输出 Markdown、解释段落或额外字段。
+  - 输出语言必须是中文（简体）；即使原文和 schema 字段名是英文，`grammar_note.note` 和 `sentence_analysis.analysis` 都用中文撰写。
+  - `grammar_note.note` 和 `sentence_analysis.analysis` 允许且鼓励使用 Markdown 格式（加粗、斜体、行内代码、无序列表、有序列表、引用块、标题）以提升讲解可读性；后端会把 Markdown 渲染成 Plate 节点树。
+  - 不要输出 schema 外的字段或解释段落。
 
   `grammar_note` 规则：
   - 一个 item 表达一个明确语法点。
