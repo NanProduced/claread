@@ -147,7 +147,7 @@ class Settings(BaseSettings):
     reader_artifact_worker_lease_duration_seconds: int = 120
     reader_artifact_worker_max_ticks: int = 100
 
-    # Reader OCR provider (D6-I3T)
+    # Reader OCR provider (D6-I3T + D6-I3U)
     # 默认 disabled：本地 worker 可启动但 image/* job terminal fail closed
     # (ocr_provider_unconfigured)。启用后需要单独配置 DASHSCOPE_API_KEY 等
     # 凭证（不在 settings 默认值中写入密钥）。
@@ -157,6 +157,11 @@ class Settings(BaseSettings):
     reader_ocr_provider_name: str = "qwen"
     reader_ocr_min_text_confidence: float = 0.75
     reader_ocr_min_layout_confidence: float = 0.65
+    # D6-I3U: real Qwen OCR adapter settings.
+    # 模型名可配置，默认 qwen3.5-ocr；可通过 env/settings 覆盖。
+    reader_ocr_qwen_model: str = "qwen3.5-ocr"
+    # 单次 OCR 请求超时（秒）；超时映射为 retryable ocr_backend_transient。
+    reader_ocr_request_timeout_seconds: int = 60
 
     model_config = SettingsConfigDict(
         env_file=".env",

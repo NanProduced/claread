@@ -1,4 +1,4 @@
-"""OCR-based image artifact extraction provider (D6-I3T).
+"""OCR-based image artifact extraction provider (D6-I3T + D6-I3U).
 
 Wraps an injectable :class:`StorageObjectReader` to download image bytes and
 a :class:`OcrTextExtractor` to recognise text in the image. Supports
@@ -6,11 +6,11 @@ a :class:`OcrTextExtractor` to recognise text in the image. Supports
 subtypes fail closed with ``unsupported_ocr_image_type``.
 
 The default :class:`UnconfiguredOcrTextExtractor` always raises
-``ocr_provider_unconfigured`` (terminal) — real OCR adapters (Qwen /
-DashScope) are env/config gated and deferred to a later round. This means
-the router can always wire an OCR provider; image jobs fail closed when
-no real extractor is configured, instead of falling through to the
-router-level "unknown content type" branch.
+``ocr_provider_unconfigured`` (terminal). The real
+:class:`QwenOcrTextExtractor` (D6-I3U) delegates to an injectable
+:class:`QwenOcrClient` (default :class:`DashScopeQwenOcrClient`) so tests
+can wire a fake client without touching the network. The DashScope client
+lazily imports the SDK and never logs the API key.
 
 Validation rules (all fail-terminal, non-retryable unless noted):
 
@@ -47,9 +47,11 @@ the extracted text. Downstream materialization is responsible for routing
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import logging
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from .artifact_extraction_worker import (
     ArtifactExtractionError,
@@ -63,6 +65,8 @@ from .text_artifact_extraction_provider import (
     StorageObjectReadResult,
     StorageObjectReader,
 )
+
+logger = logging.getLogger(__name__)
 
 EXTRACTOR_NAME_UNCONFIGURED = "unconfigured_ocr_text_extractor"
 EXTRACTOR_NAME_QWEN = "qwen_ocr_text_extractor_v1"
@@ -78,9 +82,17 @@ FAILURE_CODE_OCR_PROVIDER_UNCONFIGURED = "ocr_provider_unconfigured"
 FAILURE_CODE_OCR_NO_TEXT_DETECTED = "ocr_no_text_detected"
 FAILURE_CODE_OCR_EXTRACTION_ERROR = "ocr_extraction_error"
 FAILURE_CODE_UNSUPPORTED_OCR_IMAGE_TYPE = "unsupported_ocr_image_type"
+# D6-I3U: real Qwen OCR adapter error classification
+FAILURE_CODE_OCR_BACKEND_TRANSIENT = "ocr_backend_transient"
+FAILURE_CODE_OCR_PERMISSION_DENIED = "ocr_permission_denied"
+FAILURE_CODE_OCR_REQUEST_INVALID = "ocr_request_invalid"
+FAILURE_CODE_OCR_RESPONSE_INVALID = "ocr_response_invalid"
+FAILURE_CODE_OCR_SDK_UNAVAILABLE = "ocr_sdk_unavailable"
 
 DEFAULT_MIN_TEXT_CONFIDENCE = 0.75
 DEFAULT_MIN_LAYOUT_CONFIDENCE = 0.65
+DEFAULT_QWEN_OCR_MODEL = "qwen3.5-ocr"
+DEFAULT_QWEN_OCR_TIMEOUT_SECONDS = 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,22 +147,319 @@ class UnconfiguredOcrTextExtractor:
         )
 
 
-class QwenOcrTextExtractor:
-    """Qwen / DashScope OCR extractor stub (D6-I3T).
+# ---------------------------------------------------------------------------
+# D6-I3U: Qwen OCR client protocol + DashScope implementation
+# ---------------------------------------------------------------------------
 
-    This is a **stub** — the real DashScope network call is deferred to a
-    later round. The stub exists so that the worker can be wired with a
-    named extractor when ``reader_ocr_provider_name == "qwen"``.
+
+@dataclass(frozen=True, slots=True)
+class QwenOcrResponse:
+    """Raw response from a Qwen OCR client call, before normalisation.
+
+    ``extracted_text`` is the recognised text in natural reading order
+    (multi-region / multi-page outputs are joined by the client).
+
+    ``text_confidence`` / ``layout_confidence`` are optional floats in
+    ``[0.0, 1.0]`` — ``None`` means the model did not report a score.
+    Models that do not return confidence signals leave them as ``None``;
+    the provider does NOT reject ``None`` confidence.
+
+    ``warnings`` carries model-level signals (e.g. ``layout_order_uncertain``)
+    that the extractor preserves verbatim.
+    """
+
+    extracted_text: str
+    text_confidence: float | None = None
+    layout_confidence: float | None = None
+    warnings: list[str] | None = None
+
+
+class QwenOcrClientError(Exception):
+    """Base error for Qwen OCR client failures.
+
+    Subclasses set ``retryable`` and ``failure_code`` so the extractor can
+    map them to :class:`ArtifactExtractionError` without inspecting the
+    exception type.
+    """
+
+    retryable: bool = False
+    failure_code: str = FAILURE_CODE_OCR_EXTRACTION_ERROR
+
+
+class QwenOcrTransientError(QwenOcrClientError):
+    """Retryable backend error (timeout, 429, 5xx, connection reset)."""
+
+    retryable = True
+    failure_code = FAILURE_CODE_OCR_BACKEND_TRANSIENT
+
+
+class QwenOcrPermissionError(QwenOcrClientError):
+    """Terminal permission / auth error (401, 403)."""
+
+    retryable = False
+    failure_code = FAILURE_CODE_OCR_PERMISSION_DENIED
+
+
+class QwenOcrInvalidRequestError(QwenOcrClientError):
+    """Terminal request-format error (400, unsupported image payload)."""
+
+    retryable = False
+    failure_code = FAILURE_CODE_OCR_REQUEST_INVALID
+
+
+class QwenOcrResponseInvalidError(QwenOcrClientError):
+    """Terminal response parse error (malformed JSON, missing fields)."""
+
+    retryable = False
+    failure_code = FAILURE_CODE_OCR_RESPONSE_INVALID
+
+
+class QwenOcrSdkUnavailableError(QwenOcrClientError):
+    """Terminal SDK-missing error (dashscope not installed)."""
+
+    retryable = False
+    failure_code = FAILURE_CODE_OCR_SDK_UNAVAILABLE
+
+
+@runtime_checkable
+class QwenOcrClient(Protocol):
+    """Minimal Qwen OCR client protocol (sync, SDK-agnostic).
+
+    Implementations wrap a DashScope / Qwen VL OCR call. The protocol is
+    sync because :class:`OcrTextExtractor` is sync — real network calls
+    block the calling thread, which is acceptable for the standalone
+    artifact pipeline worker process.
+
+    ``recognize`` must NOT include the API key in raised exceptions or
+    returned data. Image bytes are passed inline (already downloaded by
+    the provider); the client must not re-download from object storage.
+    """
+
+    def recognize(
+        self,
+        *,
+        image_data: bytes,
+        content_type: str,
+        model: str,
+        timeout_seconds: int,
+    ) -> QwenOcrResponse: ...
+
+
+def _build_data_url(image_data: bytes, content_type: str) -> str:
+    """Build a base64 data URL from image bytes + content_type."""
+    encoded = base64.b64encode(image_data).decode("ascii")
+    return f"data:{content_type};base64,{encoded}"
+
+
+def _classify_exception(exc: Exception) -> QwenOcrClientError:
+    """Classify a generic SDK/network exception into a typed client error.
+
+    Never includes the API key. Inspects exception type name and message
+    for timeout / connection signals; falls back to transient (safer to
+    retry than to terminal-fail a retryable network blip).
+    """
+    exc_name = type(exc).__name__.lower()
+    exc_msg = str(exc).lower()
+
+    if "timeout" in exc_name or "timeout" in exc_msg or "timed out" in exc_msg:
+        return QwenOcrTransientError("dashscope request timed out")
+    if "connection" in exc_name or "connection" in exc_msg:
+        return QwenOcrTransientError("dashscope connection error")
+
+    # Some DashScope exceptions carry a status_code attribute
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        if status in (401, 403):
+            return QwenOcrPermissionError(f"dashscope auth failed (status={status})")
+        if status == 400:
+            return QwenOcrInvalidRequestError(f"dashscope invalid request (status={status})")
+        if status == 429 or 500 <= status < 600:
+            return QwenOcrTransientError(f"dashscope backend error (status={status})")
+
+    # Default: treat unknown errors as transient so the worker retries.
+    return QwenOcrTransientError("dashscope call failed")
+
+
+def _classify_status_error(status: int, code: str) -> QwenOcrClientError:
+    """Classify a non-200 response status code into a typed client error."""
+    if status in (401, 403):
+        return QwenOcrPermissionError(f"dashscope auth failed (status={status}, code={code})")
+    if status == 400:
+        return QwenOcrInvalidRequestError(f"dashscope invalid request (status={status}, code={code})")
+    if status == 429 or 500 <= status < 600:
+        return QwenOcrTransientError(f"dashscope backend error (status={status}, code={code})")
+    # Unknown status — treat as transient to be safe.
+    return QwenOcrTransientError(f"dashscope unexpected status (status={status}, code={code})")
+
+
+def _parse_dashscope_response(resp: Any) -> QwenOcrResponse:
+    """Parse a DashScope MultiModalConversation response into QwenOcrResponse.
+
+    Handles response shapes from qwen-vl / qwen-ocr model families:
+    - ``resp.output.choices[0].message.content`` may be a list of
+      ``[{"text": "..."}]`` dicts or a plain string.
+    - Multi-region / multi-page outputs are joined in model-given reading
+      order with a newline separator.
+    - Confidence signals are optional; missing confidence → ``None``.
+    - Adds ``layout_order_uncertain`` warning when multiple text blocks
+      are joined (reading order may be ambiguous).
+    """
+    try:
+        output = getattr(resp, "output", None)
+        if output is None:
+            raise QwenOcrResponseInvalidError("response missing 'output' field")
+
+        choices = getattr(output, "choices", None) or []
+        if not choices:
+            raise QwenOcrResponseInvalidError("response has no choices")
+
+        choice = choices[0]
+        message = getattr(choice, "message", None)
+        if message is None:
+            raise QwenOcrResponseInvalidError("response choice has no message")
+
+        content = getattr(message, "content", None)
+        if content is None:
+            raise QwenOcrResponseInvalidError("response message has no content")
+
+        text_parts: list[str] = []
+        if isinstance(content, str):
+            text_parts.append(content)
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict):
+                    text_val = item.get("text")
+                    if text_val:
+                        text_parts.append(str(text_val))
+                elif isinstance(item, str):
+                    text_parts.append(item)
+        else:
+            raise QwenOcrResponseInvalidError(
+                f"unexpected content type: {type(content).__name__}"
+            )
+
+        extracted_text = "\n".join(text_parts).strip()
+
+        # Confidence is optional — DashScope OCR models do not always
+        # return a numeric score. None is acceptable; the provider does
+        # NOT reject None confidence.
+        text_confidence: float | None = None
+        layout_confidence: float | None = None
+        warnings: list[str] = []
+
+        # If the model returned multiple text blocks, flag that reading
+        # order may be uncertain (the model did its best, but downstream
+        # materialization should treat low-confidence layouts carefully).
+        if len(text_parts) > 1:
+            warnings.append("layout_order_uncertain: multi-block reading order inferred")
+
+        return QwenOcrResponse(
+            extracted_text=extracted_text,
+            text_confidence=text_confidence,
+            layout_confidence=layout_confidence,
+            warnings=warnings if warnings else None,
+        )
+    except QwenOcrClientError:
+        raise
+    except Exception as exc:
+        raise QwenOcrResponseInvalidError(f"failed to parse dashscope response: {exc}") from exc
+
+
+class DashScopeQwenOcrClient:
+    """Real DashScope-backed Qwen OCR client (D6-I3U).
+
+    Lazily imports the ``dashscope`` SDK on first ``recognize`` call so
+    the module is importable without the SDK installed (tests use a fake
+    client; the worker entry only constructs this when OCR is enabled).
+
+    Uses the sync :meth:`dashscope.MultiModalConversation.call` API with
+    a base64 data URL. The API key is passed to the SDK only — it never
+    appears in logs, error messages, or the returned
+    :class:`QwenOcrResponse`.
+    """
+
+    def __init__(self, *, api_key: str) -> None:
+        if not api_key:
+            raise ValueError("DashScopeQwenOcrClient requires a non-empty api_key")
+        self._api_key = api_key
+
+    def recognize(
+        self,
+        *,
+        image_data: bytes,
+        content_type: str,
+        model: str,
+        timeout_seconds: int,
+    ) -> QwenOcrResponse:
+        try:
+            import dashscope
+        except ImportError as exc:
+            raise QwenOcrSdkUnavailableError(
+                "dashscope SDK not installed; install with: pip install dashscope"
+            ) from exc
+
+        data_url = _build_data_url(image_data, content_type)
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"image": data_url},
+                    {
+                        "text": (
+                            "Extract all text from this image. Return the "
+                            "recognised text in natural reading order."
+                        )
+                    },
+                ],
+            }
+        ]
+
+        try:
+            resp = dashscope.MultiModalConversation.call(
+                model=model,
+                messages=messages,
+                api_key=self._api_key,
+                timeout=timeout_seconds,
+                result_format="message",
+            )
+        except Exception as exc:
+            raise _classify_exception(exc) from exc
+
+        status = getattr(resp, "status_code", None)
+        if status != 200:
+            code = getattr(resp, "code", "") or ""
+            raise _classify_status_error(int(status) if status is not None else 0, code)
+
+        return _parse_dashscope_response(resp)
+
+
+# ---------------------------------------------------------------------------
+# QwenOcrTextExtractor (real adapter, D6-I3U)
+# ---------------------------------------------------------------------------
+
+
+class QwenOcrTextExtractor:
+    """Qwen / DashScope OCR extractor (D6-I3U real adapter).
+
+    Delegates the actual OCR call to an injectable :class:`QwenOcrClient`.
+    When no client is injected, :class:`DashScopeQwenOcrClient` is
+    constructed lazily on first ``extract_text`` call (so the SDK is only
+    imported when a real call is needed).
 
     Behaviour:
 
     - If ``api_key`` is empty → ``ocr_provider_unconfigured`` (terminal).
-    - If ``api_key`` is set → ``ocr_provider_unconfigured`` (terminal) with
-      a "not yet implemented" message. This is intentional: the stub never
-      makes a real network call. When the real adapter is implemented,
-      only this second branch needs to be replaced.
+      This preserves the D6-I3T fail-closed contract for missing
+      ``DASHSCOPE_API_KEY``.
+    - If ``api_key`` is set → delegates to ``client.recognize(...)`` and
+      maps :class:`QwenOcrClientError` subclasses to
+      :class:`ArtifactExtractionError` with the matching ``retryable`` /
+      ``failure_code``.
+    - The API key is never included in error messages, logs, or the
+      returned :class:`OcrTextExtractionResult`.
 
-    The stub is constructable without any optional SDK installed.
+    The extractor is constructable without the dashscope SDK installed
+    (the SDK is only imported inside ``DashScopeQwenOcrClient.recognize``).
     """
 
     EXTRACTOR_NAME = EXTRACTOR_NAME_QWEN
@@ -159,10 +468,16 @@ class QwenOcrTextExtractor:
         self,
         *,
         api_key: str | None,
+        client: QwenOcrClient | None = None,
+        model: str = DEFAULT_QWEN_OCR_MODEL,
+        timeout_seconds: int = DEFAULT_QWEN_OCR_TIMEOUT_SECONDS,
         min_text_confidence: float = DEFAULT_MIN_TEXT_CONFIDENCE,
         min_layout_confidence: float = DEFAULT_MIN_LAYOUT_CONFIDENCE,
     ) -> None:
         self._api_key = api_key
+        self._client = client
+        self._model = model
+        self._timeout_seconds = timeout_seconds
         self._min_text_confidence = min_text_confidence
         self._min_layout_confidence = min_layout_confidence
 
@@ -179,15 +494,56 @@ class QwenOcrTextExtractor:
                 failure_class="configuration",
                 failure_code=FAILURE_CODE_OCR_PROVIDER_UNCONFIGURED,
             )
-        # Real DashScope call is deferred — keep the stub fail-closed so
-        # no network is touched in tests or default local runs.
-        raise ArtifactExtractionError(
-            "Qwen OCR network call is not yet implemented (D6-I3T stub); "
-            "wire a real adapter or inject a fake extractor for tests",
-            retryable=False,
-            failure_class="configuration",
-            failure_code=FAILURE_CODE_OCR_PROVIDER_UNCONFIGURED,
+
+        client: QwenOcrClient = self._client or DashScopeQwenOcrClient(
+            api_key=self._api_key
         )
+
+        try:
+            response = client.recognize(
+                image_data=data,
+                content_type=content_type,
+                model=self._model,
+                timeout_seconds=self._timeout_seconds,
+            )
+        except QwenOcrClientError as exc:
+            # Map client error to ArtifactExtractionError preserving
+            # retryable + failure_code. Never include the API key.
+            failure_class = (
+                "extraction" if exc.retryable else _failure_class_for_code(exc.failure_code)
+            )
+            raise ArtifactExtractionError(
+                f"Qwen OCR client error: {exc}",
+                retryable=exc.retryable,
+                failure_class=failure_class,
+                failure_code=exc.failure_code,
+            ) from exc
+
+        warnings: list[str] = list(response.warnings or [])
+
+        return OcrTextExtractionResult(
+            extracted_text=response.extracted_text,
+            extractor_name=EXTRACTOR_NAME_QWEN,
+            text_confidence=response.text_confidence,
+            layout_confidence=response.layout_confidence,
+            warnings=warnings if warnings else None,
+        )
+
+
+def _failure_class_for_code(failure_code: str) -> str:
+    """Map a terminal OCR failure code to its failure_class.
+
+    Configuration-class errors (permission, SDK missing, unconfigured)
+    are surfaced as ``configuration`` so operators can distinguish
+    config/setup issues from extraction-time data issues.
+    """
+    if failure_code in (
+        FAILURE_CODE_OCR_PERMISSION_DENIED,
+        FAILURE_CODE_OCR_SDK_UNAVAILABLE,
+        FAILURE_CODE_OCR_PROVIDER_UNCONFIGURED,
+    ):
+        return "configuration"
+    return "extraction"
 
 
 class OcrArtifactExtractionProvider:

@@ -659,15 +659,52 @@ def test_qwen_extractor_without_api_key_fails_closed() -> None:
     assert exc_info.value.failure_code == FAILURE_CODE_OCR_PROVIDER_UNCONFIGURED
 
 
-def test_qwen_extractor_with_api_key_still_fails_closed_stub() -> None:
-    """QwenOcrTextExtractor stub with API key still fails closed — the real
-    DashScope call is deferred to a later round."""
-    extractor = QwenOcrTextExtractor(api_key="sk-fake-key")
-    with pytest.raises(ArtifactExtractionError) as exc_info:
-        extractor.extract_text(b"image bytes", content_type="image/png")
+def test_qwen_extractor_with_api_key_and_fake_client_returns_result() -> None:
+    """QwenOcrTextExtractor with API key + injected fake client returns a
+    real result (D6-I3U: the extractor is no longer a stub). The fake
+    client avoids any real network call."""
+    from app.services.reader_orchestration.ocr_artifact_extraction_provider import (
+        QwenOcrResponse,
+    )
 
-    assert exc_info.value.retryable is False
-    assert exc_info.value.failure_code == FAILURE_CODE_OCR_PROVIDER_UNCONFIGURED
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[bytes, str, str, int]] = []
+
+        def recognize(
+            self,
+            *,
+            image_data: bytes,
+            content_type: str,
+            model: str,
+            timeout_seconds: int,
+        ) -> QwenOcrResponse:
+            self.calls.append((image_data, content_type, model, timeout_seconds))
+            return QwenOcrResponse(
+                extracted_text="Real OCR text via fake client.",
+                text_confidence=0.91,
+                layout_confidence=0.82,
+            )
+
+    fake_client = _FakeClient()
+    extractor = QwenOcrTextExtractor(
+        api_key="sk-fake-key",
+        client=fake_client,  # type: ignore[arg-type]
+        model="qwen3.5-ocr",
+        timeout_seconds=42,
+    )
+    result = extractor.extract_text(b"image bytes", content_type="image/png")
+
+    assert result.extracted_text == "Real OCR text via fake client."
+    assert result.extractor_name == EXTRACTOR_NAME_QWEN
+    assert result.text_confidence == 0.91
+    assert result.layout_confidence == 0.82
+    # Client received the right args.
+    assert len(fake_client.calls) == 1
+    assert fake_client.calls[0][0] == b"image bytes"
+    assert fake_client.calls[0][1] == "image/png"
+    assert fake_client.calls[0][2] == "qwen3.5-ocr"
+    assert fake_client.calls[0][3] == 42
 
 
 # ---------------------------------------------------------------------------
@@ -924,11 +961,12 @@ def test_build_ocr_extractor_default_disabled_returns_unconfigured() -> None:
     assert isinstance(extractor, UnconfiguredOcrTextExtractor)
 
 
-def test_build_ocr_extractor_enabled_qwen_returns_qwen_stub(
+def test_build_ocr_extractor_enabled_qwen_without_api_key_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When OCR is enabled with provider_name='qwen', the worker builds a
-    QwenOcrTextExtractor stub. The stub still fails closed (no real network)."""
+    """When OCR is enabled with provider_name='qwen' but DASHSCOPE_API_KEY
+    is missing, the worker builds a QwenOcrTextExtractor that fails closed
+    with ``ocr_provider_unconfigured`` on first call (D6-I3U contract)."""
     from scripts.run_reader_artifact_pipeline_worker import _build_ocr_extractor
 
     # Ensure DASHSCOPE_API_KEY is not set in the test environment.
@@ -940,30 +978,47 @@ def test_build_ocr_extractor_enabled_qwen_returns_qwen_stub(
     )
     extractor = _build_ocr_extractor(settings)
     assert isinstance(extractor, QwenOcrTextExtractor)
-    # Stub without API key → ocr_provider_unconfigured.
+    # Missing API key → ocr_provider_unconfigured (terminal fail-closed).
     with pytest.raises(ArtifactExtractionError) as exc_info:
         extractor.extract_text(b"img", content_type="image/png")
     assert exc_info.value.failure_code == FAILURE_CODE_OCR_PROVIDER_UNCONFIGURED
 
 
-def test_build_ocr_extractor_enabled_qwen_with_api_key_still_fails_closed_stub(
+def test_build_ocr_extractor_enabled_qwen_with_api_key_constructs_real_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Even with DASHSCOPE_API_KEY set, the Qwen stub fails closed (real
-    network call is deferred to a later round)."""
+    """With DASHSCOPE_API_KEY set + OCR enabled, ``_build_ocr_extractor``
+    constructs a :class:`QwenOcrTextExtractor` with a real
+    :class:`DashScopeQwenOcrClient` (D6-I3U: no longer a stub).
+
+    The API key is read from env only and is never logged or surfaced in
+    the extractor's public attributes. We verify construction without
+    calling ``extract_text`` (which would make a real network call).
+    """
     from scripts.run_reader_artifact_pipeline_worker import _build_ocr_extractor
 
-    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-fake-test-key")
+    test_key = "sk-fake-test-key-not-real"
+    monkeypatch.setenv("DASHSCOPE_API_KEY", test_key)
 
     settings = Settings(
         reader_ocr_provider_enabled=True,
         reader_ocr_provider_name="qwen",
+        reader_ocr_qwen_model="qwen3.5-ocr",
+        reader_ocr_request_timeout_seconds=42,
     )
     extractor = _build_ocr_extractor(settings)
     assert isinstance(extractor, QwenOcrTextExtractor)
-    with pytest.raises(ArtifactExtractionError) as exc_info:
-        extractor.extract_text(b"img", content_type="image/png")
-    assert exc_info.value.failure_code == FAILURE_CODE_OCR_PROVIDER_UNCONFIGURED
+    # Model + timeout come from settings.
+    assert extractor._model == "qwen3.5-ocr"
+    assert extractor._timeout_seconds == 42
+    # The API key is NOT exposed as a public attribute or in repr.
+    assert test_key not in repr(extractor)
+    # The injected client is a real DashScopeQwenOcrClient.
+    from app.services.reader_orchestration.ocr_artifact_extraction_provider import (
+        DashScopeQwenOcrClient,
+    )
+
+    assert isinstance(extractor._client, DashScopeQwenOcrClient)
 
 
 def test_build_ocr_extractor_unknown_provider_name_falls_back_to_unconfigured() -> None:

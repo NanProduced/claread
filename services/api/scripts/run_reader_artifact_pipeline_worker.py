@@ -43,6 +43,7 @@ from app.services.reader_orchestration.artifact_pipeline_worker_service import (
     ArtifactPipelineProcessResult,
 )
 from app.services.reader_orchestration.ocr_artifact_extraction_provider import (
+    DashScopeQwenOcrClient,
     OcrTextExtractor,
     QwenOcrTextExtractor,
     UnconfiguredOcrTextExtractor,
@@ -140,14 +141,15 @@ def _build_ocr_extractor(settings: Settings) -> OcrTextExtractor:
       :class:`UnconfiguredOcrTextExtractor` (terminal fail closed on first
       image job).
     - ``reader_ocr_provider_enabled=True`` + ``reader_ocr_provider_name="qwen"``
-      → :class:`QwenOcrTextExtractor` stub. Real DashScope call is deferred;
-      the stub still fails closed (no network) until a real adapter is
-      implemented in a later round.
+      → :class:`QwenOcrTextExtractor` with a real
+      :class:`DashScopeQwenOcrClient`. ``DASHSCOPE_API_KEY`` is read from
+      ``os.environ`` (never stored in settings defaults, never logged).
+      Missing key → ``ocr_provider_unconfigured`` on first call (terminal).
     - Unknown provider name → :class:`UnconfiguredOcrTextExtractor`.
 
-    No OCR secrets are read from settings defaults. When a real Qwen
-    adapter is implemented, ``DASHSCOPE_API_KEY`` will be read from the
-    environment via ``os.environ`` (not stored in settings).
+    No OCR secrets are read from settings defaults. ``DASHSCOPE_API_KEY``
+    is read from ``os.environ`` only and is never logged or surfaced in
+    error messages / job output.
     """
     if not settings.reader_ocr_provider_enabled:
         return UnconfiguredOcrTextExtractor()
@@ -155,10 +157,24 @@ def _build_ocr_extractor(settings: Settings) -> OcrTextExtractor:
     name = (settings.reader_ocr_provider_name or "").strip().lower()
     if name == "qwen":
         # DASHSCOPE_API_KEY is read from env (not settings) so no secret
-        # lands in settings defaults or config files.
+        # lands in settings defaults or config files. The key is passed
+        # to DashScopeQwenOcrClient only — never logged or surfaced.
         api_key = os.environ.get("DASHSCOPE_API_KEY") or ""
+        if not api_key:
+            # Construct the extractor anyway; it will fail closed with
+            # ocr_provider_unconfigured on first extract_text call.
+            return QwenOcrTextExtractor(
+                api_key=None,
+                model=settings.reader_ocr_qwen_model,
+                timeout_seconds=settings.reader_ocr_request_timeout_seconds,
+                min_text_confidence=settings.reader_ocr_min_text_confidence,
+                min_layout_confidence=settings.reader_ocr_min_layout_confidence,
+            )
         return QwenOcrTextExtractor(
-            api_key=api_key or None,
+            api_key=api_key,
+            client=DashScopeQwenOcrClient(api_key=api_key),
+            model=settings.reader_ocr_qwen_model,
+            timeout_seconds=settings.reader_ocr_request_timeout_seconds,
             min_text_confidence=settings.reader_ocr_min_text_confidence,
             min_layout_confidence=settings.reader_ocr_min_layout_confidence,
         )
