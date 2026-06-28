@@ -44,6 +44,7 @@ dependencies = [
 # 安装 ``pip install -e ".[oss]"`` 后才启用真实 OSS 读写。
 [project.optional-dependencies]
 oss = ["oss2>=2.18.0,<3.0.0"]
+pdf = ["pypdf>=4.0.0,<6.0.0"]
 
 [dependency-groups]
 dev = [

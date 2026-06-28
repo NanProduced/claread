@@ -31,14 +31,17 @@ scheduler.
 
 Provider / reader injection:
 
+- Pass ``extraction_provider=`` to inject a router or custom provider
+  (e.g. :class:`ArtifactExtractionProviderRouter` for text + PDF). This is
+  the production wiring path when the worker script builds a router.
 - Pass ``storage_reader=`` to automatically wire a
   :class:`TextArtifactExtractionProvider` into the extraction worker. This is
-  the production wiring path for text/markdown uploads.
+  the legacy wiring path for text/markdown-only uploads.
 - Pass ``extraction_worker=`` / ``materialization_worker=`` to override the
   entire worker (full control for tests).
-- If neither ``storage_reader`` nor ``extraction_worker`` is provided, the
-  extraction worker uses ``UnconfiguredArtifactExtractionProvider`` which
-  fails closed — no network, no OCR, no PDF parsing.
+- If none of the above is provided, the extraction worker uses
+  ``UnconfiguredArtifactExtractionProvider`` which fails closed — no network,
+  no OCR, no PDF parsing.
 
 Deferred (NOT implemented here):
 
@@ -61,6 +64,7 @@ from app.database import connection as db_connection
 from .artifact_extraction_worker import (
     DEFAULT_EXTRACTION_RETRY_DELAY,
     ArtifactExtractionJobProcessResult,
+    ArtifactExtractionProvider,
     ArtifactExtractionWorkerService,
 )
 from .artifact_materialization_worker import (
@@ -119,6 +123,7 @@ class ArtifactInputPipelineWorkerService:
         pool: asyncpg.Pool | None = None,
         job_runtime: ReaderJobRuntime | None = None,
         storage_reader: StorageObjectReader | None = None,
+        extraction_provider: ArtifactExtractionProvider | None = None,
         extraction_worker: ArtifactExtractionWorkerService | None = None,
         materialization_worker: ArtifactMaterializationWorkerService | None = None,
     ) -> None:
@@ -127,6 +132,12 @@ class ArtifactInputPipelineWorkerService:
 
         if extraction_worker is not None:
             self._extraction_worker = extraction_worker
+        elif extraction_provider is not None:
+            self._extraction_worker = ArtifactExtractionWorkerService(
+                pool=pool,
+                job_runtime=self._job_runtime,
+                provider=extraction_provider,
+            )
         elif storage_reader is not None:
             provider = TextArtifactExtractionProvider(reader=storage_reader)
             self._extraction_worker = ArtifactExtractionWorkerService(

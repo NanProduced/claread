@@ -3,6 +3,10 @@ from .article_ready_service import (
     ArticleReadyPersistenceService,
     PlainTextArticleReadySubmitRequest,
 )
+from .artifact_extraction_provider_router import (
+    ArtifactExtractionProviderRouter,
+    build_default_extraction_provider_router,
+)
 from .artifact_pipeline_worker_service import (
     ArtifactInputPipelineWorkerService,
     ArtifactPipelineProcessResult,
@@ -57,6 +61,13 @@ from .pipeline_runner import (
 )
 from .repository import LoadedReaderSnapshotFacts, ReaderOrchestrationRepository
 from .snapshot import build_reader_plate_snapshot
+from .pdf_artifact_extraction_provider import (
+    EXTRACTOR_NAME as PDF_EXTRACTOR_NAME,
+    PdfArtifactExtractionProvider,
+    PdfTextExtractionResult,
+    PdfTextExtractor,
+    PypdfPdfTextExtractor,
+)
 from .worker_loop import (
     DEFAULT_READER_WORKER_LEASE_DURATION,
     READER_WORKER_USER_ADVISORY_LOCK_NAMESPACE,
@@ -79,6 +90,7 @@ from .worker_runner import (
 __all__ = [
     "ArticleReadyPersistenceResult",
     "ArticleReadyPersistenceService",
+    "ArtifactExtractionProviderRouter",
     "ArtifactInputPipelineWorkerService",
     "ArtifactPipelineProcessResult",
     "AliyunOssPresigner",
@@ -105,6 +117,10 @@ __all__ = [
     "NavigationUnitFact",
     "NullPresigner",
     "OrphanedTranslationDecision",
+    "PDF_EXTRACTOR_NAME",
+    "PdfArtifactExtractionProvider",
+    "PdfTextExtractionResult",
+    "PdfTextExtractor",
     "PlainTextArticleReadySubmitRequest",
     "PresignedUpload",
     "Presigner",
@@ -128,6 +144,7 @@ __all__ = [
     "WorkerTickOutcome",
     "WorkerTickStatus",
     "build_default_presigner",
+    "build_default_extraction_provider_router",
     "build_reader_worker_lease_owner",
     "build_low_impact_reading_base",
     "build_reading_base_from_canonical_text",

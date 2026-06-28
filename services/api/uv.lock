@@ -678,6 +678,9 @@ dependencies = [
 oss = [
     { name = "oss2" },
 ]
+pdf = [
+    { name = "pypdf" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -708,13 +711,14 @@ requires-dist = [
     { name = "pydantic-ai", specifier = ">=1.107.0,<2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.10.1,<3.0.0" },
     { name = "pymilvus", specifier = ">=2.4.0,<3.0.0" },
+    { name = "pypdf", marker = "extra == 'pdf'", specifier = ">=4.0.0,<6.0.0" },
     { name = "pyyaml", specifier = ">=6.0,<7.0" },
     { name = "redis", specifier = ">=5.2.0,<6.0.0" },
     { name = "spacy", specifier = ">=3.8.0,<4.0.0" },
     { name = "trafilatura", specifier = ">=2.0.0,<3.0.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35.0,<0.36.0" },
 ]
-provides-extras = ["oss"]
+provides-extras = ["oss", "pdf"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3350,6 +3354,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/28/78/68e752283ad58891687c2d9e56a09019585a31d03637af9b60bf2d396821/pymilvus-2.6.13.tar.gz", hash = "sha256:d29908d9623967be7be41c518d1fb68fe5816b9ab780af2737fd3059f2d370c0", size = 1579003, upload-time = "2026-05-07T12:08:36.179Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/15/f2/850c023173525ba02701cc0990461a67ef999825b301847ce16db9efee32/pymilvus-2.6.13-py3-none-any.whl", hash = "sha256:3098204172413f6fe7c7928652adba0e1ec70150d6e515b83da4e319b98d9e69", size = 319649, upload-time = "2026-05-07T12:08:34.362Z" },
+]
+
+[[package]]
+name = "pypdf"
+version = "5.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/89/3a/584b97a228950ed85aec97c811c68473d9b8d149e6a8c155668287cf1a28/pypdf-5.9.0.tar.gz", hash = "sha256:30f67a614d558e495e1fbb157ba58c1de91ffc1718f5e0dfeb82a029233890a1", size = 5035118, upload-time = "2025-07-27T14:04:52.364Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/d9/6cff57c80a6963e7dd183bf09e9f21604a77716644b1e580e97b259f7612/pypdf-5.9.0-py3-none-any.whl", hash = "sha256:be10a4c54202f46d9daceaa8788be07aa8cd5ea8c25c529c50dd509206382c35", size = 313193, upload-time = "2025-07-27T14:04:50.53Z" },
 ]
 
 [[package]]

@@ -35,6 +35,9 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from app.config.settings import Settings, get_settings
 from app.database.connection import close_db, init_db
+from app.services.reader_orchestration.artifact_extraction_provider_router import (
+    build_default_extraction_provider_router,
+)
 from app.services.reader_orchestration.artifact_pipeline_worker_service import (
     ArtifactInputPipelineWorkerService,
     ArtifactPipelineProcessResult,
@@ -98,10 +101,20 @@ def build_pipeline_service(
     pool: Any,
     storage_reader: StorageObjectReader | None,
 ) -> ArtifactInputPipelineWorkerService:
-    """Construct the pipeline service with the given reader (or fail-closed)."""
+    """Construct the pipeline service with a router (or fail-closed).
+
+    When ``storage_reader`` is available, a
+    :class:`ArtifactExtractionProviderRouter` is built (text + PDF providers)
+    and injected as ``extraction_provider``. When ``storage_reader`` is
+    ``None``, the pipeline uses ``UnconfiguredArtifactExtractionProvider``
+    (fail-closed).
+    """
+    if storage_reader is None:
+        return ArtifactInputPipelineWorkerService(pool=pool)
+    router = build_default_extraction_provider_router(reader=storage_reader)
     return ArtifactInputPipelineWorkerService(
         pool=pool,
-        storage_reader=storage_reader,
+        extraction_provider=router,
     )
 
 
