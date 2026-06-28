@@ -147,6 +147,17 @@ class Settings(BaseSettings):
     reader_artifact_worker_lease_duration_seconds: int = 120
     reader_artifact_worker_max_ticks: int = 100
 
+    # Reader OCR provider (D6-I3T)
+    # 默认 disabled：本地 worker 可启动但 image/* job terminal fail closed
+    # (ocr_provider_unconfigured)。启用后需要单独配置 DASHSCOPE_API_KEY 等
+    # 凭证（不在 settings 默认值中写入密钥）。
+    # confidence 阈值只产生 warnings，不直接 reject；后续 materialization
+    # gate 会按 ocr_text 进入 candidate_document_required。
+    reader_ocr_provider_enabled: bool = False
+    reader_ocr_provider_name: str = "qwen"
+    reader_ocr_min_text_confidence: float = 0.75
+    reader_ocr_min_layout_confidence: float = 0.65
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

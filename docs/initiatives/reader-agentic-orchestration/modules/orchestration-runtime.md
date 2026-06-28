@@ -1,7 +1,7 @@
 # Orchestration Runtime
 
-> 状态：`D6-E3 real-chain verification closeout`
-> 最后更新：2026-06-23
+> 状态：`D6 ongoing; artifact pipeline worker rebaselined`
+> 最后更新：2026-06-28
 > 范围：bounded run/job、worker lease、Authorization Envelope、并发和框架边界。
 
 ## Runtime 形态
@@ -31,6 +31,25 @@ D4/D5 默认收窄：
 Planner、Skip Gate、Model Profile、Prompt Cache 和 Usage Bucket 的细节见 `policy-and-cost-control.md`。本文件只定义 runtime 执行边界。
 
 后端依赖版本必须在 D3 runtime skeleton 前完成 alignment spike。D4/D5 worker、runner、projection 或 eval 任务不应临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK。
+
+### Plate Plugin 体系状态
+
+前端 Plate.js plugin 体系已从阶段划分进入代码事实校准。详细矩阵见 [`reader-plate-component-integration.md`](./reader-plate-component-integration.md)。
+
+| 内容 | 当前状态 |
+|------|------|
+| `ReaderRecordPlateSurface` 使用 `<Plate readOnly>` + `usePlateEditor` + `ReaderPlateKit` | ✅ 默认 Reading Record 页面已接入 |
+| callout children 从纯文本 leaf 改为 Plate `Descendant[]`，用 `CalloutMarkdownRenderer` 递归渲染 | ✅ 完成；不使用 `PlateStatic` |
+| Reader block / leaf plugins | ✅ `reader-blocks-kit.tsx` 与 `reader-leaf-kit.tsx` 已注册；视觉 resolver 仍待统一 |
+| FloatingToolbar | 🔄 已使用 `@platejs/floating` 官方 hook；旧 `SelectionActionStrip` 仍在渲染路径，UI 需收敛 |
+| CommentKit | 🔄 `CommentPlugin` / `CommentLeaf` / draft activeId 已接入；未接 DiscussionKit，持久化和面板仍是 Claread 自定义 |
+| CursorOverlay | 🔄 `@platejs/selection` overlay 已接入；Structure Lens / block selection / chunk decoration 未接 |
+| Stable Document Blocks -> source document projection | 🔄 后端 schema/service 已推进；中心正文仍主要由过渡 Canonical Text / anchor segment 投影 |
+| `@platejs/ai` / `@platejs/suggestion` | ❌ 依赖存在但源码未接入；Ask 继续走 Claread reader-ask |
+
+阶段一目标：让 callout 内容（grammar_note.note / sentence_analysis.analysis / ask_supplement.content_md）支持 Markdown 渲染，验证 Notion 文档形态技术可行性。
+
+详细设计见 `reader-record-plate-surface-ui.md` 的"Markdown 渲染"、"Plate Editors Demo 组件复用"section，以及当前接入矩阵。
 
 ## LangGraph 评估结论
 
@@ -83,6 +102,23 @@ D5 双评审 disposition 更新：
 
 当前 D5-W2 已补齐生产/本地 worker loop 的最小运行形态：独立 worker process 通过 CLI entrypoint 启动，扫描 eligible records 并调用 `ReaderEnhancementPipelineRunner`。该 loop 仍不是 public user-facing endpoint，也不会把 LLM execution 同步塞进 Web submit request。
 
+### Prompt 输出语言契约
+
+三个 LLM worker（translation / vocabulary / grammar bundle）的 prompt 必须强制输出简体中文：
+
+| 层级 | 要求 | 实施位置 |
+|------|------|----------|
+| system prompt | 添加"输出语言规则（强制）"section，明确所有面向用户的讲解类字段必须使用简体中文 | `services/api/prompts/agents/reader_layer_*.yaml` |
+| user prompt | 添加 `Output language: All human-readable fields MUST be in Simplified Chinese (简体中文).` 行 | 各 worker 的 `_build_*_prompt` 函数 |
+| schema description | 字段 description 明确语言契约（"简体中文讲解"） | `services/api/app/schemas/reader_orchestration.py` |
+
+允许保持英文的内容：
+- 原文锚点片段（selected_text）
+- headword、phrase、pattern
+- 专有名词、语法术语英文原形
+
+阶段一不引入 reading_goal/variant 接线，仅修复输出语言。变体策略注入属于阶段二。
+
 ## D5/D6 Worker Loop Posture
 
 D5-W1 worker loop 评估结论为 `accepted_with_changes`。
@@ -91,6 +127,7 @@ D5-W1 worker loop 评估结论为 `accepted_with_changes`。
 
 - 使用独立 worker process。
 - 本地通过 `uv run reader-enhancement-worker` CLI entrypoint 启动；部署通过同一 entrypoint 作为独立 worker service / process / container 启动。
+- Artifact-backed input 另有独立入口 `uv run reader-artifact-pipeline-worker`，负责 `input_artifact_extraction` 与 `extracted_artifact_materialization` 两类 record-level pre-base jobs。
 - API 服务只负责 request-serving，不在 FastAPI lifespan / startup hook 中启动 worker loop。
 - Web submit 不同步执行 runner；submit 只创建 durable `article_ready` facts。
 - 不新增 public 或 semi-public worker-control endpoint。
@@ -159,6 +196,36 @@ Model profile / executor 口径：
 - `services/api/pyproject.toml` 已注册 `reader-enhancement-worker = "scripts.run_reader_enhancement_worker:main"`，底层仍复用 `scripts/run_reader_enhancement_worker.py` 的 `--once` 和 loop mode，本地与部署共用同一入口。
 - D6-P1 起，worker loop 在成功更新 `reading_records.product_state` 时同步发布 `record_product_state_updated` reader event；D6-P0 的保守分类规则保持不变。
 
+### D6-I3 Artifact Pipeline Worker
+
+Artifact-backed input 使用独立 pipeline，不复用 enhancement worker scan：
+
+```text
+source_artifacts submit-input
+  -> input_artifact_extraction job
+  -> ArtifactExtractionProviderRouter
+     -> TextArtifactExtractionProvider
+     -> PdfArtifactExtractionProvider
+     -> OcrArtifactExtractionProvider
+  -> original_inputs.source_text
+  -> extracted_artifact_materialization job
+  -> Input Suitability Gate
+  -> Stable Reading Document 或 Candidate Document
+```
+
+运行入口：
+
+- `uv run reader-artifact-pipeline-worker --once`：单次 drain，适合本地诊断。
+- `uv run reader-artifact-pipeline-worker`：持续循环，适合部署为独立 worker process / container。
+
+关键约束：
+
+- `input_artifact_extraction` 和 `extracted_artifact_materialization` 都是 record-level pre-base jobs，`base_id = null` 是有意设计；runtime fence 必须在 `active_base_id IS NULL` 时才允许 claim，active base 已存在时 supersede。
+- Extraction 成功只回写 `original_inputs.source_text` 和 job transition，并 enqueue materialization job；不直接创建 Stable Document、Candidate Document 或 reader events。
+- Materialization 在同一事务内重新校验 record/input/artifact 绑定和 generation，再根据 suitability outcome 冻结 stable document 或创建 candidate document。
+- OSS reader / PDF / OCR 都是 adapter。缺 OSS 凭证或 SDK 时 worker 仍可启动，但 extraction job fail closed；缺 `pypdf` 时仅 PDF job fail closed；OCR 默认 disabled，image job fail closed 为 `ocr_provider_unconfigured`。
+- PDF/OCR provider 输出不是业务事实源。Stable Reading Document、Stable Document Blocks、Canonical Text、Reading Units 和 Anchor Segments 仍是后续渲染、Ask、RAG citation 的事实源。
+
 ## Run / Job
 
 Reader Run 是一次 bounded background run。Reader Job 是 run 内可 claim、heartbeat、retry 的执行单位。
@@ -192,7 +259,7 @@ D4 最小纵切必须包含 `reader_runs`。可以后置完整 envelope schema�
 
 Retryable failure is represented by `failure_class` plus transition to `retry_later`，不是长期 `failed_retryable` job status。`heartbeat_lost` 不必作为长期状态；watchdog 可根据 lease 过期判断并重新入队。
 
-Base-scoped jobs 必须携带 `base_id`。只有 `build_base` 这类 base 尚未存在的 record-level job 可以 `base_id = null`。`operation_fingerprint` 和 active job unique key 必须包含 `base_id + expected_generation`，避免 supersede 或重新冻结 base 后 late worker result 被误发布。
+Base-scoped jobs 必须携带 `base_id`。只有 base 尚未存在的 record-level jobs 可以 `base_id = null`，当前白名单包括 `build_base`、`input_artifact_extraction` 和 `extracted_artifact_materialization`。这些 pre-base jobs 必须额外校验 record generation 和 `active_base_id IS NULL`；其他 non-build-base job 遇到 null base 必须 fail/supersede。`operation_fingerprint` 和 active job unique key 必须包含足以区分 record/generation/base-or-artifact target 的 scope，避免 supersede 或重新冻结 base 后 late worker result 被误发布。
 
 ## 并发模型
 

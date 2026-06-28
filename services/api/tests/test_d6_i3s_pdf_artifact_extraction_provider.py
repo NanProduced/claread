@@ -34,13 +34,16 @@ import pytest
 
 from app.services.reader_orchestration.artifact_extraction_provider_router import (
     ArtifactExtractionProviderRouter,
-    FAILURE_CODE_OCR_PROVIDER_UNCONFIGURED,
     FAILURE_CODE_UNSUPPORTED_ARTIFACT_CONTENT_TYPE,
     build_default_extraction_provider_router,
 )
 from app.services.reader_orchestration.artifact_extraction_worker import (
     ArtifactExtractionError,
     ArtifactExtractionJobContext,
+)
+from app.services.reader_orchestration.ocr_artifact_extraction_provider import (
+    FAILURE_CODE_OCR_PROVIDER_UNCONFIGURED,
+    OcrArtifactExtractionProvider,
 )
 from app.services.reader_orchestration.pdf_artifact_extraction_provider import (
     EXTRACTOR_NAME,
@@ -483,6 +486,7 @@ async def test_router_routes_text_plain_to_text_provider() -> None:
     router = ArtifactExtractionProviderRouter(
         text_provider=text_provider,
         pdf_provider=pdf_provider,
+        ocr_provider=OcrArtifactExtractionProvider(reader=reader),
     )
 
     result = await router.extract(
@@ -504,6 +508,7 @@ async def test_router_routes_text_markdown_to_text_provider() -> None:
     router = ArtifactExtractionProviderRouter(
         text_provider=text_provider,
         pdf_provider=pdf_provider,
+        ocr_provider=OcrArtifactExtractionProvider(reader=reader),
     )
 
     result = await router.extract(
@@ -525,6 +530,7 @@ async def test_router_routes_text_x_markdown_to_text_provider() -> None:
     router = ArtifactExtractionProviderRouter(
         text_provider=text_provider,
         pdf_provider=pdf_provider,
+        ocr_provider=OcrArtifactExtractionProvider(reader=reader),
     )
 
     result = await router.extract(
@@ -547,6 +553,7 @@ async def test_router_routes_octet_stream_with_txt_to_text_provider() -> None:
     router = ArtifactExtractionProviderRouter(
         text_provider=text_provider,
         pdf_provider=pdf_provider,
+        ocr_provider=OcrArtifactExtractionProvider(reader=reader),
     )
 
     result = await router.extract(
@@ -571,6 +578,7 @@ async def test_router_routes_application_pdf_to_pdf_provider() -> None:
     router = ArtifactExtractionProviderRouter(
         text_provider=text_provider,
         pdf_provider=pdf_provider,
+        ocr_provider=OcrArtifactExtractionProvider(reader=reader),
     )
 
     result = await router.extract(
@@ -582,8 +590,14 @@ async def test_router_routes_application_pdf_to_pdf_provider() -> None:
 
 
 async def test_router_image_content_type_fails_closed_ocr_unconfigured() -> None:
-    """``image/png`` (and any ``image/*``) fails closed with
-    ``ocr_provider_unconfigured``."""
+    """``image/png`` (and any ``image/*``) delegates to the OCR provider,
+    which uses the default :class:`UnconfiguredOcrTextExtractor` and fails
+    closed with ``ocr_provider_unconfigured``.
+
+    Note: the OCR provider downloads bytes via the reader before calling
+    the extractor, so ``reader.calls`` is non-empty. The unconfigured
+    extractor raises before any real OCR happens.
+    """
     reader = FakeStorageObjectReader(data=b"")
     text_provider = TextArtifactExtractionProvider(reader=reader)
     pdf_provider = PdfArtifactExtractionProvider(
@@ -593,6 +607,7 @@ async def test_router_image_content_type_fails_closed_ocr_unconfigured() -> None
     router = ArtifactExtractionProviderRouter(
         text_provider=text_provider,
         pdf_provider=pdf_provider,
+        ocr_provider=OcrArtifactExtractionProvider(reader=reader),
     )
 
     with pytest.raises(ArtifactExtractionError) as exc_info:
@@ -604,12 +619,14 @@ async def test_router_image_content_type_fails_closed_ocr_unconfigured() -> None
 
     assert exc_info.value.retryable is False
     assert exc_info.value.failure_code == FAILURE_CODE_OCR_PROVIDER_UNCONFIGURED
-    # No reader / extractor call should have happened.
-    assert reader.calls == []
+    # Reader IS called (OCR provider downloads bytes before extractor),
+    # but the PDF extractor must never be called.
+    assert len(reader.calls) == 1
 
 
 async def test_router_image_jpeg_also_fails_closed() -> None:
-    """Any ``image/*`` subtype fails closed — verify with ``image/jpeg``."""
+    """Any ``image/*`` subtype delegates to the OCR provider — verify with
+    ``image/jpeg`` using the default UnconfiguredOcrTextExtractor."""
     reader = FakeStorageObjectReader(data=b"")
     router = ArtifactExtractionProviderRouter(
         text_provider=TextArtifactExtractionProvider(reader=reader),
@@ -617,6 +634,7 @@ async def test_router_image_jpeg_also_fails_closed() -> None:
             reader=reader,
             extractor=FakePdfTextExtractor(pages=["x"]),
         ),
+        ocr_provider=OcrArtifactExtractionProvider(reader=reader),
     )
 
     with pytest.raises(ArtifactExtractionError) as exc_info:
@@ -639,6 +657,7 @@ async def test_router_unknown_content_type_fails_closed() -> None:
             reader=reader,
             extractor=FakePdfTextExtractor(pages=["x"]),
         ),
+        ocr_provider=OcrArtifactExtractionProvider(reader=reader),
     )
 
     with pytest.raises(ArtifactExtractionError) as exc_info:
@@ -664,6 +683,7 @@ async def test_router_octet_stream_without_txt_md_extension_fails_closed() -> No
             reader=reader,
             extractor=FakePdfTextExtractor(pages=["x"]),
         ),
+        ocr_provider=OcrArtifactExtractionProvider(reader=reader),
     )
 
     with pytest.raises(ArtifactExtractionError) as exc_info:
@@ -690,6 +710,7 @@ async def test_router_propagates_provider_error_unchanged() -> None:
     router = ArtifactExtractionProviderRouter(
         text_provider=TextArtifactExtractionProvider(reader=reader),
         pdf_provider=pdf_provider,
+        ocr_provider=OcrArtifactExtractionProvider(reader=reader),
     )
 
     with pytest.raises(ArtifactExtractionError) as exc_info:
@@ -707,19 +728,21 @@ async def test_router_propagates_provider_error_unchanged() -> None:
 
 
 def test_build_default_router_constructs_text_and_pdf_providers() -> None:
-    """The default factory builds a router holding text + PDF providers.
+    """The default factory builds a router holding text + PDF + OCR providers.
 
-    The router is constructable without ``pypdf`` installed — the PDF
-    provider fails closed on the first PDF job.
+    The router is constructable without ``pypdf`` installed and without OCR
+    config — PDF fails closed on the first PDF job, and image jobs fail
+    closed on the first extract call via :class:`UnconfiguredOcrTextExtractor`.
     """
     reader = FakeStorageObjectReader(data=b"")
     router = build_default_extraction_provider_router(reader=reader)
 
     assert isinstance(router, ArtifactExtractionProviderRouter)
-    # Internal providers are wired (text + pdf). We check types via the
-    # private attributes; this is acceptable for a structural smoke test.
+    # Internal providers are wired (text + pdf + ocr). We check types via
+    # the private attributes; this is acceptable for a structural smoke test.
     assert isinstance(router._text_provider, TextArtifactExtractionProvider)
     assert isinstance(router._pdf_provider, PdfArtifactExtractionProvider)
+    assert isinstance(router._ocr_provider, OcrArtifactExtractionProvider)
 
 
 # ---------------------------------------------------------------------------

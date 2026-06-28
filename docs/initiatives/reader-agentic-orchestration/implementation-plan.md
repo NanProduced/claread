@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 实施计划
 
 > 状态：`D6 进行中`
-> 最后更新：2026-06-25
+> 最后更新：2026-06-28
 
 ## 成功标准
 
@@ -68,18 +68,20 @@
 | W3-D0~D9 | Web cutover：submit landing / recent recovery / list source / Library section / command palette / activity indicator / Vocabulary guard | ✅ 完成 |
 | UI-D4~D6C | ReaderRecordPlateSurface 阅读态打磨 / 默认 Plate mode / 真实流程验收 / UI polish | ✅ 完成 |
 | D6-I0 | Input / document model product decision：Candidate Document、Stable Reading Document、Stable Document Blocks、Canonical Text Layer、V1 输入范围、PDF/OCR gate、RAG source scope | ✅ 完成 |
-| D6-I1 | Stable Document Block contract + schema design | ⏳ 待做 |
-| D6-I2 | Candidate Document persistence + preview/confirm API | ⏳ 待做 |
-| D6-I3 | Upload / Source Artifact adapter（OSS + local dev） | ⏳ 待做 |
-| D6-I4 | Markdown/txt document parser + Input Suitability Gate | ⏳ 待做 |
-| D6-I5 | PDF parser + page quality gate + optional LLM reviewer | ⏳ 待做 |
-| D6-I6 | OCR provider adapter + multi-image Candidate Document | ⏳ 待做 |
+| D6-I1 | Stable Document Block contract + schema design | ✅ 完成 |
+| D6-I2 | Candidate Document persistence + preview/confirm API | ✅ 完成第一轮 |
+| D6-I3 | Upload / Source Artifact adapter（OSS + local dev） | ✅ 完成第一轮；artifact extraction/materialization worker 已接入 |
+| D6-I4 | Markdown/txt document parser + Input Suitability Gate | ✅ 完成第一轮 |
+| D6-I5 | PDF parser + page quality gate + optional LLM reviewer | 🔄 PDF text extractor/provider 已接入；page quality gate / LLM reviewer 待做 |
+| D6-I6 | OCR provider adapter + multi-image Candidate Document | 🔄 OCR provider foundation 已接入；真实 Qwen/OCR adapter 与多图 Candidate 待做 |
 | D6-RAG1 | Block-scoped RAG substrate schema/chunker/citation validator | ⏳ 待做 |
 | D6-RAG2 | VectorStoreAdapter + record-scoped indexing worker | ⏳ 待做 |
 | D6 后续 | 旧入口改线（Library/Vocabulary/active task 切新 Reading Record） | ⏳ 待做 |
-| D6 后续 | Ask 切线（依赖 reader_ask/service.py 拆分或 adapter 化） | ⏳ 待做 |
-| D6 后续 | 词典 AI / 词汇保存 / 阅读模式切换 / projection_ops 增量 applier | ⏳ 待做 |
+| D6 后续 | Ask 切线（Reading Record scope + Web 接线） | ✅ 完成第一轮；action proposal / grounding 后续 |
+| D6 后续 | 词典 AI / 词汇保存 / 阅读模式切换 / projection_ops 增量 applier | 🔄 前三项已接入第一轮；`projection_ops` 仍待做 |
 | D6 后续 | 删除 legacy analysis/ + reader_scene.py + ReaderWorkbench | ⏳ 待做 |
+
+说明：上述 D6-I1~I6 状态按当前工作区代码校准。关键落点包括 `stable_document_blocks` migration、`document_blocks.py`、candidate document creation/confirm services、`/records/input`、`/candidate-documents/{id}/confirm`、`source_artifacts` migration、`/source-artifacts/*` upload/submit-input routes、artifact extraction/materialization jobs、`reader-artifact-pipeline-worker`、OSS-backed text/Markdown reader、PDF text extraction provider、OCR provider foundation 及对应 focused tests。PDF 页级质量 gate、真实 OCR/Qwen 调用、多图 Candidate UX 和 RAG indexing 仍是后续任务。
 
 ## D0. 边界决策
 
@@ -479,17 +481,18 @@ D5 增强扩展（vocabulary / grammar bundle / worker loop / runtime guardrails
 - ReaderRecordPlateSurface 真实流程验收与 UI polish（UI-D4~D6C）
 - failed_terminal 保守映射为 `failed` product state
 - Input / document model 产品决策：旧 Candidate Base 升级为 Candidate Document；旧 Stable Reading Base 语义拆为 Stable Reading Document、Stable Document Blocks 和 Canonical Text Layer；V1 输入范围、PDF/OCR quality gate、OCR provider adapter、RAG source scope 已确认。
+- 输入链路后端第一轮：Stable Document Blocks、Candidate freeze/confirm、unified input route、Source Artifact lifecycle、OSS presigned upload、artifact extraction/materialization jobs、artifact worker CLI、text/Markdown/PDF/OCR provider foundation 已接入。
 
 ### D6 下一步（按优先级）
 
-1. **先补 Stable Document Block contract**：定义 Stable Reading Document / Stable Document Blocks / Canonical Text Layer 的 schema、DTO、snapshot 投影边界和 block identity。RAG 与高级输入都依赖这一步。
-2. **打通 Candidate Document 纵切**：实现 Candidate Document persistence、preview/confirm API、`needs_confirmation` product state、确认后冻结 Stable Reading Document 并复用现有 article_ready / worker chain。
-3. **上线输入适配最小路径**：先做 Markdown/txt parser + Input Suitability Gate + Source Artifact adapter，再做 PDF parser/page quality gate，最后接 OCR provider adapter 与多图合并。
+1. **补齐真实 OCR adapter**：在现有 `OcrArtifactExtractionProvider` contract 下接入 Qwen / DashScope OCR，保持默认无网络、env-gated smoke、错误分类和质量阈值。
+2. **补 PDF 页级质量 gate**：在 PDF text extractor 基础上增加页级诊断、text-layer quality decision、可选 LLM reviewer，只产出 Extraction Result / Candidate Document，不直写 Stable truth。
+3. **完善多图 / PDF Candidate Document UX 后端**：支持多图顺序、页码范围、OCR/text-layer 选择、quality warnings 和 confirm 后 block policy。
 4. **实现 block-scoped RAG**：在 Stable Document Blocks 已落地后，做 RAG substrate schema、chunker、citation validator、VectorStoreAdapter 和 indexing worker。不要先做只绑定线性文本的 RAG。
 5. **收敛新旧双轨**：逐个把 Library / Vocabulary source links / active task / command palette legacy records 切到新 Reading Record（前提：BFF 提供 `sourceReadingRecordId`）；评估删除 `ReaderRecordWorkbenchSurface` fallback 和 legacy `ReaderWorkbench` 的时点。
-6. **补齐 Plate surface 功能缺口**：Ask 切线（依赖 `reader_ask/service.py` 拆分或 adapter 化）、词典 AI、词汇保存、阅读模式切换、`projection_ops` 增量 applier。
+6. **补齐 Plate surface 功能缺口**：action proposal / grounding、词典 AI、词汇保存、阅读模式切换、`projection_ops` 增量 applier。
 7. **架构深化（可选）**：提取 `BaseEnhancementWorker` 消除 worker/publisher 三重复制；拆分 `repository.py`（1471 行）和 `reader_ask/service.py`（222KB 巨石）。
-8. **清理 TMP 文档**：`docs/tmp/reader-orchestration/` 下 ~60 份 TMP closeout 的结论已回写本计划，按 AGENTS.md 规则删除或归档。
+8. **清理 TMP 文档**：`docs/tmp/reader-orchestration/` 下 TMP closeout 的结论已回写本计划，按 AGENTS.md 规则删除或归档。
 
 ### 仍保持的口径
 

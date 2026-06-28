@@ -42,6 +42,11 @@ from app.services.reader_orchestration.artifact_pipeline_worker_service import (
     ArtifactInputPipelineWorkerService,
     ArtifactPipelineProcessResult,
 )
+from app.services.reader_orchestration.ocr_artifact_extraction_provider import (
+    OcrTextExtractor,
+    QwenOcrTextExtractor,
+    UnconfiguredOcrTextExtractor,
+)
 from app.services.reader_orchestration.text_artifact_extraction_provider import (
     AliyunOssObjectReader,
     StorageObjectReader,
@@ -104,18 +109,66 @@ def build_pipeline_service(
     """Construct the pipeline service with a router (or fail-closed).
 
     When ``storage_reader`` is available, a
-    :class:`ArtifactExtractionProviderRouter` is built (text + PDF providers)
-    and injected as ``extraction_provider``. When ``storage_reader`` is
-    ``None``, the pipeline uses ``UnconfiguredArtifactExtractionProvider``
-    (fail-closed).
+    :class:`ArtifactExtractionProviderRouter` is built (text + PDF + OCR
+    providers) and injected as ``extraction_provider``. The OCR provider
+    uses :class:`UnconfiguredOcrTextExtractor` by default — image jobs
+    fail closed with ``ocr_provider_unconfigured`` until OCR is enabled
+    and a real extractor is wired.
+
+    When ``storage_reader`` is ``None``, the pipeline uses
+    ``UnconfiguredArtifactExtractionProvider`` (fail-closed).
     """
     if storage_reader is None:
         return ArtifactInputPipelineWorkerService(pool=pool)
-    router = build_default_extraction_provider_router(reader=storage_reader)
+    ocr_extractor = _build_ocr_extractor(settings)
+    router = build_default_extraction_provider_router(
+        reader=storage_reader,
+        ocr_extractor=ocr_extractor,
+        ocr_min_text_confidence=settings.reader_ocr_min_text_confidence,
+        ocr_min_layout_confidence=settings.reader_ocr_min_layout_confidence,
+    )
     return ArtifactInputPipelineWorkerService(
         pool=pool,
         extraction_provider=router,
     )
+
+
+def _build_ocr_extractor(settings: Settings) -> OcrTextExtractor:
+    """Build an OCR extractor from settings, or fail-closed default.
+
+    - ``reader_ocr_provider_enabled=False`` (default) →
+      :class:`UnconfiguredOcrTextExtractor` (terminal fail closed on first
+      image job).
+    - ``reader_ocr_provider_enabled=True`` + ``reader_ocr_provider_name="qwen"``
+      → :class:`QwenOcrTextExtractor` stub. Real DashScope call is deferred;
+      the stub still fails closed (no network) until a real adapter is
+      implemented in a later round.
+    - Unknown provider name → :class:`UnconfiguredOcrTextExtractor`.
+
+    No OCR secrets are read from settings defaults. When a real Qwen
+    adapter is implemented, ``DASHSCOPE_API_KEY`` will be read from the
+    environment via ``os.environ`` (not stored in settings).
+    """
+    if not settings.reader_ocr_provider_enabled:
+        return UnconfiguredOcrTextExtractor()
+
+    name = (settings.reader_ocr_provider_name or "").strip().lower()
+    if name == "qwen":
+        # DASHSCOPE_API_KEY is read from env (not settings) so no secret
+        # lands in settings defaults or config files.
+        api_key = os.environ.get("DASHSCOPE_API_KEY") or ""
+        return QwenOcrTextExtractor(
+            api_key=api_key or None,
+            min_text_confidence=settings.reader_ocr_min_text_confidence,
+            min_layout_confidence=settings.reader_ocr_min_layout_confidence,
+        )
+
+    logger.warning(
+        "artifact pipeline worker: unknown OCR provider name %r; "
+        "falling back to UnconfiguredOcrTextExtractor (image jobs will fail closed)",
+        settings.reader_ocr_provider_name,
+    )
+    return UnconfiguredOcrTextExtractor()
 
 
 # ---------------------------------------------------------------------------
