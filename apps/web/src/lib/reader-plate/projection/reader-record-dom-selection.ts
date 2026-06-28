@@ -10,6 +10,46 @@ import {
 
 const STABLE_SOURCE_LEAF_SELECTOR = '[data-reader-record-leaf="segment_text"]';
 
+export type ReaderRecordSelectionSurfaceKind =
+  | "source"
+  | "translation"
+  | "grammar_callout"
+  | "sentence_analysis"
+  | "supplement_callout";
+
+export interface ReaderRecordSelectionSourceSegment {
+  anchorSegmentId: string;
+  sentenceId: string;
+  unitStart: number;
+  unitEnd: number;
+  sourceText: string;
+  textHash: string;
+}
+
+export interface ReaderRecordSelectionSourceContext {
+  anchorSegmentId?: string;
+  unitId?: string;
+  sentenceId?: string;
+  sourceText?: string;
+  textHash?: string;
+  unitSourceText?: string;
+  sourceSegments?: ReaderRecordSelectionSourceSegment[];
+}
+
+export interface ReaderRecordSelectionBlockContext {
+  surfaceKind: ReaderRecordSelectionSurfaceKind;
+  blockType: string;
+  blockId: string;
+  selectedText: string;
+  anchorSegmentId?: string;
+  unitId?: string;
+  layerId?: string;
+  analysisId?: string;
+  supplementId?: string;
+  chunks?: Array<{ order: number; label: string; text: string }>;
+  source?: ReaderRecordSelectionSourceContext;
+}
+
 export interface ReaderRecordSelectionAnchorBridgeResult {
   drafts: ReaderRecordAnchorDraft[];
   selectedText: string;
@@ -19,6 +59,10 @@ export interface ReaderRecordSelectionAnchorBridgeResult {
   contextSentence: string;
   supportedSingleRange: boolean;
   rect: DOMRect | null;
+  surfaceKind: ReaderRecordSelectionSurfaceKind;
+  blockType: string;
+  blockId: string;
+  blockContext: ReaderRecordSelectionBlockContext;
 }
 
 function elementFromNode(node: Node): Element | null {
@@ -309,5 +353,23 @@ export function readReaderRecordSelectionAnchorDrafts(
     contextSentence: contextSentenceText,
     supportedSingleRange: drafts.length === 1,
     rect,
+    surfaceKind: "source",
+    blockType: "reader_paragraph",
+    blockId: `paragraph:${drafts[0]?.anchor_segment_id ?? segments[0]?.sentenceId ?? ""}`,
+    blockContext: {
+      surfaceKind: "source",
+      blockType: "reader_paragraph",
+      blockId: `paragraph:${drafts[0]?.anchor_segment_id ?? segments[0]?.sentenceId ?? ""}`,
+      selectedText,
+      anchorSegmentId: drafts[0]?.anchor_segment_id,
+      unitId: drafts[0]?.unit_id,
+      source: {
+        anchorSegmentId: drafts[0]?.anchor_segment_id,
+        unitId: drafts[0]?.unit_id,
+        sentenceId: segments[0]?.sentenceId,
+        sourceText: contextSentenceText,
+        textHash: drafts[0]?.text_hash,
+      },
+    },
   };
 }

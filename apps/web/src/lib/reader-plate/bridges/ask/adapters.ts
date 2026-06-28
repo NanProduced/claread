@@ -729,6 +729,19 @@ export function askAttachmentFromDto(
       query: raw.metadata.query ?? null,
       lookupText: raw.metadata.lookup_text ?? null,
       visualTone: raw.metadata.visual_tone ?? null,
+      surfaceKind:
+        (raw.metadata.surface_kind as
+          | ReaderAskAttachment["metadata"]["surfaceKind"]
+          | undefined) ?? null,
+      blockType: raw.metadata.block_type ?? null,
+      blockId: raw.metadata.block_id ?? null,
+      anchorSegmentId: raw.metadata.anchor_segment_id ?? null,
+      unitId: raw.metadata.unit_id ?? null,
+      layerId: raw.metadata.layer_id ?? null,
+      analysisId: raw.metadata.analysis_id ?? null,
+      supplementId: raw.metadata.supplement_id ?? null,
+      sourceContext: raw.metadata.source_context ?? null,
+      chunks: raw.metadata.chunks ?? null,
     },
   });
 }

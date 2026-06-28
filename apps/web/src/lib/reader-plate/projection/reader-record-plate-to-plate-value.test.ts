@@ -6,6 +6,7 @@ import type {
   ReaderRecordPlateDocument,
   ReaderRecordPlateGrammarMark,
   ReaderRecordPlateParagraphBlock,
+  ReaderRecordPlateSentenceAnalysisBlock,
   ReaderRecordPlateTextLeaf,
   ReaderRecordPlateTranslationTextLeaf,
   ReaderRecordPlateUserHighlightMark,
@@ -18,6 +19,9 @@ import {
   READER_BLOCKQUOTE_TYPE,
   READER_CALLOUT_TYPE,
   READER_PARAGRAPH_TYPE,
+  READER_SENTENCE_ANALYSIS_CHUNK_TYPE,
+  READER_SENTENCE_ANALYSIS_CHUNKS_TYPE,
+  READER_SENTENCE_ANALYSIS_TYPE,
   textLeafToPlateTextNode,
   translationLeafToPlateTextNode,
 } from "./reader-record-plate-to-plate-value";
@@ -254,6 +258,27 @@ function makeCalloutBlock(
   };
 }
 
+function makeSentenceAnalysisBlock(
+  overrides: Partial<ReaderRecordPlateSentenceAnalysisBlock> = {},
+): ReaderRecordPlateSentenceAnalysisBlock {
+  return {
+    type: "sentence_analysis",
+    id: "sentence_analysis:analysis_seg_1",
+    icon: "🔍",
+    children: [{ type: "p", children: [{ text: "Institutional memory is the subject." }] }],
+    data: {
+      anchorSegmentId: "seg_1",
+      unitId: "unit_1",
+      layerId: "layer_sentence_analysis_1",
+      analysisId: "analysis_seg_1",
+      label: "subject driving predicate",
+      analysis: "Institutional memory is the subject.",
+      chunks: [{ order: 1, label: "subject", text: "Institutional memory" }],
+    },
+    ...overrides,
+  };
+}
+
 function makeDocument(
   children: ReaderRecordPlateDocument["children"],
 ): ReaderRecordPlateDocument {
@@ -297,12 +322,12 @@ describe("marksToPlateProps", () => {
     expect(props.vocabulary_data).toEqual(mark);
   });
 
-  it("converts vocabulary mark (startsHere=false) without data", () => {
+  it("converts vocabulary mark (startsHere=false) with data for continuation styling", () => {
     const mark = makeVocabularyMark({ startsHere: false });
     const props = marksToPlateProps([mark]);
 
     expect(props.vocabulary).toBe(true);
-    expect(props.vocabulary_data).toBeUndefined();
+    expect(props.vocabulary_data).toEqual(mark);
   });
 
   it("converts grammar mark (startsHere=true) with data", () => {
@@ -313,12 +338,12 @@ describe("marksToPlateProps", () => {
     expect(props.grammar_data).toEqual(mark);
   });
 
-  it("converts grammar mark (startsHere=false) without data", () => {
+  it("converts grammar mark (startsHere=false) with data for continuation styling", () => {
     const mark = makeGrammarMark({ startsHere: false });
     const props = marksToPlateProps([mark]);
 
     expect(props.grammar).toBe(true);
-    expect(props.grammar_data).toBeUndefined();
+    expect(props.grammar_data).toEqual(mark);
   });
 
   it("converts user_highlight mark (startsHere=true) with data", () => {
@@ -400,6 +425,45 @@ describe("textLeafToPlateTextNode", () => {
     expect(node.vocabulary_data).toEqual(vocabMark);
     expect(node.grammar_data).toEqual(grammarMark);
   });
+
+  it("preserves vocabulary and grammar data on continuation leaves split by overlapping marks", () => {
+    const vocabStart = makeVocabularyMark({
+      id: "vocab_split",
+      startsHere: true,
+      endsHere: false,
+    });
+    const vocabContinuation = makeVocabularyMark({
+      ...vocabStart,
+      startsHere: false,
+      endsHere: true,
+    });
+    const grammarStart = makeGrammarMark({
+      id: "grammar_split",
+      startsHere: true,
+      endsHere: false,
+    });
+    const grammarContinuation = makeGrammarMark({
+      ...grammarStart,
+      startsHere: false,
+      endsHere: true,
+    });
+    const leafNodes = [
+      textLeafToPlateTextNode(
+        makeTextLeaf({ text: "Institutional ", marks: [vocabStart] }),
+      ),
+      textLeafToPlateTextNode(
+        makeTextLeaf({ text: "memory", marks: [vocabContinuation, grammarStart] }),
+      ),
+      textLeafToPlateTextNode(
+        makeTextLeaf({ text: " shapes", marks: [grammarContinuation] }),
+      ),
+    ];
+
+    expect(leafNodes[0]?.vocabulary_data).toEqual(vocabStart);
+    expect(leafNodes[1]?.vocabulary_data).toEqual(vocabContinuation);
+    expect(leafNodes[1]?.grammar_data).toEqual(grammarStart);
+    expect(leafNodes[2]?.grammar_data).toEqual(grammarContinuation);
+  });
 });
 
 describe("translationLeafToPlateTextNode", () => {
@@ -421,6 +485,7 @@ describe("projectReaderRecordPlateToPlateValue", () => {
     expect(value).toHaveLength(1);
     const element = value[0] as Record<string, unknown>;
     expect(element.type).toBe(READER_PARAGRAPH_TYPE);
+    expect(element.id).toBe(block.id);
     expect(element.data).toEqual(block.data);
     expect(Array.isArray(element.children)).toBe(true);
     expect((element.children as unknown[]).length).toBe(1);
@@ -447,6 +512,7 @@ describe("projectReaderRecordPlateToPlateValue", () => {
     expect(value).toHaveLength(1);
     const element = value[0] as Record<string, unknown>;
     expect(element.type).toBe(READER_BLOCKQUOTE_TYPE);
+    expect(element.id).toBe(block.id);
     expect(element.data).toEqual(block.data);
     const textNode = (element.children as unknown[])[0] as Record<string, unknown>;
     expect(textNode.text).toBe("制度记忆会塑造政策选择。");
@@ -464,11 +530,40 @@ describe("projectReaderRecordPlateToPlateValue", () => {
     expect(value).toHaveLength(1);
     const element = value[0] as Record<string, unknown>;
     expect(element.type).toBe(READER_CALLOUT_TYPE);
+    expect(element.id).toBe(block.id);
     expect(element.data).toEqual(block.data);
     expect(element.variant).toBe("grammar");
     expect(element.icon).toBe("📖");
     // children should be passed directly (same array reference)
     expect(element.children).toBe(children);
+  });
+
+  it("converts sentence analysis block to reader_sentence_analysis element", () => {
+    const children = [
+      { type: "p", children: [{ text: "analysis text" }] },
+    ];
+    const block = makeSentenceAnalysisBlock({ children });
+    const value = projectReaderRecordPlateToPlateValue(makeDocument([block]));
+
+    expect(value).toHaveLength(1);
+    const element = value[0] as Record<string, unknown>;
+    expect(element.type).toBe(READER_SENTENCE_ANALYSIS_TYPE);
+    expect(element.id).toBe(block.id);
+    expect(element.data).toEqual(block.data);
+    expect(element.icon).toBe("🔍");
+    expect(element.children).not.toBe(children);
+    const projectedChildren = element.children as Array<Record<string, unknown>>;
+    expect(projectedChildren[0]?.type).toBe(READER_SENTENCE_ANALYSIS_CHUNKS_TYPE);
+    const chunkList = projectedChildren[0] as {
+      children: Array<Record<string, unknown>>;
+    };
+    expect(chunkList.children[0]?.type).toBe(READER_SENTENCE_ANALYSIS_CHUNK_TYPE);
+    expect(chunkList.children[0]?.data).toEqual(block.data.chunks[0]);
+    expect(
+      ((chunkList.children[0]?.children as Array<Record<string, unknown>>)[0]
+        ?.text),
+    ).toBe("Institutional memory");
+    expect(projectedChildren[1]).toBe(children[0]);
   });
 
   it("handles empty paragraph children by filling empty text node", () => {
@@ -495,14 +590,16 @@ describe("projectReaderRecordPlateToPlateValue", () => {
     const paragraph = makeParagraphBlock();
     const blockquote = makeBlockquoteBlock();
     const callout = makeCalloutBlock();
+    const analysis = makeSentenceAnalysisBlock();
     const value = projectReaderRecordPlateToPlateValue(
-      makeDocument([paragraph, blockquote, callout]),
+      makeDocument([paragraph, blockquote, callout, analysis]),
     );
 
-    expect(value).toHaveLength(3);
+    expect(value).toHaveLength(4);
     expect((value[0] as Record<string, unknown>).type).toBe(READER_PARAGRAPH_TYPE);
     expect((value[1] as Record<string, unknown>).type).toBe(READER_BLOCKQUOTE_TYPE);
     expect((value[2] as Record<string, unknown>).type).toBe(READER_CALLOUT_TYPE);
+    expect((value[3] as Record<string, unknown>).type).toBe(READER_SENTENCE_ANALYSIS_TYPE);
   });
 
   it("returns empty array for document with no children", () => {

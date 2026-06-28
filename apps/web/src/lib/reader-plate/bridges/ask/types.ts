@@ -1,4 +1,5 @@
 import type { ReaderAskCitationDto } from "@/types/api/reader-ask";
+import type { ReaderRecordSelectionSurfaceKind } from "@/lib/reader-plate/projection/reader-record-dom-selection";
 import type { ReaderContentSummaryNode, ReaderAnalysisBlockNode } from "../../model";
 import type { ReaderTextSelection } from "../../primitives";
 import type { ReaderAnchorPayload, ReaderTargetRef } from "../assets";
@@ -63,6 +64,16 @@ export interface ReaderAskAttachmentMetadata {
   lookupText?: string | null;
   visualTone?: string | null;
   readingRecordAnchor?: Record<string, unknown> | null;
+  surfaceKind?: ReaderRecordSelectionSurfaceKind | null;
+  blockType?: string | null;
+  blockId?: string | null;
+  anchorSegmentId?: string | null;
+  unitId?: string | null;
+  layerId?: string | null;
+  analysisId?: string | null;
+  supplementId?: string | null;
+  sourceContext?: Record<string, unknown> | null;
+  chunks?: Array<{ order: number; label: string; text: string }> | null;
 }
 
 export interface ReaderAskAttachment {

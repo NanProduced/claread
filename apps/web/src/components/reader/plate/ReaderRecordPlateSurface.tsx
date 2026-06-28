@@ -1,17 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AiWorkspacePanel } from "@/components/reader/AiWorkspacePanel";
 import type { DictLookupTypeDto, WebDictResult } from "@/types/api/dict";
 import {
   projectReaderPlateSnapshotToReaderRecordPlateDocument,
-  type ReaderRecordPlateBlockquoteBlock,
-  type ReaderRecordPlateCalloutBlock,
-  type ReaderRecordPlateMark,
+  type ReaderRecordPlateBlock,
   type ReaderRecordPlateParagraphBlock,
   type ReaderRecordPlateProgress,
-  type ReaderRecordPlateTextLeaf,
   type ReaderRecordPlateTextAnchor,
   type ReaderRecordPlateUserHighlightMark,
   type ReaderRecordPlateUserNoteMark,
@@ -32,7 +29,6 @@ import type { ThemeName } from "@/lib/appearance";
 import { FavoriteButton } from "@/components/reader/FavoriteButton";
 import {
   ReaderSettingsPanel,
-  createDefaultReaderSettings,
   readStoredReaderSettings,
   persistReaderSettings,
   readerModeTypography,
@@ -40,8 +36,10 @@ import {
   type ReaderSettingsState,
 } from "@/components/reader/settings";
 
-import { ReaderToolbarActionsProvider } from "@/components/editor/plugins/reader-floating-toolbar-buttons";
-import { CalloutMarkdownRenderer } from "./CalloutMarkdownRenderer";
+import {
+  ReaderToolbarActionsProvider,
+  type ReaderToolbarActions,
+} from "@/components/editor/plugins/reader-floating-toolbar-buttons";
 import {
   ReaderFloatingSurface,
   useReaderFloatingLayer,
@@ -103,11 +101,9 @@ const HIGHLIGHT_COLOR_OPTIONS: Array<{
   label: string;
   swatchClassName: string;
 }> = [
-  { value: "soft_green", label: "灰绿", swatchClassName: "bg-structure-green/45 ring-structure-green/25" },
-  { value: "warm_yellow", label: "暖黄", swatchClassName: "bg-vocab-amber/75 ring-vocab-amber/25" },
-  { value: "soft_blue", label: "雾青", swatchClassName: "bg-context-blue/65 ring-context-blue/25" },
-  { value: "soft_purple", label: "淡紫", swatchClassName: "bg-violet-200/70 ring-violet-300/50" },
-  { value: "sage_green", label: "草绿", swatchClassName: "bg-emerald-200/70 ring-emerald-300/50" },
+  { value: "warm_yellow", label: "重点", swatchClassName: "bg-vocab-amber/75 ring-vocab-amber/25" },
+  { value: "soft_blue", label: "疑问", swatchClassName: "bg-context-blue/65 ring-context-blue/25" },
+  { value: "soft_rose", label: "难点", swatchClassName: "bg-rose-200/80 ring-rose-300/50" },
 ];
 
 function overallProgressLabel(status: ReaderRecordPlateProgress["overallStatus"]) {
@@ -133,7 +129,40 @@ function lookupTypeForSelection(text: string): DictLookupTypeDto {
 function singleRangeDraft(
   selection: ReaderRecordSelectionAnchorBridgeResult | null,
 ): ReaderRecordAnchorDraft | null {
-  return selection?.supportedSingleRange ? (selection.drafts[0] ?? null) : null;
+  return selection?.surfaceKind === "source" && selection.supportedSingleRange
+    ? (selection.drafts[0] ?? null)
+    : null;
+}
+
+function hasNonSourceDocumentSelection(
+  selection: ReaderRecordSelectionAnchorBridgeResult | null,
+): boolean {
+  return Boolean(
+    selection &&
+      selection.surfaceKind !== "source" &&
+      selection.selectedText.trim().length > 0,
+  );
+}
+
+function canCopyOrAskSelection(
+  selection: ReaderRecordSelectionAnchorBridgeResult | null,
+): boolean {
+  return Boolean(singleRangeDraft(selection) || hasNonSourceDocumentSelection(selection));
+}
+
+function sourceOnlyDisabledReason(
+  selection: ReaderRecordSelectionAnchorBridgeResult | null,
+  action: "lookup" | "write",
+): string | undefined {
+  if (!selection) {
+    return "请选择稳定原文后再操作";
+  }
+  if (selection.surfaceKind !== "source") {
+    return action === "lookup"
+      ? "当前仅支持原文查词"
+      : "当前仅支持原文高亮/笔记";
+  }
+  return "暂不支持跨段或非稳定原文选区";
 }
 
 function readingRecordAskAnchorFromDraft(
@@ -176,12 +205,48 @@ function readingRecordAskAnchorFromTextAnchor(
   };
 }
 
-function actionButtonClassName(enabled: boolean) {
-  const base =
-    "rounded-full border px-2.5 py-1 transition-colors focus:outline-none focus:ring-2 focus:ring-lens-blue/30";
-  return enabled
-    ? `${base} border-border/80 bg-background/80 text-foreground hover:border-lens-blue/40 hover:bg-lens-blue/5`
-    : `${base} border-transparent bg-transparent text-muted/60`;
+function noteAnchorMatchesDraft(
+  anchor: ReaderRecordPlateTextAnchor,
+  draft: ReaderRecordAnchorDraft,
+): boolean {
+  return (
+    anchor.baseId === draft.base_id &&
+    anchor.unitId === draft.unit_id &&
+    anchor.anchorSegmentId === draft.anchor_segment_id &&
+    anchor.unitStartOffset === draft.start_offset &&
+    anchor.unitEndOffset === draft.end_offset &&
+    anchor.offsetUnit === draft.offset_unit &&
+    anchor.selectedText === draft.selected_text
+  );
+}
+
+function findDuplicateNoteMark(
+  blocks: ReaderRecordPlateBlock[],
+  draft: ReaderRecordAnchorDraft | null,
+): ReaderRecordPlateUserNoteMark | null {
+  if (!draft) {
+    return null;
+  }
+  for (const block of blocks) {
+    if (block.type !== "paragraph") {
+      continue;
+    }
+    for (const leaf of block.children) {
+      for (const mark of leaf.marks) {
+        if (
+          mark.kind === "user_note" &&
+          noteAnchorMatchesDraft(mark.anchor, draft)
+        ) {
+          return mark;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function readerMarkIdSelector(markId: string): string {
+  return `[data-reader-record-mark-id="${markId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
 }
 
 function writeStateLabel(writeState: ReaderRecordWriteState): string {
@@ -290,24 +355,6 @@ async function postReadingRecordUserAsset(
   }
 }
 
-function isVocabularyMark(
-  mark: ReaderRecordPlateMark,
-): mark is ReaderRecordPlateVocabularyMark {
-  return mark.kind !== "grammar_note" && mark.kind !== "user_highlight" && mark.kind !== "user_note";
-}
-
-function isUserHighlightMark(
-  mark: ReaderRecordPlateMark,
-): mark is ReaderRecordPlateUserHighlightMark {
-  return mark.kind === "user_highlight";
-}
-
-function isUserNoteMark(
-  mark: ReaderRecordPlateMark,
-): mark is ReaderRecordPlateUserNoteMark {
-  return mark.kind === "user_note";
-}
-
 function vocabularyTitle(mark: ReaderRecordPlateVocabularyMark) {
   if (mark.vocabulary.itemType === "vocab_highlight") {
     return mark.vocabulary.headword;
@@ -318,223 +365,41 @@ function vocabularyTitle(mark: ReaderRecordPlateVocabularyMark) {
   return mark.vocabulary.display;
 }
 
-function markClassName(mark: ReaderRecordPlateTextLeaf["marks"][number]) {
-  if (mark.kind === "user_highlight") {
-    return "rounded-sm bg-amber-100/80 ring-1 ring-amber-200/80";
-  }
-  if (mark.kind === "user_note") {
-    return "rounded-sm bg-blue-50/60 underline decoration-blue-500/80 decoration-dashed underline-offset-4";
-  }
-  if (mark.kind === "grammar_note") {
-    return "rounded-sm underline decoration-emerald-600/80 decoration-[1.5px] underline-offset-4";
-  }
-  if (mark.kind === "phrase_gloss") {
-    return "rounded-sm bg-violet-50 underline decoration-violet-500/70 underline-offset-4";
-  }
-  if (mark.kind === "context_gloss") {
-    return "rounded-sm bg-sky-50 underline decoration-sky-500/70 underline-offset-4";
-  }
-  return "rounded-sm bg-amber-50";
+function immersiveParagraphBlock(
+  block: ReaderRecordPlateParagraphBlock,
+): ReaderRecordPlateParagraphBlock {
+  return {
+    ...block,
+    children: block.children.map((leaf) => ({
+      ...leaf,
+      marks: leaf.marks.filter((mark) => mark.kind !== "grammar_note"),
+    })),
+  };
 }
 
-function markLabel(mark: ReaderRecordPlateTextLeaf["marks"][number]) {
-  if (mark.kind === "user_highlight") {
-    return "用户高亮";
+function visibleBlockForMode(
+  block: ReaderRecordPlateBlock,
+  surfaceMode: "intensive" | "immersive",
+): ReaderRecordPlateBlock | null {
+  if (surfaceMode === "intensive") {
+    return block;
   }
-  if (mark.kind === "user_note") {
-    return "用户笔记";
+  if (block.type !== "paragraph") {
+    return null;
   }
-  if (mark.kind === "grammar_note") {
-    return `语法 · ${mark.grammarPoint}`;
-  }
-  if (mark.vocabulary.itemType === "vocab_highlight") {
-    return `词汇 · ${mark.vocabulary.headword}`;
-  }
-  if (mark.vocabulary.itemType === "phrase_gloss") {
-    return `短语 · ${mark.vocabulary.gloss}`;
-  }
-  return `语境 · ${mark.vocabulary.gloss}`;
-}
-
-function markPriority(mark: ReaderRecordPlateMark) {
-  if (mark.kind === "grammar_note") {
-    return 10;
-  }
-  if (mark.kind === "phrase_gloss") {
-    return 20;
-  }
-  if (mark.kind === "context_gloss") {
-    return 30;
-  }
-  if (mark.kind === "vocab_highlight") {
-    return 40;
-  }
-  if (mark.kind === "user_note") {
-    return 45;
-  }
-  return 50;
-}
-
-function sortedMarkStack(marks: ReaderRecordPlateMark[]) {
-  return [...marks].sort((left, right) => {
-    const priorityDelta = markPriority(left) - markPriority(right);
-    return priorityDelta === 0 ? left.id.localeCompare(right.id) : priorityDelta;
-  });
-}
-
-function markStackLabel(marks: ReaderRecordPlateMark[]) {
-  return marks.map(markLabel).join("；");
-}
-
-function markStackClassName(marks: ReaderRecordPlateMark[]) {
-  return sortedMarkStack(marks).map(markClassName).join(" ");
-}
-
-function renderMarkedLeaf(
-  leaf: ReaderRecordPlateTextLeaf,
-  children: ReactNode,
-  onActivateVocabulary: (mark: ReaderRecordPlateVocabularyMark, anchor: HTMLElement) => void,
-  onActivateHighlight: (mark: ReaderRecordPlateUserHighlightMark, anchor: HTMLElement) => void,
-  onActivateNote: (mark: ReaderRecordPlateUserNoteMark, anchor: HTMLElement) => void,
-) {
-  if (leaf.marks.length === 0) {
-    return children;
-  }
-
-  const markStack = sortedMarkStack(leaf.marks);
-  const primaryMark = markStack[0];
-  const vocabularyMark = markStack.find(isVocabularyMark);
-  const userHighlightMark = markStack.find(isUserHighlightMark);
-  const userNoteMark = markStack.find(isUserNoteMark);
-
-  // Render nested spans for non-primary marks so each mark is locatable
-  // by data-reader-record-mark-id, even when multiple marks overlap.
-  const innerContent = markStack.slice(1).reduce<ReactNode>(
-    (acc, mark) => (
-      <span
-        data-reader-record-mark-entry="stack"
-        data-reader-record-mark-id={mark.id}
-        data-reader-record-mark-kind={mark.kind}
-      >
-        {acc}
-      </span>
-    ),
-    children,
-  );
-
-  return (
-    <span
-      data-reader-record-mark-entry="stack"
-      data-reader-record-mark-id={primaryMark.id}
-      data-reader-record-mark-kind={primaryMark.kind}
-      className={markStackClassName(markStack)}
-      aria-label={markStackLabel(markStack)}
-      title={markStackLabel(markStack)}
-      onClick={
-        userNoteMark
-          ? (event) => {
-              event.stopPropagation();
-              onActivateNote(userNoteMark, event.currentTarget as HTMLElement);
-            }
-          : userHighlightMark
-            ? (event) => {
-                event.stopPropagation();
-                onActivateHighlight(userHighlightMark, event.currentTarget as HTMLElement);
-              }
-            : vocabularyMark
-              ? (event) => {
-                  event.stopPropagation();
-                  onActivateVocabulary(vocabularyMark, event.currentTarget as HTMLElement);
-                }
-              : undefined
-      }
-    >
-      {innerContent}
-    </span>
-  );
-}
-
-function renderParagraphLeaf(
-  leaf: ReaderRecordPlateTextLeaf,
-  index: number,
-  onActivateVocabulary: (mark: ReaderRecordPlateVocabularyMark, anchor: HTMLElement) => void,
-  onActivateHighlight: (mark: ReaderRecordPlateUserHighlightMark, anchor: HTMLElement) => void,
-  onActivateNote: (mark: ReaderRecordPlateUserNoteMark, anchor: HTMLElement) => void,
-): ReactNode {
-  return (
-    <span
-      key={leaf.anchorSegmentId + index}
-      data-reader-record-leaf="segment_text"
-      data-anchor-segment-id={leaf.anchorSegmentId}
-      data-segment-start-utf16={leaf.segmentRange.startUtf16}
-      data-segment-end-utf16={leaf.segmentRange.endUtf16}
-    >
-      {renderMarkedLeaf(leaf, leaf.text, onActivateVocabulary, onActivateHighlight, onActivateNote)}
-    </span>
-  );
-}
-
-function ParagraphBlock({
-  block,
-  readingClassName,
-  onActivateVocabulary,
-  onActivateHighlight,
-  onActivateNote,
-}: {
-  block: ReaderRecordPlateParagraphBlock;
-  readingClassName: string;
-  onActivateVocabulary: (mark: ReaderRecordPlateVocabularyMark, anchor: HTMLElement) => void;
-  onActivateHighlight: (mark: ReaderRecordPlateUserHighlightMark, anchor: HTMLElement) => void;
-  onActivateNote: (mark: ReaderRecordPlateUserNoteMark, anchor: HTMLElement) => void;
-}) {
-  return (
-    <p
-      data-reader-record-node="paragraph"
-      data-anchor-segment-id={block.data.anchorSegmentId}
-      data-sentence-id={block.data.sentenceId}
-      data-unit-id={block.data.unitId}
-      className={`reader-record-plate-paragraph ${readingClassName}`.trim()}
-    >
-      {block.children.map((leaf, index) =>
-        renderParagraphLeaf(leaf, index, onActivateVocabulary, onActivateHighlight, onActivateNote),
-      )}
-    </p>
-  );
-}
-
-function BlockquoteBlock({
-  block,
-}: {
-  block: ReaderRecordPlateBlockquoteBlock;
-}) {
-  return (
-    <blockquote
-      data-reader-record-node="blockquote"
-      data-unit-id={block.data.unitId}
-      className="reader-record-plate-blockquote mt-3 border-l-2 border-emerald-300/60 bg-emerald-50/40 py-2 pl-4 pr-3 font-sans text-[0.95rem] leading-7 text-ink-soft"
-    >
-      <span className="mb-1 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-emerald-700/80">
-        译文
-      </span>
-      {block.children.map((leaf, index) => (
-        <span key={index}>{leaf.text}</span>
-      ))}
-    </blockquote>
-  );
+  return immersiveParagraphBlock(block);
 }
 
 function ReaderRecordHeader({
   snapshot,
   progress,
   surfaceMode,
-  readerSettings,
   onModeChange,
   onOpenSettings,
 }: {
   snapshot: ReaderPlateSnapshotDto;
   progress: ReaderRecordPlateProgress;
   surfaceMode: "intensive" | "immersive";
-  readerSettings: ReaderSettingsState;
   onModeChange: (mode: "intensive" | "immersive") => void;
   onOpenSettings: () => void;
 }) {
@@ -704,59 +569,49 @@ function ReaderRecordHeader({
   );
 }
 
-function SelectionActionStrip({
+function SelectionActionState({
   copyStatus,
-  lookupState,
   selection,
   writeState,
-  noteComposerOpen,
-  onAsk,
-  onCopy,
-  onHighlight,
-  onLookup,
-  onOpenNoteComposer,
 }: {
   copyStatus: ReaderRecordCopyStatus;
-  lookupState: ReaderRecordLookupState;
   selection: ReaderRecordSelectionAnchorBridgeResult | null;
   writeState: ReaderRecordWriteState;
-  noteComposerOpen: boolean;
-  onAsk: () => void;
-  onCopy: () => void;
-  onHighlight: () => void;
-  onLookup: () => void;
-  onOpenNoteComposer: () => void;
 }) {
   const draft = singleRangeDraft(selection);
-  const singleRangeReady = Boolean(selection?.supportedSingleRange && draft);
-  const isSaving = writeState.kind === "saving";
-  const copyDisabled = !singleRangeReady;
-  const lookupDisabled = !singleRangeReady || lookupState.kind === "loading";
-  const highlightDisabled = !singleRangeReady || isSaving;
-  const noteDisabled = !singleRangeReady || isSaving || noteComposerOpen;
-  const askDisabled = !singleRangeReady;
-  const disabledReason = !selection
-    ? "请选择稳定原文以启用此操作"
-    : singleRangeReady
-      ? "操作当前不可用"
-      : "暂不支持跨段选区";
+  const copyAskReady = canCopyOrAskSelection(selection);
   const writeStatus = writeStateLabel(writeState);
-  const actionMode = singleRangeReady ? "selection" : selection ? "unsupported" : "idle";
-  const actionHint = singleRangeReady
-    ? `已选：${draft?.selected_text ?? ""}`
+  const actionMode = copyAskReady ? "selection" : selection ? "unsupported" : "idle";
+  const actionHint = copyAskReady
+    ? `已选：${selection?.selectedText ?? draft?.selected_text ?? ""}`
     : selection
       ? "当前选区暂不支持操作"
       : "划取原文后可查词、复制、标记或记录笔记";
 
   return (
     <div
-      data-testid="reader-record-plate-disabled-actions"
-      data-reader-record-actions="selection-context"
+      data-testid="reader-record-plate-selection-state"
+      data-reader-record-actions="selection-state"
       data-reader-record-action-mode={actionMode}
       data-reader-record-selection-draft-count={selection?.drafts.length ?? 0}
-      data-reader-record-selection-supported={singleRangeReady ? "true" : "false"}
+      data-reader-record-selection-supported={copyAskReady ? "true" : "false"}
+      data-reader-record-selection-surface-kind={selection?.surfaceKind}
+      data-reader-record-selection-block-type={selection?.blockType}
+      data-reader-record-selection-block-id={selection?.blockId}
       data-reader-record-selection-anchor-segment-id={
-        draft?.anchor_segment_id ?? undefined
+        draft?.anchor_segment_id ?? selection?.blockContext.anchorSegmentId ?? undefined
+      }
+      data-reader-record-selection-unit-id={
+        draft?.unit_id ?? selection?.blockContext.unitId ?? undefined
+      }
+      data-reader-record-selection-layer-id={
+        selection?.blockContext.layerId ?? undefined
+      }
+      data-reader-record-selection-analysis-id={
+        selection?.blockContext.analysisId ?? undefined
+      }
+      data-reader-record-selection-supplement-id={
+        selection?.blockContext.supplementId ?? undefined
       }
       data-reader-record-selection-start-offset={
         draft ? String(draft.start_offset) : undefined
@@ -766,157 +621,23 @@ function SelectionActionStrip({
       }
       data-reader-record-write-state={writeState.kind}
       className="sr-only"
-      aria-label="Reader Record Plate 操作"
+      aria-label="Reader Record Plate 选区状态"
+      aria-live="polite"
     >
-      <span
-        data-reader-record-action-hint
-        className={`mr-1 max-w-full truncate sm:max-w-[40ch] ${
-          singleRangeReady ? "font-medium text-foreground" : ""
-        }`}
-      >
-        {actionHint}
-      </span>
-      {singleRangeReady ? (
-        <>
-          <button
-            type="button"
-            disabled={lookupDisabled}
-            data-reader-record-action="lookup"
-            className={actionButtonClassName(!lookupDisabled)}
-            title={lookupDisabled ? disabledReason : "查词所选文本"}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={onLookup}
-          >
-            {lookupState.kind === "loading" ? "查询中" : "查词"}
-          </button>
-          <button
-            type="button"
-            disabled={copyDisabled}
-            data-reader-record-action="copy"
-            className={actionButtonClassName(!copyDisabled)}
-            title={copyDisabled ? disabledReason : "复制所选文本"}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={onCopy}
-          >
-            复制
-          </button>
-          <button
-            type="button"
-            disabled={highlightDisabled}
-            data-reader-record-action="highlight"
-            className={actionButtonClassName(!highlightDisabled)}
-            title={highlightDisabled ? disabledReason : "保存高亮"}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => onHighlight()}
-          >
-            {writeState.kind === "saving" && writeState.action === "highlight"
-              ? "保存中"
-              : "高亮"}
-          </button>
-          <button
-            type="button"
-            disabled={noteDisabled}
-            data-reader-record-action="note"
-            className={actionButtonClassName(!noteDisabled)}
-            title={noteDisabled ? disabledReason : "创建笔记"}
-            aria-label="新建笔记"
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => onOpenNoteComposer()}
-          >
-            笔记
-          </button>
-          <button
-            type="button"
-            disabled={askDisabled}
-            data-reader-record-action="ask"
-            className={actionButtonClassName(!askDisabled)}
-            title={askDisabled ? disabledReason : "Ask 关于所选内容"}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={onAsk}
-          >
-            Ask
-          </button>
-          <span data-reader-record-coming-soon-actions="feedback" className="text-muted/70">
-            反馈稍后开放
-          </span>
-          {copyStatus !== "idle" ? (
-            <span
-              data-testid="reader-record-plate-copy-status"
-              className={
-                copyStatus === "copied" ? "text-emerald-700" : "text-rose-700"
-              }
-            >
-              {copyStatus === "copied" ? "已复制" : "复制失败"}
-            </span>
-          ) : null}
-          {writeStatus ? (
-            <span
-              data-testid="reader-record-plate-write-status"
-              className={writeStateClassName(writeState)}
-            >
-              {writeStatus}
-            </span>
-          ) : null}
-        </>
+      <span data-reader-record-action-hint>{actionHint}</span>
+      {copyStatus !== "idle" ? (
+        <span data-testid="reader-record-plate-copy-status">
+          {copyStatus === "copied" ? "已复制" : "复制失败"}
+        </span>
       ) : null}
-    </div>
-  );
-}
-
-function ReaderRecordNoteComposer({
-  noteDraft,
-  saving,
-  onCancel,
-  onChange,
-  onSave,
-}: {
-  noteDraft: string;
-  saving: boolean;
-  onCancel: () => void;
-  onChange: (value: string) => void;
-  onSave: () => void;
-}) {
-  const saveDisabled = saving || noteDraft.trim().length === 0;
-
-  return (
-    <div
-      data-testid="reader-record-plate-note-composer"
-      className="mb-5 rounded-md border border-border border-l-2 border-l-amber-300/70 bg-background px-3.5 py-3 text-sm shadow-sm"
-    >
-      <label
-        htmlFor="reader-record-plate-note-input"
-        className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted"
-      >
-        笔记
-      </label>
-      <textarea
-        id="reader-record-plate-note-input"
-        data-testid="reader-record-plate-note-input"
-        value={noteDraft}
-        rows={3}
-        className="mt-2 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-lens-blue"
-        onChange={(event) => onChange(event.currentTarget.value)}
-      />
-      <div className="mt-2 flex items-center gap-2">
-        <button
-          type="button"
-          disabled={saveDisabled}
-          className={actionButtonClassName(!saveDisabled)}
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={onSave}
+      {writeStatus ? (
+        <span
+          data-testid="reader-record-plate-write-status"
+          className={writeStateClassName(writeState)}
         >
-          {saving ? "保存中" : "保存"}
-        </button>
-        <button
-          type="button"
-          disabled={saving}
-          className={actionButtonClassName(!saving)}
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={onCancel}
-        >
-          取消
-        </button>
-      </div>
+          {writeStatus}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -930,6 +651,7 @@ export function ReaderRecordPlateSurface({
 }: ReaderRecordPlateSurfaceProps) {
   const surfaceRef = useRef<HTMLElement | null>(null);
   const commentApiRef = useRef<CommentPluginApi | null>(null);
+  const [commentApiReady, setCommentApiReady] = useState(false);
   const [activeSelection, setActiveSelection] =
     useState<ReaderRecordSelectionAnchorBridgeResult | null>(null);
   const [copyStatus, setCopyStatus] = useState<ReaderRecordCopyStatus>("idle");
@@ -939,6 +661,8 @@ export function ReaderRecordPlateSurface({
   const [noteDraft, setNoteDraft] = useState("");
   const [noteAnchorDraft, setNoteAnchorDraft] =
     useState<ReaderRecordAnchorDraft | null>(null);
+  const [noteDuplicateAcknowledged, setNoteDuplicateAcknowledged] =
+    useState(false);
   const [lookupState, setLookupState] = useState<ReaderRecordLookupState>({
     kind: "idle",
   });
@@ -974,6 +698,7 @@ export function ReaderRecordPlateSurface({
   >(snapshot.user_assets);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- snapshot reload resets optimistic user-asset projections.
     setLocalUserAssets(snapshot.user_assets);
   }, [snapshot.user_assets]);
 
@@ -1013,16 +738,17 @@ export function ReaderRecordPlateSurface({
     () => projectReaderPlateSnapshotToReaderRecordPlateDocument(projectedSnapshot),
     [projectedSnapshot],
   );
+  const duplicateNoteForDraft = useMemo(
+    () => findDuplicateNoteMark(plateDocument.children, noteAnchorDraft),
+    [noteAnchorDraft, plateDocument.children],
+  );
   const typography = readerModeTypography(readerSettings);
   const themeClassName = readerThemeClassName(themeName);
   const visibleBlocks = useMemo(() => {
-    if (surfaceMode === "intensive") {
-      return plateDocument.children;
-    }
-    // Immersive mode: hide callout (grammar/analysis) and blockquote (translation)
-    return plateDocument.children.filter(
-      (block) => block.type === "paragraph",
-    );
+    return plateDocument.children.flatMap((block) => {
+      const visibleBlock = visibleBlockForMode(block, surfaceMode);
+      return visibleBlock ? [visibleBlock] : [];
+    });
   }, [plateDocument.children, surfaceMode]);
 
   // Plate editor value: 把 visibleBlocks 投影为 Plate Descendant[]。
@@ -1084,6 +810,7 @@ export function ReaderRecordPlateSurface({
       const next = { ...readerSettings, mode };
       setReaderSettings(next);
       persistReaderSettings(next);
+      setActiveSelection(null);
     },
     [readerSettings],
   );
@@ -1131,7 +858,7 @@ export function ReaderRecordPlateSurface({
   const [feedbackState, setFeedbackState] = useState<SaveState>({ kind: "idle" });
   const [feedbackTarget, setFeedbackTarget] = useState<{
     blockId: string;
-    variant: "grammar" | "analysis" | "supplement";
+    variant: "grammar" | "supplement";
     anchorSegmentId: string;
     title: string;
   } | null>(null);
@@ -1320,13 +1047,15 @@ export function ReaderRecordPlateSurface({
   );
 
   const handleCopy = useCallback(async () => {
-    const draft = singleRangeDraft(activeSelection);
-    if (!draft) {
+    const text = singleRangeDraft(activeSelection)?.selected_text
+      ?? activeSelection?.selectedText
+      ?? "";
+    if (!text.trim()) {
       return;
     }
 
     try {
-      await navigator.clipboard.writeText(draft.selected_text);
+      await navigator.clipboard.writeText(text);
       setCopyStatus("copied");
     } catch {
       setCopyStatus("error");
@@ -1419,25 +1148,76 @@ export function ReaderRecordPlateSurface({
     const selection = activeSelection;
     const draft = singleRangeDraft(selection);
     const segment = selection?.supportedSingleRange ? (selection.segments[0] ?? null) : null;
-    if (!selection || !draft || !segment) {
+    if (!selection) {
       return null;
     }
 
+    if (draft && segment) {
+      return {
+        kind: "text_selection",
+        subtype: selection.anchorType,
+        label: draft.selected_text,
+        selectedText: draft.selected_text,
+        targetKey: draft.anchor_segment_id,
+        metadata: {
+          pageIdentity: askPageIdentity,
+          sourceSurface: "selection_toolbar",
+          entryAction: "ask_about_this",
+          surfaceKind: "source",
+          blockType: selection.blockType,
+          blockId: selection.blockId,
+          anchorSegmentId: draft.anchor_segment_id,
+          unitId: draft.unit_id,
+          sourceContext: selection.blockContext.source as Record<string, unknown> | undefined,
+          sentenceId: segment.sentenceId,
+          paragraphId: segment.paragraphId,
+          startOffset: draft.start_offset,
+          endOffset: draft.end_offset,
+          readingRecordAnchor: readingRecordAskAnchorFromDraft(draft),
+        },
+      };
+    }
+
+    if (!hasNonSourceDocumentSelection(selection)) {
+      return null;
+    }
+
+    const context = selection.blockContext;
+    const subtype: ReaderAskAttachment["subtype"] =
+      context.surfaceKind === "translation"
+        ? "translation"
+        : context.surfaceKind === "sentence_analysis"
+          ? "sentence_analysis"
+          : context.surfaceKind === "supplement_callout"
+            ? "supplement_ref"
+            : "grammar_note";
+
     return {
       kind: "text_selection",
-      subtype: selection.anchorType,
-      label: draft.selected_text,
-      selectedText: draft.selected_text,
-      targetKey: draft.anchor_segment_id,
+      subtype,
+      label: selection.selectedText,
+      selectedText: selection.selectedText,
+      targetKey: context.blockId,
       metadata: {
         pageIdentity: askPageIdentity,
         sourceSurface: "selection_toolbar",
         entryAction: "ask_about_this",
-        sentenceId: segment.sentenceId,
-        paragraphId: segment.paragraphId,
-        startOffset: draft.start_offset,
-        endOffset: draft.end_offset,
-        readingRecordAnchor: readingRecordAskAnchorFromDraft(draft),
+        surfaceKind: context.surfaceKind,
+        blockType: context.blockType,
+        blockId: context.blockId,
+        anchorSegmentId: context.anchorSegmentId,
+        unitId: context.unitId,
+        layerId: context.layerId,
+        analysisId: context.analysisId,
+        supplementId: context.supplementId,
+        sourceContext: context.source as Record<string, unknown> | undefined,
+        chunks: context.chunks,
+        sentenceId: context.source?.sentenceId ?? null,
+        paragraphId: context.unitId ?? context.source?.unitId ?? null,
+        entryId: context.analysisId ?? context.supplementId ?? context.blockId,
+        entryType: subtype,
+        translationZh:
+          context.surfaceKind === "translation" ? selection.selectedText : null,
       },
     };
   }, [activeSelection, askPageIdentity]);
@@ -1497,7 +1277,6 @@ export function ReaderRecordPlateSurface({
     setHighlightMenu(null);
     setNoteMenu(null);
     setFeedbackTarget(null);
-    window.getSelection()?.removeAllRanges();
   }, []);
 
   const handleAskFromSelection = useCallback(() => {
@@ -1706,29 +1485,6 @@ export function ReaderRecordPlateSurface({
     }
   }, [activeLookupSnapshot, lookupState, snapshot.record_id]);
 
-  const handleOpenFeedback = useCallback(
-    (
-      block: ReaderRecordPlateCalloutBlock,
-      anchor: HTMLElement,
-    ) => {
-      setFeedbackTarget({
-        blockId: block.id,
-        variant: block.variant,
-        anchorSegmentId: block.data.anchorSegmentId,
-        title:
-          block.variant === "grammar"
-            ? (block.data.grammarPoint ?? "")
-            : block.variant === "supplement"
-              ? (block.data.supplementTitle ?? "")
-              : (block.data.label ?? ""),
-      });
-      feedbackFloating.refs.setReference({
-        getBoundingClientRect: () => anchor.getBoundingClientRect(),
-      });
-    },
-    [feedbackFloating.refs],
-  );
-
   const handleSubmitFeedback = useCallback(
     async (sentiment: "positive" | "negative") => {
       const target = feedbackTarget;
@@ -1752,9 +1508,7 @@ export function ReaderRecordPlateSurface({
             annotationType:
               target.variant === "grammar"
                 ? "grammar_note"
-                : target.variant === "supplement"
-                  ? "ask_supplement"
-                  : "sentence_analysis",
+                : "ask_supplement",
             entryPoint: "reader_record_callout",
             contextSummary: target.title,
             clientPlatform: "web",
@@ -1834,7 +1588,7 @@ export function ReaderRecordPlateSurface({
     [activeLookupSnapshot],
   );
 
-  const handleHighlight = useCallback(async (color: string = "soft_green") => {
+  const handleHighlight = useCallback(async (color: string = "warm_yellow") => {
     const draft = singleRangeDraft(activeSelection);
     if (!draft || writeState.kind === "saving") {
       return;
@@ -1874,17 +1628,18 @@ export function ReaderRecordPlateSurface({
 
   const handleOpenNoteComposer = useCallback(() => {
     const draft = singleRangeDraft(activeSelection);
-    if (!draft || writeState.kind === "saving") {
+    if (!draft || writeState.kind === "saving" || !commentApiReady) {
       return;
     }
 
     setNoteAnchorDraft(draft);
     setNoteDraft("");
+    setNoteDuplicateAcknowledged(false);
     setWriteState({ kind: "idle" });
     // 通过 CommentKit 的 setDraft 创建 draft comment mark 并设置 activeId，
     // InlineCommentPanel 读取 activeId 后显示 composer。
     commentApiRef.current?.setDraft();
-  }, [activeSelection, writeState.kind]);
+  }, [activeSelection, commentApiReady, writeState.kind]);
 
   const handleCancelNote = useCallback(() => {
     if (writeState.kind === "saving") {
@@ -1892,15 +1647,50 @@ export function ReaderRecordPlateSurface({
     }
     setNoteAnchorDraft(null);
     setNoteDraft("");
+    setNoteDuplicateAcknowledged(false);
     // 移除 draft comment mark 并清除 activeId，关闭 InlineCommentPanel。
     commentApiRef.current?.removeMark();
     commentApiRef.current?.setActiveId(null);
   }, [writeState.kind]);
 
+  const handleViewDuplicateNote = useCallback(() => {
+    const duplicateNote = duplicateNoteForDraft;
+    if (!duplicateNote) {
+      return;
+    }
+    const anchor =
+      surfaceRef.current?.querySelector<HTMLElement>(
+        readerMarkIdSelector(duplicateNote.id),
+      ) ??
+      surfaceRef.current ??
+      window.document.body;
+
+    setNoteAnchorDraft(null);
+    setNoteDraft("");
+    setNoteDuplicateAcknowledged(false);
+    commentApiRef.current?.removeMark();
+    setNoteMenu({
+      mark: duplicateNote,
+      anchor,
+      mode: "view",
+      draft: duplicateNote.noteText,
+    });
+    commentApiRef.current?.setActiveId(duplicateNote.assetId);
+  }, [duplicateNoteForDraft]);
+
+  const handleContinueDuplicateNote = useCallback(() => {
+    setNoteDuplicateAcknowledged(true);
+  }, []);
+
   const handleSaveNote = useCallback(async () => {
     const draft = noteAnchorDraft;
     const noteText = noteDraft.trim();
-    if (!draft || !noteText || writeState.kind === "saving") {
+    if (
+      !draft ||
+      !noteText ||
+      writeState.kind === "saving" ||
+      (duplicateNoteForDraft && !noteDuplicateAcknowledged)
+    ) {
       return;
     }
 
@@ -1919,6 +1709,7 @@ export function ReaderRecordPlateSurface({
       });
       setNoteAnchorDraft(null);
       setNoteDraft("");
+      setNoteDuplicateAcknowledged(false);
       // 保存成功后清除 activeId 关闭 InlineCommentPanel；
       // draft comment mark 会在 snapshot reload 后通过 editor.tf.setValue 自然清除。
       commentApiRef.current?.setActiveId(null);
@@ -1939,7 +1730,15 @@ export function ReaderRecordPlateSurface({
         message: "笔记保存失败，请稍后重试。",
       });
     }
-  }, [noteAnchorDraft, noteDraft, onRequestSnapshotReload, snapshot, writeState.kind]);
+  }, [
+    duplicateNoteForDraft,
+    noteAnchorDraft,
+    noteDraft,
+    noteDuplicateAcknowledged,
+    onRequestSnapshotReload,
+    snapshot,
+    writeState.kind,
+  ]);
 
   const handleActivateHighlight = useCallback(
     (mark: ReaderRecordPlateUserHighlightMark, anchor: HTMLElement) => {
@@ -2075,12 +1874,24 @@ export function ReaderRecordPlateSurface({
 
   const handleActivateNote = useCallback(
     (mark: ReaderRecordPlateUserNoteMark, anchor: HTMLElement) => {
+      setNoteAnchorDraft(null);
+      setNoteDraft("");
+      setNoteDuplicateAcknowledged(false);
       setNoteMenu({ mark, anchor, mode: "view", draft: mark.noteText });
       // 设置 CommentKit activeId 为笔记 assetId，InlineCommentPanel 读取后显示 view 模式。
-      commentApiRef.current?.setActiveId(mark.assetId);
+      if (commentApiReady) {
+        commentApiRef.current?.setActiveId(mark.assetId);
+      }
     },
-    [],
+    [commentApiReady],
   );
+
+  useEffect(() => {
+    if (!commentApiReady || !noteMenu) {
+      return;
+    }
+    commentApiRef.current?.setActiveId(noteMenu.mark.assetId);
+  }, [commentApiReady, noteMenu?.mark.assetId, noteMenu]);
 
   // 把 mark 点击回调打包为 Context value，供 Plate leaf plugin 消费。
   const leafActions = useMemo(
@@ -2092,15 +1903,74 @@ export function ReaderRecordPlateSurface({
     [handleActivateVocabulary, handleActivateHighlight, handleActivateNote],
   );
 
+  const toolbarActionState = useMemo<ReaderToolbarActions["state"]>(() => {
+    const draft = singleRangeDraft(activeSelection);
+    const sourceSingleRangeReady = Boolean(draft);
+    const copyAskReady = canCopyOrAskSelection(activeSelection);
+    const sourceLookupReason = sourceOnlyDisabledReason(activeSelection, "lookup");
+    const sourceWriteReason = sourceOnlyDisabledReason(activeSelection, "write");
+    const selectionReason = !activeSelection
+      ? "请选择稳定原文后再操作"
+      : copyAskReady
+        ? undefined
+        : "暂不支持跨段或非稳定原文选区";
+    const savingReason =
+      writeState.kind === "saving" ? writeStateLabel(writeState) : undefined;
+
+    return {
+      lookup: {
+        disabled: !sourceSingleRangeReady || lookupState.kind === "loading",
+        reason:
+          lookupState.kind === "loading" ? "正在查询词典" : sourceLookupReason,
+      },
+      copy: {
+        disabled: !copyAskReady,
+        reason: selectionReason,
+      },
+      ask: {
+        disabled: !copyAskReady,
+        reason: selectionReason,
+      },
+      highlight: {
+        disabled: !sourceSingleRangeReady || writeState.kind === "saving",
+        reason: savingReason ?? sourceWriteReason,
+      },
+      note: {
+        disabled:
+          !sourceSingleRangeReady ||
+          !commentApiReady ||
+          writeState.kind === "saving" ||
+          noteAnchorDraft !== null,
+        reason:
+          !sourceSingleRangeReady
+            ? sourceWriteReason
+            : !commentApiReady
+            ? "笔记工具初始化中"
+            : noteAnchorDraft !== null
+            ? "笔记面板已打开"
+            : savingReason ?? sourceWriteReason,
+      },
+    };
+  }, [activeSelection, commentApiReady, lookupState.kind, noteAnchorDraft, writeState]);
+
   // 把选区工具栏回调打包为 Context value，供 ReaderFloatingToolbarButtons 消费。
-  const toolbarActions = useMemo(
+  const toolbarActions = useMemo<ReaderToolbarActions>(
     () => ({
       onAsk: () => handleAskFromSelection(),
+      onCopy: () => handleCopy(),
       onHighlight: () => handleHighlight(),
       onNote: () => handleOpenNoteComposer(),
       onLookup: () => handleLookup(),
+      state: toolbarActionState,
     }),
-    [handleAskFromSelection, handleHighlight, handleOpenNoteComposer, handleLookup],
+    [
+      handleAskFromSelection,
+      handleCopy,
+      handleHighlight,
+      handleOpenNoteComposer,
+      handleLookup,
+      toolbarActionState,
+    ],
   );
 
   const handleStartEditNote = useCallback(() => {
@@ -2129,6 +1999,7 @@ export function ReaderRecordPlateSurface({
       handleCancelNote();
     } else if (noteMenu) {
       // existing note 模式：退出编辑 + 清除 noteMenu。
+      setNoteDuplicateAcknowledged(false);
       setNoteMenu(null);
     }
   }, [noteAnchorDraft, noteMenu, handleCancelNote]);
@@ -2258,7 +2129,6 @@ export function ReaderRecordPlateSurface({
           snapshot={snapshot}
           progress={plateDocument.progress}
           surfaceMode={surfaceMode}
-          readerSettings={readerSettings}
           onModeChange={handleModeChange}
           onOpenSettings={() => setSettingsPanelOpen(true)}
         />
@@ -2273,17 +2143,10 @@ export function ReaderRecordPlateSurface({
             />
           </div>
         ) : null}
-        <SelectionActionStrip
+        <SelectionActionState
           copyStatus={copyStatus}
-          lookupState={lookupState}
           selection={activeSelection}
           writeState={writeState}
-          noteComposerOpen={noteAnchorDraft !== null}
-          onAsk={handleAskFromSelection}
-          onCopy={handleCopy}
-          onHighlight={handleHighlight}
-          onLookup={handleLookup}
-          onOpenNoteComposer={handleOpenNoteComposer}
         />
         {highlightMenu ? (
           <ReaderFloatingSurface
@@ -2366,26 +2229,33 @@ export function ReaderRecordPlateSurface({
             </button>
           </ReaderFloatingSurface>
         ) : null}
-        {/* ReaderRecordNoteComposer 已迁移到 InlineCommentPanel（CommentKit activeId 驱动） */}
         <ReaderLeafActionsContext.Provider value={leafActions}>
           <ReaderToolbarActionsProvider value={toolbarActions}>
             <Plate editor={editor} readOnly>
-              <CommentPluginBridge apiRef={commentApiRef} />
+              <CommentPluginBridge
+                apiRef={commentApiRef}
+                onReadyChange={setCommentApiReady}
+              />
               <SelectionAnchorBridge
                 snapshot={snapshot}
                 onChange={handleSelectionChange}
               />
               <EditorContainer
-                className={`reader-record-plate-document space-y-3 px-0 py-0 outline-none cursor-default overflow-visible bg-transparent ${readingClassName} ${typography.bodyClassName} ${typography.paragraphDensityClassName}`.trim()}
+                className={`reader-record-plate-document reader-record-plate-document--notion space-y-1 px-0 py-0 outline-none cursor-default overflow-visible bg-transparent ${readingClassName} ${typography.bodyClassName} ${typography.paragraphDensityClassName}`.trim()}
                 data-reader-record-mode={surfaceMode}
               >
                 <Editor readOnly disableDefaultStyles renderLeaf={renderLeaf as never} />
               </EditorContainer>
               <InlineCommentPanel
                 draftText={noteDraft}
+                draftQuoteText={noteAnchorDraft?.selected_text ?? null}
                 onDraftTextChange={setNoteDraft}
                 onSaveDraft={handleSaveNote}
                 onCancelDraft={handleCancelNote}
+                duplicateNote={duplicateNoteForDraft}
+                duplicateAcknowledged={noteDuplicateAcknowledged}
+                onViewDuplicateNote={handleViewDuplicateNote}
+                onContinueDuplicateNote={handleContinueDuplicateNote}
                 activeNote={noteMenu?.mark ?? null}
                 noteEditMode={noteMenu?.mode ?? "view"}
                 noteEditDraft={noteMenu?.draft ?? ""}

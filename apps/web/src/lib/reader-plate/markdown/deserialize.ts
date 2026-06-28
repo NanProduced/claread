@@ -2,7 +2,7 @@
  * Markdown deserialize utility
  *
  * 提供 markdown 字符串 → Plate 节点树（Descendant[]）的转换函数，
- * 供 projection 层的 callout builder 调用。
+ * 供 projection 层的 enhancement block builder 调用。
  *
  * 使用单例 editor 实例避免每次 deserialize 都创建新 editor。
  * 失败时兜底为纯文本段落，不抛出异常。
@@ -27,7 +27,7 @@ function getDeserializerEditor() {
 /**
  * 块级 markdown → Plate Value（Descendant[]）
  *
- * 用于 callout children 的 markdown 渲染：
+ * 用于 enhancement block children 的 markdown 渲染：
  * - `grammar_note.note` → Plate 节点树
  * - `sentence_analysis.analysis` → Plate 节点树
  * - `ask_supplement.content_md` → Plate 节点树

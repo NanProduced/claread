@@ -1,28 +1,41 @@
 /**
  * Reader Blocks Kit — 注册 Reader Plate 自定义 element plugin
  *
- * 三个 element plugin 对应 ReaderRecordPlateDocument 的三种 block：
+ * element plugins 对应 ReaderRecordPlateDocument 的 block：
  * - ReaderParagraphPlugin  (type: "reader_paragraph")  — 原文段落
  * - ReaderBlockquotePlugin (type: "reader_blockquote")   — 译文引用块
  * - ReaderCalloutPlugin    (type: "reader_callout")     — 增强 callout
+ * - ReaderSentenceAnalysisPlugin (type: "reader_sentence_analysis") — 句子拆解块
  *
- * 渲染逻辑参考 ReaderRecordPlateSurface.tsx 中的 ParagraphBlock / BlockquoteBlock / CalloutBlock。
+ * MarkdownPlugin 反序列化出的基础节点也在这里注册为薄 Plate element/leaf plugins。
  * 使用 Plate attributes（ref / data-slate-node 等）保证 Plate 选区和渲染正常工作。
  */
 import * as React from "react";
-import { createPlatePlugin, type PlateElementProps } from "platejs/react";
+import {
+  createPlatePlugin,
+  type PlateElementProps,
+  type PlateLeafProps,
+} from "platejs/react";
 
-import { CalloutMarkdownRenderer } from "@/components/reader/plate/CalloutMarkdownRenderer";
 import type {
   ReaderBlockquoteElement,
   ReaderCalloutElement,
   ReaderParagraphElement,
+  ReaderSentenceAnalysisChunkElement,
+  ReaderSentenceAnalysisElement,
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
 import {
   READER_BLOCKQUOTE_TYPE,
   READER_CALLOUT_TYPE,
   READER_PARAGRAPH_TYPE,
+  READER_SENTENCE_ANALYSIS_CHUNK_TYPE,
+  READER_SENTENCE_ANALYSIS_CHUNKS_TYPE,
+  READER_SENTENCE_ANALYSIS_TYPE,
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
+
+function classNames(...values: Array<string | false | null | undefined>): string {
+  return values.filter(Boolean).join(" ");
+}
 
 // --- Paragraph element ---
 
@@ -36,8 +49,9 @@ function ReaderParagraphComponent({
   return (
     <p
       {...attributes}
-      className={`reader-record-plate-paragraph ${attributes?.className ?? ""}`.trim()}
+      className={`reader-record-plate-paragraph my-2.5 text-pretty leading-[1.88] text-ink ${attributes?.className ?? ""}`.trim()}
       data-reader-record-node="paragraph"
+      data-reader-record-block-id={(element as unknown as ReaderParagraphElement).id}
       data-anchor-segment-id={data?.anchorSegmentId}
       data-sentence-id={data?.sentenceId}
       data-unit-id={data?.unitId}
@@ -67,13 +81,13 @@ function ReaderBlockquoteComponent({
   return (
     <blockquote
       {...attributes}
-      className={`reader-record-plate-blockquote mt-3 border-l-2 border-emerald-300/60 bg-emerald-50/40 py-2 pl-4 pr-3 font-sans text-[0.95rem] leading-7 text-ink-soft ${attributes?.className ?? ""}`.trim()}
+      aria-label="译文"
+      className={`reader-record-plate-blockquote reader-record-plate-translation reader-record-plate-translation-lane my-1.5 border-l-2 border-border/70 bg-transparent py-0.5 pl-3 pr-1 font-sans text-[0.84rem] leading-6 text-muted/85 ${attributes?.className ?? ""}`.trim()}
       data-reader-record-node="blockquote"
+      data-reader-record-translation-lane="true"
+      data-reader-record-block-id={(element as unknown as ReaderBlockquoteElement).id}
       data-unit-id={data?.unitId}
     >
-      <span className="mb-1 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-emerald-700/80">
-        译文
-      </span>
       {children}
     </blockquote>
   );
@@ -90,6 +104,7 @@ export const ReaderBlockquotePlugin = createPlatePlugin({
 // --- Callout element ---
 
 function ReaderCalloutComponent({
+  children,
   element,
   attributes,
 }: PlateElementProps) {
@@ -100,49 +115,58 @@ function ReaderCalloutComponent({
 
   const isGrammar = variant === "grammar";
   const isSupplement = variant === "supplement";
-  const containerClass = isGrammar
-    ? "reader-record-plate-callout reader-record-plate-callout--grammar mt-3 rounded-md border border-emerald-200/70 bg-emerald-50/60 px-4 py-3 text-sm leading-6 text-ink-soft"
-    : isSupplement
-      ? "reader-record-plate-callout reader-record-plate-callout--supplement mt-3 rounded-md border border-amber-200/70 bg-amber-50/60 px-4 py-3 text-sm leading-6 text-ink-soft"
-      : "reader-record-plate-callout reader-record-plate-callout--analysis mt-3 rounded-md border border-sky-200/70 bg-sky-50/60 px-4 py-3 text-sm leading-6 text-ink-soft";
-  const labelClass = isGrammar
-    ? "mb-1 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-emerald-700/80"
-    : isSupplement
-      ? "mb-1 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-amber-700/80"
-      : "mb-1 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-sky-700/80";
-  const label = isGrammar
-    ? "语法讲解"
-    : isSupplement
-      ? "AI 补充"
-      : "句子结构";
+  const containerClass = [
+    "reader-record-plate-callout my-2.5 bg-transparent py-1 pl-3 pr-2 text-sm leading-6 text-ink-soft",
+    isGrammar
+      ? "reader-record-plate-callout--grammar border-l-2 border-emerald-300/75"
+      : "",
+    isSupplement
+      ? "reader-record-plate-callout--supplement border-l-2 border-amber-300/75"
+      : "",
+    attributes?.className ?? "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const eyebrowClass = isGrammar
+    ? "text-emerald-700/75"
+    : "text-amber-700/75";
   const title = isGrammar
     ? data?.grammarPoint ?? ""
-    : isSupplement
-      ? data?.supplementTitle ?? ""
-      : data?.label ?? "";
+    : data?.supplementTitle ?? "";
 
   return (
     <div
       {...attributes}
       className={containerClass}
+      role="note"
       data-reader-record-node="callout"
+      data-reader-record-callout="true"
       data-callout-variant={variant}
+      data-reader-record-block-id={node.id}
       data-anchor-segment-id={data?.anchorSegmentId}
+      data-unit-id={data?.unitId}
+      data-layer-id={data?.layerId}
+      data-supplement-id={data?.supplementId}
     >
-      <div className="flex items-start gap-2">
-        <span className="text-base leading-none" aria-hidden="true">
-          {icon}
-        </span>
-        <div className="min-w-0 flex-1">
-          <span className={labelClass}>{label}</span>
+      <div className="min-w-0">
+        <div className="mb-1 flex min-w-0 items-baseline gap-2">
+          <span
+            className={`font-mono text-[0.68rem] font-medium leading-none ${eyebrowClass}`}
+            aria-hidden="true"
+          >
+            {icon}
+          </span>
           {title ? (
-            <span className="reader-serif block text-[0.95rem] font-semibold leading-snug text-ink">
+            <span className="reader-serif min-w-0 text-[0.93rem] font-semibold leading-snug text-ink/90">
               {title}
             </span>
           ) : null}
-          <div className="mt-1">
-            <CalloutMarkdownRenderer nodes={node.children} />
-          </div>
+        </div>
+        <div
+          className="reader-record-plate-markdown mt-1"
+          data-reader-record-markdown-content="plate"
+        >
+          {children}
         </div>
       </div>
     </div>
@@ -157,10 +181,422 @@ export const ReaderCalloutPlugin = createPlatePlugin({
   },
 });
 
+// --- Sentence analysis element ---
+
+function ReaderSentenceAnalysisComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const node = element as unknown as ReaderSentenceAnalysisElement;
+  const data = node.data;
+
+  return (
+    <section
+      {...attributes}
+      className={`reader-record-plate-sentence-analysis reader-record-plate-callout--analysis my-3 border-l-2 border-sky-300/75 bg-transparent py-1 pl-3 pr-2 text-sm leading-6 text-ink-soft ${attributes?.className ?? ""}`.trim()}
+      role="note"
+      data-reader-record-node="sentence-analysis"
+      data-reader-record-sentence-analysis-block="true"
+      data-reader-record-sentence-analysis-element={READER_SENTENCE_ANALYSIS_TYPE}
+      data-reader-record-block-id={node.id}
+      data-anchor-segment-id={data?.anchorSegmentId}
+      data-unit-id={data?.unitId}
+      data-layer-id={data?.layerId}
+      data-analysis-id={data?.analysisId}
+    >
+      <div className="min-w-0">
+        <div className="mb-1 flex min-w-0 items-baseline gap-2">
+          <span
+            className="font-mono text-[0.68rem] font-medium leading-none text-sky-700/75"
+            aria-hidden="true"
+          >
+            {node.icon}
+          </span>
+          {data?.label ? (
+            <span className="reader-serif min-w-0 text-[0.93rem] font-semibold leading-snug text-ink/90">
+              {data.label}
+            </span>
+          ) : null}
+        </div>
+        <div
+          className={classNames(
+            "reader-record-plate-markdown",
+            data?.chunks?.length ? "mt-2" : "mt-1",
+          )}
+          data-reader-record-markdown-content="plate"
+        >
+          {children}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export const ReaderSentenceAnalysisPlugin = createPlatePlugin({
+  key: READER_SENTENCE_ANALYSIS_TYPE,
+  node: {
+    isElement: true,
+    component: ReaderSentenceAnalysisComponent,
+  },
+});
+
+function ReaderSentenceAnalysisChunksComponent({
+  children,
+  attributes,
+}: PlateElementProps) {
+  return (
+    <dl
+      {...attributes}
+      className={`mb-2 mt-2 space-y-1.5 ${attributes?.className ?? ""}`.trim()}
+      data-reader-record-sentence-analysis-chunks="plate"
+    >
+      {children}
+    </dl>
+  );
+}
+
+function ReaderSentenceAnalysisChunkComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const chunk = (element as unknown as ReaderSentenceAnalysisChunkElement).data;
+
+  return (
+    <div
+      {...attributes}
+      className={`grid grid-cols-[minmax(5.5rem,auto)_minmax(0,1fr)] gap-x-3 text-[0.82rem] leading-6 ${attributes?.className ?? ""}`.trim()}
+      data-reader-record-sentence-analysis-chunk={chunk.label}
+      data-reader-record-sentence-analysis-chunk-order={chunk.order}
+    >
+      <dt className="min-w-0 truncate font-medium text-sky-800/75">
+        {chunk.label}
+      </dt>
+      <dd className="min-w-0 text-muted/90">{children}</dd>
+    </div>
+  );
+}
+
+export const ReaderSentenceAnalysisChunksPlugin = createPlatePlugin({
+  key: READER_SENTENCE_ANALYSIS_CHUNKS_TYPE,
+  node: {
+    isElement: true,
+    component: ReaderSentenceAnalysisChunksComponent,
+  },
+});
+
+export const ReaderSentenceAnalysisChunkPlugin = createPlatePlugin({
+  key: READER_SENTENCE_ANALYSIS_CHUNK_TYPE,
+  node: {
+    isElement: true,
+    component: ReaderSentenceAnalysisChunkComponent,
+  },
+});
+
+// --- Markdown element plugins used by enhancement children ---
+
+function ReaderMarkdownParagraphComponent({
+  children,
+  attributes,
+}: PlateElementProps) {
+  return (
+    <p
+      {...attributes}
+      className={`my-1 leading-6 ${attributes?.className ?? ""}`.trim()}
+      data-reader-record-markdown-node="p"
+    >
+      {children}
+    </p>
+  );
+}
+
+function ReaderMarkdownHeadingComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const type = (element as { type?: string }).type;
+  const commonProps = {
+    ...attributes,
+    "data-reader-record-markdown-node": type,
+  };
+  const className = (base: string) =>
+    `${base} ${attributes?.className ?? ""}`.trim();
+
+  switch (type) {
+    case "h1":
+      return (
+        <h1 {...commonProps} className={className("my-2 text-lg font-semibold leading-snug")}>
+          {children}
+        </h1>
+      );
+    case "h2":
+      return (
+        <h2 {...commonProps} className={className("my-2 text-base font-semibold leading-snug")}>
+          {children}
+        </h2>
+      );
+    case "h3":
+      return (
+        <h3 {...commonProps} className={className("my-2 text-[0.95rem] font-semibold leading-snug")}>
+          {children}
+        </h3>
+      );
+    case "h4":
+      return (
+        <h4 {...commonProps} className={className("my-2 text-[0.9rem] font-semibold leading-snug")}>
+          {children}
+        </h4>
+      );
+    case "h5":
+      return (
+        <h5 {...commonProps} className={className("my-2 text-[0.9rem] font-semibold leading-snug")}>
+          {children}
+        </h5>
+      );
+    case "h6":
+    default:
+      return (
+        <h6 {...commonProps} className={className("my-2 text-[0.9rem] font-semibold leading-snug")}>
+          {children}
+        </h6>
+      );
+  }
+}
+
+function ReaderMarkdownBlockquoteComponent({
+  children,
+  attributes,
+}: PlateElementProps) {
+  return (
+    <blockquote
+      {...attributes}
+      className={`my-1 border-l-2 border-current/30 pl-3 italic text-ink-soft ${attributes?.className ?? ""}`.trim()}
+      data-reader-record-markdown-node="blockquote"
+    >
+      {children}
+    </blockquote>
+  );
+}
+
+function ReaderMarkdownUnorderedListComponent({
+  children,
+  attributes,
+}: PlateElementProps) {
+  return (
+    <ul
+      {...attributes}
+      className={`my-1 list-disc pl-5 leading-6 ${attributes?.className ?? ""}`.trim()}
+      data-reader-record-markdown-node="ul"
+    >
+      {children}
+    </ul>
+  );
+}
+
+function ReaderMarkdownOrderedListComponent({
+  children,
+  attributes,
+}: PlateElementProps) {
+  return (
+    <ol
+      {...attributes}
+      className={`my-1 list-decimal pl-5 leading-6 ${attributes?.className ?? ""}`.trim()}
+      data-reader-record-markdown-node="ol"
+    >
+      {children}
+    </ol>
+  );
+}
+
+function ReaderMarkdownListItemComponent({
+  children,
+  attributes,
+}: PlateElementProps) {
+  return (
+    <li
+      {...attributes}
+      className={`${attributes?.className ?? ""}`.trim()}
+      data-reader-record-markdown-node="li"
+    >
+      {children}
+    </li>
+  );
+}
+
+function ReaderMarkdownListContentComponent({
+  children,
+  attributes,
+}: PlateElementProps) {
+  return (
+    <span
+      {...attributes}
+      className={`${attributes?.className ?? ""}`.trim()}
+      data-reader-record-markdown-node="lic"
+    >
+      {children}
+    </span>
+  );
+}
+
+function ReaderMarkdownCodeBlockComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const type = (element as { type?: string }).type ?? "code_block";
+  return (
+    <pre
+      {...attributes}
+      className={`my-1 overflow-x-auto rounded bg-muted/40 p-2 text-xs leading-5 ${attributes?.className ?? ""}`.trim()}
+      data-reader-record-markdown-node={type}
+    >
+      <code>{children}</code>
+    </pre>
+  );
+}
+
+function ReaderMarkdownHrComponent({
+  children,
+  attributes,
+}: PlateElementProps) {
+  return (
+    <div
+      {...attributes}
+      className={`my-2 ${attributes?.className ?? ""}`.trim()}
+      data-reader-record-markdown-node="hr"
+    >
+      <hr className="border-current/15" />
+      {children}
+    </div>
+  );
+}
+
+function ReaderMarkdownBoldLeaf({ children, attributes }: PlateLeafProps) {
+  return (
+    <strong
+      {...attributes}
+      className={`font-semibold ${attributes?.className ?? ""}`.trim()}
+      data-reader-record-markdown-mark="bold"
+    >
+      {children}
+    </strong>
+  );
+}
+
+function ReaderMarkdownItalicLeaf({ children, attributes }: PlateLeafProps) {
+  return (
+    <em
+      {...attributes}
+      className={`italic ${attributes?.className ?? ""}`.trim()}
+      data-reader-record-markdown-mark="italic"
+    >
+      {children}
+    </em>
+  );
+}
+
+function ReaderMarkdownStrikethroughLeaf({
+  children,
+  attributes,
+}: PlateLeafProps) {
+  return (
+    <span
+      {...attributes}
+      className={`line-through ${attributes?.className ?? ""}`.trim()}
+      data-reader-record-markdown-mark="strikethrough"
+    >
+      {children}
+    </span>
+  );
+}
+
+function ReaderMarkdownCodeLeaf({ children, attributes }: PlateLeafProps) {
+  return (
+    <code
+      {...attributes}
+      className={`rounded bg-muted/50 px-1 py-0.5 font-mono text-[0.85em] ${attributes?.className ?? ""}`.trim()}
+      data-reader-record-markdown-mark="code"
+    >
+      {children}
+    </code>
+  );
+}
+
+const markdownElementPlugins = [
+  createPlatePlugin({
+    key: "p",
+    node: { isElement: true, component: ReaderMarkdownParagraphComponent },
+  }),
+  ...(["h1", "h2", "h3", "h4", "h5", "h6"] as const).map((key) =>
+    createPlatePlugin({
+      key,
+      node: { isElement: true, component: ReaderMarkdownHeadingComponent },
+    }),
+  ),
+  createPlatePlugin({
+    key: "blockquote",
+    node: { isElement: true, component: ReaderMarkdownBlockquoteComponent },
+  }),
+  createPlatePlugin({
+    key: "ul",
+    node: { isElement: true, component: ReaderMarkdownUnorderedListComponent },
+  }),
+  createPlatePlugin({
+    key: "ol",
+    node: { isElement: true, component: ReaderMarkdownOrderedListComponent },
+  }),
+  createPlatePlugin({
+    key: "li",
+    node: { isElement: true, component: ReaderMarkdownListItemComponent },
+  }),
+  createPlatePlugin({
+    key: "lic",
+    node: { isElement: true, component: ReaderMarkdownListContentComponent },
+  }),
+  createPlatePlugin({
+    key: "code_block",
+    node: { isElement: true, component: ReaderMarkdownCodeBlockComponent },
+  }),
+  createPlatePlugin({
+    key: "pre",
+    node: { isElement: true, component: ReaderMarkdownCodeBlockComponent },
+  }),
+  createPlatePlugin({
+    key: "hr",
+    node: { isElement: true, component: ReaderMarkdownHrComponent },
+  }),
+];
+
+const markdownLeafPlugins = [
+  createPlatePlugin({
+    key: "bold",
+    node: { isLeaf: true, component: ReaderMarkdownBoldLeaf },
+  }),
+  createPlatePlugin({
+    key: "italic",
+    node: { isLeaf: true, component: ReaderMarkdownItalicLeaf },
+  }),
+  createPlatePlugin({
+    key: "strikethrough",
+    node: { isLeaf: true, component: ReaderMarkdownStrikethroughLeaf },
+  }),
+  createPlatePlugin({
+    key: "code",
+    node: { isLeaf: true, component: ReaderMarkdownCodeLeaf },
+  }),
+];
+
 // --- Kit aggregation ---
 
 export const ReaderBlocksKit = [
   ReaderParagraphPlugin,
   ReaderBlockquotePlugin,
   ReaderCalloutPlugin,
+  ReaderSentenceAnalysisPlugin,
+  ReaderSentenceAnalysisChunksPlugin,
+  ReaderSentenceAnalysisChunkPlugin,
+  ...markdownElementPlugins,
+  ...markdownLeafPlugins,
 ];

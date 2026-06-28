@@ -6,9 +6,10 @@
  * - paragraph  → reader_paragraph
  * - blockquote → reader_blockquote
  * - callout    → reader_callout
+ * - sentence_analysis → reader_sentence_analysis
  *
  * text leaf 的 marks 转换为 text node 属性，供 leaf plugin 渲染。
- * 仅在 mark.startsHere 时携带 mark data，避免跨 leaf 重复携带。
+ * vocabulary / grammar continuation leaf 也携带 mark data，保证跨 leaf 标注完整渲染。
  */
 import type { Descendant } from "platejs";
 
@@ -20,6 +21,7 @@ import type {
   ReaderRecordPlateGrammarMark,
   ReaderRecordPlateMark,
   ReaderRecordPlateParagraphBlock,
+  ReaderRecordPlateSentenceAnalysisBlock,
   ReaderRecordPlateTextLeaf,
   ReaderRecordPlateTranslationTextLeaf,
   ReaderRecordPlateUserHighlightMark,
@@ -32,6 +34,11 @@ import type {
 export const READER_PARAGRAPH_TYPE = "reader_paragraph" as const;
 export const READER_BLOCKQUOTE_TYPE = "reader_blockquote" as const;
 export const READER_CALLOUT_TYPE = "reader_callout" as const;
+export const READER_SENTENCE_ANALYSIS_TYPE = "reader_sentence_analysis" as const;
+export const READER_SENTENCE_ANALYSIS_CHUNKS_TYPE =
+  "reader_sentence_analysis_chunks" as const;
+export const READER_SENTENCE_ANALYSIS_CHUNK_TYPE =
+  "reader_sentence_analysis_chunk" as const;
 
 // --- Mark key constants ---
 
@@ -44,28 +51,53 @@ export const READER_USER_NOTE_MARK_KEY = "user_note" as const;
 
 export interface ReaderParagraphElement {
   type: typeof READER_PARAGRAPH_TYPE;
+  id: ReaderRecordPlateParagraphBlock["id"];
   children: PlateTextNode[];
   data: ReaderRecordPlateParagraphBlock["data"];
 }
 
 export interface ReaderBlockquoteElement {
   type: typeof READER_BLOCKQUOTE_TYPE;
+  id: ReaderRecordPlateBlockquoteBlock["id"];
   children: PlateTextNode[];
   data: ReaderRecordPlateBlockquoteBlock["data"];
 }
 
 export interface ReaderCalloutElement {
   type: typeof READER_CALLOUT_TYPE;
+  id: ReaderRecordPlateCalloutBlock["id"];
   children: Descendant[];
   data: ReaderRecordPlateCalloutBlock["data"];
   variant: ReaderRecordPlateCalloutBlock["variant"];
   icon: string;
 }
 
+export interface ReaderSentenceAnalysisElement {
+  type: typeof READER_SENTENCE_ANALYSIS_TYPE;
+  id: ReaderRecordPlateSentenceAnalysisBlock["id"];
+  children: Descendant[];
+  data: ReaderRecordPlateSentenceAnalysisBlock["data"];
+  icon: string;
+}
+
+export interface ReaderSentenceAnalysisChunksElement {
+  type: typeof READER_SENTENCE_ANALYSIS_CHUNKS_TYPE;
+  children: ReaderSentenceAnalysisChunkElement[];
+}
+
+export interface ReaderSentenceAnalysisChunkElement {
+  type: typeof READER_SENTENCE_ANALYSIS_CHUNK_TYPE;
+  children: PlateTextNode[];
+  data: ReaderRecordPlateSentenceAnalysisBlock["data"]["chunks"][number];
+}
+
 export type ReaderPlateElement =
   | ReaderParagraphElement
   | ReaderBlockquoteElement
-  | ReaderCalloutElement;
+  | ReaderCalloutElement
+  | ReaderSentenceAnalysisElement
+  | ReaderSentenceAnalysisChunksElement
+  | ReaderSentenceAnalysisChunkElement;
 
 // --- Text node type ---
 
@@ -78,7 +110,7 @@ export interface PlateTextNode {
   user_highlight?: boolean;
   user_highlight_data?: ReaderRecordPlateUserHighlightMark;
   user_note?: boolean;
-  user_note_data?: ReaderRecordPlateUserNoteMark;
+  user_note_data?: ReaderRecordPlateUserNoteMark | ReaderRecordPlateUserNoteMark[];
   translation_owner?: string;
   translation_sourceRole?: string;
   /** 段落文本 leaf 所属的 anchor segment id（用于选区锚点定位） */
@@ -123,27 +155,25 @@ function isUserNoteMark(
  * 把 ReaderRecordPlateMark[] 转换为 Plate text node 属性。
  *
  * 每个 mark 设置对应的 boolean flag（`vocabulary: true` 等），
- * 仅在 mark.startsHere 时携带完整 mark data（`vocabulary_data` 等），
- * 避免跨 leaf 重复携带 data。
+ * vocabulary / grammar mark 会被 overlapping marks 切成多个 leaf；
+ * continuation leaf 也必须携带 data，leaf plugin 才能恢复完整视觉样式。
+ * 交互能力由 leaf plugin 按 startsHere 决定，不在 projection 阶段丢弃 data。
  */
 export function marksToPlateProps(
   marks: ReaderRecordPlateMark[],
 ): Partial<Pick<PlateTextNode, "vocabulary" | "vocabulary_data" | "grammar" | "grammar_data" | "user_highlight" | "user_highlight_data" | "user_note" | "user_note_data">> {
   const props: Record<string, unknown> = {};
+  const noteMarks: ReaderRecordPlateUserNoteMark[] = [];
 
   for (const mark of marks) {
     if (isVocabularyMark(mark)) {
       props[READER_VOCABULARY_MARK_KEY] = true;
-      if (mark.startsHere) {
-        props[`${READER_VOCABULARY_MARK_KEY}_data`] = mark;
-      }
+      props[`${READER_VOCABULARY_MARK_KEY}_data`] = mark;
       continue;
     }
     if (isGrammarMark(mark)) {
       props[READER_GRAMMAR_MARK_KEY] = true;
-      if (mark.startsHere) {
-        props[`${READER_GRAMMAR_MARK_KEY}_data`] = mark;
-      }
+      props[`${READER_GRAMMAR_MARK_KEY}_data`] = mark;
       continue;
     }
     if (isUserHighlightMark(mark)) {
@@ -155,8 +185,14 @@ export function marksToPlateProps(
     }
     if (isUserNoteMark(mark)) {
       props[READER_USER_NOTE_MARK_KEY] = true;
-      props[`${READER_USER_NOTE_MARK_KEY}_data`] = mark;
+      noteMarks.push(mark);
     }
+  }
+
+  if (noteMarks.length === 1) {
+    props[`${READER_USER_NOTE_MARK_KEY}_data`] = noteMarks[0];
+  } else if (noteMarks.length > 1) {
+    props[`${READER_USER_NOTE_MARK_KEY}_data`] = noteMarks;
   }
 
   return props;
@@ -207,6 +243,7 @@ function paragraphBlockToElement(
 
   return {
     type: READER_PARAGRAPH_TYPE,
+    id: block.id,
     children,
     data: block.data,
   };
@@ -222,6 +259,7 @@ function blockquoteBlockToElement(
 
   return {
     type: READER_BLOCKQUOTE_TYPE,
+    id: block.id,
     children,
     data: block.data,
   };
@@ -232,9 +270,36 @@ function calloutBlockToElement(
 ): ReaderCalloutElement {
   return {
     type: READER_CALLOUT_TYPE,
+    id: block.id,
     children: block.children,
     data: block.data,
     variant: block.variant,
+    icon: block.icon,
+  };
+}
+
+function sentenceAnalysisBlockToElement(
+  block: ReaderRecordPlateSentenceAnalysisBlock,
+): ReaderSentenceAnalysisElement {
+  const chunkChildren: Descendant[] =
+    block.data.chunks.length > 0
+      ? [
+          {
+            type: READER_SENTENCE_ANALYSIS_CHUNKS_TYPE,
+            children: block.data.chunks.map((chunk) => ({
+              type: READER_SENTENCE_ANALYSIS_CHUNK_TYPE,
+              data: chunk,
+              children: [{ text: chunk.text }],
+            })),
+          } as unknown as Descendant,
+        ]
+      : [];
+
+  return {
+    type: READER_SENTENCE_ANALYSIS_TYPE,
+    id: block.id,
+    children: [...chunkChildren, ...block.children],
+    data: block.data,
     icon: block.icon,
   };
 }
@@ -243,7 +308,7 @@ function calloutBlockToElement(
  * 把 ReaderRecordPlateDocument 转换为 Plate editor 可消费的 Descendant[]。
  *
  * 空 children 的 block 会填充空文本节点，保证 Plate value 合法。
- * callout 的 children 已经是 Descendant[]（由 projection 层 deserializeMarkdownToBlocks 生成），直接传递。
+ * enhancement children 已经是 Descendant[]（由 projection 层 deserializeMarkdownToBlocks 生成），直接传递。
  */
 export function projectReaderRecordPlateToPlateValue(
   document: ReaderRecordPlateDocument,
@@ -256,6 +321,8 @@ export function projectReaderRecordPlateToPlateValue(
         return blockquoteBlockToElement(block) as unknown as Descendant;
       case "callout":
         return calloutBlockToElement(block) as unknown as Descendant;
+      case "sentence_analysis":
+        return sentenceAnalysisBlockToElement(block) as unknown as Descendant;
     }
   });
 }

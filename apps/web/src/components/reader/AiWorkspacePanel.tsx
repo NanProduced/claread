@@ -321,6 +321,16 @@ function serializeAttachment(attachment: ReaderAskAttachment): ReaderAskAttachme
       lookup_text: attachment.metadata.lookupText ?? null,
       visual_tone: attachment.metadata.visualTone ?? null,
       reading_record_anchor: attachment.metadata.readingRecordAnchor ?? null,
+      surface_kind: attachment.metadata.surfaceKind ?? null,
+      block_type: attachment.metadata.blockType ?? null,
+      block_id: attachment.metadata.blockId ?? null,
+      anchor_segment_id: attachment.metadata.anchorSegmentId ?? null,
+      unit_id: attachment.metadata.unitId ?? null,
+      layer_id: attachment.metadata.layerId ?? null,
+      analysis_id: attachment.metadata.analysisId ?? null,
+      supplement_id: attachment.metadata.supplementId ?? null,
+      source_context: attachment.metadata.sourceContext ?? null,
+      chunks: attachment.metadata.chunks ?? null,
     },
   };
 }

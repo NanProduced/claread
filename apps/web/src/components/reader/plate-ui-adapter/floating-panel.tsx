@@ -1,16 +1,13 @@
 "use client";
 
-import type { AriaRole, CSSProperties, MouseEvent, PointerEvent, ReactNode } from "react";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { cn } from "../../../lib/cn";
 
-interface ReaderFloatingPanelProps {
+interface ReaderFloatingPanelProps
+  extends Omit<ComponentPropsWithoutRef<"div">, "className" | "children"> {
   children: ReactNode;
   className?: string;
   floatingRef?: (node: HTMLDivElement | null) => void;
-  style?: CSSProperties;
-  role?: AriaRole;
-  onClick?: (event: MouseEvent<HTMLDivElement>) => void;
-  onPointerDown?: (event: PointerEvent<HTMLDivElement>) => void;
 }
 
 export function ReaderFloatingPanel({
@@ -21,6 +18,7 @@ export function ReaderFloatingPanel({
   role = "dialog",
   onClick,
   onPointerDown,
+  ...props
 }: ReaderFloatingPanelProps) {
   return (
     <div
@@ -34,6 +32,7 @@ export function ReaderFloatingPanel({
       style={style}
       onClick={onClick}
       onPointerDown={onPointerDown}
+      {...props}
     >
       {children}
     </div>

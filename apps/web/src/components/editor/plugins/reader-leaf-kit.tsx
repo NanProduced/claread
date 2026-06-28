@@ -14,8 +14,14 @@
  */
 import * as React from "react";
 import { createContext, useContext } from "react";
-import { createPlatePlugin, type PlateLeafProps } from "platejs/react";
+import {
+  createPlatePlugin,
+  type PlateLeafProps,
+  useEditorPlugin,
+  usePluginOption,
+} from "platejs/react";
 
+import { commentPlugin } from "@/components/editor/plugins/comment-kit";
 import type {
   ReaderRecordPlateGrammarMark,
   ReaderRecordPlateUserHighlightMark,
@@ -30,17 +36,18 @@ import {
   READER_VOCABULARY_MARK_KEY,
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
 
-// --- Mark styling helpers (mirror ReaderRecordPlateSurface.tsx) ---
-
-function vocabularyMarkClassName(mark: ReaderRecordPlateVocabularyMark): string {
+function vocabularyMarkClassName(
+  mark: ReaderRecordPlateVocabularyMark,
+  interactive: boolean,
+): string {
+  const cursorClassName = interactive ? "cursor-pointer" : "cursor-default";
   if (mark.vocabulary.itemType === "phrase_gloss") {
-    return "cursor-pointer rounded-sm bg-violet-50 underline decoration-violet-500/70 underline-offset-4 transition-colors hover:bg-violet-100";
+    return `${cursorClassName} rounded-[2px] underline decoration-violet-500/70 decoration-[1.5px] underline-offset-4 transition-colors hover:bg-violet-50/60`;
   }
   if (mark.vocabulary.itemType === "context_gloss") {
-    return "cursor-pointer rounded-sm bg-sky-50 underline decoration-sky-500/70 underline-offset-4 transition-colors hover:bg-sky-100";
+    return `${cursorClassName} rounded-[2px] underline decoration-sky-500/70 decoration-[1.5px] underline-offset-4 transition-colors hover:bg-sky-50/60`;
   }
-  // vocab_highlight: 加下划线统一视觉语言，与 phrase/context gloss 一致
-  return "cursor-pointer rounded-sm bg-amber-50 underline decoration-amber-500/70 underline-offset-4 transition-colors hover:bg-amber-100";
+  return `${cursorClassName} rounded-[2px] underline decoration-amber-500/70 decoration-[1.5px] underline-offset-4 transition-colors hover:bg-amber-50/60`;
 }
 
 function vocabularyMarkLabel(mark: ReaderRecordPlateVocabularyMark): string {
@@ -54,27 +61,67 @@ function vocabularyMarkLabel(mark: ReaderRecordPlateVocabularyMark): string {
 }
 
 function grammarMarkClassName(): string {
-  return "rounded-sm underline decoration-emerald-600/80 decoration-[1.5px] underline-offset-4 transition-colors hover:bg-emerald-50";
+  return "rounded-[2px] underline decoration-emerald-500/70 decoration-dotted decoration-[1.5px] underline-offset-4 transition-colors hover:bg-emerald-50/50";
 }
 
 function grammarMarkLabel(mark: ReaderRecordPlateGrammarMark): string {
   return `语法 · ${mark.grammarPoint}`;
 }
 
-function userHighlightMarkClassName(): string {
-  return "cursor-pointer rounded-sm bg-amber-100/80 ring-1 ring-amber-200/80 transition-colors hover:bg-amber-200/80";
+function userHighlightMarkClassName(mark: ReaderRecordPlateUserHighlightMark): string {
+  const color = mark.color ?? "warm_yellow";
+  if (color === "soft_blue" || color === "blue") {
+    return "cursor-pointer rounded-[3px] bg-sky-100/70 ring-1 ring-sky-200/70 transition-colors hover:bg-sky-200/70";
+  }
+  if (color === "soft_rose" || color === "rose") {
+    return "cursor-pointer rounded-[3px] bg-rose-100/70 ring-1 ring-rose-200/70 transition-colors hover:bg-rose-200/70";
+  }
+  return "cursor-pointer rounded-[3px] bg-amber-100/75 ring-1 ring-amber-200/75 transition-colors hover:bg-amber-200/75";
 }
 
 function userHighlightMarkLabel(): string {
   return "用户高亮";
 }
 
-function userNoteMarkClassName(): string {
-  return "cursor-pointer rounded-sm bg-blue-50/60 underline decoration-blue-500/80 decoration-dashed underline-offset-4 transition-colors hover:bg-blue-100/60";
+function userNoteMarkClassName({
+  active,
+  hover,
+}: {
+  active: boolean;
+  hover: boolean;
+}): string {
+  const stateClassName =
+    active || hover
+      ? "bg-blue-100/80 decoration-blue-600"
+      : "hover:bg-blue-50/70 decoration-blue-500/80";
+  return `cursor-pointer rounded-[2px] underline decoration-dashed decoration-[1.5px] underline-offset-4 transition-colors ${stateClassName}`;
 }
 
 function userNoteMarkLabel(): string {
   return "用户笔记";
+}
+
+function noteRangeLength(mark: ReaderRecordPlateUserNoteMark): number {
+  return Math.max(
+    0,
+    mark.anchor.segmentEndOffset - mark.anchor.segmentStartOffset,
+  );
+}
+
+function noteMarksFromLeaf(
+  data: PlateTextNode["user_note_data"],
+): ReaderRecordPlateUserNoteMark[] {
+  if (!data) {
+    return [];
+  }
+  const marks = Array.isArray(data) ? data : [data];
+  return [...marks].sort((a, b) => {
+    const byLength = noteRangeLength(b) - noteRangeLength(a);
+    if (byLength !== 0) {
+      return byLength;
+    }
+    return a.assetId.localeCompare(b.assetId);
+  });
 }
 
 // --- Callback Context ---
@@ -120,19 +167,26 @@ function VocabularyLeafComponent({
     return <span {...attributes}>{children}</span>;
   }
 
+  const interactive = mark.startsHere;
+
   return (
     <span
       {...attributes}
-      className={`${vocabularyMarkClassName(mark)} ${attributes?.className ?? ""}`.trim()}
+      className={`${vocabularyMarkClassName(mark, interactive)} ${attributes?.className ?? ""}`.trim()}
       aria-label={vocabularyMarkLabel(mark)}
       title={vocabularyMarkLabel(mark)}
       data-reader-record-mark-entry="stack"
       data-reader-record-mark-id={mark.id}
       data-reader-record-mark-kind={mark.kind}
-      onClick={(event: React.MouseEvent<HTMLElement>) => {
-        event.stopPropagation();
-        onActivateVocabulary?.(mark, event.currentTarget as HTMLElement);
-      }}
+      data-reader-record-mark-starts-here={mark.startsHere ? "true" : "false"}
+      onClick={
+        interactive
+          ? (event: React.MouseEvent<HTMLElement>) => {
+              event.stopPropagation();
+              onActivateVocabulary?.(mark, event.currentTarget as HTMLElement);
+            }
+          : undefined
+      }
     >
       {children}
     </span>
@@ -169,6 +223,7 @@ function GrammarLeafComponent({
       data-reader-record-mark-entry="stack"
       data-reader-record-mark-id={mark.id}
       data-reader-record-mark-kind={mark.kind}
+      data-reader-record-mark-starts-here={mark.startsHere ? "true" : "false"}
     >
       {children}
     </span>
@@ -200,7 +255,7 @@ function UserHighlightLeafComponent({
   return (
     <span
       {...attributes}
-      className={`${userHighlightMarkClassName()} ${attributes?.className ?? ""}`.trim()}
+      className={`${userHighlightMarkClassName(mark)} ${attributes?.className ?? ""}`.trim()}
       aria-label={userHighlightMarkLabel()}
       title={userHighlightMarkLabel()}
       data-reader-record-mark-entry="stack"
@@ -231,30 +286,58 @@ function UserNoteLeafComponent({
   leaf,
   attributes,
 }: PlateLeafProps) {
-  const mark = (leaf as unknown as PlateTextNode).user_note_data;
+  const marks = noteMarksFromLeaf(
+    (leaf as unknown as PlateTextNode).user_note_data,
+  );
   const { onActivateNote } = useReaderLeafActions();
+  const { setOption } = useEditorPlugin(commentPlugin);
+  const activeId = usePluginOption(commentPlugin, "activeId");
+  const hoverId = usePluginOption(commentPlugin, "hoverId");
 
-  if (!mark) {
+  if (marks.length === 0) {
     return <span {...attributes}>{children}</span>;
   }
 
-  return (
-    <span
-      {...attributes}
-      className={`${userNoteMarkClassName()} ${attributes?.className ?? ""}`.trim()}
-      aria-label={userNoteMarkLabel()}
-      title={userNoteMarkLabel()}
-      data-reader-record-mark-entry="stack"
-      data-reader-record-mark-id={mark.id}
-      data-reader-record-mark-kind={mark.kind}
-      onClick={(event: React.MouseEvent<HTMLElement>) => {
-        event.stopPropagation();
-        onActivateNote?.(mark, event.currentTarget as HTMLElement);
-      }}
-    >
-      {children}
-    </span>
-  );
+  const renderNoteSpan = (
+    mark: ReaderRecordPlateUserNoteMark,
+    content: React.ReactNode,
+    includeLeafAttributes: boolean,
+  ) => {
+    const active = activeId === mark.assetId;
+    const hover = hoverId === mark.assetId;
+    const className = `${userNoteMarkClassName({ active, hover })} ${
+      includeLeafAttributes ? (attributes?.className ?? "") : ""
+    }`.trim();
+
+    return (
+      <span
+        {...(includeLeafAttributes ? attributes : {})}
+        key={mark.id}
+        className={className}
+        aria-label={userNoteMarkLabel()}
+        title={userNoteMarkLabel()}
+        data-reader-record-mark-entry="stack"
+        data-reader-record-mark-id={mark.id}
+        data-reader-record-mark-kind={mark.kind}
+        data-reader-record-note-active={active ? "true" : "false"}
+        data-reader-record-note-hover={hover ? "true" : "false"}
+        onClick={(event: React.MouseEvent<HTMLElement>) => {
+          event.stopPropagation();
+          onActivateNote?.(mark, event.currentTarget as HTMLElement);
+        }}
+        onMouseEnter={() => setOption("hoverId", mark.assetId)}
+        onMouseLeave={() => setOption("hoverId", null)}
+      >
+        {content}
+      </span>
+    );
+  };
+
+  let content: React.ReactNode = children;
+  for (let index = marks.length - 1; index > 0; index -= 1) {
+    content = renderNoteSpan(marks[index], content, false);
+  }
+  return renderNoteSpan(marks[0], content, true);
 }
 
 export const ReaderUserNoteLeafPlugin = createPlatePlugin({

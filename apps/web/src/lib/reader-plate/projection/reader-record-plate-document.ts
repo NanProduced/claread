@@ -1,6 +1,5 @@
 import type {
   AnchorSegmentType,
-  ParsedDecisionState,
   ReaderBoundaryQuality,
   ReaderEnhancementCapability,
   ReaderEnhancementProgressDto,
@@ -17,12 +16,9 @@ import type {
   ReaderSourceBlockChildNodeDto,
   ReaderSourceBlockNodeDto,
   ReaderStableSegmentTextLeafDto,
-  ReaderStableSeparatorLeafDto,
   ReaderSnapshotUserAssetDto,
-  ReaderTextRangeAnchorDto,
   ReaderTranslationNodeDto,
   ReaderUnitNodeDto,
-  ReaderUnitType,
   ReaderVocabularyMarkDto,
   TranslationConfidence,
   VocabularyItemType,
@@ -44,7 +40,8 @@ export type ReaderRecordPlateDocumentSchemaVersion =
  * children is a flat array of standard Plate block types:
  * - paragraph: 原文段落（anchor segment 文本）
  * - blockquote: 译文引用块
- * - callout: grammar_note / sentence_analysis 增强层
+ * - callout: grammar_note / ask_supplement 增强层
+ * - sentence_analysis: 句子拆解增强层
  *
  * anchor_segment_id 和 UTF-16 偏移作为 text leaf 的 metadata 保留，
  * 选区读取从 leaf metadata 重建 anchor draft。
@@ -77,7 +74,8 @@ export interface ReaderRecordPlateDocument {
 export type ReaderRecordPlateBlock =
   | ReaderRecordPlateParagraphBlock
   | ReaderRecordPlateBlockquoteBlock
-  | ReaderRecordPlateCalloutBlock;
+  | ReaderRecordPlateCalloutBlock
+  | ReaderRecordPlateSentenceAnalysisBlock;
 
 /** 原文段落块 — 一个 anchor segment 对应一个 paragraph */
 export interface ReaderRecordPlateParagraphBlock {
@@ -117,7 +115,7 @@ export interface ReaderRecordPlateBlockquoteData {
   notes: string[];
 }
 
-/** Callout 增强层块 — grammar_note / sentence_analysis / ask_supplement */
+/** Callout 增强层块 — grammar_note / ask_supplement */
 export interface ReaderRecordPlateCalloutBlock {
   type: "callout";
   id: string;
@@ -128,7 +126,7 @@ export interface ReaderRecordPlateCalloutBlock {
   data: ReaderRecordPlateCalloutData;
 }
 
-export type ReaderRecordPlateCalloutVariant = "grammar" | "analysis" | "supplement";
+export type ReaderRecordPlateCalloutVariant = "grammar" | "supplement";
 
 export interface ReaderRecordPlateCalloutData {
   anchorSegmentId: string;
@@ -139,11 +137,6 @@ export interface ReaderRecordPlateCalloutData {
   grammarPoint?: string;
   pattern?: string | null;
   note?: string;
-  // sentence_analysis
-  analysisId?: string;
-  label?: string;
-  analysis?: string;
-  chunks?: ReaderSentenceAnalysisChunkDto[];
   // ask_supplement
   supplementId?: string;
   supplementType?: string;
@@ -152,6 +145,26 @@ export interface ReaderRecordPlateCalloutData {
   supplementCreatedAt?: string;
   createdFromTurnRunId?: string;
   lifecycleStatus?: string;
+}
+
+/** Sentence analysis 增强层块 — 独立 Plate element，不再伪装成 callout variant */
+export interface ReaderRecordPlateSentenceAnalysisBlock {
+  type: "sentence_analysis";
+  id: string;
+  icon: string;
+  /** Plate 节点树，由 projection 层 deserializeMarkdownToBlocks 生成 */
+  children: Descendant[];
+  data: ReaderRecordPlateSentenceAnalysisData;
+}
+
+export interface ReaderRecordPlateSentenceAnalysisData {
+  anchorSegmentId: string;
+  unitId: string;
+  layerId: string;
+  analysisId: string;
+  label: string;
+  analysis: string;
+  chunks: ReaderSentenceAnalysisChunkDto[];
 }
 
 /**
@@ -273,6 +286,7 @@ export interface ReaderRecordPlateUserHighlightMark {
   owner: "user";
   assetId: string;
   assetType: string;
+  color?: string | null;
   anchor: ReaderRecordPlateTextAnchor;
   createdAt?: string | null;
   updatedAt: string;
@@ -553,6 +567,7 @@ function buildUserAssetsBySegment(snapshot: ReaderPlateSnapshotDto): {
         owner: "user",
         assetId: asset.asset_id,
         assetType: asset.asset_type,
+        color: asset.color ?? null,
         anchor,
         createdAt: asset.created_at,
         updatedAt: asset.updated_at,
@@ -590,11 +605,22 @@ function marksForRange(
   startUtf16: number,
   endUtf16: number,
 ): ReaderRecordPlateMark[] {
-  return marks.filter(
-    (mark) =>
-      mark.anchor.segmentStartOffset <= startUtf16 &&
-      mark.anchor.segmentEndOffset >= endUtf16,
-  );
+  return marks
+    .filter(
+      (mark) =>
+        mark.anchor.segmentStartOffset <= startUtf16 &&
+        mark.anchor.segmentEndOffset >= endUtf16,
+    )
+    .map((mark) => {
+      if ("startsHere" in mark && "endsHere" in mark) {
+        return {
+          ...mark,
+          startsHere: mark.anchor.segmentStartOffset === startUtf16,
+          endsHere: mark.anchor.segmentEndOffset === endUtf16,
+        };
+      }
+      return mark;
+    });
 }
 
 function markBoundariesForLeaf(
@@ -851,17 +877,16 @@ function buildGrammarCalloutBlocks(
   return callouts;
 }
 
-function buildSentenceAnalysisCalloutBlocks(
+function buildSentenceAnalysisBlocks(
   segment: Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }>,
   context: UnitProjectionContext,
-): ReaderRecordPlateCalloutBlock[] {
+): ReaderRecordPlateSentenceAnalysisBlock[] {
   const analyses =
     context.sentenceAnalysisBySegment.get(segment.anchor_segment_id) ?? [];
 
   return analyses.map((node) => ({
-    type: "callout" as const,
-    id: `callout:analysis:${node.analysis_id}`,
-    variant: "analysis" as const,
+    type: "sentence_analysis" as const,
+    id: `sentence_analysis:${node.analysis_id}`,
     icon: "🔍",
     children: deserializeMarkdownToBlocks(node.analysis),
     data: {
@@ -956,8 +981,8 @@ function mapUnitToBlocks(
           blocks.push(buildParagraphBlock(sourceChild, context));
           // 2. grammar_note callout blocks (showCue=true)
           blocks.push(...buildGrammarCalloutBlocks(sourceChild));
-          // 3. sentence_analysis callout blocks
-          blocks.push(...buildSentenceAnalysisCalloutBlocks(sourceChild, context));
+          // 3. sentence_analysis blocks
+          blocks.push(...buildSentenceAnalysisBlocks(sourceChild, context));
           // 4. ask_supplement callout blocks
           blocks.push(...buildSupplementCalloutBlocks(sourceChild, context));
         }

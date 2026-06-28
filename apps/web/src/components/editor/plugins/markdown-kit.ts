@@ -12,7 +12,8 @@
  * 注：basic-blocks-kit / basic-marks-kit 不需要单独创建。
  * 测试验证 MarkdownPlugin 单独使用即可正确 deserialize 列表、引用、标题、
  * 加粗、斜体、代码等 markdown 语法为标准 Plate 节点树。
- * 渲染层（PlateStatic）使用自定义 component map，不依赖 @platejs/basic-* 包。
+ * 渲染层在 reader-blocks-kit 中为这些标准节点注册本地薄 Plate plugins，
+ * 不走手动 React DOM renderer。
  */
 import { MarkdownPlugin } from "@platejs/markdown";
 import remarkGfm from "remark-gfm";

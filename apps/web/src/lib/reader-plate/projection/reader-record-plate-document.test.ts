@@ -17,10 +17,10 @@ import {
 import {
   READER_RECORD_PLATE_DOCUMENT_SCHEMA_VERSION,
   projectReaderPlateSnapshotToReaderRecordPlateDocument,
-  type ReaderRecordPlateBlock,
   type ReaderRecordPlateBlockquoteBlock,
   type ReaderRecordPlateCalloutBlock,
   type ReaderRecordPlateParagraphBlock,
+  type ReaderRecordPlateSentenceAnalysisBlock,
 } from "./reader-record-plate-document";
 
 const FIRST_TEXT = "Institutional memory shapes policy choices.";
@@ -389,7 +389,7 @@ function firstParagraph(
 }
 
 function firstCallout(
-  variant?: "grammar" | "analysis" | "supplement",
+  variant?: "grammar" | "supplement",
   document = projectReaderPlateSnapshotToReaderRecordPlateDocument(makeSnapshot()),
 ): ReaderRecordPlateCalloutBlock {
   const block = document.children.find(
@@ -402,6 +402,16 @@ function firstCallout(
     throw new Error(`Expected a ${variant ?? "callout"} block`);
   }
   return block as ReaderRecordPlateCalloutBlock;
+}
+
+function firstSentenceAnalysis(
+  document = projectReaderPlateSnapshotToReaderRecordPlateDocument(makeSnapshot()),
+): ReaderRecordPlateSentenceAnalysisBlock {
+  const block = document.children.find((child) => child.type === "sentence_analysis");
+  if (!block) {
+    throw new Error("Expected a sentence_analysis block");
+  }
+  return block as ReaderRecordPlateSentenceAnalysisBlock;
 }
 
 function firstBlockquote(
@@ -503,13 +513,13 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
     });
   });
 
-  it("projects sentence analysis as callout blocks with analysis variant", () => {
-    const analysisCallout = firstCallout("analysis");
+  it("projects sentence analysis as independent sentence_analysis blocks", () => {
+    const analysisBlock = firstSentenceAnalysis();
 
-    expect(analysisCallout.id).toBe("callout:analysis:analysis_seg_1");
-    expect(analysisCallout.variant).toBe("analysis");
-    expect(analysisCallout.icon).toBe("🔍");
-    expect(analysisCallout.data).toMatchObject({
+    expect(analysisBlock.type).toBe("sentence_analysis");
+    expect(analysisBlock.id).toBe("sentence_analysis:analysis_seg_1");
+    expect(analysisBlock.icon).toBe("🔍");
+    expect(analysisBlock.data).toMatchObject({
       anchorSegmentId: "seg_1",
       unitId: "unit_1",
       layerId: "layer_sentence_analysis_1",
@@ -518,10 +528,16 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
       analysis:
         "Institutional memory is the subject; shapes is the predicate.",
     });
-    expect(analysisCallout.data.chunks).toEqual([
+    expect(analysisBlock.data.chunks).toEqual([
       { order: 1, label: "subject", text: "Institutional memory" },
       { order: 2, label: "predicate", text: "shapes policy choices" },
     ]);
+    expect(analysisBlock.children[0]).toMatchObject({
+      type: "p",
+      children: [
+        { text: "Institutional memory is the subject; shapes is the predicate." },
+      ],
+    });
   });
 
   it("projects user highlight assets as user-owned highlight marks", () => {
@@ -576,7 +592,7 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
     });
   });
 
-  it("emits blocks in order: paragraph, grammar callout, analysis callout, blockquote", () => {
+  it("emits blocks in order: paragraph, grammar callout, sentence analysis, blockquote", () => {
     const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
       makeSnapshot(),
     );
@@ -585,6 +601,7 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
     expect(types).toContain("paragraph");
     expect(types).toContain("blockquote");
     expect(types).toContain("callout");
+    expect(types).toContain("sentence_analysis");
 
     const firstParagraphIndex = types.indexOf("paragraph");
     const grammarCalloutIndex = types.findIndex(
@@ -594,17 +611,13 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
         (document.children[i] as ReaderRecordPlateCalloutBlock).variant ===
           "grammar",
     );
-    const analysisCalloutIndex = types.findIndex(
-      (t, i) =>
-        t === "callout" &&
-        i > firstParagraphIndex &&
-        (document.children[i] as ReaderRecordPlateCalloutBlock).variant ===
-          "analysis",
+    const analysisBlockIndex = types.findIndex(
+      (t, i) => t === "sentence_analysis" && i > firstParagraphIndex,
     );
     const blockquoteIndex = types.indexOf("blockquote");
 
     expect(grammarCalloutIndex).toBeGreaterThan(firstParagraphIndex);
-    expect(analysisCalloutIndex).toBeGreaterThan(firstParagraphIndex);
+    expect(analysisBlockIndex).toBeGreaterThan(firstParagraphIndex);
     expect(blockquoteIndex).toBeGreaterThan(firstParagraphIndex);
   });
 
@@ -707,7 +720,7 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
     });
   });
 
-  it("emits supplement callout after analysis callout in block order", () => {
+  it("emits supplement callout after sentence analysis in block order", () => {
     const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
       makeSnapshot(undefined, [], [makeSupplement()]),
     );
@@ -719,12 +732,7 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
         (document.children[i] as ReaderRecordPlateCalloutBlock).variant ===
           "supplement",
     );
-    const analysisIndex = types.findIndex(
-      (t, i) =>
-        t === "callout" &&
-        (document.children[i] as ReaderRecordPlateCalloutBlock).variant ===
-          "analysis",
-    );
+    const analysisIndex = types.findIndex((t) => t === "sentence_analysis");
 
     expect(supplementIndex).toBeGreaterThanOrEqual(0);
     expect(analysisIndex).toBeGreaterThanOrEqual(0);

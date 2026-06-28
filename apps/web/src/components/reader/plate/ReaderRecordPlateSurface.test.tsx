@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { computeUtf16FNV1a } from "@claread/contracts";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -20,6 +21,47 @@ import {
   type ReaderVocabularyMarkDto,
 } from "@/types/api/reader-plate";
 import type { WebDictResult } from "@/types/api/dict";
+import {
+  ReaderAskToolbarButton,
+  ReaderCopyToolbarButton,
+  ReaderFloatingToolbarButtons,
+  ReaderHighlightToolbarButton,
+  ReaderLookupToolbarButton,
+  ReaderNoteToolbarButton,
+  ReaderToolbarActionsProvider,
+  type ReaderToolbarActions,
+  type ReaderToolbarActionId,
+} from "@/components/editor/plugins/reader-floating-toolbar-buttons";
+import { Toolbar } from "@/components/ui/toolbar";
+import { TooltipProvider } from "@/components/ui/tooltip";
+
+vi.mock("@/components/editor/plugins/floating-toolbar-kit", async () => {
+  const { createPlatePlugin } = await import("platejs/react");
+  const { ReaderFloatingToolbarButtons } = await import(
+    "@/components/editor/plugins/reader-floating-toolbar-buttons"
+  );
+  const { Toolbar } = await import("@/components/ui/toolbar");
+  const { TooltipProvider } = await import("@/components/ui/tooltip");
+
+  return {
+    FloatingToolbarKit: [
+      createPlatePlugin({
+        key: "reader-floating-toolbar-test-harness",
+        render: {
+          afterEditable: () => (
+            <div data-testid="reader-record-toolbar-test-harness">
+              <TooltipProvider>
+                <Toolbar>
+                  <ReaderFloatingToolbarButtons />
+                </Toolbar>
+              </TooltipProvider>
+            </div>
+          ),
+        },
+      }),
+    ],
+  };
+});
 
 import { ReaderRecordPlateSurface } from "./ReaderRecordPlateSurface";
 
@@ -43,10 +85,24 @@ beforeEach(() => {
       },
     })) as unknown as Range["getBoundingClientRect"];
   }
+  vi.stubGlobal(
+    "ResizeObserver",
+    class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
 });
 
 afterEach(() => {
   window.getSelection()?.removeAllRanges();
+  try {
+    window.localStorage?.removeItem?.("claread.reader.settings.v4");
+    window.localStorage?.removeItem?.("claread.reader.themeName");
+  } catch {
+    // Ignore jsdom localStorage variants that do not expose the full Storage API.
+  }
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -131,7 +187,19 @@ function makeUserAsset(
   };
 }
 
-function makeUnit(): ReaderUnitNodeDto {
+function makeUnit({
+  vocabularyMarks = [makeVocabularyMark()],
+  grammarMarks = [makeGrammarMark()],
+  analysis = "Institutional memory is the subject.",
+  analysisChunks = [
+    { order: 1, label: "subject", text: "Institutional memory" },
+  ],
+}: {
+  vocabularyMarks?: ReaderVocabularyMarkDto[];
+  grammarMarks?: ReaderGrammarNoteMarkDto[];
+  analysis?: string;
+  analysisChunks?: Array<{ order: number; label: string; text: string }>;
+} = {}): ReaderUnitNodeDto {
   return {
     type: "reader_unit",
     owner: "stable",
@@ -179,8 +247,8 @@ function makeUnit(): ReaderUnitNodeDto {
                 anchor_segment_id: "seg_1",
                 segment_start_utf16: 0,
                 segment_end_utf16: SOURCE_TEXT.length,
-                reader_vocabulary_marks: [makeVocabularyMark()],
-                reader_grammar_note_marks: [makeGrammarMark()],
+                reader_vocabulary_marks: vocabularyMarks,
+                reader_grammar_note_marks: grammarMarks,
               },
             ],
           },
@@ -213,9 +281,9 @@ function makeUnit(): ReaderUnitNodeDto {
         anchor_segment_id: "seg_1",
         selected_text: SOURCE_TEXT,
         label: "subject and predicate",
-        analysis: "Institutional memory is the subject.",
-        chunks: [{ order: 1, label: "subject", text: "Institutional memory" }],
-        children: [{ text: "Institutional memory is the subject." }],
+        analysis,
+        chunks: analysisChunks,
+        children: [{ text: analysis }],
       },
     ],
   };
@@ -311,6 +379,43 @@ function makeSnapshot(
     user_assets: userAssets,
     parsed_decisions: [],
     value: [makeUnit()],
+  };
+}
+
+function makeOverlappingMarkSnapshot(): ReaderPlateSnapshotDto {
+  return {
+    ...makeSnapshot(),
+    value: [
+      makeUnit({
+        vocabularyMarks: [
+          makeVocabularyMark({
+            mark_id: "vocab_split_mark",
+            start_offset: 0,
+            end_offset: 20,
+            segment_start_utf16: 0,
+            segment_end_utf16: 20,
+            selected_text: "Institutional memory",
+            phrase: "Institutional memory",
+            gloss: "制度记忆",
+            starts_here: true,
+            ends_here: true,
+          }),
+        ],
+        grammarMarks: [
+          makeGrammarMark({
+            mark_id: "grammar_split_mark",
+            start_offset: 14,
+            end_offset: 27,
+            segment_start_utf16: 14,
+            segment_end_utf16: 27,
+            selected_text: "memory shapes",
+            grammar_point: "noun phrase plus predicate",
+            starts_here: true,
+            ends_here: true,
+          }),
+        ],
+      }),
+    ],
   };
 }
 
@@ -435,6 +540,27 @@ function makeSplitSegmentSnapshot(): ReaderPlateSnapshotDto {
   };
 }
 
+function makeSplitSegmentTranslationSnapshot(): ReaderPlateSnapshotDto {
+  const snapshot = makeSplitSegmentSnapshot();
+  const unit = snapshot.value[0];
+  const translation = makeUnit().children.find(
+    (child) => child.type === "reader_translation",
+  );
+  if (!translation) {
+    throw new Error("Expected translation fixture");
+  }
+
+  return {
+    ...snapshot,
+    value: [
+      {
+        ...unit,
+        children: [...unit.children, translation],
+      },
+    ],
+  };
+}
+
 function makeDictionaryEntryResult(query = "memory"): WebDictResult {
   return {
     kind: "entry",
@@ -484,7 +610,19 @@ function firstTextNode(element: HTMLElement): Text {
   return node as Text;
 }
 
+function focusNearestEditor(element: HTMLElement) {
+  const editor = element.closest<HTMLElement>(
+    '[contenteditable="true"], [data-slate-editor="true"]',
+  );
+  if (!editor) {
+    return;
+  }
+  editor.focus();
+  fireEvent.focus(editor);
+}
+
 function selectTextInElement(element: HTMLElement, startOffset: number, endOffset: number) {
+  focusNearestEditor(element);
   const textNode = firstTextNode(element);
   const range = document.createRange();
   range.setStart(textNode, startOffset);
@@ -501,6 +639,7 @@ function selectAcrossElements(
   endElement: HTMLElement,
   endOffset: number,
 ) {
+  focusNearestEditor(startElement);
   const range = document.createRange();
   range.setStart(firstTextNode(startElement), startOffset);
   range.setEnd(firstTextNode(endElement), endOffset);
@@ -508,6 +647,67 @@ function selectAcrossElements(
   selection?.removeAllRanges();
   selection?.addRange(range);
   document.dispatchEvent(new Event("selectionchange"));
+}
+
+function selectionActionButton(
+  container: HTMLElement,
+  action: "lookup" | "copy" | "ask" | "highlight" | "note",
+): HTMLButtonElement | null {
+  return container.querySelector<HTMLButtonElement>(
+    `[data-reader-record-toolbar-action="${action}"]`,
+  );
+}
+
+async function waitForSelectionAction(
+  container: HTMLElement,
+  action: "lookup" | "copy" | "ask" | "highlight" | "note",
+) {
+  return waitFor(() => {
+    const button = selectionActionButton(container, action);
+    if (!button) {
+      throw new Error(`Selection action not found: ${action}`);
+    }
+    return button;
+  });
+}
+
+function makeToolbarActions(
+  state: Partial<ReaderToolbarActions["state"]> = {},
+): ReaderToolbarActions {
+  const enabled = { disabled: false };
+  return {
+    onAsk: vi.fn(),
+    onCopy: vi.fn(),
+    onHighlight: vi.fn(),
+    onNote: vi.fn(),
+    onLookup: vi.fn(),
+    state: {
+      lookup: enabled,
+      copy: enabled,
+      ask: enabled,
+      highlight: enabled,
+      note: enabled,
+      ...state,
+    },
+  };
+}
+
+function renderToolbarHarness(
+  actions = makeToolbarActions(),
+  toolbarChildren: ReactNode = <ReaderFloatingToolbarButtons />,
+) {
+  return {
+    actions,
+    ...render(
+      <ReaderToolbarActionsProvider value={actions}>
+        <TooltipProvider>
+          <Toolbar>
+            {toolbarChildren}
+          </Toolbar>
+        </TooltipProvider>
+      </ReaderToolbarActionsProvider>,
+    ),
+  };
 }
 
 function expectedMemoryAnchor() {
@@ -525,11 +725,6 @@ function expectedMemoryAnchor() {
     hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
     scope: "stable_source",
   };
-}
-
-function postedJsonBody(fetchMock: ReturnType<typeof vi.fn>) {
-  const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
-  return JSON.parse(String(init?.body)) as Record<string, unknown>;
 }
 
 function installReaderAskFetchMock(recordId = "record_1") {
@@ -624,6 +819,18 @@ function installReaderAskFetchMock(recordId = "record_1") {
       );
     }
 
+    if (
+      requestUrl.pathname === "/api/web/reader-ask/threads/thread-rr-1/messages/stream" &&
+      requestUrl.searchParams.get("record_scope") === "reading_record"
+    ) {
+      return Promise.resolve(
+        new Response("", {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      );
+    }
+
     return Promise.resolve(
       new Response(
         JSON.stringify({
@@ -639,6 +846,82 @@ function installReaderAskFetchMock(recordId = "record_1") {
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+function installReaderRecordWriteFetchMock() {
+  const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+    const requestUrl = new URL(String(input), "https://example.test");
+    if (requestUrl.pathname.includes("/api/web/favorites")) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, favorited: false }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }
+
+    if (
+      requestUrl.pathname === "/api/web/reading-record/highlights" ||
+      requestUrl.pathname === "/api/web/reading-record/notes"
+    ) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            status: "created",
+            item: {},
+            session: { state: "signed_in" },
+          }),
+          {
+            status: 201,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      );
+    }
+
+    return Promise.resolve(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+async function sendAskComposerMessageAndReadFirstAttachment(
+  fetchMock: ReturnType<typeof vi.fn>,
+  content = "解释这个选区",
+) {
+  await waitFor(() => {
+    expect(screen.getByPlaceholderText("继续问这篇文章…")).toBeTruthy();
+  });
+  fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+    target: { value: content },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+  await waitFor(() => {
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/messages/stream"),
+      ),
+    ).toBe(true);
+  });
+
+  const streamCall = fetchMock.mock.calls.findLast(([input]) =>
+    String(input).includes("/messages/stream"),
+  );
+  const body = JSON.parse(String(streamCall?.[1]?.body)) as {
+    attachments: Array<{
+      selected_text?: string | null;
+      target_key?: string | null;
+      metadata: Record<string, unknown>;
+    }>;
+  };
+  return body.attachments[0];
 }
 
 describe("ReaderRecordPlateSurface", () => {
@@ -669,29 +952,193 @@ describe("ReaderRecordPlateSurface", () => {
     expect(paragraph?.textContent).not.toContain(TRANSLATION_TEXT);
   });
 
-  it("renders grammar and sentence analysis as callout blocks with variant attributes", () => {
+  it("renders grammar callout and sentence analysis as separate Plate blocks", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
     const grammarCallout = container.querySelector<HTMLElement>(
       '[data-reader-record-node="callout"][data-callout-variant="grammar"]',
     );
-    const analysisCallout = container.querySelector<HTMLElement>(
-      '[data-reader-record-node="callout"][data-callout-variant="analysis"]',
+    const analysisBlock = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="sentence-analysis"][data-reader-record-sentence-analysis-block="true"]',
     );
 
     expect(grammarCallout).not.toBeNull();
+    expect(grammarCallout?.dataset.readerRecordCallout).toBe("true");
     expect(grammarCallout?.textContent).toContain("predicate verb");
     expect(grammarCallout?.textContent).toContain(
       "shapes is the predicate verb.",
     );
     expect(grammarCallout?.classList.contains("reader-record-plate-callout--grammar")).toBe(true);
 
-    expect(analysisCallout).not.toBeNull();
-    expect(analysisCallout?.textContent).toContain("subject and predicate");
-    expect(analysisCallout?.textContent).toContain(
+    expect(analysisBlock).not.toBeNull();
+    expect(analysisBlock?.dataset.readerRecordCallout).toBeUndefined();
+    expect(analysisBlock?.dataset.readerRecordSentenceAnalysisElement).toBe(
+      "reader_sentence_analysis",
+    );
+    expect(analysisBlock?.textContent).toContain("subject and predicate");
+    expect(analysisBlock?.textContent).toContain(
       "Institutional memory is the subject.",
     );
-    expect(analysisCallout?.classList.contains("reader-record-plate-callout--analysis")).toBe(true);
+    expect(analysisBlock?.classList.contains("reader-record-plate-sentence-analysis")).toBe(true);
+    expect(
+      analysisBlock?.dataset.readerRecordSentenceAnalysisBlock,
+    ).toBe("true");
+    expect(
+      analysisBlock?.querySelector(
+        '[data-reader-record-sentence-analysis-chunks="plate"]',
+      )?.textContent,
+    ).toContain("subject");
+  });
+
+  it("renders enhancement markdown through Slate-managed Plate children", () => {
+    const markdownSnapshot = {
+      ...makeSnapshot(),
+      value: [
+        makeUnit({
+          grammarMarks: [
+            makeGrammarMark({
+              note:
+                "### Pattern\n\n**shapes** uses `subject + verb`.\n\n- Keeps policy choices active.\n\n```txt\nsubject -> verb\n```\n\n---\n\n> Read the verb.",
+            }),
+          ],
+          analysis:
+            "**Institutional memory** anchors the sentence.\n\n1. Find the subject\n2. Read the predicate",
+          analysisChunks: [
+            { order: 1, label: "subject", text: "Institutional memory" },
+            { order: 2, label: "predicate", text: "shapes policy choices" },
+          ],
+        }),
+      ],
+    };
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={markdownSnapshot} />,
+    );
+
+    const grammarCallout = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="callout"][data-callout-variant="grammar"]',
+    );
+    const analysisBlock = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="sentence-analysis"][data-reader-record-sentence-analysis-block="true"]',
+    );
+
+    expect(
+      grammarCallout?.querySelector(
+        '[data-reader-record-markdown-content="plate"] [data-slate-node="element"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      analysisBlock?.querySelector(
+        '[data-reader-record-markdown-content="plate"] [data-slate-node="element"]',
+      ),
+    ).not.toBeNull();
+    expect(grammarCallout?.querySelector("strong")?.textContent).toBe("shapes");
+    expect(grammarCallout?.querySelector("code")?.textContent).toBe(
+      "subject + verb",
+    );
+    expect(grammarCallout?.querySelector("li")?.textContent).toContain(
+      "Keeps policy choices active.",
+    );
+    expect(grammarCallout?.querySelector("h3")?.textContent).toContain("Pattern");
+    expect(grammarCallout?.querySelector("pre")?.textContent).toContain(
+      "subject -> verb",
+    );
+    expect(grammarCallout?.querySelector("hr")).not.toBeNull();
+    expect(grammarCallout?.querySelector("blockquote")?.textContent).toContain(
+      "Read the verb",
+    );
+    expect(analysisBlock?.querySelector("strong")?.textContent).toContain(
+      "Institutional memory",
+    );
+    expect(analysisBlock?.querySelector("ol")?.textContent).toContain(
+      "Read the predicate",
+    );
+    expect(analysisBlock?.innerHTML).not.toContain("<script");
+
+    const blockKitSource = readFileSync(
+      resolve(process.cwd(), "src/components/editor/plugins/reader-blocks-kit.tsx"),
+      "utf8",
+    );
+    expect(blockKitSource).not.toMatch(/CalloutMarkdownRenderer/);
+    expect(blockKitSource).not.toMatch(/dangerouslySetInnerHTML/);
+  });
+
+  it("switches between intensive and immersive document visibility", async () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([makeUserAsset()])} />,
+    );
+
+    expect(
+      container.querySelector('[data-reader-record-node="blockquote"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-callout-variant="grammar"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-reader-record-node="sentence-analysis"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-reader-record-mark-id="grammar_mark_1"]'),
+    ).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "切换到沉浸模式" }));
+
+    await waitFor(() => {
+      expect(
+        container.querySelector('[data-reader-record-node="blockquote"]'),
+      ).toBeNull();
+    });
+    expect(
+      container.querySelector('[data-callout-variant="grammar"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-reader-record-node="sentence-analysis"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-reader-record-mark-id="grammar_mark_1"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-reader-record-mark-id="vocab_mark_1"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(
+        '[data-reader-record-mark-id="user_highlight:asset_highlight_1"]',
+      ),
+    ).not.toBeNull();
+  });
+
+  it("does not keep hidden enhancement selection context after switching to immersive mode", async () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const blockquote = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquote).not.toBeNull();
+    if (!blockquote) {
+      throw new Error("Expected blockquote block");
+    }
+
+    selectTextInElement(blockquote, 0, 4);
+    const actions = screen.getByTestId("reader-record-plate-selection-state");
+    await waitFor(() => {
+      expect(actions.dataset.readerRecordSelectionSurfaceKind).toBe("translation");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "切换到沉浸模式" }));
+    await waitFor(() => {
+      expect(
+        container.querySelector('[data-reader-record-node="blockquote"]'),
+      ).toBeNull();
+    });
+    document.dispatchEvent(new Event("selectionchange"));
+
+    await waitFor(() => {
+      expect(actions.dataset.readerRecordSelectionSurfaceKind).not.toBe("translation");
+    });
+    expect(
+      container.querySelector('[data-callout-variant="grammar"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-reader-record-node="sentence-analysis"]'),
+    ).toBeNull();
   });
 
   it("renders vocab and grammar marks with locatable data attributes", () => {
@@ -708,6 +1155,49 @@ describe("ReaderRecordPlateSurface", () => {
     expect(grammar?.dataset.readerRecordMarkKind).toBe("grammar_note");
   });
 
+  it("keeps vocabulary and grammar visuals on continuation leaves split by overlapping marks", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeOverlappingMarkSnapshot()} />,
+    );
+
+    const vocabFragments = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-mark-id="vocab_split_mark"]',
+      ),
+    );
+    const grammarFragments = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-mark-id="grammar_split_mark"]',
+      ),
+    );
+
+    expect(vocabFragments).toHaveLength(2);
+    expect(grammarFragments).toHaveLength(2);
+    expect(vocabFragments.map((fragment) => fragment.textContent)).toEqual([
+      "Institutional ",
+      "memory",
+    ]);
+    expect(grammarFragments.map((fragment) => fragment.textContent)).toEqual([
+      "memory",
+      " shapes",
+    ]);
+
+    for (const fragment of vocabFragments) {
+      expect(fragment.className).toContain("underline");
+      expect(fragment.className).toContain("decoration-violet");
+      expect(fragment.dataset.readerRecordMarkKind).toBe("phrase_gloss");
+    }
+    for (const fragment of grammarFragments) {
+      expect(fragment.className).toContain("underline");
+      expect(fragment.className).toContain("decoration-dotted");
+      expect(fragment.dataset.readerRecordMarkKind).toBe("grammar_note");
+    }
+    expect(vocabFragments[0]?.dataset.readerRecordMarkStartsHere).toBe("true");
+    expect(vocabFragments[1]?.dataset.readerRecordMarkStartsHere).toBe("false");
+    expect(grammarFragments[0]?.dataset.readerRecordMarkStartsHere).toBe("true");
+    expect(grammarFragments[1]?.dataset.readerRecordMarkStartsHere).toBe("false");
+  });
+
   it("renders user highlight marks with stable asset attributes", () => {
     const { container } = render(
       <ReaderRecordPlateSurface snapshot={makeSnapshot([makeUserAsset()])} />,
@@ -720,6 +1210,26 @@ describe("ReaderRecordPlateSurface", () => {
     expect(highlight?.dataset.readerRecordMarkEntry).toBe("stack");
     expect(highlight?.dataset.readerRecordMarkKind).toBe("user_highlight");
     expect(highlight?.textContent).toBe("memory");
+  });
+
+  it("falls back legacy user highlight colors to the yellow visual treatment", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface
+        snapshot={makeSnapshot([
+          makeUserAsset({
+            color: "soft_purple",
+          }),
+        ])}
+      />,
+    );
+
+    const highlight = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="user_highlight:asset_highlight_1"]',
+    );
+
+    expect(highlight?.className).toContain("bg-amber");
+    expect(highlight?.className).not.toContain("bg-violet");
+    expect(highlight?.className).not.toContain("bg-emerald");
   });
 
   it("keeps system marks and user marks coexisting on the source text", () => {
@@ -780,27 +1290,128 @@ describe("ReaderRecordPlateSurface", () => {
     );
   });
 
-  it("keeps context actions disabled until there is a valid selection", () => {
+  it("keeps Plate toolbar as the only selection action surface and disables it when idle", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
-    const actions = screen.getByTestId("reader-record-plate-disabled-actions");
+    const actions = screen.getByTestId("reader-record-plate-selection-state");
 
-    expect(actions.dataset.readerRecordActions).toBe("selection-context");
+    expect(actions.dataset.readerRecordActions).toBe("selection-state");
     expect(actions.dataset.readerRecordActionMode).toBe("idle");
     expect(
       actions.querySelector('[data-reader-record-action-hint]')?.textContent,
     ).toContain("划取原文后");
 
-    for (const action of [
-      "lookup",
-      "copy",
-      "ask",
-      "highlight",
-      "note",
-      "feedback",
-    ]) {
-      expect(
-        container.querySelector(`[data-reader-record-action="${action}"]`),
-      ).toBeNull();
+    const toolbarButtons = container.querySelectorAll<HTMLButtonElement>(
+      "[data-reader-record-toolbar-action]",
+    );
+    expect(toolbarButtons).toHaveLength(5);
+    for (const button of toolbarButtons) {
+      expect(button.disabled).toBe(true);
+      expect(button.dataset.readerRecordDisabledReason).toBe("请选择稳定原文后再操作");
+    }
+    expect(container.querySelector('[data-reader-record-action="feedback"]')).toBeNull();
+    expect(container.querySelector('[data-reader-record-actions="selection-context"]')).toBeNull();
+    expect(container.querySelector("[data-reader-record-test-action]")).toBeNull();
+  });
+
+  it("renders the real Plate toolbar button set with disabled semantics in the toolbar harness", () => {
+    const { container, actions } = renderToolbarHarness(
+      makeToolbarActions({
+        lookup: { disabled: true, reason: "暂不支持跨段或非稳定原文选区" },
+      }),
+    );
+
+    const toolbarButtons = container.querySelectorAll<HTMLButtonElement>(
+      "[data-reader-record-toolbar-action]",
+    );
+    expect(toolbarButtons).toHaveLength(5);
+    expect(container.querySelector("[data-reader-record-test-action]")).toBeNull();
+
+    const lookup = container.querySelector<HTMLButtonElement>(
+      '[data-reader-record-toolbar-action="lookup"]',
+    );
+    const copy = container.querySelector<HTMLButtonElement>(
+      '[data-reader-record-toolbar-action="copy"]',
+    );
+    expect(lookup?.disabled).toBe(true);
+    expect(lookup?.dataset.readerRecordDisabledReason).toBe(
+      "暂不支持跨段或非稳定原文选区",
+    );
+    expect(copy?.disabled).toBe(false);
+
+    if (!lookup) {
+      throw new Error("Expected lookup toolbar button");
+    }
+    if (!copy) {
+      throw new Error("Expected copy toolbar button");
+    }
+    fireEvent.click(copy);
+    expect(actions.onCopy).toHaveBeenCalledTimes(1);
+    fireEvent.click(lookup);
+    expect(actions.onLookup).not.toHaveBeenCalled();
+  });
+
+  it("keeps each reader toolbar button as a Plate-style primitive with disabled reason and click forwarding", () => {
+    const cases: Array<{
+      action: ReaderToolbarActionId;
+      component: ReactNode;
+      handler: keyof Pick<
+        ReaderToolbarActions,
+        "onLookup" | "onCopy" | "onAsk" | "onHighlight" | "onNote"
+      >;
+    }> = [
+      { action: "lookup", component: <ReaderLookupToolbarButton />, handler: "onLookup" },
+      { action: "copy", component: <ReaderCopyToolbarButton />, handler: "onCopy" },
+      { action: "ask", component: <ReaderAskToolbarButton />, handler: "onAsk" },
+      {
+        action: "highlight",
+        component: <ReaderHighlightToolbarButton />,
+        handler: "onHighlight",
+      },
+      { action: "note", component: <ReaderNoteToolbarButton />, handler: "onNote" },
+    ];
+
+    for (const item of cases) {
+      const enabledActions = makeToolbarActions();
+      const enabledHarness = renderToolbarHarness(
+        enabledActions,
+        item.component,
+      );
+      const enabledButton = enabledHarness.container.querySelector<HTMLButtonElement>(
+        `[data-reader-record-toolbar-action="${item.action}"]`,
+      );
+      expect(enabledButton).not.toBeNull();
+      expect(enabledButton?.disabled).toBe(false);
+      if (!enabledButton) {
+        throw new Error(`Expected enabled toolbar button: ${item.action}`);
+      }
+      fireEvent.click(enabledButton);
+      expect(enabledActions[item.handler]).toHaveBeenCalledTimes(1);
+      enabledHarness.unmount();
+
+      const disabledActions = makeToolbarActions({
+        [item.action]: {
+          disabled: true,
+          reason: "暂不支持跨段或非稳定原文选区",
+        },
+      });
+      const disabledHarness = renderToolbarHarness(
+        disabledActions,
+        item.component,
+      );
+      const disabledButton = disabledHarness.container.querySelector<HTMLButtonElement>(
+        `[data-reader-record-toolbar-action="${item.action}"]`,
+      );
+      expect(disabledButton).not.toBeNull();
+      expect(disabledButton?.disabled).toBe(true);
+      expect(disabledButton?.dataset.readerRecordDisabledReason).toBe(
+        "暂不支持跨段或非稳定原文选区",
+      );
+      if (!disabledButton) {
+        throw new Error(`Expected disabled toolbar button: ${item.action}`);
+      }
+      fireEvent.click(disabledButton);
+      expect(disabledActions[item.handler]).not.toHaveBeenCalled();
+      disabledHarness.unmount();
     }
   });
 
@@ -816,36 +1427,33 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const actions = screen.getByTestId("reader-record-plate-disabled-actions");
+    const actions = screen.getByTestId("reader-record-plate-selection-state");
     await waitFor(() => {
       expect(actions.dataset.readerRecordSelectionSupported).toBe("true");
     });
     expect(actions.dataset.readerRecordSelectionDraftCount).toBe("1");
     expect(actions.dataset.readerRecordSelectionAnchorSegmentId).toBe("seg_1");
+    expect(actions.dataset.readerRecordSelectionSurfaceKind).toBe("source");
+    expect(actions.dataset.readerRecordSelectionBlockType).toBe("reader_paragraph");
+    expect(actions.dataset.readerRecordSelectionBlockId).toBe("paragraph:seg_1");
+    expect(actions.dataset.readerRecordSelectionUnitId).toBe("unit_1");
     expect(actions.dataset.readerRecordSelectionStartOffset).toBe("14");
     expect(actions.dataset.readerRecordSelectionEndOffset).toBe("20");
     expect(actions.dataset.readerRecordActionMode).toBe("selection");
     expect(
       actions.querySelector('[data-reader-record-action-hint]')?.textContent,
     ).toContain("已选：memory");
-    expect(
-      container.querySelector<HTMLButtonElement>(
-        '[data-reader-record-action="highlight"]',
-      )?.disabled,
-    ).toBe(false);
-    expect(
-      container.querySelector<HTMLButtonElement>('[data-reader-record-action="note"]')
-        ?.disabled,
-    ).toBe(false);
-    expect(
-      container.querySelector<HTMLButtonElement>('[data-reader-record-action="ask"]')
-        ?.disabled,
-    ).toBe(false);
+    await waitForSelectionAction(container, "lookup");
+    for (const action of ["lookup", "copy", "highlight", "note", "ask"]) {
+      expect(
+        selectionActionButton(
+          container,
+          action as "lookup" | "copy" | "highlight" | "note" | "ask",
+        )?.disabled,
+      ).toBe(false);
+    }
     expect(container.querySelector('[data-reader-record-action="feedback"]')).toBeNull();
-    expect(
-      container.querySelector('[data-reader-record-coming-soon-actions="feedback"]')
-        ?.textContent,
-    ).toContain("反馈稍后开放");
+    expect(container.querySelector('[data-reader-record-actions="selection-context"]')).toBeNull();
   });
 
   it("maps selection in the second anchor segment of the same unit using the segment baseline", async () => {
@@ -862,7 +1470,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(secondSegmentLeaf, 7, 13);
 
-    const actions = screen.getByTestId("reader-record-plate-disabled-actions");
+    const actions = screen.getByTestId("reader-record-plate-selection-state");
     await waitFor(() => {
       expect(actions.dataset.readerRecordSelectionSupported).toBe("true");
     });
@@ -886,15 +1494,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const copyButton = await waitFor(() => {
-      const button = container.querySelector<HTMLButtonElement>(
-        '[data-reader-record-action="copy"]',
-      );
-      if (!button) {
-        throw new Error("Copy button not found");
-      }
-      return button;
-    });
+    const copyButton = await waitForSelectionAction(container, "copy");
     await waitFor(() => {
       expect(copyButton.disabled).toBe(false);
     });
@@ -939,9 +1539,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const lookupButton = await screen.findByRole<HTMLButtonElement>("button", {
-      name: "查词",
-    });
+    const lookupButton = await waitForSelectionAction(container, "lookup");
     await waitFor(() => {
       expect(lookupButton.disabled).toBe(false);
     });
@@ -991,9 +1589,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const highlightButton = await screen.findByRole<HTMLButtonElement>("button", {
-      name: "高亮",
-    });
+    const highlightButton = await waitForSelectionAction(container, "highlight");
     await waitFor(() => {
       expect(highlightButton.disabled).toBe(false);
     });
@@ -1015,7 +1611,7 @@ describe("ReaderRecordPlateSurface", () => {
     ) as Record<string, unknown>;
     expect(body.anchor).toEqual(expectedMemoryAnchor());
     expect(body.selectedText).toBe("memory");
-    expect(body.color).toBe("soft_green");
+    expect(body.color).toBe("warm_yellow");
     await waitFor(() => {
       expect(onRequestSnapshotReload).toHaveBeenCalledTimes(1);
     });
@@ -1027,22 +1623,8 @@ describe("ReaderRecordPlateSurface", () => {
   });
 
   it("saves note through the Reading Record write endpoint with nested anchor", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          ok: true,
-          status: "created",
-          item: {},
-          session: { state: "signed_in" },
-        }),
-        {
-          status: 201,
-          headers: { "content-type": "application/json" },
-        },
-      ),
-    );
+    const fetchMock = installReaderRecordWriteFetchMock();
     const onRequestSnapshotReload = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("fetch", fetchMock);
     const { container } = render(
       <ReaderRecordPlateSurface
         snapshot={makeSnapshot()}
@@ -1059,14 +1641,17 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const noteButton = await screen.findByRole<HTMLButtonElement>("button", {
-      name: "新建笔记",
-    });
+    const noteButton = await waitForSelectionAction(container, "note");
     await waitFor(() => {
       expect(noteButton.disabled).toBe(false);
     });
     fireEvent.click(noteButton);
 
+    const panel = await screen.findByTestId("reader-record-inline-comment-panel");
+    expect(panel.dataset.readerRecordCommentMode).toBe("draft");
+    expect(
+      panel.querySelector('[data-reader-record-note-quote="true"]')?.textContent,
+    ).toContain("memory");
     const noteInput = await screen.findByTestId<HTMLTextAreaElement>(
       "reader-record-plate-note-input",
     );
@@ -1102,6 +1687,100 @@ describe("ReaderRecordPlateSurface", () => {
     ).toBe(false);
   });
 
+  it("shows a duplicate warning before creating another note on the same normalized anchor", async () => {
+    const fetchMock = installReaderRecordWriteFetchMock();
+    const existingNote = makeUserAsset({
+      asset_id: "asset_note_existing",
+      asset_type: "note",
+      note_text: "Existing note for memory.",
+    });
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([existingNote])} />,
+    );
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+    const noteButton = await waitForSelectionAction(container, "note");
+    fireEvent.click(noteButton);
+
+    const duplicateWarning = await screen.findByTestId(
+      "reader-record-note-duplicate-warning",
+    );
+    expect(duplicateWarning.textContent).toContain("这个选区已有笔记");
+    expect(duplicateWarning.textContent).toContain("Existing note for memory.");
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "保存" }).disabled,
+    ).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "仍新增一条" }));
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("reader-record-inline-comment-panel").querySelector(
+          '[data-reader-record-note-duplicate="acknowledged"]',
+        ),
+      ).not.toBeNull();
+    });
+    const noteInput = screen.getByTestId<HTMLTextAreaElement>(
+      "reader-record-plate-note-input",
+    );
+    fireEvent.change(noteInput, {
+      target: { value: "Second note on the same quote." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      const noteCall = fetchMock.mock.calls.find(
+        ([url]) => typeof url === "string" && url === "/api/web/reading-record/notes",
+      );
+      expect(noteCall).toBeDefined();
+      const body = JSON.parse(
+        String((noteCall?.[1] as RequestInit | undefined)?.body),
+      ) as Record<string, unknown>;
+      expect(body.anchor).toEqual(expectedMemoryAnchor());
+      expect(body.noteText).toBe("Second note on the same quote.");
+    });
+  });
+
+  it("can jump from the duplicate warning to the existing note view panel", async () => {
+    const existingNote = makeUserAsset({
+      asset_id: "asset_note_existing",
+      asset_type: "note",
+      note_text: "Existing note for memory.",
+    });
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([existingNote])} />,
+    );
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+    const noteButton = await waitForSelectionAction(container, "note");
+    fireEvent.click(noteButton);
+
+    await screen.findByTestId("reader-record-note-duplicate-warning");
+    fireEvent.click(screen.getByRole("button", { name: "查看/编辑已有笔记" }));
+
+    const panel = await screen.findByTestId("reader-record-inline-comment-panel");
+    await waitFor(() => {
+      expect(panel.dataset.readerRecordCommentMode).toBe("view");
+    });
+    expect(panel.textContent).toContain("Existing note for memory.");
+    expect(
+      panel.querySelector('[data-reader-record-note-quote="true"]')?.textContent,
+    ).toContain("memory");
+  });
+
   it("opens the RR Ask panel from a stable source selection and loads RR-scoped ask threads", async () => {
     const fetchMock = installReaderAskFetchMock();
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
@@ -1115,9 +1794,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const askButton = await screen.findByRole("button", {
-      name: "Ask",
-    });
+    const askButton = await waitForSelectionAction(container, "ask");
     fireEvent.click(askButton);
 
     await waitFor(() => {
@@ -1144,6 +1821,17 @@ describe("ReaderRecordPlateSurface", () => {
         String(input).includes("/api/web/reader-ask/context-records"),
       ),
     ).toBe(false);
+
+    const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
+    expect(attachment?.selected_text).toBe("memory");
+    expect(attachment?.metadata).toMatchObject({
+      surface_kind: "source",
+      block_type: "reader_paragraph",
+      block_id: "paragraph:seg_1",
+      anchor_segment_id: "seg_1",
+      unit_id: "unit_1",
+      reading_record_anchor: expectedMemoryAnchor(),
+    });
   });
 
   it("opens the RR Ask panel from a saved note in Reading Record scope", async () => {
@@ -1165,6 +1853,18 @@ describe("ReaderRecordPlateSurface", () => {
     }
 
     fireEvent.click(noteMark);
+
+    const panel = await screen.findByTestId("reader-record-inline-comment-panel");
+    await waitFor(() => {
+      expect(panel.dataset.readerRecordCommentMode).toBe("view");
+    });
+    expect(panel.textContent).toContain("Keep this policy concept for review.");
+    expect(
+      panel.querySelector('[data-reader-record-note-quote="true"]')?.textContent,
+    ).toContain("memory");
+    await waitFor(() => {
+      expect(noteMark.dataset.readerRecordNoteActive).toBe("true");
+    });
 
     const askButton = await screen.findByRole("button", {
       name: "Ask 关于这条笔记",
@@ -1190,6 +1890,61 @@ describe("ReaderRecordPlateSurface", () => {
         ),
       ),
     ).toBe(true);
+  });
+
+  it("keeps overlapping note marks locatable and opens the clicked note", async () => {
+    const shortNote = makeUserAsset({
+      asset_id: "asset_note_short",
+      asset_type: "note",
+      note_text: "Short memory note.",
+    });
+    const wideNote = makeUserAsset({
+      asset_id: "asset_note_wide",
+      asset_type: "note",
+      note_text: "Wider memory-shapes note.",
+      anchor: {
+        anchor_type: "text_range",
+        base_id: "base_1",
+        unit_id: "unit_1",
+        anchor_segment_id: "seg_1",
+        sentence_id: "sent_1",
+        segment_type: "sentence",
+        offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+        start_offset: 14,
+        end_offset: 27,
+        selected_text: "memory shapes",
+        text_hash: computeUtf16FNV1a("memory shapes"),
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+    });
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([shortNote, wideNote])} />,
+    );
+
+    const shortNoteMarks = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-mark-id="user_note:asset_note_short"]',
+      ),
+    );
+    const wideNoteMarks = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-mark-id="user_note:asset_note_wide"]',
+      ),
+    );
+    expect(shortNoteMarks.length).toBeGreaterThan(0);
+    expect(wideNoteMarks.length).toBeGreaterThan(0);
+
+    fireEvent.click(shortNoteMarks[0] as HTMLElement);
+    let panel = await screen.findByTestId("reader-record-inline-comment-panel");
+    expect(panel.textContent).toContain("Short memory note.");
+    expect(panel.textContent).toContain("memory");
+
+    fireEvent.click(wideNoteMarks[0] as HTMLElement);
+    panel = await screen.findByTestId("reader-record-inline-comment-panel");
+    await waitFor(() => {
+      expect(panel.textContent).toContain("Wider memory-shapes note.");
+    });
+    expect(panel.textContent).toContain("memory shapes");
   });
 
   it("edits an existing note through the Reading Record PATCH endpoint", async () => {
@@ -1372,9 +2127,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const noteButton = await screen.findByRole<HTMLButtonElement>("button", {
-      name: "新建笔记",
-    });
+    const noteButton = await waitForSelectionAction(container, "note");
     await waitFor(() => {
       expect(noteButton.disabled).toBe(false);
     });
@@ -1492,17 +2245,22 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectAcrossElements(firstSegmentLeaf, 14, secondSegmentLeaf, 13);
 
-    const actions = screen.getByTestId("reader-record-plate-disabled-actions");
+    const actions = screen.getByTestId("reader-record-plate-selection-state");
     await waitFor(() => {
       expect(actions.dataset.readerRecordSelectionDraftCount).toBe("2");
     });
     expect(actions.dataset.readerRecordSelectionSupported).toBe("false");
 
-    for (const action of ["lookup", "copy", "ask", "highlight", "note", "feedback"]) {
-      expect(
-        container.querySelector(`[data-reader-record-action="${action}"]`),
-      ).toBeNull();
+    await waitForSelectionAction(container, "lookup");
+    for (const action of ["lookup", "copy", "ask", "highlight", "note"]) {
+      const button = selectionActionButton(
+        container,
+        action as "lookup" | "copy" | "ask" | "highlight" | "note",
+      );
+      expect(button?.disabled).toBe(true);
+      expect(button?.dataset.readerRecordDisabledReason).toContain("暂不支持");
     }
+    expect(container.querySelector('[data-reader-record-action="feedback"]')).toBeNull();
     expect(
       fetchMock.mock.calls.filter(
         ([url]) => !(typeof url === "string" && url.includes("/api/web/favorites")),
@@ -1510,8 +2268,9 @@ describe("ReaderRecordPlateSurface", () => {
     ).toHaveLength(0);
   });
 
-  it("does not expose executable actions for selections outside stable source text", async () => {
-    const fetchMock = vi.fn();
+  it("enables Copy and Ask for translation selections with source metadata", async () => {
+    const writeText = installClipboardMock();
+    const fetchMock = installReaderAskFetchMock();
     vi.stubGlobal("fetch", fetchMock);
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
     const blockquote = container.querySelector<HTMLElement>(
@@ -1522,23 +2281,306 @@ describe("ReaderRecordPlateSurface", () => {
       throw new Error("Expected blockquote block");
     }
 
-    selectTextInElement(blockquote, 0, 2);
+    selectTextInElement(blockquote, 0, 4);
 
-    const actions = screen.getByTestId("reader-record-plate-disabled-actions");
+    const actions = screen.getByTestId("reader-record-plate-selection-state");
     await waitFor(() => {
-      expect(actions.dataset.readerRecordSelectionDraftCount).toBe("0");
+      expect(actions.dataset.readerRecordSelectionSupported).toBe("true");
+    });
+    expect(actions.dataset.readerRecordSelectionDraftCount).toBe("0");
+    expect(actions.dataset.readerRecordSelectionSurfaceKind).toBe("translation");
+    expect(actions.dataset.readerRecordSelectionBlockType).toBe("reader_blockquote");
+    expect(actions.dataset.readerRecordSelectionBlockId).toBe("blockquote:layer_translation_1:unit_1");
+    expect(actions.dataset.readerRecordSelectionUnitId).toBe("unit_1");
+    expect(actions.dataset.readerRecordSelectionLayerId).toBe("layer_translation_1");
+
+    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const copyButton = await waitForSelectionAction(container, "copy");
+    const askButton = await waitForSelectionAction(container, "ask");
+    const highlightButton = await waitForSelectionAction(container, "highlight");
+    const noteButton = await waitForSelectionAction(container, "note");
+
+    expect(copyButton.disabled).toBe(false);
+    expect(askButton.disabled).toBe(false);
+    expect(lookupButton.disabled).toBe(true);
+    expect(lookupButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文查词");
+    expect(highlightButton.disabled).toBe(true);
+    expect(highlightButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文高亮/笔记");
+    expect(noteButton.disabled).toBe(true);
+    expect(noteButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文高亮/笔记");
+
+    fireEvent.click(copyButton);
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("制度记忆");
+    });
+
+    fireEvent.click(askButton);
+    const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
+    expect(attachment?.selected_text).toBe("制度记忆");
+    expect(attachment?.target_key).toBe("blockquote:layer_translation_1:unit_1");
+    expect(attachment?.metadata.anchor_segment_id).toBeNull();
+    const sourceContext = attachment?.metadata.source_context as
+      | Record<string, unknown>
+      | undefined;
+    expect(sourceContext).not.toHaveProperty("anchorSegmentId");
+    expect(attachment?.metadata).toMatchObject({
+      surface_kind: "translation",
+      block_type: "reader_blockquote",
+      block_id: "blockquote:layer_translation_1:unit_1",
+      unit_id: "unit_1",
+      layer_id: "layer_translation_1",
+      translation_zh: "制度记忆",
+      source_context: {
+        unitId: "unit_1",
+        unitSourceText: SOURCE_TEXT,
+        sourceSegments: [
+          {
+            anchorSegmentId: "seg_1",
+            sentenceId: "sent_1",
+            unitStart: 0,
+            unitEnd: SOURCE_TEXT.length,
+            sourceText: SOURCE_TEXT,
+            textHash: "seg_hash",
+          },
+        ],
+      },
+    });
+    expect(container.querySelector('[data-reader-record-action="feedback"]')).toBeNull();
+  });
+
+  it("keeps translation source context at unit level for multi-segment units", async () => {
+    const fetchMock = installReaderAskFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSplitSegmentTranslationSnapshot()} />,
+    );
+    const blockquote = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquote).not.toBeNull();
+    if (!blockquote) {
+      throw new Error("Expected blockquote block");
+    }
+
+    selectTextInElement(blockquote, 0, 4);
+
+    const actions = screen.getByTestId("reader-record-plate-selection-state");
+    await waitFor(() => {
+      expect(actions.dataset.readerRecordSelectionSurfaceKind).toBe("translation");
+    });
+    expect(actions.dataset.readerRecordSelectionAnchorSegmentId).toBeUndefined();
+
+    const askButton = await waitForSelectionAction(container, "ask");
+    expect(askButton.disabled).toBe(false);
+    fireEvent.click(askButton);
+
+    const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
+    expect(attachment?.metadata.anchor_segment_id).toBeNull();
+    const sourceContext = attachment?.metadata.source_context as Record<
+      string,
+      unknown
+    >;
+    expect(sourceContext).not.toHaveProperty("anchorSegmentId");
+    expect(sourceContext).toMatchObject({
+      unitId: "unit_1",
+      unitSourceText: SOURCE_TEXT,
+      sourceSegments: [
+        {
+          anchorSegmentId: "seg_1",
+          sentenceId: "sent_1",
+          unitStart: 0,
+          unitEnd: "Institutional memory ".length,
+          sourceText: "Institutional memory ",
+        },
+        {
+          anchorSegmentId: "seg_2",
+          sentenceId: "sent_2",
+          unitStart: "Institutional memory ".length,
+          unitEnd: SOURCE_TEXT.length,
+          sourceText: "shapes policy choices.",
+        },
+      ],
+    });
+  });
+
+  it("does not silently fallback to a source anchor for mixed source and enhancement selections", async () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const sourceParagraph = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="paragraph"]',
+    );
+    const blockquote = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(sourceParagraph).not.toBeNull();
+    expect(blockquote).not.toBeNull();
+    if (!sourceParagraph || !blockquote) {
+      throw new Error("Expected source paragraph and translation blockquote");
+    }
+
+    selectTextInElement(sourceParagraph, 0, "Institutional".length);
+    const actions = screen.getByTestId("reader-record-plate-selection-state");
+    const copyButton = await waitForSelectionAction(container, "copy");
+    const askButton = await waitForSelectionAction(container, "ask");
+    const highlightButton = await waitForSelectionAction(container, "highlight");
+    await waitFor(() => {
+      expect(actions.dataset.readerRecordSelectionSurfaceKind).toBe("source");
+      expect(copyButton.disabled).toBe(false);
+      expect(askButton.disabled).toBe(false);
+      expect(highlightButton.disabled).toBe(false);
+    });
+
+    selectAcrossElements(sourceParagraph, 0, blockquote, 2);
+    await waitFor(() => {
+      expect(copyButton.disabled).toBe(true);
+      expect(askButton.disabled).toBe(true);
+      expect(highlightButton.disabled).toBe(true);
     });
     expect(actions.dataset.readerRecordSelectionSupported).toBe("false");
-    for (const action of ["lookup", "copy", "highlight", "note", "ask", "feedback"]) {
-      expect(
-        container.querySelector(`[data-reader-record-action="${action}"]`),
-      ).toBeNull();
+    expect(actions.dataset.readerRecordSelectionSurfaceKind).not.toBe("source");
+  });
+
+  it("enables Ask for grammar callout selections with grammar and source metadata", async () => {
+    const fetchMock = installReaderAskFetchMock();
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const grammarContent = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"] [data-reader-record-markdown-content="plate"] p',
+    );
+    expect(grammarContent).not.toBeNull();
+    if (!grammarContent) {
+      throw new Error("Expected grammar callout content");
     }
-    expect(
-      fetchMock.mock.calls.filter(
-        ([url]) => !(typeof url === "string" && url.includes("/api/web/favorites")),
-      ),
-    ).toHaveLength(0);
+
+    selectTextInElement(grammarContent, 0, "shapes".length);
+
+    const actions = screen.getByTestId("reader-record-plate-selection-state");
+    await waitFor(() => {
+      expect(actions.dataset.readerRecordSelectionSurfaceKind).toBe("grammar_callout");
+    });
+    expect(actions.dataset.readerRecordSelectionSupported).toBe("true");
+    expect(actions.dataset.readerRecordSelectionBlockType).toBe("reader_callout");
+    expect(actions.dataset.readerRecordSelectionBlockId).toBe("callout:grammar:grammar_item_1");
+    expect(actions.dataset.readerRecordSelectionAnchorSegmentId).toBe("seg_1");
+    expect(actions.dataset.readerRecordSelectionUnitId).toBe("unit_1");
+    expect(actions.dataset.readerRecordSelectionLayerId).toBe("layer_grammar_1");
+
+    const askButton = await waitForSelectionAction(container, "ask");
+    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const highlightButton = await waitForSelectionAction(container, "highlight");
+    const noteButton = await waitForSelectionAction(container, "note");
+    expect(askButton.disabled).toBe(false);
+    expect(lookupButton.disabled).toBe(true);
+    expect(lookupButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文查词");
+    expect(highlightButton.disabled).toBe(true);
+    expect(highlightButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文高亮/笔记");
+    expect(noteButton.disabled).toBe(true);
+    expect(noteButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文高亮/笔记");
+
+    fireEvent.click(askButton);
+    const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
+    expect(attachment?.selected_text).toBe("shapes");
+    expect(attachment?.metadata).toMatchObject({
+      surface_kind: "grammar_callout",
+      block_type: "reader_callout",
+      block_id: "callout:grammar:grammar_item_1",
+      anchor_segment_id: "seg_1",
+      unit_id: "unit_1",
+      layer_id: "layer_grammar_1",
+      entry_type: "grammar_note",
+      source_context: {
+        anchorSegmentId: "seg_1",
+        unitId: "unit_1",
+        sentenceId: "sent_1",
+        sourceText: SOURCE_TEXT,
+      },
+    });
+  });
+
+  it("enables Ask for sentence analysis selections with analysis chunks and source metadata", async () => {
+    const fetchMock = installReaderAskFetchMock();
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const analysisContent = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="sentence-analysis"] [data-reader-record-markdown-content="plate"] p',
+    );
+    expect(analysisContent).not.toBeNull();
+    if (!analysisContent) {
+      throw new Error("Expected sentence analysis content");
+    }
+
+    selectTextInElement(analysisContent, 0, "Institutional".length);
+
+    const actions = screen.getByTestId("reader-record-plate-selection-state");
+    await waitFor(() => {
+      expect(actions.dataset.readerRecordSelectionSurfaceKind).toBe("sentence_analysis");
+    });
+    expect(actions.dataset.readerRecordSelectionSupported).toBe("true");
+    expect(actions.dataset.readerRecordSelectionBlockType).toBe("reader_sentence_analysis");
+    expect(actions.dataset.readerRecordSelectionBlockId).toBe("sentence_analysis:analysis_1");
+    expect(actions.dataset.readerRecordSelectionAnchorSegmentId).toBe("seg_1");
+    expect(actions.dataset.readerRecordSelectionUnitId).toBe("unit_1");
+    expect(actions.dataset.readerRecordSelectionLayerId).toBe("layer_sentence_analysis_1");
+    expect(actions.dataset.readerRecordSelectionAnalysisId).toBe("analysis_1");
+
+    const askButton = await waitForSelectionAction(container, "ask");
+    expect(askButton.disabled).toBe(false);
+    fireEvent.click(askButton);
+
+    const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
+    expect(attachment?.selected_text).toBe("Institutional");
+    expect(attachment?.metadata).toMatchObject({
+      surface_kind: "sentence_analysis",
+      block_type: "reader_sentence_analysis",
+      block_id: "sentence_analysis:analysis_1",
+      anchor_segment_id: "seg_1",
+      unit_id: "unit_1",
+      layer_id: "layer_sentence_analysis_1",
+      analysis_id: "analysis_1",
+      entry_type: "sentence_analysis",
+      chunks: [{ order: 1, label: "subject", text: "Institutional memory" }],
+      source_context: {
+        anchorSegmentId: "seg_1",
+        unitId: "unit_1",
+        sentenceId: "sent_1",
+        sourceText: SOURCE_TEXT,
+      },
+    });
+  });
+
+  it("keeps sentence analysis chunk selections inside the Plate-managed analysis block", async () => {
+    const fetchMock = installReaderAskFetchMock();
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const chunk = container.querySelector<HTMLElement>(
+      '[data-reader-record-sentence-analysis-chunk="subject"]',
+    );
+    const chunkText = chunk?.querySelector<HTMLElement>("dd");
+    expect(chunk).not.toBeNull();
+    expect(chunk?.getAttribute("data-slate-node")).toBe("element");
+    expect(chunkText).not.toBeNull();
+    if (!chunkText) {
+      throw new Error("Expected Plate-managed sentence analysis chunk text");
+    }
+
+    selectTextInElement(chunkText, 0, "Institutional".length);
+
+    const actions = screen.getByTestId("reader-record-plate-selection-state");
+    await waitFor(() => {
+      expect(actions.dataset.readerRecordSelectionSurfaceKind).toBe("sentence_analysis");
+    });
+    expect(actions.dataset.readerRecordSelectionSupported).toBe("true");
+    expect(actions.dataset.readerRecordSelectionBlockId).toBe("sentence_analysis:analysis_1");
+
+    const askButton = await waitForSelectionAction(container, "ask");
+    expect(askButton.disabled).toBe(false);
+    fireEvent.click(askButton);
+
+    const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
+    expect(attachment?.selected_text).toBe("Institutional");
+    expect(attachment?.metadata).toMatchObject({
+      surface_kind: "sentence_analysis",
+      block_type: "reader_sentence_analysis",
+      block_id: "sentence_analysis:analysis_1",
+      analysis_id: "analysis_1",
+      chunks: [{ order: 1, label: "subject", text: "Institutional memory" }],
+    });
   });
 
   it("keeps Plate write paths on RR APIs and avoids legacy adapters or legacy note/annotation routes", () => {
@@ -1582,28 +2624,95 @@ describe("ReaderRecordPlateSurface", () => {
     }
   });
 
-  it("selection action strip exposes write state data attribute", () => {
-    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
-
-    const strip = container.querySelector<HTMLElement>(
-      '[data-reader-record-actions="selection-context"]',
+  it("keeps production selection UI on the Plate FloatingToolbar path without hidden test controls", () => {
+    const surfaceSource = readFileSync(
+      resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
+      "utf8",
     );
-    expect(strip).not.toBeNull();
-    expect(strip?.dataset.readerRecordWriteState).toBe("idle");
+    const floatingToolbarKitSource = readFileSync(
+      resolve(process.cwd(), "src/components/editor/plugins/floating-toolbar-kit.tsx"),
+      "utf8",
+    );
+
+    expect(floatingToolbarKitSource).toContain("FloatingToolbar");
+    expect(floatingToolbarKitSource).toContain(
+      'data-reader-record-floating-toolbar="plate"',
+    );
+    expect(surfaceSource).toContain("SelectionActionState");
+    expect(surfaceSource).not.toMatch(/SelectionActionStrip/);
+    expect(surfaceSource).not.toMatch(/data-reader-record-test-action/);
+    expect(surfaceSource).not.toMatch(/removeAllRanges/);
   });
 
-  it("blockquote translation uses improved spacing and label", () => {
+  it("routes the Note toolbar action through the Plate CommentKit draft path", () => {
+    const surfaceSource = readFileSync(
+      resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
+      "utf8",
+    );
+    const toolbarSource = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/components/editor/plugins/reader-floating-toolbar-buttons.tsx",
+      ),
+      "utf8",
+    );
+
+    expect(toolbarSource).toContain("export function ReaderNoteToolbarButton");
+    expect(toolbarSource).toContain("ToolbarButton");
+    expect(toolbarSource).toContain("ToolbarGroup");
+    expect(toolbarSource).toContain("ToolbarSeparator");
+    expect(surfaceSource).toContain("commentApiRef.current?.setDraft()");
+    expect(surfaceSource).toContain("commentApiRef.current?.setActiveId");
+    expect(surfaceSource).not.toMatch(/ReaderRecordNoteComposer/);
+  });
+
+  it("keeps new user highlight choices to yellow, blue, and rose", () => {
+    const surfaceSource = readFileSync(
+      resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
+      "utf8",
+    );
+
+    expect(
+      Array.from(
+        surfaceSource.matchAll(/value: "(warm_yellow|soft_blue|soft_rose)"/g),
+      ).map((match) => match[1]),
+    ).toEqual(["warm_yellow", "soft_blue", "soft_rose"]);
+    expect(surfaceSource).not.toMatch(/value: "soft_green"/);
+    expect(surfaceSource).not.toMatch(/value: "soft_purple"/);
+    expect(surfaceSource).not.toMatch(/value: "sage_green"/);
+  });
+
+  it("selection state bridge exposes write state without rendering the legacy action strip", () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const state = container.querySelector<HTMLElement>(
+      '[data-reader-record-actions="selection-state"]',
+    );
+    expect(state).not.toBeNull();
+    expect(state?.dataset.readerRecordWriteState).toBe("idle");
+    expect(
+      container.querySelector('[data-reader-record-actions="selection-context"]'),
+    ).toBeNull();
+  });
+
+  it("blockquote translation renders as a low-weight document lane", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
     const blockquote = container.querySelector<HTMLElement>(
       '[data-reader-record-node="blockquote"]',
     );
     expect(blockquote).not.toBeNull();
-    expect(blockquote?.className).toContain("border-l-2");
-    expect(blockquote?.className).toContain("mt-3");
+    expect(blockquote?.className).toContain("reader-record-plate-translation");
+    expect(blockquote?.dataset.readerRecordTranslationLane).toBe("true");
+    expect(blockquote?.className).toContain("border-l");
+    expect(blockquote?.className).toContain("bg-transparent");
+    expect(blockquote?.className).toContain("text-[0.84rem]");
+    expect(blockquote?.getAttribute("aria-label")).toBe("译文");
+    expect(blockquote?.textContent).toContain(TRANSLATION_TEXT);
+    expect(blockquote?.textContent).not.toContain("本段译文");
 
-    const label = blockquote?.querySelector("span");
-    expect(label?.textContent).toBe("译文");
+    const visibleLabel = blockquote?.querySelector("span");
+    expect(visibleLabel?.textContent).not.toBe("本段译文");
   });
 
   it("surface source code includes auto-dismiss timer for UI polish", () => {
@@ -1638,17 +2747,18 @@ describe("ReaderRecordPlateSurface", () => {
     expect(leaf?.dataset.segmentEndUtf16).toBe("14");
   });
 
-  it("callout blocks carry variant and anchor segment metadata", () => {
+  it("enhancement blocks carry anchor segment metadata", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
     const grammarCallout = container.querySelector<HTMLElement>(
       '[data-callout-variant="grammar"]',
     );
-    const analysisCallout = container.querySelector<HTMLElement>(
-      '[data-callout-variant="analysis"]',
+    const analysisBlock = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="sentence-analysis"]',
     );
 
     expect(grammarCallout?.dataset.anchorSegmentId).toBe("seg_1");
-    expect(analysisCallout?.dataset.anchorSegmentId).toBe("seg_1");
+    expect(analysisBlock?.dataset.anchorSegmentId).toBe("seg_1");
+    expect(analysisBlock?.dataset.analysisId).toBe("analysis_1");
   });
 });

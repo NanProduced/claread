@@ -23,8 +23,22 @@ import {
   anchorDraftsForSelection,
   type ReaderRecordAnchorDraftSelectionSegment,
 } from "./reader-record-anchor-draft";
-import type { PlateTextNode } from "./reader-record-plate-to-plate-value";
-import type { ReaderRecordSelectionAnchorBridgeResult } from "./reader-record-dom-selection";
+import {
+  READER_BLOCKQUOTE_TYPE,
+  READER_CALLOUT_TYPE,
+  READER_PARAGRAPH_TYPE,
+  READER_SENTENCE_ANALYSIS_TYPE,
+  type PlateTextNode,
+  type ReaderBlockquoteElement,
+  type ReaderCalloutElement,
+  type ReaderParagraphElement,
+  type ReaderSentenceAnalysisElement,
+} from "./reader-record-plate-to-plate-value";
+import type {
+  ReaderRecordSelectionAnchorBridgeResult,
+  ReaderRecordSelectionBlockContext,
+  ReaderRecordSelectionSourceContext,
+} from "./reader-record-dom-selection";
 
 function pathsEqual(a: number[], b: number[]): boolean {
   if (a.length !== b.length) return false;
@@ -40,6 +54,229 @@ interface LeafSlice {
   localEnd: number;
   /** 该 leaf 在 anchor segment 内的 UTF-16 起始偏移 */
   segmentStartUtf16: number;
+}
+
+interface SelectedTextSlice {
+  text: string;
+  localStart: number;
+  localEnd: number;
+}
+
+type ReaderTopLevelPlateElement =
+  | ReaderParagraphElement
+  | ReaderBlockquoteElement
+  | ReaderCalloutElement
+  | ReaderSentenceAnalysisElement;
+
+function topLevelBlockForPath(
+  editor: PlateEditor,
+  path: number[],
+): ReaderTopLevelPlateElement | null {
+  const topLevelIndex = path[0];
+  if (!Number.isInteger(topLevelIndex)) {
+    return null;
+  }
+  return (
+    (editor.children[topLevelIndex] as unknown as
+      | ReaderTopLevelPlateElement
+      | undefined) ?? null
+  );
+}
+
+function selectedSliceForTextNode(
+  node: TText,
+  path: number[],
+  start: TRange["anchor"],
+  end: TRange["focus"],
+): SelectedTextSlice | null {
+  const text = (node as unknown as PlateTextNode).text ?? "";
+  const isStartNode = pathsEqual(path, start.path);
+  const isEndNode = pathsEqual(path, end.path);
+
+  let localStart = 0;
+  let localEnd = text.length;
+
+  if (isStartNode && isEndNode) {
+    localStart = start.offset;
+    localEnd = end.offset;
+  } else if (isStartNode) {
+    localStart = start.offset;
+    localEnd = text.length;
+  } else if (isEndNode) {
+    localStart = 0;
+    localEnd = end.offset;
+  }
+
+  if (localEnd <= localStart) {
+    return null;
+  }
+  return { text, localStart, localEnd };
+}
+
+function sourceTextForAnchorSegment(
+  snapshot: ReaderPlateSnapshotDto,
+  anchorSegmentId: string,
+): string {
+  for (const unit of snapshot.value) {
+    for (const child of unit.children) {
+      if (child.type !== "reader_source_block") {
+        continue;
+      }
+      for (const sourceChild of child.children) {
+        if (
+          "type" in sourceChild &&
+          sourceChild.type === "reader_anchor_segment" &&
+          sourceChild.anchor_segment_id === anchorSegmentId
+        ) {
+          return sourceChild.children.map((leaf) => leaf.text).join("");
+        }
+      }
+    }
+  }
+  return "";
+}
+
+function sourceSegmentsForUnit(
+  snapshot: ReaderPlateSnapshotDto,
+  unitId: string,
+): NonNullable<ReaderRecordSelectionSourceContext["sourceSegments"]> {
+  return snapshot.anchor_segments
+    .filter((segment) => segment.unit_id === unitId)
+    .sort(
+      (a, b) =>
+        a.unit_order_index - b.unit_order_index ||
+        a.order_index - b.order_index,
+    )
+    .map((segment) => ({
+      anchorSegmentId: segment.anchor_segment_id,
+      sentenceId: segment.sentence_id,
+      unitStart: segment.unit_start_utf16,
+      unitEnd: segment.unit_end_utf16,
+      sourceText: sourceTextForAnchorSegment(
+        snapshot,
+        segment.anchor_segment_id,
+      ),
+      textHash: segment.text_hash,
+    }));
+}
+
+function sourceContextForSelectionBlock(
+  snapshot: ReaderPlateSnapshotDto,
+  options: { anchorSegmentId?: string; unitId?: string },
+): ReaderRecordSelectionSourceContext | undefined {
+  const unitSourceSegments = options.unitId
+    ? sourceSegmentsForUnit(snapshot, options.unitId)
+    : [];
+  const unitSourceText =
+    unitSourceSegments.length > 0
+      ? unitSourceSegments.map((segment) => segment.sourceText).join("")
+      : undefined;
+  const anchorSegment =
+    options.anchorSegmentId
+      ? snapshot.anchor_segments.find(
+          (segment) => segment.anchor_segment_id === options.anchorSegmentId,
+        )
+      : undefined;
+
+  if (!anchorSegment) {
+    return options.unitId
+      ? {
+          unitId: options.unitId,
+          unitSourceText,
+          sourceSegments: unitSourceSegments,
+        }
+      : undefined;
+  }
+
+  return {
+    anchorSegmentId: anchorSegment.anchor_segment_id,
+    unitId: anchorSegment.unit_id,
+    sentenceId: anchorSegment.sentence_id,
+    sourceText: sourceTextForAnchorSegment(
+      snapshot,
+      anchorSegment.anchor_segment_id,
+    ),
+    textHash: anchorSegment.text_hash,
+    unitSourceText,
+    sourceSegments: unitSourceSegments,
+  };
+}
+
+function domRectForSelection(
+  editor: PlateEditor,
+  selection: TRange,
+): DOMRect | null {
+  try {
+    const domRange = editor.api.toDOMRange(selection);
+    return domRange?.getBoundingClientRect() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function blockContextForNonSourceSelection(
+  block: ReaderTopLevelPlateElement,
+  selectedText: string,
+  snapshot: ReaderPlateSnapshotDto,
+): ReaderRecordSelectionBlockContext | null {
+  switch (block.type) {
+    case READER_BLOCKQUOTE_TYPE: {
+      const data = (block as ReaderBlockquoteElement).data;
+      return {
+        surfaceKind: "translation",
+        blockType: block.type,
+        blockId: block.id,
+        selectedText,
+        unitId: data.unitId,
+        layerId: data.layerId,
+        source: sourceContextForSelectionBlock(snapshot, {
+          unitId: data.unitId,
+        }),
+      };
+    }
+    case READER_CALLOUT_TYPE: {
+      const callout = block as ReaderCalloutElement;
+      const data = callout.data;
+      const surfaceKind =
+        callout.variant === "grammar"
+          ? "grammar_callout"
+          : "supplement_callout";
+      return {
+        surfaceKind,
+        blockType: block.type,
+        blockId: block.id,
+        selectedText,
+        anchorSegmentId: data.anchorSegmentId,
+        unitId: data.unitId,
+        layerId: data.layerId,
+        supplementId: data.supplementId,
+        source: sourceContextForSelectionBlock(snapshot, {
+          anchorSegmentId: data.anchorSegmentId,
+          unitId: data.unitId,
+        }),
+      };
+    }
+    case READER_SENTENCE_ANALYSIS_TYPE: {
+      const data = (block as ReaderSentenceAnalysisElement).data;
+      return {
+        surfaceKind: "sentence_analysis",
+        blockType: block.type,
+        blockId: block.id,
+        selectedText,
+        anchorSegmentId: data.anchorSegmentId,
+        unitId: data.unitId,
+        layerId: data.layerId,
+        analysisId: data.analysisId,
+        chunks: data.chunks,
+        source: sourceContextForSelectionBlock(snapshot, {
+          anchorSegmentId: data.anchorSegmentId,
+          unitId: data.unitId,
+        }),
+      };
+    }
+    default:
+      return null;
+  }
 }
 
 /**
@@ -78,6 +315,9 @@ export function readReaderRecordSelectionFromEditor(
 
   // 2. 归一化选区起止点（RangeApi.edges 返回 [start, end] tuple）
   const [start, end] = RangeApi.edges(selection);
+
+  const topLevelIndexes = new Set(textEntries.map(([, path]) => path[0]));
+  const firstBlock = topLevelBlockForPath(editor, textEntries[0][1]);
 
   // 3. 按 anchor_segment_id 分组，计算每组的选中片段
   const groups = new Map<string, LeafSlice[]>();
@@ -121,6 +361,62 @@ export function readReaderRecordSelectionFromEditor(
   }
 
   if (groups.size === 0) {
+    if (topLevelIndexes.size !== 1 || !firstBlock) {
+      return null;
+    }
+
+    const blockContextSlices: string[] = [];
+    for (const [node, path] of textEntries) {
+      const block = topLevelBlockForPath(editor, path);
+      if (!block || block.id !== firstBlock.id) {
+        return null;
+      }
+      const slice = selectedSliceForTextNode(node, path, start, end);
+      if (slice) {
+        blockContextSlices.push(
+          slice.text.slice(slice.localStart, slice.localEnd),
+        );
+      }
+    }
+
+    const selectedText = blockContextSlices.join("").trim();
+    if (!selectedText) {
+      return null;
+    }
+
+    const blockContext = blockContextForNonSourceSelection(
+      firstBlock,
+      selectedText,
+      snapshot,
+    );
+    if (!blockContext) {
+      return null;
+    }
+
+    return {
+      drafts: [],
+      selectedText,
+      anchorType: "text_range",
+      segments: [],
+      sentenceId: blockContext.source?.sentenceId ?? "",
+      contextSentence:
+        blockContext.source?.sourceText ??
+        blockContext.source?.unitSourceText ??
+        "",
+      supportedSingleRange: false,
+      rect: domRectForSelection(editor, selection),
+      surfaceKind: blockContext.surfaceKind,
+      blockType: blockContext.blockType,
+      blockId: blockContext.blockId,
+      blockContext,
+    };
+  }
+
+  const hasNonSourceBlockText = textEntries.some(([, path]) => {
+    const block = topLevelBlockForPath(editor, path);
+    return !block || block.type !== READER_PARAGRAPH_TYPE;
+  });
+  if (hasNonSourceBlockText) {
     return null;
   }
 
@@ -180,17 +476,19 @@ export function readReaderRecordSelectionFromEditor(
     return null;
   }
 
-  // DOM rect：全程 Plate 原生，用 editor.api.toDOMRange 转换
-  let rect: DOMRect | null = null;
-  try {
-    const domRange = editor.api.toDOMRange(selection);
-    if (domRange) {
-      rect = domRange.getBoundingClientRect();
-    }
-  } catch {
-    // toDOMRange 在极端情况下可能抛错（DOM 未挂载），降级为 null
-    rect = null;
-  }
+  const primaryDraft = drafts[0] ?? null;
+  const primarySegment = segments[0] ?? null;
+  const blockId =
+    firstBlock?.type === READER_PARAGRAPH_TYPE
+      ? (firstBlock as ReaderParagraphElement).id
+      : `paragraph:${primaryDraft?.anchor_segment_id ?? primarySegment?.sentenceId ?? ""}`;
+  const sourceContext: ReaderRecordSelectionSourceContext = {
+    anchorSegmentId: primaryDraft?.anchor_segment_id,
+    unitId: primaryDraft?.unit_id,
+    sentenceId: primarySegment?.sentenceId,
+    sourceText: contextSentence,
+    textHash: primaryDraft?.text_hash,
+  };
 
   return {
     drafts,
@@ -200,6 +498,18 @@ export function readReaderRecordSelectionFromEditor(
     sentenceId: segments[0]?.sentenceId ?? "",
     contextSentence,
     supportedSingleRange: drafts.length === 1,
-    rect,
+    rect: domRectForSelection(editor, selection),
+    surfaceKind: "source",
+    blockType: firstBlock?.type ?? READER_PARAGRAPH_TYPE,
+    blockId,
+    blockContext: {
+      surfaceKind: "source",
+      blockType: firstBlock?.type ?? READER_PARAGRAPH_TYPE,
+      blockId,
+      selectedText,
+      anchorSegmentId: primaryDraft?.anchor_segment_id,
+      unitId: primaryDraft?.unit_id,
+      source: sourceContext,
+    },
   };
 }

@@ -17,7 +17,11 @@ export const FloatingToolbarKit = [
     key: "reader-floating-toolbar",
     render: {
       afterEditable: () => (
-        <FloatingToolbar state={{ showWhenReadOnly: true }}>
+        <FloatingToolbar
+          className="reader-record-floating-toolbar"
+          data-reader-record-floating-toolbar="plate"
+          state={{ showWhenReadOnly: true }}
+        >
           <ReaderFloatingToolbarButtons />
         </FloatingToolbar>
       ),

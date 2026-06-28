@@ -32,7 +32,7 @@ export function CursorOverlay() {
               <div
                 key={`${cursor.id}-sel-${index}`}
                 className={cn(
-                  "absolute rounded-[1px] bg-brand/20",
+                  "slate-selection-area absolute rounded-[3px] bg-lens-blue/[0.18]",
                 )}
                 style={{
                   ...selectionStyle,

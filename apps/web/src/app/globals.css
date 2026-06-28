@@ -1813,6 +1813,35 @@ select {
   color: inherit;
 }
 
+.reader-record-plate-document {
+  --reader-record-selection-fill: rgba(37, 99, 235, 0.18);
+  --reader-record-selection-fill-strong: rgba(37, 99, 235, 0.24);
+  --reader-record-selection-outline: rgba(37, 99, 235, 0.2);
+  --reader-record-selection-ink: var(--ink);
+}
+
+.reader-record-plate-document::selection,
+.reader-record-plate-document *::selection {
+  background: var(--reader-record-selection-fill);
+  color: var(--reader-record-selection-ink);
+}
+
+.reader-record-plate-document .slate-selection-area {
+  border-radius: 0.2rem;
+  background: var(--reader-record-selection-fill-strong) !important;
+  box-shadow: 0 0 0 1px var(--reader-record-selection-outline);
+  mix-blend-mode: multiply;
+  opacity: 0.58;
+  transition:
+    opacity 120ms ease,
+    visibility 120ms ease;
+}
+
+.reader-record-plate-document:focus-within .slate-selection-area {
+  visibility: hidden;
+  opacity: 0;
+}
+
 .reader-mark--vocab {
   border-radius: 0.12em;
   color: var(--reader-mark-vocab-ink);
