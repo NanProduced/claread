@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import timedelta
 from typing import get_args
 from uuid import UUID
 
@@ -88,6 +89,12 @@ from app.services.reader_orchestration.source_artifact_service import (
     SourceArtifactNotFoundError,
     SourceArtifactRegistrationResult,
     SourceArtifactService,
+)
+from app.services.reader_orchestration.oss_presigner import (
+    NullPresigner,
+    PresignedUpload,
+    Presigner,
+    build_default_presigner,
 )
 
 router = APIRouter(prefix="/reader", tags=["reader"])
@@ -252,7 +259,30 @@ def _build_source_artifact_upload_init_response(
     result: SourceArtifactRegistrationResult,
     bucket: str,
     endpoint: str,
+    presigned: PresignedUpload | None = None,
 ) -> ReaderSourceArtifactUploadInitResponse:
+    if presigned is not None:
+        upload_method = "oss_put_object_presigned"
+        presigned_url = presigned.url
+        presigned_method = presigned.method
+        presigned_expires_at = presigned.expires_at
+        # D6-I3Q: in presigned mode the headers MUST come from the presigner
+        # so the client sends exactly the headers that were signed. Returning
+        # the non-signed hints here would cause the client to upload with
+        # ``content-sha256`` instead of the signed ``x-oss-content-sha256``,
+        # breaking OSS signature validation.
+        headers = dict(presigned.headers)
+    else:
+        upload_method = "oss_put_object_pending_credentials"
+        presigned_url = None
+        presigned_method = None
+        presigned_expires_at = None
+        # Pending-credentials path: provide non-signed hints the client
+        # should include when uploading with its own credentials.
+        headers = _build_source_artifact_upload_headers(
+            content_type=result.content_type,
+            content_sha256=result.content_sha256,
+        )
     return ReaderSourceArtifactUploadInitResponse(
         artifact_id=str(result.artifact_id),
         artifact_kind=result.artifact_kind,
@@ -265,11 +295,11 @@ def _build_source_artifact_upload_init_response(
         byte_size=result.byte_size,
         content_sha256=result.content_sha256,
         source_filename=result.source_filename,
-        upload_method="oss_put_object_pending_credentials",
-        headers=_build_source_artifact_upload_headers(
-            content_type=result.content_type,
-            content_sha256=result.content_sha256,
-        ),
+        upload_method=upload_method,
+        headers=headers,
+        presigned_url=presigned_url,
+        presigned_method=presigned_method,
+        presigned_expires_at=presigned_expires_at,
     )
 
 
@@ -454,11 +484,48 @@ async def init_reader_source_artifact_upload(
     except SourceArtifactError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    # D6-I3Q: build a presigned PUT URL if a presigner is configured.
+    # build_default_presigner() returns NullPresigner when credentials are
+    # missing or presigning is disabled — the response then falls back to
+    # ``oss_put_object_pending_credentials`` with ``presigned_url=None``.
+    #
+    # Security contract: the AccessKey secret never leaves the server. The
+    # presigned URL may include the AccessKey id (``OSSAccessKeyId=...``) in
+    # the query string per the standard OSS presigned-URL model — the id is
+    # not a secret.
+    presigner: Presigner = build_default_presigner()
+    presigned: PresignedUpload | None = None
+    if not isinstance(presigner, NullPresigner):
+        try:
+            presigned = presigner.presign_put_object(
+                bucket=object_ref["bucket"],
+                endpoint=object_ref["endpoint"],
+                object_key=result.object_key,
+                content_type=result.content_type,
+                content_sha256=result.content_sha256,
+                expires_in=timedelta(
+                    seconds=_get_presign_expires_seconds(),
+                ),
+            )
+        except Exception:
+            # Presigner failure must not break init-upload; fall back to
+            # pending-credentials semantic. The client can retry with its
+            # own credentials.
+            presigned = None
+
     return _build_source_artifact_upload_init_response(
         result=result,
         bucket=object_ref["bucket"],
         endpoint=object_ref["endpoint"],
+        presigned=presigned,
     )
+
+
+def _get_presign_expires_seconds() -> int:
+    """Read presign expiry from settings (lazy to avoid import cycles)."""
+    from app.config.settings import get_settings
+
+    return get_settings().aliyun_oss_presign_expires_seconds
 
 
 @router.post(

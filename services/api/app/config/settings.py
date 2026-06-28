@@ -130,6 +130,17 @@ class Settings(BaseSettings):
     # 内部 API Key（云函数调用等）
     internal_api_key: str = ""
 
+    # Aliyun OSS（D6-I3Q）
+    # 凭证从环境变量读取，不写入代码、测试或 API 响应。
+    # dev 默认 bucket/endpoint 保持 claread-dev / oss-cn-shenzhen 兼容。
+    # presign_enabled=False 时默认 fail closed（NullPresigner），客户端走 pending credentials 语义。
+    aliyun_oss_access_key_id: str = ""
+    aliyun_oss_access_key_secret: str = ""
+    aliyun_oss_bucket: str = "claread-dev"
+    aliyun_oss_endpoint: str = "https://oss-cn-shenzhen.aliyuncs.com"
+    aliyun_oss_presign_enabled: bool = False
+    aliyun_oss_presign_expires_seconds: int = 900
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

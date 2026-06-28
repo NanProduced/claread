@@ -178,7 +178,8 @@ def test_init_source_artifact_upload_response_includes_upload_target_without_cre
         source_filename=SOURCE_FILENAME,
         artifact_kind="original_upload",
     )
-    assert response.json() == {
+    response_json = response.json()
+    assert response_json == {
         "artifact_id": str(ARTIFACT_ID),
         "artifact_kind": "original_upload",
         "storage_provider": "oss",
@@ -195,10 +196,19 @@ def test_init_source_artifact_upload_response_includes_upload_target_without_cre
             "content-type": "application/pdf",
             "content-sha256": CONTENT_SHA256,
         },
+        "presigned_url": None,
+        "presigned_method": None,
+        "presigned_expires_at": None,
     }
     assert "authorization" not in {
-        key.lower() for key in response.json()["headers"].keys()
+        key.lower() for key in response_json["headers"].keys()
     }
+    # D6-I3Q: no presigner configured in test env → presigned fields are null
+    # and the response must never leak access keys / secrets.
+    response_text = str(response_json)
+    assert "access_key" not in response_text.lower()
+    assert "access_secret" not in response_text.lower()
+    assert "LTAI" not in response_text  # common Aliyun AK prefix
 
 
 def test_init_source_artifact_upload_allows_pre_record_upload_with_null_ids() -> None:

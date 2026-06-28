@@ -568,8 +568,20 @@ class ReaderSourceArtifactUploadInitResponse(BaseModel):
     byte_size: int | None = Field(default=None, ge=0)
     content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     source_filename: str = Field(min_length=1)
-    upload_method: Literal["oss_put_object_pending_credentials"]
+    upload_method: Literal[
+        "oss_put_object_pending_credentials",
+        "oss_put_object_presigned",
+    ]
     headers: dict[str, str]
+    # D6-I3Q: presigned upload URL. ``None`` when the server has no presigner
+    # configured (``oss_put_object_pending_credentials``); populated when a
+    # presigner returns a signed URL (``oss_put_object_presigned``).
+    # The URL carries the signature in the query string and may include the
+    # AccessKey id (``OSSAccessKeyId=...``) per the standard OSS presigned-URL
+    # model — the id is not a secret. The AccessKey secret is never returned.
+    presigned_url: str | None = None
+    presigned_method: Literal["PUT"] | None = None
+    presigned_expires_at: datetime | None = None
 
 
 class ReaderSourceArtifactUploadCompleteRequest(BaseModel):

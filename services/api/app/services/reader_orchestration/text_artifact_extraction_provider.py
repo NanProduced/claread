@@ -1,14 +1,14 @@
-"""Deterministic text artifact extraction provider (D6-I3M).
+"""Deterministic text artifact extraction provider (D6-I3M + D6-I3Q).
 
 Wraps an injectable :class:`StorageObjectReader` to download object bytes and
 decode them as UTF-8 text. Supports ``text/plain``, ``text/markdown``,
 ``text/x-markdown``, and ``application/octet-stream`` (only when the source
 filename ends with ``.txt`` or ``.md``).
 
-This provider performs **no** OCR, PDF parsing, or real network I/O — all
-storage access goes through the injected reader. In tests, a
-``FakeStorageObjectReader`` is used; in production, an OSS-backed reader will
-be wired later.
+This provider performs **no** OCR, PDF parsing — all storage access goes
+through the injected reader. In tests, a ``FakeStorageObjectReader`` is used;
+in production, :class:`AliyunOssObjectReader` (D6-I3Q) is wired via
+:class:`ArtifactInputPipelineWorkerService`.
 
 Validation rules (all fail-terminal, non-retryable):
 
@@ -28,6 +28,7 @@ and non-fatal warnings (BOM stripped, octet-stream-by-extension).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -57,6 +58,14 @@ FAILURE_CODE_DECODE_ERROR = "decode_error"
 FAILURE_CODE_EMPTY_TEXT = "extraction_empty_text"
 FAILURE_CODE_STORAGE_READ_ERROR = "storage_read_error"
 
+# AliyunOssObjectReader failure codes (D6-I3Q)
+FAILURE_CODE_OSS_SDK_MISSING = "oss_sdk_missing"
+FAILURE_CODE_OSS_OBJECT_NOT_FOUND = "oss_object_not_found"
+FAILURE_CODE_OSS_ACCESS_DENIED = "oss_access_denied"
+FAILURE_CODE_OSS_BUCKET_ENDPOINT_MISMATCH = "oss_bucket_endpoint_mismatch"
+FAILURE_CODE_OSS_NETWORK_ERROR = "oss_network_error"
+FAILURE_CODE_OSS_ERROR = "oss_error"
+
 _UTF8_BOM = b"\xef\xbb\xbf"
 
 
@@ -83,18 +92,67 @@ class StorageObjectReader(Protocol):
 
 
 class AliyunOssObjectReader:
-    """Stub for future Aliyun OSS integration.
+    """Aliyun OSS object reader using ``oss2`` (lazy import, D6-I3Q).
 
-    Not wired yet — calling :meth:`read_object` raises ``NotImplementedError``
-    so production code fails loudly if it accidentally tries to use this reader
-    before the real OSS SDK adapter is implemented. No credentials are read, no
-    network calls are made.
+    Fail-closed: if ``oss2`` is not installed or credentials are missing,
+    :meth:`read_object` raises :class:`ArtifactExtractionError` with
+    ``retryable=False`` (terminal). No credentials are ever returned in error
+    messages or :class:`StorageObjectReadResult`.
+
+    Error classification:
+
+    - ``NoSuchKey`` (404) / ``AccessDenied`` (403) → terminal (non-retryable)
+    - ``RequestError`` / ``TimeoutError`` / ``ConnectionError`` → retryable
+    - Other ``oss2.exceptions.OssError`` → retryable (conservative default)
+
+    The synchronous ``oss2`` call runs in a thread executor so the event loop
+    is not blocked. Credentials are read once at construction time and never
+    logged.
     """
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        # Accept (and ignore) arbitrary config so future wiring can pass
-        # credentials / endpoint / region without changing the call site.
-        pass
+    def __init__(
+        self,
+        *,
+        access_key_id: str,
+        access_key_secret: str,
+        bucket: str,
+        endpoint: str,
+    ) -> None:
+        if not access_key_id or not access_key_secret:
+            raise ValueError(
+                "AliyunOssObjectReader requires non-empty access_key_id and access_key_secret"
+            )
+        if not bucket or not endpoint:
+            raise ValueError(
+                "AliyunOssObjectReader requires non-empty bucket and endpoint"
+            )
+        self._access_key_id = access_key_id
+        self._access_key_secret = access_key_secret
+        self._bucket = bucket
+        self._endpoint = endpoint
+        # Lazy-initialized oss2.Bucket instance (None until first use).
+        self._bucket_instance: Any = None
+
+    def _ensure_sdk(self) -> None:
+        """Lazy-import ``oss2`` and build the Auth + Bucket instances.
+
+        Raises :class:`ArtifactExtractionError` (terminal) if the SDK is not
+        installed. Credentials are never included in the error message.
+        """
+        if self._bucket_instance is not None:
+            return
+        try:
+            import oss2  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise ArtifactExtractionError(
+                "oss2 SDK is not installed; install 'oss2' to enable "
+                "AliyunOssObjectReader",
+                retryable=False,
+                failure_class="extraction",
+                failure_code=FAILURE_CODE_OSS_SDK_MISSING,
+            ) from exc
+        auth = oss2.Auth(self._access_key_id, self._access_key_secret)
+        self._bucket_instance = oss2.Bucket(auth, self._endpoint, self._bucket)
 
     async def read_object(
         self,
@@ -103,10 +161,81 @@ class AliyunOssObjectReader:
         endpoint: str,
         object_key: str,
     ) -> StorageObjectReadResult:
-        raise NotImplementedError(
-            "AliyunOssObjectReader is not implemented yet; inject a "
-            "FakeStorageObjectReader for tests or a real OSS adapter when ready"
+        # Validate request before loading SDK so bucket/endpoint mismatch is
+        # caught even when oss2 is not installed.
+        if bucket != self._bucket or endpoint != self._endpoint:
+            raise ArtifactExtractionError(
+                "AliyunOssObjectReader bucket/endpoint mismatch: reader is "
+                "configured for a different bucket/endpoint than the one "
+                "requested. Refusing to read from an unconfigured bucket.",
+                retryable=False,
+                failure_class="extraction",
+                failure_code=FAILURE_CODE_OSS_BUCKET_ENDPOINT_MISMATCH,
+            )
+
+        try:
+            self._ensure_sdk()
+        except ArtifactExtractionError:
+            raise
+
+        # oss2 is synchronous — run in a thread to avoid blocking the event loop.
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, self._read_object_sync, object_key,
         )
+
+    def _read_object_sync(self, object_key: str) -> StorageObjectReadResult:
+        """Synchronous OSS read + error classification (runs in executor)."""
+        import oss2  # type: ignore[import-untyped]  # local for type narrowing
+
+        try:
+            result = self._bucket_instance.get_object(object_key)
+            data = result.read()
+            content_type = result.headers.get("Content-Type")
+            etag = result.headers.get("ETag")
+            if etag:
+                etag = etag.strip('"')
+            return StorageObjectReadResult(
+                data=data,
+                byte_size=len(data),
+                etag=etag,
+                content_type=content_type,
+            )
+        except oss2.exceptions.NoSuchKey as exc:
+            raise ArtifactExtractionError(
+                f"OSS object not found: object_key={object_key!r}",
+                retryable=False,
+                failure_class="extraction",
+                failure_code=FAILURE_CODE_OSS_OBJECT_NOT_FOUND,
+            ) from exc
+        except oss2.exceptions.AccessDenied as exc:
+            raise ArtifactExtractionError(
+                f"OSS access denied reading object: object_key={object_key!r}",
+                retryable=False,
+                failure_class="extraction",
+                failure_code=FAILURE_CODE_OSS_ACCESS_DENIED,
+            ) from exc
+        except (
+            oss2.exceptions.RequestError,
+            TimeoutError,
+            ConnectionError,
+        ) as exc:
+            raise ArtifactExtractionError(
+                f"OSS network error reading object: object_key={object_key!r}",
+                retryable=True,
+                failure_class="extraction",
+                failure_code=FAILURE_CODE_OSS_NETWORK_ERROR,
+            ) from exc
+        except oss2.exceptions.OssError as exc:
+            # Conservative default: treat unknown OSS errors as retryable so
+            # the worker can schedule retry_later. A reader that knows an
+            # error is terminal should raise ArtifactExtractionError directly.
+            raise ArtifactExtractionError(
+                f"OSS error reading object: object_key={object_key!r}",
+                retryable=True,
+                failure_class="extraction",
+                failure_code=FAILURE_CODE_OSS_ERROR,
+            ) from exc
 
 
 class TextArtifactExtractionProvider:

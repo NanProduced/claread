@@ -39,6 +39,12 @@ dependencies = [
     "alibabacloud-dypnsapi20170525>=1.2.2,<3.0.0",
 ]
 
+# D6-I3Q: OSS-backed artifact IO (AliyunOssObjectReader / AliyunOssPresigner).
+# oss2 是可选依赖：缺省 fail closed（NullPresigner / 读取时报 oss_sdk_missing），
+# 安装 ``pip install -e ".[oss]"`` 后才启用真实 OSS 读写。
+[project.optional-dependencies]
+oss = ["oss2>=2.18.0,<3.0.0"]
+
 [dependency-groups]
 dev = [
     "mypy>=1.17.1,<2.0.0",
@@ -50,6 +56,16 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# NOTE (D6-I3Q): the optional [oss] extra pulls in oss2 → aliyun-python-sdk-core,
+# which requires jmespath<1.0.0. Since uv lock resolves all extras into a single
+# lockfile, this downgrades jmespath from 1.1.0 to 0.10.0 in the shared graph.
+# This is unavoidable while the [oss] extra is declared here: pinning
+# jmespath>=1.0.0 via constraint-dependencies makes the oss extra unsatisfiable.
+# The downgrade is accepted because (a) no repo code imports jmespath directly,
+# (b) botocore/boto3 work with jmespath 0.10.0 (no version upper bound), and
+# (c) all tests pass. If a future STS/proxy model removes the need for oss2,
+# jmespath will naturally return to 1.x.
 
 [project.scripts]
 reader-enhancement-worker = "scripts.run_reader_enhancement_worker:main"
