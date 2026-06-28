@@ -141,6 +141,12 @@ class Settings(BaseSettings):
     aliyun_oss_presign_enabled: bool = False
     aliyun_oss_presign_expires_seconds: int = 900
 
+    # Reader artifact pipeline worker (D6-I3R)
+    reader_artifact_worker_poll_interval_seconds: int = 5
+    reader_artifact_worker_lease_owner_prefix: str = "reader-artifact-pipeline-worker"
+    reader_artifact_worker_lease_duration_seconds: int = 120
+    reader_artifact_worker_max_ticks: int = 100
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
