@@ -44,6 +44,7 @@ from .job_bootstrap import (
     GRAMMAR_JOB_TYPE,
     GRAMMAR_OPERATION_FINGERPRINT,
     GRAMMAR_TARGET_SCOPE,
+    _fingerprint_matches_base,
 )
 from .job_runtime import ClaimResult, FenceViolationError, ReaderJobRuntime
 from .layer_publisher import GrammarBundleLayerPublisher, PublishedGrammarBundle
@@ -406,7 +407,9 @@ class GrammarBundleWorkerService:
         if (
             claim.job_type != GRAMMAR_JOB_TYPE
             or claim.target_type != GRAMMAR_TARGET_SCOPE
-            or claim.operation_fingerprint != GRAMMAR_OPERATION_FINGERPRINT
+            or not _fingerprint_matches_base(
+                claim.operation_fingerprint, GRAMMAR_OPERATION_FINGERPRINT
+            )
         ):
             raise RuntimeError(
                 "grammar worker claimed unsupported job "
@@ -439,7 +442,9 @@ class GrammarBundleWorkerService:
         if (
             claim.job_type != GRAMMAR_JOB_TYPE
             or claim.target_type != GRAMMAR_TARGET_SCOPE
-            or claim.operation_fingerprint != GRAMMAR_OPERATION_FINGERPRINT
+            or not _fingerprint_matches_base(
+                claim.operation_fingerprint, GRAMMAR_OPERATION_FINGERPRINT
+            )
         ):
             raise RuntimeError(
                 "grammar worker claimed unsupported job "

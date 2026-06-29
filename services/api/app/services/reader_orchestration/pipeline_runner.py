@@ -691,7 +691,8 @@ class ReaderEnhancementPipelineRunner:
                       AND expected_generation = $3
                       AND job_type = $4
                       AND target_type = $5
-                      AND operation_fingerprint = $6
+                      AND (operation_fingerprint = $6
+                           OR starts_with(operation_fingerprint, $6 || ':'))
                       AND status = 'superseded'
                     """,
                     record_id,

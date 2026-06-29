@@ -241,7 +241,9 @@ class ReaderJobRuntime:
                           AND available_at <= NOW()
                           AND ($1::text IS NULL OR job_type = $1)
                           AND ($2::text IS NULL OR target_type = $2)
-                          AND ($3::text IS NULL OR operation_fingerprint = $3)
+                          AND ($3::text IS NULL
+                               OR operation_fingerprint = $3
+                               OR starts_with(operation_fingerprint, $3 || ':'))
                           AND ($4::uuid IS NULL OR reading_record_id = $4)
                           AND ($5::uuid IS NULL OR base_id = $5)
                           AND ($6::integer IS NULL OR expected_generation = $6)

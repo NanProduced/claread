@@ -42,6 +42,7 @@ from .job_bootstrap import (
     VOCABULARY_JOB_TYPE,
     VOCABULARY_OPERATION_FINGERPRINT,
     VOCABULARY_TARGET_SCOPE,
+    _fingerprint_matches_base,
 )
 from .job_runtime import ClaimResult, FenceViolationError, ReaderJobRuntime
 from .layer_publisher import PublishedVocabularyLayer, VocabularyLayerPublisher
@@ -425,7 +426,9 @@ class VocabularyWorkerService:
         if (
             claim.job_type != VOCABULARY_JOB_TYPE
             or claim.target_type != VOCABULARY_TARGET_SCOPE
-            or claim.operation_fingerprint != VOCABULARY_OPERATION_FINGERPRINT
+            or not _fingerprint_matches_base(
+                claim.operation_fingerprint, VOCABULARY_OPERATION_FINGERPRINT
+            )
         ):
             raise RuntimeError(
                 "vocabulary worker claimed unsupported job "
@@ -458,7 +461,9 @@ class VocabularyWorkerService:
         if (
             claim.job_type != VOCABULARY_JOB_TYPE
             or claim.target_type != VOCABULARY_TARGET_SCOPE
-            or claim.operation_fingerprint != VOCABULARY_OPERATION_FINGERPRINT
+            or not _fingerprint_matches_base(
+                claim.operation_fingerprint, VOCABULARY_OPERATION_FINGERPRINT
+            )
         ):
             raise RuntimeError(
                 "vocabulary worker claimed unsupported job "

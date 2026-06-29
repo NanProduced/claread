@@ -26,6 +26,7 @@ from .job_bootstrap import (
     VOCABULARY_JOB_TYPE,
     VOCABULARY_OPERATION_FINGERPRINT,
     VOCABULARY_TARGET_SCOPE,
+    _fingerprint_matches_base,
 )
 from .job_runtime import (
     FenceViolationError,
@@ -397,7 +398,10 @@ class VocabularyLayerPublisher:
                 if (
                     job_row["job_type"] != VOCABULARY_JOB_TYPE
                     or job_row["target_type"] != VOCABULARY_TARGET_SCOPE
-                    or job_row["operation_fingerprint"] != VOCABULARY_OPERATION_FINGERPRINT
+                    or not _fingerprint_matches_base(
+                        job_row["operation_fingerprint"],
+                        VOCABULARY_OPERATION_FINGERPRINT,
+                    )
                 ):
                     raise ValueError(
                         "vocabulary publish requires a build_vocabulary_layer/unit job"
@@ -631,7 +635,10 @@ class GrammarBundleLayerPublisher:
                 if (
                     job_row["job_type"] != GRAMMAR_JOB_TYPE
                     or job_row["target_type"] != GRAMMAR_TARGET_SCOPE
-                    or job_row["operation_fingerprint"] != GRAMMAR_OPERATION_FINGERPRINT
+                    or not _fingerprint_matches_base(
+                        job_row["operation_fingerprint"],
+                        GRAMMAR_OPERATION_FINGERPRINT,
+                    )
                 ):
                     raise ValueError(
                         "grammar publish requires a build_grammar_bundle/unit job"
