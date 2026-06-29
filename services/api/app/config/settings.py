@@ -163,6 +163,20 @@ class Settings(BaseSettings):
     # 单次 OCR 请求超时（秒）；超时映射为 retryable ocr_backend_transient。
     reader_ocr_request_timeout_seconds: int = 60
 
+    # D6-I4D: Article RAG provider adapter foundation.
+    # 默认 disabled + 无 zilliz 凭证 / 无 embedding provider 时，
+    # factory 返回 Unconfigured* 包装（fail closed，不联网）。
+    # README/Zilliz 仅作为 index replica；citation truth 永远回 Postgres。
+    reader_article_rag_embedding_provider: str = ""
+    reader_article_rag_embedding_model: str = ""
+    reader_article_rag_vector_provider: str = ""
+    reader_article_rag_zilliz_uri: str = ""
+    reader_article_rag_zilliz_token: str = ""
+    reader_article_rag_zilliz_collection: str = "article_rag_index_v1"
+    reader_article_rag_vector_dim: int = 1024
+    reader_article_rag_enabled: bool = False
+    reader_article_rag_smoke: bool = False
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

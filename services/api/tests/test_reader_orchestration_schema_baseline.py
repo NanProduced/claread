@@ -22,11 +22,15 @@ BASELINE_SQL = (
 ).read_text(encoding="utf-8") + "\n" + (
     REPO_ROOT / "infra" / "migrations" / "0003_reader_ask_dual_scope.sql"
 ).read_text(encoding="utf-8") + "\n" + (
+    REPO_ROOT / "infra" / "migrations" / "0004_reader_document_blocks.sql"
+).read_text(encoding="utf-8") + "\n" + (
     REPO_ROOT / "infra" / "migrations" / "0006_reader_ask_supplements_nullable_analysis_record_id.sql"
 ).read_text(encoding="utf-8") + "\n" + (
     REPO_ROOT / "infra" / "migrations" / "0008_reader_jobs_input_artifact_extraction.sql"
 ).read_text(encoding="utf-8") + "\n" + (
     REPO_ROOT / "infra" / "migrations" / "0009_reader_jobs_extracted_artifact_materialization.sql"
+).read_text(encoding="utf-8") + "\n" + (
+    REPO_ROOT / "infra" / "migrations" / "0010_reader_article_rag_index_state.sql"
 ).read_text(encoding="utf-8")
 
 
@@ -826,7 +830,49 @@ async def test_reader_jobs_base_scope_and_active_fingerprint(reader_schema: str)
                 run_id,
                 user_id,
             )
-    finally:
+
+        # article_rag_index_build (added in 0010) is base-scoped:
+        # non-null base_id is accepted, null base_id is rejected by
+        # ck_reader_jobs_base_scope's catch-all clause.
+        await conn.execute(
+            """
+            INSERT INTO reader_jobs (
+                reading_record_id, base_id, run_id, user_id,
+                job_type, target_type, target_key,
+                status, expected_generation,
+                operation_fingerprint, idempotency_key
+            )
+            VALUES (
+                $1, $2, $3, $4, 'article_rag_index_build', 'record', $5,
+                'queued', 1, 'fp-rag-index', 'id-rag-index-1'
+            )
+            """,
+            record_id,
+            base_id,
+            run_id,
+            user_id,
+            str(record_id),
+        )
+
+        with pytest.raises(asyncpg.CheckViolationError):
+            await conn.execute(
+                """
+                INSERT INTO reader_jobs (
+                    reading_record_id, base_id, run_id, user_id,
+                    job_type, target_type, target_key,
+                    status, expected_generation,
+                    operation_fingerprint, idempotency_key
+                )
+                VALUES (
+                    $1, NULL, $2, $3, 'article_rag_index_build', 'record', $4,
+                    'queued', 1, 'fp-rag-index-no-base', 'id-rag-index-no-base'
+                )
+                """,
+                record_id,
+                run_id,
+                user_id,
+                str(record_id),
+            )    finally:
         await conn.close()
 
 
