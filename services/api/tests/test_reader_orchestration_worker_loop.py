@@ -23,6 +23,11 @@ from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
+from app.services.reader_orchestration.display_title_worker import (
+    DisplayTitleExecutionResult,
+    DisplayTitleJobContext,
+    DisplayTitleWorkerService,
+)
 from app.services.reader_orchestration.grammar_worker import (
     GrammarBundleWorkerService,
     GrammarExecutionResult,
@@ -270,6 +275,21 @@ class _StaticGrammarExecutor:
         )
 
 
+class _StaticTitleGenerator:
+    async def generate(
+        self,
+        context: DisplayTitleJobContext,
+    ) -> DisplayTitleExecutionResult:
+        return DisplayTitleExecutionResult(
+            title_zh="循环测试文章标题",
+            usage_data={"input_tokens": 1, "output_tokens": 1},
+            prompt_version="worker-loop-title",
+            model_profile="worker_loop_fake_title",
+            model_provider="fake",
+            model_name="worker-loop-title",
+        )
+
+
 @pytest.fixture
 async def worker_loop_env() -> asyncpg.Pool:
     schema_name = f"test_reader_worker_loop_{uuid4().hex}"
@@ -297,6 +317,7 @@ async def worker_loop_env() -> asyncpg.Pool:
 def _make_runner(
     pool: asyncpg.Pool,
     *,
+    title_generator: object | None = None,
     translator: object | None = None,
     vocabulary_executor: object | None = None,
     grammar_executor: object | None = None,
@@ -313,8 +334,13 @@ def _make_runner(
     grammar_worker = None
     if grammar_executor is not None:
         grammar_worker = GrammarBundleWorkerService(pool=pool, executor=grammar_executor)
+    display_title_worker = DisplayTitleWorkerService(
+        pool=pool,
+        generator=title_generator or _StaticTitleGenerator(),
+    )
     return ReaderEnhancementPipelineRunner(
         pool=pool,
+        display_title_worker_service=display_title_worker,
         translation_orchestrator=translation_orchestrator,
         vocabulary_worker_service=vocabulary_worker,
         grammar_worker_service=grammar_worker,
@@ -687,15 +713,13 @@ async def test_process_candidate_forwards_custom_lease_duration_to_pipeline_runn
     assert len(runner.calls) == 1
     assert runner.calls[0]["lease_duration"] == lease_duration
     assert await _load_product_state(worker_loop_env, article.record_id) == "readable_enhancing"
-    assert (
-        await _poll_events_after(
-            worker_loop_env,
-            record_id=article.record_id,
-            user_id=user_id,
-            after_sequence=article.article_ready_sequence,
-        )
-        == ()
+    events_after_retry = await _poll_events_after(
+        worker_loop_env,
+        record_id=article.record_id,
+        user_id=user_id,
+        after_sequence=article.article_ready_sequence,
     )
+    assert [event for event in events_after_retry if event.event_type != "record_state_changed"] == []
 
 
 async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload_events(
@@ -817,15 +841,17 @@ async def test_retry_later_records_are_not_hot_looped_until_available(
     assert result.pipeline_summary.stopped_reason == "attention_required"
     assert result.pipeline_summary.stopped_outcome == "retry_later"
     assert await _load_product_state(worker_loop_env, article.record_id) == "readable_enhancing"
-    assert (
-        await _poll_events_after(
-            worker_loop_env,
-            record_id=article.record_id,
-            user_id=user_id,
-            after_sequence=article.article_ready_sequence,
-        )
-        == ()
+    events_after_retry = await _poll_events_after(
+        worker_loop_env,
+        record_id=article.record_id,
+        user_id=user_id,
+        after_sequence=article.article_ready_sequence,
     )
+    assert [
+        event
+        for event in events_after_retry
+        if event.event_type != "record_state_changed"
+    ] == []
 
     candidates_after_retry = await service.scan_eligible_records(batch_size=20)
     candidate_ids_after_retry = {

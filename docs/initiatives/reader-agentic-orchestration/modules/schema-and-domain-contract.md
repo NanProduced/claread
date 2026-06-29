@@ -1,7 +1,7 @@
 # Schema And Domain Contract
 
-> 状态：`D6-I0 input / document model decision merged`
-> 最后更新：2026-06-25
+> 状态：`D6 display title generation contract merged`
+> 最后更新：2026-06-29
 > 范围：Reader agentic orchestration 的后端 schema 边界、领域对象、运行时事实源、projection DTO、旧 workflow cutover 和 reset 约束。
 
 ## 目标
@@ -47,6 +47,7 @@ D3 处于开发期，没有生产数据兼容需求。正式代码和文档使�
 | D3-P4 Implementation | `accepted` | Job runtime、event publisher 和 polling cursor 已实现；job fence 必须校验 record 当前 active base，polling cursor 不得在 caught-up / empty stream 时误报 reload。 |
 | D4-P0 Implementation | `accepted` | 最小 Reader API 已实现；plain text submit、snapshot reload 和 event polling 均复用 D3 services；新 API 不读取 `render_scene_json`；blank `client_record_id` 规范化为 `NULL`，重复 active `client_record_id` 返回 409。 |
 | D4-P1 Implementation | `accepted` | Translation bootstrap、worker、publisher、usage attribution 和 snapshot projection 已实现；worker claim 必须按 job type/target type 过滤；retry 后成功必须清理 run failure 字段。 |
+| D6 Display Title Generation | `accepted` | 新 Reader Header 中文标题由后端 `generate_display_title_zh` job 生成；`reading_records.generated_title_zh` 是 snapshot `record.display_title_zh` 的唯一事实源；失败必须停在可重试状态。 |
 
 ## Schema Groups
 
@@ -109,6 +110,12 @@ Required fields:
 | `client_record_id` | optional client alias |
 | `source_type` | `text`, `markdown`, `file`, `url`, `pdf`, `ocr`, etc. |
 | `title` | display title |
+| `generated_title_zh` | backend-generated Simplified Chinese masthead title |
+| `title_generation_status` | `pending`, `succeeded`, `failed_retryable` |
+| `title_generation_error_code` | nullable retry diagnostic |
+| `title_generation_error_message` | nullable sanitized retry diagnostic |
+| `title_generation_attempt_count` | last title-generation attempt count |
+| `title_generation_updated_at` | last title-generation state transition timestamp |
 | `language` | detected or user-selected language |
 | `lifecycle_status` | `active`, `cancelled`, `superseded`, `deleted` |
 | `product_state` | Reader / Library visible state |
@@ -134,6 +141,10 @@ Rules:
 - Supersede creates or points to another Reading Record; it does not mutate an existing Stable Reading Document or canonical text base.
 - `active_base_id` can be enforced by nullable FK + transaction check, deferrable FK, or equivalent service-level invariant. The contract requires the invariant, not a single DDL shape.
 - D3-P1 does not require a DB trigger to enforce `active_base_id -> reading_bases.status = 'active'`. Service / publisher code must enforce this invariant when setting active base, superseding base, and publishing layers/jobs.
+- `title` remains source/user-facing input metadata. It is not the generated Chinese masthead contract.
+- `generated_title_zh` belongs to `reading_records`, not `reading_bases`, because it is localized product metadata for a user's Reading Record and can be retried or regenerated without changing the canonical text base. Stable source facts and Canonical Text Layer identity must not depend on a localized masthead label.
+- `title_generation_status='succeeded'` requires a non-empty `generated_title_zh`. `pending` and `failed_retryable` must not expose a fake success title.
+- `failed_retryable` must preserve an error code/message suitable for operator diagnostics and user-facing retry flow. It is not a terminal record failure.
 
 ### Record State Ownership
 
@@ -1222,6 +1233,9 @@ D5-V2 values:
 W3-C2 alignment additions:
 
 - Snapshot top-level `record` is the minimum ReaderWorkbench shell metadata contract for title, created time, source metadata, current `product_state`, and current `readiness_state`.
+- Snapshot `record.display_title_zh` is the only generated Chinese masthead field for `/app/reader-record/{recordId}` Header. It is populated only when `record.title_generation_status = "succeeded"`.
+- Snapshot `record.title_generation_status` has exactly `pending`, `succeeded`, and `failed_retryable`. `failed_retryable` may include `title_generation_error_code` and sanitized `title_generation_error_message` so the client can expose retry/diagnostic affordances without treating the title as present.
+- Snapshot serializers must reject or fail closed if persisted facts claim `title_generation_status = "succeeded"` but `generated_title_zh` is blank. They must not fall back to `reading_records.title`, `reading_bases.title_snapshot`, Stable Reading Document title, or client-generated text as a successful Chinese title.
 - `/app/reader-record/{recordId}` may surface `product_state` as the primary reader-facing status and `readiness_state` as auxiliary milestone text after snapshot reloads.
 - D6-P7A adds `enhancement_progress` so Reader UI can distinguish queued, processing, published and failed enhancement work. It is derived from `reading_records`, current-base/current-generation `reader_jobs`, and `enhancement_layers`; it is not a new source of truth and does not create new DB tables.
 - `enhancement_progress.layers[*].capability` groups existing facts into `translation`, `vocabulary`, or `grammar`. Grammar jobs may have no single `layer_type`; published grammar outputs continue to use existing `grammar_note` and `sentence_analysis` layer types.

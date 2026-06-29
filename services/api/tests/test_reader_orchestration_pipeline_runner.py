@@ -23,6 +23,11 @@ from app.schemas.reader_orchestration import (
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
+from app.services.reader_orchestration.display_title_worker import (
+    DisplayTitleExecutionResult,
+    DisplayTitleJobContext,
+    DisplayTitleWorkerService,
+)
 from app.services.reader_orchestration.grammar_worker import (
     GrammarBundleWorkerService,
     GrammarExecutionResult,
@@ -250,6 +255,21 @@ class _StaticGrammarExecutor:
         )
 
 
+class _StaticTitleGenerator:
+    async def generate(
+        self,
+        context: DisplayTitleJobContext,
+    ) -> DisplayTitleExecutionResult:
+        return DisplayTitleExecutionResult(
+            title_zh="管线测试文章标题",
+            usage_data={"input_tokens": 1, "output_tokens": 1},
+            prompt_version="pipeline-test-display-title",
+            model_profile="fake_title",
+            model_provider="fake",
+            model_name="fake-title",
+        )
+
+
 @pytest.fixture
 async def pipeline_runner_env() -> asyncpg.Pool:
     schema_name = f"test_reader_pipeline_runner_{uuid4().hex}"
@@ -285,6 +305,7 @@ def _plain_text(unit_count: int) -> str:
 def _make_runner(
     pool: asyncpg.Pool,
     *,
+    title_generator: object | None = None,
     translator: object | None = None,
     vocabulary_executor: object | None = None,
     grammar_executor: object | None = None,
@@ -308,8 +329,13 @@ def _make_runner(
         if grammar_executor is not None
         else None
     )
+    display_title_worker = DisplayTitleWorkerService(
+        pool=pool,
+        generator=title_generator or _StaticTitleGenerator(),
+    )
     return ReaderEnhancementPipelineRunner(
         pool=pool,
+        display_title_worker_service=display_title_worker,
         translation_orchestrator=orchestrator,
         vocabulary_worker_service=vocabulary_worker,
         grammar_worker_service=grammar_worker,
@@ -452,6 +478,7 @@ async def test_bootstrap_missing_jobs_covers_all_units_and_is_idempotent(
         article.base_id,
     )
     assert unit_count == 3
+    assert first.job_counts.display_title == 1
     assert first.job_counts.translation == unit_count
     assert first.job_counts.vocabulary == unit_count
     assert first.job_counts.grammar_bundle == unit_count
@@ -466,7 +493,13 @@ async def test_bootstrap_missing_jobs_covers_all_units_and_is_idempotent(
     assert second.job_counts.translation == 0
     assert second.job_counts.vocabulary == 0
     assert second.job_counts.grammar_bundle == 0
+    assert second.job_counts.display_title == 0
 
+    assert await _count_jobs(
+        pipeline_runner_env,
+        article.record_id,
+        "generate_display_title_zh",
+    ) == 1
     assert await _count_jobs(
         pipeline_runner_env,
         article.record_id,
@@ -511,6 +544,7 @@ async def test_run_only_drains_jobs_for_target_record(
         record_id=older_article.record_id,
         user_id=user_id,
     )
+    assert older_bootstrap.job_counts.display_title == 1
     assert older_bootstrap.job_counts.translation == 1
     assert older_bootstrap.job_counts.vocabulary == 1
     assert older_bootstrap.job_counts.grammar_bundle == 1
@@ -520,16 +554,16 @@ async def test_run_only_drains_jobs_for_target_record(
         user_id=user_id,
         lease_owner="pipeline-record-scope",
         lease_duration=LEASE_DURATION,
-        max_ticks=3,
-        max_jobs=3,
+        max_ticks=4,
+        max_jobs=4,
     )
 
     assert summary.record_id == target_article.record_id
     assert summary.base_id == target_article.base_id
-    assert summary.total_jobs == 3
-    assert summary.total_ticks == 3
+    assert summary.total_jobs == 4
+    assert summary.total_ticks == 4
     assert summary.stopped_reason == "max_jobs_reached"
-    assert summary.outcome_counts.succeeded == 3
+    assert summary.outcome_counts.succeeded == 4
     assert summary.outcome_counts.no_job == 0
 
     assert await _count_layers(
@@ -577,12 +611,12 @@ async def test_run_only_drains_jobs_for_target_record(
         pipeline_runner_env,
         older_article.record_id,
         "queued",
-    ) == 3
+    ) == 4
     assert await _count_jobs_by_status(
         pipeline_runner_env,
         target_article.record_id,
         "succeeded",
-    ) == 3
+    ) == 4
 
 
 @pytest.mark.anyio
@@ -608,23 +642,25 @@ async def test_run_with_fake_executors_publishes_all_layers_and_snapshot_reload_
         user_id=user_id,
         lease_owner="pipeline-success",
         lease_duration=LEASE_DURATION,
-        max_ticks=12,
+        max_ticks=13,
         max_jobs=12,
     )
 
     assert summary.bootstrapped_job_counts.translation == 2
     assert summary.bootstrapped_job_counts.vocabulary == 2
     assert summary.bootstrapped_job_counts.grammar_bundle == 2
+    assert summary.bootstrapped_job_counts.display_title == 1
+    assert summary.worker_tick_counts.display_title == 3
     assert summary.worker_tick_counts.translation == 3
     assert summary.worker_tick_counts.vocabulary == 3
     assert summary.worker_tick_counts.grammar_bundle == 3
-    assert summary.outcome_counts.succeeded == 6
+    assert summary.outcome_counts.succeeded == 7
     assert summary.outcome_counts.retry_later == 0
     assert summary.outcome_counts.failed_terminal == 0
     assert summary.outcome_counts.superseded == 0
-    assert summary.outcome_counts.no_job == 3
-    assert summary.total_jobs == 6
-    assert summary.total_ticks == 9
+    assert summary.outcome_counts.no_job == 5
+    assert summary.total_jobs == 7
+    assert summary.total_ticks == 12
     assert summary.stopped_reason == "all_workers_no_job"
     assert summary.stopped_worker_type is None
     assert summary.snapshot_reload_recommended is True
@@ -833,9 +869,9 @@ async def test_run_reports_superseded_when_publish_fence_fails(
     assert summary.stopped_worker_type == "translation"
     assert summary.stopped_outcome == "superseded"
     assert summary.attention_code == "publish_fence_failed"
-    assert summary.outcome_counts.succeeded == 0
+    assert summary.outcome_counts.succeeded == 1
     assert summary.outcome_counts.superseded >= 1
-    assert summary.total_jobs == 1
+    assert summary.total_jobs == 2
     assert summary.snapshot_reload_recommended is True
     assert await _count_layers(
         pipeline_runner_env,
@@ -874,7 +910,7 @@ async def test_run_fail_closed_on_unconfigured_vocabulary_executor(
     assert summary.stopped_worker_type == "vocabulary"
     assert summary.stopped_outcome == "failed_terminal"
     assert summary.attention_code == "vocabulary_executor_unconfigured"
-    assert summary.outcome_counts.succeeded == 1
+    assert summary.outcome_counts.succeeded == 2
     assert summary.outcome_counts.failed_terminal == 1
     assert await _count_layers(
         pipeline_runner_env,
@@ -928,7 +964,7 @@ async def test_run_respects_max_ticks(
         pipeline_runner_env,
         article.record_id,
         "vocabulary",
-    ) == 1
+    ) == 0
     assert await _count_layers(
         pipeline_runner_env,
         article.record_id,
@@ -976,7 +1012,7 @@ async def test_run_respects_max_jobs(
         pipeline_runner_env,
         article.record_id,
         "vocabulary",
-    ) == 1
+    ) == 0
     assert await _count_layers(
         pipeline_runner_env,
         article.record_id,

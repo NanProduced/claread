@@ -33,6 +33,7 @@ from app.services.reader_orchestration.article_ready_service import (
     PlainTextArticleReadySubmitRequest,
 )
 from app.services.reader_orchestration.job_bootstrap import (
+    DisplayTitleJobBootstrapService,
     TranslationJobBootstrapService,
 )
 from app.services.reader_orchestration.translation_parsed_decision import (
@@ -83,6 +84,7 @@ class ReaderOrchestrator:
         pool: asyncpg.Pool | None = None,
         article_ready_service: ArticleReadyPersistenceService | None = None,
         bootstrap_service: TranslationJobBootstrapService | None = None,
+        title_bootstrap_service: DisplayTitleJobBootstrapService | None = None,
         worker_service: TranslationWorkerService | None = None,
     ) -> None:
         self._pool = pool
@@ -90,6 +92,9 @@ class ReaderOrchestrator:
             pool=pool
         )
         self._bootstrap_service = bootstrap_service or TranslationJobBootstrapService(pool=pool)
+        self._title_bootstrap_service = (
+            title_bootstrap_service or DisplayTitleJobBootstrapService(pool=pool)
+        )
         self._worker_service = worker_service or TranslationWorkerService(pool=pool)
 
     def get_pool(self) -> asyncpg.Pool:
@@ -109,6 +114,10 @@ class ReaderOrchestrator:
         bootstrap is idempotent: repeated calls reuse the active job.
         """
         result = await self._article_ready_service.submit_plain_text(request)
+        await self._title_bootstrap_service.bootstrap_display_title_job(
+            record_id=result.record_id,
+            user_id=request.user_id,
+        )
         await self._bootstrap_service.bootstrap_translation_run(
             record_id=result.record_id,
             user_id=request.user_id,

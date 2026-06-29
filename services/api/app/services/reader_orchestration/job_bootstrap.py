@@ -32,6 +32,13 @@ GRAMMAR_TRIGGER_KIND = "system"
 GRAMMAR_POLICY_VERSION = "reader_grammar_bundle_bootstrap_v1"
 GRAMMAR_OPERATION_FINGERPRINT = "grammar_bundle_unit_v1"
 DEFAULT_GRAMMAR_MAX_ATTEMPTS = 3
+DISPLAY_TITLE_RUN_TYPE = "display_title_generation"
+DISPLAY_TITLE_JOB_TYPE = "generate_display_title_zh"
+DISPLAY_TITLE_TARGET_SCOPE = "record"
+DISPLAY_TITLE_TRIGGER_KIND = "system"
+DISPLAY_TITLE_POLICY_VERSION = "reader_display_title_bootstrap_v1"
+DISPLAY_TITLE_OPERATION_FINGERPRINT = "display_title_zh_v1"
+DEFAULT_DISPLAY_TITLE_MAX_ATTEMPTS = 5
 _BOOTSTRAP_READY_PRODUCT_STATES = frozenset({"readable_enhancing", "processing"})
 
 
@@ -69,7 +76,18 @@ class GrammarBootstrapResult:
 
 
 @dataclass(frozen=True, slots=True)
+class DisplayTitleBootstrapResult:
+    run_id: UUID
+    job_id: UUID
+    reading_record_id: UUID
+    base_id: UUID
+    expected_generation: int
+    operation_fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
 class EnhancementBootstrapJobCounts:
+    display_title: int = 0
     translation: int = 0
     vocabulary: int = 0
     grammar_bundle: int = 0
@@ -82,6 +100,7 @@ class EnhancementBootstrapSummary:
     expected_generation: int
     last_event_sequence: int
     job_counts: EnhancementBootstrapJobCounts
+    display_title_results: tuple[DisplayTitleBootstrapResult, ...] = ()
     translation_results: tuple[TranslationBootstrapResult, ...] = ()
     vocabulary_results: tuple[VocabularyBootstrapResult, ...] = ()
     grammar_results: tuple[GrammarBootstrapResult, ...] = ()
@@ -859,6 +878,33 @@ class GrammarJobBootstrapService:
                 )
 
 
+class DisplayTitleJobBootstrapService:
+    def __init__(self, *, pool: asyncpg.Pool | None = None) -> None:
+        self._pool = pool
+
+    def get_pool(self) -> asyncpg.Pool:
+        pool = self._pool or db_connection.DB_POOL
+        if pool is None:
+            raise RuntimeError("Database pool not initialized")
+        return pool
+
+    async def bootstrap_display_title_job(
+        self,
+        *,
+        record_id: UUID,
+        user_id: UUID,
+    ) -> DisplayTitleBootstrapResult | None:
+        async with self.get_pool().acquire() as conn:
+            async with conn.transaction():
+                state = await _load_locked_active_base_state(
+                    conn,
+                    record_id=record_id,
+                    user_id=user_id,
+                )
+                results = await _bootstrap_display_title_job(conn, state=state)
+        return results[0] if results else None
+
+
 class EnhancementJobBootstrapService:
     def __init__(self, *, pool: asyncpg.Pool | None = None) -> None:
         self._pool = pool
@@ -882,6 +928,10 @@ class EnhancementJobBootstrapService:
                     record_id=record_id,
                     user_id=user_id,
                 )
+                display_title_results = await _bootstrap_display_title_job(
+                    conn,
+                    state=state,
+                )
                 translation_results = await self._bootstrap_translation_jobs(
                     conn,
                     state=state,
@@ -901,10 +951,12 @@ class EnhancementJobBootstrapService:
             expected_generation=state.expected_generation,
             last_event_sequence=state.last_event_sequence,
             job_counts=EnhancementBootstrapJobCounts(
+                display_title=len(display_title_results),
                 translation=len(translation_results),
                 vocabulary=len(vocabulary_results),
                 grammar_bundle=len(grammar_results),
             ),
+            display_title_results=tuple(display_title_results),
             translation_results=tuple(translation_results),
             vocabulary_results=tuple(vocabulary_results),
             grammar_results=tuple(grammar_results),
@@ -1246,6 +1298,108 @@ async def _load_locked_active_base_state(
     )
 
 
+async def _bootstrap_display_title_job(
+    conn: asyncpg.Connection,
+    *,
+    state: _LockedActiveBaseState,
+) -> list[DisplayTitleBootstrapResult]:
+    row = await conn.fetchrow(
+        """
+        SELECT title_generation_status
+        FROM reading_records
+        WHERE id = $1
+          AND user_id = $2
+          AND deleted_at IS NULL
+        """,
+        state.record_id,
+        state.user_id,
+    )
+    if row is None:
+        raise LookupError(f"reading record {state.record_id} not found")
+    if row["title_generation_status"] == "succeeded":
+        return []
+
+    existing_job = await conn.fetchrow(
+        """
+        SELECT id
+        FROM reader_jobs
+        WHERE reading_record_id = $1
+          AND base_id = $2
+          AND job_type = $3
+          AND target_type = $4
+          AND target_key = $5
+          AND expected_generation = $6
+          AND operation_fingerprint = $7
+          AND status IN ('queued', 'claimed', 'retry_later', 'paused', 'succeeded')
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+        """,
+        state.record_id,
+        state.base_id,
+        DISPLAY_TITLE_JOB_TYPE,
+        DISPLAY_TITLE_TARGET_SCOPE,
+        str(state.record_id),
+        state.expected_generation,
+        DISPLAY_TITLE_OPERATION_FINGERPRINT,
+    )
+    if existing_job is not None:
+        return []
+
+    await conn.execute(
+        """
+        UPDATE reading_records
+        SET title_generation_status = 'pending',
+            title_generation_error_code = NULL,
+            title_generation_error_message = NULL,
+            title_generation_updated_at = NOW(),
+            updated_at = NOW()
+        WHERE id = $1
+          AND user_id = $2
+          AND generation = $3
+          AND active_base_id = $4
+          AND deleted_at IS NULL
+          AND title_generation_status <> 'succeeded'
+        """,
+        state.record_id,
+        state.user_id,
+        state.expected_generation,
+        state.base_id,
+    )
+
+    run_id, job_id = await _insert_record_job(
+        conn,
+        state=state,
+        run_type=DISPLAY_TITLE_RUN_TYPE,
+        job_type=DISPLAY_TITLE_JOB_TYPE,
+        target_scope=DISPLAY_TITLE_TARGET_SCOPE,
+        policy_version=DISPLAY_TITLE_POLICY_VERSION,
+        trigger_kind=DISPLAY_TITLE_TRIGGER_KIND,
+        operation_fingerprint=DISPLAY_TITLE_OPERATION_FINGERPRINT,
+        max_attempts=DEFAULT_DISPLAY_TITLE_MAX_ATTEMPTS,
+        envelope_json={
+            "record_id": str(state.record_id),
+            "base_id": str(state.base_id),
+            "target_scope": DISPLAY_TITLE_TARGET_SCOPE,
+            "target_language": "zh-CN",
+        },
+        input_signature_suffix=f"{state.base_language}:display_title_zh:1",
+        input_json={
+            "target_language": "zh-CN",
+            "base_language": state.base_language,
+        },
+    )
+    return [
+        DisplayTitleBootstrapResult(
+            run_id=run_id,
+            job_id=job_id,
+            reading_record_id=state.record_id,
+            base_id=state.base_id,
+            expected_generation=state.expected_generation,
+            operation_fingerprint=DISPLAY_TITLE_OPERATION_FINGERPRINT,
+        )
+    ]
+
+
 async def _load_last_event_sequence(
     conn: asyncpg.Connection,
     *,
@@ -1262,6 +1416,125 @@ async def _load_last_event_sequence(
     if row is None or row["next_sequence"] is None:
         return 0
     return max(0, int(row["next_sequence"]) - 1)
+
+
+async def _insert_record_job(
+    conn: asyncpg.Connection,
+    *,
+    state: _LockedActiveBaseState,
+    run_type: str,
+    job_type: str,
+    target_scope: str,
+    policy_version: str,
+    trigger_kind: str,
+    operation_fingerprint: str,
+    max_attempts: int,
+    envelope_json: dict[str, Any],
+    input_signature_suffix: str,
+    input_json: dict[str, Any],
+) -> tuple[UUID, UUID]:
+    run_row = await conn.fetchrow(
+        """
+        INSERT INTO reader_runs (
+            reading_record_id,
+            user_id,
+            run_type,
+            status,
+            record_generation,
+            envelope_json,
+            policy_version,
+            trigger_kind
+        )
+        VALUES (
+            $1,
+            $2,
+            $3,
+            'queued',
+            $4,
+            $5::jsonb,
+            $6,
+            $7
+        )
+        RETURNING id
+        """,
+        state.record_id,
+        state.user_id,
+        run_type,
+        state.expected_generation,
+        jsonb_param(envelope_json),
+        policy_version,
+        trigger_kind,
+    )
+    if run_row is None:
+        raise RuntimeError("reader_runs insert did not return a row")
+
+    input_signature = (
+        f"{state.base_id}:{state.record_id}:{state.expected_generation}:"
+        f"{operation_fingerprint}:{input_signature_suffix}"
+    )
+    input_hash = hashlib.sha256(input_signature.encode("utf-8")).hexdigest()
+    job_row = await conn.fetchrow(
+        """
+        INSERT INTO reader_jobs (
+            reading_record_id,
+            base_id,
+            run_id,
+            user_id,
+            job_type,
+            target_type,
+            target_key,
+            status,
+            priority,
+            expected_generation,
+            operation_fingerprint,
+            idempotency_key,
+            input_hash,
+            input_json,
+            max_attempts
+        )
+        VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6,
+            $7,
+            'queued',
+            10,
+            $8,
+            $9,
+            $10,
+            $11,
+            $12::jsonb,
+            $13
+        )
+        RETURNING id
+        """,
+        state.record_id,
+        state.base_id,
+        run_row["id"],
+        state.user_id,
+        job_type,
+        target_scope,
+        str(state.record_id),
+        state.expected_generation,
+        operation_fingerprint,
+        f"{operation_fingerprint}:{state.record_id}",
+        input_hash,
+        jsonb_param(
+            {
+                **input_json,
+                "record_id": str(state.record_id),
+                "base_id": str(state.base_id),
+                "expected_generation": state.expected_generation,
+            }
+        ),
+        max_attempts,
+    )
+    if job_row is None:
+        raise RuntimeError("reader_jobs insert did not return a row")
+    return run_row["id"], job_row["id"]
 
 
 async def _insert_unit_job(

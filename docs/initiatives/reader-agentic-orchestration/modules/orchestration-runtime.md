@@ -1,7 +1,7 @@
 # Orchestration Runtime
 
-> 状态：`D6 ongoing; artifact pipeline worker rebaselined`
-> 最后更新：2026-06-28
+> 状态：`D6 ongoing; display title worker added`
+> 最后更新：2026-06-29
 > 范围：bounded run/job、worker lease、Authorization Envelope、并发和框架边界。
 
 ## Runtime 形态
@@ -92,8 +92,8 @@ D5 双评审 disposition 更新：
 
 当前 closeout 口径：
 
-- runner 先通过 `EnhancementJobBootstrapService` 为当前 record/base/generation 创建缺失的 translation、vocabulary 和 grammar bundle jobs；
-- drain 顺序固定为 translation -> vocabulary -> grammar bundle；
+- runner 先通过 `EnhancementJobBootstrapService` 为当前 record/base/generation 创建缺失的 display title、translation、vocabulary 和 grammar bundle jobs；
+- drain 顺序固定为 display title -> translation -> vocabulary -> grammar bundle；
 - worker claim 必须带 `reading_record_id`、`base_id`、`expected_generation` scope，防止某个 record 的 runner 消费另一个 record 的 queued jobs；
 - runner 只汇总 typed summary 和 attention outcome，不拥有 layer truth，不绕过 Layer Publisher；
 - 遇到 `retry_later`、`failed_terminal` 或 publish fence supersede 时返回 attention summary，由调用方决定继续、告警或 repair；
@@ -102,14 +102,38 @@ D5 双评审 disposition 更新：
 
 当前 D5-W2 已补齐生产/本地 worker loop 的最小运行形态：独立 worker process 通过 CLI entrypoint 启动，扫描 eligible records 并调用 `ReaderEnhancementPipelineRunner`。该 loop 仍不是 public user-facing endpoint，也不会把 LLM execution 同步塞进 Web submit request。
 
+### Display Title Generation Worker
+
+`generate_display_title_zh` 是 Reader Header 中文标题的后端 worker job。它属于 enhancement runner 的首个 job，但不写 `enhancement_layers`，而是在 job/run fence 校验通过后更新 `reading_records.generated_title_zh` 和 `title_generation_status`。
+
+Contract:
+
+- job type: `generate_display_title_zh`;
+- target scope: `record`;
+- target key: `reading_record_id`;
+- operation fingerprint: `display_title_zh_v1`;
+- model route / usage capability: `reader_title_generation`;
+- record states: `pending`, `succeeded`, `failed_retryable`;
+- successful output: one Simplified Chinese masthead title, recommended 8-24 Chinese characters, suitable for Header display;
+- retryable failure: record `generated_title_zh = NULL`, `title_generation_status = failed_retryable`, job `retry_later`, run `failed_retryable`, and a record state-change event.
+
+Input policy:
+
+- prefer active Stable Reading Document title and Stable Document Blocks when present;
+- for long text, PDF, OCR and other artifact-backed inputs, use heading/abstract-like blocks, first meaningful paragraphs, captions or OCR text blocks already normalized into Stable Document Blocks;
+- during migration, if Stable Document Blocks are absent, use bounded `reading_units` / Canonical Text Layer preview from the active base;
+- never send the full article text to the title model; the title prompt receives bounded headings, preview and source metadata only.
+
+`failed_retryable` is recoverable by worker retry or compensation bootstrap. Snapshot/API must keep the title absent in this state and expose the retryable status instead of fabricating a fallback.
+
 ### Prompt 输出语言契约
 
-三个 LLM worker（translation / vocabulary / grammar bundle）的 prompt 必须强制输出简体中文：
+四个 LLM worker（display title / translation / vocabulary / grammar bundle）的 prompt 必须强制输出简体中文：
 
 | 层级 | 要求 | 实施位置 |
 |------|------|----------|
-| system prompt | 添加"输出语言规则（强制）"section，明确所有面向用户的讲解类字段必须使用简体中文 | `services/api/prompts/agents/reader_layer_*.yaml` |
-| user prompt | 添加 `Output language: All human-readable fields MUST be in Simplified Chinese (简体中文).` 行 | 各 worker 的 `_build_*_prompt` 函数 |
+| system prompt | 添加"输出语言规则（强制）"section，明确所有面向用户的讲解类字段必须使用简体中文 | `services/api/prompts/agents/reader_title_generation.yaml` and `services/api/prompts/agents/reader_layer_*.yaml` |
+| user prompt | 添加 `Output language: All human-readable fields MUST be in Simplified Chinese (简体中文).` 或等价中文约束 | 各 worker 的 `_build_*_prompt` 函数 |
 | schema description | 字段 description 明确语言契约（"简体中文讲解"） | `services/api/app/schemas/reader_orchestration.py` |
 
 允许保持英文的内容：
@@ -168,7 +192,7 @@ Eligible scan 初版口径：
   - `reading_bases.status = 'active'`
   - `reading_bases.record_generation = reading_records.generation`
 - `coverage_complete` 默认不再进入普通 enhancement scan；如 D6 repair / rerun policy 需要，必须单独定义回流条件。
-- scanner 只做 coarse eligibility；不要复制 per-layer missing-work 判断。translation / vocabulary / grammar bundle 的 exact bootstrap 继续由 `EnhancementJobBootstrapService` 和 runner 决定。
+- scanner 只做 coarse eligibility；不要复制 per-layer missing-work 判断。display title / translation / vocabulary / grammar bundle 的 exact bootstrap 继续由 `EnhancementJobBootstrapService` 和 runner 决定。
 
 Concurrency / lock 初版口径：
 
@@ -361,7 +385,7 @@ D3/D4 runtime baseline：
 
 D4 orchestration integration：
 
-- `ReaderOrchestrator.submit_plain_text_and_bootstrap_translation()` 是后端 D4 submit facade：先复用 `ArticleReadyPersistenceService` 创建 record/base/unit/anchor/event facts，再复用 translation bootstrap 创建第一条 translation run/job。
+- `ReaderOrchestrator.submit_plain_text_and_bootstrap_translation()` 是后端 D4 submit facade：先复用 `ArticleReadyPersistenceService` 创建 record/base/unit/anchor/event facts，再创建 display title run/job 和第一条 translation run/job。方法名保留历史命名，runtime contract 已要求中文标题 job 先于 translation job 进入队列。
 - `ReaderOrchestrator.tick_translation_worker()` 是 D4/D5 最小 worker tick：复用 `TranslationWorkerService` claim/process/publish；translation publish 成功时，publisher transaction 同时写最小 `parsed_decisions` 并发布 `parsed_decision_updated` event。
 - `TranslationWorkerRunner` 是 D4 内部 callable runner：封装 single tick 与 bounded drain，用 `WorkerDrainResult` 汇总 success / retry / terminal failure / fence rejection。
 - D4 tick 是 service/testable entry，不是公开 HTTP endpoint。若后续暴露内部 route，必须补 worker auth、权限边界和 focused tests。

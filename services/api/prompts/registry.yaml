@@ -6,6 +6,8 @@ agents:
     file: agents/reader_layer_vocabulary.yaml
   reader_layer_grammar_bundle:
     file: agents/reader_layer_grammar_bundle.yaml
+  reader_title_generation:
+    file: agents/reader_title_generation.yaml
   reader_ask:
     file: agents/reader_ask.yaml
   reader_layer_translation:

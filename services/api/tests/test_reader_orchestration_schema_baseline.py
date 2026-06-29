@@ -31,6 +31,8 @@ BASELINE_SQL = (
     REPO_ROOT / "infra" / "migrations" / "0009_reader_jobs_extracted_artifact_materialization.sql"
 ).read_text(encoding="utf-8") + "\n" + (
     REPO_ROOT / "infra" / "migrations" / "0010_reader_article_rag_index_state.sql"
+).read_text(encoding="utf-8") + "\n" + (
+    REPO_ROOT / "infra" / "migrations" / "0011_reader_display_title_generation.sql"
 ).read_text(encoding="utf-8")
 
 
@@ -271,6 +273,52 @@ async def test_reading_records_generation_must_be_positive(reader_schema: str) -
                 """,
                 user_id,
             )
+    finally:
+        await conn.close()
+
+
+async def test_reading_record_title_generation_state_is_fail_closed(
+    reader_schema: str,
+) -> None:
+    conn = await _connect(reader_schema)
+    try:
+        user_id = await _insert_user(conn)
+        record_id = await _insert_reading_record(conn, user_id)
+
+        row = await conn.fetchrow(
+            """
+            SELECT generated_title_zh, title_generation_status,
+                   title_generation_error_code, title_generation_attempt_count
+            FROM reading_records
+            WHERE id = $1
+            """,
+            record_id,
+        )
+        assert row["generated_title_zh"] is None
+        assert row["title_generation_status"] == "pending"
+        assert row["title_generation_error_code"] is None
+        assert row["title_generation_attempt_count"] == 0
+
+        with pytest.raises(asyncpg.CheckViolationError):
+            await conn.execute(
+                """
+                UPDATE reading_records
+                SET title_generation_status = 'succeeded',
+                    generated_title_zh = NULL
+                WHERE id = $1
+                """,
+                record_id,
+            )
+
+        await conn.execute(
+            """
+            UPDATE reading_records
+            SET title_generation_status = 'succeeded',
+                generated_title_zh = '城市补贴政策争议'
+            WHERE id = $1
+            """,
+            record_id,
+        )
     finally:
         await conn.close()
 
@@ -872,7 +920,50 @@ async def test_reader_jobs_base_scope_and_active_fingerprint(reader_schema: str)
                 run_id,
                 user_id,
                 str(record_id),
-            )    finally:
+            )
+
+        # generate_display_title_zh (added in 0011) is also base-scoped:
+        # it targets the record but must be fenced to the active base/generation.
+        await conn.execute(
+            """
+            INSERT INTO reader_jobs (
+                reading_record_id, base_id, run_id, user_id,
+                job_type, target_type, target_key,
+                status, expected_generation,
+                operation_fingerprint, idempotency_key
+            )
+            VALUES (
+                $1, $2, $3, $4, 'generate_display_title_zh', 'record', $5,
+                'queued', 1, 'display-title-fp', 'id-display-title-1'
+            )
+            """,
+            record_id,
+            base_id,
+            run_id,
+            user_id,
+            str(record_id),
+        )
+
+        with pytest.raises(asyncpg.CheckViolationError):
+            await conn.execute(
+                """
+                INSERT INTO reader_jobs (
+                    reading_record_id, base_id, run_id, user_id,
+                    job_type, target_type, target_key,
+                    status, expected_generation,
+                    operation_fingerprint, idempotency_key
+                )
+                VALUES (
+                    $1, NULL, $2, $3, 'generate_display_title_zh', 'record', $4,
+                    'queued', 1, 'display-title-fp-no-base', 'id-display-title-no-base'
+                )
+                """,
+                record_id,
+                run_id,
+                user_id,
+                str(record_id),
+            )
+    finally:
         await conn.close()
 
 

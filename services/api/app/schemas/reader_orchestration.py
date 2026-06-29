@@ -61,6 +61,7 @@ ReaderJobStatus = Literal[
     "superseded",
 ]
 ReaderLayerType = Literal["translation", "vocabulary", "grammar_note", "sentence_analysis"]
+ReaderTitleGenerationStatus = Literal["pending", "succeeded", "failed_retryable"]
 ReaderEnhancementProgressOverallStatus = Literal[
     "processing",
     "readable_enhancing",
@@ -269,6 +270,14 @@ class ReaderSnapshotRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(min_length=1)
+    display_title_zh: str | None = Field(default=None, min_length=1)
+    title_generation_status: ReaderTitleGenerationStatus = "pending"
+    title_generation_error_code: str | None = Field(default=None, min_length=1)
+    title_generation_error_message: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=240,
+    )
     created_at: datetime
     source_type: str = Field(min_length=1)
     source_metadata: dict[str, Any] = Field(default_factory=dict)

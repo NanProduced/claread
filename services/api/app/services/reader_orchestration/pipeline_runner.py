@@ -13,7 +13,15 @@ from app.services.reader_orchestration.grammar_worker import (
     GrammarBundleWorkerService,
     GrammarJobProcessResult,
 )
+from app.services.reader_orchestration.display_title_worker import (
+    DEFAULT_DISPLAY_TITLE_RETRY_DELAY,
+    DisplayTitleJobProcessResult,
+    DisplayTitleWorkerService,
+)
 from app.services.reader_orchestration.job_bootstrap import (
+    DISPLAY_TITLE_JOB_TYPE,
+    DISPLAY_TITLE_OPERATION_FINGERPRINT,
+    DISPLAY_TITLE_TARGET_SCOPE,
     GRAMMAR_JOB_TYPE,
     GRAMMAR_OPERATION_FINGERPRINT,
     GRAMMAR_TARGET_SCOPE,
@@ -38,7 +46,7 @@ from app.services.reader_orchestration.vocabulary_worker import (
     VocabularyWorkerService,
 )
 
-WorkerType = Literal["translation", "vocabulary", "grammar_bundle"]
+WorkerType = Literal["display_title", "translation", "vocabulary", "grammar_bundle"]
 PipelineAttemptOutcome = Literal[
     "succeeded",
     "retry_later",
@@ -59,6 +67,7 @@ DEFAULT_PIPELINE_MAX_JOBS = 24
 
 @dataclass(frozen=True, slots=True)
 class EnhancementWorkerTickCounts:
+    display_title: int = 0
     translation: int = 0
     vocabulary: int = 0
     grammar_bundle: int = 0
@@ -117,6 +126,7 @@ class ReaderEnhancementPipelineRunner:
         *,
         pool: asyncpg.Pool | None = None,
         bootstrap_service: EnhancementJobBootstrapService | None = None,
+        display_title_worker_service: DisplayTitleWorkerService | None = None,
         translation_orchestrator: ReaderOrchestrator | None = None,
         vocabulary_worker_service: VocabularyWorkerService | None = None,
         grammar_worker_service: GrammarBundleWorkerService | None = None,
@@ -124,6 +134,9 @@ class ReaderEnhancementPipelineRunner:
         self._pool = pool
         self._bootstrap_service = bootstrap_service or EnhancementJobBootstrapService(
             pool=pool
+        )
+        self._display_title_worker_service = (
+            display_title_worker_service or DisplayTitleWorkerService(pool=pool)
         )
         self._translation_orchestrator = translation_orchestrator or ReaderOrchestrator(
             pool=pool
@@ -164,6 +177,7 @@ class ReaderEnhancementPipelineRunner:
         translation_retry_delay: timedelta = DEFAULT_TRANSLATION_RETRY_DELAY,
         vocabulary_retry_delay: timedelta = DEFAULT_VOCABULARY_RETRY_DELAY,
         grammar_retry_delay: timedelta = DEFAULT_GRAMMAR_RETRY_DELAY,
+        display_title_retry_delay: timedelta = DEFAULT_DISPLAY_TITLE_RETRY_DELAY,
     ) -> ReaderPipelineRunSummary:
         if max_ticks < 1:
             raise ValueError("max_ticks must be >= 1")
@@ -177,6 +191,7 @@ class ReaderEnhancementPipelineRunner:
 
         attempts: list[ReaderPipelineWorkerAttempt] = []
         tick_counts = {
+            "display_title": 0,
             "translation": 0,
             "vocabulary": 0,
             "grammar_bundle": 0,
@@ -196,6 +211,7 @@ class ReaderEnhancementPipelineRunner:
         attention_code: str | None = None
 
         worker_order: tuple[WorkerType, ...] = (
+            "display_title",
             "translation",
             "vocabulary",
             "grammar_bundle",
@@ -215,6 +231,7 @@ class ReaderEnhancementPipelineRunner:
                     translation_retry_delay=translation_retry_delay,
                     vocabulary_retry_delay=vocabulary_retry_delay,
                     grammar_retry_delay=grammar_retry_delay,
+                    display_title_retry_delay=display_title_retry_delay,
                 )
                 attempts.append(attempt)
                 total_ticks += 1
@@ -273,6 +290,7 @@ class ReaderEnhancementPipelineRunner:
             bootstrap=bootstrap,
             bootstrapped_job_counts=bootstrap.job_counts,
             worker_tick_counts=EnhancementWorkerTickCounts(
+                display_title=tick_counts["display_title"],
                 translation=tick_counts["translation"],
                 vocabulary=tick_counts["vocabulary"],
                 grammar_bundle=tick_counts["grammar_bundle"],
@@ -307,7 +325,17 @@ class ReaderEnhancementPipelineRunner:
         translation_retry_delay: timedelta,
         vocabulary_retry_delay: timedelta,
         grammar_retry_delay: timedelta,
+        display_title_retry_delay: timedelta,
     ) -> ReaderPipelineWorkerAttempt:
+        if worker_type == "display_title":
+            return await self._run_display_title_attempt(
+                record_id=record_id,
+                base_id=base_id,
+                expected_generation=expected_generation,
+                lease_owner=lease_owner,
+                lease_duration=lease_duration,
+                retry_delay=display_title_retry_delay,
+            )
         if worker_type == "translation":
             return await self._run_translation_attempt(
                 record_id=record_id,
@@ -333,6 +361,65 @@ class ReaderEnhancementPipelineRunner:
             lease_owner=lease_owner,
             lease_duration=lease_duration,
             retry_delay=grammar_retry_delay,
+        )
+
+    async def _run_display_title_attempt(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+        retry_delay: timedelta,
+    ) -> ReaderPipelineWorkerAttempt:
+        before_superseded = await self._count_superseded_jobs(
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            job_type=DISPLAY_TITLE_JOB_TYPE,
+            target_scope=DISPLAY_TITLE_TARGET_SCOPE,
+            operation_fingerprint=DISPLAY_TITLE_OPERATION_FINGERPRINT,
+        )
+        try:
+            result = await self._display_title_worker_service.process_next_display_title_job_for_record(
+                record_id=record_id,
+                base_id=base_id,
+                expected_generation=expected_generation,
+                lease_owner=lease_owner,
+                lease_duration=lease_duration,
+                retry_delay=retry_delay,
+            )
+        except FenceViolationError:
+            superseded_jobs = (
+                await self._count_superseded_jobs(
+                    record_id=record_id,
+                    base_id=base_id,
+                    expected_generation=expected_generation,
+                    job_type=DISPLAY_TITLE_JOB_TYPE,
+                    target_scope=DISPLAY_TITLE_TARGET_SCOPE,
+                    operation_fingerprint=DISPLAY_TITLE_OPERATION_FINGERPRINT,
+                )
+                - before_superseded
+            )
+            return ReaderPipelineWorkerAttempt(
+                worker_type="display_title",
+                outcome="superseded",
+                processed_job=True,
+                attention_code="publish_fence_failed",
+                superseded_jobs=max(1, superseded_jobs),
+            )
+
+        return await self._build_worker_attempt_from_result(
+            worker_type="display_title",
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            job_type=DISPLAY_TITLE_JOB_TYPE,
+            target_scope=DISPLAY_TITLE_TARGET_SCOPE,
+            operation_fingerprint=DISPLAY_TITLE_OPERATION_FINGERPRINT,
+            before_superseded=before_superseded,
+            result=result,
         )
 
     async def _run_translation_attempt(
@@ -544,7 +631,12 @@ class ReaderEnhancementPipelineRunner:
         target_scope: str,
         operation_fingerprint: str,
         before_superseded: int,
-        result: VocabularyJobProcessResult | GrammarJobProcessResult | None,
+        result: (
+            DisplayTitleJobProcessResult
+            | VocabularyJobProcessResult
+            | GrammarJobProcessResult
+            | None
+        ),
     ) -> ReaderPipelineWorkerAttempt:
         superseded_jobs = (
             await self._count_superseded_jobs(

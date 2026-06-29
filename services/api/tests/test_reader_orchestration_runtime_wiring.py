@@ -105,7 +105,7 @@ def test_submit_route_remains_request_serving_only() -> None:
     assert not any(target.endswith("tick_translation_worker") for target in call_targets)
 
 
-def test_orchestrator_submit_only_persists_article_ready_and_bootstraps_first_job() -> None:
+def test_orchestrator_submit_only_persists_article_ready_and_bootstraps_initial_jobs() -> None:
     source = ORCHESTRATOR_PATH.read_text(encoding="utf-8")
     module = _parse_module(ORCHESTRATOR_PATH)
     method = _find_async_method(
@@ -120,5 +120,6 @@ def test_orchestrator_submit_only_persists_article_ready_and_bootstraps_first_jo
 
     assert _collect_call_targets(method) == [
         "self._article_ready_service.submit_plain_text",
+        "self._title_bootstrap_service.bootstrap_display_title_job",
         "self._bootstrap_service.bootstrap_translation_run",
     ]

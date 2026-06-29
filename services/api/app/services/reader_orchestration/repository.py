@@ -574,6 +574,10 @@ class ReaderOrchestrationRepository:
                 r.user_id,
                 r.source_type,
                 r.title,
+                r.generated_title_zh,
+                r.title_generation_status,
+                r.title_generation_error_code,
+                r.title_generation_error_message,
                 r.language,
                 r.product_state,
                 r.readiness_state,
@@ -898,8 +902,31 @@ class ReaderOrchestrationRepository:
             record_id,
             base_id,
         )
+        title_generation_status = str(record_row["title_generation_status"] or "pending")
+        display_title_zh = (
+            str(record_row["generated_title_zh"])
+            if record_row["generated_title_zh"] is not None
+            else None
+        )
+        if title_generation_status == "succeeded" and not display_title_zh:
+            raise ValueError("reader snapshot requires display_title_zh when title generation succeeded")
+
         snapshot_record = ReaderSnapshotRecord(
             title=str(title_snapshot) if title_snapshot is not None else "Untitled Reading",
+            display_title_zh=(
+                display_title_zh if title_generation_status == "succeeded" else None
+            ),
+            title_generation_status=title_generation_status,
+            title_generation_error_code=(
+                str(record_row["title_generation_error_code"])
+                if record_row["title_generation_error_code"] is not None
+                else None
+            ),
+            title_generation_error_message=(
+                _sanitize_failure_message(record_row["title_generation_error_message"])
+                if record_row["title_generation_error_message"] is not None
+                else None
+            ),
             created_at=record_row["record_created_at"],
             source_type=str(record_row["source_type"]),
             source_metadata=source_metadata,

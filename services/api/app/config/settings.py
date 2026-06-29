@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     reader_translation_model_profile: str = ""
     reader_vocabulary_model_profile: str = ""
     reader_grammar_bundle_model_profile: str = ""
+    reader_title_model_profile: str = ""
     reader_worker_scan_interval_seconds: int = 5
     reader_worker_batch_size: int = 10
     reader_worker_max_ticks: int = 24
