@@ -224,6 +224,7 @@ type ReaderAskQuickActionRequest = {
   content: string;
   entryAction: ReaderAskEntryActionDto;
   attachments: ReaderAskAttachment[];
+  submissionMode?: "chat" | "quick_action";
 };
 
 function submissionModeOf(message: Pick<ReaderAskMessageDto, "submission_mode"> | Pick<ReaderAskCompletedPayloadDto, "submission_mode">) {
@@ -3097,7 +3098,7 @@ export function AiWorkspacePanel({
       content: pendingQuickActionRequest.content,
       attachments: pendingQuickActionRequest.attachments,
       entryAction: pendingQuickActionRequest.entryAction,
-      submissionMode: "quick_action",
+      submissionMode: pendingQuickActionRequest.submissionMode ?? "quick_action",
       clearComposer: false,
     }).finally(() => {
       onPendingQuickActionConsumed?.();

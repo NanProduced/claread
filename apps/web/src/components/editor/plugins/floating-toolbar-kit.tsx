@@ -10,21 +10,33 @@
 import { createPlatePlugin } from "platejs/react";
 
 import { FloatingToolbar } from "@/components/ui/floating-toolbar";
-import { ReaderFloatingToolbarButtons } from "./reader-floating-toolbar-buttons";
+import {
+  ReaderFloatingToolbarButtons,
+  useReaderToolbarActions,
+} from "./reader-floating-toolbar-buttons";
+
+function ReaderRecordFloatingToolbar() {
+  const actions = useReaderToolbarActions();
+  const state = actions?.suppressToolbar
+    ? { showWhenReadOnly: true, hideToolbar: true }
+    : { showWhenReadOnly: true };
+
+  return (
+    <FloatingToolbar
+      className="reader-record-floating-toolbar rounded-[10px] p-1"
+      data-reader-record-floating-toolbar="plate"
+      state={state}
+    >
+      <ReaderFloatingToolbarButtons />
+    </FloatingToolbar>
+  );
+}
 
 export const FloatingToolbarKit = [
   createPlatePlugin({
     key: "reader-floating-toolbar",
     render: {
-      afterEditable: () => (
-        <FloatingToolbar
-          className="reader-record-floating-toolbar"
-          data-reader-record-floating-toolbar="plate"
-          state={{ showWhenReadOnly: true }}
-        >
-          <ReaderFloatingToolbarButtons />
-        </FloatingToolbar>
-      ),
+      afterEditable: () => <ReaderRecordFloatingToolbar />,
     },
   }),
 ];

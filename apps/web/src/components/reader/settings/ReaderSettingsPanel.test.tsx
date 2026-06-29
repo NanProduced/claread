@@ -6,6 +6,26 @@ import { defaultReaderSettings } from "./shared";
 import { ReaderSettingsPanel } from "./ReaderSettingsPanel";
 
 describe("ReaderSettingsPanel", () => {
+  it("renders the floating variant as a single shell without lookup chrome", () => {
+    const { container, unmount } = render(
+      <ReaderSettingsPanel
+        themeName="paper"
+        variant="floating"
+        value={defaultReaderSettings}
+        onChange={vi.fn()}
+        onThemeChange={vi.fn()}
+      />,
+    );
+
+    const panel = container.querySelector('[data-reader-settings-panel="floating"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.classList.contains("reader-tool-panel")).toBe(true);
+    expect(panel?.classList.contains("reader-lookup-preview")).toBe(false);
+    expect(panel?.classList.contains("border-border\/55")).toBe(false);
+    expect(panel?.classList.contains("bg-transparent")).toBe(false);
+    unmount();
+  });
+
   it("renders only the new calibration controls and emits updated settings", () => {
     const onChange = vi.fn();
     const onThemeChange = vi.fn();

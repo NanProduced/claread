@@ -134,8 +134,19 @@ export interface ReaderSnapshotBaseDto {
   hash_algorithm: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
 }
 
+export type ReaderTitleGenerationStatus =
+  | "pending"
+  | "succeeded"
+  | "failed_retryable";
+
 export interface ReaderSnapshotRecordDto {
   title: string;
+  display_title_zh?: string | null;
+  title_generation_status?: ReaderTitleGenerationStatus | null;
+  title_generation_error_code?: string | null;
+  title_generation_error_message?: string | null;
+  reading_goal?: string | null;
+  reading_variant?: string | null;
   created_at: string;
   source_type: string;
   source_metadata: Record<string, unknown>;

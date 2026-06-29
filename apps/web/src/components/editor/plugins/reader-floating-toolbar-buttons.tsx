@@ -17,10 +17,30 @@
  */
 "use client";
 
-import { createContext, useContext, type ReactNode } from "react";
-import { Copy, Highlighter, MessageSquare, NotebookPen, Search } from "lucide-react";
+import { createContext, useContext, useId, useState, type ReactNode } from "react";
+import {
+  BookOpenText,
+  Copy,
+  Highlighter,
+  MessageSquare,
+  NotebookPen,
+  Search,
+  Sparkles,
+  WandSparkles,
+} from "lucide-react";
 
-import { ToolbarButton, ToolbarGroup, ToolbarSeparator } from "@/components/ui/toolbar";
+import {
+  AIMenu,
+  AIMenuAnchor,
+  AIMenuCommand,
+  AIMenuContent,
+  AIMenuEmpty,
+  AIMenuInput,
+  AIMenuItem,
+  AIMenuList,
+} from "@/components/ui/ai-menu";
+import { ToolbarButton, ToolbarGroup } from "@/components/ui/toolbar";
+import type { ReaderAskEntryActionDto } from "@/types/api/reader-ask";
 
 export type ReaderToolbarActionId = "lookup" | "copy" | "ask" | "highlight" | "note";
 
@@ -31,10 +51,16 @@ export interface ReaderToolbarActionState {
 
 export interface ReaderToolbarActions {
   onAsk: () => void;
+  onAskSubmit?: (request: {
+    content: string;
+    entryAction?: ReaderAskEntryActionDto;
+    submissionMode?: "chat" | "quick_action";
+  }) => void;
   onCopy: () => void;
   onHighlight: () => void;
   onNote: () => void;
   onLookup: () => void;
+  suppressToolbar?: boolean;
   state: Record<ReaderToolbarActionId, ReaderToolbarActionState>;
 }
 
@@ -50,9 +76,9 @@ const preventFocusLoss = {
   },
 } as const;
 
-const toolbarGroupClassName = "items-center gap-0.5";
+const toolbarGroupClassName = "items-center";
 const toolbarButtonClassName =
-  "h-7 min-w-7 rounded-[5px] px-1.5 text-ink-soft hover:bg-lens-blue-soft/65 hover:text-ink focus-visible:ring-2 focus-visible:ring-lens-blue/25 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-ink-soft";
+  "disabled:cursor-not-allowed disabled:opacity-40";
 
 function actionState(
   actions: ReaderToolbarActions | null,
@@ -86,6 +112,7 @@ function ReaderActionToolbarButton({
   return (
     <ToolbarButton
       className={toolbarButtonClassName}
+      size="default"
       tooltip={title}
       title={title}
       aria-label={label}
@@ -108,7 +135,7 @@ export function ReaderLookupToolbarButton() {
       label="查词"
       onAction={(actions) => actions.onLookup()}
     >
-      <Search className="size-3.5" />
+      <Search className="size-4" />
     </ReaderActionToolbarButton>
   );
 }
@@ -120,20 +147,181 @@ export function ReaderCopyToolbarButton() {
       label="复制"
       onAction={(actions) => actions.onCopy()}
     >
-      <Copy className="size-3.5" />
+      <Copy className="size-4" />
     </ReaderActionToolbarButton>
   );
 }
 
+const askQuickActions: Array<{
+  label: string;
+  description: string;
+  content: string;
+  entryAction: ReaderAskEntryActionDto;
+  icon: ReactNode;
+}> = [
+  {
+    label: "解释这段",
+    description: "结合上下文解释含义",
+    content: "请结合上下文解释这段内容。",
+    entryAction: "explain_this",
+    icon: <BookOpenText className="size-4" />,
+  },
+  {
+    label: "分析语法",
+    description: "拆解语法和句子结构",
+    content: "请分析这段内容的语法、句子结构和理解难点。",
+    entryAction: "why_here",
+    icon: <WandSparkles className="size-4" />,
+  },
+  {
+    label: "提取重点词汇",
+    description: "找出值得掌握的词和短语",
+    content: "请提取这段内容里的重点词汇和短语，并结合语境解释。",
+    entryAction: "lookup_in_context",
+    icon: <Search className="size-4" />,
+  },
+];
+
 export function ReaderAskToolbarButton() {
+  const actions = useContext(ReaderToolbarActionsContext);
+  const state = actionState(actions, "ask");
+  const title = toolbarTitle("Ask Claread", state);
+  const [open, setOpen] = useState(false);
+  const [prompt, setPrompt] = useState("");
+  const inputId = useId();
+
+  const submitPrompt = () => {
+    const content = prompt.trim();
+    if (!content || state.disabled || !actions?.onAskSubmit) {
+      return;
+    }
+    actions.onAskSubmit({
+      content,
+      entryAction: "ask_about_this",
+      submissionMode: "chat",
+    });
+    setPrompt("");
+    setOpen(false);
+  };
+
+  const submitQuickAction = (action: (typeof askQuickActions)[number]) => {
+    if (state.disabled || !actions?.onAskSubmit) {
+      return;
+    }
+    actions.onAskSubmit({
+      content: action.content,
+      entryAction: action.entryAction,
+      submissionMode: "quick_action",
+    });
+    setOpen(false);
+  };
+
   return (
-    <ReaderActionToolbarButton
-      actionId="ask"
-      label="Ask"
-      onAction={(actions) => actions.onAsk()}
+    <div
+      className="min-w-0"
+      data-reader-record-ask-toolbar={open ? "open" : "closed"}
+      data-plate-focus="true"
     >
-      <MessageSquare className="size-3.5" />
-    </ReaderActionToolbarButton>
+      <AIMenu open={open && !state.disabled} onOpenChange={setOpen}>
+        <AIMenuAnchor>
+          <span>
+            <ToolbarButton
+              className={`${toolbarButtonClassName} gap-1.5 px-3 text-lens-blue hover:text-lens-blue`}
+              size="default"
+              tooltip={title}
+              title={title}
+              aria-label="Ask Claread"
+              aria-expanded={open}
+              aria-controls={open ? inputId : undefined}
+              data-reader-record-action="ask"
+              data-reader-record-toolbar-action="ask"
+              data-reader-record-disabled-reason={state.disabled ? state.reason : undefined}
+              disabled={state.disabled}
+              onPointerDown={preventFocusLoss.onPointerDown}
+              onClick={() => {
+                if (state.disabled || !actions) {
+                  return;
+                }
+                setOpen((current) => !current);
+              }}
+            >
+              <Sparkles className="size-4" />
+              <span className="text-sm font-medium">Ask</span>
+            </ToolbarButton>
+          </span>
+        </AIMenuAnchor>
+
+        <AIMenuContent
+          data-reader-record-ask-menu="open"
+          onPointerDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              setOpen(false);
+            }
+          }}
+        >
+          <AIMenuCommand>
+            <label htmlFor={inputId} className="sr-only">
+              输入 Ask Claread 问题
+            </label>
+            <AIMenuInput
+              id={inputId}
+              autoFocus
+              value={prompt}
+              onValueChange={setPrompt}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  submitPrompt();
+                }
+              }}
+              placeholder="Ask Claread anything..."
+              data-reader-record-ask-prompt="true"
+            />
+            <AIMenuList>
+              <AIMenuEmpty>输入问题后按 Enter 发送给 Ask Claread。</AIMenuEmpty>
+              {askQuickActions.map((action) => (
+                <AIMenuItem
+                  key={action.entryAction}
+                  value={action.label}
+                  onSelect={() => submitQuickAction(action)}
+                  data-reader-record-ask-quick-action={action.entryAction}
+                >
+                  <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-lens-blue">
+                    {action.icon}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block font-medium leading-5 text-foreground">{action.label}</span>
+                    <span className="block truncate text-xs leading-4 text-muted-foreground">
+                      {action.description}
+                    </span>
+                  </span>
+                </AIMenuItem>
+              ))}
+              <AIMenuItem
+                value="加入 Ask 上下文"
+                onSelect={() => {
+                  actions?.onAsk();
+                  setOpen(false);
+                }}
+                data-reader-record-ask-attach-context="true"
+              >
+                <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-lens-blue">
+                  <MessageSquare className="size-4" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block font-medium leading-5 text-foreground">加入 Ask 上下文</span>
+                  <span className="block truncate text-xs leading-4 text-muted-foreground">
+                    打开 Ask 面板后继续输入
+                  </span>
+                </span>
+              </AIMenuItem>
+            </AIMenuList>
+          </AIMenuCommand>
+        </AIMenuContent>
+      </AIMenu>
+    </div>
   );
 }
 
@@ -144,7 +332,7 @@ export function ReaderHighlightToolbarButton() {
       label="高亮"
       onAction={(actions) => actions.onHighlight()}
     >
-      <Highlighter className="size-3.5" />
+      <Highlighter className="size-4" />
     </ReaderActionToolbarButton>
   );
 }
@@ -158,24 +346,31 @@ export function ReaderNoteToolbarButton() {
       label="新建笔记"
       onAction={(actions) => actions.onNote()}
     >
-      <NotebookPen className="size-3.5" />
+      <NotebookPen className="size-4" />
     </ReaderActionToolbarButton>
   );
 }
 
 export function ReaderFloatingToolbarButtons() {
+  const actions = useReaderToolbarActions();
+  if (actions?.suppressToolbar) {
+    return null;
+  }
+
   return (
-    <ToolbarGroup className={toolbarGroupClassName}>
-      <ReaderLookupToolbarButton />
-      <ReaderCopyToolbarButton />
-      <ReaderAskToolbarButton />
-      <ToolbarSeparator
-        orientation="vertical"
-        className="mx-1 h-4 w-px bg-border/70"
-      />
-      <ReaderHighlightToolbarButton />
-      <ReaderNoteToolbarButton />
-    </ToolbarGroup>
+    <>
+      <ToolbarGroup className={toolbarGroupClassName} data-reader-record-toolbar-layout="ask-first">
+        <ReaderAskToolbarButton />
+      </ToolbarGroup>
+      <ToolbarGroup className={toolbarGroupClassName}>
+        <ReaderLookupToolbarButton />
+        <ReaderCopyToolbarButton />
+      </ToolbarGroup>
+      <ToolbarGroup className={toolbarGroupClassName}>
+        <ReaderHighlightToolbarButton />
+        <ReaderNoteToolbarButton />
+      </ToolbarGroup>
+    </>
   );
 }
 

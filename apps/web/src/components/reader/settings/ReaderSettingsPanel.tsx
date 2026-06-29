@@ -15,6 +15,7 @@ interface ReaderSettingsPanelProps {
   onChange: (next: ReaderSettingsState) => void;
   onThemeChange: (next: ThemeName) => void;
   onClose?: () => void;
+  variant?: "default" | "floating";
 }
 
 const fontScaleOptions: Array<{ value: ReaderFontScale; label: string }> = [
@@ -76,33 +77,30 @@ export function ReaderSettingsPanel({
   onClose,
   onThemeChange,
   value,
+  variant = "default",
 }: ReaderSettingsPanelProps) {
+  const isFloating = variant === "floating";
   return (
-    <section className="reader-tool-panel reader-settings-panel relative flex w-full flex-col overflow-visible md:w-[22.5rem] shadow-surface-quiet bg-[#FDFBF7] dark:bg-[#1A1A1E]">
-      
-      {/* Tactile Folder Tab Index Handle (Decorative/Affordance) */}
-      <div
-        aria-hidden="true"
-        className="absolute -right-4.5 top-1/2 -translate-y-1/2 hidden md:flex flex-col items-center justify-center w-4.5 h-20 bg-[#e4dcce] dark:bg-[#252422] border-t border-r border-b border-hairline rounded-r-[0.6rem] shadow-[3px_0_6px_rgba(0,0,0,0.04)] group cursor-pointer select-none transition-all duration-300 hover:translate-x-[2px] hover:bg-[#ded5c5] z-10"
-      >
-        <span className="text-[0.55rem] font-bold tracking-[0.08em] text-[#8e8574] dark:text-[#736c61] rotate-90 scale-90 opacity-80 group-hover:opacity-100 transition-opacity">
-          ⚏
-        </span>
-      </div>
-
-      {/* Header Section */}
-      <div className="flex items-center justify-between gap-4 px-4.5 pt-4.5 pb-3.5 select-none">
+    <section
+      className={cn(
+        "reader-tool-panel reader-settings-panel flex w-[min(20rem,calc(100vw-2rem))] flex-col overflow-hidden",
+        !isFloating &&
+          "border border-border/55 bg-[#FDFBF7]/98 shadow-xl shadow-black/10 backdrop-blur-xl dark:bg-[#1A1A1E]/98",
+      )}
+      data-reader-settings-panel={isFloating ? "floating" : "compact"}
+    >
+      <div className="flex items-start justify-between gap-4 px-4 py-3.5 select-none">
         <div>
-          <h2 className="font-headline text-[1.25rem] font-bold text-ink leading-none">阅读设置</h2>
-          <p className="mt-1 text-[0.68rem] text-muted">
-            为当前文章核准阅读体验
+          <h2 className="font-headline text-[1.05rem] font-bold leading-none text-ink">阅读设置</h2>
+          <p className="mt-1 text-[0.66rem] leading-none text-muted">
+            当前文章阅读体验
           </p>
         </div>
-        
+
         {onClose ? (
           <button
             type="button"
-            className={cn(readerCommandControl, "h-9 w-9 rounded-full p-0 text-[1.5rem] font-light leading-none text-muted hover:text-ink")}
+            className={cn(readerCommandControl, "h-7 w-7 rounded-full p-0 text-[1.1rem] font-light leading-none text-muted hover:text-ink")}
             onClick={onClose}
             aria-label="关闭阅读设置"
           >
@@ -111,22 +109,18 @@ export function ReaderSettingsPanel({
         ) : null}
       </div>
 
-      {/* Flat Content List (Flattened layout, eliminating nested cards) */}
-      <div className="flex flex-col pb-4.5">
-        
-        {/* A01: Theme Section */}
-        <fieldset className="border-t border-hairline/80 px-4.5 py-4">
-          <div className="flex items-center justify-between mb-3.5 select-none">
-            <legend className="flex items-center gap-1.5 text-[0.7rem] font-bold tracking-wide uppercase">
-              <span className="text-muted/60 font-mono">A01</span>
-              <span className="text-ink">主题</span>
+      <div className="flex flex-col border-t border-hairline/70">
+        <fieldset className="px-4 py-3.5">
+          <div className="mb-2.5 flex items-center justify-between select-none">
+            <legend className="text-[0.72rem] font-semibold tracking-wide text-ink">
+              主题
             </legend>
-            <span className="text-[0.55rem] font-mono tracking-[0.1em] font-semibold text-subtle">
-              Theme
+            <span className="text-[0.58rem] font-mono font-semibold tracking-[0.12em] text-subtle">
+              THEME
             </span>
           </div>
 
-          <div className="grid grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-3 gap-2">
             {themeOptions.map((option) => {
               const active = themeName === option.value;
               return (
@@ -136,17 +130,16 @@ export function ReaderSettingsPanel({
                   aria-pressed={active}
                   className={cn(
                     readerSegmentedOption({ selected: active }),
-                    "relative flex flex-col items-stretch rounded-[0.5rem] border bg-background/40 p-1 text-left",
+                    "relative flex flex-col items-stretch rounded-[0.55rem] border bg-background/35 p-1 text-left",
                     active
-                      ? "border-vocab-amber/40 shadow-[0_2px_8px_rgba(195,155,98,0.06)]"
+                      ? "border-vocab-amber/45 bg-vocab-amber/6 shadow-[0_2px_8px_rgba(195,155,98,0.06)]"
                       : "border-hairline",
                   )}
                   onClick={() => onThemeChange(option.value)}
                 >
-                  {/* Miniature article layout mockup */}
                   <div
                     className={cn(
-                      "relative flex h-14 flex-col justify-center gap-1.5 overflow-hidden rounded-[0.35rem] border border-hairline/20 p-2 shadow-[inset_0_1px_2px_rgba(0,0,0,0.02)] md:h-[3.8rem]",
+                      "relative flex h-10 flex-col justify-center gap-1.5 overflow-hidden rounded-[0.35rem] border border-hairline/20 p-2 shadow-[inset_0_1px_2px_rgba(0,0,0,0.02)]",
                       readerTransitionStandard,
                       option.value === "paper"
                         ? "bg-[#f4f0e6] text-[#4a3e3d]/80"
@@ -155,24 +148,22 @@ export function ReaderSettingsPanel({
                           : "bg-[#18181c] text-[#a1a1a6]"
                     )}
                   >
-                    <div className="flex flex-col gap-1.5 w-full opacity-60">
-                      {/* Real-looking text paragraph mockup */}
-                      <div className="h-[3px] w-2/5 bg-current rounded-full mb-0.5 opacity-70" />
-                      <div className="h-[2px] w-full bg-current rounded-full opacity-35" />
-                      <div className="h-[2px] w-5/6 bg-current rounded-full opacity-35" />
+                    <div className="flex w-full flex-col gap-1.5 opacity-60">
+                      <div className="mb-0.5 h-[3px] w-2/5 rounded-full bg-current opacity-70" />
+                      <div className="h-[2px] w-full rounded-full bg-current opacity-35" />
+                      <div className="h-[2px] w-5/6 rounded-full bg-current opacity-35" />
                     </div>
 
                     {active && (
-                      <span className="absolute top-1 right-1 h-3 w-3 rounded-full bg-vocab-amber flex items-center justify-center text-[0.5rem] font-bold text-white shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
+                      <span className="absolute right-1 top-1 flex h-3 w-3 items-center justify-center rounded-full bg-vocab-amber text-[0.5rem] font-bold text-white shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
                         ✓
                       </span>
                     )}
                   </div>
 
-                  {/* Labels */}
-                  <span className="block text-center mt-2 pb-0.5">
-                    <span className="block text-[0.78rem] font-semibold text-ink leading-none">{option.label}</span>
-                    <span className="mt-0.5 block text-[0.55rem] tracking-[0.08em] font-sans font-medium text-subtle leading-none">
+                  <span className="mt-1.5 block pb-0.5 text-center">
+                    <span className="block text-[0.72rem] font-semibold leading-none text-ink">{option.label}</span>
+                    <span className="mt-0.5 block font-sans text-[0.52rem] font-medium leading-none tracking-[0.08em] text-subtle">
                       {option.english}
                     </span>
                   </span>
@@ -180,35 +171,19 @@ export function ReaderSettingsPanel({
               );
             })}
           </div>
-
-          {/* Radio-style pagination indicators */}
-          <div className="flex items-center justify-center gap-1.2 mt-3 select-none">
-            {themeOptions.map((opt) => (
-              <span
-                key={opt.value}
-                className={`h-1 w-1 rounded-full transition-all duration-300 ${
-                  themeName === opt.value
-                    ? "bg-vocab-amber w-2.5"
-                    : "bg-hairline hover:bg-muted"
-                }`}
-              />
-            ))}
-          </div>
         </fieldset>
 
-        {/* A02: Font Scale Section */}
-        <fieldset className="border-t border-hairline/80 px-4.5 py-4">
-          <div className="flex items-center justify-between mb-3.5 select-none">
-            <legend className="flex items-center gap-1.5 text-[0.7rem] font-bold tracking-wide uppercase">
-              <span className="text-muted/60 font-mono">A02</span>
-              <span className="text-ink">字号</span>
+        <fieldset className="border-t border-hairline/70 px-4 py-3.5">
+          <div className="mb-2.5 flex items-center justify-between select-none">
+            <legend className="text-[0.72rem] font-semibold tracking-wide text-ink">
+              字号
             </legend>
-            <span className="text-[0.55rem] font-mono tracking-[0.1em] font-semibold text-subtle">
-              Size
+            <span className="text-[0.58rem] font-mono font-semibold tracking-[0.12em] text-subtle">
+              SIZE
             </span>
           </div>
 
-          <div className="flex w-full items-center gap-1 rounded-[0.6rem] border border-hairline p-0.5 bg-background/20">
+          <div className="flex w-full items-center gap-1 rounded-[0.6rem] border border-hairline bg-background/20 p-0.5">
             {fontScaleOptions.map((option) => {
               const active = value.fontScale === option.value;
               return (
@@ -217,7 +192,7 @@ export function ReaderSettingsPanel({
                   type="button"
                   className={cn(
                     readerSegmentedOption({ selected: active }),
-                    "flex-1 min-h-[2.1rem] rounded-[0.45rem] border leading-none",
+                    "min-h-[2rem] flex-1 rounded-[0.45rem] border leading-none",
                     active
                       ? "border-vocab-amber/30 bg-vocab-amber/8 text-vocab-amber font-bold shadow-[0_1px_2px_rgba(0,0,0,0.02)]"
                       : "text-muted text-[0.8rem]",
@@ -231,19 +206,17 @@ export function ReaderSettingsPanel({
           </div>
         </fieldset>
 
-        {/* A03: Font Family Section */}
-        <fieldset className="border-t border-hairline/80 px-4.5 py-4">
-          <div className="flex items-center justify-between mb-3.5 select-none">
-            <legend className="flex items-center gap-1.5 text-[0.7rem] font-bold tracking-wide uppercase">
-              <span className="text-muted/60 font-mono">A03</span>
-              <span className="text-ink">字体</span>
+        <fieldset className="border-t border-hairline/70 px-4 py-3.5">
+          <div className="mb-2.5 flex items-center justify-between select-none">
+            <legend className="text-[0.72rem] font-semibold tracking-wide text-ink">
+              字体
             </legend>
-            <span className="text-[0.55rem] font-mono tracking-[0.1em] font-semibold text-subtle">
-              Typeface
+            <span className="text-[0.58rem] font-mono font-semibold tracking-[0.12em] text-subtle">
+              TYPEFACE
             </span>
           </div>
 
-          <div className="grid grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-3 gap-2">
             {fontFamilyOptions.map((option) => {
               const active = value.fontFamily === option.value;
               return (
@@ -252,19 +225,19 @@ export function ReaderSettingsPanel({
                   type="button"
                   className={cn(
                     readerSegmentedOption({ selected: active }),
-                    "relative min-h-[3.6rem] flex-col rounded-[0.6rem] border bg-background/40 p-2.5",
+                    "relative min-h-[3.15rem] flex-col rounded-[0.6rem] border bg-background/35 p-2",
                     active
-                      ? "border-vocab-amber/30 bg-vocab-amber/8 text-vocab-amber shadow-[0_1px_3px_rgba(0,0,0,0.02)]"
+                      ? "border-vocab-amber/35 bg-vocab-amber/8 text-vocab-amber shadow-[0_1px_3px_rgba(0,0,0,0.02)]"
                       : "border-hairline bg-transparent text-ink",
                   )}
                   onClick={() => onChange(updateField(value, "fontFamily", option.value))}
                 >
-                  <span className="block text-[0.82rem] font-bold tracking-tight">{option.label}</span>
-                  <span className="mt-0.5 block text-[0.55rem] tracking-[0.08em] font-sans font-medium text-subtle leading-none">
+                  <span className="block text-[0.76rem] font-bold tracking-tight">{option.label}</span>
+                  <span className="mt-0.5 block font-sans text-[0.52rem] font-medium leading-none tracking-[0.08em] text-subtle">
                     {option.english}
                   </span>
                   {active && (
-                    <span className="absolute top-1 right-1 h-3 w-3 rounded-full bg-vocab-amber flex items-center justify-center text-[0.5rem] font-bold text-white shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
+                    <span className="absolute right-1 top-1 flex h-3 w-3 items-center justify-center rounded-full bg-vocab-amber text-[0.5rem] font-bold text-white shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
                       ✓
                     </span>
                   )}
@@ -273,7 +246,6 @@ export function ReaderSettingsPanel({
             })}
           </div>
         </fieldset>
-
       </div>
     </section>
   );

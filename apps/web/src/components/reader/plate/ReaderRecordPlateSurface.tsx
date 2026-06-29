@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 
 import { AiWorkspacePanel } from "@/components/reader/AiWorkspacePanel";
 import type { DictLookupTypeDto, WebDictResult } from "@/types/api/dict";
@@ -25,9 +26,14 @@ import {
 } from "@/lib/reader-plate";
 import type { ReaderRecordAnchorDraft } from "@/lib/reader-plate/projection/reader-record-anchor-draft";
 import type { ReaderPlateSnapshotDto, ReaderSnapshotUserAssetDto } from "@/types/api/reader-plate";
-import type { ReaderAskActionConfirmResponseDto } from "@/types/api/reader-ask";
+import type {
+  ReaderAskActionConfirmResponseDto,
+  ReaderAskEntryActionDto,
+} from "@/types/api/reader-ask";
 import type { ThemeName } from "@/lib/appearance";
+import { BookOpen, Eye, Globe, SlidersHorizontal, Sparkles } from "lucide-react";
 import { FavoriteButton } from "@/components/reader/FavoriteButton";
+import { readerCommandControl } from "@/components/reader/interaction";
 import {
   ReaderSettingsPanel,
   readStoredReaderSettings,
@@ -36,6 +42,11 @@ import {
   readerThemeClassName,
   type ReaderSettingsState,
 } from "@/components/reader/settings";
+import {
+  READING_GOAL_OPTIONS,
+  READING_VARIANT_OPTIONS,
+} from "@/lib/reading-defaults";
+import { cn } from "@/lib/cn";
 
 import {
   ReaderToolbarActionsProvider,
@@ -490,6 +501,13 @@ function askAttachmentFromVocabularyInspect(
   };
 }
 
+type PendingReaderRecordAskRequest = {
+  content: string;
+  entryAction: ReaderAskEntryActionDto;
+  attachments: ReaderAskAttachment[];
+  submissionMode?: "chat" | "quick_action";
+};
+
 function immersiveParagraphBlock(
   block: ReaderRecordPlateParagraphBlock,
 ): ReaderRecordPlateParagraphBlock {
@@ -515,6 +533,100 @@ function visibleBlockForMode(
   return immersiveParagraphBlock(block);
 }
 
+/**
+ * Traverse snapshot.value and collect only stable source text leaves
+ * (segment_text), skipping translation, grammar note, sentence_analysis
+ * and Ask supplement surfaces.
+ */
+function extractStableSourceText(
+  snapshot: ReaderPlateSnapshotDto,
+): string {
+  const parts: string[] = [];
+  for (const unit of snapshot.value) {
+    for (const child of unit.children) {
+      if (child.type !== "reader_source_block") {
+        continue;
+      }
+      for (const sourceChild of child.children) {
+        // ReaderAnchorSegmentNodeDto has `children`; ReaderStableSeparatorLeafDto does not.
+        if (!("children" in sourceChild)) {
+          // separator leaf 保留了 segment 间的空格/换行，必须纳入才能保证词数正确。
+          parts.push(sourceChild.text);
+          continue;
+        }
+        for (const leaf of sourceChild.children) {
+          parts.push(leaf.text);
+        }
+      }
+    }
+  }
+  return parts.join("");
+}
+
+/**
+ * Compute source-only English word count from stable source text leaves.
+ * Returns null when source text cannot be reliably obtained or is empty,
+ * so the header can omit the word count rather than falling back to sentence count.
+ */
+function computeSourceOnlyWordCount(
+  snapshot: ReaderPlateSnapshotDto,
+): number | null {
+  const sourceText = extractStableSourceText(snapshot);
+  const trimmed = sourceText.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  return words.length > 0 ? words.length : null;
+}
+
+/**
+ * Resolve `goal · variant` label using reading-defaults options.
+ * Returns null when either field is missing or cannot be mapped,
+ * so the header omits the strategy label rather than fabricating it.
+ */
+function resolveReadingGoalVariantLabel(
+  goal: string | null | undefined,
+  variant: string | null | undefined,
+): string | null {
+  if (!goal || !variant) {
+    return null;
+  }
+  const goalOption = READING_GOAL_OPTIONS.find((option) => option.value === goal);
+  if (!goalOption) {
+    return null;
+  }
+  const variantOptions = READING_VARIANT_OPTIONS[goalOption.value];
+  if (!variantOptions) {
+    return null;
+  }
+  const variantOption = variantOptions.find(
+    (option) => option.value === variant,
+  );
+  if (!variantOption) {
+    return null;
+  }
+  return `${goalOption.label} · ${variantOption.label}`;
+}
+
+function formatReaderRecordDate(createdAt: string | undefined): string {
+  if (!createdAt) return "今日";
+  const d = new Date(createdAt);
+  if (Number.isNaN(d.getTime())) return "今日";
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+function readerRecordSourceTypeLabel(sourceType: string): string {
+  switch (sourceType) {
+    case "text":
+    case "plain_text":
+    case "user_input":
+      return "粘贴导入";
+    default:
+      return sourceType;
+  }
+}
+
 function ReaderRecordHeader({
   snapshot,
   progress,
@@ -526,13 +638,28 @@ function ReaderRecordHeader({
   progress: ReaderRecordPlateProgress;
   surfaceMode: "intensive" | "immersive";
   onModeChange: (mode: "intensive" | "immersive") => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (anchor: HTMLElement) => void;
 }) {
-  const title = snapshot.record.title;
-  const createdAt = snapshot.record.created_at;
-  const sentenceCount = snapshot.anchor_segments.length;
-  const sourceType = snapshot.record.source_type;
-  const sourceMetadata = snapshot.record.source_metadata ?? {};
+  const record = snapshot.record;
+  const displayTitleZh = record.display_title_zh?.trim() || "";
+  const recordTitle = record.title?.trim() || "";
+  const titleGenerationStatus = record.title_generation_status ?? null;
+  const hasChineseTitle = displayTitleZh.length > 0;
+  const titlePending =
+    !hasChineseTitle && titleGenerationStatus === "pending";
+  const titleFailed =
+    !hasChineseTitle && titleGenerationStatus === "failed_retryable";
+  // 迁移期防崩溃降级：只有旧 snapshot 完全没有 title_generation_status 时，
+  // 才允许用 record.title 作为兼容 H1。如果后端明确返回 succeeded/pending/failed_retryable，
+  // 则必须遵守对应合同，不能将英文源标题提升为中文 masthead。
+  const titleMigrationFallback =
+    !hasChineseTitle &&
+    titleGenerationStatus === null &&
+    recordTitle.length > 0;
+
+  const createdAt = record.created_at;
+  const sourceType = record.source_type;
+  const sourceMetadata = record.source_metadata ?? {};
   const sourceUrl =
     typeof sourceMetadata.source_url === "string" &&
     (sourceMetadata.source_url.startsWith("http:") ||
@@ -547,20 +674,32 @@ function ReaderRecordHeader({
     typeof sourceMetadata.source_domain === "string"
       ? sourceMetadata.source_domain
       : null;
+
   const statusLabel = overallProgressLabel(progress.overallStatus);
-  const formattedDate = createdAt
-    ? new Date(createdAt).toLocaleDateString("zh-CN", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      })
-    : "今日";
-  const readingMinutes = Math.max(1, Math.ceil(sentenceCount / 5));
+  const formattedDate = formatReaderRecordDate(createdAt);
   const modeLabel = surfaceMode === "immersive" ? "沉浸模式" : "精读模式";
-  const sourceBadge =
-    sourceName ??
-    sourceDomain ??
-    (sourceType === "plain_text" ? "粘贴导入" : sourceType);
+
+  // source-only word count：仅基于 snapshot.value 的稳定原文 segment_text 叶子计算，
+  // 不包含 translation / grammar note / sentence_analysis / Ask supplement。
+  // 无法可靠得到原文时不显示词数，绝不 fallback 到 sentence count。
+  const sourceWordCount = computeSourceOnlyWordCount(snapshot);
+  // reading_goal · reading_variant 标签：仅当两个字段都有真实值且能映射到
+  // reading-defaults.ts 的 options 时才展示，否则不展示，避免伪造。
+  const readingGoalVariantLabel = resolveReadingGoalVariantLabel(
+    record.reading_goal,
+    record.reading_variant,
+  );
+
+  const actionButtonBaseClassName = cn(
+    readerCommandControl,
+    "relative flex flex-1 justify-center rounded-none px-3.5 py-2.5 text-left sm:py-3.5 md:px-5",
+  );
+  const actionButtonActiveClassName =
+    "text-vocab-amber after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-vocab-amber";
+  const actionButtonIdleClassName = "text-ink hover:text-ink-soft";
+
+  const sourceLabel = readerRecordSourceTypeLabel(sourceType);
+  const hasExternalSource = Boolean(sourceName || sourceDomain || sourceUrl);
 
   return (
     <header
@@ -575,123 +714,215 @@ function ReaderRecordHeader({
         <span className="text-muted font-medium">{formattedDate}</span>
       </div>
 
-      {/* Zone 2: H1 + overview */}
-      {title ? (
+      {/* Zone 2: H1 editorial masthead / title state */}
+      {hasChineseTitle ? (
         <h1
           data-reader-record-reading-title
-          className="mt-4 font-headline text-[2rem] font-semibold leading-[1.1] text-ink sm:text-[2.35rem] lg:text-[2.65rem]"
+          data-reader-record-title-state="succeeded"
+          className="mt-4 font-headline text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] tracking-normal text-ink"
         >
-          {title}
+          {displayTitleZh}
+        </h1>
+      ) : titlePending ? (
+        <h1
+          data-reader-record-reading-title
+          data-reader-record-title-state="pending"
+          className="mt-4 font-headline text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] tracking-normal text-muted"
+        >
+          标题生成中…
+        </h1>
+      ) : titleFailed ? (
+        <div className="mt-4">
+          <h1
+            data-reader-record-reading-title
+            data-reader-record-title-state="failed_retryable"
+            className="font-headline text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] tracking-normal text-muted"
+          >
+            标题生成失败
+          </h1>
+          {recordTitle ? (
+            <p
+              data-reader-record-source-title="true"
+              className="mt-1.5 text-[0.8rem] font-medium text-subtle"
+            >
+              源标题：{recordTitle}
+            </p>
+          ) : null}
+        </div>
+      ) : titleMigrationFallback ? (
+        <h1
+          data-reader-record-reading-title
+          data-reader-record-title-state="migration_fallback"
+          className="mt-4 font-headline text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] tracking-normal text-ink"
+        >
+          {recordTitle}
         </h1>
       ) : null}
 
-      {/* Zone 3: Action bar — left (badges) + right (favorite + mode + settings) */}
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3 text-[0.78rem] text-muted tracking-wide">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-lens-blue" />
-            <span
-              data-reader-record-progress-status={progress.overallStatus}
-              className="font-medium text-foreground"
-            >
-              {statusLabel}
-            </span>
+      {/* Zone 3: Action bar — hairline shell, left metadata + right action buttons */}
+      <div
+        className="mt-6 w-full border-t border-b border-hairline bg-transparent py-0 flex flex-col sm:flex-row items-stretch justify-between min-h-[56px]"
+        data-reader-record-action-bar="true"
+      >
+        {/* Left metadata / status block */}
+        <div className="flex items-center gap-3.5 px-3 py-3 sm:py-0">
+          <span
+            data-reader-record-progress-status={progress.overallStatus}
+            className="px-3 py-1 text-[0.75rem] font-semibold text-ink-soft bg-surface-warm border border-hairline/80 rounded-[0.5rem] flex items-center gap-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(0,0,0,0.03)] select-none"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-vocab-amber fill-vocab-amber/10" />
+            <span>{statusLabel}</span>
           </span>
-          <span className="text-muted/60">·</span>
-          <span className="font-medium">{sentenceCount} 句</span>
-          <span className="text-muted/60">·</span>
-          <span className="font-medium">约 {readingMinutes} 分钟阅读</span>
-          {sourceBadge ? (
+          {sourceWordCount !== null ? (
             <>
-              <span className="text-muted/60">·</span>
-              <span className="font-medium">来源 {sourceBadge}</span>
+              <div className="h-3.5 w-[1px] bg-hairline" />
+              <span
+                className="text-[0.8rem] font-semibold text-muted"
+                data-reader-record-source-word-count={String(sourceWordCount)}
+              >
+                {sourceWordCount} 词
+              </span>
+            </>
+          ) : null}
+          {readingGoalVariantLabel ? (
+            <>
+              <div className="h-3.5 w-[1px] bg-hairline" />
+              <span
+                className="text-[0.8rem] font-semibold text-muted"
+                data-reader-record-reading-goal-variant="true"
+              >
+                {readingGoalVariantLabel}
+              </span>
             </>
           ) : null}
         </div>
 
-        <div className="flex items-center gap-1.5">
+        {/* Right action buttons */}
+        <div className="flex items-stretch divide-x divide-hairline border-t border-hairline sm:border-t-0 select-none">
           <FavoriteButton recordId={snapshot.record_id} variant="action-bar" />
-          <div
-            className="flex items-center rounded-full border border-border/70 bg-background/80 p-0.5"
-            role="group"
-            aria-label="阅读模式切换"
+          <button
+            type="button"
+            aria-pressed={surfaceMode === "intensive"}
+            aria-label="切换到精读模式"
             data-reader-record-mode-switch={surfaceMode}
+            data-reader-record-mode-option="intensive"
+            onClick={() => onModeChange("intensive")}
+            className={cn(
+              actionButtonBaseClassName,
+              surfaceMode === "intensive"
+                ? actionButtonActiveClassName
+                : actionButtonIdleClassName,
+            )}
           >
-            <button
-              type="button"
-              aria-pressed={surfaceMode === "intensive"}
-              aria-label="切换到精读模式"
-              data-reader-record-mode-option="intensive"
-              onClick={() => onModeChange("intensive")}
-              className={
-                surfaceMode === "intensive"
-                  ? "rounded-full bg-lens-blue/10 px-3 py-1 text-[0.75rem] font-semibold text-lens-blue"
-                  : "rounded-full px-3 py-1 text-[0.75rem] font-medium text-muted hover:text-ink"
-              }
-            >
-              精读
-            </button>
-            <button
-              type="button"
-              aria-pressed={surfaceMode === "immersive"}
-              aria-label="切换到沉浸模式"
-              data-reader-record-mode-option="immersive"
-              onClick={() => onModeChange("immersive")}
-              className={
-                surfaceMode === "immersive"
-                  ? "rounded-full bg-lens-blue/10 px-3 py-1 text-[0.75rem] font-semibold text-lens-blue"
-                  : "rounded-full px-3 py-1 text-[0.75rem] font-medium text-muted hover:text-ink"
-              }
-            >
-              沉浸
-            </button>
-          </div>
+            <BookOpen
+              aria-hidden="true"
+              className="h-[18px] w-[18px] shrink-0"
+              strokeWidth={1.5}
+            />
+            <span className="flex min-w-0 flex-col items-start leading-none whitespace-nowrap">
+              <span className="text-[0.85rem] font-semibold whitespace-nowrap">
+                精读
+              </span>
+              <span className="hidden sm:block mt-1 text-[0.65rem] font-medium text-subtle whitespace-nowrap">
+                逐句解析
+              </span>
+            </span>
+          </button>
+          <button
+            type="button"
+            aria-pressed={surfaceMode === "immersive"}
+            aria-label="切换到沉浸模式"
+            data-reader-record-mode-switch={surfaceMode}
+            data-reader-record-mode-option="immersive"
+            onClick={() => onModeChange("immersive")}
+            className={cn(
+              actionButtonBaseClassName,
+              surfaceMode === "immersive"
+                ? actionButtonActiveClassName
+                : actionButtonIdleClassName,
+            )}
+          >
+            <Eye
+              aria-hidden="true"
+              className="h-[18px] w-[18px] shrink-0"
+              strokeWidth={1.5}
+            />
+            <span className="flex min-w-0 flex-col items-start leading-none whitespace-nowrap">
+              <span className="text-[0.85rem] font-semibold whitespace-nowrap">
+                沉浸
+              </span>
+              <span className="hidden sm:block mt-1 text-[0.65rem] font-medium text-subtle whitespace-nowrap">
+                专注阅读
+              </span>
+            </span>
+          </button>
           <button
             type="button"
             aria-label="打开阅读设置"
             data-reader-record-action="open-settings"
-            onClick={onOpenSettings}
-            className="rounded-full border border-border/70 bg-background/80 p-1.5 text-muted transition-colors hover:text-ink"
+            onClick={(event) => onOpenSettings(event.currentTarget)}
+            className={cn(
+              actionButtonBaseClassName,
+              actionButtonIdleClassName,
+            )}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+            <SlidersHorizontal
               aria-hidden="true"
-            >
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
+              className="h-[18px] w-[18px] shrink-0"
+              strokeWidth={1.5}
+            />
+            <span className="flex min-w-0 flex-col items-start leading-none whitespace-nowrap">
+              <span className="text-[0.85rem] font-semibold whitespace-nowrap">
+                阅读设置
+              </span>
+              <span className="hidden sm:block mt-1 text-[0.65rem] font-medium text-subtle whitespace-nowrap">
+                版式与偏好
+              </span>
+            </span>
           </button>
         </div>
       </div>
 
-      {/* Zone 4: Bottom metadata — source + date + reading time + original link */}
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-[0.72rem] text-muted/80 tracking-wide">
-        {sourceName || sourceDomain ? (
-          <span className="font-medium">来源 {sourceName ?? sourceDomain}</span>
-        ) : null}
-        {sourceUrl ? (
-          <>
-            <span className="text-muted/40">·</span>
+      {/* Zone 4: Bottom metadata — source / date / word count / import type */}
+      <div className="mt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-0 text-[0.78rem] text-muted tracking-wide leading-normal sm:leading-none select-none">
+        <div className="flex flex-wrap items-center gap-1.5 font-medium">
+          <span>
+            {hasExternalSource
+              ? `来源 ${sourceName ?? sourceDomain}`
+              : `来源 ${sourceLabel}`}
+          </span>
+          {formattedDate && (
+            <>
+              <span className="text-muted/60">·</span>
+              <span>{formattedDate}</span>
+            </>
+          )}
+          {sourceWordCount !== null && (
+            <>
+              <span className="text-muted/60">·</span>
+              <span>{sourceWordCount} 词</span>
+            </>
+          )}
+        </div>
+
+        <div>
+          {sourceUrl ? (
             <a
               href={sourceUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="font-semibold text-muted transition-colors hover:text-ink"
+              className="focus-ring inline-flex items-center gap-1.5 font-semibold text-muted transition-colors hover:text-ink"
             >
-              原文链接
+              <Globe className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+              <span>英文原文</span>
             </a>
-          </>
-        ) : null}
-        <span className="text-muted/40">·</span>
-        <span>数据来源 {sourceType === "plain_text" ? "粘贴导入" : sourceType}</span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-muted/60">
+              <Globe className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+              <span>{sourceLabel}</span>
+            </span>
+          )}
+        </div>
       </div>
     </header>
   );
@@ -823,6 +1054,7 @@ export function ReaderRecordPlateSurface({
     }
   }, [themeName]);
   const [settingsPanelOpen, setSettingsPanelOpen] = useState(false);
+  const settingsAnchorRef = useRef<HTMLElement | null>(null);
   const surfaceMode = readerSettings.mode;
   const [localUserAssets, setLocalUserAssets] = useState<
     ReaderPlateSnapshotDto["user_assets"]
@@ -979,10 +1211,58 @@ export function ReaderRecordPlateSurface({
     [activeSentenceChunkId],
   );
 
+  const settingsFloating = useReaderFloatingLayer({
+    open: settingsPanelOpen,
+    placement: "bottom-end",
+    offsetPx: 10,
+    collisionPadding: 16,
+    strategy: "fixed",
+  });
+
   const handleSettingsChange = useCallback((next: ReaderSettingsState) => {
     setReaderSettings(next);
     persistReaderSettings(next);
   }, []);
+
+  const handleOpenSettingsPanel = useCallback(
+    (anchor: HTMLElement) => {
+      settingsAnchorRef.current = anchor;
+      settingsFloating.refs.setPositionReference?.({
+        getBoundingClientRect: () => anchor.getBoundingClientRect(),
+        contextElement: anchor,
+      });
+      setSettingsPanelOpen(true);
+    },
+    [settingsFloating.refs],
+  );
+
+  const { refs: settingsFloatingRefs, update: settingsFloatingUpdate } =
+    settingsFloating;
+  useEffect(() => {
+    if (!settingsPanelOpen) {
+      return;
+    }
+
+    function updateReference() {
+      const anchor = settingsAnchorRef.current;
+      if (!anchor) {
+        return;
+      }
+      settingsFloatingRefs.setPositionReference?.({
+        getBoundingClientRect: () => anchor.getBoundingClientRect(),
+        contextElement: anchor,
+      });
+      settingsFloatingUpdate?.();
+    }
+
+    updateReference();
+    window.addEventListener("resize", updateReference);
+    window.addEventListener("scroll", updateReference, true);
+    return () => {
+      window.removeEventListener("resize", updateReference);
+      window.removeEventListener("scroll", updateReference, true);
+    };
+  }, [settingsFloatingRefs, settingsFloatingUpdate, settingsPanelOpen]);
 
   const handleModeChange = useCallback(
     (mode: "intensive" | "immersive") => {
@@ -1013,11 +1293,53 @@ export function ReaderRecordPlateSurface({
     draft: string;
   } | null>(null);
   const quickPeekOpen = lookupState.kind !== "idle" || inspectState !== null;
+  const quickPeekAnchorRef = useRef<
+    | { kind: "element"; element: HTMLElement }
+    | { kind: "range"; getRect: () => DOMRectReadOnly | DOMRect }
+    | null
+  >(null);
   const quickPeekFloating = useReaderFloatingLayer({
     open: quickPeekOpen,
-    placement: "bottom",
+    placement: "bottom-start",
     offsetPx: 8,
+    collisionPadding: 12,
+    strategy: "fixed",
   });
+
+  const { refs: quickPeekFloatingRefs, update: quickPeekFloatingUpdate } =
+    quickPeekFloating;
+  useEffect(() => {
+    if (!quickPeekOpen) {
+      return;
+    }
+
+    function updateReference() {
+      const anchor = quickPeekAnchorRef.current;
+      if (!anchor) {
+        return;
+      }
+      if (anchor.kind === "element") {
+        quickPeekFloatingRefs.setPositionReference?.({
+          getBoundingClientRect: () => anchor.element.getBoundingClientRect(),
+          contextElement: anchor.element,
+        });
+      } else {
+        quickPeekFloatingRefs.setPositionReference?.({
+          getBoundingClientRect: anchor.getRect,
+        });
+      }
+      quickPeekFloatingUpdate?.();
+    }
+
+    updateReference();
+    window.addEventListener("resize", updateReference);
+    window.addEventListener("scroll", updateReference, true);
+    return () => {
+      window.removeEventListener("resize", updateReference);
+      window.removeEventListener("scroll", updateReference, true);
+    };
+  }, [quickPeekFloatingRefs, quickPeekFloatingUpdate, quickPeekOpen]);
+
   const [dictionaryOpen, setDictionaryOpen] = useState(false);
   const [dictionaryHistory, setDictionaryHistory] = useState<
     DictionaryLookupSnapshot[]
@@ -1036,6 +1358,8 @@ export function ReaderRecordPlateSurface({
   });
   const [askOpen, setAskOpen] = useState(false);
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
+  const [pendingAskRequest, setPendingAskRequest] =
+    useState<PendingReaderRecordAskRequest | null>(null);
   const [feedbackState, setFeedbackState] = useState<SaveState>({ kind: "idle" });
   const [feedbackTarget, setFeedbackTarget] = useState<{
     blockId: string;
@@ -1123,6 +1447,39 @@ export function ReaderRecordPlateSurface({
   }, [inspectState, lookupState.kind, quickPeekFloating.refs.floating]);
 
   useEffect(() => {
+    if (!settingsPanelOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node | null;
+      if (!target) {
+        return;
+      }
+      if (settingsFloating.refs.floating.current?.contains(target)) {
+        return;
+      }
+      if (settingsAnchorRef.current?.contains(target)) {
+        return;
+      }
+      setSettingsPanelOpen(false);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setSettingsPanelOpen(false);
+      }
+    }
+
+    window.document.addEventListener("pointerdown", handlePointerDown);
+    window.document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.document.removeEventListener("pointerdown", handlePointerDown);
+      window.document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [settingsFloating.refs.floating, settingsPanelOpen]);
+
+  useEffect(() => {
     if (writeState.kind !== "saved" && writeState.kind !== "error") {
       return;
     }
@@ -1184,8 +1541,10 @@ export function ReaderRecordPlateSurface({
         lookupType: lookupTypeForSelection(query),
         source: "vocabulary",
       };
-      quickPeekFloating.refs.setReference({
+      quickPeekAnchorRef.current = { kind: "element", element: anchor };
+      quickPeekFloating.refs.setPositionReference?.({
         getBoundingClientRect: () => anchor.getBoundingClientRect(),
+        contextElement: anchor,
       });
 
       const inspectIntent = structuredInspectIntentFromVocabularyMark(
@@ -1290,9 +1649,10 @@ export function ReaderRecordPlateSurface({
         liveSelection && liveSelection.rangeCount > 0
           ? liveSelection.getRangeAt(0)
           : null;
-      quickPeekFloating.refs.setReference({
-        getBoundingClientRect: () =>
-          liveRange?.getBoundingClientRect() ?? selection.rect!,
+      const getRect = () => liveRange?.getBoundingClientRect() ?? selection.rect!;
+      quickPeekAnchorRef.current = { kind: "range", getRect };
+      quickPeekFloating.refs.setPositionReference?.({
+        getBoundingClientRect: getRect,
       });
     }
 
@@ -1483,6 +1843,7 @@ export function ReaderRecordPlateSurface({
     setDictionaryOpen(true);
     setLookupState({ kind: "idle" });
     setInspectState(null);
+    quickPeekAnchorRef.current = null;
     if (activeLookupSnapshot) {
       setDictionaryHistory((current) => {
         const filtered = current.filter(
@@ -1521,12 +1882,16 @@ export function ReaderRecordPlateSurface({
     void onRequestSnapshotReload?.();
   }, [onRequestSnapshotReload]);
 
-  const openAskPanel = useCallback((attachment?: ReaderAskAttachment | null) => {
+  const openAskPanel = useCallback((
+    attachment?: ReaderAskAttachment | null,
+    pendingRequest?: PendingReaderRecordAskRequest | null,
+  ) => {
     if (attachment === null) {
       setAskAttachments([]);
     } else if (attachment) {
       setAskAttachments([attachment]);
     }
+    setPendingAskRequest(pendingRequest ?? null);
     setAskOpen(true);
     setDictionaryOpen(false);
     setDictionaryAIPanelOpen(false);
@@ -1551,6 +1916,27 @@ export function ReaderRecordPlateSurface({
     }
     openAskPanel(currentAskSelectionAttachment);
   }, [currentAskSelectionAttachment, openAskPanel]);
+
+  const handleAskPromptFromSelection = useCallback(
+    (request: {
+      content: string;
+      entryAction?: ReaderAskEntryActionDto;
+      submissionMode?: "chat" | "quick_action";
+    }) => {
+      const content = request.content.trim();
+      if (!content || !currentAskSelectionAttachment) {
+        return;
+      }
+      const pendingRequest: PendingReaderRecordAskRequest = {
+        content,
+        entryAction: request.entryAction ?? "ask_about_this",
+        attachments: [currentAskSelectionAttachment],
+        submissionMode: request.submissionMode ?? "chat",
+      };
+      openAskPanel(currentAskSelectionAttachment, pendingRequest);
+    },
+    [currentAskSelectionAttachment, openAskPanel],
+  );
 
   const handleAskFromNote = useCallback(() => {
     const activeMenu = noteMenu;
@@ -2292,18 +2678,22 @@ export function ReaderRecordPlateSurface({
   const toolbarActions = useMemo<ReaderToolbarActions>(
     () => ({
       onAsk: () => handleAskFromSelection(),
+      onAskSubmit: (request) => handleAskPromptFromSelection(request),
       onCopy: () => handleCopy(),
       onHighlight: () => handleHighlight(),
       onNote: () => handleOpenNoteComposer(),
       onLookup: () => handleLookup(),
+      suppressToolbar: quickPeekOpen,
       state: toolbarActionState,
     }),
     [
       handleAskFromSelection,
+      handleAskPromptFromSelection,
       handleCopy,
       handleHighlight,
       handleOpenNoteComposer,
       handleLookup,
+      quickPeekOpen,
       toolbarActionState,
     ],
   );
@@ -2459,25 +2849,44 @@ export function ReaderRecordPlateSurface({
       data-reader-record-surface="plate-readonly-reading"
       className={`${className} ${themeClassName}`}
     >
-      <div className={contentColumnClassName}>
+      {/* Header sits in its own wider editorial column, decoupled from the reading column. */}
+      <div className="reader-header-band-inner mx-auto w-full max-w-[82ch]">
         <ReaderRecordHeader
           snapshot={snapshot}
           progress={plateDocument.progress}
           surfaceMode={surfaceMode}
           onModeChange={handleModeChange}
-          onOpenSettings={() => setSettingsPanelOpen(true)}
+          onOpenSettings={handleOpenSettingsPanel}
         />
         {settingsPanelOpen ? (
-          <div className="mb-6">
+          <ReaderFloatingSurface
+            chrome="bare"
+            floatingRef={settingsFloating.refs.setFloating}
+            style={settingsFloating.floatingStyles as CSSProperties}
+            data-reader-record-settings-panel="open"
+            data-testid="reader-record-settings-popover"
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                setSettingsPanelOpen(false);
+              }
+            }}
+          >
             <ReaderSettingsPanel
+              variant="floating"
               themeName={themeName}
               value={readerSettings}
               onChange={handleSettingsChange}
               onThemeChange={setThemeName}
               onClose={() => setSettingsPanelOpen(false)}
             />
-          </div>
+          </ReaderFloatingSurface>
         ) : null}
+      </div>
+
+      <div className={contentColumnClassName}>
         <SelectionActionState
           copyStatus={copyStatus}
           selection={activeSelection}
@@ -2531,6 +2940,7 @@ export function ReaderRecordPlateSurface({
             onDismiss={() => {
               setLookupState({ kind: "idle" });
               setInspectState(null);
+              quickPeekAnchorRef.current = null;
             }}
             onOpenDetail={activeLookupSnapshot ? openDictionaryRail : undefined}
             onLookupPhrase={inspectState ? handleLookupFromInspect : undefined}
@@ -2674,8 +3084,10 @@ export function ReaderRecordPlateSurface({
         hideClosedLauncher
         recordTitle={snapshot.record.title}
         attachments={askAttachments}
+        pendingQuickActionRequest={pendingAskRequest}
         onRemoveAttachment={handleRemoveAskAttachment}
         onClearAttachments={() => setAskAttachments([])}
+        onPendingQuickActionConsumed={() => setPendingAskRequest(null)}
         onToggle={() => setAskOpen(false)}
         onActionExecuted={handleAskActionExecuted}
         onSupplementDeleted={handleAskSupplementDeleted}

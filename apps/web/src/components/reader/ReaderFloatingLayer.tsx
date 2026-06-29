@@ -49,15 +49,17 @@ interface ReaderFloatingSurfaceProps {
   children: ReactNode;
   className?: string;
   floatingRef?: (node: HTMLDivElement | null) => void;
+  chrome?: "lookup" | "bare";
 }
 
 type ReaderFloatingSurfaceDivProps = ReaderFloatingSurfaceProps &
-  Omit<ComponentPropsWithoutRef<"div">, "children" | "className">;
+  Omit<ComponentPropsWithoutRef<"div">, "children" | "className" | "chrome">;
 
 export function ReaderFloatingSurface({
   children,
   className,
   floatingRef,
+  chrome = "lookup",
   ...props
 }: ReaderFloatingSurfaceDivProps) {
   return (
@@ -65,6 +67,7 @@ export function ReaderFloatingSurface({
       <ReaderFloatingPanel
         floatingRef={floatingRef}
         className={className}
+        chrome={chrome}
         {...props}
       >
         {children}

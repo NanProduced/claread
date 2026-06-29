@@ -85,6 +85,9 @@ beforeEach(() => {
       },
     })) as unknown as Range["getBoundingClientRect"];
   }
+  if (!HTMLElement.prototype.scrollIntoView) {
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+  }
   vi.stubGlobal(
     "ResizeObserver",
     class ResizeObserver {
@@ -423,6 +426,12 @@ function closestMarkStack(element: HTMLElement | null): HTMLElement | null {
   return element?.closest<HTMLElement>("[data-reader-record-mark-stack-kinds]") ?? null;
 }
 
+function headerSourceTitleElement(container: HTMLElement): HTMLElement | null {
+  return container.querySelector<HTMLElement>(
+    "[data-reader-record-source-title='true']",
+  );
+}
+
 function makeAnchorSegmentNode(
   overrides: Partial<ReaderAnchorSegmentNodeDto> & {
     anchor_segment_id: string;
@@ -673,6 +682,22 @@ async function waitForSelectionAction(
     }
     return button;
   });
+}
+
+async function openAskPanelFromToolbar(askButton: HTMLButtonElement) {
+  fireEvent.click(askButton);
+  const attachContext = await screen.findByText("加入 Ask 上下文");
+  fireEvent.click(attachContext);
+}
+
+async function submitAskPromptFromToolbar(
+  askButton: HTMLButtonElement,
+  prompt: string,
+) {
+  fireEvent.click(askButton);
+  const input = await screen.findByPlaceholderText("Ask Claread anything...");
+  fireEvent.change(input, { target: { value: prompt } });
+  fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
 }
 
 function makeToolbarActions(
@@ -1287,19 +1312,92 @@ describe("ReaderRecordPlateSurface", () => {
     expect(userHighlight?.dataset.readerRecordMarkKind).toBe("user_highlight");
   });
 
-  it("renders the article title in the header", () => {
-    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+  it("renders the Chinese title from snapshot.record.display_title_zh in the header", () => {
+    const snapshot = makeSnapshot();
+    snapshot.record.display_title_zh = "阅读记录 Plate 测试标题";
+    snapshot.record.title_generation_status = "succeeded";
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
 
     const titleEl = container.querySelector<HTMLElement>(
       "[data-reader-record-reading-title]",
     );
     expect(titleEl).not.toBeNull();
     expect(titleEl?.tagName).toBe("H1");
-    expect(titleEl?.textContent).toBe("Reader Record Plate Surface Fixture");
+    expect(titleEl?.textContent).toBe("阅读记录 Plate 测试标题");
+    expect(titleEl?.dataset.readerRecordTitleState).toBe("succeeded");
   });
 
-  it("omits the title element when snapshot.record.title is empty", () => {
+  it("does not promote record.title to the succeeded masthead when display_title_zh is missing", () => {
     const snapshot = makeSnapshot();
+    snapshot.record.display_title_zh = null;
+    snapshot.record.title_generation_status = "succeeded";
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={snapshot} />,
+    );
+
+    const titleEl = container.querySelector<HTMLElement>(
+      "[data-reader-record-reading-title]",
+    );
+    expect(titleEl?.textContent).not.toBe(
+      "Reader Record Plate Surface Fixture",
+    );
+    expect(titleEl?.dataset.readerRecordTitleState).not.toBe("succeeded");
+  });
+
+  it("falls back to snapshot.record.title when display_title_zh is missing and title_generation_status is unset (migration fallback)", () => {
+    // 旧 snapshot 没有 title_generation_status，且没有中文标题，但有 record.title：
+    // 作为迁移期防崩溃降级渲染 H1，避免页面空白；不计入"中文标题成功态"。
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const titleEl = container.querySelector<HTMLElement>(
+      "[data-reader-record-reading-title]",
+    );
+    expect(titleEl).not.toBeNull();
+    expect(titleEl?.textContent).toBe("Reader Record Plate Surface Fixture");
+    expect(titleEl?.dataset.readerRecordTitleState).toBe("migration_fallback");
+  });
+
+  it("renders pending title state and does not promote record.title to the Chinese masthead", () => {
+    const snapshot = makeSnapshot();
+    snapshot.record.display_title_zh = null;
+    snapshot.record.title_generation_status = "pending";
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+
+    const titleEl = container.querySelector<HTMLElement>(
+      "[data-reader-record-reading-title]",
+    );
+    expect(titleEl).not.toBeNull();
+    expect(titleEl?.tagName).toBe("H1");
+    expect(titleEl?.textContent).toBe("标题生成中…");
+    expect(titleEl?.dataset.readerRecordTitleState).toBe("pending");
+    expect(headerSourceTitleElement(container)).toBeNull();
+  });
+
+  it("renders failed_retryable title state with record.title as secondary source title", () => {
+    const snapshot = makeSnapshot();
+    snapshot.record.display_title_zh = null;
+    snapshot.record.title_generation_status = "failed_retryable";
+    snapshot.record.title_generation_error_code = "llm_timeout";
+    snapshot.record.title_generation_error_message = "LLM 调用超时";
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+
+    const titleEl = container.querySelector<HTMLElement>(
+      "[data-reader-record-reading-title]",
+    );
+    expect(titleEl).not.toBeNull();
+    expect(titleEl?.textContent).toBe("标题生成失败");
+    expect(titleEl?.dataset.readerRecordTitleState).toBe("failed_retryable");
+
+    const sourceTitleEl = headerSourceTitleElement(container);
+    expect(sourceTitleEl).not.toBeNull();
+    expect(sourceTitleEl?.textContent).toContain(
+      "Reader Record Plate Surface Fixture",
+    );
+  });
+
+  it("omits the title element when both display_title_zh and title are empty", () => {
+    const snapshot = makeSnapshot();
+    snapshot.record.display_title_zh = "";
     snapshot.record.title = "";
     const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
 
@@ -1307,6 +1405,16 @@ describe("ReaderRecordPlateSurface", () => {
       "[data-reader-record-reading-title]",
     );
     expect(titleEl).toBeNull();
+  });
+
+  it("renders header eyebrow with mode label and date", () => {
+    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const header = screen.getByTestId("reader-record-plate-header");
+    expect(header).toBeTruthy();
+    expect(header.textContent).toContain("精读模式");
+    // 旧 snapshot 默认 created_at = 2026-06-24T00:00:00Z
+    expect(header.textContent).toContain("2026年6月24日");
   });
 
   it("renders header with progress status and metadata", () => {
@@ -1323,6 +1431,339 @@ describe("ReaderRecordPlateSurface", () => {
     expect(progressStatus?.dataset.readerRecordProgressStatus).toBe(
       "readable_enhancing",
     );
+  });
+
+  it("does not show estimated reading minutes in the header", () => {
+    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const header = screen.getByTestId("reader-record-plate-header");
+    expect(header.textContent).not.toContain("分钟阅读");
+    expect(header.textContent).not.toMatch(/约\s*\d+\s*分钟/);
+  });
+
+  it("does not use sentence count as the primary reading metric in the header", () => {
+    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const header = screen.getByTestId("reader-record-plate-header");
+    // 旧实现会把 anchor_segments.length 渲染成 "1 句"；新版 action bar 不应再展示该 metric。
+    expect(header.textContent).not.toMatch(/^\s*1\s*句$/);
+    expect(header.textContent).not.toContain("1 句");
+    expect(header.textContent).not.toMatch(/\d+\s*句/);
+  });
+
+  it("renders the header in a wide editorial column decoupled from the reading column", () => {
+    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const surface = screen.getByTestId("reader-record-plate-surface");
+    const headerColumn = surface.firstElementChild as HTMLElement | null;
+    const contentColumn = surface.children[1] as HTMLElement | null;
+
+    expect(headerColumn?.className).toContain("max-w-[82ch]");
+    expect(headerColumn?.querySelector('[data-testid="reader-record-plate-header"]')).not.toBeNull();
+    expect(contentColumn?.className).toContain("max-w-[46rem]");
+    expect(contentColumn?.querySelector(".reader-record-plate-document")).not.toBeNull();
+  });
+
+  it("renders the action bar as a single horizontal control strip on desktop", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot()} />,
+    );
+
+    const actionBar = container.querySelector<HTMLElement>(
+      '[data-reader-record-action-bar="true"]',
+    );
+    expect(actionBar).not.toBeNull();
+    expect(actionBar?.className).toContain("sm:flex-row");
+    expect(actionBar?.className).not.toContain("flex-wrap");
+    expect(actionBar?.className).toContain("border-t");
+    expect(actionBar?.className).toContain("border-b");
+    expect(actionBar?.className).toContain("border-hairline");
+
+    const rightButtons = actionBar?.querySelector(
+      ".flex.items-stretch.divide-x.divide-hairline",
+    );
+    expect(rightButtons).not.toBeNull();
+    expect(rightButtons?.className).toContain("divide-x");
+    expect(rightButtons?.className).toContain("divide-hairline");
+  });
+
+  it("renders the progress status as a chip with Sparkles icon instead of a blue dot", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot()} />,
+    );
+
+    const progressStatus = container.querySelector<HTMLElement>(
+      "[data-reader-record-progress-status]",
+    );
+    expect(progressStatus).not.toBeNull();
+    expect(progressStatus?.className).toContain("rounded-[0.5rem]");
+    expect(progressStatus?.className).toContain("bg-surface-warm");
+    expect(progressStatus?.textContent).toContain("解析生成中");
+
+    const blueDot = container.querySelector(
+      ".rounded-full.bg-lens-blue",
+    );
+    expect(blueDot).toBeNull();
+  });
+
+  it("maps raw source_type 'text' to user-readable '粘贴导入' in bottom metadata", () => {
+    const snapshot = makeSnapshot();
+    snapshot.record.source_type = "text";
+    render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+
+    const header = screen.getByTestId("reader-record-plate-header");
+    expect(header.textContent).toContain("来源 粘贴导入");
+    expect(header.textContent).not.toContain("来源 text");
+    expect(header.textContent).not.toContain("数据来源 text");
+  });
+
+  it("renders the right action buttons with icon + label + sublabel", () => {
+    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const header = screen.getByTestId("reader-record-plate-header");
+    // FavoriteButton 是独立状态组件，其在 header 中占位即可。
+    expect(header.textContent).toContain("收藏");
+    expect(header.textContent).toContain("精读");
+    expect(header.textContent).toContain("逐句解析");
+    expect(header.textContent).toContain("沉浸");
+    expect(header.textContent).toContain("专注阅读");
+    expect(header.textContent).toContain("阅读设置");
+    expect(header.textContent).toContain("版式与偏好");
+  });
+
+  it("shows source-only word count from stable source text in the header", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot()} />,
+    );
+
+    // SOURCE_TEXT = "Institutional memory shapes policy choices." → 5 词
+    const wordCountEl = container.querySelector<HTMLElement>(
+      "[data-reader-record-source-word-count]",
+    );
+    expect(wordCountEl).not.toBeNull();
+    expect(wordCountEl?.textContent).toBe("5 词");
+  });
+
+  it("counts source words correctly across multiple segments with separator leaves", () => {
+    const snapshot = makeSnapshot();
+    const unit = snapshot.value[0];
+    const sourceBlock = unit.children.find(
+      (child) => child.type === "reader_source_block",
+    );
+    if (sourceBlock && sourceBlock.type === "reader_source_block") {
+      sourceBlock.children = [
+        {
+          type: "reader_anchor_segment",
+          owner: "stable",
+          base_id: "base_1",
+          unit_id: "unit_1",
+          anchor_segment_id: "seg_1",
+          sentence_id: "sent_1",
+          segment_type: "sentence",
+          boundary_quality: "normal",
+          base_start_utf16: 0,
+          base_end_utf16: 11,
+          unit_start_utf16: 0,
+          unit_end_utf16: 11,
+          text_hash: "seg_hash_1",
+          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+          children: [
+            {
+              text: "Hello world",
+              owner: "stable",
+              lock_source: true,
+              source_role: "segment_text",
+              base_start_utf16: 0,
+              base_end_utf16: 11,
+              anchor_segment_id: "seg_1",
+              segment_start_utf16: 0,
+              segment_end_utf16: 11,
+            },
+          ],
+        },
+        {
+          text: " ",
+          owner: "stable",
+          lock_source: true,
+          source_role: "separator",
+          base_start_utf16: 11,
+          base_end_utf16: 12,
+        },
+        {
+          type: "reader_anchor_segment",
+          owner: "stable",
+          base_id: "base_1",
+          unit_id: "unit_1",
+          anchor_segment_id: "seg_2",
+          sentence_id: "sent_2",
+          segment_type: "sentence",
+          boundary_quality: "normal",
+          base_start_utf16: 12,
+          base_end_utf16: 27,
+          unit_start_utf16: 12,
+          unit_end_utf16: 27,
+          text_hash: "seg_hash_2",
+          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+          children: [
+            {
+              text: "next sentence",
+              owner: "stable",
+              lock_source: true,
+              source_role: "segment_text",
+              base_start_utf16: 12,
+              base_end_utf16: 27,
+              anchor_segment_id: "seg_2",
+              segment_start_utf16: 0,
+              segment_end_utf16: 15,
+            },
+          ],
+        },
+      ];
+    }
+
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={snapshot} />,
+    );
+
+    const wordCountEl = container.querySelector<HTMLElement>(
+      "[data-reader-record-source-word-count]",
+    );
+    expect(wordCountEl).not.toBeNull();
+    expect(wordCountEl?.textContent).toBe("4 词");
+  });
+
+  it("omits source word count when stable source text is empty", () => {
+    const snapshot = makeSnapshot();
+    // 移除 unit 的 source_block children，模拟无法可靠获取原文的场景。
+    const unit = snapshot.value[0];
+    const sourceBlock = unit.children.find(
+      (child) => child.type === "reader_source_block",
+    );
+    if (sourceBlock && sourceBlock.type === "reader_source_block") {
+      sourceBlock.children = [];
+    }
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={snapshot} />,
+    );
+
+    const wordCountEl = container.querySelector<HTMLElement>(
+      "[data-reader-record-source-word-count]",
+    );
+    expect(wordCountEl).toBeNull();
+  });
+
+  it("does not render a leading separator dot in bottom metadata when source info is absent", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot()} />,
+    );
+
+    const header = container.querySelector<HTMLElement>(
+      '[data-testid="reader-record-plate-header"]',
+    );
+    const bottomMetadata = header?.querySelector(
+      ".mt-3.flex.flex-col.sm\\:flex-row.sm\\:items-center.justify-between",
+    );
+    expect(bottomMetadata?.textContent).toBeTruthy();
+    expect(bottomMetadata?.textContent?.trim() ?? "").not.toMatch(/^·/);
+    expect(bottomMetadata?.textContent).toContain("来源 粘贴导入");
+  });
+
+  it("shows reading goal and variant label when both fields are present and mappable", () => {
+    const snapshot = makeSnapshot();
+    snapshot.record.reading_goal = "exam";
+    snapshot.record.reading_variant = "kaoyan";
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={snapshot} />,
+    );
+
+    const labelEl = container.querySelector<HTMLElement>(
+      "[data-reader-record-reading-goal-variant]",
+    );
+    expect(labelEl).not.toBeNull();
+    expect(labelEl?.textContent).toBe("备考精读 · 考研");
+  });
+
+  it("omits reading goal and variant label when fields are missing", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot()} />,
+    );
+
+    const labelEl = container.querySelector<HTMLElement>(
+      "[data-reader-record-reading-goal-variant]",
+    );
+    expect(labelEl).toBeNull();
+  });
+
+  it("omits reading goal and variant label when variant cannot be mapped", () => {
+    const snapshot = makeSnapshot();
+    snapshot.record.reading_goal = "exam";
+    snapshot.record.reading_variant = "this_variant_does_not_exist";
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={snapshot} />,
+    );
+
+    const labelEl = container.querySelector<HTMLElement>(
+      "[data-reader-record-reading-goal-variant]",
+    );
+    expect(labelEl).toBeNull();
+  });
+
+  it("keeps favorite, intensive, immersive and reading settings actions on the right side of the action bar", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot()} />,
+    );
+
+    const actionBar = container.querySelector<HTMLElement>(
+      "[data-reader-record-action-bar]",
+    );
+    expect(actionBar).not.toBeNull();
+
+    expect(
+      container.querySelector('[data-reader-record-mode-option="intensive"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-reader-record-mode-option="immersive"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-reader-record-action="open-settings"]'),
+    ).not.toBeNull();
+    // FavoriteButton 渲染为 aria-pressed 收藏按钮
+    expect(
+      container.querySelector('button[aria-pressed]'),
+    ).not.toBeNull();
+    // 旧版 pill segmented control 已被移除，新版使用 hairline action bar
+    expect(
+      container.querySelector('[data-reader-record-mode-switch="intensive"][role="group"]'),
+    ).toBeNull();
+    // 仍保留 favorite、精读、沉浸、阅读设置四个右侧按钮
+    expect(
+      screen.getByRole("button", { name: "切换到精读模式" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "切换到沉浸模式" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "打开阅读设置" }),
+    ).toBeTruthy();
+  });
+
+  it("opens reading settings as a floating compact popover", () => {
+    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    fireEvent.click(screen.getByLabelText("打开阅读设置"));
+
+    const popover = screen.getByTestId("reader-record-settings-popover");
+    expect(popover.dataset.readerRecordSettingsPanel).toBe("open");
+    expect(
+      popover.querySelector('[data-reader-settings-panel="floating"]'),
+    ).toBeTruthy();
+
+    expect(popover.classList.contains("reader-lookup-preview")).toBe(false);
+    const shells = popover.querySelectorAll(".reader-tool-panel");
+    expect(shells.length).toBe(1);
+
+    fireEvent.keyDown(popover, { key: "Escape" });
+    expect(screen.queryByTestId("reader-record-settings-popover")).toBeNull();
   });
 
   it("keeps Plate toolbar as the only selection action surface and disables it when idle", () => {
@@ -1420,7 +1861,12 @@ describe("ReaderRecordPlateSurface", () => {
         throw new Error(`Expected enabled toolbar button: ${item.action}`);
       }
       fireEvent.click(enabledButton);
-      expect(enabledActions[item.handler]).toHaveBeenCalledTimes(1);
+      if (item.action === "ask") {
+        expect(document.querySelector('[data-reader-record-ask-menu="open"]')).not.toBeNull();
+        expect(enabledActions.onAsk).not.toHaveBeenCalled();
+      } else {
+        expect(enabledActions[item.handler]).toHaveBeenCalledTimes(1);
+      }
       enabledHarness.unmount();
 
       const disabledActions = makeToolbarActions({
@@ -1758,6 +2204,7 @@ describe("ReaderRecordPlateSurface", () => {
     fireEvent.click(lookupButton);
 
     await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(selectionActionButton(container, "lookup")).toBeNull();
     const nonFavoritesCalls = fetchMock.mock.calls.filter(
       ([url]) => !(typeof url === "string" && url.includes("/api/web/favorites")),
     );
@@ -2007,7 +2454,7 @@ describe("ReaderRecordPlateSurface", () => {
     selectTextInElement(memoryMark, 0, "memory".length);
 
     const askButton = await waitForSelectionAction(container, "ask");
-    fireEvent.click(askButton);
+    await openAskPanelFromToolbar(askButton);
 
     await waitFor(() => {
       expect(
@@ -2044,6 +2491,42 @@ describe("ReaderRecordPlateSurface", () => {
       unit_id: "unit_1",
       reading_record_anchor: expectedMemoryAnchor(),
     });
+  });
+
+  it("submits a toolbar Ask prompt with the current selection as context", async () => {
+    const fetchMock = installReaderAskFetchMock();
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+
+    const askButton = await waitForSelectionAction(container, "ask");
+    await submitAskPromptFromToolbar(askButton, "这句话为什么这样表达？");
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).includes("/messages/stream"),
+        ),
+      ).toBe(true);
+    });
+    const streamCall = fetchMock.mock.calls.findLast(([input]) =>
+      String(input).includes("/messages/stream"),
+    );
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as {
+      content: string;
+      entry_action: string;
+      attachments: Array<{ selected_text?: string | null }>;
+    };
+    expect(body.content).toBe("这句话为什么这样表达？");
+    expect(body.entry_action).toBe("ask_about_this");
+    expect(body.attachments[0]?.selected_text).toBe("memory");
   });
 
   it("opens the RR Ask panel from a saved note in Reading Record scope", async () => {
@@ -2526,7 +3009,7 @@ describe("ReaderRecordPlateSurface", () => {
       expect(writeText).toHaveBeenCalledWith("制度记忆");
     });
 
-    fireEvent.click(askButton);
+    await openAskPanelFromToolbar(askButton);
     const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
     expect(attachment?.selected_text).toBe("制度记忆");
     expect(attachment?.target_key).toBe("blockquote:layer_translation_1:unit_1");
@@ -2584,7 +3067,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     const askButton = await waitForSelectionAction(container, "ask");
     expect(askButton.disabled).toBe(false);
-    fireEvent.click(askButton);
+    await openAskPanelFromToolbar(askButton);
 
     const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
     expect(attachment?.metadata.anchor_segment_id).toBeNull();
@@ -2687,7 +3170,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(noteButton.disabled).toBe(true);
     expect(noteButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文高亮/笔记");
 
-    fireEvent.click(askButton);
+    await openAskPanelFromToolbar(askButton);
     const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
     expect(attachment?.selected_text).toBe("shapes");
     expect(attachment?.metadata).toMatchObject({
@@ -2734,7 +3217,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     const askButton = await waitForSelectionAction(container, "ask");
     expect(askButton.disabled).toBe(false);
-    fireEvent.click(askButton);
+    await openAskPanelFromToolbar(askButton);
 
     const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
     expect(attachment?.selected_text).toBe("Institutional");
@@ -2782,7 +3265,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     const askButton = await waitForSelectionAction(container, "ask");
     expect(askButton.disabled).toBe(false);
-    fireEvent.click(askButton);
+    await openAskPanelFromToolbar(askButton);
 
     const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
     expect(attachment?.selected_text).toBe("Institutional");
@@ -2929,7 +3412,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(toolbarSource).toContain("export function ReaderNoteToolbarButton");
     expect(toolbarSource).toContain("ToolbarButton");
     expect(toolbarSource).toContain("ToolbarGroup");
-    expect(toolbarSource).toContain("ToolbarSeparator");
+    expect(toolbarSource).toContain("AIMenu");
     expect(surfaceSource).toContain("commentApiRef.current?.setDraft()");
     expect(surfaceSource).toContain("commentApiRef.current?.setActiveId");
     expect(surfaceSource).not.toMatch(/ReaderRecordNoteComposer/);
@@ -2990,7 +3473,8 @@ describe("ReaderRecordPlateSurface", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
     const surface = screen.getByTestId("reader-record-plate-surface");
-    const contentColumn = surface.firstElementChild as HTMLElement | null;
+    const headerColumn = surface.firstElementChild as HTMLElement | null;
+    const contentColumn = surface.children[1] as HTMLElement | null;
     const documentSurface = container.querySelector<HTMLElement>(
       ".reader-record-plate-document",
     );
@@ -3001,6 +3485,7 @@ describe("ReaderRecordPlateSurface", () => {
       '[data-reader-record-node="sentence-analysis"]',
     );
 
+    expect(headerColumn?.className).toContain("max-w-[82ch]");
     expect(contentColumn?.className).toContain("max-w-[46rem]");
     expect(documentSurface?.className).toContain("reader-record-plate-font-sans");
     expect(documentSurface?.className).toContain("reader-record-plate-type-md");
