@@ -32,6 +32,7 @@ from app.services.analysis.prompting.prompt_loader import (
     load_agent_instructions,
 )
 
+from ._text import sanitize_failure_message
 from .job_bootstrap import (
     DISPLAY_TITLE_JOB_TYPE,
     DISPLAY_TITLE_OPERATION_FINGERPRINT,
@@ -40,15 +41,19 @@ from .job_bootstrap import (
 from .job_runtime import (
     STATUS_CLAIMED,
     STATUS_RETRY_LATER,
-    STATUS_SUCCEEDED as JOB_STATUS_SUCCEEDED,
     ClaimResult,
     FenceViolationError,
     ReaderJobRuntime,
 )
+from .job_runtime import (
+    STATUS_SUCCEEDED as JOB_STATUS_SUCCEEDED,
+)
 
 DEFAULT_DISPLAY_TITLE_RETRY_DELAY = timedelta(minutes=5)
+DEFAULT_DISPLAY_TITLE_FAILURE_MESSAGE = "display title generation failed"
 DISPLAY_TITLE_PROMPT_AGENT_NAME = "reader_title_generation"
 DISPLAY_TITLE_WORKER_VERSION = "reader-display-title-worker-v1"
+MAX_GENERATED_TITLE_CHARS = 32
 MAX_TITLE_SOURCE_CHARS = 3600
 MAX_TITLE_HEADING_CHARS = 900
 MAX_TITLE_BLOCK_SCAN_ROWS = 40
@@ -59,7 +64,7 @@ _MARKETING_RE = re.compile(r"(震惊|必看|一文读懂|揭秘|重磅|爆款|�
 
 
 class DisplayTitleStructuredOutput(BaseModel):
-    title_zh: str = Field(min_length=1, max_length=40)
+    title_zh: str = Field(min_length=1, max_length=MAX_GENERATED_TITLE_CHARS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,11 +171,7 @@ class PydanticAIDisplayTitleGenerator:
     ) -> DisplayTitleExecutionResult:
         settings = self._settings or get_settings()
         prompt_version = get_prompt_version()
-        if not (
-            str(settings.reader_title_model_profile or "").strip()
-            or str(settings.reader_translation_model_profile or "").strip()
-            or str(settings.annotation_model_profile or "").strip()
-        ):
+        if not str(settings.reader_title_model_profile or "").strip():
             raise DisplayTitleGenerationError(
                 (
                     "display title generator is not configured; set "
@@ -743,7 +744,10 @@ class DisplayTitleWorkerService:
                     else int(job_row["expected_generation"])
                 )
                 attempt_count = context.attempt_count if context else int(job_row["attempt_count"])
-                sanitized_message = _sanitize_error_message(failure_message)
+                sanitized_message = sanitize_failure_message(
+                    failure_message,
+                    default=DEFAULT_DISPLAY_TITLE_FAILURE_MESSAGE,
+                ) or DEFAULT_DISPLAY_TITLE_FAILURE_MESSAGE
 
                 updated_record = await conn.fetchrow(
                     """
@@ -953,7 +957,13 @@ class DisplayTitleWorkerService:
                 planner_kind="llm_worker",
                 operation_fingerprint=context.operation_fingerprint,
                 error_code=error_code,
-                error_message=_sanitize_error_message(error_message),
+                error_message=(
+                    sanitize_failure_message(
+                        error_message,
+                        default=DEFAULT_DISPLAY_TITLE_FAILURE_MESSAGE,
+                    )
+                    or DEFAULT_DISPLAY_TITLE_FAILURE_MESSAGE
+                ),
                 metadata_json=_usage_metadata(context),
             )
         )
@@ -1001,7 +1011,11 @@ def build_display_title_generation_input(
         if len(blocks) >= MAX_TITLE_BLOCKS:
             break
 
-    preview = _bounded_join(blocks or [base_text])
+    if blocks:
+        preview = _bounded_join(blocks)
+    else:
+        cleaned_base = _clean_text(base_text)
+        preview = cleaned_base[:MAX_TITLE_SOURCE_CHARS] if cleaned_base else ""
     return DisplayTitleGenerationInput(
         source_title=base_title_snapshot or record_title,
         source_type=source_type,
@@ -1023,7 +1037,7 @@ def normalize_generated_title_zh(value: str) -> str:
         raise ValueError("generated title is blank")
     if not _CJK_RE.search(title):
         raise ValueError("generated title must contain Chinese characters")
-    if len(title) > 32:
+    if len(title) > MAX_GENERATED_TITLE_CHARS:
         raise ValueError("generated title is too long for reader masthead")
     if _MARKETING_RE.search(title):
         raise ValueError("generated title uses marketing-style wording")
@@ -1264,11 +1278,6 @@ async def _insert_title_reader_event(
         claim.job_id,
         created_at,
     )
-
-
-def _sanitize_error_message(value: str) -> str:
-    return (" ".join(str(value).split()) or "display title generation failed")[:240]
-
 
 def _usage_metadata(context: DisplayTitleJobContext) -> dict[str, Any]:
     title_input = context.title_input

@@ -5,16 +5,24 @@ from uuid import uuid4
 
 import asyncpg
 import pytest
+from pydantic import ValidationError
 
+from app.config.settings import Settings
 from app.database import connection as db_connection
+from app.llm.registry import build_model_registry
+from app.llm.routes import MODEL_ROUTE_READER_TITLE_GENERATION
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
 from app.services.reader_orchestration.display_title_worker import (
+    MAX_GENERATED_TITLE_CHARS,
     MAX_TITLE_SOURCE_CHARS,
     DisplayTitleExecutionResult,
     DisplayTitleGenerationError,
+    DisplayTitleStructuredOutput,
     DisplayTitleWorkerService,
+    build_display_title_generation_input,
+    normalize_generated_title_zh,
 )
 from app.services.reader_orchestration.job_bootstrap import (
     DISPLAY_TITLE_OPERATION_FINGERPRINT,
@@ -288,3 +296,61 @@ async def test_display_title_worker_does_not_send_full_long_text_to_generator(
     assert title_input.preview_char_length <= MAX_TITLE_SOURCE_CHARS
     assert sentinel not in title_input.content_preview
     assert long_body not in title_input.content_preview
+
+
+def test_display_title_output_contract_uses_32_character_hard_limit() -> None:
+    valid_title = "中" * MAX_GENERATED_TITLE_CHARS
+    too_long_title = "中" * (MAX_GENERATED_TITLE_CHARS + 1)
+
+    assert DisplayTitleStructuredOutput(title_zh=valid_title).title_zh == valid_title
+    assert normalize_generated_title_zh(valid_title) == valid_title
+
+    with pytest.raises(ValidationError):
+        DisplayTitleStructuredOutput(title_zh=too_long_title)
+    with pytest.raises(ValueError, match="too long"):
+        normalize_generated_title_zh(too_long_title)
+
+
+def test_display_title_base_text_fallback_preview_is_explicitly_bounded() -> None:
+    sentinel = "DO_NOT_SEND_FULL_TEXT_SENTINEL"
+    base_text = ("Alpha beta gamma delta. " * 260) + sentinel
+
+    title_input = build_display_title_generation_input(
+        record_title="Fallback Source Title",
+        base_title_snapshot=None,
+        source_type="plain_text",
+        source_language="en",
+        source_metadata={},
+        base_text=base_text,
+        base_char_length=len(base_text),
+        stable_rows=(),
+        unit_rows=(),
+    )
+
+    assert title_input.input_strategy == "base_text_preview"
+    assert title_input.preview_char_length <= MAX_TITLE_SOURCE_CHARS
+    assert sentinel not in title_input.content_preview
+    assert base_text not in title_input.content_preview
+
+
+def test_reader_title_route_requires_explicit_model_profile() -> None:
+    registry_without_title = build_model_registry(
+        Settings(
+            annotation_model_profile="annotation",
+            reader_translation_model_profile="translation",
+            reader_title_model_profile="",
+        )
+    )
+    registry_with_title = build_model_registry(
+        Settings(
+            annotation_model_profile="annotation",
+            reader_translation_model_profile="translation",
+            reader_title_model_profile="reader_title",
+        )
+    )
+
+    assert MODEL_ROUTE_READER_TITLE_GENERATION not in registry_without_title.route_defaults
+    assert (
+        registry_with_title.route_defaults[MODEL_ROUTE_READER_TITLE_GENERATION]
+        == "reader_title"
+    )

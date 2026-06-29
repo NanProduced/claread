@@ -34,6 +34,7 @@ from app.schemas.reader_orchestration import (
     ReadingRecordProductState,
 )
 
+from ._text import sanitize_failure_message
 from .base_builder import (
     BuiltAnchorSegment,
     BuiltReadingUnit,
@@ -909,7 +910,9 @@ class ReaderOrchestrationRepository:
             else None
         )
         if title_generation_status == "succeeded" and not display_title_zh:
-            raise ValueError("reader snapshot requires display_title_zh when title generation succeeded")
+            raise ValueError(
+                "reader snapshot requires display_title_zh when title generation succeeded"
+            )
 
         snapshot_record = ReaderSnapshotRecord(
             title=str(title_snapshot) if title_snapshot is not None else "Untitled Reading",
@@ -922,10 +925,8 @@ class ReaderOrchestrationRepository:
                 if record_row["title_generation_error_code"] is not None
                 else None
             ),
-            title_generation_error_message=(
-                _sanitize_failure_message(record_row["title_generation_error_message"])
-                if record_row["title_generation_error_message"] is not None
-                else None
+            title_generation_error_message=sanitize_failure_message(
+                record_row["title_generation_error_message"]
             ),
             created_at=record_row["record_created_at"],
             source_type=str(record_row["source_type"]),
@@ -1523,7 +1524,7 @@ def _build_enhancement_progress(
                 updated_at=row["updated_at"] or row["published_at"],
                 failure_code=failure_code,
                 failure_message=(
-                    _sanitize_failure_message(job_row["failure_message"])
+                    sanitize_failure_message(job_row["failure_message"])
                     if job_row is not None
                     else None
                 ),
@@ -1558,7 +1559,7 @@ def _build_enhancement_progress(
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
                 failure_code=failure_code,
-                failure_message=_sanitize_failure_message(row["failure_message"]),
+                failure_message=sanitize_failure_message(row["failure_message"]),
             )
         )
 
@@ -1693,15 +1694,6 @@ def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
-
-
-def _sanitize_failure_message(value: Any) -> str | None:
-    if value is None:
-        return None
-    message = " ".join(str(value).split())
-    if not message:
-        return None
-    return message[:240]
 
 
 def _navigation_json_from_build_result(

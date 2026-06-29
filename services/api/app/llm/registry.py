@@ -135,11 +135,7 @@ def _build_model_registry_cached(
             MODEL_ROUTE_READER_LAYER_GRAMMAR_BUNDLE: (
                 settings.reader_grammar_bundle_model_profile
             ),
-            MODEL_ROUTE_READER_TITLE_GENERATION: (
-                settings.reader_title_model_profile
-                or settings.reader_translation_model_profile
-                or settings.annotation_model_profile
-            ),
+            MODEL_ROUTE_READER_TITLE_GENERATION: settings.reader_title_model_profile,
             MODEL_ROUTE_READER_ASK: (
                 settings.ask_claread_profile
                 or settings.annotation_model_profile

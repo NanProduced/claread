@@ -112,9 +112,9 @@ Contract:
 - target scope: `record`;
 - target key: `reading_record_id`;
 - operation fingerprint: `display_title_zh_v1`;
-- model route / usage capability: `reader_title_generation`;
+- model route / usage capability: `reader_title_generation`; this route requires an explicit `reader_title_model_profile` and must not silently fall back to translation or annotation profiles;
 - record states: `pending`, `succeeded`, `failed_retryable`;
-- successful output: one Simplified Chinese masthead title, recommended 8-24 Chinese characters, suitable for Header display;
+- successful output: one Simplified Chinese masthead title, hard max 32 characters, recommended 8-24 Chinese characters, suitable for Header display;
 - retryable failure: record `generated_title_zh = NULL`, `title_generation_status = failed_retryable`, job `retry_later`, run `failed_retryable`, and a record state-change event.
 
 Input policy:

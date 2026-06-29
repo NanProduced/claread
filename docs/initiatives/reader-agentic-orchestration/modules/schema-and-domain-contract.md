@@ -143,7 +143,7 @@ Rules:
 - D3-P1 does not require a DB trigger to enforce `active_base_id -> reading_bases.status = 'active'`. Service / publisher code must enforce this invariant when setting active base, superseding base, and publishing layers/jobs.
 - `title` remains source/user-facing input metadata. It is not the generated Chinese masthead contract.
 - `generated_title_zh` belongs to `reading_records`, not `reading_bases`, because it is localized product metadata for a user's Reading Record and can be retried or regenerated without changing the canonical text base. Stable source facts and Canonical Text Layer identity must not depend on a localized masthead label.
-- `title_generation_status='succeeded'` requires a non-empty `generated_title_zh`. `pending` and `failed_retryable` must not expose a fake success title.
+- `title_generation_status='succeeded'` requires a non-empty `generated_title_zh` within the 32-character hard max. `pending` and `failed_retryable` must not expose a fake success title.
 - `failed_retryable` must preserve an error code/message suitable for operator diagnostics and user-facing retry flow. It is not a terminal record failure.
 
 ### Record State Ownership
@@ -1233,7 +1233,7 @@ D5-V2 values:
 W3-C2 alignment additions:
 
 - Snapshot top-level `record` is the minimum ReaderWorkbench shell metadata contract for title, created time, source metadata, current `product_state`, and current `readiness_state`.
-- Snapshot `record.display_title_zh` is the only generated Chinese masthead field for `/app/reader-record/{recordId}` Header. It is populated only when `record.title_generation_status = "succeeded"`.
+- Snapshot `record.display_title_zh` is the only generated Chinese masthead field for `/app/reader-record/{recordId}` Header. It is populated only when `record.title_generation_status = "succeeded"` and follows the generated-title hard max of 32 characters.
 - Snapshot `record.title_generation_status` has exactly `pending`, `succeeded`, and `failed_retryable`. `failed_retryable` may include `title_generation_error_code` and sanitized `title_generation_error_message` so the client can expose retry/diagnostic affordances without treating the title as present.
 - Snapshot serializers must reject or fail closed if persisted facts claim `title_generation_status = "succeeded"` but `generated_title_zh` is blank. They must not fall back to `reading_records.title`, `reading_bases.title_snapshot`, Stable Reading Document title, or client-generated text as a successful Chinese title.
 - `/app/reader-record/{recordId}` may surface `product_state` as the primary reader-facing status and `readiness_state` as auxiliary milestone text after snapshot reloads.

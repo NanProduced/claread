@@ -38,6 +38,8 @@
 - target key: `reading_record_id`
 - operation fingerprint: `display_title_zh_v1`
 - model route / usage capability: `reader_title_generation`
+- model profile：必须显式配置 `reader_title_model_profile`；不能静默回退到 translation 或 annotation profiles
+- output length：硬上限 32 个字符，推荐 8-24 个中文字符
 
 Drain 顺序为：
 

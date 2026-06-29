@@ -187,6 +187,8 @@ Fallback 规则：
 - `operation_fingerprint` 表示 business intent，包含 route / prompt / layer / unit / input hash 等稳定字段，不包含临时 actual provider/model。
 - Usage event 记录 primary profile、actual profile、fallback attempt index 和 fallback reason。
 
+Display title generation 使用独立的 `reader_title_generation` route，必须显式配置 `reader_title_model_profile`。它不能静默回退到 `reader_layer_translation`：title worker 是短 bounded context + 极小 structured output，translation profile 通常按更长 unit translation 的上下文、延迟和额度配置。独立 worker 会为每个 record 增加一次短模型调用，但换来独立 retry、usage attribution 和 quota control，不把标题失败或重试耦合到逐 unit 翻译。
+
 ## Usage Bucket 合同
 
 `ai_usage_events` 需要从“记录一次模型调用”升级为可做成本归因的审计表。
