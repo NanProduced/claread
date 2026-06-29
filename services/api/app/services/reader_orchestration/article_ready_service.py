@@ -7,7 +7,13 @@ from uuid import UUID, uuid4
 
 import asyncpg
 
-from app.schemas.reader_orchestration import ReaderPlateSnapshot
+from app.schemas.reader_orchestration import (
+    DEFAULT_READER_ORCHESTRATION_READING_GOAL,
+    DEFAULT_READER_ORCHESTRATION_READING_VARIANT,
+    ReaderOrchestrationReadingGoal,
+    ReaderOrchestrationReadingVariant,
+    ReaderPlateSnapshot,
+)
 
 from .base_builder import LowImpactReadingBaseBuildInput, build_low_impact_reading_base
 from .repository import ReaderOrchestrationRepository
@@ -22,6 +28,15 @@ class PlainTextArticleReadySubmitRequest:
     language: str | None = None
     source_metadata: dict[str, Any] | None = None
     client_record_id: str | None = None
+    # Reader strategy first-class facts. Defaults keep the existing Web BFF
+    # path working when the client omits the fields; the values are persisted
+    # on `reading_records` and never inferred from `source_metadata`.
+    reading_goal: ReaderOrchestrationReadingGoal = (
+        DEFAULT_READER_ORCHESTRATION_READING_GOAL
+    )
+    reading_variant: ReaderOrchestrationReadingVariant = (
+        DEFAULT_READER_ORCHESTRATION_READING_VARIANT
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +92,8 @@ class ArticleReadyPersistenceService:
                     title=title,
                     language=language,
                     created_at=now,
+                    reading_goal=request.reading_goal,
+                    reading_variant=request.reading_variant,
                 )
                 await self._repository.insert_original_input(
                     conn,

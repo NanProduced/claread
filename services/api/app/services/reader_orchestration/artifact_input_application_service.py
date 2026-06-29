@@ -11,6 +11,12 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.database.json_compat import jsonb_param
+from app.schemas.reader_orchestration import (
+    DEFAULT_READER_ORCHESTRATION_READING_GOAL,
+    DEFAULT_READER_ORCHESTRATION_READING_VARIANT,
+    ReaderOrchestrationReadingGoal,
+    ReaderOrchestrationReadingVariant,
+)
 from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
 
 ArtifactBoundReadingSourceType = Literal["file", "pdf", "image"]
@@ -86,6 +92,12 @@ class ArtifactInputApplicationService:
         client_record_id: str | None = None,
         source_metadata: dict[str, Any] | None = None,
         now: datetime | None = None,
+        reading_goal: ReaderOrchestrationReadingGoal = (
+            DEFAULT_READER_ORCHESTRATION_READING_GOAL
+        ),
+        reading_variant: ReaderOrchestrationReadingVariant = (
+            DEFAULT_READER_ORCHESTRATION_READING_VARIANT
+        ),
     ) -> ArtifactInputApplicationResult:
         created_at = now or datetime.now(UTC)
         title_value = _normalize_optional_text(title)
@@ -157,6 +169,8 @@ class ArtifactInputApplicationService:
                             title=title_resolved,
                             language=language_value,
                             created_at=created_at,
+                            reading_goal=reading_goal,
+                            reading_variant=reading_variant,
                         )
                         await _insert_original_input(
                             conn,
@@ -297,6 +311,8 @@ async def _insert_reading_record(
     title: str,
     language: str | None,
     created_at: datetime,
+    reading_goal: str,
+    reading_variant: str,
 ) -> None:
     await conn.execute(
         """
@@ -311,6 +327,8 @@ async def _insert_reading_record(
             product_state,
             readiness_state,
             generation,
+            reading_goal,
+            reading_variant,
             created_at,
             updated_at
         )
@@ -326,7 +344,9 @@ async def _insert_reading_record(
             'submitted',
             1,
             $7,
-            $7
+            $8,
+            $9,
+            $9
         )
         """,
         record_id,
@@ -335,6 +355,8 @@ async def _insert_reading_record(
         source_type,
         title,
         language,
+        reading_goal,
+        reading_variant,
         created_at,
     )
 

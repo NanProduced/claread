@@ -16,6 +16,12 @@ from app.schemas.reader_input_adapter import (
     InputSuitabilityRequest,
     InputSuitabilityResult,
 )
+from app.schemas.reader_orchestration import (
+    DEFAULT_READER_ORCHESTRATION_READING_GOAL,
+    DEFAULT_READER_ORCHESTRATION_READING_VARIANT,
+    ReaderOrchestrationReadingGoal,
+    ReaderOrchestrationReadingVariant,
+)
 from app.services.reader_orchestration.input_suitability_gate import (
     evaluate_input_suitability,
 )
@@ -102,6 +108,12 @@ class CandidateDocumentCreationService:
         client_record_id: str | None = None,
         language: str | None = "en",
         now: datetime | None = None,
+        reading_goal: ReaderOrchestrationReadingGoal = (
+            DEFAULT_READER_ORCHESTRATION_READING_GOAL
+        ),
+        reading_variant: ReaderOrchestrationReadingVariant = (
+            DEFAULT_READER_ORCHESTRATION_READING_VARIANT
+        ),
     ) -> CandidateDocumentCreationResult:
         created_at = now or datetime.now(UTC)
         language_value = (language or "en").strip() or "en"
@@ -172,6 +184,8 @@ class CandidateDocumentCreationService:
                             title=title,
                             language=language_value,
                             created_at=created_at,
+                            reading_goal=reading_goal,
+                            reading_variant=reading_variant,
                         )
                         await _insert_original_input(
                             conn,
@@ -239,6 +253,8 @@ async def _insert_reading_record(
     title: str | None,
     language: str,
     created_at: datetime,
+    reading_goal: str,
+    reading_variant: str,
 ) -> None:
     await conn.execute(
         """
@@ -253,6 +269,8 @@ async def _insert_reading_record(
             product_state,
             readiness_state,
             generation,
+            reading_goal,
+            reading_variant,
             created_at,
             updated_at
         )
@@ -268,7 +286,9 @@ async def _insert_reading_record(
             'submitted',
             1,
             $7,
-            $7
+            $8,
+            $9,
+            $9
         )
         """,
         record_id,
@@ -277,6 +297,8 @@ async def _insert_reading_record(
         _READING_RECORD_SOURCE_TYPE_BY_INPUT_SOURCE[source_type],
         title,
         language,
+        reading_goal,
+        reading_variant,
         created_at,
     )
 

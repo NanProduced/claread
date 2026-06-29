@@ -23,6 +23,8 @@ from app.contracts.annotation import (
 from app.database import connection as db_connection
 from app.database.json_compat import ensure_json_array, ensure_json_object, jsonb_param
 from app.schemas.reader_orchestration import (
+    DEFAULT_READER_ORCHESTRATION_READING_GOAL,
+    DEFAULT_READER_ORCHESTRATION_READING_VARIANT,
     ReaderEnhancementProgress,
     ReaderEnhancementProgressLayer,
     ReaderSnapshotAskSupplement,
@@ -110,6 +112,8 @@ class ReaderOrchestrationRepository:
         title: str,
         language: str,
         created_at: datetime,
+        reading_goal: str = DEFAULT_READER_ORCHESTRATION_READING_GOAL,
+        reading_variant: str = DEFAULT_READER_ORCHESTRATION_READING_VARIANT,
     ) -> None:
         await conn.execute(
             """
@@ -124,6 +128,8 @@ class ReaderOrchestrationRepository:
                 product_state,
                 readiness_state,
                 generation,
+                reading_goal,
+                reading_variant,
                 created_at,
                 updated_at
             )
@@ -139,7 +145,9 @@ class ReaderOrchestrationRepository:
                 'submitted',
                 1,
                 $6,
-                $6
+                $7,
+                $8,
+                $8
             )
             """,
             record_id,
@@ -147,6 +155,8 @@ class ReaderOrchestrationRepository:
             client_record_id,
             title,
             language,
+            reading_goal,
+            reading_variant,
             created_at,
         )
 
@@ -584,6 +594,8 @@ class ReaderOrchestrationRepository:
                 r.readiness_state,
                 r.generation,
                 r.active_base_id,
+                r.reading_goal,
+                r.reading_variant,
                 r.created_at AS record_created_at,
                 r.updated_at AS record_updated_at,
                 b.id AS base_id,
@@ -934,6 +946,8 @@ class ReaderOrchestrationRepository:
             generation=record_generation,
             product_state=str(record_row["product_state"]),
             readiness_state=str(record_row["readiness_state"]),
+            reading_goal=str(record_row["reading_goal"]),
+            reading_variant=str(record_row["reading_variant"]),
         )
         snapshot_layers = tuple(
             ReaderSnapshotLayer(

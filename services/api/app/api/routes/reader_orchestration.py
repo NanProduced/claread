@@ -381,6 +381,8 @@ async def submit_reader_plain_text(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+                reading_goal=body.reading_goal,
+                reading_variant=body.reading_variant,
     return ReaderPlainTextSubmitResponse(
         record_id=str(result.record_id),
         base_id=str(result.base_id),
@@ -431,6 +433,8 @@ async def submit_reader_input(
             result = await service.create_candidate_document_from_input(
                 user_id=user_id,
                 source_type=body.source_type,
+                reading_goal=body.reading_goal,
+                reading_variant=body.reading_variant,
                 text=body.text,
                 filename=body.filename,
                 source_metadata=body.source_metadata,
@@ -448,6 +452,8 @@ async def submit_reader_input(
     )
 
 
+                reading_goal=body.reading_goal,
+                reading_variant=body.reading_variant,
 @router.post(
     "/source-artifacts/init-upload",
     response_model=ReaderSourceArtifactUploadInitResponse,
@@ -588,6 +594,8 @@ async def submit_reader_source_artifact_as_input(
     "/records/stable-ready-input",
     response_model=ReaderStableReadyInputSubmitResponse,
     summary="Freeze stable-ready input into a reader record and reload the snapshot",
+            reading_goal=body.reading_goal,
+            reading_variant=body.reading_variant,
 )
 async def submit_reader_stable_ready_input(
     body: ReaderStableReadyInputSubmitRequest,
@@ -756,6 +764,8 @@ async def poll_reader_events(
             user_id=UUID(current_user.user_id),
             after_sequence=after_sequence,
             limit=limit,
+            reading_goal=body.reading_goal,
+            reading_variant=body.reading_variant,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Reader record not found") from exc

@@ -95,6 +95,106 @@ ReaderLayerTargetScope = Literal["unit", "anchor_segment", "unit_range", "record
 ReaderArtifactInputSourceType = Literal["file", "pdf", "image"]
 ReaderArtifactOriginalInputType = Literal["file_ref", "image_ref"]
 
+# ---------------------------------------------------------------------------#
+# Reader Orchestration reading strategy contract (T1 backend contract restore)
+#
+# `reading_goal` / `reading_variant` are first-class facts on `reading_records`.
+# They are the truth owner for Reader strategy in the new orchestration. They
+# MUST NOT be inferred from `source_metadata`.
+#
+# Scope: only `daily_reading` and `exam` are wired into the new Reader
+# Orchestration. `academic` / `academic_general` from legacy AI Workflow are
+# intentionally excluded; submitting them must fail closed at the schema layer
+# rather than being silently mapped to a daily/exam variant.
+#
+# The centralized defaults below backfill historical records (DB migration) and
+# keep the existing Web BFF submit body working when the client omits the
+# fields. Defaults are persisted as first-class facts; they are not a fallback
+# that lives in worker code or in `source_metadata`.
+# ---------------------------------------------------------------------------#
+ReaderOrchestrationReadingGoal = Literal["daily_reading", "exam"]
+ReaderOrchestrationReadingVariant = Literal[
+    "beginner_reading",
+    "intermediate_reading",
+    "intensive_reading",
+    "gaokao",
+    "cet",
+    "kaoyan",
+    "tem",
+    "ielts_toefl",
+]
+
+READER_ORCHESTRATION_GOAL_VARIANT_MAP: dict[
+    ReaderOrchestrationReadingGoal, frozenset[ReaderOrchestrationReadingVariant]
+] = {
+    "daily_reading": frozenset(
+        {"beginner_reading", "intermediate_reading", "intensive_reading"}
+    ),
+    "exam": frozenset({"gaokao", "cet", "kaoyan", "tem", "ielts_toefl"}),
+}
+
+# Centralized historical/missing-strategy defaults. Used by the DB migration
+# to backfill existing rows, by submit schemas as field defaults, and by the
+# snapshot model so legacy fixtures remain valid. Do not duplicate these in
+# workers or in source_metadata.
+DEFAULT_READER_ORCHESTRATION_READING_GOAL: ReaderOrchestrationReadingGoal = (
+    "daily_reading"
+)
+DEFAULT_READER_ORCHESTRATION_READING_VARIANT: ReaderOrchestrationReadingVariant = (
+    "intermediate_reading"
+)
+
+
+def _validate_reader_orchestration_strategy(
+    reading_goal: ReaderOrchestrationReadingGoal,
+    reading_variant: ReaderOrchestrationReadingVariant,
+) -> None:
+    """Fail-closed validator for the new Reader Orchestration strategy pair.
+
+    `academic` / `academic_general` are rejected by the Literal types above.
+    This helper additionally enforces that `reading_variant` belongs to
+    `reading_goal`. It is the single chokepoint for variant-in-goal checks;
+    repository / worker code should not re-implement this mapping.
+    """
+    allowed_variants = READER_ORCHESTRATION_GOAL_VARIANT_MAP.get(reading_goal)
+    if allowed_variants is None or reading_variant not in allowed_variants:
+        raise ValueError(
+            f"reading_variant={reading_variant!r} does not belong to "
+            f"reading_goal={reading_goal!r} in the new Reader Orchestration scope"
+        )
+
+
+# `reading_goal` / `reading_variant` are reserved at the top level of
+# `source_metadata`. Allowing them there would create a second truth source
+# (next to the first-class `reading_records` columns) and let a client split
+# record truth from Ask strategy. Nested keys inside sub-objects are not
+# affected. Apply this set via `_reject_reserved_strategy_keys_in_source_metadata`
+# on every Reader Orchestration submit schema.
+READER_ORCHESTRATION_RESERVED_SOURCE_METADATA_KEYS: frozenset[str] = frozenset(
+    {"reading_goal", "reading_variant"}
+)
+
+
+def _reject_reserved_strategy_keys_in_source_metadata(
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Reject top-level reserved strategy keys on submit `source_metadata`.
+
+    Returns the metadata unchanged when no reserved key is present (or when the
+    value is `None`). Raises `ValueError` so Pydantic surfaces it as a 422 at
+    the API boundary.
+    """
+    if metadata is None:
+        return None
+    conflicting = READER_ORCHESTRATION_RESERVED_SOURCE_METADATA_KEYS & metadata.keys()
+    if conflicting:
+        raise ValueError(
+            "source_metadata must not carry reserved strategy keys at the "
+            f"top level: {sorted(conflicting)}. Use the first-class "
+            "reading_goal / reading_variant request fields instead."
+        )
+    return metadata
+
 
 class ReaderUnitAnchor(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -284,6 +384,23 @@ class ReaderSnapshotRecord(BaseModel):
     generation: int = Field(ge=1)
     product_state: ReadingRecordProductState
     readiness_state: ReadingRecordReadinessState
+    # Reader strategy first-class facts. Persisted on `reading_records` and
+    # exposed on every snapshot. Defaults keep legacy fixtures valid; the
+    # repository always passes the DB-loaded values for real records.
+    reading_goal: ReaderOrchestrationReadingGoal = Field(
+        default=DEFAULT_READER_ORCHESTRATION_READING_GOAL
+    )
+    reading_variant: ReaderOrchestrationReadingVariant = Field(
+        default=DEFAULT_READER_ORCHESTRATION_READING_VARIANT
+    )
+
+    @model_validator(mode="after")
+    def _validate_reader_strategy_pair(self) -> ReaderSnapshotRecord:
+        _validate_reader_orchestration_strategy(
+            reading_goal=self.reading_goal,
+            reading_variant=self.reading_variant,
+        )
+        return self
 
 
 class ReaderSnapshotNavigationUnit(BaseModel):
@@ -430,6 +547,12 @@ class ReaderPlainTextSubmitRequest(BaseModel):
     language: str | None = None
     source_metadata: dict[str, Any] | None = None
     client_record_id: str | None = Field(default=None, max_length=255)
+    reading_goal: ReaderOrchestrationReadingGoal = Field(
+        default=DEFAULT_READER_ORCHESTRATION_READING_GOAL
+    )
+    reading_variant: ReaderOrchestrationReadingVariant = Field(
+        default=DEFAULT_READER_ORCHESTRATION_READING_VARIANT
+    )
 
     @field_validator("plain_text")
     @classmethod
@@ -445,6 +568,21 @@ class ReaderPlainTextSubmitRequest(BaseModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @field_validator("source_metadata")
+    @classmethod
+    def _reject_reserved_strategy_keys(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        return _reject_reserved_strategy_keys_in_source_metadata(value)
+
+    @model_validator(mode="after")
+    def _validate_reader_strategy_pair(self) -> ReaderPlainTextSubmitRequest:
+        _validate_reader_orchestration_strategy(
+            reading_goal=self.reading_goal,
+            reading_variant=self.reading_variant,
+        )
+        return self
 
 
 class ReaderPlainTextSubmitResponse(BaseModel):
@@ -465,6 +603,12 @@ class ReaderStableReadyInputSubmitRequest(BaseModel):
     source_metadata: dict[str, Any] | None = None
     client_record_id: str | None = Field(default=None, max_length=255)
     language: str | None = None
+    reading_goal: ReaderOrchestrationReadingGoal = Field(
+        default=DEFAULT_READER_ORCHESTRATION_READING_GOAL
+    )
+    reading_variant: ReaderOrchestrationReadingVariant = Field(
+        default=DEFAULT_READER_ORCHESTRATION_READING_VARIANT
+    )
 
     @field_validator("text")
     @classmethod
@@ -480,6 +624,21 @@ class ReaderStableReadyInputSubmitRequest(BaseModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @field_validator("source_metadata")
+    @classmethod
+    def _reject_reserved_strategy_keys(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        return _reject_reserved_strategy_keys_in_source_metadata(value)
+
+    @model_validator(mode="after")
+    def _validate_reader_strategy_pair(self) -> ReaderStableReadyInputSubmitRequest:
+        _validate_reader_orchestration_strategy(
+            reading_goal=self.reading_goal,
+            reading_variant=self.reading_variant,
+        )
+        return self
 
 
 class ReaderStableReadyInputSubmitResponse(BaseModel):
@@ -628,6 +787,12 @@ class ReaderSourceArtifactSubmitInputRequest(BaseModel):
     language: str | None = None
     client_record_id: str | None = Field(default=None, max_length=255)
     source_metadata: dict[str, Any] | None = None
+    reading_goal: ReaderOrchestrationReadingGoal = Field(
+        default=DEFAULT_READER_ORCHESTRATION_READING_GOAL
+    )
+    reading_variant: ReaderOrchestrationReadingVariant = Field(
+        default=DEFAULT_READER_ORCHESTRATION_READING_VARIANT
+    )
 
     @field_validator("title")
     @classmethod
@@ -652,6 +817,21 @@ class ReaderSourceArtifactSubmitInputRequest(BaseModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @field_validator("source_metadata")
+    @classmethod
+    def _reject_reserved_strategy_keys(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        return _reject_reserved_strategy_keys_in_source_metadata(value)
+
+    @model_validator(mode="after")
+    def _validate_reader_strategy_pair(self) -> ReaderSourceArtifactSubmitInputRequest:
+        _validate_reader_orchestration_strategy(
+            reading_goal=self.reading_goal,
+            reading_variant=self.reading_variant,
+        )
+        return self
 
 
 class ReaderSourceArtifactSubmitInputResponse(BaseModel):

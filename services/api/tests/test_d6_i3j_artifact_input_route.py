@@ -142,6 +142,8 @@ def test_submit_source_artifact_as_input_happy_path_calls_service_and_serializes
         language="en",
         client_record_id="client-artifact-001",
         source_metadata={"origin": "ios"},
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
     )
     assert response.json() == {
         "reading_record_id": str(READING_RECORD_ID),

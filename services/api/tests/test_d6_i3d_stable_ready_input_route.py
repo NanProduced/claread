@@ -200,6 +200,8 @@ def test_submit_stable_ready_input_happy_path_pasted_text_calls_service_and_seri
         },
         client_record_id="client-route-001",
         language="en",
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
     )
     assert response.json() == {
         "reading_record_id": str(result.reading_record_id),
@@ -253,6 +255,8 @@ def test_submit_stable_ready_input_happy_path_markdown_file_passes_filename() ->
         source_metadata=None,
         client_record_id=None,
         language=None,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
     )
 
 

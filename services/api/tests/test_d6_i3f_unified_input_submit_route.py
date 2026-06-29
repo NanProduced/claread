@@ -280,6 +280,8 @@ def test_submit_reader_input_stable_ready_routes_to_stable_service_and_trims_emp
         source_metadata={"source_kind": "route_test"},
         client_record_id=None,
         language="en",
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
     )
     mock_candidate.assert_not_awaited()
     assert response.json() == {
@@ -360,6 +362,8 @@ def test_submit_reader_input_candidate_routes_to_candidate_service() -> None:
         source_metadata=None,
         client_record_id=None,
         language=None,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
     )
     mock_stable.assert_not_awaited()
     assert response.json() == {
