@@ -21,6 +21,7 @@ import type {
   ReaderRecordPlateGrammarMark,
   ReaderRecordPlateMark,
   ReaderRecordPlateParagraphBlock,
+  ReaderRecordPlateSentenceChunkMark,
   ReaderRecordPlateSentenceAnalysisBlock,
   ReaderRecordPlateTextLeaf,
   ReaderRecordPlateTranslationTextLeaf,
@@ -46,6 +47,7 @@ export const READER_VOCABULARY_MARK_KEY = "vocabulary" as const;
 export const READER_GRAMMAR_MARK_KEY = "grammar" as const;
 export const READER_USER_HIGHLIGHT_MARK_KEY = "user_highlight" as const;
 export const READER_USER_NOTE_MARK_KEY = "user_note" as const;
+export const READER_SENTENCE_CHUNK_MARK_KEY = "sentence_chunk" as const;
 
 // --- Element node types ---
 
@@ -107,6 +109,8 @@ export interface PlateTextNode {
   vocabulary_data?: ReaderRecordPlateVocabularyMark;
   grammar?: boolean;
   grammar_data?: ReaderRecordPlateGrammarMark;
+  sentence_chunk?: boolean;
+  sentence_chunk_data?: ReaderRecordPlateSentenceChunkMark;
   user_highlight?: boolean;
   user_highlight_data?: ReaderRecordPlateUserHighlightMark;
   user_note?: boolean;
@@ -127,9 +131,9 @@ function isVocabularyMark(
   mark: ReaderRecordPlateMark,
 ): mark is ReaderRecordPlateVocabularyMark {
   return (
-    mark.kind !== "grammar_note" &&
-    mark.kind !== "user_highlight" &&
-    mark.kind !== "user_note"
+    mark.kind === "vocab_highlight" ||
+    mark.kind === "phrase_gloss" ||
+    mark.kind === "context_gloss"
   );
 }
 
@@ -143,6 +147,12 @@ function isUserHighlightMark(
   mark: ReaderRecordPlateMark,
 ): mark is ReaderRecordPlateUserHighlightMark {
   return mark.kind === "user_highlight";
+}
+
+function isSentenceChunkMark(
+  mark: ReaderRecordPlateMark,
+): mark is ReaderRecordPlateSentenceChunkMark {
+  return mark.kind === "sentence_analysis_chunk";
 }
 
 function isUserNoteMark(
@@ -161,7 +171,7 @@ function isUserNoteMark(
  */
 export function marksToPlateProps(
   marks: ReaderRecordPlateMark[],
-): Partial<Pick<PlateTextNode, "vocabulary" | "vocabulary_data" | "grammar" | "grammar_data" | "user_highlight" | "user_highlight_data" | "user_note" | "user_note_data">> {
+): Partial<Pick<PlateTextNode, "vocabulary" | "vocabulary_data" | "grammar" | "grammar_data" | "sentence_chunk" | "sentence_chunk_data" | "user_highlight" | "user_highlight_data" | "user_note" | "user_note_data">> {
   const props: Record<string, unknown> = {};
   const noteMarks: ReaderRecordPlateUserNoteMark[] = [];
 
@@ -174,6 +184,11 @@ export function marksToPlateProps(
     if (isGrammarMark(mark)) {
       props[READER_GRAMMAR_MARK_KEY] = true;
       props[`${READER_GRAMMAR_MARK_KEY}_data`] = mark;
+      continue;
+    }
+    if (isSentenceChunkMark(mark)) {
+      props[READER_SENTENCE_CHUNK_MARK_KEY] = true;
+      props[`${READER_SENTENCE_CHUNK_MARK_KEY}_data`] = mark;
       continue;
     }
     if (isUserHighlightMark(mark)) {

@@ -2,7 +2,7 @@
 
 import { useId } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { BookOpen, Bot, Search, Sparkles, X } from "lucide-react";
+import { BookOpen, Bot, Flag, Search, Sparkles, X } from "lucide-react";
 import { readerIconAction } from "@/components/reader/interaction";
 import { cn } from "@/lib/cn";
 import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
@@ -61,6 +61,7 @@ interface ReaderQuickPeekProps {
   onOpenDetail?: () => void;
   onLookupPhrase?: () => void;
   onAttachToAsk?: () => void;
+  onFeedback?: () => void;
   onRequestAI?: (mode: WebDictAIRequest["mode"]) => void;
   dictionaryAI?: DictionaryAIViewState;
 }
@@ -156,6 +157,7 @@ export function ReaderQuickPeek({
   lookup = null,
   onDismiss,
   onAttachToAsk,
+  onFeedback,
   onLookupPhrase,
   onOpenDetail,
   onRequestAI,
@@ -180,6 +182,9 @@ export function ReaderQuickPeek({
           body={
             <ReaderStructuredInspectCard
               intent={inspect}
+              onFeedback={onFeedback}
+              onLookupPhrase={onLookupPhrase}
+              onAttachToAsk={onAttachToAsk}
               variant="peek"
             />
           }
@@ -198,6 +203,11 @@ export function ReaderQuickPeek({
               {onOpenDetail ? (
                 <PeekIconAction label="打开词典" onClick={onOpenDetail}>
                   <BookOpen className="h-3.5 w-3.5" />
+                </PeekIconAction>
+              ) : null}
+              {onFeedback ? (
+                <PeekIconAction label="反馈" onClick={onFeedback}>
+                  <Flag className="h-3.5 w-3.5" />
                 </PeekIconAction>
               ) : null}
             </div>

@@ -11,6 +11,7 @@
  * 使用 Plate attributes（ref / data-slate-node 等）保证 Plate 选区和渲染正常工作。
  */
 import * as React from "react";
+import { createContext, useContext } from "react";
 import {
   createPlatePlugin,
   type PlateElementProps,
@@ -37,6 +38,59 @@ function classNames(...values: Array<string | false | null | undefined>): string
   return values.filter(Boolean).join(" ");
 }
 
+export interface ReaderSentenceAnalysisInteractionValue {
+  activeChunkId: string | null;
+  setActiveChunkId: (chunkId: string | null) => void;
+}
+
+export const ReaderSentenceAnalysisInteractionContext =
+  createContext<ReaderSentenceAnalysisInteractionValue>({
+    activeChunkId: null,
+    setActiveChunkId: () => {},
+  });
+
+function useReaderSentenceAnalysisInteraction() {
+  return useContext(ReaderSentenceAnalysisInteractionContext);
+}
+
+function sentenceChunkDomId(chunk: {
+  order: number;
+  label: string;
+  sourceMatch?: { markId: string };
+}): string {
+  return chunk.sourceMatch?.markId ?? `unmatched:${chunk.order}:${chunk.label}`;
+}
+
+function sentenceChunkDescription(label: string): string {
+  const normalized = label.trim().toLowerCase();
+  if (normalized.includes("subject") || normalized.includes("主语")) {
+    return "主语 / 话题核心";
+  }
+  if (normalized.includes("predicate") || normalized.includes("verb") || normalized.includes("谓语")) {
+    return "谓语 / 动作核心";
+  }
+  if (normalized.includes("object") || normalized.includes("宾语")) {
+    return "宾语 / 承接对象";
+  }
+  if (normalized.includes("modifier") || normalized.includes("修饰")) {
+    return "修饰 / 补充限定";
+  }
+  if (normalized.includes("clause") || normalized.includes("从句")) {
+    return "从句 / 信息层";
+  }
+  if (normalized.includes("condition") || normalized.includes("条件")) {
+    return "条件 / 前提信息";
+  }
+  if (normalized.includes("reason") || normalized.includes("cause") || normalized.includes("原因")) {
+    return "原因 / 解释关系";
+  }
+  return "结构片段";
+}
+
+function calloutTypeLabel(variant: ReaderCalloutElement["variant"]): string {
+  return variant === "grammar" ? "语法解析" : "补充说明";
+}
+
 // --- Paragraph element ---
 
 function ReaderParagraphComponent({
@@ -49,12 +103,13 @@ function ReaderParagraphComponent({
   return (
     <p
       {...attributes}
-      className={`reader-record-plate-paragraph my-2.5 text-pretty leading-[1.88] text-ink ${attributes?.className ?? ""}`.trim()}
+      className={`reader-record-plate-paragraph text-pretty text-ink ${attributes?.className ?? ""}`.trim()}
       data-reader-record-node="paragraph"
       data-reader-record-block-id={(element as unknown as ReaderParagraphElement).id}
       data-anchor-segment-id={data?.anchorSegmentId}
       data-sentence-id={data?.sentenceId}
       data-unit-id={data?.unitId}
+      data-reader-record-unit-start={data?.isUnitStart ? "true" : undefined}
     >
       {children}
     </p>
@@ -82,7 +137,9 @@ function ReaderBlockquoteComponent({
     <blockquote
       {...attributes}
       aria-label="译文"
-      className={`reader-record-plate-blockquote reader-record-plate-translation reader-record-plate-translation-lane my-1.5 border-l-2 border-border/70 bg-transparent py-0.5 pl-3 pr-1 font-sans text-[0.84rem] leading-6 text-muted/85 ${attributes?.className ?? ""}`.trim()}
+      className={`reader-record-plate-blockquote reader-record-plate-translation reader-record-plate-translation-lane reader-record-plate-translation-copy reader-font-sans border-l border-hairline/85 bg-transparent ${
+        attributes?.className ?? ""
+      }`.trim()}
       data-reader-record-node="blockquote"
       data-reader-record-translation-lane="true"
       data-reader-record-block-id={(element as unknown as ReaderBlockquoteElement).id}
@@ -115,21 +172,22 @@ function ReaderCalloutComponent({
 
   const isGrammar = variant === "grammar";
   const isSupplement = variant === "supplement";
+  const label = calloutTypeLabel(variant);
   const containerClass = [
-    "reader-record-plate-callout my-2.5 bg-transparent py-1 pl-3 pr-2 text-sm leading-6 text-ink-soft",
+    "reader-record-plate-callout rounded-[8px] border font-sans text-ink-soft shadow-none",
     isGrammar
-      ? "reader-record-plate-callout--grammar border-l-2 border-emerald-300/75"
+      ? "reader-record-plate-callout--grammar border-grammar-violet/18 bg-ink/[0.035]"
       : "",
     isSupplement
-      ? "reader-record-plate-callout--supplement border-l-2 border-amber-300/75"
+      ? "reader-record-plate-callout--supplement border-vocab-amber/18 bg-vocab-amber/[0.045]"
       : "",
     attributes?.className ?? "",
   ]
     .filter(Boolean)
     .join(" ");
   const eyebrowClass = isGrammar
-    ? "text-emerald-700/75"
-    : "text-amber-700/75";
+    ? "text-grammar-violet/80"
+    : "text-vocab-amber/90";
   const title = isGrammar
     ? data?.grammarPoint ?? ""
     : data?.supplementTitle ?? "";
@@ -147,23 +205,29 @@ function ReaderCalloutComponent({
       data-unit-id={data?.unitId}
       data-layer-id={data?.layerId}
       data-supplement-id={data?.supplementId}
+      data-reader-record-callout-label={label}
     >
       <div className="min-w-0">
-        <div className="mb-1 flex min-w-0 items-baseline gap-2">
+        <div className="mb-1.5 flex min-w-0 items-start gap-2">
           <span
-            className={`font-mono text-[0.68rem] font-medium leading-none ${eyebrowClass}`}
+            className={`reader-record-plate-note-icon mt-0.5 leading-none ${eyebrowClass}`}
             aria-hidden="true"
           >
             {icon}
           </span>
-          {title ? (
-            <span className="reader-serif min-w-0 text-[0.93rem] font-semibold leading-snug text-ink/90">
-              {title}
-            </span>
-          ) : null}
+          <div className="min-w-0">
+            <div className={`reader-record-plate-label ${eyebrowClass}`}>
+              {label}
+            </div>
+            {title ? (
+              <div className="reader-record-plate-note-title mt-0.5 min-w-0 text-ink/90">
+                {title}
+              </div>
+            ) : null}
+          </div>
         </div>
         <div
-          className="reader-record-plate-markdown mt-1"
+          className="reader-record-plate-markdown reader-record-plate-note-prose mt-1.5 text-ink-soft"
           data-reader-record-markdown-content="plate"
         >
           {children}
@@ -194,11 +258,14 @@ function ReaderSentenceAnalysisComponent({
   return (
     <section
       {...attributes}
-      className={`reader-record-plate-sentence-analysis reader-record-plate-callout--analysis my-3 border-l-2 border-sky-300/75 bg-transparent py-1 pl-3 pr-2 text-sm leading-6 text-ink-soft ${attributes?.className ?? ""}`.trim()}
+      className={`reader-record-plate-sentence-analysis reader-record-plate-callout--analysis rounded-[8px] border border-context-blue/20 bg-context-blue/[0.04] font-sans text-ink-soft shadow-none ${
+        attributes?.className ?? ""
+      }`.trim()}
       role="note"
       data-reader-record-node="sentence-analysis"
       data-reader-record-sentence-analysis-block="true"
       data-reader-record-sentence-analysis-element={READER_SENTENCE_ANALYSIS_TYPE}
+      data-reader-record-sentence-analysis-label="长句拆析"
       data-reader-record-block-id={node.id}
       data-anchor-segment-id={data?.anchorSegmentId}
       data-unit-id={data?.unitId}
@@ -206,22 +273,27 @@ function ReaderSentenceAnalysisComponent({
       data-analysis-id={data?.analysisId}
     >
       <div className="min-w-0">
-        <div className="mb-1 flex min-w-0 items-baseline gap-2">
+        <div className="mb-1.5 flex min-w-0 items-start gap-2">
           <span
-            className="font-mono text-[0.68rem] font-medium leading-none text-sky-700/75"
+            className="reader-record-plate-note-icon mt-0.5 leading-none text-context-blue/85"
             aria-hidden="true"
           >
             {node.icon}
           </span>
-          {data?.label ? (
-            <span className="reader-serif min-w-0 text-[0.93rem] font-semibold leading-snug text-ink/90">
-              {data.label}
-            </span>
-          ) : null}
+          <div className="min-w-0">
+            <div className="reader-record-plate-label text-context-blue/85">
+              长句拆析
+            </div>
+            {data?.label ? (
+              <div className="reader-record-plate-note-title mt-0.5 min-w-0 text-ink/88">
+                {data.label}
+              </div>
+            ) : null}
+          </div>
         </div>
         <div
           className={classNames(
-            "reader-record-plate-markdown",
+            "reader-record-plate-markdown reader-record-plate-note-prose",
             data?.chunks?.length ? "mt-2" : "mt-1",
           )}
           data-reader-record-markdown-content="plate"
@@ -248,7 +320,9 @@ function ReaderSentenceAnalysisChunksComponent({
   return (
     <dl
       {...attributes}
-      className={`mb-2 mt-2 space-y-1.5 ${attributes?.className ?? ""}`.trim()}
+      className={`reader-record-plate-sentence-analysis-chunks ${
+        attributes?.className ?? ""
+      }`.trim()}
       data-reader-record-sentence-analysis-chunks="plate"
     >
       {children}
@@ -262,18 +336,56 @@ function ReaderSentenceAnalysisChunkComponent({
   attributes,
 }: PlateElementProps) {
   const chunk = (element as unknown as ReaderSentenceAnalysisChunkElement).data;
+  const { activeChunkId, setActiveChunkId } =
+    useReaderSentenceAnalysisInteraction();
+  const chunkId = sentenceChunkDomId(chunk);
+  const hasSourceMatch = Boolean(chunk.sourceMatch);
+  const active = hasSourceMatch && activeChunkId === chunkId;
 
   return (
     <div
       {...attributes}
-      className={`grid grid-cols-[minmax(5.5rem,auto)_minmax(0,1fr)] gap-x-3 text-[0.82rem] leading-6 ${attributes?.className ?? ""}`.trim()}
+      className={`reader-record-plate-sentence-analysis-chunk grid grid-cols-[minmax(6rem,0.4fr)_minmax(0,1fr)] rounded-[6px] border border-hairline/55 bg-surface/35 ${
+        hasSourceMatch
+          ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-context-blue/30"
+          : ""
+      } ${attributes?.className ?? ""}`.trim()}
       data-reader-record-sentence-analysis-chunk={chunk.label}
       data-reader-record-sentence-analysis-chunk-order={chunk.order}
+      data-reader-record-sentence-analysis-chunk-match={hasSourceMatch ? "true" : "false"}
+      data-reader-record-sentence-analysis-chunk-source-mark-id={chunk.sourceMatch?.markId}
+      data-reader-record-sentence-analysis-chunk-source-start={
+        chunk.sourceMatch ? String(chunk.sourceMatch.startOffset) : undefined
+      }
+      data-reader-record-sentence-analysis-chunk-source-end={
+        chunk.sourceMatch ? String(chunk.sourceMatch.endOffset) : undefined
+      }
+      data-reader-record-sentence-analysis-chunk-active={active ? "true" : "false"}
+      tabIndex={hasSourceMatch ? 0 : undefined}
+      onMouseEnter={() => {
+        if (hasSourceMatch) setActiveChunkId(chunkId);
+      }}
+      onMouseLeave={() => {
+        if (hasSourceMatch) setActiveChunkId(null);
+      }}
+      onFocus={() => {
+        if (hasSourceMatch) setActiveChunkId(chunkId);
+      }}
+      onBlur={() => {
+        if (hasSourceMatch) setActiveChunkId(null);
+      }}
     >
-      <dt className="min-w-0 truncate font-medium text-sky-800/75">
-        {chunk.label}
+      <dt className="min-w-0">
+        <span className="reader-record-plate-sentence-analysis-chunk-label block truncate text-context-blue/90">
+          {chunk.label}
+        </span>
+        <span className="reader-record-plate-sentence-analysis-chunk-kind mt-0.5 block truncate font-sans text-muted/75">
+          {sentenceChunkDescription(chunk.label)}
+        </span>
       </dt>
-      <dd className="min-w-0 text-muted/90">{children}</dd>
+      <dd className="reader-record-plate-sentence-analysis-chunk-body min-w-0 font-sans text-ink-soft/92">
+        {children}
+      </dd>
     </div>
   );
 }
@@ -303,7 +415,7 @@ function ReaderMarkdownParagraphComponent({
   return (
     <p
       {...attributes}
-      className={`my-1 leading-6 ${attributes?.className ?? ""}`.trim()}
+      className={`reader-record-plate-markdown-p ${attributes?.className ?? ""}`.trim()}
       data-reader-record-markdown-node="p"
     >
       {children}
@@ -327,38 +439,68 @@ function ReaderMarkdownHeadingComponent({
   switch (type) {
     case "h1":
       return (
-        <h1 {...commonProps} className={className("my-2 text-lg font-semibold leading-snug")}>
+        <h1
+          {...commonProps}
+          className={className(
+            "reader-record-plate-markdown-heading reader-record-plate-markdown-heading--h1",
+          )}
+        >
           {children}
         </h1>
       );
     case "h2":
       return (
-        <h2 {...commonProps} className={className("my-2 text-base font-semibold leading-snug")}>
+        <h2
+          {...commonProps}
+          className={className(
+            "reader-record-plate-markdown-heading reader-record-plate-markdown-heading--h2",
+          )}
+        >
           {children}
         </h2>
       );
     case "h3":
       return (
-        <h3 {...commonProps} className={className("my-2 text-[0.95rem] font-semibold leading-snug")}>
+        <h3
+          {...commonProps}
+          className={className(
+            "reader-record-plate-markdown-heading reader-record-plate-markdown-heading--h3",
+          )}
+        >
           {children}
         </h3>
       );
     case "h4":
       return (
-        <h4 {...commonProps} className={className("my-2 text-[0.9rem] font-semibold leading-snug")}>
+        <h4
+          {...commonProps}
+          className={className(
+            "reader-record-plate-markdown-heading reader-record-plate-markdown-heading--h4",
+          )}
+        >
           {children}
         </h4>
       );
     case "h5":
       return (
-        <h5 {...commonProps} className={className("my-2 text-[0.9rem] font-semibold leading-snug")}>
+        <h5
+          {...commonProps}
+          className={className(
+            "reader-record-plate-markdown-heading reader-record-plate-markdown-heading--h5",
+          )}
+        >
           {children}
         </h5>
       );
     case "h6":
     default:
       return (
-        <h6 {...commonProps} className={className("my-2 text-[0.9rem] font-semibold leading-snug")}>
+        <h6
+          {...commonProps}
+          className={className(
+            "reader-record-plate-markdown-heading reader-record-plate-markdown-heading--h6",
+          )}
+        >
           {children}
         </h6>
       );
@@ -372,7 +514,9 @@ function ReaderMarkdownBlockquoteComponent({
   return (
     <blockquote
       {...attributes}
-      className={`my-1 border-l-2 border-current/30 pl-3 italic text-ink-soft ${attributes?.className ?? ""}`.trim()}
+      className={`reader-record-plate-markdown-blockquote border-l-2 border-current/30 italic text-ink-soft ${
+        attributes?.className ?? ""
+      }`.trim()}
       data-reader-record-markdown-node="blockquote"
     >
       {children}
@@ -387,7 +531,7 @@ function ReaderMarkdownUnorderedListComponent({
   return (
     <ul
       {...attributes}
-      className={`my-1 list-disc pl-5 leading-6 ${attributes?.className ?? ""}`.trim()}
+      className={`reader-record-plate-markdown-list list-disc ${attributes?.className ?? ""}`.trim()}
       data-reader-record-markdown-node="ul"
     >
       {children}
@@ -402,7 +546,7 @@ function ReaderMarkdownOrderedListComponent({
   return (
     <ol
       {...attributes}
-      className={`my-1 list-decimal pl-5 leading-6 ${attributes?.className ?? ""}`.trim()}
+      className={`reader-record-plate-markdown-list list-decimal ${attributes?.className ?? ""}`.trim()}
       data-reader-record-markdown-node="ol"
     >
       {children}
@@ -449,7 +593,9 @@ function ReaderMarkdownCodeBlockComponent({
   return (
     <pre
       {...attributes}
-      className={`my-1 overflow-x-auto rounded bg-muted/40 p-2 text-xs leading-5 ${attributes?.className ?? ""}`.trim()}
+      className={`reader-record-plate-markdown-code-block overflow-x-auto rounded bg-muted/40 ${
+        attributes?.className ?? ""
+      }`.trim()}
       data-reader-record-markdown-node={type}
     >
       <code>{children}</code>
@@ -516,7 +662,9 @@ function ReaderMarkdownCodeLeaf({ children, attributes }: PlateLeafProps) {
   return (
     <code
       {...attributes}
-      className={`rounded bg-muted/50 px-1 py-0.5 font-mono text-[0.85em] ${attributes?.className ?? ""}`.trim()}
+      className={`reader-record-plate-inline-code rounded bg-muted/50 font-mono ${
+        attributes?.className ?? ""
+      }`.trim()}
       data-reader-record-markdown-mark="code"
     >
       {children}

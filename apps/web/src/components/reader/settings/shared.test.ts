@@ -9,6 +9,7 @@ import {
   modeVisibility,
   normalizeReaderSettings,
   persistReaderSettings,
+  readerRecordPlateTypography,
   readStoredReaderSettings,
 } from "./shared";
 
@@ -43,6 +44,21 @@ afterEach(() => {
 });
 
 describe("reader settings storage", () => {
+  it("defaults the new Reader Record surface to sans without changing saved preferences", () => {
+    expect(createDefaultReaderSettings()).toEqual({
+      mode: "intensive",
+      fontFamily: "sans",
+      fontScale: "md",
+    });
+
+    const restored = normalizeReaderSettings({
+      mode: "intensive",
+      fontFamily: "editorial",
+      fontScale: "md",
+    });
+    expect(restored.fontFamily).toBe("editorial");
+  });
+
   it("normalizes supported payloads back to the new shape", () => {
     expect(
       normalizeReaderSettings({
@@ -156,5 +172,40 @@ describe("reader settings storage", () => {
     });
     expect(modeShowsTranslation("intensive")).toBe(true);
     expect(modeShowsTranslation("immersive")).toBe(false);
+  });
+
+  it("derives Reader Record Plate typography from font family, scale, and mode", () => {
+    expect(readerRecordPlateTypography(createDefaultReaderSettings())).toEqual({
+      bodyClassName:
+        "reader-font-sans text-ink reader-record-plate-font-sans reader-record-plate-type-md",
+      columnClassName: "max-w-[46rem]",
+      paragraphDensityClassName: "reader-record-plate-density-intensive",
+    });
+
+    expect(
+      readerRecordPlateTypography({
+        mode: "intensive",
+        fontFamily: "editorial",
+        fontScale: "sm",
+      }),
+    ).toEqual({
+      bodyClassName:
+        "reader-font-editorial text-ink reader-record-plate-font-editorial reader-record-plate-type-sm",
+      columnClassName: "max-w-[44rem]",
+      paragraphDensityClassName: "reader-record-plate-density-intensive",
+    });
+
+    expect(
+      readerRecordPlateTypography({
+        mode: "immersive",
+        fontFamily: "book",
+        fontScale: "lg",
+      }),
+    ).toEqual({
+      bodyClassName:
+        "reader-font-book text-ink reader-record-plate-font-book reader-record-plate-type-lg",
+      columnClassName: "max-w-[42rem]",
+      paragraphDensityClassName: "reader-record-plate-density-immersive",
+    });
   });
 });

@@ -9,6 +9,8 @@ import {
   type ReaderPlateSnapshotDto,
   type ReaderSnapshotAskSupplementDto,
   type ReaderSnapshotUserAssetDto,
+  type ReaderSourceBlockChildNodeDto,
+  type ReaderSourceBlockNodeDto,
   type ReaderUnitNodeDto,
   type ReaderVocabularyMarkDto,
   type ReaderGrammarNoteMarkDto,
@@ -27,6 +29,11 @@ const FIRST_TEXT = "Institutional memory shapes policy choices.";
 const SECOND_TEXT = "Those choices persist.";
 const SEPARATOR_TEXT = "\n\n";
 const SECOND_START = FIRST_TEXT.length + SEPARATOR_TEXT.length;
+
+type ReaderAnchorSegmentFixture = Extract<
+  ReaderSourceBlockChildNodeDto,
+  { type: "reader_anchor_segment" }
+>;
 
 function makeVocabularyMark(
   overrides: Partial<ReaderVocabularyMarkDto> = {},
@@ -453,10 +460,25 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
     expect(paragraph.data.anchorSegmentId).toBe("seg_1");
     expect(paragraph.data.sentenceId).toBe("sent_1");
     expect(paragraph.data.unitId).toBe("unit_1");
+    expect(paragraph.data.isUnitStart).toBe(true);
     expect(paragraph.data.baseRange).toEqual({
       startUtf16: 0,
       endUtf16: FIRST_TEXT.length,
     });
+  });
+
+  it("marks only the first paragraph in a unit as unit start", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeSnapshot(),
+    );
+    const paragraphs = document.children.filter(
+      (child): child is ReaderRecordPlateParagraphBlock =>
+        child.type === "paragraph",
+    );
+
+    expect(paragraphs).toHaveLength(2);
+    expect(paragraphs[0]?.data.isUnitStart).toBe(true);
+    expect(paragraphs[1]?.data.isUnitStart).toBeUndefined();
   });
 
   it("projects vocabulary and grammar annotations as text marks", () => {
@@ -529,8 +551,28 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
         "Institutional memory is the subject; shapes is the predicate.",
     });
     expect(analysisBlock.data.chunks).toEqual([
-      { order: 1, label: "subject", text: "Institutional memory" },
-      { order: 2, label: "predicate", text: "shapes policy choices" },
+      {
+        order: 1,
+        label: "subject",
+        text: "Institutional memory",
+        sourceMatch: {
+          anchorSegmentId: "seg_1",
+          startOffset: 0,
+          endOffset: 20,
+          markId: "sentence_chunk:analysis_seg_1:1:subject",
+        },
+      },
+      {
+        order: 2,
+        label: "predicate",
+        text: "shapes policy choices",
+        sourceMatch: {
+          anchorSegmentId: "seg_1",
+          startOffset: 21,
+          endOffset: 42,
+          markId: "sentence_chunk:analysis_seg_1:2:predicate",
+        },
+      },
     ]);
     expect(analysisBlock.children[0]).toMatchObject({
       type: "p",
@@ -619,6 +661,46 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
     expect(grammarCalloutIndex).toBeGreaterThan(firstParagraphIndex);
     expect(analysisBlockIndex).toBeGreaterThan(firstParagraphIndex);
     expect(blockquoteIndex).toBeGreaterThan(firstParagraphIndex);
+  });
+
+  it("deduplicates grammar callouts when the same grammar item appears on multiple leaves", () => {
+    const unit = makeUnit();
+    const sourceBlock = unit.children.find(
+      (child) => child.type === "reader_source_block",
+    ) as ReaderSourceBlockNodeDto | undefined;
+    if (!sourceBlock || sourceBlock.type !== "reader_source_block") {
+      throw new Error("Expected source block fixture");
+    }
+    const firstSegment = sourceBlock.children.find(
+      (child) => "type" in child && child.type === "reader_anchor_segment",
+    ) as ReaderAnchorSegmentFixture | undefined;
+    if (!firstSegment) {
+      throw new Error("Expected first segment fixture");
+    }
+    const firstLeaf = firstSegment.children[0];
+    if (!("reader_grammar_note_marks" in firstLeaf)) {
+      throw new Error("Expected segment text leaf fixture");
+    }
+    firstLeaf.reader_grammar_note_marks = [
+      makeGrammarMark(),
+      makeGrammarMark({
+        mark_id: "grammar_mark_1_continuation",
+        starts_here: false,
+        ends_here: true,
+      }),
+    ];
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument({
+      ...makeSnapshot(),
+      value: [unit],
+    });
+    const grammarCallouts = document.children.filter(
+      (child): child is ReaderRecordPlateCalloutBlock =>
+        child.type === "callout" &&
+        (child as ReaderRecordPlateCalloutBlock).variant === "grammar",
+    );
+
+    expect(grammarCallouts).toHaveLength(1);
+    expect(grammarCallouts[0]?.id).toBe("callout:grammar:grammar_item_1");
   });
 
   it("projects enhancement progress to document-level progress", () => {

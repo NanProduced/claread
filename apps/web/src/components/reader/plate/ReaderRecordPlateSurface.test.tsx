@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { computeUtf16FNV1a } from "@claread/contracts";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -417,6 +417,10 @@ function makeOverlappingMarkSnapshot(): ReaderPlateSnapshotDto {
       }),
     ],
   };
+}
+
+function closestMarkStack(element: HTMLElement | null): HTMLElement | null {
+  return element?.closest<HTMLElement>("[data-reader-record-mark-stack-kinds]") ?? null;
 }
 
 function makeAnchorSegmentNode(
@@ -965,21 +969,32 @@ describe("ReaderRecordPlateSurface", () => {
     expect(grammarCallout).not.toBeNull();
     expect(grammarCallout?.dataset.readerRecordCallout).toBe("true");
     expect(grammarCallout?.textContent).toContain("predicate verb");
+    expect(grammarCallout?.textContent).toContain("语法解析");
     expect(grammarCallout?.textContent).toContain(
       "shapes is the predicate verb.",
     );
     expect(grammarCallout?.classList.contains("reader-record-plate-callout--grammar")).toBe(true);
+    expect(grammarCallout?.dataset.readerRecordCalloutLabel).toBe("语法解析");
+    expect(grammarCallout?.className).toContain("font-sans");
+    expect(grammarCallout?.className).toContain("rounded-[8px]");
+    expect(grammarCallout?.className).toContain("bg-ink/[0.035]");
 
     expect(analysisBlock).not.toBeNull();
     expect(analysisBlock?.dataset.readerRecordCallout).toBeUndefined();
     expect(analysisBlock?.dataset.readerRecordSentenceAnalysisElement).toBe(
       "reader_sentence_analysis",
     );
+    expect(analysisBlock?.dataset.readerRecordSentenceAnalysisLabel).toBe(
+      "长句拆析",
+    );
     expect(analysisBlock?.textContent).toContain("subject and predicate");
+    expect(analysisBlock?.textContent).toContain("长句拆析");
     expect(analysisBlock?.textContent).toContain(
       "Institutional memory is the subject.",
     );
     expect(analysisBlock?.classList.contains("reader-record-plate-sentence-analysis")).toBe(true);
+    expect(analysisBlock?.className).toContain("font-sans");
+    expect(analysisBlock?.className).toContain("bg-context-blue/[0.04]");
     expect(
       analysisBlock?.dataset.readerRecordSentenceAnalysisBlock,
     ).toBe("true");
@@ -1060,6 +1075,7 @@ describe("ReaderRecordPlateSurface", () => {
     );
     expect(blockKitSource).not.toMatch(/CalloutMarkdownRenderer/);
     expect(blockKitSource).not.toMatch(/dangerouslySetInnerHTML/);
+    expect(blockKitSource).not.toMatch(/Grammar X-Ray/);
   });
 
   it("switches between intensive and immersive document visibility", async () => {
@@ -1183,15 +1199,27 @@ describe("ReaderRecordPlateSurface", () => {
     ]);
 
     for (const fragment of vocabFragments) {
-      expect(fragment.className).toContain("underline");
-      expect(fragment.className).toContain("decoration-violet");
+      const stack = closestMarkStack(fragment);
+      expect(stack?.className).toContain("reader-record-mark-stack");
+      expect(stack?.className).toContain("reader-record-mark-stack--vocabulary");
+      expect(stack?.className).toContain("reader-record-mark-stack--phrase");
+      expect(stack?.dataset.readerRecordMarkStackKinds).toContain("phrase_gloss");
+      expect(stack?.getAttribute("aria-label")).toContain("短语");
       expect(fragment.dataset.readerRecordMarkKind).toBe("phrase_gloss");
     }
     for (const fragment of grammarFragments) {
-      expect(fragment.className).toContain("underline");
-      expect(fragment.className).toContain("decoration-dotted");
+      const stack = closestMarkStack(fragment);
+      expect(stack?.className).toContain("reader-record-mark-stack");
+      expect(stack?.className).toContain("reader-record-mark-stack--grammar");
+      expect(stack?.dataset.readerRecordMarkStackKinds).toContain("grammar_note");
+      expect(stack?.getAttribute("aria-label")).toContain("语法");
       expect(fragment.dataset.readerRecordMarkKind).toBe("grammar_note");
     }
+    const overlapStack = closestMarkStack(vocabFragments[1] ?? null);
+    expect(overlapStack?.className).toContain("reader-record-mark-stack--vocabulary");
+    expect(overlapStack?.className).toContain("reader-record-mark-stack--grammar");
+    expect(overlapStack?.dataset.readerRecordMarkStackKinds).toContain("phrase_gloss");
+    expect(overlapStack?.dataset.readerRecordMarkStackKinds).toContain("grammar_note");
     expect(vocabFragments[0]?.dataset.readerRecordMarkStartsHere).toBe("true");
     expect(vocabFragments[1]?.dataset.readerRecordMarkStartsHere).toBe("false");
     expect(grammarFragments[0]?.dataset.readerRecordMarkStartsHere).toBe("true");
@@ -1226,10 +1254,17 @@ describe("ReaderRecordPlateSurface", () => {
     const highlight = container.querySelector<HTMLElement>(
       '[data-reader-record-mark-id="user_highlight:asset_highlight_1"]',
     );
+    const highlightStack = closestMarkStack(highlight);
 
-    expect(highlight?.className).toContain("bg-amber");
-    expect(highlight?.className).not.toContain("bg-violet");
-    expect(highlight?.className).not.toContain("bg-emerald");
+    expect(highlightStack?.className).toContain(
+      "reader-record-mark-stack--highlight-yellow",
+    );
+    expect(highlightStack?.className).not.toContain(
+      "reader-record-mark-stack--highlight-blue",
+    );
+    expect(highlightStack?.className).not.toContain(
+      "reader-record-mark-stack--highlight-rose",
+    );
   });
 
   it("keeps system marks and user marks coexisting on the source text", () => {
@@ -1508,6 +1543,183 @@ describe("ReaderRecordPlateSurface", () => {
         ([url]) => !(typeof url === "string" && url.includes("/api/web/favorites")),
       ),
     ).toHaveLength(0);
+  });
+
+  it.each([
+    {
+      label: "phrase_gloss",
+      mark: makeVocabularyMark({
+        item_type: "phrase_gloss",
+        phrase: "memory",
+        phrase_type: "collocation",
+        gloss: "记忆",
+        example: "Institutional memory shapes choices.",
+      }),
+      expectedText: "记忆",
+    },
+    {
+      label: "context_gloss",
+      mark: makeVocabularyMark({
+        item_type: "context_gloss",
+        display: "memory",
+        gloss: "此处指制度延续下来的经验",
+        reason: "这里强调制度在时间中的延续性。",
+      }),
+      expectedText: "此处指制度延续下来的经验",
+    },
+  ])(
+    "opens structured inspect for $label vocabulary marks without dictionary lookup",
+    async ({ mark, expectedText }) => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const snapshot = {
+        ...makeSnapshot(),
+        value: [makeUnit({ vocabularyMarks: [mark] })],
+      };
+      const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+      const memoryMark = container.querySelector<HTMLElement>(
+        `[data-reader-record-mark-id="${mark.mark_id}"]`,
+      );
+      expect(memoryMark).not.toBeNull();
+      if (!memoryMark) {
+        throw new Error("Expected vocabulary mark");
+      }
+
+      fireEvent.click(memoryMark);
+
+      const panel = await screen.findByTestId("reader-record-plate-lookup-panel");
+      const inspectPanel = within(panel);
+      expect(inspectPanel.getByText(expectedText)).toBeTruthy();
+      expect(panel.textContent).not.toContain("当前词典暂未收录");
+      expect(inspectPanel.getByLabelText("查短语")).toBeTruthy();
+      expect(inspectPanel.getByLabelText("带入 Ask")).toBeTruthy();
+      expect(inspectPanel.getByLabelText("反馈")).toBeTruthy();
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url]) => typeof url === "string" && url.includes("/api/web/dict/lookup"),
+        ),
+      ).toHaveLength(0);
+    },
+  );
+
+  it("submits vocabulary inspect feedback through the dictionary feedback scope", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/web/feedback") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, message: "ok" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, favorited: false }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected vocabulary mark");
+    }
+
+    fireEvent.click(memoryMark);
+
+    const panel = await screen.findByTestId("reader-record-plate-lookup-panel");
+    fireEvent.click(within(panel).getByLabelText("反馈"));
+    const menu = await screen.findByRole("dialog", { name: "反馈选项" });
+    const feedbackMenu = within(menu);
+    expect(feedbackMenu.queryByText("有帮助")).toBeNull();
+    fireEvent.click(feedbackMenu.getByText("释义有问题"));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url]) => url === "/api/web/feedback"),
+      ).toBe(true);
+    });
+    const feedbackCall = fetchMock.mock.calls.find(
+      ([url]) => url === "/api/web/feedback",
+    );
+    const body = JSON.parse(
+      String((feedbackCall?.[1] as RequestInit | undefined)?.body),
+    ) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      feedbackScope: "dictionary",
+      targetId: "vocab_mark_1",
+      sentiment: "negative",
+      feedbackType: "wrong_definition",
+      entryPoint: "reader_record_vocabulary_mark",
+      clientSurface: "reader_record",
+    });
+    expect(body).not.toHaveProperty("analysisRecordId");
+    expect(body.contextJson).toMatchObject({
+      readingRecordId: "record_1",
+      annotationType: "phrase_gloss",
+      targetVariant: "vocabulary",
+    });
+  });
+
+  it("runs dictionary lookup when a vocab_highlight mark is clicked", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(makeDictionaryEntryResult("memory")), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const vocabMark = makeVocabularyMark({
+      item_type: "vocab_highlight",
+      headword: "memory",
+      brief_explanation: "the ability to remember information",
+      reason: "Useful for this source sentence.",
+    });
+    const snapshot = {
+      ...makeSnapshot(),
+      value: [makeUnit({ vocabularyMarks: [vocabMark] })],
+    };
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected vocabulary mark");
+    }
+
+    fireEvent.click(memoryMark);
+
+    await screen.findByTestId("reader-record-plate-lookup-panel");
+    const lookupCalls = fetchMock.mock.calls.filter(
+      ([url]) => typeof url === "string" && url.includes("/api/web/dict/lookup"),
+    );
+    expect(lookupCalls).toHaveLength(1);
+    const lookupUrl = String(lookupCalls[0]?.[0]);
+    const lookupParams = new URL(lookupUrl, "http://claread.test").searchParams;
+    expect(lookupParams.get("word")).toBe("memory");
+    expect(lookupParams.get("type")).toBe("word");
+    expect(lookupParams.get("context")).toBe(SOURCE_TEXT);
+    expect(await screen.findByText("the ability to remember information")).toBeTruthy();
   });
 
   it("runs dictionary lookup only for a valid single anchor draft", async () => {
@@ -2583,6 +2795,63 @@ describe("ReaderRecordPlateSurface", () => {
     });
   });
 
+  it("links uniquely matched sentence analysis chunks with source leaf hover and focus state", async () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const chunk = container.querySelector<HTMLElement>(
+      '[data-reader-record-sentence-analysis-chunk="subject"]',
+    );
+    expect(chunk).not.toBeNull();
+    if (!chunk) {
+      throw new Error("Expected sentence analysis chunk row");
+    }
+
+    expect(chunk.dataset.readerRecordSentenceAnalysisChunkMatch).toBe("true");
+    expect(chunk.dataset.readerRecordSentenceAnalysisChunkSourceMarkId).toBe(
+      "sentence_chunk:analysis_1:1:subject",
+    );
+    expect(chunk.dataset.readerRecordSentenceAnalysisChunkSourceStart).toBe("0");
+    expect(chunk.dataset.readerRecordSentenceAnalysisChunkSourceEnd).toBe("20");
+
+    const sourceLeaves = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-sentence-analysis-chunk-source="sentence_chunk:analysis_1:1:subject"]',
+      ),
+    );
+    expect(sourceLeaves).toHaveLength(2);
+    expect(sourceLeaves.map((leaf) => leaf.textContent).join("")).toBe(
+      "Institutional memory",
+    );
+    for (const leaf of sourceLeaves) {
+      expect(leaf.dataset.readerRecordMarkStackKinds).toContain(
+        "sentence_analysis_chunk",
+      );
+    }
+
+    fireEvent.mouseEnter(chunk);
+    await waitFor(() => {
+      expect(chunk.dataset.readerRecordSentenceAnalysisChunkActive).toBe("true");
+      for (const leaf of sourceLeaves) {
+        expect(leaf.dataset.readerRecordSentenceAnalysisChunkActive).toBe("true");
+      }
+    });
+
+    fireEvent.mouseLeave(chunk);
+    await waitFor(() => {
+      expect(chunk.dataset.readerRecordSentenceAnalysisChunkActive).toBe("false");
+      for (const leaf of sourceLeaves) {
+        expect(leaf.dataset.readerRecordSentenceAnalysisChunkActive).toBeUndefined();
+      }
+    });
+
+    fireEvent.focus(sourceLeaves[0]!);
+    await waitFor(() => {
+      expect(chunk.dataset.readerRecordSentenceAnalysisChunkActive).toBe("true");
+      for (const leaf of sourceLeaves) {
+        expect(leaf.dataset.readerRecordSentenceAnalysisChunkActive).toBe("true");
+      }
+    });
+  });
+
   it("keeps Plate write paths on RR APIs and avoids legacy adapters or legacy note/annotation routes", () => {
     const surfaceSource = readFileSync(
       resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
@@ -2706,13 +2975,40 @@ describe("ReaderRecordPlateSurface", () => {
     expect(blockquote?.dataset.readerRecordTranslationLane).toBe("true");
     expect(blockquote?.className).toContain("border-l");
     expect(blockquote?.className).toContain("bg-transparent");
-    expect(blockquote?.className).toContain("text-[0.84rem]");
+    expect(blockquote?.className).toContain("reader-font-sans");
+    expect(blockquote?.className).not.toContain("reader-serif");
+    expect(blockquote?.className).toContain("reader-record-plate-translation-copy");
     expect(blockquote?.getAttribute("aria-label")).toBe("译文");
     expect(blockquote?.textContent).toContain(TRANSLATION_TEXT);
     expect(blockquote?.textContent).not.toContain("本段译文");
 
     const visibleLabel = blockquote?.querySelector("span");
     expect(visibleLabel?.textContent).not.toBe("本段译文");
+  });
+
+  it("uses the Reader Record Plate typography ramp on the document surface", () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const surface = screen.getByTestId("reader-record-plate-surface");
+    const contentColumn = surface.firstElementChild as HTMLElement | null;
+    const documentSurface = container.querySelector<HTMLElement>(
+      ".reader-record-plate-document",
+    );
+    const paragraph = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="paragraph"]',
+    );
+    const analysisBlock = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="sentence-analysis"]',
+    );
+
+    expect(contentColumn?.className).toContain("max-w-[46rem]");
+    expect(documentSurface?.className).toContain("reader-record-plate-font-sans");
+    expect(documentSurface?.className).toContain("reader-record-plate-type-md");
+    expect(documentSurface?.className).toContain(
+      "reader-record-plate-density-intensive",
+    );
+    expect(paragraph?.className).toContain("reader-record-plate-paragraph");
+    expect(analysisBlock?.className).toContain("reader-record-plate-sentence-analysis");
   });
 
   it("surface source code includes auto-dismiss timer for UI polish", () => {
@@ -2732,6 +3028,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(paragraph?.dataset.anchorSegmentId).toBe("seg_1");
     expect(paragraph?.dataset.sentenceId).toBe("sent_1");
     expect(paragraph?.dataset.unitId).toBe("unit_1");
+    expect(paragraph?.dataset.readerRecordUnitStart).toBe("true");
   });
 
   it("segment text leaf carries anchor metadata as data attributes", () => {

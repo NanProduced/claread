@@ -21,6 +21,7 @@ import {
   askAttachmentKey,
   type ReaderAskAttachment,
   type ReaderAskPageIdentity,
+  type ReaderStructuredInspectIntent,
 } from "@/lib/reader-plate";
 import type { ReaderRecordAnchorDraft } from "@/lib/reader-plate/projection/reader-record-anchor-draft";
 import type { ReaderPlateSnapshotDto, ReaderSnapshotUserAssetDto } from "@/types/api/reader-plate";
@@ -31,7 +32,7 @@ import {
   ReaderSettingsPanel,
   readStoredReaderSettings,
   persistReaderSettings,
-  readerModeTypography,
+  readerRecordPlateTypography,
   readerThemeClassName,
   type ReaderSettingsState,
 } from "@/components/reader/settings";
@@ -52,7 +53,12 @@ import type { DictionaryAIViewState } from "@/types/api/dict-ai";
 import { Plate, usePlateEditor, type RenderLeaf } from "platejs/react";
 import { Editor, EditorContainer } from "@/components/ui/editor";
 import { ReaderPlateKit } from "@/components/editor/plugins/reader-plate-kit";
-import { ReaderLeafActionsContext } from "@/components/editor/plugins/reader-leaf-kit";
+import {
+  ReaderLeafActionsContext,
+  resolveReaderMarkVisual,
+  sentenceChunkDomId,
+} from "@/components/editor/plugins/reader-leaf-kit";
+import { ReaderSentenceAnalysisInteractionContext } from "@/components/editor/plugins/reader-blocks-kit";
 import {
   CommentPluginBridge,
   InlineCommentPanel,
@@ -365,6 +371,125 @@ function vocabularyTitle(mark: ReaderRecordPlateVocabularyMark) {
   return mark.vocabulary.display;
 }
 
+function phraseTypeForInspect(
+  phraseType: string | undefined,
+): NonNullable<ReaderStructuredInspectIntent["glossary"]>["phraseType"] {
+  if (
+    phraseType === "collocation" ||
+    phraseType === "phrasal_verb" ||
+    phraseType === "idiom" ||
+    phraseType === "proper_noun" ||
+    phraseType === "compound"
+  ) {
+    return phraseType;
+  }
+  return undefined;
+}
+
+function sourceTextForAnchorSegment(
+  blocks: ReaderRecordPlateBlock[],
+  anchorSegmentId: string,
+): string {
+  const paragraph = blocks.find(
+    (block): block is ReaderRecordPlateParagraphBlock =>
+      block.type === "paragraph" &&
+      block.data.anchorSegmentId === anchorSegmentId,
+  );
+  return paragraph?.children.map((leaf) => leaf.text).join("") ?? "";
+}
+
+function structuredInspectIntentFromVocabularyMark(
+  mark: ReaderRecordPlateVocabularyMark,
+  contextSentence: string,
+): ReaderStructuredInspectIntent | null {
+  if (mark.vocabulary.itemType === "vocab_highlight") {
+    return null;
+  }
+
+  if (mark.vocabulary.itemType === "phrase_gloss") {
+    return {
+      kind: "structured_annotation_inspect",
+      sentenceId: mark.anchor.sentenceId,
+      contextSentence,
+      markId: mark.id,
+      annotationType: "phrase_gloss",
+      visualTone: "phrase",
+      anchorText: mark.anchor.selectedText,
+      lookupText: mark.vocabulary.phrase,
+      lookupKind: "phrase",
+      glossary: {
+        gloss: mark.vocabulary.gloss,
+        phraseType: phraseTypeForInspect(mark.vocabulary.phraseType),
+        reason: mark.vocabulary.example
+          ? `例句：${mark.vocabulary.example}`
+          : undefined,
+      },
+      anchorOffsets: {
+        startOffset: mark.anchor.segmentStartOffset,
+        endOffset: mark.anchor.segmentEndOffset,
+      },
+      title: "短语说明",
+      label: "短语说明",
+    };
+  }
+
+  return {
+    kind: "structured_annotation_inspect",
+    sentenceId: mark.anchor.sentenceId,
+    contextSentence,
+    markId: mark.id,
+    annotationType: "context_gloss",
+    visualTone: "context",
+    anchorText: mark.anchor.selectedText,
+    lookupText: mark.vocabulary.display,
+    lookupKind: "phrase",
+    glossary: {
+      gloss: mark.vocabulary.gloss,
+      reason: mark.vocabulary.reason,
+    },
+    anchorOffsets: {
+      startOffset: mark.anchor.segmentStartOffset,
+      endOffset: mark.anchor.segmentEndOffset,
+    },
+    title: "语境义",
+    label: "语境义",
+  };
+}
+
+function askAttachmentFromVocabularyInspect(
+  pageIdentity: ReaderAskPageIdentity,
+  intent: ReaderStructuredInspectIntent,
+): ReaderAskAttachment {
+  const displayText = intent.lookupText ?? intent.anchorText;
+  return {
+    kind: "analysis_ref",
+    subtype: "sentence",
+    label: `结构化解释：${displayText}`,
+    selectedText: displayText,
+    targetKey: `record:${pageIdentity.recordId}:analysis:structured_inspect:${intent.markId}`,
+    metadata: {
+      pageIdentity,
+      sourceSurface: "reader_record_vocabulary_inspect",
+      entryAction: "lookup_in_context",
+      markId: intent.markId,
+      sentenceId: intent.sentenceId,
+      entryId: intent.markId,
+      entryType: "structured_inspect",
+      annotationType: intent.annotationType,
+      startOffset: intent.anchorOffsets?.startOffset ?? null,
+      endOffset: intent.anchorOffsets?.endOffset ?? null,
+      title: intent.title,
+      query: displayText,
+      lookupText: displayText,
+      visualTone: intent.visualTone,
+      sourceContext: {
+        sentenceId: intent.sentenceId,
+        sourceText: intent.contextSentence,
+      },
+    },
+  };
+}
+
 function immersiveParagraphBlock(
   block: ReaderRecordPlateParagraphBlock,
 ): ReaderRecordPlateParagraphBlock {
@@ -432,7 +557,10 @@ function ReaderRecordHeader({
     : "今日";
   const readingMinutes = Math.max(1, Math.ceil(sentenceCount / 5));
   const modeLabel = surfaceMode === "immersive" ? "沉浸模式" : "精读模式";
-  const sourceBadge = sourceName ?? sourceDomain ?? (sourceType === "plain_text" ? "粘贴导入" : sourceType);
+  const sourceBadge =
+    sourceName ??
+    sourceDomain ??
+    (sourceType === "plain_text" ? "粘贴导入" : sourceType);
 
   return (
     <header
@@ -451,7 +579,7 @@ function ReaderRecordHeader({
       {title ? (
         <h1
           data-reader-record-reading-title
-          className="font-headline mt-4 text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] text-ink tracking-tight"
+          className="mt-4 font-headline text-[2rem] font-semibold leading-[1.1] text-ink sm:text-[2.35rem] lg:text-[2.65rem]"
         >
           {title}
         </h1>
@@ -645,8 +773,8 @@ function SelectionActionState({
 export function ReaderRecordPlateSurface({
   snapshot,
   className = "px-5 py-8 sm:px-8 lg:px-10",
-  columnClassName = "mx-auto max-w-[72ch]",
-  readingClassName = "reader-serif text-ink",
+  columnClassName,
+  readingClassName = "",
   onRequestSnapshotReload,
 }: ReaderRecordPlateSurfaceProps) {
   const surfaceRef = useRef<HTMLElement | null>(null);
@@ -666,6 +794,9 @@ export function ReaderRecordPlateSurface({
   const [lookupState, setLookupState] = useState<ReaderRecordLookupState>({
     kind: "idle",
   });
+  const [inspectState, setInspectState] =
+    useState<ReaderStructuredInspectIntent | null>(null);
+  const [activeSentenceChunkId, setActiveSentenceChunkId] = useState<string | null>(null);
   const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(
     () => readStoredReaderSettings(),
   );
@@ -742,8 +873,10 @@ export function ReaderRecordPlateSurface({
     () => findDuplicateNoteMark(plateDocument.children, noteAnchorDraft),
     [noteAnchorDraft, plateDocument.children],
   );
-  const typography = readerModeTypography(readerSettings);
+  const typography = readerRecordPlateTypography(readerSettings);
   const themeClassName = readerThemeClassName(themeName);
+  const contentColumnClassName =
+    columnClassName ?? `mx-auto w-full ${typography.columnClassName}`;
   const visibleBlocks = useMemo(() => {
     return plateDocument.children.flatMap((block) => {
       const visibleBlock = visibleBlockForMode(block, surfaceMode);
@@ -782,22 +915,68 @@ export function ReaderRecordPlateSurface({
     (props: Parameters<RenderLeaf>[0]) => {
       const leaf = props.leaf as unknown as PlateTextNode;
       const anchorSegmentId = leaf.anchor_segment_id;
+      const visual = resolveReaderMarkVisual(leaf, { activeSentenceChunkId });
+      const sentenceChunk = visual.sentenceChunk;
+      const sentenceChunkId = sentenceChunk ? sentenceChunkDomId(sentenceChunk) : null;
+      const mergedClassName = [
+        visual.kinds.length > 0 ? visual.className : null,
+        props.attributes.className,
+      ]
+        .filter(Boolean)
+        .join(" ");
       if (anchorSegmentId) {
         return (
           <span
             {...props.attributes}
+            className={mergedClassName || undefined}
+            aria-label={visual.ariaLabel}
+            title={visual.title}
             data-reader-record-leaf="segment_text"
             data-anchor-segment-id={anchorSegmentId}
             data-segment-start-utf16={leaf.segment_start_utf16}
             data-segment-end-utf16={leaf.segment_end_utf16}
+            data-reader-record-mark-stack-kinds={
+              visual.kinds.length > 0 ? visual.kinds.join(" ") : undefined
+            }
+            data-reader-record-sentence-analysis-chunk-source={sentenceChunkId ?? undefined}
+            data-reader-record-sentence-analysis-chunk-active={
+              sentenceChunkId && activeSentenceChunkId === sentenceChunkId
+                ? "true"
+                : undefined
+            }
+            tabIndex={sentenceChunkId ? 0 : undefined}
+            onMouseEnter={() => {
+              if (sentenceChunkId) setActiveSentenceChunkId(sentenceChunkId);
+            }}
+            onMouseLeave={() => {
+              if (sentenceChunkId) setActiveSentenceChunkId(null);
+            }}
+            onFocus={() => {
+              if (sentenceChunkId) setActiveSentenceChunkId(sentenceChunkId);
+            }}
+            onBlur={() => {
+              if (sentenceChunkId) setActiveSentenceChunkId(null);
+            }}
           >
             {props.children}
           </span>
         );
       }
-      return <span {...props.attributes}>{props.children}</span>;
+      return (
+        <span
+          {...props.attributes}
+          className={mergedClassName || undefined}
+          aria-label={visual.ariaLabel}
+          title={visual.title}
+          data-reader-record-mark-stack-kinds={
+            visual.kinds.length > 0 ? visual.kinds.join(" ") : undefined
+          }
+        >
+          {props.children}
+        </span>
+      );
     },
-    [],
+    [activeSentenceChunkId],
   );
 
   const handleSettingsChange = useCallback((next: ReaderSettingsState) => {
@@ -811,6 +990,8 @@ export function ReaderRecordPlateSurface({
       setReaderSettings(next);
       persistReaderSettings(next);
       setActiveSelection(null);
+      setInspectState(null);
+      setActiveSentenceChunkId(null);
     },
     [readerSettings],
   );
@@ -831,7 +1012,7 @@ export function ReaderRecordPlateSurface({
     mode: "view" | "edit";
     draft: string;
   } | null>(null);
-  const quickPeekOpen = lookupState.kind !== "idle";
+  const quickPeekOpen = lookupState.kind !== "idle" || inspectState !== null;
   const quickPeekFloating = useReaderFloatingLayer({
     open: quickPeekOpen,
     placement: "bottom",
@@ -858,9 +1039,12 @@ export function ReaderRecordPlateSurface({
   const [feedbackState, setFeedbackState] = useState<SaveState>({ kind: "idle" });
   const [feedbackTarget, setFeedbackTarget] = useState<{
     blockId: string;
-    variant: "grammar" | "supplement";
+    variant: "grammar" | "supplement" | "vocabulary";
+    feedbackScope: "annotation" | "dictionary";
+    analysisRecordId?: string;
     anchorSegmentId: string;
     title: string;
+    annotationType?: string;
   } | null>(null);
   const feedbackFloating = useReaderFloatingLayer({
     open: feedbackTarget !== null,
@@ -918,7 +1102,7 @@ export function ReaderRecordPlateSurface({
   );
 
   useEffect(() => {
-    if (lookupState.kind === "idle") {
+    if (lookupState.kind === "idle" && inspectState === null) {
       return;
     }
     function handlePointerDown(event: PointerEvent) {
@@ -930,12 +1114,13 @@ export function ReaderRecordPlateSurface({
         return;
       }
       setLookupState({ kind: "idle" });
+      setInspectState(null);
     }
     window.document.addEventListener("pointerdown", handlePointerDown);
     return () => {
       window.document.removeEventListener("pointerdown", handlePointerDown);
     };
-  }, [lookupState.kind, quickPeekFloating.refs.floating]);
+  }, [inspectState, lookupState.kind, quickPeekFloating.refs.floating]);
 
   useEffect(() => {
     if (writeState.kind !== "saved" && writeState.kind !== "error") {
@@ -987,8 +1172,13 @@ export function ReaderRecordPlateSurface({
       if (!query) {
         return;
       }
+      const contextSentence =
+        sourceTextForAnchorSegment(
+          plateDocument.children,
+          mark.anchor.anchorSegmentId,
+        ) || mark.anchor.selectedText;
       const context: ReaderRecordLookupContext = {
-        contextSentence: mark.anchor.selectedText,
+        contextSentence,
         sentenceId: mark.anchor.sentenceId,
         anchorText: mark.anchor.selectedText,
         lookupType: lookupTypeForSelection(query),
@@ -997,13 +1187,25 @@ export function ReaderRecordPlateSurface({
       quickPeekFloating.refs.setReference({
         getBoundingClientRect: () => anchor.getBoundingClientRect(),
       });
+
+      const inspectIntent = structuredInspectIntentFromVocabularyMark(
+        mark,
+        contextSentence,
+      );
+      if (inspectIntent) {
+        setLookupState({ kind: "idle" });
+        setInspectState(inspectIntent);
+        return;
+      }
+
+      setInspectState(null);
       setLookupState({ kind: "loading", query, context });
       void (async () => {
         try {
           const params = new URLSearchParams({
             word: query,
             type: context.lookupType,
-            context: mark.anchor.selectedText,
+            context: contextSentence,
             sentenceId: mark.anchor.sentenceId,
           });
           const response = await fetch(`/api/web/dict/lookup?${params.toString()}`);
@@ -1043,7 +1245,7 @@ export function ReaderRecordPlateSurface({
         }
       })();
     },
-    [quickPeekFloating.refs],
+    [plateDocument.children, quickPeekFloating.refs],
   );
 
   const handleCopy = useCallback(async () => {
@@ -1094,6 +1296,7 @@ export function ReaderRecordPlateSurface({
       });
     }
 
+    setInspectState(null);
     setLookupState({ kind: "loading", query, context });
 
     try {
@@ -1139,6 +1342,60 @@ export function ReaderRecordPlateSurface({
       });
     }
   }, [activeSelection, quickPeekFloating.refs]);
+
+  const handleLookupFromInspect = useCallback(async () => {
+    const intent = inspectState;
+    if (!intent) {
+      return;
+    }
+    const query = (intent.lookupText ?? intent.anchorText).trim();
+    if (!query) {
+      return;
+    }
+    const lookupType =
+      intent.lookupKind === "phrase" || /\s/.test(query) ? "phrase" : "word";
+    const context: ReaderRecordLookupContext = {
+      contextSentence: intent.contextSentence,
+      sentenceId: intent.sentenceId,
+      anchorText: intent.anchorText,
+      lookupType,
+      source: "vocabulary",
+    };
+
+    setInspectState(null);
+    setLookupState({ kind: "loading", query, context });
+
+    try {
+      const params = new URLSearchParams({
+        word: query,
+        type: lookupType,
+        context: intent.contextSentence,
+        sentenceId: intent.sentenceId,
+      });
+      const response = await fetch(`/api/web/dict/lookup?${params.toString()}`);
+      const payload = (await response.json().catch(() => null)) as
+        | WebDictResult
+        | null;
+      if (!payload || (!response.ok && payload.kind !== "error")) {
+        setLookupState({
+          kind: "error",
+          query,
+          context,
+          message: "词典查询失败。",
+        });
+        return;
+      }
+      setLookupState({ kind: "ready", query, context, result: payload });
+    } catch (error) {
+      console.warn("[ReaderRecordPlateSurface] inspect phrase lookup failed", error);
+      setLookupState({
+        kind: "error",
+        query,
+        context,
+        message: "词典查询失败，请稍后重试。",
+      });
+    }
+  }, [inspectState]);
 
   const activeLookupSnapshot = useMemo(
     () => buildDictionaryLookupSnapshot(snapshot, lookupState),
@@ -1225,6 +1482,7 @@ export function ReaderRecordPlateSurface({
   const openDictionaryRail = useCallback(() => {
     setDictionaryOpen(true);
     setLookupState({ kind: "idle" });
+    setInspectState(null);
     if (activeLookupSnapshot) {
       setDictionaryHistory((current) => {
         const filtered = current.filter(
@@ -1274,10 +1532,18 @@ export function ReaderRecordPlateSurface({
     setDictionaryAIPanelOpen(false);
     setDictionaryAI({ kind: "idle" });
     setLookupState({ kind: "idle" });
+    setInspectState(null);
     setHighlightMenu(null);
     setNoteMenu(null);
     setFeedbackTarget(null);
   }, []);
+
+  const handleAttachInspectToAsk = useCallback(() => {
+    if (!inspectState) {
+      return;
+    }
+    openAskPanel(askAttachmentFromVocabularyInspect(askPageIdentity, inspectState));
+  }, [askPageIdentity, inspectState, openAskPanel]);
 
   const handleAskFromSelection = useCallback(() => {
     if (!currentAskSelectionAttachment) {
@@ -1337,6 +1603,7 @@ export function ReaderRecordPlateSurface({
         lookupType,
         source: "selection",
       };
+      setInspectState(null);
       setLookupState({ kind: "loading", query: trimmed, context });
       try {
         const params = new URLSearchParams({
@@ -1388,6 +1655,7 @@ export function ReaderRecordPlateSurface({
         lookupType: historyLookup.lookupType,
         source: "selection",
       };
+      setInspectState(null);
       if (historyLookup.state.kind === "ready") {
         setLookupState({
           kind: "ready",
@@ -1494,6 +1762,28 @@ export function ReaderRecordPlateSurface({
       setFeedbackTarget(null);
       setFeedbackState({ kind: "saving" });
       try {
+        if (target.feedbackScope === "annotation" && !target.analysisRecordId) {
+          setFeedbackState({
+            kind: "error",
+            message: "当前标注反馈暂不可用。",
+          });
+          return;
+        }
+        const feedbackType =
+          target.feedbackScope === "dictionary"
+            ? sentiment === "negative"
+              ? "wrong_definition"
+              : null
+            : sentiment === "positive"
+              ? "helpful"
+              : "inaccurate";
+        if (!feedbackType) {
+          setFeedbackState({
+            kind: "error",
+            message: "当前反馈类型暂不可用。",
+          });
+          return;
+        }
         const response = await fetch("/api/web/feedback", {
           method: "POST",
           headers: {
@@ -1501,15 +1791,31 @@ export function ReaderRecordPlateSurface({
             accept: "application/json",
           },
           body: JSON.stringify({
-            feedbackScope: "annotation",
+            feedbackScope: target.feedbackScope,
             targetId: target.blockId,
             sentiment,
-            feedbackType: sentiment === "positive" ? "helpful" : "other",
-            annotationType:
-              target.variant === "grammar"
-                ? "grammar_note"
-                : "ask_supplement",
-            entryPoint: "reader_record_callout",
+            feedbackType,
+            ...(target.analysisRecordId
+              ? { analysisRecordId: target.analysisRecordId }
+              : {}),
+            ...(target.feedbackScope === "annotation"
+              ? {
+                  annotationType:
+                    target.annotationType ??
+                    (target.variant === "grammar"
+                      ? "grammar_note"
+                      : "ask_supplement"),
+                }
+              : {}),
+            entryPoint:
+              target.variant === "vocabulary"
+                ? "reader_record_vocabulary_mark"
+                : "reader_record_callout",
+            contextJson: {
+              readingRecordId: snapshot.record_id,
+              annotationType: target.annotationType,
+              targetVariant: target.variant,
+            },
             contextSummary: target.title,
             clientPlatform: "web",
             clientSurface: "reader_record",
@@ -1533,8 +1839,29 @@ export function ReaderRecordPlateSurface({
         });
       }
     },
-    [feedbackTarget],
+    [feedbackTarget, snapshot.record_id],
   );
+
+  const handleInspectFeedback = useCallback(() => {
+    const intent = inspectState;
+    if (!intent) {
+      return;
+    }
+    const floatingNode = quickPeekFloating.refs.floating.current;
+    if (floatingNode) {
+      feedbackFloating.refs.setReference({
+        getBoundingClientRect: () => floatingNode.getBoundingClientRect(),
+      });
+    }
+    setFeedbackTarget({
+      blockId: intent.markId,
+      variant: "vocabulary",
+      feedbackScope: "dictionary",
+      anchorSegmentId: "",
+      title: intent.title,
+      annotationType: intent.annotationType,
+    });
+  }, [feedbackFloating.refs, inspectState, quickPeekFloating.refs.floating]);
 
   const handleSelectCandidate = useCallback(
     async (entryId: number) => {
@@ -1903,6 +2230,14 @@ export function ReaderRecordPlateSurface({
     [handleActivateVocabulary, handleActivateHighlight, handleActivateNote],
   );
 
+  const sentenceAnalysisInteraction = useMemo(
+    () => ({
+      activeChunkId: activeSentenceChunkId,
+      setActiveChunkId: setActiveSentenceChunkId,
+    }),
+    [activeSentenceChunkId],
+  );
+
   const toolbarActionState = useMemo<ReaderToolbarActions["state"]>(() => {
     const draft = singleRangeDraft(activeSelection);
     const sourceSingleRangeReady = Boolean(draft);
@@ -2124,7 +2459,7 @@ export function ReaderRecordPlateSurface({
       data-reader-record-surface="plate-readonly-reading"
       className={`${className} ${themeClassName}`}
     >
-      <div className={columnClassName}>
+      <div className={contentColumnClassName}>
         <ReaderRecordHeader
           snapshot={snapshot}
           progress={plateDocument.progress}
@@ -2183,6 +2518,7 @@ export function ReaderRecordPlateSurface({
         {quickPeekOpen ? (
           <ReaderQuickPeek
             lookup={activeLookupSnapshot}
+            inspect={inspectState}
             className="reader-tool-float"
             floatingRef={(node) => {
               quickPeekFloating.refs.setFloating(node);
@@ -2192,8 +2528,14 @@ export function ReaderRecordPlateSurface({
               }
             }}
             style={quickPeekFloating.floatingStyles}
-            onDismiss={() => setLookupState({ kind: "idle" })}
-            onOpenDetail={openDictionaryRail}
+            onDismiss={() => {
+              setLookupState({ kind: "idle" });
+              setInspectState(null);
+            }}
+            onOpenDetail={activeLookupSnapshot ? openDictionaryRail : undefined}
+            onLookupPhrase={inspectState ? handleLookupFromInspect : undefined}
+            onAttachToAsk={inspectState ? handleAttachInspectToAsk : undefined}
+            onFeedback={inspectState ? handleInspectFeedback : undefined}
           />
         ) : null}
         {feedbackTarget ? (
@@ -2213,66 +2555,94 @@ export function ReaderRecordPlateSurface({
               }
             }}
           >
+            {feedbackTarget.feedbackScope === "annotation" ? (
+              <button
+                type="button"
+                className="block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-structure-green/10 disabled:cursor-not-allowed disabled:text-muted disabled:hover:bg-transparent"
+                disabled={!feedbackTarget.analysisRecordId}
+                data-reader-record-disabled-reason={
+                  feedbackTarget.analysisRecordId
+                    ? undefined
+                    : "当前标注反馈需要 analysisRecordId"
+                }
+                onClick={() => handleSubmitFeedback("positive")}
+              >
+                有帮助
+              </button>
+            ) : null}
             <button
               type="button"
-              className="block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-structure-green/10"
-              onClick={() => handleSubmitFeedback("positive")}
-            >
-              有帮助
-            </button>
-            <button
-              type="button"
-              className="mt-0.5 block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-error-red/10"
+              className="mt-0.5 block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-error-red/10 disabled:cursor-not-allowed disabled:text-muted disabled:hover:bg-transparent"
+              disabled={
+                feedbackTarget.feedbackScope === "annotation" &&
+                !feedbackTarget.analysisRecordId
+              }
+              data-reader-record-disabled-reason={
+                feedbackTarget.feedbackScope === "annotation" &&
+                !feedbackTarget.analysisRecordId
+                  ? "当前标注反馈需要 analysisRecordId"
+                  : undefined
+              }
               onClick={() => handleSubmitFeedback("negative")}
             >
-              有问题
+              {feedbackTarget.feedbackScope === "dictionary" ? "释义有问题" : "有问题"}
             </button>
+            {feedbackTarget.feedbackScope === "annotation" &&
+            !feedbackTarget.analysisRecordId ? (
+              <p className="mt-1 px-3 py-1 text-xs leading-5 text-muted" role="status">
+                当前标注反馈暂不可用
+              </p>
+            ) : null}
           </ReaderFloatingSurface>
         ) : null}
         <ReaderLeafActionsContext.Provider value={leafActions}>
-          <ReaderToolbarActionsProvider value={toolbarActions}>
-            <Plate editor={editor} readOnly>
-              <CommentPluginBridge
-                apiRef={commentApiRef}
-                onReadyChange={setCommentApiReady}
-              />
-              <SelectionAnchorBridge
-                snapshot={snapshot}
-                onChange={handleSelectionChange}
-              />
-              <EditorContainer
-                className={`reader-record-plate-document reader-record-plate-document--notion space-y-1 px-0 py-0 outline-none cursor-default overflow-visible bg-transparent ${readingClassName} ${typography.bodyClassName} ${typography.paragraphDensityClassName}`.trim()}
-                data-reader-record-mode={surfaceMode}
-              >
-                <Editor readOnly disableDefaultStyles renderLeaf={renderLeaf as never} />
-              </EditorContainer>
-              <InlineCommentPanel
-                draftText={noteDraft}
-                draftQuoteText={noteAnchorDraft?.selected_text ?? null}
-                onDraftTextChange={setNoteDraft}
-                onSaveDraft={handleSaveNote}
-                onCancelDraft={handleCancelNote}
-                duplicateNote={duplicateNoteForDraft}
-                duplicateAcknowledged={noteDuplicateAcknowledged}
-                onViewDuplicateNote={handleViewDuplicateNote}
-                onContinueDuplicateNote={handleContinueDuplicateNote}
-                activeNote={noteMenu?.mark ?? null}
-                noteEditMode={noteMenu?.mode ?? "view"}
-                noteEditDraft={noteMenu?.draft ?? ""}
-                onNoteEditDraftChange={handleNoteEditDraftChange}
-                onStartEditNote={handleStartEditNote}
-                onCancelEditNote={handleCancelEditNote}
-                onSaveNoteEdit={handleSaveNoteEdit}
-                onDeleteNote={handleDeleteNote}
-                onAskFromNote={handleAskFromNote}
-                isSaving={commentIsSaving}
-                statusMessage={commentStatusMessage}
-                onClose={handleCloseCommentPanel}
-                floatingRef={commentFloating.refs.setFloating}
-                floatingStyles={commentFloating.floatingStyles}
-              />
-            </Plate>
-          </ReaderToolbarActionsProvider>
+          <ReaderSentenceAnalysisInteractionContext.Provider
+            value={sentenceAnalysisInteraction}
+          >
+            <ReaderToolbarActionsProvider value={toolbarActions}>
+              <Plate editor={editor} readOnly>
+                <CommentPluginBridge
+                  apiRef={commentApiRef}
+                  onReadyChange={setCommentApiReady}
+                />
+                <SelectionAnchorBridge
+                  snapshot={snapshot}
+                  onChange={handleSelectionChange}
+                />
+                <EditorContainer
+                  className={`reader-record-plate-document reader-record-plate-document--notion px-0 py-0 outline-none cursor-default overflow-visible bg-transparent ${readingClassName} ${typography.bodyClassName} ${typography.paragraphDensityClassName}`.trim()}
+                  data-reader-record-mode={surfaceMode}
+                >
+                  <Editor readOnly disableDefaultStyles renderLeaf={renderLeaf as never} />
+                </EditorContainer>
+                <InlineCommentPanel
+                  draftText={noteDraft}
+                  draftQuoteText={noteAnchorDraft?.selected_text ?? null}
+                  onDraftTextChange={setNoteDraft}
+                  onSaveDraft={handleSaveNote}
+                  onCancelDraft={handleCancelNote}
+                  duplicateNote={duplicateNoteForDraft}
+                  duplicateAcknowledged={noteDuplicateAcknowledged}
+                  onViewDuplicateNote={handleViewDuplicateNote}
+                  onContinueDuplicateNote={handleContinueDuplicateNote}
+                  activeNote={noteMenu?.mark ?? null}
+                  noteEditMode={noteMenu?.mode ?? "view"}
+                  noteEditDraft={noteMenu?.draft ?? ""}
+                  onNoteEditDraftChange={handleNoteEditDraftChange}
+                  onStartEditNote={handleStartEditNote}
+                  onCancelEditNote={handleCancelEditNote}
+                  onSaveNoteEdit={handleSaveNoteEdit}
+                  onDeleteNote={handleDeleteNote}
+                  onAskFromNote={handleAskFromNote}
+                  isSaving={commentIsSaving}
+                  statusMessage={commentStatusMessage}
+                  onClose={handleCloseCommentPanel}
+                  floatingRef={commentFloating.refs.setFloating}
+                  floatingStyles={commentFloating.floatingStyles}
+                />
+              </Plate>
+            </ReaderToolbarActionsProvider>
+          </ReaderSentenceAnalysisInteractionContext.Provider>
         </ReaderLeafActionsContext.Provider>
         {feedbackState.kind !== "idle" ? (
           <div

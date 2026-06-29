@@ -24,6 +24,7 @@ import {
 import { commentPlugin } from "@/components/editor/plugins/comment-kit";
 import type {
   ReaderRecordPlateGrammarMark,
+  ReaderRecordPlateSentenceChunkMark,
   ReaderRecordPlateUserHighlightMark,
   ReaderRecordPlateUserNoteMark,
   ReaderRecordPlateVocabularyMark,
@@ -42,12 +43,12 @@ function vocabularyMarkClassName(
 ): string {
   const cursorClassName = interactive ? "cursor-pointer" : "cursor-default";
   if (mark.vocabulary.itemType === "phrase_gloss") {
-    return `${cursorClassName} rounded-[2px] underline decoration-violet-500/70 decoration-[1.5px] underline-offset-4 transition-colors hover:bg-violet-50/60`;
+    return `${cursorClassName} reader-record-mark-hit reader-record-mark-hit--vocabulary rounded-[2px] transition-colors hover:bg-violet-50/40`;
   }
   if (mark.vocabulary.itemType === "context_gloss") {
-    return `${cursorClassName} rounded-[2px] underline decoration-sky-500/70 decoration-[1.5px] underline-offset-4 transition-colors hover:bg-sky-50/60`;
+    return `${cursorClassName} reader-record-mark-hit reader-record-mark-hit--vocabulary rounded-[2px] transition-colors hover:bg-sky-50/40`;
   }
-  return `${cursorClassName} rounded-[2px] underline decoration-amber-500/70 decoration-[1.5px] underline-offset-4 transition-colors hover:bg-amber-50/60`;
+  return `${cursorClassName} reader-record-mark-hit reader-record-mark-hit--vocabulary rounded-[2px] transition-colors hover:bg-amber-50/40`;
 }
 
 function vocabularyMarkLabel(mark: ReaderRecordPlateVocabularyMark): string {
@@ -61,7 +62,7 @@ function vocabularyMarkLabel(mark: ReaderRecordPlateVocabularyMark): string {
 }
 
 function grammarMarkClassName(): string {
-  return "rounded-[2px] underline decoration-emerald-500/70 decoration-dotted decoration-[1.5px] underline-offset-4 transition-colors hover:bg-emerald-50/50";
+  return "reader-record-mark-hit reader-record-mark-hit--grammar rounded-[2px] transition-colors hover:bg-emerald-50/35";
 }
 
 function grammarMarkLabel(mark: ReaderRecordPlateGrammarMark): string {
@@ -71,12 +72,12 @@ function grammarMarkLabel(mark: ReaderRecordPlateGrammarMark): string {
 function userHighlightMarkClassName(mark: ReaderRecordPlateUserHighlightMark): string {
   const color = mark.color ?? "warm_yellow";
   if (color === "soft_blue" || color === "blue") {
-    return "cursor-pointer rounded-[3px] bg-sky-100/70 ring-1 ring-sky-200/70 transition-colors hover:bg-sky-200/70";
+    return "cursor-pointer reader-record-mark-hit reader-record-mark-hit--user-highlight rounded-[3px] transition-colors";
   }
   if (color === "soft_rose" || color === "rose") {
-    return "cursor-pointer rounded-[3px] bg-rose-100/70 ring-1 ring-rose-200/70 transition-colors hover:bg-rose-200/70";
+    return "cursor-pointer reader-record-mark-hit reader-record-mark-hit--user-highlight rounded-[3px] transition-colors";
   }
-  return "cursor-pointer rounded-[3px] bg-amber-100/75 ring-1 ring-amber-200/75 transition-colors hover:bg-amber-200/75";
+  return "cursor-pointer reader-record-mark-hit reader-record-mark-hit--user-highlight rounded-[3px] transition-colors";
 }
 
 function userHighlightMarkLabel(): string {
@@ -122,6 +123,99 @@ function noteMarksFromLeaf(
     }
     return a.assetId.localeCompare(b.assetId);
   });
+}
+
+function highlightColorKey(mark?: ReaderRecordPlateUserHighlightMark): string {
+  const color = mark?.color ?? "warm_yellow";
+  if (color === "soft_blue" || color === "blue") {
+    return "blue";
+  }
+  if (color === "soft_rose" || color === "rose") {
+    return "rose";
+  }
+  return "yellow";
+}
+
+function vocabularyToneKey(mark?: ReaderRecordPlateVocabularyMark): string {
+  if (mark?.vocabulary.itemType === "phrase_gloss") {
+    return "phrase";
+  }
+  if (mark?.vocabulary.itemType === "context_gloss") {
+    return "context";
+  }
+  return "vocab";
+}
+
+export function sentenceChunkDomId(
+  mark: ReaderRecordPlateSentenceChunkMark,
+): string {
+  return mark.id;
+}
+
+export interface ReaderMarkVisualResolution {
+  className: string;
+  ariaLabel?: string;
+  title?: string;
+  kinds: string[];
+  sentenceChunk?: ReaderRecordPlateSentenceChunkMark;
+}
+
+export function resolveReaderMarkVisual(
+  leaf: PlateTextNode,
+  options: { activeSentenceChunkId?: string | null } = {},
+): ReaderMarkVisualResolution {
+  const vocabularyMark = leaf.vocabulary_data;
+  const grammarMark = leaf.grammar_data;
+  const sentenceChunk = leaf.sentence_chunk_data;
+  const userHighlight = leaf.user_highlight_data;
+  const userNotes = noteMarksFromLeaf(leaf.user_note_data);
+  const kinds: string[] = [];
+  const classes = ["reader-record-mark-stack"];
+  const labels: string[] = [];
+
+  if (vocabularyMark) {
+    kinds.push(vocabularyMark.kind);
+    classes.push(
+      "reader-record-mark-stack--vocabulary",
+      `reader-record-mark-stack--${vocabularyToneKey(vocabularyMark)}`,
+    );
+    labels.push(vocabularyMarkLabel(vocabularyMark));
+  }
+  if (grammarMark) {
+    kinds.push("grammar_note");
+    classes.push("reader-record-mark-stack--grammar");
+    labels.push(grammarMarkLabel(grammarMark));
+  }
+  if (sentenceChunk) {
+    const chunkId = sentenceChunkDomId(sentenceChunk);
+    kinds.push("sentence_analysis_chunk");
+    classes.push("reader-record-mark-stack--sentence-chunk");
+    if (options.activeSentenceChunkId === chunkId) {
+      classes.push("reader-record-mark-stack--sentence-chunk-active");
+    }
+    labels.push(`句子成分 · ${sentenceChunk.label}`);
+  }
+  if (userHighlight) {
+    kinds.push("user_highlight");
+    classes.push(
+      "reader-record-mark-stack--user-highlight",
+      `reader-record-mark-stack--highlight-${highlightColorKey(userHighlight)}`,
+    );
+    labels.push(userHighlightMarkLabel());
+  }
+  if (userNotes.length > 0) {
+    kinds.push("user_note");
+    classes.push("reader-record-mark-stack--user-note");
+    labels.push(userNoteMarkLabel());
+  }
+
+  return {
+    className: classes.join(" "),
+    ariaLabel: labels.length > 0 ? labels.join("；") : undefined,
+    title: labels.length > 0 ? labels.join("；") : undefined,
+    kinds,
+    sentenceChunk,
+  };
 }
 
 // --- Callback Context ---

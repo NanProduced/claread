@@ -25,6 +25,12 @@ export interface ReaderModeTypography {
   paragraphDensityClassName: string;
 }
 
+export interface ReaderRecordPlateTypography {
+  bodyClassName: string;
+  columnClassName: string;
+  paragraphDensityClassName: string;
+}
+
 export const READER_SETTINGS_STORAGE_KEY = "claread.reader.settings.v4";
 const LEGACY_READER_SETTINGS_STORAGE_KEYS = [
   "claread.reader.settings.v3",
@@ -34,7 +40,7 @@ const LEGACY_READER_SETTINGS_STORAGE_KEYS = [
 export function createDefaultReaderSettings(): ReaderSettingsState {
   return {
     mode: "intensive",
-    fontFamily: "editorial",
+    fontFamily: "sans",
     fontScale: "md",
   };
 }
@@ -211,6 +217,48 @@ export function readerModeTypography({
     columnClassName: mode === "immersive" ? "max-w-[68ch]" : "max-w-[69ch]",
     paragraphDensityClassName:
       mode === "immersive" ? "reader-density-immersive" : "reader-density-intensive",
+  };
+}
+
+export function readerRecordPlateTypography({
+  mode,
+  fontFamily,
+  fontScale,
+}: Pick<ReaderSettingsState, "mode" | "fontFamily" | "fontScale">): ReaderRecordPlateTypography {
+  const fontClass =
+    fontFamily === "book"
+      ? "reader-font-book"
+      : fontFamily === "sans"
+        ? "reader-font-sans"
+        : "reader-font-editorial";
+  const readerRecordFontClass =
+    fontFamily === "book"
+      ? "reader-record-plate-font-book"
+      : fontFamily === "sans"
+        ? "reader-record-plate-font-sans"
+        : "reader-record-plate-font-editorial";
+  const typeScaleClass =
+    fontScale === "sm"
+      ? "reader-record-plate-type-sm"
+      : fontScale === "lg"
+        ? "reader-record-plate-type-lg"
+        : "reader-record-plate-type-md";
+  const columnClassName =
+    fontFamily === "sans"
+      ? mode === "immersive"
+        ? "max-w-[44rem]"
+        : "max-w-[46rem]"
+      : mode === "immersive"
+        ? "max-w-[42rem]"
+        : "max-w-[44rem]";
+
+  return {
+    bodyClassName: `${fontClass} text-ink ${readerRecordFontClass} ${typeScaleClass}`,
+    columnClassName,
+    paragraphDensityClassName:
+      mode === "immersive"
+        ? "reader-record-plate-density-immersive"
+        : "reader-record-plate-density-intensive",
   };
 }
 

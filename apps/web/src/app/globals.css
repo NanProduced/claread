@@ -1818,6 +1818,85 @@ select {
   --reader-record-selection-fill-strong: rgba(37, 99, 235, 0.24);
   --reader-record-selection-outline: rgba(37, 99, 235, 0.2);
   --reader-record-selection-ink: var(--ink);
+  --reader-record-source-size-sm: 0.98rem;
+  --reader-record-source-size-md: 1.04rem;
+  --reader-record-source-size-lg: 1.14rem;
+  --reader-record-source-size: var(--reader-record-source-size-md);
+  --reader-record-source-leading: 1.74;
+  --reader-record-source-tracking: 0.001em;
+  --reader-record-translation-size: 0.9rem;
+  --reader-record-translation-leading: 1.68;
+  --reader-record-note-body-size: 0.89rem;
+  --reader-record-note-body-leading: 1.64;
+  --reader-record-note-title-size: 0.96rem;
+  --reader-record-label-size: 0.72rem;
+  --reader-record-label-leading: 1.25;
+  --reader-record-note-icon-size: 0.76rem;
+  --reader-record-chunk-label-size: 0.8rem;
+  --reader-record-chunk-kind-size: 0.68rem;
+  --reader-record-chunk-body-size: 0.84rem;
+  --reader-record-inline-code-size: 0.85em;
+  --reader-record-note-padding-block: 0.78rem;
+  --reader-record-note-padding-inline: 0.9rem;
+  --reader-record-source-paragraph-gap: 0.72rem;
+  --reader-record-source-translation-gap: 0.36rem;
+  --reader-record-source-analysis-gap: 0.62rem;
+  --reader-record-analysis-source-gap: 1.05rem;
+  --reader-record-translation-analysis-gap: 0.72rem;
+  --reader-record-analysis-stack-gap: 0.58rem;
+  --reader-record-reading-group-gap: 1.48rem;
+  --reader-record-unit-gap: 1.7rem;
+}
+
+.reader-record-plate-font-sans {
+  --reader-record-source-size-sm: 0.98rem;
+  --reader-record-source-size-md: 1.04rem;
+  --reader-record-source-size-lg: 1.14rem;
+  --reader-record-source-leading: 1.74;
+  --reader-record-source-tracking: 0.001em;
+  --reader-record-source-paragraph-gap: 0.72rem;
+  --reader-record-reading-group-gap: 1.48rem;
+  --reader-record-unit-gap: 1.7rem;
+}
+
+.reader-record-plate-font-editorial {
+  --reader-record-source-size-sm: 1.02rem;
+  --reader-record-source-size-md: 1.08rem;
+  --reader-record-source-size-lg: 1.19rem;
+  --reader-record-source-leading: 1.82;
+  --reader-record-source-tracking: 0;
+  --reader-record-source-paragraph-gap: 0.78rem;
+  --reader-record-reading-group-gap: 1.62rem;
+  --reader-record-unit-gap: 1.82rem;
+}
+
+.reader-record-plate-font-book {
+  --reader-record-source-size-sm: 1.01rem;
+  --reader-record-source-size-md: 1.07rem;
+  --reader-record-source-size-lg: 1.18rem;
+  --reader-record-source-leading: 1.84;
+  --reader-record-source-tracking: 0;
+  --reader-record-source-paragraph-gap: 0.8rem;
+  --reader-record-reading-group-gap: 1.64rem;
+  --reader-record-unit-gap: 1.86rem;
+}
+
+.reader-record-plate-type-sm {
+  --reader-record-source-size: var(--reader-record-source-size-sm);
+}
+
+.reader-record-plate-type-md {
+  --reader-record-source-size: var(--reader-record-source-size-md);
+}
+
+.reader-record-plate-type-lg {
+  --reader-record-source-size: var(--reader-record-source-size-lg);
+}
+
+.reader-record-plate-density-immersive {
+  --reader-record-source-paragraph-gap: 0.92rem;
+  --reader-record-reading-group-gap: 1.78rem;
+  --reader-record-unit-gap: 2rem;
 }
 
 .reader-record-plate-document::selection,
@@ -1840,6 +1919,347 @@ select {
 .reader-record-plate-document:focus-within .slate-selection-area {
   visibility: hidden;
   opacity: 0;
+}
+
+.reader-record-plate-document > :not([hidden]),
+.reader-record-plate-document [data-slate-node="value"] > :not([hidden]) {
+  margin-block: 0;
+}
+
+.reader-record-plate-document > :not([hidden]) + :not([hidden]),
+.reader-record-plate-document
+  [data-slate-node="value"]
+  > :not([hidden])
+  + :not([hidden]) {
+  margin-top: var(--reader-record-reading-group-gap);
+}
+
+.reader-record-plate-document
+  > [data-reader-record-node="paragraph"]
+  + [data-reader-record-node="paragraph"],
+.reader-record-plate-document
+  [data-slate-node="value"]
+  > [data-reader-record-node="paragraph"]
+  + [data-reader-record-node="paragraph"] {
+  margin-top: var(--reader-record-source-paragraph-gap);
+}
+
+.reader-record-plate-document
+  > [data-reader-record-node="paragraph"]
+  + [data-reader-record-node="blockquote"],
+.reader-record-plate-document
+  [data-slate-node="value"]
+  > [data-reader-record-node="paragraph"]
+  + [data-reader-record-node="blockquote"] {
+  margin-top: var(--reader-record-source-translation-gap);
+}
+
+.reader-record-plate-document
+  > [data-reader-record-node="paragraph"]
+  + :is(
+    [data-reader-record-node="callout"],
+    [data-reader-record-node="sentence-analysis"]
+  ),
+.reader-record-plate-document
+  [data-slate-node="value"]
+  > [data-reader-record-node="paragraph"]
+  + :is(
+    [data-reader-record-node="callout"],
+    [data-reader-record-node="sentence-analysis"]
+  ) {
+  margin-top: var(--reader-record-source-analysis-gap);
+}
+
+.reader-record-plate-document
+  > [data-reader-record-node="blockquote"]
+  + :is(
+    [data-reader-record-node="callout"],
+    [data-reader-record-node="sentence-analysis"]
+  ),
+.reader-record-plate-document
+  [data-slate-node="value"]
+  > [data-reader-record-node="blockquote"]
+  + :is(
+    [data-reader-record-node="callout"],
+    [data-reader-record-node="sentence-analysis"]
+  ) {
+  margin-top: var(--reader-record-translation-analysis-gap);
+}
+
+.reader-record-plate-document
+  > :is(
+    [data-reader-record-node="callout"],
+    [data-reader-record-node="sentence-analysis"]
+  )
+  + :is(
+    [data-reader-record-node="callout"],
+    [data-reader-record-node="sentence-analysis"]
+  ),
+.reader-record-plate-document
+  [data-slate-node="value"]
+  > :is(
+    [data-reader-record-node="callout"],
+    [data-reader-record-node="sentence-analysis"]
+  )
+  + :is(
+    [data-reader-record-node="callout"],
+    [data-reader-record-node="sentence-analysis"]
+  ) {
+  margin-top: var(--reader-record-analysis-stack-gap);
+}
+
+.reader-record-plate-document
+  > :is(
+    [data-reader-record-node="callout"],
+    [data-reader-record-node="sentence-analysis"]
+  )
+  + [data-reader-record-node="paragraph"],
+.reader-record-plate-document
+  [data-slate-node="value"]
+  > :is(
+    [data-reader-record-node="callout"],
+    [data-reader-record-node="sentence-analysis"]
+  )
+  + [data-reader-record-node="paragraph"] {
+  margin-top: var(--reader-record-analysis-source-gap);
+}
+
+.reader-record-plate-document
+  > [data-reader-record-unit-start="true"]:not(:first-child),
+.reader-record-plate-document
+  [data-slate-node="value"]
+  > [data-reader-record-unit-start="true"]:not(:first-child) {
+  margin-top: var(--reader-record-unit-gap);
+}
+
+.reader-record-plate-paragraph {
+  font-size: var(--reader-record-source-size);
+  line-height: var(--reader-record-source-leading);
+  letter-spacing: var(--reader-record-source-tracking);
+  text-wrap: pretty;
+}
+
+.reader-record-plate-translation {
+  padding-block: 0.08rem 0.1rem;
+  padding-inline: 0.9rem 0.25rem;
+  color: color-mix(in srgb, var(--muted) 88%, var(--ink) 12%);
+  font-size: var(--reader-record-translation-size);
+  font-weight: 400;
+  line-height: var(--reader-record-translation-leading);
+  letter-spacing: 0.002em;
+}
+
+.reader-record-plate-callout,
+.reader-record-plate-sentence-analysis {
+  padding: var(--reader-record-note-padding-block)
+    var(--reader-record-note-padding-inline);
+  font-size: var(--reader-record-note-body-size);
+  line-height: var(--reader-record-note-body-leading);
+}
+
+.reader-record-plate-note-icon {
+  font-size: var(--reader-record-note-icon-size);
+}
+
+.reader-record-plate-label {
+  font-size: var(--reader-record-label-size);
+  font-weight: 600;
+  line-height: var(--reader-record-label-leading);
+  letter-spacing: 0.01em;
+}
+
+.reader-record-plate-note-title {
+  font-size: var(--reader-record-note-title-size);
+  font-weight: 600;
+  line-height: 1.34;
+  text-wrap: pretty;
+}
+
+.reader-record-plate-markdown {
+  font-size: var(--reader-record-note-body-size);
+  line-height: var(--reader-record-note-body-leading);
+}
+
+.reader-record-plate-markdown-p {
+  margin-block: 0.22rem 0;
+  line-height: var(--reader-record-note-body-leading);
+}
+
+.reader-record-plate-markdown-heading {
+  margin-block: 0.65rem 0.25rem;
+  font-weight: 650;
+  line-height: 1.32;
+  text-wrap: balance;
+}
+
+.reader-record-plate-markdown-heading--h1,
+.reader-record-plate-markdown-heading--h2 {
+  font-size: var(--reader-record-note-title-size);
+}
+
+.reader-record-plate-markdown-heading--h3,
+.reader-record-plate-markdown-heading--h4,
+.reader-record-plate-markdown-heading--h5,
+.reader-record-plate-markdown-heading--h6 {
+  font-size: calc(var(--reader-record-note-body-size) * 1.02);
+}
+
+.reader-record-plate-markdown-blockquote {
+  margin-block: 0.42rem 0;
+  padding-left: 0.78rem;
+  line-height: var(--reader-record-note-body-leading);
+}
+
+.reader-record-plate-markdown-list {
+  margin-block: 0.38rem 0;
+  padding-left: 1.15rem;
+  line-height: var(--reader-record-note-body-leading);
+}
+
+.reader-record-plate-markdown-list
+  [data-reader-record-markdown-node="li"]
+  + [data-reader-record-markdown-node="li"] {
+  margin-top: 0.18rem;
+}
+
+.reader-record-plate-markdown-code-block {
+  margin-block: 0.45rem 0;
+  padding: 0.5rem 0.62rem;
+  font-size: calc(var(--reader-record-note-body-size) * 0.9);
+  line-height: 1.55;
+}
+
+.reader-record-plate-inline-code {
+  padding: 0.05em 0.3em;
+  font-size: var(--reader-record-inline-code-size);
+  line-height: 1;
+  vertical-align: baseline;
+}
+
+.reader-record-plate-sentence-analysis-chunks {
+  display: grid;
+  gap: 0.42rem;
+  margin-block: 0.58rem 0.1rem;
+}
+
+.reader-record-plate-sentence-analysis-chunk {
+  column-gap: 0.75rem;
+  padding: 0.42rem 0.55rem;
+  font-size: var(--reader-record-chunk-body-size);
+  line-height: 1.48;
+}
+
+.reader-record-plate-sentence-analysis-chunk-label {
+  font-size: var(--reader-record-chunk-label-size);
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.reader-record-plate-sentence-analysis-chunk-kind {
+  font-size: var(--reader-record-chunk-kind-size);
+  line-height: 1.35;
+}
+
+.reader-record-plate-sentence-analysis-chunk-body {
+  font-size: var(--reader-record-chunk-body-size);
+  line-height: 1.56;
+}
+
+@media (max-width: 640px) {
+  .reader-record-plate-sentence-analysis-chunk {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0.16rem;
+  }
+}
+
+.reader-record-mark-stack {
+  --reader-record-vocab-rule: transparent;
+  --reader-record-grammar-rule: transparent;
+  border-radius: 0.16em;
+  background-color: transparent;
+  background-image:
+    linear-gradient(
+      90deg,
+      var(--reader-record-vocab-rule),
+      var(--reader-record-vocab-rule)
+    ),
+    repeating-linear-gradient(
+      90deg,
+      var(--reader-record-grammar-rule) 0 0.16em,
+      transparent 0.16em 0.32em
+    );
+  background-repeat: no-repeat;
+  background-position:
+    left calc(100% - 0.06em),
+    left calc(100% - 0.24em);
+  background-size:
+    100% 0.07em,
+    100% 0.08em;
+  transition:
+    background-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.reader-record-mark-stack--vocab {
+  --reader-record-vocab-rule: rgba(217, 119, 6, 0.46);
+}
+
+.reader-record-mark-stack--phrase {
+  --reader-record-vocab-rule: rgba(124, 58, 237, 0.42);
+}
+
+.reader-record-mark-stack--context {
+  --reader-record-vocab-rule: rgba(2, 132, 199, 0.42);
+}
+
+.reader-record-mark-stack--grammar {
+  --reader-record-grammar-rule: rgba(5, 150, 105, 0.5);
+}
+
+.reader-record-mark-stack--user-highlight {
+  background-color: rgba(251, 191, 36, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(217, 119, 6, 0.18);
+}
+
+.reader-record-mark-stack--highlight-blue {
+  background-color: rgba(56, 189, 248, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(2, 132, 199, 0.2);
+}
+
+.reader-record-mark-stack--highlight-rose {
+  background-color: rgba(251, 113, 133, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(225, 29, 72, 0.18);
+}
+
+.reader-record-mark-stack--sentence-chunk {
+  box-shadow: inset 0 -0.12em 0 rgba(14, 165, 233, 0.18);
+}
+
+.reader-record-mark-stack--sentence-chunk-active,
+.reader-record-mark-stack--sentence-chunk:hover,
+.reader-record-mark-stack--sentence-chunk:focus-visible {
+  background-color: rgba(14, 165, 233, 0.12);
+  box-shadow:
+    inset 0 -0.14em 0 rgba(14, 165, 233, 0.34),
+    inset 0 0 0 1px rgba(14, 165, 233, 0.2);
+}
+
+.reader-record-mark-hit {
+  text-decoration: none;
+}
+
+.reader-record-plate-sentence-analysis [data-reader-record-sentence-analysis-chunk] {
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.reader-record-plate-sentence-analysis
+  [data-reader-record-sentence-analysis-chunk-active="true"] {
+  border-color: rgba(14, 165, 233, 0.36);
+  background-color: rgba(14, 165, 233, 0.07);
+  box-shadow: inset 2px 0 0 rgba(14, 165, 233, 0.42);
 }
 
 .reader-mark--vocab {

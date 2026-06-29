@@ -89,6 +89,7 @@ export interface ReaderRecordPlateParagraphData {
   anchorSegmentId: string;
   sentenceId: string;
   unitId: string;
+  isUnitStart?: boolean;
   baseId: string;
   baseRange: ReaderRecordPlateRange;
   unitRange: ReaderRecordPlateRange;
@@ -164,7 +165,17 @@ export interface ReaderRecordPlateSentenceAnalysisData {
   analysisId: string;
   label: string;
   analysis: string;
-  chunks: ReaderSentenceAnalysisChunkDto[];
+  chunks: ReaderRecordPlateSentenceAnalysisChunk[];
+}
+
+export interface ReaderRecordPlateSentenceAnalysisChunk
+  extends ReaderSentenceAnalysisChunkDto {
+  sourceMatch?: {
+    anchorSegmentId: string;
+    startOffset: number;
+    endOffset: number;
+    markId: string;
+  };
 }
 
 /**
@@ -213,6 +224,7 @@ export interface ReaderRecordPlateTextLeaf {
 export type ReaderRecordPlateMark =
   | ReaderRecordPlateVocabularyMark
   | ReaderRecordPlateGrammarMark
+  | ReaderRecordPlateSentenceChunkMark
   | ReaderRecordPlateUserHighlightMark
   | ReaderRecordPlateUserNoteMark;
 
@@ -236,7 +248,7 @@ export interface ReaderRecordPlateTextAnchor {
 interface ReaderRecordPlateMarkBase {
   id: string;
   layerId: string;
-  kind: VocabularyItemType | "grammar_note";
+  kind: VocabularyItemType | "grammar_note" | "sentence_analysis_chunk";
   owner: "system_ai";
   anchor: ReaderRecordPlateTextAnchor;
   startsHere: boolean;
@@ -280,6 +292,15 @@ export interface ReaderRecordPlateGrammarMark
   note: string;
 }
 
+export interface ReaderRecordPlateSentenceChunkMark
+  extends ReaderRecordPlateMarkBase {
+  kind: "sentence_analysis_chunk";
+  analysisId: string;
+  order: number;
+  label: string;
+  text: string;
+}
+
 export interface ReaderRecordPlateUserHighlightMark {
   id: string;
   kind: "user_highlight";
@@ -318,6 +339,7 @@ interface UnitProjectionContext {
     string,
     ReaderSentenceAnalysisNodeDto[]
   >;
+  sentenceChunkMarksBySegment: Map<string, ReaderRecordPlateSentenceChunkMark[]>;
   userHighlightMarksBySegment: Map<string, ReaderRecordPlateUserHighlightMark[]>;
   userNoteMarksBySegment: Map<string, ReaderRecordPlateUserNoteMark[]>;
   supplementsBySegment: Map<string, ReaderSnapshotAskSupplementDto[]>;
@@ -467,6 +489,119 @@ function buildSentenceAnalysisBySegment(
       result.set(child.anchor_segment_id, list);
     }
   }
+  return result;
+}
+
+function sourceTextForSegment(
+  segment: Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }>,
+): string {
+  return segment.children.map((leaf) => leaf.text).join("");
+}
+
+function findUniqueChunkMatch(
+  sourceText: string,
+  chunkText: string,
+): { startOffset: number; endOffset: number } | null {
+  const needle = chunkText.trim();
+  if (!needle) {
+    return null;
+  }
+  const first = sourceText.indexOf(needle);
+  if (first < 0) {
+    return null;
+  }
+  const second = sourceText.indexOf(needle, first + needle.length);
+  if (second >= 0) {
+    return null;
+  }
+  return {
+    startOffset: first,
+    endOffset: first + needle.length,
+  };
+}
+
+function chunkMarkId(analysisId: string, order: number, label: string): string {
+  const safeLabel = label.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "_");
+  return `sentence_chunk:${analysisId}:${order}:${safeLabel || "chunk"}`;
+}
+
+function mapSentenceChunkMark(
+  segment: Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }>,
+  analysis: ReaderSentenceAnalysisNodeDto,
+  chunk: ReaderSentenceAnalysisChunkDto,
+  sourceText: string,
+): ReaderRecordPlateSentenceChunkMark | null {
+  const match = findUniqueChunkMatch(sourceText, chunk.text);
+  if (!match) {
+    return null;
+  }
+  const selectedText = sourceText.slice(match.startOffset, match.endOffset);
+  const markId = chunkMarkId(analysis.analysis_id, chunk.order, chunk.label);
+  return {
+    id: markId,
+    layerId: analysis.layer_id,
+    kind: "sentence_analysis_chunk",
+    owner: "system_ai",
+    anchor: {
+      anchorType: "text_range",
+      baseId: segment.base_id,
+      unitId: segment.unit_id,
+      anchorSegmentId: segment.anchor_segment_id,
+      sentenceId: segment.sentence_id,
+      segmentType: segment.segment_type,
+      offsetUnit: "utf16",
+      unitStartOffset: segment.unit_start_utf16 + match.startOffset,
+      unitEndOffset: segment.unit_start_utf16 + match.endOffset,
+      segmentStartOffset: match.startOffset,
+      segmentEndOffset: match.endOffset,
+      selectedText,
+      textHash: computeUtf16FNV1a(selectedText),
+      hashAlgorithm: segment.hash_algorithm,
+    },
+    startsHere: true,
+    endsHere: true,
+    analysisId: analysis.analysis_id,
+    order: chunk.order,
+    label: chunk.label,
+    text: selectedText,
+  };
+}
+
+function buildSentenceChunkMarksBySegment(
+  value: ReaderPlateSnapshotDto["value"],
+): Map<string, ReaderRecordPlateSentenceChunkMark[]> {
+  const result = new Map<string, ReaderRecordPlateSentenceChunkMark[]>();
+
+  for (const unit of value) {
+    const sourceSegments = unit.children.flatMap((child) =>
+      isSourceBlockNode(child)
+        ? child.children.filter(isAnchorSegmentNode)
+        : [],
+    );
+    const analyses = unit.children.filter(isSentenceAnalysisNode);
+
+    for (const analysis of analyses) {
+      const segment = sourceSegments.find(
+        (candidate) =>
+          candidate.anchor_segment_id === analysis.anchor_segment_id,
+      );
+      if (!segment) {
+        continue;
+      }
+      const sourceText = sourceTextForSegment(segment);
+      const marks = analysis.chunks.flatMap((chunk) => {
+        const mark = mapSentenceChunkMark(segment, analysis, chunk, sourceText);
+        return mark ? [mark] : [];
+      });
+      if (marks.length === 0) {
+        continue;
+      }
+      const list = result.get(segment.anchor_segment_id) ?? [];
+      list.push(...marks);
+      result.set(segment.anchor_segment_id, list);
+    }
+  }
+
   return result;
 }
 
@@ -782,7 +917,15 @@ function mapTextLeaf(
     context.userHighlightMarksBySegment.get(segment.anchor_segment_id) ?? [];
   const userNoteMarks =
     context.userNoteMarksBySegment.get(segment.anchor_segment_id) ?? [];
-  const marks = [...vocabularyMarks, ...grammarMarks, ...userHighlightMarks, ...userNoteMarks];
+  const sentenceChunkMarks =
+    context.sentenceChunkMarksBySegment.get(segment.anchor_segment_id) ?? [];
+  const marks = [
+    ...vocabularyMarks,
+    ...grammarMarks,
+    ...sentenceChunkMarks,
+    ...userHighlightMarks,
+    ...userNoteMarks,
+  ];
 
   return splitTextLeafByMarks(leaf, marks);
 }
@@ -792,6 +935,7 @@ function mapTextLeaf(
 function buildParagraphBlock(
   segment: Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }>,
   context: UnitProjectionContext,
+  options: { isUnitStart?: boolean } = {},
 ): ReaderRecordPlateParagraphBlock {
   const children = segment.children.flatMap((leaf) =>
     mapTextLeaf(segment, leaf, context),
@@ -805,6 +949,7 @@ function buildParagraphBlock(
       anchorSegmentId: segment.anchor_segment_id,
       sentenceId: segment.sentence_id,
       unitId: segment.unit_id,
+      isUnitStart: options.isUnitStart || undefined,
       baseId: segment.base_id,
       baseRange: range(segment.base_start_utf16, segment.base_end_utf16),
       unitRange: range(segment.unit_start_utf16, segment.unit_end_utf16),
@@ -848,6 +993,7 @@ function buildGrammarCalloutBlocks(
   segment: Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }>,
 ): ReaderRecordPlateCalloutBlock[] {
   const callouts: ReaderRecordPlateCalloutBlock[] = [];
+  const seenGrammarItems = new Set<string>();
 
   for (const leaf of segment.children) {
     const grammarMarks = leaf.reader_grammar_note_marks ?? [];
@@ -855,9 +1001,14 @@ function buildGrammarCalloutBlocks(
       if (!mark.show_note_chip) {
         continue;
       }
+      const calloutId = `callout:grammar:${mark.item_id}`;
+      if (seenGrammarItems.has(calloutId)) {
+        continue;
+      }
+      seenGrammarItems.add(calloutId);
       callouts.push({
         type: "callout",
-        id: `callout:grammar:${mark.item_id}`,
+        id: calloutId,
         variant: "grammar",
         icon: "📖",
         children: deserializeMarkdownToBlocks(mark.note),
@@ -883,6 +1034,9 @@ function buildSentenceAnalysisBlocks(
 ): ReaderRecordPlateSentenceAnalysisBlock[] {
   const analyses =
     context.sentenceAnalysisBySegment.get(segment.anchor_segment_id) ?? [];
+  const chunkMarks = context.sentenceChunkMarksBySegment.get(
+    segment.anchor_segment_id,
+  ) ?? [];
 
   return analyses.map((node) => ({
     type: "sentence_analysis" as const,
@@ -896,7 +1050,26 @@ function buildSentenceAnalysisBlocks(
       analysisId: node.analysis_id,
       label: node.label,
       analysis: node.analysis,
-      chunks: node.chunks,
+      chunks: node.chunks.map((chunk) => {
+        const mark = chunkMarks.find(
+          (candidate) =>
+            candidate.analysisId === node.analysis_id &&
+            candidate.order === chunk.order &&
+            candidate.label === chunk.label,
+        );
+        if (!mark) {
+          return chunk;
+        }
+        return {
+          ...chunk,
+          sourceMatch: {
+            anchorSegmentId: mark.anchor.anchorSegmentId,
+            startOffset: mark.anchor.segmentStartOffset,
+            endOffset: mark.anchor.segmentEndOffset,
+            markId: mark.id,
+          },
+        };
+      }),
     },
   }));
 }
@@ -972,13 +1145,19 @@ function mapUnitToBlocks(
   context: UnitProjectionContext,
 ): ReaderRecordPlateBlock[] {
   const blocks: ReaderRecordPlateBlock[] = [];
+  let isFirstAnchorSegmentInUnit = true;
 
   for (const child of unit.children) {
     if (isSourceBlockNode(child)) {
       for (const sourceChild of child.children) {
         if (isAnchorSegmentNode(sourceChild)) {
           // 1. 原文段落 paragraph block
-          blocks.push(buildParagraphBlock(sourceChild, context));
+          blocks.push(
+            buildParagraphBlock(sourceChild, context, {
+              isUnitStart: isFirstAnchorSegmentInUnit,
+            }),
+          );
+          isFirstAnchorSegmentInUnit = false;
           // 2. grammar_note callout blocks (showCue=true)
           blocks.push(...buildGrammarCalloutBlocks(sourceChild));
           // 3. sentence_analysis blocks
@@ -1008,6 +1187,7 @@ export function projectReaderPlateSnapshotToReaderRecordPlateDocument(
   const context: UnitProjectionContext = {
     snapshot,
     sentenceAnalysisBySegment: buildSentenceAnalysisBySegment(snapshot.value),
+    sentenceChunkMarksBySegment: buildSentenceChunkMarksBySegment(snapshot.value),
     userHighlightMarksBySegment: userAssetsBySegment.highlights,
     userNoteMarksBySegment: userAssetsBySegment.noteMarks,
     supplementsBySegment: buildSupplementsBySegment(snapshot),
