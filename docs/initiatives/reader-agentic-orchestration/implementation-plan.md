@@ -478,7 +478,7 @@ D5 增强扩展（vocabulary / grammar bundle / worker loop / runtime guardrails
 - Reading Record anchor gate + single-range persistence（D6-U4：migration + runtime 写入，不启用 UI 写入口）
 - user_assets read projection（D6-U5）
 - Web cutover：`/app/read` 默认提交到新 Reading Record，`/app/reader-record/{recordId}` 默认 Plate surface，Library/command palette/activity indicator 新增新 Reading Record 发现入口（W3-D0~D9）
-- ReaderRecordPlateSurface 真实流程验收与 UI polish（UI-D4~D6C）
+- ReaderRecordPlateSurface 真实流程验收与 UI polish（UI-D4~D6C；Header / control strip 于 2026-06-30 冻结，只接受 bugfix）
 - failed_terminal 保守映射为 `failed` product state
 - Input / document model 产品决策：旧 Candidate Base 升级为 Candidate Document；旧 Stable Reading Base 语义拆为 Stable Reading Document、Stable Document Blocks 和 Canonical Text Layer；V1 输入范围、PDF/OCR quality gate、OCR provider adapter、RAG source scope 已确认。
 - 输入链路后端第一轮：Stable Document Blocks、Candidate freeze/confirm、unified input route、Source Artifact lifecycle、OSS presigned upload、artifact extraction/materialization jobs、artifact worker CLI、text/Markdown/PDF/OCR provider foundation 已接入。
@@ -490,7 +490,7 @@ D5 增强扩展（vocabulary / grammar bundle / worker loop / runtime guardrails
 3. **完善多图 / PDF Candidate Document UX 后端**：支持多图顺序、页码范围、OCR/text-layer 选择、quality warnings 和 confirm 后 block policy。
 4. **实现 block-scoped RAG**：在 Stable Document Blocks 已落地后，做 RAG substrate schema、chunker、citation validator、VectorStoreAdapter 和 indexing worker。不要先做只绑定线性文本的 RAG。
 5. **收敛新旧双轨**：逐个把 Library / Vocabulary source links / active task / command palette legacy records 切到新 Reading Record（前提：BFF 提供 `sourceReadingRecordId`）；评估删除 `ReaderRecordWorkbenchSurface` fallback 和 legacy `ReaderWorkbench` 的时点。
-6. **补齐 Plate surface 功能缺口**：action proposal / grounding、词典 AI、词汇保存、阅读模式切换、`projection_ops` 增量 applier。
+6. **补齐 Plate surface 功能缺口**：Header 线已冻结；下一步优先处理真实 snapshot 字段核对、正文 Plate block hierarchy、sentence-analysis source decorations、统一 mark visual resolver、移动端 action sheet、词典 AI、词汇保存和 `projection_ops` 增量 applier。
 7. **架构深化（可选）**：提取 `BaseEnhancementWorker` 消除 worker/publisher 三重复制；拆分 `repository.py`（1471 行）和 `reader_ask/service.py`（222KB 巨石）。
 8. **清理 TMP 文档**：`docs/tmp/reader-orchestration/` 下 TMP closeout 的结论已回写本计划，按 AGENTS.md 规则删除或归档。
 

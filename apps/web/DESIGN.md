@@ -318,14 +318,18 @@ Claread 不靠厚重阴影制造层级，而靠纸面分层、1px 规则、边�
 
 - **Role:** 精读模式顶部控制带中的第一主控件。
 - **Character:** 模式切换表达阅读意图，不表达“显示选项”。因此它必须视觉上压过阅读设置。
-- **Shape:** 靠近标题区的短 segmented capsule，当前项使用激活 pill。
+- **Shape:** 在 Reader Record 解析页中，模式切换已收敛为 hairline control strip 内的等高 action cell；当前项使用底部 amber underline，不再使用独立 pill segmented control。
 - **Language:** 中文主，英文辅。英文是注记，不是装饰。
 
 ### Reader Header / Control Strip
 
-- **Presence:** 中等偏弱。初始进入时可见，滚动后应逐步淡出存在感。
-- **Structure:** 标题、元信息、模式切换，然后才是阅读设置。设置必须次于模式。
-- **Constraint:** 它不能像生产力软件的一整排 toolbar。
+- **Status:** `/app/reader-record/{recordId}` Header 线已冻结。后续只接受可用性、响应式或数据状态 bugfix，不再重排骨架。
+- **Presence:** 中等偏弱。初始进入时可见，滚动后应逐步淡出存在感；它是文章 masthead，不是应用 toolbar。
+- **Structure:** 顶部 eyebrow（阅读模式 + 日期）、中文 masthead H1、单条 hairline action bar、底部低权重 metadata。Header 使用比正文更宽的 editorial column，正文仍保持阅读列宽。
+- **Title Source:** 成功态只使用 `snapshot.record.display_title_zh`。`pending` / `failed_retryable` 使用占位 masthead；旧 snapshot 只有在 `title_generation_status` 缺失时才允许用 `record.title` 做 migration fallback。
+- **Control Strip:** 左侧是解析状态 chip、source-only word count、reading goal/variant；右侧是收藏、精读、沉浸、阅读设置四个等高 cell。active 模式使用 amber underline。
+- **Metadata:** 底部只显示可读来源、日期、词数和原文入口；不暴露 raw `source_type`，不展示句数或估算阅读分钟。
+- **Constraint:** 它不能像生产力软件的一整排 toolbar，也不能把设置控件升级成主视觉。
 
 ### Translation Layer
 
