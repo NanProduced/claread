@@ -1,4 +1,7 @@
-import type { ReadingGoalDto, ReadingVariantDto } from "@/types/api/tasks";
+import type {
+  ReaderRecordReadingGoal,
+  ReaderRecordReadingVariant,
+} from "@/lib/reading-defaults";
 
 export type ReadPageSubmitMode = "reading-record";
 
@@ -6,8 +9,14 @@ export const READ_PAGE_SUBMIT_MODE: ReadPageSubmitMode = "reading-record";
 
 export interface ReadPageSubmitPayloadInput {
   text: string;
-  readingGoal: ReadingGoalDto;
-  readingVariant: ReadingVariantDto;
+  readingGoal: ReaderRecordReadingGoal;
+  readingVariant: ReaderRecordReadingVariant;
+}
+
+export interface ReadPageSubmitRequestBody {
+  plainText: string;
+  reading_goal: ReaderRecordReadingGoal;
+  reading_variant: ReaderRecordReadingVariant;
 }
 
 export function readPageSubmitEndpoint(
@@ -20,9 +29,11 @@ export function readPageSubmitEndpoint(
 export function readPageSubmitRequestBody(
   input: ReadPageSubmitPayloadInput,
   mode: ReadPageSubmitMode = READ_PAGE_SUBMIT_MODE,
-) {
+): ReadPageSubmitRequestBody {
   void mode;
-  void input.readingGoal;
-  void input.readingVariant;
-  return { plainText: input.text };
+  return {
+    plainText: input.text,
+    reading_goal: input.readingGoal,
+    reading_variant: input.readingVariant,
+  };
 }

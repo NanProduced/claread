@@ -90,7 +90,115 @@ describe("AnalyzeSubmitForm submit cutover", () => {
         readingGoal: "daily_reading",
         readingVariant: "intermediate_reading",
       }),
-    ).toEqual({ plainText: "This is a short English article." });
+    ).toEqual({
+      plainText: "This is a short English article.",
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
+    });
+  });
+
+  it("forwards reading_goal / reading_variant in the submit body", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/web/reading-record/submit");
+      expect(init).toEqual(
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            plainText: "This is a short English article.",
+            reading_goal: "exam",
+            reading_variant: "cet",
+          }),
+        }),
+      );
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          readingRecordId: "reading_record_strategy",
+          readerUrl: "/app/reader-record/reading_record_strategy",
+          snapshot: {
+            record: {
+              title: "Strategy submit fixture",
+            },
+          },
+          message: "阅读记录已创建，正在打开 Reader。",
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AnalyzeSubmitForm
+        readingGoal="exam"
+        readingVariant="cet"
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Paste an English article here"), {
+      target: { value: "This is a short English article." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
+
+    await waitFor(() => {
+      expect(navigationMock.push).toHaveBeenCalledWith(
+        "/app/reader-record/reading_record_strategy",
+      );
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("filters out academic in Reader Record submit and falls back to daily_reading", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      // academic / academic_general must never reach the submit body
+      expect(body.reading_goal).not.toBe("academic");
+      expect(body.reading_variant).not.toBe("academic_general");
+      expect(body.reading_goal).toBe("daily_reading");
+      expect(body.reading_variant).toBe("intermediate_reading");
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          readingRecordId: "reading_record_academic_filter",
+          readerUrl: "/app/reader-record/reading_record_academic_filter",
+          snapshot: {
+            record: {
+              title: "Academic filter fixture",
+            },
+          },
+          message: "阅读记录已创建，正在打开 Reader。",
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AnalyzeSubmitForm
+        readingGoal="academic"
+        readingVariant="academic_general"
+      />,
+    );
+
+    // The form must not render the academic goal option in the popover
+    fireEvent.change(screen.getByPlaceholderText("Paste an English article here"), {
+      target: { value: "This is a short English article." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
+
+    await waitFor(() => {
+      expect(navigationMock.push).toHaveBeenCalledWith(
+        "/app/reader-record/reading_record_academic_filter",
+      );
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("submits /app/read to the Reading Record endpoint and lands on reader-record", async () => {
@@ -99,7 +207,11 @@ describe("AnalyzeSubmitForm submit cutover", () => {
       expect(init).toEqual(
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ plainText: "This is a short English article." }),
+          body: JSON.stringify({
+            plainText: "This is a short English article.",
+            reading_goal: "daily_reading",
+            reading_variant: "intermediate_reading",
+          }),
         }),
       );
 

@@ -7,9 +7,19 @@ export async function POST(request: Request) {
     plainText?: unknown;
     title?: unknown;
     language?: unknown;
+    reading_goal?: unknown;
+    reading_variant?: unknown;
+    readingGoal?: unknown;
+    readingVariant?: unknown;
   };
 
-  const result = await submitReaderPlainTextFromWeb(body);
+  const result = await submitReaderPlainTextFromWeb({
+    plainText: body.plainText,
+    title: body.title,
+    language: body.language,
+    readingGoal: body.readingGoal ?? body.reading_goal,
+    readingVariant: body.readingVariant ?? body.reading_variant,
+  });
 
   return NextResponse.json(result, {
     status: result.ok ? 200 : result.status,

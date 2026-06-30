@@ -10,15 +10,16 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/primitives/tooltip";
 import { cn } from "@/lib/cn";
 import {
-  READING_GOAL_OPTIONS,
-  READING_VARIANT_OPTIONS,
-  DEFAULT_READING_VARIANT_BY_GOAL,
+  READER_RECORD_READING_GOAL_OPTIONS,
+  READER_RECORD_READING_VARIANT_OPTIONS,
+  READER_RECORD_DEFAULT_READING_VARIANT_BY_GOAL,
   type ReadingDefaultState,
-  normalizeReadingDefaults,
+  type ReaderRecordReadingGoal,
+  type ReaderRecordReadingVariant,
+  normalizeReaderRecordReadingDefaults,
 } from "@/lib/reading-defaults";
 import { appReadingRecordRoute } from "@/lib/routes";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
-import type { ReadingGoalDto, ReadingVariantDto } from "@/types/api/tasks";
 import {
   extractReadingRecordIdFromReaderUrl,
   readRecentReadingRecord,
@@ -551,9 +552,9 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
   const router = useRouter();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [text, setText] = useState("");
-  const defaults = normalizeReadingDefaults({ readingGoal: initialGoal, readingVariant: initialVariant });
-  const [readingGoal, setReadingGoal] = useState<ReadingGoalDto>(defaults.readingGoal);
-  const [readingVariant, setReadingVariant] = useState<ReadingVariantDto>(defaults.readingVariant);
+  const defaults = normalizeReaderRecordReadingDefaults({ readingGoal: initialGoal, readingVariant: initialVariant });
+  const [readingGoal, setReadingGoal] = useState<ReaderRecordReadingGoal>(defaults.readingGoal);
+  const [readingVariant, setReadingVariant] = useState<ReaderRecordReadingVariant>(defaults.readingVariant);
   const [state, setState] = useState<SubmitState>({ kind: "idle" });
   const [recentReadingRecord, setRecentReadingRecord] =
     useState<RecentReadingRecord | null>(null);
@@ -644,8 +645,8 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
     }
   }
 
-  const selectedGoalLabel = READING_GOAL_OPTIONS.find((option) => option.value === readingGoal)?.label;
-  const selectedVariantLabel = READING_VARIANT_OPTIONS[readingGoal].find(
+  const selectedGoalLabel = READER_RECORD_READING_GOAL_OPTIONS.find((option) => option.value === readingGoal)?.label;
+  const selectedVariantLabel = READER_RECORD_READING_VARIANT_OPTIONS[readingGoal].find(
     (option) => option.value === readingVariant,
   )?.label;
   const loadingStageTitle = "正在透读这篇文章";
@@ -803,16 +804,16 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
                       </div>
 
                       <div className="mt-1 flex gap-2">
-                        {READING_GOAL_OPTIONS.map((goal) => (
+                        {READER_RECORD_READING_GOAL_OPTIONS.map((goal) => (
                           <div key={goal.value} className="flex-1">
                             <GoalCard
                               goal={goal}
                               active={goal.value === readingGoal}
                               onSelect={() => {
                                 setReadingGoal(goal.value);
-                                const variants = READING_VARIANT_OPTIONS[goal.value];
+                                const variants = READER_RECORD_READING_VARIANT_OPTIONS[goal.value];
                                 if (!variants.find((v) => v.value === readingVariant)) {
-                                  setReadingVariant(DEFAULT_READING_VARIANT_BY_GOAL[goal.value] || variants[0].value);
+                                  setReadingVariant(READER_RECORD_DEFAULT_READING_VARIANT_BY_GOAL[goal.value] || variants[0].value);
                                 }
                               }}
                             />
@@ -826,7 +827,7 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
                           <div className="h-px flex-1 bg-hairline/60" />
                         </div>
                         <div className="grid grid-cols-3 gap-2">
-                          {READING_VARIANT_OPTIONS[readingGoal].map((variant) => (
+                          {READER_RECORD_READING_VARIANT_OPTIONS[readingGoal].map((variant) => (
                             <VariantPill
                               key={variant.value}
                               variant={variant}

@@ -327,6 +327,12 @@ function makeSnapshot(
     record_id: "record_1",
     record: {
       title: "Reader Record Plate Surface Fixture",
+      display_title_zh: null,
+      title_generation_status: "pending",
+      title_generation_error_code: null,
+      title_generation_error_message: null,
+      reading_goal: "daily_reading",
+      reading_variant: "intensive_reading",
       created_at: "2026-06-24T00:00:00Z",
       source_type: "plain_text",
       source_metadata: {},
@@ -1344,19 +1350,6 @@ describe("ReaderRecordPlateSurface", () => {
     expect(titleEl?.dataset.readerRecordTitleState).not.toBe("succeeded");
   });
 
-  it("falls back to snapshot.record.title when display_title_zh is missing and title_generation_status is unset (migration fallback)", () => {
-    // 旧 snapshot 没有 title_generation_status，且没有中文标题，但有 record.title：
-    // 作为迁移期防崩溃降级渲染 H1，避免页面空白；不计入"中文标题成功态"。
-    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
-
-    const titleEl = container.querySelector<HTMLElement>(
-      "[data-reader-record-reading-title]",
-    );
-    expect(titleEl).not.toBeNull();
-    expect(titleEl?.textContent).toBe("Reader Record Plate Surface Fixture");
-    expect(titleEl?.dataset.readerRecordTitleState).toBe("migration_fallback");
-  });
-
   it("renders pending title state and does not promote record.title to the Chinese masthead", () => {
     const snapshot = makeSnapshot();
     snapshot.record.display_title_zh = null;
@@ -1395,10 +1388,12 @@ describe("ReaderRecordPlateSurface", () => {
     );
   });
 
-  it("omits the title element when both display_title_zh and title are empty", () => {
+  it("omits the title element when succeeded status has no display_title_zh (fail-closed)", () => {
+    // 契约保证 succeeded 必有 display_title_zh；前端对违反契约的数据 fail-closed，
+    // 不渲染任何标题元素，而不是用源标题冒充成功中文标题。
     const snapshot = makeSnapshot();
-    snapshot.record.display_title_zh = "";
-    snapshot.record.title = "";
+    snapshot.record.display_title_zh = null;
+    snapshot.record.title_generation_status = "succeeded";
     const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
 
     const titleEl = container.querySelector<HTMLElement>(
@@ -1681,17 +1676,6 @@ describe("ReaderRecordPlateSurface", () => {
     );
     expect(labelEl).not.toBeNull();
     expect(labelEl?.textContent).toBe("备考精读 · 考研");
-  });
-
-  it("omits reading goal and variant label when fields are missing", () => {
-    const { container } = render(
-      <ReaderRecordPlateSurface snapshot={makeSnapshot()} />,
-    );
-
-    const labelEl = container.querySelector<HTMLElement>(
-      "[data-reader-record-reading-goal-variant]",
-    );
-    expect(labelEl).toBeNull();
   });
 
   it("omits reading goal and variant label when variant cannot be mapped", () => {

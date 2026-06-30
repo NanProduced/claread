@@ -8,6 +8,10 @@ import {
   submitUpstreamReaderPlainText,
 } from "@/services/api/reader-plate";
 import { appReadingRecordRoute } from "@/lib/routes";
+import {
+  normalizeReaderRecordReadingDefaults,
+  type ReaderRecordReadingDefaultState,
+} from "@/lib/reading-defaults";
 import { getWebSession } from "@/services/bff/session";
 import type {
   ReaderEventPollResponseDto,
@@ -100,10 +104,29 @@ async function requireSession(): Promise<
   return { ok: true, sessionToken: session.sessionToken };
 }
 
+/**
+ * Normalize raw (unknown) strategy fields from the request body into the
+ * Reader Record submit scope. `academic` / `academic_general` and any
+ * unrecognized value fall back to the default `daily_reading` /
+ * `intermediate_reading` pair so the upstream API never receives an
+ * unsupported strategy.
+ */
+function resolveReaderRecordStrategy(
+  readingGoal: unknown,
+  readingVariant: unknown,
+): ReaderRecordReadingDefaultState {
+  return normalizeReaderRecordReadingDefaults({
+    readingGoal: readingGoal as ReaderRecordReadingDefaultState["readingGoal"] | undefined,
+    readingVariant: readingVariant as ReaderRecordReadingDefaultState["readingVariant"] | undefined,
+  });
+}
+
 export async function submitReaderPlainTextFromWeb(input: {
   plainText?: unknown;
   title?: unknown;
   language?: unknown;
+  readingGoal?: unknown;
+  readingVariant?: unknown;
 }): Promise<ReaderPlateSubmitResult> {
   const plainText =
     typeof input.plainText === "string" ? input.plainText.trim() : "";
@@ -116,6 +139,11 @@ export async function submitReaderPlainTextFromWeb(input: {
       message: "请先粘贴需要透读的英文内容。",
     };
   }
+
+  const strategy = resolveReaderRecordStrategy(
+    input.readingGoal,
+    input.readingVariant,
+  );
 
   const sessionResult = await requireSession();
   if (!sessionResult.ok) {
@@ -131,6 +159,8 @@ export async function submitReaderPlainTextFromWeb(input: {
           ? input.language
           : null,
       client_record_id: `web-plate-${randomUUID()}`,
+      reading_goal: strategy.readingGoal,
+      reading_variant: strategy.readingVariant,
     },
     sessionResult.sessionToken,
   );
@@ -146,6 +176,8 @@ export async function submitReadingRecordPlainTextFromWeb(input: {
   plainText?: unknown;
   title?: unknown;
   language?: unknown;
+  readingGoal?: unknown;
+  readingVariant?: unknown;
 }): Promise<ReadingRecordSubmitResult> {
   const result = await submitReaderPlainTextFromWeb(input);
   if (!result.ok) {

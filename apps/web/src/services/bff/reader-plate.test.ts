@@ -45,6 +45,12 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
     record_id: "rec_1",
     record: {
       title: "Reader Plate BFF Fixture",
+      display_title_zh: null,
+      title_generation_status: "pending",
+      title_generation_error_code: null,
+      title_generation_error_message: null,
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
       created_at: "2026-06-21T00:00:00Z",
       source_type: "plain_text",
       source_metadata: {},
@@ -208,6 +214,54 @@ describe("reader-plate BFF submit", () => {
       plain_text: "Hello.",
       client_record_id: expect.stringMatching(/^web-plate-/),
     });
+  });
+
+  it("forwards reading_goal / reading_variant to the upstream payload", async () => {
+    vi.mocked(submitUpstreamReaderPlainText).mockResolvedValue({
+      ok: true,
+      data: {
+        record_id: "rec_strategy",
+        base_id: "base_1",
+        article_ready_sequence: 1,
+        snapshot: makeSnapshot(),
+      },
+    });
+
+    const result = await submitReaderPlainTextFromWeb({
+      plainText: "Hello.",
+      readingGoal: "exam",
+      readingVariant: "cet",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(vi.mocked(submitUpstreamReaderPlainText).mock.calls[0][0]).toMatchObject({
+      plain_text: "Hello.",
+      reading_goal: "exam",
+      reading_variant: "cet",
+    });
+  });
+
+  it("filters academic / academic_general to daily_reading / intermediate_reading", async () => {
+    vi.mocked(submitUpstreamReaderPlainText).mockResolvedValue({
+      ok: true,
+      data: {
+        record_id: "rec_academic_filter",
+        base_id: "base_1",
+        article_ready_sequence: 1,
+        snapshot: makeSnapshot(),
+      },
+    });
+
+    const result = await submitReaderPlainTextFromWeb({
+      plainText: "Hello.",
+      readingGoal: "academic",
+      readingVariant: "academic_general",
+    });
+
+    expect(result.ok).toBe(true);
+    const upstreamPayload = vi.mocked(submitUpstreamReaderPlainText).mock.calls[0][0];
+    expect(upstreamPayload.reading_goal).toBe("daily_reading");
+    expect(upstreamPayload.reading_variant).toBe("intermediate_reading");
   });
 
   it("returns a product submit contract with Reading Record id semantics", async () => {

@@ -102,6 +102,28 @@ export type ReaderPlateOwner =
   | "ephemeral";
 
 // ---------------------------------------------------------------------------
+// Reader Orchestration reading strategy contract
+//
+// Mirrors `ReaderOrchestrationReadingGoal` / `ReaderOrchestrationReadingVariant`
+// in services/api/app/schemas/reader_orchestration.py. `academic` /
+// `academic_general` from legacy AI Workflow are intentionally excluded; the
+// backend rejects them at the schema layer (422) rather than silently mapping
+// them to a daily/exam variant.
+// ---------------------------------------------------------------------------
+
+export type ReaderOrchestrationReadingGoalDto = "daily_reading" | "exam";
+
+export type ReaderOrchestrationReadingVariantDto =
+  | "beginner_reading"
+  | "intermediate_reading"
+  | "intensive_reading"
+  | "gaokao"
+  | "cet"
+  | "kaoyan"
+  | "tem"
+  | "ielts_toefl";
+
+// ---------------------------------------------------------------------------
 // Plain-text submit
 // ---------------------------------------------------------------------------
 
@@ -111,6 +133,8 @@ export interface ReaderPlainTextSubmitRequestDto {
   language?: string | null;
   source_metadata?: Record<string, unknown> | null;
   client_record_id?: string | null;
+  reading_goal: ReaderOrchestrationReadingGoalDto;
+  reading_variant: ReaderOrchestrationReadingVariantDto;
 }
 
 export interface ReaderPlainTextSubmitResponseDto {
@@ -141,12 +165,12 @@ export type ReaderTitleGenerationStatus =
 
 export interface ReaderSnapshotRecordDto {
   title: string;
-  display_title_zh?: string | null;
-  title_generation_status?: ReaderTitleGenerationStatus | null;
-  title_generation_error_code?: string | null;
-  title_generation_error_message?: string | null;
-  reading_goal?: string | null;
-  reading_variant?: string | null;
+  display_title_zh: string | null;
+  title_generation_status: ReaderTitleGenerationStatus;
+  title_generation_error_code: string | null;
+  title_generation_error_message: string | null;
+  reading_goal: ReaderOrchestrationReadingGoalDto;
+  reading_variant: ReaderOrchestrationReadingVariantDto;
   created_at: string;
   source_type: string;
   source_metadata: Record<string, unknown>;
