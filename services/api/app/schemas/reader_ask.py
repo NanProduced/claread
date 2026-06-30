@@ -902,6 +902,13 @@ class ReaderAskUserVisibleOutput(BaseModel):
     # chips at the tail of the assistant message. None when the tool
     # was not called.
     follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
+    # D6-I4Q: Article RAG structured citations sidecar.  Separate
+    # from tool-generated ``citations`` — these come from the RAG
+    # retrieval pipeline (I4A-I4O) and are never parsed from prompt
+    # text.  Empty list when RAG is unavailable / not attached /
+    # fail-soft.  This field NEVER enters the LLM prompt because it
+    # is not part of ``prompt_payload``.
+    article_rag_citations: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ReaderAskCompletedPayload(ReaderAskUserVisibleOutput):

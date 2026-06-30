@@ -288,6 +288,9 @@ def test_hydration_reads_all_contract_fields_from_user_visible_output() -> None:
             {"label": "Next", "prompt": "Tell me more"},
             {"label": "Save", "prompt": "Save as note"},
         ],
+        "article_rag_citations": [
+            {"citation_id": "rag-1", "kind": "article_rag_context", "label": "RAG source"},
+        ],
     }
 
     # Verify the test data covers all contract fields

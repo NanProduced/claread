@@ -72,6 +72,10 @@ USER_VISIBLE_OUTPUT_FIELDS: frozenset[str] = frozenset({
     "persisted_supplements",
     # Round 2: follow-up prompt suggestions (suggest_prompts tool)
     "follow_up_suggestions",
+    # D6-I4Q: Article RAG structured citations sidecar.  Separate
+    # from tool-generated ``citations``; comes from the RAG retrieval
+    # pipeline and never enters the LLM prompt.
+    "article_rag_citations",
 })
 
 # Fields that repository hydration projects from user_visible_output_json onto
@@ -142,6 +146,7 @@ def build_user_visible_output(
     reasoning_md: str | None = None,
     reasoning_status: str | None = None,
     follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | list[dict[str, Any]] | None = None,
+    article_rag_citations: list[dict[str, Any]] | None = None,
 ) -> ReaderAskUserVisibleOutput:
     normalized_run_info = (
         run_info
@@ -187,6 +192,7 @@ def build_user_visible_output(
         reasoning_md=reasoning_md,
         reasoning_status=reasoning_status,
         follow_up_suggestions=normalized_suggestions,
+        article_rag_citations=list(article_rag_citations) if article_rag_citations else [],
     )
 
 

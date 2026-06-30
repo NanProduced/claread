@@ -124,6 +124,16 @@ class ReaderAskRuntimeState:
     # Round 6 — observability: latency tracking.
     first_token_at: str | None = None  # ISO 8601, first text delta time
     run_started_at: str | None = None  # ISO 8601, run entry time
+    # D6-I4Q — Article RAG output-side sidecar.  These fields carry
+    # structured RAG citations / context_ids / metadata to the
+    # completed payload WITHOUT entering the LLM prompt.  They are
+    # NOT part of ``prompt_payload`` / ``deps.payload`` —
+    # ``build_reader_ask_prompt`` only serializes ``deps.payload``,
+    # so these fields never leak into the LLM prompt text.
+    # On the no-attach / fail-soft path all three fields stay empty.
+    article_rag_citations: list[dict[str, Any]] = field(default_factory=list)
+    article_rag_context_ids: list[str] = field(default_factory=list)
+    article_rag_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

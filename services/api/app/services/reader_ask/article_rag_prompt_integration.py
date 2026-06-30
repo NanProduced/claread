@@ -1,4 +1,4 @@
-"""D6-I4P: Article RAG Ask Prompt Runtime Integration.
+"""D6-I4P / D6-I4Q: Article RAG Ask Prompt Runtime Integration.
 
 Minimal integration layer that wires the Article RAG context
 pipeline (D6-I4A through I4O) into the existing Reader Ask
@@ -19,14 +19,22 @@ Contract
     to obtain an :class:`ArticleRagAskPromptAssembly`;
   * calls :meth:`ArticleRagAskPromptBridge.bridge` to combine
     the base prompt text with the RAG assembly;
-  * on ``should_attach=True``: writes ``bridge.prompt_text``
-    back to ``payload["user_message"]`` (the LLM sees the
-    user's question + the RAG envelope);
-  * on ``should_attach=False``: returns the original payload
-    unchanged — the Ask runtime answers without RAG;
+  * returns an :class:`ArticleRagPromptIntegrationResult`
+    carrying:
+      - ``payload``: the (possibly mutated) prompt payload dict.
+        On ``should_attach=True`` the ``user_message`` field is
+        replaced with ``bridge.prompt_text`` (base prompt + RAG
+        envelope).  On ``should_attach=False`` the payload is
+        returned unchanged.
+      - ``sidecar``: an :class:`ArticleRagSidecar` carrying
+        structured citations / context_ids / metadata OUT of
+        the prompt payload.  The sidecar NEVER enters
+        ``build_reader_ask_prompt`` — it flows through
+        ``ReaderAskRuntimeState`` to the completed payload.
   * never raises — every failure (missing provider, missing
     bridge, provider exception, bridge exception, unexpected
-    shape) maps to a fail-soft return of the original payload.
+    shape) maps to a fail-soft result with the original payload
+    and an empty sidecar.
 
 Truth boundary
 --------------
@@ -47,6 +55,7 @@ Article RAG pipeline and the Ask prompt runtime.  It:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -75,6 +84,98 @@ logger = logging.getLogger(__name__)
 FAILURE_CODE_INTEGRATION_UNEXPECTED_ERROR = (
     "article_rag_prompt_integration_unexpected_error"
 )
+
+
+# ---------------------------------------------------------------------------
+# Sidecar dataclass (D6-I4Q)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ArticleRagSidecar:
+    """Structured sidecar carrying Article RAG citations and
+    metadata OUT of the prompt payload.
+
+    This data NEVER enters ``build_reader_ask_prompt`` — it
+    flows through ``ReaderAskRuntimeState`` to the completed
+    payload.  The sidecar is the output-side contract for
+    Article RAG evidence.
+
+    All fields that may carry user-derived content use
+    ``field(repr=False)`` so the default repr / str does NOT
+    echo it.
+    """
+
+    # Whether the RAG context was attached to the prompt.
+    should_attach: bool
+    # Structured citations (verbatim from the bridge result).
+    citations: tuple[dict[str, Any], ...] = field(repr=False, default=())
+    # Stable context ids embedded in the prompt attachment.
+    context_ids: tuple[str, ...] = field(repr=False, default=())
+    # Source identity hash from the I4G composer.
+    source_pack_hash: str | None = field(repr=False, default=None)
+    # SHA-256 of the query text (never the raw query).
+    query_sha256: str | None = field(repr=False, default=None)
+    # Upstream status (guarded by the 5-value allowlist).
+    status: str = field(repr=False, default="not_indexed_or_unavailable")
+    # Upstream failure code.
+    failure_code: str | None = field(repr=False, default=None)
+    # Upstream retryable flag.
+    retryable: bool = True
+    # Upstream fallback-allowed flag.
+    fallback_allowed: bool = True
+    # Strict-allowlist metadata (same allowlist as I4L / I4M).
+    metadata_json: dict[str, Any] = field(
+        repr=False, default_factory=dict
+    )
+
+    @classmethod
+    def empty(cls) -> ArticleRagSidecar:
+        """Return an empty sidecar for the no-attach / fail-soft path."""
+        return cls(should_attach=False)
+
+    @classmethod
+    def from_bridge_result(
+        cls,
+        bridge_result: ArticleRagAskPromptBridgeResult,
+    ) -> ArticleRagSidecar:
+        """Build a sidecar from a bridge result.
+
+        On the no-attach path the bridge result has empty
+        citations / context_ids — the sidecar mirrors that.
+        """
+        return cls(
+            should_attach=bridge_result.should_attach,
+            citations=tuple(bridge_result.citations),
+            context_ids=tuple(bridge_result.context_ids),
+            source_pack_hash=bridge_result.source_pack_hash,
+            query_sha256=bridge_result.query_sha256,
+            status=bridge_result.status,
+            failure_code=bridge_result.failure_code,
+            retryable=bridge_result.retryable,
+            fallback_allowed=bridge_result.fallback_allowed,
+            metadata_json=dict(bridge_result.metadata_json),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ArticleRagPromptIntegrationResult:
+    """Result of :meth:`ArticleRagPromptIntegration.integrate`.
+
+    Carries the (possibly mutated) prompt payload AND the
+    structured sidecar.  The sidecar is SEPARATE from the
+    payload — it must NOT be merged into ``prompt_payload``
+    because ``build_reader_ask_prompt`` serializes the entire
+    payload for the LLM.
+    """
+
+    # The prompt payload dict.  On the attach path the
+    # ``user_message`` field has been replaced with the bridge's
+    # combined prompt text.
+    payload: dict[str, Any]
+    # The structured sidecar.  On the no-attach / fail-soft path
+    # this is an empty sidecar (``should_attach=False``).
+    sidecar: ArticleRagSidecar
 
 
 # ---------------------------------------------------------------------------
@@ -122,10 +223,12 @@ class ArticleRagPromptIntegration:
     Pure orchestrator.  No I/O beyond what the injected provider
     does.  The Ask service calls :meth:`integrate` between
     ``build_prompt_payload`` and ``prepare_prompt_payload`` and
-    gets back a possibly mutated payload dict.
+    gets back an :class:`ArticleRagPromptIntegrationResult`
+    carrying the (possibly mutated) payload dict AND a structured
+    sidecar.
 
-    Never raises.  Every failure maps to a fail-soft return of
-    the original payload unchanged.
+    Never raises.  Every failure maps to a fail-soft result with
+    the original payload unchanged and an empty sidecar.
     """
 
     def __init__(
@@ -148,16 +251,20 @@ class ArticleRagPromptIntegration:
         limit: int = DEFAULT_FACADE_LIMIT,
         max_context_chars: int = DEFAULT_FACADE_MAX_CONTEXT_CHARS,
         index_version: str = DEFAULT_FACADE_INDEX_VERSION,
-    ) -> dict[str, Any]:
+    ) -> ArticleRagPromptIntegrationResult:
         """Integrate Article RAG context into ``prompt_payload``.
 
-        Returns the (possibly mutated) payload dict.  On the
-        no-attach path the payload is returned unchanged.
+        Returns an :class:`ArticleRagPromptIntegrationResult`
+        carrying the (possibly mutated) payload and a structured
+        sidecar.  On the no-attach / fail-soft path the payload is
+        returned unchanged and the sidecar is empty.
 
         Never raises.  Every failure (missing provider / bridge,
         provider exception, bridge exception, unexpected shape)
-        maps to a fail-soft return of the original payload.
+        maps to a fail-soft result with the original payload.
         """
+        empty_sidecar = ArticleRagSidecar.empty()
+
         # 1. Validate injected dependencies.  A missing provider
         #    or bridge is a wiring error (production code
         #    injects both; tests inject fakes).  The integration
@@ -165,12 +272,18 @@ class ArticleRagPromptIntegration:
         #    returns the payload unchanged so the Ask runtime
         #    answers without RAG.
         if self._provider is None or self._bridge is None:
-            return prompt_payload
+            return ArticleRagPromptIntegrationResult(
+                payload=prompt_payload,
+                sidecar=empty_sidecar,
+            )
 
         # 2. Defensive shape check on the payload.  A regression
         #    could pass a non-dict.  Fail-soft.
         if not isinstance(prompt_payload, dict):
-            return prompt_payload
+            return ArticleRagPromptIntegrationResult(
+                payload=prompt_payload,
+                sidecar=empty_sidecar,
+            )
 
         # 3. Extract the base prompt text from the payload.  The
         #    ``user_message`` field is the user's question — the
@@ -201,7 +314,10 @@ class ArticleRagPromptIntegration:
                 "unchanged",
                 type(exc).__name__,
             )
-            return prompt_payload
+            return ArticleRagPromptIntegrationResult(
+                payload=prompt_payload,
+                sidecar=empty_sidecar,
+            )
 
         # 5. Call the bridge to combine the base prompt text with
         #    the RAG assembly.  The bridge never raises (every
@@ -219,7 +335,10 @@ class ArticleRagPromptIntegration:
                 "unchanged",
                 type(exc).__name__,
             )
-            return prompt_payload
+            return ArticleRagPromptIntegrationResult(
+                payload=prompt_payload,
+                sidecar=empty_sidecar,
+            )
 
         # 6. Shape check on the bridge result.  A regression
         #    could return a non-ArticleRagAskPromptBridgeResult.
@@ -231,14 +350,28 @@ class ArticleRagPromptIntegration:
                 "(type=%s); returning original payload unchanged",
                 type(bridge_result).__name__,
             )
-            return prompt_payload
+            return ArticleRagPromptIntegrationResult(
+                payload=prompt_payload,
+                sidecar=empty_sidecar,
+            )
 
-        # 7. No-attach path: return the payload unchanged.  The
-        #    Ask runtime answers without RAG.
+        # 7. Build the sidecar from the bridge result.  The
+        #    sidecar carries structured citations / context_ids /
+        #    metadata OUT of the prompt payload.  On the
+        #    no-attach path the bridge result has empty
+        #    citations — the sidecar mirrors that.
+        sidecar = ArticleRagSidecar.from_bridge_result(bridge_result)
+
+        # 8. No-attach path: return the payload unchanged.  The
+        #    Ask runtime answers without RAG.  The sidecar still
+        #    carries status / failure_code for ops visibility.
         if not bridge_result.should_attach:
-            return prompt_payload
+            return ArticleRagPromptIntegrationResult(
+                payload=prompt_payload,
+                sidecar=sidecar,
+            )
 
-        # 8. Attach path: write the combined prompt text back to
+        # 9. Attach path: write the combined prompt text back to
         #    ``payload["user_message"]``.  The ``prompt_text`` is
         #    ``base_prompt_text + "\n\n" + envelope`` — the LLM
         #    sees the user's question followed by the RAG context
@@ -251,7 +384,10 @@ class ArticleRagPromptIntegration:
         #    the LLM prompt and duplicate the RAG context.
         prompt_payload["user_message"] = bridge_result.prompt_text
 
-        return prompt_payload
+        return ArticleRagPromptIntegrationResult(
+            payload=prompt_payload,
+            sidecar=sidecar,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -414,5 +550,7 @@ def build_default_article_rag_prompt_integration(
 __all__ = [
     "FAILURE_CODE_INTEGRATION_UNEXPECTED_ERROR",
     "ArticleRagPromptIntegration",
+    "ArticleRagPromptIntegrationResult",
+    "ArticleRagSidecar",
     "build_default_article_rag_prompt_integration",
 ]

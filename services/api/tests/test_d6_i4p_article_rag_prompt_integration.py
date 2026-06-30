@@ -29,6 +29,8 @@ import pytest
 from app.agents.reader_ask_agent import build_reader_ask_prompt
 from app.services.reader_ask.article_rag_prompt_integration import (
     ArticleRagPromptIntegration,
+    ArticleRagPromptIntegrationResult,
+    ArticleRagSidecar,
     build_default_article_rag_prompt_integration,
 )
 from app.services.reader_orchestration.article_rag_ask_prompt_assembly import (
@@ -238,15 +240,21 @@ async def test_attach_path_augments_user_message_with_rag_envelope() -> None:
         query_text=_QUERY_TEXT,
     )
 
-    assert result is payload  # same dict, mutated in place
-    assert result["user_message"] != original_user_message
-    assert result["user_message"].startswith(original_user_message)
-    assert ATTACHMENT_BEGIN_MARKER in result["user_message"]
-    assert ATTACHMENT_END_MARKER in result["user_message"]
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
+    assert result.payload is payload  # same dict, mutated in place
+    assert result.payload["user_message"] != original_user_message
+    assert result.payload["user_message"].startswith(original_user_message)
+    assert ATTACHMENT_BEGIN_MARKER in result.payload["user_message"]
+    assert ATTACHMENT_END_MARKER in result.payload["user_message"]
     assert (
-        result["user_message"].index(ATTACHMENT_BEGIN_MARKER)
-        < result["user_message"].index(ATTACHMENT_END_MARKER)
+        result.payload["user_message"].index(ATTACHMENT_BEGIN_MARKER)
+        < result.payload["user_message"].index(ATTACHMENT_END_MARKER)
     )
+    # Sidecar: attach path carries citations / context_ids out of band.
+    assert result.sidecar.should_attach is True
+    assert len(result.sidecar.citations) > 0
+    assert result.sidecar.context_ids
 
 
 @pytest.mark.anyio
@@ -267,18 +275,24 @@ async def test_attach_path_does_not_write_article_rag_sidecar_into_payload() -> 
 
     payload = _make_base_payload()
 
-    await integration.integrate(
+    result = await integration.integrate(
         prompt_payload=payload,
         reading_record_id=_RECORD_ID,
         user_id=_USER_ID,
         query_text=_QUERY_TEXT,
     )
 
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
     assert "article_rag" not in payload["canonical_context"]
     assert str(citations[0]) not in repr(payload)
     assert "block-y" not in repr(payload)
     assert _SOURCE_PACK_HASH not in repr(payload)
     assert _QUERY_SHA256 not in repr(payload)
+    # Sidecar: attach path carries citations / context_ids out of band.
+    assert result.sidecar.should_attach is True
+    assert len(result.sidecar.citations) > 0
+    assert result.sidecar.context_ids
 
 
 @pytest.mark.anyio
@@ -306,13 +320,15 @@ async def test_attach_path_citation_json_not_inlined_in_prompt_text() -> None:
 
     payload = _make_base_payload()
 
-    await integration.integrate(
+    result = await integration.integrate(
         prompt_payload=payload,
         reading_record_id=_RECORD_ID,
         user_id=_USER_ID,
         query_text=_QUERY_TEXT,
     )
 
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
     # The citation secret MUST NOT appear in the prompt text
     # (user_message), nor in the final LLM prompt payload.
     assert citation_secret not in payload["user_message"]
@@ -323,6 +339,10 @@ async def test_attach_path_citation_json_not_inlined_in_prompt_text() -> None:
     assert "\"article_rag\"" not in final_prompt
     assert "\"citations\"" not in final_prompt
     assert "\"attachment_block\"" not in final_prompt
+    # Sidecar: attach path carries citations / context_ids out of band.
+    assert result.sidecar.should_attach is True
+    assert len(result.sidecar.citations) > 0
+    assert result.sidecar.context_ids
 
 
 @pytest.mark.anyio
@@ -338,17 +358,23 @@ async def test_attach_path_preserves_existing_canonical_context() -> None:
     existing_attachments = [{"kind": "record_ref", "label": "Existing"}]
     payload["canonical_context"]["attachments"] = existing_attachments
 
-    await integration.integrate(
+    result = await integration.integrate(
         prompt_payload=payload,
         reading_record_id=_RECORD_ID,
         user_id=_USER_ID,
         query_text=_QUERY_TEXT,
     )
 
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
     assert (
         payload["canonical_context"]["attachments"] == existing_attachments
     )
     assert "article_rag" not in payload["canonical_context"]
+    # Sidecar: attach path carries citations / context_ids out of band.
+    assert result.sidecar.should_attach is True
+    assert len(result.sidecar.citations) > 0
+    assert result.sidecar.context_ids
 
 
 # ---------------------------------------------------------------------------
@@ -377,8 +403,13 @@ async def test_no_attach_path_returns_payload_completely_unchanged() -> None:
         query_text=_QUERY_TEXT,
     )
 
-    assert result == original
-    assert "article_rag" not in result.get("canonical_context", {})
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
+    assert result.payload == original
+    assert "article_rag" not in result.payload.get("canonical_context", {})
+    # Sidecar: no-attach path leaves the sidecar empty.
+    assert result.sidecar.should_attach is False
+    assert result.sidecar.citations == ()
 
 
 @pytest.mark.anyio
@@ -401,7 +432,12 @@ async def test_empty_status_no_attach_returns_payload_unchanged() -> None:
         query_text=_QUERY_TEXT,
     )
 
-    assert result == original
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
+    assert result.payload == original
+    # Sidecar: no-attach path leaves the sidecar empty.
+    assert result.sidecar.should_attach is False
+    assert result.sidecar.citations == ()
 
 
 # ---------------------------------------------------------------------------
@@ -434,8 +470,13 @@ async def test_bridge_fail_soft_returns_payload_unchanged() -> None:
         query_text=_QUERY_TEXT,
     )
 
-    assert result == original
-    assert "article_rag" not in result.get("canonical_context", {})
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
+    assert result.payload == original
+    assert "article_rag" not in result.payload.get("canonical_context", {})
+    # Sidecar: bridge fail-soft leaves the sidecar empty.
+    assert result.sidecar.should_attach is False
+    assert result.sidecar.citations == ()
 
 
 # ---------------------------------------------------------------------------
@@ -463,8 +504,13 @@ async def test_provider_unexpected_exception_fail_soft() -> None:
         query_text=_QUERY_TEXT,
     )
 
-    assert result == original
-    assert "article_rag" not in result.get("canonical_context", {})
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
+    assert result.payload == original
+    assert "article_rag" not in result.payload.get("canonical_context", {})
+    # Sidecar: provider exception fail-soft leaves the sidecar empty.
+    assert result.sidecar.should_attach is False
+    assert result.sidecar.citations == ()
 
 
 # ---------------------------------------------------------------------------
@@ -490,7 +536,12 @@ async def test_missing_provider_fail_soft() -> None:
         query_text=_QUERY_TEXT,
     )
 
-    assert result == original
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
+    assert result.payload == original
+    # Sidecar: missing-provider fail-soft leaves the sidecar empty.
+    assert result.sidecar.should_attach is False
+    assert result.sidecar.citations == ()
 
 
 @pytest.mark.anyio
@@ -511,7 +562,12 @@ async def test_missing_bridge_fail_soft() -> None:
         query_text=_QUERY_TEXT,
     )
 
-    assert result == original
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
+    assert result.payload == original
+    # Sidecar: missing-bridge fail-soft leaves the sidecar empty.
+    assert result.sidecar.should_attach is False
+    assert result.sidecar.citations == ()
 
 
 # ---------------------------------------------------------------------------
@@ -530,7 +586,12 @@ async def test_non_dict_payload_fail_soft() -> None:
         user_id=_USER_ID,
         query_text=_QUERY_TEXT,
     )
-    assert result == "not-a-dict"
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
+    assert result.payload == "not-a-dict"
+    # Sidecar: non-dict fail-soft leaves the sidecar empty.
+    assert result.sidecar.should_attach is False
+    assert result.sidecar.citations == ()
 
 
 # ---------------------------------------------------------------------------
@@ -560,16 +621,22 @@ async def test_query_text_not_in_payload_after_attach() -> None:
 
     payload = _make_base_payload(user_message="regular question")
 
-    await integration.integrate(
+    result = await integration.integrate(
         prompt_payload=payload,
         reading_record_id=_RECORD_ID,
         user_id=_USER_ID,
         query_text=secret_query,
     )
 
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
     assert secret_query not in payload["user_message"]
     assert secret_query not in repr(payload)
     assert secret_query not in str(payload)
+    # Sidecar: attach path carries citations / context_ids out of band.
+    assert result.sidecar.should_attach is True
+    assert len(result.sidecar.citations) > 0
+    assert result.sidecar.context_ids
 
 
 @pytest.mark.anyio
@@ -585,18 +652,24 @@ async def test_query_text_passed_to_provider_but_not_leaked() -> None:
 
     payload = _make_base_payload()
 
-    await integration.integrate(
+    result = await integration.integrate(
         prompt_payload=payload,
         reading_record_id=_RECORD_ID,
         user_id=_USER_ID,
         query_text=secret_query,
     )
 
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
     # The provider was called with the query text.
     assert provider.calls[0]["query_text"] == secret_query
     # But the raw query text does NOT appear in the payload.
     assert secret_query not in repr(payload)
     assert secret_query not in str(payload)
+    # Sidecar: attach path carries citations / context_ids out of band.
+    assert result.sidecar.should_attach is True
+    assert len(result.sidecar.citations) > 0
+    assert result.sidecar.context_ids
 
 
 # ---------------------------------------------------------------------------
@@ -612,7 +685,7 @@ async def test_provider_receives_correct_kwargs() -> None:
 
     payload = _make_base_payload()
 
-    await integration.integrate(
+    result = await integration.integrate(
         prompt_payload=payload,
         reading_record_id=_RECORD_ID,
         user_id=_USER_ID,
@@ -623,6 +696,8 @@ async def test_provider_receives_correct_kwargs() -> None:
         index_version="article_rag_index_v1",
     )
 
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
     call = provider.calls[0]
     assert call["reading_record_id"] == _RECORD_ID
     assert call["user_id"] == _USER_ID
@@ -631,6 +706,10 @@ async def test_provider_receives_correct_kwargs() -> None:
     assert call["limit"] == 5
     assert call["max_context_chars"] == 2000
     assert call["index_version"] == "article_rag_index_v1"
+    # Sidecar: attach path carries citations / context_ids out of band.
+    assert result.sidecar.should_attach is True
+    assert len(result.sidecar.citations) > 0
+    assert result.sidecar.context_ids
 
 
 # ---------------------------------------------------------------------------
@@ -646,7 +725,7 @@ async def test_disabled_flag_propagated_to_provider() -> None:
 
     payload = _make_base_payload()
 
-    await integration.integrate(
+    result = await integration.integrate(
         prompt_payload=payload,
         reading_record_id=_RECORD_ID,
         user_id=_USER_ID,
@@ -654,7 +733,12 @@ async def test_disabled_flag_propagated_to_provider() -> None:
         enabled=False,
     )
 
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
     assert provider.calls[0]["enabled"] is False
+    # Sidecar: no-attach path leaves the sidecar empty.
+    assert result.sidecar.should_attach is False
+    assert result.sidecar.citations == ()
 
 
 # ---------------------------------------------------------------------------
@@ -776,7 +860,12 @@ async def test_integration_never_raises_on_malformed_assembly() -> None:
         query_text=_QUERY_TEXT,
     )
 
-    assert result == original
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
+    assert result.payload == original
+    # Sidecar: fail-soft path leaves the sidecar empty.
+    assert result.sidecar.should_attach is False
+    assert result.sidecar.citations == ()
 
 
 @pytest.mark.anyio
@@ -806,7 +895,12 @@ async def test_integration_never_raises_on_bridge_returning_non_result() -> None
         query_text=_QUERY_TEXT,
     )
 
-    assert result == original
+    assert isinstance(result, ArticleRagPromptIntegrationResult)
+    assert isinstance(result.sidecar, ArticleRagSidecar)
+    assert result.payload == original
+    # Sidecar: fail-soft path leaves the sidecar empty.
+    assert result.sidecar.should_attach is False
+    assert result.sidecar.citations == ()
 
 
 # ---------------------------------------------------------------------------

@@ -126,6 +126,7 @@ from app.services.reader_ask import supplements as supplements_svc
 from app.services.reader_ask.agent_deps_factory import build_reader_ask_agent_deps
 from app.services.reader_ask.article_rag_prompt_integration import (
     ArticleRagPromptIntegration,
+    ArticleRagSidecar,
     build_default_article_rag_prompt_integration,
 )
 from app.services.reader_ask.agent_invocation import (
@@ -184,6 +185,42 @@ def _get_article_rag_prompt_integration() -> ArticleRagPromptIntegration | None:
             _article_rag_prompt_integration_singleton = None
         _article_rag_prompt_integration_initialized = True
     return _article_rag_prompt_integration_singleton
+
+
+def _apply_article_rag_sidecar_to_runtime_state(
+    runtime_state: ReaderAskRuntimeState,
+    sidecar: ArticleRagSidecar,
+) -> None:
+    """Write the Article RAG sidecar to ``runtime_state``.
+
+    D6-I4R: extracted from the duplicated inline blocks in
+    ``stream_thread_message`` and ``retry_thread_message`` so the
+    two paths cannot drift.
+
+    Semantics:
+      * ``citations`` — shallow-copied via ``dict(c)`` so the
+        runtime_state does NOT alias the sidecar's frozen tuple.
+      * ``context_ids`` — copied via ``list(...)`` for the same
+        reason.
+      * ``article_rag_metadata`` — ``sidecar.metadata_json`` is
+        spread first, then the top-level authoritative fields
+        (``should_attach`` / ``source_pack_hash`` / ``query_sha256``
+        / ``status`` / ``failure_code`` / ``retryable`` /
+        ``fallback_allowed``) are written afterwards so they
+        override any same-named keys in ``metadata_json``.
+    """
+    runtime_state.article_rag_citations = [dict(c) for c in sidecar.citations]
+    runtime_state.article_rag_context_ids = list(sidecar.context_ids)
+    runtime_state.article_rag_metadata = {
+        **sidecar.metadata_json,
+        "should_attach": sidecar.should_attach,
+        "source_pack_hash": sidecar.source_pack_hash,
+        "query_sha256": sidecar.query_sha256,
+        "status": sidecar.status,
+        "failure_code": sidecar.failure_code,
+        "retryable": sidecar.retryable,
+        "fallback_allowed": sidecar.fallback_allowed,
+    }
 
 
 @dataclass(slots=True)
@@ -1580,6 +1617,7 @@ def _build_user_visible_output(
     reasoning_md: str | None = None,
     reasoning_status: str | None = None,
     follow_up_suggestions: list[Any] | None = None,
+    article_rag_citations: list[dict[str, Any]] | None = None,
 ) -> ReaderAskUserVisibleOutput:
     return output_contract_svc.build_user_visible_output(
         content_md=content_md,
@@ -1604,6 +1642,7 @@ def _build_user_visible_output(
         reasoning_md=reasoning_md,
         reasoning_status=reasoning_status,
         follow_up_suggestions=follow_up_suggestions,
+        article_rag_citations=article_rag_citations,
     )
 
 
@@ -1707,6 +1746,7 @@ def _build_stream_checkpoint_output_json(
         reasoning_md=reasoning_md,
         reasoning_status=reasoning_status,
         follow_up_suggestions=runtime_state.latest_suggestions or None,
+        article_rag_citations=runtime_state.article_rag_citations,
     )
     return output.model_dump(mode="json")
 
@@ -2160,6 +2200,18 @@ def _merge_repair_runtime_state(
     target.latest_resolved_references = repair.latest_resolved_references
     target.latest_generated_annotations = repair.latest_generated_annotations
     target.latest_suggestions = repair.latest_suggestions
+    # D6-I4Q: The repair payload bypassed the Article RAG
+    # integration hook (see ``_run_agent_loop_repair`` — it goes
+    # directly to ``prepare_prompt_payload`` without calling
+    # ``ArticleRagPromptIntegration.integrate``).  The repair LLM
+    # call therefore did NOT receive RAG context.  Any article_rag
+    # citations / context_ids / metadata from the original
+    # (degenerate) run are stale and must be cleared so the
+    # completed payload does not publish RAG citations for an
+    # answer that was not based on RAG evidence.
+    target.article_rag_citations = []
+    target.article_rag_context_ids = []
+    target.article_rag_metadata = {}
 
 
 _TRACE_SUMMARY_METRIC_KEYS = (
@@ -3296,20 +3348,31 @@ async def stream_thread_message(
                 max_message_text=cfg.MAX_MESSAGE_TEXT,
             )
         )
-        # D6-I4P: Article RAG prompt runtime integration.
+        # D6-I4P / D6-I4Q: Article RAG prompt runtime integration.
         # Inserted between ``build_prompt_payload`` and
         # ``prepare_prompt_payload``.  Fail-soft: if the
         # integration is unavailable (config missing) or raises,
         # the payload is returned unchanged and the Ask runtime
-        # answers without RAG.
+        # answers without RAG.  The structured sidecar (citations
+        # / context_ids / metadata) is written to
+        # ``runtime_state`` — it NEVER enters ``prompt_payload``
+        # because ``build_reader_ask_prompt`` serializes the
+        # entire payload for the LLM.
         _article_rag_integration = _get_article_rag_prompt_integration()
         if _article_rag_integration is not None:
             try:
-                prompt_payload = await _article_rag_integration.integrate(
+                _rag_result = await _article_rag_integration.integrate(
                     prompt_payload=prompt_payload,
                     reading_record_id=record.record_id,
                     user_id=user_id,
                     query_text=body.content,
+                )
+                prompt_payload = _rag_result.payload
+                # D6-I4Q / D6-I4R: write the structured sidecar to
+                # runtime_state via the shared helper so stream and
+                # retry paths cannot drift.
+                _apply_article_rag_sidecar_to_runtime_state(
+                    runtime_state, _rag_result.sidecar
                 )
             except Exception:  # noqa: BLE001 — defensive catch-all
                 logger.info(
@@ -3687,6 +3750,7 @@ async def stream_thread_message(
             reasoning_md=stream_runtime.emitted_reasoning or None,
             reasoning_status=stream_checkpoint_svc.terminal_reasoning_status(stream_runtime.reasoning_started),
             follow_up_suggestions=runtime_state.latest_suggestions or None,
+            article_rag_citations=runtime_state.article_rag_citations,
         )
         final_message_status = "interrupted" if stream_outcome.interrupted else "completed"
         updated = await repo.update_message(
@@ -4236,20 +4300,31 @@ async def retry_thread_message(
                 max_message_text=cfg.MAX_MESSAGE_TEXT,
             )
         )
-        # D6-I4P: Article RAG prompt runtime integration.
+        # D6-I4P / D6-I4Q: Article RAG prompt runtime integration.
         # Inserted between ``build_prompt_payload`` and
         # ``prepare_prompt_payload``.  Fail-soft: if the
         # integration is unavailable (config missing) or raises,
         # the payload is returned unchanged and the Ask runtime
-        # answers without RAG.
+        # answers without RAG.  The structured sidecar (citations
+        # / context_ids / metadata) is written to
+        # ``runtime_state`` — it NEVER enters ``prompt_payload``
+        # because ``build_reader_ask_prompt`` serializes the
+        # entire payload for the LLM.
         _article_rag_integration = _get_article_rag_prompt_integration()
         if _article_rag_integration is not None:
             try:
-                prompt_payload = await _article_rag_integration.integrate(
+                _rag_result = await _article_rag_integration.integrate(
                     prompt_payload=prompt_payload,
                     reading_record_id=record.record_id,
                     user_id=user_id,
                     query_text=body.content,
+                )
+                prompt_payload = _rag_result.payload
+                # D6-I4Q / D6-I4R: write the structured sidecar to
+                # runtime_state via the shared helper so stream and
+                # retry paths cannot drift.
+                _apply_article_rag_sidecar_to_runtime_state(
+                    runtime_state, _rag_result.sidecar
                 )
             except Exception:  # noqa: BLE001 — defensive catch-all
                 logger.info(
@@ -4629,6 +4704,7 @@ async def retry_thread_message(
             reasoning_md=stream_runtime.emitted_reasoning or None,
             reasoning_status=stream_checkpoint_svc.terminal_reasoning_status(stream_runtime.reasoning_started),
             follow_up_suggestions=runtime_state.latest_suggestions or None,
+            article_rag_citations=runtime_state.article_rag_citations,
         )
         final_message_status = "interrupted" if stream_outcome.interrupted else "completed"
         await repo.update_message(
