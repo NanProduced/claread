@@ -1261,7 +1261,7 @@ Rules:
 - DB-hydrated `ReadingBaseBuildResult` must pass `validate_reading_base_build_result` or an equivalent public builder invariant validator before snapshot serialization.
 - Top-level `enhancement_layers` and `value` must be produced by the same projection builder. Focused tests must verify a published translation layer appears both in `enhancement_layers` and in matching Plate nodes by `layer_id`.
 - Snapshot reload remains the source of truth for `record`, `base`, `navigation`, `anchor_segments`, published layers, ask supplements, user assets and parsed decisions. Future `projection_ops` must not become an alternate truth source for these facts.
-- D4 minimal translation projection only covers published `translation` layers whose output validates as `TranslationLayerOutput` and whose target scope is `unit` or `anchor_segment`.
+- Translation projection covers published `translation` layers whose output validates as group-native `TranslationLayerOutput`. Snapshot emits `reader_translation_group` nodes from `groups[]`; invalid layers/groups are defensively skipped on the read path without crashing snapshot reload.
 - D5-V2 vocabulary projection only covers published `vocabulary` layers whose output validates as `VocabularyLayerOutput`, whose layer target scope is `unit`, and whose item anchors belong to the current base/unit/anchor segment.
 - Non-translation `unit_range` / `record` membership checks are reserved for D5 Layer Publisher and must not be silently accepted into a D4 snapshot if they cannot be grounded to the current base.
 - D4 snapshot does not expose `projection_version`. D5 may add non-cursor projection metadata if projection cache or op applier needs it.
@@ -1276,7 +1276,7 @@ D4 source nodes:
 | `reader_source_block` | source container inside unit | `owner=stable`, `base_id`, `unit_id`, base offsets |
 | `reader_anchor_segment` | inline sentence-like anchor | `owner=stable`, `base_id`, `unit_id`, `anchor_segment_id`, optional `sentence_id`, `segment_type`, base offsets, text hash |
 | stable source leaf | text leaf | `owner=stable`, `lock_source=true`, `source_role=segment_text|separator`, base offsets, optional segment-local offsets |
-| `reader_translation` | D4 translation block | `owner=system_ai`, `layer_id`, `layer_version`, `unit_id` or `anchor_segment_id`, typed text payload |
+| `reader_translation_group` | group-native translation block | `owner=system_ai`, `layer_id`, `layer_version`, `unit_id`, `group_id`, `covered_anchor_segment_ids`, `source_text_hash`, translated text in `children[0].text` |
 
 Source validation:
 

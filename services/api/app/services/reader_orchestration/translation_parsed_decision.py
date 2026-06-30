@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
@@ -12,21 +13,17 @@ TRANSLATION_PARSED_TRIGGER = "translation_layer_published"
 def build_translation_parsed_decision_documents(
     *,
     layer_id: UUID,
-    unit_id: str,
-    generation: int,
-    source_language: str,
-    target_language: str,
+    coverage_summary: Mapping[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     coverage_json: dict[str, Any] = {
         "translation_layer_id": str(layer_id),
-        "target_language": target_language,
-        "source_language": source_language,
+        **dict(coverage_summary),
     }
     decision_json: dict[str, Any] = {
         "policy_version": TRANSLATION_PARSED_POLICY_VERSION,
         "trigger": TRANSLATION_PARSED_TRIGGER,
-        "generation": generation,
-        "unit_id": unit_id,
+        "translation_layer_id": str(layer_id),
+        **dict(coverage_summary),
     }
     return coverage_json, decision_json
 

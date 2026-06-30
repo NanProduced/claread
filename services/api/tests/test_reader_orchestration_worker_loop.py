@@ -15,7 +15,8 @@ from app.schemas.reader_orchestration import (
     ReaderTextRangeAnchor,
     SentenceAnalysisChunk,
     SentenceAnalysisItem,
-    TranslationLayerOutput,
+    TranslationGenerationGroup,
+    TranslationLayerGenerationOutput,
     VocabularyHighlightItem,
     VocabularyLayerOutput,
 )
@@ -66,6 +67,7 @@ from app.services.reader_orchestration.worker_loop import (
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
+    CompatTranslationLayerPublisher,
     connect_admin,
     insert_user,
     make_pool,
@@ -147,11 +149,16 @@ class _StaticTranslator:
         context: TranslationJobContext,
     ) -> TranslationExecutionResult:
         return TranslationExecutionResult(
-            output=TranslationLayerOutput(
-                target_language="zh-CN",
-                translated_text=f"译文：{context.source_text}",
-                notes=[],
-                confidence="normal",
+            output=TranslationLayerGenerationOutput(
+                groups=[
+                    TranslationGenerationGroup(
+                        anchor_segment_ids=[
+                            anchor_segment.anchor_segment_id
+                            for anchor_segment in context.anchor_segments
+                        ],
+                        translated_text=f"译文：{context.source_text}",
+                    )
+                ]
             ),
             usage_data={"input_tokens": 1, "output_tokens": 1},
             prompt_version="worker-loop-translation",
@@ -326,7 +333,11 @@ def _make_runner(
     if translator is not None:
         translation_orchestrator = ReaderOrchestrator(
             pool=pool,
-            worker_service=TranslationWorkerService(pool=pool, translator=translator),
+            worker_service=TranslationWorkerService(
+                pool=pool,
+                layer_publisher=CompatTranslationLayerPublisher(pool=pool),
+                translator=translator,
+            ),
         )
     vocabulary_worker = None
     if vocabulary_executor is not None:

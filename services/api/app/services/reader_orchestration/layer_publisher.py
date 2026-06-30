@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import asyncpg
+from pydantic import ValidationError
 
 from app.contracts.annotation import compute_text_range_hash, slice_by_utf16_offsets
 from app.database import connection as db_connection
@@ -23,6 +24,7 @@ from .job_bootstrap import (
     GRAMMAR_JOB_TYPE,
     GRAMMAR_OPERATION_FINGERPRINT,
     GRAMMAR_TARGET_SCOPE,
+    TRANSLATION_OPERATION_FINGERPRINT,
     VOCABULARY_JOB_TYPE,
     VOCABULARY_OPERATION_FINGERPRINT,
     VOCABULARY_TARGET_SCOPE,
@@ -43,6 +45,7 @@ from .translation_parsed_decision import (
 
 GRAMMAR_NOTE_LAYER_OPERATION_FINGERPRINT = "grammar_note_unit_v1"
 SENTENCE_ANALYSIS_LAYER_OPERATION_FINGERPRINT = "sentence_analysis_unit_v1"
+TRANSLATION_LAYER_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,8 +93,33 @@ class PublishedGrammarBundle:
 
 @dataclass(frozen=True, slots=True)
 class _UnitAnchorValidationContext:
+    unit_id: str
     unit_text: str
+    unit_text_hash: str
+    ordered_segments: tuple[asyncpg.Record, ...]
     segments_by_id: dict[str, asyncpg.Record]
+
+
+@dataclass(frozen=True, slots=True)
+class _ValidatedTranslationGroup:
+    group_id: str
+    anchor_segment_ids: tuple[str, ...]
+    source_text_hash: str
+    translated_text_length: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ValidatedTranslationOutput:
+    output: TranslationLayerOutput
+    covered_anchor_segment_ids: tuple[str, ...]
+    missing_anchor_segment_ids: tuple[str, ...]
+    groups: tuple[_ValidatedTranslationGroup, ...]
+
+
+class TranslationPublishValidationError(ValueError):
+    def __init__(self, failure_code: str, message: str) -> None:
+        super().__init__(message)
+        self.failure_code = failure_code
 
 
 class TranslationLayerPublisher:
@@ -122,7 +150,6 @@ class TranslationLayerPublisher:
         output: TranslationLayerOutput,
         quality_json: dict[str, Any] | None = None,
     ) -> PublishedTranslationLayer:
-        payload = output.model_dump(mode="json")
         published_at = datetime.now(UTC)
 
         async with self.get_pool().acquire() as conn:
@@ -154,49 +181,44 @@ class TranslationLayerPublisher:
                 generation = int(job_row["expected_generation"])
                 unit_id = str(job_row["target_key"])
 
-                unit_row = await conn.fetchrow(
-                    """
-                    SELECT unit.unit_id,
-                           base.language AS source_language
-                    FROM reading_units unit
-                    JOIN reading_bases base
-                      ON base.id = unit.base_id
-                     AND base.reading_record_id = unit.reading_record_id
-                    WHERE unit.reading_record_id = $1
-                      AND unit.base_id = $2
-                      AND unit.unit_id = $3
-                    """,
-                    reading_record_id,
-                    base_id,
-                    unit_id,
+                validation = await _validate_translation_output_for_publish(
+                    conn,
+                    reading_record_id=reading_record_id,
+                    base_id=base_id,
+                    unit_id=unit_id,
+                    operation_fingerprint=str(job_row["operation_fingerprint"] or ""),
+                    output=output,
                 )
-                if unit_row is None:
-                    raise ValueError(f"translation publish target unit {unit_id} does not exist")
+                await _assert_no_published_layer(
+                    conn,
+                    reading_record_id=reading_record_id,
+                    base_id=base_id,
+                    unit_id=unit_id,
+                    generation=generation,
+                    layer_type="translation",
+                )
 
-                existing_layer = await conn.fetchrow(
-                    """
-                    SELECT id
-                    FROM enhancement_layers
-                    WHERE reading_record_id = $1
-                      AND base_id = $2
-                      AND layer_type = 'translation'
-                      AND target_scope = 'unit'
-                      AND target_key = $3
-                      AND generation = $4
-                      AND status = 'published'
-                    LIMIT 1
-                    """,
-                    reading_record_id,
-                    base_id,
-                    unit_id,
-                    generation,
+                payload = validation.output.model_dump(mode="json")
+                coverage_summary = _build_translation_coverage_summary(
+                    unit_id=unit_id,
+                    generation=generation,
+                    validation=validation,
                 )
-                if existing_layer is not None:
-                    raise ValueError(f"translation layer already published for unit {unit_id}")
+                layer_id = uuid4()
+                coverage_json, decision_json = build_translation_parsed_decision_documents(
+                    layer_id=layer_id,
+                    coverage_summary=coverage_summary,
+                )
+                effective_quality_json = dict(quality_json or {})
+                effective_quality_json["group_count"] = len(validation.groups)
+                effective_quality_json["covered_anchor_segment_count"] = len(
+                    validation.covered_anchor_segment_ids
+                )
 
                 layer_row = await conn.fetchrow(
                     """
                     INSERT INTO enhancement_layers (
+                        id,
                         reading_record_id,
                         base_id,
                         layer_type,
@@ -217,31 +239,34 @@ class TranslationLayerPublisher:
                     VALUES (
                         $1,
                         $2,
+                        $3,
                         'translation',
                         NULL,
                         'unit',
-                        $3,
                         $4,
-                        'published',
                         $5,
+                        'published',
                         $6,
-                        $7::jsonb,
-                        '{}'::jsonb,
+                        $7,
                         $8::jsonb,
-                        $9,
-                        $10,
-                        $11
+                        $9::jsonb,
+                        $10::jsonb,
+                        $11,
+                        $12,
+                        $13
                     )
                     RETURNING id
                     """,
+                    layer_id,
                     reading_record_id,
                     base_id,
                     unit_id,
                     generation,
                     job_row["operation_fingerprint"],
-                    int(output.schema_version),
+                    TRANSLATION_LAYER_SCHEMA_VERSION,
                     jsonb_param(payload),
-                    jsonb_param(dict(quality_json or {})),
+                    jsonb_param(coverage_json),
+                    jsonb_param(effective_quality_json),
                     job_row["run_id"],
                     job_id,
                     published_at,
@@ -266,14 +291,6 @@ class TranslationLayerPublisher:
                     source_job_id=job_id,
                     source_layer_id=layer_row["id"],
                     created_at=published_at,
-                )
-                source_language = str(unit_row["source_language"] or "en")
-                coverage_json, decision_json = build_translation_parsed_decision_documents(
-                    layer_id=layer_row["id"],
-                    unit_id=unit_id,
-                    generation=generation,
-                    source_language=source_language,
-                    target_language=output.target_language,
                 )
                 await self._repository.upsert_parsed_decision(
                     conn,
@@ -861,6 +878,207 @@ async def _assert_no_published_layer(
         raise ValueError(f"{layer_type} layer already published for unit {unit_id}")
 
 
+def _build_translation_coverage_summary(
+    *,
+    unit_id: str,
+    generation: int,
+    validation: _ValidatedTranslationOutput,
+) -> dict[str, Any]:
+    return {
+        "coverage_status": "complete",
+        "unit_id": unit_id,
+        "generation": generation,
+        "group_count": len(validation.groups),
+        "covered_anchor_segment_ids": list(validation.covered_anchor_segment_ids),
+        "missing_anchor_segment_ids": list(validation.missing_anchor_segment_ids),
+        "groups": [
+            {
+                "group_id": group.group_id,
+                "anchor_segment_ids": list(group.anchor_segment_ids),
+                "source_text_hash": group.source_text_hash,
+                "translated_text_length": group.translated_text_length,
+            }
+            for group in validation.groups
+        ],
+    }
+
+
+async def _validate_translation_output_for_publish(
+    conn: asyncpg.Connection,
+    *,
+    reading_record_id: UUID,
+    base_id: UUID,
+    unit_id: str,
+    operation_fingerprint: str,
+    output: Any,
+) -> _ValidatedTranslationOutput:
+    if not _fingerprint_matches_base(
+        operation_fingerprint,
+        TRANSLATION_OPERATION_FINGERPRINT,
+    ):
+        raise TranslationPublishValidationError(
+            "translation_fingerprint_mismatch",
+            (
+                f"translation publish fingerprint {operation_fingerprint!r} "
+                f"does not match {TRANSLATION_OPERATION_FINGERPRINT!r}"
+            ),
+        )
+
+    try:
+        parsed_output = TranslationLayerOutput.model_validate(output)
+    except ValidationError as exc:
+        raise TranslationPublishValidationError(
+            "translation_invalid_output_schema",
+            "translation output must match current group-native TranslationLayerOutput",
+        ) from exc
+
+    context = await _load_unit_anchor_validation_context(
+        conn,
+        reading_record_id=reading_record_id,
+        base_id=base_id,
+        unit_id=unit_id,
+    )
+
+    covered_anchor_segment_ids: list[str] = []
+    covered_anchor_segment_id_set: set[str] = set()
+    seen_group_ids: set[str] = set()
+    validated_groups: list[_ValidatedTranslationGroup] = []
+    last_group_end_order = 0
+
+    for group in parsed_output.groups:
+        if not group.group_id.strip():
+            raise TranslationPublishValidationError(
+                "translation_invalid_group_id",
+                "translation group_id must be non-empty",
+            )
+        if group.group_id in seen_group_ids:
+            raise TranslationPublishValidationError(
+                "translation_duplicate_group_id",
+                f"translation group_id {group.group_id!r} is duplicated",
+            )
+        seen_group_ids.add(group.group_id)
+
+        if not group.translated_text.strip():
+            raise TranslationPublishValidationError(
+                "translation_empty_translated_text",
+                f"translation group {group.group_id!r} translated_text must not be blank",
+            )
+
+        segment_rows: list[asyncpg.Record] = []
+        for anchor_segment_id in group.anchor_segment_ids:
+            segment_row = context.segments_by_id.get(anchor_segment_id)
+            if segment_row is None:
+                raise TranslationPublishValidationError(
+                    "translation_unknown_anchor_segment",
+                    (
+                        f"translation group {group.group_id!r} references unknown "
+                        f"anchor_segment_id {anchor_segment_id!r}"
+                    ),
+                )
+            segment_rows.append(segment_row)
+
+        order_indexes = [int(row["order_index"]) for row in segment_rows]
+        if order_indexes != sorted(order_indexes) or any(
+            current != previous + 1
+            for previous, current in zip(order_indexes, order_indexes[1:], strict=False)
+        ):
+            raise TranslationPublishValidationError(
+                "translation_group_non_contiguous",
+                (
+                    f"translation group {group.group_id!r} anchor segments must be "
+                    "ordered and contiguous"
+                ),
+            )
+
+        first_row = segment_rows[0]
+        last_row = segment_rows[-1]
+        first_order = int(first_row["order_index"])
+        last_order = int(last_row["order_index"])
+        if first_order <= last_group_end_order:
+            raise TranslationPublishValidationError(
+                "translation_group_overlap",
+                (
+                    f"translation group {group.group_id!r} overlaps or reorders "
+                    "previous translation coverage"
+                ),
+            )
+
+        span_start = int(first_row["unit_start_utf16"])
+        span_end = int(last_row["unit_end_utf16"])
+        if span_start > span_end:
+            raise TranslationPublishValidationError(
+                "translation_group_span_inverted",
+                (
+                    f"translation group {group.group_id!r} has inverted span "
+                    f"{span_start}:{span_end}"
+                ),
+            )
+
+        span_text = slice_by_utf16_offsets(context.unit_text, span_start, span_end)
+        if span_text is None or not span_text:
+            raise TranslationPublishValidationError(
+                "translation_group_slice_failed",
+                (
+                    f"translation group {group.group_id!r} span "
+                    f"{span_start}:{span_end} could not be sliced from unit {unit_id!r}"
+                ),
+            )
+        if compute_text_range_hash(span_text) != group.source_text_hash:
+            raise TranslationPublishValidationError(
+                "translation_group_hash_mismatch",
+                (
+                    f"translation group {group.group_id!r} source_text_hash does "
+                    "not match the stable unit span slice"
+                ),
+            )
+
+        for anchor_segment_id in group.anchor_segment_ids:
+            if anchor_segment_id in covered_anchor_segment_id_set:
+                raise TranslationPublishValidationError(
+                    "translation_group_overlap",
+                    (
+                        f"translation group {group.group_id!r} reuses "
+                        f"anchor_segment_id {anchor_segment_id!r}"
+                    ),
+                )
+            covered_anchor_segment_id_set.add(anchor_segment_id)
+            covered_anchor_segment_ids.append(anchor_segment_id)
+        last_group_end_order = last_order
+        validated_groups.append(
+            _ValidatedTranslationGroup(
+                group_id=group.group_id,
+                anchor_segment_ids=tuple(group.anchor_segment_ids),
+                source_text_hash=group.source_text_hash,
+                translated_text_length=len(group.translated_text),
+            )
+        )
+
+    expected_anchor_segment_ids = tuple(
+        str(row["anchor_segment_id"])
+        for row in context.ordered_segments
+    )
+    missing_anchor_segment_ids = tuple(
+        anchor_segment_id
+        for anchor_segment_id in expected_anchor_segment_ids
+        if anchor_segment_id not in covered_anchor_segment_id_set
+    )
+    if missing_anchor_segment_ids:
+        raise TranslationPublishValidationError(
+            "translation_missing_anchor_coverage",
+            (
+                f"translation output for unit {unit_id!r} is missing anchor coverage "
+                f"for {list(missing_anchor_segment_ids)!r}"
+            ),
+        )
+
+    return _ValidatedTranslationOutput(
+        output=parsed_output,
+        covered_anchor_segment_ids=expected_anchor_segment_ids,
+        missing_anchor_segment_ids=missing_anchor_segment_ids,
+        groups=tuple(validated_groups),
+    )
+
+
 async def _insert_published_grammar_layer(
     conn: asyncpg.Connection,
     *,
@@ -972,7 +1190,9 @@ async def _load_unit_anchor_validation_context(
 ) -> _UnitAnchorValidationContext:
     unit_row = await conn.fetchrow(
         """
-        SELECT base.text AS base_text,
+        SELECT unit.unit_id,
+               unit.text_hash,
+               base.text AS base_text,
                unit.base_start_utf16,
                unit.base_end_utf16
         FROM reading_units unit
@@ -1002,6 +1222,7 @@ async def _load_unit_anchor_validation_context(
         """
         SELECT anchor_segment_id,
                sentence_id,
+               order_index,
                segment_type,
                unit_start_utf16,
                unit_end_utf16,
@@ -1024,7 +1245,10 @@ async def _load_unit_anchor_validation_context(
         raise ValueError(f"publish target unit {unit_id} has no anchor segments")
 
     return _UnitAnchorValidationContext(
+        unit_id=str(unit_row["unit_id"]),
         unit_text=unit_text,
+        unit_text_hash=str(unit_row["text_hash"]),
+        ordered_segments=tuple(segment_rows),
         segments_by_id=segments_by_id,
     )
 

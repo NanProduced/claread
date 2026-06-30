@@ -807,18 +807,26 @@ async def test_superseded_stale_jobs_are_not_claimed_by_worker(
 # ---------------------------------------------------------------------------#
 
 
-def test_fingerprint_matches_base_rejects_v1_matching_v10() -> None:
-    """``v1`` must NOT match ``v10`` — bare startswith would be wrong."""
-    assert not _fingerprint_matches_base("translation_unit_v10", "translation_unit_v1")
+def test_fingerprint_matches_base_rejects_similar_prefixes() -> None:
+    """Only the exact base or ``base:hash`` may match."""
+    assert not _fingerprint_matches_base(
+        "translation_unit_old:hash", "translation_unit"
+    )
+    assert not _fingerprint_matches_base(
+        "translation_unit_experimental:hash", "translation_unit"
+    )
+    assert not _fingerprint_matches_base(
+        "translation_unit_extra:hash", "translation_unit"
+    )
     assert not _fingerprint_matches_base("v1abc", "v1")
     assert not _fingerprint_matches_base("v1x:hash", "v1")
 
 
 def test_fingerprint_matches_base_accepts_exact_and_composed() -> None:
     """Exact match (legacy) and ``base:hash`` (T5 composed) are both accepted."""
-    assert _fingerprint_matches_base("translation_unit_v1", "translation_unit_v1")
+    assert _fingerprint_matches_base("translation_unit", "translation_unit")
     assert _fingerprint_matches_base(
-        "translation_unit_v1:abc123", "translation_unit_v1"
+        "translation_unit:abc123", "translation_unit"
     )
     assert _fingerprint_matches_base(
         "display_title_zh_v1:def456", "display_title_zh_v1"
@@ -828,7 +836,7 @@ def test_fingerprint_matches_base_accepts_exact_and_composed() -> None:
 def test_fingerprint_matches_base_rejects_different_base() -> None:
     """A fingerprint with a different base must not match."""
     assert not _fingerprint_matches_base(
-        "vocabulary_unit_v1:hash", "translation_unit_v1"
+        "vocabulary_unit_v1:hash", "translation_unit"
     )
     assert not _fingerprint_matches_base(
         "grammar_bundle_unit_v1:hash", "vocabulary_unit_v1"

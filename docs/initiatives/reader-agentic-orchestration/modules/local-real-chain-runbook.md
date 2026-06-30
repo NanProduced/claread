@@ -517,7 +517,7 @@ D6-P0 起，worker loop 会通过保守 classifier 更新 `reading_records.produ
 - `uv run reader-enhancement-worker --help` 可以正常输出 CLI help
 - 真实 DashScope `workflow-qwen37-max` provider 下，短文本 `plain_text -> article_ready -> worker loop -> snapshot reload` 端到端跑通。
 - Worker 自动 bootstrap vocabulary / grammar bundle jobs，并发布 translation、vocabulary、grammar_note 三类 layer。
-- Snapshot projection 出现 `reader_translation` node、`reader_vocabulary_marks` 和 `reader_grammar_note_marks`。
+- Snapshot projection 当前出现 group-native `reader_translation_group` node、`reader_vocabulary_marks` 和 `reader_grammar_note_marks`。
 - Reader events 从 `article_ready` 推进到 `layer_published` / `parsed_decision_updated`，sequence 严格递增。
 - 第二次 worker `--once` 扫描为空，证明当前 record/base/generation 不重复 publish。
 - 真实 DashScope `workflow-qwen37-max` provider 下，250+ 词长文本也已完成 `plain_text -> article_ready -> worker loop -> snapshot reload -> Web render`。

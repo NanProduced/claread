@@ -224,7 +224,7 @@ async def test_prepare_record_keeps_other_record_jobs_queued(
         smoke_harness_env,
         older_record.record_id,
         "queued",
-    ) == 3
+    ) == 4
     assert await _count_layers(
         smoke_harness_env,
         older_record.record_id,

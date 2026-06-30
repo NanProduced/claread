@@ -590,7 +590,7 @@ UI-D5 Active Anchor Inspector 已在 `ReaderRecordPlateSurface` 内落地为前�
 
 - 原文。
 - V1 过渡期显示 unit 边界内的“本段译文”。
-- Translation V2 后显示按阅读组对齐的译文。
+- Group-native translation 完成后显示按阅读组对齐的译文。
 - `vocab_highlight`、`phrase_gloss`、`context_gloss`。
 - grammar note / grammar explanation，作为文档式行间注释，而不是旧式卡片。
 - sentence analysis structure block，默认展开但保持紧凑。
@@ -602,37 +602,48 @@ UI-D5 Active Anchor Inspector 已在 `ReaderRecordPlateSurface` 内落地为前�
 
 ### 当前约束
 
-当前 translation worker 以 unit 为输入，`TranslationLayerOutput` 只有整段 `translated_text`。
+旧 unit-level translation 只有整段 `translated_text`，不能安全插到第一个
+anchor segment 下方。Backend group-native translation 已改为由 worker 按
+unit 生成连续 anchor segment groups，再由 snapshot 输出
+`reader_translation_group`。前端仍需按该 node contract 接入最终双语显示。
 
-因此，当前 unit 级译文不能显示在第一个 anchor segment 下方。V1 只能作为 unit 边界内的“本段译文”块，并明确它覆盖整个 unit。
+### Group-Native Translation 目标形态
 
-### V2 目标形态
+冻结日期：2026-06-30。以下字段合同已作为 backend implementation 基线落地。
 
-后续 translation worker/schema 升级为：
+Translation worker/schema 已升级为 group-native contract。Translation worker 仍按
+Reading Unit 接收完整 unit 文本，但 LLM 只输出 unit 内的语义分组决策和自然中文译文；
+server 再根据 Stable Reading Base / Anchor Segment context hydrate source/hash 等事实字段。
 
 ```ts
-type TranslationLayerOutputV2 = {
-  schema_version: 2;
-  target_language: string;
-  items: Array<{
-    anchor_segment_id: string;
-    source_text: string;
+type TranslationLayerOutput = {
+  groups: Array<{
+    group_id: string;
+    anchor_segment_ids: string[];
+    source_text_hash: string;
     translated_text: string;
   }>;
-  full_translation?: string;
-  confidence: "low" | "normal" | "high";
-  notes: string[];
 };
 ```
 
-worker 仍读取完整 unit 以保证翻译质量，但输出 per-anchor-segment 对齐 items。
+Translation Group 粒度由 LLM 在 unit 内基于语义决定。后端不设置 group size 上限、
+数字阈值或 "1-3 个 segment" 规则；publisher 只校验事实合同：covered anchor ids
+存在、按 unit 顺序连续、无 overlap、覆盖完整、source/hash/fingerprint 正确。
+`group_id` 由 server 在 hydrate 阶段基于 unit/group segment range 确定性生成，
+只作为 snapshot/render key；它不是 LLM 输出，也不是 stable source anchor。
+per-segment source echo 不进入 durable `output_json`；相关 source/hash/type/boundary
+事实留在 Stable Reading Base / Anchor Segment context 与 publisher validation 中。
+group source text 也不进入 durable `output_json`；需要展示或校验时通过
+`anchor_segment_ids` 回源到 Stable Reading Base 重新切片。
 
-前端再把 1-3 个连续 anchor segments 合并为 translation pair group。这样保证原文和译文可对应，同时避免文章被机械切碎。
+前端解析页直接消费 backend `reader_translation_group` / Translation Group。若某个 group
+内部因为 grammar_note、sentence_analysis 或版式需要出现视觉换行/插块，这属于 display-only
+layout policy：不得拆分后端 `TranslationGroup`，不得生成新的翻译事实，也不得按中文标点重新切译文。
 
 分阶段要求：
 
-- V1：精读模式显示“本段译文”；沉浸模式隐藏译文。
-- V2：精读模式默认显示 translation pair group；沉浸模式仍隐藏译文。
+- 当前前端过渡期：旧 UI 可能仍显示低权重 unit 译文 lane；沉浸模式隐藏译文。
+- Group-native 前端接入后：精读模式默认显示 backend translation group；沉浸模式仍隐藏译文。
 
 ## 文档 Marks And Cues
 
@@ -1113,14 +1124,14 @@ V1d 可以在 Sentence Analysis V2 offset schema 之前做基础版本：
 - chunk underlines / numbered decorations 只在唯一匹配时 best-effort 显示。
 - 不能唯一匹配时只显示 structure block，不画错误 source decoration。
 
-V2 schema 完成后：
+Group-native schema 完成后：
 
 - chunk underlines / numbered spans 成为必选能力。
 - hover chunk row 和原文 chunk 双向联动。
 
 ### 第一阶段不包含：
 
-- translation schema V2。
+- group-native translation 的最终 Web Plate 渲染接入。
 - sentence_analysis chunk offset schema V2。
 - Ask Supplement 入文档。
 - AI suggestion / revision。
@@ -1136,13 +1147,16 @@ V2 schema 完成后：
 - Feedback：直到 AI mark/cue feedback contract 与新 route 稳定。
 - Ask supplement save-to-document：直到 Ask Supplement Projection 设计和 API 完成。
 - sentence_analysis chunk underlines：直到 V1d best-effort 或 Sentence Analysis V2；默认不显示。
-- translation pair group：直到 Translation V2。
+- backend translation group：backend contract 已完成，Web Plate 渲染接入另行推进。
 
 ## 后续需求
 
-### Translation V2
+### Group-Native Translation
 
-升级 translation worker/schema，输出 per-anchor-segment translation items。
+Backend 已升级 translation worker/schema，输出 backend group-native translation。
+LLM 在单个 Reading Unit 内决定语义分组；server hydrate source/hash；前端消费
+`reader_translation_group`，并只在 display policy 中处理 grammar_note /
+sentence_analysis 引发的视觉换行或插块。
 
 ### Sentence Analysis V2
 

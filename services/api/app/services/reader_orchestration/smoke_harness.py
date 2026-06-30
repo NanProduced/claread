@@ -18,13 +18,19 @@ from app.schemas.reader_orchestration import (
     ReaderTextRangeAnchor,
     SentenceAnalysisChunk,
     SentenceAnalysisItem,
-    TranslationLayerOutput,
+    TranslationGenerationGroup,
+    TranslationLayerGenerationOutput,
     VocabularyHighlightItem,
     VocabularyLayerOutput,
 )
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
     PlainTextArticleReadySubmitRequest,
+)
+from app.services.reader_orchestration.display_title_worker import (
+    DisplayTitleExecutionResult,
+    DisplayTitleJobContext,
+    DisplayTitleWorkerService,
 )
 from app.services.reader_orchestration.grammar_worker import (
     GrammarBundleWorkerService,
@@ -86,11 +92,16 @@ class DevFakeTranslationExecutor:
         context: TranslationJobContext,
     ) -> TranslationExecutionResult:
         return TranslationExecutionResult(
-            output=TranslationLayerOutput(
-                target_language="zh-CN",
-                translated_text=f"[DEV FAKE] {context.source_text}",
-                notes=[],
-                confidence="normal",
+            output=TranslationLayerGenerationOutput(
+                groups=[
+                    TranslationGenerationGroup(
+                        anchor_segment_ids=[
+                            anchor_segment.anchor_segment_id
+                            for anchor_segment in context.anchor_segments
+                        ],
+                        translated_text=f"[DEV FAKE] {context.source_text}",
+                    )
+                ]
             ),
             usage_data={"input_tokens": 1, "output_tokens": 1},
             prompt_version=DEV_FAKE_TRANSLATION_PROMPT_VERSION,
@@ -211,6 +222,21 @@ class DevFakeGrammarBundleExecutor:
         )
 
 
+class DevFakeDisplayTitleGenerator:
+    async def generate(
+        self,
+        context: DisplayTitleJobContext,
+    ) -> DisplayTitleExecutionResult:
+        return DisplayTitleExecutionResult(
+            title_zh="本地冒烟标题",
+            usage_data={"input_tokens": 1, "output_tokens": 1},
+            prompt_version="reader-d5-smoke-fake-display-title",
+            model_profile=f"{DEV_FAKE_MODEL_PROFILE_PREFIX}_display_title",
+            model_provider="fake",
+            model_name="reader-d5-smoke-fake-display-title",
+        )
+
+
 class ReaderEnhancementSmokeHarness:
     def __init__(
         self,
@@ -316,8 +342,13 @@ class ReaderEnhancementSmokeHarness:
             pool=pool,
             executor=DevFakeGrammarBundleExecutor(),
         )
+        display_title_worker = DisplayTitleWorkerService(
+            pool=pool,
+            generator=DevFakeDisplayTitleGenerator(),
+        )
         return ReaderEnhancementPipelineRunner(
             pool=pool,
+            display_title_worker_service=display_title_worker,
             translation_orchestrator=orchestrator,
             vocabulary_worker_service=vocabulary_worker,
             grammar_worker_service=grammar_worker,

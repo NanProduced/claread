@@ -7,7 +7,10 @@ import asyncpg
 import pytest
 
 from app.database import connection as db_connection
-from app.schemas.reader_orchestration import TranslationLayerOutput
+from app.schemas.reader_orchestration import (
+    TranslationGenerationGroup,
+    TranslationLayerGenerationOutput,
+)
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
@@ -22,6 +25,7 @@ from app.services.reader_orchestration.translation_worker import (
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
+    CompatTranslationLayerPublisher,
     connect_admin,
     insert_user,
     make_pool,
@@ -33,14 +37,14 @@ pytestmark = pytest.mark.anyio
 class _StaticTranslator:
     """Fake translator that returns a fixed translation output."""
 
-    def __init__(self, output: TranslationLayerOutput) -> None:
-        self.output = output
+    def __init__(self, translated_text: str = "第一句。\n\n第二段。") -> None:
+        self.translated_text = translated_text
         self.calls: list = []
 
     async def translate(self, context) -> TranslationExecutionResult:
         self.calls.append(context)
         return TranslationExecutionResult(
-            output=self.output,
+            output=_translation_output(context, self.translated_text),
             usage_data={
                 "aggregate": {
                     "input_tokens": 10,
@@ -55,12 +59,20 @@ class _StaticTranslator:
         )
 
 
-def _translation_output(text: str = "第一句。\n\n第二段。") -> TranslationLayerOutput:
-    return TranslationLayerOutput(
-        target_language="zh-CN",
-        translated_text=text,
-        notes=[],
-        confidence="normal",
+def _translation_output(
+    context,
+    text: str = "第一句。\n\n第二段。",
+) -> TranslationLayerGenerationOutput:
+    return TranslationLayerGenerationOutput(
+        groups=[
+            TranslationGenerationGroup(
+                anchor_segment_ids=[
+                    anchor_segment.anchor_segment_id
+                    for anchor_segment in context.anchor_segments
+                ],
+                translated_text=text,
+            )
+        ]
     )
 
 
@@ -90,7 +102,15 @@ def _make_orchestrator(
     *,
     translator: _StaticTranslator | None = None,
 ) -> ReaderOrchestrator:
-    worker = TranslationWorkerService(pool=pool, translator=translator) if translator else None
+    worker = (
+        TranslationWorkerService(
+            pool=pool,
+            layer_publisher=CompatTranslationLayerPublisher(pool=pool),
+            translator=translator,
+        )
+        if translator
+        else None
+    )
     return ReaderOrchestrator(pool=pool, worker_service=worker)
 
 
@@ -168,7 +188,7 @@ async def test_tick_publishes_translation_layer(
     orchestrator_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(orchestrator_env)
-    translator = _StaticTranslator(_translation_output())
+    translator = _StaticTranslator()
     orchestrator = _make_orchestrator(orchestrator_env, translator=translator)
 
     article = await orchestrator.submit_plain_text_and_bootstrap_translation(
@@ -194,7 +214,7 @@ async def test_tick_keeps_parsed_decision_consistent_with_publish(
     orchestrator_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(orchestrator_env)
-    translator = _StaticTranslator(_translation_output())
+    translator = _StaticTranslator()
     orchestrator = _make_orchestrator(orchestrator_env, translator=translator)
 
     article = await orchestrator.submit_plain_text_and_bootstrap_translation(
@@ -231,7 +251,7 @@ async def test_diagnose_orphaned_translation_decisions_detects_partial_state(
     orchestrator_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(orchestrator_env)
-    translator = _StaticTranslator(_translation_output())
+    translator = _StaticTranslator()
     orchestrator = _make_orchestrator(orchestrator_env, translator=translator)
 
     article = await orchestrator.submit_plain_text_and_bootstrap_translation(
@@ -274,7 +294,7 @@ async def test_snapshot_reload_contains_translation_layer_and_parsed_decision(
     orchestrator_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(orchestrator_env)
-    translator = _StaticTranslator(_translation_output())
+    translator = _StaticTranslator()
     orchestrator = _make_orchestrator(orchestrator_env, translator=translator)
 
     article = await orchestrator.submit_plain_text_and_bootstrap_translation(
@@ -308,7 +328,7 @@ async def test_snapshot_reload_does_not_repair_orphaned_translation_decision_sta
     orchestrator_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(orchestrator_env)
-    translator = _StaticTranslator(_translation_output())
+    translator = _StaticTranslator()
     orchestrator = _make_orchestrator(orchestrator_env, translator=translator)
 
     article = await orchestrator.submit_plain_text_and_bootstrap_translation(
@@ -353,7 +373,7 @@ async def test_polling_after_article_ready_returns_layer_published_event(
     from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 
     user_id = await insert_user(orchestrator_env)
-    translator = _StaticTranslator(_translation_output())
+    translator = _StaticTranslator()
     orchestrator = _make_orchestrator(orchestrator_env, translator=translator)
 
     article = await orchestrator.submit_plain_text_and_bootstrap_translation(
@@ -395,7 +415,7 @@ async def test_repeated_bootstrap_does_not_create_duplicate_active_job_or_layer(
     orchestrator_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(orchestrator_env)
-    translator = _StaticTranslator(_translation_output())
+    translator = _StaticTranslator()
     orchestrator = _make_orchestrator(orchestrator_env, translator=translator)
 
     article = await orchestrator.submit_plain_text_and_bootstrap_translation(
@@ -450,7 +470,7 @@ async def test_tick_rejects_active_base_mismatch(
     orchestrator_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(orchestrator_env)
-    translator = _StaticTranslator(_translation_output())
+    translator = _StaticTranslator()
     orchestrator = _make_orchestrator(orchestrator_env, translator=translator)
 
     article = await orchestrator.submit_plain_text_and_bootstrap_translation(

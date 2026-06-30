@@ -4,7 +4,9 @@ import hashlib
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 
-from app.contracts.annotation import slice_by_utf16_offsets
+from pydantic import ValidationError
+
+from app.contracts.annotation import compute_text_range_hash, slice_by_utf16_offsets
 from app.schemas.reader_orchestration import (
     GrammarNoteLayerOutput,
     ReaderEnhancementProgress,
@@ -656,7 +658,7 @@ def _build_translation_nodes(
     nodes.extend(
         _build_translation_nodes_for_layers(
             unit=unit,
-            anchor_segment_id=None,
+            unit_segments=unit_segments,
             layers=translation_layers_by_target.get(("unit", unit.unit_id), []),
         )
     )
@@ -664,7 +666,7 @@ def _build_translation_nodes(
         nodes.extend(
             _build_translation_nodes_for_layers(
                 unit=unit,
-                anchor_segment_id=segment.anchor_segment_id,
+                unit_segments=unit_segments,
                 layers=translation_layers_by_target.get(
                     ("anchor_segment", segment.anchor_segment_id),
                     [],
@@ -1087,29 +1089,83 @@ def _grammar_note_mark_sort_key(mark: dict[str, object]) -> tuple[int, int, int,
 def _build_translation_nodes_for_layers(
     *,
     unit: BuiltReadingUnit,
-    anchor_segment_id: str | None,
+    unit_segments: Sequence[BuiltAnchorSegment],
     layers: Sequence[ReaderSnapshotLayer],
 ) -> list[dict[str, object]]:
     nodes: list[dict[str, object]] = []
+    segments_by_id = {
+        segment.anchor_segment_id: segment for segment in unit_segments
+    }
     for layer in layers:
-        output = TranslationLayerOutput.model_validate(layer.output)
-        node: dict[str, object] = {
-            "type": "reader_translation",
-            "owner": "system_ai",
-            "layer_id": layer.layer_id,
-            "layer_version": layer.schema_version,
-            "base_id": unit.base_id,
-            "unit_id": unit.unit_id,
-            "target_scope": layer.target_scope,
-            "target_key": layer.target_key,
-            "target_language": output.target_language,
-            "confidence": output.confidence,
-            "notes": output.notes,
-            "children": [{"text": output.translated_text}],
-        }
-        if anchor_segment_id is not None:
-            node["anchor_segment_id"] = anchor_segment_id
-        nodes.append(node)
+        try:
+            output = TranslationLayerOutput.model_validate(layer.output)
+        except ValidationError:
+            continue
+
+        covered_anchor_segment_ids: set[str] = set()
+        last_group_end_order = 0
+        for group in output.groups:
+            if not group.group_id.strip() or not group.translated_text.strip():
+                continue
+
+            group_segments: list[BuiltAnchorSegment] = []
+            for anchor_segment_id in group.anchor_segment_ids:
+                segment = segments_by_id.get(anchor_segment_id)
+                if segment is None:
+                    group_segments = []
+                    break
+                group_segments.append(segment)
+            if not group_segments:
+                continue
+
+            order_indexes = [segment.order_index for segment in group_segments]
+            if order_indexes != sorted(order_indexes) or any(
+                current != previous + 1
+                for previous, current in zip(order_indexes, order_indexes[1:], strict=False)
+            ):
+                continue
+
+            first_segment = group_segments[0]
+            last_segment = group_segments[-1]
+            first_order = first_segment.order_index
+            last_order = last_segment.order_index
+            if first_order <= last_group_end_order:
+                continue
+            if any(
+                anchor_segment_id in covered_anchor_segment_ids
+                for anchor_segment_id in group.anchor_segment_ids
+            ):
+                continue
+
+            span_start = first_segment.unit_start_utf16
+            span_end = last_segment.unit_end_utf16
+            if span_start > span_end:
+                continue
+
+            span_text = slice_by_utf16_offsets(unit.text, span_start, span_end)
+            if span_text is None or not span_text:
+                continue
+            if compute_text_range_hash(span_text) != group.source_text_hash:
+                continue
+
+            covered_anchor_segment_ids.update(group.anchor_segment_ids)
+            last_group_end_order = last_order
+            nodes.append(
+                {
+                    "type": "reader_translation_group",
+                    "owner": "system_ai",
+                    "layer_id": layer.layer_id,
+                    "layer_version": layer.schema_version,
+                    "base_id": unit.base_id,
+                    "unit_id": unit.unit_id,
+                    "target_scope": layer.target_scope,
+                    "target_key": layer.target_key,
+                    "group_id": group.group_id,
+                    "covered_anchor_segment_ids": list(group.anchor_segment_ids),
+                    "source_text_hash": group.source_text_hash,
+                    "children": [{"text": group.translated_text}],
+                }
+            )
     return nodes
 
 

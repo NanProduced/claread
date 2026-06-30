@@ -63,6 +63,50 @@ def _mock_auth(user_id: UUID):
     )
 
 
+async def _published_translation_output_json(
+    conn: asyncpg.Connection,
+    *,
+    base_id: UUID,
+    unit_id: str,
+    translated_text: str,
+) -> dict[str, object]:
+    unit_row = await conn.fetchrow(
+        """
+        SELECT text_hash
+        FROM reading_units
+        WHERE base_id = $1
+          AND unit_id = $2
+        """,
+        base_id,
+        unit_id,
+    )
+    assert unit_row is not None
+    anchor_rows = await conn.fetch(
+        """
+        SELECT anchor_segment_id
+        FROM anchor_segments
+        WHERE base_id = $1
+          AND unit_id = $2
+        ORDER BY order_index, anchor_segment_id
+        """,
+        base_id,
+        unit_id,
+    )
+    assert anchor_rows
+    return {
+        "groups": [
+            {
+                "group_id": "group-1",
+                "anchor_segment_ids": [
+                    str(row["anchor_segment_id"]) for row in anchor_rows
+                ],
+                "source_text_hash": str(unit_row["text_hash"]),
+                "translated_text": translated_text,
+            }
+        ]
+    }
+
+
 @pytest.fixture
 async def reader_api_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     schema_name = f"test_reader_api_{uuid4().hex}"
@@ -203,7 +247,7 @@ async def test_snapshot_progress_marks_published_layer_succeeded(
             async with pool.acquire() as conn:
                 job_row = await conn.fetchrow(
                     """
-                    SELECT id, run_id, base_id, target_key
+                    SELECT id, run_id, base_id, target_key, operation_fingerprint
                     FROM reader_jobs
                     WHERE reading_record_id = $1
                       AND job_type = 'translate_unit'
@@ -246,11 +290,11 @@ async def test_snapshot_progress_marks_published_layer_succeeded(
                         $3,
                         1,
                         'published',
-                        'translation_unit_v1',
+                        $4,
                         1,
-                        $4::jsonb,
-                        $5,
+                        $5::jsonb,
                         $6,
+                        $7,
                         NOW()
                     )
                     RETURNING id
@@ -258,13 +302,15 @@ async def test_snapshot_progress_marks_published_layer_succeeded(
                     record_id,
                     job_row["base_id"],
                     job_row["target_key"],
-                    jsonb_param({
-                        "schema_version": 1,
-                        "target_language": "zh-CN",
-                        "translated_text": "已发布译文。",
-                        "notes": [],
-                        "confidence": "normal",
-                    }),
+                    job_row["operation_fingerprint"],
+                    jsonb_param(
+                        await _published_translation_output_json(
+                            conn,
+                            base_id=job_row["base_id"],
+                            unit_id=str(job_row["target_key"]),
+                            translated_text="已发布译文。",
+                        )
+                    ),
                     job_row["run_id"],
                     job_row["id"],
                 )
@@ -309,7 +355,7 @@ async def test_snapshot_progress_ignores_stale_failed_job_after_newer_publish(
             async with pool.acquire() as conn:
                 stale_job_row = await conn.fetchrow(
                     """
-                    SELECT id, run_id, base_id, target_key
+                    SELECT id, run_id, base_id, target_key, operation_fingerprint
                     FROM reader_jobs
                     WHERE reading_record_id = $1
                       AND job_type = 'translate_unit'
@@ -359,8 +405,8 @@ async def test_snapshot_progress_ignores_stale_failed_job_after_newer_publish(
                         'succeeded',
                         0,
                         1,
-                        'translation_unit_v1',
-                        'translation_unit_v1:retry-progress',
+                        $6,
+                        $7,
                         NOW() + INTERVAL '1 second',
                         NOW() + INTERVAL '1 second'
                     )
@@ -371,6 +417,8 @@ async def test_snapshot_progress_ignores_stale_failed_job_after_newer_publish(
                     stale_job_row["run_id"],
                     user_id,
                     stale_job_row["target_key"],
+                    stale_job_row["operation_fingerprint"],
+                    f"{stale_job_row['operation_fingerprint']}:retry-progress",
                 )
                 assert isinstance(newer_job_id, UUID)
                 layer_id = await conn.fetchval(
@@ -398,11 +446,11 @@ async def test_snapshot_progress_ignores_stale_failed_job_after_newer_publish(
                         $3,
                         1,
                         'published',
-                        'translation_unit_v1',
+                        $4,
                         1,
-                        $4::jsonb,
-                        $5,
+                        $5::jsonb,
                         $6,
+                        $7,
                         NOW() + INTERVAL '2 seconds'
                     )
                     RETURNING id
@@ -410,13 +458,15 @@ async def test_snapshot_progress_ignores_stale_failed_job_after_newer_publish(
                     record_id,
                     stale_job_row["base_id"],
                     stale_job_row["target_key"],
-                    jsonb_param({
-                        "schema_version": 1,
-                        "target_language": "zh-CN",
-                        "translated_text": "重试后发布的译文。",
-                        "notes": [],
-                        "confidence": "normal",
-                    }),
+                    stale_job_row["operation_fingerprint"],
+                    jsonb_param(
+                        await _published_translation_output_json(
+                            conn,
+                            base_id=stale_job_row["base_id"],
+                            unit_id=str(stale_job_row["target_key"]),
+                            translated_text="重试后发布的译文。",
+                        )
+                    ),
                     stale_job_row["run_id"],
                     newer_job_id,
                 )

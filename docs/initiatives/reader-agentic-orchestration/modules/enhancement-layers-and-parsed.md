@@ -1,7 +1,7 @@
 # Enhancement Layers 与 Parsed Decision
 
 > 状态：`D6 输入与文档层口径同步`
-> 最后更新：2026-06-25
+> 最后更新：2026-06-30
 > 范围：增强层 schema、anchor 合同、发布门禁和 parsed coverage。
 
 ## Layer 原则
@@ -105,17 +105,35 @@ Coordinate scope：
 
 ## Layer Content Schema
 
-D4 translation layer：
+Translation layer：
+
+冻结日期：2026-06-30。Translation `output_json` 当前 backend contract 为
+group-native payload。
 
 ```json
 {
-  "schema_version": 1,
-  "target_language": "zh-CN",
-  "translated_text": "...",
-  "notes": [],
-  "confidence": "normal"
+  "groups": [
+    {
+      "group_id": "unit_1_g1",
+      "anchor_segment_ids": ["s1", "s2"],
+      "source_text_hash": "1a2b3c4d",
+      "translated_text": "自然流畅的中文译文。"
+    }
+  ]
 }
 ```
+
+`group_id` 是服务端在 translation hydration 阶段生成的确定性投影键，用于 snapshot/render 稳定性。
+LLM 不输出 `group_id`；下游也不能把它当成 stable source anchor 或一等可锚实体。
+per-segment source echo 不进入 translation `output_json`；相关 source/hash/type/boundary
+事实来自 Stable Reading Base / Anchor Segment context 和 publisher validation。
+group source text 也不进入 translation `output_json`；需要展示或校验时通过
+`anchor_segment_ids` 回源到 Stable Reading Base 重新切片。
+
+Translation `output_json` 只保存翻译事实与投影所需事实；诊断、跳过原因和质量信号写入
+`quality_json`、worker / publisher events、failure metadata 或后续 reviewer/eval layer。
+Claread Reader 当前固定为面向中文母语用户的英译中能力，语言方向与策略身份不重复写入
+translation `output_json`。
 
 D5 vocabulary layer 保留旧 AI Workflow 的三类词汇批注语义，但它们是同一个 `vocabulary` layer 内的 `item_type`，不是三个顶层 layer type：
 
@@ -212,6 +230,7 @@ D5 boundary policy（grammar + vocabulary 统一口径）：
   - `grammar_note` 任一 span 落在 fallback_window → 整条 grammar_note 跳过，reason_code `boundary_low_fallback_window`。
   - `sentence_analysis` anchor 落在 fallback_window → 整条 sentence_analysis 跳过，reason_code `boundary_low_fallback_window`。
   - `vocabulary` 任一候选 item 落在 fallback_window → 整条 vocabulary item 跳过，reason_code `boundary_low_fallback_window`。
+- Translation 与上述细粒度 annotation layer 不同：group-native translation 可以继续在 parent unit 上运行。`boundary_quality = low` 只是 prompt hint 与 quality/eval signal，不强制跳过、不强制单独成组，也不作为 publisher reject 条件。
 - 跳过原因统一写入 worker `diagnostics.skipped_items[]`；被跳过的 item 不进入 `output.items`。Vocabulary 可以发布空 `VocabularyLayerOutput(items=[])` 并把 diagnostics 存为 layer quality metadata，用于标记该 unit 已处理。
 - 后续 boundary refiner / reviewer 可重新产出 acceptable segments；未发生前 fallback_window segment 在 UI / layer / RAG 中都不应被当作真实句子引用。
 - D5-V4 snapshot 只暴露 top-level layer metadata，不投影 grammar marks/nodes 到 `snapshot.value`。
@@ -259,6 +278,13 @@ Publisher 禁止写 User Editorial Assets。需要保存用户高亮或笔记时
 ## Parsed Decision
 
 `Parsed` 是 Reading Unit 状态，不是固定批注数量。
+
+Parsed Decision 可以携带轻量 `coverage_json`，用于记录 unit 级 readiness /
+coverage index。它不是 layer truth，也不是 translation content source；不得复制
+正文、译文或 source text。Translation coverage 可以保存 group summary
+（`group_id`、covered anchor ids、`source_text_hash`、`translated_text_length`），
+用于调试和 Ask/reader readiness 判断。需要读取 translation 内容时，应从已发布的
+`enhancement_layers` 加载。
 
 D4 写入前置：
 

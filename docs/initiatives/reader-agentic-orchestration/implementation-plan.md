@@ -249,7 +249,7 @@ Schema / Domain Contract：见 `modules/schema-and-domain-contract.md`。D3-P1 �
 状态：completed on 2026-06-21。
 
 - 新增 deterministic translation run/job bootstrap 和 base-scoped `reader_jobs`；`claim_next_job()` 支持 `job_type`/`target_type` 过滤，避免 worker 跨队列 claim。
-- Layer publisher 单事务内写 `enhancement_layers(layer_type='translation')`、发布 `layer_published` event、完成 job/run transition；snapshot reload 投影 `reader_translation` node。
+- Layer publisher 单事务内写 `enhancement_layers(layer_type='translation')`、发布 `layer_published` event、完成 job/run transition；当前 snapshot reload 投影 group-native `reader_translation_group` node。
 - 成功和失败路径均写 `ai_usage_events` 带 record/run/job/layer attribution；retryable failure 后重新成功会清空 run 旧失败状态。
 
 ### D4-P2. Backend Orchestration Integration + Parsed Decision
@@ -417,7 +417,7 @@ Schema / Domain Contract：见 `modules/schema-and-domain-contract.md`。D3-P1 �
 状态：completed on 2026-06-22。
 
 - 真实 DashScope `workflow-qwen37-max` provider 下短文本主链路端到端跑通（`plain_text -> article_ready -> worker loop -> snapshot reload`），未使用 smoke harness 或 fake executor；events 推进到 `article_ready + layer_published x3 + parsed_decision_updated`。
-- Snapshot projection 出现 `reader_translation`/`reader_vocabulary_marks`/`reader_grammar_note_marks`；`sentence_analysis` 未出现是短文本真实 LLM 行为，非 bug；第二次 `--once` 扫描为空证明不重复 publish。
+- Snapshot projection 当前出现 group-native `reader_translation_group`、`reader_vocabulary_marks` 和 `reader_grammar_note_marks`；`sentence_analysis` 未出现是短文本真实 LLM 行为，非 bug；第二次 `--once` 扫描为空证明不重复 publish。
 - Follow-up：`ai_usage_events`/`user_credit_ledger` 列缺失按本地 DB schema drift 处理（D5-R5）；长文本 lease duration 单独评估；`sentence_analysis` 验收需长文本 fixture。
 
 ### D5-R5. Schema Health Check + Worker Lease Duration Setting

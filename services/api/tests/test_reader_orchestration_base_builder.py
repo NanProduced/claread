@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,28 +44,127 @@ def _build_result(source_text: str):
     )
 
 
-def _build_translation_layer(
+def _unit_segments(result, unit_index: int = 0):
+    unit_id = result.units[unit_index].unit_id
+    return [segment for segment in result.anchor_segments if segment.unit_id == unit_id]
+
+
+def _build_translation_group(
+    result,
     *,
-    base_id: str,
+    unit_index: int = 0,
+    anchor_segment_ids: list[str] | None = None,
+    group_id: str = "group-1",
+    translated_text: str = "示例译文",
+    source_text_hash: str | None = None,
+) -> dict[str, object]:
+    unit = result.units[unit_index]
+    unit_segments = _unit_segments(result, unit_index)
+    if anchor_segment_ids is None:
+        anchor_segment_ids = [
+            segment.anchor_segment_id for segment in unit_segments
+        ]
+    segments_by_id = {
+        segment.anchor_segment_id: segment for segment in unit_segments
+    }
+    group_segments = [segments_by_id[anchor_segment_id] for anchor_segment_id in anchor_segment_ids]
+    span_text = slice_by_utf16_offsets(
+        unit.text,
+        group_segments[0].unit_start_utf16,
+        group_segments[-1].unit_end_utf16,
+    )
+    assert span_text is not None
+    return {
+        "group_id": group_id,
+        "anchor_segment_ids": list(anchor_segment_ids),
+        "source_text_hash": source_text_hash or compute_text_range_hash(span_text),
+        "translated_text": translated_text,
+    }
+
+
+def _build_translation_layer(
+    result,
+    *,
+    base_id: str | None = None,
     target_scope: str,
     target_key: str,
     layer_id: str = "layer-1",
+    output: dict[str, object] | None = None,
+    groups: list[dict[str, object]] | None = None,
 ) -> ReaderSnapshotLayer:
     return ReaderSnapshotLayer(
         layer_id=layer_id,
         layer_type="translation",
-        base_id=base_id,
+        base_id=base_id or result.base.base_id,
         target_scope=target_scope,  # type: ignore[arg-type]
         target_key=target_key,
         schema_version=1,
-        output={
-            "schema_version": 1,
-            "target_language": "zh-CN",
-            "translated_text": "示例译文",
-            "notes": [],
-            "confidence": "normal",
-        },
+        output=output or {"groups": groups or [_build_translation_group(result)]},
         published_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    )
+
+
+def _translation_nodes(snapshot) -> list[dict[str, object]]:
+    return [
+        child
+        for unit_node in snapshot.value
+        for child in unit_node["children"]  # type: ignore[index]
+        if isinstance(child, dict) and child.get("type") == "reader_translation_group"
+    ]
+
+
+def _build_result_with_unit_separator(separator: str):
+    left = "First sentence."
+    right = "Second sentence."
+    result = _build_result(f"{left} {right}")
+    assert len(result.units) == 1
+    unit = result.units[0]
+    segments = _unit_segments(result)
+    assert len(segments) == 2
+    first_segment, second_segment = segments
+    separator_length = utf16_code_unit_length(separator)
+    first_length = utf16_code_unit_length(left)
+    second_start = first_length + separator_length
+    second_end = second_start + utf16_code_unit_length(right)
+    unit_text = f"{left}{separator}{right}"
+    unit_length = utf16_code_unit_length(unit_text)
+    return replace(
+        result,
+        base=replace(
+            result.base,
+            text=unit_text,
+            content_utf16_length=unit_length,
+        ),
+        units=(
+            replace(
+                unit,
+                base_end_utf16=unit.base_start_utf16 + unit_length,
+                text=unit_text,
+                text_hash=compute_text_range_hash(unit_text),
+            ),
+        ),
+        anchor_segments=(
+            replace(
+                first_segment,
+                base_end_utf16=first_segment.base_start_utf16 + first_length,
+                unit_end_utf16=first_length,
+                text_hash=compute_text_range_hash(left),
+            ),
+            replace(
+                second_segment,
+                base_start_utf16=unit.base_start_utf16 + second_start,
+                base_end_utf16=unit.base_start_utf16 + second_end,
+                unit_start_utf16=second_start,
+                unit_end_utf16=second_end,
+                text_hash=compute_text_range_hash(right),
+            ),
+        ),
+        navigation_units=(
+            replace(
+                result.navigation_units[0],
+                base_end_utf16=unit.base_start_utf16 + unit_length,
+            ),
+        ),
     )
 
 
@@ -587,7 +687,7 @@ def test_reader_plate_snapshot_rebuild_is_stable_for_same_domain_facts() -> None
 def test_reader_plate_snapshot_projects_translation_layer_in_top_level_and_value() -> None:
     result = _build_result("First sentence.\n\nSecond paragraph.")
     layer = _build_translation_layer(
-        base_id=result.base.base_id,
+        result,
         target_scope="unit",
         target_key=result.units[0].unit_id,
     )
@@ -599,18 +699,279 @@ def test_reader_plate_snapshot_projects_translation_layer_in_top_level_and_value
         enhancement_layers=[layer],
     )
 
-    translation_nodes = [
-        child
-        for unit_node in snapshot.value
-        for child in unit_node["children"]  # type: ignore[index]
-        if isinstance(child, dict) and child.get("type") == "reader_translation"
-    ]
+    translation_nodes = _translation_nodes(snapshot)
 
     assert [layer.layer_id for layer in snapshot.enhancement_layers] == ["layer-1"]
     assert snapshot.enhancement_layers[0].owner == "system_ai"
     assert [node["layer_id"] for node in translation_nodes] == ["layer-1"]
-    assert translation_nodes[0]["unit_id"] == result.units[0].unit_id
-    assert translation_nodes[0]["base_id"] == result.base.base_id
+    assert translation_nodes[0] == {
+        "type": "reader_translation_group",
+        "owner": "system_ai",
+        "layer_id": "layer-1",
+        "layer_version": 1,
+        "base_id": result.base.base_id,
+        "unit_id": result.units[0].unit_id,
+        "target_scope": "unit",
+        "target_key": result.units[0].unit_id,
+        "group_id": "group-1",
+        "covered_anchor_segment_ids": [
+            result.anchor_segments[0].anchor_segment_id,
+        ],
+        "source_text_hash": result.anchor_segments[0].text_hash,
+        "children": [{"text": "示例译文"}],
+    }
+    for forbidden_key in (
+        "target_language",
+        "source_language",
+        "confidence",
+        "notes",
+        "source_text",
+        "translated_text",
+    ):
+        assert forbidden_key not in translation_nodes[0]
+
+
+def test_reader_plate_snapshot_projects_multiple_translation_groups_in_stable_order() -> None:
+    result = _build_result("First sentence. Second sentence. Third sentence.")
+    segments = _unit_segments(result)
+    assert len(segments) == 3
+    layer = _build_translation_layer(
+        result,
+        target_scope="unit",
+        target_key=result.units[0].unit_id,
+        groups=[
+            _build_translation_group(
+                result,
+                anchor_segment_ids=[segments[0].anchor_segment_id],
+                group_id="group-1",
+                translated_text="译文一",
+            ),
+            _build_translation_group(
+                result,
+                anchor_segment_ids=[
+                    segments[1].anchor_segment_id,
+                    segments[2].anchor_segment_id,
+                ],
+                group_id="group-2",
+                translated_text="译文二",
+            ),
+        ],
+    )
+
+    snapshot = build_reader_plate_snapshot(
+        result,
+        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        last_event_sequence=18,
+        enhancement_layers=[layer],
+    )
+
+    translation_nodes = _translation_nodes(snapshot)
+
+    assert [node["group_id"] for node in translation_nodes] == ["group-1", "group-2"]
+    assert translation_nodes[0]["covered_anchor_segment_ids"] == [
+        segments[0].anchor_segment_id
+    ]
+    assert translation_nodes[1]["covered_anchor_segment_ids"] == [
+        segments[1].anchor_segment_id,
+        segments[2].anchor_segment_id,
+    ]
+    assert [node["children"][0]["text"] for node in translation_nodes] == [  # type: ignore[index]
+        "译文一",
+        "译文二",
+    ]
+
+
+def test_reader_plate_snapshot_skips_invalid_translation_output_without_crashing() -> None:
+    result = _build_result("First sentence.")
+    layer = _build_translation_layer(
+        result,
+        target_scope="unit",
+        target_key=result.units[0].unit_id,
+        output={"translated_text": "旧输出"},
+    )
+
+    snapshot = build_reader_plate_snapshot(
+        result,
+        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        last_event_sequence=19,
+        enhancement_layers=[layer],
+    )
+
+    assert [layer.layer_id for layer in snapshot.enhancement_layers] == ["layer-1"]
+    assert _translation_nodes(snapshot) == []
+
+
+def test_reader_plate_snapshot_drops_translation_group_with_unknown_anchor_id() -> None:
+    result = _build_result("First sentence. Second sentence.")
+    layer = _build_translation_layer(
+        result,
+        target_scope="unit",
+        target_key=result.units[0].unit_id,
+        groups=[
+            {
+                "group_id": "group-1",
+                "anchor_segment_ids": ["missing-anchor"],
+                "source_text_hash": "deadbeef",
+                "translated_text": "示例译文",
+            }
+        ],
+    )
+
+    snapshot = build_reader_plate_snapshot(
+        result,
+        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        last_event_sequence=20,
+        enhancement_layers=[layer],
+    )
+
+    assert _translation_nodes(snapshot) == []
+
+
+def test_reader_plate_snapshot_drops_non_contiguous_translation_group() -> None:
+    result = _build_result("First sentence. Second sentence. Third sentence.")
+    segments = _unit_segments(result)
+    assert len(segments) == 3
+    layer = _build_translation_layer(
+        result,
+        target_scope="unit",
+        target_key=result.units[0].unit_id,
+        groups=[
+            _build_translation_group(
+                result,
+                anchor_segment_ids=[
+                    segments[0].anchor_segment_id,
+                    segments[2].anchor_segment_id,
+                ],
+            )
+        ],
+    )
+
+    snapshot = build_reader_plate_snapshot(
+        result,
+        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        last_event_sequence=21,
+        enhancement_layers=[layer],
+    )
+
+    assert _translation_nodes(snapshot) == []
+
+
+def test_reader_plate_snapshot_drops_overlapping_translation_group_and_keeps_prior_group() -> None:
+    result = _build_result("First sentence. Second sentence. Third sentence.")
+    segments = _unit_segments(result)
+    assert len(segments) == 3
+    layer = _build_translation_layer(
+        result,
+        target_scope="unit",
+        target_key=result.units[0].unit_id,
+        groups=[
+            _build_translation_group(
+                result,
+                anchor_segment_ids=[
+                    segments[0].anchor_segment_id,
+                    segments[1].anchor_segment_id,
+                ],
+                group_id="group-1",
+                translated_text="前半组",
+            ),
+            _build_translation_group(
+                result,
+                anchor_segment_ids=[
+                    segments[1].anchor_segment_id,
+                    segments[2].anchor_segment_id,
+                ],
+                group_id="group-2",
+                translated_text="后半组",
+            ),
+        ],
+    )
+
+    snapshot = build_reader_plate_snapshot(
+        result,
+        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        last_event_sequence=22,
+        enhancement_layers=[layer],
+    )
+
+    translation_nodes = _translation_nodes(snapshot)
+    assert [node["group_id"] for node in translation_nodes] == ["group-1"]
+    assert translation_nodes[0]["children"] == [{"text": "前半组"}]
+
+
+def test_reader_plate_snapshot_drops_translation_group_with_hash_mismatch_on_space_separator() -> None:
+    result = _build_result("First sentence. Second sentence.")
+    layer = _build_translation_layer(
+        result,
+        target_scope="unit",
+        target_key=result.units[0].unit_id,
+        groups=[
+            _build_translation_group(
+                result,
+                source_text_hash=compute_text_range_hash(
+                    result.units[0].text.replace(" ", "")
+                ),
+            )
+        ],
+    )
+
+    snapshot = build_reader_plate_snapshot(
+        result,
+        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        last_event_sequence=23,
+        enhancement_layers=[layer],
+    )
+
+    assert _translation_nodes(snapshot) == []
+
+
+def test_reader_plate_snapshot_drops_translation_group_with_hash_mismatch_on_blank_line_separator() -> None:
+    result = _build_result_with_unit_separator("\n\n")
+    layer = _build_translation_layer(
+        result,
+        target_scope="unit",
+        target_key=result.units[0].unit_id,
+        groups=[
+            _build_translation_group(
+                result,
+                source_text_hash=compute_text_range_hash(
+                    result.units[0].text.replace("\n\n", "")
+                ),
+            )
+        ],
+    )
+
+    snapshot = build_reader_plate_snapshot(
+        result,
+        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        last_event_sequence=24,
+        enhancement_layers=[layer],
+    )
+
+    assert _translation_nodes(snapshot) == []
+
+
+def test_reader_plate_snapshot_drops_translation_group_with_empty_translated_text() -> None:
+    result = _build_result("First sentence.")
+    layer = _build_translation_layer(
+        result,
+        target_scope="unit",
+        target_key=result.units[0].unit_id,
+        groups=[
+            _build_translation_group(
+                result,
+                translated_text="   ",
+            )
+        ],
+    )
+
+    snapshot = build_reader_plate_snapshot(
+        result,
+        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        last_event_sequence=25,
+        enhancement_layers=[layer],
+    )
+
+    assert _translation_nodes(snapshot) == []
 
 
 def test_reader_plate_snapshot_projects_vocabulary_marks_into_source_leaves() -> None:
@@ -742,6 +1103,7 @@ def test_reader_plate_snapshot_projects_grammar_note_marks_and_sentence_analysis
 def test_reader_plate_snapshot_rejects_wrong_base_translation_layer() -> None:
     result = _build_result("First sentence.\n\nSecond paragraph.")
     layer = _build_translation_layer(
+        result,
         base_id="base-other",
         target_scope="unit",
         target_key=result.units[0].unit_id,

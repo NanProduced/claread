@@ -233,14 +233,32 @@ class ReaderTextRangeAnchor(BaseModel):
         return self
 
 
+class TranslationGenerationGroup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    anchor_segment_ids: list[str] = Field(min_length=1)
+    translated_text: str = Field(min_length=1)
+
+
+class TranslationLayerGenerationOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    groups: list[TranslationGenerationGroup] = Field(min_length=1)
+
+
+class TranslationGroup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    group_id: str = Field(min_length=1)
+    anchor_segment_ids: list[str] = Field(min_length=1)
+    source_text_hash: str = Field(pattern=r"^[0-9a-f]{8}$")
+    translated_text: str = Field(min_length=1)
+
+
 class TranslationLayerOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1] = 1
-    target_language: str = Field(min_length=1)
-    translated_text: str = Field(min_length=1)
-    notes: list[str] = Field(default_factory=list)
-    confidence: Literal["low", "normal", "high"] = "normal"
+    groups: list[TranslationGroup] = Field(min_length=1)
 
 
 class VocabularyHighlightItem(BaseModel):

@@ -16,7 +16,8 @@ from app.schemas.reader_orchestration import (
     ReaderTextRangeAnchor,
     SentenceAnalysisChunk,
     SentenceAnalysisItem,
-    TranslationLayerOutput,
+    TranslationGenerationGroup,
+    TranslationLayerGenerationOutput,
     VocabularyHighlightItem,
     VocabularyLayerOutput,
 )
@@ -50,6 +51,7 @@ from app.services.reader_orchestration.vocabulary_worker import (
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
+    CompatTranslationLayerPublisher,
     connect_admin,
     insert_user,
     long_plain_text_fixture,
@@ -67,11 +69,16 @@ class _StaticTranslator:
         context: TranslationJobContext,
     ) -> TranslationExecutionResult:
         return TranslationExecutionResult(
-            output=TranslationLayerOutput(
-                target_language="zh-CN",
-                translated_text=f"译文：{context.source_text}",
-                notes=[],
-                confidence="normal",
+            output=TranslationLayerGenerationOutput(
+                groups=[
+                    TranslationGenerationGroup(
+                        anchor_segment_ids=[
+                            anchor_segment.anchor_segment_id
+                            for anchor_segment in context.anchor_segments
+                        ],
+                        translated_text=f"译文：{context.source_text}",
+                    )
+                ]
             ),
             usage_data={"input_tokens": 1, "output_tokens": 1},
             prompt_version="pipeline-test-translation",
@@ -311,7 +318,11 @@ def _make_runner(
     grammar_executor: object | None = None,
 ) -> ReaderEnhancementPipelineRunner:
     translation_worker = (
-        TranslationWorkerService(pool=pool, translator=translator)
+        TranslationWorkerService(
+            pool=pool,
+            layer_publisher=CompatTranslationLayerPublisher(pool=pool),
+            translator=translator,
+        )
         if translator is not None
         else None
     )
@@ -416,7 +427,7 @@ def _translation_nodes(snapshot) -> list[dict[str, object]]:
         child
         for unit_node in snapshot.value
         for child in unit_node["children"]  # type: ignore[index]
-        if isinstance(child, dict) and child.get("type") == "reader_translation"
+        if isinstance(child, dict) and child.get("type") == "reader_translation_group"
     ]
 
 
@@ -730,7 +741,25 @@ async def test_run_with_fake_executors_publishes_all_layers_and_snapshot_reload_
     assert layer_types.count("vocabulary") == 2
     assert layer_types.count("grammar_note") == 2
     assert layer_types.count("sentence_analysis") == 2
-    assert len(_translation_nodes(snapshot)) == 2
+    translation_nodes = _translation_nodes(snapshot)
+    assert len(translation_nodes) == 2
+    assert all(node["type"] == "reader_translation_group" for node in translation_nodes)
+    assert all(node["owner"] == "system_ai" for node in translation_nodes)
+    assert all(isinstance(node["group_id"], str) and node["group_id"] for node in translation_nodes)
+    assert all(isinstance(node["covered_anchor_segment_ids"], list) for node in translation_nodes)
+    assert all(isinstance(node["source_text_hash"], str) for node in translation_nodes)
+    assert all(node["children"][0]["text"].startswith("译文：") for node in translation_nodes)  # type: ignore[index]
+    assert all(
+        forbidden_key not in node
+        for node in translation_nodes
+        for forbidden_key in (
+            "target_language",
+            "confidence",
+            "notes",
+            "source_text",
+            "translated_text",
+        )
+    )
     assert _vocabulary_marked_leaves(snapshot)
     assert _grammar_marked_leaves(snapshot)
     assert len(_sentence_analysis_nodes(snapshot)) == 2

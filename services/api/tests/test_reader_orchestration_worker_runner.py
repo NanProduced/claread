@@ -21,7 +21,10 @@ import asyncpg
 import pytest
 
 from app.database import connection as db_connection
-from app.schemas.reader_orchestration import TranslationLayerOutput
+from app.schemas.reader_orchestration import (
+    TranslationGenerationGroup,
+    TranslationLayerGenerationOutput,
+)
 from app.services.reader_orchestration.article_ready_service import (
     PlainTextArticleReadySubmitRequest,
 )
@@ -40,6 +43,7 @@ from app.services.reader_orchestration.worker_runner import (
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
+    CompatTranslationLayerPublisher,
     connect_admin,
     insert_user,
     make_pool,
@@ -52,14 +56,14 @@ LEASE_DURATION = timedelta(seconds=30)
 
 
 class _StaticTranslator:
-    def __init__(self, output: TranslationLayerOutput) -> None:
-        self.output = output
+    def __init__(self, translated_text: str = "第一句。\n\n第二段。") -> None:
+        self.translated_text = translated_text
         self.calls: list = []
 
     async def translate(self, context) -> TranslationExecutionResult:
         self.calls.append(context)
         return TranslationExecutionResult(
-            output=self.output,
+            output=_translation_output(context, self.translated_text),
             usage_data={
                 "aggregate": {
                     "input_tokens": 10,
@@ -82,12 +86,20 @@ class _FailingTranslator:
         raise self.error
 
 
-def _translation_output(text: str = "第一句。\n\n第二段。") -> TranslationLayerOutput:
-    return TranslationLayerOutput(
-        target_language="zh-CN",
-        translated_text=text,
-        notes=[],
-        confidence="normal",
+def _translation_output(
+    context,
+    text: str = "第一句。\n\n第二段。",
+) -> TranslationLayerGenerationOutput:
+    return TranslationLayerGenerationOutput(
+        groups=[
+            TranslationGenerationGroup(
+                anchor_segment_ids=[
+                    anchor_segment.anchor_segment_id
+                    for anchor_segment in context.anchor_segments
+                ],
+                translated_text=text,
+            )
+        ]
     )
 
 
@@ -135,7 +147,11 @@ def _make_runner(
     *,
     translator,
 ) -> TranslationWorkerRunner:
-    worker = TranslationWorkerService(pool=pool, translator=translator)
+    worker = TranslationWorkerService(
+        pool=pool,
+        layer_publisher=CompatTranslationLayerPublisher(pool=pool),
+        translator=translator,
+    )
     orchestrator = ReaderOrchestrator(pool=pool, worker_service=worker)
     return TranslationWorkerRunner(orchestrator)
 
@@ -188,7 +204,7 @@ async def _count_published_translation_layers(
 async def test_single_tick_no_job_returns_no_job_status(
     runner_env: asyncpg.Pool,
 ) -> None:
-    runner = _make_runner(runner_env, translator=_StaticTranslator(_translation_output()))
+    runner = _make_runner(runner_env, translator=_StaticTranslator())
 
     outcome = await runner.run_single_tick(
         lease_owner=LEASE_OWNER,
@@ -207,7 +223,7 @@ async def test_single_tick_success_publishes_layer_and_writes_parsed_decision(
 ) -> None:
     user_id = await insert_user(runner_env)
     article = await _submit_and_bootstrap(runner_env, user_id)
-    runner = _make_runner(runner_env, translator=_StaticTranslator(_translation_output()))
+    runner = _make_runner(runner_env, translator=_StaticTranslator())
 
     outcome = await runner.run_single_tick(
         lease_owner=LEASE_OWNER,
@@ -300,7 +316,7 @@ async def test_single_tick_active_base_mismatch_supersedes_job_without_layer(
 ) -> None:
     user_id = await insert_user(runner_env)
     article = await _submit_and_bootstrap(runner_env, user_id)
-    runner = _make_runner(runner_env, translator=_StaticTranslator(_translation_output()))
+    runner = _make_runner(runner_env, translator=_StaticTranslator())
 
     async with runner_env.acquire() as conn:
         await conn.execute(
@@ -340,7 +356,7 @@ async def test_event_sequence_layer_published_before_parsed_decision_updated(
 ) -> None:
     user_id = await insert_user(runner_env)
     article = await _submit_and_bootstrap(runner_env, user_id)
-    runner = _make_runner(runner_env, translator=_StaticTranslator(_translation_output()))
+    runner = _make_runner(runner_env, translator=_StaticTranslator())
 
     await runner.run_single_tick(
         lease_owner=LEASE_OWNER,
@@ -386,7 +402,7 @@ async def test_drain_processes_multiple_jobs_until_queue_empty(
         runner_env, user_id, title="Drain Article B"
     )
 
-    runner = _make_runner(runner_env, translator=_StaticTranslator(_translation_output()))
+    runner = _make_runner(runner_env, translator=_StaticTranslator())
 
     drain_result = await runner.run_drain(
         lease_owner=LEASE_OWNER,
@@ -418,7 +434,7 @@ async def test_drain_respects_max_ticks_limit(
     user_id = await insert_user(runner_env)
     await _submit_and_bootstrap(runner_env, user_id, title="MaxTicks Article")
 
-    runner = _make_runner(runner_env, translator=_StaticTranslator(_translation_output()))
+    runner = _make_runner(runner_env, translator=_StaticTranslator())
 
     drain_result = await runner.run_drain(
         lease_owner=LEASE_OWNER,
@@ -434,7 +450,7 @@ async def test_drain_respects_max_ticks_limit(
 async def test_drain_rejects_invalid_max_ticks(
     runner_env: asyncpg.Pool,
 ) -> None:
-    runner = _make_runner(runner_env, translator=_StaticTranslator(_translation_output()))
+    runner = _make_runner(runner_env, translator=_StaticTranslator())
 
     with pytest.raises(ValueError, match="max_ticks must be >= 1"):
         await runner.run_drain(
@@ -451,7 +467,7 @@ async def test_orphan_diagnostic_returns_empty_after_successful_tick(
     article = await _submit_and_bootstrap(runner_env, user_id)
 
     orchestrator = ReaderOrchestrator(pool=runner_env)
-    runner = _make_runner(runner_env, translator=_StaticTranslator(_translation_output()))
+    runner = _make_runner(runner_env, translator=_StaticTranslator())
     await runner.run_single_tick(
         lease_owner=LEASE_OWNER,
         lease_duration=LEASE_DURATION,
@@ -469,7 +485,7 @@ async def test_orphan_diagnostic_detects_layer_without_parsed_decision(
     user_id = await insert_user(runner_env)
     article = await _submit_and_bootstrap(runner_env, user_id)
 
-    runner = _make_runner(runner_env, translator=_StaticTranslator(_translation_output()))
+    runner = _make_runner(runner_env, translator=_StaticTranslator())
     await runner.run_single_tick(
         lease_owner=LEASE_OWNER,
         lease_duration=LEASE_DURATION,
@@ -505,7 +521,7 @@ async def test_orphan_diagnostic_scoped_to_record(
     article_a = await _submit_and_bootstrap(runner_env, user_id, title="Scope A")
     article_b = await _submit_and_bootstrap(runner_env, user_id, title="Scope B")
 
-    runner = _make_runner(runner_env, translator=_StaticTranslator(_translation_output()))
+    runner = _make_runner(runner_env, translator=_StaticTranslator())
     await runner.run_drain(
         lease_owner=LEASE_OWNER,
         lease_duration=LEASE_DURATION,
@@ -540,7 +556,7 @@ async def test_single_tick_idempotent_replay_does_not_duplicate_layer_or_decisio
 ) -> None:
     user_id = await insert_user(runner_env)
     article = await _submit_and_bootstrap(runner_env, user_id)
-    runner = _make_runner(runner_env, translator=_StaticTranslator(_translation_output()))
+    runner = _make_runner(runner_env, translator=_StaticTranslator())
 
     first = await runner.run_single_tick(
         lease_owner=LEASE_OWNER,

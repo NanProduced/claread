@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 from uuid import UUID
 
 import asyncpg
@@ -11,6 +12,7 @@ from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
     PlainTextArticleReadySubmitRequest,
 )
+from app.services.reader_orchestration.layer_publisher import TranslationLayerPublisher
 from tests.test_reader_orchestration_schema_baseline import (
     BASELINE_SQL as _BASELINE_SQL,
 )
@@ -20,6 +22,32 @@ from tests.test_reader_orchestration_schema_baseline import (
 
 BASELINE_SQL = _BASELINE_SQL
 _WORD_RE = re.compile(r"[A-Za-z]+")
+
+
+class CompatTranslationLayerPublisher:
+    def __init__(
+        self,
+        *,
+        pool: asyncpg.Pool,
+    ) -> None:
+        self._publisher = TranslationLayerPublisher(pool=pool)
+        self.published_outputs: list[Any] = []
+
+    async def publish_unit_translation(
+        self,
+        *,
+        job_id,
+        lease_token,
+        output,
+        quality_json: dict[str, Any] | None = None,
+    ):
+        self.published_outputs.append(output)
+        return await self._publisher.publish_unit_translation(
+            job_id=job_id,
+            lease_token=lease_token,
+            output=output,
+            quality_json=quality_json,
+        )
 
 
 def long_plain_text_fixture() -> str:

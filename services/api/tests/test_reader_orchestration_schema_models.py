@@ -15,6 +15,9 @@ from app.schemas.reader_orchestration import (
     SentenceAnalysisChunk,
     SentenceAnalysisItem,
     SentenceAnalysisLayerOutput,
+    TranslationGenerationGroup,
+    TranslationGroup,
+    TranslationLayerGenerationOutput,
     TranslationLayerOutput,
     VocabularyLayerOutput,
 )
@@ -64,13 +67,246 @@ def test_reader_text_range_anchor_rejects_text_hash_mismatch() -> None:
         )
 
 
-def test_translation_layer_output_forbids_unknown_fields() -> None:
+def test_translation_layer_generation_output_accepts_group_native_payload() -> None:
+    output = TranslationLayerGenerationOutput.model_validate(
+        {
+            "groups": [
+                {
+                    "anchor_segment_ids": ["s1", "s2"],
+                    "translated_text": "自然流畅的中文译文。",
+                }
+            ]
+        }
+    )
+
+    assert len(output.groups) == 1
+    assert isinstance(output.groups[0], TranslationGenerationGroup)
+    assert output.groups[0].anchor_segment_ids == ["s1", "s2"]
+    assert output.groups[0].translated_text == "自然流畅的中文译文。"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("group_id", "unit_1_g1"),
+        ("source_text_hash", "1a2b3c4d"),
+        ("source_text", "Hello world"),
+        ("segment_sources", [{"anchor_segment_id": "s1"}]),
+        ("source_language", "en"),
+        ("target_language", "zh-CN"),
+        ("profile", {"reading_goal": "daily_reading"}),
+        ("confidence", "high"),
+        ("reason", "semantic_grouping"),
+        ("notes", ["note"]),
+        ("diagnostics", []),
+        ("plate_path", [0, 1]),
+        ("slate_path", [0, 1]),
+        ("dom_path", "p:nth-child(1)"),
+    ],
+)
+def test_translation_layer_generation_output_rejects_disallowed_group_fields(
+    field: str,
+    value: object,
+) -> None:
     with pytest.raises(ValidationError):
-        TranslationLayerOutput(
-            target_language="zh-CN",
-            translated_text="测试",
-            extra_field=True,
+        TranslationLayerGenerationOutput.model_validate(
+            {
+                "groups": [
+                    {
+                        "anchor_segment_ids": ["s1"],
+                        "translated_text": "测试",
+                        field: value,
+                    }
+                ]
+            }
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("schema_version", 1),
+        ("target_language", "zh-CN"),
+        ("profile", {"reading_goal": "daily_reading"}),
+        ("coverage_json", {"coverage_status": "complete"}),
+        ("quality_json", {"group_count": 1}),
+    ],
+)
+def test_translation_layer_generation_output_rejects_top_level_extras(
+    field: str,
+    value: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        TranslationLayerGenerationOutput.model_validate(
+            {
+                "groups": [
+                    {
+                        "anchor_segment_ids": ["s1"],
+                        "translated_text": "测试",
+                    }
+                ],
+                field: value,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"groups": []},
+        {"groups": [{"anchor_segment_ids": [], "translated_text": "测试"}]},
+        {"groups": [{"anchor_segment_ids": ["s1"], "translated_text": ""}]},
+    ],
+)
+def test_translation_layer_generation_output_rejects_invalid_shapes(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        TranslationLayerGenerationOutput.model_validate(payload)
+
+
+def test_translation_layer_output_accepts_group_native_payload() -> None:
+    output = TranslationLayerOutput.model_validate(
+        {
+            "groups": [
+                {
+                    "group_id": "unit_1_g1",
+                    "anchor_segment_ids": ["s1", "s2"],
+                    "source_text_hash": "1a2b3c4d",
+                    "translated_text": "自然流畅的中文译文。",
+                }
+            ]
+        }
+    )
+
+    assert len(output.groups) == 1
+    assert isinstance(output.groups[0], TranslationGroup)
+    assert output.groups[0].group_id == "unit_1_g1"
+    assert output.groups[0].anchor_segment_ids == ["s1", "s2"]
+    assert output.groups[0].source_text_hash == "1a2b3c4d"
+    assert output.groups[0].translated_text == "自然流畅的中文译文。"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("source_text", "Hello world"),
+        ("segment_sources", [{"anchor_segment_id": "s1"}]),
+        ("source_language", "en"),
+        ("target_language", "zh-CN"),
+        ("profile", {"reading_goal": "daily_reading"}),
+        ("confidence", "high"),
+        ("reason", "semantic_grouping"),
+        ("notes", ["note"]),
+        ("diagnostics", []),
+        ("coverage_json", {"coverage_status": "complete"}),
+        ("quality_json", {"group_count": 1}),
+        ("plate_path", [0, 1]),
+        ("slate_path", [0, 1]),
+        ("dom_path", "p:nth-child(1)"),
+    ],
+)
+def test_translation_layer_output_rejects_disallowed_group_fields(
+    field: str,
+    value: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        TranslationLayerOutput.model_validate(
+            {
+                "groups": [
+                    {
+                        "group_id": "unit_1_g1",
+                        "anchor_segment_ids": ["s1"],
+                        "source_text_hash": "1a2b3c4d",
+                        "translated_text": "测试",
+                        field: value,
+                    }
+                ]
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("schema_version", 1),
+        ("target_language", "zh-CN"),
+        ("profile", {"reading_goal": "daily_reading"}),
+        ("coverage_json", {"coverage_status": "complete"}),
+        ("quality_json", {"group_count": 1}),
+    ],
+)
+def test_translation_layer_output_rejects_top_level_extras(
+    field: str,
+    value: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        TranslationLayerOutput.model_validate(
+            {
+                "groups": [
+                    {
+                        "group_id": "unit_1_g1",
+                        "anchor_segment_ids": ["s1"],
+                        "source_text_hash": "1a2b3c4d",
+                        "translated_text": "测试",
+                    }
+                ],
+                field: value,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"groups": []},
+        {
+            "groups": [
+                {
+                    "group_id": "",
+                    "anchor_segment_ids": ["s1"],
+                    "source_text_hash": "1a2b3c4d",
+                    "translated_text": "测试",
+                }
+            ]
+        },
+        {
+            "groups": [
+                {
+                    "group_id": "unit_1_g1",
+                    "anchor_segment_ids": [],
+                    "source_text_hash": "1a2b3c4d",
+                    "translated_text": "测试",
+                }
+            ]
+        },
+        {
+            "groups": [
+                {
+                    "group_id": "unit_1_g1",
+                    "anchor_segment_ids": ["s1"],
+                    "source_text_hash": "bad-hash",
+                    "translated_text": "测试",
+                }
+            ]
+        },
+        {
+            "groups": [
+                {
+                    "group_id": "unit_1_g1",
+                    "anchor_segment_ids": ["s1"],
+                    "source_text_hash": "1a2b3c4d",
+                    "translated_text": "",
+                }
+            ]
+        },
+    ],
+)
+def test_translation_layer_output_rejects_invalid_shapes(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        TranslationLayerOutput.model_validate(payload)
 
 
 def test_vocabulary_layer_output_accepts_empty_items() -> None:
