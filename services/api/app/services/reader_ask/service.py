@@ -124,6 +124,10 @@ from app.services.reader_ask import stream_checkpoint as stream_checkpoint_svc
 from app.services.reader_ask import stream_events as stream_events_svc
 from app.services.reader_ask import supplements as supplements_svc
 from app.services.reader_ask.agent_deps_factory import build_reader_ask_agent_deps
+from app.services.reader_ask.article_rag_prompt_integration import (
+    ArticleRagPromptIntegration,
+    build_default_article_rag_prompt_integration,
+)
 from app.services.reader_ask.agent_invocation import (
     AgentStreamRuntime,
     ReaderAskStreamCompleted,
@@ -153,6 +157,33 @@ _TASK_MODE_LABELS: dict[ReaderAskTaskMode, str] = {
     "practice": "练习",
     "general": "通用",
 }
+
+
+# D6-I4P: Article RAG prompt integration (lazy singleton).
+# Built once on first use; returns None when config is missing
+# (fail-soft — the Ask runtime answers without RAG).  The
+# factory never raises on misconfiguration.
+_article_rag_prompt_integration_singleton: ArticleRagPromptIntegration | None = None
+_article_rag_prompt_integration_initialized: bool = False
+
+
+def _get_article_rag_prompt_integration() -> ArticleRagPromptIntegration | None:
+    """Return the cached Article RAG prompt integration, or
+    ``None`` if Article RAG is not configured.  Never raises."""
+    global _article_rag_prompt_integration_singleton, _article_rag_prompt_integration_initialized
+    if not _article_rag_prompt_integration_initialized:
+        try:
+            _article_rag_prompt_integration_singleton = (
+                build_default_article_rag_prompt_integration(get_settings())
+            )
+        except Exception:  # noqa: BLE001 — defensive catch-all
+            logger.info(
+                "Article RAG prompt integration factory raised "
+                "unexpectedly; Ask will run without RAG"
+            )
+            _article_rag_prompt_integration_singleton = None
+        _article_rag_prompt_integration_initialized = True
+    return _article_rag_prompt_integration_singleton
 
 
 @dataclass(slots=True)
@@ -3265,6 +3296,27 @@ async def stream_thread_message(
                 max_message_text=cfg.MAX_MESSAGE_TEXT,
             )
         )
+        # D6-I4P: Article RAG prompt runtime integration.
+        # Inserted between ``build_prompt_payload`` and
+        # ``prepare_prompt_payload``.  Fail-soft: if the
+        # integration is unavailable (config missing) or raises,
+        # the payload is returned unchanged and the Ask runtime
+        # answers without RAG.
+        _article_rag_integration = _get_article_rag_prompt_integration()
+        if _article_rag_integration is not None:
+            try:
+                prompt_payload = await _article_rag_integration.integrate(
+                    prompt_payload=prompt_payload,
+                    reading_record_id=record.record_id,
+                    user_id=user_id,
+                    query_text=body.content,
+                )
+            except Exception:  # noqa: BLE001 — defensive catch-all
+                logger.info(
+                    "Article RAG prompt integration raised "
+                    "unexpectedly in stream; continuing with "
+                    "original payload"
+                )
         # Emit context.compacting *before* compression so the user sees
         # "上下文压缩中" while compaction is in progress, not after.
         _max_input_budget = prompt_preparation_svc.compute_max_input_budget(
@@ -4184,6 +4236,27 @@ async def retry_thread_message(
                 max_message_text=cfg.MAX_MESSAGE_TEXT,
             )
         )
+        # D6-I4P: Article RAG prompt runtime integration.
+        # Inserted between ``build_prompt_payload`` and
+        # ``prepare_prompt_payload``.  Fail-soft: if the
+        # integration is unavailable (config missing) or raises,
+        # the payload is returned unchanged and the Ask runtime
+        # answers without RAG.
+        _article_rag_integration = _get_article_rag_prompt_integration()
+        if _article_rag_integration is not None:
+            try:
+                prompt_payload = await _article_rag_integration.integrate(
+                    prompt_payload=prompt_payload,
+                    reading_record_id=record.record_id,
+                    user_id=user_id,
+                    query_text=body.content,
+                )
+            except Exception:  # noqa: BLE001 — defensive catch-all
+                logger.info(
+                    "Article RAG prompt integration raised "
+                    "unexpectedly in retry; continuing with "
+                    "original payload"
+                )
         # Emit context.compacting *before* compression so the user sees
         # "上下文压缩中" while compaction is in progress, not after.
         _max_input_budget = prompt_preparation_svc.compute_max_input_budget(
