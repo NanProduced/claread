@@ -178,6 +178,15 @@ class Settings(BaseSettings):
     reader_article_rag_enabled: bool = False
     reader_article_rag_smoke: bool = False
 
+    # D6-I4U: Article RAG index worker entry (poll/lease/max-ticks).
+    # Mirrors reader_artifact_worker_* defaults; the entry script reads these
+    # as CLI argument defaults. Missing DashScope/Zilliz config does NOT
+    # prevent worker startup — providers fail closed on first job.
+    reader_article_rag_worker_poll_interval_seconds: int = 5
+    reader_article_rag_worker_lease_owner_prefix: str = "reader-article-rag-index-worker"
+    reader_article_rag_worker_lease_duration_seconds: int = 120
+    reader_article_rag_worker_max_ticks: int = 100
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

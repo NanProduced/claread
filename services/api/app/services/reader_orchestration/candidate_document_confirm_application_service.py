@@ -83,6 +83,10 @@ from uuid import UUID
 import asyncpg
 
 from app.schemas.reader_orchestration import ReaderPlateSnapshot
+from app.services.reader_orchestration.article_rag_auto_ensure_service import (
+    ArticleRagAutoEnsureService,
+    build_default_auto_ensure_service,
+)
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
@@ -169,6 +173,7 @@ class CandidateDocumentConfirmApplicationService:
         repository: ReaderOrchestrationRepository | None = None,
         event_runtime: ReaderEventRuntime | None = None,
         snapshot_service: ArticleReadyPersistenceService | None = None,
+        auto_ensure_service: ArticleRagAutoEnsureService | None = None,
     ) -> None:
         self._pool = pool
         self._repository = repository or ReaderOrchestrationRepository(pool=pool)
@@ -176,6 +181,12 @@ class CandidateDocumentConfirmApplicationService:
         self._snapshot_service = snapshot_service or ArticleReadyPersistenceService(
             pool=pool, repository=self._repository
         )
+        self._auto_ensure_service = auto_ensure_service
+
+    def _get_auto_ensure_service(self) -> ArticleRagAutoEnsureService:
+        if self._auto_ensure_service is None:
+            self._auto_ensure_service = build_default_auto_ensure_service()
+        return self._auto_ensure_service
 
     def _get_pool(self) -> asyncpg.Pool:
         if self._pool is not None:
@@ -308,6 +319,15 @@ class CandidateDocumentConfirmApplicationService:
                             f"{reading_record_id} as article_ready: {exc}"
                         ) from exc
 
+                    # D6-I4V: Article RAG index auto-ensure (fail-soft).
+                    rag_result = await self._get_auto_ensure_service().ensure_in_transaction(
+                        conn,
+                        reading_record_id=reading_record_id,
+                        user_id=user_id,
+                        expected_generation=freeze_result.record_generation,
+                        now=frozen_at,
+                    )
+
                     # (4) Publish article_ready event. The DB does not
                     # allow new event_type values, so "article_ready" is
                     # reused with a "source" discriminator in the payload.
@@ -326,6 +346,10 @@ class CandidateDocumentConfirmApplicationService:
                         "candidate_confirmed": freeze_result.candidate_confirmed,
                         "freeze_idempotent_noop": freeze_result.idempotent_noop,
                         "source": "candidate_document_confirm",
+                    }
+                    payload_json["article_rag_index"] = {
+                        "status": rag_result.status,
+                        "reason_code": rag_result.reason_code,
                     }
                     try:
                         envelope = await self._event_runtime.publish_event_in_transaction(

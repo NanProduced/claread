@@ -36,6 +36,10 @@ from app.schemas.reader_input_adapter import (
     InputSuitabilityRequest,
     InputSuitabilityResult,
 )
+from app.services.reader_orchestration.article_rag_auto_ensure_service import (
+    ArticleRagAutoEnsureService,
+    build_default_auto_ensure_service,
+)
 from app.services.reader_orchestration.base_builder import (
     DETERMINISTIC_READING_BASE_BUILDER_VERSION,
     DETERMINISTIC_SEGMENTER_VERSION,
@@ -43,9 +47,9 @@ from app.services.reader_orchestration.base_builder import (
 )
 from app.services.reader_orchestration.candidate_document_creation_service import (
     _build_candidate_blocks,
-    _canonical_text_preview,
     _candidate_quality_json,
     _candidate_source_refs_json,
+    _canonical_text_preview,
 )
 from app.services.reader_orchestration.document_freeze_persistence import (
     persist_stable_document_freeze_plan,
@@ -152,10 +156,17 @@ class ExtractedArtifactMaterializationService:
         pool: asyncpg.Pool | None = None,
         repository: ReaderOrchestrationRepository | None = None,
         event_runtime: ReaderEventRuntime | None = None,
+        auto_ensure_service: ArticleRagAutoEnsureService | None = None,
     ) -> None:
         self._pool = pool
         self._repository = repository or ReaderOrchestrationRepository(pool=pool)
         self._event_runtime = event_runtime or ReaderEventRuntime(pool=pool)
+        self._auto_ensure_service = auto_ensure_service
+
+    def _get_auto_ensure_service(self) -> ArticleRagAutoEnsureService:
+        if self._auto_ensure_service is None:
+            self._auto_ensure_service = build_default_auto_ensure_service()
+        return self._auto_ensure_service
 
     def get_pool(self) -> asyncpg.Pool:
         from app.database import connection as db_connection
@@ -508,6 +519,15 @@ class ExtractedArtifactMaterializationService:
             updated_at=now,
         )
 
+        # D6-I4V: Article RAG index auto-ensure (fail-soft).
+        rag_result = await self._get_auto_ensure_service().ensure_in_transaction(
+            conn,
+            reading_record_id=record_id,
+            user_id=user_id,
+            expected_generation=generation,
+            now=now,
+        )
+
         payload = _build_article_ready_payload(
             record_id=record_id,
             source_type=source_type,
@@ -516,6 +536,10 @@ class ExtractedArtifactMaterializationService:
             freeze_result=freeze_result,
             suitability=suitability,
         )
+        payload["article_rag_index"] = {
+            "status": rag_result.status,
+            "reason_code": rag_result.reason_code,
+        }
         event_envelope = await self._event_runtime.publish_event_in_transaction(
             conn,
             record_id=record_id,

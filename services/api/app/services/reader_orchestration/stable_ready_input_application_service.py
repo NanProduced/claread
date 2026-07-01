@@ -21,6 +21,10 @@ from app.schemas.reader_orchestration import (
     ReaderOrchestrationReadingVariant,
     ReaderPlateSnapshot,
 )
+from app.services.reader_orchestration.article_rag_auto_ensure_service import (
+    ArticleRagAutoEnsureService,
+    build_default_auto_ensure_service,
+)
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
@@ -35,7 +39,6 @@ from app.services.reader_orchestration.document_freeze_persistence import (
     persist_stable_document_freeze_plan,
 )
 from app.services.reader_orchestration.document_freeze_plan import (
-    StableDocumentFreezePlan,
     StableDocumentFreezePlanError,
     build_stable_document_freeze_plan,
 )
@@ -101,6 +104,7 @@ class StableReadyInputApplicationService:
         repository: ReaderOrchestrationRepository | None = None,
         event_runtime: ReaderEventRuntime | None = None,
         snapshot_service: ArticleReadyPersistenceService | None = None,
+        auto_ensure_service: ArticleRagAutoEnsureService | None = None,
     ) -> None:
         self._pool = pool
         self._repository = repository or ReaderOrchestrationRepository(pool=pool)
@@ -109,6 +113,12 @@ class StableReadyInputApplicationService:
             pool=pool,
             repository=self._repository,
         )
+        self._auto_ensure_service = auto_ensure_service
+
+    def _get_auto_ensure_service(self) -> ArticleRagAutoEnsureService:
+        if self._auto_ensure_service is None:
+            self._auto_ensure_service = build_default_auto_ensure_service()
+        return self._auto_ensure_service
 
     def _get_pool(self) -> asyncpg.Pool:
         if self._pool is not None:
@@ -260,6 +270,19 @@ class StableReadyInputApplicationService:
                             f"Failed to mark reading record {record_id} as article_ready: {exc}"
                         ) from exc
 
+                    # D6-I4V: Article RAG index auto-ensure (fail-soft).
+                    # Called inside the same transaction so the index job
+                    # commits atomically with the article_ready transition.
+                    # Any failure is swallowed by the service and returned
+                    # as a typed result — it never blocks the main flow.
+                    rag_result = await self._get_auto_ensure_service().ensure_in_transaction(
+                        conn,
+                        reading_record_id=record_id,
+                        user_id=user_id,
+                        expected_generation=freeze_result.record_generation,
+                        now=frozen_at,
+                    )
+
                     payload_json = _build_article_ready_payload(
                         record_id=record_id,
                         source_type=source_type,
@@ -268,6 +291,10 @@ class StableReadyInputApplicationService:
                         freeze_result=freeze_result,
                         suitability=normalized.suitability,
                     )
+                    payload_json["article_rag_index"] = {
+                        "status": rag_result.status,
+                        "reason_code": rag_result.reason_code,
+                    }
                     try:
                         envelope = await self._event_runtime.publish_event_in_transaction(
                             conn,
@@ -278,7 +305,8 @@ class StableReadyInputApplicationService:
                         )
                     except (ValueError, LookupError, RuntimeError, TypeError) as exc:
                         raise StableReadyInputApplicationError(
-                            f"Failed to publish article_ready event for reading record {record_id}: {exc}"
+                            "Failed to publish article_ready event for "
+                            f"reading record {record_id}: {exc}"
                         ) from exc
         except StableReadyInputApplicationError:
             raise
@@ -302,7 +330,8 @@ class StableReadyInputApplicationService:
             )
         except (ValueError, LookupError, RuntimeError) as exc:
             raise StableReadyInputApplicationError(
-                f"Failed to reload snapshot after committing stable-ready input for reading record {record_id}: {exc}"
+                "Failed to reload snapshot after committing stable-ready "
+                f"input for reading record {record_id}: {exc}"
             ) from exc
 
         return StableReadyInputApplicationResult(

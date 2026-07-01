@@ -71,6 +71,7 @@ build-backend = "hatchling.build"
 [project.scripts]
 reader-enhancement-worker = "scripts.run_reader_enhancement_worker:main"
 reader-artifact-pipeline-worker = "scripts.run_reader_artifact_pipeline_worker:main"
+reader-article-rag-index-worker = "scripts.run_reader_article_rag_index_worker:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app", "scripts"]
