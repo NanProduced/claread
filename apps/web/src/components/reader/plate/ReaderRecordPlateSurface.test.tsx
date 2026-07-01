@@ -1050,7 +1050,35 @@ async function sendAskComposerMessageAndReadFirstAttachment(
   );
   const body = JSON.parse(String(streamCall?.[1]?.body)) as {
     attachments: Array<{
+      subtype?: string | null;
+      anchor_payload?: {
+        anchor_type?: string | null;
+        target_key?: string | null;
+        record_id?: string | null;
+        paragraph_id?: string | null;
+        sentence_id?: string | null;
+        selected_text?: string | null;
+        start_offset?: number | null;
+        end_offset?: number | null;
+        text_hash?: string | null;
+        segments?: Array<{
+          paragraph_id?: string | null;
+          sentence_id?: string | null;
+          selected_text?: string | null;
+          start_offset?: number | null;
+          end_offset?: number | null;
+          text_hash?: string | null;
+        }>;
+      } | null;
       selected_text?: string | null;
+      segments?: Array<{
+        paragraph_id?: string | null;
+        sentence_id?: string | null;
+        selected_text?: string | null;
+        start_offset?: number | null;
+        end_offset?: number | null;
+        text_hash?: string | null;
+      }>;
       target_key?: string | null;
       metadata: Record<string, unknown>;
     }>;
@@ -3077,7 +3105,8 @@ describe("ReaderRecordPlateSurface", () => {
     expect(nonFavoritesCalls).toHaveLength(0);
   });
 
-  it("keeps lookup, copy, and write actions disabled for unsupported cross-segment selections", async () => {
+  it("keeps source multi_text limited to Copy and blocks Ask plus write actions", async () => {
+    const writeText = installClipboardMock();
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const { container } = render(
@@ -3101,23 +3130,46 @@ describe("ReaderRecordPlateSurface", () => {
     await waitFor(() => {
       expect(actions.dataset.readerRecordSelectionDraftCount).toBe("2");
     });
-    expect(actions.dataset.readerRecordSelectionSupported).toBe("false");
+    expect(actions.dataset.readerRecordSelectionSupported).toBe("true");
 
-    await waitForSelectionAction(container, "lookup");
-    for (const action of ["lookup", "copy", "ask", "highlight", "note"]) {
-      const button = selectionActionButton(
-        container,
-        action as "lookup" | "copy" | "ask" | "highlight" | "note",
-      );
-      expect(button?.disabled).toBe(true);
-      expect(button?.dataset.readerRecordDisabledReason).toContain("暂不支持");
-    }
+    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const copyButton = await waitForSelectionAction(container, "copy");
+    const askButton = await waitForSelectionAction(container, "ask");
+    const highlightButton = await waitForSelectionAction(container, "highlight");
+    const noteButton = await waitForSelectionAction(container, "note");
+
+    expect(copyButton.disabled).toBe(false);
+    expect(askButton.disabled).toBe(true);
+    expect(askButton.dataset.readerRecordDisabledReason).toBe("跨句选区暂不支持 Ask");
+    expect(lookupButton.disabled).toBe(true);
+    expect(lookupButton.dataset.readerRecordDisabledReason).toBe("跨句选区暂不支持查词");
+    expect(highlightButton.disabled).toBe(true);
+    expect(highlightButton.dataset.readerRecordDisabledReason).toBe("跨句选区暂不支持高亮/笔记");
+    expect(noteButton.disabled).toBe(true);
+    expect(noteButton.dataset.readerRecordDisabledReason).toBe("跨句选区暂不支持高亮/笔记");
+
+    fireEvent.click(copyButton);
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("memory shapes policy");
+    });
+
+    fireEvent.click(askButton);
     expect(container.querySelector('[data-reader-record-action="feedback"]')).toBeNull();
     expect(
-      fetchMock.mock.calls.filter(
-        ([url]) => !(typeof url === "string" && url.includes("/api/web/favorites")),
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("/api/web/reading-record/highlights"),
       ),
-    ).toHaveLength(0);
+    ).toBe(false);
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("/api/web/reading-record/notes"),
+      ),
+    ).toBe(false);
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("/messages/stream"),
+      ),
+    ).toBe(false);
   });
 
   it("enables Copy and Ask for translation selections with source metadata", async () => {

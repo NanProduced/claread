@@ -1,5 +1,10 @@
 "use client";
 
+import {
+  TEXT_RANGE_HASH_ALGORITHM,
+  TEXT_RANGE_OFFSET_UNIT,
+  buildTextRangeTargetKey,
+} from "@claread/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
@@ -24,6 +29,7 @@ import {
   type ReaderAskPageIdentity,
   type ReaderStructuredInspectIntent,
 } from "@/lib/reader-plate";
+import type { ReaderAnchorPayload } from "@/lib/reader-plate/bridges/assets";
 import type { ReaderRecordAnchorDraft } from "@/lib/reader-plate/projection/reader-record-anchor-draft";
 import type { ReaderPlateSnapshotDto, ReaderSnapshotUserAssetDto } from "@/types/api/reader-plate";
 import type {
@@ -161,7 +167,26 @@ function hasNonSourceDocumentSelection(
   );
 }
 
-function canCopyOrAskSelection(
+function hasSourceMultiTextSelection(
+  selection: ReaderRecordSelectionAnchorBridgeResult | null,
+): boolean {
+  return Boolean(
+    selection &&
+      selection.surfaceKind === "source" &&
+      selection.anchorType === "multi_text" &&
+      selection.selectedText.trim().length > 0 &&
+      selection.drafts.length >= 2 &&
+      selection.segments.length >= 2,
+  );
+}
+
+function canCopySelection(
+  selection: ReaderRecordSelectionAnchorBridgeResult | null,
+): boolean {
+  return Boolean(selection?.selectedText.trim().length);
+}
+
+function canAskSelection(
   selection: ReaderRecordSelectionAnchorBridgeResult | null,
 ): boolean {
   return Boolean(singleRangeDraft(selection) || hasNonSourceDocumentSelection(selection));
@@ -179,7 +204,55 @@ function sourceOnlyDisabledReason(
       ? "当前仅支持原文查词"
       : "当前仅支持原文高亮/笔记";
   }
+  if (hasSourceMultiTextSelection(selection)) {
+    return action === "lookup"
+      ? "跨句选区暂不支持查词"
+      : "跨句选区暂不支持高亮/笔记";
+  }
   return "暂不支持跨段或非稳定原文选区";
+}
+
+function sourceSelectionAnchorPayload(
+  recordId: string,
+  selection: ReaderRecordSelectionAnchorBridgeResult | null,
+): ReaderAnchorPayload | null {
+  if (!selection || selection.surfaceKind !== "source") {
+    return null;
+  }
+
+  const primarySegment = selection.segments[0] ?? null;
+  if (!primarySegment) {
+    return null;
+  }
+
+  const draft = singleRangeDraft(selection);
+  if (!draft) {
+    return null;
+  }
+
+  return {
+    anchorType: "text_range",
+    targetKey: buildTextRangeTargetKey(
+      recordId,
+      primarySegment.sentenceId,
+      draft.start_offset,
+      draft.end_offset,
+      draft.text_hash,
+    ),
+    recordId,
+    paragraphId: primarySegment.paragraphId,
+    sentenceId: primarySegment.sentenceId,
+    selectedText: draft.selected_text,
+    startOffset: draft.start_offset,
+    endOffset: draft.end_offset,
+    textHash: draft.text_hash,
+    metadata: {
+      offsetUnit: TEXT_RANGE_OFFSET_UNIT,
+      textHashAlgorithm: TEXT_RANGE_HASH_ALGORITHM,
+      source: "reader_selection",
+      originType: "text_range",
+    },
+  };
 }
 
 function readingRecordAskAnchorFromDraft(
@@ -946,10 +1019,11 @@ function SelectionActionState({
   writeState: ReaderRecordWriteState;
 }) {
   const draft = singleRangeDraft(selection);
-  const copyAskReady = canCopyOrAskSelection(selection);
+  const selectionActionable =
+    canCopySelection(selection) || canAskSelection(selection);
   const writeStatus = writeStateLabel(writeState);
-  const actionMode = copyAskReady ? "selection" : selection ? "unsupported" : "idle";
-  const actionHint = copyAskReady
+  const actionMode = selectionActionable ? "selection" : selection ? "unsupported" : "idle";
+  const actionHint = selectionActionable
     ? `已选：${selection?.selectedText ?? draft?.selected_text ?? ""}`
     : selection
       ? "当前选区暂不支持操作"
@@ -961,7 +1035,7 @@ function SelectionActionState({
       data-reader-record-actions="selection-state"
       data-reader-record-action-mode={actionMode}
       data-reader-record-selection-draft-count={selection?.drafts.length ?? 0}
-      data-reader-record-selection-supported={copyAskReady ? "true" : "false"}
+      data-reader-record-selection-supported={selectionActionable ? "true" : "false"}
       data-reader-record-selection-surface-kind={selection?.surfaceKind}
       data-reader-record-selection-block-type={selection?.blockType}
       data-reader-record-selection-block-id={selection?.blockId}
@@ -1773,17 +1847,19 @@ export function ReaderRecordPlateSurface({
     const selection = activeSelection;
     const draft = singleRangeDraft(selection);
     const segment = selection?.supportedSingleRange ? (selection.segments[0] ?? null) : null;
+    const anchorPayload = sourceSelectionAnchorPayload(snapshot.record_id, selection);
     if (!selection) {
       return null;
     }
 
-    if (draft && segment) {
+    if (draft && segment && anchorPayload) {
       return {
         kind: "text_selection",
         subtype: selection.anchorType,
         label: draft.selected_text,
         selectedText: draft.selected_text,
         targetKey: draft.anchor_segment_id,
+        anchorPayload,
         metadata: {
           pageIdentity: askPageIdentity,
           sourceSurface: "selection_toolbar",
@@ -1845,7 +1921,7 @@ export function ReaderRecordPlateSurface({
           context.surfaceKind === "translation" ? selection.selectedText : null,
       },
     };
-  }, [activeSelection, askPageIdentity]);
+  }, [activeSelection, askPageIdentity, snapshot.record_id]);
 
   const openDictionaryRail = useCallback(() => {
     setDictionaryOpen(true);
@@ -2635,12 +2711,21 @@ export function ReaderRecordPlateSurface({
   const toolbarActionState = useMemo<ReaderToolbarActions["state"]>(() => {
     const draft = singleRangeDraft(activeSelection);
     const sourceSingleRangeReady = Boolean(draft);
-    const copyAskReady = canCopyOrAskSelection(activeSelection);
+    const copyReady = canCopySelection(activeSelection);
+    const askReady =
+      canAskSelection(activeSelection) && currentAskSelectionAttachment !== null;
     const sourceLookupReason = sourceOnlyDisabledReason(activeSelection, "lookup");
     const sourceWriteReason = sourceOnlyDisabledReason(activeSelection, "write");
-    const selectionReason = !activeSelection
+    const copyReason = !activeSelection
       ? "请选择稳定原文后再操作"
-      : copyAskReady
+      : copyReady
+        ? undefined
+        : "暂不支持跨段或非稳定原文选区";
+    const askReason = !activeSelection
+      ? "请选择稳定原文后再操作"
+      : hasSourceMultiTextSelection(activeSelection)
+        ? "跨句选区暂不支持 Ask"
+      : askReady
         ? undefined
         : "暂不支持跨段或非稳定原文选区";
     const savingReason =
@@ -2653,12 +2738,12 @@ export function ReaderRecordPlateSurface({
           lookupState.kind === "loading" ? "正在查询词典" : sourceLookupReason,
       },
       copy: {
-        disabled: !copyAskReady,
-        reason: selectionReason,
+        disabled: !copyReady,
+        reason: copyReason,
       },
       ask: {
-        disabled: !copyAskReady,
-        reason: selectionReason,
+        disabled: !askReady,
+        reason: askReason,
       },
       highlight: {
         disabled: !sourceSingleRangeReady || writeState.kind === "saving",
@@ -2680,7 +2765,14 @@ export function ReaderRecordPlateSurface({
             : savingReason ?? sourceWriteReason,
       },
     };
-  }, [activeSelection, commentApiReady, lookupState.kind, noteAnchorDraft, writeState]);
+  }, [
+    activeSelection,
+    commentApiReady,
+    currentAskSelectionAttachment,
+    lookupState.kind,
+    noteAnchorDraft,
+    writeState,
+  ]);
 
   // 把选区工具栏回调打包为 Context value，供 ReaderFloatingToolbarButtons 消费。
   const toolbarActions = useMemo<ReaderToolbarActions>(
