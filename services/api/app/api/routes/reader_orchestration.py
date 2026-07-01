@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import timedelta
-from typing import get_args
+from typing import Any, get_args
 from uuid import UUID
 
 import asyncpg
@@ -37,8 +37,28 @@ from app.schemas.reader_orchestration import (
     ReaderRecordListItem,
     ReaderRecordListResponse,
     ReadingRecordProductState,
+    ReaderArtifactPipelineArtifactSummary,
+    ReaderArtifactPipelineCandidateDocument,
+    ReaderArtifactPipelineJobSummary,
+    ReaderArtifactPipelineOriginalInputSummary,
+    ReaderArtifactPipelineRecordSummary,
+    ReaderArtifactPipelineStableDocument,
+    ReaderArtifactPipelineStatusResponse,
+    ReaderArticleRagIndexEnsureRequest,
+    ReaderArticleRagIndexEnsureResponse,
+    ReaderArticleRagIndexStatusResponse,
 )
 from app.services.auth.dependencies import AuthUserDep
+from app.services.reader_orchestration.article_rag_index_bootstrap import (
+    DEFAULT_INDEX_VERSION,
+)
+from app.services.reader_orchestration.article_rag_index_lifecycle_service import (
+    ENSURE_STATUS_RECORD_NOT_FOUND,
+    STATUS_UNAVAILABLE,
+    ArticleRagIndexEnsureResult,
+    ArticleRagIndexLifecycleService,
+    ArticleRagIndexLifecycleStatus,
+)
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
     PlainTextArticleReadySubmitRequest,
@@ -49,6 +69,11 @@ from app.services.reader_orchestration.artifact_input_application_service import
     ArtifactInputApplicationNotFoundError,
     ArtifactInputApplicationResult,
     ArtifactInputApplicationService,
+)
+from app.services.reader_orchestration.artifact_input_status_query_service import (
+    ArtifactInputStatusQueryError,
+    ArtifactInputStatusResult,
+    ArtifactPipelineStatusQueryService,
 )
 from app.services.reader_orchestration.base_builder import (
     DETERMINISTIC_READING_BASE_BUILDER_VERSION,
@@ -589,6 +614,149 @@ async def submit_reader_source_artifact_as_input(
 
     return _build_source_artifact_submit_input_response(result)
 
+def _build_artifact_pipeline_job_summary(
+    job: Any,
+) -> ReaderArtifactPipelineJobSummary:
+    return ReaderArtifactPipelineJobSummary(
+        job_id=str(job.job_id),
+        status=job.status,
+        attempt_count=job.attempt_count,
+        max_attempts=job.max_attempts,
+        failure_class=job.failure_class,
+        failure_code=job.failure_code,
+        rationale_code=job.rationale_code,
+        available_at=job.available_at,
+        updated_at=job.updated_at,
+    )
+
+
+def _build_artifact_pipeline_status_response(
+    result: ArtifactInputStatusResult,
+) -> ReaderArtifactPipelineStatusResponse:
+    artifact_summary = ReaderArtifactPipelineArtifactSummary(
+        artifact_id=str(result.artifact.artifact_id),
+        status=result.artifact.status,
+        artifact_kind=result.artifact.artifact_kind,
+        storage_provider=result.artifact.storage_provider,
+        bucket=result.artifact.bucket,
+        endpoint=result.artifact.endpoint,
+        object_key=result.artifact.object_key,
+        content_type=result.artifact.content_type,
+        byte_size=result.artifact.byte_size,
+        content_sha256=result.artifact.content_sha256,
+        source_filename=result.artifact.source_filename,
+        reading_record_id=(
+            str(result.artifact.reading_record_id)
+            if result.artifact.reading_record_id is not None
+            else None
+        ),
+        original_input_id=(
+            str(result.artifact.original_input_id)
+            if result.artifact.original_input_id is not None
+            else None
+        ),
+    )
+
+    record_summary: ReaderArtifactPipelineRecordSummary | None = None
+    if result.record is not None:
+        record_summary = ReaderArtifactPipelineRecordSummary(
+            reading_record_id=str(result.record.reading_record_id),
+            generation=result.record.generation,
+            product_state=result.record.product_state,
+            readiness_state=result.record.readiness_state,
+            active_base_id=(
+                str(result.record.active_base_id)
+                if result.record.active_base_id is not None
+                else None
+            ),
+            source_type=result.record.source_type,
+            title=result.record.title,
+            language=result.record.language,
+        )
+
+    original_input_summary: (
+        ReaderArtifactPipelineOriginalInputSummary | None
+    ) = None
+    if result.original_input is not None:
+        original_input_summary = ReaderArtifactPipelineOriginalInputSummary(
+            original_input_id=str(result.original_input.original_input_id),
+            input_type=result.original_input.input_type,
+            content_sha256=result.original_input.content_sha256,
+            has_source_text=result.original_input.has_source_text,
+            extraction_status=result.original_input.extraction_status,
+            metadata=result.original_input.metadata,
+        )
+
+    extraction_job_summary: ReaderArtifactPipelineJobSummary | None = None
+    if result.extraction_job is not None:
+        extraction_job_summary = _build_artifact_pipeline_job_summary(
+            result.extraction_job
+        )
+
+    materialization_job_summary: ReaderArtifactPipelineJobSummary | None = None
+    if result.materialization_job is not None:
+        materialization_job_summary = _build_artifact_pipeline_job_summary(
+            result.materialization_job
+        )
+
+    candidate_summary: ReaderArtifactPipelineCandidateDocument | None = None
+    if result.candidate_document is not None:
+        candidate_summary = ReaderArtifactPipelineCandidateDocument(
+            candidate_document_id=str(result.candidate_document.candidate_document_id),
+            record_generation=result.candidate_document.record_generation,
+            canonical_text_preview=result.candidate_document.canonical_text_preview,
+        )
+
+    stable_summary: ReaderArtifactPipelineStableDocument | None = None
+    if result.stable_document is not None:
+        stable_summary = ReaderArtifactPipelineStableDocument(
+            stable_document_id=str(result.stable_document.stable_document_id),
+            base_id=str(result.stable_document.base_id),
+            record_generation=result.stable_document.record_generation,
+            content_sha256=result.stable_document.content_sha256,
+            canonical_text_sha256=result.stable_document.canonical_text_sha256,
+        )
+
+    return ReaderArtifactPipelineStatusResponse(
+        artifact=artifact_summary,
+        record=record_summary,
+        original_input=original_input_summary,
+        extraction_job=extraction_job_summary,
+        materialization_job=materialization_job_summary,
+        candidate_document=candidate_summary,
+        stable_document=stable_summary,
+        outcome=result.outcome,
+        next_action=result.next_action,
+    )
+
+
+@router.get(
+    "/source-artifacts/{artifact_id}/pipeline-status",
+    response_model=ReaderArtifactPipelineStatusResponse,
+    summary="Load read-only artifact input pipeline status (D6-I3V)",
+)
+async def get_reader_source_artifact_pipeline_status(
+    artifact_id: UUID,
+    current_user: AuthUserDep,
+) -> ReaderArtifactPipelineStatusResponse:
+    service = ArtifactPipelineStatusQueryService()
+    try:
+        result = await service.load_pipeline_status(
+            artifact_id=artifact_id,
+            user_id=UUID(current_user.user_id),
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=404, detail="Source artifact not found"
+        ) from exc
+    except ArtifactInputStatusQueryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return _build_artifact_pipeline_status_response(result)
+
+
+
+
 
 @router.post(
     "/records/stable-ready-input",
@@ -859,3 +1027,213 @@ async def list_reader_records(
         total=total,
         limit=limit,
     )
+
+# ===========================================================================
+# D6-I4T Article RAG Index Lifecycle API
+#
+# Thin route layer that delegates to ``ArticleRagIndexLifecycleService``.
+# Both routes source ``user_id`` exclusively from ``AuthUserDep``; the
+# request body and query string never carry identity.
+#
+# Status route is read-only: no transaction, no writes, no locks.
+# Ensure route is caller-managed-transaction: the route opens the
+# transaction and the service writes index_runs / reader_runs /
+# reader_jobs inside it.
+# ===========================================================================
+
+
+def _get_article_rag_index_lifecycle_service() -> ArticleRagIndexLifecycleService:
+    """Factory for the lifecycle service.
+
+    Tests can monkeypatch this to inject a fake service without touching
+    the real bootstrap / vector / embedding path.
+    """
+    return ArticleRagIndexLifecycleService()
+
+
+def _get_reader_pool() -> asyncpg.Pool:
+    """Returns the DB pool. Tests can monkeypatch this to inject a fake pool."""
+    return ReaderOrchestrationRepository().get_pool()
+
+
+def _build_article_rag_index_status_response(
+    result: ArticleRagIndexLifecycleStatus,
+) -> ReaderArticleRagIndexStatusResponse:
+    return ReaderArticleRagIndexStatusResponse(
+        reading_record_id=str(result.reading_record_id),
+        status=result.status,
+        stable_document_id=(
+            str(result.stable_document_id)
+            if result.stable_document_id is not None
+            else None
+        ),
+        base_id=(
+            str(result.base_id) if result.base_id is not None else None
+        ),
+        record_generation=result.record_generation,
+        index_run_id=(
+            str(result.index_run_id)
+            if result.index_run_id is not None
+            else None
+        ),
+        index_version=result.index_version,
+        plan_content_sha256=result.plan_content_sha256,
+        chunk_count=result.chunk_count,
+        reason_code=result.reason_code,
+    )
+
+
+def _build_article_rag_index_ensure_response(
+    result: ArticleRagIndexEnsureResult,
+) -> ReaderArticleRagIndexEnsureResponse:
+    return ReaderArticleRagIndexEnsureResponse(
+        reading_record_id=str(result.reading_record_id),
+        status=result.status,
+        reason_code=result.reason_code,
+        idempotent_noop=result.idempotent_noop,
+        stable_document_id=(
+            str(result.stable_document_id)
+            if result.stable_document_id is not None
+            else None
+        ),
+        base_id=(
+            str(result.base_id) if result.base_id is not None else None
+        ),
+        record_generation=result.record_generation,
+        index_run_id=(
+            str(result.index_run_id)
+            if result.index_run_id is not None
+            else None
+        ),
+        job_id=(
+            str(result.job_id) if result.job_id is not None else None
+        ),
+        index_version=result.index_version,
+        chunker_version=result.chunker_version,
+    )
+
+
+@router.get(
+    "/records/{record_id}/article-rag-index/status",
+    response_model=ReaderArticleRagIndexStatusResponse,
+    summary="Load the Article RAG index lifecycle status (D6-I4T)",
+)
+async def get_reader_article_rag_index_status(
+    record_id: UUID,
+    current_user: AuthUserDep,
+    index_version: str | None = Query(
+        default=None,
+        description="Article RAG index version; defaults to the service's "
+        "DEFAULT_INDEX_VERSION when omitted.",
+    ),
+) -> ReaderArticleRagIndexStatusResponse:
+    """Read-only Article RAG index lifecycle status query.
+
+    Does NOT write, lock rows, or read chunk text / embedding vector /
+    Plate JSON / Markdown / DOM / Slate / UI fields.  ``user_id`` comes
+    only from ``AuthUserDep``.
+
+    HTTP mapping:
+      * ``status=unavailable`` + ``reason_code=record_not_found`` → 404
+      * All other typed statuses → 200 with the typed response
+    """
+    service = _get_article_rag_index_lifecycle_service()
+    pool = _get_reader_pool()
+    try:
+        # Read-only: no transaction needed.
+        async with pool.acquire() as conn:
+            result = await service.load_article_rag_index_lifecycle_status(
+                conn,
+                reading_record_id=record_id,
+                user_id=UUID(current_user.user_id),
+                index_version=index_version or DEFAULT_INDEX_VERSION,
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        # Unexpected (non-typed) failure: surface as 409 with a fixed,
+        # leak-safe identifier — the underlying exception message, type
+        # name, and traceback are NEVER echoed to the client (they may
+        # contain tokens, URIs, chunk text, query text, or SDK
+        # internals).  The exception is intentionally raised ``from
+        # None`` so the cause chain cannot be introspected downstream
+        # either — structured server-side logging should be wired
+        # separately (e.g. via an exception middleware / handler) and
+        # must redact the same fields before persisting.
+        raise HTTPException(
+            status_code=409,
+            detail="article_rag_index_status_unexpected_error",
+        ) from None
+
+    if (
+        result.status == STATUS_UNAVAILABLE
+        and result.reason_code == "record_not_found"
+    ):
+        raise HTTPException(
+            status_code=404, detail="Reader record not found"
+        )
+    return _build_article_rag_index_status_response(result)
+
+
+@router.post(
+    "/records/{record_id}/article-rag-index/ensure",
+    response_model=ReaderArticleRagIndexEnsureResponse,
+    summary="Ensure an Article RAG index build job exists for the record (D6-I4T)",
+)
+async def ensure_reader_article_rag_index_job(
+    record_id: UUID,
+    body: ReaderArticleRagIndexEnsureRequest,
+    current_user: AuthUserDep,
+) -> ReaderArticleRagIndexEnsureResponse:
+    """Trigger Article RAG index build job creation with caller-managed tx.
+
+    The route opens the transaction; the service writes ``index_runs`` /
+    ``reader_runs`` / ``reader_jobs`` inside it.  ``user_id`` comes only
+    from ``AuthUserDep``; ``chunker_version`` is intentionally NOT
+    accepted (I4S: bootstrap plan service is the authority).
+
+    HTTP mapping:
+      * ``status=record_not_found`` → 404
+      * All other typed statuses (including ``error``) → 200 with typed
+        response, so callers can switch on ``status`` / ``reason_code``
+        without parsing opaque details.
+      * Unexpected service exception → 409.
+    """
+    service = _get_article_rag_index_lifecycle_service()
+    pool = _get_reader_pool()
+    index_version = body.index_version or DEFAULT_INDEX_VERSION
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = (
+                    await service.ensure_article_rag_index_job_in_transaction(
+                        conn,
+                        reading_record_id=record_id,
+                        user_id=UUID(current_user.user_id),
+                        expected_generation=body.expected_generation,
+                        index_version=index_version,
+                    )
+                )
+    except HTTPException:
+        raise
+    except Exception:
+        # Unexpected (non-typed) failure: surface as 409 with a fixed,
+        # leak-safe identifier — the underlying exception message, type
+        # name, and traceback are NEVER echoed to the client (they may
+        # contain tokens, URIs, chunk text, query text, or SDK
+        # internals).  The exception is intentionally raised ``from
+        # None`` so the cause chain cannot be introspected downstream
+        # either — structured server-side logging should be wired
+        # separately (e.g. via an exception middleware / handler) and
+        # must redact the same fields before persisting.
+        raise HTTPException(
+            status_code=409,
+            detail="article_rag_index_ensure_unexpected_error",
+        ) from None
+
+    if result.status == ENSURE_STATUS_RECORD_NOT_FOUND:
+        raise HTTPException(
+            status_code=404, detail="Reader record not found"
+        )
+    return _build_article_rag_index_ensure_response(result)

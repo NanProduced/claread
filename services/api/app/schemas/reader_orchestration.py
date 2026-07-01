@@ -1002,3 +1002,216 @@ class ReaderEventPollResponse(BaseModel):
     reload_required: bool = False
     reload_reason: str | None = None
     events: list[ReaderEventResponse] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# D6-I3V Artifact Input Pipeline Status (read-only)
+# ---------------------------------------------------------------------------
+
+ReaderArtifactPipelineOutcome = Literal[
+    "upload_pending",
+    "upload_available_not_submitted",
+    "extraction_queued",
+    "extraction_running",
+    "extraction_retry_later",
+    "extraction_failed",
+    "materialization_queued",
+    "materialization_running",
+    "materialization_retry_later",
+    "materialization_failed",
+    "stable_document_ready",
+    "candidate_document_required",
+    "input_rejected_or_action_required",
+]
+
+ReaderArtifactPipelineNextAction = Literal[
+    "complete_upload",
+    "submit_input",
+    "wait_for_worker",
+    "retry_later",
+    "show_error",
+    "open_reader",
+    "confirm_candidate_document",
+    "revise_input",
+]
+
+
+class ReaderArtifactPipelineArtifactSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_id: str = Field(min_length=1)
+    status: str = Field(min_length=1)
+    artifact_kind: str = Field(min_length=1)
+    storage_provider: str = Field(min_length=1)
+    bucket: str | None = None
+    endpoint: str | None = None
+    object_key: str = Field(min_length=1)
+    content_type: str | None = None
+    byte_size: int | None = Field(default=None, ge=0)
+    content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    source_filename: str | None = None
+    reading_record_id: str | None = None
+    original_input_id: str | None = None
+
+
+class ReaderArtifactPipelineRecordSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reading_record_id: str = Field(min_length=1)
+    generation: int = Field(ge=1)
+    product_state: ReadingRecordProductState
+    readiness_state: ReadingRecordReadinessState
+    active_base_id: str | None = None
+    source_type: str = Field(min_length=1)
+    title: str | None = None
+    language: str | None = None
+
+
+class ReaderArtifactPipelineOriginalInputSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    original_input_id: str = Field(min_length=1)
+    input_type: str = Field(min_length=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    has_source_text: bool
+    extraction_status: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReaderArtifactPipelineJobSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str = Field(min_length=1)
+    status: str = Field(min_length=1)
+    attempt_count: int = Field(ge=0)
+    max_attempts: int = Field(ge=1)
+    failure_class: str | None = None
+    failure_code: str | None = None
+    rationale_code: str | None = None
+    available_at: datetime
+    updated_at: datetime
+
+
+class ReaderArtifactPipelineCandidateDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_document_id: str = Field(min_length=1)
+    record_generation: int = Field(ge=1)
+    canonical_text_preview: str
+
+
+class ReaderArtifactPipelineStableDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stable_document_id: str = Field(min_length=1)
+    base_id: str = Field(min_length=1)
+    record_generation: int = Field(ge=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    canonical_text_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ReaderArtifactPipelineStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact: ReaderArtifactPipelineArtifactSummary
+    record: ReaderArtifactPipelineRecordSummary | None = None
+    original_input: ReaderArtifactPipelineOriginalInputSummary | None = None
+    extraction_job: ReaderArtifactPipelineJobSummary | None = None
+    materialization_job: ReaderArtifactPipelineJobSummary | None = None
+    candidate_document: ReaderArtifactPipelineCandidateDocument | None = None
+    stable_document: ReaderArtifactPipelineStableDocument | None = None
+    outcome: ReaderArtifactPipelineOutcome
+    next_action: ReaderArtifactPipelineNextAction
+
+
+# ---------------------------------------------------------------------------
+# D6-I4T Article RAG Index Lifecycle API (read-only status + ensure trigger)
+#
+# The lifecycle service exposes two typed result dataclasses; these schemas
+# mirror them for the HTTP boundary. ``user_id`` is intentionally NOT
+# returned on either response — it is sourced only from ``AuthUserDep`` and
+# exposing it would let clients depend on an internal identity field.
+#
+# No chunk text / embedding vector / vector payload / Plate JSON /
+# Markdown syntax / DOM selection / Slate path / UI display group is ever
+# present in these schemas.
+# ---------------------------------------------------------------------------
+
+ReaderArticleRagIndexLifecycleStatusValue = Literal[
+    "not_ready",
+    "not_indexed",
+    "queued",
+    "indexing",
+    "indexed",
+    "failed",
+    "superseded_or_stale",
+    "unavailable",
+]
+
+ReaderArticleRagIndexEnsureStatusValue = Literal[
+    "enqueued",
+    "idempotent_noop",
+    "not_ready",
+    "no_active_base",
+    "generation_mismatch",
+    "record_not_found",
+    "plan_hash_mismatch",
+    "bootstrap_inconsistent",
+    "error",
+]
+
+
+class ReaderArticleRagIndexStatusResponse(BaseModel):
+    """GET /reader/records/{record_id}/article-rag-index/status response.
+
+    Mirrors ``ArticleRagIndexLifecycleStatus`` minus ``user_id``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reading_record_id: str = Field(min_length=1)
+    status: ReaderArticleRagIndexLifecycleStatusValue
+    stable_document_id: str | None = None
+    base_id: str | None = None
+    record_generation: int | None = Field(default=None, ge=1)
+    index_run_id: str | None = None
+    index_version: str | None = Field(default=None, min_length=1)
+    plan_content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    chunk_count: int | None = Field(default=None, ge=0)
+    reason_code: str | None = None
+
+
+class ReaderArticleRagIndexEnsureRequest(BaseModel):
+    """POST /reader/records/{record_id}/article-rag-index/ensure body.
+
+    ``extra="forbid"`` so unknown fields (including ``user_id`` and
+    ``chunker_version``) are rejected with 422.  ``user_id`` is sourced
+    only from ``AuthUserDep``; ``chunker_version`` is intentionally not
+    exposed to clients (I4S: bootstrap plan service is the authority).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_generation: int = Field(ge=1)
+    index_version: str | None = Field(default=None, min_length=1)
+
+
+class ReaderArticleRagIndexEnsureResponse(BaseModel):
+    """POST /reader/records/{record_id}/article-rag-index/ensure response.
+
+    Mirrors ``ArticleRagIndexEnsureResult`` minus ``user_id``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reading_record_id: str = Field(min_length=1)
+    status: ReaderArticleRagIndexEnsureStatusValue
+    reason_code: str = Field(min_length=1)
+    idempotent_noop: bool
+    stable_document_id: str | None = None
+    base_id: str | None = None
+    record_generation: int | None = Field(default=None, ge=1)
+    index_run_id: str | None = None
+    job_id: str | None = None
+    index_version: str | None = Field(default=None, min_length=1)
+    chunker_version: str | None = Field(default=None, min_length=1)
