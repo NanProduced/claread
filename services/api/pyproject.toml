@@ -92,6 +92,8 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "real_llm: calls a real LLM provider; requires CLAREAD_ALLOW_REAL_LLM_TESTS=1 + CLAREAD_REAL_LLM_MODEL=<model> + -m real_llm",
+    "article_rag_smoke: opt-in real-provider Article RAG integration smoke; requires READER_ARTICLE_RAG_SMOKE=1 + -m article_rag_smoke",
+    "no_network_default: default-passes I4Y test that must not hit any real network / LLM / vector store",
 ]
 
 [tool.mypy]
