@@ -207,7 +207,7 @@ function makeUnit(): ReaderUnitNodeDto {
         ],
       },
       {
-        type: "reader_translation",
+        type: "reader_translation_group",
         owner: "system_ai",
         layer_id: "layer_translation_1",
         layer_version: 1,
@@ -215,9 +215,9 @@ function makeUnit(): ReaderUnitNodeDto {
         unit_id: "unit_1",
         target_scope: "unit",
         target_key: "unit_1",
-        target_language: "zh",
-        confidence: "normal",
-        notes: [],
+        group_id: "group_translation_1",
+        covered_anchor_segment_ids: ["seg_1", "seg_2"],
+        source_text_hash: "unit_hash_1",
         children: [{ text: "制度记忆会塑造政策选择，这些选择会持续存在。" }],
       },
       {
@@ -304,6 +304,12 @@ function makeSnapshot(
     record_id: "record_1",
     record: {
       title: "Projection Spike Fixture",
+      display_title_zh: null,
+      title_generation_status: "pending",
+      title_generation_error_code: null,
+      title_generation_error_message: null,
+      reading_goal: "daily_reading",
+      reading_variant: "intensive_reading",
       created_at: "2026-06-24T00:00:00Z",
       source_type: "plain_text",
       source_metadata: {},
@@ -382,6 +388,63 @@ function makeSnapshot(
       },
     ],
     value: [makeUnit()],
+  };
+}
+
+function makeSequentialTranslationGroupSnapshot(): ReaderPlateSnapshotDto {
+  const snapshot = makeSnapshot();
+  const unit = snapshot.value[0];
+  const sourceBlock = unit.children.find(
+    (child): child is ReaderSourceBlockNodeDto =>
+      child.type === "reader_source_block",
+  );
+  const sentenceAnalysis = unit.children.find(
+    (child) => child.type === "reader_sentence_analysis",
+  );
+
+  if (!sourceBlock || !sentenceAnalysis) {
+    throw new Error("Expected source block and sentence analysis fixtures");
+  }
+
+  return {
+    ...snapshot,
+    value: [
+      {
+        ...unit,
+        children: [
+          sourceBlock,
+          {
+            type: "reader_translation_group",
+            owner: "system_ai",
+            layer_id: "layer_translation_1",
+            layer_version: 1,
+            base_id: "base_1",
+            unit_id: "unit_1",
+            target_scope: "unit",
+            target_key: "unit_1",
+            group_id: "group_translation_1",
+            covered_anchor_segment_ids: ["seg_1"],
+            source_text_hash: "group_hash_1",
+            children: [{ text: "制度记忆会塑造政策选择。" }],
+          },
+          sentenceAnalysis,
+          {
+            type: "reader_translation_group",
+            owner: "system_ai",
+            layer_id: "layer_translation_1",
+            layer_version: 1,
+            base_id: "base_1",
+            unit_id: "unit_1",
+            target_scope: "unit",
+            target_key: "unit_1",
+            group_id: "group_translation_2",
+            covered_anchor_segment_ids: ["seg_2"],
+            source_text_hash: "group_hash_2",
+            children: [{ text: "这些选择会持续存在。" }],
+          },
+        ],
+      },
+    ],
   };
 }
 
@@ -619,19 +682,133 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
     );
     const blockquote = firstBlockquote(document);
 
-    expect(blockquote.id).toBe("blockquote:layer_translation_1:unit_1");
+    expect(blockquote.id).toBe("blockquote:layer_translation_1:group_translation_1");
     expect(blockquote.data).toMatchObject({
       unitId: "unit_1",
       layerId: "layer_translation_1",
       layerVersion: 1,
-      targetLanguage: "zh",
-      confidence: "normal",
+      groupId: "group_translation_1",
+      coveredAnchorSegmentIds: ["seg_1", "seg_2"],
+      sourceTextHash: "unit_hash_1",
     });
     expect(blockquote.children[0]).toEqual({
       text: "制度记忆会塑造政策选择，这些选择会持续存在。",
       owner: "system_ai",
       sourceRole: "unit_translation_text",
     });
+  });
+
+  it("inserts each translation group after its covered source span", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeSequentialTranslationGroupSnapshot(),
+    );
+    const blockIds = document.children.map((child) => child.id);
+
+    expect(
+      blockIds.indexOf("sentence_analysis:analysis_seg_1"),
+    ).toBeLessThan(
+      blockIds.indexOf("blockquote:layer_translation_1:group_translation_1"),
+    );
+    expect(
+      blockIds.indexOf("blockquote:layer_translation_1:group_translation_1"),
+    ).toBeLessThan(blockIds.indexOf("paragraph:seg_2"));
+    expect(blockIds.indexOf("paragraph:seg_2")).toBeLessThan(
+      blockIds.indexOf("blockquote:layer_translation_1:group_translation_2"),
+    );
+  });
+
+  it("skips translation groups whose covered anchors are all missing", () => {
+    const snapshot = makeSnapshot();
+    const unit = snapshot.value[0];
+    const sourceBlock = unit.children.find(
+      (child): child is ReaderSourceBlockNodeDto =>
+        child.type === "reader_source_block",
+    );
+    const sentenceAnalysis = unit.children.find(
+      (child) => child.type === "reader_sentence_analysis",
+    );
+
+    if (!sourceBlock || !sentenceAnalysis) {
+      throw new Error("Expected source block and sentence analysis fixtures");
+    }
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument({
+      ...snapshot,
+      value: [
+        {
+          ...unit,
+          children: [
+            sourceBlock,
+            {
+              type: "reader_translation_group",
+              owner: "system_ai",
+              layer_id: "layer_translation_1",
+              layer_version: 1,
+              base_id: "base_1",
+              unit_id: "unit_1",
+              target_scope: "unit",
+              target_key: "unit_1",
+              group_id: "group_translation_missing_only",
+              covered_anchor_segment_ids: ["missing_seg"],
+              source_text_hash: "group_hash_missing_only",
+              children: [{ text: "不应投影" }],
+            },
+            sentenceAnalysis,
+          ],
+        },
+      ],
+    });
+
+    expect(
+      document.children.filter((child) => child.type === "blockquote"),
+    ).toHaveLength(0);
+  });
+
+  it("skips translation groups whose covered anchors are partially missing", () => {
+    const snapshot = makeSnapshot();
+    const unit = snapshot.value[0];
+    const sourceBlock = unit.children.find(
+      (child): child is ReaderSourceBlockNodeDto =>
+        child.type === "reader_source_block",
+    );
+    const sentenceAnalysis = unit.children.find(
+      (child) => child.type === "reader_sentence_analysis",
+    );
+
+    if (!sourceBlock || !sentenceAnalysis) {
+      throw new Error("Expected source block and sentence analysis fixtures");
+    }
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument({
+      ...snapshot,
+      value: [
+        {
+          ...unit,
+          children: [
+            sourceBlock,
+            {
+              type: "reader_translation_group",
+              owner: "system_ai",
+              layer_id: "layer_translation_1",
+              layer_version: 1,
+              base_id: "base_1",
+              unit_id: "unit_1",
+              target_scope: "unit",
+              target_key: "unit_1",
+              group_id: "group_translation_missing_partial",
+              covered_anchor_segment_ids: ["seg_1", "missing_seg"],
+              source_text_hash: "group_hash_missing_partial",
+              children: [{ text: "不应投影" }],
+            },
+            sentenceAnalysis,
+          ],
+        },
+      ],
+    });
+
+    expect(
+      document.children.filter((child) => child.type === "blockquote"),
+    ).toHaveLength(0);
   });
 
   it("emits blocks in order: paragraph, grammar callout, sentence analysis, blockquote", () => {

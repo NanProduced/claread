@@ -222,15 +222,15 @@ function makeBlockquoteBlock(
 ): ReaderRecordPlateBlockquoteBlock {
   return {
     type: "blockquote",
-    id: "blockquote:layer_translation_1:unit_1",
+    id: "blockquote:layer_translation_1:group_translation_1",
     children: [makeTranslationLeaf()],
     data: {
       unitId: "unit_1",
       layerId: "layer_translation_1",
       layerVersion: 1,
-      targetLanguage: "zh",
-      confidence: "normal",
-      notes: [],
+      groupId: "group_translation_1",
+      coveredAnchorSegmentIds: ["seg_1", "seg_2"],
+      sourceTextHash: "unit_hash_1",
     },
     ...overrides,
   };

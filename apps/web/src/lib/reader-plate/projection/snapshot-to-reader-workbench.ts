@@ -3,6 +3,7 @@ import type {
   ReaderGrammarNoteMarkDto,
   ReaderPlateSnapshotDto,
   ReaderSourceBlockChildNodeDto,
+  ReaderTranslationGroupNodeDto,
   ReaderTranslationNodeDto,
   ReaderUnitChildNodeDto,
   ReaderUnitNodeDto,
@@ -43,8 +44,11 @@ function isSourceBlockNode(
 
 function isTranslationNode(
   node: ReaderUnitChildNodeDto,
-): node is ReaderTranslationNodeDto {
-  return node.type === "reader_translation";
+): node is ReaderTranslationNodeDto | ReaderTranslationGroupNodeDto {
+  return (
+    node.type === "reader_translation" ||
+    node.type === "reader_translation_group"
+  );
 }
 
 function sentenceIdForAnchor(anchor: ReaderAnchorSegmentNodeDto): string {
@@ -55,8 +59,32 @@ function textFromAnchorSegment(anchor: ReaderAnchorSegmentNodeDto): string {
   return anchor.children.map((leaf) => leaf.text).join("");
 }
 
-function textFromTranslation(node: ReaderTranslationNodeDto): string {
+function textFromTranslation(
+  node: ReaderTranslationNodeDto | ReaderTranslationGroupNodeDto,
+): string {
   return node.children.map((leaf) => leaf.text).join("").trim();
+}
+
+function sentenceIdForTranslation(
+  translation: ReaderTranslationNodeDto | ReaderTranslationGroupNodeDto,
+  unit: ReaderUnitNodeDto,
+  context: SnapshotProjectionContext,
+): string | undefined {
+  // Reader Workbench remains a legacy sentence-oriented fallback. It cannot
+  // represent group-native translations losslessly, so a translation group is
+  // attached to its first covered sentence instead of being split or duplicated.
+  if (translation.type === "reader_translation_group") {
+    const firstAnchorSegmentId = translation.covered_anchor_segment_ids[0];
+    return firstAnchorSegmentId
+      ? context.sentenceByAnchorSegmentId.get(firstAnchorSegmentId)?.sentenceId
+      : context.sentenceIdsByUnitId.get(unit.unit_id)?.[0];
+  }
+
+  return translation.target_scope === "anchor_segment"
+    ? context.sentenceByAnchorSegmentId.get(
+        translation.anchor_segment_id ?? translation.target_key,
+      )?.sentenceId
+    : context.sentenceIdsByUnitId.get(unit.unit_id)?.[0];
 }
 
 function phraseTypeForWorkbench(
@@ -257,12 +285,7 @@ function buildTranslations(
         return;
       }
 
-      const sentenceId =
-        translation.target_scope === "anchor_segment"
-          ? context.sentenceByAnchorSegmentId.get(
-              translation.anchor_segment_id ?? translation.target_key,
-            )?.sentenceId
-          : context.sentenceIdsByUnitId.get(unit.unit_id)?.[0];
+      const sentenceId = sentenceIdForTranslation(translation, unit, context);
 
       if (!sentenceId || seen.has(sentenceId)) {
         return;

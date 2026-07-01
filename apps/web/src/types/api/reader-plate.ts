@@ -258,12 +258,15 @@ export interface ReaderSnapshotAnchorSegmentDto {
   hash_algorithm: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
 }
 
-export interface TranslationLayerOutputDto {
-  schema_version: 1;
-  target_language: string;
+export interface TranslationGroupDto {
+  group_id: string;
+  anchor_segment_ids: string[];
+  source_text_hash: string;
   translated_text: string;
-  notes: string[];
-  confidence: TranslationConfidence;
+}
+
+export interface TranslationLayerOutputDto {
+  groups: TranslationGroupDto[];
 }
 
 export interface VocabularyHighlightItemDto {
@@ -493,6 +496,7 @@ export interface ReaderUnitNodeDto {
 
 export type ReaderUnitChildNodeDto =
   | ReaderSourceBlockNodeDto
+  | ReaderTranslationGroupNodeDto
   | ReaderTranslationNodeDto
   | ReaderSentenceAnalysisNodeDto;
 
@@ -528,6 +532,25 @@ export interface ReaderAnchorSegmentNodeDto {
   children: ReaderStableSegmentTextLeafDto[];
 }
 
+export interface ReaderTranslationGroupNodeDto {
+  type: "reader_translation_group";
+  owner: "system_ai";
+  layer_id: string;
+  layer_version: number;
+  base_id: string;
+  unit_id: string;
+  target_scope: "unit";
+  target_key: string;
+  group_id: string;
+  covered_anchor_segment_ids: string[];
+  source_text_hash: string;
+  children: ReaderTranslationTextLeafDto[];
+}
+
+/**
+ * @deprecated Legacy pre-group translation projection. Reader Record Plate
+ * consumes `reader_translation_group`.
+ */
 export interface ReaderTranslationNodeDto {
   type: "reader_translation";
   owner: "system_ai";

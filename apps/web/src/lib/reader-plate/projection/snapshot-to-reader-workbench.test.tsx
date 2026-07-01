@@ -237,6 +237,12 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
     record_id: "record_1",
     record: {
       title: "Snapshot Adapter Fixture",
+      display_title_zh: null,
+      title_generation_status: "pending",
+      title_generation_error_code: null,
+      title_generation_error_message: null,
+      reading_goal: "daily_reading",
+      reading_variant: "intensive_reading",
       created_at: "2026-06-22T00:00:00Z",
       source_type: "plain_text",
       source_metadata: {},
@@ -309,6 +315,42 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
   };
 }
 
+function makeGroupNativeSnapshot(): ReaderPlateSnapshotDto {
+  const snapshot = makeSnapshot();
+  const unit = snapshot.value[0];
+
+  return {
+    ...snapshot,
+    value: [
+      {
+        ...unit,
+        children: unit.children.map((child) =>
+          child.type === "reader_translation"
+            ? {
+                type: "reader_translation_group" as const,
+                owner: "system_ai" as const,
+                layer_id: child.layer_id,
+                layer_version: child.layer_version,
+                base_id: child.base_id,
+                unit_id: child.unit_id,
+                target_scope: "unit" as const,
+                target_key: child.target_key,
+                group_id: "group_translation_1",
+                covered_anchor_segment_ids: ["seg_1", "seg_2"],
+                source_text_hash: "group_hash_1",
+                children: [
+                  {
+                    text: "制度记忆会塑造政策选择。这些选择会跨届持续存在。",
+                  },
+                ],
+              }
+            : child,
+        ),
+      },
+    ],
+  };
+}
+
 describe("snapshot-to-reader-workbench adapter", () => {
   it("projects reader_unit and reader_anchor_segment into paragraph and sentence models", () => {
     const vm = adaptReaderPlateSnapshotToReaderVm(makeSnapshot());
@@ -340,6 +382,17 @@ describe("snapshot-to-reader-workbench adapter", () => {
       {
         sentenceId: "sent_1",
         translationZh: "制度记忆会塑造政策选择。",
+      },
+    ]);
+  });
+
+  it("degrades group-native translations onto the first covered sentence in the legacy fallback", () => {
+    const vm = adaptReaderPlateSnapshotToReaderVm(makeGroupNativeSnapshot());
+
+    expect(vm.translations).toEqual([
+      {
+        sentenceId: "sent_1",
+        translationZh: "制度记忆会塑造政策选择。这些选择会跨届持续存在。",
       },
     ]);
   });

@@ -13,7 +13,7 @@ import {
   type ReaderPlateValueDto,
   type ReaderPlainTextSubmitResponseDto,
   type ReaderSentenceAnalysisNodeDto,
-  type ReaderTranslationNodeDto,
+  type ReaderTranslationGroupNodeDto,
   type ReaderUnitNodeDto,
 } from "@/types/api/reader-plate";
 
@@ -121,9 +121,9 @@ function makeUnit(): ReaderUnitNodeDto {
   };
 }
 
-function makeTranslation(): ReaderTranslationNodeDto {
+function makeTranslation(): ReaderTranslationGroupNodeDto {
   return {
-    type: "reader_translation",
+    type: "reader_translation_group",
     owner: "system_ai",
     layer_id: "layer_1",
     layer_version: 1,
@@ -131,9 +131,9 @@ function makeTranslation(): ReaderTranslationNodeDto {
     unit_id: "u1",
     target_scope: "unit",
     target_key: "u1",
-    target_language: "zh",
-    confidence: "normal",
-    notes: [],
+    group_id: "group_1",
+    covered_anchor_segment_ids: ["s1"],
+    source_text_hash: "abcd1234",
     children: [{ text: "很少有人能把热爱变成稳定收入。" }],
   };
 }
@@ -175,6 +175,12 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
     record_id: "rec_1",
     record: {
       title: "Reader Plate DTO Fixture",
+      display_title_zh: null,
+      title_generation_status: "pending",
+      title_generation_error_code: null,
+      title_generation_error_message: null,
+      reading_goal: "daily_reading",
+      reading_variant: "intensive_reading",
       created_at: "2026-06-21T00:00:00Z",
       source_type: "plain_text",
       source_metadata: {},
@@ -353,11 +359,14 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
         status: "published",
         schema_version: 1,
         output: {
-          schema_version: 1,
-          target_language: "zh",
-          translated_text: "很少有人能把热爱变成稳定收入。",
-          notes: [],
-          confidence: "normal",
+          groups: [
+            {
+              group_id: "group_1",
+              anchor_segment_ids: ["s1"],
+              source_text_hash: "abcd1234",
+              translated_text: "很少有人能把热爱变成稳定收入。",
+            },
+          ],
         },
         published_at: "2026-06-21T00:00:00Z",
       },
@@ -448,12 +457,12 @@ describe("Reader Plate DTO shapes", () => {
     expect(snapshot.value[0].owner).toBe("stable");
   });
 
-  it("reader_unit contains reader_source_block and reader_translation children", () => {
+  it("reader_unit contains reader_source_block and reader_translation_group children", () => {
     const snapshot = makeSnapshot();
     const unit = snapshot.value[0];
     const childTypes = unit.children.map((child) => child.type);
     expect(childTypes).toContain("reader_source_block");
-    expect(childTypes).toContain("reader_translation");
+    expect(childTypes).toContain("reader_translation_group");
     expect(childTypes).toContain("reader_sentence_analysis");
   });
 
@@ -482,20 +491,21 @@ describe("Reader Plate DTO shapes", () => {
     }
   });
 
-  it("reader_translation carries layer metadata and target scope", () => {
+  it("reader_translation_group carries layer and group metadata", () => {
     const snapshot = makeSnapshot();
     const unit = snapshot.value[0];
     const translation = unit.children.find(
-      (child) => child.type === "reader_translation",
+      (child) => child.type === "reader_translation_group",
     );
     expect(translation).toBeDefined();
-    if (translation?.type === "reader_translation") {
+    if (translation?.type === "reader_translation_group") {
       expect(translation.owner).toBe("system_ai");
       expect(translation.layer_id).toBe("layer_1");
       expect(translation.target_scope).toBe("unit");
       expect(translation.target_key).toBe("u1");
-      expect(translation.target_language).toBe("zh");
-      expect(translation.confidence).toBe("normal");
+      expect(translation.group_id).toBe("group_1");
+      expect(translation.covered_anchor_segment_ids).toEqual(["s1"]);
+      expect(translation.source_text_hash).toBe("abcd1234");
       expect(translation.children[0].text).toContain("收入");
     }
   });

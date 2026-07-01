@@ -17,10 +17,9 @@ import type {
   ReaderSourceBlockNodeDto,
   ReaderStableSegmentTextLeafDto,
   ReaderSnapshotUserAssetDto,
-  ReaderTranslationNodeDto,
+  ReaderTranslationGroupNodeDto,
   ReaderUnitNodeDto,
   ReaderVocabularyMarkDto,
-  TranslationConfidence,
   VocabularyItemType,
   VocabularyPhraseType,
 } from "@/types/api/reader-plate";
@@ -99,7 +98,7 @@ export interface ReaderRecordPlateParagraphData {
   boundaryQuality: ReaderBoundaryQuality;
 }
 
-/** 译文引用块 — unit 级译文 */
+/** 译文引用块 — backend group-native translation group */
 export interface ReaderRecordPlateBlockquoteBlock {
   type: "blockquote";
   id: string;
@@ -111,9 +110,9 @@ export interface ReaderRecordPlateBlockquoteData {
   unitId: string;
   layerId: string;
   layerVersion: number;
-  targetLanguage: string;
-  confidence: TranslationConfidence;
-  notes: string[];
+  groupId: string;
+  coveredAnchorSegmentIds: string[];
+  sourceTextHash: string;
 }
 
 /** Callout 增强层块 — grammar_note / ask_supplement */
@@ -379,10 +378,10 @@ function isSourceBlockNode(
   return node.type === "reader_source_block";
 }
 
-function isTranslationNode(
+function isTranslationGroupNode(
   node: ReaderUnitNodeDto["children"][number],
-): node is ReaderTranslationNodeDto {
-  return node.type === "reader_translation";
+): node is ReaderTranslationGroupNodeDto {
+  return node.type === "reader_translation_group";
 }
 
 function isSentenceAnalysisNode(
@@ -403,7 +402,7 @@ function range(startUtf16: number, endUtf16: number): ReaderRecordPlateRange {
   return { startUtf16, endUtf16 };
 }
 
-function textFromTranslation(node: ReaderTranslationNodeDto): string {
+function textFromTranslation(node: ReaderTranslationGroupNodeDto): string {
   return node.children.map((child) => child.text).join("");
 }
 
@@ -962,7 +961,7 @@ function buildParagraphBlock(
 }
 
 function buildBlockquoteBlock(
-  node: ReaderTranslationNodeDto,
+  node: ReaderTranslationGroupNodeDto,
 ): ReaderRecordPlateBlockquoteBlock | null {
   if (node.target_scope !== "unit") {
     return null;
@@ -970,7 +969,7 @@ function buildBlockquoteBlock(
 
   return {
     type: "blockquote",
-    id: `blockquote:${node.layer_id}:${node.target_key}`,
+    id: `blockquote:${node.layer_id}:${node.group_id}`,
     children: [
       {
         text: textFromTranslation(node),
@@ -982,9 +981,9 @@ function buildBlockquoteBlock(
       unitId: node.unit_id,
       layerId: node.layer_id,
       layerVersion: node.layer_version,
-      targetLanguage: node.target_language,
-      confidence: node.confidence,
-      notes: node.notes,
+      groupId: node.group_id,
+      coveredAnchorSegmentIds: node.covered_anchor_segment_ids,
+      sourceTextHash: node.source_text_hash,
     },
   };
 }
@@ -1140,38 +1139,98 @@ function buildSupplementCalloutBlocks(
   });
 }
 
+function buildTranslationGroupsByTerminalSegment(
+  unit: ReaderUnitNodeDto,
+): {
+  groupsByTerminalSegmentId: Map<string, ReaderTranslationGroupNodeDto[]>;
+} {
+  const orderedAnchorSegmentIds = unit.children.flatMap((child) =>
+    isSourceBlockNode(child)
+      ? child.children.flatMap((sourceChild) =>
+          isAnchorSegmentNode(sourceChild)
+            ? [sourceChild.anchor_segment_id]
+            : [],
+        )
+      : [],
+  );
+  const knownAnchorSegmentIds = new Set(orderedAnchorSegmentIds);
+  const groupsByTerminalSegmentId = new Map<
+    string,
+    ReaderTranslationGroupNodeDto[]
+  >();
+
+  for (const child of unit.children) {
+    if (!isTranslationGroupNode(child)) {
+      continue;
+    }
+
+    if (child.covered_anchor_segment_ids.length === 0) {
+      continue;
+    }
+
+    if (
+      child.covered_anchor_segment_ids.some(
+        (anchorSegmentId) => !knownAnchorSegmentIds.has(anchorSegmentId),
+      )
+    ) {
+      continue;
+    }
+
+    const terminalSegmentId = child.covered_anchor_segment_ids.at(-1);
+    if (!terminalSegmentId || !knownAnchorSegmentIds.has(terminalSegmentId)) {
+      continue;
+    }
+
+    const list = groupsByTerminalSegmentId.get(terminalSegmentId) ?? [];
+    list.push(child);
+    groupsByTerminalSegmentId.set(terminalSegmentId, list);
+  }
+
+  return {
+    groupsByTerminalSegmentId,
+  };
+}
+
 function mapUnitToBlocks(
   unit: ReaderUnitNodeDto,
   context: UnitProjectionContext,
 ): ReaderRecordPlateBlock[] {
   const blocks: ReaderRecordPlateBlock[] = [];
   let isFirstAnchorSegmentInUnit = true;
+  const { groupsByTerminalSegmentId } =
+    buildTranslationGroupsByTerminalSegment(unit);
 
   for (const child of unit.children) {
-    if (isSourceBlockNode(child)) {
-      for (const sourceChild of child.children) {
-        if (isAnchorSegmentNode(sourceChild)) {
-          // 1. 原文段落 paragraph block
-          blocks.push(
-            buildParagraphBlock(sourceChild, context, {
-              isUnitStart: isFirstAnchorSegmentInUnit,
-            }),
-          );
-          isFirstAnchorSegmentInUnit = false;
-          // 2. grammar_note callout blocks (showCue=true)
-          blocks.push(...buildGrammarCalloutBlocks(sourceChild));
-          // 3. sentence_analysis blocks
-          blocks.push(...buildSentenceAnalysisBlocks(sourceChild, context));
-          // 4. ask_supplement callout blocks
-          blocks.push(...buildSupplementCalloutBlocks(sourceChild, context));
-        }
-      }
+    if (!isSourceBlockNode(child)) {
       continue;
     }
-    if (isTranslationNode(child)) {
-      const blockquote = buildBlockquoteBlock(child);
-      if (blockquote) {
-        blocks.push(blockquote);
+
+    for (const sourceChild of child.children) {
+      if (!isAnchorSegmentNode(sourceChild)) {
+        continue;
+      }
+
+      // 1. 原文段落 paragraph block
+      blocks.push(
+        buildParagraphBlock(sourceChild, context, {
+          isUnitStart: isFirstAnchorSegmentInUnit,
+        }),
+      );
+      isFirstAnchorSegmentInUnit = false;
+      // 2. grammar_note callout blocks (showCue=true)
+      blocks.push(...buildGrammarCalloutBlocks(sourceChild));
+      // 3. sentence_analysis blocks
+      blocks.push(...buildSentenceAnalysisBlocks(sourceChild, context));
+      // 4. ask_supplement callout blocks
+      blocks.push(...buildSupplementCalloutBlocks(sourceChild, context));
+      // 5. covered span 的最后一个 segment 后插入对应译文 group
+      const translationGroups =
+        groupsByTerminalSegmentId.get(sourceChild.anchor_segment_id) ?? [];
+      for (const group of translationGroups) {
+        const blockquote = buildBlockquoteBlock(group);
+        if (blockquote) {
+          blocks.push(blockquote);
+        }
       }
     }
   }

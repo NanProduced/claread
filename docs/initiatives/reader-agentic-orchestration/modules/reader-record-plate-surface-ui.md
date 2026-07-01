@@ -605,7 +605,8 @@ UI-D5 Active Anchor Inspector 已在 `ReaderRecordPlateSurface` 内落地为前�
 旧 unit-level translation 只有整段 `translated_text`，不能安全插到第一个
 anchor segment 下方。Backend group-native translation 已改为由 worker 按
 unit 生成连续 anchor segment groups，再由 snapshot 输出
-`reader_translation_group`。前端仍需按该 node contract 接入最终双语显示。
+`reader_translation_group`。Web Reader Record Plate 已在 projection 层接入该
+node contract，并按 group 覆盖的最后一个 anchor segment 后插入译文块。
 
 ### Group-Native Translation 目标形态
 
@@ -636,14 +637,17 @@ per-segment source echo 不进入 durable `output_json`；相关 source/hash/typ
 group source text 也不进入 durable `output_json`；需要展示或校验时通过
 `anchor_segment_ids` 回源到 Stable Reading Base 重新切片。
 
-前端解析页直接消费 backend `reader_translation_group` / Translation Group。若某个 group
-内部因为 grammar_note、sentence_analysis 或版式需要出现视觉换行/插块，这属于 display-only
-layout policy：不得拆分后端 `TranslationGroup`，不得生成新的翻译事实，也不得按中文标点重新切译文。
+前端解析页直接消费 backend `reader_translation_group` / Translation Group。projection
+按 `covered_anchor_segment_ids` 定位 group 覆盖范围，在最后一个 covered anchor segment
+输出完 paragraph / grammar_note / sentence_analysis / ask supplement 后插入对应译文块。
+若某个 group 内部因为 grammar_note、sentence_analysis 或版式需要出现视觉换行/插块，这属于
+display-only layout policy：不得拆分后端 `TranslationGroup`，不得生成新的翻译事实，也不得按中文标点重新切译文。
 
 分阶段要求：
 
-- 当前前端过渡期：旧 UI 可能仍显示低权重 unit 译文 lane；沉浸模式隐藏译文。
-- Group-native 前端接入后：精读模式默认显示 backend translation group；沉浸模式仍隐藏译文。
+- 当前前端：精读模式默认显示 backend translation group；沉浸模式隐藏译文。
+- Defensive policy：`covered_anchor_segment_ids` 为空或无法全部定位到当前 unit source anchors 时，
+  Web projection 跳过该 translation group，不在 unit 末尾兜底渲染。
 
 ## 文档 Marks And Cues
 
@@ -1147,16 +1151,16 @@ Group-native schema 完成后：
 - Feedback：直到 AI mark/cue feedback contract 与新 route 稳定。
 - Ask supplement save-to-document：直到 Ask Supplement Projection 设计和 API 完成。
 - sentence_analysis chunk underlines：直到 V1d best-effort 或 Sentence Analysis V2；默认不显示。
-- backend translation group：backend contract 已完成，Web Plate 渲染接入另行推进。
+- backend translation group：backend contract 与 Web Plate projection 接入已完成。
 
 ## 后续需求
 
 ### Group-Native Translation
 
 Backend 已升级 translation worker/schema，输出 backend group-native translation。
-LLM 在单个 Reading Unit 内决定语义分组；server hydrate source/hash；前端消费
-`reader_translation_group`，并只在 display policy 中处理 grammar_note /
-sentence_analysis 引发的视觉换行或插块。
+LLM 在单个 Reading Unit 内决定语义分组；server hydrate source/hash；Web projection
+消费 `reader_translation_group` 并按 covered span interleave 译文块。后续只在
+display policy 中处理 grammar_note / sentence_analysis 引发的视觉换行或插块。
 
 ### Sentence Analysis V2
 

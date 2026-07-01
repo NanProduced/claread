@@ -206,8 +206,10 @@ describe("reader record boundary - ReaderRecordPlateSurface must not reference l
     // Feedback stays out of the selection toolbar actions: there is no
     // onFeedback callback wired into the toolbarActions memo.
     expect(source).not.toMatch(/\bonFeedback:\s*\(\)\s*=>/);
-    // The selection action strip still marks feedback as coming-soon.
-    expect(source).toContain(
+    // The read-only selection state is still rendered, but feedback is not
+    // surfaced as a toolbar action.
+    expect(source).toContain('data-reader-record-actions="selection-state"');
+    expect(source).not.toContain(
       'data-reader-record-coming-soon-actions="feedback"',
     );
   });

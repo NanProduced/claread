@@ -88,14 +88,24 @@ function makeSnapshot(
     last_event_sequence: options?.lastEventSequence ?? 1,
     record_id: recordId,
     record: {
-      title: "Reading Record Page Fixture",
-      created_at: "2026-06-22T00:00:00Z",
-      source_type: "text",
-      source_metadata: {},
-      generation: 1,
-      product_state: "readable_enhancing",
-      readiness_state: "article_ready",
-      ...recordOverrides,
+      title: recordOverrides.title ?? "Reading Record Page Fixture",
+      display_title_zh: recordOverrides.display_title_zh ?? null,
+      title_generation_status:
+        recordOverrides.title_generation_status ?? "pending",
+      title_generation_error_code:
+        recordOverrides.title_generation_error_code ?? null,
+      title_generation_error_message:
+        recordOverrides.title_generation_error_message ?? null,
+      reading_goal: recordOverrides.reading_goal ?? "daily_reading",
+      reading_variant:
+        recordOverrides.reading_variant ?? "intensive_reading",
+      created_at: recordOverrides.created_at ?? "2026-06-22T00:00:00Z",
+      source_type: recordOverrides.source_type ?? "text",
+      source_metadata: recordOverrides.source_metadata ?? {},
+      generation: recordOverrides.generation ?? 1,
+      product_state:
+        recordOverrides.product_state ?? "readable_enhancing",
+      readiness_state: recordOverrides.readiness_state ?? "article_ready",
     },
     base: {
       base_id: "base_1",
@@ -240,20 +250,17 @@ function makeSnapshot(
             ],
           },
           {
-            type: "reader_translation",
+            type: "reader_translation_group",
             owner: "system_ai",
             layer_id: "layer_translation_1",
             layer_version: 1,
             base_id: "base_1",
             unit_id: "unit_1",
-            target_scope: options?.translationScope ?? "anchor_segment",
-            target_key:
-              options?.translationScope === "unit" ? "unit_1" : "seg_1",
-            anchor_segment_id:
-              options?.translationScope === "unit" ? undefined : "seg_1",
-            target_language: "zh",
-            confidence: "normal",
-            notes: [],
+            target_scope: "unit",
+            target_key: "unit_1",
+            group_id: "group_translation_1",
+            covered_anchor_segment_ids: ["seg_1"],
+            source_text_hash: "unit_hash_1",
             children: [{ text: options?.translationText ?? TRANSLATION_TEXT }],
           },
           ...(options?.withSentenceAnalysis
@@ -767,7 +774,7 @@ describe("ReadingRecordPage static contract", () => {
 
     // The action strip is always rendered; verify its visible text uses Chinese.
     const actionStrip = container.querySelector<HTMLElement>(
-      '[data-reader-record-actions="selection-context"]',
+      '[data-reader-record-actions="selection-state"]',
     );
     expect(actionStrip).not.toBeNull();
     if (actionStrip) {

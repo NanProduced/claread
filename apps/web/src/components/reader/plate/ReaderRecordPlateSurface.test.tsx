@@ -258,7 +258,7 @@ function makeUnit({
         ],
       },
       {
-        type: "reader_translation",
+        type: "reader_translation_group",
         owner: "system_ai",
         layer_id: "layer_translation_1",
         layer_version: 1,
@@ -266,9 +266,9 @@ function makeUnit({
         unit_id: "unit_1",
         target_scope: "unit",
         target_key: "unit_1",
-        target_language: "zh",
-        confidence: "normal",
-        notes: [],
+        group_id: "group_translation_1",
+        covered_anchor_segment_ids: ["seg_1"],
+        source_text_hash: "unit_hash_1",
         children: [{ text: TRANSLATION_TEXT }],
       },
       {
@@ -563,7 +563,7 @@ function makeSplitSegmentTranslationSnapshot(): ReaderPlateSnapshotDto {
   const snapshot = makeSplitSegmentSnapshot();
   const unit = snapshot.value[0];
   const translation = makeUnit().children.find(
-    (child) => child.type === "reader_translation",
+    (child) => child.type === "reader_translation_group",
   );
   if (!translation) {
     throw new Error("Expected translation fixture");
@@ -574,7 +574,59 @@ function makeSplitSegmentTranslationSnapshot(): ReaderPlateSnapshotDto {
     value: [
       {
         ...unit,
-        children: [...unit.children, translation],
+        children: [
+          ...unit.children,
+          {
+            ...translation,
+            covered_anchor_segment_ids: ["seg_1", "seg_2"],
+            source_text_hash: "split_unit_hash_1",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function makeSequentialTranslationGroupSnapshot(): ReaderPlateSnapshotDto {
+  const snapshot = makeSplitSegmentSnapshot();
+  const unit = snapshot.value[0];
+
+  return {
+    ...snapshot,
+    value: [
+      {
+        ...unit,
+        children: [
+          ...unit.children,
+          {
+            type: "reader_translation_group",
+            owner: "system_ai",
+            layer_id: "layer_translation_1",
+            layer_version: 1,
+            base_id: "base_1",
+            unit_id: "unit_1",
+            target_scope: "unit",
+            target_key: "unit_1",
+            group_id: "group_translation_1",
+            covered_anchor_segment_ids: ["seg_1"],
+            source_text_hash: "group_hash_1",
+            children: [{ text: "制度记忆" }],
+          },
+          {
+            type: "reader_translation_group",
+            owner: "system_ai",
+            layer_id: "layer_translation_1",
+            layer_version: 1,
+            base_id: "base_1",
+            unit_id: "unit_1",
+            target_scope: "unit",
+            target_key: "unit_1",
+            group_id: "group_translation_2",
+            covered_anchor_segment_ids: ["seg_2"],
+            source_text_hash: "group_hash_2",
+            children: [{ text: "塑造政策选择" }],
+          },
+        ],
       },
     ],
   };
@@ -985,6 +1037,26 @@ describe("ReaderRecordPlateSurface", () => {
     expect(paragraph).not.toBeNull();
     expect(paragraph?.textContent).toContain(SOURCE_TEXT);
     expect(paragraph?.textContent).not.toContain(TRANSLATION_TEXT);
+  });
+
+  it("keeps translation groups interleaved with their covered source span", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSequentialTranslationGroupSnapshot()} />,
+    );
+    const orderedBlocks = [
+      ...container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-node="paragraph"], [data-reader-record-node="blockquote"]',
+      ),
+    ];
+
+    expect(
+      orderedBlocks.map((block) => block.dataset.readerRecordBlockId),
+    ).toEqual([
+      "paragraph:seg_1",
+      "blockquote:layer_translation_1:group_translation_1",
+      "paragraph:seg_2",
+      "blockquote:layer_translation_1:group_translation_2",
+    ]);
   });
 
   it("renders grammar callout and sentence analysis as separate Plate blocks", () => {
@@ -1681,7 +1753,8 @@ describe("ReaderRecordPlateSurface", () => {
   it("omits reading goal and variant label when variant cannot be mapped", () => {
     const snapshot = makeSnapshot();
     snapshot.record.reading_goal = "exam";
-    snapshot.record.reading_variant = "this_variant_does_not_exist";
+    snapshot.record.reading_variant =
+      "this_variant_does_not_exist" as typeof snapshot.record.reading_variant;
     const { container } = render(
       <ReaderRecordPlateSurface snapshot={snapshot} />,
     );
@@ -2969,7 +3042,9 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actions.dataset.readerRecordSelectionDraftCount).toBe("0");
     expect(actions.dataset.readerRecordSelectionSurfaceKind).toBe("translation");
     expect(actions.dataset.readerRecordSelectionBlockType).toBe("reader_blockquote");
-    expect(actions.dataset.readerRecordSelectionBlockId).toBe("blockquote:layer_translation_1:unit_1");
+    expect(actions.dataset.readerRecordSelectionBlockId).toBe(
+      "blockquote:layer_translation_1:group_translation_1",
+    );
     expect(actions.dataset.readerRecordSelectionUnitId).toBe("unit_1");
     expect(actions.dataset.readerRecordSelectionLayerId).toBe("layer_translation_1");
 
@@ -2996,7 +3071,9 @@ describe("ReaderRecordPlateSurface", () => {
     await openAskPanelFromToolbar(askButton);
     const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
     expect(attachment?.selected_text).toBe("制度记忆");
-    expect(attachment?.target_key).toBe("blockquote:layer_translation_1:unit_1");
+    expect(attachment?.target_key).toBe(
+      "blockquote:layer_translation_1:group_translation_1",
+    );
     expect(attachment?.metadata.anchor_segment_id).toBeNull();
     const sourceContext = attachment?.metadata.source_context as
       | Record<string, unknown>
@@ -3005,7 +3082,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(attachment?.metadata).toMatchObject({
       surface_kind: "translation",
       block_type: "reader_blockquote",
-      block_id: "blockquote:layer_translation_1:unit_1",
+      block_id: "blockquote:layer_translation_1:group_translation_1",
       unit_id: "unit_1",
       layer_id: "layer_translation_1",
       translation_zh: "制度记忆",
@@ -3033,13 +3110,15 @@ describe("ReaderRecordPlateSurface", () => {
     const { container } = render(
       <ReaderRecordPlateSurface snapshot={makeSplitSegmentTranslationSnapshot()} />,
     );
-    const blockquote = container.querySelector<HTMLElement>(
+    const blockquotes = container.querySelectorAll<HTMLElement>(
       '[data-reader-record-node="blockquote"]',
     );
-    expect(blockquote).not.toBeNull();
+    expect(blockquotes).toHaveLength(1);
+    const blockquote = blockquotes[0];
     if (!blockquote) {
       throw new Error("Expected blockquote block");
     }
+    expect(blockquote.textContent).toContain(TRANSLATION_TEXT);
 
     selectTextInElement(blockquote, 0, 4);
 
