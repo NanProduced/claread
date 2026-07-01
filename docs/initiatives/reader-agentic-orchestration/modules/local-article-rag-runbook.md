@@ -274,3 +274,103 @@ LIMIT 5;
 - **不**把 Plate JSON / Markdown / DOM / Slate 投影纳入 RAG 索引或检索。
 - **不**用 `READER_ARTICLE_RAG_SMOKE=true` 进生产部署：它是测试 opt-in gate。
 - **不**在没有 worker 进程的情况下假设 `indexed` 状态会自然出现 —— 那是 RAG 索引进度，不是 article_ready 进度。
+
+## 7. 本地 dry-run + 真实 smoke 命令
+
+本节把第 1 节（配置）和第 2 节（启动 worker）落地为可验证命令。所有命令都基于 `services/api/` 工作目录。
+
+### 7.1 默认 no-network dry-run（CI 必跑）
+
+`tests/test_d6_i4z_article_rag_local_dry_run.py` 默认会跑、且不触网。它覆盖：
+
+- 启动/构造 worker 不需要 provider 配置（注入 `Unconfigured*` 兜底）
+- 用真实 test-Postgres schema（per-test 临时 schema，自动清理）seed 一个最小 article_ready record
+- 调 lifecycle `ensure` 创建 `index_run` + `reader_job`
+- 调 `worker.process_next` 一次：因为 provider unconfigured，job / index_run 走 fail-closed
+- 断言：
+  - `index_run.status` ≠ `indexed`
+  - `index_run.error_json.failure_code` ∈ `{embedding_provider_unconfigured, vector_writer_unconfigured}`
+  - `reader_jobs.status` = `failed_terminal` 且 `failure_code` 是同一个 unconfigured sentinel
+  - `reading_records.readiness_state` 保持 `article_ready` —— **worker 失败不级联回 article_ready 主流程**
+  - `lifecycle.load_article_rag_index_lifecycle_status` 返回 `status=failed` + `reason_code=index_run_failed`
+  - `error_json` / `reason_code` / `failure_code` 都不含 token / URI / chunk text / query text
+- 二次 `ensure` 同 generation 必须返回 `idempotent_noop`（不重复 enqueue）
+
+跑：
+
+```powershell
+cd services/api
+
+# 只跑 I4Z dry-run
+uv run pytest -q tests/test_d6_i4z_article_rag_local_dry_run.py
+
+# 跑 I4Y + I4Z（readiness + dry-run），都不触网
+uv run pytest -q tests/test_d6_i4y_article_rag_operational_readiness.py tests/test_d6_i4z_article_rag_local_dry_run.py
+
+# 跑除 article_rag_smoke 之外的所有 I4 测试（显式排除真实 smoke）
+uv run pytest -q -m "not article_rag_smoke" tests/test_d6_i4z_article_rag_local_dry_run.py
+```
+
+预期结果：所有 default-passes 测试 `passed`，真实 smoke 标记的测试 `skipped`，**无** `failed`。
+
+### 7.2 真实 provider 烟囱测试（opt-in，生产禁止）
+
+`tests/test_d6_i4z_article_rag_local_dry_run.py::test_real_provider_end_to_end_indexed_and_retrievable` 是真实 DashScope (Bailian) + Zilliz 链路 smoke，**默认 skip**。要 opt-in 跑，必须同时满足以下条件：
+
+```text
+READER_ARTICLE_RAG_SMOKE=1
+READER_ARTICLE_RAG_EMBEDDING_PROVIDER=dashscope
+# 二选一（任一非空即可）：
+BAILIAN_API_KEY=<real key>
+# 或者：
+RAG_EMBEDDING_MODEL_PROFILE=<profile that resolves to dashscope_embedding>
+READER_ARTICLE_RAG_VECTOR_PROVIDER=zilliz
+READER_ARTICLE_RAG_ZILLIZ_URI=<real URI>
+READER_ARTICLE_RAG_ZILLIZ_TOKEN=<real token>
+# 强制 namespace 隔离：collection 名必须以 article_rag_index_smoke_ 开头
+# （防止 env-typo 把 smoke 数据写到生产 collection）
+READER_ARTICLE_RAG_ZILLIZ_COLLECTION=article_rag_index_smoke_<8-hex>
+READER_ARTICLE_RAG_VECTOR_DIM=<1024 或按真实 provider 配>
+```
+
+**关键合同**（与 I4D 工厂 `build_default_article_rag_embedding_provider` 一致）：
+
+- `DASHSCOPE_API_KEY` **不**是 Article RAG 嵌入 provider 的 key。`DASHSCOPE_API_KEY` 是 OCR adapter 用的 env；Article RAG 走 registry 路由（`RAG_EMBEDDING_MODEL_PROFILE` 必须解析到 `dashscope_embedding` adapter）或 legacy fallback（`BAILIAN_API_KEY` + `BAILIAN_EMBEDDING_MODEL`）。
+- 凭据 env **任一非空**即可：smoke gate 接受 `BAILIAN_API_KEY` 或 `RAG_EMBEDDING_MODEL_PROFILE` 二选一。只设其中一个（team 走哪条路径）都行。
+- 只设 `DASHSCOPE_API_KEY` + `READER_ARTICLE_RAG_EMBEDDING_PROVIDER=dashscope` 仍然会让工厂返回 `UnconfiguredArticleRagEmbeddingProvider` —— 这是历史 bug 修复后的预期行为，不是配置错误。
+- 任一 env 缺失 → test `skip`，**不** `fail`（保护 CI 不会因为缺凭据变红）。
+- **Collection 隔离硬规则**：`READER_ARTICLE_RAG_ZILLIZ_COLLECTION` 必须以 `article_rag_index_smoke_` 开头，否则 smoke 在进入测试体前就 SKIP，不会向 Zilliz 发起任何写入。生产 collection 名（如 `article_rag_index_v1`）会让 smoke 静默 skip，不会误写。
+
+opt-in 命令：
+
+```powershell
+cd services/api
+
+$env:READER_ARTICLE_RAG_SMOKE = "1"
+$env:READER_ARTICLE_RAG_EMBEDDING_PROVIDER = "dashscope"
+# 二选一（凭据 env，team 走哪条路径都行）：
+$env:BAILIAN_API_KEY = "<real key>"
+# 或者用 registry 路由（如果已配 model-profiles.json）：
+# $env:RAG_EMBEDDING_MODEL_PROFILE = "<profile-name>"
+$env:READER_ARTICLE_RAG_VECTOR_PROVIDER = "zilliz"
+$env:READER_ARTICLE_RAG_ZILLIZ_URI = "<real URI>"
+$env:READER_ARTICLE_RAG_ZILLIZ_TOKEN = "<real token>"
+# 强制 collection 隔离：必须以 article_rag_index_smoke_ 开头
+$env:READER_ARTICLE_RAG_ZILLIZ_COLLECTION = "article_rag_index_smoke_<8-hex>"
+$env:READER_ARTICLE_RAG_VECTOR_DIM = "1024"
+
+uv run pytest -q -m article_rag_smoke tests/test_d6_i4z_article_rag_local_dry_run.py
+```
+
+真实 smoke 行为（实现细节）：
+
+1. 用真实 `Settings()` 构造 `DashScopeArticleRagEmbeddingProvider` + `ZillizArticleRagVectorWriter` + `ZillizArticleRagVectorSearcher`（**不** fake）
+2. seed 一个最小 article_ready record（短英文，无敏感内容）
+3. `lifecycle.ensure` → `worker.process_next` → 断言 `index_run.status='indexed'`，`embedding_model` / `vector_store_provider` / `vector_collection` 都是真实 provider 名（**不** 是 `fake-*`）
+4. `retrieval.retrieve_for_record` 用同句短 query 返回 typed `ArticleRagRetrievalResult`（hits 可能为 0，因为 collection 是干净的；smoke 只断言响应 shape，不强求 hit 数）
+5. `ArticleRagAskContextProvider.build_for_ask` 返回 valid `ArticleRagAskPromptAssembly`（`should_attach` 取决于 hit 数；hit 数 > 0 → True，hit 数 = 0 → False，状态 `not_indexed_or_unavailable`）
+6. 残留策略：测试用 deterministic collection prefix `article_rag_index_smoke_<8-hex>`，**不**自动删除 Zilliz 数据；需要 ops 在测试结束后手动清。日志 / 失败消息都 scrub 过 token / URI。
+
+### 7.3 真实 smoke gate 严禁进入生产
+
+`READER_ARTICLE_RAG_SMOKE=1` 是个测试 opt-in gate。生产部署 / staging 长期运行**绝对不要**设这个变量。CI 也不会设。如果生产环境的 `.env` / secret manager 里看到这个变量，**请删掉**——它会打开真实 DashScope + Zilliz 流量，与生产 RAG 流量混在同一个 Zilliz collection namespace 下，会污染 / 干扰正式数据。
