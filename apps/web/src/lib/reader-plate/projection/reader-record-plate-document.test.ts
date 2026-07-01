@@ -27,8 +27,10 @@ import {
 
 const FIRST_TEXT = "Institutional memory shapes policy choices.";
 const SECOND_TEXT = "Those choices persist.";
+const THIRD_TEXT = "Institutional habits compound.";
 const SEPARATOR_TEXT = "\n\n";
 const SECOND_START = FIRST_TEXT.length + SEPARATOR_TEXT.length;
+const THIRD_START = SECOND_START + SECOND_TEXT.length + SEPARATOR_TEXT.length;
 
 type ReaderAnchorSegmentFixture = Extract<
   ReaderSourceBlockChildNodeDto,
@@ -448,6 +450,112 @@ function makeSequentialTranslationGroupSnapshot(): ReaderPlateSnapshotDto {
   };
 }
 
+function makeThreeSegmentSnapshot(): ReaderPlateSnapshotDto {
+  const snapshot = makeSnapshot();
+  const unit = snapshot.value[0];
+  const sourceBlock = unit.children.find(
+    (child): child is ReaderSourceBlockNodeDto =>
+      child.type === "reader_source_block",
+  );
+
+  if (!sourceBlock) {
+    throw new Error("Expected source block fixture");
+  }
+
+  const thirdSegment: ReaderAnchorSegmentFixture = {
+    type: "reader_anchor_segment",
+    owner: "stable",
+    base_id: "base_1",
+    unit_id: "unit_1",
+    anchor_segment_id: "seg_3",
+    sentence_id: "sent_3",
+    segment_type: "sentence",
+    boundary_quality: "normal",
+    base_start_utf16: THIRD_START,
+    base_end_utf16: THIRD_START + THIRD_TEXT.length,
+    unit_start_utf16: THIRD_START,
+    unit_end_utf16: THIRD_START + THIRD_TEXT.length,
+    text_hash: "seg_3_hash",
+    hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+    children: [
+      {
+        text: THIRD_TEXT,
+        owner: "stable",
+        lock_source: true,
+        source_role: "segment_text",
+        base_start_utf16: THIRD_START,
+        base_end_utf16: THIRD_START + THIRD_TEXT.length,
+        anchor_segment_id: "seg_3",
+        segment_start_utf16: 0,
+        segment_end_utf16: THIRD_TEXT.length,
+      },
+    ],
+  };
+  const extendedSourceBlock: ReaderSourceBlockNodeDto = {
+    ...sourceBlock,
+    base_end_utf16: THIRD_START + THIRD_TEXT.length,
+    children: [
+      ...sourceBlock.children,
+      {
+        text: SEPARATOR_TEXT,
+        owner: "stable",
+        lock_source: true,
+        source_role: "separator",
+        base_start_utf16: SECOND_START + SECOND_TEXT.length,
+        base_end_utf16: THIRD_START,
+      },
+      thirdSegment,
+    ],
+  };
+
+  return {
+    ...snapshot,
+    base: {
+      ...snapshot.base,
+      text_length_utf16: THIRD_START + THIRD_TEXT.length,
+    },
+    navigation: {
+      ...snapshot.navigation,
+      units: snapshot.navigation.units.map((navigationUnit) =>
+        navigationUnit.unit_id === "unit_1"
+          ? {
+              ...navigationUnit,
+              base_end_utf16: THIRD_START + THIRD_TEXT.length,
+            }
+          : navigationUnit,
+      ),
+    },
+    anchor_segments: [
+      ...snapshot.anchor_segments,
+      {
+        anchor_segment_id: "seg_3",
+        sentence_id: "sent_3",
+        paragraph_id: "unit_1",
+        unit_id: "unit_1",
+        order_index: 3,
+        unit_order_index: 1,
+        segment_type: "sentence",
+        boundary_quality: "normal",
+        base_start_utf16: THIRD_START,
+        base_end_utf16: THIRD_START + THIRD_TEXT.length,
+        unit_start_utf16: THIRD_START,
+        unit_end_utf16: THIRD_START + THIRD_TEXT.length,
+        text_hash: "seg_3_hash",
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+    ],
+    value: [
+      {
+        ...unit,
+        base_end_utf16: THIRD_START + THIRD_TEXT.length,
+        children: unit.children.map((child) =>
+          child === sourceBlock ? extendedSourceBlock : child,
+        ),
+      },
+    ],
+  };
+}
+
 function firstParagraph(
   document = projectReaderPlateSnapshotToReaderRecordPlateDocument(makeSnapshot()),
 ): ReaderRecordPlateParagraphBlock {
@@ -494,6 +602,14 @@ function firstBlockquote(
   return block as ReaderRecordPlateBlockquoteBlock;
 }
 
+function paragraphBlocks(
+  document = projectReaderPlateSnapshotToReaderRecordPlateDocument(makeSnapshot()),
+): ReaderRecordPlateParagraphBlock[] {
+  return document.children.filter(
+    (child): child is ReaderRecordPlateParagraphBlock => child.type === "paragraph",
+  );
+}
+
 describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
   it("projects snapshot metadata and stable paragraph ids", () => {
     const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
@@ -521,18 +637,19 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
     const paragraph = firstParagraph(document);
     expect(paragraph.id).toBe("paragraph:seg_1");
     expect(paragraph.data.anchorSegmentId).toBe("seg_1");
+    expect(paragraph.data.coveredAnchorSegmentIds).toEqual(["seg_1", "seg_2"]);
     expect(paragraph.data.sentenceId).toBe("sent_1");
     expect(paragraph.data.unitId).toBe("unit_1");
     expect(paragraph.data.isUnitStart).toBe(true);
     expect(paragraph.data.baseRange).toEqual({
       startUtf16: 0,
-      endUtf16: FIRST_TEXT.length,
+      endUtf16: SECOND_START + SECOND_TEXT.length,
     });
   });
 
   it("marks only the first paragraph in a unit as unit start", () => {
     const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
-      makeSnapshot(),
+      makeThreeSegmentSnapshot(),
     );
     const paragraphs = document.children.filter(
       (child): child is ReaderRecordPlateParagraphBlock =>
@@ -553,7 +670,9 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
       leaf.marks.some((mark) => mark.kind === "grammar_note"),
     );
 
-    expect(paragraph.children.map((leaf) => leaf.text).join("")).toBe(FIRST_TEXT);
+    expect(paragraph.children.map((leaf) => leaf.text).join("")).toBe(
+      `${FIRST_TEXT}${SEPARATOR_TEXT}${SECOND_TEXT}`,
+    );
     expect(phraseLeaf?.text).toBe("Institutional memory");
     expect(grammarLeaf?.text).toBe("shapes");
     expect(phraseLeaf?.marks[0]).toMatchObject({
@@ -698,23 +817,138 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
     });
   });
 
-  it("inserts each translation group after its covered source span", () => {
+  it("projects a translation group as one source paragraph with preserved separator text", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeSnapshot(),
+    );
+    const paragraphs = paragraphBlocks(document);
+
+    expect(paragraphs).toHaveLength(1);
+    expect(paragraphs[0]?.data.coveredAnchorSegmentIds).toEqual([
+      "seg_1",
+      "seg_2",
+    ]);
+    expect(paragraphs[0]?.children.map((child) => child.text).join("")).toBe(
+      `${FIRST_TEXT}${SEPARATOR_TEXT}${SECOND_TEXT}`,
+    );
+    expect(
+      paragraphs[0]?.children.some(
+        (child) => child.text === SEPARATOR_TEXT && child.sourceRole === "separator",
+      ),
+    ).toBe(true);
+  });
+
+  it("renders each translation group as source paragraph then translation then annotations", () => {
     const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
       makeSequentialTranslationGroupSnapshot(),
     );
     const blockIds = document.children.map((child) => child.id);
 
     expect(
-      blockIds.indexOf("sentence_analysis:analysis_seg_1"),
+      blockIds.indexOf("paragraph:seg_1"),
     ).toBeLessThan(
       blockIds.indexOf("blockquote:layer_translation_1:group_translation_1"),
     );
     expect(
       blockIds.indexOf("blockquote:layer_translation_1:group_translation_1"),
-    ).toBeLessThan(blockIds.indexOf("paragraph:seg_2"));
+    ).toBeLessThan(blockIds.indexOf("callout:grammar:grammar_item_1"));
+    expect(blockIds.indexOf("callout:grammar:grammar_item_1")).toBeLessThan(
+      blockIds.indexOf("sentence_analysis:analysis_seg_1"),
+    );
+    expect(blockIds.indexOf("sentence_analysis:analysis_seg_1")).toBeLessThan(
+      blockIds.indexOf("paragraph:seg_2"),
+    );
     expect(blockIds.indexOf("paragraph:seg_2")).toBeLessThan(
       blockIds.indexOf("blockquote:layer_translation_1:group_translation_2"),
     );
+  });
+
+  it("renders group annotations after the blockquote in anchor order", () => {
+    const snapshot = makeSnapshot(undefined, [], [
+      makeSupplement({
+        supplement_id: "supplement_seg_2",
+        anchor: {
+          anchor_type: "text_range",
+          base_id: "base_1",
+          unit_id: "unit_1",
+          anchor_segment_id: "seg_2",
+          sentence_id: "sent_2",
+          segment_type: "sentence",
+          offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+          start_offset: 0,
+          end_offset: SECOND_TEXT.length,
+          selected_text: SECOND_TEXT,
+          text_hash: computeUtf16FNV1a(SECOND_TEXT),
+          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        },
+        content: {
+          target_key: "seg_2",
+          sentence_id: "sent_2",
+          title: "关于 seg_2 的补充",
+          content_md: "第二句补充。",
+          supplement_type: "grammar_note",
+        },
+      }),
+    ]);
+    const unit = snapshot.value[0];
+    const sourceBlock = unit.children.find(
+      (child): child is ReaderSourceBlockNodeDto =>
+        child.type === "reader_source_block",
+    );
+    const baseSentenceAnalysis = unit.children.find(
+      (child) => child.type === "reader_sentence_analysis",
+    );
+
+    if (!sourceBlock || !baseSentenceAnalysis) {
+      throw new Error("Expected source block and sentence analysis fixtures");
+    }
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument({
+      ...snapshot,
+      value: [
+        {
+          ...unit,
+          children: [
+            sourceBlock,
+            unit.children.find(
+              (child) => child.type === "reader_translation_group",
+            )!,
+            baseSentenceAnalysis,
+            {
+              type: "reader_sentence_analysis",
+              owner: "system_ai",
+              analysis_id: "analysis_seg_2",
+              layer_id: "layer_sentence_analysis_2",
+              layer_version: 1,
+              base_id: "base_1",
+              unit_id: "unit_1",
+              target_scope: "unit",
+              target_key: "unit_1",
+              anchor_segment_id: "seg_2",
+              selected_text: SECOND_TEXT,
+              label: "result clause",
+              analysis: "Those choices persist is the follow-up clause.",
+              chunks: [{ order: 1, label: "clause", text: SECOND_TEXT }],
+              children: [
+                {
+                  text: "Those choices persist is the follow-up clause.",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const blockIds = document.children.map((child) => child.id);
+
+    expect(blockIds).toEqual([
+      "paragraph:seg_1",
+      "blockquote:layer_translation_1:group_translation_1",
+      "callout:grammar:grammar_item_1",
+      "sentence_analysis:analysis_seg_1",
+      "sentence_analysis:analysis_seg_2",
+      "callout:supplement:supplement_seg_2",
+    ]);
   });
 
   it("skips translation groups whose covered anchors are all missing", () => {
@@ -762,6 +996,11 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
     expect(
       document.children.filter((child) => child.type === "blockquote"),
     ).toHaveLength(0);
+    expect(
+      paragraphBlocks(document).map((paragraph) =>
+        paragraph.children.map((child) => child.text).join(""),
+      ),
+    ).toEqual([FIRST_TEXT, SECOND_TEXT]);
   });
 
   it("skips translation groups whose covered anchors are partially missing", () => {
@@ -809,11 +1048,211 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
     expect(
       document.children.filter((child) => child.type === "blockquote"),
     ).toHaveLength(0);
+    expect(
+      paragraphBlocks(document).map((paragraph) =>
+        paragraph.children.map((child) => child.text).join(""),
+      ),
+    ).toEqual([FIRST_TEXT, SECOND_TEXT]);
   });
 
-  it("emits blocks in order: paragraph, grammar callout, sentence analysis, blockquote", () => {
+  it("falls back to single-segment paragraphs for uncovered anchors", () => {
     const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
-      makeSnapshot(),
+      makeThreeSegmentSnapshot(),
+    );
+    const paragraphs = paragraphBlocks(document);
+
+    expect(paragraphs).toHaveLength(2);
+    expect(paragraphs[0]?.children.map((child) => child.text).join("")).toBe(
+      `${FIRST_TEXT}${SEPARATOR_TEXT}${SECOND_TEXT}`,
+    );
+    expect(paragraphs[1]?.children.map((child) => child.text).join("")).toBe(
+      THIRD_TEXT,
+    );
+  });
+
+  it("skips non-contiguous translation groups and falls back to source paragraphs", () => {
+    const snapshot = makeThreeSegmentSnapshot();
+    const unit = snapshot.value[0];
+    const sourceBlock = unit.children.find(
+      (child): child is ReaderSourceBlockNodeDto =>
+        child.type === "reader_source_block",
+    );
+    const analyses = unit.children.filter(
+      (child) => child.type === "reader_sentence_analysis",
+    );
+
+    if (!sourceBlock) {
+      throw new Error("Expected source block fixture");
+    }
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument({
+      ...snapshot,
+      value: [
+        {
+          ...unit,
+          children: [
+            sourceBlock,
+            {
+              type: "reader_translation_group",
+              owner: "system_ai",
+              layer_id: "layer_translation_1",
+              layer_version: 1,
+              base_id: "base_1",
+              unit_id: "unit_1",
+              target_scope: "unit",
+              target_key: "unit_1",
+              group_id: "group_translation_non_contiguous",
+              covered_anchor_segment_ids: ["seg_1", "seg_3"],
+              source_text_hash: "group_hash_non_contiguous",
+              children: [{ text: "不应投影" }],
+            },
+            ...analyses,
+          ],
+        },
+      ],
+    });
+
+    expect(
+      document.children.filter((child) => child.type === "blockquote"),
+    ).toHaveLength(0);
+    expect(paragraphBlocks(document)).toHaveLength(3);
+  });
+
+  it("skips overlapping translation groups and keeps remaining anchors visible", () => {
+    const snapshot = makeThreeSegmentSnapshot();
+    const unit = snapshot.value[0];
+    const sourceBlock = unit.children.find(
+      (child): child is ReaderSourceBlockNodeDto =>
+        child.type === "reader_source_block",
+    );
+    const analyses = unit.children.filter(
+      (child) => child.type === "reader_sentence_analysis",
+    );
+
+    if (!sourceBlock) {
+      throw new Error("Expected source block fixture");
+    }
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument({
+      ...snapshot,
+      value: [
+        {
+          ...unit,
+          children: [
+            sourceBlock,
+            {
+              type: "reader_translation_group",
+              owner: "system_ai",
+              layer_id: "layer_translation_1",
+              layer_version: 1,
+              base_id: "base_1",
+              unit_id: "unit_1",
+              target_scope: "unit",
+              target_key: "unit_1",
+              group_id: "group_translation_1",
+              covered_anchor_segment_ids: ["seg_1", "seg_2"],
+              source_text_hash: "group_hash_1",
+              children: [{ text: "第一组" }],
+            },
+            {
+              type: "reader_translation_group",
+              owner: "system_ai",
+              layer_id: "layer_translation_1",
+              layer_version: 1,
+              base_id: "base_1",
+              unit_id: "unit_1",
+              target_scope: "unit",
+              target_key: "unit_1",
+              group_id: "group_translation_overlap",
+              covered_anchor_segment_ids: ["seg_2", "seg_3"],
+              source_text_hash: "group_hash_overlap",
+              children: [{ text: "不应投影" }],
+            },
+            ...analyses,
+          ],
+        },
+      ],
+    });
+
+    expect(
+      document.children.filter((child) => child.type === "blockquote"),
+    ).toHaveLength(1);
+    expect(paragraphBlocks(document)).toHaveLength(2);
+    expect(
+      paragraphBlocks(document)[1]?.children.map((child) => child.text).join(""),
+    ).toBe(THIRD_TEXT);
+  });
+
+  it("accepts non-overlapping translation groups even when snapshot nodes are out of source order", () => {
+    const snapshot = makeThreeSegmentSnapshot();
+    const unit = snapshot.value[0];
+    const sourceBlock = unit.children.find(
+      (child): child is ReaderSourceBlockNodeDto =>
+        child.type === "reader_source_block",
+    );
+    const analyses = unit.children.filter(
+      (child) => child.type === "reader_sentence_analysis",
+    );
+
+    if (!sourceBlock) {
+      throw new Error("Expected source block fixture");
+    }
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument({
+      ...snapshot,
+      value: [
+        {
+          ...unit,
+          children: [
+            sourceBlock,
+            {
+              type: "reader_translation_group",
+              owner: "system_ai",
+              layer_id: "layer_translation_1",
+              layer_version: 1,
+              base_id: "base_1",
+              unit_id: "unit_1",
+              target_scope: "unit",
+              target_key: "unit_1",
+              group_id: "group_translation_seg_3",
+              covered_anchor_segment_ids: ["seg_3"],
+              source_text_hash: "group_hash_seg_3",
+              children: [{ text: "第三句" }],
+            },
+            {
+              type: "reader_translation_group",
+              owner: "system_ai",
+              layer_id: "layer_translation_1",
+              layer_version: 1,
+              base_id: "base_1",
+              unit_id: "unit_1",
+              target_scope: "unit",
+              target_key: "unit_1",
+              group_id: "group_translation_seg_1_2",
+              covered_anchor_segment_ids: ["seg_1", "seg_2"],
+              source_text_hash: "group_hash_seg_1_2",
+              children: [{ text: "前两句" }],
+            },
+            ...analyses,
+          ],
+        },
+      ],
+    });
+
+    expect(
+      document.children
+        .filter((child): child is ReaderRecordPlateBlockquoteBlock => child.type === "blockquote")
+        .map((child) => child.id),
+    ).toEqual([
+      "blockquote:layer_translation_1:group_translation_seg_1_2",
+      "blockquote:layer_translation_1:group_translation_seg_3",
+    ]);
+    expect(paragraphBlocks(document)).toHaveLength(2);
+  });
+
+  it("emits blocks in order: paragraph, blockquote, grammar callout, sentence analysis, supplement", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeSnapshot(undefined, [], [makeSupplement()]),
     );
 
     const types = document.children.map((child) => child.type);
@@ -834,10 +1273,18 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
       (t, i) => t === "sentence_analysis" && i > firstParagraphIndex,
     );
     const blockquoteIndex = types.indexOf("blockquote");
+    const supplementIndex = types.findIndex(
+      (t, i) =>
+        t === "callout" &&
+        i > firstParagraphIndex &&
+        (document.children[i] as ReaderRecordPlateCalloutBlock).variant ===
+          "supplement",
+    );
 
-    expect(grammarCalloutIndex).toBeGreaterThan(firstParagraphIndex);
-    expect(analysisBlockIndex).toBeGreaterThan(firstParagraphIndex);
     expect(blockquoteIndex).toBeGreaterThan(firstParagraphIndex);
+    expect(grammarCalloutIndex).toBeGreaterThan(blockquoteIndex);
+    expect(analysisBlockIndex).toBeGreaterThan(grammarCalloutIndex);
+    expect(supplementIndex).toBeGreaterThan(analysisBlockIndex);
   });
 
   it("deduplicates grammar callouts when the same grammar item appears on multiple leaves", () => {

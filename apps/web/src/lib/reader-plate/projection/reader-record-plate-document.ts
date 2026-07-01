@@ -15,6 +15,7 @@ import type {
   ReaderSnapshotAskSupplementDto,
   ReaderSourceBlockChildNodeDto,
   ReaderSourceBlockNodeDto,
+  ReaderStableSeparatorLeafDto,
   ReaderStableSegmentTextLeafDto,
   ReaderSnapshotUserAssetDto,
   ReaderTranslationGroupNodeDto,
@@ -76,7 +77,7 @@ export type ReaderRecordPlateBlock =
   | ReaderRecordPlateCalloutBlock
   | ReaderRecordPlateSentenceAnalysisBlock;
 
-/** 原文段落块 — 一个 anchor segment 对应一个 paragraph */
+/** 原文段落块 — 一个 source span 对应一个 paragraph */
 export interface ReaderRecordPlateParagraphBlock {
   type: "paragraph";
   id: string;
@@ -86,12 +87,14 @@ export interface ReaderRecordPlateParagraphBlock {
 
 export interface ReaderRecordPlateParagraphData {
   anchorSegmentId: string;
+  coveredAnchorSegmentIds: string[];
   sentenceId: string;
   unitId: string;
   isUnitStart?: boolean;
   baseId: string;
   baseRange: ReaderRecordPlateRange;
   unitRange: ReaderRecordPlateRange;
+  /** Primary anchor segment hash when a paragraph spans multiple anchors. */
   textHash: string;
   hashAlgorithm: ReaderUnitNodeDto["hash_algorithm"];
   segmentType: AnchorSegmentType;
@@ -213,10 +216,10 @@ export interface ReaderRecordPlateTextLeaf {
   text: string;
   owner: "stable";
   lockSource: true;
-  sourceRole: "segment_text";
+  sourceRole: "segment_text" | "separator";
   baseRange: ReaderRecordPlateRange;
-  anchorSegmentId: string;
-  segmentRange: ReaderRecordPlateRange;
+  anchorSegmentId?: string;
+  segmentRange?: ReaderRecordPlateRange;
   marks: ReaderRecordPlateMark[];
 }
 
@@ -404,6 +407,65 @@ function range(startUtf16: number, endUtf16: number): ReaderRecordPlateRange {
 
 function textFromTranslation(node: ReaderTranslationGroupNodeDto): string {
   return node.children.map((child) => child.text).join("");
+}
+
+type ReaderAnchorSegmentNode = Extract<
+  ReaderSourceBlockChildNodeDto,
+  { type: "reader_anchor_segment" }
+>;
+
+interface UnitSourceLayout {
+  sourceChildren: ReaderSourceBlockChildNodeDto[];
+  orderedAnchorSegments: ReaderAnchorSegmentNode[];
+  anchorOrderIndexById: Map<string, number>;
+  anchorChildIndexById: Map<string, number>;
+}
+
+interface TranslationGroupSourceSpan {
+  group: ReaderTranslationGroupNodeDto;
+  coveredSegments: ReaderAnchorSegmentNode[];
+  startAnchorIndex: number;
+  endAnchorIndex: number;
+  sourceChildren: ReaderSourceBlockChildNodeDto[];
+}
+
+interface TranslationGroupSourceSpanCandidate
+  extends TranslationGroupSourceSpan {}
+
+function buildUnitSourceLayout(unit: ReaderUnitNodeDto): UnitSourceLayout {
+  const sourceChildren: ReaderSourceBlockChildNodeDto[] = [];
+  const orderedAnchorSegments: ReaderAnchorSegmentNode[] = [];
+  const anchorOrderIndexById = new Map<string, number>();
+  const anchorChildIndexById = new Map<string, number>();
+
+  for (const child of unit.children) {
+    if (!isSourceBlockNode(child)) {
+      continue;
+    }
+
+    for (const sourceChild of child.children) {
+      const childIndex = sourceChildren.length;
+      sourceChildren.push(sourceChild);
+
+      if (!isAnchorSegmentNode(sourceChild)) {
+        continue;
+      }
+
+      anchorChildIndexById.set(sourceChild.anchor_segment_id, childIndex);
+      anchorOrderIndexById.set(
+        sourceChild.anchor_segment_id,
+        orderedAnchorSegments.length,
+      );
+      orderedAnchorSegments.push(sourceChild);
+    }
+  }
+
+  return {
+    sourceChildren,
+    orderedAnchorSegments,
+    anchorOrderIndexById,
+    anchorChildIndexById,
+  };
 }
 
 function mapProgress(
@@ -809,6 +871,19 @@ function splitTextLeafByMarks(
   return projected;
 }
 
+function mapSeparatorLeaf(
+  leaf: ReaderStableSeparatorLeafDto,
+): ReaderRecordPlateTextLeaf {
+  return {
+    text: leaf.text,
+    owner: "stable",
+    lockSource: true,
+    sourceRole: "separator",
+    baseRange: range(leaf.base_start_utf16, leaf.base_end_utf16),
+    marks: [],
+  };
+}
+
 function markAnchor(
   segment: Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }>,
   mark: ReaderVocabularyMarkDto | ReaderGrammarNoteMarkDto,
@@ -931,33 +1006,59 @@ function mapTextLeaf(
 
 // --- Block builders ---
 
-function buildParagraphBlock(
-  segment: Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }>,
+function buildParagraphBlockForSourceSpan(
+  sourceChildren: ReaderSourceBlockChildNodeDto[],
+  anchorSegments: ReaderAnchorSegmentNode[],
   context: UnitProjectionContext,
   options: { isUnitStart?: boolean } = {},
 ): ReaderRecordPlateParagraphBlock {
-  const children = segment.children.flatMap((leaf) =>
-    mapTextLeaf(segment, leaf, context),
+  if (anchorSegments.length === 0) {
+    throw new Error("Expected at least one anchor segment in source span");
+  }
+
+  const primaryAnchor = anchorSegments[0];
+  const terminalAnchor = anchorSegments[anchorSegments.length - 1];
+  const children = sourceChildren.flatMap((child) =>
+    isAnchorSegmentNode(child)
+      ? child.children.flatMap((leaf) => mapTextLeaf(child, leaf, context))
+      : [mapSeparatorLeaf(child)],
   );
 
   return {
     type: "paragraph",
-    id: `paragraph:${segment.anchor_segment_id}`,
+    id: `paragraph:${primaryAnchor.anchor_segment_id}`,
     children,
     data: {
-      anchorSegmentId: segment.anchor_segment_id,
-      sentenceId: segment.sentence_id,
-      unitId: segment.unit_id,
+      anchorSegmentId: primaryAnchor.anchor_segment_id,
+      coveredAnchorSegmentIds: anchorSegments.map(
+        (segment) => segment.anchor_segment_id,
+      ),
+      sentenceId: primaryAnchor.sentence_id,
+      unitId: primaryAnchor.unit_id,
       isUnitStart: options.isUnitStart || undefined,
-      baseId: segment.base_id,
-      baseRange: range(segment.base_start_utf16, segment.base_end_utf16),
-      unitRange: range(segment.unit_start_utf16, segment.unit_end_utf16),
-      textHash: segment.text_hash,
-      hashAlgorithm: segment.hash_algorithm,
-      segmentType: segment.segment_type,
-      boundaryQuality: segment.boundary_quality,
+      baseId: primaryAnchor.base_id,
+      baseRange: range(
+        primaryAnchor.base_start_utf16,
+        terminalAnchor.base_end_utf16,
+      ),
+      unitRange: range(
+        primaryAnchor.unit_start_utf16,
+        terminalAnchor.unit_end_utf16,
+      ),
+      textHash: primaryAnchor.text_hash,
+      hashAlgorithm: primaryAnchor.hash_algorithm,
+      segmentType: primaryAnchor.segment_type,
+      boundaryQuality: primaryAnchor.boundary_quality,
     },
   };
+}
+
+function buildParagraphBlock(
+  segment: ReaderAnchorSegmentNode,
+  context: UnitProjectionContext,
+  options: { isUnitStart?: boolean } = {},
+): ReaderRecordPlateParagraphBlock {
+  return buildParagraphBlockForSourceSpan([segment], [segment], context, options);
 }
 
 function buildBlockquoteBlock(
@@ -1139,55 +1240,120 @@ function buildSupplementCalloutBlocks(
   });
 }
 
-function buildTranslationGroupsByTerminalSegment(
+function buildAnnotationBlocksForSegments(
+  segments: ReaderAnchorSegmentNode[],
+  context: UnitProjectionContext,
+): ReaderRecordPlateBlock[] {
+  const blocks: ReaderRecordPlateBlock[] = [];
+
+  for (const segment of segments) {
+    blocks.push(...buildGrammarCalloutBlocks(segment));
+    blocks.push(...buildSentenceAnalysisBlocks(segment, context));
+    blocks.push(...buildSupplementCalloutBlocks(segment, context));
+  }
+
+  return blocks;
+}
+
+function buildValidTranslationGroupSpans(
   unit: ReaderUnitNodeDto,
 ): {
-  groupsByTerminalSegmentId: Map<string, ReaderTranslationGroupNodeDto[]>;
+  layout: UnitSourceLayout;
+  spans: TranslationGroupSourceSpan[];
 } {
-  const orderedAnchorSegmentIds = unit.children.flatMap((child) =>
-    isSourceBlockNode(child)
-      ? child.children.flatMap((sourceChild) =>
-          isAnchorSegmentNode(sourceChild)
-            ? [sourceChild.anchor_segment_id]
-            : [],
-        )
-      : [],
-  );
-  const knownAnchorSegmentIds = new Set(orderedAnchorSegmentIds);
-  const groupsByTerminalSegmentId = new Map<
-    string,
-    ReaderTranslationGroupNodeDto[]
-  >();
+  const layout = buildUnitSourceLayout(unit);
+  const candidates: TranslationGroupSourceSpanCandidate[] = [];
 
   for (const child of unit.children) {
-    if (!isTranslationGroupNode(child)) {
+    if (!isTranslationGroupNode(child) || child.target_scope !== "unit") {
       continue;
     }
 
-    if (child.covered_anchor_segment_ids.length === 0) {
+    const coveredAnchorSegmentIds = child.covered_anchor_segment_ids;
+    if (coveredAnchorSegmentIds.length === 0) {
       continue;
     }
 
     if (
-      child.covered_anchor_segment_ids.some(
-        (anchorSegmentId) => !knownAnchorSegmentIds.has(anchorSegmentId),
+      new Set(coveredAnchorSegmentIds).size !== coveredAnchorSegmentIds.length
+    ) {
+      continue;
+    }
+
+    const startAnchorId = coveredAnchorSegmentIds[0];
+    const endAnchorId = coveredAnchorSegmentIds[coveredAnchorSegmentIds.length - 1];
+    if (!startAnchorId || !endAnchorId) {
+      continue;
+    }
+    const startAnchorIndex = layout.anchorOrderIndexById.get(startAnchorId);
+    const startChildIndex = layout.anchorChildIndexById.get(startAnchorId);
+    const endChildIndex = layout.anchorChildIndexById.get(endAnchorId);
+
+    if (
+      startAnchorIndex === undefined ||
+      startChildIndex === undefined ||
+      endChildIndex === undefined ||
+      endChildIndex < startChildIndex
+    ) {
+      continue;
+    }
+
+    const coveredSegments = layout.orderedAnchorSegments.slice(
+      startAnchorIndex,
+      startAnchorIndex + coveredAnchorSegmentIds.length,
+    );
+    if (coveredSegments.length !== coveredAnchorSegmentIds.length) {
+      continue;
+    }
+
+    if (
+      coveredSegments.some(
+        (segment, index) =>
+          segment.anchor_segment_id !== coveredAnchorSegmentIds[index],
       )
     ) {
       continue;
     }
 
-    const terminalSegmentId = child.covered_anchor_segment_ids.at(-1);
-    if (!terminalSegmentId || !knownAnchorSegmentIds.has(terminalSegmentId)) {
+    const endAnchorIndex =
+      startAnchorIndex + coveredAnchorSegmentIds.length - 1;
+
+    candidates.push({
+      group: child,
+      coveredSegments,
+      startAnchorIndex,
+      endAnchorIndex,
+      sourceChildren: layout.sourceChildren.slice(
+        startChildIndex,
+        endChildIndex + 1,
+      ),
+    });
+  }
+
+  candidates.sort((left, right) => {
+    if (left.startAnchorIndex !== right.startAnchorIndex) {
+      return left.startAnchorIndex - right.startAnchorIndex;
+    }
+    if (left.endAnchorIndex !== right.endAnchorIndex) {
+      return left.endAnchorIndex - right.endAnchorIndex;
+    }
+    return left.group.group_id.localeCompare(right.group.group_id);
+  });
+
+  const spans: TranslationGroupSourceSpan[] = [];
+  let lastAcceptedEndAnchorIndex = -1;
+  for (const candidate of candidates) {
+    if (candidate.startAnchorIndex <= lastAcceptedEndAnchorIndex) {
       continue;
     }
 
-    const list = groupsByTerminalSegmentId.get(terminalSegmentId) ?? [];
-    list.push(child);
-    groupsByTerminalSegmentId.set(terminalSegmentId, list);
+    spans.push(candidate);
+    lastAcceptedEndAnchorIndex = candidate.endAnchorIndex;
   }
 
   return {
-    groupsByTerminalSegmentId,
+    layout,
+    spans,
   };
 }
 
@@ -1197,42 +1363,54 @@ function mapUnitToBlocks(
 ): ReaderRecordPlateBlock[] {
   const blocks: ReaderRecordPlateBlock[] = [];
   let isFirstAnchorSegmentInUnit = true;
-  const { groupsByTerminalSegmentId } =
-    buildTranslationGroupsByTerminalSegment(unit);
+  const { layout, spans } = buildValidTranslationGroupSpans(unit);
+  let nextAnchorIndex = 0;
 
-  for (const child of unit.children) {
-    if (!isSourceBlockNode(child)) {
-      continue;
+  const pushFallbackSegment = (segment: ReaderAnchorSegmentNode) => {
+    blocks.push(
+      buildParagraphBlock(segment, context, {
+        isUnitStart: isFirstAnchorSegmentInUnit,
+      }),
+    );
+    isFirstAnchorSegmentInUnit = false;
+    blocks.push(...buildAnnotationBlocksForSegments([segment], context));
+  };
+
+  for (const span of spans) {
+    while (nextAnchorIndex < span.startAnchorIndex) {
+      const fallbackSegment = layout.orderedAnchorSegments[nextAnchorIndex];
+      if (fallbackSegment) {
+        pushFallbackSegment(fallbackSegment);
+      }
+      nextAnchorIndex += 1;
     }
 
-    for (const sourceChild of child.children) {
-      if (!isAnchorSegmentNode(sourceChild)) {
-        continue;
-      }
-
-      // 1. 原文段落 paragraph block
-      blocks.push(
-        buildParagraphBlock(sourceChild, context, {
+    blocks.push(
+      buildParagraphBlockForSourceSpan(
+        span.sourceChildren,
+        span.coveredSegments,
+        context,
+        {
           isUnitStart: isFirstAnchorSegmentInUnit,
-        }),
-      );
-      isFirstAnchorSegmentInUnit = false;
-      // 2. grammar_note callout blocks (showCue=true)
-      blocks.push(...buildGrammarCalloutBlocks(sourceChild));
-      // 3. sentence_analysis blocks
-      blocks.push(...buildSentenceAnalysisBlocks(sourceChild, context));
-      // 4. ask_supplement callout blocks
-      blocks.push(...buildSupplementCalloutBlocks(sourceChild, context));
-      // 5. covered span 的最后一个 segment 后插入对应译文 group
-      const translationGroups =
-        groupsByTerminalSegmentId.get(sourceChild.anchor_segment_id) ?? [];
-      for (const group of translationGroups) {
-        const blockquote = buildBlockquoteBlock(group);
-        if (blockquote) {
-          blocks.push(blockquote);
-        }
-      }
+        },
+      ),
+    );
+    isFirstAnchorSegmentInUnit = false;
+
+    const blockquote = buildBlockquoteBlock(span.group);
+    if (blockquote) {
+      blocks.push(blockquote);
     }
+    blocks.push(...buildAnnotationBlocksForSegments(span.coveredSegments, context));
+    nextAnchorIndex = span.endAnchorIndex + 1;
+  }
+
+  while (nextAnchorIndex < layout.orderedAnchorSegments.length) {
+    const fallbackSegment = layout.orderedAnchorSegments[nextAnchorIndex];
+    if (fallbackSegment) {
+      pushFallbackSegment(fallbackSegment);
+    }
+    nextAnchorIndex += 1;
   }
 
   return blocks;

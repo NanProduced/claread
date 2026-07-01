@@ -216,8 +216,8 @@ export function marksToPlateProps(
 /**
  * ReaderRecordPlateTextLeaf → Plate text node。
  *
- * 无 marks 的 leaf（separator）仅返回 `{ text }`。
- * 携带 anchor segment id 和 segment range，供 renderLeaf 输出选区锚点 data 属性。
+ * 无 anchor metadata 的 leaf（例如 separator）不会生成选区锚点属性。
+ * 携带 anchor segment id 和 segment range 的 source leaf 会继续输出选区锚点 data 属性。
  */
 export function textLeafToPlateTextNode(
   leaf: ReaderRecordPlateTextLeaf,
@@ -225,9 +225,13 @@ export function textLeafToPlateTextNode(
   return {
     text: leaf.text,
     ...marksToPlateProps(leaf.marks),
-    anchor_segment_id: leaf.anchorSegmentId,
-    segment_start_utf16: leaf.segmentRange.startUtf16,
-    segment_end_utf16: leaf.segmentRange.endUtf16,
+    ...(leaf.anchorSegmentId && leaf.segmentRange
+      ? {
+          anchor_segment_id: leaf.anchorSegmentId,
+          segment_start_utf16: leaf.segmentRange.startUtf16,
+          segment_end_utf16: leaf.segmentRange.endUtf16,
+        }
+      : {}),
   };
 }
 

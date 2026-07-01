@@ -632,6 +632,53 @@ function makeSequentialTranslationGroupSnapshot(): ReaderPlateSnapshotDto {
   };
 }
 
+function makeGroupedSeg2PhraseGlossSnapshot(): ReaderPlateSnapshotDto {
+  const snapshot = makeSplitSegmentTranslationSnapshot();
+  const unit = snapshot.value[0];
+  const sourceBlock = unit.children.find(
+    (child): child is ReaderSourceBlockNodeDto =>
+      child.type === "reader_source_block",
+  );
+
+  if (!sourceBlock) {
+    throw new Error("Expected source block fixture");
+  }
+
+  const secondSegment = sourceBlock.children.find(
+    (child): child is ReaderAnchorSegmentNodeDto =>
+      "type" in child &&
+      child.type === "reader_anchor_segment" &&
+      child.anchor_segment_id === "seg_2",
+  );
+  if (!secondSegment) {
+    throw new Error("Expected seg_2 fixture");
+  }
+
+  const seg2PhraseMark = makeVocabularyMark({
+    mark_id: "vocab_mark_seg_2",
+    anchor_segment_id: "seg_2",
+    item_type: "phrase_gloss",
+    start_offset: 7,
+    end_offset: 21,
+    segment_start_utf16: 7,
+    segment_end_utf16: 21,
+    selected_text: "policy choices",
+    phrase: "policy choices",
+    phrase_type: "collocation",
+    gloss: "政策选择",
+    example: "Policy choices shape institutions.",
+  });
+
+  secondSegment.children = [
+    {
+      ...secondSegment.children[0],
+      reader_vocabulary_marks: [seg2PhraseMark],
+    },
+  ];
+
+  return snapshot;
+}
+
 function makeDictionaryEntryResult(query = "memory"): WebDictResult {
   return {
     kind: "entry",
@@ -2109,6 +2156,59 @@ describe("ReaderRecordPlateSurface", () => {
       ).toHaveLength(0);
     },
   );
+
+  it("uses the seg_2 source sentence for grouped phrase_gloss lookup context", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(makeDictionaryEntryResult("policy choices")), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeGroupedSeg2PhraseGlossSnapshot()} />,
+    );
+    const seg2Mark = container.querySelector<HTMLElement>(
+      '[data-reader-record-mark-id="vocab_mark_seg_2"]',
+    );
+    expect(seg2Mark).not.toBeNull();
+    if (!seg2Mark) {
+      throw new Error("Expected seg_2 vocabulary mark");
+    }
+
+    fireEvent.click(seg2Mark);
+
+    const panel = await screen.findByTestId("reader-record-plate-lookup-panel");
+    fireEvent.click(within(panel).getByLabelText("查短语"));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url]) =>
+            typeof url === "string" && url.includes("/api/web/dict/lookup"),
+        ),
+      ).toBe(true);
+    });
+
+    const lookupCall = fetchMock.mock.calls.find(
+      ([url]) => typeof url === "string" && url.includes("/api/web/dict/lookup"),
+    );
+    const lookupUrl = String(lookupCall?.[0]);
+    const lookupParams = new URL(lookupUrl, "http://claread.test").searchParams;
+    expect(lookupParams.get("word")).toBe("policy choices");
+    expect(lookupParams.get("context")).toBe("shapes policy choices.");
+  });
 
   it("submits vocabulary inspect feedback through the dictionary feedback scope", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {

@@ -103,7 +103,10 @@ function findAnchorSegment(
 
     if (
       block.data.unitId === anchor.unit_id &&
-      block.data.anchorSegmentId === anchor.anchor_segment_id
+      (
+        block.data.coveredAnchorSegmentIds.includes(anchor.anchor_segment_id) ||
+        block.data.anchorSegmentId === anchor.anchor_segment_id
+      )
     ) {
       return block;
     }

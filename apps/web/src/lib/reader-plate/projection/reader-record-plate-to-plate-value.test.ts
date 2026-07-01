@@ -181,6 +181,20 @@ function makeTextLeaf(
   };
 }
 
+function makeSeparatorLeaf(
+  overrides: Partial<ReaderRecordPlateTextLeaf> = {},
+): ReaderRecordPlateTextLeaf {
+  return {
+    text: "\n\n",
+    owner: "stable",
+    lockSource: true,
+    sourceRole: "separator",
+    baseRange: { startUtf16: 20, endUtf16: 22 },
+    marks: [],
+    ...overrides,
+  };
+}
+
 function makeTranslationLeaf(
   overrides: Partial<ReaderRecordPlateTranslationTextLeaf> = {},
 ): ReaderRecordPlateTranslationTextLeaf {
@@ -203,6 +217,7 @@ function makeParagraphBlock(
     children: [makeTextLeaf()],
     data: {
       anchorSegmentId: "seg_1",
+      coveredAnchorSegmentIds: ["seg_1"],
       sentenceId: "sent_1",
       unitId: "unit_1",
       baseId: "base_1",
@@ -401,6 +416,15 @@ describe("textLeafToPlateTextNode", () => {
     expect(node.grammar).toBeUndefined();
     expect(node.user_highlight).toBeUndefined();
     expect(node.user_note).toBeUndefined();
+  });
+
+  it("omits anchor metadata for separator leaf", () => {
+    const node = textLeafToPlateTextNode(makeSeparatorLeaf());
+
+    expect(node.text).toBe("\n\n");
+    expect(node.anchor_segment_id).toBeUndefined();
+    expect(node.segment_start_utf16).toBeUndefined();
+    expect(node.segment_end_utf16).toBeUndefined();
   });
 
   it("converts leaf with vocabulary mark", () => {

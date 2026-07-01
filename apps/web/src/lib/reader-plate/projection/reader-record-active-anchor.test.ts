@@ -124,6 +124,7 @@ function makeDocument(
         ],
         data: {
           anchorSegmentId: "seg_1",
+          coveredAnchorSegmentIds: ["seg_1"],
           sentenceId: "sent_1",
           unitId: "unit_1",
           baseId: "base_1",
@@ -287,6 +288,136 @@ describe("userEditorialAssetAnchorDraftForActiveAnchor", () => {
       end_offset: 27,
       selected_text: "shapes",
       text_hash: computeUtf16FNV1a("shapes"),
+    });
+  });
+
+  it("finds grouped paragraphs for non-primary seg_2 system marks and cues", () => {
+    const secondVocabularyAnchor = textAnchor({
+      anchorSegmentId: "seg_2",
+      sentenceId: "sent_2",
+      unitStartOffset: 23,
+      unitEndOffset: 28,
+      segmentStartOffset: 0,
+      segmentEndOffset: 5,
+      selectedText: "Those",
+      textHash: computeUtf16FNV1a("Those"),
+    });
+    const secondGrammarAnchor = textAnchor({
+      anchorSegmentId: "seg_2",
+      sentenceId: "sent_2",
+      unitStartOffset: 37,
+      unitEndOffset: 44,
+      segmentStartOffset: 14,
+      segmentEndOffset: 21,
+      selectedText: "persist",
+      textHash: computeUtf16FNV1a("persist"),
+    });
+    const secondVocabularyMark: ReaderRecordPlateVocabularyMark = {
+      id: "vocab_mark_seg_2",
+      layerId: "layer_vocab_2",
+      kind: "phrase_gloss",
+      owner: "system_ai",
+      anchor: secondVocabularyAnchor,
+      startsHere: true,
+      endsHere: true,
+      vocabulary: {
+        itemType: "phrase_gloss",
+        phrase: "Those",
+        phraseType: "collocation",
+        gloss: "那些",
+        example: null,
+      },
+    };
+    const secondGrammarMark: ReaderRecordPlateGrammarMark = {
+      id: "grammar_mark_seg_2",
+      layerId: "layer_grammar_2",
+      kind: "grammar_note",
+      owner: "system_ai",
+      anchor: secondGrammarAnchor,
+      startsHere: true,
+      endsHere: true,
+      itemId: "grammar_item_2",
+      spanIndex: 0,
+      spanCount: 1,
+      showCue: true,
+      grammarPoint: "predicate verb",
+      pattern: "subject + predicate",
+      note: "persist acts as the predicate verb.",
+    };
+    const document = makeDocument({
+      children: [
+        {
+          type: "paragraph",
+          id: "paragraph:seg_1",
+          children: [
+            {
+              text: "Institutional memory.",
+              owner: "stable",
+              lockSource: true,
+              sourceRole: "segment_text",
+              baseRange: { startUtf16: 0, endUtf16: 21 },
+              anchorSegmentId: "seg_1",
+              segmentRange: { startUtf16: 0, endUtf16: 21 },
+              marks: [],
+            },
+            {
+              text: "\n\n",
+              owner: "stable",
+              lockSource: true,
+              sourceRole: "separator",
+              baseRange: { startUtf16: 21, endUtf16: 23 },
+              marks: [],
+            },
+            {
+              text: "Those choices persist.",
+              owner: "stable",
+              lockSource: true,
+              sourceRole: "segment_text",
+              baseRange: { startUtf16: 23, endUtf16: 45 },
+              anchorSegmentId: "seg_2",
+              segmentRange: { startUtf16: 0, endUtf16: 22 },
+              marks: [secondVocabularyMark, secondGrammarMark],
+            },
+          ],
+          data: {
+            anchorSegmentId: "seg_1",
+            coveredAnchorSegmentIds: ["seg_1", "seg_2"],
+            sentenceId: "sent_1",
+            unitId: "unit_1",
+            baseId: "base_1",
+            baseRange: { startUtf16: 0, endUtf16: 45 },
+            unitRange: { startUtf16: 0, endUtf16: 45 },
+            textHash: "seg_1_hash",
+            hashAlgorithm: "fnv1a32-utf16",
+            segmentType: "sentence",
+            boundaryQuality: "normal",
+          },
+        },
+      ],
+    });
+
+    const markAnchor = userEditorialAssetAnchorDraftForActiveAnchor(document, {
+      source: "system_mark",
+      anchor: secondVocabularyAnchor,
+    });
+    const cueAnchor = userEditorialAssetAnchorDraftForActiveAnchor(document, {
+      source: "system_cue",
+      anchor: secondGrammarAnchor,
+    });
+
+    expect(markAnchor).not.toBeNull();
+    expect(cueAnchor).not.toBeNull();
+    expect(markAnchor).toMatchObject({
+      anchor_segment_id: "seg_2",
+      selected_text: "Those",
+      start_offset: 23,
+      end_offset: 28,
+    });
+    expect(cueAnchor).toMatchObject({
+      anchor_segment_id: "seg_2",
+      selected_text: "persist",
+      start_offset: 37,
+      end_offset: 44,
     });
   });
 

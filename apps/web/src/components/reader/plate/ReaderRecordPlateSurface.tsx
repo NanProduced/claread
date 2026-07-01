@@ -404,9 +404,17 @@ function sourceTextForAnchorSegment(
   const paragraph = blocks.find(
     (block): block is ReaderRecordPlateParagraphBlock =>
       block.type === "paragraph" &&
-      block.data.anchorSegmentId === anchorSegmentId,
+      block.data.coveredAnchorSegmentIds.includes(anchorSegmentId),
   );
-  return paragraph?.children.map((leaf) => leaf.text).join("") ?? "";
+
+  if (!paragraph) {
+    return "";
+  }
+
+  return paragraph.children
+    .filter((leaf) => leaf.anchorSegmentId === anchorSegmentId)
+    .map((leaf) => leaf.text)
+    .join("");
 }
 
 function structuredInspectIntentFromVocabularyMark(
