@@ -3,20 +3,53 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 
 import {
+  completeUpstreamReaderSourceArtifactUpload,
+  confirmUpstreamReaderCandidateDocument,
+  ensureUpstreamReaderArticleRagIndex,
+  getUpstreamReaderArticleRagIndexStatus,
+  getUpstreamReaderArtifactPipelineStatus,
   getUpstreamReaderPlateSnapshot,
+  getUpstreamReaderStableDocument,
+  initUpstreamReaderSourceArtifactUpload,
   pollUpstreamReaderEvents,
   submitUpstreamReaderPlainText,
+  submitUpstreamReaderSourceArtifactInput,
+  submitUpstreamReaderUnifiedInput,
 } from "@/services/api/reader-plate";
 import { appReadingRecordRoute } from "@/lib/routes";
 import {
   normalizeReaderRecordReadingDefaults,
   type ReaderRecordReadingDefaultState,
 } from "@/lib/reading-defaults";
+import {
+  mapArticleRagIndexEnsure,
+  mapArticleRagIndexStatus,
+  mapArtifactPipelineStatus,
+  type ReaderArticleRagIndexEnsureSafeDto,
+  type ReaderArticleRagIndexStatusSafeDto,
+  type ReaderArtifactPipelineStatusSafeDto,
+} from "@/lib/reader-orchestration/status-mapper";
 import { getWebSession } from "@/services/bff/session";
 import type {
+  ReaderArticleRagIndexEnsureRequestDto,
+  ReaderArticleRagIndexEnsureResponseDto,
+  ReaderArticleRagIndexStatusResponseDto,
+  ReaderArtifactPipelineStatusResponseDto,
+  ReaderCandidateDocumentConfirmRequestDto,
+  ReaderCandidateDocumentConfirmResponseDto,
   ReaderEventPollResponseDto,
+  ReaderInputAdapterSourceTypeDto,
   ReaderPlainTextSubmitResponseDto,
   ReaderPlateSnapshotDto,
+  ReaderSourceArtifactSubmitInputRequestDto,
+  ReaderSourceArtifactSubmitInputResponseDto,
+  ReaderSourceArtifactUploadCompleteRequestDto,
+  ReaderSourceArtifactUploadCompleteResponseDto,
+  ReaderSourceArtifactUploadInitRequestDto,
+  ReaderSourceArtifactUploadInitResponseDto,
+  ReaderStableDocumentResponseDto,
+  ReaderUnifiedInputSubmitRequestDto,
+  ReaderUnifiedInputSubmitResponseDto,
 } from "@/types/api/reader-plate";
 
 export type ReaderPlateBffError = {
@@ -26,9 +59,12 @@ export type ReaderPlateBffError = {
     | "auth_required"
     | "upstream_auth_failed"
     | "record_not_found"
+    | "artifact_not_found"
     | "upstream_unavailable"
     | "upstream_error"
-    | "empty_text";
+    | "empty_text"
+    | "invalid_input"
+    | "candidate_conflict";
   message: string;
 };
 
@@ -56,8 +92,52 @@ export type ReaderPlateEventsResult =
   | ({ ok: true } & ReaderEventPollResponseDto)
   | ReaderPlateBffError;
 
+export type ReaderUnifiedInputSubmitResult =
+  | ({ ok: true } & ReaderUnifiedInputSubmitResponseDto)
+  | ReaderPlateBffError;
+
+export type ReaderSourceArtifactUploadInitResult =
+  | ({ ok: true } & ReaderSourceArtifactUploadInitResponseDto)
+  | ReaderPlateBffError;
+
+export type ReaderSourceArtifactUploadCompleteResult =
+  | ({ ok: true } & ReaderSourceArtifactUploadCompleteResponseDto)
+  | ReaderPlateBffError;
+
+export type ReaderSourceArtifactSubmitInputResult =
+  | ({ ok: true } & ReaderSourceArtifactSubmitInputResponseDto)
+  | ReaderPlateBffError;
+
+export type ReaderArtifactPipelineStatusResult =
+  | ({ ok: true } & ReaderArtifactPipelineStatusSafeDto)
+  | ReaderPlateBffError;
+
+export type ReaderCandidateDocumentConfirmResult =
+  | ({ ok: true } & ReaderCandidateDocumentConfirmResponseDto)
+  | ReaderPlateBffError;
+
+export type ReaderStableDocumentResult =
+  | ({ ok: true } & ReaderStableDocumentResponseDto)
+  | ReaderPlateBffError;
+
+export type ReaderArticleRagIndexStatusResult =
+  | ({ ok: true } & ReaderArticleRagIndexStatusSafeDto)
+  | ReaderPlateBffError;
+
+export type ReaderArticleRagIndexEnsureResult =
+  | ({ ok: true } & ReaderArticleRagIndexEnsureSafeDto)
+  | ReaderPlateBffError;
+
 function authRequired(message: string): ReaderPlateBffError {
   return { ok: false, status: 401, code: "auth_required", message };
+}
+
+function invalidInput(message: string): ReaderPlateBffError {
+  return { ok: false, status: 400, code: "invalid_input", message };
+}
+
+function candidateConflict(message: string): ReaderPlateBffError {
+  return { ok: false, status: 409, code: "candidate_conflict", message };
 }
 
 function upstreamError(status: number, message: string): ReaderPlateBffError {
@@ -86,6 +166,27 @@ function upstreamError(status: number, message: string): ReaderPlateBffError {
     };
   }
   return { ok: false, status, code: "upstream_error", message };
+}
+
+/**
+ * Route-specific upstream error mapper for source-artifact endpoints.
+ * A 404 on `/reader/source-artifacts/{artifact_id}/*` means the artifact
+ * was not found — NOT that the reading record was not found. Mapping it
+ * to `record_not_found` would surface the wrong user-facing message.
+ */
+function artifactUpstreamError(
+  status: number,
+  message: string,
+): ReaderPlateBffError {
+  if (status === 404) {
+    return {
+      ok: false,
+      status: 404,
+      code: "artifact_not_found",
+      message: "没有找到这个上传文件，请重新上传或刷新后重试。",
+    };
+  }
+  return upstreamError(status, message);
 }
 
 async function requireSession(): Promise<
@@ -235,4 +336,460 @@ export async function pollReaderEventsFromWeb(
   }
 
   return { ok: true, ...upstreamResult.data };
+}
+
+// ---------------------------------------------------------------------------
+// Unified input submit (POST /reader/records/input)
+//
+// Coerces the request body from the Web client into the typed
+// `ReaderUnifiedInputSubmitRequestDto`. The response is a discriminated
+// union by `outcome`; the frontend MUST branch on `outcome` before reading
+// outcome-specific fields.
+// ---------------------------------------------------------------------------
+
+const READER_INPUT_SOURCE_TYPES: ReadonlySet<ReaderInputAdapterSourceTypeDto> = new Set([
+  "pasted_text",
+  "txt_file",
+  "markdown_file",
+  "ocr_text",
+  "pdf_text",
+  "url_text",
+]);
+
+function resolveInputSourceType(value: unknown): ReaderInputAdapterSourceTypeDto {
+  return typeof value === "string" && READER_INPUT_SOURCE_TYPES.has(
+    value as ReaderInputAdapterSourceTypeDto,
+  )
+    ? (value as ReaderInputAdapterSourceTypeDto)
+    : "pasted_text";
+}
+
+export async function submitReaderUnifiedInputFromWeb(input: {
+  sourceType?: unknown;
+  text?: unknown;
+  filename?: unknown;
+  language?: unknown;
+  sourceMetadata?: unknown;
+  clientRecordId?: unknown;
+  readingGoal?: unknown;
+  readingVariant?: unknown;
+}): Promise<ReaderUnifiedInputSubmitResult> {
+  const text = typeof input.text === "string" ? input.text.trim() : "";
+
+  if (!text) {
+    return invalidInput("请先粘贴需要透读的英文内容。");
+  }
+
+  const strategy = resolveReaderRecordStrategy(
+    input.readingGoal,
+    input.readingVariant,
+  );
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const payload: ReaderUnifiedInputSubmitRequestDto = {
+    source_type: resolveInputSourceType(input.sourceType),
+    text,
+    filename:
+      typeof input.filename === "string" && input.filename.trim()
+        ? input.filename
+        : null,
+    language:
+      typeof input.language === "string" && input.language.trim()
+        ? input.language
+        : null,
+    source_metadata:
+      input.sourceMetadata && typeof input.sourceMetadata === "object"
+        ? (input.sourceMetadata as Record<string, unknown>)
+        : null,
+    client_record_id:
+      typeof input.clientRecordId === "string" && input.clientRecordId.trim()
+        ? input.clientRecordId
+        : `web-input-${randomUUID()}`,
+    reading_goal: strategy.readingGoal,
+    reading_variant: strategy.readingVariant,
+  };
+
+  const upstreamResult = await submitUpstreamReaderUnifiedInput(
+    payload,
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    return upstreamError(upstreamResult.status, upstreamResult.message);
+  }
+
+  return { ok: true, ...upstreamResult.data };
+}
+
+// ---------------------------------------------------------------------------
+// Source artifacts: init-upload / complete-upload / submit-input / pipeline-status
+//
+// These wrappers do not render debug-only fields. `pipeline-status` runs
+// through `mapArtifactPipelineStatus` so the UI receives only the safe
+// `outcome` / `next_action` pair and a stripped job summary.
+// ---------------------------------------------------------------------------
+
+export async function initReaderSourceArtifactUploadFromWeb(input: {
+  artifactKind?: unknown;
+  sourceFilename?: unknown;
+  contentType?: unknown;
+  byteSize?: unknown;
+  contentSha256?: unknown;
+  readingRecordId?: unknown;
+  originalInputId?: unknown;
+  sourceRefs?: unknown;
+  metadata?: unknown;
+  quality?: unknown;
+}): Promise<ReaderSourceArtifactUploadInitResult> {
+  if (input.artifactKind !== "original_upload") {
+    return invalidInput("仅支持 original_upload 类型 artifact 上传。");
+  }
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const payload: ReaderSourceArtifactUploadInitRequestDto = {
+    artifact_kind: "original_upload",
+    source_filename:
+      typeof input.sourceFilename === "string" && input.sourceFilename.trim()
+        ? input.sourceFilename
+        : null,
+    content_type:
+      typeof input.contentType === "string" && input.contentType.trim()
+        ? input.contentType
+        : null,
+    byte_size:
+      typeof input.byteSize === "number" && Number.isFinite(input.byteSize)
+        ? input.byteSize
+        : null,
+    content_sha256:
+      typeof input.contentSha256 === "string" && input.contentSha256.trim()
+        ? input.contentSha256
+        : null,
+    reading_record_id:
+      typeof input.readingRecordId === "string" && input.readingRecordId.trim()
+        ? input.readingRecordId
+        : null,
+    original_input_id:
+      typeof input.originalInputId === "string" && input.originalInputId.trim()
+        ? input.originalInputId
+        : null,
+    source_refs:
+      input.sourceRefs && typeof input.sourceRefs === "object"
+        ? (input.sourceRefs as Record<string, unknown>)
+        : null,
+    metadata:
+      input.metadata && typeof input.metadata === "object"
+        ? (input.metadata as Record<string, unknown>)
+        : null,
+    quality:
+      input.quality && typeof input.quality === "object"
+        ? (input.quality as Record<string, unknown>)
+        : null,
+  };
+
+  const upstreamResult = await initUpstreamReaderSourceArtifactUpload(
+    payload,
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    return upstreamError(upstreamResult.status, upstreamResult.message);
+  }
+
+  return { ok: true, ...upstreamResult.data };
+}
+
+export async function completeReaderSourceArtifactUploadFromWeb(
+  artifactId: string,
+  input: {
+    contentType?: unknown;
+    byteSize?: unknown;
+    contentSha256?: unknown;
+    metadata?: unknown;
+    quality?: unknown;
+  },
+): Promise<ReaderSourceArtifactUploadCompleteResult> {
+  if (!artifactId) {
+    return invalidInput("缺少 artifact_id。");
+  }
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const payload: ReaderSourceArtifactUploadCompleteRequestDto = {
+    content_type:
+      typeof input.contentType === "string" && input.contentType.trim()
+        ? input.contentType
+        : null,
+    byte_size:
+      typeof input.byteSize === "number" && Number.isFinite(input.byteSize)
+        ? input.byteSize
+        : null,
+    content_sha256:
+      typeof input.contentSha256 === "string" && input.contentSha256.trim()
+        ? input.contentSha256
+        : null,
+    metadata:
+      input.metadata && typeof input.metadata === "object"
+        ? (input.metadata as Record<string, unknown>)
+        : null,
+    quality:
+      input.quality && typeof input.quality === "object"
+        ? (input.quality as Record<string, unknown>)
+        : null,
+  };
+
+  const upstreamResult = await completeUpstreamReaderSourceArtifactUpload(
+    artifactId,
+    payload,
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    return artifactUpstreamError(upstreamResult.status, upstreamResult.message);
+  }
+
+  return { ok: true, ...upstreamResult.data };
+}
+
+export async function submitReaderSourceArtifactInputFromWeb(
+  artifactId: string,
+  input: {
+    title?: unknown;
+    language?: unknown;
+    clientRecordId?: unknown;
+    sourceMetadata?: unknown;
+    readingGoal?: unknown;
+    readingVariant?: unknown;
+  },
+): Promise<ReaderSourceArtifactSubmitInputResult> {
+  if (!artifactId) {
+    return invalidInput("缺少 artifact_id。");
+  }
+
+  const strategy = resolveReaderRecordStrategy(
+    input.readingGoal,
+    input.readingVariant,
+  );
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const payload: ReaderSourceArtifactSubmitInputRequestDto = {
+    title:
+      typeof input.title === "string" && input.title.trim()
+        ? input.title
+        : null,
+    language:
+      typeof input.language === "string" && input.language.trim()
+        ? input.language
+        : null,
+    client_record_id:
+      typeof input.clientRecordId === "string" && input.clientRecordId.trim()
+        ? input.clientRecordId
+        : `web-artifact-${randomUUID()}`,
+    source_metadata:
+      input.sourceMetadata && typeof input.sourceMetadata === "object"
+        ? (input.sourceMetadata as Record<string, unknown>)
+        : null,
+    reading_goal: strategy.readingGoal,
+    reading_variant: strategy.readingVariant,
+  };
+
+  const upstreamResult = await submitUpstreamReaderSourceArtifactInput(
+    artifactId,
+    payload,
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    return artifactUpstreamError(upstreamResult.status, upstreamResult.message);
+  }
+
+  return { ok: true, ...upstreamResult.data };
+}
+
+export async function getReaderArtifactPipelineStatusFromWeb(
+  artifactId: string,
+): Promise<ReaderArtifactPipelineStatusResult> {
+  if (!artifactId) {
+    return invalidInput("缺少 artifact_id。");
+  }
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const upstreamResult = await getUpstreamReaderArtifactPipelineStatus(
+    artifactId,
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    return artifactUpstreamError(upstreamResult.status, upstreamResult.message);
+  }
+
+  return { ok: true, ...mapArtifactPipelineStatus(upstreamResult.data) };
+}
+
+// ---------------------------------------------------------------------------
+// Candidate document confirmation
+// ---------------------------------------------------------------------------
+
+export async function confirmReaderCandidateDocumentFromWeb(
+  recordId: string,
+  candidateDocumentId: string,
+  input: { language?: unknown } = {},
+): Promise<ReaderCandidateDocumentConfirmResult> {
+  if (!recordId || !candidateDocumentId) {
+    return invalidInput("缺少 record_id 或 candidate_document_id。");
+  }
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const payload: ReaderCandidateDocumentConfirmRequestDto = {
+    language:
+      typeof input.language === "string" && input.language.trim()
+        ? input.language
+        : null,
+  };
+
+  const upstreamResult = await confirmUpstreamReaderCandidateDocument(
+    recordId,
+    candidateDocumentId,
+    payload,
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    if (upstreamResult.status === 409) {
+      return candidateConflict(
+        "候选文档状态已变化，请刷新后重试。",
+      );
+    }
+    return upstreamError(upstreamResult.status, upstreamResult.message);
+  }
+
+  return { ok: true, ...upstreamResult.data };
+}
+
+// ---------------------------------------------------------------------------
+// Stable Document projection
+// ---------------------------------------------------------------------------
+
+export async function getReaderStableDocumentFromWeb(
+  recordId: string,
+): Promise<ReaderStableDocumentResult> {
+  if (!recordId) {
+    return invalidInput("缺少 record_id。");
+  }
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const upstreamResult = await getUpstreamReaderStableDocument(
+    recordId,
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    return upstreamError(upstreamResult.status, upstreamResult.message);
+  }
+
+  return { ok: true, ...upstreamResult.data };
+}
+
+// ---------------------------------------------------------------------------
+// Article RAG Index lifecycle
+//
+// The BFF always runs the upstream response through the status mapper so
+// unknown enums fail closed to a safe fallback and `reason_code` is stripped
+// before the response reaches the UI. The frontend NEVER sees raw
+// `reason_code` values.
+// ---------------------------------------------------------------------------
+
+export async function getReaderArticleRagIndexStatusFromWeb(
+  recordId: string,
+): Promise<ReaderArticleRagIndexStatusResult> {
+  if (!recordId) {
+    return invalidInput("缺少 record_id。");
+  }
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const upstreamResult = await getUpstreamReaderArticleRagIndexStatus(
+    recordId,
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    return upstreamError(upstreamResult.status, upstreamResult.message);
+  }
+
+  return { ok: true, ...mapArticleRagIndexStatus(upstreamResult.data) };
+}
+
+export async function ensureReaderArticleRagIndexFromWeb(
+  recordId: string,
+  input: { expectedGeneration?: unknown; indexVersion?: unknown },
+): Promise<ReaderArticleRagIndexEnsureResult> {
+  if (!recordId) {
+    return invalidInput("缺少 record_id。");
+  }
+
+  const expectedGeneration =
+    typeof input.expectedGeneration === "number" &&
+    Number.isFinite(input.expectedGeneration) &&
+    input.expectedGeneration >= 1
+      ? Math.floor(input.expectedGeneration)
+      : null;
+
+  if (expectedGeneration === null) {
+    return invalidInput("expected_generation 必须是大于等于 1 的整数。");
+  }
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const payload: ReaderArticleRagIndexEnsureRequestDto = {
+    expected_generation: expectedGeneration,
+    index_version:
+      typeof input.indexVersion === "string" && input.indexVersion.trim()
+        ? input.indexVersion
+        : null,
+  };
+
+  const upstreamResult = await ensureUpstreamReaderArticleRagIndex(
+    recordId,
+    payload,
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    return upstreamError(upstreamResult.status, upstreamResult.message);
+  }
+
+  return { ok: true, ...mapArticleRagIndexEnsure(upstreamResult.data) };
 }

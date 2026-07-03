@@ -566,12 +566,14 @@ export interface ReaderAskCompletedPayloadDto {
   context_plan?: ReaderAskContextPlanDto | null;
   resolved_context_input?: ReaderAskResolvedContextInputDto | null;
   run_info?: ReaderAskRunInfoDto | null;
-  supplement_candidates: ReaderAskSupplementCandidateDto[]; 
+  supplement_candidates: ReaderAskSupplementCandidateDto[];
   persisted_supplements: ReaderAskPersistedSupplementDto[];
   reasoning_md?: string | null;
   reasoning_status?: "idle" | "streaming" | "completed" | null;
   follow_up_suggestions?: ReaderAskFollowUpSuggestionDto[] | null;
   usage_event_id?: string | null;
+  article_rag?: ReaderAskArticleRagSidecarDto | null;
+  article_rag_citations?: ReaderAskArticleRagCitationDto[] | null;
 }
 
 export interface ReaderAskThreadCreateRequestDto {
@@ -615,4 +617,59 @@ export type ReaderAskStreamEventName =
 export interface ReaderAskStreamEnvelopeDto<TData = Record<string, unknown>> {
   event: ReaderAskStreamEventName;
   data: TData;
+}
+
+// ---------------------------------------------------------------------------
+// Article RAG sidecar — `article_rag` block on Ask user-visible output.
+//
+// Mirrors `ReaderAskArticleRagSidecar` and `ReaderAskArticleRagCitation` in
+// `services/api/app/schemas/reader_ask.py`. The `citation` field is the
+// I4A 9-key truth pointer into Postgres-backed stable document facts;
+// `failure_code` / `retryable` / `fallback_allowed` / `query_sha256` /
+// `source_pack_hash` are DEBUG-ONLY and MUST NOT be rendered to end users.
+// Frontend MUST coerce unknown `status` values to
+// `not_indexed_or_unavailable` (see lib/reader-orchestration/status-mapper).
+// ---------------------------------------------------------------------------
+
+export type ReaderAskArticleRagStatusDto =
+  | "available"
+  | "empty"
+  | "not_indexed_or_unavailable"
+  | "composer_rejected"
+  | "disabled"
+  | "stale_due_to_repair";
+
+export interface ReaderAskArticleRagCitationContentDto {
+  reading_record_id: string;
+  stable_document_id: string;
+  base_id: string;
+  record_generation: number;
+  block_ids: string[];
+  unit_ids: string[];
+  anchor_segment_ids: string[];
+  canonical_text_start_utf16: number;
+  canonical_text_end_utf16: number;
+}
+
+export interface ReaderAskArticleRagCitationDto {
+  context_id: string;
+  chunk_id: string;
+  citation: ReaderAskArticleRagCitationContentDto;
+}
+
+export interface ReaderAskArticleRagSidecarDto {
+  status: ReaderAskArticleRagStatusDto;
+  // DEBUG-ONLY — must NOT be rendered to end users.
+  failure_code: string | null;
+  // DEBUG-ONLY — must NOT be rendered to end users.
+  retryable: boolean;
+  // DEBUG-ONLY — must NOT be rendered to end users.
+  fallback_allowed: boolean;
+  should_attach: boolean;
+  context_ids: string[];
+  // DEBUG-ONLY — must NOT be rendered to end users.
+  source_pack_hash: string | null;
+  // DEBUG-ONLY — must NOT be rendered to end users.
+  query_sha256: string | null;
+  citations: ReaderAskArticleRagCitationDto[];
 }

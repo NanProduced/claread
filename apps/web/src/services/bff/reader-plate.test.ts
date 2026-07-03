@@ -11,24 +11,62 @@ vi.mock("@/services/bff/session", () => ({
 
 vi.mock("@/services/api/reader-plate", () => ({
   submitUpstreamReaderPlainText: vi.fn(),
+  submitUpstreamReaderUnifiedInput: vi.fn(),
   getUpstreamReaderPlateSnapshot: vi.fn(),
   pollUpstreamReaderEvents: vi.fn(),
+  initUpstreamReaderSourceArtifactUpload: vi.fn(),
+  completeUpstreamReaderSourceArtifactUpload: vi.fn(),
+  submitUpstreamReaderSourceArtifactInput: vi.fn(),
+  getUpstreamReaderArtifactPipelineStatus: vi.fn(),
+  confirmUpstreamReaderCandidateDocument: vi.fn(),
+  getUpstreamReaderStableDocument: vi.fn(),
+  getUpstreamReaderArticleRagIndexStatus: vi.fn(),
+  ensureUpstreamReaderArticleRagIndex: vi.fn(),
 }));
 
 import { getWebSession } from "@/services/bff/session";
 import {
+  completeUpstreamReaderSourceArtifactUpload,
+  confirmUpstreamReaderCandidateDocument,
+  ensureUpstreamReaderArticleRagIndex,
+  getUpstreamReaderArticleRagIndexStatus,
+  getUpstreamReaderArtifactPipelineStatus,
   getUpstreamReaderPlateSnapshot,
+  getUpstreamReaderStableDocument,
+  initUpstreamReaderSourceArtifactUpload,
   pollUpstreamReaderEvents,
   submitUpstreamReaderPlainText,
+  submitUpstreamReaderSourceArtifactInput,
+  submitUpstreamReaderUnifiedInput,
 } from "@/services/api/reader-plate";
 import {
+  completeReaderSourceArtifactUploadFromWeb,
+  confirmReaderCandidateDocumentFromWeb,
+  ensureReaderArticleRagIndexFromWeb,
+  getReaderArticleRagIndexStatusFromWeb,
+  getReaderArtifactPipelineStatusFromWeb,
   getReaderPlateSnapshotFromWeb,
+  getReaderStableDocumentFromWeb,
+  initReaderSourceArtifactUploadFromWeb,
   pollReaderEventsFromWeb,
-  submitReadingRecordPlainTextFromWeb,
   submitReaderPlainTextFromWeb,
+  submitReaderSourceArtifactInputFromWeb,
+  submitReaderUnifiedInputFromWeb,
+  submitReadingRecordPlainTextFromWeb,
 } from "./reader-plate";
 import { appReadingRecordRoute } from "@/lib/routes";
-import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
+import type {
+  ReaderArticleRagIndexEnsureResponseDto,
+  ReaderArticleRagIndexStatusResponseDto,
+  ReaderArtifactPipelineStatusResponseDto,
+  ReaderCandidateDocumentConfirmResponseDto,
+  ReaderPlateSnapshotDto,
+  ReaderSourceArtifactSubmitInputResponseDto,
+  ReaderSourceArtifactUploadCompleteResponseDto,
+  ReaderSourceArtifactUploadInitResponseDto,
+  ReaderStableDocumentResponseDto,
+  ReaderUnifiedInputSubmitResponseDto,
+} from "@/types/api/reader-plate";
 
 const mockSession = {
   kind: "authenticated" as const,
@@ -441,3 +479,938 @@ describe("reader-plate BFF events polling", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Unified input submit (POST /reader/records/input)
+// ---------------------------------------------------------------------------
+
+describe("reader-plate BFF unified input submit", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("rejects empty text with invalid_input before hitting session or upstream", async () => {
+    const result = await submitReaderUnifiedInputFromWeb({ text: "   " });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 400,
+      code: "invalid_input",
+    });
+    expect(getWebSession).not.toHaveBeenCalled();
+    expect(submitUpstreamReaderUnifiedInput).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-string text as invalid_input", async () => {
+    const result = await submitReaderUnifiedInputFromWeb({ text: undefined });
+
+    expect(result).toMatchObject({ ok: false, status: 400, code: "invalid_input" });
+  });
+
+  it("rejects anonymous sessions with auth_required", async () => {
+    vi.mocked(getWebSession).mockResolvedValue({
+      kind: "anonymous",
+      source: "none",
+    });
+
+    const result = await submitReaderUnifiedInputFromWeb({ text: "Hello." });
+
+    expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
+    expect(submitUpstreamReaderUnifiedInput).not.toHaveBeenCalled();
+  });
+
+  it("falls back unknown sourceType to pasted_text", async () => {
+    vi.mocked(submitUpstreamReaderUnifiedInput).mockResolvedValue({
+      ok: true,
+      data: makeUnifiedInputStableResponse(),
+    });
+
+    const result = await submitReaderUnifiedInputFromWeb({
+      text: "Hello.",
+      sourceType: "totally_unknown_source_type",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(vi.mocked(submitUpstreamReaderUnifiedInput).mock.calls[0][0]).toMatchObject({
+      source_type: "pasted_text",
+      text: "Hello.",
+    });
+  });
+
+  it("filters academic / academic_general to daily_reading / intermediate_reading", async () => {
+    vi.mocked(submitUpstreamReaderUnifiedInput).mockResolvedValue({
+      ok: true,
+      data: makeUnifiedInputStableResponse(),
+    });
+
+    await submitReaderUnifiedInputFromWeb({
+      text: "Hello.",
+      readingGoal: "academic",
+      readingVariant: "academic_general",
+    });
+
+    const payload = vi.mocked(submitUpstreamReaderUnifiedInput).mock.calls[0][0];
+    expect(payload.reading_goal).toBe("daily_reading");
+    expect(payload.reading_variant).toBe("intermediate_reading");
+  });
+
+  it("maps upstream 500 to upstream_unavailable", async () => {
+    vi.mocked(submitUpstreamReaderUnifiedInput).mockResolvedValue({
+      ok: false,
+      status: 500,
+      message: "internal error",
+    });
+
+    const result = await submitReaderUnifiedInputFromWeb({ text: "Hello." });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 503,
+      code: "upstream_unavailable",
+    });
+  });
+
+  it("returns ok with stable_document_ready outcome on success", async () => {
+    const data = makeUnifiedInputStableResponse();
+    vi.mocked(submitUpstreamReaderUnifiedInput).mockResolvedValue({
+      ok: true,
+      data,
+    });
+
+    const result = await submitReaderUnifiedInputFromWeb({ text: "Hello." });
+
+    expect(result.ok).toBe(true);
+    if (result.ok && result.outcome === "stable_document_ready") {
+      expect(result.reading_record_id).toBe("rec_unified_1");
+      expect(result.stable_document_id).toBe("sd_1");
+    }
+  });
+
+  it("passes through candidate_document_required outcome without modification", async () => {
+    vi.mocked(submitUpstreamReaderUnifiedInput).mockResolvedValue({
+      ok: true,
+      data: makeUnifiedInputCandidateResponse(),
+    });
+
+    const result = await submitReaderUnifiedInputFromWeb({ text: "Hello." });
+
+    expect(result.ok).toBe(true);
+    if (result.ok && result.outcome === "candidate_document_required") {
+      expect(result.candidate_document_id).toBe("cand_1");
+      expect(result.original_input_id).toBe("inp_cand_1");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Source artifacts — init-upload / complete-upload / submit-input / pipeline-status
+// ---------------------------------------------------------------------------
+
+describe("reader-plate BFF source artifact init-upload", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("rejects non-original_upload artifactKind with invalid_input", async () => {
+    const result = await initReaderSourceArtifactUploadFromWeb({
+      artifactKind: "pdf_page_image",
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 400, code: "invalid_input" });
+    expect(getWebSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects anonymous sessions", async () => {
+    vi.mocked(getWebSession).mockResolvedValue({
+      kind: "anonymous",
+      source: "none",
+    });
+
+    const result = await initReaderSourceArtifactUploadFromWeb({
+      artifactKind: "original_upload",
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
+  });
+
+  it("returns ok with init response on success", async () => {
+    vi.mocked(initUpstreamReaderSourceArtifactUpload).mockResolvedValue({
+      ok: true,
+      data: makeInitUploadResponse(),
+    });
+
+    const result = await initReaderSourceArtifactUploadFromWeb({
+      artifactKind: "original_upload",
+      sourceFilename: "doc.pdf",
+      contentType: "application/pdf",
+      byteSize: 1024,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.artifact_id).toBe("art_1");
+      expect(result.upload_method).toBe("oss_put_object_presigned");
+    }
+    expect(vi.mocked(initUpstreamReaderSourceArtifactUpload).mock.calls[0][0]).toMatchObject({
+      artifact_kind: "original_upload",
+      source_filename: "doc.pdf",
+      content_type: "application/pdf",
+      byte_size: 1024,
+    });
+  });
+
+  it("does not map init-upload upstream 404 to artifact_not_found", async () => {
+    vi.mocked(initUpstreamReaderSourceArtifactUpload).mockResolvedValue({
+      ok: false,
+      status: 404,
+      message: "reading record not found",
+    });
+
+    const result = await initReaderSourceArtifactUploadFromWeb({
+      artifactKind: "original_upload",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 404,
+      code: "record_not_found",
+    });
+    if (!result.ok) {
+      expect(result.message).toContain("阅读记录");
+      expect(result.message).not.toContain("上传文件");
+    }
+  });
+});
+
+describe("reader-plate BFF source artifact complete-upload", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("rejects empty artifactId with invalid_input", async () => {
+    const result = await completeReaderSourceArtifactUploadFromWeb("", {
+      contentSha256: "abc",
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 400, code: "invalid_input" });
+    expect(getWebSession).not.toHaveBeenCalled();
+  });
+
+  it("returns ok with complete response on success", async () => {
+    vi.mocked(completeUpstreamReaderSourceArtifactUpload).mockResolvedValue({
+      ok: true,
+      data: makeCompleteUploadResponse(),
+    });
+
+    const result = await completeReaderSourceArtifactUploadFromWeb("art_1", {
+      contentSha256: "abc",
+      byteSize: 1024,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.artifact_id).toBe("art_1");
+      expect(result.upload_completed).toBe(true);
+    }
+    expect(vi.mocked(completeUpstreamReaderSourceArtifactUpload).mock.calls[0]).toEqual([
+      "art_1",
+      expect.objectContaining({
+        content_sha256: "abc",
+        byte_size: 1024,
+      }),
+      "session-token",
+    ]);
+  });
+
+  it("maps upstream 404 to artifact_not_found (not record_not_found)", async () => {
+    vi.mocked(completeUpstreamReaderSourceArtifactUpload).mockResolvedValue({
+      ok: false,
+      status: 404,
+      message: "artifact not found",
+    });
+
+    const result = await completeReaderSourceArtifactUploadFromWeb("art_1", {});
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 404,
+      code: "artifact_not_found",
+    });
+    if (!result.ok) {
+      expect(result.message).not.toContain("阅读记录");
+      expect(result.message).toContain("上传文件");
+    }
+  });
+});
+
+describe("reader-plate BFF source artifact submit-input", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("rejects empty artifactId with invalid_input", async () => {
+    const result = await submitReaderSourceArtifactInputFromWeb("", {
+      title: "Test",
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 400, code: "invalid_input" });
+  });
+
+  it("filters academic strategy before forwarding to upstream", async () => {
+    vi.mocked(submitUpstreamReaderSourceArtifactInput).mockResolvedValue({
+      ok: true,
+      data: makeSubmitInputResponse(),
+    });
+
+    await submitReaderSourceArtifactInputFromWeb("art_1", {
+      readingGoal: "academic",
+      readingVariant: "academic_general",
+    });
+
+    const payload = vi.mocked(submitUpstreamReaderSourceArtifactInput).mock.calls[0][1];
+    expect(payload.reading_goal).toBe("daily_reading");
+    expect(payload.reading_variant).toBe("intermediate_reading");
+  });
+
+  it("returns ok with submit-input response on success", async () => {
+    vi.mocked(submitUpstreamReaderSourceArtifactInput).mockResolvedValue({
+      ok: true,
+      data: makeSubmitInputResponse(),
+    });
+
+    const result = await submitReaderSourceArtifactInputFromWeb("art_1", {
+      title: "Test",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.reading_record_id).toBe("rec_art_1");
+      expect(result.artifact_id).toBe("art_1");
+    }
+  });
+
+  it("maps upstream 404 to artifact_not_found (not record_not_found)", async () => {
+    vi.mocked(submitUpstreamReaderSourceArtifactInput).mockResolvedValue({
+      ok: false,
+      status: 404,
+      message: "artifact not found",
+    });
+
+    const result = await submitReaderSourceArtifactInputFromWeb("art_1", {
+      title: "Test",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 404,
+      code: "artifact_not_found",
+    });
+    if (!result.ok) {
+      expect(result.message).not.toContain("阅读记录");
+    }
+  });
+});
+
+describe("reader-plate BFF source artifact pipeline-status", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("rejects empty artifactId with invalid_input", async () => {
+    const result = await getReaderArtifactPipelineStatusFromWeb("");
+
+    expect(result).toMatchObject({ ok: false, status: 400, code: "invalid_input" });
+  });
+
+  it("strips debug fields from job summaries before returning to UI", async () => {
+    vi.mocked(getUpstreamReaderArtifactPipelineStatus).mockResolvedValue({
+      ok: true,
+      data: makePipelineStatusRaw(),
+    });
+
+    const result = await getReaderArtifactPipelineStatusFromWeb("art_1");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.extraction_job).not.toHaveProperty("failure_class");
+      expect(result.extraction_job).not.toHaveProperty("failure_code");
+      expect(result.extraction_job).not.toHaveProperty("rationale_code");
+      expect(result.outcome).toBe("extraction_running");
+    }
+  });
+
+  it("coerces unknown outcome to extraction_failed via status mapper", async () => {
+    const raw = makePipelineStatusRaw();
+    (raw as { outcome: unknown }).outcome = "unknown_outcome";
+    (raw as { next_action: unknown }).next_action = "unknown_action";
+    vi.mocked(getUpstreamReaderArtifactPipelineStatus).mockResolvedValue({
+      ok: true,
+      data: raw,
+    });
+
+    const result = await getReaderArtifactPipelineStatusFromWeb("art_1");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.outcome).toBe("extraction_failed");
+      expect(result.next_action).toBe("show_error");
+    }
+  });
+
+  it("maps upstream 401 to upstream_auth_failed", async () => {
+    vi.mocked(getUpstreamReaderArtifactPipelineStatus).mockResolvedValue({
+      ok: false,
+      status: 401,
+      message: "token expired",
+    });
+
+    const result = await getReaderArtifactPipelineStatusFromWeb("art_1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 401,
+      code: "upstream_auth_failed",
+    });
+  });
+
+  it("maps upstream 404 to artifact_not_found (not record_not_found)", async () => {
+    vi.mocked(getUpstreamReaderArtifactPipelineStatus).mockResolvedValue({
+      ok: false,
+      status: 404,
+      message: "artifact not found",
+    });
+
+    const result = await getReaderArtifactPipelineStatusFromWeb("art_1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 404,
+      code: "artifact_not_found",
+    });
+    if (!result.ok) {
+      expect(result.message).not.toContain("阅读记录");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Candidate document confirmation
+// ---------------------------------------------------------------------------
+
+describe("reader-plate BFF candidate document confirm", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("rejects missing recordId with invalid_input", async () => {
+    const result = await confirmReaderCandidateDocumentFromWeb("", "cand_1", {});
+
+    expect(result).toMatchObject({ ok: false, status: 400, code: "invalid_input" });
+  });
+
+  it("rejects missing candidateDocumentId with invalid_input", async () => {
+    const result = await confirmReaderCandidateDocumentFromWeb("rec_1", "", {});
+
+    expect(result).toMatchObject({ ok: false, status: 400, code: "invalid_input" });
+  });
+
+  it("maps upstream 409 to candidate_conflict", async () => {
+    vi.mocked(confirmUpstreamReaderCandidateDocument).mockResolvedValue({
+      ok: false,
+      status: 409,
+      message: "candidate already confirmed",
+    });
+
+    const result = await confirmReaderCandidateDocumentFromWeb("rec_1", "cand_1", {});
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 409,
+      code: "candidate_conflict",
+    });
+    if (!result.ok) {
+      expect(result.message).toContain("候选文档");
+    }
+  });
+
+  it("returns ok with confirm response on success", async () => {
+    vi.mocked(confirmUpstreamReaderCandidateDocument).mockResolvedValue({
+      ok: true,
+      data: makeCandidateConfirmResponse(),
+    });
+
+    const result = await confirmReaderCandidateDocumentFromWeb("rec_1", "cand_1", {
+      language: "en",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.reading_record_id).toBe("rec_1");
+      expect(result.candidate_document_id).toBe("cand_1");
+      expect(result.stable_document_id).toBe("sd_1");
+      expect(result.candidate_confirmed).toBe(true);
+    }
+    expect(vi.mocked(confirmUpstreamReaderCandidateDocument).mock.calls[0]).toEqual([
+      "rec_1",
+      "cand_1",
+      { language: "en" },
+      "session-token",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stable Document projection
+// ---------------------------------------------------------------------------
+
+describe("reader-plate BFF stable document", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("rejects empty recordId with invalid_input", async () => {
+    const result = await getReaderStableDocumentFromWeb("");
+
+    expect(result).toMatchObject({ ok: false, status: 400, code: "invalid_input" });
+  });
+
+  it("returns ok with stable document response on success", async () => {
+    vi.mocked(getUpstreamReaderStableDocument).mockResolvedValue({
+      ok: true,
+      data: makeStableDocumentResponse(),
+    });
+
+    const result = await getReaderStableDocumentFromWeb("rec_1");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.reading_record_id).toBe("rec_1");
+      expect(result.active_base_id).toBe("base_1");
+      expect(result.base.base_id).toBe("base_1");
+      expect(result.blocks).toHaveLength(1);
+    }
+  });
+
+  it("maps upstream 404 to record_not_found", async () => {
+    vi.mocked(getUpstreamReaderStableDocument).mockResolvedValue({
+      ok: false,
+      status: 404,
+      message: "record not found",
+    });
+
+    const result = await getReaderStableDocumentFromWeb("rec_1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 404,
+      code: "record_not_found",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Article RAG Index — status / ensure
+// ---------------------------------------------------------------------------
+
+describe("reader-plate BFF article rag index status", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("rejects empty recordId with invalid_input", async () => {
+    const result = await getReaderArticleRagIndexStatusFromWeb("");
+
+    expect(result).toMatchObject({ ok: false, status: 400, code: "invalid_input" });
+  });
+
+  it("strips reason_code via status mapper before returning to UI", async () => {
+    vi.mocked(getUpstreamReaderArticleRagIndexStatus).mockResolvedValue({
+      ok: true,
+      data: makeRagStatusRaw(),
+    });
+
+    const result = await getReaderArticleRagIndexStatusFromWeb("rec_1");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result).not.toHaveProperty("reason_code");
+      expect(result.status).toBe("indexed");
+      expect(result.chunk_count).toBe(42);
+    }
+  });
+
+  it("coerces unknown status to unavailable via status mapper", async () => {
+    const raw = makeRagStatusRaw();
+    (raw as { status: unknown }).status = "totally_unknown_status";
+    vi.mocked(getUpstreamReaderArticleRagIndexStatus).mockResolvedValue({
+      ok: true,
+      data: raw,
+    });
+
+    const result = await getReaderArticleRagIndexStatusFromWeb("rec_1");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.status).toBe("unavailable");
+    }
+  });
+});
+
+describe("reader-plate BFF article rag index ensure", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("rejects empty recordId with invalid_input", async () => {
+    const result = await ensureReaderArticleRagIndexFromWeb("", {
+      expectedGeneration: 1,
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 400, code: "invalid_input" });
+  });
+
+  it.each([0, -1, NaN, "1", undefined, null])(
+    "rejects invalid expectedGeneration %p with invalid_input",
+    async (expectedGeneration) => {
+      const result = await ensureReaderArticleRagIndexFromWeb("rec_1", {
+        expectedGeneration,
+      });
+
+      expect(result).toMatchObject({ ok: false, status: 400, code: "invalid_input" });
+      expect(ensureUpstreamReaderArticleRagIndex).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts valid expectedGeneration and forwards to upstream", async () => {
+    vi.mocked(ensureUpstreamReaderArticleRagIndex).mockResolvedValue({
+      ok: true,
+      data: makeRagEnsureRaw(),
+    });
+
+    const result = await ensureReaderArticleRagIndexFromWeb("rec_1", {
+      expectedGeneration: 2,
+      indexVersion: "v2",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(vi.mocked(ensureUpstreamReaderArticleRagIndex).mock.calls[0]).toEqual([
+      "rec_1",
+      { expected_generation: 2, index_version: "v2" },
+      "session-token",
+    ]);
+  });
+
+  it("strips reason_code via status mapper before returning to UI", async () => {
+    vi.mocked(ensureUpstreamReaderArticleRagIndex).mockResolvedValue({
+      ok: true,
+      data: makeRagEnsureRaw(),
+    });
+
+    const result = await ensureReaderArticleRagIndexFromWeb("rec_1", {
+      expectedGeneration: 1,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result).not.toHaveProperty("reason_code");
+      expect(result.status).toBe("enqueued");
+    }
+  });
+
+  it("coerces unknown ensure status to error via status mapper", async () => {
+    const raw = makeRagEnsureRaw();
+    (raw as { status: unknown }).status = "totally_unknown_ensure_status";
+    vi.mocked(ensureUpstreamReaderArticleRagIndex).mockResolvedValue({
+      ok: true,
+      data: raw,
+    });
+
+    const result = await ensureReaderArticleRagIndexFromWeb("rec_1", {
+      expectedGeneration: 1,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.status).toBe("error");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+function makeUnifiedInputStableResponse(): ReaderUnifiedInputSubmitResponseDto {
+  return {
+    outcome: "stable_document_ready",
+    reading_record_id: "rec_unified_1",
+    stable_document_id: "sd_1",
+    base_id: "base_1",
+    record_generation: 1,
+    document_version: 1,
+    title: null,
+    content_sha256: "abc",
+    canonical_text_sha256: "def",
+    block_count: 1,
+    article_ready_event_id: "evt_1",
+    article_ready_sequence: 1,
+    suitability: {
+      outcome: "stable_document_ready",
+      source_type: "pasted_text",
+      word_count: 10,
+      english_word_ratio: 1,
+      natural_language_score: 0.95,
+      flags: [],
+      reasons: [],
+      normalized_preview: "Hello.",
+    },
+    snapshot: makeSnapshot(),
+  };
+}
+
+function makeUnifiedInputCandidateResponse(): ReaderUnifiedInputSubmitResponseDto {
+  return {
+    outcome: "candidate_document_required",
+    reading_record_id: "rec_unified_2",
+    candidate_document_id: "cand_1",
+    original_input_id: "inp_cand_1",
+    record_generation: 1,
+    status: "ready",
+    title: null,
+    block_count: 1,
+    source_type: "pasted_text",
+    filename: null,
+    suitability: {
+      outcome: "candidate_document_required",
+      source_type: "pasted_text",
+      word_count: 10,
+      english_word_ratio: 1,
+      natural_language_score: 0.95,
+      flags: [],
+      reasons: [],
+      normalized_preview: "Hello.",
+    },
+  };
+}
+
+function makeInitUploadResponse(): ReaderSourceArtifactUploadInitResponseDto {
+  return {
+    artifact_id: "art_1",
+    artifact_kind: "original_upload",
+    storage_provider: "oss",
+    bucket: "claread",
+    endpoint: "https://oss.example.com",
+    object_key: "artifacts/art_1.bin",
+    status: "pending",
+    content_type: "application/pdf",
+    byte_size: 1024,
+    content_sha256: "abc",
+    source_filename: "doc.pdf",
+    upload_method: "oss_put_object_presigned",
+    headers: {},
+    presigned_url: "https://oss.example.com/artifacts/art_1.bin?signature=...",
+    presigned_method: "PUT",
+    presigned_expires_at: "2026-07-01T01:00:00Z",
+  };
+}
+
+function makeCompleteUploadResponse(): ReaderSourceArtifactUploadCompleteResponseDto {
+  return {
+    artifact_id: "art_1",
+    artifact_kind: "original_upload",
+    storage_provider: "oss",
+    bucket: "claread",
+    endpoint: "https://oss.example.com",
+    object_key: "artifacts/art_1.bin",
+    status: "available",
+    content_type: "application/pdf",
+    byte_size: 1024,
+    content_sha256: "abc",
+    source_filename: "doc.pdf",
+    upload_completed: true,
+    idempotent_noop: false,
+  };
+}
+
+function makeSubmitInputResponse(): ReaderSourceArtifactSubmitInputResponseDto {
+  return {
+    reading_record_id: "rec_art_1",
+    original_input_id: "inp_1",
+    artifact_id: "art_1",
+    record_generation: 1,
+    source_type: "file",
+    input_type: "file_ref",
+    product_state: "processing",
+    readiness_state: "submitted",
+    title: "Test",
+    language: null,
+    extraction_required: true,
+    bucket: "claread",
+    endpoint: "https://oss.example.com",
+    object_key: "artifacts/art_1.bin",
+    content_type: "application/pdf",
+    byte_size: 1024,
+    content_sha256: "abc",
+    source_filename: "doc.pdf",
+    extraction_job_id: "job_1",
+    extraction_job_status: "queued",
+  };
+}
+
+function makePipelineStatusRaw(): ReaderArtifactPipelineStatusResponseDto {
+  return {
+    artifact: {
+      artifact_id: "art_1",
+      status: "extraction_running",
+      artifact_kind: "original_upload",
+      storage_provider: "oss",
+      bucket: "claread",
+      endpoint: "https://oss.example.com",
+      object_key: "artifacts/art_1.bin",
+      content_type: "application/pdf",
+      byte_size: 1024,
+      content_sha256: "abc",
+      source_filename: "doc.pdf",
+      reading_record_id: "rec_1",
+      original_input_id: "inp_1",
+    },
+    record: {
+      reading_record_id: "rec_1",
+      generation: 1,
+      product_state: "processing",
+      readiness_state: "submitted",
+      active_base_id: null,
+      source_type: "pdf_text",
+      title: null,
+      language: null,
+    },
+    original_input: {
+      original_input_id: "inp_1",
+      input_type: "original_upload",
+      content_sha256: "abc",
+      has_source_text: false,
+      extraction_status: "running",
+      metadata: {},
+    },
+    extraction_job: {
+      job_id: "job_1",
+      status: "running",
+      attempt_count: 1,
+      max_attempts: 3,
+      failure_class: "TransienceError",
+      failure_code: "upstream_timeout",
+      rationale_code: "retry_later_policy",
+      available_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:01:00Z",
+    },
+    materialization_job: null,
+    candidate_document: null,
+    stable_document: null,
+    outcome: "extraction_running",
+    next_action: "wait_for_worker",
+  };
+}
+
+function makeCandidateConfirmResponse(): ReaderCandidateDocumentConfirmResponseDto {
+  return {
+    reading_record_id: "rec_1",
+    candidate_document_id: "cand_1",
+    stable_document_id: "sd_1",
+    base_id: "base_1",
+    record_generation: 1,
+    document_version: 1,
+    content_sha256: "abc",
+    canonical_text_sha256: "def",
+    block_count: 1,
+    candidate_confirmed: true,
+    freeze_idempotent_noop: false,
+    article_ready_event_id: "evt_1",
+    article_ready_sequence: 1,
+    snapshot: makeSnapshot(),
+  };
+}
+
+function makeStableDocumentResponse(): ReaderStableDocumentResponseDto {
+  return {
+    reading_record_id: "rec_1",
+    record_generation: 1,
+    active_base_id: "base_1",
+    base: {
+      base_id: "base_1",
+      content_sha256: "abc",
+      content_utf16_length: 12,
+      canonicalizer_version: "1.0.0",
+      builder_version: "1.0.0",
+      segmenter_version: "1.0.0",
+      language: "en",
+      title_snapshot: "Hello.",
+      navigation: {},
+      text: "Hello world.",
+    },
+    stable_document: {
+      stable_document_id: "sd_1",
+      document_version: 1,
+      title: "Hello.",
+      language: "en",
+      source_profile: {},
+      content_sha256: "abc",
+      status: "ready",
+    },
+    blocks: [
+      {
+        block_id: "block_1",
+        parent_block_id: null,
+        order_index: 0,
+        block_type: "paragraph",
+        text_content: "Hello world.",
+        payload: {},
+        source_refs: {},
+        quality: {},
+        canonical_text_start_utf16: 0,
+        canonical_text_end_utf16: 12,
+        interpretation_policy: {},
+      },
+    ],
+    anchor_segments: [],
+  };
+}
+
+function makeRagStatusRaw(): ReaderArticleRagIndexStatusResponseDto {
+  return {
+    reading_record_id: "rec_1",
+    status: "indexed",
+    stable_document_id: "sd_1",
+    base_id: "base_1",
+    record_generation: 1,
+    index_run_id: "run_1",
+    index_version: "v1",
+    plan_content_sha256: "abc",
+    chunk_count: 42,
+    reason_code: "debug_internal_reason",
+  };
+}
+
+function makeRagEnsureRaw(): ReaderArticleRagIndexEnsureResponseDto {
+  return {
+    reading_record_id: "rec_1",
+    status: "enqueued",
+    reason_code: "internal_debug",
+    idempotent_noop: false,
+    stable_document_id: "sd_1",
+    base_id: "base_1",
+    record_generation: 1,
+    index_run_id: "run_1",
+    job_id: "job_1",
+    index_version: "v1",
+    chunker_version: "chunker_v1",
+  };
+}

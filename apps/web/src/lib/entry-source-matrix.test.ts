@@ -86,8 +86,10 @@ describe("entry source matrix - Track D convergence", () => {
     expect(recentSource).toContain("/app/reader-record/");
     expect(recentSource).not.toContain("saveRecentReadingRecordForSubmitMode");
 
-    expect(submitModeSource).toContain('export type ReadPageSubmitMode = "reading-record"');
+    expect(submitModeSource).toContain('export type ReadPageSubmitMode = "reader-plate-input"');
+    expect(submitModeSource).toContain("/api/web/reader-plate/input");
     expect(submitModeSource).not.toContain("/api/web/analysis/submit");
+    expect(submitModeSource).not.toContain("/api/web/reading-record/submit");
   });
 
   it("the merged activity indicator uses Reading Records first and keeps explicit legacy fallback wiring", () => {

@@ -4,7 +4,7 @@ import { readReadingDefaultsFromSettings } from "@/lib/reading-defaults";
 import { dailyArticleRoute, dailyRoute } from "@/lib/routes";
 import { fetchDailyReaderList, fetchDailyReaderToday } from "@/services/api/daily-reader";
 import { getProfileSettings } from "@/services/bff/profile";
-import { AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
+import { ReadPageIntake } from "./ReadPageIntake";
 import { EditorialTagList } from "./EditorialTagList";
 
 export const dynamic = "force-dynamic";
@@ -179,7 +179,7 @@ export default async function PasteToReadPage() {
             </div>
 
             <div className="mt-9 flex flex-1 flex-col md:mt-9 md:min-h-0 xl:mt-11 2xl:mt-12">
-              <AnalyzeSubmitForm
+              <ReadPageIntake
                 readingGoal={readingDefaults.readingGoal}
                 readingVariant={readingDefaults.readingVariant}
               />

@@ -19,16 +19,21 @@ import {
   normalizeReaderRecordReadingDefaults,
 } from "@/lib/reading-defaults";
 import { appReadingRecordRoute } from "@/lib/routes";
-import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
+import type { ReaderUnifiedInputSubmitResponseDto } from "@/types/api/reader-plate";
+import type { ReaderPlateBffError } from "@/services/bff/reader-plate";
 import {
-  extractReadingRecordIdFromReaderUrl,
   readRecentReadingRecord,
   recentReadingRecordTitleFromText,
   saveRecentReadingRecord,
   type RecentReadingRecord,
+  type RecentReadingRecordInput,
 } from "./recent-reading-record";
 import {
-  READ_PAGE_SUBMIT_MODE,
+  clearPendingCandidate,
+  readPendingCandidate,
+  savePendingCandidate,
+} from "./pending-candidate";
+import {
   readPageSubmitEndpoint,
   readPageSubmitRequestBody,
 } from "./submit-mode";
@@ -37,15 +42,23 @@ type SubmitState =
   | { kind: "idle" }
   | { kind: "pending"; message: string }
   | { kind: "success"; message: string }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  | {
+      kind: "candidate";
+      readingRecordId: string;
+      candidateDocumentId: string;
+      originalInputId: string;
+      inputSnapshot: string;
+    }
+  | {
+      kind: "rejected";
+      reasons: string[];
+      preview: string;
+    };
 
-interface ReadingRecordSubmitResponse {
-  ok: boolean;
-  message?: string;
-  readingRecordId?: string;
-  readerUrl?: string;
-  snapshot?: Pick<ReaderPlateSnapshotDto, "record">;
-}
+type UnifiedSubmitPayload =
+  | ({ ok: true } & ReaderUnifiedInputSubmitResponseDto)
+  | ReaderPlateBffError;
 
 const LOADING_MESSAGES = [
   "正在梳理文章结构",
@@ -559,21 +572,35 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
   const [recentReadingRecord, setRecentReadingRecord] =
     useState<RecentReadingRecord | null>(null);
   const isWaiting = state.kind === "pending";
+  const isSubmitting: boolean = isWaiting;
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setRecentReadingRecord(readRecentReadingRecord());
+
+      const pending = readPendingCandidate();
+      if (pending) {
+        setText(pending.inputSnapshot);
+        setState({
+          kind: "candidate",
+          readingRecordId: pending.readingRecordId,
+          candidateDocumentId: pending.candidateDocumentId,
+          originalInputId: pending.originalInputId,
+          inputSnapshot: pending.inputSnapshot,
+        });
+      }
     }, 0);
 
     return () => window.clearTimeout(timer);
   }, []);
 
   async function handleSubmit() {
-    if (isWaiting) {
+    if (state.kind === "pending") {
       return;
     }
 
-    if (text.trim().length === 0) {
+    const trimmed = text.trim();
+    if (trimmed.length === 0) {
       setState({ kind: "error", message: "请先粘贴一段需要透读的英文内容。" });
       return;
     }
@@ -581,19 +608,20 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
     setState({ kind: "pending", message: "正在提交透读任务..." });
 
     try {
-      const response = await fetch(readPageSubmitEndpoint(READ_PAGE_SUBMIT_MODE), {
+      const response = await fetch(readPageSubmitEndpoint(), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(
-          readPageSubmitRequestBody(
-            { text, readingGoal, readingVariant },
-            READ_PAGE_SUBMIT_MODE,
-          ),
+          readPageSubmitRequestBody({
+            text: trimmed,
+            readingGoal,
+            readingVariant,
+          }),
         ),
       });
-      const payload = (await response.json()) as ReadingRecordSubmitResponse;
+      const payload = (await response.json()) as UnifiedSubmitPayload;
 
-      if (!response.ok || !payload.ok) {
+      if (!payload.ok) {
         setState({
           kind: "error",
           message: payload.message || "提交失败，请稍后重试。",
@@ -601,43 +629,63 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
         return;
       }
 
-      const readerUrl =
-        (payload.readerUrl as Route | undefined) ||
-        (payload.readingRecordId
-          ? appReadingRecordRoute(payload.readingRecordId)
-          : null);
-
-      const readingRecordId =
-        payload.readingRecordId ||
-        (readerUrl ? extractReadingRecordIdFromReaderUrl(readerUrl) : null);
-
-      if (!readerUrl || !readingRecordId) {
-        setState({
-          kind: "error",
-          message: "阅读记录已创建，但返回结果缺少 readingRecordId。",
-        });
-        return;
+      switch (payload.outcome) {
+        case "stable_document_ready": {
+          const readerUrl = appReadingRecordRoute(payload.reading_record_id);
+          const title =
+            payload.title?.trim() || recentReadingRecordTitleFromText(trimmed);
+          const recordInput: RecentReadingRecordInput = {
+            readingRecordId: payload.reading_record_id,
+            readerUrl,
+            title,
+          };
+          if (saveRecentReadingRecord(recordInput)) {
+            setRecentReadingRecord({
+              ...recordInput,
+              createdAt: new Date().toISOString(),
+            });
+          }
+          clearPendingCandidate();
+          setState({
+            kind: "success",
+            message: "阅读记录已创建，正在打开 Reader。",
+          });
+          router.push(readerUrl);
+          return;
+        }
+        case "candidate_document_required": {
+          const pending = savePendingCandidate({
+            readingRecordId: payload.reading_record_id,
+            candidateDocumentId: payload.candidate_document_id,
+            originalInputId: payload.original_input_id,
+            inputSnapshot: trimmed,
+          });
+          if (pending) {
+            setState({
+              kind: "candidate",
+              readingRecordId: pending.readingRecordId,
+              candidateDocumentId: pending.candidateDocumentId,
+              originalInputId: pending.originalInputId,
+              inputSnapshot: pending.inputSnapshot,
+            });
+          } else {
+            setState({
+              kind: "error",
+              message: "已生成候选文档，但本地暂存失败，请稍后再试。",
+            });
+          }
+          return;
+        }
+        case "input_rejected_or_action_required": {
+          setState({
+            kind: "rejected",
+            reasons: payload.suitability.reasons ?? [],
+            preview: payload.suitability.normalized_preview ?? "",
+          });
+          return;
+        }
       }
-
-      const createdAt = new Date().toISOString();
-      const snapshotTitle = payload.snapshot?.record.title.trim();
-      const recentRecord = {
-        readingRecordId,
-        readerUrl,
-        title: snapshotTitle || recentReadingRecordTitleFromText(text),
-        createdAt,
-      };
-
-      if (saveRecentReadingRecord(recentRecord)) {
-        setRecentReadingRecord(recentRecord);
-      }
-
-      setState({
-        kind: "success",
-        message: payload.message || "阅读记录已创建，正在打开 Reader。",
-      });
-      router.push(readerUrl);
-    } catch (error) {
+    } catch (error: unknown) {
       setState({
         kind: "error",
         message: error instanceof Error ? error.message : "提交失败，请稍后重试。",
@@ -847,7 +895,7 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
                   ) : null}
 
                   <ApertureCornerSubmitButton
-                    isPending={false}
+                    isPending={isSubmitting}
                     isReady={text.trim().length > 0}
                     onClick={handleSubmit}
                   />
@@ -858,7 +906,7 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
         </div>
       </div>
 
-      {state.kind !== "idle" && !isWaiting && (
+      {state.kind !== "idle" && !isWaiting && state.kind !== "candidate" && state.kind !== "rejected" ? (
         <div
           className={`mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 text-[0.82rem] font-medium lg:mx-12 ${
             state.kind === "error" ? "text-red-700" : "text-lens-blue"
@@ -866,7 +914,101 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
         >
           {state.message}
         </div>
-      )}
+      ) : null}
+
+      {state.kind === "candidate" ? (
+        <section
+          role="status"
+          aria-live="polite"
+          className="mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-ink lg:mx-12"
+        >
+          <p className="font-semibold">已收到候选文档，需要确认后开始阅读</p>
+          <dl className="mt-2 grid grid-cols-1 gap-x-4 gap-y-1 text-[0.74rem] text-muted">
+            <div>
+              <dt className="inline font-semibold text-ink/80">reading_record_id</dt>
+              {": "}
+              <code className="font-mono text-ink/90">{state.readingRecordId}</code>
+            </div>
+            <div>
+              <dt className="inline font-semibold text-ink/80">candidate_document_id</dt>
+              {": "}
+              <code className="font-mono text-ink/90">{state.candidateDocumentId}</code>
+            </div>
+            <div>
+              <dt className="inline font-semibold text-ink/80">original_input_id</dt>
+              {": "}
+              <code className="font-mono text-ink/90">{state.originalInputId}</code>
+            </div>
+          </dl>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="primary-ink"
+              size="sm"
+              onClick={() => router.push(appReadingRecordRoute(state.readingRecordId))}
+            >
+              去阅读记录确认
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setState({ kind: "idle" })}
+            >
+              稍后处理
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                clearPendingCandidate();
+                setText(state.inputSnapshot);
+                setState({ kind: "idle" });
+              }}
+            >
+              重新编辑
+            </Button>
+          </div>
+        </section>
+      ) : null}
+
+      {state.kind === "rejected" ? (
+        <section
+          role="status"
+          aria-live="polite"
+          className="mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-red-700 lg:mx-12"
+        >
+          <p className="font-semibold">这次没法直接开始透读</p>
+          {state.reasons.length > 0 ? (
+            <ul className="mt-2 list-disc pl-5 text-[0.78rem]">
+              {state.reasons.slice(0, 2).map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-[0.78rem]">
+              系统没能识别这是一段适合透读的英文文本。你可以再调整一下内容，或者试试英文新闻 / 论文片段。
+            </p>
+          )}
+          {state.preview ? (
+            <p className="mt-2 whitespace-pre-wrap rounded-[8px] border border-hairline/60 bg-reader-paper/40 p-2 text-[0.74rem] text-muted">
+              <span className="font-semibold text-ink/80">我们收到的内容：</span>
+              {state.preview.slice(0, 240)}
+            </p>
+          ) : null}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setState({ kind: "idle" })}
+            >
+              重新编辑
+            </Button>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

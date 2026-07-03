@@ -723,3 +723,490 @@ export interface ReaderEventPollResponseDto {
   reload_reason?: string | null;
   events: ReaderEventResponseDto[];
 }
+
+// ---------------------------------------------------------------------------
+// POST /reader/records/input — unified input submit (text / Markdown / file ref)
+//
+// Mirrors `ReaderUnifiedInputSubmit*` in
+// `services/api/app/schemas/reader_orchestration.py`. Response is a typed
+// union discriminated by `outcome`. The frontend MUST branch on `outcome`
+// before reading outcome-specific fields.
+// ---------------------------------------------------------------------------
+
+export type ReaderInputAdapterSourceTypeDto =
+  | "pasted_text"
+  | "txt_file"
+  | "markdown_file"
+  | "ocr_text"
+  | "pdf_text"
+  | "url_text";
+
+export type ReaderUnifiedInputSubmitOutcomeDto =
+  | "stable_document_ready"
+  | "candidate_document_required"
+  | "input_rejected_or_action_required";
+
+export type ReaderSourceLossFlagDto =
+  | "non_english_or_mixed_language"
+  | "too_short_for_learning"
+  | "too_long_requires_envelope"
+  | "layout_order_uncertain"
+  | "ocr_low_confidence"
+  | "table_structure_uncertain"
+  | "image_ocr_uncertain"
+  | "footnote_or_caption_merged"
+  | "document_block_degraded"
+  | "code_dominant"
+  | "link_list_dominant"
+  | "markdown_complex_structure";
+
+export interface ReaderInputSuitabilityResultDto {
+  outcome: ReaderUnifiedInputSubmitOutcomeDto;
+  source_type: ReaderInputAdapterSourceTypeDto;
+  word_count: number;
+  english_word_ratio: number;
+  natural_language_score: number;
+  flags: ReaderSourceLossFlagDto[];
+  reasons: string[];
+  normalized_preview: string;
+}
+
+export interface ReaderUnifiedInputSubmitRequestDto {
+  source_type: ReaderInputAdapterSourceTypeDto;
+  text: string;
+  filename?: string | null;
+  source_metadata?: Record<string, unknown> | null;
+  client_record_id?: string | null;
+  language?: string | null;
+  reading_goal?: ReaderOrchestrationReadingGoalDto;
+  reading_variant?: ReaderOrchestrationReadingVariantDto;
+}
+
+export interface ReaderUnifiedInputSubmitStableResponseDto {
+  outcome: "stable_document_ready";
+  reading_record_id: string;
+  stable_document_id: string;
+  base_id: string;
+  record_generation: number;
+  document_version: number;
+  title: string | null;
+  content_sha256: string;
+  canonical_text_sha256: string;
+  block_count: number;
+  article_ready_event_id: string;
+  article_ready_sequence: number;
+  suitability: ReaderInputSuitabilityResultDto;
+  snapshot: ReaderPlateSnapshotDto;
+}
+
+export type ReaderCandidateDocumentStatusDto =
+  | "ready"
+  | "confirmed"
+  | "rejected"
+  | "superseded";
+
+export interface ReaderUnifiedInputSubmitCandidateResponseDto {
+  outcome: "candidate_document_required";
+  reading_record_id: string;
+  candidate_document_id: string;
+  original_input_id: string;
+  record_generation: number;
+  status: ReaderCandidateDocumentStatusDto;
+  title: string | null;
+  block_count: number;
+  source_type: ReaderInputAdapterSourceTypeDto;
+  filename: string | null;
+  suitability: ReaderInputSuitabilityResultDto;
+}
+
+export interface ReaderUnifiedInputSubmitRejectedResponseDto {
+  outcome: "input_rejected_or_action_required";
+  suitability: ReaderInputSuitabilityResultDto;
+}
+
+export type ReaderUnifiedInputSubmitResponseDto =
+  | ReaderUnifiedInputSubmitStableResponseDto
+  | ReaderUnifiedInputSubmitCandidateResponseDto
+  | ReaderUnifiedInputSubmitRejectedResponseDto;
+
+// ---------------------------------------------------------------------------
+// Source artifacts: init-upload / complete-upload / submit-input / pipeline-status
+//
+// Mirrors `ReaderSourceArtifact*` and `ReaderArtifactPipeline*` schemas in
+// `services/api/app/schemas/reader_orchestration.py` plus
+// `services/api/app/schemas/reader_input_adapter.py`.
+//
+// The init-upload response never includes the AccessKey secret. A presigned
+// URL may carry the AccessKey id in the query string per the OSS presigned
+// model — the id is not a secret.
+// ---------------------------------------------------------------------------
+
+export type ReaderSourceArtifactKindDto =
+  | "original_upload"
+  | "pdf_page_image"
+  | "ocr_result"
+  | "extracted_text"
+  | "webpage_snapshot"
+  | "derived_preview";
+
+export type ReaderSourceArtifactStorageProviderDto = "oss" | "local";
+export type ReaderSourceArtifactStatusDto =
+  | "pending"
+  | "available"
+  | "failed"
+  | "deleted";
+export type ReaderSourceArtifactUploadMethodDto =
+  | "oss_put_object_pending_credentials"
+  | "oss_put_object_presigned";
+
+export interface ReaderSourceArtifactUploadInitRequestDto {
+  artifact_kind: "original_upload";
+  source_filename?: string | null;
+  content_type?: string | null;
+  byte_size?: number | null;
+  content_sha256?: string | null;
+  reading_record_id?: string | null;
+  original_input_id?: string | null;
+  source_refs?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown> | null;
+  quality?: Record<string, unknown> | null;
+}
+
+export interface ReaderSourceArtifactUploadInitResponseDto {
+  artifact_id: string;
+  artifact_kind: ReaderSourceArtifactKindDto;
+  storage_provider: ReaderSourceArtifactStorageProviderDto;
+  bucket: string;
+  endpoint: string;
+  object_key: string;
+  status: ReaderSourceArtifactStatusDto;
+  content_type: string | null;
+  byte_size: number | null;
+  content_sha256: string | null;
+  source_filename: string;
+  upload_method: ReaderSourceArtifactUploadMethodDto;
+  headers: Record<string, string>;
+  presigned_url: string | null;
+  presigned_method: "PUT" | null;
+  presigned_expires_at: string | null;
+}
+
+export interface ReaderSourceArtifactUploadCompleteRequestDto {
+  content_type?: string | null;
+  byte_size?: number | null;
+  content_sha256?: string | null;
+  metadata?: Record<string, unknown> | null;
+  quality?: Record<string, unknown> | null;
+}
+
+export interface ReaderSourceArtifactUploadCompleteResponseDto {
+  artifact_id: string;
+  artifact_kind: ReaderSourceArtifactKindDto;
+  storage_provider: ReaderSourceArtifactStorageProviderDto;
+  bucket: string;
+  endpoint: string;
+  object_key: string;
+  status: ReaderSourceArtifactStatusDto;
+  content_type: string | null;
+  byte_size: number | null;
+  content_sha256: string | null;
+  source_filename: string;
+  upload_completed: true;
+  idempotent_noop: boolean;
+}
+
+export type ReaderArtifactInputSourceTypeDto = "file" | "pdf" | "image";
+export type ReaderArtifactOriginalInputTypeDto = "file_ref" | "image_ref";
+
+export interface ReaderSourceArtifactSubmitInputRequestDto {
+  title?: string | null;
+  language?: string | null;
+  client_record_id?: string | null;
+  source_metadata?: Record<string, unknown> | null;
+  reading_goal?: ReaderOrchestrationReadingGoalDto;
+  reading_variant?: ReaderOrchestrationReadingVariantDto;
+}
+
+export interface ReaderSourceArtifactSubmitInputResponseDto {
+  reading_record_id: string;
+  original_input_id: string;
+  artifact_id: string;
+  record_generation: number;
+  source_type: ReaderArtifactInputSourceTypeDto;
+  input_type: ReaderArtifactOriginalInputTypeDto;
+  product_state: ReadingRecordProductState;
+  readiness_state: ReadingRecordReadinessState;
+  title: string;
+  language: string | null;
+  extraction_required: true;
+  bucket: string;
+  endpoint: string;
+  object_key: string;
+  content_type: string | null;
+  byte_size: number | null;
+  content_sha256: string | null;
+  source_filename: string;
+  extraction_job_id: string;
+  extraction_job_status: string;
+}
+
+export type ReaderArtifactPipelineOutcomeDto =
+  | "upload_pending"
+  | "upload_available_not_submitted"
+  | "extraction_queued"
+  | "extraction_running"
+  | "extraction_retry_later"
+  | "extraction_failed"
+  | "materialization_queued"
+  | "materialization_running"
+  | "materialization_retry_later"
+  | "materialization_failed"
+  | "stable_document_ready"
+  | "candidate_document_required"
+  | "input_rejected_or_action_required";
+
+export type ReaderArtifactPipelineNextActionDto =
+  | "complete_upload"
+  | "submit_input"
+  | "wait_for_worker"
+  | "retry_later"
+  | "show_error"
+  | "open_reader"
+  | "confirm_candidate_document"
+  | "revise_input";
+
+export interface ReaderArtifactPipelineArtifactSummaryDto {
+  artifact_id: string;
+  status: string;
+  artifact_kind: string;
+  storage_provider: string;
+  bucket: string | null;
+  endpoint: string | null;
+  object_key: string;
+  content_type: string | null;
+  byte_size: number | null;
+  content_sha256: string | null;
+  source_filename: string | null;
+  reading_record_id: string | null;
+  original_input_id: string | null;
+}
+
+export interface ReaderArtifactPipelineRecordSummaryDto {
+  reading_record_id: string;
+  generation: number;
+  product_state: ReadingRecordProductState;
+  readiness_state: ReadingRecordReadinessState;
+  active_base_id: string | null;
+  source_type: string;
+  title: string | null;
+  language: string | null;
+}
+
+export interface ReaderArtifactPipelineOriginalInputSummaryDto {
+  original_input_id: string;
+  input_type: string;
+  content_sha256: string;
+  has_source_text: boolean;
+  extraction_status: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface ReaderArtifactPipelineJobSummaryDto {
+  job_id: string;
+  status: string;
+  attempt_count: number;
+  max_attempts: number;
+  // DEBUG-ONLY — must NOT be rendered to end users.
+  failure_class: string | null;
+  // DEBUG-ONLY — must NOT be rendered to end users.
+  failure_code: string | null;
+  // DEBUG-ONLY — must NOT be rendered to end users.
+  rationale_code: string | null;
+  available_at: string;
+  updated_at: string;
+}
+
+export interface ReaderArtifactPipelineCandidateDocumentDto {
+  candidate_document_id: string;
+  record_generation: number;
+  canonical_text_preview: string;
+}
+
+export interface ReaderArtifactPipelineStableDocumentDto {
+  stable_document_id: string;
+  base_id: string;
+  record_generation: number;
+  content_sha256: string;
+  canonical_text_sha256: string;
+}
+
+export interface ReaderArtifactPipelineStatusResponseDto {
+  artifact: ReaderArtifactPipelineArtifactSummaryDto;
+  record: ReaderArtifactPipelineRecordSummaryDto | null;
+  original_input: ReaderArtifactPipelineOriginalInputSummaryDto | null;
+  extraction_job: ReaderArtifactPipelineJobSummaryDto | null;
+  materialization_job: ReaderArtifactPipelineJobSummaryDto | null;
+  candidate_document: ReaderArtifactPipelineCandidateDocumentDto | null;
+  stable_document: ReaderArtifactPipelineStableDocumentDto | null;
+  outcome: ReaderArtifactPipelineOutcomeDto;
+  next_action: ReaderArtifactPipelineNextActionDto;
+}
+
+// ---------------------------------------------------------------------------
+// Candidate document confirmation
+//
+// Mirrors `ReaderCandidateDocumentConfirm*` in
+// `services/api/app/schemas/reader_orchestration.py`.
+// ---------------------------------------------------------------------------
+
+export interface ReaderCandidateDocumentConfirmRequestDto {
+  language?: string | null;
+}
+
+export interface ReaderCandidateDocumentConfirmResponseDto {
+  reading_record_id: string;
+  candidate_document_id: string;
+  stable_document_id: string;
+  base_id: string;
+  record_generation: number;
+  document_version: number;
+  content_sha256: string;
+  canonical_text_sha256: string;
+  block_count: number;
+  candidate_confirmed: boolean;
+  freeze_idempotent_noop: boolean;
+  article_ready_event_id: string;
+  article_ready_sequence: number;
+  snapshot: ReaderPlateSnapshotDto;
+}
+
+// ---------------------------------------------------------------------------
+// Stable Document projection — GET /reader/records/{record_id}/stable-document
+//
+// Mirrors `ReaderStableDocument*` in
+// `services/api/app/schemas/reader_orchestration.py`. `base.text`,
+// `blocks[*].text_content`, `canonical_text_*` and `anchor_segments` are
+// the only citation / anchor truth sources the frontend may consume.
+// Plate JSON, Slate path and DOM selection are NOT truth.
+// ---------------------------------------------------------------------------
+
+export interface ReaderStableDocumentBaseDto {
+  base_id: string;
+  content_sha256: string;
+  content_utf16_length: number;
+  canonicalizer_version: string;
+  builder_version: string;
+  segmenter_version: string;
+  language: string | null;
+  title_snapshot: string | null;
+  navigation: Record<string, unknown>;
+  text: string;
+}
+
+export interface ReaderStableDocumentMetadataDto {
+  stable_document_id: string;
+  document_version: number;
+  title: string | null;
+  language: string | null;
+  source_profile: Record<string, unknown>;
+  content_sha256: string;
+  status: string;
+}
+
+export interface ReaderStableDocumentBlockDto {
+  block_id: string;
+  parent_block_id: string | null;
+  order_index: number;
+  block_type: string;
+  text_content: string | null;
+  payload: Record<string, unknown>;
+  source_refs: Record<string, unknown>;
+  quality: Record<string, unknown>;
+  canonical_text_start_utf16: number | null;
+  canonical_text_end_utf16: number | null;
+  interpretation_policy: Record<string, unknown>;
+}
+
+export interface ReaderStableDocumentAnchorSegmentDto {
+  anchor_segment_id: string;
+  unit_id: string;
+  order_index: number;
+  segment_type: string;
+  base_start_utf16: number;
+  base_end_utf16: number;
+  text_hash: string;
+}
+
+export interface ReaderStableDocumentResponseDto {
+  reading_record_id: string;
+  record_generation: number;
+  active_base_id: string;
+  base: ReaderStableDocumentBaseDto;
+  stable_document: ReaderStableDocumentMetadataDto;
+  blocks: ReaderStableDocumentBlockDto[];
+  anchor_segments: ReaderStableDocumentAnchorSegmentDto[];
+}
+
+// ---------------------------------------------------------------------------
+// Article RAG Index lifecycle — status / ensure
+//
+// Mirrors `ReaderArticleRagIndex*` in
+// `services/api/app/schemas/reader_orchestration.py`. `reason_code` is
+// DEBUG-ONLY and MUST NOT be rendered to end users. The frontend coerces
+// unknown `status` values to a safe fallback (see status-mapper).
+// ---------------------------------------------------------------------------
+
+export type ReaderArticleRagIndexLifecycleStatusDto =
+  | "not_ready"
+  | "not_indexed"
+  | "queued"
+  | "indexing"
+  | "indexed"
+  | "failed"
+  | "superseded_or_stale"
+  | "unavailable";
+
+export type ReaderArticleRagIndexEnsureStatusDto =
+  | "enqueued"
+  | "idempotent_noop"
+  | "not_ready"
+  | "no_active_base"
+  | "generation_mismatch"
+  | "record_not_found"
+  | "plan_hash_mismatch"
+  | "bootstrap_inconsistent"
+  | "error";
+
+export interface ReaderArticleRagIndexStatusResponseDto {
+  reading_record_id: string;
+  status: ReaderArticleRagIndexLifecycleStatusDto;
+  stable_document_id: string | null;
+  base_id: string | null;
+  record_generation: number | null;
+  index_run_id: string | null;
+  index_version: string | null;
+  plan_content_sha256: string | null;
+  chunk_count: number | null;
+  // DEBUG-ONLY — must NOT be rendered to end users.
+  reason_code: string | null;
+}
+
+export interface ReaderArticleRagIndexEnsureRequestDto {
+  expected_generation: number;
+  index_version?: string | null;
+}
+
+export interface ReaderArticleRagIndexEnsureResponseDto {
+  reading_record_id: string;
+  status: ReaderArticleRagIndexEnsureStatusDto;
+  // DEBUG-ONLY — must NOT be rendered to end users.
+  reason_code: string;
+  idempotent_noop: boolean;
+  stable_document_id: string | null;
+  base_id: string | null;
+  record_generation: number | null;
+  index_run_id: string | null;
+  job_id: string | null;
+  index_version: string | null;
+  chunker_version: string | null;
+}
