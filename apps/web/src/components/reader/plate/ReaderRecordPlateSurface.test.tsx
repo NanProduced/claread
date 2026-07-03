@@ -429,6 +429,54 @@ function makeOverlappingMarkSnapshot(): ReaderPlateSnapshotDto {
   };
 }
 
+function makeMultiGrammarSnapshot(): ReaderPlateSnapshotDto {
+  return {
+    ...makeSnapshot(),
+    value: [
+      makeUnit({
+        grammarMarks: [
+          makeGrammarMark({
+            mark_id: "grammar_mark_subject",
+            item_id: "grammar_item_subject",
+            start_offset: 0,
+            end_offset: 20,
+            selected_text: "Institutional memory",
+            segment_start_utf16: 0,
+            segment_end_utf16: 20,
+            grammar_point: "fronted subject",
+            pattern: "noun phrase",
+            note: "Institutional memory names the sentence topic.",
+          }),
+          makeGrammarMark({
+            mark_id: "grammar_mark_predicate",
+            item_id: "grammar_item_predicate",
+            start_offset: 21,
+            end_offset: 27,
+            selected_text: "shapes",
+            segment_start_utf16: 21,
+            segment_end_utf16: 27,
+            grammar_point: "predicate verb",
+            pattern: "subject + verb",
+            note: "shapes carries the main action.",
+          }),
+          makeGrammarMark({
+            mark_id: "grammar_mark_object",
+            item_id: "grammar_item_object",
+            start_offset: 28,
+            end_offset: 42,
+            selected_text: "policy choices",
+            segment_start_utf16: 28,
+            segment_end_utf16: 42,
+            grammar_point: "direct object",
+            pattern: "verb + object",
+            note: "policy choices receives the action.",
+          }),
+        ],
+      }),
+    ],
+  };
+}
+
 function makeAnnotationMatrixSnapshot(): ReaderPlateSnapshotDto {
   const noteText = SOURCE_TEXT.slice(0, 34);
   const wideNote = makeUserAsset({
@@ -1280,28 +1328,41 @@ describe("ReaderRecordPlateSurface", () => {
     ]);
   });
 
-  it("renders grammar callout and sentence analysis as separate Plate blocks", () => {
-    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+  it("groups consecutive grammar callouts and keeps sentence analysis separate", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeMultiGrammarSnapshot()} />,
+    );
 
-    const grammarCallout = container.querySelector<HTMLElement>(
-      '[data-reader-record-node="callout"][data-callout-variant="grammar"]',
+    const grammarGroup = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="callout-group"][data-reader-record-callout-group="grammar"]',
+    );
+    const grammarRows = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-node="callout"][data-callout-variant="grammar"]',
+      ),
     );
     const analysisBlock = container.querySelector<HTMLElement>(
       '[data-reader-record-node="sentence-analysis"][data-reader-record-sentence-analysis-block="true"]',
     );
 
-    expect(grammarCallout).not.toBeNull();
-    expect(grammarCallout?.dataset.readerRecordCallout).toBe("true");
-    expect(grammarCallout?.textContent).toContain("predicate verb");
-    expect(grammarCallout?.textContent).toContain("语法解析");
-    expect(grammarCallout?.textContent).toContain(
-      "shapes is the predicate verb.",
-    );
-    expect(grammarCallout?.classList.contains("reader-record-plate-callout--grammar")).toBe(true);
-    expect(grammarCallout?.dataset.readerRecordCalloutLabel).toBe("语法解析");
-    expect(grammarCallout?.className).toContain("font-sans");
-    expect(grammarCallout?.className).toContain("rounded-[8px]");
-    expect(grammarCallout?.className).toContain("bg-ink/[0.035]");
+    expect(grammarGroup).not.toBeNull();
+    expect(grammarGroup?.dataset.readerRecordCalloutGroupCount).toBe("3");
+    expect(grammarGroup?.textContent).toContain("语法解析 · 3 条");
+    expect(container.querySelectorAll('[data-reader-record-node="callout-group"]')).toHaveLength(1);
+    expect(grammarGroup?.nextElementSibling).toBe(analysisBlock);
+    expect(grammarRows).toHaveLength(3);
+    for (const row of grammarRows) {
+      expect(row.closest('[data-reader-record-callout-group="grammar"]')).toBe(grammarGroup);
+      expect(row.dataset.readerRecordCallout).toBe("true");
+      expect(row.dataset.readerRecordCalloutRow).toBe("grammar");
+      expect(row.dataset.readerRecordCalloutLabel).toBe("语法解析");
+      expect(row.classList.contains("reader-record-plate-callout--grammar-row")).toBe(true);
+      expect(row.className).toContain("font-sans");
+      expect(row.className).not.toContain("bg-ink/[0.035]");
+    }
+    expect(grammarRows[0]?.textContent).toContain("fronted subject");
+    expect(grammarRows[1]?.textContent).toContain("predicate verb");
+    expect(grammarRows[2]?.textContent).toContain("direct object");
 
     expect(analysisBlock).not.toBeNull();
     expect(analysisBlock?.dataset.readerRecordCallout).toBeUndefined();
@@ -1329,7 +1390,501 @@ describe("ReaderRecordPlateSurface", () => {
     ).toContain("subject");
   });
 
-  it("renders enhancement markdown through Slate-managed Plate children", () => {
+  it("renders grammar callouts collapsed by default and toggles full content", async () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const grammarCallout = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="callout"][data-callout-variant="grammar"]',
+    );
+    expect(grammarCallout).not.toBeNull();
+    if (!grammarCallout) {
+      throw new Error("Expected grammar callout");
+    }
+
+    const content = grammarCallout.querySelector<HTMLElement>(
+      '[data-reader-record-markdown-content="plate"]',
+    );
+    const preview = grammarCallout.querySelector<HTMLElement>(
+      '[data-reader-record-callout-preview="grammar"]',
+    );
+    const toggle = grammarCallout.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
+    expect(content).not.toBeNull();
+    expect(preview).toBeNull();
+    expect(toggle).not.toBeNull();
+    if (!content || !toggle) {
+      throw new Error("Expected grammar callout compact controls");
+    }
+
+    expect(grammarCallout.dataset.readerRecordCalloutCollapsed).toBe("true");
+    expect(content.hidden).toBe(true);
+    expect(toggle.textContent?.trim()).toBe("");
+    expect(toggle.getAttribute("aria-label")).toBe("展开语法解析");
+    expect(toggle.title).toBe("展开解析");
+    const pointerDownResult = fireEvent.pointerDown(toggle);
+    const mouseDownResult = fireEvent.mouseDown(toggle);
+    expect(pointerDownResult).toBe(false);
+    expect(mouseDownResult).toBe(false);
+    expect(grammarCallout.dataset.readerRecordCalloutCollapsed).toBe("true");
+    expect(
+      grammarCallout.querySelector(
+        '[data-reader-record-callout-pattern="grammar"]',
+      )?.textContent,
+    ).toBe("subject + verb");
+    const title = grammarCallout.querySelector<HTMLElement>(
+      '[data-reader-record-callout-title="grammar"]',
+    );
+    const pattern = grammarCallout.querySelector<HTMLElement>(
+      '[data-reader-record-callout-pattern="grammar"]',
+    );
+    expect(title).not.toBeNull();
+    expect(pattern).not.toBeNull();
+    if (!title || !pattern) {
+      throw new Error("Expected grammar title and pattern");
+    }
+    expect(title.compareDocumentPosition(pattern)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(grammarCallout.dataset.readerRecordCalloutCollapsed).toBe("false");
+      expect(content.hidden).toBe(false);
+    });
+    expect(toggle.textContent?.trim()).toBe("");
+    expect(toggle.getAttribute("aria-label")).toBe("收起语法解析");
+    expect(toggle.title).toBe("收起解析");
+
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(grammarCallout.dataset.readerRecordCalloutCollapsed).toBe("true");
+      expect(content.hidden).toBe(true);
+    });
+    expect(toggle.textContent?.trim()).toBe("");
+    expect(toggle.getAttribute("aria-label")).toBe("展开语法解析");
+  });
+
+  it("supports expanding multiple grammar rows inside an aggregated group", async () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeMultiGrammarSnapshot()} />,
+    );
+    const subjectRow = container.querySelector<HTMLElement>(
+      '[data-reader-record-grammar-item-id="grammar_item_subject"][data-callout-variant="grammar"]',
+    );
+    const predicateRow = container.querySelector<HTMLElement>(
+      '[data-reader-record-grammar-item-id="grammar_item_predicate"][data-callout-variant="grammar"]',
+    );
+    const objectRow = container.querySelector<HTMLElement>(
+      '[data-reader-record-grammar-item-id="grammar_item_object"][data-callout-variant="grammar"]',
+    );
+    expect(subjectRow).not.toBeNull();
+    expect(predicateRow).not.toBeNull();
+    expect(objectRow).not.toBeNull();
+    if (!subjectRow || !predicateRow || !objectRow) {
+      throw new Error("Expected grouped grammar rows");
+    }
+
+    const subjectContent = subjectRow.querySelector<HTMLElement>(
+      '[data-reader-record-markdown-content="plate"]',
+    );
+    const predicateContent = predicateRow.querySelector<HTMLElement>(
+      '[data-reader-record-markdown-content="plate"]',
+    );
+    const objectContent = objectRow.querySelector<HTMLElement>(
+      '[data-reader-record-markdown-content="plate"]',
+    );
+    const predicateToggle = predicateRow.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
+    const objectToggle = objectRow.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
+    expect(subjectContent?.hidden).toBe(true);
+    expect(predicateContent?.hidden).toBe(true);
+    expect(objectContent?.hidden).toBe(true);
+    expect(predicateToggle).not.toBeNull();
+    expect(objectToggle).not.toBeNull();
+    if (!predicateToggle || !objectToggle) {
+      throw new Error("Expected grouped grammar toggles");
+    }
+
+    fireEvent.click(predicateToggle);
+    await waitFor(() => {
+      expect(predicateRow.dataset.readerRecordCalloutCollapsed).toBe("false");
+      expect(predicateContent?.hidden).toBe(false);
+    });
+    expect(subjectContent?.hidden).toBe(true);
+    expect(objectContent?.hidden).toBe(true);
+
+    fireEvent.click(objectToggle);
+    await waitFor(() => {
+      expect(objectRow.dataset.readerRecordCalloutCollapsed).toBe("false");
+      expect(objectContent?.hidden).toBe(false);
+    });
+    expect(predicateContent?.hidden).toBe(false);
+    expect(subjectContent?.hidden).toBe(true);
+
+    fireEvent.click(predicateToggle);
+    await waitFor(() => {
+      expect(predicateRow.dataset.readerRecordCalloutCollapsed).toBe("true");
+      expect(predicateContent?.hidden).toBe(true);
+    });
+    expect(objectContent?.hidden).toBe(false);
+  });
+
+  it("source grammar mark expands its row without closing other expanded rows", async () => {
+    const scrollSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => undefined);
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeMultiGrammarSnapshot()} />,
+    );
+    const predicateSource = container.querySelector<HTMLElement>(
+      '[data-reader-record-leaf="segment_text"][data-reader-record-grammar-item-id="grammar_item_predicate"]',
+    );
+    const predicateRow = container.querySelector<HTMLElement>(
+      '[data-reader-record-grammar-item-id="grammar_item_predicate"][data-callout-variant="grammar"]',
+    );
+    const objectRow = container.querySelector<HTMLElement>(
+      '[data-reader-record-grammar-item-id="grammar_item_object"][data-callout-variant="grammar"]',
+    );
+    const objectToggle = objectRow?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
+    const predicateToggle = predicateRow?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
+    const predicateContent = predicateRow?.querySelector<HTMLElement>(
+      '[data-reader-record-markdown-content="plate"]',
+    );
+    const objectContent = objectRow?.querySelector<HTMLElement>(
+      '[data-reader-record-markdown-content="plate"]',
+    );
+    expect(predicateSource).not.toBeNull();
+    expect(predicateRow).not.toBeNull();
+    expect(objectRow).not.toBeNull();
+    expect(objectToggle).not.toBeNull();
+    expect(predicateToggle).not.toBeNull();
+    if (
+      !predicateSource ||
+      !predicateRow ||
+      !objectRow ||
+      !objectToggle ||
+      !predicateToggle
+    ) {
+      throw new Error("Expected source mark and grouped grammar rows");
+    }
+
+    fireEvent.click(objectToggle);
+    await waitFor(() => {
+      expect(objectContent?.hidden).toBe(false);
+    });
+    scrollSpy.mockClear();
+
+    fireEvent.click(predicateSource);
+    await waitFor(() => {
+      expect(predicateRow.dataset.readerRecordCalloutCollapsed).toBe("false");
+      expect(predicateContent?.hidden).toBe(false);
+      expect(objectContent?.hidden).toBe(false);
+      expect(scrollSpy).toHaveBeenCalled();
+    });
+
+    fireEvent.click(predicateToggle);
+    await waitFor(() => {
+      expect(predicateRow.dataset.readerRecordCalloutCollapsed).toBe("true");
+      expect(predicateContent?.hidden).toBe(true);
+      expect(objectContent?.hidden).toBe(false);
+    });
+  });
+
+  it("renders sentence analysis collapsed without a chunk badge and toggles chunk rows", async () => {
+    const snapshot = {
+      ...makeSnapshot(),
+      value: [
+        makeUnit({
+          analysis: "Four-part sentence structure.",
+          analysisChunks: [
+            { order: 1, label: "subject", text: "Institutional memory" },
+            { order: 2, label: "predicate", text: "shapes" },
+            { order: 3, label: "object", text: "policy choices" },
+            { order: 4, label: "modifier", text: "during review" },
+          ],
+        }),
+      ],
+    };
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    const analysisBlock = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="sentence-analysis"][data-reader-record-sentence-analysis-block="true"]',
+    );
+    expect(analysisBlock).not.toBeNull();
+    if (!analysisBlock) {
+      throw new Error("Expected sentence analysis block");
+    }
+
+    const content = analysisBlock.querySelector<HTMLElement>(
+      '[data-reader-record-markdown-content="plate"]',
+    );
+    const summary = analysisBlock.querySelector<HTMLElement>(
+      '[data-reader-record-callout-preview="sentence-analysis"]',
+    );
+    const eyebrow = analysisBlock.querySelector<HTMLElement>(
+      ".reader-record-plate-sentence-analysis-eyebrow",
+    );
+    const title = analysisBlock.querySelector<HTMLElement>(
+      '[data-reader-record-callout-title="sentence-analysis"]',
+    );
+    const chunkRows = analysisBlock.querySelector<HTMLElement>(
+      '[data-reader-record-sentence-analysis-chunks="plate"]',
+    );
+    const toggle = analysisBlock.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="sentence-analysis"]',
+    );
+    expect(content).not.toBeNull();
+    expect(summary).toBeNull();
+    expect(eyebrow).not.toBeNull();
+    expect(title).not.toBeNull();
+    expect(chunkRows).not.toBeNull();
+    expect(toggle).not.toBeNull();
+    if (!content || !eyebrow || !title || !chunkRows || !toggle) {
+      throw new Error("Expected sentence analysis compact controls");
+    }
+
+    expect(analysisBlock.dataset.readerRecordSentenceAnalysisCollapsed).toBe("true");
+    expect(eyebrow.textContent).toContain("长句拆析");
+    expect(title.textContent).toBe("subject and predicate");
+    expect(title.closest(".reader-record-plate-sentence-analysis-title-row")).not.toBeNull();
+    expect(content.hidden).toBe(true);
+    expect(toggle.textContent?.trim()).toBe("");
+    expect(toggle.getAttribute("aria-label")).toBe("展开长句拆析");
+    expect(toggle.title).toBe("展开解析");
+
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(analysisBlock.dataset.readerRecordSentenceAnalysisCollapsed).toBe("false");
+      expect(content.hidden).toBe(false);
+    });
+    expect(chunkRows.textContent).toContain("subject");
+    expect(chunkRows.textContent).toContain("modifier");
+    expect(toggle.textContent?.trim()).toBe("");
+    expect(toggle.getAttribute("aria-label")).toBe("收起长句拆析");
+  });
+
+  it("disables Ask from grammar callout actions and disables unsupported grammar feedback", () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const grammarCallout = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_1"]',
+    );
+    expect(grammarCallout).not.toBeNull();
+    if (!grammarCallout) {
+      throw new Error("Expected grammar callout");
+    }
+
+    const askButton = grammarCallout.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-action="ask"]',
+    );
+    const feedbackButton = grammarCallout.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-action="feedback"]',
+    );
+    expect(askButton).not.toBeNull();
+    expect(feedbackButton).not.toBeNull();
+    if (!askButton || !feedbackButton) {
+      throw new Error("Expected grammar callout actions");
+    }
+    expect(askButton.disabled).toBe(true);
+    expect(askButton.getAttribute("aria-label")).toBe("带这条解析提问");
+    expect(askButton.title).toBe("当前解析暂不能加入 Ask Claread");
+    expect(feedbackButton.disabled).toBe(true);
+    expect(feedbackButton.title).toBe("当前解析缺少可反馈的记录 ID");
+    expect(
+      askButton.querySelector("svg")?.classList.contains(
+        "lucide-message-circle-question",
+      ),
+    ).toBe(true);
+
+    fireEvent.click(feedbackButton);
+    expect(screen.queryByRole("dialog", { name: "反馈选项" })).toBeNull();
+    fireEvent.click(askButton);
+    expect(screen.queryByRole("button", { name: "发送" })).toBeNull();
+  });
+
+  it("submits sentence analysis callout feedback only when analysis id is available", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const requestUrl = new URL(String(input), "https://example.test");
+      if (requestUrl.pathname === "/api/web/feedback") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, message: "ok" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, favorited: false }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const analysisBlock = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="sentence-analysis"]',
+    );
+    const feedbackButton = analysisBlock?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-action="feedback"]',
+    );
+    expect(analysisBlock).not.toBeNull();
+    expect(feedbackButton).not.toBeNull();
+    if (!analysisBlock || !feedbackButton) {
+      throw new Error("Expected sentence analysis feedback action");
+    }
+    expect(feedbackButton.disabled).toBe(false);
+
+    fireEvent.click(feedbackButton);
+    const menu = await screen.findByRole("dialog", { name: "反馈选项" });
+    fireEvent.click(within(menu).getByText("有问题"));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url]) => url === "/api/web/feedback"),
+      ).toBe(true);
+    });
+    const feedbackCall = fetchMock.mock.calls.find(
+      ([url]) => url === "/api/web/feedback",
+    );
+    const body = JSON.parse(
+      String((feedbackCall?.[1] as RequestInit | undefined)?.body),
+    ) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      feedbackScope: "annotation",
+      targetId: "sentence_analysis:analysis_1",
+      sentiment: "negative",
+      feedbackType: "inaccurate",
+      analysisRecordId: "analysis_1",
+      annotationType: "sentence_analysis",
+      entryPoint: "reader_record_callout",
+      clientSurface: "reader_record",
+    });
+    expect(body.contextJson).toMatchObject({
+      readingRecordId: "record_1",
+      annotationType: "sentence_analysis",
+      targetVariant: "sentence_analysis",
+    });
+  });
+
+  it("marks callout chrome controls as excluded from copied content", () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const chromeControls = [
+      ...container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-callout-controls], [data-reader-record-callout-toggle], [data-reader-record-callout-action]',
+      ),
+    ];
+    expect(chromeControls.length).toBeGreaterThan(0);
+    for (const control of chromeControls) {
+      expect(control.dataset.readerRecordCopyExclude).toBe("true");
+      expect(control.getAttribute("contenteditable")).toBe("false");
+      expect(control.getAttribute("draggable")).toBe("false");
+    }
+
+    const grammarTitle = container.querySelector<HTMLElement>(
+      '[data-reader-record-callout-title="grammar"]',
+    );
+    const grammarPreview = container.querySelector<HTMLElement>(
+      '[data-reader-record-callout-preview="grammar"]',
+    );
+    expect(grammarTitle?.dataset.readerRecordCopyExclude).toBeUndefined();
+    expect(grammarPreview).toBeNull();
+
+    const globalsSource = readFileSync(
+      resolve(process.cwd(), "src/app/globals.css"),
+      "utf8",
+    );
+    expect(globalsSource).toMatch(
+      /\.reader-record-plate-callout-row-controls\s*\{[\s\S]*?opacity:\s*0/,
+    );
+    expect(globalsSource).toMatch(
+      /\.reader-record-plate-callout:hover \.reader-record-plate-callout-row-controls/,
+    );
+    expect(globalsSource).toMatch(
+      /\.reader-record-plate-callout-group-rows\s*\{[\s\S]*?counter-reset:\s*reader-record-grammar-row/,
+    );
+    expect(globalsSource).toMatch(
+      /\.reader-record-plate-callout--grammar-row::before\s*\{[\s\S]*?content:\s*counter\(reader-record-grammar-row\)/,
+    );
+    expect(globalsSource).toMatch(
+      /\.reader-record-plate-callout-group\s*[\s\S]*?\.reader-record-plate-callout--grammar-row:hover\s*\{[\s\S]*?background-color:\s*color-mix\(in srgb, var\(--grammar-violet\) 1\.6%, transparent\)/,
+    );
+    expect(globalsSource).toMatch(
+      /\.reader-record-plate-callout-group:has\(\+ \.reader-record-plate-sentence-analysis\)\s*\{[\s\S]*?border-bottom-color:\s*transparent/,
+    );
+    expect(globalsSource).toMatch(
+      /\.reader-record-plate-callout-group\s*\+\s*\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="true"\]\s*\{[\s\S]*?border-top-color:\s*transparent/,
+    );
+    expect(globalsSource).toMatch(
+      /\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="true"\]\s*\{[\s\S]*?border-right-color:\s*transparent[\s\S]*?background-color:\s*transparent/,
+    );
+    expect(globalsSource).toMatch(
+      /\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="false"\]\s*\{[\s\S]*?background-color:\s*color-mix\(in srgb, var\(--context-blue\) 2\.4%, transparent\)/,
+    );
+  });
+
+  it("sanitizes copied grammar content without callout chrome text", async () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const grammarCallout = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_1"]',
+    );
+    const toggle = grammarCallout?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
+    expect(grammarCallout).not.toBeNull();
+    expect(toggle).not.toBeNull();
+    if (!grammarCallout || !toggle) {
+      throw new Error("Expected grammar callout");
+    }
+
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(grammarCallout.dataset.readerRecordCalloutCollapsed).toBe("false");
+    });
+
+    const title = grammarCallout.querySelector<HTMLElement>(
+      '[data-reader-record-callout-title="grammar"]',
+    );
+    const content = grammarCallout.querySelector<HTMLElement>(
+      '[data-reader-record-markdown-content="plate"] p',
+    );
+    expect(title).not.toBeNull();
+    expect(content).not.toBeNull();
+    if (!title || !content) {
+      throw new Error("Expected expanded grammar content");
+    }
+
+    const range = document.createRange();
+    range.setStart(firstTextNode(title), 0);
+    range.setEnd(firstTextNode(content), content.textContent?.length ?? 0);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const clipboardData = {
+      setData: vi.fn(),
+    };
+    fireEvent.copy(grammarCallout, { clipboardData });
+
+    const plainTextCall = clipboardData.setData.mock.calls.find(
+      ([type]) => type === "text/plain",
+    );
+    expect(plainTextCall).toBeDefined();
+    const copiedText = String(plainTextCall?.[1] ?? "");
+    expect(copiedText).toContain("predicate verb");
+    expect(copiedText).toContain("shapes is the predicate verb.");
+    expect(copiedText).not.toContain("收起");
+    expect(copiedText).not.toContain("展开");
+    expect(copiedText).not.toContain("加入 Ask");
+    expect(copiedText).not.toContain("反馈");
+  });
+
+  it("renders expanded enhancement markdown through Slate-managed Plate children", async () => {
     const markdownSnapshot = {
       ...makeSnapshot(),
       value: [
@@ -1359,7 +1914,11 @@ describe("ReaderRecordPlateSurface", () => {
     const analysisBlock = container.querySelector<HTMLElement>(
       '[data-reader-record-node="sentence-analysis"][data-reader-record-sentence-analysis-block="true"]',
     );
+    const grammarPreview = grammarCallout?.querySelector<HTMLElement>(
+      '[data-reader-record-callout-preview="grammar"]',
+    );
 
+    expect(grammarPreview).toBeNull();
     expect(
       grammarCallout?.querySelector(
         '[data-reader-record-markdown-content="plate"] [data-slate-node="element"]',
@@ -1370,6 +1929,23 @@ describe("ReaderRecordPlateSurface", () => {
         '[data-reader-record-markdown-content="plate"] [data-slate-node="element"]',
       ),
     ).not.toBeNull();
+    const grammarToggle = grammarCallout?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
+    const analysisToggle = analysisBlock?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="sentence-analysis"]',
+    );
+    expect(grammarToggle).not.toBeNull();
+    expect(analysisToggle).not.toBeNull();
+    if (!grammarToggle || !analysisToggle || !grammarCallout || !analysisBlock) {
+      throw new Error("Expected callout toggles");
+    }
+    fireEvent.click(grammarToggle);
+    fireEvent.click(analysisToggle);
+    await waitFor(() => {
+      expect(grammarCallout.dataset.readerRecordCalloutCollapsed).toBe("false");
+      expect(analysisBlock.dataset.readerRecordSentenceAnalysisCollapsed).toBe("false");
+    });
     expect(grammarCallout?.querySelector("strong")?.textContent).toBe("shapes");
     const inlineCode = grammarCallout?.querySelector("code");
     expect(inlineCode?.textContent).toBe("subject + verb");
@@ -1983,6 +2559,15 @@ describe("ReaderRecordPlateSurface", () => {
     if (!sourceGrammar || !callout) {
       throw new Error("Expected grammar source and callout");
     }
+    const calloutContent = callout.querySelector<HTMLElement>(
+      '[data-reader-record-markdown-content="plate"]',
+    );
+    expect(calloutContent).not.toBeNull();
+    if (!calloutContent) {
+      throw new Error("Expected grammar callout content");
+    }
+    expect(callout.dataset.readerRecordCalloutCollapsed).toBe("true");
+    expect(calloutContent.hidden).toBe(true);
 
     fireEvent.mouseEnter(callout);
     await waitFor(() => {
@@ -1998,12 +2583,15 @@ describe("ReaderRecordPlateSurface", () => {
     await waitFor(() => {
       expect(callout.dataset.readerRecordGrammarActive).toBe("true");
     });
+    expect(calloutContent.hidden).toBe(true);
     expect(scrollSpy).not.toHaveBeenCalled();
     fireEvent.mouseLeave(sourceGrammar);
 
     fireEvent.click(sourceGrammar);
     await waitFor(() => {
       expect(callout.dataset.readerRecordGrammarActive).toBe("true");
+      expect(callout.dataset.readerRecordCalloutCollapsed).toBe("false");
+      expect(calloutContent.hidden).toBe(false);
       expect(scrollSpy).toHaveBeenCalled();
     });
     expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
@@ -3568,13 +4156,11 @@ describe("ReaderRecordPlateSurface", () => {
     const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
     expect(attachment?.selected_text).toBe("memory");
     expect(attachment?.metadata).toMatchObject({
-      surface_kind: "source",
-      block_type: "reader_paragraph",
-      block_id: "paragraph:seg_1",
-      anchor_segment_id: "seg_1",
-      unit_id: "unit_1",
       reading_record_anchor: expectedMemoryAnchor(),
     });
+    expect(attachment?.metadata).not.toHaveProperty("surface_kind");
+    expect(attachment?.metadata).not.toHaveProperty("block_type");
+    expect(attachment?.metadata).not.toHaveProperty("anchor_segment_id");
   });
 
   it("submits a toolbar Ask prompt with the current selection as context", async () => {
@@ -4060,7 +4646,7 @@ describe("ReaderRecordPlateSurface", () => {
     ).toBe(false);
   });
 
-  it("enables Copy and Ask for translation selections with source metadata", async () => {
+  it("enables Copy and disables Ask for translation selections without a stable anchor", async () => {
     const writeText = installClipboardMock();
     const fetchMock = installReaderAskFetchMock();
     vi.stubGlobal("fetch", fetchMock);
@@ -4095,7 +4681,8 @@ describe("ReaderRecordPlateSurface", () => {
     const noteButton = await waitForSelectionAction(container, "note");
 
     expect(copyButton.disabled).toBe(false);
-    expect(askButton.disabled).toBe(false);
+    expect(askButton.disabled).toBe(true);
+    expect(askButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文 Ask");
     expect(lookupButton.disabled).toBe(true);
     expect(lookupButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文查词");
     expect(highlightButton.disabled).toBe(true);
@@ -4108,43 +4695,17 @@ describe("ReaderRecordPlateSurface", () => {
       expect(writeText).toHaveBeenCalledWith("制度记忆");
     });
 
-    await openAskPanelFromToolbar(askButton);
-    const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
-    expect(attachment?.selected_text).toBe("制度记忆");
-    expect(attachment?.target_key).toBe(
-      "blockquote:layer_translation_1:group_translation_1",
-    );
-    expect(attachment?.metadata.anchor_segment_id).toBeNull();
-    const sourceContext = attachment?.metadata.source_context as
-      | Record<string, unknown>
-      | undefined;
-    expect(sourceContext).not.toHaveProperty("anchorSegmentId");
-    expect(attachment?.metadata).toMatchObject({
-      surface_kind: "translation",
-      block_type: "reader_blockquote",
-      block_id: "blockquote:layer_translation_1:group_translation_1",
-      unit_id: "unit_1",
-      layer_id: "layer_translation_1",
-      translation_zh: "制度记忆",
-      source_context: {
-        unitId: "unit_1",
-        unitSourceText: SOURCE_TEXT,
-        sourceSegments: [
-          {
-            anchorSegmentId: "seg_1",
-            sentenceId: "sent_1",
-            unitStart: 0,
-            unitEnd: SOURCE_TEXT.length,
-            sourceText: SOURCE_TEXT,
-            textHash: "seg_hash",
-          },
-        ],
-      },
-    });
+    fireEvent.click(askButton);
+    expect(screen.queryByRole("button", { name: "发送" })).toBeNull();
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/messages/stream"),
+      ),
+    ).toBe(false);
     expect(container.querySelector('[data-reader-record-action="feedback"]')).toBeNull();
   });
 
-  it("keeps translation source context at unit level for multi-segment units", async () => {
+  it("keeps multi-segment translation selections Copy-only without source anchor fallback", async () => {
     const fetchMock = installReaderAskFetchMock();
     vi.stubGlobal("fetch", fetchMock);
     const { container } = render(
@@ -4169,36 +4730,14 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actions.dataset.readerRecordSelectionAnchorSegmentId).toBeUndefined();
 
     const askButton = await waitForSelectionAction(container, "ask");
-    expect(askButton.disabled).toBe(false);
-    await openAskPanelFromToolbar(askButton);
-
-    const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
-    expect(attachment?.metadata.anchor_segment_id).toBeNull();
-    const sourceContext = attachment?.metadata.source_context as Record<
-      string,
-      unknown
-    >;
-    expect(sourceContext).not.toHaveProperty("anchorSegmentId");
-    expect(sourceContext).toMatchObject({
-      unitId: "unit_1",
-      unitSourceText: SOURCE_TEXT,
-      sourceSegments: [
-        {
-          anchorSegmentId: "seg_1",
-          sentenceId: "sent_1",
-          unitStart: 0,
-          unitEnd: "Institutional memory ".length,
-          sourceText: "Institutional memory ",
-        },
-        {
-          anchorSegmentId: "seg_2",
-          sentenceId: "sent_2",
-          unitStart: "Institutional memory ".length,
-          unitEnd: SOURCE_TEXT.length,
-          sourceText: "shapes policy choices.",
-        },
-      ],
-    });
+    expect(askButton.disabled).toBe(true);
+    expect(askButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文 Ask");
+    fireEvent.click(askButton);
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/messages/stream"),
+      ),
+    ).toBe(false);
   });
 
   it("does not silently fallback to a source anchor for mixed source and enhancement selections", async () => {
@@ -4237,11 +4776,27 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actions.dataset.readerRecordSelectionSurfaceKind).not.toBe("source");
   });
 
-  it("enables Ask for grammar callout selections with grammar and source metadata", async () => {
+  it("disables Ask for grammar callout selections without a stable source anchor", async () => {
     const fetchMock = installReaderAskFetchMock();
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
-    const grammarContent = container.querySelector<HTMLElement>(
-      '[data-callout-variant="grammar"] [data-reader-record-markdown-content="plate"] p',
+    const grammarCallout = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"]',
+    );
+    const grammarToggle = grammarCallout?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
+    expect(grammarCallout).not.toBeNull();
+    expect(grammarToggle).not.toBeNull();
+    if (!grammarCallout || !grammarToggle) {
+      throw new Error("Expected grammar callout controls");
+    }
+
+    fireEvent.click(grammarToggle);
+    await waitFor(() => {
+      expect(grammarCallout.dataset.readerRecordCalloutCollapsed).toBe("false");
+    });
+    const grammarContent = grammarCallout.querySelector<HTMLElement>(
+      '[data-reader-record-markdown-content="plate"] p',
     );
     expect(grammarContent).not.toBeNull();
     if (!grammarContent) {
@@ -4263,9 +4818,12 @@ describe("ReaderRecordPlateSurface", () => {
 
     const askButton = await waitForSelectionAction(container, "ask");
     const lookupButton = await waitForSelectionAction(container, "lookup");
+    const copyButton = await waitForSelectionAction(container, "copy");
     const highlightButton = await waitForSelectionAction(container, "highlight");
     const noteButton = await waitForSelectionAction(container, "note");
-    expect(askButton.disabled).toBe(false);
+    expect(copyButton.disabled).toBe(false);
+    expect(askButton.disabled).toBe(true);
+    expect(askButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文 Ask");
     expect(lookupButton.disabled).toBe(true);
     expect(lookupButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文查词");
     expect(highlightButton.disabled).toBe(true);
@@ -4273,31 +4831,35 @@ describe("ReaderRecordPlateSurface", () => {
     expect(noteButton.disabled).toBe(true);
     expect(noteButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文高亮/笔记");
 
-    await openAskPanelFromToolbar(askButton);
-    const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
-    expect(attachment?.selected_text).toBe("shapes");
-    expect(attachment?.metadata).toMatchObject({
-      surface_kind: "grammar_callout",
-      block_type: "reader_callout",
-      block_id: "callout:grammar:grammar_item_1",
-      anchor_segment_id: "seg_1",
-      unit_id: "unit_1",
-      layer_id: "layer_grammar_1",
-      entry_type: "grammar_note",
-      source_context: {
-        anchorSegmentId: "seg_1",
-        unitId: "unit_1",
-        sentenceId: "sent_1",
-        sourceText: SOURCE_TEXT,
-      },
-    });
+    fireEvent.click(askButton);
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/messages/stream"),
+      ),
+    ).toBe(false);
   });
 
-  it("enables Ask for sentence analysis selections with analysis chunks and source metadata", async () => {
+  it("disables Ask for sentence analysis selections without a stable source anchor", async () => {
     const fetchMock = installReaderAskFetchMock();
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
-    const analysisContent = container.querySelector<HTMLElement>(
-      '[data-reader-record-node="sentence-analysis"] [data-reader-record-markdown-content="plate"] p',
+    const analysisBlock = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="sentence-analysis"]',
+    );
+    const analysisToggle = analysisBlock?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="sentence-analysis"]',
+    );
+    expect(analysisBlock).not.toBeNull();
+    expect(analysisToggle).not.toBeNull();
+    if (!analysisBlock || !analysisToggle) {
+      throw new Error("Expected sentence analysis controls");
+    }
+
+    fireEvent.click(analysisToggle);
+    await waitFor(() => {
+      expect(analysisBlock.dataset.readerRecordSentenceAnalysisCollapsed).toBe("false");
+    });
+    const analysisContent = analysisBlock.querySelector<HTMLElement>(
+      '[data-reader-record-markdown-content="plate"] p',
     );
     expect(analysisContent).not.toBeNull();
     if (!analysisContent) {
@@ -4319,33 +4881,36 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actions.dataset.readerRecordSelectionAnalysisId).toBe("analysis_1");
 
     const askButton = await waitForSelectionAction(container, "ask");
-    expect(askButton.disabled).toBe(false);
-    await openAskPanelFromToolbar(askButton);
-
-    const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
-    expect(attachment?.selected_text).toBe("Institutional");
-    expect(attachment?.metadata).toMatchObject({
-      surface_kind: "sentence_analysis",
-      block_type: "reader_sentence_analysis",
-      block_id: "sentence_analysis:analysis_1",
-      anchor_segment_id: "seg_1",
-      unit_id: "unit_1",
-      layer_id: "layer_sentence_analysis_1",
-      analysis_id: "analysis_1",
-      entry_type: "sentence_analysis",
-      chunks: [{ order: 1, label: "subject", text: "Institutional memory" }],
-      source_context: {
-        anchorSegmentId: "seg_1",
-        unitId: "unit_1",
-        sentenceId: "sent_1",
-        sourceText: SOURCE_TEXT,
-      },
-    });
+    const copyButton = await waitForSelectionAction(container, "copy");
+    expect(copyButton.disabled).toBe(false);
+    expect(askButton.disabled).toBe(true);
+    expect(askButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文 Ask");
+    fireEvent.click(askButton);
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/messages/stream"),
+      ),
+    ).toBe(false);
   });
 
   it("keeps sentence analysis chunk selections inside the Plate-managed analysis block", async () => {
     const fetchMock = installReaderAskFetchMock();
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const analysisBlock = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="sentence-analysis"]',
+    );
+    const analysisToggle = analysisBlock?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="sentence-analysis"]',
+    );
+    expect(analysisBlock).not.toBeNull();
+    expect(analysisToggle).not.toBeNull();
+    if (!analysisBlock || !analysisToggle) {
+      throw new Error("Expected sentence analysis controls");
+    }
+    fireEvent.click(analysisToggle);
+    await waitFor(() => {
+      expect(analysisBlock.dataset.readerRecordSentenceAnalysisCollapsed).toBe("false");
+    });
     const chunk = container.querySelector<HTMLElement>(
       '[data-reader-record-sentence-analysis-chunk="subject"]',
     );
@@ -4367,22 +4932,35 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actions.dataset.readerRecordSelectionBlockId).toBe("sentence_analysis:analysis_1");
 
     const askButton = await waitForSelectionAction(container, "ask");
-    expect(askButton.disabled).toBe(false);
-    await openAskPanelFromToolbar(askButton);
-
-    const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
-    expect(attachment?.selected_text).toBe("Institutional");
-    expect(attachment?.metadata).toMatchObject({
-      surface_kind: "sentence_analysis",
-      block_type: "reader_sentence_analysis",
-      block_id: "sentence_analysis:analysis_1",
-      analysis_id: "analysis_1",
-      chunks: [{ order: 1, label: "subject", text: "Institutional memory" }],
-    });
+    const copyButton = await waitForSelectionAction(container, "copy");
+    expect(copyButton.disabled).toBe(false);
+    expect(askButton.disabled).toBe(true);
+    expect(askButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文 Ask");
+    fireEvent.click(askButton);
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/messages/stream"),
+      ),
+    ).toBe(false);
   });
 
   it("activates sentence analysis source overlay only from chunk row hover, focus, or tap", async () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const analysisBlock = container.querySelector<HTMLElement>(
+      '[data-reader-record-node="sentence-analysis"]',
+    );
+    const analysisToggle = analysisBlock?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="sentence-analysis"]',
+    );
+    expect(analysisBlock).not.toBeNull();
+    expect(analysisToggle).not.toBeNull();
+    if (!analysisBlock || !analysisToggle) {
+      throw new Error("Expected sentence analysis controls");
+    }
+    fireEvent.click(analysisToggle);
+    await waitFor(() => {
+      expect(analysisBlock.dataset.readerRecordSentenceAnalysisCollapsed).toBe("false");
+    });
     const chunk = container.querySelector<HTMLElement>(
       '[data-reader-record-sentence-analysis-chunk="subject"]',
     );

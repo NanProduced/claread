@@ -40,6 +40,8 @@ import type {
   ReaderRecordSelectionSourceContext,
 } from "./reader-record-dom-selection";
 
+const READER_CALLOUT_GROUP_TYPE = "reader_callout_group" as const;
+
 function pathsEqual(a: number[], b: number[]): boolean {
   if (a.length !== b.length) return false;
   return a.every((v, i) => v === b[i]);
@@ -66,21 +68,41 @@ type ReaderTopLevelPlateElement =
   | ReaderParagraphElement
   | ReaderBlockquoteElement
   | ReaderCalloutElement
+  | ReaderSentenceAnalysisElement
+  | {
+      type: typeof READER_CALLOUT_GROUP_TYPE;
+      id: string;
+      children: ReaderCalloutElement[];
+    };
+
+type ReaderSelectionBlockElement =
+  | ReaderParagraphElement
+  | ReaderBlockquoteElement
+  | ReaderCalloutElement
   | ReaderSentenceAnalysisElement;
 
-function topLevelBlockForPath(
+function selectionBlockForPath(
   editor: PlateEditor,
   path: number[],
-): ReaderTopLevelPlateElement | null {
+): ReaderSelectionBlockElement | null {
   const topLevelIndex = path[0];
   if (!Number.isInteger(topLevelIndex)) {
     return null;
   }
-  return (
-    (editor.children[topLevelIndex] as unknown as
-      | ReaderTopLevelPlateElement
-      | undefined) ?? null
-  );
+  const topLevelBlock = editor.children[topLevelIndex] as unknown as
+    | ReaderTopLevelPlateElement
+    | undefined;
+  if (!topLevelBlock) {
+    return null;
+  }
+  if (topLevelBlock.type === READER_CALLOUT_GROUP_TYPE) {
+    const childIndex = path[1];
+    if (!Number.isInteger(childIndex)) {
+      return null;
+    }
+    return topLevelBlock.children[childIndex] ?? null;
+  }
+  return topLevelBlock;
 }
 
 function selectedSliceForTextNode(
@@ -215,7 +237,7 @@ function domRectForSelection(
 }
 
 function blockContextForNonSourceSelection(
-  block: ReaderTopLevelPlateElement,
+  block: ReaderSelectionBlockElement,
   selectedText: string,
   snapshot: ReaderPlateSnapshotDto,
 ): ReaderRecordSelectionBlockContext | null {
@@ -317,7 +339,7 @@ export function readReaderRecordSelectionFromEditor(
   const [start, end] = RangeApi.edges(selection);
 
   const topLevelIndexes = new Set(textEntries.map(([, path]) => path[0]));
-  const firstBlock = topLevelBlockForPath(editor, textEntries[0][1]);
+  const firstBlock = selectionBlockForPath(editor, textEntries[0][1]);
 
   // 3. 按 anchor_segment_id 分组，计算每组的选中片段
   const groups = new Map<string, LeafSlice[]>();
@@ -367,7 +389,7 @@ export function readReaderRecordSelectionFromEditor(
 
     const blockContextSlices: string[] = [];
     for (const [node, path] of textEntries) {
-      const block = topLevelBlockForPath(editor, path);
+      const block = selectionBlockForPath(editor, path);
       if (!block || block.id !== firstBlock.id) {
         return null;
       }
@@ -413,7 +435,7 @@ export function readReaderRecordSelectionFromEditor(
   }
 
   const hasNonSourceBlockText = textEntries.some(([, path]) => {
-    const block = topLevelBlockForPath(editor, path);
+    const block = selectionBlockForPath(editor, path);
     return !block || block.type !== READER_PARAGRAPH_TYPE;
   });
   if (hasNonSourceBlockText) {

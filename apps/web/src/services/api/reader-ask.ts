@@ -66,6 +66,43 @@ function toReadingRecordAskMessageRequest(
   };
 }
 
+function toGenericReaderAskAttachmentMetadata(
+  metadata: ReaderAskAttachmentDto["metadata"],
+): Omit<ReaderAskAttachmentDto["metadata"], "reading_record_anchor"> {
+  return {
+    source_surface: metadata.source_surface,
+    entry_action: metadata.entry_action ?? null,
+    record_id: metadata.record_id ?? null,
+    record_title: metadata.record_title ?? null,
+    sentence_id: metadata.sentence_id ?? null,
+    paragraph_id: metadata.paragraph_id ?? null,
+    entry_id: metadata.entry_id ?? null,
+    entry_type: metadata.entry_type ?? null,
+    asset_id: metadata.asset_id ?? null,
+    annotation_type: metadata.annotation_type ?? null,
+    start_offset: metadata.start_offset ?? null,
+    end_offset: metadata.end_offset ?? null,
+    translation_zh: metadata.translation_zh ?? null,
+    note: metadata.note ?? null,
+    title: metadata.title ?? null,
+    query: metadata.query ?? null,
+    lookup_text: metadata.lookup_text ?? null,
+    visual_tone: metadata.visual_tone ?? null,
+  };
+}
+
+function toGenericReaderAskMessageRequest(
+  body: ReaderAskMessageStreamRequestDto,
+): ReaderAskMessageStreamRequestDto {
+  return {
+    ...body,
+    attachments: body.attachments.map((attachment) => ({
+      ...attachment,
+      metadata: toGenericReaderAskAttachmentMetadata(attachment.metadata),
+    })),
+  };
+}
+
 export function listUpstreamReaderAskThreads(
   recordId: string,
   sessionToken: string,
@@ -243,7 +280,7 @@ export async function createUpstreamReaderAskStream(
       authorization: `Bearer ${sessionToken}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(toGenericReaderAskMessageRequest(body)),
     cache: "no-store",
   });
 }

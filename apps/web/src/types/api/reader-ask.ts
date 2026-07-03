@@ -137,17 +137,8 @@ export interface ReaderAskAttachmentMetadataDto {
   query?: string | null;
   lookup_text?: string | null;
   visual_tone?: string | null;
+  /** BFF-only field used by Reading Record Ask routes; never forwarded to generic Reader Ask upstream. */
   reading_record_anchor?: Record<string, unknown> | null;
-  surface_kind?: string | null;
-  block_type?: string | null;
-  block_id?: string | null;
-  anchor_segment_id?: string | null;
-  unit_id?: string | null;
-  layer_id?: string | null;
-  analysis_id?: string | null;
-  supplement_id?: string | null;
-  source_context?: Record<string, unknown> | null;
-  chunks?: Array<{ order: number; label: string; text: string }> | null;
 }
 
 export interface ReaderAskAttachmentDto {

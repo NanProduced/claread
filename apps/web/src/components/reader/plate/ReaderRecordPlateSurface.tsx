@@ -7,6 +7,7 @@ import {
 } from "@claread/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  ClipboardEvent as ReactClipboardEvent,
   CSSProperties,
   HTMLAttributes,
   MouseEvent,
@@ -87,8 +88,11 @@ import {
   sentenceChunkDomId,
 } from "@/components/editor/plugins/reader-leaf-kit";
 import {
+  READER_CALLOUT_GROUP_TYPE,
+  ReaderCalloutActionContext,
   ReaderGrammarInteractionContext,
   ReaderSentenceAnalysisInteractionContext,
+  type ReaderCalloutActionTarget,
 } from "@/components/editor/plugins/reader-blocks-kit";
 import {
   CommentPluginBridge,
@@ -97,7 +101,9 @@ import {
 } from "@/components/reader/plate/InlineCommentPanel";
 import { SelectionAnchorBridge } from "@/components/reader/plate/SelectionAnchorBridge";
 import {
+  READER_CALLOUT_TYPE,
   projectReaderRecordPlateToPlateValue,
+  type ReaderCalloutElement,
   type PlateTextNode,
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
 
@@ -203,7 +209,7 @@ function canCopySelection(
 function canAskSelection(
   selection: ReaderRecordSelectionAnchorBridgeResult | null,
 ): boolean {
-  return Boolean(singleRangeDraft(selection) || hasNonSourceDocumentSelection(selection));
+  return Boolean(singleRangeDraft(selection));
 }
 
 function sourceOnlyDisabledReason(
@@ -417,6 +423,90 @@ function hasNonCollapsedReaderSelection(
     return true;
   }
   return !domSelection.isCollapsed && domSelection.toString().trim().length > 0;
+}
+
+const READER_RECORD_COPY_EXCLUDE_SELECTOR =
+  '[data-reader-record-copy-exclude="true"], [hidden], svg[aria-hidden="true"]';
+
+function normalizedClipboardTextFromElement(element: HTMLElement): string {
+  return (element.textContent ?? "")
+    .replace(/\u200B/g, "")
+    .replace(/[ \t\r\f\v]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function sanitizedSelectionClipboardPayload(
+  root: HTMLElement,
+): { text: string; html: string } | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return null;
+  }
+
+  const range = selection.getRangeAt(0);
+  const commonAncestor =
+    range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+      ? (range.commonAncestorContainer as Element)
+      : range.commonAncestorContainer.parentElement;
+  if (!commonAncestor || !root.contains(commonAncestor)) {
+    return null;
+  }
+
+  const container = document.createElement("div");
+  container.appendChild(range.cloneContents());
+  container
+    .querySelectorAll(READER_RECORD_COPY_EXCLUDE_SELECTOR)
+    .forEach((node) => node.remove());
+
+  const text = normalizedClipboardTextFromElement(container);
+  if (!text) {
+    return null;
+  }
+  return {
+    text,
+    html: container.innerHTML,
+  };
+}
+
+function isGrammarCalloutElement(value: unknown): value is ReaderCalloutElement {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as { type?: unknown; variant?: unknown };
+  return candidate.type === READER_CALLOUT_TYPE && candidate.variant === "grammar";
+}
+
+function groupConsecutiveGrammarCallouts(nodes: unknown[]): unknown[] {
+  const grouped: unknown[] = [];
+  let pending: ReaderCalloutElement[] = [];
+
+  function flushPending() {
+    if (pending.length === 0) {
+      return;
+    }
+    const first = pending[0];
+    grouped.push({
+      type: READER_CALLOUT_GROUP_TYPE,
+      id: `callout-group:${first.data.unitId}:${first.data.anchorSegmentId}:${grouped.length}`,
+      children: pending,
+    });
+    pending = [];
+  }
+
+  nodes.forEach((node) => {
+    if (isGrammarCalloutElement(node)) {
+      pending.push(node);
+      return;
+    }
+    flushPending();
+    grouped.push(node);
+  });
+  flushPending();
+
+  return grouped;
 }
 
 function userNoteMarksFromLeaf(
@@ -1415,6 +1505,8 @@ export function ReaderRecordPlateSurface({
     useState<ReaderStructuredInspectIntent | null>(null);
   const [activeSentenceChunkId, setActiveSentenceChunkId] = useState<string | null>(null);
   const [activeGrammarItemId, setActiveGrammarItemId] = useState<string | null>(null);
+  const [grammarExpandRequest, setGrammarExpandRequest] =
+    useState<{ itemId: string; requestId: number } | null>(null);
   const [hoverNoteAssetId, setHoverNoteAssetId] = useState<string | null>(null);
   const [noteMenu, setNoteMenu] = useState<{
     mark: ReaderRecordPlateUserNoteMark;
@@ -1423,6 +1515,7 @@ export function ReaderRecordPlateSurface({
     draft: string;
   } | null>(null);
   const grammarPulseTimerRef = useRef<number | null>(null);
+  const grammarExpandRequestIdRef = useRef(0);
   const leafClickResolverRef = useRef<ReaderLeafClickResolver | null>(null);
   const markPointerRef = useRef<{
     pointerId: number;
@@ -1539,10 +1632,12 @@ export function ReaderRecordPlateSurface({
   // visibleBlocks 过滤在 projection 层完成，保证 editor 只渲染当前 surfaceMode 需要的 blocks。
   const plateValue = useMemo(
     () =>
-      projectReaderRecordPlateToPlateValue({
-        ...plateDocument,
-        children: visibleBlocks,
-      }),
+      groupConsecutiveGrammarCallouts(
+        projectReaderRecordPlateToPlateValue({
+          ...plateDocument,
+          children: visibleBlocks,
+        }),
+      ),
     [plateDocument, visibleBlocks],
   );
   const editor = usePlateEditor(
@@ -1969,7 +2064,7 @@ export function ReaderRecordPlateSurface({
   const [feedbackState, setFeedbackState] = useState<SaveState>({ kind: "idle" });
   const [feedbackTarget, setFeedbackTarget] = useState<{
     blockId: string;
-    variant: "grammar" | "supplement" | "vocabulary";
+    variant: "grammar" | "supplement" | "vocabulary" | "sentence_analysis";
     feedbackScope: "annotation" | "dictionary";
     analysisRecordId?: string;
     anchorSegmentId: string;
@@ -2232,6 +2327,21 @@ export function ReaderRecordPlateSurface({
     }
   }, [activeSelection]);
 
+  const handleDocumentCopyCapture = useCallback(
+    (event: ReactClipboardEvent<HTMLElement>) => {
+      const payload = sanitizedSelectionClipboardPayload(event.currentTarget);
+      if (!payload) {
+        return;
+      }
+      event.preventDefault();
+      event.clipboardData.setData("text/plain", payload.text);
+      if (payload.html) {
+        event.clipboardData.setData("text/html", payload.html);
+      }
+    },
+    [],
+  );
+
   const handleLookup = useCallback(async () => {
     const selection = activeSelection;
     const draft = singleRangeDraft(selection);
@@ -2406,48 +2516,11 @@ export function ReaderRecordPlateSurface({
       };
     }
 
-    if (!hasNonSourceDocumentSelection(selection)) {
+    if (hasNonSourceDocumentSelection(selection)) {
       return null;
     }
 
-    const context = selection.blockContext;
-    const subtype: ReaderAskAttachment["subtype"] =
-      context.surfaceKind === "translation"
-        ? "translation"
-        : context.surfaceKind === "sentence_analysis"
-          ? "sentence_analysis"
-          : context.surfaceKind === "supplement_callout"
-            ? "supplement_ref"
-            : "grammar_note";
-
-    return {
-      kind: "text_selection",
-      subtype,
-      label: selection.selectedText,
-      selectedText: selection.selectedText,
-      targetKey: context.blockId,
-      metadata: {
-        pageIdentity: askPageIdentity,
-        sourceSurface: "selection_toolbar",
-        entryAction: "ask_about_this",
-        surfaceKind: context.surfaceKind,
-        blockType: context.blockType,
-        blockId: context.blockId,
-        anchorSegmentId: context.anchorSegmentId,
-        unitId: context.unitId,
-        layerId: context.layerId,
-        analysisId: context.analysisId,
-        supplementId: context.supplementId,
-        sourceContext: context.source as Record<string, unknown> | undefined,
-        chunks: context.chunks,
-        sentenceId: context.source?.sentenceId ?? null,
-        paragraphId: context.unitId ?? context.source?.unitId ?? null,
-        entryId: context.analysisId ?? context.supplementId ?? context.blockId,
-        entryType: subtype,
-        translationZh:
-          context.surfaceKind === "translation" ? selection.selectedText : null,
-      },
-    };
+    return null;
   }, [activeSelection, askPageIdentity, snapshot.record_id]);
 
   const openDictionaryRail = useCallback(() => {
@@ -2579,6 +2652,27 @@ export function ReaderRecordPlateSurface({
       },
     });
   }, [askPageIdentity, noteMenu, openAskPanel, snapshot.record.generation, snapshot.record_id]);
+
+  const handleFeedbackFromCallout = useCallback(
+    (target: ReaderCalloutActionTarget, anchor: HTMLElement) => {
+      if (target.kind !== "sentence_analysis" || !target.analysisId) {
+        return;
+      }
+      feedbackFloating.refs.setReference({
+        getBoundingClientRect: () => anchor.getBoundingClientRect(),
+      });
+      setFeedbackTarget({
+        blockId: target.blockId,
+        variant: "sentence_analysis",
+        feedbackScope: "annotation",
+        analysisRecordId: target.analysisId,
+        anchorSegmentId: target.anchorSegmentId,
+        title: target.title,
+        annotationType: "sentence_analysis",
+      });
+    },
+    [feedbackFloating.refs],
+  );
 
   const handleRequestAI = useCallback(() => {
     openAskPanel(currentAskSelectionAttachment);
@@ -3280,6 +3374,14 @@ export function ReaderRecordPlateSurface({
     }, 1600);
   }, []);
 
+  const requestExpandGrammarItem = useCallback((itemId: string) => {
+    grammarExpandRequestIdRef.current += 1;
+    setGrammarExpandRequest({
+      itemId,
+      requestId: grammarExpandRequestIdRef.current,
+    });
+  }, []);
+
   const handleActivateGrammar = useCallback(
     (mark: ReaderRecordPlateGrammarMark) => {
       if (hasNonCollapsedNativeSelection()) {
@@ -3289,6 +3391,7 @@ export function ReaderRecordPlateSurface({
       setInspectState(null);
       quickPeekAnchorRef.current = null;
       setActiveGrammarItemId(mark.itemId);
+      requestExpandGrammarItem(mark.itemId);
 
       const callout = surfaceRef.current?.querySelector<HTMLElement>(
         `[data-callout-variant="grammar"]${dataAttributeEqualsSelector(
@@ -3301,7 +3404,7 @@ export function ReaderRecordPlateSurface({
         callout.focus({ preventScroll: true });
       }
     },
-    [],
+    [requestExpandGrammarItem],
   );
 
   const handleLeafClickIntent = useCallback<ReaderLeafClickResolver>(
@@ -3361,10 +3464,24 @@ export function ReaderRecordPlateSurface({
   const grammarInteraction = useMemo(
     () => ({
       activeGrammarItemId,
+      expandGrammarItemRequest: grammarExpandRequest,
       setActiveGrammarItemId,
       pulseGrammarItemId,
+      requestExpandGrammarItem,
     }),
-    [activeGrammarItemId, pulseGrammarItemId],
+    [
+      activeGrammarItemId,
+      grammarExpandRequest,
+      pulseGrammarItemId,
+      requestExpandGrammarItem,
+    ],
+  );
+
+  const calloutActions = useMemo(
+    () => ({
+      onFeedbackFromCallout: handleFeedbackFromCallout,
+    }),
+    [handleFeedbackFromCallout],
   );
 
   const toolbarActionState = useMemo<ReaderToolbarActions["state"]>(() => {
@@ -3384,6 +3501,8 @@ export function ReaderRecordPlateSurface({
       ? "请选择稳定原文后再操作"
       : hasSourceMultiTextSelection(activeSelection)
         ? "跨句选区暂不支持 Ask"
+      : activeSelection.surfaceKind !== "source"
+        ? "当前仅支持原文 Ask"
       : askReady
         ? undefined
         : "暂不支持跨段或非稳定原文选区";
@@ -3765,53 +3884,56 @@ export function ReaderRecordPlateSurface({
           </ReaderFloatingSurface>
         ) : null}
         <ReaderGrammarInteractionContext.Provider value={grammarInteraction}>
-          <ReaderSentenceAnalysisInteractionContext.Provider
-            value={sentenceAnalysisInteraction}
-          >
-            <ReaderToolbarActionsProvider value={toolbarActions}>
-              <Plate editor={editor} readOnly>
-                <CommentPluginBridge
-                  apiRef={commentApiRef}
-                  onReadyChange={setCommentApiReady}
-                />
-                <SelectionAnchorBridge
-                  snapshot={snapshot}
-                  onChange={handleSelectionChange}
-                />
-                <EditorContainer
-                  className={`reader-record-plate-document reader-record-plate-document--notion px-0 py-0 outline-none cursor-default overflow-visible bg-transparent ${readingClassName} ${typography.bodyClassName} ${typography.paragraphDensityClassName}`.trim()}
-                  data-reader-record-mode={surfaceMode}
-                >
-                  <Editor readOnly disableDefaultStyles renderLeaf={renderLeaf as never} />
-                </EditorContainer>
-                <InlineCommentPanel
-                  draftText={noteDraft}
-                  draftQuoteText={noteAnchorDraft?.selected_text ?? null}
-                  onDraftTextChange={setNoteDraft}
-                  onSaveDraft={handleSaveNote}
-                  onCancelDraft={handleCancelNote}
-                  duplicateNote={duplicateNoteForDraft}
-                  duplicateAcknowledged={noteDuplicateAcknowledged}
-                  onViewDuplicateNote={handleViewDuplicateNote}
-                  onContinueDuplicateNote={handleContinueDuplicateNote}
-                  activeNote={noteMenu?.mark ?? null}
-                  noteEditMode={noteMenu?.mode ?? "view"}
-                  noteEditDraft={noteMenu?.draft ?? ""}
-                  onNoteEditDraftChange={handleNoteEditDraftChange}
-                  onStartEditNote={handleStartEditNote}
-                  onCancelEditNote={handleCancelEditNote}
-                  onSaveNoteEdit={handleSaveNoteEdit}
-                  onDeleteNote={handleDeleteNote}
-                  onAskFromNote={handleAskFromNote}
-                  isSaving={commentIsSaving}
-                  statusMessage={commentStatusMessage}
-                onClose={handleCloseCommentPanel}
-                floatingRef={commentFloating.refs.setFloating}
-                floatingStyles={commentFloating.floatingStyles as CSSProperties}
-              />
-              </Plate>
-            </ReaderToolbarActionsProvider>
-          </ReaderSentenceAnalysisInteractionContext.Provider>
+          <ReaderCalloutActionContext.Provider value={calloutActions}>
+            <ReaderSentenceAnalysisInteractionContext.Provider
+              value={sentenceAnalysisInteraction}
+            >
+              <ReaderToolbarActionsProvider value={toolbarActions}>
+                <Plate editor={editor} readOnly>
+                  <CommentPluginBridge
+                    apiRef={commentApiRef}
+                    onReadyChange={setCommentApiReady}
+                  />
+                  <SelectionAnchorBridge
+                    snapshot={snapshot}
+                    onChange={handleSelectionChange}
+                  />
+                  <EditorContainer
+                    className={`reader-record-plate-document reader-record-plate-document--notion px-0 py-0 outline-none cursor-default overflow-visible bg-transparent ${readingClassName} ${typography.bodyClassName} ${typography.paragraphDensityClassName}`.trim()}
+                    data-reader-record-mode={surfaceMode}
+                    onCopyCapture={handleDocumentCopyCapture}
+                  >
+                    <Editor readOnly disableDefaultStyles renderLeaf={renderLeaf as never} />
+                  </EditorContainer>
+                  <InlineCommentPanel
+                    draftText={noteDraft}
+                    draftQuoteText={noteAnchorDraft?.selected_text ?? null}
+                    onDraftTextChange={setNoteDraft}
+                    onSaveDraft={handleSaveNote}
+                    onCancelDraft={handleCancelNote}
+                    duplicateNote={duplicateNoteForDraft}
+                    duplicateAcknowledged={noteDuplicateAcknowledged}
+                    onViewDuplicateNote={handleViewDuplicateNote}
+                    onContinueDuplicateNote={handleContinueDuplicateNote}
+                    activeNote={noteMenu?.mark ?? null}
+                    noteEditMode={noteMenu?.mode ?? "view"}
+                    noteEditDraft={noteMenu?.draft ?? ""}
+                    onNoteEditDraftChange={handleNoteEditDraftChange}
+                    onStartEditNote={handleStartEditNote}
+                    onCancelEditNote={handleCancelEditNote}
+                    onSaveNoteEdit={handleSaveNoteEdit}
+                    onDeleteNote={handleDeleteNote}
+                    onAskFromNote={handleAskFromNote}
+                    isSaving={commentIsSaving}
+                    statusMessage={commentStatusMessage}
+                    onClose={handleCloseCommentPanel}
+                    floatingRef={commentFloating.refs.setFloating}
+                    floatingStyles={commentFloating.floatingStyles as CSSProperties}
+                  />
+                </Plate>
+              </ReaderToolbarActionsProvider>
+            </ReaderSentenceAnalysisInteractionContext.Provider>
+          </ReaderCalloutActionContext.Provider>
         </ReaderGrammarInteractionContext.Provider>
         {feedbackState.kind !== "idle" ? (
           <div

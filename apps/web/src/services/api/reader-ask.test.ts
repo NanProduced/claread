@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { createUpstreamReadingRecordAskStream } from "./reader-ask";
+import {
+  createUpstreamReaderAskStream,
+  createUpstreamReadingRecordAskStream,
+} from "./reader-ask";
 
 describe("reader-ask API transport", () => {
   beforeEach(() => {
@@ -102,6 +105,93 @@ describe("reader-ask API transport", () => {
         text_hash: "9fd7545a",
         hash_algorithm: "fnv1a32-utf16",
       },
+    });
+  });
+
+  it("strips BFF-only and stale metadata before forwarding generic Reader Ask", async () => {
+    await createUpstreamReaderAskStream(
+      "thread-1",
+      {
+        content: "Explain this",
+        entry_action: "ask_about_this",
+        model: "ask-fast",
+        page_identity: {
+          record_id: "reader-record-1",
+          title: "Reading Record",
+          surface: "reader",
+          source: "reader_2_0",
+          available_context_capabilities: ["record_context"],
+          has_article_overview: false,
+          has_sentence_entries: true,
+          has_annotations: true,
+          has_reader_notes: false,
+        },
+        attachments: [
+          {
+            kind: "text_selection",
+            subtype: "text_range",
+            label: "memory",
+            selected_text: "memory",
+            target_key: "record:reader-record-1:range:sent-1",
+            anchor_payload: {
+              anchor_type: "text_range",
+              target_key: "record:reader-record-1:range:sent-1",
+              record_id: "reader-record-1",
+              paragraph_id: "unit-1",
+              sentence_id: "sent-1",
+              selected_text: "memory",
+              start_offset: 0,
+              end_offset: 6,
+              text_hash: "9fd7545a",
+              segments: [],
+            },
+            metadata: {
+              source_surface: "selection_toolbar",
+              entry_action: "ask_about_this",
+              reading_record_anchor: { record_id: "reader-record-1" },
+              surface_kind: "source",
+              block_type: "reader_paragraph",
+              block_id: "paragraph:seg-1",
+              anchor_segment_id: "seg-1",
+              unit_id: "unit-1",
+              layer_id: "layer-1",
+              analysis_id: "analysis-1",
+              source_context: { sourceText: "memory" },
+              chunks: [{ order: 1, label: "subject", text: "memory" }],
+            } as never,
+          },
+        ],
+      },
+      "session-token",
+    );
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = vi.mocked(global.fetch).mock.calls[0] ?? [];
+    expect(String(url)).toBe(
+      "http://api.example.test/reader-ask/threads/thread-1/messages/stream",
+    );
+    const body = JSON.parse(String(init?.body)) as {
+      attachments: Array<{ metadata: Record<string, unknown> }>;
+    };
+    expect(body.attachments[0]?.metadata).toEqual({
+      source_surface: "selection_toolbar",
+      entry_action: "ask_about_this",
+      record_id: null,
+      record_title: null,
+      sentence_id: null,
+      paragraph_id: null,
+      entry_id: null,
+      entry_type: null,
+      asset_id: null,
+      annotation_type: null,
+      start_offset: null,
+      end_offset: null,
+      translation_zh: null,
+      note: null,
+      title: null,
+      query: null,
+      lookup_text: null,
+      visual_tone: null,
     });
   });
 });

@@ -13,6 +13,13 @@
 import * as React from "react";
 import { createContext, useContext } from "react";
 import {
+  ChevronDown,
+  ChevronUp,
+  Flag,
+  MessageCircleQuestion,
+  WandSparkles,
+} from "lucide-react";
+import {
   createPlatePlugin,
   type PlateElementProps,
   type PlateLeafProps,
@@ -33,6 +40,8 @@ import {
   READER_SENTENCE_ANALYSIS_CHUNKS_TYPE,
   READER_SENTENCE_ANALYSIS_TYPE,
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
+
+export const READER_CALLOUT_GROUP_TYPE = "reader_callout_group" as const;
 
 function classNames(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -55,19 +64,82 @@ function useReaderSentenceAnalysisInteraction() {
 
 export interface ReaderGrammarInteractionValue {
   activeGrammarItemId: string | null;
+  expandGrammarItemRequest: { itemId: string; requestId: number } | null;
   setActiveGrammarItemId: (itemId: string | null) => void;
   pulseGrammarItemId: (itemId: string) => void;
+  requestExpandGrammarItem: (itemId: string) => void;
 }
 
 export const ReaderGrammarInteractionContext =
   createContext<ReaderGrammarInteractionValue>({
     activeGrammarItemId: null,
+    expandGrammarItemRequest: null,
     setActiveGrammarItemId: () => {},
     pulseGrammarItemId: () => {},
+    requestExpandGrammarItem: () => {},
   });
 
 function useReaderGrammarInteraction() {
   return useContext(ReaderGrammarInteractionContext);
+}
+
+export interface ReaderCalloutActionTarget {
+  kind: "grammar" | "sentence_analysis";
+  blockId: string;
+  anchorSegmentId: string;
+  unitId: string;
+  layerId: string;
+  itemId?: string;
+  analysisId?: string;
+  title: string;
+  preview: string;
+  text: string;
+}
+
+export interface ReaderCalloutActionValue {
+  onAskFromCallout?: (
+    target: ReaderCalloutActionTarget,
+    anchor: HTMLElement,
+  ) => void;
+  onFeedbackFromCallout?: (
+    target: ReaderCalloutActionTarget,
+    anchor: HTMLElement,
+  ) => void;
+}
+
+export const ReaderCalloutActionContext =
+  createContext<ReaderCalloutActionValue>({});
+
+function useReaderCalloutActions() {
+  return useContext(ReaderCalloutActionContext);
+}
+
+interface ReaderGrammarCalloutGroupElement {
+  type: typeof READER_CALLOUT_GROUP_TYPE;
+  id: string;
+  children: ReaderCalloutElement[];
+}
+
+interface ReaderGrammarCalloutGroupValue {
+  expandedItemIds: ReadonlySet<string>;
+  expandItem: (itemId: string) => void;
+  toggleItem: (itemId: string) => void;
+}
+
+const ReaderGrammarCalloutGroupContext =
+  createContext<ReaderGrammarCalloutGroupValue | null>(null);
+
+const copyExcludeProps = {
+  contentEditable: false,
+  draggable: false,
+  "data-reader-record-copy-exclude": "true",
+} as const;
+
+function stopReaderCalloutControlEvent(
+  event: React.SyntheticEvent<HTMLElement>,
+) {
+  event.preventDefault();
+  event.stopPropagation();
 }
 
 function sentenceChunkDomId(chunk: {
@@ -106,6 +178,177 @@ function sentenceChunkDescription(label: string): string {
 
 function calloutTypeLabel(variant: ReaderCalloutElement["variant"]): string {
   return variant === "grammar" ? "语法解析" : "补充说明";
+}
+
+function domIdFromBlockId(prefix: string, id: string): string {
+  return `${prefix}-${id.replace(/[^a-zA-Z0-9_-]+/g, "-")}`;
+}
+
+function textFromNode(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(textFromNode).join(" ");
+  }
+  if (value && typeof value === "object") {
+    const record = value as { text?: unknown; children?: unknown };
+    if (typeof record.text === "string") {
+      return record.text;
+    }
+    return textFromNode(record.children);
+  }
+  return "";
+}
+
+function stripMarkdownPreviewSyntax(value: string): string {
+  return value
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[>#]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function compactPreviewFromText(value: string, maxLength = 96): string {
+  const normalized = stripMarkdownPreviewSyntax(value);
+  if (!normalized) {
+    return "";
+  }
+  const sentenceBoundary = normalized.search(/[.!?。！？；;]/);
+  const firstSentence =
+    sentenceBoundary >= 12 && sentenceBoundary < maxLength
+      ? normalized.slice(0, sentenceBoundary + 1)
+      : normalized;
+  if (firstSentence.length <= maxLength) {
+    return firstSentence;
+  }
+  return `${firstSentence.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function compactPreviewFromMarkdown(value: string, maxLength = 96): string {
+  const paragraphs = value
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => !part.startsWith("```"))
+    .filter((part) => !/^#{1,6}\s+/.test(part));
+  return compactPreviewFromText(paragraphs[0] ?? value, maxLength);
+}
+
+function previewCandidateTexts(value: unknown, output: string[] = []): string[] {
+  if (!value || typeof value !== "object") {
+    return output;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((child) => previewCandidateTexts(child, output));
+    return output;
+  }
+  const record = value as { type?: unknown; children?: unknown; text?: unknown };
+  if (typeof record.text === "string") {
+    return output;
+  }
+  const type = typeof record.type === "string" ? record.type : "";
+  const normalized = textFromNode(record.children).replace(/\s+/g, " ").trim();
+  if (
+    normalized &&
+    (type.includes("paragraph") ||
+      type === "p" ||
+      type.includes("blockquote") ||
+      type.includes("li"))
+  ) {
+    output.push(normalized);
+  }
+  previewCandidateTexts(record.children, output);
+  return output;
+}
+
+function compactPreviewFromChildren(children: unknown, maxLength = 96): string {
+  const firstBlock = previewCandidateTexts(children)[0];
+  const normalized = firstBlock
+    ? compactPreviewFromText(firstBlock, maxLength)
+    : compactPreviewFromText(textFromNode(children), maxLength);
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function ReaderCalloutActionButtons({
+  target,
+  askDisabled = false,
+  feedbackDisabled = false,
+}: {
+  target: ReaderCalloutActionTarget;
+  askDisabled?: boolean;
+  feedbackDisabled?: boolean;
+}) {
+  const { onAskFromCallout, onFeedbackFromCallout } = useReaderCalloutActions();
+  const askUnavailable = askDisabled || !target.text.trim() || !onAskFromCallout;
+  const feedbackUnavailable = feedbackDisabled || !onFeedbackFromCallout;
+
+  return (
+    <div
+      className="reader-record-plate-callout-actions"
+      data-reader-record-callout-actions={target.kind}
+      {...copyExcludeProps}
+    >
+      <button
+        type="button"
+        className="reader-record-plate-callout-icon-button"
+        aria-label="带这条解析提问"
+        title={
+          askUnavailable
+            ? "当前解析暂不能加入 Ask Claread"
+            : "带这条解析提问"
+        }
+        disabled={askUnavailable}
+        data-reader-record-callout-action="ask"
+        {...copyExcludeProps}
+        onPointerDown={stopReaderCalloutControlEvent}
+        onMouseDown={stopReaderCalloutControlEvent}
+        onClick={(event) => {
+          stopReaderCalloutControlEvent(event);
+          if (!askUnavailable) {
+            onAskFromCallout?.(target, event.currentTarget);
+          }
+        }}
+      >
+        <MessageCircleQuestion aria-hidden="true" size={15} strokeWidth={1.9} />
+      </button>
+      <button
+        type="button"
+        className="reader-record-plate-callout-icon-button"
+        aria-label="反馈解析"
+        title={
+          feedbackUnavailable
+            ? "当前解析缺少可反馈的记录 ID"
+            : "反馈解析"
+        }
+        disabled={feedbackUnavailable}
+        data-reader-record-callout-action="feedback"
+        {...copyExcludeProps}
+        onPointerDown={stopReaderCalloutControlEvent}
+        onMouseDown={stopReaderCalloutControlEvent}
+        onClick={(event) => {
+          stopReaderCalloutControlEvent(event);
+          if (!feedbackUnavailable) {
+            onFeedbackFromCallout?.(target, event.currentTarget);
+          }
+        }}
+      >
+        <Flag aria-hidden="true" size={15} strokeWidth={1.9} />
+      </button>
+    </div>
+  );
 }
 
 // --- Paragraph element ---
@@ -177,6 +420,82 @@ export const ReaderBlockquotePlugin = createPlatePlugin({
 
 // --- Callout element ---
 
+function ReaderCalloutGroupComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const node = element as unknown as ReaderGrammarCalloutGroupElement;
+  const [expandedItemIds, setExpandedItemIds] = React.useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const calloutCount = node.children.length;
+  const expandItem = React.useCallback((itemId: string) => {
+    setExpandedItemIds((current) => {
+      if (current.has(itemId)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(itemId);
+      return next;
+    });
+  }, []);
+  const toggleItem = React.useCallback((itemId: string) => {
+    setExpandedItemIds((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  }, []);
+  const contextValue = React.useMemo(
+    () => ({ expandedItemIds, expandItem, toggleItem }),
+    [expandItem, expandedItemIds, toggleItem],
+  );
+
+  return (
+    <section
+      {...attributes}
+      className={`reader-record-plate-callout-group reader-record-plate-callout-group--grammar font-sans text-ink-soft ${
+        attributes?.className ?? ""
+      }`.trim()}
+      role="group"
+      aria-label={`语法解析 · ${calloutCount} 条`}
+      data-reader-record-node="callout-group"
+      data-reader-record-callout-group="grammar"
+      data-reader-record-callout-group-count={calloutCount}
+      data-reader-record-block-id={node.id}
+    >
+      <div className="reader-record-plate-callout-group-header">
+        <span
+          className="reader-record-plate-callout-group-icon"
+          aria-hidden="true"
+          {...copyExcludeProps}
+        >
+          <WandSparkles size={15} strokeWidth={1.8} />
+        </span>
+        <span className="reader-record-plate-callout-group-label">
+          语法解析 · {calloutCount} 条
+        </span>
+      </div>
+      <ReaderGrammarCalloutGroupContext.Provider value={contextValue}>
+        <div className="reader-record-plate-callout-group-rows">{children}</div>
+      </ReaderGrammarCalloutGroupContext.Provider>
+    </section>
+  );
+}
+
+export const ReaderCalloutGroupPlugin = createPlatePlugin({
+  key: READER_CALLOUT_GROUP_TYPE,
+  node: {
+    isElement: true,
+    component: ReaderCalloutGroupComponent,
+  },
+});
+
 function ReaderCalloutComponent({
   children,
   element,
@@ -188,19 +507,24 @@ function ReaderCalloutComponent({
   const icon = node.icon;
   const {
     activeGrammarItemId,
+    expandGrammarItemRequest,
     setActiveGrammarItemId,
     pulseGrammarItemId,
   } = useReaderGrammarInteraction();
+  const groupContext = useContext(ReaderGrammarCalloutGroupContext);
 
   const isGrammar = variant === "grammar";
   const isSupplement = variant === "supplement";
+  const isGroupedGrammar = isGrammar && groupContext !== null;
   const grammarItemId = isGrammar ? data?.itemId : undefined;
   const grammarActive =
     isGrammar && grammarItemId ? activeGrammarItemId === grammarItemId : false;
   const label = calloutTypeLabel(variant);
   const containerClass = [
     "reader-record-plate-callout rounded-[8px] border font-sans text-ink-soft shadow-none",
-    isGrammar
+    isGroupedGrammar
+      ? "reader-record-plate-callout--grammar-row"
+      : isGrammar
       ? "reader-record-plate-callout--grammar border-grammar-violet/18 bg-ink/[0.035]"
       : "",
     grammarActive ? "reader-record-plate-callout--grammar-active" : "",
@@ -217,6 +541,66 @@ function ReaderCalloutComponent({
   const title = isGrammar
     ? data?.grammarPoint ?? ""
     : data?.supplementTitle ?? "";
+  const [localExpanded, setLocalExpanded] = React.useState(!isGrammar);
+  const contentId = domIdFromBlockId("reader-record-callout-content", node.id);
+  const preview =
+    isGrammar && data?.note
+      ? compactPreviewFromMarkdown(data.note)
+      : compactPreviewFromChildren(node.children);
+  const fullText = textFromNode(node.children).replace(/\s+/g, " ").trim();
+  const expanded = isGroupedGrammar
+    ? grammarItemId !== undefined && groupContext.expandedItemIds.has(grammarItemId)
+    : localExpanded;
+  const toggleExpanded = React.useCallback(() => {
+    if (isGroupedGrammar && grammarItemId) {
+      groupContext.toggleItem(grammarItemId);
+      return;
+    }
+    setLocalExpanded((current) => !current);
+  }, [grammarItemId, groupContext, isGroupedGrammar]);
+  const actionTarget: ReaderCalloutActionTarget | null = isGrammar
+    ? {
+        kind: "grammar",
+        blockId: node.id,
+        anchorSegmentId: data?.anchorSegmentId ?? "",
+        unitId: data?.unitId ?? "",
+        layerId: data?.layerId ?? "",
+        itemId: grammarItemId,
+        title: title || label,
+        preview,
+        text: fullText,
+      }
+    : null;
+  const handledExpandGrammarRequestIdRef = React.useRef<number | null>(null);
+
+  React.useEffect(() => {
+    if (!isGrammar || !grammarItemId || !expandGrammarItemRequest) {
+      return;
+    }
+    if (expandGrammarItemRequest.itemId !== grammarItemId) {
+      return;
+    }
+    if (
+      handledExpandGrammarRequestIdRef.current ===
+      expandGrammarItemRequest.requestId
+    ) {
+      return;
+    }
+    handledExpandGrammarRequestIdRef.current = expandGrammarItemRequest.requestId;
+
+    if (isGroupedGrammar) {
+      groupContext.expandItem(grammarItemId);
+    } else {
+      setLocalExpanded(true);
+    }
+  }, [
+    expandGrammarItemRequest?.itemId,
+    expandGrammarItemRequest?.requestId,
+    grammarItemId,
+    groupContext,
+    isGroupedGrammar,
+    isGrammar,
+  ]);
 
   return (
     <div
@@ -234,6 +618,8 @@ function ReaderCalloutComponent({
       data-reader-record-grammar-item-id={grammarItemId}
       data-reader-record-grammar-active={grammarActive ? "true" : undefined}
       data-reader-record-callout-label={label}
+      data-reader-record-callout-collapsed={expanded ? "false" : "true"}
+      data-reader-record-callout-row={isGroupedGrammar ? "grammar" : undefined}
       tabIndex={isGrammar ? -1 : undefined}
       onMouseEnter={() => {
         if (grammarItemId) {
@@ -262,27 +648,81 @@ function ReaderCalloutComponent({
       }}
     >
       <div className="min-w-0">
-        <div className="mb-1.5 flex min-w-0 items-start gap-2">
+        <div className="reader-record-plate-callout-header mb-1.5 flex min-w-0 items-start gap-2">
           <span
             className={`reader-record-plate-note-icon mt-0.5 leading-none ${eyebrowClass}`}
             aria-hidden="true"
+            {...copyExcludeProps}
           >
             {icon}
           </span>
-          <div className="min-w-0">
+          <div className="reader-record-plate-callout-heading min-w-0">
             <div className={`reader-record-plate-label ${eyebrowClass}`}>
               {label}
             </div>
-            {title ? (
-              <div className="reader-record-plate-note-title mt-0.5 min-w-0 text-ink/90">
-                {title}
-              </div>
-            ) : null}
+            <div className="reader-record-plate-callout-title-line">
+              {title ? (
+                <div
+                  className="reader-record-plate-note-title reader-record-plate-callout-title mt-0.5 min-w-0 text-ink/90"
+                  data-reader-record-callout-title={
+                    isGrammar ? "grammar" : variant
+                  }
+                >
+                  {title}
+                </div>
+              ) : null}
+              {isGrammar && data?.pattern ? (
+                <span
+                  className="reader-record-plate-callout-pattern-chip"
+                  data-reader-record-callout-pattern="grammar"
+                >
+                  {data.pattern}
+                </span>
+              ) : null}
+            </div>
           </div>
+          {isGrammar ? (
+            <div
+              className="reader-record-plate-callout-row-controls"
+              data-reader-record-callout-controls="grammar"
+              {...copyExcludeProps}
+            >
+              <button
+                type="button"
+                className="reader-record-plate-callout-toggle"
+                aria-expanded={expanded}
+                aria-controls={contentId}
+                aria-label={expanded ? "收起语法解析" : "展开语法解析"}
+                title={expanded ? "收起解析" : "展开解析"}
+                data-reader-record-callout-toggle="grammar"
+                {...copyExcludeProps}
+                onPointerDown={stopReaderCalloutControlEvent}
+                onMouseDown={stopReaderCalloutControlEvent}
+                onClick={(event) => {
+                  stopReaderCalloutControlEvent(event);
+                  toggleExpanded();
+                }}
+              >
+                {expanded ? (
+                  <ChevronUp aria-hidden="true" size={15} strokeWidth={1.9} />
+                ) : (
+                  <ChevronDown aria-hidden="true" size={15} strokeWidth={1.9} />
+                )}
+              </button>
+              {actionTarget ? (
+                <ReaderCalloutActionButtons
+                  target={actionTarget}
+                  feedbackDisabled
+                />
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <div
+          id={contentId}
           className="reader-record-plate-markdown reader-record-plate-note-prose mt-1.5 text-ink-soft"
           data-reader-record-markdown-content="plate"
+          hidden={isGrammar && !expanded}
         >
           {children}
         </div>
@@ -308,6 +748,22 @@ function ReaderSentenceAnalysisComponent({
 }: PlateElementProps) {
   const node = element as unknown as ReaderSentenceAnalysisElement;
   const data = node.data;
+  const [expanded, setExpanded] = React.useState(false);
+  const contentId = domIdFromBlockId("reader-record-sentence-analysis-content", node.id);
+  const chunkCount = data?.chunks?.length ?? 0;
+  const summary = chunkCount > 0 ? `${chunkCount} 个片段` : "结构说明";
+  const fullText = textFromNode(node.children).replace(/\s+/g, " ").trim();
+  const actionTarget: ReaderCalloutActionTarget = {
+    kind: "sentence_analysis",
+    blockId: node.id,
+    anchorSegmentId: data?.anchorSegmentId ?? "",
+    unitId: data?.unitId ?? "",
+    layerId: data?.layerId ?? "",
+    analysisId: data?.analysisId,
+    title: data?.label ?? "长句拆析",
+    preview: summary,
+    text: fullText,
+  };
 
   return (
     <section
@@ -325,32 +781,73 @@ function ReaderSentenceAnalysisComponent({
       data-unit-id={data?.unitId}
       data-layer-id={data?.layerId}
       data-analysis-id={data?.analysisId}
+      data-reader-record-sentence-analysis-collapsed={expanded ? "false" : "true"}
     >
       <div className="min-w-0">
-        <div className="mb-1.5 flex min-w-0 items-start gap-2">
-          <span
-            className="reader-record-plate-note-icon mt-0.5 leading-none text-context-blue/85"
-            aria-hidden="true"
-          >
-            {node.icon}
-          </span>
-          <div className="min-w-0">
-            <div className="reader-record-plate-label text-context-blue/85">
-              长句拆析
+        <div className="reader-record-plate-callout-header reader-record-plate-sentence-analysis-header mb-1.5 flex min-w-0 items-start gap-2">
+          <div className="reader-record-plate-callout-heading min-w-0">
+            <div className="reader-record-plate-label reader-record-plate-sentence-analysis-eyebrow text-context-blue/85">
+              <span
+                className="reader-record-plate-note-icon leading-none text-context-blue/85"
+                aria-hidden="true"
+                {...copyExcludeProps}
+              >
+                {node.icon}
+              </span>
+              <span>长句拆析</span>
             </div>
-            {data?.label ? (
-              <div className="reader-record-plate-note-title mt-0.5 min-w-0 text-ink/88">
-                {data.label}
-              </div>
-            ) : null}
+            <div className="reader-record-plate-sentence-analysis-title-row">
+              {data?.label ? (
+                <div
+                  className="reader-record-plate-note-title reader-record-plate-callout-title mt-0.5 min-w-0 text-ink/88"
+                  data-reader-record-callout-title="sentence-analysis"
+                >
+                  {data.label}
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <div
+            className="reader-record-plate-callout-row-controls"
+            data-reader-record-callout-controls="sentence-analysis"
+            {...copyExcludeProps}
+          >
+            <button
+              type="button"
+              className="reader-record-plate-callout-toggle"
+              aria-expanded={expanded}
+              aria-controls={contentId}
+              aria-label={expanded ? "收起长句拆析" : "展开长句拆析"}
+              title={expanded ? "收起解析" : "展开解析"}
+              data-reader-record-callout-toggle="sentence-analysis"
+              {...copyExcludeProps}
+              onPointerDown={stopReaderCalloutControlEvent}
+              onMouseDown={stopReaderCalloutControlEvent}
+              onClick={(event) => {
+                stopReaderCalloutControlEvent(event);
+                setExpanded((current) => !current);
+              }}
+            >
+              {expanded ? (
+                <ChevronUp aria-hidden="true" size={15} strokeWidth={1.9} />
+              ) : (
+                <ChevronDown aria-hidden="true" size={15} strokeWidth={1.9} />
+              )}
+            </button>
+            <ReaderCalloutActionButtons
+              target={actionTarget}
+              feedbackDisabled={!data?.analysisId}
+            />
           </div>
         </div>
         <div
+          id={contentId}
           className={classNames(
             "reader-record-plate-markdown reader-record-plate-note-prose",
             data?.chunks?.length ? "mt-2" : "mt-1",
           )}
           data-reader-record-markdown-content="plate"
+          hidden={!expanded}
         >
           {children}
         </div>
@@ -801,6 +1298,7 @@ const markdownLeafPlugins = [
 export const ReaderBlocksKit = [
   ReaderParagraphPlugin,
   ReaderBlockquotePlugin,
+  ReaderCalloutGroupPlugin,
   ReaderCalloutPlugin,
   ReaderSentenceAnalysisPlugin,
   ReaderSentenceAnalysisChunksPlugin,
