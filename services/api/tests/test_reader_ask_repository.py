@@ -291,6 +291,17 @@ def test_hydration_reads_all_contract_fields_from_user_visible_output() -> None:
         "article_rag_citations": [
             {"citation_id": "rag-1", "kind": "article_rag_context", "label": "RAG source"},
         ],
+        "article_rag": {
+            "status": "stale_due_to_repair",
+            "failure_code": "article_rag_repair_citations_dropped",
+            "retryable": False,
+            "fallback_allowed": True,
+            "should_attach": False,
+            "context_ids": [],
+            "source_pack_hash": None,
+            "query_sha256": None,
+            "citations": [],
+        },
     }
 
     # Verify the test data covers all contract fields

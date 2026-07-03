@@ -41,6 +41,7 @@ from app.contracts.anchor_validation import (
 )
 from app.contracts.annotation import (
     compute_text_range_hash,
+    slice_by_utf16_offsets,
     utf16_code_unit_length,
 )
 from app.schemas.reader_notes import ReaderNoteCreateRequest
@@ -65,8 +66,18 @@ BASE_ID = uuid4()
 # ---------------------------------------------------------------------------
 
 
-def _build_result() -> ReadingBaseBuildResult:
-    unit_text = "Hello 🧠 world"
+def _build_result(
+    *,
+    unit_text: str = "Hello 🧠 world",
+    segment_start_utf16: int = 6,
+    segment_end_utf16: int = 8,
+) -> ReadingBaseBuildResult:
+    segment_text = slice_by_utf16_offsets(
+        unit_text,
+        segment_start_utf16,
+        segment_end_utf16,
+    )
+    assert segment_text is not None
     base = StableReadingBase(
         reading_record_id=str(RECORD_ID),
         base_id=str(BASE_ID),
@@ -91,7 +102,6 @@ def _build_result() -> ReadingBaseBuildResult:
         text_hash=compute_text_range_hash(unit_text),
         text=unit_text,
     )
-    segment_text = "🧠"
     segment = BuiltAnchorSegment(
         reading_record_id=str(RECORD_ID),
         base_id=str(BASE_ID),
@@ -103,10 +113,10 @@ def _build_result() -> ReadingBaseBuildResult:
         unit_order_index=1,
         segment_type="sentence",
         boundary_quality="normal",
-        base_start_utf16=6,
-        base_end_utf16=8,
-        unit_start_utf16=6,
-        unit_end_utf16=8,
+        base_start_utf16=segment_start_utf16,
+        base_end_utf16=segment_end_utf16,
+        unit_start_utf16=segment_start_utf16,
+        unit_end_utf16=segment_end_utf16,
         text_hash=compute_text_range_hash(segment_text),
         text=segment_text,
     )
@@ -169,6 +179,12 @@ def _new_anchor(**overrides: object) -> UserEditorialAssetAnchor:
 
 def _mock_db_pool() -> tuple[MagicMock, AsyncMock]:
     mock_conn = AsyncMock()
+    mock_conn.fetch.return_value = []
+    mock_conn.execute.return_value = "UPDATE 1"
+    mock_tx = MagicMock()
+    mock_tx.__aenter__ = AsyncMock(return_value=None)
+    mock_tx.__aexit__ = AsyncMock(return_value=False)
+    mock_conn.transaction = MagicMock(return_value=mock_tx)
     mock_pool = MagicMock()
     # `acquire_connection()` is patched to return `mock_pool` directly, so
     # `async with acquire_connection() as conn:` calls `mock_pool.__aenter__`.
@@ -177,10 +193,10 @@ def _mock_db_pool() -> tuple[MagicMock, AsyncMock]:
     return mock_pool, mock_conn
 
 
-def _make_inserted_annotation_row() -> dict:
+def _make_inserted_annotation_row(**overrides: object) -> dict:
     """A realistic user_annotations row as returned by RETURNING."""
     now = datetime(2026, 6, 24, 12, 0, 0)
-    return {
+    row = {
         "id": uuid4(),
         "analysis_record_id": None,
         "anchor_type": "text_range",
@@ -194,7 +210,7 @@ def _make_inserted_annotation_row() -> dict:
         "start_offset": None,
         "end_offset": None,
         "text_hash": compute_text_range_hash("🧠"),
-        "color": "soft_green",
+        "color": "warm_yellow",
         "payload_json": {},
         "created_at": now,
         "updated_at": now,
@@ -206,6 +222,128 @@ def _make_inserted_annotation_row() -> dict:
         "unit_start_utf16": 6,
         "unit_end_utf16": 8,
     }
+    row.update(overrides)
+    return row
+
+
+def _rr_anchor_for_range(unit_text: str, start: int, end: int) -> UserEditorialAssetAnchor:
+    selected_text = slice_by_utf16_offsets(unit_text, start, end)
+    assert selected_text is not None
+    return _new_anchor(
+        start_offset=start,
+        end_offset=end,
+        selected_text=selected_text,
+        text_hash=compute_text_range_hash(selected_text),
+    )
+
+
+def _make_annotation_row_for_range(
+    unit_text: str,
+    start: int,
+    end: int,
+    *,
+    row_id: UUID | None = None,
+    color: str = "warm_yellow",
+    created_at: datetime | None = None,
+    payload_json: dict | None = None,
+) -> dict:
+    selected_text = slice_by_utf16_offsets(unit_text, start, end)
+    assert selected_text is not None
+    text_hash = compute_text_range_hash(selected_text)
+    now = created_at or datetime(2026, 6, 24, 12, 0, 0)
+    return _make_inserted_annotation_row(
+        id=row_id or uuid4(),
+        target_key=(
+            f"reading-record:{RECORD_ID}:base:{BASE_ID}:gen:2:"
+            f"unit:u1:segment:s1:range:{start}:{end}:{text_hash}"
+        ),
+        selected_text=selected_text,
+        text_hash=text_hash,
+        color=color,
+        payload_json=payload_json or {},
+        created_at=now,
+        updated_at=now,
+        unit_start_utf16=start,
+        unit_end_utf16=end,
+    )
+
+
+def _repository_for_unit_text(unit_text: str) -> _FakeRepository:
+    return _FakeRepository(
+        facts=SimpleNamespace(
+            build_result=_build_result(
+                unit_text=unit_text,
+                segment_start_utf16=0,
+                segment_end_utf16=utf16_code_unit_length(unit_text),
+            )
+        )
+    )
+
+
+def _request_for_range(
+    unit_text: str,
+    start: int,
+    end: int,
+    *,
+    color: str,
+    payload_json: dict | None = None,
+) -> UserAnnotationCreateRequest:
+    anchor = _rr_anchor_for_range(unit_text, start, end)
+    return UserAnnotationCreateRequest(
+        anchor=anchor,
+        selected_text=anchor.selected_text,
+        color=color,
+        payload_json=payload_json or {},
+    )
+
+
+def _assert_merge_update_args(
+    mock_conn: AsyncMock,
+    *,
+    unit_text: str,
+    start: int,
+    end: int,
+    color: str,
+) -> None:
+    sql_arg = mock_conn.fetchrow.call_args.args[0]
+    assert "UPDATE user_annotations" in sql_arg
+    assert "INSERT INTO user_annotations" not in sql_arg
+
+    selected_text = slice_by_utf16_offsets(unit_text, start, end)
+    assert selected_text is not None
+    text_hash = compute_text_range_hash(selected_text)
+    assert mock_conn.fetchrow.call_args.args[1] == (
+        f"reading-record:{RECORD_ID}:base:{BASE_ID}:gen:2:"
+        f"unit:u1:segment:s1:range:{start}:{end}:{text_hash}"
+    )
+    assert mock_conn.fetchrow.call_args.args[2] == selected_text
+    assert mock_conn.fetchrow.call_args.args[3] == text_hash
+    assert mock_conn.fetchrow.call_args.args[4] == color
+    assert mock_conn.fetchrow.call_args.args[11] == start
+    assert mock_conn.fetchrow.call_args.args[12] == end
+
+
+def _assert_insert_args(
+    mock_conn: AsyncMock,
+    *,
+    unit_text: str,
+    start: int,
+    end: int,
+    color: str,
+) -> None:
+    sql_arg = mock_conn.fetchrow.call_args.args[0]
+    assert "INSERT INTO user_annotations" in sql_arg
+
+    selected_text = slice_by_utf16_offsets(unit_text, start, end)
+    assert selected_text is not None
+    text_hash = compute_text_range_hash(selected_text)
+    assert mock_conn.fetchrow.call_args.args[2] == (
+        f"reading-record:{RECORD_ID}:base:{BASE_ID}:gen:2:"
+        f"unit:u1:segment:s1:range:{start}:{end}:{text_hash}"
+    )
+    assert mock_conn.fetchrow.call_args.args[3] == selected_text
+    assert mock_conn.fetchrow.call_args.args[4] == text_hash
+    assert mock_conn.fetchrow.call_args.args[5] == color
 
 
 def _make_inserted_note_row() -> dict:
@@ -543,6 +681,9 @@ async def test_user_annotation_new_anchor_persists_row_no_409() -> None:
     assert call["expected_generation"] == 2
 
     # A real INSERT was issued (fetchrow called once).
+    mock_conn.transaction.assert_called_once()
+    assert mock_conn.fetch.call_count == 1
+    assert "FOR UPDATE" in mock_conn.fetch.call_args.args[0]
     assert mock_conn.fetchrow.call_count == 1
     sql_arg = mock_conn.fetchrow.call_args.args[0]
     assert "INSERT INTO user_annotations" in sql_arg
@@ -557,6 +698,384 @@ async def test_user_annotation_new_anchor_persists_row_no_409() -> None:
     assert response.unit_start_utf16 == 6
     assert response.unit_end_utf16 == 8
     assert response.selected_text == "🧠"
+
+
+@pytest.mark.asyncio
+async def test_user_annotation_new_anchor_exact_duplicate_updates_canonical_row() -> None:
+    unit_text = "abcdefghij"
+    existing_id = uuid4()
+    existing = _make_annotation_row_for_range(
+        unit_text,
+        2,
+        5,
+        row_id=existing_id,
+        color="warm_yellow",
+    )
+    updated = _make_annotation_row_for_range(
+        unit_text,
+        2,
+        5,
+        row_id=existing_id,
+        color="soft_mint",
+        payload_json={"source": "second"},
+    )
+    repository = _repository_for_unit_text(unit_text)
+    pool, mock_conn = _mock_db_pool()
+    mock_conn.fetch.return_value = [existing]
+    mock_conn.fetchrow.return_value = updated
+
+    req = _request_for_range(
+        unit_text,
+        2,
+        5,
+        color="soft_mint",
+        payload_json={"source": "second"},
+    )
+    with patch(
+        "app.services.user_annotations.db_connect.acquire_connection",
+        return_value=pool,
+    ):
+        response = await create_user_annotation(USER_ID, req, repository=repository)
+
+    assert response.id == existing_id
+    assert response.unit_start_utf16 == 2
+    assert response.unit_end_utf16 == 5
+    assert response.color == "soft_mint"
+    assert response.superseded_ids == []
+    mock_conn.execute.assert_not_called()
+    _assert_merge_update_args(
+        mock_conn,
+        unit_text=unit_text,
+        start=2,
+        end=5,
+        color="soft_mint",
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_annotation_new_anchor_subset_keeps_existing_range() -> None:
+    unit_text = "abcdefghij"
+    existing_id = uuid4()
+    existing = _make_annotation_row_for_range(unit_text, 2, 8, row_id=existing_id)
+    updated = _make_annotation_row_for_range(
+        unit_text,
+        2,
+        8,
+        row_id=existing_id,
+        color="soft_rose",
+    )
+    repository = _repository_for_unit_text(unit_text)
+    pool, mock_conn = _mock_db_pool()
+    mock_conn.fetch.return_value = [existing]
+    mock_conn.fetchrow.return_value = updated
+
+    req = _request_for_range(unit_text, 3, 5, color="soft_rose")
+    with patch(
+        "app.services.user_annotations.db_connect.acquire_connection",
+        return_value=pool,
+    ):
+        response = await create_user_annotation(USER_ID, req, repository=repository)
+
+    assert response.id == existing_id
+    assert response.unit_start_utf16 == 2
+    assert response.unit_end_utf16 == 8
+    assert response.color == "soft_rose"
+    assert response.superseded_ids == []
+    mock_conn.execute.assert_not_called()
+    _assert_merge_update_args(
+        mock_conn,
+        unit_text=unit_text,
+        start=2,
+        end=8,
+        color="soft_rose",
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_annotation_new_anchor_superset_extends_existing_range() -> None:
+    unit_text = "abcdefghij"
+    existing_id = uuid4()
+    existing = _make_annotation_row_for_range(unit_text, 3, 5, row_id=existing_id)
+    updated = _make_annotation_row_for_range(
+        unit_text,
+        2,
+        8,
+        row_id=existing_id,
+        color="soft_mint",
+    )
+    repository = _repository_for_unit_text(unit_text)
+    pool, mock_conn = _mock_db_pool()
+    mock_conn.fetch.return_value = [existing]
+    mock_conn.fetchrow.return_value = updated
+
+    req = _request_for_range(unit_text, 2, 8, color="soft_mint")
+    with patch(
+        "app.services.user_annotations.db_connect.acquire_connection",
+        return_value=pool,
+    ):
+        response = await create_user_annotation(USER_ID, req, repository=repository)
+
+    assert response.id == existing_id
+    assert response.unit_start_utf16 == 2
+    assert response.unit_end_utf16 == 8
+    assert response.color == "soft_mint"
+    assert response.superseded_ids == []
+    mock_conn.execute.assert_not_called()
+    _assert_merge_update_args(
+        mock_conn,
+        unit_text=unit_text,
+        start=2,
+        end=8,
+        color="soft_mint",
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_annotation_new_anchor_partial_overlap_merges_union() -> None:
+    unit_text = "abcdefghij"
+    existing_id = uuid4()
+    existing = _make_annotation_row_for_range(unit_text, 2, 6, row_id=existing_id)
+    updated = _make_annotation_row_for_range(
+        unit_text,
+        2,
+        8,
+        row_id=existing_id,
+        color="soft_rose",
+    )
+    repository = _repository_for_unit_text(unit_text)
+    pool, mock_conn = _mock_db_pool()
+    mock_conn.fetch.return_value = [existing]
+    mock_conn.fetchrow.return_value = updated
+
+    req = _request_for_range(unit_text, 4, 8, color="soft_rose")
+    with patch(
+        "app.services.user_annotations.db_connect.acquire_connection",
+        return_value=pool,
+    ):
+        response = await create_user_annotation(USER_ID, req, repository=repository)
+
+    assert response.id == existing_id
+    assert response.unit_start_utf16 == 2
+    assert response.unit_end_utf16 == 8
+    assert response.color == "soft_rose"
+    assert response.superseded_ids == []
+    mock_conn.execute.assert_not_called()
+    _assert_merge_update_args(
+        mock_conn,
+        unit_text=unit_text,
+        start=2,
+        end=8,
+        color="soft_rose",
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_annotation_new_anchor_multiple_overlaps_merge_and_report_superseded_ids() -> None:
+    unit_text = "abcdefghij"
+    canonical_id = uuid4()
+    superseded_id = uuid4()
+    canonical = _make_annotation_row_for_range(
+        unit_text,
+        2,
+        5,
+        row_id=canonical_id,
+        created_at=datetime(2026, 6, 24, 12, 0, 0),
+    )
+    superseded = _make_annotation_row_for_range(
+        unit_text,
+        6,
+        9,
+        row_id=superseded_id,
+        created_at=datetime(2026, 6, 24, 12, 1, 0),
+    )
+    updated = _make_annotation_row_for_range(
+        unit_text,
+        2,
+        9,
+        row_id=canonical_id,
+        color="soft_mint",
+    )
+    repository = _repository_for_unit_text(unit_text)
+    pool, mock_conn = _mock_db_pool()
+    mock_conn.fetch.return_value = [canonical, superseded]
+    mock_conn.fetchrow.return_value = updated
+
+    req = _request_for_range(unit_text, 4, 7, color="soft_mint")
+    with patch(
+        "app.services.user_annotations.db_connect.acquire_connection",
+        return_value=pool,
+    ):
+        response = await create_user_annotation(USER_ID, req, repository=repository)
+
+    assert response.id == canonical_id
+    assert response.unit_start_utf16 == 2
+    assert response.unit_end_utf16 == 9
+    assert response.superseded_ids == [superseded_id]
+    assert mock_conn.execute.call_count == 1
+    assert mock_conn.execute.call_args.args[2] == superseded_id
+    _assert_merge_update_args(
+        mock_conn,
+        unit_text=unit_text,
+        start=2,
+        end=9,
+        color="soft_mint",
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_annotation_new_anchor_merge_reuses_existing_final_target_key_row() -> None:
+    unit_text = "abcdefghij"
+    active_a_id = uuid4()
+    active_b_id = uuid4()
+    final_target_id = uuid4()
+    active_a = _make_annotation_row_for_range(
+        unit_text,
+        2,
+        5,
+        row_id=active_a_id,
+        created_at=datetime(2026, 6, 24, 12, 0, 0),
+    )
+    active_b = _make_annotation_row_for_range(
+        unit_text,
+        6,
+        9,
+        row_id=active_b_id,
+        created_at=datetime(2026, 6, 24, 12, 1, 0),
+    )
+    final_target = _make_annotation_row_for_range(
+        unit_text,
+        2,
+        9,
+        row_id=final_target_id,
+        color="warm_yellow",
+        created_at=datetime(2026, 6, 24, 11, 0, 0),
+    )
+    updated = _make_annotation_row_for_range(
+        unit_text,
+        2,
+        9,
+        row_id=final_target_id,
+        color="soft_rose",
+    )
+    repository = _repository_for_unit_text(unit_text)
+    pool, mock_conn = _mock_db_pool()
+    mock_conn.fetch.return_value = [active_a, active_b]
+    mock_conn.fetchrow.side_effect = [final_target, updated]
+
+    req = _request_for_range(unit_text, 4, 7, color="soft_rose")
+    with patch(
+        "app.services.user_annotations.db_connect.acquire_connection",
+        return_value=pool,
+    ):
+        response = await create_user_annotation(USER_ID, req, repository=repository)
+
+    assert response.id == final_target_id
+    assert response.unit_start_utf16 == 2
+    assert response.unit_end_utf16 == 9
+    assert response.color == "soft_rose"
+    assert response.superseded_ids == [active_a_id, active_b_id]
+    assert mock_conn.execute.call_count == 2
+    assert [call.args[2] for call in mock_conn.execute.call_args_list] == [
+        active_a_id,
+        active_b_id,
+    ]
+    final_target_lock_sql = mock_conn.fetchrow.call_args_list[0].args[0]
+    assert "target_key = $2" in final_target_lock_sql
+    assert "FOR UPDATE" in final_target_lock_sql
+    _assert_merge_update_args(
+        mock_conn,
+        unit_text=unit_text,
+        start=2,
+        end=9,
+        color="soft_rose",
+    )
+    assert mock_conn.fetchrow.call_args.args[13] == final_target_id
+
+
+@pytest.mark.asyncio
+async def test_user_annotation_new_anchor_adjacent_same_color_merges() -> None:
+    unit_text = "abcdefghij"
+    existing_id = uuid4()
+    existing = _make_annotation_row_for_range(
+        unit_text,
+        2,
+        5,
+        row_id=existing_id,
+        color="warm_yellow",
+    )
+    updated = _make_annotation_row_for_range(
+        unit_text,
+        2,
+        8,
+        row_id=existing_id,
+        color="warm_yellow",
+    )
+    repository = _repository_for_unit_text(unit_text)
+    pool, mock_conn = _mock_db_pool()
+    mock_conn.fetch.return_value = [existing]
+    mock_conn.fetchrow.return_value = updated
+
+    req = _request_for_range(unit_text, 5, 8, color="warm_yellow")
+    with patch(
+        "app.services.user_annotations.db_connect.acquire_connection",
+        return_value=pool,
+    ):
+        response = await create_user_annotation(USER_ID, req, repository=repository)
+
+    assert response.id == existing_id
+    assert response.unit_start_utf16 == 2
+    assert response.unit_end_utf16 == 8
+    assert response.superseded_ids == []
+    mock_conn.execute.assert_not_called()
+    _assert_merge_update_args(
+        mock_conn,
+        unit_text=unit_text,
+        start=2,
+        end=8,
+        color="warm_yellow",
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_annotation_new_anchor_adjacent_different_color_stays_separate() -> None:
+    unit_text = "abcdefghij"
+    existing = _make_annotation_row_for_range(
+        unit_text,
+        2,
+        5,
+        color="warm_yellow",
+    )
+    inserted = _make_annotation_row_for_range(
+        unit_text,
+        5,
+        8,
+        color="soft_mint",
+    )
+    repository = _repository_for_unit_text(unit_text)
+    pool, mock_conn = _mock_db_pool()
+    mock_conn.fetch.return_value = [existing]
+    mock_conn.fetchrow.return_value = inserted
+
+    req = _request_for_range(unit_text, 5, 8, color="soft_mint")
+    with patch(
+        "app.services.user_annotations.db_connect.acquire_connection",
+        return_value=pool,
+    ):
+        response = await create_user_annotation(USER_ID, req, repository=repository)
+
+    assert response.id == inserted["id"]
+    assert response.unit_start_utf16 == 5
+    assert response.unit_end_utf16 == 8
+    assert response.color == "soft_mint"
+    assert response.superseded_ids == []
+    mock_conn.execute.assert_not_called()
+    _assert_insert_args(
+        mock_conn,
+        unit_text=unit_text,
+        start=5,
+        end=8,
+        color="soft_mint",
+    )
 
 
 @pytest.mark.asyncio

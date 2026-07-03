@@ -70,7 +70,7 @@ def _make_row(**overrides):
         "start_offset": None,
         "end_offset": None,
         "text_hash": None,
-        "color": "soft_green",
+        "color": "warm_yellow",
         "payload_json": {},
         "created_at": now,
         "updated_at": now,
@@ -83,7 +83,7 @@ class TestSchemaValidation:
     def test_create_request_defaults(self):
         req = UserAnnotationCreateRequest(selected_text="Sentence", sentence_id="s1")
         assert req.anchor_type == "sentence"
-        assert req.color == "soft_green"
+        assert req.color == "warm_yellow"
 
     def test_create_request_validates_text_range_hash(self):
         text = "policy choices"
@@ -120,8 +120,36 @@ class TestSchemaValidation:
             )
 
     def test_update_request_only_accepts_color(self):
-        req = UserAnnotationUpdateRequest(color="soft_blue")
-        assert req.color == "soft_blue"
+        req = UserAnnotationUpdateRequest(color="soft_mint")
+        assert req.color == "soft_mint"
+
+    @pytest.mark.parametrize("color", ["warm_yellow", "soft_mint", "soft_rose"])
+    def test_create_request_accepts_supported_colors(self, color):
+        req = UserAnnotationCreateRequest(
+            selected_text="Sentence",
+            sentence_id="s1",
+            color=color,
+        )
+        assert req.color == color
+
+    @pytest.mark.parametrize("color", ["soft_green", "sage_green", "soft_blue", "soft_purple"])
+    def test_create_request_rejects_legacy_colors(self, color):
+        with pytest.raises(ValidationError):
+            UserAnnotationCreateRequest(
+                selected_text="Sentence",
+                sentence_id="s1",
+                color=color,
+            )
+
+    @pytest.mark.parametrize("color", ["warm_yellow", "soft_mint", "soft_rose"])
+    def test_update_request_accepts_supported_colors(self, color):
+        req = UserAnnotationUpdateRequest(color=color)
+        assert req.color == color
+
+    @pytest.mark.parametrize("color", ["soft_green", "sage_green", "soft_blue", "soft_purple"])
+    def test_update_request_rejects_legacy_colors(self, color):
+        with pytest.raises(ValidationError):
+            UserAnnotationUpdateRequest(color=color)
 
 
 class TestHelpers:
@@ -239,7 +267,7 @@ class TestHelpers:
             start_offset=None,
             end_offset=None,
             text_hash=None,
-            color="soft_green",
+            color="warm_yellow",
         )
         updated = _make_row(
             id=existing["id"],
@@ -247,7 +275,7 @@ class TestHelpers:
             target_key=existing["target_key"],
             sentence_id="s1",
             selected_text=existing["selected_text"],
-            color="soft_green",
+            color="warm_yellow",
         )
         conn = AsyncMock()
         conn.fetch.return_value = [existing]
@@ -260,7 +288,7 @@ class TestHelpers:
             start_offset=14,
             end_offset=20,
             text_hash=compute_text_range_hash("memory"),
-            color="soft_blue",
+            color="soft_mint",
         )
 
         response = await _resolve_single_sentence_conflict(
@@ -274,7 +302,7 @@ class TestHelpers:
         assert response is not None
         assert response.target_key == existing["target_key"]
         # Subset preserves existing color, not request color
-        assert response.color == "soft_green"
+        assert response.color == "warm_yellow"
 
     @pytest.mark.anyio
     async def test_resolve_single_sentence_superset_extends_existing_highlight(self):
@@ -286,7 +314,7 @@ class TestHelpers:
             start_offset=14,
             end_offset=20,
             text_hash=compute_text_range_hash("memory"),
-            color="soft_green",
+            color="warm_yellow",
         )
         updated = _make_row(
             id=existing["id"],
@@ -297,7 +325,7 @@ class TestHelpers:
             start_offset=None,
             end_offset=None,
             text_hash=None,
-            color="soft_green",
+            color="warm_yellow",
         )
         conn = AsyncMock()
         conn.fetch.return_value = [existing]
@@ -322,7 +350,7 @@ class TestHelpers:
         assert response.anchor_type == "sentence"
         assert response.target_key == f"record:{RECORD_ID}:sentence:s1"
         # Superset preserves existing color
-        assert response.color == "soft_green"
+        assert response.color == "warm_yellow"
 
     def test_compute_merged_range(self):
         existing_rows = [
@@ -336,14 +364,14 @@ class TestHelpers:
 
     def test_resolve_merged_color_consistent(self):
         rows = [
-            _make_row(color="soft_blue"),
-            _make_row(color="soft_blue"),
+            _make_row(color="soft_mint"),
+            _make_row(color="soft_mint"),
         ]
-        assert _resolve_merged_color(rows, "warm_yellow") == "soft_blue"
+        assert _resolve_merged_color(rows, "warm_yellow") == "soft_mint"
 
     def test_resolve_merged_color_inconsistent(self):
         rows = [
-            _make_row(color="soft_blue"),
+            _make_row(color="soft_mint"),
             _make_row(color="warm_yellow"),
         ]
         assert _resolve_merged_color(rows, "warm_yellow") == "warm_yellow"
@@ -365,7 +393,7 @@ class TestHelpers:
             start_offset=10,
             end_offset=25,
             text_hash=compute_text_range_hash(existing_text),
-            color="soft_blue",
+            color="soft_mint",
         )
         merged_hash = compute_text_range_hash(merged_text)
         updated = _make_row(
@@ -377,7 +405,7 @@ class TestHelpers:
             start_offset=10,
             end_offset=35,
             text_hash=merged_hash,
-            color="soft_blue",
+            color="soft_mint",
         )
         conn = AsyncMock()
         conn.fetch.return_value = [existing]
@@ -417,7 +445,7 @@ class TestHelpers:
         assert response.start_offset == 10
         assert response.end_offset == 35
         # Partial overlap preserves existing color
-        assert response.color == "soft_blue"
+        assert response.color == "soft_mint"
 
     @pytest.mark.anyio
     async def test_resolve_partial_overlap_upgrades_to_sentence(self):
@@ -433,7 +461,7 @@ class TestHelpers:
             start_offset=0,
             end_offset=20,
             text_hash=compute_text_range_hash(existing_text),
-            color="soft_blue",
+            color="soft_mint",
         )
         # request text = sentence[15:sentence_len]
         request_text = sentence_text[15:]
@@ -447,7 +475,7 @@ class TestHelpers:
             start_offset=None,
             end_offset=None,
             text_hash=None,
-            color="soft_blue",
+            color="soft_mint",
         )
         conn = AsyncMock()
         conn.fetch.return_value = [existing]
@@ -488,7 +516,7 @@ class TestHelpers:
         assert response is not None
         assert response.anchor_type == "sentence"
         assert response.target_key == f"record:{RECORD_ID}:sentence:s1"
-        assert response.color == "soft_blue"
+        assert response.color == "soft_mint"
 
     @pytest.mark.anyio
     async def test_resolve_multiple_overlaps_merges_all(self):
@@ -510,7 +538,7 @@ class TestHelpers:
             start_offset=5,
             end_offset=15,
             text_hash=compute_text_range_hash(existing_1_text),
-            color="soft_blue",
+            color="soft_mint",
             created_at=earlier_time,
         )
         existing_2_text = sentence_text[20:30]
@@ -523,7 +551,7 @@ class TestHelpers:
             start_offset=20,
             end_offset=30,
             text_hash=compute_text_range_hash(existing_2_text),
-            color="soft_blue",
+            color="soft_mint",
             created_at=later_time,
         )
         merged_text = sentence_text[5:30]
@@ -537,7 +565,7 @@ class TestHelpers:
             start_offset=5,
             end_offset=30,
             text_hash=merged_hash,
-            color="soft_blue",
+            color="soft_mint",
         )
         conn = AsyncMock()
         conn.fetch.return_value = [existing_1, existing_2]
@@ -576,8 +604,8 @@ class TestHelpers:
         assert response is not None
         assert response.start_offset == 5
         assert response.end_offset == 30
-        # Both existing are soft_blue → preserved
-        assert response.color == "soft_blue"
+        # Both existing are soft_mint -> preserved
+        assert response.color == "soft_mint"
         # The later row should be in superseded_ids
         assert late_id in response.superseded_ids
         assert early_id not in response.superseded_ids
@@ -599,7 +627,7 @@ class TestHelpers:
             start_offset=5,
             end_offset=15,
             text_hash=compute_text_range_hash(existing_1_text),
-            color="soft_blue",
+            color="soft_mint",
             created_at=earlier_time,
         )
         existing_2_text = sentence_text[20:30]
@@ -683,7 +711,7 @@ class TestRoutes:
                 "anchor_type": "sentence",
                 "sentence_id": "s1",
                 "selected_text": "Test text",
-                "color": "soft_green",
+                "color": "warm_yellow",
             },
             headers=AUTH_HEADERS,
         )
@@ -700,7 +728,7 @@ class TestRoutes:
     def test_list_annotations(self, mock_pool, _mock_session):
         pool, conn = _mock_db_pool()
         mock_pool.acquire = pool.acquire
-        conn.fetch.return_value = [_make_row(color="soft_blue")]
+        conn.fetch.return_value = [_make_row(color="soft_mint")]
 
         response = client.get(
             f"/user-annotations?analysis_record_id={RECORD_ID}",
@@ -710,7 +738,7 @@ class TestRoutes:
         assert response.status_code == 200
         data = response.json()["items"]
         assert len(data) == 1
-        assert data[0]["color"] == "soft_blue"
+        assert data[0]["color"] == "soft_mint"
 
     @_mock_auth()
     @patch("app.services.user_annotations.db_connect.DB_POOL")

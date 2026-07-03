@@ -6,7 +6,7 @@ from app.contracts.annotation import compute_text_range_hash, utf16_code_unit_le
 from app.schemas.user_editorial_assets import UserEditorialAssetAnchor
 
 USER_ANNOTATION_COLOR_PATTERN = (
-    "^(soft_green|soft_blue|soft_purple|warm_yellow|sage_green)$"
+    "^(warm_yellow|soft_mint|soft_rose)$"
 )
 
 
@@ -46,7 +46,7 @@ class UserAnnotationCreateRequest(BaseModel):
     end_offset: int | None = None
     text_hash: str | None = None
     segments: list[UserAnnotationSegment] = Field(default_factory=list)
-    color: str = Field(default="soft_green", pattern=USER_ANNOTATION_COLOR_PATTERN)
+    color: str = Field(default="warm_yellow", pattern=USER_ANNOTATION_COLOR_PATTERN)
     payload_json: dict = Field(default_factory=dict)
     # D6-A5 dual-contract spike. When set, the legacy sentence_id / offsets /
     # text_hash fields become optional and the request is routed to the
@@ -118,7 +118,7 @@ class UserAnnotationResponse(BaseModel):
     end_offset: int | None = None
     text_hash: str | None = None
     segments: list[UserAnnotationSegment] = Field(default_factory=list)
-    color: str
+    color: str = Field(pattern=USER_ANNOTATION_COLOR_PATTERN)
     payload_json: dict
     created_at: str
     updated_at: str

@@ -35,6 +35,8 @@ BASELINE_SQL = (
     REPO_ROOT / "infra" / "migrations" / "0011_reader_display_title_generation.sql"
 ).read_text(encoding="utf-8") + "\n" + (
     REPO_ROOT / "infra" / "migrations" / "0012_reader_record_reading_strategy.sql"
+).read_text(encoding="utf-8") + "\n" + (
+    REPO_ROOT / "infra" / "migrations" / "0013_user_annotation_color_palette.sql"
 ).read_text(encoding="utf-8")
 
 
@@ -275,6 +277,71 @@ async def test_reading_records_generation_must_be_positive(reader_schema: str) -
                 """,
                 user_id,
             )
+    finally:
+        await conn.close()
+
+
+async def test_user_annotations_color_contract_matches_r1_palette(
+    reader_schema: str,
+) -> None:
+    conn = await _connect(reader_schema)
+    try:
+        user_id = await _insert_user(conn)
+
+        default_color = await conn.fetchval(
+            """
+            INSERT INTO user_annotations (
+                user_id, anchor_type, target_key, sentence_id, selected_text
+            )
+            VALUES ($1, 'sentence', 'default-color', 's1', 'Default color')
+            RETURNING color
+            """,
+            user_id,
+        )
+        assert default_color == "warm_yellow"
+
+        color_comment = await conn.fetchval(
+            """
+            SELECT col_description('user_annotations'::regclass, attnum)
+            FROM pg_attribute
+            WHERE attrelid = 'user_annotations'::regclass
+              AND attname = 'color'
+            """
+        )
+        assert color_comment == (
+            "用户高亮颜色，固定支持 warm_yellow、soft_mint、soft_rose。"
+        )
+
+        for color in ("warm_yellow", "soft_mint", "soft_rose"):
+            stored_color = await conn.fetchval(
+                """
+                INSERT INTO user_annotations (
+                    user_id, anchor_type, target_key, sentence_id, selected_text, color
+                )
+                VALUES ($1, 'sentence', $2, 's1', $3, $4)
+                RETURNING color
+                """,
+                user_id,
+                f"supported-{color}",
+                f"Supported {color}",
+                color,
+            )
+            assert stored_color == color
+
+        for color in ("soft_green", "sage_green", "soft_blue", "soft_purple"):
+            with pytest.raises(asyncpg.CheckViolationError):
+                await conn.execute(
+                    """
+                    INSERT INTO user_annotations (
+                        user_id, anchor_type, target_key, sentence_id, selected_text, color
+                    )
+                    VALUES ($1, 'sentence', $2, 's1', $3, $4)
+                    """,
+                    user_id,
+                    f"rejected-{color}",
+                    f"Rejected {color}",
+                    color,
+                )
     finally:
         await conn.close()
 

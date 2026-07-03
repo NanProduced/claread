@@ -914,6 +914,10 @@ class ReaderStableDocumentBase(BaseModel):
     language: str | None = None
     title_snapshot: str | None = None
     navigation: dict[str, Any] = Field(default_factory=dict)
+    # Canonical plain text for the entire base, sourced from
+    # ``reading_bases.text``.  The frontend slices block text and resolves
+    # user-selected offsets against this truth source.
+    text: str = Field(min_length=1)
 
 
 class ReaderStableDocumentMetadata(BaseModel):
@@ -944,6 +948,23 @@ class ReaderStableDocumentBlock(BaseModel):
     interpretation_policy: dict[str, Any] = Field(default_factory=dict)
 
 
+class ReaderStableDocumentAnchorSegment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    anchor_segment_id: str = Field(min_length=1)
+    unit_id: str = Field(min_length=1)
+    # ``anchor_segments.order_index`` has a CHECK constraint ``>= 1``; the
+    # route layer only surfaces persisted rows so we mirror that bound.
+    order_index: int = Field(ge=1)
+    segment_type: str = Field(min_length=1)
+    base_start_utf16: int = Field(ge=0)
+    # ``anchor_segments.base_end_utf16`` has a CHECK constraint
+    # ``base_end_utf16 > base_start_utf16``; enforce the lower bound here and
+    # the strict-greater relation at construction time (see route helper).
+    base_end_utf16: int = Field(gt=0)
+    text_hash: str = Field(pattern=r"^[0-9a-f]{8}$")
+
+
 class ReaderStableDocumentResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -953,6 +974,7 @@ class ReaderStableDocumentResponse(BaseModel):
     base: ReaderStableDocumentBase
     stable_document: ReaderStableDocumentMetadata
     blocks: list[ReaderStableDocumentBlock] = Field(min_length=1)
+    anchor_segments: list[ReaderStableDocumentAnchorSegment] = Field(default_factory=list)
 
 
 class ReaderEventResponse(BaseModel):

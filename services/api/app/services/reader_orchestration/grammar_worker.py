@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Protocol
@@ -48,6 +49,10 @@ from .job_bootstrap import (
 )
 from .job_runtime import ClaimResult, FenceViolationError, ReaderJobRuntime
 from .layer_publisher import GrammarBundleLayerPublisher, PublishedGrammarBundle
+from .reading_strategy import (
+    ReaderStrategyResolverError,
+    resolve_reader_variant_strategy,
+)
 
 DEFAULT_GRAMMAR_RETRY_DELAY = timedelta(minutes=5)
 GRAMMAR_WORKFLOW_VERSION = "d5-v6-grammar-worker"
@@ -67,6 +72,21 @@ MAX_GRAMMAR_FIELD_LENGTH = 360
 MAX_GRAMMAR_CHUNKS_PER_ANALYSIS = 8
 MAX_GRAMMAR_DIAGNOSTIC_ITEMS = 8
 MAX_GRAMMAR_DIAGNOSTIC_TEXT_LENGTH = 80
+
+# T8: variant-first strategy metadata keys read from reader_jobs.input_json.
+# Must match the keys written by _build_strategy_metadata in job_bootstrap.
+_STRATEGY_INPUT_KEYS: tuple[str, ...] = (
+    "reading_goal",
+    "reading_variant",
+    "strategy_version",
+    "strategy_hash",
+    "layer_policy_hash",
+)
+_GRAMMAR_LAYER_NAME = "grammar_bundle"
+_STRATEGY_METADATA_MISSING_CODE = "strategy_metadata_missing"
+_STRATEGY_HASH_MISMATCH_CODE = "strategy_hash_mismatch"
+_LAYER_POLICY_HASH_MISMATCH_CODE = "layer_policy_hash_mismatch"
+_STRATEGY_VERSION_MISMATCH_CODE = "strategy_version_mismatch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +115,12 @@ class GrammarJobContext:
     source_text: str
     text_hash: str
     anchor_segments: tuple[GrammarAnchorSegmentContext, ...]
+    reading_goal: str
+    reading_variant: str
+    strategy_version: str
+    strategy_hash: str
+    layer_policy_hash: str
+    grammar_prompt_lines: tuple[str, ...]
 
 
 class GrammarCandidateSpan(BaseModel):
@@ -698,6 +724,7 @@ class GrammarBundleWorkerService:
                        job.target_key,
                        job.expected_generation,
                        job.operation_fingerprint,
+                       job.input_json,
                        base.language AS source_language,
                        base.text AS base_text,
                        unit.order_index,
@@ -814,6 +841,9 @@ class GrammarBundleWorkerService:
                 failure_code="missing_anchor_segments",
             )
 
+        input_json = row["input_json"]
+        strategy_metadata = _validate_grammar_strategy_metadata(input_json)
+
         return GrammarJobContext(
             job_id=row["id"],
             run_id=row["run_id"],
@@ -828,6 +858,12 @@ class GrammarBundleWorkerService:
             source_text=source_text,
             text_hash=expected_hash,
             anchor_segments=tuple(anchor_segments),
+            reading_goal=strategy_metadata.reading_goal,
+            reading_variant=strategy_metadata.reading_variant,
+            strategy_version=strategy_metadata.strategy_version,
+            strategy_hash=strategy_metadata.strategy_hash,
+            layer_policy_hash=strategy_metadata.layer_policy_hash,
+            grammar_prompt_lines=strategy_metadata.grammar_prompt_lines,
         )
 
     async def _mark_run_running(self, run_id: UUID) -> None:
@@ -980,6 +1016,7 @@ class GrammarBundleWorkerService:
 
 
 def _build_grammar_prompt(context: GrammarJobContext) -> str:
+    strategy_section = _format_grammar_strategy_section(context)
     anchor_segments = [
         {
             "anchor_segment_id": segment.anchor_segment_id,
@@ -997,6 +1034,7 @@ def _build_grammar_prompt(context: GrammarJobContext) -> str:
         f"unit_id: {context.unit_id}\n"
         f"max_grammar_notes: {MAX_GRAMMAR_NOTE_ITEMS}\n"
         f"max_sentence_analyses: {MAX_SENTENCE_ANALYSIS_ITEMS}\n"
+        f"{strategy_section}"
         "Return only the structured candidate output.\n"
         "<source_text>\n"
         f"{context.source_text}\n"
@@ -1004,6 +1042,158 @@ def _build_grammar_prompt(context: GrammarJobContext) -> str:
         "<anchor_segments_json>\n"
         f"{json.dumps(anchor_segments, ensure_ascii=False)}\n"
         "</anchor_segments_json>"
+    )
+
+
+def _format_grammar_strategy_section(context: GrammarJobContext) -> str:
+    """Format the concrete grammar_bundle policy lines as a prompt section.
+
+    The strategy section carries the resolved variant-first policy lines
+    (from ``reader_variants.yaml`` via ``resolve_reader_variant_strategy``)
+    so the grammar bundle agent can vary its grammar_note / sentence_analysis
+    output by ``reading_goal`` / ``reading_variant``. The accompanying hashes
+    are included for traceability and so that prompt-level evals can group
+    by strategy.
+    """
+    lines_bullet = "\n".join(
+        f"- {line}" for line in context.grammar_prompt_lines
+    )
+    return (
+        "<reader_strategy>\n"
+        f"reading_goal: {context.reading_goal}\n"
+        f"reading_variant: {context.reading_variant}\n"
+        f"strategy_version: {context.strategy_version}\n"
+        f"strategy_hash: {context.strategy_hash}\n"
+        f"layer_policy_hash: {context.layer_policy_hash}\n"
+        "<policy_lines>\n"
+        f"{lines_bullet}\n"
+        "</policy_lines>\n"
+        "</reader_strategy>\n"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _GrammarStrategyMetadata:
+    """Validated strategy metadata extracted from a grammar job's
+    input_json and cross-checked against the live resolver."""
+
+    reading_goal: str
+    reading_variant: str
+    strategy_version: str
+    strategy_hash: str
+    layer_policy_hash: str
+    grammar_prompt_lines: tuple[str, ...]
+
+
+def _validate_grammar_strategy_metadata(
+    input_json: Any,
+) -> _GrammarStrategyMetadata:
+    """Read strategy metadata from input_json and validate against the resolver.
+
+    Fail-closed contract:
+        - ``input_json`` must be a mapping containing every key in
+          :data:`_STRATEGY_INPUT_KEYS` with a non-empty string value.
+          Legacy bare-fingerprint jobs without strategy metadata are
+          rejected with ``strategy_metadata_missing``; there is NO default
+          fallback.
+        - The ``(reading_goal, reading_variant)`` pair must resolve via
+          :func:`resolve_reader_variant_strategy`. Resolver errors
+          (unknown variant, missing layer, etc.) propagate as
+          :class:`GrammarExecutionError` with failure_class
+          ``strategy_resolution``.
+        - ``strategy_version``, ``strategy_hash`` and
+          ``layer_policy_hash`` from input_json must match the resolver
+          output exactly. Any mismatch fails closed with a dedicated
+          failure_code.
+    """
+    if not isinstance(input_json, Mapping):
+        raise GrammarExecutionError(
+            "grammar job input_json is not a mapping; "
+            "strategy metadata cannot be read",
+            retryable=False,
+            failure_class="validation",
+            failure_code=_STRATEGY_METADATA_MISSING_CODE,
+        )
+
+    missing: list[str] = []
+    for key in _STRATEGY_INPUT_KEYS:
+        value = input_json.get(key)
+        if not isinstance(value, str) or not value:
+            missing.append(key)
+    if missing:
+        raise GrammarExecutionError(
+            "grammar job input_json is missing strategy metadata: "
+            + ", ".join(missing),
+            retryable=False,
+            failure_class="validation",
+            failure_code=_STRATEGY_METADATA_MISSING_CODE,
+        )
+
+    reading_goal = str(input_json["reading_goal"])
+    reading_variant = str(input_json["reading_variant"])
+    expected_strategy_version = str(input_json["strategy_version"])
+    expected_strategy_hash = str(input_json["strategy_hash"])
+    expected_layer_policy_hash = str(input_json["layer_policy_hash"])
+
+    try:
+        strategy = resolve_reader_variant_strategy(reading_goal, reading_variant)
+    except ReaderStrategyResolverError as exc:
+        raise GrammarExecutionError(
+            f"grammar strategy resolver rejected pair "
+            f"({reading_goal!r}, {reading_variant!r}): {exc}",
+            retryable=False,
+            failure_class="strategy_resolution",
+            failure_code="strategy_resolver_error",
+        ) from exc
+
+    if strategy.strategy_version != expected_strategy_version:
+        raise GrammarExecutionError(
+            f"grammar strategy_version mismatch: input_json has "
+            f"{expected_strategy_version!r} but resolver produced "
+            f"{strategy.strategy_version!r}",
+            retryable=False,
+            failure_class="validation",
+            failure_code=_STRATEGY_VERSION_MISMATCH_CODE,
+        )
+
+    if strategy.strategy_hash != expected_strategy_hash:
+        raise GrammarExecutionError(
+            f"grammar strategy_hash mismatch: input_json has "
+            f"{expected_strategy_hash!r} but resolver produced "
+            f"{strategy.strategy_hash!r}",
+            retryable=False,
+            failure_class="validation",
+            failure_code=_STRATEGY_HASH_MISMATCH_CODE,
+        )
+
+    layer = strategy.layers.get(_GRAMMAR_LAYER_NAME)
+    if layer is None:
+        # Defensive: the resolver guarantees all REQUIRED_LAYERS are
+        # present. Fail closed if a future code path violates that.
+        raise GrammarExecutionError(
+            f"resolved strategy has no layer {_GRAMMAR_LAYER_NAME!r}",
+            retryable=False,
+            failure_class="strategy_resolution",
+            failure_code="strategy_resolver_error",
+        )
+
+    if layer.policy_hash != expected_layer_policy_hash:
+        raise GrammarExecutionError(
+            f"grammar layer_policy_hash mismatch: input_json has "
+            f"{expected_layer_policy_hash!r} but resolver produced "
+            f"{layer.policy_hash!r}",
+            retryable=False,
+            failure_class="validation",
+            failure_code=_LAYER_POLICY_HASH_MISMATCH_CODE,
+        )
+
+    return _GrammarStrategyMetadata(
+        reading_goal=reading_goal,
+        reading_variant=reading_variant,
+        strategy_version=strategy.strategy_version,
+        strategy_hash=strategy.strategy_hash,
+        layer_policy_hash=layer.policy_hash,
+        grammar_prompt_lines=layer.prompt_lines,
     )
 
 

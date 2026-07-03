@@ -766,6 +766,7 @@ class TranslationWorkerService:
 
 def _build_translation_prompt(context: TranslationJobContext) -> str:
     strategy_section = _format_translation_strategy_section(context)
+    grouping_section = _format_grouping_guidance_section()
     target_segments_section = _format_target_segments_section(context)
     return (
         "Translate the following reading unit.\n"
@@ -773,6 +774,7 @@ def _build_translation_prompt(context: TranslationJobContext) -> str:
         f"target_language: {context.target_language}\n"
         f"unit_id: {context.unit_id}\n"
         f"{strategy_section}"
+        f"{grouping_section}"
         "Return only the structured TranslationLayerGenerationOutput.\n"
         "Only output groups[].anchor_segment_ids and groups[].translated_text.\n"
         "Do not output source_text, source_text_hash, group_id, segment_sources, "
@@ -789,8 +791,63 @@ def _build_translation_prompt(context: TranslationJobContext) -> str:
     )
 
 
+def _format_grouping_guidance_section() -> str:
+    """Render the per-call semantic grouping guidance that goes alongside the
+    variant-specific policy lines. This section is variant-independent; it
+    teaches the model how to think about group granularity for any variant.
+
+    Hard rules:
+      - Translate the unit as a whole; do NOT fill a row per anchor segment.
+      - Each group must cover a contiguous semantic reading unit.
+      - Short consecutive sentences that jointly express one semantic move,
+        argument step, example, contrast, or explanation chain must merge
+        into a single group.
+      - Titles, list items, and isolated long/complex sentences may stand
+        alone as their own group.
+      - No fixed min/max group size; the semantic reading unit decides.
+      - `target_segments` is a registry of anchor handles, not a row template.
+    """
+    return (
+        "<grouping_guidance>\n"
+        "Your main translation object is the complete unit source_text in this "
+        "prompt, not a per-anchor-segment fill-in-the-blank table.\n"
+        "You must output semantic reading groups: each group should cover a "
+        "span of contiguous anchor_segment_ids that jointly form one reading "
+        "unit (one semantic action, one argumentative step, one example, one "
+        "turn/contrast, or one explanation chain).\n"
+        "Do NOT mechanically create one group per anchor segment. A group may "
+        "cover one or more consecutive anchor_segment_ids.\n"
+        "Short, consecutive sentences that share a single semantic move, "
+        "argument step, example, contrast, or explanation chain must be merged "
+        "into a single group rather than split one-per-segment.\n"
+        "Titles, list items, and isolated long/complex sentences may stand "
+        "alone as their own group.\n"
+        "Do not aim to collapse everything into one giant group, and do not "
+        "aim to split one sentence per group either. Let the semantic reading "
+        "unit decide the granularity.\n"
+        "Do not pad groups or force splits to hit a count.\n"
+        "There is no fixed minimum or maximum group size. There is no fixed "
+        "number of groups. Granularity is decided by the semantic reading "
+        "structure of the text.\n"
+        "<target_segments_registry_note>\n"
+        "The `<target_segments>` block below lists the available anchor "
+        "handles you may reference in `groups[].anchor_segment_ids`. It is a "
+        "registry of valid ids, not a row-by-row output template. You choose "
+        "which anchor_segment_ids belong to each group; you do not need to "
+        "produce one row per listed id.\n"
+        "</target_segments_registry_note>\n"
+        "</grouping_guidance>\n"
+    )
+
+
 def _format_target_segments_section(context: TranslationJobContext) -> str:
     lines = ["<target_segments>"]
+    lines.append(
+        "Each entry below is an anchor handle you may reference from "
+        "`groups[].anchor_segment_ids`. Pick the contiguous ids that form "
+        "each semantic reading group; do NOT treat this list as a row "
+        "template that requires one output row per id."
+    )
     for segment in context.anchor_segments:
         lines.extend(
             [

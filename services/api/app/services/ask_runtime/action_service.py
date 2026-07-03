@@ -131,7 +131,7 @@ def _annotation_request_from_rr_anchor(anchor: ReaderAskReadingRecordAnchor) -> 
     return UserAnnotationCreateRequest(
         anchor_type="text_range",
         selected_text=anchor.selected_text,
-        color="soft_green",
+        color="warm_yellow",
         payload_json={"source": "reader_ask"},
         anchor=anchor,
     )

@@ -47,15 +47,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SOURCE_ARTIFACTS_SQL = (
     REPO_ROOT / "infra" / "migrations" / "0007_reader_source_artifacts.sql"
 ).read_text(encoding="utf-8")
-DOCUMENT_BLOCKS_SQL = (
-    REPO_ROOT / "infra" / "migrations" / "0004_reader_document_blocks.sql"
-).read_text(encoding="utf-8")
 
 from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABASE_URL  # noqa: E402
 
-I3P_SCHEMA_SQL = (
-    BASELINE_SQL + "\n" + SOURCE_ARTIFACTS_SQL + "\n" + DOCUMENT_BLOCKS_SQL
-)
+# 0004 (document_blocks) is now in BASELINE_SQL, so the I3P schema is
+# BASELINE_SQL + 0007 (reader_source_artifacts).
+I3P_SCHEMA_SQL = BASELINE_SQL + "\n" + SOURCE_ARTIFACTS_SQL
 
 # Fixed UUIDs (different range from I3O to avoid cross-test conflicts)
 _USER_ID = UUID("00000000-0000-0000-0000-000000000f01")
@@ -752,3 +749,101 @@ async def test_no_job_returns_none(i3p_env: asyncpg.Pool) -> None:
         lease_owner=_LEASE_OWNER, lease_duration=_LEASE_DURATION,
     )
     assert result is None
+
+
+# ===================================================================
+# Script-level drain cycle: stale-lease recovery (D6 backend hardening: Task 1)
+# ===================================================================
+#
+# These tests exercise ``_run_drain_cycle`` from the artifact pipeline worker
+# script directly using a no-network fake service. They do NOT use the
+# ``i3p_env`` DB fixture — recovery and drain are stubbed at the script
+# boundary so no real Postgres or network calls happen.
+
+
+class TestArtifactPipelineDrainStaleLease:
+    async def test_drain_cycle_calls_recover_before_processing(self) -> None:
+        """Drain cycle must call ``ReaderJobRuntime.recover_stale_leases`` before
+        the downstream ``service.drain``, using the independent batch size.
+        """
+        from unittest.mock import AsyncMock
+
+        from scripts.run_reader_artifact_pipeline_worker import _run_drain_cycle
+
+        order: list[str] = []
+
+        async def _recover_side_effect(*, batch_size: int) -> int:
+            order.append(f"recover:{batch_size}")
+            return 0
+
+        recover_mock = AsyncMock(side_effect=_recover_side_effect)
+
+        from app.services.reader_orchestration import job_runtime
+
+        original_recover = job_runtime.ReaderJobRuntime.recover_stale_leases
+        # ``AsyncMock`` correctly handles the bound-method ``self`` (a plain
+        # async function with keyword-only args does NOT — Python would pass
+        # the instance as a positional arg, breaking the keyword-only call).
+        job_runtime.ReaderJobRuntime.recover_stale_leases = recover_mock  # type: ignore[assignment]
+        try:
+            class _Svc:
+                async def drain(
+                    self,
+                    *,
+                    lease_owner: str,
+                    lease_duration: timedelta,
+                    max_ticks: int,
+                ) -> list:
+                    order.append("drain")
+                    return []
+
+            svc = _Svc()
+            out = await _run_drain_cycle(
+                service=svc,  # type: ignore[arg-type]
+                lease_owner="owner",
+                lease_duration=timedelta(seconds=30),
+                max_ticks=5,
+                recover_batch_size=200,
+            )
+        finally:
+            job_runtime.ReaderJobRuntime.recover_stale_leases = original_recover  # type: ignore[assignment]
+
+        assert out == []
+        assert order == ["recover:200", "drain"], (
+            "stale-lease recovery must precede drain"
+        )
+
+    async def test_recover_failure_is_not_swallowed(self) -> None:
+        """If ``recover_stale_leases`` raises, the drain cycle must re-raise
+        and MUST NOT call ``service.drain``.
+        """
+        from scripts.run_reader_artifact_pipeline_worker import _run_drain_cycle
+
+        async def _recover_side_effect(*, batch_size: int) -> int:
+            raise RuntimeError("simulated DB drop")
+
+        from unittest.mock import AsyncMock
+
+        recover_mock = AsyncMock(side_effect=_recover_side_effect)
+
+        from app.services.reader_orchestration import job_runtime
+
+        original_recover = job_runtime.ReaderJobRuntime.recover_stale_leases
+        job_runtime.ReaderJobRuntime.recover_stale_leases = recover_mock  # type: ignore[assignment]
+        try:
+            class _Svc:
+                async def drain(
+                    self, *, lease_owner, lease_duration, max_ticks
+                ) -> list:
+                    raise AssertionError("drain must NOT run if recover raised")
+
+            svc = _Svc()
+            with pytest.raises(RuntimeError, match="simulated DB drop"):
+                await _run_drain_cycle(
+                    service=svc,  # type: ignore[arg-type]
+                    lease_owner="o",
+                    lease_duration=timedelta(seconds=10),
+                    max_ticks=1,
+                )
+        finally:
+            job_runtime.ReaderJobRuntime.recover_stale_leases = original_recover  # type: ignore[assignment]

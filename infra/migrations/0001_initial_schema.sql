@@ -473,8 +473,8 @@ CREATE TABLE user_annotations (
     start_offset INTEGER,
     end_offset INTEGER,
     text_hash TEXT,
-    color TEXT NOT NULL DEFAULT 'soft_green'
-        CHECK (color IN ('soft_green', 'soft_blue', 'soft_purple', 'warm_yellow', 'sage_green')),
+    color TEXT NOT NULL DEFAULT 'warm_yellow'
+        CHECK (color IN ('warm_yellow', 'soft_mint', 'soft_rose')),
     payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     deleted_at TIMESTAMPTZ,
     deleted_by UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -1545,7 +1545,7 @@ COMMENT ON COLUMN user_annotations.selected_text IS '用户选中的文本内容
 COMMENT ON COLUMN user_annotations.start_offset IS '选区起始偏移量。';
 COMMENT ON COLUMN user_annotations.end_offset IS '选区结束偏移量。';
 COMMENT ON COLUMN user_annotations.text_hash IS '选中文本的哈希值。';
-COMMENT ON COLUMN user_annotations.color IS '标注颜色，支持 soft_green、soft_blue、soft_purple、warm_yellow、sage_green。';
+COMMENT ON COLUMN user_annotations.color IS '用户高亮颜色，固定支持 warm_yellow、soft_mint、soft_rose。';
 COMMENT ON COLUMN user_annotations.payload_json IS '批注附加元数据 JSON。';
 COMMENT ON COLUMN user_annotations.created_at IS '记录创建时间。';
 COMMENT ON COLUMN user_annotations.updated_at IS '记录最后更新时间。';

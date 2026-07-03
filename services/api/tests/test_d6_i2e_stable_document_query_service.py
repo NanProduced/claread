@@ -120,6 +120,7 @@ def _queue_happy_path(conn: _FakeConn) -> None:
                     }
                 ]
             },
+            "text": "\nSection A\nHello stable document.\n",
         }
     )
     conn.queue_fetch(
@@ -272,6 +273,52 @@ async def test_load_active_stable_document_zero_blocks_fails_closed() -> None:
             record_id=RECORD_ID,
             user_id=USER_ID,
         )
+
+
+async def test_load_active_stable_document_returns_canonical_text_and_anchors() -> None:
+    conn = _FakeConn()
+    _queue_happy_path(conn)
+    # Augment base_row with the canonical text column.  ``_queue_happy_path``
+    # already queues three fetchrow results; we splice text into index 2
+    # (the base row) and add an anchor_segments fetch after the blocks.
+    base_index = 2
+    conn._fetchrow_queue[base_index]["text"] = (
+        "\nSection A\nHello stable document.\n"
+    )
+    conn.queue_fetch(
+        [
+            {
+                "anchor_segment_id": "as-2",
+                "unit_id": "u1",
+                "order_index": 1,
+                "segment_type": "sentence",
+                "base_start_utf16": 11,
+                "base_end_utf16": 33,
+                "text_hash": "12345678",
+            },
+            {
+                "anchor_segment_id": "as-1",
+                "unit_id": "u1",
+                "order_index": 0,
+                "segment_type": "sentence",
+                "base_start_utf16": 0,
+                "base_end_utf16": 9,
+                "text_hash": "abcdef00",
+            },
+        ]
+    )
+    service = _build_service(conn)
+    result = await service.load_active_stable_document(
+        record_id=RECORD_ID, user_id=USER_ID,
+    )
+
+    assert result.base.text.startswith("\nSection A")
+    # Anchor segments sorted by order_index ascending.
+    assert [a.anchor_segment_id for a in result.anchor_segments] == ["as-1", "as-2"]
+    # All blocks present.
+    assert result.blocks[0].text_content == "Section A"
+    # Block slices match base.text by offset.
+    assert result.base.text[1:10] == "Section A"
 
 
 @pytest.mark.parametrize(

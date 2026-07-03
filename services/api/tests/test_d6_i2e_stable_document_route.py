@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.api.routes import reader_orchestration
 from app.services.reader_orchestration.stable_document_query_service import (
+    StableDocumentProjectionAnchorSegment,
     StableDocumentProjectionBase,
     StableDocumentProjectionBlock,
     StableDocumentProjectionResult,
@@ -66,6 +67,7 @@ def _build_result() -> StableDocumentProjectionResult:
             language="en",
             title_snapshot="Base Title",
             navigation={"units": [{"unit_id": "u1"}]},
+            text="\nHeading\nHello stable doc.\n",
         ),
         stable_document=StableDocumentProjectionStableDocument(
             stable_document_id=STABLE_DOCUMENT_ID,
@@ -110,6 +112,26 @@ def _build_result() -> StableDocumentProjectionResult:
                     "default_route": "main_reading",
                     "rag_eligible": True,
                 },
+            ),
+        ),
+        anchor_segments=(
+            StableDocumentProjectionAnchorSegment(
+                anchor_segment_id="as-heading",
+                unit_id="u1",
+                order_index=1,
+                segment_type="sentence",
+                base_start_utf16=0,
+                base_end_utf16=7,
+                text_hash="12345678",
+            ),
+            StableDocumentProjectionAnchorSegment(
+                anchor_segment_id="as-paragraph",
+                unit_id="u1",
+                order_index=2,
+                segment_type="sentence",
+                base_start_utf16=9,
+                base_end_utf16=26,
+                text_hash="abcdef01",
             ),
         ),
     )
@@ -163,6 +185,7 @@ def test_get_reader_stable_document_success_calls_service_and_serializes_respons
             "language": "en",
             "title_snapshot": "Base Title",
             "navigation": {"units": [{"unit_id": "u1"}]},
+            "text": "\nHeading\nHello stable doc.\n",
         },
         "stable_document": {
             "stable_document_id": str(STABLE_DOCUMENT_ID),
@@ -207,6 +230,26 @@ def test_get_reader_stable_document_success_calls_service_and_serializes_respons
                     "default_route": "main_reading",
                     "rag_eligible": True,
                 },
+            },
+        ],
+        "anchor_segments": [
+            {
+                "anchor_segment_id": "as-heading",
+                "unit_id": "u1",
+                "order_index": 1,
+                "segment_type": "sentence",
+                "base_start_utf16": 0,
+                "base_end_utf16": 7,
+                "text_hash": "12345678",
+            },
+            {
+                "anchor_segment_id": "as-paragraph",
+                "unit_id": "u1",
+                "order_index": 2,
+                "segment_type": "sentence",
+                "base_start_utf16": 9,
+                "base_end_utf16": 26,
+                "text_hash": "abcdef01",
             },
         ],
     }
@@ -258,3 +301,70 @@ def test_get_reader_stable_document_query_error_maps_to_409_without_traceback() 
     assert response.status_code == 409
     assert response.json() == {"detail": "stable document facts incomplete"}
     assert "Traceback" not in response.text
+
+
+def test_route_response_includes_text_and_anchor_segments() -> None:
+    from app.services.reader_orchestration.stable_document_query_service import (
+        StableDocumentProjectionAnchorSegment,
+        StableDocumentProjectionBase,
+        StableDocumentProjectionBlock,
+        StableDocumentProjectionStableDocument,
+        StableDocumentProjectionResult,
+    )
+    from app.api.routes.reader_orchestration import _build_stable_document_route_response
+
+    result = StableDocumentProjectionResult(
+        reading_record_id=UUID(int=1),
+        record_generation=1,
+        active_base_id=UUID(int=2),
+        base=StableDocumentProjectionBase(
+            base_id=UUID(int=2),
+            content_sha256="a" * 64,
+            content_utf16_length=10,
+            canonicalizer_version="c",
+            builder_version="b",
+            segmenter_version="s",
+            language="en",
+            title_snapshot=None,
+            navigation={},
+            text="\nhello\n",
+        ),
+        stable_document=StableDocumentProjectionStableDocument(
+            stable_document_id=UUID(int=3),
+            document_version=1,
+            title=None,
+            language="en",
+            source_profile={},
+            content_sha256="a" * 64,
+            status="active",
+        ),
+        blocks=(
+            StableDocumentProjectionBlock(
+                block_id="b1",
+                parent_block_id=None,
+                order_index=0,
+                block_type="paragraph",
+                text_content="hello",
+                payload={},
+                source_refs={},
+                quality={},
+                canonical_text_start_utf16=1,
+                canonical_text_end_utf16=6,
+                interpretation_policy={},
+            ),
+        ),
+        anchor_segments=(
+            StableDocumentProjectionAnchorSegment(
+                anchor_segment_id="as-1",
+                unit_id="u1",
+                order_index=1,
+                segment_type="sentence",
+                base_start_utf16=1,
+                base_end_utf16=6,
+                text_hash="12345678",
+            ),
+        ),
+    )
+    resp = _build_stable_document_route_response(result)
+    assert resp.base.text == "\nhello\n"
+    assert [a.anchor_segment_id for a in resp.anchor_segments] == ["as-1"]

@@ -47,6 +47,44 @@ pytestmark = pytest.mark.anyio
 
 
 # ---------------------------------------------------------------------------
+# Module-level autouse fixture: stub stale-lease recovery at the runtime
+# class boundary so tests that drive ``_run_drain_cycle`` / ``_run_worker``
+# directly do NOT touch a real DB / network.
+#
+# This is a global safety net added in D6 backend hardening Task 1.  Tests
+# that need to assert ordering / batch-size propagation (e.g.
+# ``TestStaleLeaseRecovery``) override this stub with their own
+# ``monkeypatch.setattr(...)`` — monkeypatch teardown is function-scoped, so
+# the override only applies to that test.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _stub_recover_stale_leases_for_tests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stub ``ReaderJobRuntime.recover_stale_leases`` at the runtime class
+    boundary so tests that drive ``_run_drain_cycle`` / ``_run_worker``
+    directly do NOT touch a real DB / network.
+
+    This is a global safety net added in D6 backend hardening Task 1. Tests
+    that need to assert ordering / batch-size propagation (e.g.
+    ``TestStaleLeaseRecovery``) override this stub with their own
+    ``monkeypatch.setattr(...)`` — monkeypatch teardown is function-scoped, so
+    the override only applies to that test.
+    """
+    from unittest.mock import AsyncMock
+
+    from app.services.reader_orchestration import job_runtime
+
+    monkeypatch.setattr(
+        job_runtime.ReaderJobRuntime,
+        "recover_stale_leases",
+        AsyncMock(return_value=0),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
 
@@ -133,7 +171,11 @@ def _stub_infra(
     *,
     fake_service: _FakeWorkerService | None = None,
 ) -> _FakeWorkerService:
-    """Stub init_db / close_db / DB_POOL / build_worker_service."""
+    """Stub init_db / close_db / DB_POOL / build_worker_service.
+
+    Stale-lease recovery is stubbed at the module level by an autouse fixture
+    so this helper does NOT need to repeat that work.
+    """
     monkeypatch.setattr(
         "scripts.run_reader_article_rag_index_worker.init_db", _noop_init_db
     )
@@ -626,3 +668,132 @@ class TestNoRealBackendCalls:
         assert close_call_count == 1
         # No real process_next calls (idle).
         assert len(fake_service.process_next_calls) == 1
+
+
+# ===========================================================================
+# Stale-lease recovery (D6 backend hardening: Task 1)
+# ===========================================================================
+
+
+class TestStaleLeaseRecovery:
+    async def test_drain_cycle_calls_recover_before_process_next(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Drain cycle must call ``ReaderJobRuntime.recover_stale_leases`` once
+        before any ``process_next`` calls, and must use the independent
+        ``recover_batch_size`` (not throttled by ``max_ticks``).
+        """
+        from unittest.mock import AsyncMock
+
+        recover_calls: list[int] = []
+        call_order: list[str] = []
+
+        async def _side_effect(*, batch_size: int) -> int:
+            recover_calls.append(batch_size)
+            call_order.append("recover")
+            return 0
+
+        # ``AsyncMock`` is required (not a plain async function) so the
+        # bound-method ``self`` does not break the keyword-only call.
+        mock = AsyncMock(side_effect=_side_effect)
+
+        from app.services.reader_orchestration import job_runtime
+
+        monkeypatch.setattr(
+            job_runtime.ReaderJobRuntime,
+            "recover_stale_leases",
+            mock,
+        )
+
+        svc = _FakeWorkerService(process_next_results=[None])
+        # Subclass to record process_next invocations in the shared order list.
+        original_process_next = svc.process_next
+
+        async def _tracking_process_next(**kwargs: Any) -> Any:
+            call_order.append("process_next")
+            return await original_process_next(**kwargs)
+
+        svc.process_next = _tracking_process_next  # type: ignore[method-assign]
+        _stub_infra(monkeypatch, fake_service=svc)  # type: ignore[arg-type]
+
+        # Drive the drain cycle directly with our (overridden) service injected.
+        from scripts.run_reader_article_rag_index_worker import _run_drain_cycle
+
+        results = await _run_drain_cycle(
+            service=svc,  # type: ignore[arg-type]
+            lease_owner="test-owner",
+            lease_duration=timedelta(seconds=30),
+            max_ticks=3,
+            recover_batch_size=200,
+        )
+        assert results == []
+        # ``process_next`` runs AFTER the recover stub.
+        assert svc.process_next_calls, "process_next should have run at least once"
+        # Recover ran first, with the independent batch size 200.
+        assert recover_calls == [200], (
+            f"recover must use the independent batch size; got {recover_calls}"
+        )
+        # Plan-mandated: recover MUST run before process_next (one ordering
+        # assertion that would fail if a regression swapped the order).
+        assert call_order and call_order[0] == "recover", (
+            f"recover_stale_leases must run before process_next; order was {call_order}"
+        )
+
+    async def test_once_mode_invokes_recover_before_draining(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--once mode: runtime-level recover runs before any process_next
+        call. Recovery must use the independent batch size.
+        """
+        from unittest.mock import AsyncMock
+
+        recover_batch_used: list[int] = []
+        call_order: list[str] = []
+
+        async def _side_effect(*, batch_size: int) -> int:
+            recover_batch_used.append(batch_size)
+            call_order.append("recover")
+            return 7
+
+        mock = AsyncMock(side_effect=_side_effect)
+
+        from app.services.reader_orchestration import job_runtime
+
+        monkeypatch.setattr(
+            job_runtime.ReaderJobRuntime,
+            "recover_stale_leases",
+            mock,
+        )
+
+        svc = _FakeWorkerService(process_next_results=[None])
+        # Track process_next invocations in the shared order list.
+        original_process_next = svc.process_next
+
+        async def _tracking_process_next(**kwargs: Any) -> Any:
+            call_order.append("process_next")
+            return await original_process_next(**kwargs)
+
+        svc.process_next = _tracking_process_next  # type: ignore[method-assign]
+        _stub_infra(monkeypatch, fake_service=svc)  # type: ignore[arg-type]
+
+        args = Namespace(
+            once=True, poll_interval_seconds=0, lease_duration_seconds=120,
+            lease_owner_prefix="test-once-recover", max_ticks=100,
+            recover_batch_size=200,
+        )
+        await _run_worker(args, Settings())
+        # The runtime-level recover must have used the independent batch 200.
+        assert recover_batch_used == [200], (
+            f"runtime-level recover must use recover_batch_size=200; got {recover_batch_used}"
+        )
+        # Plan-mandated: drain cycle MUST have run (process_next invoked at
+        # least once). Without this, an early-exit regression would pass.
+        assert len(svc.process_next_calls) >= 1, (
+            "process_next must run at least once after recover (drain cycle "
+            f"invoked); got {len(svc.process_next_calls)} calls"
+        )
+        # Plan-mandated: recover MUST run before process_next.
+        assert call_order and call_order[0] == "recover", (
+            f"recover_stale_leases must run before process_next; order was {call_order}"
+        )

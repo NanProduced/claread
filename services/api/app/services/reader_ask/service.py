@@ -30,6 +30,8 @@ from app.schemas.reader_ask import (
     ReaderAskActionConfirmResult,
     ReaderAskActionProposal,
     ReaderAskAnchorRef,
+    ReaderAskArticleRagCitation,
+    ReaderAskArticleRagSidecar,
     ReaderAskAssetDisambiguation,
     ReaderAskAttachment,
     ReaderAskAttachmentPayload,
@@ -1593,6 +1595,88 @@ def _assistant_message_metadata(
     )
 
 
+# ---------------------------------------------------------------------------
+# Article RAG sidecar status coercion
+# ---------------------------------------------------------------------------
+
+
+# Mirrors the ``ReaderAskArticleRagStatus`` Literal in ``reader_ask.py``.
+# Kept here (a service-local frozenset) so the coercion helper does not
+# require a schema re-import at module load — and so an accidental
+# schema drift surfaces as a NameError at coercion time, not as a silent
+# misclassification.
+_ALLOWED_ARTICLE_RAG_SIDECAR_STATUSES: frozenset[str] = frozenset(
+    {
+        "available",
+        "empty",
+        "not_indexed_or_unavailable",
+        "composer_rejected",
+        "disabled",
+        "stale_due_to_repair",
+    }
+)
+
+
+def _coerce_article_rag_sidecar_status(
+    raw_status: Any,
+) -> "ReaderAskArticleRagStatus":
+    """Coerce an unknown status to ``not_indexed_or_unavailable``.
+
+    Per ``frontend-integration-status-map.md`` (Coercion contract), the
+    boundary layer coerces unknown / hostile / regressed statuses to
+    the safe fallback so the frontend always sees a closed enum.
+
+    The Pydantic ``ReaderAskArticleRagSidecar.status`` field is a
+    Literal allowlist — passing an unknown value raises
+    ``ValidationError``.  This helper guarantees the Literal
+    validation never raises for the status field, while preserving
+    all known statuses verbatim.
+    """
+    if (
+        isinstance(raw_status, str)
+        and raw_status in _ALLOWED_ARTICLE_RAG_SIDECAR_STATUSES
+    ):
+        return raw_status  # type: ignore[return-value]
+    return "not_indexed_or_unavailable"
+
+
+def _build_typed_article_rag_sidecar_from_runtime(
+    *,
+    article_rag_metadata: dict[str, Any] | None,
+    article_rag_citations: list[dict[str, Any]] | None,
+) -> ReaderAskArticleRagSidecar | None:
+    """Build a typed ``ReaderAskArticleRagSidecar`` from runtime state.
+
+    Returns ``None`` when there is no metadata AND no citations — the
+    historical "no RAG in this run" case. Returns a typed sidecar
+    otherwise, so the frontend always sees a stable shape.
+
+    The ``status`` fallback mirrors the Ask sidecar bridge behavior
+    when status is unknown — see ``frontend-integration-status-map.md``
+    for the coercion contract.  The citation list is validated through
+    the typed ``ReaderAskArticleRagCitation`` schema which mirrors the
+    real I4G attachment shape ``{context_id, chunk_id, citation: {9-key}}``.
+    """
+    if not article_rag_metadata and not article_rag_citations:
+        return None
+    metadata = dict(article_rag_metadata or {})
+    citations = [
+        ReaderAskArticleRagCitation.model_validate(c)
+        for c in (article_rag_citations or [])
+    ]
+    return ReaderAskArticleRagSidecar(
+        status=_coerce_article_rag_sidecar_status(metadata.get("status")),
+        failure_code=metadata.get("failure_code"),
+        retryable=bool(metadata.get("retryable", False)),
+        fallback_allowed=bool(metadata.get("fallback_allowed", True)),
+        should_attach=bool(metadata.get("should_attach", False)),
+        context_ids=list(metadata.get("context_ids") or []),
+        source_pack_hash=metadata.get("source_pack_hash"),
+        query_sha256=metadata.get("query_sha256"),
+        citations=citations,
+    )
+
+
 def _build_user_visible_output(
     *,
     content_md: str,
@@ -1618,6 +1702,7 @@ def _build_user_visible_output(
     reasoning_status: str | None = None,
     follow_up_suggestions: list[Any] | None = None,
     article_rag_citations: list[dict[str, Any]] | None = None,
+    article_rag: ReaderAskArticleRagSidecar | None = None,
 ) -> ReaderAskUserVisibleOutput:
     return output_contract_svc.build_user_visible_output(
         content_md=content_md,
@@ -1643,6 +1728,7 @@ def _build_user_visible_output(
         reasoning_status=reasoning_status,
         follow_up_suggestions=follow_up_suggestions,
         article_rag_citations=article_rag_citations,
+        article_rag=article_rag,
     )
 
 
@@ -1747,6 +1833,10 @@ def _build_stream_checkpoint_output_json(
         reasoning_status=reasoning_status,
         follow_up_suggestions=runtime_state.latest_suggestions or None,
         article_rag_citations=runtime_state.article_rag_citations,
+        article_rag=_build_typed_article_rag_sidecar_from_runtime(
+            article_rag_metadata=runtime_state.article_rag_metadata,
+            article_rag_citations=runtime_state.article_rag_citations,
+        ),
     )
     return output.model_dump(mode="json")
 
@@ -2209,9 +2299,24 @@ def _merge_repair_runtime_state(
     # (degenerate) run are stale and must be cleared so the
     # completed payload does not publish RAG citations for an
     # answer that was not based on RAG evidence.
+    #
+    # D6-I4Q (Round 2): the metadata now carries an explicit
+    # ``status=stale_due_to_repair`` so the frontend can distinguish
+    # 'RAG was never enabled' (status=disabled) from 'RAG was
+    # enabled but cleared because the repair branch bypassed
+    # integration'. The failure_code is also surfaced for ops
+    # dashboards.
     target.article_rag_citations = []
     target.article_rag_context_ids = []
-    target.article_rag_metadata = {}
+    target.article_rag_metadata = {
+        "status": "stale_due_to_repair",
+        "failure_code": "article_rag_repair_citations_dropped",
+        "retryable": False,
+        "fallback_allowed": True,
+        "should_attach": False,
+        "context_ids": [],
+        "citations": [],
+    }
 
 
 _TRACE_SUMMARY_METRIC_KEYS = (
@@ -3751,6 +3856,10 @@ async def stream_thread_message(
             reasoning_status=stream_checkpoint_svc.terminal_reasoning_status(stream_runtime.reasoning_started),
             follow_up_suggestions=runtime_state.latest_suggestions or None,
             article_rag_citations=runtime_state.article_rag_citations,
+            article_rag=_build_typed_article_rag_sidecar_from_runtime(
+                article_rag_metadata=runtime_state.article_rag_metadata,
+                article_rag_citations=runtime_state.article_rag_citations,
+            ),
         )
         final_message_status = "interrupted" if stream_outcome.interrupted else "completed"
         updated = await repo.update_message(
@@ -4705,6 +4814,10 @@ async def retry_thread_message(
             reasoning_status=stream_checkpoint_svc.terminal_reasoning_status(stream_runtime.reasoning_started),
             follow_up_suggestions=runtime_state.latest_suggestions or None,
             article_rag_citations=runtime_state.article_rag_citations,
+            article_rag=_build_typed_article_rag_sidecar_from_runtime(
+                article_rag_metadata=runtime_state.article_rag_metadata,
+                article_rag_citations=runtime_state.article_rag_citations,
+            ),
         )
         final_message_status = "interrupted" if stream_outcome.interrupted else "completed"
         await repo.update_message(

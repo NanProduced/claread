@@ -1061,9 +1061,24 @@ type ReaderPlateSnapshot = {
   record_id: string;
   record: {
     title: string;
+    display_title_zh: string | null;
+    title_generation_status: "pending" | "succeeded" | "failed_retryable";
+    title_generation_error_code: string | null;
+    title_generation_error_message: string | null;
+    reading_goal: "daily_reading" | "exam";
+    reading_variant:
+      | "beginner_reading"
+      | "intermediate_reading"
+      | "intensive_reading"
+      | "gaokao"
+      | "cet"
+      | "kaoyan"
+      | "tem"
+      | "ielts_toefl";
     created_at: string;
     source_type: string;
     source_metadata: Record<string, unknown>;
+    generation: number;
     product_state:
       | "processing"
       | "needs_confirmation"
@@ -1245,6 +1260,8 @@ W3-C2 alignment additions:
 - Snapshot top-level `anchor_segments` and `navigation.units[*].text_hash` are stable interaction anchors. Frontends must not infer them only from Plate tree shape.
 - `enhancement_layers.owner`, `ask_supplements.owner` and `user_assets.owner` distinguish projection ownership. Only `enhancement_layers` uses `target_scope` / `target_key` as publish targeting; ask supplements and user assets continue to ground themselves through explicit anchors.
 - `reading_goal` and `reading_variant` are first-class facts on `reading_records` and are exposed on `ReaderPlateSnapshot.record` (via `ReaderSnapshotRecord.reading_goal` / `reading_variant`). They are the truth owner for Reader strategy in the new orchestration. `source_metadata` must not carry them as top-level keys (submit schemas reject with 422). Only `daily_reading` and `exam` (with their scoped variants) are wired into the new orchestration; `academic` / `academic_general` fail closed at submit.
+- Reader strategy is currently active only for the core annotation generation path: submit strategy -> persisted record strategy -> variant-first resolver -> job metadata/fingerprint -> translation/vocabulary/grammar prompt injection. `translation` uses the `translation` policy, `vocabulary` uses the `vocabulary` policy, and grammar jobs use the `grammar_bundle` policy for both `grammar_note` and `sentence_analysis`. There is no separate `sentence_analysis` policy layer in this version.
+- Ask Claread, RAG selection and few-shot/example selection are intentionally deferred from this strategy repair. `reader_variants.yaml` may contain `ask` policy lines as future review input, but the current Ask runtime does not consume them. Any future Ask/RAG/few-shot strategy integration requires a separate design review covering truth owner, filter dimensions, fallback behavior, cache/index versioning and evaluation gates.
 - `summary` / `semantic_outline` are intentionally not formalized as typed snapshot layer schemas in D5-W3-C2. `layer_type: string` keeps room for future experimentation, but production layer contracts must wait until owner, target scope, publish policy and ReaderWorkbench rendering shape are decided.
 
 Rules:

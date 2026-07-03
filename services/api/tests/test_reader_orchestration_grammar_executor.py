@@ -24,6 +24,9 @@ from app.services.reader_orchestration.grammar_worker import (
     PydanticAIGrammarBundleExecutor,
 )
 from app.services.reader_orchestration.job_bootstrap import GrammarJobBootstrapService
+from app.services.reader_orchestration.reading_strategy import (
+    resolve_reader_variant_strategy,
+)
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
@@ -81,6 +84,8 @@ def _build_context(
     anchor_segment_id: str = "s1",
     segment_type: str = "sentence",
 ) -> GrammarJobContext:
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer = strategy.layers["grammar_bundle"]
     return GrammarJobContext(
         job_id=uuid4(),
         run_id=uuid4(),
@@ -105,6 +110,12 @@ def _build_context(
                 text=source_text,
             ),
         ),
+        reading_goal=strategy.reading_goal,
+        reading_variant=strategy.reading_variant,
+        strategy_version=strategy.strategy_version,
+        strategy_hash=strategy.strategy_hash,
+        layer_policy_hash=layer.policy_hash,
+        grammar_prompt_lines=layer.prompt_lines,
     )
 
 

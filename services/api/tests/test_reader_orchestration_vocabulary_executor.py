@@ -10,6 +10,9 @@ from app.contracts.annotation import compute_text_range_hash, utf16_code_unit_le
 from app.llm.registry import build_model_registry
 from app.llm.routes import MODEL_ROUTE_READER_LAYER_VOCABULARY
 from app.services.reader_orchestration import vocabulary_worker as vocabulary_worker_module
+from app.services.reader_orchestration.reading_strategy import (
+    resolve_reader_variant_strategy,
+)
 from app.services.reader_orchestration.vocabulary_worker import (
     PydanticAIVocabularyExecutor,
     VocabularyAnchorSegmentContext,
@@ -42,6 +45,8 @@ def _build_context(
     source_text: str,
     anchor_segment_id: str = "s1",
 ) -> VocabularyJobContext:
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer = strategy.layers["vocabulary"]
     return VocabularyJobContext(
         job_id=uuid4(),
         run_id=uuid4(),
@@ -66,6 +71,12 @@ def _build_context(
                 text=source_text,
             ),
         ),
+        reading_goal=strategy.reading_goal,
+        reading_variant=strategy.reading_variant,
+        strategy_version=strategy.strategy_version,
+        strategy_hash=strategy.strategy_hash,
+        layer_policy_hash=layer.policy_hash,
+        vocabulary_prompt_lines=layer.prompt_lines,
     )
 
 

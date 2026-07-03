@@ -3,6 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from app.schemas.reader_ask import (
+    ReaderAskActionProposal,
+    ReaderAskArticleRagSidecar,
+    ReaderAskAssetDisambiguation,
+    ReaderAskCitation,
     ReaderAskCompletedPayload,
     ReaderAskContextPlan,
     ReaderAskDisambiguation,
@@ -20,9 +24,6 @@ from app.schemas.reader_ask import (
     ReaderAskToolTraceEntry,
     ReaderAskTraceSummary,
     ReaderAskUserVisibleOutput,
-    ReaderAskAssetDisambiguation,
-    ReaderAskActionProposal,
-    ReaderAskCitation,
 )
 
 # ---------------------------------------------------------------------------
@@ -76,6 +77,13 @@ USER_VISIBLE_OUTPUT_FIELDS: frozenset[str] = frozenset({
     # from tool-generated ``citations``; comes from the RAG retrieval
     # pipeline and never enters the LLM prompt.
     "article_rag_citations",
+    # D6-I4Q (Round 2): typed Article RAG sidecar.  Carries the same
+    # citation data plus status / failure_code / retryable /
+    # fallback_allowed / should_attach / context_ids /
+    # source_pack_hash / query_sha256.  Frontend renders
+    # status-specific UI from this field; ``article_rag_citations``
+    # is preserved for back-compat.
+    "article_rag",
 })
 
 # Fields that repository hydration projects from user_visible_output_json onto
@@ -147,6 +155,7 @@ def build_user_visible_output(
     reasoning_status: str | None = None,
     follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | list[dict[str, Any]] | None = None,
     article_rag_citations: list[dict[str, Any]] | None = None,
+    article_rag: ReaderAskArticleRagSidecar | dict[str, Any] | None = None,
 ) -> ReaderAskUserVisibleOutput:
     normalized_run_info = (
         run_info
@@ -169,6 +178,26 @@ def build_user_visible_output(
             else ReaderAskFollowUpSuggestion.model_validate(item)
             for item in follow_up_suggestions
         ]
+    # D6-I4Q (Round 2): normalize the typed Article RAG sidecar.
+    # Callers may pass the typed DTO, a dict (e.g. round-tripped
+    # from a stored JSON), or None.
+    if article_rag is None:
+        normalized_sidecar: ReaderAskArticleRagSidecar | None = None
+    elif isinstance(article_rag, ReaderAskArticleRagSidecar):
+        normalized_sidecar = article_rag
+    else:
+        normalized_sidecar = ReaderAskArticleRagSidecar.model_validate(article_rag)
+    # Back-compat: when ``article_rag_citations`` is not explicitly
+    # provided AND the typed sidecar is present, derive the legacy
+    # field from the sidecar's citations.  This keeps old callers
+    # (and stored JSON) working without a code change.
+    if article_rag_citations is None and normalized_sidecar is not None:
+        derived_legacy: list[dict[str, Any]] = [
+            c.model_dump(mode="json")
+            for c in normalized_sidecar.citations
+        ]
+    else:
+        derived_legacy = list(article_rag_citations) if article_rag_citations else []
     return ReaderAskUserVisibleOutput(
         content_md=content_md,
         submission_mode=submission_mode,
@@ -192,7 +221,8 @@ def build_user_visible_output(
         reasoning_md=reasoning_md,
         reasoning_status=reasoning_status,
         follow_up_suggestions=normalized_suggestions,
-        article_rag_citations=list(article_rag_citations) if article_rag_citations else [],
+        article_rag_citations=derived_legacy,
+        article_rag=normalized_sidecar,
     )
 
 
@@ -222,6 +252,12 @@ def to_completed_payload(
 def visible_output_from_message(message: ReaderAskMessage, message_dict: dict[str, Any]) -> dict[str, Any]:
     current = message_dict.get("current_user_visible_output")
     if isinstance(current, dict):
+        # The stored JSON already carries the article_rag typed
+        # sidecar verbatim (USER_VISIBLE_OUTPUT_FIELDS now includes
+        # ``article_rag``), so the early-return path is sufficient
+        # for the round-trip. The fallback ``build_user_visible_output``
+        # below still threads ``article_rag`` for the case where
+        # ``current_user_visible_output`` is missing.
         return dict(current)
     current_turn_run = message_dict.get("current_turn_run") or {}
     output = build_user_visible_output(
@@ -247,5 +283,8 @@ def visible_output_from_message(message: ReaderAskMessage, message_dict: dict[st
         reasoning_md=message.reasoning_md,
         reasoning_status=message.reasoning_status,
         follow_up_suggestions=message.follow_up_suggestions,
+        article_rag=current_turn_run.get("user_visible_output_json", {}).get("article_rag")
+        if isinstance(current_turn_run.get("user_visible_output_json"), dict)
+        else None,
     )
     return output.model_dump(mode="json")

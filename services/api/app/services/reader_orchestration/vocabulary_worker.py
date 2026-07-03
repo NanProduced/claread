@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal, Protocol
@@ -46,6 +47,10 @@ from .job_bootstrap import (
 )
 from .job_runtime import ClaimResult, FenceViolationError, ReaderJobRuntime
 from .layer_publisher import PublishedVocabularyLayer, VocabularyLayerPublisher
+from .reading_strategy import (
+    ReaderStrategyResolverError,
+    resolve_reader_variant_strategy,
+)
 
 DEFAULT_VOCABULARY_RETRY_DELAY = timedelta(minutes=5)
 VOCABULARY_WORKFLOW_VERSION = "d5-v3-vocabulary-worker"
@@ -59,6 +64,24 @@ MAX_VOCABULARY_CANDIDATE_TEXT_LENGTH = 160
 MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH = 240
 MAX_VOCABULARY_DIAGNOSTIC_ITEMS = 8
 MAX_VOCABULARY_DIAGNOSTIC_TEXT_LENGTH = 80
+
+# T7 strategy metadata keys that T5 bootstrap writes into reader_jobs.input_json.
+# T7 reads them back and validates against the live resolver output. Missing
+# keys or hash mismatch fail closed; legacy bare-fingerprint jobs without
+# strategy metadata are rejected as validation errors, never silently
+# downgraded to a default strategy.
+_STRATEGY_INPUT_KEYS: tuple[str, ...] = (
+    "reading_goal",
+    "reading_variant",
+    "strategy_version",
+    "strategy_hash",
+    "layer_policy_hash",
+)
+_VOCABULARY_LAYER_NAME = "vocabulary"
+_STRATEGY_METADATA_MISSING_CODE = "strategy_metadata_missing"
+_STRATEGY_HASH_MISMATCH_CODE = "strategy_hash_mismatch"
+_LAYER_POLICY_HASH_MISMATCH_CODE = "layer_policy_hash_mismatch"
+_STRATEGY_VERSION_MISMATCH_CODE = "strategy_version_mismatch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +111,16 @@ class VocabularyJobContext:
     source_text: str
     text_hash: str
     anchor_segments: tuple[VocabularyAnchorSegmentContext, ...]
+    # T7 strategy fields. Populated by _load_job_context from
+    # reader_jobs.input_json (written by T5 bootstrap) and cross-validated
+    # against resolve_reader_variant_strategy(). Fail-closed contract:
+    # missing metadata or hash mismatch never falls back to a default.
+    reading_goal: str
+    reading_variant: str
+    strategy_version: str
+    strategy_hash: str
+    layer_policy_hash: str
+    vocabulary_prompt_lines: tuple[str, ...]
 
 
 class VocabularyCandidateItemBase(BaseModel):
@@ -683,6 +716,7 @@ class VocabularyWorkerService:
                        job.target_key,
                        job.expected_generation,
                        job.operation_fingerprint,
+                       job.input_json,
                        base.language AS source_language,
                        base.text AS base_text,
                        unit.order_index,
@@ -801,6 +835,14 @@ class VocabularyWorkerService:
                 failure_code="missing_anchor_segments",
             )
 
+        # T7: read strategy metadata written by T5 bootstrap from
+        # input_json and cross-validate against the live resolver. Missing
+        # metadata or hash mismatch fail closed; legacy bare-fingerprint
+        # jobs without strategy metadata are rejected, never silently
+        # downgraded to a default strategy.
+        input_json = row["input_json"]
+        strategy_metadata = _validate_vocabulary_strategy_metadata(input_json)
+
         return VocabularyJobContext(
             job_id=row["id"],
             run_id=row["run_id"],
@@ -815,6 +857,12 @@ class VocabularyWorkerService:
             source_text=source_text,
             text_hash=expected_hash,
             anchor_segments=tuple(anchor_segments),
+            reading_goal=strategy_metadata.reading_goal,
+            reading_variant=strategy_metadata.reading_variant,
+            strategy_version=strategy_metadata.strategy_version,
+            strategy_hash=strategy_metadata.strategy_hash,
+            layer_policy_hash=strategy_metadata.layer_policy_hash,
+            vocabulary_prompt_lines=strategy_metadata.vocabulary_prompt_lines,
         )
 
     async def _mark_run_running(self, run_id: UUID) -> None:
@@ -946,6 +994,7 @@ class VocabularyWorkerService:
 
 
 def _build_vocabulary_prompt(context: VocabularyJobContext) -> str:
+    strategy_section = _format_vocabulary_strategy_section(context)
     anchor_segments = [
         {
             "anchor_segment_id": segment.anchor_segment_id,
@@ -962,6 +1011,7 @@ def _build_vocabulary_prompt(context: VocabularyJobContext) -> str:
         f"source_language: {context.source_language}\n"
         f"unit_id: {context.unit_id}\n"
         f"max_items: {MAX_VOCABULARY_ITEMS}\n"
+        f"{strategy_section}"
         "Return only the structured candidate output.\n"
         "<source_text>\n"
         f"{context.source_text}\n"
@@ -969,6 +1019,158 @@ def _build_vocabulary_prompt(context: VocabularyJobContext) -> str:
         "<anchor_segments_json>\n"
         f"{json.dumps(anchor_segments, ensure_ascii=False)}\n"
         "</anchor_segments_json>"
+    )
+
+
+def _format_vocabulary_strategy_section(context: VocabularyJobContext) -> str:
+    """Format the concrete vocabulary policy lines as a prompt section.
+
+    The strategy section carries the resolved variant-first policy lines
+    (from ``reader_variants.yaml`` via ``resolve_reader_variant_strategy``)
+    so the vocabulary agent can vary its annotation choices by
+    ``reading_goal`` / ``reading_variant``. The accompanying hashes are
+    included for traceability and so that prompt-level evals can group by
+    strategy.
+    """
+    lines_bullet = "\n".join(
+        f"- {line}" for line in context.vocabulary_prompt_lines
+    )
+    return (
+        "<reader_strategy>\n"
+        f"reading_goal: {context.reading_goal}\n"
+        f"reading_variant: {context.reading_variant}\n"
+        f"strategy_version: {context.strategy_version}\n"
+        f"strategy_hash: {context.strategy_hash}\n"
+        f"layer_policy_hash: {context.layer_policy_hash}\n"
+        "<policy_lines>\n"
+        f"{lines_bullet}\n"
+        "</policy_lines>\n"
+        "</reader_strategy>\n"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _VocabularyStrategyMetadata:
+    """Validated strategy metadata extracted from a vocabulary job's
+    input_json and cross-checked against the live resolver."""
+
+    reading_goal: str
+    reading_variant: str
+    strategy_version: str
+    strategy_hash: str
+    layer_policy_hash: str
+    vocabulary_prompt_lines: tuple[str, ...]
+
+
+def _validate_vocabulary_strategy_metadata(
+    input_json: Any,
+) -> _VocabularyStrategyMetadata:
+    """Read strategy metadata from input_json and validate against the resolver.
+
+    Fail-closed contract:
+        - ``input_json`` must be a mapping containing every key in
+          :data:`_STRATEGY_INPUT_KEYS` with a non-empty string value.
+          Legacy bare-fingerprint jobs without strategy metadata are
+          rejected with ``strategy_metadata_missing``; there is NO default
+          fallback.
+        - The ``(reading_goal, reading_variant)`` pair must resolve via
+          :func:`resolve_reader_variant_strategy`. Resolver errors
+          (unknown variant, missing layer, etc.) propagate as
+          :class:`VocabularyExecutionError` with failure_class
+          ``strategy_resolution``.
+        - ``strategy_version``, ``strategy_hash`` and
+          ``layer_policy_hash`` from input_json must match the resolver
+          output exactly. Any mismatch fails closed with a dedicated
+          failure_code.
+    """
+    if not isinstance(input_json, Mapping):
+        raise VocabularyExecutionError(
+            "vocabulary job input_json is not a mapping; "
+            "strategy metadata cannot be read",
+            retryable=False,
+            failure_class="validation",
+            failure_code=_STRATEGY_METADATA_MISSING_CODE,
+        )
+
+    missing: list[str] = []
+    for key in _STRATEGY_INPUT_KEYS:
+        value = input_json.get(key)
+        if not isinstance(value, str) or not value:
+            missing.append(key)
+    if missing:
+        raise VocabularyExecutionError(
+            "vocabulary job input_json is missing strategy metadata: "
+            + ", ".join(missing),
+            retryable=False,
+            failure_class="validation",
+            failure_code=_STRATEGY_METADATA_MISSING_CODE,
+        )
+
+    reading_goal = str(input_json["reading_goal"])
+    reading_variant = str(input_json["reading_variant"])
+    expected_strategy_version = str(input_json["strategy_version"])
+    expected_strategy_hash = str(input_json["strategy_hash"])
+    expected_layer_policy_hash = str(input_json["layer_policy_hash"])
+
+    try:
+        strategy = resolve_reader_variant_strategy(reading_goal, reading_variant)
+    except ReaderStrategyResolverError as exc:
+        raise VocabularyExecutionError(
+            f"vocabulary strategy resolver rejected pair "
+            f"({reading_goal!r}, {reading_variant!r}): {exc}",
+            retryable=False,
+            failure_class="strategy_resolution",
+            failure_code="strategy_resolver_error",
+        ) from exc
+
+    if strategy.strategy_version != expected_strategy_version:
+        raise VocabularyExecutionError(
+            f"vocabulary strategy_version mismatch: input_json has "
+            f"{expected_strategy_version!r} but resolver produced "
+            f"{strategy.strategy_version!r}",
+            retryable=False,
+            failure_class="validation",
+            failure_code=_STRATEGY_VERSION_MISMATCH_CODE,
+        )
+
+    if strategy.strategy_hash != expected_strategy_hash:
+        raise VocabularyExecutionError(
+            f"vocabulary strategy_hash mismatch: input_json has "
+            f"{expected_strategy_hash!r} but resolver produced "
+            f"{strategy.strategy_hash!r}",
+            retryable=False,
+            failure_class="validation",
+            failure_code=_STRATEGY_HASH_MISMATCH_CODE,
+        )
+
+    layer = strategy.layers.get(_VOCABULARY_LAYER_NAME)
+    if layer is None:
+        # Defensive: the resolver guarantees all REQUIRED_LAYERS are
+        # present. Fail closed if a future code path violates that.
+        raise VocabularyExecutionError(
+            f"resolved strategy has no layer {_VOCABULARY_LAYER_NAME!r}",
+            retryable=False,
+            failure_class="strategy_resolution",
+            failure_code="strategy_resolver_error",
+        )
+
+    if layer.policy_hash != expected_layer_policy_hash:
+        raise VocabularyExecutionError(
+            f"vocabulary layer_policy_hash mismatch: input_json has "
+            f"{expected_layer_policy_hash!r} but resolver produced "
+            f"{layer.policy_hash!r}",
+            retryable=False,
+            failure_class="validation",
+            failure_code=_LAYER_POLICY_HASH_MISMATCH_CODE,
+        )
+
+    return _VocabularyStrategyMetadata(
+        reading_goal=reading_goal,
+        reading_variant=reading_variant,
+        strategy_version=strategy.strategy_version,
+        strategy_hash=strategy.strategy_hash,
+        layer_policy_hash=layer.policy_hash,
+        vocabulary_prompt_lines=layer.prompt_lines,
     )
 
 

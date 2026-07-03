@@ -23,21 +23,29 @@ from app.schemas.reader_orchestration import (
 from app.services.reader_orchestration import grammar_worker as grammar_worker_module
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
+    PlainTextArticleReadySubmitRequest,
 )
 from app.services.reader_orchestration.grammar_worker import (
     FakeGrammarBundleExecutor,
+    GrammarAnchorSegmentContext,
     GrammarBundleCandidateOutput,
     GrammarBundleWorkerService,
     GrammarExecutionError,
     GrammarExecutionResult,
     GrammarJobContext,
     PydanticAIGrammarBundleExecutor,
+    _build_grammar_prompt,
+    _validate_grammar_strategy_metadata,
 )
 from app.services.reader_orchestration.job_bootstrap import (
     GRAMMAR_OPERATION_FINGERPRINT,
     GrammarJobBootstrapService,
+    _fingerprint_matches_base,
 )
 from app.services.reader_orchestration.job_runtime import FenceViolationError
+from app.services.reader_orchestration.reading_strategy import (
+    resolve_reader_variant_strategy,
+)
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
@@ -274,7 +282,10 @@ async def test_bootstrap_creates_grammar_run_and_job_with_expected_fingerprint(
 
     assert result.base_id == article.base_id
     assert result.expected_generation == 1
-    assert result.operation_fingerprint == GRAMMAR_OPERATION_FINGERPRINT
+    assert _fingerprint_matches_base(
+        result.operation_fingerprint, GRAMMAR_OPERATION_FINGERPRINT
+    )
+    assert result.operation_fingerprint != GRAMMAR_OPERATION_FINGERPRINT
     assert result.unit_id == article.snapshot.navigation.units[0].unit_id
 
     async with grammar_worker_env.acquire() as conn:
@@ -310,7 +321,10 @@ async def test_bootstrap_creates_grammar_run_and_job_with_expected_fingerprint(
     assert job_row["target_key"] == result.unit_id
     assert job_row["status"] == "queued"
     assert job_row["expected_generation"] == 1
-    assert job_row["operation_fingerprint"] == GRAMMAR_OPERATION_FINGERPRINT
+    assert _fingerprint_matches_base(
+        job_row["operation_fingerprint"], GRAMMAR_OPERATION_FINGERPRINT
+    )
+    assert job_row["operation_fingerprint"] != GRAMMAR_OPERATION_FINGERPRINT
     assert job_row["max_attempts"] == 3
 
 
@@ -333,6 +347,7 @@ async def test_bootstrap_does_not_create_duplicate_active_grammar_job(
 
     assert second.run_id == first.run_id
     assert second.job_id == first.job_id
+    assert second.operation_fingerprint == first.operation_fingerprint
 
     async with grammar_worker_env.acquire() as conn:
         total_jobs = await conn.fetchval(
@@ -345,7 +360,7 @@ async def test_bootstrap_does_not_create_duplicate_active_grammar_job(
               AND operation_fingerprint = $2
             """,
             article.record_id,
-            GRAMMAR_OPERATION_FINGERPRINT,
+            first.operation_fingerprint,
         )
     assert total_jobs == 1
 
@@ -847,7 +862,7 @@ async def test_worker_claim_fence_supersedes_job_on_active_base_mismatch(
 ) -> None:
     user_id = await insert_user(grammar_worker_env)
     article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
-    await GrammarJobBootstrapService(pool=grammar_worker_env).bootstrap_grammar_run(
+    boot_result = await GrammarJobBootstrapService(pool=grammar_worker_env).bootstrap_grammar_run(
         record_id=article.record_id,
         user_id=user_id,
     )
@@ -877,7 +892,7 @@ async def test_worker_claim_fence_supersedes_job_on_active_base_mismatch(
               AND operation_fingerprint = $2
             """,
             article.record_id,
-            GRAMMAR_OPERATION_FINGERPRINT,
+            boot_result.operation_fingerprint,
         )
         layer_count = await conn.fetchval(
             """
@@ -1265,3 +1280,603 @@ def test_grammar_modules_do_not_reference_render_scene_json() -> None:
     assert "render_scene_json" not in job_bootstrap_path.read_text(encoding="utf-8")
     assert "render_scene_json" not in worker_path.read_text(encoding="utf-8")
     assert "render_scene_json" not in layer_publisher_path.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------#
+# T8: variant-first grammar_bundle strategy prompt + metadata validation
+# ---------------------------------------------------------------------------#
+
+
+def _build_context_for_variant(
+    *,
+    reading_goal: str,
+    reading_variant: str,
+    source_text: str = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    ),
+) -> GrammarJobContext:
+    """Build a GrammarJobContext with strategy metadata for a given variant."""
+    strategy = resolve_reader_variant_strategy(reading_goal, reading_variant)
+    layer = strategy.layers["grammar_bundle"]
+    return GrammarJobContext(
+        job_id=UUID("11111111-1111-1111-1111-111111111111"),
+        run_id=UUID("22222222-2222-2222-2222-222222222222"),
+        reading_record_id=UUID("33333333-3333-3333-3333-333333333333"),
+        user_id=UUID("44444444-4444-4444-4444-444444444444"),
+        base_id=UUID("55555555-5555-5555-5555-555555555555"),
+        unit_id="u1",
+        order_index=1,
+        expected_generation=1,
+        operation_fingerprint="grammar_bundle_unit_v1",
+        source_language="en",
+        source_text=source_text,
+        text_hash=compute_text_range_hash(source_text),
+        anchor_segments=(
+            GrammarAnchorSegmentContext(
+                anchor_segment_id="s1",
+                sentence_id="s1",
+                segment_type="sentence",
+                unit_start_utf16=0,
+                unit_end_utf16=utf16_code_unit_length(source_text),
+                text_hash=compute_text_range_hash(source_text),
+                text=source_text,
+            ),
+        ),
+        reading_goal=strategy.reading_goal,
+        reading_variant=strategy.reading_variant,
+        strategy_version=strategy.strategy_version,
+        strategy_hash=strategy.strategy_hash,
+        layer_policy_hash=layer.policy_hash,
+        grammar_prompt_lines=layer.prompt_lines,
+    )
+
+
+def test_build_grammar_prompt_contains_concrete_policy_lines() -> None:
+    """The prompt must include the concrete grammar_bundle policy lines from
+    reader_variants.yaml, not just a goal/variant label."""
+    context = _build_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+    )
+    prompt = _build_grammar_prompt(context)
+
+    assert "<reader_strategy>" in prompt
+    assert "</reader_strategy>" in prompt
+    assert "<policy_lines>" in prompt
+    assert "</policy_lines>" in prompt
+    assert "reading_goal: daily_reading" in prompt
+    assert "reading_variant: intermediate_reading" in prompt
+    assert "strategy_hash:" in prompt
+    assert "layer_policy_hash:" in prompt
+
+    # Every concrete policy line for intermediate_reading grammar_bundle
+    # layer must appear in the prompt.
+    for line in context.grammar_prompt_lines:
+        assert line in prompt
+
+
+def test_build_grammar_prompt_differs_between_daily_intermediate_and_exam_cet() -> None:
+    """daily_reading/intermediate_reading and exam/cet must produce
+    different strategy sections in the grammar prompt."""
+    daily_context = _build_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+    )
+    exam_context = _build_context_for_variant(
+        reading_goal="exam",
+        reading_variant="cet",
+    )
+
+    daily_prompt = _build_grammar_prompt(daily_context)
+    exam_prompt = _build_grammar_prompt(exam_context)
+
+    assert daily_prompt != exam_prompt
+
+    assert "reading_goal: daily_reading" in daily_prompt
+    assert "reading_variant: intermediate_reading" in daily_prompt
+    for line in daily_context.grammar_prompt_lines:
+        assert line in daily_prompt
+
+    assert "reading_goal: exam" in exam_prompt
+    assert "reading_variant: cet" in exam_prompt
+    for line in exam_context.grammar_prompt_lines:
+        assert line in exam_prompt
+
+    # The two variants' grammar_bundle policy lines must actually differ
+    # (guards against accidentally identical policy text).
+    assert (
+        daily_context.grammar_prompt_lines
+        != exam_context.grammar_prompt_lines
+    )
+
+
+def test_build_grammar_prompt_strategy_section_order() -> None:
+    """The strategy section must sit before the 'Return only...' directive
+    so it does not clobber the source_text block."""
+    context = _build_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+    )
+    prompt = _build_grammar_prompt(context)
+
+    unit_id_idx = prompt.index(f"unit_id: {context.unit_id}")
+    strategy_idx = prompt.index("<reader_strategy>")
+    return_idx = prompt.index("Return only the structured candidate output.")
+    source_idx = prompt.index("<source_text>")
+
+    assert unit_id_idx < strategy_idx < return_idx < source_idx
+
+
+# ---------------------------------------------------------------------------#
+# T8: _validate_grammar_strategy_metadata fail-closed unit tests
+# ---------------------------------------------------------------------------#
+
+
+def test_validate_grammar_strategy_metadata_rejects_non_mapping_input() -> None:
+    with pytest.raises(GrammarExecutionError) as exc_info:
+        _validate_grammar_strategy_metadata(None)
+    assert exc_info.value.failure_code == "strategy_metadata_missing"
+    assert exc_info.value.retryable is False
+
+
+def test_validate_grammar_strategy_metadata_rejects_missing_keys() -> None:
+    """A legacy bare-fingerprint job whose input_json lacks strategy
+    metadata must fail closed, not fall back to a default strategy."""
+    incomplete = {
+        "unit_id": "u1",
+        "base_language": "en",
+        # No reading_goal / reading_variant / strategy_version / strategy_hash
+        # / layer_policy_hash.
+    }
+    with pytest.raises(GrammarExecutionError) as exc_info:
+        _validate_grammar_strategy_metadata(incomplete)
+    assert exc_info.value.failure_code == "strategy_metadata_missing"
+    assert "reading_goal" in str(exc_info.value)
+    assert exc_info.value.retryable is False
+
+
+def test_validate_grammar_strategy_metadata_rejects_empty_string_values() -> None:
+    """Empty string values are treated as missing."""
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer = strategy.layers["grammar_bundle"]
+    payload = {
+        "reading_goal": "",
+        "reading_variant": strategy.reading_variant,
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash,
+        "layer_policy_hash": layer.policy_hash,
+    }
+    with pytest.raises(GrammarExecutionError) as exc_info:
+        _validate_grammar_strategy_metadata(payload)
+    assert exc_info.value.failure_code == "strategy_metadata_missing"
+
+
+def test_validate_grammar_strategy_metadata_rejects_strategy_hash_mismatch() -> None:
+    """strategy_hash mismatch must fail closed with a dedicated code."""
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer = strategy.layers["grammar_bundle"]
+    payload = {
+        "reading_goal": strategy.reading_goal,
+        "reading_variant": strategy.reading_variant,
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash + "_tampered",
+        "layer_policy_hash": layer.policy_hash,
+    }
+    with pytest.raises(GrammarExecutionError) as exc_info:
+        _validate_grammar_strategy_metadata(payload)
+    assert exc_info.value.failure_code == "strategy_hash_mismatch"
+    assert "strategy_hash" in str(exc_info.value)
+    assert exc_info.value.retryable is False
+
+
+def test_validate_grammar_strategy_metadata_rejects_layer_policy_hash_mismatch() -> None:
+    """layer_policy_hash mismatch must fail closed with a dedicated code."""
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    payload = {
+        "reading_goal": strategy.reading_goal,
+        "reading_variant": strategy.reading_variant,
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash,
+        # Use a different layer's policy_hash to trigger mismatch.
+        "layer_policy_hash": strategy.layers["translation"].policy_hash,
+    }
+    with pytest.raises(GrammarExecutionError) as exc_info:
+        _validate_grammar_strategy_metadata(payload)
+    assert exc_info.value.failure_code == "layer_policy_hash_mismatch"
+    assert exc_info.value.retryable is False
+
+
+def test_validate_grammar_strategy_metadata_rejects_strategy_version_mismatch() -> None:
+    """strategy_version mismatch must fail closed."""
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer = strategy.layers["grammar_bundle"]
+    payload = {
+        "reading_goal": strategy.reading_goal,
+        "reading_variant": strategy.reading_variant,
+        "strategy_version": "stale_version",
+        "strategy_hash": strategy.strategy_hash,
+        "layer_policy_hash": layer.policy_hash,
+    }
+    with pytest.raises(GrammarExecutionError) as exc_info:
+        _validate_grammar_strategy_metadata(payload)
+    assert exc_info.value.failure_code == "strategy_version_mismatch"
+
+
+def test_validate_grammar_strategy_metadata_rejects_illegal_goal_variant_pair() -> None:
+    """An illegal goal/variant pair (e.g. academic) must fail closed via
+    the resolver, not silently fall back."""
+    payload = {
+        "reading_goal": "academic",
+        "reading_variant": "academic_general",
+        "strategy_version": "reader_variant_policy_v1",
+        "strategy_hash": "irrelevant",
+        "layer_policy_hash": "irrelevant",
+    }
+    with pytest.raises(GrammarExecutionError) as exc_info:
+        _validate_grammar_strategy_metadata(payload)
+    assert exc_info.value.failure_class == "strategy_resolution"
+    assert exc_info.value.failure_code == "strategy_resolver_error"
+
+
+def test_validate_grammar_strategy_metadata_returns_resolved_prompt_lines_on_success() -> None:
+    """On success, the helper returns the resolver's concrete prompt_lines
+    so the prompt builder can inject them."""
+    strategy = resolve_reader_variant_strategy("exam", "cet")
+    layer = strategy.layers["grammar_bundle"]
+    payload = {
+        "reading_goal": "exam",
+        "reading_variant": "cet",
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash,
+        "layer_policy_hash": layer.policy_hash,
+    }
+    result = _validate_grammar_strategy_metadata(payload)
+    assert result.reading_goal == "exam"
+    assert result.reading_variant == "cet"
+    assert result.strategy_hash == strategy.strategy_hash
+    assert result.layer_policy_hash == layer.policy_hash
+    assert result.grammar_prompt_lines == layer.prompt_lines
+    assert len(result.grammar_prompt_lines) >= 1
+
+
+# ---------------------------------------------------------------------------#
+# T8: _load_job_context integration — reads T5/T8 bootstrap strategy metadata
+# ---------------------------------------------------------------------------#
+
+
+@pytest.mark.anyio
+async def test_load_job_context_reads_t5_bootstrap_strategy_metadata(
+    grammar_worker_env: asyncpg.Pool,
+) -> None:
+    """_load_job_context must read strategy metadata written by T5/T8 bootstrap
+    and resolve the concrete grammar_bundle policy lines from the resolver."""
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    bootstrap = GrammarJobBootstrapService(pool=grammar_worker_env)
+    boot_result = await bootstrap.bootstrap_grammar_run(
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+
+    worker = GrammarBundleWorkerService(pool=grammar_worker_env)
+    context = await worker._load_job_context(boot_result.job_id)
+
+    assert context.reading_goal == "daily_reading"
+    assert context.reading_variant == "intermediate_reading"
+
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    assert context.strategy_version == strategy.strategy_version
+    assert context.strategy_hash == strategy.strategy_hash
+    assert context.layer_policy_hash == strategy.layers["grammar_bundle"].policy_hash
+
+    assert context.grammar_prompt_lines == strategy.layers["grammar_bundle"].prompt_lines
+    assert len(context.grammar_prompt_lines) >= 1
+
+    prompt = _build_grammar_prompt(context)
+    for line in context.grammar_prompt_lines:
+        assert line in prompt
+
+
+@pytest.mark.anyio
+async def test_load_job_context_reads_exam_cet_strategy_metadata(
+    grammar_worker_env: asyncpg.Pool,
+) -> None:
+    """_load_job_context must also work for exam/cet variant."""
+    user_id = await insert_user(grammar_worker_env)
+    service = ArticleReadyPersistenceService(pool=grammar_worker_env)
+    submit_result = await service.submit_plain_text(
+        PlainTextArticleReadySubmitRequest(
+            user_id=user_id,
+            plain_text=(
+                "Not only did the team revise the plan, "
+                "but they also clarified the timeline."
+            ),
+            title="Exam CET Grammar Slice",
+            language="en",
+            reading_goal="exam",  # type: ignore[arg-type]
+            reading_variant="cet",  # type: ignore[arg-type]
+        )
+    )
+
+    bootstrap = GrammarJobBootstrapService(pool=grammar_worker_env)
+    boot_result = await bootstrap.bootstrap_grammar_run(
+        record_id=submit_result.record_id,
+        user_id=user_id,
+    )
+
+    worker = GrammarBundleWorkerService(pool=grammar_worker_env)
+    context = await worker._load_job_context(boot_result.job_id)
+
+    assert context.reading_goal == "exam"
+    assert context.reading_variant == "cet"
+    strategy = resolve_reader_variant_strategy("exam", "cet")
+    assert context.strategy_hash == strategy.strategy_hash
+    assert context.layer_policy_hash == strategy.layers["grammar_bundle"].policy_hash
+    assert context.grammar_prompt_lines == strategy.layers["grammar_bundle"].prompt_lines
+
+
+async def _insert_legacy_grammar_job_without_strategy_metadata(
+    pool: asyncpg.Pool,
+    *,
+    record_id: UUID,
+    base_id: UUID,
+    user_id: UUID,
+    unit_id: str,
+    input_json: dict,
+) -> UUID:
+    """Insert a grammar job row with crafted input_json.
+
+    Used to simulate legacy bare-fingerprint jobs or jobs with tampered
+    strategy metadata for fail-closed tests.
+    """
+    from app.database.json_compat import jsonb_param
+
+    async with pool.acquire() as conn:
+        run_id = await conn.fetchval(
+            """
+            INSERT INTO reader_runs (
+                reading_record_id, user_id, run_type, status,
+                record_generation, envelope_json, policy_version, trigger_kind
+            )
+            VALUES ($1, $2, 'grammar_bundle', 'queued', 1,
+                    '{}'::jsonb, 'legacy-test', 'system')
+            RETURNING id
+            """,
+            record_id,
+            user_id,
+        )
+        job_id = await conn.fetchval(
+            """
+            INSERT INTO reader_jobs (
+                reading_record_id, base_id, run_id, user_id,
+                job_type, target_type, target_key, status,
+                priority, expected_generation, operation_fingerprint,
+                idempotency_key, input_hash, input_json, max_attempts
+            )
+            VALUES (
+                $1, $2, $3, $4,
+                'build_grammar_bundle', 'unit', $5, 'queued',
+                0, 1, $6,
+                $7, $8, $9::jsonb, 3
+            )
+            RETURNING id
+            """,
+            record_id,
+            base_id,
+            run_id,
+            user_id,
+            unit_id,
+            GRAMMAR_OPERATION_FINGERPRINT,
+            f"{GRAMMAR_OPERATION_FINGERPRINT}:{unit_id}",
+            "legacy-input-hash",
+            jsonb_param(input_json),
+        )
+    assert isinstance(job_id, UUID)
+    return job_id
+
+
+@pytest.mark.anyio
+async def test_load_job_context_fail_closed_on_missing_strategy_metadata(
+    grammar_worker_env: asyncpg.Pool,
+) -> None:
+    """A legacy bare-fingerprint job without strategy metadata in input_json
+    must fail closed when _load_job_context tries to load it."""
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    unit_id = article.snapshot.navigation.units[0].unit_id
+
+    legacy_input_json = {
+        "unit_id": unit_id,
+        "base_language": "en",
+        # No strategy metadata keys.
+    }
+    job_id = await _insert_legacy_grammar_job_without_strategy_metadata(
+        grammar_worker_env,
+        record_id=article.record_id,
+        base_id=article.base_id,
+        user_id=user_id,
+        unit_id=unit_id,
+        input_json=legacy_input_json,
+    )
+
+    worker = GrammarBundleWorkerService(pool=grammar_worker_env)
+    with pytest.raises(GrammarExecutionError) as exc_info:
+        await worker._load_job_context(job_id)
+    assert exc_info.value.failure_code == "strategy_metadata_missing"
+    assert exc_info.value.retryable is False
+
+
+@pytest.mark.anyio
+async def test_load_job_context_fail_closed_on_strategy_hash_mismatch(
+    grammar_worker_env: asyncpg.Pool,
+) -> None:
+    """A job whose input_json strategy_hash doesn't match the resolver
+    output must fail closed."""
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    unit_id = article.snapshot.navigation.units[0].unit_id
+
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer = strategy.layers["grammar_bundle"]
+    tampered_input_json = {
+        "unit_id": unit_id,
+        "base_language": "en",
+        "reading_goal": strategy.reading_goal,
+        "reading_variant": strategy.reading_variant,
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash + "_tampered",
+        "layer_policy_hash": layer.policy_hash,
+    }
+    job_id = await _insert_legacy_grammar_job_without_strategy_metadata(
+        grammar_worker_env,
+        record_id=article.record_id,
+        base_id=article.base_id,
+        user_id=user_id,
+        unit_id=unit_id,
+        input_json=tampered_input_json,
+    )
+
+    worker = GrammarBundleWorkerService(pool=grammar_worker_env)
+    with pytest.raises(GrammarExecutionError) as exc_info:
+        await worker._load_job_context(job_id)
+    assert exc_info.value.failure_code == "strategy_hash_mismatch"
+    assert exc_info.value.retryable is False
+
+
+@pytest.mark.anyio
+async def test_load_job_context_fail_closed_on_layer_policy_hash_mismatch(
+    grammar_worker_env: asyncpg.Pool,
+) -> None:
+    """A job whose input_json layer_policy_hash doesn't match the resolver
+    output must fail closed."""
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    unit_id = article.snapshot.navigation.units[0].unit_id
+
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    tampered_input_json = {
+        "unit_id": unit_id,
+        "base_language": "en",
+        "reading_goal": strategy.reading_goal,
+        "reading_variant": strategy.reading_variant,
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash,
+        # Use a different layer's policy_hash to trigger mismatch.
+        "layer_policy_hash": strategy.layers["translation"].policy_hash,
+    }
+    job_id = await _insert_legacy_grammar_job_without_strategy_metadata(
+        grammar_worker_env,
+        record_id=article.record_id,
+        base_id=article.base_id,
+        user_id=user_id,
+        unit_id=unit_id,
+        input_json=tampered_input_json,
+    )
+
+    worker = GrammarBundleWorkerService(pool=grammar_worker_env)
+    with pytest.raises(GrammarExecutionError) as exc_info:
+        await worker._load_job_context(job_id)
+    assert exc_info.value.failure_code == "layer_policy_hash_mismatch"
+    assert exc_info.value.retryable is False
+
+
+@pytest.mark.anyio
+async def test_load_job_context_fail_closed_on_strategy_version_mismatch(
+    grammar_worker_env: asyncpg.Pool,
+) -> None:
+    """A job whose input_json strategy_version doesn't match the resolver
+    output must fail closed."""
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    unit_id = article.snapshot.navigation.units[0].unit_id
+
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer = strategy.layers["grammar_bundle"]
+    tampered_input_json = {
+        "unit_id": unit_id,
+        "base_language": "en",
+        "reading_goal": strategy.reading_goal,
+        "reading_variant": strategy.reading_variant,
+        "strategy_version": "stale_version",
+        "strategy_hash": strategy.strategy_hash,
+        "layer_policy_hash": layer.policy_hash,
+    }
+    job_id = await _insert_legacy_grammar_job_without_strategy_metadata(
+        grammar_worker_env,
+        record_id=article.record_id,
+        base_id=article.base_id,
+        user_id=user_id,
+        unit_id=unit_id,
+        input_json=tampered_input_json,
+    )
+
+    worker = GrammarBundleWorkerService(pool=grammar_worker_env)
+    with pytest.raises(GrammarExecutionError) as exc_info:
+        await worker._load_job_context(job_id)
+    assert exc_info.value.failure_code == "strategy_version_mismatch"
+    assert exc_info.value.retryable is False
+
+
+@pytest.mark.anyio
+async def test_worker_fail_closed_on_missing_strategy_metadata_moves_job_to_failed_terminal(
+    grammar_worker_env: asyncpg.Pool,
+) -> None:
+    """End-to-end: a legacy job without strategy metadata, when processed
+    by the worker, must move to failed_terminal with the right failure code."""
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    unit_id = article.snapshot.navigation.units[0].unit_id
+
+    legacy_input_json = {
+        "unit_id": unit_id,
+        "base_language": "en",
+    }
+    job_id = await _insert_legacy_grammar_job_without_strategy_metadata(
+        grammar_worker_env,
+        record_id=article.record_id,
+        base_id=article.base_id,
+        user_id=user_id,
+        unit_id=unit_id,
+        input_json=legacy_input_json,
+    )
+
+    worker = GrammarBundleWorkerService(
+        pool=grammar_worker_env,
+        executor=_StaticGrammarExecutor(_sample_grammar_bundle_output),
+    )
+
+    # Manually claim the legacy bare-fingerprint job through the runtime so
+    # this test can exercise process_claimed_grammar_job's fail-closed
+    # metadata-validation path directly.
+    from app.services.reader_orchestration.job_runtime import ReaderJobRuntime
+
+    runtime = ReaderJobRuntime(pool=grammar_worker_env)
+    claim = await runtime.claim_next_job(
+        lease_owner="legacy-test-worker",
+        lease_duration=timedelta(seconds=30),
+        job_type="build_grammar_bundle",
+        operation_fingerprint=GRAMMAR_OPERATION_FINGERPRINT,
+    )
+    assert claim is not None
+    assert claim.job_id == job_id
+
+    result = await worker.process_claimed_grammar_job(claim=claim)
+
+    assert result.status == "failed_terminal"
+    assert result.context is None  # context loading failed before assignment
+
+    async with grammar_worker_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            "SELECT status, failure_class, failure_code, rationale_code "
+            "FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+    assert job_row is not None
+    assert job_row["status"] == "failed_terminal"
+    assert job_row["failure_class"] == "validation"
+    assert job_row["failure_code"] == "strategy_metadata_missing"
+    # GrammarExecutionError defaults rationale_code to failure_code when
+    # not explicitly set; the worker's GrammarExecutionError branch
+    # propagates exc.rationale_code to the transition call.
+    assert job_row["rationale_code"] == "strategy_metadata_missing"

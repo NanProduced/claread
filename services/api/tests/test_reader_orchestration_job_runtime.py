@@ -1449,3 +1449,183 @@ async def test_claim_supersedes_extraction_job_when_active_base_already_exists(
     row = await _fetch_job(job_runtime_env, job_id)
     assert row["status"] == STATUS_SUPERSEDED
     assert row["rationale_code"] == "active_base_already_exists"
+
+
+# ---------------------------------------------------------------------------
+# Tests: article_rag_index_build fence tripwire (D6-I4C)
+#
+# ``article_rag_index_build`` is a base-scoped job_type added in D6-I4B. It
+# must NOT be in the build_base / extraction / materialization allow-list,
+# so the runtime fence must enforce:
+#   * base_id IS NOT NULL (DB CHECK constraint catches this at insert time)
+#   * expected_generation matches reading_records.generation
+#   * base row exists and status='active'
+#   * reading_records.active_base_id matches the job's base_id
+# These tripwire tests pin the fence behavior for the new job_type so a
+# future allow-list change does not silently exempt it.
+# ---------------------------------------------------------------------------
+
+
+async def test_claim_accepts_article_rag_index_build_with_valid_fence(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """article_rag_index_build with a valid base/generation fence is claimed."""
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        job_type="article_rag_index_build",
+        target_type="record",
+        target_key=str(uuid4()),
+        operation_fingerprint="article_rag_index_build_v1",
+        idempotency_key="id-rag-index-build-valid",
+    )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="rag-index-worker",
+        lease_duration=timedelta(seconds=30),
+        job_type="article_rag_index_build",
+        target_type="record",
+        operation_fingerprint="article_rag_index_build_v1",
+    )
+    assert claimed is not None
+    assert claimed.job_id == job_id
+    assert claimed.job_type == "article_rag_index_build"
+    assert claimed.base_id == base_id
+
+    row = await _fetch_job(job_runtime_env, job_id)
+    assert row["status"] == STATUS_CLAIMED
+
+
+async def test_claim_supersedes_article_rag_index_build_with_inactive_base(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """article_rag_index_build is superseded when its base is inactive."""
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        job_type="article_rag_index_build",
+        target_type="record",
+        target_key=str(uuid4()),
+        operation_fingerprint="article_rag_index_build_v1",
+        idempotency_key="id-rag-index-build-inactive-base",
+    )
+    async with job_runtime_env.acquire() as conn:
+        await conn.execute(
+            "UPDATE reading_bases SET status = 'superseded' WHERE id = $1",
+            base_id,
+        )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    result = await runtime.claim_next_job(
+        lease_owner="rag-index-worker",
+        lease_duration=timedelta(seconds=30),
+        job_type="article_rag_index_build",
+        target_type="record",
+        operation_fingerprint="article_rag_index_build_v1",
+    )
+    assert result is None
+
+    async with job_runtime_env.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, rationale_code FROM reader_jobs "
+            "WHERE idempotency_key = $1",
+            "id-rag-index-build-inactive-base",
+        )
+    assert row["status"] == STATUS_SUPERSEDED
+    assert row["rationale_code"] == "inactive_base"
+
+
+async def test_claim_supersedes_article_rag_index_build_with_stale_generation(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """article_rag_index_build is superseded when generation has moved."""
+    user_id, record_id, base_id, run_id = await _seed_active_record(
+        job_runtime_env, generation=1
+    )
+    await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        job_type="article_rag_index_build",
+        target_type="record",
+        target_key=str(uuid4()),
+        expected_generation=1,
+        operation_fingerprint="article_rag_index_build_v1",
+        idempotency_key="id-rag-index-build-stale-gen",
+    )
+    async with job_runtime_env.acquire() as conn:
+        await conn.execute(
+            "UPDATE reading_records SET active_base_id = NULL, generation = 2 "
+            "WHERE id = $1",
+            record_id,
+        )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    result = await runtime.claim_next_job(
+        lease_owner="rag-index-worker",
+        lease_duration=timedelta(seconds=30),
+        job_type="article_rag_index_build",
+        target_type="record",
+        operation_fingerprint="article_rag_index_build_v1",
+    )
+    assert result is None
+
+    async with job_runtime_env.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, rationale_code FROM reader_jobs "
+            "WHERE idempotency_key = $1",
+            "id-rag-index-build-stale-gen",
+        )
+    assert row["status"] == STATUS_SUPERSEDED
+    assert row["rationale_code"] == "stale_generation"
+
+
+async def test_claim_supersedes_article_rag_index_build_with_active_base_mismatch(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """article_rag_index_build is superseded when active_base_id does not match."""
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        job_type="article_rag_index_build",
+        target_type="record",
+        target_key=str(uuid4()),
+        operation_fingerprint="article_rag_index_build_v1",
+        idempotency_key="id-rag-index-build-active-base-mismatch",
+    )
+    # Clear active_base_id so the job's base_id no longer matches.
+    await _set_active_base(job_runtime_env, record_id=record_id, base_id=None)
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    result = await runtime.claim_next_job(
+        lease_owner="rag-index-worker",
+        lease_duration=timedelta(seconds=30),
+        job_type="article_rag_index_build",
+        target_type="record",
+        operation_fingerprint="article_rag_index_build_v1",
+    )
+    assert result is None
+
+    async with job_runtime_env.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, rationale_code FROM reader_jobs "
+            "WHERE idempotency_key = $1",
+            "id-rag-index-build-active-base-mismatch",
+        )
+    assert row["status"] == STATUS_SUPERSEDED
+    assert row["rationale_code"] == "active_base_mismatch"

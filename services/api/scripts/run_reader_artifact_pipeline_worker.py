@@ -42,6 +42,7 @@ from app.services.reader_orchestration.artifact_pipeline_worker_service import (
     ArtifactInputPipelineWorkerService,
     ArtifactPipelineProcessResult,
 )
+from app.services.reader_orchestration.job_runtime import ReaderJobRuntime
 from app.services.reader_orchestration.ocr_artifact_extraction_provider import (
     DashScopeQwenOcrClient,
     OcrTextExtractor,
@@ -54,6 +55,11 @@ from app.services.reader_orchestration.text_artifact_extraction_provider import 
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Default batch size for stale-lease recovery — independent of ``max_ticks``
+# so a backlog of crashed jobs is not throttled by the per-cycle budget.
+DEFAULT_RECOVER_BATCH_SIZE = 200
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +233,14 @@ def _parse_args(settings: Settings) -> argparse.Namespace:
         default=settings.reader_artifact_worker_max_ticks,
         help="Maximum process_once calls per drain cycle (safety valve)",
     )
+    parser.add_argument(
+        "--recover-batch-size",
+        type=int,
+        default=settings.reader_artifact_worker_recover_batch_size
+        if hasattr(settings, "reader_artifact_worker_recover_batch_size")
+        else DEFAULT_RECOVER_BATCH_SIZE,
+        help="Independent batch size for stale-lease recovery (default 200)",
+    )
     return parser.parse_args()
 
 
@@ -261,8 +275,31 @@ async def _run_drain_cycle(
     lease_owner: str,
     lease_duration: timedelta,
     max_ticks: int,
+    recover_batch_size: int = DEFAULT_RECOVER_BATCH_SIZE,
 ) -> list[ArtifactPipelineProcessResult]:
-    """Run one drain cycle: process jobs until idle or max_ticks reached."""
+    """Run one drain cycle: stale-lease recovery then ``service.drain``.
+
+    Recovery uses an independent batch size so a backlog of crashed jobs is
+    not throttled by the per-cycle ``max_ticks`` budget.
+
+    If recovery fails, the exception is logged and re-raised — we MUST NOT
+    silently swallow the failure, otherwise stale leases would never recover.
+    """
+    try:
+        recovered = await ReaderJobRuntime().recover_stale_leases(
+            batch_size=recover_batch_size,
+        )
+    except Exception:
+        logger.exception(
+            "artifact pipeline worker: stale-lease recovery failed; "
+            "aborting drain cycle to avoid masking the failure"
+        )
+        raise
+    if recovered:
+        logger.info(
+            "artifact pipeline worker: recovered stale leases",
+            extra={"recovered": recovered, "recover_batch_size": recover_batch_size},
+        )
     return await service.drain(
         lease_owner=lease_owner,
         lease_duration=lease_duration,
@@ -282,6 +319,11 @@ async def _run_worker(
         raise ValueError("lease_duration_seconds must be >= 1")
     if args.max_ticks < 1:
         raise ValueError("max_ticks must be >= 1")
+    # ``recover_batch_size`` may be absent on a hand-rolled Namespace in
+    # tests; fall back to the script default rather than crashing.
+    recover_batch_size = getattr(args, "recover_batch_size", DEFAULT_RECOVER_BATCH_SIZE)
+    if recover_batch_size < 1:
+        raise ValueError("recover_batch_size must be >= 1")
 
     await init_db(
         settings.database_url,
@@ -313,6 +355,7 @@ async def _run_worker(
                 lease_owner=lease_owner,
                 lease_duration=lease_duration,
                 max_ticks=args.max_ticks,
+                recover_batch_size=recover_batch_size,
             )
             print(
                 json.dumps(
@@ -346,6 +389,7 @@ async def _run_worker(
                 "lease_duration_seconds": args.lease_duration_seconds,
                 "poll_interval_seconds": args.poll_interval_seconds,
                 "max_ticks": args.max_ticks,
+                "recover_batch_size": recover_batch_size,
                 "storage_reader": type(storage_reader).__name__
                 if storage_reader is not None
                 else "None(fail-closed)",
@@ -358,6 +402,7 @@ async def _run_worker(
                 lease_owner=lease_owner,
                 lease_duration=lease_duration,
                 max_ticks=args.max_ticks,
+                recover_batch_size=recover_batch_size,
             )
             if results:
                 logger.info(

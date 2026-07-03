@@ -28,8 +28,10 @@ Coverage map (per D6-I3U spec):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
@@ -58,6 +60,7 @@ from app.services.reader_orchestration.ocr_artifact_extraction_provider import (
     FAILURE_CODE_OCR_RESPONSE_INVALID,
     FAILURE_CODE_OCR_SDK_UNAVAILABLE,
     OcrArtifactExtractionProvider,
+    OcrTextExtractionResult,
     QwenOcrClientError,
     QwenOcrInvalidRequestError,
     QwenOcrPermissionError,
@@ -1149,7 +1152,110 @@ def test_build_default_router_accepts_real_qwen_extractor() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 20. Opt-in smoke skeleton (env-gated, no network by default)
+# 20. Event loop non-blocking regression (asyncio.to_thread)
+# ---------------------------------------------------------------------------
+
+
+async def test_ocr_provider_extract_text_does_not_block_event_loop() -> None:
+    """Regression (P2): ``extract_text`` runs in ``asyncio.to_thread`` so a
+    real DashScope call (which may block for up to
+    ``reader_ocr_request_timeout_seconds``) does NOT block the artifact
+    pipeline worker's event loop.
+
+    A slow fake extractor blocks the calling thread for 0.2s using
+    ``time.sleep`` (NOT ``asyncio.sleep``). A concurrent tracker task
+    records event-loop ticks every 50ms. If the event loop were blocked,
+    all ticks would land AFTER the extractor finishes. The test asserts
+    at least one tick landed DURING the extractor's blocking window.
+    """
+
+    class _SlowBlockingExtractor:
+        """Simulates a slow OCR call that blocks the calling thread."""
+
+        def __init__(self) -> None:
+            self.started_at: float | None = None
+            self.finished_at: float | None = None
+
+        def extract_text(
+            self, data: bytes, *, content_type: str
+        ) -> OcrTextExtractionResult:
+            self.started_at = time.monotonic()
+            time.sleep(0.2)  # blocking — simulates real DashScope I/O
+            self.finished_at = time.monotonic()
+            return OcrTextExtractionResult(
+                extracted_text="slow OCR result",
+                extractor_name="slow_fake_extractor",
+            )
+
+    slow_extractor = _SlowBlockingExtractor()
+    raw_bytes = _png_bytes()
+    reader = FakeStorageObjectReader(data=raw_bytes)
+    provider = OcrArtifactExtractionProvider(
+        reader=reader, extractor=slow_extractor
+    )
+    context = _make_context(byte_size=None, content_sha256=None)
+
+    loop_ticks: list[float] = []
+
+    async def _track_loop() -> None:
+        """Record event-loop ticks every 50ms while OCR runs."""
+        for _ in range(4):
+            await asyncio.sleep(0.05)
+            loop_ticks.append(time.monotonic())
+
+    tracker = asyncio.create_task(_track_loop())
+    result = await provider.extract(context)
+    await tracker
+
+    assert result.extracted_text == "slow OCR result"
+    assert slow_extractor.started_at is not None
+    assert slow_extractor.finished_at is not None
+
+    # At least one loop tick must land DURING the extractor's blocking
+    # window. If extract_text blocked the event loop, all ticks would
+    # land after finished_at.
+    ticks_during_block = [
+        t for t in loop_ticks
+        if slow_extractor.started_at <= t <= slow_extractor.finished_at
+    ]
+    assert len(ticks_during_block) >= 1, (
+        f"Event loop was blocked during OCR call; "
+        f"started={slow_extractor.started_at}, "
+        f"finished={slow_extractor.finished_at}, "
+        f"ticks={loop_ticks}"
+    )
+
+
+async def test_ocr_provider_preserves_artifact_error_from_thread() -> None:
+    """ArtifactExtractionError raised inside the thread propagates through
+    asyncio.to_thread with retryable + failure_code intact."""
+
+    class _FailingExtractor:
+        def extract_text(
+            self, data: bytes, *, content_type: str
+        ) -> OcrTextExtractionResult:
+            raise ArtifactExtractionError(
+                "simulated transient failure",
+                retryable=True,
+                failure_class="extraction",
+                failure_code=FAILURE_CODE_OCR_BACKEND_TRANSIENT,
+            )
+
+    raw_bytes = _png_bytes()
+    reader = FakeStorageObjectReader(data=raw_bytes)
+    provider = OcrArtifactExtractionProvider(
+        reader=reader, extractor=_FailingExtractor()
+    )
+
+    with pytest.raises(ArtifactExtractionError) as exc_info:
+        await provider.extract(_make_context(byte_size=None, content_sha256=None))
+
+    assert exc_info.value.retryable is True
+    assert exc_info.value.failure_code == FAILURE_CODE_OCR_BACKEND_TRANSIENT
+
+
+# ---------------------------------------------------------------------------
+# 21. Opt-in smoke skeleton (env-gated, no network by default)
 # ---------------------------------------------------------------------------
 
 

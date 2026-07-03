@@ -28,6 +28,10 @@ class StableDocumentProjectionBase:
     language: str | None
     title_snapshot: str | None
     navigation: dict[str, Any]
+    # Canonical plain text for the entire base.  Sourced from
+    # ``reading_bases.text``; the frontend slices block text and resolves
+    # user-selected offsets against this truth source.
+    text: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +61,17 @@ class StableDocumentProjectionBlock:
 
 
 @dataclass(frozen=True, slots=True)
+class StableDocumentProjectionAnchorSegment:
+    anchor_segment_id: str
+    unit_id: str
+    order_index: int
+    segment_type: str
+    base_start_utf16: int
+    base_end_utf16: int
+    text_hash: str
+
+
+@dataclass(frozen=True, slots=True)
 class StableDocumentProjectionResult:
     reading_record_id: UUID
     record_generation: int
@@ -64,6 +79,7 @@ class StableDocumentProjectionResult:
     base: StableDocumentProjectionBase
     stable_document: StableDocumentProjectionStableDocument
     blocks: tuple[StableDocumentProjectionBlock, ...]
+    anchor_segments: tuple[StableDocumentProjectionAnchorSegment, ...]
 
 
 def _coerce_json_object(raw: Any, *, field_name: str) -> dict[str, Any]:
@@ -155,7 +171,8 @@ class StableDocumentQueryService:
                     segmenter_version,
                     language,
                     title_snapshot,
-                    navigation_json
+                    navigation_json,
+                    text
                 FROM reading_bases
                 WHERE id = $1
                   AND reading_record_id = $2
@@ -198,6 +215,33 @@ class StableDocumentQueryService:
                     f"Stable document {stable_document_id} has no ordered blocks."
                 )
 
+            # Anchor segments are keyed by `base_id` (not `stable_document_id`);
+            # a base is the canonical-text truth source for its segments, and a
+            # stable document is rendered against its active base.  Sorted by
+            # `order_index ASC` so the frontend receives them in reading order.
+            anchor_rows = await conn.fetch(
+                """
+                SELECT
+                    anchor_segment_id,
+                    unit_id,
+                    order_index,
+                    segment_type,
+                    base_start_utf16,
+                    base_end_utf16,
+                    text_hash
+                FROM anchor_segments
+                WHERE base_id = $1
+                ORDER BY order_index ASC
+                """,
+                active_base_id,
+            )
+            # Defensive client-side sort: production Postgres honours ORDER BY,
+            # but the in-memory test fake does not re-order rows.  Sorting here
+            # keeps the projection stable across both execution paths.
+            sorted_anchor_rows = sorted(
+                anchor_rows, key=lambda row: int(row["order_index"])
+            )
+
         base_language = (
             str(base_row["language"]) if base_row["language"] is not None else None
         )
@@ -218,6 +262,7 @@ class StableDocumentQueryService:
                 base_row["navigation_json"],
                 field_name="reading_bases.navigation_json",
             ),
+            text=str(base_row["text"]),
         )
 
         stable_document = StableDocumentProjectionStableDocument(
@@ -293,6 +338,19 @@ class StableDocumentQueryService:
             for row in block_rows
         )
 
+        anchor_segments = tuple(
+            StableDocumentProjectionAnchorSegment(
+                anchor_segment_id=str(row["anchor_segment_id"]),
+                unit_id=str(row["unit_id"]),
+                order_index=int(row["order_index"]),
+                segment_type=str(row["segment_type"]),
+                base_start_utf16=int(row["base_start_utf16"]),
+                base_end_utf16=int(row["base_end_utf16"]),
+                text_hash=str(row["text_hash"]),
+            )
+            for row in sorted_anchor_rows
+        )
+
         return StableDocumentProjectionResult(
             reading_record_id=record_id,
             record_generation=record_generation,
@@ -300,4 +358,5 @@ class StableDocumentQueryService:
             base=base,
             stable_document=stable_document,
             blocks=blocks,
+            anchor_segments=anchor_segments,
         )

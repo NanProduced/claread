@@ -47,6 +47,7 @@ the extracted text. Downstream materialization is responsible for routing
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import logging
@@ -637,9 +638,17 @@ class OcrArtifactExtractionProvider:
                 )
             content_sha256_verified = True
 
-        # 5. Extract text via injected OCR extractor
+        # 5. Extract text via injected OCR extractor.
+        # Wrap the sync call in asyncio.to_thread so a real DashScope call
+        # (which may block for up to reader_ocr_request_timeout_seconds)
+        # does NOT block the artifact pipeline worker's event loop. The
+        # OcrTextExtractor Protocol stays sync; only the provider offloads
+        # the call to a worker thread. ArtifactExtractionError raised
+        # inside the thread propagates through to_thread unchanged.
         try:
-            extraction = self._extractor.extract_text(raw_bytes, content_type=ct)
+            extraction = await asyncio.to_thread(
+                self._extractor.extract_text, raw_bytes, content_type=ct
+            )
         except ArtifactExtractionError:
             # Preserve retryable flag + failure_code from the extractor
             # (e.g. ocr_provider_unconfigured, retryable network errors).

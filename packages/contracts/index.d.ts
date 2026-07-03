@@ -19,11 +19,9 @@ export declare const FAVORITE_TARGET_TYPES: readonly [
 export type FavoriteTargetType = (typeof FAVORITE_TARGET_TYPES)[number];
 
 export declare const USER_ANNOTATION_COLORS: readonly [
-  "soft_green",
-  "soft_blue",
-  "soft_purple",
   "warm_yellow",
-  "sage_green",
+  "soft_mint",
+  "soft_rose",
 ];
 export type UserAnnotationColor = (typeof USER_ANNOTATION_COLORS)[number];
 

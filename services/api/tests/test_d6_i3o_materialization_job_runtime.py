@@ -47,15 +47,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SOURCE_ARTIFACTS_SQL = (
     REPO_ROOT / "infra" / "migrations" / "0007_reader_source_artifacts.sql"
 ).read_text(encoding="utf-8")
-DOCUMENT_BLOCKS_SQL = (
-    REPO_ROOT / "infra" / "migrations" / "0004_reader_document_blocks.sql"
-).read_text(encoding="utf-8")
 
 from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABASE_URL  # noqa: E402
 
-I3O_SCHEMA_SQL = (
-    BASELINE_SQL + "\n" + SOURCE_ARTIFACTS_SQL + "\n" + DOCUMENT_BLOCKS_SQL
-)
+# 0004 (document_blocks) is now in BASELINE_SQL, so the I3O schema is
+# BASELINE_SQL + 0007 (reader_source_artifacts).
+I3O_SCHEMA_SQL = BASELINE_SQL + "\n" + SOURCE_ARTIFACTS_SQL
 
 # Fixed UUIDs for deterministic seeding
 _USER_ID = UUID("00000000-0000-0000-0000-000000000e01")

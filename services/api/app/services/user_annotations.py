@@ -72,47 +72,136 @@ def _build_reading_record_target_key(
     )
 
 
-async def _persist_reading_record_anchor_branch(
+def _range_from_reading_record_row(row: dict) -> _SingleSentenceRange | None:
+    unit_start_utf16 = row.get("unit_start_utf16")
+    unit_end_utf16 = row.get("unit_end_utf16")
+    if (
+        isinstance(unit_start_utf16, int)
+        and isinstance(unit_end_utf16, int)
+        and unit_start_utf16 < unit_end_utf16
+    ):
+        return _SingleSentenceRange(unit_start_utf16, unit_end_utf16)
+    return None
+
+
+def _range_within_anchor_segment(
+    range_: _SingleSentenceRange,
+    validated: ValidatedReadingRecordAnchor,
+) -> bool:
+    return (
+        validated.anchor_segment.unit_start_utf16 <= range_.start_offset
+        and range_.end_offset <= validated.anchor_segment.unit_end_utf16
+    )
+
+
+def _is_adjacent(left: _SingleSentenceRange, right: _SingleSentenceRange) -> bool:
+    return (
+        left.end_offset == right.start_offset
+        or right.end_offset == left.start_offset
+    )
+
+
+def _merge_ranges(
+    left: _SingleSentenceRange,
+    right: _SingleSentenceRange,
+) -> _SingleSentenceRange:
+    return _SingleSentenceRange(
+        min(left.start_offset, right.start_offset),
+        max(left.end_offset, right.end_offset),
+    )
+
+
+def _collect_reading_record_highlight_merge_rows(
+    rows: list[dict],
+    *,
+    request_range: _SingleSentenceRange,
+    request_color: str,
+    validated: ValidatedReadingRecordAnchor,
+) -> list[dict]:
+    """Collect unit-local rows that canonicalize with the requested highlight.
+
+    Reading Record user highlights merge on true overlap regardless of color,
+    and on adjacency only when the color is the same. The loop is transitive:
+    if merging one row expands the union into another row, that row is also
+    collected.
+    """
+    merge_rows: list[dict] = []
+    merged_range = request_range
+
+    changed = True
+    while changed:
+        changed = False
+        for row in rows:
+            if any(candidate["id"] == row["id"] for candidate in merge_rows):
+                continue
+
+            row_range = _range_from_reading_record_row(row)
+            if row_range is None or not _range_within_anchor_segment(row_range, validated):
+                continue
+
+            should_merge = _is_overlap(row_range, merged_range)
+            if not should_merge and row.get("color") == request_color:
+                should_merge = _is_adjacent(row_range, merged_range)
+
+            if should_merge:
+                merge_rows.append(row)
+                merged_range = _merge_ranges(merged_range, row_range)
+                changed = True
+
+    return merge_rows
+
+
+def _slice_reading_record_range(
+    validated: ValidatedReadingRecordAnchor,
+    range_: _SingleSentenceRange,
+) -> tuple[str, str]:
+    selected_text = slice_by_utf16_offsets(
+        validated.unit.text,
+        range_.start_offset,
+        range_.end_offset,
+    )
+    if selected_text is None:
+        raise HTTPException(
+            status_code=400,
+            detail="merged range offsets are outside reading unit text",
+        )
+    return selected_text, compute_text_range_hash(selected_text)
+
+
+def _row_list_contains_id(rows: list[dict], row_id: UUID) -> bool:
+    return any(row["id"] == row_id for row in rows)
+
+
+def _select_reading_record_canonical_row(
+    rows: list[dict],
+    *,
+    final_target_key: str,
+) -> dict:
+    for row in rows:
+        if row.get("target_key") == final_target_key:
+            return row
+    return min(
+        rows,
+        key=lambda row: (row["created_at"], str(row["id"])),
+    )
+
+
+async def _insert_reading_record_highlight_row(
     conn,
     *,
     user_id: UUID,
     req: UserAnnotationCreateRequest,
-    repository: ReaderOrchestrationRepository | None,
+    validated: ValidatedReadingRecordAnchor,
+    unit_start_utf16: int,
+    unit_end_utf16: int,
+    selected_text: str,
+    text_hash: str,
 ) -> UserAnnotationResponse:
-    """D6-U4 V1c single-range persistence for `req.anchor is not None`.
-
-    Runs the request through the Reading Record anchor gate, then writes
-    a real row into `user_annotations` with the Reading Record anchor
-    columns populated and `analysis_record_id = NULL`. The legacy
-    `target_key` / `render_scene` path is never touched.
-    """
-    assert req.anchor is not None  # caller guards
-    repo = repository or ReaderOrchestrationRepository()
-
-    try:
-        validated: ValidatedReadingRecordAnchor = await load_validated_reading_record_anchor(
-            conn,
-            repository=repo,
-            user_id=user_id,
-            anchor=req.anchor,
-        )
-    except AnchorValidationError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "code": exc.code,
-                "message": exc.message,
-                "field": "anchor",
-            },
-        ) from exc
-
-    unit_start_utf16 = req.anchor.start_offset
-    unit_end_utf16 = req.anchor.end_offset
     target_key = _build_reading_record_target_key(
         validated,
         unit_start_utf16=unit_start_utf16,
         unit_end_utf16=unit_end_utf16,
-        text_hash=req.anchor.text_hash,
+        text_hash=text_hash,
     )
 
     row = await conn.fetchrow(
@@ -146,8 +235,8 @@ async def _persist_reading_record_anchor_branch(
         """,
         user_id,
         target_key,
-        req.selected_text,
-        req.anchor.text_hash,
+        selected_text,
+        text_hash,
         req.color,
         jsonb_param(dict(req.payload_json)),
         validated.record_id,
@@ -161,6 +250,206 @@ async def _persist_reading_record_anchor_branch(
     if not row:
         raise HTTPException(status_code=500, detail="Failed to create user annotation")
     return _row_to_response(dict(row))
+
+
+async def _merge_reading_record_highlight_rows(
+    conn,
+    *,
+    user_id: UUID,
+    req: UserAnnotationCreateRequest,
+    validated: ValidatedReadingRecordAnchor,
+    merge_rows: list[dict],
+    request_range: _SingleSentenceRange,
+) -> UserAnnotationResponse:
+    merged_range = request_range
+    for row in merge_rows:
+        row_range = _range_from_reading_record_row(row)
+        if row_range is not None:
+            merged_range = _merge_ranges(merged_range, row_range)
+
+    selected_text, text_hash = _slice_reading_record_range(validated, merged_range)
+    target_key = _build_reading_record_target_key(
+        validated,
+        unit_start_utf16=merged_range.start_offset,
+        unit_end_utf16=merged_range.end_offset,
+        text_hash=text_hash,
+    )
+
+    final_target_row = await conn.fetchrow(
+        f"""
+        SELECT {_ANNOTATION_FIELDS}
+        FROM user_annotations
+        WHERE user_id = $1
+          AND target_key = $2
+        FOR UPDATE
+        """,
+        user_id,
+        target_key,
+    )
+    if final_target_row:
+        final_target_candidate = dict(final_target_row)
+        if not _row_list_contains_id(merge_rows, final_target_candidate["id"]):
+            merge_rows.append(final_target_candidate)
+
+    canonical_row = _select_reading_record_canonical_row(
+        merge_rows,
+        final_target_key=target_key,
+    )
+    superseded_ids: list[UUID] = []
+    now = datetime.now(UTC)
+    for row in merge_rows:
+        if row["id"] == canonical_row["id"]:
+            continue
+        await conn.execute(
+            """
+            UPDATE user_annotations
+            SET deleted_at = $3, deleted_by = $1
+            WHERE id = $2 AND user_id = $1 AND deleted_at IS NULL
+            """,
+            user_id,
+            row["id"],
+            now,
+        )
+        superseded_ids.append(row["id"])
+
+    row = await conn.fetchrow(
+        f"""
+        UPDATE user_annotations
+        SET anchor_type = 'text_range',
+            target_key = $1,
+            paragraph_id = NULL,
+            sentence_id = NULL,
+            selected_text = $2,
+            start_offset = NULL,
+            end_offset = NULL,
+            text_hash = $3,
+            color = $4,
+            payload_json = $5::jsonb,
+            reading_record_id = $6,
+            base_id = $7,
+            generation = $8,
+            unit_id = $9,
+            anchor_segment_id = $10,
+            unit_start_utf16 = $11,
+            unit_end_utf16 = $12,
+            deleted_at = NULL,
+            deleted_by = NULL,
+            updated_at = NOW()
+        WHERE id = $13 AND user_id = $14
+        RETURNING {_ANNOTATION_FIELDS}
+        """,
+        target_key,
+        selected_text,
+        text_hash,
+        req.color,
+        jsonb_param(dict(req.payload_json)),
+        validated.record_id,
+        validated.base_id,
+        validated.generation,
+        validated.unit.unit_id,
+        validated.anchor_segment.anchor_segment_id,
+        merged_range.start_offset,
+        merged_range.end_offset,
+        canonical_row["id"],
+        user_id,
+    )
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to merge highlights")
+    return _row_to_response(dict(row), superseded_ids)
+
+
+async def _persist_reading_record_anchor_branch(
+    conn,
+    *,
+    user_id: UUID,
+    req: UserAnnotationCreateRequest,
+    repository: ReaderOrchestrationRepository | None,
+) -> UserAnnotationResponse:
+    """Persist and canonicalize `req.anchor is not None` user highlights.
+
+    Runs the request through the Reading Record anchor gate, then writes
+    a real row into `user_annotations` with the Reading Record anchor
+    columns populated and `analysis_record_id = NULL`. This branch uses
+    unit-local UTF-16 offsets as the authority and never touches the legacy
+    `target_key` / `render_scene` path.
+    """
+    assert req.anchor is not None  # caller guards
+    repo = repository or ReaderOrchestrationRepository()
+
+    try:
+        validated: ValidatedReadingRecordAnchor = await load_validated_reading_record_anchor(
+            conn,
+            repository=repo,
+            user_id=user_id,
+            anchor=req.anchor,
+        )
+    except AnchorValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": exc.code,
+                "message": exc.message,
+                "field": "anchor",
+            },
+        ) from exc
+
+    request_range = _SingleSentenceRange(
+        req.anchor.start_offset,
+        req.anchor.end_offset,
+    )
+    selected_text, text_hash = _slice_reading_record_range(validated, request_range)
+
+    async with conn.transaction():
+        rows = await conn.fetch(
+            f"""
+            SELECT {_ANNOTATION_FIELDS}
+            FROM user_annotations
+            WHERE user_id = $1
+              AND analysis_record_id IS NULL
+              AND reading_record_id = $2
+              AND base_id = $3
+              AND generation = $4
+              AND unit_id = $5
+              AND anchor_segment_id = $6
+              AND deleted_at IS NULL
+              AND anchor_type = 'text_range'
+            ORDER BY created_at ASC, id ASC
+            FOR UPDATE
+            """,
+            user_id,
+            validated.record_id,
+            validated.base_id,
+            validated.generation,
+            validated.unit.unit_id,
+            validated.anchor_segment.anchor_segment_id,
+        )
+        merge_rows = _collect_reading_record_highlight_merge_rows(
+            [dict(row) for row in rows],
+            request_range=request_range,
+            request_color=req.color,
+            validated=validated,
+        )
+
+        if merge_rows:
+            return await _merge_reading_record_highlight_rows(
+                conn,
+                user_id=user_id,
+                req=req,
+                validated=validated,
+                merge_rows=merge_rows,
+                request_range=request_range,
+            )
+
+        return await _insert_reading_record_highlight_row(
+            conn,
+            user_id=user_id,
+            req=req,
+            validated=validated,
+            unit_start_utf16=request_range.start_offset,
+            unit_end_utf16=request_range.end_offset,
+            selected_text=selected_text,
+            text_hash=text_hash,
+        )
 
 
 def _range_from_annotation_row(row: dict) -> _SingleSentenceRange | None:

@@ -30,6 +30,7 @@ from app.schemas.reader_orchestration import (
     ReaderUnifiedInputSubmitRequest,
     ReaderUnifiedInputSubmitResponse,
     ReaderUnifiedInputSubmitStableResponse,
+    ReaderStableDocumentAnchorSegment,
     ReaderStableDocumentBase,
     ReaderStableDocumentBlock,
     ReaderStableDocumentMetadata,
@@ -104,6 +105,7 @@ from app.services.reader_orchestration.stable_ready_input_application_service im
     StableReadyInputApplicationService,
 )
 from app.services.reader_orchestration.stable_document_query_service import (
+    StableDocumentProjectionResult,
     StableDocumentQueryError,
     StableDocumentQueryService,
 )
@@ -394,6 +396,8 @@ async def submit_reader_plain_text(
                 language=body.language,
                 source_metadata=body.source_metadata,
                 client_record_id=body.client_record_id,
+                reading_goal=body.reading_goal,
+                reading_variant=body.reading_variant,
             )
         )
     except asyncpg.UniqueViolationError as exc:
@@ -406,8 +410,6 @@ async def submit_reader_plain_text(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-                reading_goal=body.reading_goal,
-                reading_variant=body.reading_variant,
     return ReaderPlainTextSubmitResponse(
         record_id=str(result.record_id),
         base_id=str(result.base_id),
@@ -446,6 +448,8 @@ async def submit_reader_input(
                 source_metadata=body.source_metadata,
                 client_record_id=body.client_record_id,
                 language=body.language,
+                reading_goal=body.reading_goal,
+                reading_variant=body.reading_variant,
             )
         except StableReadyInputApplicationError as exc:
             _raise_stable_ready_input_application_error(exc)
@@ -458,13 +462,13 @@ async def submit_reader_input(
             result = await service.create_candidate_document_from_input(
                 user_id=user_id,
                 source_type=body.source_type,
-                reading_goal=body.reading_goal,
-                reading_variant=body.reading_variant,
                 text=body.text,
                 filename=body.filename,
                 source_metadata=body.source_metadata,
                 client_record_id=body.client_record_id,
                 language=body.language,
+                reading_goal=body.reading_goal,
+                reading_variant=body.reading_variant,
             )
         except CandidateDocumentCreationError as exc:
             _raise_candidate_document_creation_error(exc)
@@ -477,8 +481,6 @@ async def submit_reader_input(
     )
 
 
-                reading_goal=body.reading_goal,
-                reading_variant=body.reading_variant,
 @router.post(
     "/source-artifacts/init-upload",
     response_model=ReaderSourceArtifactUploadInitResponse,
@@ -607,12 +609,15 @@ async def submit_reader_source_artifact_as_input(
             language=body.language,
             client_record_id=body.client_record_id,
             source_metadata=body.source_metadata,
+            reading_goal=body.reading_goal,
+            reading_variant=body.reading_variant,
         )
     except ArtifactInputApplicationError as exc:
         _raise_artifact_input_application_error(exc)
         raise AssertionError("unreachable")
 
     return _build_source_artifact_submit_input_response(result)
+
 
 def _build_artifact_pipeline_job_summary(
     job: Any,
@@ -755,15 +760,10 @@ async def get_reader_source_artifact_pipeline_status(
     return _build_artifact_pipeline_status_response(result)
 
 
-
-
-
 @router.post(
     "/records/stable-ready-input",
     response_model=ReaderStableReadyInputSubmitResponse,
     summary="Freeze stable-ready input into a reader record and reload the snapshot",
-            reading_goal=body.reading_goal,
-            reading_variant=body.reading_variant,
 )
 async def submit_reader_stable_ready_input(
     body: ReaderStableReadyInputSubmitRequest,
@@ -779,6 +779,8 @@ async def submit_reader_stable_ready_input(
             source_metadata=body.source_metadata,
             client_record_id=body.client_record_id,
             language=body.language,
+            reading_goal=body.reading_goal,
+            reading_variant=body.reading_variant,
         )
     except StableReadyInputApplicationError as exc:
         _raise_stable_ready_input_application_error(exc)
@@ -850,6 +852,18 @@ async def get_reader_stable_document(
     except StableDocumentQueryError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    return _build_stable_document_route_response(result)
+
+
+def _build_stable_document_route_response(
+    result: StableDocumentProjectionResult,
+) -> ReaderStableDocumentResponse:
+    """Map the service's projection dataclass tree onto the HTTP response.
+
+    Field-by-field mapping (no ``**`` spread) so the contract between the
+    service layer and the API boundary stays explicit and reviewable.  New
+    fields (e.g. ``base.text``, ``anchor_segments``) must be wired here.
+    """
     return ReaderStableDocumentResponse(
         reading_record_id=str(result.reading_record_id),
         record_generation=result.record_generation,
@@ -864,6 +878,7 @@ async def get_reader_stable_document(
             language=result.base.language,
             title_snapshot=result.base.title_snapshot,
             navigation=result.base.navigation,
+            text=result.base.text,
         ),
         stable_document=ReaderStableDocumentMetadata(
             stable_document_id=str(result.stable_document.stable_document_id),
@@ -889,6 +904,18 @@ async def get_reader_stable_document(
                 interpretation_policy=block.interpretation_policy,
             )
             for block in result.blocks
+        ],
+        anchor_segments=[
+            ReaderStableDocumentAnchorSegment(
+                anchor_segment_id=segment.anchor_segment_id,
+                unit_id=segment.unit_id,
+                order_index=segment.order_index,
+                segment_type=segment.segment_type,
+                base_start_utf16=segment.base_start_utf16,
+                base_end_utf16=segment.base_end_utf16,
+                text_hash=segment.text_hash,
+            )
+            for segment in result.anchor_segments
         ],
     )
 
@@ -932,8 +959,6 @@ async def poll_reader_events(
             user_id=UUID(current_user.user_id),
             after_sequence=after_sequence,
             limit=limit,
-            reading_goal=body.reading_goal,
-            reading_variant=body.reading_variant,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Reader record not found") from exc
@@ -1027,6 +1052,7 @@ async def list_reader_records(
         total=total,
         limit=limit,
     )
+
 
 # ===========================================================================
 # D6-I4T Article RAG Index Lifecycle API

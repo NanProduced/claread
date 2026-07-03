@@ -1,5 +1,7 @@
 # D6 Article RAG Operational Runbook
 
+> Frontend integration contract for status / reason_code mapping: see `frontend-integration-status-map.md` in this directory.
+
 > 状态：D6 文档型 Reader 修订（Article RAG operational readiness）
 > 最后更新：2026-07-01
 > 范围：当前 Reading Record 内 Article RAG substrate 的本地启动、状态查询、排障、可交接的运维手册。

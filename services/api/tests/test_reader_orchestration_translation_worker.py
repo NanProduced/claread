@@ -18,6 +18,7 @@ from app.contracts.annotation import (
 )
 from app.database import connection as db_connection
 from app.llm.agent_runner import extract_run_usage
+from app.services.analysis.prompting.prompt_loader import load_agent_instructions
 from app.schemas.reader_orchestration import (
     TranslationGenerationGroup,
     TranslationLayerGenerationOutput,
@@ -829,6 +830,240 @@ def test_build_translation_prompt_includes_target_segments_and_group_native_outp
     assert "Alpha" in prompt
     assert "Beta" in prompt
     assert "1-3 segments" not in prompt
+
+
+def test_build_translation_prompt_requires_semantic_reading_groups_and_forbids_one_to_one() -> None:
+    """Prompt must teach the model to produce semantic reading groups, not
+    a row-per-anchor-segment fill-in-the-blank table."""
+    context = _build_context_with_segments(
+        source_text="Alpha Beta",
+        segment_specs=[
+            ("s1", 0, 5, "sentence", "normal", "sent-1"),
+            ("s2", 6, 10, "sentence", "normal", "sent-2"),
+        ],
+    )
+    prompt = _build_translation_prompt(context)
+
+    # Variant-independent per-call grouping guidance must be present.
+    assert "<grouping_guidance>" in prompt
+    assert "</grouping_guidance>" in prompt
+
+    # The prompt must call out semantic reading groups explicitly.
+    assert "semantic reading groups" in prompt
+
+    # The prompt must forbid mechanically one-group-per-anchor-segment.
+    assert "one group per anchor segment" in prompt
+
+    # The prompt must reframe target_segments as anchor handles, not a
+    # row-by-row output template.
+    assert "anchor handle" in prompt
+    assert "row-by-row output template" in prompt
+
+    # The prompt must allow groups of varying size (>= 1 segment) without
+    # imposing a fixed number-of-groups rule.
+    assert "one or more consecutive anchor_segment_ids" in prompt
+    assert "no fixed minimum or maximum group size" in prompt
+    assert "no fixed number of groups" in prompt
+
+
+def test_build_translation_prompt_does_not_introduce_group_size_thresholds() -> None:
+    """Prompt must NOT prescribe a numeric threshold for group size or count.
+
+    Granularity must be left to the model's semantic judgment; the codebase
+    must not encode "groups of 2-3 segments" or similar mechanical cutoffs.
+
+    Note: this test guards against prescriptive thresholds like
+    "minimum group size = 2" or "groups of 3-5". It must NOT match the
+    prompt's own meta-language about *not* having a threshold (e.g.
+    "no minimum or maximum group size").
+    """
+    context = _build_context_with_segments(
+        source_text="Alpha Beta Gamma",
+        segment_specs=[
+            ("s1", 0, 5, "sentence", "normal", "sent-1"),
+            ("s2", 6, 10, "sentence", "normal", "sent-2"),
+            ("s3", 11, 16, "sentence", "normal", "sent-3"),
+        ],
+    )
+    prompt = _build_translation_prompt(context)
+
+    # Strip the prompt's own negation preamble before scanning, so the
+    # meta-language about "no fixed minimum/maximum" does not trip the
+    # forbidden-substring check. We test that the prompt contains a
+    # self-declaration of "no fixed minimum/maximum group size" below in
+    # the positive-assertion test.
+    lower = prompt.lower()
+
+    # No numeric group-size cutoffs (e.g. "1-3 segments", "2-4 segments").
+    for forbidden in (
+        "1-3 segments",
+        "1-3 anchor",
+        "2-4 segments",
+        "2-4 anchor",
+        "groups of 2",
+        "groups of 3",
+        "at least 2 segments",
+        "at most 4 segments",
+        "min group size",
+        "max group size",
+    ):
+        assert forbidden not in lower, f"prompt must not prescribe {forbidden!r}"
+
+    # No "must merge" / "must split" cutoff phrasing that would coerce
+    # group counts into a fixed shape.
+    for forbidden in (
+        "must merge",
+        "must split",
+        "always merge",
+        "always split",
+        "exactly",
+        "at least one group",
+        "at most one group",
+    ):
+        assert forbidden not in lower, f"prompt must not prescribe {forbidden!r}"
+
+    # Positive self-declaration: the prompt MUST tell the model there is
+    # no fixed min/max size and no fixed number of groups.
+    assert "no fixed minimum or maximum group size" in lower
+    assert "no fixed number of groups" in lower
+
+
+def test_build_translation_prompt_reframes_target_segments_as_registry_not_template() -> None:
+    """The <target_segments> block must be presented as an anchor handle
+    registry the model references back into, not a row-by-row output template."""
+    context = _build_context_with_segments(
+        source_text="Alpha Beta",
+        segment_specs=[
+            ("s1", 0, 5, "sentence", "normal", "sent-1"),
+            ("s2", 6, 10, "sentence", "normal", "sent-2"),
+        ],
+    )
+    prompt = _build_translation_prompt(context)
+
+    # The grouping guidance block must precede the real target_segments block.
+    grouping_block_idx = prompt.index("<grouping_guidance>")
+    grouping_close_idx = prompt.index("</grouping_guidance>")
+    # The real <target_segments> block sits AFTER </grouping_guidance>. The
+    # registry_note body mentions the literal "<target_segments>" string, so
+    # we cannot rely on `prompt.index("<target_segments>")` — we search from
+    # past the grouping_close marker to find the real registry block.
+    target_segments_block_idx = prompt.index("<target_segments>", grouping_close_idx)
+    target_segments_close_idx = prompt.index("</target_segments>", grouping_close_idx)
+    assert grouping_block_idx < grouping_close_idx < target_segments_block_idx < target_segments_close_idx
+
+    # The grouping guidance must include a registry_note subsection that
+    # reframes target_segments as anchor handles.
+    registry_idx = prompt.index("<target_segments_registry_note>")
+    registry_close_idx = prompt.index("</target_segments_registry_note>")
+    assert grouping_block_idx < registry_idx < registry_close_idx < grouping_close_idx
+
+    # The note explicitly forbids one-row-per-listed-id behavior.
+    registry_note = prompt[registry_idx:registry_close_idx]
+    assert "row-by-row output template" in registry_note
+    assert "one row per listed id" in registry_note
+
+
+def test_build_translation_prompt_grouping_guidance_sits_between_strategy_and_output_contract() -> None:
+    """The grouping_guidance block must sit between the strategy section and
+    the structured-output contract so it shapes model behavior before the
+    schema is named."""
+    context = _build_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+    )
+    prompt = _build_translation_prompt(context)
+
+    strategy_idx = prompt.index("<reader_strategy>")
+    grouping_idx = prompt.index("<grouping_guidance>")
+    return_idx = prompt.index("Return only the structured TranslationLayerGenerationOutput.")
+    source_idx = prompt.index("<source_text>")
+
+    assert strategy_idx < grouping_idx < return_idx < source_idx
+
+
+def test_translation_agent_instructions_require_semantic_groups_and_drop_legacy_contract() -> None:
+    """The agent-level instructions (loaded via load_agent_instructions) must:
+
+    1. Teach semantic reading groups and forbid one-group-per-anchor-segment.
+    2. Treat ``target_segments`` as anchor handles, not a row template.
+    3. Restrict the generation output to ``TranslationLayerGenerationOutput``
+       with only ``groups[].anchor_segment_ids`` and ``groups[].translated_text``.
+    4. NOT carry over the legacy ``TranslationLayerOutput`` contract that
+       asked for ``target_language`` / ``confidence`` / ``notes`` round-trip
+       fields — those belong to the publisher, not the generator.
+    """
+    instructions = load_agent_instructions("reader_layer_translation")
+
+    # 1) Semantic grouping guidance must be present in the agent instructions.
+    assert "semantic reading groups" in instructions
+    assert "one group per anchor segment" in instructions
+    assert "anchor handles" in instructions or "anchor handle" in instructions
+    # The instructions must declare the canonical two-field generation whitelist
+    # using the full field-path syntax.
+    assert (
+        "只输出 `groups[].anchor_segment_ids` 和 `groups[].translated_text`"
+        in instructions
+    )
+    assert "groups[].anchor_segment_ids" in instructions
+    assert "groups[].translated_text" in instructions
+
+    # 2) The legacy TranslationLayerOutput contract must not appear.
+    #    The instruction must point at the generation-state schema, not the
+    #    publisher/persisted schema.
+    assert "TranslationLayerOutput" not in instructions
+
+    # 3) The legacy "target_language must be round-tripped" contract must not
+    #    appear. Instead, target_language is referenced as task context only,
+    #    not as an output field.
+    assert "target_language 必须回填" not in instructions
+    assert "目标语言由任务上下文" in instructions
+    # The instruction must explicitly tell the model not to write
+    # target_language back into the generated structure.
+    assert "不要在生成结构中回写" in instructions
+    assert (
+        "`target_language` 字段" in instructions
+        or "target_language 字段" in instructions
+    )
+
+    # 4) Legacy per-group fields must not be requested as outputs.
+    for forbidden in (
+        "confidence",  # legacy TranslationLayerOutput.confidence
+        "notes",  # legacy TranslationLayerOutput.notes
+    ):
+        # `confidence` and `notes` may legitimately appear as part of the
+        # forbidden-output list ("不要输出 ... confidence ..."), so we
+        # require the surrounding negation pattern.
+        if forbidden in instructions:
+            # If present, it must be inside the "don't output" list, not as
+            # an instruction to round-trip the value.
+            assert (
+                f"不要输出" in instructions
+                or "do not output" in instructions.lower()
+                or "not output" in instructions.lower()
+            ), (
+                f"instructions mention {forbidden!r} but not in a "
+                f"'don't output' context"
+            )
+
+    # 5) Generation-state-only field whitelist must be enforced explicitly.
+    #    Every legacy field must appear in a "do not output" prohibition so
+    #    the model treats them as off-limits.
+    for forbidden_field in (
+        "group_id",
+        "source_text_hash",
+        "source_language",
+        "diagnostics",
+        "coverage_json",
+        "quality_json",
+        "source_text",
+        "segment_sources",
+        "profile",
+        "reason",
+    ):
+        assert forbidden_field in instructions, (
+            f"instructions must enumerate {forbidden_field!r} as a forbidden "
+            f"generation field"
+        )
 
 
 def test_build_translation_prompt_differs_between_daily_intermediate_and_exam_cet() -> None:

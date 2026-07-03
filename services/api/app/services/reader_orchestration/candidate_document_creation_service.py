@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -25,6 +25,7 @@ from app.schemas.reader_orchestration import (
 from app.services.reader_orchestration.input_suitability_gate import (
     evaluate_input_suitability,
 )
+from app.services.reader_orchestration.inline_markdown import strip_inline_markdown
 from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
 from app.services.reader_orchestration.stable_ready_input_application_service import (
     _ORIGINAL_INPUT_TYPE_BY_INPUT_SOURCE,
@@ -71,6 +72,7 @@ class _BlockDraft:
     payload_json: dict[str, Any]
     line_start: int
     line_end: int
+    links: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -491,6 +493,7 @@ def _build_candidate_blocks(
                 original_input_id=original_input_id,
                 line_start=draft.line_start,
                 line_end=draft.line_end,
+                links=draft.links,
             ),
         )
         for index, draft in enumerate(drafts)
@@ -565,7 +568,8 @@ def _build_markdown_candidate_drafts(
         heading_match = _HEADING_PATTERN.match(line)
         if heading_match:
             active_list = None
-            heading_text = heading_match.group(2).strip()
+            heading_raw = heading_match.group(2).strip()
+            heading_text, heading_links = strip_inline_markdown(heading_raw)
             drafts.append(
                 _BlockDraft(
                     block_type="heading",
@@ -573,6 +577,7 @@ def _build_markdown_candidate_drafts(
                     payload_json={"level": len(heading_match.group(1))},
                     line_start=index + 1,
                     line_end=index + 1,
+                    links=heading_links,
                 )
             )
             if title is None and heading_text:
@@ -636,14 +641,19 @@ def _build_markdown_candidate_drafts(
                     break
                 quote_lines.append(_BLOCKQUOTE_PATTERN.sub("", current, count=1).strip())
                 index += 1
+            quote_joined = (
+                "\n".join(part for part in quote_lines if part).strip()
+                or "\n".join(lines[start:index]).strip()
+            )
+            bq_text, bq_links = strip_inline_markdown(quote_joined)
             drafts.append(
                 _BlockDraft(
                     block_type="blockquote",
-                    text_content="\n".join(part for part in quote_lines if part).strip()
-                    or "\n".join(lines[start:index]).strip(),
+                    text_content=bq_text,
                     payload_json={},
                     line_start=start + 1,
                     line_end=max(start + 1, index),
+                    links=bq_links,
                 )
             )
             continue
@@ -679,13 +689,15 @@ def _build_markdown_candidate_drafts(
             paragraph_lines.append(current)
             index += 1
         raw = "\n".join(paragraph_lines).strip()
+        paragraph_text, paragraph_links = strip_inline_markdown(raw)
         drafts.append(
             _BlockDraft(
                 block_type="paragraph",
-                text_content=raw,
+                text_content=paragraph_text,
                 payload_json={},
                 line_start=start + 1,
                 line_end=max(start + 1, index),
+                links=paragraph_links,
             )
         )
 
@@ -795,9 +807,11 @@ def _consume_list_item(
             indent_width=indent_width,
         )
 
+    joined = _join_soft_lines(content_lines)
+    text, list_links = strip_inline_markdown(joined)
     block = _BlockDraft(
         block_type="list_item",
-        text_content=_join_soft_lines(content_lines),
+        text_content=text,
         payload_json={
             "list_id": active_list.list_id,
             "ordered": ordered,
@@ -807,6 +821,7 @@ def _consume_list_item(
         },
         line_start=start_line,
         line_end=end_line,
+        links=list_links,
     )
     active_list.next_ordinal += 1
     return block, index, active_list, list_counter
@@ -819,6 +834,7 @@ def _block_source_refs_json(
     original_input_id: UUID,
     line_start: int,
     line_end: int,
+    links: list[dict[str, str]],
 ) -> dict[str, Any]:
     source_refs_json: dict[str, Any] = {
         "source_type": source_type,
@@ -828,6 +844,8 @@ def _block_source_refs_json(
     }
     if filename is not None:
         source_refs_json["filename"] = filename
+    if links:
+        source_refs_json["links"] = list(links)
     return source_refs_json
 
 

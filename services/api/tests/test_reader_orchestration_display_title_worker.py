@@ -27,6 +27,7 @@ from app.services.reader_orchestration.display_title_worker import (
 from app.services.reader_orchestration.job_bootstrap import (
     DISPLAY_TITLE_OPERATION_FINGERPRINT,
     DisplayTitleJobBootstrapService,
+    _fingerprint_matches_base,
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
@@ -100,7 +101,10 @@ async def _bootstrap_title_job(pool: asyncpg.Pool, *, record_id, user_id):
         user_id=user_id,
     )
     assert result is not None
-    assert result.operation_fingerprint == DISPLAY_TITLE_OPERATION_FINGERPRINT
+    assert _fingerprint_matches_base(
+        result.operation_fingerprint, DISPLAY_TITLE_OPERATION_FINGERPRINT
+    )
+    assert result.operation_fingerprint != DISPLAY_TITLE_OPERATION_FINGERPRINT
     return result
 
 

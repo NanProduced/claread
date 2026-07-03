@@ -423,52 +423,35 @@ class VocabularyJobBootstrapService:
         record_id: UUID,
         user_id: UUID,
     ) -> VocabularyBootstrapResult:
+        """Enqueue the first vocabulary job for the active base.
+
+        Uses the shared strategy-aware helpers so the created job carries
+        the same strategy metadata (reading_goal / reading_variant /
+        strategy_version / strategy_hash / layer_policy_hash) and composed
+        operation_fingerprint as ``EnhancementJobBootstrapService``. Any
+        stale queued / retry_later / paused vocabulary job whose
+        operation_fingerprint no longer matches the current strategy is
+        marked superseded before the new job is created.
+        """
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
-                record_row = await conn.fetchrow(
-                    """
-                    SELECT id, generation, active_base_id, lifecycle_status, product_state
-                    FROM reading_records
-                    WHERE id = $1
-                      AND user_id = $2
-                      AND deleted_at IS NULL
-                    FOR UPDATE
-                    """,
-                    record_id,
-                    user_id,
+                state = await _load_locked_active_base_state(
+                    conn,
+                    record_id=record_id,
+                    user_id=user_id,
                 )
-                if record_row is None:
-                    raise LookupError(f"reading record {record_id} not found for user {user_id}")
-                if record_row["lifecycle_status"] != "active":
-                    raise ValueError("vocabulary bootstrap requires an active reading record")
-                if record_row["product_state"] not in {"readable_enhancing", "processing"}:
-                    raise ValueError("reading record is not ready for vocabulary bootstrap")
-
-                base_id = record_row["active_base_id"]
-                if base_id is None:
-                    raise ValueError("vocabulary bootstrap requires an active base")
-
-                base_row = await conn.fetchrow(
-                    """
-                    SELECT id, record_generation, status, language
-                    FROM reading_bases
-                    WHERE id = $1
-                      AND reading_record_id = $2
-                    """,
-                    base_id,
-                    record_id,
+                operation_fingerprint = _compose_operation_fingerprint(
+                    VOCABULARY_OPERATION_FINGERPRINT, state.strategy
                 )
-                if base_row is None:
-                    raise ValueError("active base does not belong to the requested record")
-
-                expected_generation = int(record_row["generation"])
-                if int(base_row["record_generation"]) != expected_generation:
-                    raise ValueError(
-                        "active base generation does not match "
-                        "the reading record generation"
-                    )
-                if base_row["status"] != "active":
-                    raise ValueError("vocabulary bootstrap requires status='active' base")
+                await _supersede_stale_fingerprint_jobs(
+                    conn,
+                    record_id=state.record_id,
+                    base_id=state.base_id,
+                    expected_generation=state.expected_generation,
+                    job_type=VOCABULARY_JOB_TYPE,
+                    target_scope=VOCABULARY_TARGET_SCOPE,
+                    current_fingerprint=operation_fingerprint,
+                )
 
                 unit_row = await conn.fetchrow(
                     """
@@ -493,9 +476,9 @@ class VocabularyJobBootstrapService:
                     ORDER BY u.order_index ASC
                     LIMIT 1
                     """,
-                    record_id,
-                    base_id,
-                    expected_generation,
+                    state.record_id,
+                    state.base_id,
+                    state.expected_generation,
                 )
                 if unit_row is None:
                     raise ValueError("no unprocessed vocabulary reading unit is available")
@@ -514,145 +497,61 @@ class VocabularyJobBootstrapService:
                       AND status IN ('queued', 'claimed', 'retry_later', 'paused')
                     LIMIT 1
                     """,
-                    record_id,
-                    base_id,
+                    state.record_id,
+                    state.base_id,
                     VOCABULARY_JOB_TYPE,
                     VOCABULARY_TARGET_SCOPE,
                     unit_row["unit_id"],
-                    expected_generation,
-                    VOCABULARY_OPERATION_FINGERPRINT,
+                    state.expected_generation,
+                    operation_fingerprint,
                 )
                 if existing_job is not None:
                     return VocabularyBootstrapResult(
                         run_id=existing_job["run_id"],
                         job_id=existing_job["id"],
-                        reading_record_id=record_id,
-                        base_id=base_id,
+                        reading_record_id=state.record_id,
+                        base_id=state.base_id,
                         unit_id=str(unit_row["unit_id"]),
-                        expected_generation=expected_generation,
-                        operation_fingerprint=VOCABULARY_OPERATION_FINGERPRINT,
+                        expected_generation=state.expected_generation,
+                        operation_fingerprint=operation_fingerprint,
                     )
 
-                run_row = await conn.fetchrow(
-                    """
-                    INSERT INTO reader_runs (
-                        reading_record_id,
-                        user_id,
-                        run_type,
-                        status,
-                        record_generation,
-                        envelope_json,
-                        policy_version,
-                        trigger_kind
-                    )
-                    VALUES (
-                        $1,
-                        $2,
-                        $3,
-                        'queued',
-                        $4,
-                        $5::jsonb,
-                        $6,
-                        $7
-                    )
-                    RETURNING id
-                    """,
-                    record_id,
-                    user_id,
-                    VOCABULARY_RUN_TYPE,
-                    expected_generation,
-                    jsonb_param(
-                        {
-                            "record_id": str(record_id),
-                            "base_id": str(base_id),
-                            "target_scope": VOCABULARY_TARGET_SCOPE,
-                            "target_unit_id": str(unit_row["unit_id"]),
-                            "layer_type": "vocabulary",
-                        }
-                    ),
-                    VOCABULARY_POLICY_VERSION,
-                    VOCABULARY_TRIGGER_KIND,
+                run_id, job_id = await _insert_unit_job(
+                    conn,
+                    state=state,
+                    unit_id=str(unit_row["unit_id"]),
+                    unit_order_index=int(unit_row["order_index"]),
+                    unit_text_hash=str(unit_row["text_hash"]),
+                    run_type=VOCABULARY_RUN_TYPE,
+                    job_type=VOCABULARY_JOB_TYPE,
+                    target_scope=VOCABULARY_TARGET_SCOPE,
+                    policy_version=VOCABULARY_POLICY_VERSION,
+                    trigger_kind=VOCABULARY_TRIGGER_KIND,
+                    operation_fingerprint=operation_fingerprint,
+                    max_attempts=DEFAULT_VOCABULARY_MAX_ATTEMPTS,
+                    envelope_json={
+                        "record_id": str(state.record_id),
+                        "base_id": str(state.base_id),
+                        "target_scope": VOCABULARY_TARGET_SCOPE,
+                        "target_unit_id": str(unit_row["unit_id"]),
+                        "layer_type": "vocabulary",
+                    },
+                    input_signature_suffix=f"{state.base_language}:vocabulary:1",
+                    input_json={
+                        "base_language": state.base_language,
+                        "layer_type": "vocabulary",
+                    },
+                    layer_name=_LAYER_NAME_BY_JOB_TYPE[VOCABULARY_JOB_TYPE],
                 )
-                if run_row is None:
-                    raise RuntimeError("reader_runs insert did not return a row")
-
-                unit_text_signature = (
-                    f"{base_id}:{unit_row['unit_id']}:{unit_row['text_hash']}:"
-                    f"{base_row['language'] or 'en'}:vocabulary:1"
-                )
-                input_hash = hashlib.sha256(unit_text_signature.encode("utf-8")).hexdigest()
-
-                job_row = await conn.fetchrow(
-                    """
-                    INSERT INTO reader_jobs (
-                        reading_record_id,
-                        base_id,
-                        run_id,
-                        user_id,
-                        job_type,
-                        target_type,
-                        target_key,
-                        status,
-                        priority,
-                        expected_generation,
-                        operation_fingerprint,
-                        idempotency_key,
-                        input_hash,
-                        input_json,
-                        max_attempts
-                    )
-                    VALUES (
-                        $1,
-                        $2,
-                        $3,
-                        $4,
-                        $5,
-                        $6,
-                        $7,
-                        'queued',
-                        0,
-                        $8,
-                        $9,
-                        $10,
-                        $11,
-                        $12::jsonb,
-                        $13
-                    )
-                    RETURNING id
-                    """,
-                    record_id,
-                    base_id,
-                    run_row["id"],
-                    user_id,
-                    VOCABULARY_JOB_TYPE,
-                    VOCABULARY_TARGET_SCOPE,
-                    unit_row["unit_id"],
-                    expected_generation,
-                    VOCABULARY_OPERATION_FINGERPRINT,
-                    f"{VOCABULARY_OPERATION_FINGERPRINT}:{unit_row['unit_id']}",
-                    input_hash,
-                    jsonb_param(
-                        {
-                            "unit_id": str(unit_row["unit_id"]),
-                            "unit_order_index": int(unit_row["order_index"]),
-                            "unit_text_hash": str(unit_row["text_hash"]),
-                            "base_language": str(base_row["language"] or "en"),
-                            "layer_type": "vocabulary",
-                        }
-                    ),
-                    DEFAULT_VOCABULARY_MAX_ATTEMPTS,
-                )
-                if job_row is None:
-                    raise RuntimeError("reader_jobs insert did not return a row")
 
                 return VocabularyBootstrapResult(
-                    run_id=run_row["id"],
-                    job_id=job_row["id"],
-                    reading_record_id=record_id,
-                    base_id=base_id,
+                    run_id=run_id,
+                    job_id=job_id,
+                    reading_record_id=state.record_id,
+                    base_id=state.base_id,
                     unit_id=str(unit_row["unit_id"]),
-                    expected_generation=expected_generation,
-                    operation_fingerprint=VOCABULARY_OPERATION_FINGERPRINT,
+                    expected_generation=state.expected_generation,
+                    operation_fingerprint=operation_fingerprint,
                 )
 
 
@@ -672,52 +571,35 @@ class GrammarJobBootstrapService:
         record_id: UUID,
         user_id: UUID,
     ) -> GrammarBootstrapResult:
+        """Enqueue the first grammar bundle job for the active base.
+
+        Uses the shared strategy-aware helpers so the created job carries
+        the same strategy metadata (reading_goal / reading_variant /
+        strategy_version / strategy_hash / layer_policy_hash) and composed
+        operation_fingerprint as ``EnhancementJobBootstrapService``. Any
+        stale queued / retry_later / paused grammar job whose
+        operation_fingerprint no longer matches the current strategy is
+        marked superseded before the new job is created.
+        """
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
-                record_row = await conn.fetchrow(
-                    """
-                    SELECT id, generation, active_base_id, lifecycle_status, product_state
-                    FROM reading_records
-                    WHERE id = $1
-                      AND user_id = $2
-                      AND deleted_at IS NULL
-                    FOR UPDATE
-                    """,
-                    record_id,
-                    user_id,
+                state = await _load_locked_active_base_state(
+                    conn,
+                    record_id=record_id,
+                    user_id=user_id,
                 )
-                if record_row is None:
-                    raise LookupError(f"reading record {record_id} not found for user {user_id}")
-                if record_row["lifecycle_status"] != "active":
-                    raise ValueError("grammar bootstrap requires an active reading record")
-                if record_row["product_state"] not in {"readable_enhancing", "processing"}:
-                    raise ValueError("reading record is not ready for grammar bootstrap")
-
-                base_id = record_row["active_base_id"]
-                if base_id is None:
-                    raise ValueError("grammar bootstrap requires an active base")
-
-                base_row = await conn.fetchrow(
-                    """
-                    SELECT id, record_generation, status, language
-                    FROM reading_bases
-                    WHERE id = $1
-                      AND reading_record_id = $2
-                    """,
-                    base_id,
-                    record_id,
+                operation_fingerprint = _compose_operation_fingerprint(
+                    GRAMMAR_OPERATION_FINGERPRINT, state.strategy
                 )
-                if base_row is None:
-                    raise ValueError("active base does not belong to the requested record")
-
-                expected_generation = int(record_row["generation"])
-                if int(base_row["record_generation"]) != expected_generation:
-                    raise ValueError(
-                        "active base generation does not match "
-                        "the reading record generation"
-                    )
-                if base_row["status"] != "active":
-                    raise ValueError("grammar bootstrap requires status='active' base")
+                await _supersede_stale_fingerprint_jobs(
+                    conn,
+                    record_id=state.record_id,
+                    base_id=state.base_id,
+                    expected_generation=state.expected_generation,
+                    job_type=GRAMMAR_JOB_TYPE,
+                    target_scope=GRAMMAR_TARGET_SCOPE,
+                    current_fingerprint=operation_fingerprint,
+                )
 
                 unit_row = await conn.fetchrow(
                     """
@@ -754,12 +636,12 @@ class GrammarJobBootstrapService:
                     ORDER BY u.order_index ASC
                     LIMIT 1
                     """,
-                    record_id,
-                    base_id,
-                    expected_generation,
+                    state.record_id,
+                    state.base_id,
+                    state.expected_generation,
                     GRAMMAR_JOB_TYPE,
                     GRAMMAR_TARGET_SCOPE,
-                    GRAMMAR_OPERATION_FINGERPRINT,
+                    operation_fingerprint,
                 )
                 if unit_row is None:
                     raise ValueError("no unprocessed grammar reading unit is available")
@@ -778,145 +660,61 @@ class GrammarJobBootstrapService:
                       AND status IN ('queued', 'claimed', 'retry_later', 'paused')
                     LIMIT 1
                     """,
-                    record_id,
-                    base_id,
+                    state.record_id,
+                    state.base_id,
                     GRAMMAR_JOB_TYPE,
                     GRAMMAR_TARGET_SCOPE,
                     unit_row["unit_id"],
-                    expected_generation,
-                    GRAMMAR_OPERATION_FINGERPRINT,
+                    state.expected_generation,
+                    operation_fingerprint,
                 )
                 if existing_job is not None:
                     return GrammarBootstrapResult(
                         run_id=existing_job["run_id"],
                         job_id=existing_job["id"],
-                        reading_record_id=record_id,
-                        base_id=base_id,
+                        reading_record_id=state.record_id,
+                        base_id=state.base_id,
                         unit_id=str(unit_row["unit_id"]),
-                        expected_generation=expected_generation,
-                        operation_fingerprint=GRAMMAR_OPERATION_FINGERPRINT,
+                        expected_generation=state.expected_generation,
+                        operation_fingerprint=operation_fingerprint,
                     )
 
-                run_row = await conn.fetchrow(
-                    """
-                    INSERT INTO reader_runs (
-                        reading_record_id,
-                        user_id,
-                        run_type,
-                        status,
-                        record_generation,
-                        envelope_json,
-                        policy_version,
-                        trigger_kind
-                    )
-                    VALUES (
-                        $1,
-                        $2,
-                        $3,
-                        'queued',
-                        $4,
-                        $5::jsonb,
-                        $6,
-                        $7
-                    )
-                    RETURNING id
-                    """,
-                    record_id,
-                    user_id,
-                    GRAMMAR_RUN_TYPE,
-                    expected_generation,
-                    jsonb_param(
-                        {
-                            "record_id": str(record_id),
-                            "base_id": str(base_id),
-                            "target_scope": GRAMMAR_TARGET_SCOPE,
-                            "target_unit_id": str(unit_row["unit_id"]),
-                            "layer_types": ["grammar_note", "sentence_analysis"],
-                        }
-                    ),
-                    GRAMMAR_POLICY_VERSION,
-                    GRAMMAR_TRIGGER_KIND,
+                run_id, job_id = await _insert_unit_job(
+                    conn,
+                    state=state,
+                    unit_id=str(unit_row["unit_id"]),
+                    unit_order_index=int(unit_row["order_index"]),
+                    unit_text_hash=str(unit_row["text_hash"]),
+                    run_type=GRAMMAR_RUN_TYPE,
+                    job_type=GRAMMAR_JOB_TYPE,
+                    target_scope=GRAMMAR_TARGET_SCOPE,
+                    policy_version=GRAMMAR_POLICY_VERSION,
+                    trigger_kind=GRAMMAR_TRIGGER_KIND,
+                    operation_fingerprint=operation_fingerprint,
+                    max_attempts=DEFAULT_GRAMMAR_MAX_ATTEMPTS,
+                    envelope_json={
+                        "record_id": str(state.record_id),
+                        "base_id": str(state.base_id),
+                        "target_scope": GRAMMAR_TARGET_SCOPE,
+                        "target_unit_id": str(unit_row["unit_id"]),
+                        "layer_types": ["grammar_note", "sentence_analysis"],
+                    },
+                    input_signature_suffix=f"{state.base_language}:grammar_bundle:1",
+                    input_json={
+                        "base_language": state.base_language,
+                        "layer_types": ["grammar_note", "sentence_analysis"],
+                    },
+                    layer_name=_LAYER_NAME_BY_JOB_TYPE[GRAMMAR_JOB_TYPE],
                 )
-                if run_row is None:
-                    raise RuntimeError("reader_runs insert did not return a row")
-
-                unit_text_signature = (
-                    f"{base_id}:{unit_row['unit_id']}:{unit_row['text_hash']}:"
-                    f"{base_row['language'] or 'en'}:grammar_bundle:1"
-                )
-                input_hash = hashlib.sha256(unit_text_signature.encode("utf-8")).hexdigest()
-
-                job_row = await conn.fetchrow(
-                    """
-                    INSERT INTO reader_jobs (
-                        reading_record_id,
-                        base_id,
-                        run_id,
-                        user_id,
-                        job_type,
-                        target_type,
-                        target_key,
-                        status,
-                        priority,
-                        expected_generation,
-                        operation_fingerprint,
-                        idempotency_key,
-                        input_hash,
-                        input_json,
-                        max_attempts
-                    )
-                    VALUES (
-                        $1,
-                        $2,
-                        $3,
-                        $4,
-                        $5,
-                        $6,
-                        $7,
-                        'queued',
-                        0,
-                        $8,
-                        $9,
-                        $10,
-                        $11,
-                        $12::jsonb,
-                        $13
-                    )
-                    RETURNING id
-                    """,
-                    record_id,
-                    base_id,
-                    run_row["id"],
-                    user_id,
-                    GRAMMAR_JOB_TYPE,
-                    GRAMMAR_TARGET_SCOPE,
-                    unit_row["unit_id"],
-                    expected_generation,
-                    GRAMMAR_OPERATION_FINGERPRINT,
-                    f"{GRAMMAR_OPERATION_FINGERPRINT}:{unit_row['unit_id']}",
-                    input_hash,
-                    jsonb_param(
-                        {
-                            "unit_id": str(unit_row["unit_id"]),
-                            "unit_order_index": int(unit_row["order_index"]),
-                            "unit_text_hash": str(unit_row["text_hash"]),
-                            "base_language": str(base_row["language"] or "en"),
-                            "layer_types": ["grammar_note", "sentence_analysis"],
-                        }
-                    ),
-                    DEFAULT_GRAMMAR_MAX_ATTEMPTS,
-                )
-                if job_row is None:
-                    raise RuntimeError("reader_jobs insert did not return a row")
 
                 return GrammarBootstrapResult(
-                    run_id=run_row["id"],
-                    job_id=job_row["id"],
-                    reading_record_id=record_id,
-                    base_id=base_id,
+                    run_id=run_id,
+                    job_id=job_id,
+                    reading_record_id=state.record_id,
+                    base_id=state.base_id,
                     unit_id=str(unit_row["unit_id"]),
-                    expected_generation=expected_generation,
-                    operation_fingerprint=GRAMMAR_OPERATION_FINGERPRINT,
+                    expected_generation=state.expected_generation,
+                    operation_fingerprint=operation_fingerprint,
                 )
 
 

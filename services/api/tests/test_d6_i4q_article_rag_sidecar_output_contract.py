@@ -32,7 +32,10 @@ from uuid import UUID
 import pytest
 
 from app.agents.reader_ask_agent import ReaderAskRuntimeState
-from app.schemas.reader_ask import ReaderAskUserVisibleOutput
+from app.schemas.reader_ask import (
+    ReaderAskResolvedContextSummary,
+    ReaderAskUserVisibleOutput,
+)
 from app.services.reader_ask.article_rag_prompt_integration import (
     ArticleRagPromptIntegration,
     ArticleRagPromptIntegrationResult,
@@ -903,9 +906,15 @@ def test_service_py_merges_sidecar_metadata_json() -> None:
 
 def test_merge_repair_runtime_state_clears_article_rag_fields() -> None:
     """``_merge_repair_runtime_state`` must clear
-    ``article_rag_citations`` / ``article_rag_context_ids`` /
-    ``article_rag_metadata`` on the target because the repair
-    payload bypassed the Article RAG integration hook."""
+    ``article_rag_citations`` / ``article_rag_context_ids`` on the
+    target because the repair payload bypassed the Article RAG
+    integration hook.
+
+    D6-I4Q (Round 2): ``article_rag_metadata`` is NOT cleared to an
+    empty dict — it is set to ``status=stale_due_to_repair`` so the
+    frontend can distinguish 'RAG was never enabled' from 'RAG was
+    enabled but cleared after repair'.
+    """
     from app.services.reader_ask.service import _merge_repair_runtime_state
 
     target = ReaderAskRuntimeState()
@@ -927,9 +936,14 @@ def test_merge_repair_runtime_state_clears_article_rag_fields() -> None:
 
     _merge_repair_runtime_state(target, repair)
 
+    # Citations / context_ids are empty.
     assert target.article_rag_citations == []
     assert target.article_rag_context_ids == []
-    assert target.article_rag_metadata == {}
+    # Metadata is replaced with the explicit stale_due_to_repair shape.
+    assert target.article_rag_metadata.get("status") == "stale_due_to_repair"
+    assert target.article_rag_metadata.get("failure_code") == (
+        "article_rag_repair_citations_dropped"
+    )
 
 
 def test_merge_repair_runtime_state_clears_even_when_repair_has_rag_values() -> None:
@@ -992,3 +1006,583 @@ def test_service_py_merge_repair_clears_article_rag_fields() -> None:
         f"_merge_repair_runtime_state must clear all three "
         f"article_rag_* fields; only cleared: {sorted(cleared_fields)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 15. D6-I4Q (Round 2): Typed sidecar DTO contract (article_rag field)
+# ---------------------------------------------------------------------------
+
+
+def test_typed_sidecar_available_round_trip() -> None:
+    """A ``ReaderAskArticleRagSidecar`` with status=available must
+    survive a model_dump + ReaderAskUserVisibleOutput round-trip,
+    AND the legacy ``article_rag_citations`` field must be populated
+    from the sidecar's citations list (back-compat)."""
+    from app.schemas.reader_ask import (
+        ReaderAskArticleRagSidecar,
+        ReaderAskUserVisibleOutput,
+    )
+
+    sidecar = ReaderAskArticleRagSidecar(
+        status="available",
+        failure_code=None,
+        retryable=False,
+        fallback_allowed=True,
+        should_attach=True,
+        context_ids=["c-1", "c-2"],
+        source_pack_hash="sp-1",
+        query_sha256="q-1",
+        citations=[
+            {
+                "context_id": "ctx-1",
+                "chunk_id": "chunk-1",
+                "citation": {
+                    "reading_record_id": "00000000-0000-0000-0000-000000000001",
+                    "stable_document_id": "00000000-0000-0000-0000-000000000002",
+                    "base_id": "00000000-0000-0000-0000-000000000003",
+                    "record_generation": 1,
+                    "block_ids": ["b0001"],
+                    "unit_ids": ["u0001"],
+                    "anchor_segment_ids": ["as-0001"],
+                    "canonical_text_start_utf16": 0,
+                    "canonical_text_end_utf16": 100,
+                },
+            },
+        ],
+    )
+    dumped = sidecar.model_dump(mode="json")
+    assert dumped["status"] == "available"
+    assert dumped["citations"][0]["context_id"] == "ctx-1"
+    assert dumped["citations"][0]["chunk_id"] == "chunk-1"
+    assert (
+        dumped["citations"][0]["citation"]["reading_record_id"]
+        == "00000000-0000-0000-0000-000000000001"
+    )
+    assert dumped["citations"][0]["citation"]["record_generation"] == 1
+    assert dumped["citations"][0]["citation"]["canonical_text_end_utf16"] == 100
+    # Round-trip via the user-visible output container.
+    out = ReaderAskUserVisibleOutput(
+        content_md="x",
+        submission_mode="chat",
+        resolved_intent=None,
+        citations=[],
+        action_proposals=[],
+        tool_trace=[],
+        evidence=[],
+        trace_summary=None,
+        disambiguation=None,
+        external_asset_disambiguation=None,
+        response_cards=[],
+        usage_summary=None,
+        billed_points=0,
+        resolved_context=ReaderAskResolvedContextSummary(
+            record_id="rec-1",
+        ),
+        article_rag=sidecar,
+    )
+    assert out.article_rag is not None
+    assert out.article_rag.status == "available"
+    # Backward-compat: the legacy citations field is populated from
+    # the typed sidecar's citations (serialized to dicts).
+    expected_legacy = [c.model_dump(mode="json") for c in sidecar.citations]
+    assert out.article_rag_citations == expected_legacy
+
+
+def test_disabled_path_status_stable() -> None:
+    """A sidecar with status=disabled must serialize ``should_attach=False``
+    and produce a stable, no-op shape."""
+    from app.schemas.reader_ask import ReaderAskArticleRagSidecar
+
+    sidecar = ReaderAskArticleRagSidecar(
+        status="disabled",
+        failure_code=None,
+        retryable=False,
+        fallback_allowed=True,
+        should_attach=False,
+        context_ids=[],
+        source_pack_hash=None,
+        query_sha256=None,
+        citations=[],
+    )
+    assert sidecar.status == "disabled"
+    assert sidecar.should_attach is False
+
+
+def test_repair_path_status_distinct_from_disabled() -> None:
+    """Repair path must produce ``stale_due_to_repair`` so the frontend
+    can distinguish 'RAG was never enabled' from 'RAG was enabled but
+    cleared because the repair branch bypassed integration'."""
+    from app.schemas.reader_ask import ReaderAskArticleRagSidecar
+
+    sidecar = ReaderAskArticleRagSidecar(
+        status="stale_due_to_repair",
+        failure_code="article_rag_repair_citations_dropped",
+        retryable=False,
+        fallback_allowed=True,
+        should_attach=False,
+        context_ids=[],
+        source_pack_hash=None,
+        query_sha256=None,
+        citations=[],
+    )
+    assert sidecar.status == "stale_due_to_repair"
+    assert sidecar.failure_code == "article_rag_repair_citations_dropped"
+    assert sidecar.citations == []
+
+
+def test_unknown_status_rejected_by_schema() -> None:
+    """Unknown status literals must be rejected by the schema — the
+    ``ReaderAskArticleRagStatus`` literal allowlist is the contract."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.schemas.reader_ask import ReaderAskArticleRagSidecar
+
+    with pytest.raises(ValidationError):
+        ReaderAskArticleRagSidecar(
+            status="never_seen_before",  # type: ignore[arg-type]
+            failure_code=None,
+            retryable=False,
+            fallback_allowed=True,
+            should_attach=False,
+            context_ids=[],
+            source_pack_hash=None,
+            query_sha256=None,
+            citations=[],
+        )
+
+
+def test_repair_runtime_state_writes_stale_due_to_repair() -> None:
+    """``_merge_repair_runtime_state`` must set the runtime metadata's
+    status to ``stale_due_to_repair`` while keeping the citation list
+    empty."""
+    from app.services.reader_ask.service import _merge_repair_runtime_state
+
+    target = ReaderAskRuntimeState(
+        article_rag_citations=[{"chunk_id": "old"}],
+        article_rag_context_ids=["c-old"],
+        article_rag_metadata={"status": "available"},
+    )
+    repair = ReaderAskRuntimeState()
+
+    _merge_repair_runtime_state(target, repair)
+
+    assert target.article_rag_citations == []
+    assert target.article_rag_context_ids == []
+    assert target.article_rag_metadata.get("status") == "stale_due_to_repair"
+    assert target.article_rag_metadata.get("failure_code") == (
+        "article_rag_repair_citations_dropped"
+    )
+    assert target.article_rag_metadata.get("fallback_allowed") is True
+
+
+def test_prompt_payload_never_contains_citation_json() -> None:
+    """Regression guard: when the bridge attaches RAG context, the
+    sidecar's citations must NOT leak into ``prompt_payload``. The
+    payload is the dict that gets serialized into the LLM prompt;
+    only the bracket text (already joined into ``user_message``) is
+    allowed to be there."""
+
+    class _StubBridge:
+        should_attach = True
+        prompt_text = "USER QUESTION\n\n[RAG CONTEXT]\nchunk text\n"
+        # Simulated citations that must NOT appear in payload.
+        citations = ({"chunk_id": "k", "preview": "leak"},)
+        context_ids = ("ctx",)
+        attachment_block = "chunk text"
+        failure_code = None
+
+    # Mimic the production attach branch from
+    # ``ArticleRagPromptIntegration.integrate``: when the bridge
+    # says ``should_attach=True``, only ``user_message`` is written.
+    payload: dict = {"user_message": "ORIGINAL"}
+    bridge = _StubBridge()
+    if bridge.should_attach:
+        payload["user_message"] = bridge.prompt_text
+    assert "citations" not in payload
+    assert "context_ids" not in payload
+    assert "attachment_block" not in payload
+    assert payload["user_message"].startswith("USER QUESTION")
+
+
+# ---------------------------------------------------------------------------
+# 16. D6-I4Q (Round 2): Repository hydrate typed sidecar
+# ---------------------------------------------------------------------------
+
+
+def test_repository_hydrates_typed_sidecar() -> None:
+    """Hydrating a stored ``user_visible_output_json`` must produce a
+    ``ReaderAskUserVisibleOutput`` whose ``article_rag`` typed sidecar
+    survives the JSON round-trip with status intact.
+
+    The repository uses ``_message_row_to_dict`` directly with a stubbed
+    row dict (mirrors the production shape).
+    """
+    from app.services.reader_ask.repository import _message_row_to_dict
+    from app.schemas.reader_ask import (
+        ReaderAskArticleRagSidecar,
+        ReaderAskUserVisibleOutput,
+    )
+
+    stored_sidecar = {
+        "status": "stale_due_to_repair",
+        "failure_code": "article_rag_repair_citations_dropped",
+        "retryable": False,
+        "fallback_allowed": True,
+        "should_attach": False,
+        "context_ids": [],
+        "source_pack_hash": None,
+        "query_sha256": None,
+        "citations": [],
+    }
+    row: dict[str, Any] = {
+        "id": "msg-1",
+        "thread_id": "thread-1",
+        "role": "assistant",
+        "status": "completed",
+        "content_md": "test",
+        "context_anchors_json": [],
+        "citations_json": [],
+        "action_proposals_json": [],
+        "tool_trace_json": [],
+        "metadata_json": {},
+        "current_turn_run_id": None,
+        "usage_event_id": None,
+        "created_at": None,
+        "updated_at": None,
+        "user_visible_output_json": {
+            "content_md": "test",
+            "submission_mode": "chat",
+            "resolved_intent": None,
+            "citations": [],
+            "action_proposals": [],
+            "tool_trace": [],
+            "evidence": [],
+            "trace_summary": None,
+            "disambiguation": None,
+            "external_asset_disambiguation": None,
+            "response_cards": [],
+            "usage_summary": None,
+            "billed_points": 0,
+            "resolved_context": {"record_id": "rec-1"},
+            "context_plan": None,
+            "resolved_context_input": None,
+            "run_info": None,
+            "supplement_candidates": [],
+            "persisted_supplements": [],
+            "reasoning_md": None,
+            "reasoning_status": None,
+            "follow_up_suggestions": None,
+            "article_rag_citations": [],
+            "article_rag": stored_sidecar,
+        },
+    }
+    message = _message_row_to_dict(row)
+    # The hydration shape returns the raw user_visible_output_json
+    # nested under ``current_user_visible_output``.  Round-trip the
+    # stored sidecar through the schema to confirm it parses cleanly
+    # AND the status literal is preserved.
+    current_output = message["current_user_visible_output"]
+    assert current_output["article_rag"]["status"] == "stale_due_to_repair"
+    parsed_sidecar = ReaderAskArticleRagSidecar.model_validate(
+        current_output["article_rag"]
+    )
+    assert isinstance(parsed_sidecar, ReaderAskArticleRagSidecar)
+    assert parsed_sidecar.status == "stale_due_to_repair"
+    # And the legacy field round-trips with an empty list as well.
+    assert current_output["article_rag_citations"] == []
+
+    # Also confirm a full container round-trip is valid.
+    full_output = ReaderAskUserVisibleOutput.model_validate(current_output)
+    assert full_output.article_rag is not None
+    assert full_output.article_rag.status == "stale_due_to_repair"
+
+
+# ---------------------------------------------------------------------------
+# 17. D6-Closure-A final fix: wiring the typed sidecar through service.py
+# ---------------------------------------------------------------------------
+
+
+def test_build_typed_sidecar_returns_none_when_runtime_state_empty() -> None:
+    """``_build_typed_article_rag_sidecar_from_runtime`` must return
+    ``None`` when both runtime fields are empty — the historical
+    'no RAG in this run' case."""
+    from app.services.reader_ask.service import (
+        _build_typed_article_rag_sidecar_from_runtime,
+    )
+
+    assert (
+        _build_typed_article_rag_sidecar_from_runtime(
+            article_rag_metadata=None,
+            article_rag_citations=None,
+        )
+        is None
+    )
+    # Either field empty also returns None.
+    assert (
+        _build_typed_article_rag_sidecar_from_runtime(
+            article_rag_metadata=None,
+            article_rag_citations=[],
+        )
+        is None
+    )
+    assert (
+        _build_typed_article_rag_sidecar_from_runtime(
+            article_rag_metadata={},
+            article_rag_citations=None,
+        )
+        is None
+    )
+
+
+def test_build_typed_sidecar_reads_repair_metadata() -> None:
+    """``_build_typed_article_rag_sidecar_from_runtime`` must map the
+    repair-path metadata (``stale_due_to_repair``) into the typed
+    sidecar so the frontend can distinguish a repair branch from
+    'RAG is broken'."""
+    from app.services.reader_ask.service import (
+        _build_typed_article_rag_sidecar_from_runtime,
+    )
+
+    sidecar = _build_typed_article_rag_sidecar_from_runtime(
+        article_rag_metadata={
+            "status": "stale_due_to_repair",
+            "failure_code": "article_rag_repair_citations_dropped",
+            "retryable": False,
+            "fallback_allowed": True,
+            "should_attach": False,
+            "context_ids": [],
+        },
+        article_rag_citations=[],
+    )
+    assert sidecar is not None
+    assert sidecar.status == "stale_due_to_repair"
+    assert sidecar.failure_code == "article_rag_repair_citations_dropped"
+    assert sidecar.retryable is False
+    assert sidecar.fallback_allowed is True
+    assert sidecar.should_attach is False
+    assert sidecar.context_ids == []
+    assert sidecar.citations == []
+
+
+def test_build_user_visible_output_forwards_typed_sidecar() -> None:
+    """The wrapper ``_build_user_visible_output`` must accept and
+    forward the typed ``article_rag`` sidecar to
+    ``output_contract.build_user_visible_output``, so the production
+    call sites can route the typed runtime state to the frontend."""
+    from app.schemas.reader_ask import (
+        ReaderAskArticleRagSidecar,
+        ReaderAskResolvedContextSummary,
+    )
+    from app.services.reader_ask.service import _build_user_visible_output
+
+    minimal_resolved_context = ReaderAskResolvedContextSummary.model_validate(
+        {
+            "record_id": "rec-1",
+            "record_title": "Title",
+            "anchors": [],
+            "explicit_attachment_count": 0,
+        }
+    )
+
+    sidecar = ReaderAskArticleRagSidecar(
+        status="stale_due_to_repair",
+        failure_code="article_rag_repair_citations_dropped",
+        retryable=False,
+        fallback_allowed=True,
+        should_attach=False,
+        context_ids=[],
+        source_pack_hash=None,
+        query_sha256=None,
+        citations=[],
+    )
+
+    output = _build_user_visible_output(
+        content_md="hello",
+        submission_mode="chat",
+        resolved_intent=None,
+        citations=[],
+        action_proposals=[],
+        tool_trace=[],
+        evidence=[],
+        trace_summary=None,
+        disambiguation=None,
+        external_asset_disambiguation=None,
+        response_cards=[],
+        usage_summary=None,
+        billed_points=0,
+        resolved_context=minimal_resolved_context,
+        context_plan=None,
+        resolved_context_input=None,
+        run_info=None,
+        supplement_candidates=[],
+        persisted_supplements=[],
+        article_rag_citations=[],
+        article_rag=sidecar,
+    )
+    assert output.article_rag is not None
+    assert output.article_rag.status == "stale_due_to_repair"
+    assert output.article_rag.failure_code == "article_rag_repair_citations_dropped"
+
+
+# ---------------------------------------------------------------------------
+# 18. D6-Closure-A follow-up: typed citation matches the I4G shape
+#     AND status coercion contract is implemented at the boundary.
+# ---------------------------------------------------------------------------
+
+
+def test_real_upstream_sidecar_shape_does_not_raise() -> None:
+    """Real I4G sidecar shape ``{context_id, chunk_id, citation: {9-key I4A truth}}``
+    must validate cleanly through the typed schema.  This is the
+    regression test for the P1 finding — a real RAG-available Ask
+    completion must not fail at output-build time.
+
+    Pre-fix bug: ``ReaderAskArticleRagCitation`` was a flat 9-key
+    schema, so ``model_validate({"context_id": ..., "chunk_id": ...,
+    "citation": {...}})`` raised ``ValidationError`` because of
+    ``extra="forbid"`` and missing required flat fields.  The build
+    helper ran inside ``_build_user_visible_output`` — the user saw
+    a 500 on the only RAG-available path.
+    """
+    from app.services.reader_ask.service import (
+        _build_typed_article_rag_sidecar_from_runtime,
+    )
+    real_citation = {
+        "context_id": "ctx-1",
+        "chunk_id": "chunk-1",
+        "citation": {
+            "reading_record_id": "00000000-0000-0000-0000-000000000001",
+            "stable_document_id": "00000000-0000-0000-0000-000000000002",
+            "base_id": "00000000-0000-0000-0000-000000000003",
+            "record_generation": 1,
+            "block_ids": ["b0001"],
+            "unit_ids": ["u0001"],
+            "anchor_segment_ids": ["as-0001"],
+            "canonical_text_start_utf16": 0,
+            "canonical_text_end_utf16": 100,
+        },
+    }
+    sidecar = _build_typed_article_rag_sidecar_from_runtime(
+        article_rag_metadata={
+            "status": "available",
+            "should_attach": True,
+            "context_ids": ["ctx-1"],
+            "source_pack_hash": "sp-1",
+            "query_sha256": "q-1",
+        },
+        article_rag_citations=[real_citation],
+    )
+    assert sidecar is not None
+    assert sidecar.status == "available"
+    assert len(sidecar.citations) == 1
+    c = sidecar.citations[0]
+    assert c.context_id == "ctx-1"
+    assert c.chunk_id == "chunk-1"
+    # Pin the 9-key I4A truth
+    assert c.citation.reading_record_id == "00000000-0000-0000-0000-000000000001"
+    assert c.citation.stable_document_id == "00000000-0000-0000-0000-000000000002"
+    assert c.citation.base_id == "00000000-0000-0000-0000-000000000003"
+    assert c.citation.record_generation == 1
+    assert c.citation.block_ids == ["b0001"]
+    assert c.citation.unit_ids == ["u0001"]
+    assert c.citation.anchor_segment_ids == ["as-0001"]
+    assert c.citation.canonical_text_start_utf16 == 0
+    assert c.citation.canonical_text_end_utf16 == 100
+
+
+def test_unknown_status_coerces_to_not_indexed_or_unavailable() -> None:
+    """Unknown status values must coerce to
+    ``not_indexed_or_unavailable``, not raise — see
+    ``frontend-integration-status-map.md`` (Coercion contract).
+
+    Pre-fix bug: ``metadata["status"]`` was passed straight to the
+    Pydantic Literal field, so any regression / hostile fake / drift
+    caused a ``ValidationError`` instead of a safe fallback.  This
+    test verifies the coercion helper at the boundary.
+    """
+    from app.services.reader_ask.service import (
+        _build_typed_article_rag_sidecar_from_runtime,
+    )
+
+    sidecar = _build_typed_article_rag_sidecar_from_runtime(
+        article_rag_metadata={"status": "never_seen_before"},
+        article_rag_citations=None,
+    )
+    assert sidecar is not None
+    assert sidecar.status == "not_indexed_or_unavailable"
+
+
+def test_unknown_status_coerces_on_real_upstream_shape() -> None:
+    """Coercion must hold even with the real nested citation shape.
+
+    Combines the P1 (nested shape) and P2 (coercion) regressions into
+    one test — the canonical failure mode is an unknown status
+    arriving alongside real I4G citations on the available path.
+    """
+    from app.services.reader_ask.service import (
+        _build_typed_article_rag_sidecar_from_runtime,
+    )
+
+    sidecar = _build_typed_article_rag_sidecar_from_runtime(
+        article_rag_metadata={"status": "something_hostile"},
+        article_rag_citations=[
+            {
+                "context_id": "ctx-x",
+                "chunk_id": "chunk-y",
+                "citation": {
+                    "reading_record_id": "00000000-0000-0000-0000-000000000001",
+                    "stable_document_id": "00000000-0000-0000-0000-000000000002",
+                    "base_id": "00000000-0000-0000-0000-000000000003",
+                    "record_generation": 1,
+                    "block_ids": [],
+                    "unit_ids": [],
+                    "anchor_segment_ids": [],
+                    "canonical_text_start_utf16": 0,
+                    "canonical_text_end_utf16": 10,
+                },
+            }
+        ],
+    )
+    assert sidecar is not None
+    assert sidecar.status == "not_indexed_or_unavailable"
+    assert len(sidecar.citations) == 1
+    assert sidecar.citations[0].context_id == "ctx-x"
+    assert sidecar.citations[0].chunk_id == "chunk-y"
+    assert (
+        sidecar.citations[0].citation.reading_record_id
+        == "00000000-0000-0000-0000-000000000001"
+    )
+    assert sidecar.citations[0].citation.canonical_text_end_utf16 == 10
+
+
+def test_extra_forbid_rejects_non_allowlist_key_on_inner_citation() -> None:
+    """The inner content model uses ``extra="forbid"`` — a regression
+    that surfaces a non-I4A key (e.g. provider metadata, query text,
+    a UI projection field) must raise ``ValidationError``.
+
+    Mirrors ``article_rag_ask_prompt_attachment._ALLOWED_CITATION_KEYS``
+    — the attachment layer already strips hostile extras, but the
+    typed DTO re-enforces the closed schema as defence in depth.
+    """
+    from pydantic import ValidationError
+
+    from app.schemas.reader_ask import ReaderAskArticleRagCitation
+
+    bad = {
+        "context_id": "ctx-1",
+        "chunk_id": "chunk-1",
+        "citation": {
+            "reading_record_id": "r-1",
+            "stable_document_id": "sd-1",
+            "base_id": "b-1",
+            "record_generation": 1,
+            "block_ids": [],
+            "unit_ids": [],
+            "anchor_segment_ids": [],
+            "canonical_text_start_utf16": 0,
+            "canonical_text_end_utf16": 10,
+            "provider_metadata": {"query_text": "leak"},  # hostile field
+        },
+    }
+    with pytest.raises(ValidationError):
+        ReaderAskArticleRagCitation.model_validate(bad)

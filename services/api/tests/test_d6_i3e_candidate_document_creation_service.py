@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -12,6 +12,7 @@ from app.services.reader_orchestration.candidate_document_creation_service impor
     CandidateDocumentCreationError,
     CandidateDocumentCreationResult,
     CandidateDocumentCreationService,
+    _build_candidate_blocks,
 )
 
 _USER_ID = UUID("00000000-0000-0000-0000-000000000501")
@@ -430,3 +431,127 @@ def test_db_write_error_rolls_back_and_wraps_cause() -> None:
     assert isinstance(excinfo.value.__cause__, RuntimeError)
     assert conn._last_transaction is not None
     assert conn._last_transaction.rolled_back is True
+
+
+def test_candidate_heading_strips_inline_markdown() -> None:
+    blocks, _ = _build_candidate_blocks(
+        source_type="markdown_file",
+        text="## **Bold heading** with [link](https://x.test)",
+        filename="x.md",
+        source_metadata={},
+        original_input_id=uuid4(),
+    )
+    assert blocks[0].block_type == "heading"
+    assert blocks[0].text_content == "Bold heading with link"
+    assert blocks[0].source_refs_json.get("links") == [
+        {"label": "link", "url": "https://x.test"}
+    ]
+
+
+def test_candidate_paragraph_strips_inline_code_and_strong() -> None:
+    blocks, _ = _build_candidate_blocks(
+        source_type="markdown_file",
+        text="**bold** and `code` and *em*",
+        filename=None,
+        source_metadata={},
+        original_input_id=uuid4(),
+    )
+    assert blocks[0].block_type == "paragraph"
+    assert blocks[0].text_content == "bold and code and em"
+
+
+def test_candidate_list_item_strips_inline_markdown() -> None:
+    blocks, _ = _build_candidate_blocks(
+        source_type="markdown_file",
+        text="- **bold** [link](https://x.test)",
+        filename=None,
+        source_metadata={},
+        original_input_id=uuid4(),
+    )
+    assert blocks[0].block_type == "list_item"
+    assert blocks[0].text_content == "bold link"
+    assert blocks[0].source_refs_json["links"] == [
+        {"label": "link", "url": "https://x.test"}
+    ]
+
+
+def test_candidate_blockquote_strips_inline_markdown() -> None:
+    blocks, _ = _build_candidate_blocks(
+        source_type="markdown_file",
+        text="> **quoted** [link](https://x.test)",
+        filename=None,
+        source_metadata={},
+        original_input_id=uuid4(),
+    )
+    assert blocks[0].block_type == "blockquote"
+    assert blocks[0].text_content == "quoted link"
+
+
+def test_candidate_code_block_keeps_raw_code_and_no_links() -> None:
+    blocks, _ = _build_candidate_blocks(
+        source_type="markdown_file",
+        text="```py\nprint(**kwargs)\n```",
+        filename=None,
+        source_metadata={},
+        original_input_id=uuid4(),
+    )
+    code = next(b for b in blocks if b.block_type == "code_block")
+    assert code.text_content == "print(**kwargs)"
+    assert "**" in code.text_content  # code body is untouched
+    assert "links" not in code.source_refs_json
+
+
+def test_candidate_fenced_block_does_not_emit_fence_in_text_content() -> None:
+    blocks, _ = _build_candidate_blocks(
+        source_type="markdown_file",
+        text="```\nhello\n```",
+        filename=None,
+        source_metadata={},
+        original_input_id=uuid4(),
+    )
+    code = next(b for b in blocks if b.block_type == "code_block")
+    assert "```" not in code.text_content
+    assert code.text_content.strip() == "hello"
+
+
+def test_candidate_freeze_plan_canonical_text_has_no_inline_markdown() -> None:
+    """When the candidate is confirmed, the freeze plan must derive
+    canonical_text from the stripped block text — not from the raw
+    markdown source. This guards the round-trip against regressions
+    that would re-introduce inline syntax into reading_bases.text.
+    """
+    from app.services.reader_orchestration.document_freeze_plan import (
+        build_stable_document_freeze_plan,
+    )
+
+    # Build candidate blocks using the public function.
+    blocks, _ = _build_candidate_blocks(
+        source_type="markdown_file",
+        text=(
+            "## **Heading**\n"
+            "\n"
+            "Paragraph with **bold** and [link](https://x.test).\n"
+            "\n"
+            "- item with `code`\n"
+        ),
+        filename="x.md",
+        source_metadata={},
+        original_input_id=uuid4(),
+    )
+
+    # ``build_stable_document_freeze_plan`` is the canonical text builder
+    # used by the candidate-confirm transaction service.
+    plan = build_stable_document_freeze_plan(
+        reading_record_id=str(uuid4()),
+        record_generation=1,
+        document_version=1,
+        title="Test",
+        blocks=blocks,
+        source_profile_json={},
+    )
+    canonical = plan.canonical_text
+    for forbidden in ("**", "[", "](", "`"):
+        assert forbidden not in canonical, (
+            f"freeze plan canonical_text leaked Markdown syntax {forbidden!r}: "
+            f"{canonical!r}"
+        )

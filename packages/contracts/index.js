@@ -8,11 +8,9 @@ export const FAVORITE_TARGET_TYPES = [
 ];
 
 export const USER_ANNOTATION_COLORS = [
-  "soft_green",
-  "soft_blue",
-  "soft_purple",
   "warm_yellow",
-  "sage_green",
+  "soft_mint",
+  "soft_rose",
 ];
 
 export const TEXT_RANGE_OFFSET_UNIT = "utf16";

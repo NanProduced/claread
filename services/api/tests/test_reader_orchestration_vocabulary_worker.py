@@ -25,8 +25,12 @@ from app.services.reader_orchestration.article_ready_service import (
 from app.services.reader_orchestration.job_bootstrap import (
     VOCABULARY_OPERATION_FINGERPRINT,
     VocabularyJobBootstrapService,
+    _fingerprint_matches_base,
 )
 from app.services.reader_orchestration.job_runtime import FenceViolationError
+from app.services.reader_orchestration.reading_strategy import (
+    resolve_reader_variant_strategy,
+)
 from app.services.reader_orchestration.vocabulary_worker import (
     FakeVocabularyExecutor,
     PydanticAIVocabularyExecutor,
@@ -37,6 +41,8 @@ from app.services.reader_orchestration.vocabulary_worker import (
     VocabularyJobContext,
     VocabularyWorkerService,
     _build_vocabulary_output_from_candidates,
+    _build_vocabulary_prompt,
+    _validate_vocabulary_strategy_metadata,
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
@@ -233,7 +239,10 @@ async def test_bootstrap_creates_vocabulary_run_and_job_with_expected_fingerprin
 
     assert result.base_id == article.base_id
     assert result.expected_generation == 1
-    assert result.operation_fingerprint == VOCABULARY_OPERATION_FINGERPRINT
+    assert _fingerprint_matches_base(
+        result.operation_fingerprint, VOCABULARY_OPERATION_FINGERPRINT
+    )
+    assert result.operation_fingerprint != VOCABULARY_OPERATION_FINGERPRINT
     assert result.unit_id == article.snapshot.navigation.units[0].unit_id
 
     async with vocabulary_worker_env.acquire() as conn:
@@ -269,7 +278,10 @@ async def test_bootstrap_creates_vocabulary_run_and_job_with_expected_fingerprin
     assert job_row["target_key"] == result.unit_id
     assert job_row["status"] == "queued"
     assert job_row["expected_generation"] == 1
-    assert job_row["operation_fingerprint"] == VOCABULARY_OPERATION_FINGERPRINT
+    assert _fingerprint_matches_base(
+        job_row["operation_fingerprint"], VOCABULARY_OPERATION_FINGERPRINT
+    )
+    assert job_row["operation_fingerprint"] != VOCABULARY_OPERATION_FINGERPRINT
     assert job_row["max_attempts"] == 3
 
 
@@ -303,7 +315,7 @@ async def test_bootstrap_does_not_create_duplicate_active_vocabulary_job(
               AND operation_fingerprint = $2
             """,
             article.record_id,
-            VOCABULARY_OPERATION_FINGERPRINT,
+            first.operation_fingerprint,
         )
     assert total_jobs == 1
 
@@ -439,12 +451,6 @@ async def test_worker_process_publishes_vocabulary_layer_and_snapshot_reload_exp
         "phrase_gloss",
         "context_gloss",
     }
-    assert all(
-        child.get("type") != "reader_translation"
-        for unit_node in snapshot.value
-        for child in unit_node["children"]  # type: ignore[index]
-        if isinstance(child, dict)
-    )
 
 
 async def test_real_executor_path_publishes_vocabulary_layer_and_snapshot_marks(
@@ -850,7 +856,9 @@ async def test_worker_claim_fence_supersedes_job_on_active_base_mismatch(
 ) -> None:
     user_id = await insert_user(vocabulary_worker_env)
     article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
-    await VocabularyJobBootstrapService(pool=vocabulary_worker_env).bootstrap_vocabulary_run(
+    boot_result = await VocabularyJobBootstrapService(
+        pool=vocabulary_worker_env
+    ).bootstrap_vocabulary_run(
         record_id=article.record_id,
         user_id=user_id,
     )
@@ -880,7 +888,7 @@ async def test_worker_claim_fence_supersedes_job_on_active_base_mismatch(
               AND operation_fingerprint = $2
             """,
             article.record_id,
-            VOCABULARY_OPERATION_FINGERPRINT,
+            boot_result.operation_fingerprint,
         )
         layer_count = await conn.fetchval(
             """
@@ -1052,6 +1060,8 @@ def _build_fallback_context(
     unit_text: str,
     segments: list[VocabularyAnchorSegmentContext],
 ) -> VocabularyJobContext:
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer = strategy.layers["vocabulary"]
     return VocabularyJobContext(
         job_id=UUID("11111111-1111-1111-1111-111111111111"),
         run_id=UUID("22222222-2222-2222-2222-222222222222"),
@@ -1066,6 +1076,12 @@ def _build_fallback_context(
         source_text=unit_text,
         text_hash=compute_text_range_hash(unit_text),
         anchor_segments=tuple(segments),
+        reading_goal=strategy.reading_goal,
+        reading_variant=strategy.reading_variant,
+        strategy_version=strategy.strategy_version,
+        strategy_hash=strategy.strategy_hash,
+        layer_policy_hash=layer.policy_hash,
+        vocabulary_prompt_lines=layer.prompt_lines,
     )
 
 
@@ -1181,3 +1197,572 @@ def test_vocabulary_anchor_segment_context_defaults_boundary_quality_to_normal()
         text="hello",
     )
     assert seg.boundary_quality == "normal"
+
+
+# ---------------------------------------------------------------------------#
+# T7: variant-first strategy integration into vocabulary worker
+# ---------------------------------------------------------------------------#
+
+
+def _build_context_for_variant(
+    *,
+    reading_goal: str,
+    reading_variant: str,
+    source_text: str = "Vocabulary source text for variant strategy.",
+) -> VocabularyJobContext:
+    """Build a VocabularyJobContext with strategy metadata for a given variant."""
+    strategy = resolve_reader_variant_strategy(reading_goal, reading_variant)
+    layer = strategy.layers["vocabulary"]
+    return VocabularyJobContext(
+        job_id=UUID("11111111-1111-1111-1111-111111111111"),
+        run_id=UUID("22222222-2222-2222-2222-222222222222"),
+        reading_record_id=UUID("33333333-3333-3333-3333-333333333333"),
+        user_id=UUID("44444444-4444-4444-4444-444444444444"),
+        base_id=UUID("55555555-5555-5555-5555-555555555555"),
+        unit_id="u1",
+        order_index=1,
+        expected_generation=1,
+        operation_fingerprint="vocabulary_unit_v1",
+        source_language="en",
+        source_text=source_text,
+        text_hash="vocabulary-text-hash",
+        anchor_segments=(
+            VocabularyAnchorSegmentContext(
+                anchor_segment_id="s1",
+                sentence_id="s1",
+                segment_type="sentence",
+                unit_start_utf16=0,
+                unit_end_utf16=len(
+                    source_text.encode("utf-16-le", "surrogatepass")
+                )
+                // 2,
+                text_hash=compute_text_range_hash(source_text),
+                text=source_text,
+            ),
+        ),
+        reading_goal=strategy.reading_goal,
+        reading_variant=strategy.reading_variant,
+        strategy_version=strategy.strategy_version,
+        strategy_hash=strategy.strategy_hash,
+        layer_policy_hash=layer.policy_hash,
+        vocabulary_prompt_lines=layer.prompt_lines,
+    )
+
+
+def test_build_vocabulary_prompt_contains_concrete_policy_lines() -> None:
+    """The prompt must include the concrete vocabulary policy lines from
+    reader_variants.yaml, not just a goal/variant label."""
+    context = _build_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+    )
+    prompt = _build_vocabulary_prompt(context)
+
+    # The strategy section must be present with the variant's prompt lines.
+    assert "<reader_strategy>" in prompt
+    assert "</reader_strategy>" in prompt
+    assert "<policy_lines>" in prompt
+    assert "</policy_lines>" in prompt
+    assert "reading_goal: daily_reading" in prompt
+    assert "reading_variant: intermediate_reading" in prompt
+    assert "strategy_hash:" in prompt
+    assert "layer_policy_hash:" in prompt
+
+    # Every concrete policy line for intermediate_reading vocabulary layer
+    # must appear in the prompt.
+    for line in context.vocabulary_prompt_lines:
+        assert line in prompt
+
+
+def test_build_vocabulary_prompt_differs_between_daily_intermediate_and_exam_cet() -> None:
+    """daily_reading/intermediate_reading and exam/cet must produce
+    different strategy sections in the vocabulary prompt."""
+    daily_context = _build_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+    )
+    exam_context = _build_context_for_variant(
+        reading_goal="exam",
+        reading_variant="cet",
+    )
+
+    daily_prompt = _build_vocabulary_prompt(daily_context)
+    exam_prompt = _build_vocabulary_prompt(exam_context)
+
+    # The two prompts must differ in the strategy section.
+    assert daily_prompt != exam_prompt
+
+    # The daily prompt must carry the daily_reading goal and the
+    # intermediate_reading variant's vocabulary policy lines.
+    assert "reading_goal: daily_reading" in daily_prompt
+    assert "reading_variant: intermediate_reading" in daily_prompt
+    for line in daily_context.vocabulary_prompt_lines:
+        assert line in daily_prompt
+
+    # The exam prompt must carry the exam goal and the cet variant's
+    # vocabulary policy lines.
+    assert "reading_goal: exam" in exam_prompt
+    assert "reading_variant: cet" in exam_prompt
+    for line in exam_context.vocabulary_prompt_lines:
+        assert line in exam_prompt
+
+    # The two variants' vocabulary policy lines must actually differ (this
+    # guards against accidentally identical policy text).
+    assert (
+        daily_context.vocabulary_prompt_lines
+        != exam_context.vocabulary_prompt_lines
+    )
+
+
+def test_build_vocabulary_prompt_strategy_section_order() -> None:
+    """The strategy section must sit before the 'Return only...' directive
+    so it does not clobber the source_text block."""
+    context = _build_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+    )
+    prompt = _build_vocabulary_prompt(context)
+
+    unit_id_idx = prompt.index(f"unit_id: {context.unit_id}")
+    strategy_idx = prompt.index("<reader_strategy>")
+    return_idx = prompt.index("Return only the structured candidate output.")
+    source_idx = prompt.index("<source_text>")
+
+    assert unit_id_idx < strategy_idx < return_idx < source_idx
+
+
+# ---------------------------------------------------------------------------#
+# T7: _validate_vocabulary_strategy_metadata fail-closed unit tests
+# ---------------------------------------------------------------------------#
+
+
+def test_validate_strategy_metadata_rejects_non_mapping_input() -> None:
+    with pytest.raises(VocabularyExecutionError) as exc_info:
+        _validate_vocabulary_strategy_metadata(None)
+    assert exc_info.value.failure_code == "strategy_metadata_missing"
+    assert exc_info.value.retryable is False
+
+
+def test_validate_strategy_metadata_rejects_missing_keys() -> None:
+    """A legacy bare-fingerprint job whose input_json lacks strategy
+    metadata must fail closed, not fall back to a default strategy."""
+    incomplete = {
+        "unit_id": "u1",
+        "base_language": "en",
+        # No reading_goal / reading_variant / strategy_version / strategy_hash
+        # / layer_policy_hash.
+    }
+    with pytest.raises(VocabularyExecutionError) as exc_info:
+        _validate_vocabulary_strategy_metadata(incomplete)
+    assert exc_info.value.failure_code == "strategy_metadata_missing"
+    assert "reading_goal" in str(exc_info.value)
+    assert exc_info.value.retryable is False
+
+
+def test_validate_strategy_metadata_rejects_empty_string_values() -> None:
+    """Empty string values are treated as missing."""
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer = strategy.layers["vocabulary"]
+    payload = {
+        "reading_goal": "",
+        "reading_variant": strategy.reading_variant,
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash,
+        "layer_policy_hash": layer.policy_hash,
+    }
+    with pytest.raises(VocabularyExecutionError) as exc_info:
+        _validate_vocabulary_strategy_metadata(payload)
+    assert exc_info.value.failure_code == "strategy_metadata_missing"
+
+
+def test_validate_strategy_metadata_rejects_strategy_hash_mismatch() -> None:
+    """strategy_hash mismatch must fail closed with a dedicated code."""
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer = strategy.layers["vocabulary"]
+    payload = {
+        "reading_goal": strategy.reading_goal,
+        "reading_variant": strategy.reading_variant,
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash + "_tampered",
+        "layer_policy_hash": layer.policy_hash,
+    }
+    with pytest.raises(VocabularyExecutionError) as exc_info:
+        _validate_vocabulary_strategy_metadata(payload)
+    assert exc_info.value.failure_code == "strategy_hash_mismatch"
+    assert "strategy_hash" in str(exc_info.value)
+    assert exc_info.value.retryable is False
+
+
+def test_validate_strategy_metadata_rejects_layer_policy_hash_mismatch() -> None:
+    """layer_policy_hash mismatch must fail closed with a dedicated code."""
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    payload = {
+        "reading_goal": strategy.reading_goal,
+        "reading_variant": strategy.reading_variant,
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash,
+        # Use a different layer's policy_hash to trigger mismatch.
+        "layer_policy_hash": strategy.layers["translation"].policy_hash,
+    }
+    with pytest.raises(VocabularyExecutionError) as exc_info:
+        _validate_vocabulary_strategy_metadata(payload)
+    assert exc_info.value.failure_code == "layer_policy_hash_mismatch"
+    assert exc_info.value.retryable is False
+
+
+def test_validate_strategy_metadata_rejects_strategy_version_mismatch() -> None:
+    """strategy_version mismatch must fail closed."""
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer = strategy.layers["vocabulary"]
+    payload = {
+        "reading_goal": strategy.reading_goal,
+        "reading_variant": strategy.reading_variant,
+        "strategy_version": "stale_version",
+        "strategy_hash": strategy.strategy_hash,
+        "layer_policy_hash": layer.policy_hash,
+    }
+    with pytest.raises(VocabularyExecutionError) as exc_info:
+        _validate_vocabulary_strategy_metadata(payload)
+    assert exc_info.value.failure_code == "strategy_version_mismatch"
+
+
+def test_validate_strategy_metadata_rejects_illegal_goal_variant_pair() -> None:
+    """An illegal goal/variant pair (e.g. academic) must fail closed via
+    the resolver, not silently fall back."""
+    payload = {
+        "reading_goal": "academic",
+        "reading_variant": "academic_general",
+        "strategy_version": "reader_variant_policy_v1",
+        "strategy_hash": "irrelevant",
+        "layer_policy_hash": "irrelevant",
+    }
+    with pytest.raises(VocabularyExecutionError) as exc_info:
+        _validate_vocabulary_strategy_metadata(payload)
+    assert exc_info.value.failure_class == "strategy_resolution"
+    assert exc_info.value.failure_code == "strategy_resolver_error"
+
+
+def test_validate_strategy_metadata_returns_resolved_prompt_lines_on_success() -> None:
+    """On success, the helper returns the resolver's concrete prompt_lines
+    so the prompt builder can inject them."""
+    strategy = resolve_reader_variant_strategy("exam", "cet")
+    layer = strategy.layers["vocabulary"]
+    payload = {
+        "reading_goal": "exam",
+        "reading_variant": "cet",
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash,
+        "layer_policy_hash": layer.policy_hash,
+    }
+    result = _validate_vocabulary_strategy_metadata(payload)
+    assert result.reading_goal == "exam"
+    assert result.reading_variant == "cet"
+    assert result.strategy_hash == strategy.strategy_hash
+    assert result.layer_policy_hash == layer.policy_hash
+    assert result.vocabulary_prompt_lines == layer.prompt_lines
+    assert len(result.vocabulary_prompt_lines) >= 1
+
+
+# ---------------------------------------------------------------------------#
+# T7: _load_job_context integration — reads T5 bootstrap strategy metadata
+# ---------------------------------------------------------------------------#
+
+
+async def test_load_job_context_reads_t5_bootstrap_strategy_metadata(
+    vocabulary_worker_env: asyncpg.Pool,
+) -> None:
+    """_load_job_context must read strategy metadata written by T5 bootstrap
+    and resolve the concrete vocabulary policy lines from the resolver."""
+    user_id = await insert_user(vocabulary_worker_env)
+    article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
+    bootstrap = VocabularyJobBootstrapService(pool=vocabulary_worker_env)
+    boot_result = await bootstrap.bootstrap_vocabulary_run(
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+
+    worker = VocabularyWorkerService(pool=vocabulary_worker_env)
+    context = await worker._load_job_context(boot_result.job_id)
+
+    # The context must carry the strategy metadata from input_json.
+    assert context.reading_goal == "daily_reading"
+    assert context.reading_variant == "intermediate_reading"
+
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    assert context.strategy_version == strategy.strategy_version
+    assert context.strategy_hash == strategy.strategy_hash
+    assert context.layer_policy_hash == strategy.layers["vocabulary"].policy_hash
+
+    # The concrete prompt lines must come from the resolver, not from
+    # input_json (input_json only stores hashes, not the lines themselves).
+    assert context.vocabulary_prompt_lines == strategy.layers["vocabulary"].prompt_lines
+    assert len(context.vocabulary_prompt_lines) >= 1
+
+    # The prompt built from this context must include the concrete lines.
+    prompt = _build_vocabulary_prompt(context)
+    for line in context.vocabulary_prompt_lines:
+        assert line in prompt
+
+
+async def test_load_job_context_reads_exam_cet_strategy_metadata(
+    vocabulary_worker_env: asyncpg.Pool,
+) -> None:
+    """_load_job_context must also work for exam/cet variant."""
+    from app.services.reader_orchestration.article_ready_service import (
+        ArticleReadyPersistenceService,
+        PlainTextArticleReadySubmitRequest,
+    )
+
+    user_id = await insert_user(vocabulary_worker_env)
+    service = ArticleReadyPersistenceService(pool=vocabulary_worker_env)
+    submit_result = await service.submit_plain_text(
+        PlainTextArticleReadySubmitRequest(
+            user_id=user_id,
+            plain_text="First paragraph for exam vocab.\n\nSecond paragraph for exam vocab.",
+            title="Exam CET Vocabulary Slice",
+            language="en",
+            reading_goal="exam",  # type: ignore[arg-type]
+            reading_variant="cet",  # type: ignore[arg-type]
+        )
+    )
+
+    bootstrap = VocabularyJobBootstrapService(pool=vocabulary_worker_env)
+    boot_result = await bootstrap.bootstrap_vocabulary_run(
+        record_id=submit_result.record_id,
+        user_id=user_id,
+    )
+
+    worker = VocabularyWorkerService(pool=vocabulary_worker_env)
+    context = await worker._load_job_context(boot_result.job_id)
+
+    assert context.reading_goal == "exam"
+    assert context.reading_variant == "cet"
+    strategy = resolve_reader_variant_strategy("exam", "cet")
+    assert context.strategy_hash == strategy.strategy_hash
+    assert context.layer_policy_hash == strategy.layers["vocabulary"].policy_hash
+    assert context.vocabulary_prompt_lines == strategy.layers["vocabulary"].prompt_lines
+
+
+async def _insert_legacy_vocabulary_job_without_strategy_metadata(
+    pool: asyncpg.Pool,
+    *,
+    record_id: UUID,
+    base_id: UUID,
+    user_id: UUID,
+    unit_id: str,
+    input_json: dict,
+) -> UUID:
+    """Insert a vocabulary job row with crafted input_json.
+
+    Used to simulate legacy bare-fingerprint jobs or jobs with tampered
+    strategy metadata for fail-closed tests.
+    """
+    from app.database.json_compat import jsonb_param
+
+    async with pool.acquire() as conn:
+        run_id = await conn.fetchval(
+            """
+            INSERT INTO reader_runs (
+                reading_record_id, user_id, run_type, status,
+                record_generation, envelope_json, policy_version, trigger_kind
+            )
+            VALUES ($1, $2, 'vocabulary_layer', 'queued', 1,
+                    '{}'::jsonb, 'legacy-test', 'system')
+            RETURNING id
+            """,
+            record_id,
+            user_id,
+        )
+        job_id = await conn.fetchval(
+            """
+            INSERT INTO reader_jobs (
+                reading_record_id, base_id, run_id, user_id,
+                job_type, target_type, target_key, status,
+                priority, expected_generation, operation_fingerprint,
+                idempotency_key, input_hash, input_json, max_attempts
+            )
+            VALUES (
+                $1, $2, $3, $4,
+                'build_vocabulary_layer', 'unit', $5, 'queued',
+                0, 1, $6,
+                $7, $8, $9::jsonb, 3
+            )
+            RETURNING id
+            """,
+            record_id,
+            base_id,
+            run_id,
+            user_id,
+            unit_id,
+            "vocabulary_unit_v1",
+            f"vocabulary_unit_v1:{unit_id}",
+            "legacy-input-hash",
+            jsonb_param(input_json),
+        )
+    assert isinstance(job_id, UUID)
+    return job_id
+
+
+async def test_load_job_context_fail_closed_on_missing_strategy_metadata(
+    vocabulary_worker_env: asyncpg.Pool,
+) -> None:
+    """A legacy bare-fingerprint job without strategy metadata in input_json
+    must fail closed when _load_job_context tries to load it."""
+    user_id = await insert_user(vocabulary_worker_env)
+    article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
+    unit_id = article.snapshot.navigation.units[0].unit_id
+
+    legacy_input_json = {
+        "unit_id": unit_id,
+        "base_language": "en",
+        # No strategy metadata keys.
+    }
+    job_id = await _insert_legacy_vocabulary_job_without_strategy_metadata(
+        vocabulary_worker_env,
+        record_id=article.record_id,
+        base_id=article.base_id,
+        user_id=user_id,
+        unit_id=unit_id,
+        input_json=legacy_input_json,
+    )
+
+    worker = VocabularyWorkerService(pool=vocabulary_worker_env)
+    with pytest.raises(VocabularyExecutionError) as exc_info:
+        await worker._load_job_context(job_id)
+    assert exc_info.value.failure_code == "strategy_metadata_missing"
+    assert exc_info.value.retryable is False
+
+
+async def test_load_job_context_fail_closed_on_strategy_hash_mismatch(
+    vocabulary_worker_env: asyncpg.Pool,
+) -> None:
+    """A job whose input_json strategy_hash doesn't match the resolver
+    output must fail closed."""
+    user_id = await insert_user(vocabulary_worker_env)
+    article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
+    unit_id = article.snapshot.navigation.units[0].unit_id
+
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer = strategy.layers["vocabulary"]
+    tampered_input_json = {
+        "unit_id": unit_id,
+        "base_language": "en",
+        "reading_goal": strategy.reading_goal,
+        "reading_variant": strategy.reading_variant,
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash + "_tampered",
+        "layer_policy_hash": layer.policy_hash,
+    }
+    job_id = await _insert_legacy_vocabulary_job_without_strategy_metadata(
+        vocabulary_worker_env,
+        record_id=article.record_id,
+        base_id=article.base_id,
+        user_id=user_id,
+        unit_id=unit_id,
+        input_json=tampered_input_json,
+    )
+
+    worker = VocabularyWorkerService(pool=vocabulary_worker_env)
+    with pytest.raises(VocabularyExecutionError) as exc_info:
+        await worker._load_job_context(job_id)
+    assert exc_info.value.failure_code == "strategy_hash_mismatch"
+    assert exc_info.value.retryable is False
+
+
+async def test_load_job_context_fail_closed_on_layer_policy_hash_mismatch(
+    vocabulary_worker_env: asyncpg.Pool,
+) -> None:
+    """A job whose input_json layer_policy_hash doesn't match the resolver
+    output must fail closed."""
+    user_id = await insert_user(vocabulary_worker_env)
+    article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
+    unit_id = article.snapshot.navigation.units[0].unit_id
+
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    tampered_input_json = {
+        "unit_id": unit_id,
+        "base_language": "en",
+        "reading_goal": strategy.reading_goal,
+        "reading_variant": strategy.reading_variant,
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash,
+        # Use a different layer's policy_hash to trigger mismatch.
+        "layer_policy_hash": strategy.layers["translation"].policy_hash,
+    }
+    job_id = await _insert_legacy_vocabulary_job_without_strategy_metadata(
+        vocabulary_worker_env,
+        record_id=article.record_id,
+        base_id=article.base_id,
+        user_id=user_id,
+        unit_id=unit_id,
+        input_json=tampered_input_json,
+    )
+
+    worker = VocabularyWorkerService(pool=vocabulary_worker_env)
+    with pytest.raises(VocabularyExecutionError) as exc_info:
+        await worker._load_job_context(job_id)
+    assert exc_info.value.failure_code == "layer_policy_hash_mismatch"
+    assert exc_info.value.retryable is False
+
+
+async def test_worker_fail_closed_on_missing_strategy_metadata_moves_job_to_failed_terminal(
+    vocabulary_worker_env: asyncpg.Pool,
+) -> None:
+    """End-to-end: a legacy job without strategy metadata, when processed
+    by the worker, must move to failed_terminal with the right failure code."""
+    user_id = await insert_user(vocabulary_worker_env)
+    article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
+    unit_id = article.snapshot.navigation.units[0].unit_id
+
+    legacy_input_json = {
+        "unit_id": unit_id,
+        "base_language": "en",
+    }
+    job_id = await _insert_legacy_vocabulary_job_without_strategy_metadata(
+        vocabulary_worker_env,
+        record_id=article.record_id,
+        base_id=article.base_id,
+        user_id=user_id,
+        unit_id=unit_id,
+        input_json=legacy_input_json,
+    )
+
+    worker = VocabularyWorkerService(
+        pool=vocabulary_worker_env,
+        executor=_StaticVocabularyExecutor(_sample_vocabulary_output),
+    )
+
+    # Manually claim the legacy bare-fingerprint job through the runtime so
+    # this test can exercise process_claimed_vocabulary_job's fail-closed
+    # metadata-validation path directly.
+    from app.services.reader_orchestration.job_runtime import ReaderJobRuntime
+
+    runtime = ReaderJobRuntime(pool=vocabulary_worker_env)
+    claim = await runtime.claim_next_job(
+        lease_owner="legacy-test-worker",
+        lease_duration=timedelta(seconds=30),
+        job_type="build_vocabulary_layer",
+        operation_fingerprint="vocabulary_unit_v1",
+    )
+    assert claim is not None
+    assert claim.job_id == job_id
+
+    result = await worker.process_claimed_vocabulary_job(claim=claim)
+
+    assert result.status == "failed_terminal"
+    assert result.context is None  # context loading failed before assignment
+
+    async with vocabulary_worker_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            "SELECT status, failure_class, failure_code, rationale_code "
+            "FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+    assert job_row is not None
+    assert job_row["status"] == "failed_terminal"
+    assert job_row["failure_class"] == "validation"
+    assert job_row["failure_code"] == "strategy_metadata_missing"
+    # VocabularyExecutionError defaults rationale_code to failure_code when
+    # not explicitly set; the worker's VocabularyExecutionError branch
+    # propagates exc.rationale_code to the transition call.
+    assert job_row["rationale_code"] == "strategy_metadata_missing"

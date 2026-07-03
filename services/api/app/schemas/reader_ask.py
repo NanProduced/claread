@@ -74,6 +74,32 @@ ReaderAskPlannerAssetType = Literal["analysis", "supplement"]
 ReaderAskContextScope = Literal["sentence", "paragraph", "article", "cross_article"]
 ReaderAskAnswerPolicy = Literal["concise", "detailed", "step_by_step", "comparative"]
 
+# D6-I4Q (Round 2): Article RAG status literal allowlist.
+#
+# Frontend contract: the frontend renders different copy / chips
+# depending on this literal.  Adding new values requires a schema
+# bump + a typed round-trip test in
+# ``tests/test_d6_i4q_article_rag_sidecar_output_contract.py``.
+#
+# Status semantics:
+#   * ``available`` — provider returned chunks; citations are real.
+#   * ``empty`` — provider reachable but returned 0 chunks.
+#   * ``not_indexed_or_unavailable`` — no index exists or provider down.
+#   * ``composer_rejected`` — composer rejected the assembly shape.
+#   * ``disabled`` — feature flag off; integration was not wired.
+#   * ``stale_due_to_repair`` — repair branch ran; original
+#     citations are stale and were cleared. Frontend should NOT
+#     show 'RAG is broken' — show 'previous citations cleared
+#     after repair'.
+ReaderAskArticleRagStatus = Literal[
+    "available",
+    "empty",
+    "not_indexed_or_unavailable",
+    "composer_rejected",
+    "disabled",
+    "stale_due_to_repair",
+]
+
 
 class ReaderAskAnchorSegment(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -875,6 +901,99 @@ class ReaderRecordAskPendingResponse(BaseModel):
     action_id: str | None = None
 
 
+class ReaderAskArticleRagCitationContent(BaseModel):
+    """The I4A 9-key citation truth.
+
+    Mirrors ``article_rag_ask_prompt_attachment._ALLOWED_CITATION_KEYS``
+    exactly.  Any other key on the upstream citation dict is a
+    regression (provider metadata / query text / projection fields)
+    that the attachment layer has already stripped via
+    ``_scrub_citation``.  We mirror that allowlist here so the
+    typed DTO accepts the production shape and ``extra="forbid"``
+    keeps the defence-in-depth.
+
+    Fields are pointers into Postgres truth layers:
+      * ``reading_record_id`` / ``stable_document_id`` / ``base_id``
+        → PK lookups against the corresponding tables
+      * ``record_generation``
+        → record generation (>= 1)
+      * ``block_ids`` / ``unit_ids`` / ``anchor_segment_ids``
+        → join keys for stable_document_blocks / reading_units /
+          anchor_segments (each a list of ids)
+      * ``canonical_text_start_utf16`` / ``canonical_text_end_utf16``
+        → UTF-16 offset into reading_bases.text (canonical truth
+          text); end > start per DB CHECK constraint
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reading_record_id: str = Field(min_length=1)
+    stable_document_id: str = Field(min_length=1)
+    base_id: str = Field(min_length=1)
+    record_generation: int = Field(ge=1)
+    block_ids: list[str] = Field(default_factory=list)
+    unit_ids: list[str] = Field(default_factory=list)
+    anchor_segment_ids: list[str] = Field(default_factory=list)
+    canonical_text_start_utf16: int = Field(ge=0)
+    canonical_text_end_utf16: int = Field(gt=0)
+
+
+class ReaderAskArticleRagCitation(BaseModel):
+    """One RAG-derived citation (D6-I4O I4G sidecar shape).
+
+    The upstream I4G attachment layer produces a 3-key outer dict:
+
+      * ``context_id`` (str) — the resolver's context id
+      * ``chunk_id`` (str) — the chunk id within the context
+      * ``citation`` (dict) — the 9-key I4A truth allowlist
+
+    This DTO mirrors that shape so the typed schema can validate the
+    runtime state directly, with no extra transformation layer.  The
+    shape must stay stable across schema versions because the frontend
+    renders this directly.  New fields require a schema bump + a typed
+    round-trip test.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    context_id: str = Field(min_length=1)
+    chunk_id: str = Field(min_length=1)
+    citation: ReaderAskArticleRagCitationContent
+
+
+class ReaderAskArticleRagSidecar(BaseModel):
+    """Structured sidecar for the Article RAG integration (D6-I4Q).
+
+    Status semantics:
+      * ``available`` — provider returned chunks; citations are real.
+      * ``empty`` — provider reachable but returned 0 chunks.
+      * ``not_indexed_or_unavailable`` — no index exists or provider down.
+      * ``composer_rejected`` — composer rejected the assembly shape.
+      * ``disabled`` — feature flag off; integration was not wired.
+      * ``stale_due_to_repair`` — repair branch ran; original
+        citations are stale and were cleared. Frontend should NOT
+        show 'RAG is broken' — show 'previous citations cleared
+        after repair'.
+
+    The sidecar is part of the user-visible output contract and is
+    serialized into ``user_visible_output_json``. It is NEVER written
+    into ``prompt_payload`` — the LLM prompt only sees the bracket
+    text already joined into ``user_message``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: ReaderAskArticleRagStatus
+    failure_code: str | None = None
+    retryable: bool = False
+    fallback_allowed: bool = True
+    should_attach: bool = False
+    context_ids: list[str] = Field(default_factory=list)
+    source_pack_hash: str | None = None
+    query_sha256: str | None = None
+    citations: list[ReaderAskArticleRagCitation] = Field(default_factory=list)
+
+
 class ReaderAskUserVisibleOutput(BaseModel):
     content_md: str
     submission_mode: ReaderAskSubmissionMode = "chat"
@@ -909,6 +1028,29 @@ class ReaderAskUserVisibleOutput(BaseModel):
     # fail-soft.  This field NEVER enters the LLM prompt because it
     # is not part of ``prompt_payload``.
     article_rag_citations: list[dict[str, Any]] = Field(default_factory=list)
+    # D6-I4Q (Round 2): Typed Article RAG sidecar. Carries the same
+    # data as ``article_rag_citations`` plus status / failure_code /
+    # retryable / fallback_allowed / should_attach / context_ids /
+    # source_pack_hash / query_sha256. The typed contract lets the
+    # frontend render status-specific UI without parsing the legacy
+    # ``article_rag_citations`` list. Back-compat: when the typed
+    # sidecar is set, ``article_rag_citations`` is populated from
+    # ``article_rag.citations``.
+    article_rag: ReaderAskArticleRagSidecar | None = None
+
+    @model_validator(mode="after")
+    def back_fill_article_rag_citations(self) -> ReaderAskUserVisibleOutput:
+        """D6-I4Q (Round 2): back-compat — when the typed sidecar is
+        present and the legacy ``article_rag_citations`` field is
+        empty, populate it from the sidecar's citations. This lets
+        the frontend (and older callers) keep reading the legacy
+        field without code changes.
+        """
+        if self.article_rag is not None and not self.article_rag_citations:
+            self.article_rag_citations = [
+                c.model_dump(mode="json") for c in self.article_rag.citations
+            ]
+        return self
 
 
 class ReaderAskCompletedPayload(ReaderAskUserVisibleOutput):

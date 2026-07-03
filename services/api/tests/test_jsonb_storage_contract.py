@@ -103,7 +103,7 @@ class TestJsonCompatibilityReads:
             "start_offset": None,
             "end_offset": None,
             "text_hash": None,
-            "color": "soft_green",
+            "color": "warm_yellow",
             "payload_json": {"segments": []},
             "created_at": now,
             "updated_at": now,
