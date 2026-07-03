@@ -859,7 +859,7 @@ describe("ReadingRecordPage direct load", () => {
     ).not.toBeNull();
     expect(
       container.querySelector(
-        '[data-reader-record-mark-id="user_highlight:asset_highlight_1"]',
+        '[data-reader-record-user-highlight-asset-id="asset_highlight_1"]',
       ),
     ).not.toBeNull();
     for (const action of ["ask", "highlight", "note", "feedback"]) {

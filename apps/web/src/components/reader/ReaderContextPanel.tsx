@@ -17,8 +17,8 @@ export type AnnotationSaveState =
 
 const colorOptions: Array<{ value: UserAnnotationColorDto; label: string; className: string }> = [
   { value: "warm_yellow", label: "暖黄", className: "bg-vocab-amber/60" },
-  { value: "soft_blue", label: "雾青", className: "bg-context-blue/55" },
-  { value: "sage_green", label: "灰绿", className: "bg-structure-green/35" },
+  { value: "soft_mint", label: "薄荷", className: "bg-emerald-200/80" },
+  { value: "soft_rose", label: "柔玫", className: "bg-rose-200/80" },
 ];
 
 export interface ReaderContextPanelProps {

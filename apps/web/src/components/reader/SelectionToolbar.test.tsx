@@ -97,15 +97,25 @@ describe("SelectionToolbar", () => {
     );
 
     expect(screen.getByLabelText("切换为暖黄")).toBeTruthy();
-    expect(screen.getByLabelText("切换为雾青")).toBeTruthy();
-    expect(screen.getByLabelText("切换为灰绿")).toBeTruthy();
+    expect(screen.getByLabelText("切换为薄荷")).toBeTruthy();
+    expect(screen.getByLabelText("切换为柔玫")).toBeTruthy();
+    expect(screen.queryByLabelText("切换为雾青")).toBeNull();
+    expect(screen.queryByLabelText("切换为灰绿")).toBeNull();
 
-    fireEvent.click(screen.getByLabelText("切换为雾青"));
+    fireEvent.click(screen.getByLabelText("切换为薄荷"));
 
     expect(onHighlight).toHaveBeenCalledWith(
-      "soft_blue",
+      "soft_mint",
       "memory",
       defaultSelectionToolbarColorOptions[1],
     );
+  });
+
+  it("exposes only the Reading Record user highlight contract colors", () => {
+    expect(defaultSelectionToolbarColorOptions.map((option) => option.value)).toEqual([
+      "warm_yellow",
+      "soft_mint",
+      "soft_rose",
+    ]);
   });
 });

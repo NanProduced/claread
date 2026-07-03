@@ -8,6 +8,9 @@
  * - floating-toolbar-kit: Plate FloatingToolbar plugin，只读模式下选区浮动工具栏（阶段二 V2 Phase 2）
  * - comment-kit: Plate CommentPlugin + CommentLeaf，inline comment mark 渲染（阶段二 V2 Phase 3）
  * - cursor-overlay-kit: Plate CursorOverlayPlugin，rail 获焦时维持选区高亮（G1 选区保持）
+ *
+ * 注意：ReaderRecordPlateSurface 不再使用 ReaderPlateKit，改用 ReaderRecordPlateKit。
+ * ReaderPlateKit 保留给其他可能仍依赖 leaf plugin 组件渲染的 surface。
  */
 import { CommentKit } from "./comment-kit";
 import { CursorOverlayKit } from "./cursor-overlay-kit";
@@ -20,6 +23,25 @@ export const ReaderPlateKit = [
   ...MarkdownKit,
   ...ReaderBlocksKit,
   ...ReaderLeafKit,
+  ...FloatingToolbarKit,
+  ...CommentKit,
+  ...CursorOverlayKit,
+];
+
+/**
+ * Reader Record Plate Kit — ReaderRecordPlateSurface 专用 plugin 列表
+ *
+ * 与 ReaderPlateKit 的区别：不注册 ReaderLeafKit（vocabulary / grammar /
+ * user_highlight / user_note leaf plugin）。这些 mark 的视觉和交互全部由
+ * ReaderRecordPlateSurface 的 renderLeaf 在外层 span 统一承载，避免
+ * 嵌套 mark-hit wrapper 干扰浏览器原生 selection 落点。
+ *
+ * 保留：MarkdownKit / ReaderBlocksKit / FloatingToolbarKit / CommentKit /
+ * CursorOverlayKit。
+ */
+export const ReaderRecordPlateKit = [
+  ...MarkdownKit,
+  ...ReaderBlocksKit,
   ...FloatingToolbarKit,
   ...CommentKit,
   ...CursorOverlayKit,

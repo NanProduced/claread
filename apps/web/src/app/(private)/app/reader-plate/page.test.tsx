@@ -45,6 +45,12 @@ function makeSnapshot(recordId = "rec_submit_1"): ReaderPlateSnapshotDto {
     record_id: recordId,
     record: {
       title: "Reader Plate Page Fixture",
+      display_title_zh: "Reader Plate Page Fixture",
+      title_generation_status: "succeeded",
+      title_generation_error_code: null,
+      title_generation_error_message: null,
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
       created_at: "2026-06-22T00:00:00Z",
       source_type: "plain_text",
       source_metadata: {},

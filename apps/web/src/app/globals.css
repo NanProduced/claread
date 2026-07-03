@@ -403,8 +403,18 @@ body {
   --reader-mark-context-hover-fill: rgba(138, 191, 232, 0.66);
   --reader-mark-context-hover-ink: rgb(29, 89, 134);
   --reader-mark-grammar-line-strong: rgba(95, 78, 138, 0.82);
-  --reader-mark-grammar-line-soft: rgba(95, 78, 138, 0.5);
+  --reader-mark-grammar-line-soft: rgba(95, 78, 138, 0.7);
   --reader-mark-grammar-fill: rgba(95, 78, 138, 0.08);
+  --reader-mark-grammar-active-fill: rgba(95, 78, 138, 0.12);
+  --reader-record-user-yellow-fill: rgba(254, 240, 138, 0.72);
+  --reader-record-user-yellow-fill-active: rgba(254, 226, 110, 0.82);
+  --reader-record-user-yellow-line: #a16207;
+  --reader-record-user-mint-fill: rgba(220, 252, 231, 0.78);
+  --reader-record-user-mint-fill-active: rgba(187, 247, 208, 0.86);
+  --reader-record-user-mint-line: #15803d;
+  --reader-record-user-rose-fill: rgba(255, 228, 230, 0.78);
+  --reader-record-user-rose-fill-active: rgba(254, 205, 211, 0.86);
+  --reader-record-user-rose-line: #be123c;
   --reader-mark-term-line-strong: rgba(39, 108, 77, 0.58);
   --reader-mark-term-line-soft: rgba(39, 108, 77, 0.24);
   --reader-mark-term-fill: rgba(60, 140, 104, 0.12);
@@ -498,27 +508,21 @@ body {
   --reader-user-highlight-warm-fill: rgba(229, 132, 103, 0.3);
   --reader-user-highlight-warm-line: rgba(157, 95, 74, 0.66);
   --reader-user-highlight-warm-edge: rgba(157, 95, 74, 0.12);
-  --reader-user-highlight-green-fill: rgba(126, 139, 88, 0.24);
-  --reader-user-highlight-green-line: rgba(106, 112, 79, 0.58);
-  --reader-user-highlight-green-edge: rgba(106, 112, 79, 0.1);
-  --reader-user-highlight-blue-fill: rgba(80, 169, 178, 0.22);
-  --reader-user-highlight-blue-line: rgba(47, 116, 123, 0.58);
-  --reader-user-highlight-blue-edge: rgba(47, 116, 123, 0.1);
-  --reader-user-highlight-purple-fill: rgba(190, 133, 164, 0.24);
-  --reader-user-highlight-purple-line: rgba(139, 78, 112, 0.52);
-  --reader-user-highlight-purple-edge: rgba(139, 78, 112, 0.1);
+  --reader-user-highlight-mint-fill: rgba(126, 139, 88, 0.24);
+  --reader-user-highlight-mint-line: rgba(106, 112, 79, 0.58);
+  --reader-user-highlight-mint-edge: rgba(106, 112, 79, 0.1);
+  --reader-user-highlight-rose-fill: rgba(190, 133, 164, 0.24);
+  --reader-user-highlight-rose-line: rgba(139, 78, 112, 0.52);
+  --reader-user-highlight-rose-edge: rgba(139, 78, 112, 0.1);
   --reader-user-range-warm-line: rgba(157, 95, 74, 0.4);
   --reader-user-range-warm-fill-hover: rgba(229, 132, 103, 0.15);
   --reader-user-range-warm-line-hover: rgba(157, 95, 74, 0.7);
-  --reader-user-range-green-line: rgba(106, 112, 79, 0.4);
-  --reader-user-range-green-fill-hover: rgba(126, 139, 88, 0.15);
-  --reader-user-range-green-line-hover: rgba(106, 112, 79, 0.7);
-  --reader-user-range-blue-line: rgba(47, 116, 123, 0.4);
-  --reader-user-range-blue-fill-hover: rgba(80, 169, 178, 0.15);
-  --reader-user-range-blue-line-hover: rgba(47, 116, 123, 0.7);
-  --reader-user-range-purple-line: rgba(139, 78, 112, 0.4);
-  --reader-user-range-purple-fill-hover: rgba(190, 133, 164, 0.15);
-  --reader-user-range-purple-line-hover: rgba(139, 78, 112, 0.7);
+  --reader-user-range-mint-line: rgba(106, 112, 79, 0.4);
+  --reader-user-range-mint-fill-hover: rgba(126, 139, 88, 0.15);
+  --reader-user-range-mint-line-hover: rgba(106, 112, 79, 0.7);
+  --reader-user-range-rose-line: rgba(139, 78, 112, 0.4);
+  --reader-user-range-rose-fill-hover: rgba(190, 133, 164, 0.15);
+  --reader-user-range-rose-line-hover: rgba(139, 78, 112, 0.7);
   --reader-user-range-stacked-line: rgba(145, 106, 55, 0.4);
   --reader-user-range-stacked-fill-hover: rgba(177, 135, 77, 0.15);
   --reader-user-range-stacked-line-hover: rgba(145, 106, 55, 0.7);
@@ -577,7 +581,7 @@ body {
   --reader-entry-focus-outline: rgba(140, 178, 255, 0.18);
   --reader-entry-focus-shadow: rgba(0, 0, 0, 0.22);
   --reader-mark-grammar-line-strong: rgba(176, 156, 231, 0.92);
-  --reader-mark-grammar-line-soft: rgba(156, 138, 210, 0.58);
+  --reader-mark-grammar-line-soft: rgba(156, 138, 210, 0.74);
   --reader-mark-grammar-fill: rgba(95, 78, 138, 0.26);
   --reader-mark-term-line-strong: rgba(131, 206, 171, 0.88);
   --reader-mark-term-line-soft: rgba(111, 182, 149, 0.56);
@@ -678,27 +682,21 @@ body {
   --reader-user-highlight-warm-fill: rgba(235, 163, 127, 0.24);
   --reader-user-highlight-warm-line: rgba(248, 194, 168, 0.8);
   --reader-user-highlight-warm-edge: rgba(248, 194, 168, 0.12);
-  --reader-user-highlight-green-fill: rgba(126, 182, 142, 0.22);
-  --reader-user-highlight-green-line: rgba(174, 219, 186, 0.72);
-  --reader-user-highlight-green-edge: rgba(174, 219, 186, 0.12);
-  --reader-user-highlight-blue-fill: rgba(104, 172, 209, 0.2);
-  --reader-user-highlight-blue-line: rgba(166, 216, 242, 0.72);
-  --reader-user-highlight-blue-edge: rgba(166, 216, 242, 0.12);
-  --reader-user-highlight-purple-fill: rgba(169, 146, 219, 0.22);
-  --reader-user-highlight-purple-line: rgba(220, 205, 251, 0.72);
-  --reader-user-highlight-purple-edge: rgba(220, 205, 251, 0.12);
+  --reader-user-highlight-mint-fill: rgba(126, 182, 142, 0.22);
+  --reader-user-highlight-mint-line: rgba(174, 219, 186, 0.72);
+  --reader-user-highlight-mint-edge: rgba(174, 219, 186, 0.12);
+  --reader-user-highlight-rose-fill: rgba(169, 146, 219, 0.22);
+  --reader-user-highlight-rose-line: rgba(220, 205, 251, 0.72);
+  --reader-user-highlight-rose-edge: rgba(220, 205, 251, 0.12);
   --reader-user-range-warm-line: rgba(248, 194, 168, 0.52);
   --reader-user-range-warm-fill-hover: rgba(235, 163, 127, 0.2);
   --reader-user-range-warm-line-hover: rgba(248, 194, 168, 0.82);
-  --reader-user-range-green-line: rgba(174, 219, 186, 0.48);
-  --reader-user-range-green-fill-hover: rgba(126, 182, 142, 0.18);
-  --reader-user-range-green-line-hover: rgba(174, 219, 186, 0.8);
-  --reader-user-range-blue-line: rgba(166, 216, 242, 0.48);
-  --reader-user-range-blue-fill-hover: rgba(104, 172, 209, 0.18);
-  --reader-user-range-blue-line-hover: rgba(166, 216, 242, 0.82);
-  --reader-user-range-purple-line: rgba(220, 205, 251, 0.48);
-  --reader-user-range-purple-fill-hover: rgba(169, 146, 219, 0.18);
-  --reader-user-range-purple-line-hover: rgba(220, 205, 251, 0.82);
+  --reader-user-range-mint-line: rgba(174, 219, 186, 0.48);
+  --reader-user-range-mint-fill-hover: rgba(126, 182, 142, 0.18);
+  --reader-user-range-mint-line-hover: rgba(174, 219, 186, 0.8);
+  --reader-user-range-rose-line: rgba(220, 205, 251, 0.48);
+  --reader-user-range-rose-fill-hover: rgba(169, 146, 219, 0.18);
+  --reader-user-range-rose-line-hover: rgba(220, 205, 251, 0.82);
   --reader-user-range-stacked-line: rgba(208, 183, 126, 0.48);
   --reader-user-range-stacked-fill-hover: rgba(208, 183, 126, 0.18);
   --reader-user-range-stacked-line-hover: rgba(227, 204, 151, 0.78);
@@ -1827,7 +1825,7 @@ select {
   --reader-record-translation-size: 0.9rem;
   --reader-record-translation-leading: 1.68;
   --reader-record-note-body-size: 0.89rem;
-  --reader-record-note-body-leading: 1.64;
+  --reader-record-note-body-leading: 1.68;
   --reader-record-note-title-size: 0.96rem;
   --reader-record-label-size: 0.72rem;
   --reader-record-label-leading: 1.25;
@@ -1835,15 +1833,15 @@ select {
   --reader-record-chunk-label-size: 0.8rem;
   --reader-record-chunk-kind-size: 0.68rem;
   --reader-record-chunk-body-size: 0.84rem;
-  --reader-record-inline-code-size: 0.85em;
-  --reader-record-note-padding-block: 0.78rem;
-  --reader-record-note-padding-inline: 0.9rem;
+  --reader-record-inline-code-size: 0.9em;
+  --reader-record-note-padding-block: 0.92rem;
+  --reader-record-note-padding-inline: 1.02rem;
   --reader-record-source-paragraph-gap: 0.72rem;
   --reader-record-source-translation-gap: 0.36rem;
   --reader-record-source-analysis-gap: 0.62rem;
-  --reader-record-analysis-source-gap: 1.05rem;
-  --reader-record-translation-analysis-gap: 0.72rem;
-  --reader-record-analysis-stack-gap: 0.58rem;
+  --reader-record-analysis-source-gap: 1.18rem;
+  --reader-record-translation-analysis-gap: 0.86rem;
+  --reader-record-analysis-stack-gap: 0.72rem;
   --reader-record-reading-group-gap: 1.48rem;
   --reader-record-unit-gap: 1.7rem;
 }
@@ -2081,7 +2079,7 @@ select {
 }
 
 .reader-record-plate-markdown-p {
-  margin-block: 0.22rem 0;
+  margin-block: 0.3rem 0;
   line-height: var(--reader-record-note-body-leading);
 }
 
@@ -2111,7 +2109,7 @@ select {
 }
 
 .reader-record-plate-markdown-list {
-  margin-block: 0.38rem 0;
+  margin-block: 0.48rem 0;
   padding-left: 1.15rem;
   line-height: var(--reader-record-note-body-leading);
 }
@@ -2119,7 +2117,7 @@ select {
 .reader-record-plate-markdown-list
   [data-reader-record-markdown-node="li"]
   + [data-reader-record-markdown-node="li"] {
-  margin-top: 0.18rem;
+  margin-top: 0.26rem;
 }
 
 .reader-record-plate-markdown-code-block {
@@ -2130,8 +2128,16 @@ select {
 }
 
 .reader-record-plate-inline-code {
-  padding: 0.05em 0.3em;
+  box-decoration-break: clone;
+  border-radius: 0.24em;
+  background-color: color-mix(in srgb, var(--grammar-violet) 12%, var(--surface));
+  color: color-mix(in srgb, var(--ink) 88%, var(--grammar-violet) 12%);
+  padding: 0.08em 0.34em;
+  font-family: inherit;
   font-size: var(--reader-record-inline-code-size);
+  font-variant-ligatures: none;
+  font-weight: 600;
+  letter-spacing: 0.002em;
   line-height: 1;
   vertical-align: baseline;
 }
@@ -2173,79 +2179,151 @@ select {
 }
 
 .reader-record-mark-stack {
-  --reader-record-vocab-rule: transparent;
-  --reader-record-grammar-rule: transparent;
   border-radius: 0.16em;
   background-color: transparent;
-  background-image:
-    linear-gradient(
-      90deg,
-      var(--reader-record-vocab-rule),
-      var(--reader-record-vocab-rule)
-    ),
-    repeating-linear-gradient(
-      90deg,
-      var(--reader-record-grammar-rule) 0 0.16em,
-      transparent 0.16em 0.32em
-    );
-  background-repeat: no-repeat;
-  background-position:
-    left calc(100% - 0.06em),
-    left calc(100% - 0.24em);
-  background-size:
-    100% 0.07em,
-    100% 0.08em;
   transition:
     background-color 140ms ease,
-    box-shadow 140ms ease;
+    color 140ms ease,
+    text-decoration-color 140ms ease;
 }
 
-.reader-record-mark-stack--vocab {
-  --reader-record-vocab-rule: rgba(217, 119, 6, 0.46);
-}
-
-.reader-record-mark-stack--phrase {
-  --reader-record-vocab-rule: rgba(124, 58, 237, 0.42);
-}
-
-.reader-record-mark-stack--context {
-  --reader-record-vocab-rule: rgba(2, 132, 199, 0.42);
-}
-
-.reader-record-mark-stack--grammar {
-  --reader-record-grammar-rule: rgba(5, 150, 105, 0.5);
-}
+/* --- User highlight --- */
 
 .reader-record-mark-stack--user-highlight {
-  background-color: rgba(251, 191, 36, 0.24);
-  box-shadow: inset 0 0 0 1px rgba(217, 119, 6, 0.18);
+  background-color: var(--reader-record-user-fill, transparent);
 }
 
-.reader-record-mark-stack--highlight-blue {
-  background-color: rgba(56, 189, 248, 0.22);
-  box-shadow: inset 0 0 0 1px rgba(2, 132, 199, 0.2);
+.reader-record-mark-stack--user-highlight:hover,
+.reader-record-mark-stack--user-highlight:focus-visible {
+  background-color: var(
+    --reader-record-user-fill-active,
+    var(--reader-record-user-fill, transparent)
+  );
 }
 
-.reader-record-mark-stack--highlight-rose {
-  background-color: rgba(251, 113, 133, 0.2);
-  box-shadow: inset 0 0 0 1px rgba(225, 29, 72, 0.18);
+.reader-record-mark-stack--highlight-yellow,
+.reader-record-user-asset--yellow {
+  --reader-record-user-fill: var(--reader-record-user-yellow-fill);
+  --reader-record-user-fill-active: var(--reader-record-user-yellow-fill-active);
+  --reader-record-user-line: var(--reader-record-user-yellow-line);
 }
 
-.reader-record-mark-stack--sentence-chunk {
-  box-shadow: inset 0 -0.12em 0 rgba(14, 165, 233, 0.18);
+.reader-record-mark-stack--highlight-mint,
+.reader-record-user-asset--mint {
+  --reader-record-user-fill: var(--reader-record-user-mint-fill);
+  --reader-record-user-fill-active: var(--reader-record-user-mint-fill-active);
+  --reader-record-user-line: var(--reader-record-user-mint-line);
 }
 
-.reader-record-mark-stack--sentence-chunk-active,
-.reader-record-mark-stack--sentence-chunk:hover,
-.reader-record-mark-stack--sentence-chunk:focus-visible {
-  background-color: rgba(14, 165, 233, 0.12);
-  box-shadow:
-    inset 0 -0.14em 0 rgba(14, 165, 233, 0.34),
-    inset 0 0 0 1px rgba(14, 165, 233, 0.2);
+.reader-record-mark-stack--highlight-rose,
+.reader-record-user-asset--rose {
+  --reader-record-user-fill: var(--reader-record-user-rose-fill);
+  --reader-record-user-fill-active: var(--reader-record-user-rose-fill-active);
+  --reader-record-user-line: var(--reader-record-user-rose-line);
 }
 
-.reader-record-mark-hit {
-  text-decoration: none;
+/* --- Vocabulary --- */
+
+.reader-record-mark-stack--vocabulary {
+  cursor: pointer;
+}
+
+.reader-record-mark-stack--vocab-phrase {
+  background-color: var(--reader-mark-phrase-fill);
+  color: var(--reader-mark-phrase-ink);
+}
+
+.reader-record-mark-stack--vocab-phrase:hover {
+  background-color: var(--reader-mark-phrase-hover-fill);
+  color: var(--reader-mark-phrase-hover-ink);
+}
+
+.reader-record-mark-stack--vocab-context {
+  background-color: var(--reader-mark-context-fill);
+  color: var(--reader-mark-context-ink);
+}
+
+.reader-record-mark-stack--vocab-context:hover {
+  background-color: var(--reader-mark-context-hover-fill);
+  color: var(--reader-mark-context-hover-ink);
+}
+
+.reader-record-mark-stack--vocab-vocab {
+  background-color: var(--reader-mark-vocab-fill);
+  color: var(--reader-mark-vocab-ink);
+}
+
+.reader-record-mark-stack--vocab-vocab:hover {
+  background-color: var(--reader-mark-vocab-hover-fill);
+  color: var(--reader-mark-vocab-hover-ink);
+}
+
+/* Downgraded: vocabulary overlapping user asset → text color only, no background */
+.reader-record-mark-stack--vocabulary-downgraded {
+  background-color: transparent;
+}
+
+.reader-record-mark-stack--vocabulary-downgraded.reader-record-mark-stack--vocab-phrase:hover {
+  background-color: transparent;
+}
+
+.reader-record-mark-stack--vocabulary-downgraded.reader-record-mark-stack--vocab-context:hover {
+  background-color: transparent;
+}
+
+.reader-record-mark-stack--vocabulary-downgraded.reader-record-mark-stack--vocab-vocab:hover {
+  background-color: transparent;
+}
+
+/* --- Grammar --- */
+
+.reader-record-mark-stack--grammar {
+  font-weight: 500;
+  text-decoration-color: var(--reader-mark-grammar-line-soft);
+  text-decoration-line: underline;
+  text-decoration-thickness: 0.1em;
+  text-underline-offset: 0.18em;
+}
+
+.reader-record-mark-stack--grammar:hover,
+.reader-record-mark-stack--grammar-active,
+.reader-record-mark-stack--grammar[data-reader-record-grammar-active="true"] {
+  background-color: var(--reader-mark-grammar-active-fill);
+  text-decoration-color: var(--reader-mark-grammar-line-strong);
+  text-decoration-thickness: 0.11em;
+}
+
+/* --- User note --- */
+/* Declared after highlight color tokens so note fill overrides highlight fill
+   when both marks coexist on the same leaf (notes are always yellow). */
+
+.reader-record-mark-stack--user-note {
+  cursor: pointer;
+  --reader-record-user-fill: var(--reader-record-user-yellow-fill);
+  --reader-record-user-fill-active: var(--reader-record-user-yellow-fill-active);
+  --reader-record-user-line: var(--reader-record-user-yellow-line);
+  background-color: var(--reader-record-user-fill);
+  text-decoration-color: var(--reader-record-user-line);
+  text-decoration-line: underline;
+  text-decoration-style: solid;
+  text-decoration-thickness: 0.11em;
+  text-underline-offset: 0.18em;
+}
+
+.reader-record-mark-stack--user-note:hover,
+.reader-record-mark-stack--user-note-active {
+  background-color: var(--reader-record-user-fill-active);
+}
+
+/* --- Sentence chunk --- */
+
+.reader-record-mark-stack--sentence-chunk-active {
+  background-color: var(--reader-mark-context-fill-quiet, rgba(165, 208, 239, 0.28));
+}
+
+.reader-record-plate-callout--grammar-active {
+  border-color: color-mix(in srgb, var(--grammar-violet) 34%, transparent);
+  background-color: color-mix(in srgb, var(--grammar-violet) 7%, var(--surface));
 }
 
 .reader-record-plate-sentence-analysis [data-reader-record-sentence-analysis-chunk] {
@@ -2257,9 +2335,8 @@ select {
 
 .reader-record-plate-sentence-analysis
   [data-reader-record-sentence-analysis-chunk-active="true"] {
-  border-color: rgba(14, 165, 233, 0.36);
   background-color: rgba(14, 165, 233, 0.07);
-  box-shadow: inset 2px 0 0 rgba(14, 165, 233, 0.42);
+  box-shadow: none;
 }
 
 .reader-mark--vocab {
@@ -3319,28 +3396,21 @@ select {
   --reader-user-highlight-edge: var(--reader-user-highlight-warm-edge);
 }
 
-.reader-user-highlight--soft-green,
-.reader-user-highlight--sage-green {
-  --reader-user-highlight-fill: var(--reader-user-highlight-green-fill);
-  --reader-user-highlight-line: var(--reader-user-highlight-green-line);
-  --reader-user-highlight-edge: var(--reader-user-highlight-green-edge);
+.reader-user-highlight--soft-mint {
+  --reader-user-highlight-fill: var(--reader-user-highlight-mint-fill);
+  --reader-user-highlight-line: var(--reader-user-highlight-mint-line);
+  --reader-user-highlight-edge: var(--reader-user-highlight-mint-edge);
 }
 
-.reader-user-highlight--soft-blue {
-  --reader-user-highlight-fill: var(--reader-user-highlight-blue-fill);
-  --reader-user-highlight-line: var(--reader-user-highlight-blue-line);
-  --reader-user-highlight-edge: var(--reader-user-highlight-blue-edge);
-}
-
-.reader-user-highlight--soft-purple {
-  --reader-user-highlight-fill: var(--reader-user-highlight-purple-fill);
-  --reader-user-highlight-line: var(--reader-user-highlight-purple-line);
-  --reader-user-highlight-edge: var(--reader-user-highlight-purple-edge);
+.reader-user-highlight--soft-rose {
+  --reader-user-highlight-fill: var(--reader-user-highlight-rose-fill);
+  --reader-user-highlight-line: var(--reader-user-highlight-rose-line);
+  --reader-user-highlight-edge: var(--reader-user-highlight-rose-edge);
 }
 
 .reader-user-range {
   --reader-user-range-fill: transparent;
-  --reader-user-range-line: rgba(157, 95, 74, 0.4);
+  --reader-user-range-line: transparent;
   --reader-user-range-edge: transparent;
 
   margin-inline: -0.035em;
@@ -3369,22 +3439,15 @@ select {
   --reader-user-range-edge: transparent;
 }
 
-.reader-user-range--soft-green,
-.reader-user-range--sage-green {
+.reader-user-range--soft-mint {
   --reader-user-range-fill: transparent;
-  --reader-user-range-line: var(--reader-user-range-green-line);
+  --reader-user-range-line: var(--reader-user-range-mint-line);
   --reader-user-range-edge: transparent;
 }
 
-.reader-user-range--soft-blue {
+.reader-user-range--soft-rose {
   --reader-user-range-fill: transparent;
-  --reader-user-range-line: var(--reader-user-range-blue-line);
-  --reader-user-range-edge: transparent;
-}
-
-.reader-user-range--soft-purple {
-  --reader-user-range-fill: transparent;
-  --reader-user-range-line: var(--reader-user-range-purple-line);
+  --reader-user-range-line: var(--reader-user-range-rose-line);
   --reader-user-range-edge: transparent;
 }
 
@@ -3432,28 +3495,18 @@ select {
   --reader-user-range-line: var(--reader-user-range-warm-line-hover);
 }
 
-.reader-user-range--soft-green:hover,
-.reader-user-range--soft-green.reader-user-range--hovered-group,
-.reader-user-range--soft-green.reader-mark--entry-active,
-.reader-user-range--sage-green:hover,
-.reader-user-range--sage-green.reader-user-range--hovered-group,
-.reader-user-range--sage-green.reader-mark--entry-active {
-  --reader-user-range-fill: var(--reader-user-range-green-fill-hover);
-  --reader-user-range-line: var(--reader-user-range-green-line-hover);
+.reader-user-range--soft-mint:hover,
+.reader-user-range--soft-mint.reader-user-range--hovered-group,
+.reader-user-range--soft-mint.reader-mark--entry-active {
+  --reader-user-range-fill: var(--reader-user-range-mint-fill-hover);
+  --reader-user-range-line: var(--reader-user-range-mint-line-hover);
 }
 
-.reader-user-range--soft-blue:hover,
-.reader-user-range--soft-blue.reader-user-range--hovered-group,
-.reader-user-range--soft-blue.reader-mark--entry-active {
-  --reader-user-range-fill: var(--reader-user-range-blue-fill-hover);
-  --reader-user-range-line: var(--reader-user-range-blue-line-hover);
-}
-
-.reader-user-range--soft-purple:hover,
-.reader-user-range--soft-purple.reader-user-range--hovered-group,
-.reader-user-range--soft-purple.reader-mark--entry-active {
-  --reader-user-range-fill: var(--reader-user-range-purple-fill-hover);
-  --reader-user-range-line: var(--reader-user-range-purple-line-hover);
+.reader-user-range--soft-rose:hover,
+.reader-user-range--soft-rose.reader-user-range--hovered-group,
+.reader-user-range--soft-rose.reader-mark--entry-active {
+  --reader-user-range-fill: var(--reader-user-range-rose-fill-hover);
+  --reader-user-range-line: var(--reader-user-range-rose-line-hover);
 }
 
 .reader-user-range--stacked:hover,
@@ -3903,17 +3956,12 @@ select {
   border-radius: 2px !important;
 }
 
-.reader-shell--immersive .reader-user-range--soft-green {
+.reader-shell--immersive .reader-user-range--soft-mint {
   --immersive-user-highlight: rgba(167, 243, 208, 0.12) !important;
   border-bottom-color: rgba(52, 211, 153, 0.28) !important;
 }
 
-.reader-shell--immersive .reader-user-range--soft-blue {
-  --immersive-user-highlight: rgba(191, 219, 254, 0.12) !important;
-  border-bottom-color: rgba(96, 165, 250, 0.28) !important;
-}
-
-.reader-shell--immersive .reader-user-range--soft-purple {
+.reader-shell--immersive .reader-user-range--soft-rose {
   --immersive-user-highlight: rgba(233, 213, 255, 0.12) !important;
   border-bottom-color: rgba(192, 132, 252, 0.28) !important;
 }

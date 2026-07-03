@@ -1,9 +1,9 @@
 "use client";
 
 import { cn } from "@/lib/cn";
-import type { CSSProperties, ElementType } from "react";
+import type { ElementType } from "react";
 import { memo, useMemo } from "react";
-import { motion } from "motion/react";
+import { motion, type HTMLMotionProps } from "motion/react";
 
 export interface TextShimmerProps {
   children: string;
@@ -35,7 +35,7 @@ const ShimmerComponent = ({
     "--spread": `${dynamicSpread}px`,
     backgroundImage:
       "var(--bg), linear-gradient(var(--color-muted-foreground), var(--color-muted-foreground))",
-  } as CSSProperties;
+  } as HTMLMotionProps<"span">["style"];
 
   const shimmerProps = {
     animate: { backgroundPosition: "0% center" },

@@ -316,7 +316,7 @@ export async function createReaderSentenceAnnotation(
     end_offset: anchorType === "text_range" ? endOffset : null,
     text_hash: anchorType === "text_range" ? textHash : null,
     segments: anchorType === "multi_text" ? segments : [],
-    color: request.color ?? "soft_green",
+    color: request.color ?? "warm_yellow",
     payload_json: {
       ...(isRecord(request.payloadJson) ? request.payloadJson : {}),
       source: anchorType === "sentence" ? "web_reader_sentence_action" : "web_reader_text_action",

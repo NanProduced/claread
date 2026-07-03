@@ -301,16 +301,14 @@ function renderLeafContent(
 
 function annotationToneClass(color: WebAnnotationVm["color"] | null | undefined) {
   switch (color) {
-    case "soft_green":
-    case "sage_green":
-      return "reader-user-range--soft-green";
-    case "soft_blue":
-      return "reader-user-range--soft-blue";
-    case "soft_purple":
-      return "reader-user-range--soft-purple";
     case "warm_yellow":
-    default:
       return "reader-user-range--warm-yellow";
+    case "soft_mint":
+      return "reader-user-range--soft-mint";
+    case "soft_rose":
+      return "reader-user-range--soft-rose";
+    default:
+      return "";
   }
 }
 

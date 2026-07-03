@@ -13,7 +13,7 @@ const initialValue: Descendant[] = [
 function createEditor({ readOnly }: { readOnly: boolean }) {
   return createPlateEditor({
     plugins: [BaseCommentPlugin],
-    value: initialValue,
+    value: initialValue as never,
     options: { readOnly },
   });
 }
@@ -21,7 +21,11 @@ function createEditor({ readOnly }: { readOnly: boolean }) {
 describe("Spike: Plate editor readOnly + CommentKit transform", () => {
   it("readOnly=false: tf.comment.setDraft adds draft comment mark", () => {
     const editor = createEditor({ readOnly: false });
-    editor.tf.select(editor.children[0] as any, { at: [0], anchor: { path: [0, 0], offset: 0 }, focus: { path: [0, 0], offset: 5 } });
+    (editor.tf as any).select(editor.children[0], {
+      at: [0],
+      anchor: { path: [0, 0], offset: 0 },
+      focus: { path: [0, 0], offset: 5 },
+    });
     editor.tf.focus();
     const tf = (editor as any).tf;
     if (tf?.comment?.setDraft) {

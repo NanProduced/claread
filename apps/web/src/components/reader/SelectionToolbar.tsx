@@ -88,14 +88,14 @@ export const defaultSelectionToolbarColorOptions: SelectionToolbarColorOption[] 
     swatchClassName: "bg-vocab-amber/75 ring-vocab-amber/25",
   },
   {
-    value: "soft_blue",
-    label: "雾青",
-    swatchClassName: "bg-context-blue/65 ring-context-blue/25",
+    value: "soft_mint",
+    label: "薄荷",
+    swatchClassName: "bg-emerald-200/80 ring-emerald-300/50",
   },
   {
-    value: "sage_green",
-    label: "灰绿",
-    swatchClassName: "bg-structure-green/45 ring-structure-green/25",
+    value: "soft_rose",
+    label: "柔玫",
+    swatchClassName: "bg-rose-200/80 ring-rose-300/50",
   },
 ];
 

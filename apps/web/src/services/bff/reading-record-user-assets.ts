@@ -1,5 +1,6 @@
 import "server-only";
 
+import { USER_ANNOTATION_COLORS } from "@claread/contracts";
 import {
   READER_TEXT_RANGE_HASH_ALGORITHM,
   READER_TEXT_RANGE_OFFSET_UNIT,
@@ -53,6 +54,8 @@ type ReadingRecordUserAssetResult<T> =
   | ReadingRecordUserAssetSuccess<T>
   | ReadingRecordUserAssetError;
 
+const userAnnotationColorValues = new Set<string>(USER_ANNOTATION_COLORS);
+
 function authError(session: WebSession): {
   status: "unauthenticated" | "limited_debug";
   message: string;
@@ -90,6 +93,13 @@ function readRawString(value: unknown): string | undefined {
 
 function readInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) ? value : undefined;
+}
+
+function readUserAnnotationColor(value: unknown): UserAnnotationColorDto | undefined {
+  const color = readString(value);
+  return color && userAnnotationColorValues.has(color)
+    ? (color as UserAnnotationColorDto)
+    : undefined;
 }
 
 function parseAnchor(value: unknown): UserEditorialAssetAnchorDto | null {
@@ -198,7 +208,10 @@ export async function createReadingRecordHighlight(
     return invalidRequest(session, "selectedText 必须与 anchor.selected_text 一致。");
   }
 
-  const color = (readString(body.color) ?? "soft_green") as UserAnnotationColorDto;
+  const color = body.color === undefined ? "warm_yellow" : readUserAnnotationColor(body.color);
+  if (!color) {
+    return invalidRequest(session, "color 必须是 warm_yellow、soft_mint 或 soft_rose。");
+  }
   const upstreamBody: UserAnnotationCreateRequestDto = {
     anchor_type: "text_range",
     selected_text: anchor.selected_text,
@@ -353,9 +366,9 @@ export async function updateReadingRecordHighlight(
     return invalidRequest(session, "请求体格式不正确。");
   }
 
-  const color = readString(body.color) as UserAnnotationColorDto | undefined;
+  const color = readUserAnnotationColor(body.color);
   if (!color) {
-    return invalidRequest(session, "color 是必填项。");
+    return invalidRequest(session, "color 必须是 warm_yellow、soft_mint 或 soft_rose。");
   }
 
   const upstreamBody: UserAnnotationUpdateRequestDto = { color };

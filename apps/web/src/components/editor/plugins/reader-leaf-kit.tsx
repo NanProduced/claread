@@ -40,15 +40,27 @@ import {
 function vocabularyMarkClassName(
   mark: ReaderRecordPlateVocabularyMark,
   interactive: boolean,
+  downgraded: boolean,
 ): string {
   const cursorClassName = interactive ? "cursor-pointer" : "cursor-default";
+
+  if (downgraded) {
+    if (mark.vocabulary.itemType === "phrase_gloss") {
+      return `${cursorClassName} reader-record-mark-hit reader-record-mark-hit--vocabulary text-[var(--reader-mark-phrase-ink)] hover:text-[var(--reader-mark-phrase-hover-ink)] transition-colors`;
+    }
+    if (mark.vocabulary.itemType === "context_gloss") {
+      return `${cursorClassName} reader-record-mark-hit reader-record-mark-hit--vocabulary text-[var(--reader-mark-context-ink)] hover:text-[var(--reader-mark-context-hover-ink)] transition-colors`;
+    }
+    return `${cursorClassName} reader-record-mark-hit reader-record-mark-hit--vocabulary text-[var(--reader-mark-vocab-ink)] hover:text-[var(--reader-mark-vocab-hover-ink)] transition-colors`;
+  }
+
   if (mark.vocabulary.itemType === "phrase_gloss") {
-    return `${cursorClassName} reader-record-mark-hit reader-record-mark-hit--vocabulary rounded-[2px] transition-colors hover:bg-violet-50/40`;
+    return `${cursorClassName} reader-record-mark-hit reader-record-mark-hit--vocabulary bg-[var(--reader-mark-phrase-fill)] text-[var(--reader-mark-phrase-ink)] hover:bg-[var(--reader-mark-phrase-hover-fill)] hover:text-[var(--reader-mark-phrase-hover-ink)] rounded-[2px] transition-colors`;
   }
   if (mark.vocabulary.itemType === "context_gloss") {
-    return `${cursorClassName} reader-record-mark-hit reader-record-mark-hit--vocabulary rounded-[2px] transition-colors hover:bg-sky-50/40`;
+    return `${cursorClassName} reader-record-mark-hit reader-record-mark-hit--vocabulary bg-[var(--reader-mark-context-fill)] text-[var(--reader-mark-context-ink)] hover:bg-[var(--reader-mark-context-hover-fill)] hover:text-[var(--reader-mark-context-hover-ink)] rounded-[2px] transition-colors`;
   }
-  return `${cursorClassName} reader-record-mark-hit reader-record-mark-hit--vocabulary rounded-[2px] transition-colors hover:bg-amber-50/40`;
+  return `${cursorClassName} reader-record-mark-hit reader-record-mark-hit--vocabulary bg-[var(--reader-mark-vocab-fill)] text-[var(--reader-mark-vocab-ink)] hover:bg-[var(--reader-mark-vocab-hover-fill)] hover:text-[var(--reader-mark-vocab-hover-ink)] rounded-[2px] transition-colors`;
 }
 
 function vocabularyMarkLabel(mark: ReaderRecordPlateVocabularyMark): string {
@@ -62,7 +74,7 @@ function vocabularyMarkLabel(mark: ReaderRecordPlateVocabularyMark): string {
 }
 
 function grammarMarkClassName(): string {
-  return "reader-record-mark-hit reader-record-mark-hit--grammar rounded-[2px] transition-colors hover:bg-emerald-50/35";
+  return "reader-record-mark-hit reader-record-mark-hit--grammar transition-colors font-medium underline decoration-ink/30 decoration-1 underline-offset-[3px]";
 }
 
 function grammarMarkLabel(mark: ReaderRecordPlateGrammarMark): string {
@@ -70,14 +82,13 @@ function grammarMarkLabel(mark: ReaderRecordPlateGrammarMark): string {
 }
 
 function userHighlightMarkClassName(mark: ReaderRecordPlateUserHighlightMark): string {
-  const color = mark.color ?? "warm_yellow";
-  if (color === "soft_blue" || color === "blue") {
-    return "cursor-pointer reader-record-mark-hit reader-record-mark-hit--user-highlight rounded-[3px] transition-colors";
-  }
-  if (color === "soft_rose" || color === "rose") {
-    return "cursor-pointer reader-record-mark-hit reader-record-mark-hit--user-highlight rounded-[3px] transition-colors";
-  }
-  return "cursor-pointer reader-record-mark-hit reader-record-mark-hit--user-highlight rounded-[3px] transition-colors";
+  const colorKey = highlightColorKey(mark);
+  return [
+    "cursor-pointer reader-record-mark-hit reader-record-mark-hit--user-highlight rounded-[3px] transition-colors",
+    colorKey ? `reader-record-user-asset--${colorKey}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function userHighlightMarkLabel(): string {
@@ -91,11 +102,8 @@ function userNoteMarkClassName({
   active: boolean;
   hover: boolean;
 }): string {
-  const stateClassName =
-    active || hover
-      ? "bg-blue-100/80 decoration-blue-600"
-      : "hover:bg-blue-50/70 decoration-blue-500/80";
-  return `cursor-pointer rounded-[2px] underline decoration-dashed decoration-[1.5px] underline-offset-4 transition-colors ${stateClassName}`;
+  const stateClassName = active || hover ? "reader-record-user-note--active" : "";
+  return `cursor-pointer reader-record-mark-hit reader-record-mark-hit--user-note reader-record-user-asset--yellow rounded-[2px] underline underline-offset-4 transition-colors ${stateClassName}`;
 }
 
 function userNoteMarkLabel(): string {
@@ -125,15 +133,19 @@ function noteMarksFromLeaf(
   });
 }
 
-function highlightColorKey(mark?: ReaderRecordPlateUserHighlightMark): string {
-  const color = mark?.color ?? "warm_yellow";
-  if (color === "soft_blue" || color === "blue") {
-    return "blue";
+function highlightColorKey(
+  mark?: ReaderRecordPlateUserHighlightMark,
+): "yellow" | "mint" | "rose" | null {
+  switch (mark?.color) {
+    case "warm_yellow":
+      return "yellow";
+    case "soft_mint":
+      return "mint";
+    case "soft_rose":
+      return "rose";
+    default:
+      return null;
   }
-  if (color === "soft_rose" || color === "rose") {
-    return "rose";
-  }
-  return "yellow";
 }
 
 function vocabularyToneKey(mark?: ReaderRecordPlateVocabularyMark): string {
@@ -162,7 +174,20 @@ export interface ReaderMarkVisualResolution {
 
 export function resolveReaderMarkVisual(
   leaf: PlateTextNode,
-  options: { activeSentenceChunkId?: string | null } = {},
+  options: {
+    activeSentenceChunkId?: string | null;
+    activeGrammarItemId?: string | null;
+    /**
+     * 当 vocabulary mark 与 user_highlight / user_note 重叠时，降级为
+     * 仅文字色，不渲染背景，避免遮盖 user asset 填充色。
+     */
+    downgradeVocabulary?: boolean;
+    /**
+     * 当前处于 active/hover 状态的 note assetId 集合。叶子上有任意 note
+     * 命中时追加 `reader-record-mark-stack--user-note-active` class。
+     */
+    activeNoteAssetIds?: Set<string> | null;
+  } = {},
 ): ReaderMarkVisualResolution {
   const vocabularyMark = leaf.vocabulary_data;
   const grammarMark = leaf.grammar_data;
@@ -175,15 +200,20 @@ export function resolveReaderMarkVisual(
 
   if (vocabularyMark) {
     kinds.push(vocabularyMark.kind);
-    classes.push(
-      "reader-record-mark-stack--vocabulary",
-      `reader-record-mark-stack--${vocabularyToneKey(vocabularyMark)}`,
-    );
+    classes.push("reader-record-mark-stack--vocabulary");
+    const tone = vocabularyToneKey(vocabularyMark);
+    classes.push(`reader-record-mark-stack--vocab-${tone}`);
+    if (options.downgradeVocabulary) {
+      classes.push("reader-record-mark-stack--vocabulary-downgraded");
+    }
     labels.push(vocabularyMarkLabel(vocabularyMark));
   }
   if (grammarMark) {
     kinds.push("grammar_note");
     classes.push("reader-record-mark-stack--grammar");
+    if (options.activeGrammarItemId === grammarMark.itemId) {
+      classes.push("reader-record-mark-stack--grammar-active");
+    }
     labels.push(grammarMarkLabel(grammarMark));
   }
   if (sentenceChunk) {
@@ -196,16 +226,23 @@ export function resolveReaderMarkVisual(
     labels.push(`句子成分 · ${sentenceChunk.label}`);
   }
   if (userHighlight) {
+    const colorKey = highlightColorKey(userHighlight);
     kinds.push("user_highlight");
-    classes.push(
-      "reader-record-mark-stack--user-highlight",
-      `reader-record-mark-stack--highlight-${highlightColorKey(userHighlight)}`,
-    );
+    classes.push("reader-record-mark-stack--user-highlight");
+    if (colorKey) {
+      classes.push(`reader-record-mark-stack--highlight-${colorKey}`);
+    }
     labels.push(userHighlightMarkLabel());
   }
   if (userNotes.length > 0) {
     kinds.push("user_note");
     classes.push("reader-record-mark-stack--user-note");
+    const noteActive = options.activeNoteAssetIds
+      ? userNotes.some((note) => options.activeNoteAssetIds!.has(note.assetId))
+      : false;
+    if (noteActive) {
+      classes.push("reader-record-mark-stack--user-note-active");
+    }
     labels.push(userNoteMarkLabel());
   }
 
@@ -221,6 +258,11 @@ export function resolveReaderMarkVisual(
 // --- Callback Context ---
 
 export interface ReaderLeafActions {
+  onActivateLeaf?: (
+    leaf: PlateTextNode,
+    anchor: HTMLElement,
+    event: React.MouseEvent<HTMLElement>,
+  ) => void;
   onActivateVocabulary?: (
     mark: ReaderRecordPlateVocabularyMark,
     anchor: HTMLElement,
@@ -247,6 +289,32 @@ export function useReaderLeafActions(): ReaderLeafActions {
   return useContext(ReaderLeafActionsContext);
 }
 
+function hasNonCollapsedNativeSelection(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const domSelection = window.getSelection();
+  return Boolean(
+    domSelection &&
+      domSelection.rangeCount > 0 &&
+      !domSelection.isCollapsed &&
+      domSelection.toString().trim().length > 0,
+  );
+}
+
+function useTypedLeafClickHandler(leaf: PlateTextNode) {
+  const { onActivateLeaf } = useReaderLeafActions();
+  return onActivateLeaf
+    ? (event: React.MouseEvent<HTMLElement>) => {
+        if (hasNonCollapsedNativeSelection()) {
+          return;
+        }
+        event.stopPropagation();
+        onActivateLeaf(leaf, event.currentTarget, event);
+      }
+    : undefined;
+}
+
 // --- Vocabulary leaf plugin ---
 
 function VocabularyLeafComponent({
@@ -254,33 +322,30 @@ function VocabularyLeafComponent({
   leaf,
   attributes,
 }: PlateLeafProps) {
-  const mark = (leaf as unknown as PlateTextNode).vocabulary_data;
-  const { onActivateVocabulary } = useReaderLeafActions();
+  const plateLeaf = leaf as unknown as PlateTextNode;
+  const mark = plateLeaf.vocabulary_data;
+  const userHighlight = plateLeaf.user_highlight_data;
+  const userNotes = noteMarksFromLeaf(plateLeaf.user_note_data);
+  const hasUserAsset = !!userHighlight || userNotes.length > 0;
+  const onClick = useTypedLeafClickHandler(plateLeaf);
 
   if (!mark) {
     return <span {...attributes}>{children}</span>;
   }
 
-  const interactive = mark.startsHere;
+  const interactive = true;
 
   return (
     <span
       {...attributes}
-      className={`${vocabularyMarkClassName(mark, interactive)} ${attributes?.className ?? ""}`.trim()}
+      className={`${vocabularyMarkClassName(mark, interactive, hasUserAsset)} ${attributes?.className ?? ""}`.trim()}
       aria-label={vocabularyMarkLabel(mark)}
       title={vocabularyMarkLabel(mark)}
       data-reader-record-mark-entry="stack"
       data-reader-record-mark-id={mark.id}
       data-reader-record-mark-kind={mark.kind}
       data-reader-record-mark-starts-here={mark.startsHere ? "true" : "false"}
-      onClick={
-        interactive
-          ? (event: React.MouseEvent<HTMLElement>) => {
-              event.stopPropagation();
-              onActivateVocabulary?.(mark, event.currentTarget as HTMLElement);
-            }
-          : undefined
-      }
+      onClick={onClick}
     >
       {children}
     </span>
@@ -302,7 +367,9 @@ function GrammarLeafComponent({
   leaf,
   attributes,
 }: PlateLeafProps) {
-  const mark = (leaf as unknown as PlateTextNode).grammar_data;
+  const plateLeaf = leaf as unknown as PlateTextNode;
+  const mark = plateLeaf.grammar_data;
+  const onClick = useTypedLeafClickHandler(plateLeaf);
 
   if (!mark) {
     return <span {...attributes}>{children}</span>;
@@ -317,7 +384,9 @@ function GrammarLeafComponent({
       data-reader-record-mark-entry="stack"
       data-reader-record-mark-id={mark.id}
       data-reader-record-mark-kind={mark.kind}
+      data-reader-record-grammar-item-id={mark.itemId}
       data-reader-record-mark-starts-here={mark.startsHere ? "true" : "false"}
+      onClick={onClick}
     >
       {children}
     </span>
@@ -339,8 +408,9 @@ function UserHighlightLeafComponent({
   leaf,
   attributes,
 }: PlateLeafProps) {
-  const mark = (leaf as unknown as PlateTextNode).user_highlight_data;
-  const { onActivateHighlight } = useReaderLeafActions();
+  const plateLeaf = leaf as unknown as PlateTextNode;
+  const mark = plateLeaf.user_highlight_data;
+  const onClick = useTypedLeafClickHandler(plateLeaf);
 
   if (!mark) {
     return <span {...attributes}>{children}</span>;
@@ -355,10 +425,7 @@ function UserHighlightLeafComponent({
       data-reader-record-mark-entry="stack"
       data-reader-record-mark-id={mark.id}
       data-reader-record-mark-kind={mark.kind}
-      onClick={(event: React.MouseEvent<HTMLElement>) => {
-        event.stopPropagation();
-        onActivateHighlight?.(mark, event.currentTarget as HTMLElement);
-      }}
+      onClick={onClick}
     >
       {children}
     </span>
@@ -380,10 +447,11 @@ function UserNoteLeafComponent({
   leaf,
   attributes,
 }: PlateLeafProps) {
+  const plateLeaf = leaf as unknown as PlateTextNode;
   const marks = noteMarksFromLeaf(
-    (leaf as unknown as PlateTextNode).user_note_data,
+    plateLeaf.user_note_data,
   );
-  const { onActivateNote } = useReaderLeafActions();
+  const onClick = useTypedLeafClickHandler(plateLeaf);
   const { setOption } = useEditorPlugin(commentPlugin);
   const activeId = usePluginOption(commentPlugin, "activeId");
   const hoverId = usePluginOption(commentPlugin, "hoverId");
@@ -415,10 +483,7 @@ function UserNoteLeafComponent({
         data-reader-record-mark-kind={mark.kind}
         data-reader-record-note-active={active ? "true" : "false"}
         data-reader-record-note-hover={hover ? "true" : "false"}
-        onClick={(event: React.MouseEvent<HTMLElement>) => {
-          event.stopPropagation();
-          onActivateNote?.(mark, event.currentTarget as HTMLElement);
-        }}
+        onClick={onClick}
         onMouseEnter={() => setOption("hoverId", mark.assetId)}
         onMouseLeave={() => setOption("hoverId", null)}
       >

@@ -96,6 +96,7 @@ beforeEach(() => {
       disconnect() {}
     },
   );
+  window.getSelection()?.removeAllRanges();
 });
 
 afterEach(() => {
@@ -413,6 +414,63 @@ function makeOverlappingMarkSnapshot(): ReaderPlateSnapshotDto {
         grammarMarks: [
           makeGrammarMark({
             mark_id: "grammar_split_mark",
+            start_offset: 14,
+            end_offset: 27,
+            segment_start_utf16: 14,
+            segment_end_utf16: 27,
+            selected_text: "memory shapes",
+            grammar_point: "noun phrase plus predicate",
+            starts_here: true,
+            ends_here: true,
+          }),
+        ],
+      }),
+    ],
+  };
+}
+
+function makeAnnotationMatrixSnapshot(): ReaderPlateSnapshotDto {
+  const noteText = SOURCE_TEXT.slice(0, 34);
+  const wideNote = makeUserAsset({
+    asset_id: "asset_note_matrix",
+    asset_type: "note",
+    note_text: "Matrix note for the sentence opening.",
+    anchor: {
+      anchor_type: "text_range",
+      base_id: "base_1",
+      unit_id: "unit_1",
+      anchor_segment_id: "seg_1",
+      sentence_id: "sent_1",
+      segment_type: "sentence",
+      offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+      start_offset: 0,
+      end_offset: noteText.length,
+      selected_text: noteText,
+      text_hash: computeUtf16FNV1a(noteText),
+      hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+    },
+  });
+
+  return {
+    ...makeSnapshot([wideNote]),
+    value: [
+      makeUnit({
+        vocabularyMarks: [
+          makeVocabularyMark({
+            mark_id: "vocab_matrix_mark",
+            start_offset: 14,
+            end_offset: 20,
+            segment_start_utf16: 14,
+            segment_end_utf16: 20,
+            selected_text: "memory",
+            starts_here: true,
+            ends_here: true,
+          }),
+        ],
+        grammarMarks: [
+          makeGrammarMark({
+            mark_id: "grammar_matrix_mark",
+            item_id: "grammar_matrix_item",
             start_offset: 14,
             end_offset: 27,
             segment_start_utf16: 14,
@@ -861,6 +919,94 @@ function expectedMemoryAnchor() {
   };
 }
 
+function policyNoteAnchor(selectedText = "policy") {
+  const start = SOURCE_TEXT.indexOf(selectedText);
+  if (start < 0) {
+    throw new Error(`Missing policy note fixture text: ${selectedText}`);
+  }
+  return {
+    anchor_type: "text_range" as const,
+    base_id: "base_1",
+    unit_id: "unit_1",
+    anchor_segment_id: "seg_1",
+    sentence_id: "sent_1",
+    segment_type: "sentence" as const,
+    offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+    start_offset: start,
+    end_offset: start + selectedText.length,
+    selected_text: selectedText,
+    text_hash: computeUtf16FNV1a(selectedText),
+    hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+  };
+}
+
+function makePolicyNoteAsset(
+  overrides: Partial<ReaderSnapshotUserAssetDto> = {},
+): ReaderSnapshotUserAssetDto {
+  return makeUserAsset({
+    asset_id: "asset_note_policy",
+    asset_type: "note",
+    note_text: "Policy note.",
+    anchor: policyNoteAnchor(),
+    ...overrides,
+  });
+}
+
+function makePolicyHighlightAsset(
+  overrides: Partial<ReaderSnapshotUserAssetDto> = {},
+): ReaderSnapshotUserAssetDto {
+  return makeUserAsset({
+    asset_id: "asset_highlight_policy",
+    asset_type: "user_highlight",
+    color: "soft_mint",
+    anchor: policyNoteAnchor(),
+    ...overrides,
+  });
+}
+
+function makeHighlightWriteItem({
+  id = "asset_highlight_policy",
+  selectedText = "policy",
+  color = "soft_mint",
+  supersededIds = [],
+}: {
+  id?: string;
+  selectedText?: string;
+  color?: "warm_yellow" | "soft_mint" | "soft_rose";
+  supersededIds?: string[];
+} = {}) {
+  const start = SOURCE_TEXT.indexOf(selectedText);
+  if (start < 0) {
+    throw new Error(`Missing highlight fixture text: ${selectedText}`);
+  }
+  const end = start + selectedText.length;
+  return {
+    id,
+    analysis_record_id: null,
+    anchor_type: "text_range",
+    target_key: `reading-record:record_1:unit_1:seg_1:${start}:${end}`,
+    paragraph_id: null,
+    sentence_id: "sent_1",
+    selected_text: selectedText,
+    start_offset: null,
+    end_offset: null,
+    text_hash: computeUtf16FNV1a(selectedText),
+    segments: [],
+    color,
+    payload_json: {},
+    created_at: "2026-07-01T00:00:00Z",
+    updated_at: "2026-07-01T00:00:01Z",
+    superseded_ids: supersededIds,
+    reading_record_id: "record_1",
+    base_id: "base_1",
+    generation: 1,
+    unit_id: "unit_1",
+    anchor_segment_id: "seg_1",
+    unit_start_utf16: start,
+    unit_end_utf16: end,
+  };
+}
+
 function installReaderAskFetchMock(recordId = "record_1") {
   const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
     const requestUrl = new URL(String(input), "https://example.test");
@@ -1225,9 +1371,11 @@ describe("ReaderRecordPlateSurface", () => {
       ),
     ).not.toBeNull();
     expect(grammarCallout?.querySelector("strong")?.textContent).toBe("shapes");
-    expect(grammarCallout?.querySelector("code")?.textContent).toBe(
-      "subject + verb",
-    );
+    const inlineCode = grammarCallout?.querySelector("code");
+    expect(inlineCode?.textContent).toBe("subject + verb");
+    expect(inlineCode?.className).toContain("reader-record-plate-inline-code");
+    expect(inlineCode?.className).not.toContain("bg-muted/50");
+    expect(inlineCode?.className).not.toContain("font-mono");
     expect(grammarCallout?.querySelector("li")?.textContent).toContain(
       "Keeps policy choices active.",
     );
@@ -1254,6 +1402,9 @@ describe("ReaderRecordPlateSurface", () => {
     expect(blockKitSource).not.toMatch(/CalloutMarkdownRenderer/);
     expect(blockKitSource).not.toMatch(/dangerouslySetInnerHTML/);
     expect(blockKitSource).not.toMatch(/Grammar X-Ray/);
+    expect(blockKitSource).not.toMatch(
+      /reader-record-plate-inline-code[^`]*bg-muted\/50[^`]*font-mono/,
+    );
   });
 
   it("switches between intensive and immersive document visibility", async () => {
@@ -1271,7 +1422,7 @@ describe("ReaderRecordPlateSurface", () => {
       container.querySelector('[data-reader-record-node="sentence-analysis"]'),
     ).not.toBeNull();
     expect(
-      container.querySelector('[data-reader-record-mark-id="grammar_mark_1"]'),
+      container.querySelector('[data-reader-record-grammar-mark-id="grammar_mark_1"]'),
     ).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "切换到沉浸模式" }));
@@ -1288,14 +1439,14 @@ describe("ReaderRecordPlateSurface", () => {
       container.querySelector('[data-reader-record-node="sentence-analysis"]'),
     ).toBeNull();
     expect(
-      container.querySelector('[data-reader-record-mark-id="grammar_mark_1"]'),
+      container.querySelector('[data-reader-record-grammar-mark-id="grammar_mark_1"]'),
     ).toBeNull();
     expect(
-      container.querySelector('[data-reader-record-mark-id="vocab_mark_1"]'),
+      container.querySelector('[data-reader-record-vocabulary-mark-id="vocab_mark_1"]'),
     ).not.toBeNull();
     expect(
       container.querySelector(
-        '[data-reader-record-mark-id="user_highlight:asset_highlight_1"]',
+        '[data-reader-record-user-highlight-asset-id="asset_highlight_1"]',
       ),
     ).not.toBeNull();
   });
@@ -1339,14 +1490,14 @@ describe("ReaderRecordPlateSurface", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
     const vocab = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_1"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
     const grammar = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="grammar_mark_1"]',
+      '[data-reader-record-grammar-mark-id="grammar_mark_1"]',
     );
 
-    expect(vocab?.dataset.readerRecordMarkKind).toBe("phrase_gloss");
-    expect(grammar?.dataset.readerRecordMarkKind).toBe("grammar_note");
+    expect(vocab?.dataset.readerRecordVocabularyKind).toBe("phrase_gloss");
+    expect(grammar?.dataset.readerRecordGrammarMarkId).toBe("grammar_mark_1");
   });
 
   it("keeps vocabulary and grammar visuals on continuation leaves split by overlapping marks", () => {
@@ -1356,12 +1507,12 @@ describe("ReaderRecordPlateSurface", () => {
 
     const vocabFragments = Array.from(
       container.querySelectorAll<HTMLElement>(
-        '[data-reader-record-mark-id="vocab_split_mark"]',
+        '[data-reader-record-vocabulary-mark-id="vocab_split_mark"]',
       ),
     );
     const grammarFragments = Array.from(
       container.querySelectorAll<HTMLElement>(
-        '[data-reader-record-mark-id="grammar_split_mark"]',
+        '[data-reader-record-grammar-mark-id="grammar_split_mark"]',
       ),
     );
 
@@ -1380,10 +1531,9 @@ describe("ReaderRecordPlateSurface", () => {
       const stack = closestMarkStack(fragment);
       expect(stack?.className).toContain("reader-record-mark-stack");
       expect(stack?.className).toContain("reader-record-mark-stack--vocabulary");
-      expect(stack?.className).toContain("reader-record-mark-stack--phrase");
       expect(stack?.dataset.readerRecordMarkStackKinds).toContain("phrase_gloss");
       expect(stack?.getAttribute("aria-label")).toContain("短语");
-      expect(fragment.dataset.readerRecordMarkKind).toBe("phrase_gloss");
+      expect(fragment.dataset.readerRecordVocabularyKind).toBe("phrase_gloss");
     }
     for (const fragment of grammarFragments) {
       const stack = closestMarkStack(fragment);
@@ -1391,17 +1541,17 @@ describe("ReaderRecordPlateSurface", () => {
       expect(stack?.className).toContain("reader-record-mark-stack--grammar");
       expect(stack?.dataset.readerRecordMarkStackKinds).toContain("grammar_note");
       expect(stack?.getAttribute("aria-label")).toContain("语法");
-      expect(fragment.dataset.readerRecordMarkKind).toBe("grammar_note");
+      expect(fragment.dataset.readerRecordGrammarMarkId).toBe("grammar_split_mark");
     }
     const overlapStack = closestMarkStack(vocabFragments[1] ?? null);
     expect(overlapStack?.className).toContain("reader-record-mark-stack--vocabulary");
     expect(overlapStack?.className).toContain("reader-record-mark-stack--grammar");
     expect(overlapStack?.dataset.readerRecordMarkStackKinds).toContain("phrase_gloss");
     expect(overlapStack?.dataset.readerRecordMarkStackKinds).toContain("grammar_note");
-    expect(vocabFragments[0]?.dataset.readerRecordMarkStartsHere).toBe("true");
-    expect(vocabFragments[1]?.dataset.readerRecordMarkStartsHere).toBe("false");
-    expect(grammarFragments[0]?.dataset.readerRecordMarkStartsHere).toBe("true");
-    expect(grammarFragments[1]?.dataset.readerRecordMarkStartsHere).toBe("false");
+    expect(vocabFragments[0]?.dataset.readerRecordVocabularyStartsHere).toBe("true");
+    expect(vocabFragments[1]?.dataset.readerRecordVocabularyStartsHere).toBe("false");
+    expect(grammarFragments[0]?.dataset.readerRecordGrammarStartsHere).toBe("true");
+    expect(grammarFragments[1]?.dataset.readerRecordGrammarStartsHere).toBe("false");
   });
 
   it("renders user highlight marks with stable asset attributes", () => {
@@ -1410,39 +1560,126 @@ describe("ReaderRecordPlateSurface", () => {
     );
 
     const highlight = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="user_highlight:asset_highlight_1"]',
+      '[data-reader-record-user-highlight-asset-id="asset_highlight_1"]',
     );
 
-    expect(highlight?.dataset.readerRecordMarkEntry).toBe("stack");
-    expect(highlight?.dataset.readerRecordMarkKind).toBe("user_highlight");
+    expect(highlight?.dataset.readerRecordUserHighlightAssetId).toBe("asset_highlight_1");
+    expect(highlight?.dataset.readerRecordMarkStackKinds).toContain("user_highlight");
     expect(highlight?.textContent).toBe("memory");
   });
 
-  it("falls back legacy user highlight colors to the yellow visual treatment", () => {
+  it("targets actual renderLeaf stack classes for user highlight hover", () => {
     const { container } = render(
-      <ReaderRecordPlateSurface
-        snapshot={makeSnapshot([
-          makeUserAsset({
-            color: "soft_purple",
-          }),
-        ])}
-      />,
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([makeUserAsset()])} />,
     );
-
     const highlight = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="user_highlight:asset_highlight_1"]',
+      '[data-reader-record-user-highlight-asset-id="asset_highlight_1"]',
     );
-    const highlightStack = closestMarkStack(highlight);
+    const stack = closestMarkStack(highlight);
+    const cssSource = readFileSync(
+      resolve(process.cwd(), "src/app/globals.css"),
+      "utf8",
+    );
 
-    expect(highlightStack?.className).toContain(
-      "reader-record-mark-stack--highlight-yellow",
+    expect(stack).not.toBeNull();
+    expect(stack).toBe(highlight);
+    expect(stack?.className).toContain("reader-record-mark-stack--user-highlight");
+    expect(cssSource).toMatch(/\.reader-record-mark-stack--user-highlight:hover/);
+    expect(cssSource).toMatch(
+      /--reader-mark-grammar-line-soft:\s*rgba\(95,\s*78,\s*138,\s*0\.7\)/,
     );
-    expect(highlightStack?.className).not.toContain(
-      "reader-record-mark-stack--highlight-blue",
+    expect(cssSource).toMatch(/text-decoration-thickness:\s*0\.1em/);
+    expect(cssSource).not.toMatch(
+      /\.reader-record-mark-stack--grammar-active\s+\.reader-record-mark-hit--grammar/,
     );
-    expect(highlightStack?.className).not.toContain(
-      "reader-record-mark-stack--highlight-rose",
+    expect(cssSource).not.toMatch(/\.reader-record-mark-hit--/);
+  });
+
+  it("renders source text leaves as a single stack span without inner mark-hit wrappers", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeAnnotationMatrixSnapshot()} />,
     );
+
+    const sourceLeaves = container.querySelectorAll<HTMLElement>(
+      '[data-reader-record-leaf="segment_text"]',
+    );
+    expect(sourceLeaves.length).toBeGreaterThan(0);
+
+    for (const leaf of sourceLeaves) {
+      expect(leaf.querySelector(".reader-record-mark-hit--grammar")).toBeNull();
+      expect(leaf.querySelector(".reader-record-mark-hit--vocabulary")).toBeNull();
+      expect(leaf.querySelector(".reader-record-mark-hit--user-highlight")).toBeNull();
+      expect(leaf.querySelector(".reader-record-mark-hit--user-note")).toBeNull();
+      expect(leaf.querySelector("[data-reader-record-mark-entry]")).toBeNull();
+    }
+  });
+
+  it("keeps overlap leaf as a single stack span with vocabulary+grammar kinds and data attrs", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeAnnotationMatrixSnapshot()} />,
+    );
+
+    const overlap = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_matrix_mark"]',
+    );
+    expect(overlap).not.toBeNull();
+    if (!overlap) {
+      throw new Error("Expected overlap leaf");
+    }
+
+    // 同一个 span 同时承载 vocabulary 和 grammar 的 stack class 与 data attrs
+    expect(overlap.className).toContain("reader-record-mark-stack--vocabulary");
+    expect(overlap.className).toContain("reader-record-mark-stack--grammar");
+    expect(overlap.dataset.readerRecordVocabularyMarkId).toBe("vocab_matrix_mark");
+    expect(overlap.dataset.readerRecordGrammarMarkId).toBe("grammar_matrix_mark");
+    expect(overlap.dataset.readerRecordGrammarItemId).toBe("grammar_matrix_item");
+    expect(overlap.dataset.readerRecordMarkStackKinds).toContain("phrase_gloss");
+    expect(overlap.dataset.readerRecordMarkStackKinds).toContain("grammar_note");
+
+    // 不应存在内层 mark-hit wrapper
+    expect(overlap.querySelector(".reader-record-mark-hit--vocabulary")).toBeNull();
+    expect(overlap.querySelector(".reader-record-mark-hit--grammar")).toBeNull();
+  });
+
+  it("does not enlarge a partial selection that crosses from plain text into the grammar+vocabulary overlap", () => {
+    // SOURCE_TEXT = "Institutional memory shapes policy choices."
+    // vocabulary "memory" 位于 [14, 20)，grammar "memory shapes" 位于 [14, 27)。
+    // 源文本会被切分成多个 leaf：plain "Institutional " + overlap "memory shapes" + ...
+    // 从普通文本末尾空格拖入 overlap 首字符 "m"，native selection 应保持精确文本，不扩大到 vocabulary 边界。
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeAnnotationMatrixSnapshot()} />,
+    );
+
+    const sourceLeaves = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-leaf="segment_text"]',
+      ),
+    );
+    expect(sourceLeaves.length).toBeGreaterThanOrEqual(2);
+
+    const plainLeaf = sourceLeaves[0]!;
+    const overlapLeaf = sourceLeaves.find((leaf) =>
+      leaf.querySelector('[data-reader-record-vocabulary-mark-id]') ||
+      leaf.matches("[data-reader-record-vocabulary-mark-id]"),
+    );
+    expect(overlapLeaf).toBeDefined();
+
+    const plainText = firstTextNode(plainLeaf);
+    const overlapText = firstTextNode(overlapLeaf!);
+    expect(plainText).toBeTruthy();
+    expect(overlapText).toBeTruthy();
+
+    // 选取 plain leaf 最后 1 字符 " " + overlap leaf 前 1 字符 "m"
+    selectAcrossElements(plainLeaf, plainText!.length - 1, overlapLeaf!, 1);
+
+    expect(window.getSelection()?.isCollapsed).toBe(false);
+    expect(window.getSelection()?.toString()).toBe(" m");
+
+    // overlap leaf 的 startsHere 仍应保留为 true，未被 selection 改写
+    const overlap = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_matrix_mark"]',
+    );
+    expect(overlap?.dataset.readerRecordVocabularyStartsHere).toBe("true");
   });
 
   it("keeps system marks and user marks coexisting on the source text", () => {
@@ -1454,15 +1691,399 @@ describe("ReaderRecordPlateSurface", () => {
       '[data-reader-record-node="paragraph"]',
     );
     const vocab = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_1"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
     const userHighlight = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="user_highlight:asset_highlight_1"]',
+      '[data-reader-record-user-highlight-asset-id="asset_highlight_1"]',
     );
 
     expect(paragraph?.textContent).toContain(SOURCE_TEXT);
-    expect(vocab?.dataset.readerRecordMarkKind).toBe("phrase_gloss");
-    expect(userHighlight?.dataset.readerRecordMarkKind).toBe("user_highlight");
+    expect(vocab?.dataset.readerRecordVocabularyKind).toBe("phrase_gloss");
+    expect(userHighlight?.dataset.readerRecordUserHighlightAssetId).toBe("asset_highlight_1");
+  });
+
+  it("resolves overlapping mark clicks by vocabulary, grammar, user note, then user highlight priority", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const scrollSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => undefined);
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeAnnotationMatrixSnapshot()} />,
+    );
+
+    const vocab = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_matrix_mark"]',
+    );
+    expect(vocab).not.toBeNull();
+    if (!vocab) {
+      throw new Error("Expected vocabulary mark");
+    }
+    fireEvent.click(vocab);
+
+    expect(await screen.findByTestId("reader-record-plate-lookup-panel")).toBeTruthy();
+    expect(screen.queryByTestId("reader-record-inline-comment-panel")).toBeNull();
+
+    const grammarOnly = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-grammar-mark-id="grammar_matrix_mark"]',
+      ),
+    ).find((element) => element.textContent?.includes("shapes"));
+    expect(grammarOnly).toBeDefined();
+    if (!grammarOnly) {
+      throw new Error("Expected grammar-only fragment");
+    }
+    fireEvent.click(grammarOnly);
+
+    const grammarCallout = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_matrix_item"]',
+    );
+    expect(grammarCallout).not.toBeNull();
+    await waitFor(() => {
+      expect(grammarCallout?.dataset.readerRecordGrammarActive).toBe("true");
+      expect(scrollSpy).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+    });
+    expect(screen.queryByTestId("reader-record-inline-comment-panel")).toBeNull();
+
+    const noteOnly = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-user-note-asset-ids~="asset_note_matrix"]',
+      ),
+    ).find((element) => element.textContent?.includes("Institutional"));
+    expect(noteOnly).toBeDefined();
+    if (!noteOnly) {
+      throw new Error("Expected note-only fragment");
+    }
+    fireEvent.click(noteOnly);
+
+    const notePanel = await screen.findByTestId("reader-record-inline-comment-panel");
+    expect(notePanel.textContent).toContain("Matrix note for the sentence opening.");
+  });
+
+  it("does not trigger mark actions while a non-collapsed native selection exists", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const scrollSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => undefined);
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeAnnotationMatrixSnapshot()} />,
+    );
+
+    const vocab = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_matrix_mark"]',
+    );
+    expect(vocab).not.toBeNull();
+    if (!vocab) {
+      throw new Error("Expected vocabulary mark");
+    }
+
+    selectTextInElement(vocab, 0, "memory".length);
+    expect(window.getSelection()?.isCollapsed).toBe(false);
+    scrollSpy.mockClear();
+
+    fireEvent.click(vocab);
+
+    expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+    expect(screen.queryByTestId("reader-record-inline-comment-panel")).toBeNull();
+    expect(scrollSpy).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.some(
+        ([url]) => typeof url === "string" && url.includes("/api/web/dict"),
+      ),
+    ).toBe(false);
+  });
+
+  it("suppresses the following mark click after pointer drag", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([makePolicyHighlightAsset()])} />,
+    );
+    const highlight = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-highlight-asset-id="asset_highlight_policy"]',
+    );
+    expect(highlight).not.toBeNull();
+    if (!highlight) {
+      throw new Error("Expected policy highlight mark");
+    }
+
+    fireEvent.mouseDown(highlight, { clientX: 10, clientY: 10 });
+    fireEvent.mouseMove(highlight, { clientX: 18, clientY: 10 });
+    fireEvent.mouseUp(highlight, { clientX: 18, clientY: 10 });
+    fireEvent.click(highlight);
+
+    expect(screen.queryByRole("button", { name: "删除高亮" })).toBeNull();
+  });
+
+  it("keeps every grammar leaf active across vocabulary overlap and same-item hover transitions", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeAnnotationMatrixSnapshot()} />,
+    );
+    const grammarLeaves = () =>
+      Array.from(
+        container.querySelectorAll<HTMLElement>(
+          '[data-reader-record-leaf="segment_text"][data-reader-record-grammar-item-id="grammar_matrix_item"]',
+        ),
+      );
+    const overlapLeaf = grammarLeaves().find((element) =>
+      element.textContent?.includes("memory"),
+    );
+    const grammarOnlyLeaf = grammarLeaves().find((element) =>
+      element.textContent?.includes("shapes"),
+    );
+    expect(overlapLeaf).toBeDefined();
+    expect(grammarOnlyLeaf).toBeDefined();
+    if (!overlapLeaf || !grammarOnlyLeaf) {
+      throw new Error("Expected overlapped and grammar-only leaves");
+    }
+
+    fireEvent.mouseEnter(overlapLeaf);
+    await waitFor(() => {
+      for (const leaf of grammarLeaves()) {
+        expect(leaf.dataset.readerRecordGrammarActive).toBe("true");
+        expect(leaf.className).toContain("reader-record-mark-stack--grammar-active");
+      }
+    });
+
+    fireEvent.mouseLeave(overlapLeaf, { relatedTarget: grammarOnlyLeaf });
+    await waitFor(() => {
+      for (const leaf of grammarLeaves()) {
+        expect(leaf.dataset.readerRecordGrammarActive).toBe("true");
+      }
+    });
+
+    fireEvent.mouseLeave(grammarOnlyLeaf, { relatedTarget: document.body });
+    await waitFor(() => {
+      for (const leaf of grammarLeaves()) {
+        expect(leaf.dataset.readerRecordGrammarActive).toBeUndefined();
+      }
+    });
+  });
+
+  it("keeps grammar hover active when a stacked vocabulary leaf opens vocabulary inspect", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeAnnotationMatrixSnapshot()} />,
+    );
+    const grammarLeaves = () =>
+      Array.from(
+        container.querySelectorAll<HTMLElement>(
+          '[data-reader-record-leaf="segment_text"][data-reader-record-grammar-item-id="grammar_matrix_item"]',
+        ),
+      );
+    const overlapLeaf = grammarLeaves().find((element) =>
+      element.textContent?.includes("memory"),
+    );
+    expect(overlapLeaf).toBeDefined();
+    if (!overlapLeaf) {
+      throw new Error("Expected overlapped vocabulary/grammar leaf");
+    }
+
+    fireEvent.mouseEnter(overlapLeaf);
+    await waitFor(() => {
+      expect(overlapLeaf.dataset.readerRecordGrammarActive).toBe("true");
+    });
+    fireEvent.click(overlapLeaf);
+
+    expect(await screen.findByTestId("reader-record-plate-lookup-panel")).toBeTruthy();
+    await waitFor(() => {
+      for (const leaf of grammarLeaves()) {
+        expect(leaf.dataset.readerRecordGrammarActive).toBe("true");
+      }
+    });
+  });
+
+  it("opens vocabulary inspect from a continuation fragment, not only startsHere", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeOverlappingMarkSnapshot()} />,
+    );
+
+    const continuation = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-vocabulary-mark-id="vocab_split_mark"]',
+      ),
+    ).find((element) => element.dataset.readerRecordVocabularyStartsHere === "false");
+    expect(continuation).toBeDefined();
+    if (!continuation) {
+      throw new Error("Expected vocabulary continuation fragment");
+    }
+
+    fireEvent.click(continuation);
+
+    expect(await screen.findByTestId("reader-record-plate-lookup-panel")).toBeTruthy();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url]) => typeof url === "string" && url.includes("/api/web/dict/lookup"),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("coordinates grammar source and callout active state by itemId without opening Quick Peek", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const scrollSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => undefined);
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const sourceGrammar = container.querySelector<HTMLElement>(
+      '[data-reader-record-leaf="segment_text"][data-reader-record-grammar-item-id="grammar_item_1"]',
+    );
+    const callout = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_1"]',
+    );
+    expect(sourceGrammar).not.toBeNull();
+    expect(callout).not.toBeNull();
+    if (!sourceGrammar || !callout) {
+      throw new Error("Expected grammar source and callout");
+    }
+
+    fireEvent.mouseEnter(callout);
+    await waitFor(() => {
+      expect(sourceGrammar.dataset.readerRecordGrammarActive).toBe("true");
+    });
+    fireEvent.mouseLeave(callout);
+    await waitFor(() => {
+      expect(sourceGrammar.dataset.readerRecordGrammarActive).toBeUndefined();
+    });
+
+    scrollSpy.mockClear();
+    fireEvent.mouseEnter(sourceGrammar);
+    await waitFor(() => {
+      expect(callout.dataset.readerRecordGrammarActive).toBe("true");
+    });
+    expect(scrollSpy).not.toHaveBeenCalled();
+    fireEvent.mouseLeave(sourceGrammar);
+
+    fireEvent.click(sourceGrammar);
+    await waitFor(() => {
+      expect(callout.dataset.readerRecordGrammarActive).toBe("true");
+      expect(scrollSpy).toHaveBeenCalled();
+    });
+    expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+  });
+
+  it("clicking a grammar callout briefly activates the source grammar span without scrolling", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    const scrollSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => undefined);
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const sourceGrammar = container.querySelector<HTMLElement>(
+      '[data-reader-record-leaf="segment_text"][data-reader-record-grammar-item-id="grammar_item_1"]',
+    );
+    const callout = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_1"]',
+    );
+    expect(sourceGrammar).not.toBeNull();
+    expect(callout).not.toBeNull();
+    if (!sourceGrammar || !callout) {
+      throw new Error("Expected grammar source and callout");
+    }
+
+    scrollSpy.mockClear();
+    fireEvent.click(callout);
+
+    await waitFor(() => {
+      expect(sourceGrammar.dataset.readerRecordGrammarActive).toBe("true");
+    });
+    expect(scrollSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps user note quote classes out of legacy blue dashed and border/ring visuals", () => {
+    const noteAsset = makeUserAsset({
+      asset_id: "asset_note_visual",
+      asset_type: "note",
+      note_text: "Visual note.",
+    });
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([noteAsset])} />,
+    );
+    const noteMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-note-asset-ids~="asset_note_visual"]',
+    );
+    expect(noteMark).not.toBeNull();
+    expect(noteMark?.className).toContain("reader-record-mark-stack--user-note");
+    expect(noteMark?.className).not.toMatch(/blue|decoration-blue|dashed/);
+    expect(noteMark?.className).not.toMatch(/border|ring|inset/);
+  });
+
+  it("downgrades AI vocabulary background when it overlaps a user asset", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([makeUserAsset()])} />,
+    );
+    const vocab = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    const stack = closestMarkStack(vocab);
+    const userHighlight = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-highlight-asset-id="asset_highlight_1"]',
+    );
+
+    expect(vocab).not.toBeNull();
+    expect(userHighlight).not.toBeNull();
+    expect(stack?.className).toContain("reader-record-mark-stack--user-highlight");
+    expect(vocab?.className).toContain("reader-record-mark-stack--vocabulary");
+    expect(vocab?.className).toContain(
+      "reader-record-mark-stack--vocabulary-downgraded",
+    );
+    expect(userHighlight?.className).toContain(
+      "reader-record-mark-stack--user-highlight",
+    );
   });
 
   it("renders the Chinese title from snapshot.record.display_title_zh in the header", () => {
@@ -2031,7 +2652,7 @@ describe("ReaderRecordPlateSurface", () => {
   it("maps a stable source selection to an anchor draft with unit-local UTF-16 offsets", async () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
     const memoryMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_1"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
     expect(memoryMark).not.toBeNull();
     if (!memoryMark) {
@@ -2098,7 +2719,7 @@ describe("ReaderRecordPlateSurface", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
     const memoryMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_1"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
     expect(memoryMark).not.toBeNull();
     if (!memoryMark) {
@@ -2161,7 +2782,7 @@ describe("ReaderRecordPlateSurface", () => {
       };
       const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
       const memoryMark = container.querySelector<HTMLElement>(
-        `[data-reader-record-mark-id="${mark.mark_id}"]`,
+        `[data-reader-record-vocabulary-mark-id="${mark.mark_id}"]`,
       );
       expect(memoryMark).not.toBeNull();
       if (!memoryMark) {
@@ -2208,7 +2829,7 @@ describe("ReaderRecordPlateSurface", () => {
       <ReaderRecordPlateSurface snapshot={makeGroupedSeg2PhraseGlossSnapshot()} />,
     );
     const seg2Mark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_seg_2"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_seg_2"]',
     );
     expect(seg2Mark).not.toBeNull();
     if (!seg2Mark) {
@@ -2258,7 +2879,7 @@ describe("ReaderRecordPlateSurface", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
     const memoryMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_1"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
     expect(memoryMark).not.toBeNull();
     if (!memoryMark) {
@@ -2331,7 +2952,7 @@ describe("ReaderRecordPlateSurface", () => {
     };
     const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
     const memoryMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_1"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
     expect(memoryMark).not.toBeNull();
     if (!memoryMark) {
@@ -2373,7 +2994,7 @@ describe("ReaderRecordPlateSurface", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
     const memoryMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_1"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
     expect(memoryMark).not.toBeNull();
     if (!memoryMark) {
@@ -2424,7 +3045,7 @@ describe("ReaderRecordPlateSurface", () => {
       />,
     );
     const memoryMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_1"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
     expect(memoryMark).not.toBeNull();
     if (!memoryMark) {
@@ -2466,6 +3087,284 @@ describe("ReaderRecordPlateSurface", () => {
     ).toBe(false);
   });
 
+  it("opens an existing user highlight menu and updates color through the Reading Record PATCH endpoint", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      if (url === "/api/web/reading-record/highlights/asset_highlight_policy") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              ok: true,
+              status: "updated",
+              item: makeHighlightWriteItem({ color: "soft_rose" }),
+              session: { state: "signed_in" },
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    const onRequestSnapshotReload = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(
+      <ReaderRecordPlateSurface
+        snapshot={makeSnapshot([makePolicyHighlightAsset()])}
+        onRequestSnapshotReload={onRequestSnapshotReload}
+      />,
+    );
+    const highlight = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-highlight-asset-id="asset_highlight_policy"]',
+    );
+    expect(highlight).not.toBeNull();
+    if (!highlight) {
+      throw new Error("Expected policy highlight mark");
+    }
+
+    fireEvent.click(highlight);
+    fireEvent.click(await screen.findByLabelText("切换为难点"));
+
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find(
+        ([url]) =>
+          typeof url === "string" &&
+          url === "/api/web/reading-record/highlights/asset_highlight_policy",
+      );
+      expect(patchCall).toBeDefined();
+      expect((patchCall?.[1] as RequestInit | undefined)?.method).toBe("PATCH");
+      const body = JSON.parse(
+        String((patchCall?.[1] as RequestInit | undefined)?.body),
+      ) as Record<string, unknown>;
+      expect(body.color).toBe("soft_rose");
+    });
+    expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+    expect(onRequestSnapshotReload).not.toHaveBeenCalled();
+  });
+
+  it("deletes an existing user highlight from the highlight menu", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, status: "deleted" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onRequestSnapshotReload = vi.fn().mockResolvedValue(undefined);
+
+    const { container } = render(
+      <ReaderRecordPlateSurface
+        snapshot={makeSnapshot([makePolicyHighlightAsset()])}
+        onRequestSnapshotReload={onRequestSnapshotReload}
+      />,
+    );
+    const highlight = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-highlight-asset-id="asset_highlight_policy"]',
+    );
+    expect(highlight).not.toBeNull();
+    if (!highlight) {
+      throw new Error("Expected policy highlight mark");
+    }
+
+    fireEvent.click(highlight);
+    fireEvent.click(await screen.findByRole("button", { name: "删除高亮" }));
+
+    await waitFor(() => {
+      const deleteCall = fetchMock.mock.calls.find(
+        ([url]) =>
+          typeof url === "string" &&
+          url === "/api/web/reading-record/highlights/asset_highlight_policy",
+      );
+      expect(deleteCall).toBeDefined();
+      expect((deleteCall?.[1] as RequestInit | undefined)?.method).toBe("DELETE");
+    });
+    await waitFor(() => {
+      expect(
+        container.querySelector(
+          '[data-reader-record-user-highlight-asset-id="asset_highlight_policy"]',
+        ),
+      ).toBeNull();
+    });
+  });
+
+  it("updates an exact saved highlight range instead of creating a duplicate highlight", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            status: "updated",
+            item: makeHighlightWriteItem({ color: "warm_yellow" }),
+            session: { state: "signed_in" },
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onRequestSnapshotReload = vi.fn().mockResolvedValue(undefined);
+
+    const { container } = render(
+      <ReaderRecordPlateSurface
+        snapshot={makeSnapshot([makePolicyHighlightAsset()])}
+        onRequestSnapshotReload={onRequestSnapshotReload}
+      />,
+    );
+    const highlight = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-highlight-asset-id="asset_highlight_policy"]',
+    );
+    expect(highlight).not.toBeNull();
+    if (!highlight) {
+      throw new Error("Expected policy highlight mark");
+    }
+
+    selectTextInElement(highlight, 0, "policy".length);
+    const highlightButton = await waitForSelectionAction(container, "highlight");
+    await waitFor(() => {
+      expect(highlightButton.disabled).toBe(false);
+    });
+    fireEvent.click(highlightButton);
+
+    await waitFor(() => {
+      const patchCalls = fetchMock.mock.calls.filter(
+        ([url]) =>
+          typeof url === "string" &&
+          url === "/api/web/reading-record/highlights/asset_highlight_policy",
+      );
+      expect(patchCalls).toHaveLength(1);
+      expect((patchCalls[0]?.[1] as RequestInit | undefined)?.method).toBe("PATCH");
+    });
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) =>
+          typeof url === "string" &&
+          url === "/api/web/reading-record/highlights" &&
+          (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
+  it("removes superseded highlight assets after a canonical merge response", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      if (url === "/api/web/reading-record/highlights") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              ok: true,
+              status: "created",
+              item: makeHighlightWriteItem({
+                id: "asset_highlight_canonical",
+                selectedText: "policy choices",
+                color: "soft_rose",
+                supersededIds: ["asset_highlight_policy"],
+              }),
+              session: { state: "signed_in" },
+            }),
+            {
+              status: 201,
+              headers: { "content-type": "application/json" },
+            },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onRequestSnapshotReload = vi.fn().mockResolvedValue(undefined);
+
+    const { container } = render(
+      <ReaderRecordPlateSurface
+        snapshot={makeSnapshot([makePolicyHighlightAsset()])}
+        onRequestSnapshotReload={onRequestSnapshotReload}
+      />,
+    );
+    const policyMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-highlight-asset-id="asset_highlight_policy"]',
+    );
+    const choicesLeaf = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-reader-record-leaf="segment_text"]'),
+    ).find((element) => element.textContent?.includes(" choices"));
+    expect(policyMark).not.toBeNull();
+    expect(choicesLeaf).not.toBeNull();
+    if (!policyMark || !choicesLeaf) {
+      throw new Error("Expected policy highlight and choices leaf");
+    }
+
+    selectAcrossElements(policyMark, 0, choicesLeaf, " choices".length);
+    const highlightButton = await waitForSelectionAction(container, "highlight");
+    await waitFor(() => {
+      expect(highlightButton.disabled).toBe(false);
+    });
+    fireEvent.click(highlightButton);
+
+    await waitFor(() => {
+      expect(
+        container.querySelector(
+          '[data-reader-record-user-highlight-asset-id="asset_highlight_policy"]',
+        ),
+      ).toBeNull();
+      const canonical = container.querySelector<HTMLElement>(
+        '[data-reader-record-user-highlight-asset-id="asset_highlight_canonical"]',
+      );
+      expect(canonical).not.toBeNull();
+      expect(canonical?.textContent).toContain("policy");
+    });
+    expect(onRequestSnapshotReload).not.toHaveBeenCalled();
+  });
+
   it("saves note through the Reading Record write endpoint with nested anchor", async () => {
     const fetchMock = installReaderRecordWriteFetchMock();
     const onRequestSnapshotReload = vi.fn().mockResolvedValue(undefined);
@@ -2476,7 +3375,7 @@ describe("ReaderRecordPlateSurface", () => {
       />,
     );
     const memoryMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_1"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
     expect(memoryMark).not.toBeNull();
     if (!memoryMark) {
@@ -2542,7 +3441,7 @@ describe("ReaderRecordPlateSurface", () => {
       <ReaderRecordPlateSurface snapshot={makeSnapshot([existingNote])} />,
     );
     const memoryMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_1"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
     expect(memoryMark).not.toBeNull();
     if (!memoryMark) {
@@ -2601,7 +3500,7 @@ describe("ReaderRecordPlateSurface", () => {
       <ReaderRecordPlateSurface snapshot={makeSnapshot([existingNote])} />,
     );
     const memoryMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_1"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
     expect(memoryMark).not.toBeNull();
     if (!memoryMark) {
@@ -2629,7 +3528,7 @@ describe("ReaderRecordPlateSurface", () => {
     const fetchMock = installReaderAskFetchMock();
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
     const memoryMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_1"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
     expect(memoryMark).not.toBeNull();
     if (!memoryMark) {
@@ -2682,7 +3581,7 @@ describe("ReaderRecordPlateSurface", () => {
     const fetchMock = installReaderAskFetchMock();
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
     const memoryMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_1"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
     expect(memoryMark).not.toBeNull();
     if (!memoryMark) {
@@ -2716,16 +3615,15 @@ describe("ReaderRecordPlateSurface", () => {
 
   it("opens the RR Ask panel from a saved note in Reading Record scope", async () => {
     const fetchMock = installReaderAskFetchMock();
-    const noteAsset = makeUserAsset({
+    const noteAsset = makePolicyNoteAsset({
       asset_id: "asset_note_1",
-      asset_type: "note",
       note_text: "Keep this policy concept for review.",
     });
     const { container } = render(
       <ReaderRecordPlateSurface snapshot={makeSnapshot([noteAsset])} />,
     );
     const noteMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-kind="user_note"]',
+      '[data-reader-record-user-note-asset-ids]',
     );
     expect(noteMark).not.toBeNull();
     if (!noteMark) {
@@ -2741,7 +3639,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(panel.textContent).toContain("Keep this policy concept for review.");
     expect(
       panel.querySelector('[data-reader-record-note-quote="true"]')?.textContent,
-    ).toContain("memory");
+    ).toContain("policy");
     await waitFor(() => {
       expect(noteMark.dataset.readerRecordNoteActive).toBe("true");
     });
@@ -2773,29 +3671,14 @@ describe("ReaderRecordPlateSurface", () => {
   });
 
   it("keeps overlapping note marks locatable and opens the clicked note", async () => {
-    const shortNote = makeUserAsset({
+    const shortNote = makePolicyNoteAsset({
       asset_id: "asset_note_short",
-      asset_type: "note",
-      note_text: "Short memory note.",
+      note_text: "Short policy note.",
     });
-    const wideNote = makeUserAsset({
+    const wideNote = makePolicyNoteAsset({
       asset_id: "asset_note_wide",
-      asset_type: "note",
-      note_text: "Wider memory-shapes note.",
-      anchor: {
-        anchor_type: "text_range",
-        base_id: "base_1",
-        unit_id: "unit_1",
-        anchor_segment_id: "seg_1",
-        sentence_id: "sent_1",
-        segment_type: "sentence",
-        offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
-        start_offset: 14,
-        end_offset: 27,
-        selected_text: "memory shapes",
-        text_hash: computeUtf16FNV1a("memory shapes"),
-        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
-      },
+      note_text: "Wider policy-choices note.",
+      anchor: policyNoteAnchor("policy choices"),
     });
     const { container } = render(
       <ReaderRecordPlateSurface snapshot={makeSnapshot([shortNote, wideNote])} />,
@@ -2803,12 +3686,12 @@ describe("ReaderRecordPlateSurface", () => {
 
     const shortNoteMarks = Array.from(
       container.querySelectorAll<HTMLElement>(
-        '[data-reader-record-mark-id="user_note:asset_note_short"]',
+        '[data-reader-record-user-note-asset-ids~="asset_note_short"]',
       ),
     );
     const wideNoteMarks = Array.from(
       container.querySelectorAll<HTMLElement>(
-        '[data-reader-record-mark-id="user_note:asset_note_wide"]',
+        '[data-reader-record-user-note-asset-ids~="asset_note_wide"]',
       ),
     );
     expect(shortNoteMarks.length).toBeGreaterThan(0);
@@ -2816,15 +3699,23 @@ describe("ReaderRecordPlateSurface", () => {
 
     fireEvent.click(shortNoteMarks[0] as HTMLElement);
     let panel = await screen.findByTestId("reader-record-inline-comment-panel");
-    expect(panel.textContent).toContain("Short memory note.");
-    expect(panel.textContent).toContain("memory");
+    expect(panel.textContent).toContain("Short policy note.");
+    expect(panel.textContent).toContain("policy");
 
-    fireEvent.click(wideNoteMarks[0] as HTMLElement);
+    const wideOnlyMark = wideNoteMarks.find((element) =>
+      element.textContent?.includes("choices"),
+    );
+    expect(wideOnlyMark).toBeDefined();
+    if (!wideOnlyMark) {
+      throw new Error("Expected wide-only note fragment");
+    }
+
+    fireEvent.click(wideOnlyMark);
     panel = await screen.findByTestId("reader-record-inline-comment-panel");
     await waitFor(() => {
-      expect(panel.textContent).toContain("Wider memory-shapes note.");
+      expect(panel.textContent).toContain("Wider policy-choices note.");
     });
-    expect(panel.textContent).toContain("memory shapes");
+    expect(panel.textContent).toContain("policy choices");
   });
 
   it("edits an existing note through the Reading Record PATCH endpoint", async () => {
@@ -2848,9 +3739,8 @@ describe("ReaderRecordPlateSurface", () => {
     const onRequestSnapshotReload = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("fetch", fetchMock);
 
-    const noteAsset = makeUserAsset({
+    const noteAsset = makePolicyNoteAsset({
       asset_id: "asset_note_1",
-      asset_type: "note",
       note_text: "Original note text for editing.",
     });
     const { container } = render(
@@ -2861,7 +3751,7 @@ describe("ReaderRecordPlateSurface", () => {
     );
 
     const noteMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-kind="user_note"]',
+      '[data-reader-record-user-note-asset-ids]',
     );
     expect(noteMark).not.toBeNull();
     if (!noteMark) {
@@ -2929,9 +3819,8 @@ describe("ReaderRecordPlateSurface", () => {
     const onRequestSnapshotReload = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("fetch", fetchMock);
 
-    const noteAsset = makeUserAsset({
+    const noteAsset = makePolicyNoteAsset({
       asset_id: "asset_note_1",
-      asset_type: "note",
       note_text: "Note to be deleted.",
     });
     const { container } = render(
@@ -2942,7 +3831,7 @@ describe("ReaderRecordPlateSurface", () => {
     );
 
     const noteMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-kind="user_note"]',
+      '[data-reader-record-user-note-asset-ids]',
     );
     expect(noteMark).not.toBeNull();
     if (!noteMark) {
@@ -2998,7 +3887,7 @@ describe("ReaderRecordPlateSurface", () => {
     );
 
     const memoryMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-id="vocab_mark_1"]',
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
     expect(memoryMark).not.toBeNull();
     if (!memoryMark) {
@@ -3053,9 +3942,8 @@ describe("ReaderRecordPlateSurface", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const noteAsset = makeUserAsset({
+    const noteAsset = makePolicyNoteAsset({
       asset_id: "asset_note_1",
-      asset_type: "note",
       note_text: "Original note for cancel-edit test.",
     });
     const { container } = render(
@@ -3063,7 +3951,7 @@ describe("ReaderRecordPlateSurface", () => {
     );
 
     const noteMark = container.querySelector<HTMLElement>(
-      '[data-reader-record-mark-kind="user_note"]',
+      '[data-reader-record-user-note-asset-ids]',
     );
     expect(noteMark).not.toBeNull();
     if (!noteMark) {
@@ -3493,7 +4381,7 @@ describe("ReaderRecordPlateSurface", () => {
     });
   });
 
-  it("links uniquely matched sentence analysis chunks with source leaf hover and focus state", async () => {
+  it("activates sentence analysis source overlay only from chunk row hover, focus, or tap", async () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
     const chunk = container.querySelector<HTMLElement>(
       '[data-reader-record-sentence-analysis-chunk="subject"]',
@@ -3523,7 +4411,17 @@ describe("ReaderRecordPlateSurface", () => {
       expect(leaf.dataset.readerRecordMarkStackKinds).toContain(
         "sentence_analysis_chunk",
       );
+      expect(leaf.tabIndex).toBe(-1);
     }
+
+    fireEvent.mouseEnter(sourceLeaves[0]!);
+    fireEvent.click(sourceLeaves[0]!);
+    await waitFor(() => {
+      expect(chunk.dataset.readerRecordSentenceAnalysisChunkActive).toBe("false");
+      for (const leaf of sourceLeaves) {
+        expect(leaf.dataset.readerRecordSentenceAnalysisChunkActive).toBeUndefined();
+      }
+    });
 
     fireEvent.mouseEnter(chunk);
     await waitFor(() => {
@@ -3541,13 +4439,48 @@ describe("ReaderRecordPlateSurface", () => {
       }
     });
 
-    fireEvent.focus(sourceLeaves[0]!);
+    fireEvent.focus(chunk);
     await waitFor(() => {
       expect(chunk.dataset.readerRecordSentenceAnalysisChunkActive).toBe("true");
       for (const leaf of sourceLeaves) {
         expect(leaf.dataset.readerRecordSentenceAnalysisChunkActive).toBe("true");
       }
     });
+
+    fireEvent.blur(chunk);
+    await waitFor(() => {
+      expect(chunk.dataset.readerRecordSentenceAnalysisChunkActive).toBe("false");
+    });
+
+    fireEvent.click(chunk);
+    await waitFor(() => {
+      expect(chunk.dataset.readerRecordSentenceAnalysisChunkActive).toBe("true");
+      for (const leaf of sourceLeaves) {
+        expect(leaf.dataset.readerRecordSentenceAnalysisChunkActive).toBe("true");
+      }
+    });
+  });
+
+  it("freezes Quick Peek reference rect and does not resolve mark intent from DOM JSON payloads", () => {
+    const surfaceSource = readFileSync(
+      resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
+      "utf8",
+    );
+    const leafSource = readFileSync(
+      resolve(process.cwd(), "src/components/editor/plugins/reader-leaf-kit.tsx"),
+      "utf8",
+    );
+
+    expect(surfaceSource).toContain("const rect = anchor.getBoundingClientRect();");
+    expect(surfaceSource).toContain(
+      'quickPeekAnchorRef.current = { kind: "range", getRect: () => rect };',
+    );
+    expect(surfaceSource).toContain("handleLeafClickIntent");
+    expect(surfaceSource).not.toMatch(/onClickCapture/);
+    expect(surfaceSource).not.toMatch(/handleSurfaceClick/);
+    expect(surfaceSource).not.toMatch(/readerRecordMarkPayload/);
+    expect(surfaceSource).not.toMatch(/JSON\.parse\(.*payload/i);
+    expect(leafSource).not.toMatch(/data-reader-record-mark-payload/);
   });
 
   it("keeps Plate write paths on RR APIs and avoids legacy adapters or legacy note/annotation routes", () => {
@@ -3633,20 +4566,30 @@ describe("ReaderRecordPlateSurface", () => {
     expect(surfaceSource).not.toMatch(/ReaderRecordNoteComposer/);
   });
 
-  it("keeps new user highlight choices to yellow, blue, and rose", () => {
+  it("keeps new user highlight choices to yellow, mint, and rose", () => {
     const surfaceSource = readFileSync(
       resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
       "utf8",
     );
+    const userHighlightSources = [
+      "src/components/reader/SelectionToolbar.tsx",
+      "src/components/reader/ReaderContextPanel.tsx",
+      "src/components/editor/plugins/reader-leaf-kit.tsx",
+      "src/components/reader/plate/ReaderMarkLeaf.tsx",
+      "src/app/globals.css",
+    ].map((filePath) => readFileSync(resolve(process.cwd(), filePath), "utf8"));
 
     expect(
       Array.from(
-        surfaceSource.matchAll(/value: "(warm_yellow|soft_blue|soft_rose)"/g),
+        surfaceSource.matchAll(/value: "(warm_yellow|soft_mint|soft_rose)"/g),
       ).map((match) => match[1]),
-    ).toEqual(["warm_yellow", "soft_blue", "soft_rose"]);
-    expect(surfaceSource).not.toMatch(/value: "soft_green"/);
-    expect(surfaceSource).not.toMatch(/value: "soft_purple"/);
-    expect(surfaceSource).not.toMatch(/value: "sage_green"/);
+    ).toEqual(["warm_yellow", "soft_mint", "soft_rose"]);
+    for (const source of [surfaceSource, ...userHighlightSources]) {
+      expect(source).not.toMatch(/soft_blue/);
+      expect(source).not.toMatch(/soft_green/);
+      expect(source).not.toMatch(/soft_purple/);
+      expect(source).not.toMatch(/sage_green/);
+    }
   });
 
   it("selection state bridge exposes write state without rendering the legacy action strip", () => {

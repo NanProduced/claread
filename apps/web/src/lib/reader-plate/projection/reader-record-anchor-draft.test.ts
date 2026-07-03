@@ -57,6 +57,12 @@ function makeSnapshot(
     record_id: RECORD_ID,
     record: {
       title: "Reader Record Anchor Draft Test",
+      display_title_zh: "Reader Record Anchor Draft Test",
+      title_generation_status: "succeeded",
+      title_generation_error_code: null,
+      title_generation_error_message: null,
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
       created_at: "2026-06-23T00:00:00Z",
       source_type: "text",
       source_metadata: {},

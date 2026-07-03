@@ -53,6 +53,23 @@ function useReaderSentenceAnalysisInteraction() {
   return useContext(ReaderSentenceAnalysisInteractionContext);
 }
 
+export interface ReaderGrammarInteractionValue {
+  activeGrammarItemId: string | null;
+  setActiveGrammarItemId: (itemId: string | null) => void;
+  pulseGrammarItemId: (itemId: string) => void;
+}
+
+export const ReaderGrammarInteractionContext =
+  createContext<ReaderGrammarInteractionValue>({
+    activeGrammarItemId: null,
+    setActiveGrammarItemId: () => {},
+    pulseGrammarItemId: () => {},
+  });
+
+function useReaderGrammarInteraction() {
+  return useContext(ReaderGrammarInteractionContext);
+}
+
 function sentenceChunkDomId(chunk: {
   order: number;
   label: string;
@@ -169,15 +186,24 @@ function ReaderCalloutComponent({
   const data = node.data;
   const variant = node.variant;
   const icon = node.icon;
+  const {
+    activeGrammarItemId,
+    setActiveGrammarItemId,
+    pulseGrammarItemId,
+  } = useReaderGrammarInteraction();
 
   const isGrammar = variant === "grammar";
   const isSupplement = variant === "supplement";
+  const grammarItemId = isGrammar ? data?.itemId : undefined;
+  const grammarActive =
+    isGrammar && grammarItemId ? activeGrammarItemId === grammarItemId : false;
   const label = calloutTypeLabel(variant);
   const containerClass = [
     "reader-record-plate-callout rounded-[8px] border font-sans text-ink-soft shadow-none",
     isGrammar
       ? "reader-record-plate-callout--grammar border-grammar-violet/18 bg-ink/[0.035]"
       : "",
+    grammarActive ? "reader-record-plate-callout--grammar-active" : "",
     isSupplement
       ? "reader-record-plate-callout--supplement border-vocab-amber/18 bg-vocab-amber/[0.045]"
       : "",
@@ -205,7 +231,35 @@ function ReaderCalloutComponent({
       data-unit-id={data?.unitId}
       data-layer-id={data?.layerId}
       data-supplement-id={data?.supplementId}
+      data-reader-record-grammar-item-id={grammarItemId}
+      data-reader-record-grammar-active={grammarActive ? "true" : undefined}
       data-reader-record-callout-label={label}
+      tabIndex={isGrammar ? -1 : undefined}
+      onMouseEnter={() => {
+        if (grammarItemId) {
+          setActiveGrammarItemId(grammarItemId);
+        }
+      }}
+      onMouseLeave={() => {
+        if (grammarItemId) {
+          setActiveGrammarItemId(null);
+        }
+      }}
+      onFocus={() => {
+        if (grammarItemId) {
+          setActiveGrammarItemId(grammarItemId);
+        }
+      }}
+      onBlur={() => {
+        if (grammarItemId) {
+          setActiveGrammarItemId(null);
+        }
+      }}
+      onClick={() => {
+        if (grammarItemId) {
+          pulseGrammarItemId(grammarItemId);
+        }
+      }}
     >
       <div className="min-w-0">
         <div className="mb-1.5 flex min-w-0 items-start gap-2">
@@ -373,6 +427,12 @@ function ReaderSentenceAnalysisChunkComponent({
       }}
       onBlur={() => {
         if (hasSourceMatch) setActiveChunkId(null);
+      }}
+      onPointerDown={() => {
+        if (hasSourceMatch) setActiveChunkId(chunkId);
+      }}
+      onClick={() => {
+        if (hasSourceMatch) setActiveChunkId(chunkId);
       }}
     >
       <dt className="min-w-0">
@@ -662,7 +722,7 @@ function ReaderMarkdownCodeLeaf({ children, attributes }: PlateLeafProps) {
   return (
     <code
       {...attributes}
-      className={`reader-record-plate-inline-code rounded bg-muted/50 font-mono ${
+      className={`reader-record-plate-inline-code ${
         attributes?.className ?? ""
       }`.trim()}
       data-reader-record-markdown-mark="code"

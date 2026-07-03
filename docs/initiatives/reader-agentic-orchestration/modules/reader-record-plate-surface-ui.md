@@ -1,7 +1,7 @@
 # Reader Record Plate Surface UI
 
-> 状态：目标方案草案；2026-06-27 已按当前代码重新校准 Plate 接入口径
-> 最后更新：2026-06-27
+> 状态：目标方案 + 当前实现基线；2026-07-03 已按 Annotation Visual Matrix 与浏览器验收结果重新校准
+> 最后更新：2026-07-03
 > 范围：`/app/reader-record/{recordId}` 在 Agentic Orchestration 架构下的 Reader Record 解析页 UI/UX、Plate.js 文档表面、选择交互、词典/Ask 联动、用户高亮/笔记和第一版实现边界。
 
 当前代码接入矩阵见 [`reader-plate-component-integration.md`](./reader-plate-component-integration.md)。本文件描述目标 UI/UX 和产品边界；若本文与代码事实冲突，以接入矩阵和当前代码为准，再反向更新本文。
@@ -43,7 +43,7 @@ Reader Record 页面使用 Plate.js 作为中心阅读文档的交互底座。�
 
 - 页面只保留 **精读模式** 和 **沉浸模式** 两态，不再引入第三个“原文/双语”模式。
 - 精读模式默认显示译文和解析批注；沉浸模式不显示译文、grammar note、sentence analysis 正文。
-- 用户高亮只用三色：yellow（重点）、blue（疑问）、rose（难点）。用户高亮主要使用半透明背景；AI 词汇/语法标注主要使用下划线/cue；用户笔记使用 Plate Comment mark。
+- 用户高亮只用三色：`warm_yellow`（重点）、`soft_mint`（疑问）、`soft_rose`（难点）。用户高亮主要使用半透明背景；用户笔记使用高亮背景 + 同色系下划线；AI 词汇三类使用各自高亮色系；语法标注使用清晰下划线 + hover/active 浅色底。
 - 单击 `vocab_highlight` 才触发词典 quick peek 并调用词典接口；单击 `phrase_gloss` / `context_gloss` 打开已有解释，不再查词典；普通原文单击不自动查词，划选后从 toolbar 触发 Lookup。
 - Ask Claread 采用全局可选、稳定回源、全上下文引用：payload 必须包含 `visible_selected_text`、source `anchor_set`、source context、相关译文/词汇/语法/句析/用户资产。
 - 个人笔记使用 Plate Comment UI 但没有协作语义；重复同一选区应提醒但允许新增，不允许静默覆盖。
@@ -589,8 +589,7 @@ UI-D5 Active Anchor Inspector 已在 `ReaderRecordPlateSurface` 内落地为前�
 默认显示：
 
 - 原文。
-- V1 过渡期显示 unit 边界内的“本段译文”。
-- Group-native translation 完成后显示按阅读组对齐的译文。
+- Group-native translation 按阅读组显示译文，source group 后紧跟 translation lane。
 - `vocab_highlight`、`phrase_gloss`、`context_gloss`。
 - grammar note / grammar explanation，作为文档式行间注释，而不是旧式卡片。
 - sentence analysis structure block，默认展开但保持紧凑。
@@ -638,8 +637,10 @@ group source text 也不进入 durable `output_json`；需要展示或校验时�
 `anchor_segment_ids` 回源到 Stable Reading Base 重新切片。
 
 前端解析页直接消费 backend `reader_translation_group` / Translation Group。projection
-按 `covered_anchor_segment_ids` 定位 group 覆盖范围，在最后一个 covered anchor segment
-输出完 paragraph / grammar_note / sentence_analysis / ask supplement 后插入对应译文块。
+按 `covered_anchor_segment_ids` 定位 group 覆盖范围，先输出一个合并后的 source group
+paragraph，再紧跟对应译文 blockquote，然后输出该 group 覆盖范围内的 grammar_note /
+sentence_analysis / ask supplement。这样译文贴近原文，解析块仍保留在对应 source group
+之后。
 若某个 group 内部因为 grammar_note、sentence_analysis 或版式需要出现视觉换行/插块，这属于
 display-only layout policy：不得拆分后端 `TranslationGroup`，不得生成新的翻译事实，也不得按中文标点重新切译文。
 
@@ -651,25 +652,27 @@ display-only layout policy：不得拆分后端 `TranslationGroup`，不得生�
 
 ## 文档 Marks And Cues
 
-系统标注不再使用多盒彩色高亮。
+系统标注不再使用“全都下划线”的低可见度方案。2026-07-03 视觉基线采用单层
+mark stack：Reader Record source text 的一个 leaf 只渲染一个 stack span，避免
+vocabulary / grammar / user highlight / user note 嵌套 span 互相抢 selection 或 click。
 
 | Layer | 默认形态 | Active / Hover |
 |---|---|---|
-| `vocab_highlight` | 浅底色，精读模式显示 | 打开词典 / mark 增强 |
-| `phrase_gloss` | 细实线或轻底色 | 打开结构化短语解释 |
-| `context_gloss` | 点线或虚线下划线 | 打开上下文释义 |
-| `grammar_note` | 细下划线 + 小编号 / cue | 显示文档注释 / 脚注式解释 |
-| `sentence_analysis` | 结构 cue | 打开 Structure Lens |
-| `user_highlight` | 用户荧光笔背景 mark | 改颜色 / 删除 / Ask |
-| `comment_note` | Plate Comment mark / underline / margin indicator | 打开个人笔记 stack |
+| `vocab_highlight` | amber 高亮底 + 同色系深色文字，无下划线 | 打开词典 Quick Peek；hover 加深底色和文字 |
+| `phrase_gloss` | violet/lavender 高亮底 + 同色系深色文字，无下划线 | 打开结构化短语解释；hover 加深 |
+| `context_gloss` | sky/context 高亮底 + 同色系深色文字，无下划线 | 打开上下文释义；hover 加深 |
+| `grammar_note` | link-like 清晰下划线，不默认加大块底色 | hover/active 时加 grammar-violet 浅底 + 更强下划线，并联动 grammar callout |
+| `sentence_analysis` | source text 默认不显示 chunk 标注 | 只在 chunk row hover/focus/tap 时显示 borderless source overlay |
+| `user_highlight` | 用户荧光笔背景 mark，无下划线 | 点击打开改色/删除；hover 加深但不产生边框/ring |
+| `comment_note` / user note | 用户荧光笔背景 + 同色系较深下划线 | 打开个人笔记；hover/active 加深但不使用蓝色虚线 |
 
 用户高亮只保留三种语义色：
 
-- `yellow`：重点，默认色。
-- `blue`：疑问，适合后续 Ask。
-- `rose`：难点，适合语法难点或复习点。
+- `warm_yellow`：重点，默认色。
+- `soft_mint`：疑问，适合后续 Ask。
+- `soft_rose`：难点，适合语法难点或复习点。
 
-用户高亮的默认视觉只使用半透明背景，不改变正文颜色，不使用系统标注下划线。AI 词汇、短语、语法标注优先使用下划线、线型、编号或 cue；用户笔记使用 Plate Comment mark。这样同一段文本同时有用户高亮、AI 标注和笔记时仍能保持正文可读。
+用户高亮的默认视觉只使用半透明背景，不改变正文颜色，不使用系统标注下划线。用户笔记 quote 可以有同色系下划线，因为它是 user-owned 资产。AI vocabulary/phrase/context 使用高亮底 + 字色；当它们与用户资产重叠时，用户资产背景优先，AI mark 降级为文字色。这样同一段文本同时有用户高亮、AI 标注和笔记时仍能保持正文可读。
 
 ### Marks / Cues Conflict Resolver
 
@@ -680,18 +683,18 @@ display-only layout policy：不得拆分后端 `TranslationGroup`，不得生�
 | Priority | Layer | 视觉策略 |
 |---:|---|---|
 | 1 | 当前 selection | 半透明 overlay，覆盖所有 mark，但不改变文字颜色 |
-| 2 | active comment / active user highlight | ring / stronger underline / margin indicator 增强 |
-| 3 | active system cue | cue 编号、线型或局部 underline 增强 |
-| 4 | user highlight | 用户三色半透明底色，但透明度低于 selection |
-| 5 | comment indicator | comment underline 或 margin dot，不抢用户 highlight 底色 |
-| 6 | phrase/context/grammar system marks | 低干扰线型或轻底色 |
-| 7 | vocab system mark | 最弱提示；精读可略明显，沉浸降级为低透明下划线/点线 |
+| 2 | active user note / active user highlight | 高亮底色或同色下划线增强；不使用 border/ring/inset 导致行高跳动 |
+| 3 | active system cue | grammar underline / sentence chunk overlay 临时增强 |
+| 4 | user highlight / user note | 用户三色半透明底色；note 额外使用同色系下划线 |
+| 5 | vocabulary / phrase / context system marks | amber / violet / sky 高亮底 + 同色文字；与用户资产重叠时降级为文字色 |
+| 6 | grammar system mark | 默认清晰下划线；hover/active 才出现浅底色 |
+| 7 | sentence-analysis chunk source overlay | 默认不显示；只由 chunk row hover/focus/tap 单向激活 |
 
 合并规则：
 
 - selection 永远是 overlay，不和 highlight/comment/system mark 的背景色相乘。
-- 同一 text leaf 同时有 user highlight 和 system mark 时，背景取 user highlight；system mark 降级为 underline / cue。
-- 同一 text leaf 同时有 comment 和 user highlight 时，highlight 保留背景，comment 使用 underline 或 margin indicator。
+- 同一 text leaf 同时有 user highlight 和 vocabulary/phrase/context mark 时，背景取 user asset；system vocabulary mark 降级为文字色。
+- 同一 text leaf 同时有 user note 和 user highlight 时，note 的下划线保留，背景仍保持 user asset 单层高亮。
 - 同一 text leaf 同时有多个 system marks 时，只允许一个背景层；其余使用线型、编号或 popover cue。
 - underline lane 最多两层：user/comment lane 和 system lane。active cue 可以临时提升到最上层，但不能导致行高跳动。
 - sentence_analysis chunk underline 不参与默认叠层；只在 Structure Lens active 时显示。
@@ -704,8 +707,8 @@ display-only layout policy：不得拆分后端 `TranslationGroup`，不得生�
 
 | Overlap | 结果 |
 |---|---|
-| user highlight + vocab | 用户底色 + vocab 弱 underline/tooltip |
-| comment + grammar_note | comment indicator 保留；grammar cue 编号可见但不加第二块背景 |
+| user highlight + vocab | 用户底色 + vocab 同色系文字；不叠第二层背景 |
+| user note + grammar_note | note 底色/下划线保留；grammar 默认下划线或 active 浅底由 resolver 控制 |
 | selection + user highlight + phrase_gloss | selection overlay 覆盖；toolbar anchor 来自 selection |
 | active Structure Lens + grammar_note | Structure Lens chunk line 临时增强；grammar cue 降低强调但仍可点击 |
 | multi_text comment ranges + system marks | 多个 ranges 共用 comment thread indicator；system marks 按各自 range 低干扰显示 |
@@ -881,7 +884,7 @@ Lookup 是 Claread 核心能力，但不能破坏文档阅读和 Plate selection
 - 当前 V1c 代码只支持单个 `UserEditorialAssetAnchor` 表达的 sentence/full-segment 或 `text_range`，这是实现现状，不是最终产品边界。
 - 多段 / 跨 block 高亮后续应走 `UserEditorialAssetAnchorSet` 或等价 `user_asset_anchor_ranges` persistence contract。
 - 作为 user-owned mark 投影到 Plate surface。
-- 仅三种颜色：yellow / blue / rose；默认 yellow。
+- 仅三种颜色：`warm_yellow` / `soft_mint` / `soft_rose`；默认 `warm_yellow`。
 - 用户高亮视觉使用半透明背景，不使用 AI 系统标注的下划线语义。
 
 ### User Note

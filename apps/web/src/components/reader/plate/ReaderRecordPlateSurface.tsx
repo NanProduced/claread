@@ -6,7 +6,13 @@ import {
   buildTextRangeTargetKey,
 } from "@claread/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type {
+  CSSProperties,
+  HTMLAttributes,
+  MouseEvent,
+  PointerEvent as ReactPointerEvent,
+  Ref,
+} from "react";
 
 import { AiWorkspacePanel } from "@/components/reader/AiWorkspacePanel";
 import type { DictLookupTypeDto, WebDictResult } from "@/types/api/dict";
@@ -16,6 +22,7 @@ import {
   type ReaderRecordPlateParagraphBlock,
   type ReaderRecordPlateProgress,
   type ReaderRecordPlateTextAnchor,
+  type ReaderRecordPlateGrammarMark,
   type ReaderRecordPlateUserHighlightMark,
   type ReaderRecordPlateUserNoteMark,
   type ReaderRecordPlateVocabularyMark,
@@ -31,7 +38,12 @@ import {
 } from "@/lib/reader-plate";
 import type { ReaderAnchorPayload } from "@/lib/reader-plate/bridges/assets";
 import type { ReaderRecordAnchorDraft } from "@/lib/reader-plate/projection/reader-record-anchor-draft";
-import type { ReaderPlateSnapshotDto, ReaderSnapshotUserAssetDto } from "@/types/api/reader-plate";
+import {
+  READER_TEXT_RANGE_HASH_ALGORITHM,
+  READER_TEXT_RANGE_OFFSET_UNIT,
+  type ReaderPlateSnapshotDto,
+  type ReaderSnapshotUserAssetDto,
+} from "@/types/api/reader-plate";
 import type {
   ReaderAskActionConfirmResponseDto,
   ReaderAskEntryActionDto,
@@ -69,13 +81,15 @@ import { firstMeaning, meaningsJson } from "../dictionary/contracts";
 import type { DictionaryAIViewState } from "@/types/api/dict-ai";
 import { Plate, usePlateEditor, type RenderLeaf } from "platejs/react";
 import { Editor, EditorContainer } from "@/components/ui/editor";
-import { ReaderPlateKit } from "@/components/editor/plugins/reader-plate-kit";
+import { ReaderRecordPlateKit } from "@/components/editor/plugins/reader-plate-kit";
 import {
-  ReaderLeafActionsContext,
   resolveReaderMarkVisual,
   sentenceChunkDomId,
 } from "@/components/editor/plugins/reader-leaf-kit";
-import { ReaderSentenceAnalysisInteractionContext } from "@/components/editor/plugins/reader-blocks-kit";
+import {
+  ReaderGrammarInteractionContext,
+  ReaderSentenceAnalysisInteractionContext,
+} from "@/components/editor/plugins/reader-blocks-kit";
 import {
   CommentPluginBridge,
   InlineCommentPanel,
@@ -125,7 +139,7 @@ const HIGHLIGHT_COLOR_OPTIONS: Array<{
   swatchClassName: string;
 }> = [
   { value: "warm_yellow", label: "重点", swatchClassName: "bg-vocab-amber/75 ring-vocab-amber/25" },
-  { value: "soft_blue", label: "疑问", swatchClassName: "bg-context-blue/65 ring-context-blue/25" },
+  { value: "soft_mint", label: "疑问", swatchClassName: "bg-emerald-200/80 ring-emerald-300/50" },
   { value: "soft_rose", label: "难点", swatchClassName: "bg-rose-200/80 ring-rose-300/50" },
 ];
 
@@ -335,8 +349,92 @@ function findDuplicateNoteMark(
   return null;
 }
 
-function readerMarkIdSelector(markId: string): string {
-  return `[data-reader-record-mark-id="${markId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+function readerNoteAssetIdSelector(assetId: string): string {
+  // ~= matches whitespace-separated list values
+  return `[data-reader-record-user-note-asset-ids~="${assetId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+}
+
+function dataAttributeEqualsSelector(attribute: string, value: string): string {
+  return `[${attribute}="${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+}
+
+function eventTargetElement(target: EventTarget | null): Element | null {
+  if (!target) {
+    return null;
+  }
+  if (typeof Element !== "undefined" && target instanceof Element) {
+    return target;
+  }
+  if (
+    typeof Node !== "undefined" &&
+    target instanceof Node &&
+    target.parentElement
+  ) {
+    return target.parentElement;
+  }
+  return null;
+}
+
+function relatedTargetInsideGrammarItem(
+  relatedTarget: EventTarget | null,
+  grammarItemId: string,
+): boolean {
+  const element = eventTargetElement(relatedTarget);
+  return Boolean(
+    element?.closest(
+      dataAttributeEqualsSelector(
+        "data-reader-record-grammar-item-id",
+        grammarItemId,
+      ),
+    ),
+  );
+}
+
+function hasNonCollapsedNativeSelection(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const domSelection = window.getSelection();
+  return Boolean(
+    domSelection &&
+      domSelection.rangeCount > 0 &&
+      !domSelection.isCollapsed &&
+      domSelection.toString().trim().length > 0,
+  );
+}
+
+function hasNonCollapsedReaderSelection(
+  selection: ReaderRecordSelectionAnchorBridgeResult | null,
+): boolean {
+  if (!selection?.selectedText.trim()) {
+    return false;
+  }
+  if (typeof window === "undefined") {
+    return true;
+  }
+  const domSelection = window.getSelection();
+  if (!domSelection) {
+    return true;
+  }
+  return !domSelection.isCollapsed && domSelection.toString().trim().length > 0;
+}
+
+function userNoteMarksFromLeaf(
+  leaf: PlateTextNode,
+): ReaderRecordPlateUserNoteMark[] {
+  const data = leaf.user_note_data;
+  if (!data) {
+    return [];
+  }
+  const marks = Array.isArray(data) ? data : [data];
+  return [...marks].sort((a, b) => {
+    const aLength = a.anchor.segmentEndOffset - a.anchor.segmentStartOffset;
+    const bLength = b.anchor.segmentEndOffset - b.anchor.segmentStartOffset;
+    if (aLength !== bLength) {
+      return aLength - bLength;
+    }
+    return a.assetId.localeCompare(b.assetId);
+  });
 }
 
 function writeStateLabel(writeState: ReaderRecordWriteState): string {
@@ -398,6 +496,176 @@ function buildTempUserAsset(
   };
 }
 
+type ReadingRecordUserAssetWritePayload = {
+  ok?: boolean;
+  message?: string;
+  item?: unknown;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? value
+    : null;
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function isHighlightUserAsset(asset: ReaderSnapshotUserAssetDto): boolean {
+  return (
+    asset.asset_type === "highlight" ||
+    asset.asset_type === "quick_highlight" ||
+    asset.asset_type === "user_highlight"
+  );
+}
+
+function userHighlightAssetMatchesDraft(
+  asset: ReaderSnapshotUserAssetDto,
+  draft: ReaderRecordAnchorDraft,
+): boolean {
+  const anchor = asset.anchor;
+  return (
+    !asset.deleted_at &&
+    isHighlightUserAsset(asset) &&
+    asset.reading_record_id === draft.record_id &&
+    asset.generation === draft.generation &&
+    anchor.anchor_type === "text_range" &&
+    anchor.base_id === draft.base_id &&
+    anchor.unit_id === draft.unit_id &&
+    anchor.anchor_segment_id === draft.anchor_segment_id &&
+    anchor.offset_unit === draft.offset_unit &&
+    anchor.start_offset === draft.start_offset &&
+    anchor.end_offset === draft.end_offset &&
+    anchor.selected_text === draft.selected_text &&
+    anchor.text_hash === draft.text_hash
+  );
+}
+
+function findExactUserHighlightAsset(
+  assets: ReaderSnapshotUserAssetDto[],
+  draft: ReaderRecordAnchorDraft,
+): ReaderSnapshotUserAssetDto | null {
+  return assets.find((asset) => userHighlightAssetMatchesDraft(asset, draft)) ?? null;
+}
+
+function canonicalHighlightAssetFromWritePayload(
+  snapshot: ReaderPlateSnapshotDto,
+  payload: ReadingRecordUserAssetWritePayload | null,
+): { asset: ReaderSnapshotUserAssetDto; supersededIds: string[] } | null {
+  if (!payload || !isRecord(payload.item)) {
+    return null;
+  }
+
+  const item = payload.item;
+  const assetId = readString(item.id);
+  const readingRecordId = readString(item.reading_record_id) ?? snapshot.record_id;
+  const baseId = readString(item.base_id);
+  const generation = readNumber(item.generation) ?? snapshot.record.generation;
+  const unitId = readString(item.unit_id);
+  const anchorSegmentId = readString(item.anchor_segment_id);
+  const startOffset = readNumber(item.unit_start_utf16);
+  const endOffset = readNumber(item.unit_end_utf16);
+  const selectedText = readString(item.selected_text);
+  const textHash = readString(item.text_hash);
+
+  if (
+    !assetId ||
+    readingRecordId !== snapshot.record_id ||
+    generation !== snapshot.record.generation ||
+    !baseId ||
+    baseId !== snapshot.base.base_id ||
+    !unitId ||
+    !anchorSegmentId ||
+    startOffset === null ||
+    endOffset === null ||
+    startOffset >= endOffset ||
+    !selectedText ||
+    !textHash
+  ) {
+    return null;
+  }
+
+  const segment = snapshot.anchor_segments.find(
+    (candidate) =>
+      candidate.anchor_segment_id === anchorSegmentId &&
+      candidate.unit_id === unitId,
+  );
+  if (!segment) {
+    return null;
+  }
+
+  return {
+    asset: {
+      asset_id: assetId,
+      asset_type: "user_highlight",
+      owner: "user",
+      reading_record_id: readingRecordId,
+      generation,
+      anchor: {
+        anchor_type: "text_range",
+        base_id: baseId,
+        unit_id: unitId,
+        anchor_segment_id: anchorSegmentId,
+        sentence_id: readString(item.sentence_id) ?? segment.sentence_id,
+        segment_type: segment.segment_type,
+        offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+        start_offset: startOffset,
+        end_offset: endOffset,
+        selected_text: selectedText,
+        text_hash: textHash,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+      note_text: null,
+      color: typeof item.color === "string" ? item.color : null,
+      created_at: readString(item.created_at) ?? new Date().toISOString(),
+      updated_at: readString(item.updated_at) ?? new Date().toISOString(),
+    },
+    supersededIds: readStringArray(item.superseded_ids),
+  };
+}
+
+function reconcileCanonicalHighlightAsset(
+  current: ReaderSnapshotUserAssetDto[],
+  canonical: ReaderSnapshotUserAssetDto,
+  supersededIds: string[],
+  extraRemovedIds: string[] = [],
+): ReaderSnapshotUserAssetDto[] {
+  const removedIds = new Set([...supersededIds, ...extraRemovedIds]);
+  removedIds.delete(canonical.asset_id);
+
+  const next: ReaderSnapshotUserAssetDto[] = [];
+  let inserted = false;
+  for (const asset of current) {
+    if (removedIds.has(asset.asset_id)) {
+      continue;
+    }
+    if (asset.asset_id === canonical.asset_id) {
+      if (!inserted) {
+        next.push(canonical);
+        inserted = true;
+      }
+      continue;
+    }
+    next.push(asset);
+  }
+
+  if (!inserted) {
+    next.push(canonical);
+  }
+  return next;
+}
+
 function buildDictionaryLookupSnapshot(
   snapshot: ReaderPlateSnapshotDto,
   state: ReaderRecordLookupState,
@@ -427,7 +695,7 @@ function buildDictionaryLookupSnapshot(
 async function postReadingRecordUserAsset(
   endpoint: "/api/web/reading-record/highlights" | "/api/web/reading-record/notes",
   body: Record<string, unknown>,
-): Promise<void> {
+): Promise<ReadingRecordUserAssetWritePayload | null> {
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
@@ -443,6 +711,31 @@ async function postReadingRecordUserAsset(
   if (!response.ok || payload?.ok === false) {
     throw new Error(payload?.message ?? "阅读资产保存失败。");
   }
+  return payload;
+}
+
+async function patchReadingRecordHighlightColor(
+  highlightId: string,
+  color: string,
+): Promise<ReadingRecordUserAssetWritePayload | null> {
+  const response = await fetch(
+    `/api/web/reading-record/highlights/${encodeURIComponent(highlightId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({ color }),
+    },
+  );
+  const payload = (await response.json().catch(() => null)) as
+    | ReadingRecordUserAssetWritePayload
+    | null;
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.message ?? "高亮更新失败。");
+  }
+  return payload;
 }
 
 function vocabularyTitle(mark: ReaderRecordPlateVocabularyMark) {
@@ -587,6 +880,17 @@ type PendingReaderRecordAskRequest = {
   entryAction: ReaderAskEntryActionDto;
   attachments: ReaderAskAttachment[];
   submissionMode?: "chat" | "quick_action";
+};
+
+type ReaderLeafClickResolver = (
+  leaf: PlateTextNode,
+  anchor: HTMLElement,
+  event: MouseEvent<HTMLElement>,
+) => void;
+
+type ReaderLeafSpanAttributes = HTMLAttributes<HTMLSpanElement> & {
+  ref?: Ref<HTMLSpanElement>;
+  "data-slate-leaf"?: true;
 };
 
 function immersiveParagraphBlock(
@@ -1110,6 +1414,23 @@ export function ReaderRecordPlateSurface({
   const [inspectState, setInspectState] =
     useState<ReaderStructuredInspectIntent | null>(null);
   const [activeSentenceChunkId, setActiveSentenceChunkId] = useState<string | null>(null);
+  const [activeGrammarItemId, setActiveGrammarItemId] = useState<string | null>(null);
+  const [hoverNoteAssetId, setHoverNoteAssetId] = useState<string | null>(null);
+  const [noteMenu, setNoteMenu] = useState<{
+    mark: ReaderRecordPlateUserNoteMark;
+    anchor: HTMLElement;
+    mode: "view" | "edit";
+    draft: string;
+  } | null>(null);
+  const grammarPulseTimerRef = useRef<number | null>(null);
+  const leafClickResolverRef = useRef<ReaderLeafClickResolver | null>(null);
+  const markPointerRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    dragged: boolean;
+  } | null>(null);
+  const suppressNextMarkClickRef = useRef(false);
   const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(
     () => readStoredReaderSettings(),
   );
@@ -1135,6 +1456,22 @@ export function ReaderRecordPlateSurface({
       // Ignore storage errors (e.g. private browsing, test env)
     }
   }, [themeName]);
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setActiveGrammarItemId(null);
+      }
+    }
+
+    window.document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.document.removeEventListener("keydown", handleKeyDown);
+      if (grammarPulseTimerRef.current !== null) {
+        window.clearTimeout(grammarPulseTimerRef.current);
+        grammarPulseTimerRef.current = null;
+      }
+    };
+  }, []);
   const [settingsPanelOpen, setSettingsPanelOpen] = useState(false);
   const settingsAnchorRef = useRef<HTMLElement | null>(null);
   const surfaceMode = readerSettings.mode;
@@ -1210,7 +1547,7 @@ export function ReaderRecordPlateSurface({
   );
   const editor = usePlateEditor(
     {
-      plugins: [...ReaderPlateKit],
+      plugins: [...ReaderRecordPlateKit],
       value: plateValue as never[],
     },
     [],
@@ -1223,25 +1560,221 @@ export function ReaderRecordPlateSurface({
   }, [plateValue, editor]);
 
   // renderLeaf：为每个 paragraph text leaf 输出选区锚点 data 属性，
-  // 保持与旧手动渲染（renderParagraphLeaf）一致的 DOM 结构，
-  // 让 readReaderRecordSelectionAnchorDrafts 选区逻辑无需改动。
+  // 同时承载 vocabulary / grammar / user_highlight / user_note 的视觉和交互。
+  //
+  // 单一外层 span 设计：
+  // - 不再注册 ReaderLeafKit leaf plugin，避免嵌套 mark-hit wrapper 干扰
+  //   浏览器原生 selection 落点。
+  // - 所有 mark 视觉通过 reader-record-mark-stack--* class 控制。
+  // - 点击优先级由 leaf 上各 mark data 字段决定，handleLeafClickIntent
+  //   按 vocabulary > grammar_note > user_note > user_highlight 顺序派发。
   const renderLeaf = useCallback(
     (props: Parameters<RenderLeaf>[0]) => {
       const leaf = props.leaf as unknown as PlateTextNode;
+      const attributes =
+        props.attributes as unknown as ReaderLeafSpanAttributes;
       const anchorSegmentId = leaf.anchor_segment_id;
-      const visual = resolveReaderMarkVisual(leaf, { activeSentenceChunkId });
+      const vocabularyMark = leaf.vocabulary_data;
+      const grammarMark = leaf.grammar_data;
+      const userHighlightMark = leaf.user_highlight_data;
+      const noteMarks = userNoteMarksFromLeaf(leaf);
+      const hasUserAsset = Boolean(userHighlightMark) || noteMarks.length > 0;
+      const downgradeVocabulary = Boolean(vocabularyMark) && hasUserAsset;
+      const activeNoteAssetIds = new Set<string>();
+      if (noteMenu?.mark.assetId) {
+        activeNoteAssetIds.add(noteMenu.mark.assetId);
+      }
+      if (hoverNoteAssetId) {
+        activeNoteAssetIds.add(hoverNoteAssetId);
+      }
+      const visual = resolveReaderMarkVisual(leaf, {
+        activeSentenceChunkId,
+        activeGrammarItemId,
+        downgradeVocabulary,
+        activeNoteAssetIds,
+      });
       const sentenceChunk = visual.sentenceChunk;
       const sentenceChunkId = sentenceChunk ? sentenceChunkDomId(sentenceChunk) : null;
+      const grammarItemId = grammarMark?.itemId ?? null;
+      const grammarActive =
+        grammarItemId !== null && activeGrammarItemId === grammarItemId;
+      const noteAssetIds = noteMarks.length > 0
+        ? noteMarks.map((mark) => mark.assetId).join(" ")
+        : null;
+      const firstNoteAssetId = noteMarks[0]?.assetId ?? null;
       const mergedClassName = [
         visual.kinds.length > 0 ? visual.className : null,
         props.attributes.className,
       ]
         .filter(Boolean)
         .join(" ");
+      const markClickProps =
+        visual.kinds.length > 0
+          ? ({
+              onPointerDown: (event: ReactPointerEvent<HTMLSpanElement>) => {
+                markPointerRef.current = {
+                  pointerId: event.pointerId,
+                  startX: event.clientX,
+                  startY: event.clientY,
+                  dragged: false,
+                };
+                suppressNextMarkClickRef.current = false;
+              },
+              onPointerMove: (event: ReactPointerEvent<HTMLSpanElement>) => {
+                const pointer = markPointerRef.current;
+                if (!pointer || pointer.pointerId !== event.pointerId) {
+                  return;
+                }
+                const dx = event.clientX - pointer.startX;
+                const dy = event.clientY - pointer.startY;
+                if (dx * dx + dy * dy >= 16) {
+                  pointer.dragged = true;
+                  suppressNextMarkClickRef.current = true;
+                }
+              },
+              onPointerUp: (event: ReactPointerEvent<HTMLSpanElement>) => {
+                const pointer = markPointerRef.current;
+                if (pointer?.pointerId === event.pointerId && pointer.dragged) {
+                  suppressNextMarkClickRef.current = true;
+                }
+                if (hasNonCollapsedNativeSelection()) {
+                  suppressNextMarkClickRef.current = true;
+                }
+                markPointerRef.current = null;
+              },
+              onPointerCancel: () => {
+                markPointerRef.current = null;
+              },
+              onMouseDown: (event: MouseEvent<HTMLSpanElement>) => {
+                if (markPointerRef.current !== null) {
+                  return;
+                }
+                markPointerRef.current = {
+                  pointerId: -1,
+                  startX: event.clientX,
+                  startY: event.clientY,
+                  dragged: false,
+                };
+                suppressNextMarkClickRef.current = false;
+              },
+              onMouseMove: (event: MouseEvent<HTMLSpanElement>) => {
+                const pointer = markPointerRef.current;
+                if (!pointer || pointer.pointerId !== -1) {
+                  return;
+                }
+                const dx = event.clientX - pointer.startX;
+                const dy = event.clientY - pointer.startY;
+                if (dx * dx + dy * dy >= 16) {
+                  pointer.dragged = true;
+                  suppressNextMarkClickRef.current = true;
+                }
+              },
+              onMouseUp: () => {
+                const pointer = markPointerRef.current;
+                if (pointer?.pointerId === -1 && pointer.dragged) {
+                  suppressNextMarkClickRef.current = true;
+                }
+                if (hasNonCollapsedNativeSelection()) {
+                  suppressNextMarkClickRef.current = true;
+                }
+                if (pointer?.pointerId === -1) {
+                  markPointerRef.current = null;
+                }
+              },
+              onClick: (event: MouseEvent<HTMLSpanElement>) => {
+                if (
+                  suppressNextMarkClickRef.current ||
+                  hasNonCollapsedNativeSelection()
+                ) {
+                  suppressNextMarkClickRef.current = false;
+                  return;
+                }
+                leafClickResolverRef.current?.(
+                  leaf,
+                  event.currentTarget,
+                  event as unknown as MouseEvent<HTMLElement>,
+                );
+              },
+            } satisfies HTMLAttributes<HTMLSpanElement>)
+          : {};
+      // 合并 grammar hover 和 note hover 到同一组 handler，避免多 span 嵌套。
+      const hoverProps: HTMLAttributes<HTMLSpanElement> = {};
+      if (grammarItemId) {
+        hoverProps.onMouseEnter = () => {
+          setActiveGrammarItemId(grammarItemId);
+        };
+        hoverProps.onMouseLeave = (event) => {
+          if (relatedTargetInsideGrammarItem(event.relatedTarget, grammarItemId)) {
+            return;
+          }
+          setActiveGrammarItemId((current) =>
+            current === grammarItemId ? null : current,
+          );
+        };
+        hoverProps.onFocus = () => {
+          setActiveGrammarItemId(grammarItemId);
+        };
+        hoverProps.onBlur = (event) => {
+          if (relatedTargetInsideGrammarItem(event.relatedTarget, grammarItemId)) {
+            return;
+          }
+          setActiveGrammarItemId((current) =>
+            current === grammarItemId ? null : current,
+          );
+        };
+      }
+      if (firstNoteAssetId) {
+        const prevMouseEnter = hoverProps.onMouseEnter;
+        const prevMouseLeave = hoverProps.onMouseLeave;
+        hoverProps.onMouseEnter = (event) => {
+          prevMouseEnter?.(event);
+          setHoverNoteAssetId(firstNoteAssetId);
+        };
+        hoverProps.onMouseLeave = (event) => {
+          prevMouseLeave?.(event);
+          setHoverNoteAssetId(null);
+        };
+      }
+      const vocabularyDataAttrs = vocabularyMark
+        ? {
+            "data-reader-record-vocabulary-mark-id": vocabularyMark.id,
+            "data-reader-record-vocabulary-kind": vocabularyMark.kind,
+            "data-reader-record-vocabulary-starts-here": vocabularyMark.startsHere
+              ? "true"
+              : "false",
+          }
+        : {};
+      const grammarDataAttrs = grammarMark
+        ? {
+            "data-reader-record-grammar-mark-id": grammarMark.id,
+            "data-reader-record-grammar-starts-here": grammarMark.startsHere
+              ? "true"
+              : "false",
+          }
+        : {};
+      const userHighlightDataAttrs = userHighlightMark
+        ? {
+            "data-reader-record-user-highlight-asset-id": userHighlightMark.assetId,
+          }
+        : {};
+      const userNoteDataAttrs = noteAssetIds
+        ? {
+            "data-reader-record-user-note-asset-ids": noteAssetIds,
+            "data-reader-record-note-active":
+              noteMarks.some((mark) => activeNoteAssetIds.has(mark.assetId)) ||
+              undefined,
+          }
+        : {};
       if (anchorSegmentId) {
         return (
           <span
-            {...props.attributes}
+            {...attributes}
+            {...markClickProps}
+            {...hoverProps}
+            {...vocabularyDataAttrs}
+            {...grammarDataAttrs}
+            {...userHighlightDataAttrs}
+            {...userNoteDataAttrs}
             className={mergedClassName || undefined}
             aria-label={visual.ariaLabel}
             title={visual.title}
@@ -1258,19 +1791,8 @@ export function ReaderRecordPlateSurface({
                 ? "true"
                 : undefined
             }
-            tabIndex={sentenceChunkId ? 0 : undefined}
-            onMouseEnter={() => {
-              if (sentenceChunkId) setActiveSentenceChunkId(sentenceChunkId);
-            }}
-            onMouseLeave={() => {
-              if (sentenceChunkId) setActiveSentenceChunkId(null);
-            }}
-            onFocus={() => {
-              if (sentenceChunkId) setActiveSentenceChunkId(sentenceChunkId);
-            }}
-            onBlur={() => {
-              if (sentenceChunkId) setActiveSentenceChunkId(null);
-            }}
+            data-reader-record-grammar-item-id={grammarItemId ?? undefined}
+            data-reader-record-grammar-active={grammarActive ? "true" : undefined}
           >
             {props.children}
           </span>
@@ -1278,19 +1800,27 @@ export function ReaderRecordPlateSurface({
       }
       return (
         <span
-          {...props.attributes}
+          {...attributes}
+          {...markClickProps}
+          {...hoverProps}
+          {...vocabularyDataAttrs}
+          {...grammarDataAttrs}
+          {...userHighlightDataAttrs}
+          {...userNoteDataAttrs}
           className={mergedClassName || undefined}
           aria-label={visual.ariaLabel}
           title={visual.title}
           data-reader-record-mark-stack-kinds={
             visual.kinds.length > 0 ? visual.kinds.join(" ") : undefined
           }
+          data-reader-record-grammar-item-id={grammarItemId ?? undefined}
+          data-reader-record-grammar-active={grammarActive ? "true" : undefined}
         >
           {props.children}
         </span>
       );
     },
-    [activeSentenceChunkId],
+    [activeGrammarItemId, activeSentenceChunkId, hoverNoteAssetId, noteMenu],
   );
 
   const settingsFloating = useReaderFloatingLayer({
@@ -1368,12 +1898,6 @@ export function ReaderRecordPlateSurface({
     placement: "bottom",
     offsetPx: 8,
   });
-  const [noteMenu, setNoteMenu] = useState<{
-    mark: ReaderRecordPlateUserNoteMark;
-    anchor: HTMLElement;
-    mode: "view" | "edit";
-    draft: string;
-  } | null>(null);
   const quickPeekOpen = lookupState.kind !== "idle" || inspectState !== null;
   const quickPeekAnchorRef = useRef<
     | { kind: "element"; element: HTMLElement }
@@ -1607,6 +2131,9 @@ export function ReaderRecordPlateSurface({
 
   const handleActivateVocabulary = useCallback(
     (mark: ReaderRecordPlateVocabularyMark, anchor: HTMLElement) => {
+      if (hasNonCollapsedNativeSelection()) {
+        return;
+      }
       const query = vocabularyTitle(mark).trim();
       if (!query) {
         return;
@@ -1623,10 +2150,10 @@ export function ReaderRecordPlateSurface({
         lookupType: lookupTypeForSelection(query),
         source: "vocabulary",
       };
-      quickPeekAnchorRef.current = { kind: "element", element: anchor };
+      const rect = anchor.getBoundingClientRect();
+      quickPeekAnchorRef.current = { kind: "range", getRect: () => rect };
       quickPeekFloating.refs.setPositionReference?.({
-        getBoundingClientRect: () => anchor.getBoundingClientRect(),
-        contextElement: anchor,
+        getBoundingClientRect: () => rect,
       });
 
       const inspectIntent = structuredInspectIntentFromVocabularyMark(
@@ -2385,9 +2912,77 @@ export function ReaderRecordPlateSurface({
     [activeLookupSnapshot],
   );
 
+  const saveHighlightColorById = useCallback(
+    async (
+      targetAssetId: string,
+      color: string,
+      options: { closeMenu?: boolean } = {},
+    ) => {
+      if (writeState.kind === "saving") {
+        return;
+      }
+
+      const previousAssets = localUserAssets;
+      if (options.closeMenu) {
+        setHighlightMenu(null);
+      }
+      setLocalUserAssets((current) =>
+        current.map((asset) =>
+          asset.asset_id === targetAssetId
+            ? { ...asset, color, updated_at: new Date().toISOString() }
+            : asset,
+        ),
+      );
+      setWriteState({ kind: "saving", action: "highlight" });
+
+      try {
+        const payload = await patchReadingRecordHighlightColor(
+          targetAssetId,
+          color,
+        );
+        const canonical = canonicalHighlightAssetFromWritePayload(
+          snapshot,
+          payload,
+        );
+        if (canonical) {
+          setLocalUserAssets((current) =>
+            reconcileCanonicalHighlightAsset(
+              current,
+              canonical.asset,
+              canonical.supersededIds,
+              canonical.asset.asset_id === targetAssetId ? [] : [targetAssetId],
+            ),
+          );
+        } else {
+          await onRequestSnapshotReload?.();
+        }
+        setWriteState({
+          kind: "saved",
+          action: "highlight",
+          message: "高亮颜色已更新",
+        });
+      } catch (error) {
+        console.warn("[ReaderRecordPlateSurface] highlight update failed", error);
+        setLocalUserAssets(previousAssets);
+        setWriteState({
+          kind: "error",
+          action: "highlight",
+          message: "高亮更新失败，请稍后重试。",
+        });
+      }
+    },
+    [localUserAssets, onRequestSnapshotReload, snapshot, writeState.kind],
+  );
+
   const handleHighlight = useCallback(async (color: string = "warm_yellow") => {
     const draft = singleRangeDraft(activeSelection);
     if (!draft || writeState.kind === "saving") {
+      return;
+    }
+
+    const exactHighlight = findExactUserHighlightAsset(localUserAssets, draft);
+    if (exactHighlight) {
+      await saveHighlightColorById(exactHighlight.asset_id, color);
       return;
     }
 
@@ -2399,17 +2994,29 @@ export function ReaderRecordPlateSurface({
     setWriteState({ kind: "saving", action: "highlight" });
 
     try {
-      await postReadingRecordUserAsset("/api/web/reading-record/highlights", {
+      const payload = await postReadingRecordUserAsset("/api/web/reading-record/highlights", {
         anchor: draft,
         selectedText: draft.selected_text,
         color,
       });
+      const canonical = canonicalHighlightAssetFromWritePayload(snapshot, payload);
+      if (canonical) {
+        setLocalUserAssets((current) =>
+          reconcileCanonicalHighlightAsset(
+            current,
+            canonical.asset,
+            canonical.supersededIds,
+            [tempAsset.asset_id],
+          ),
+        );
+      } else {
+        await onRequestSnapshotReload?.();
+      }
       setWriteState({
         kind: "saved",
         action: "highlight",
         message: "高亮已保存",
       });
-      await onRequestSnapshotReload?.();
     } catch (error) {
       console.warn("[ReaderRecordPlateSurface] highlight save failed", error);
       setLocalUserAssets((current) =>
@@ -2421,7 +3028,14 @@ export function ReaderRecordPlateSurface({
         message: "高亮保存失败，请稍后重试。",
       });
     }
-  }, [activeSelection, onRequestSnapshotReload, snapshot, writeState.kind]);
+  }, [
+    activeSelection,
+    localUserAssets,
+    onRequestSnapshotReload,
+    saveHighlightColorById,
+    snapshot,
+    writeState.kind,
+  ]);
 
   const handleOpenNoteComposer = useCallback(() => {
     const draft = singleRangeDraft(activeSelection);
@@ -2457,7 +3071,7 @@ export function ReaderRecordPlateSurface({
     }
     const anchor =
       surfaceRef.current?.querySelector<HTMLElement>(
-        readerMarkIdSelector(duplicateNote.id),
+        readerNoteAssetIdSelector(duplicateNote.assetId),
       ) ??
       surfaceRef.current ??
       window.document.body;
@@ -2539,6 +3153,9 @@ export function ReaderRecordPlateSurface({
 
   const handleActivateHighlight = useCallback(
     (mark: ReaderRecordPlateUserHighlightMark, anchor: HTMLElement) => {
+      if (hasNonCollapsedNativeSelection()) {
+        return;
+      }
       setHighlightMenu({ mark, anchor });
       highlightMenuFloating.refs.setReference({
         getBoundingClientRect: () => anchor.getBoundingClientRect(),
@@ -2596,53 +3213,11 @@ export function ReaderRecordPlateSurface({
         return;
       }
 
-      const targetAssetId = activeMenu.mark.assetId;
-      const previousAssets = localUserAssets;
-      setHighlightMenu(null);
-      setLocalUserAssets((current) =>
-        current.map((asset) =>
-          asset.asset_id === targetAssetId
-            ? { ...asset, color, updated_at: new Date().toISOString() }
-            : asset,
-        ),
-      );
-      setWriteState({ kind: "saving", action: "highlight" });
-
-      try {
-        const response = await fetch(
-          `/api/web/reading-record/highlights/${encodeURIComponent(targetAssetId)}`,
-          {
-            method: "PATCH",
-            headers: {
-              "content-type": "application/json",
-              accept: "application/json",
-            },
-            body: JSON.stringify({ color }),
-          },
-        );
-        const payload = (await response.json().catch(() => null)) as
-          | { ok?: boolean; message?: string }
-          | null;
-        if (!response.ok || payload?.ok === false) {
-          throw new Error(payload?.message ?? "高亮更新失败。");
-        }
-        setWriteState({
-          kind: "saved",
-          action: "highlight",
-          message: "高亮颜色已更新",
-        });
-        await onRequestSnapshotReload?.();
-      } catch (error) {
-        console.warn("[ReaderRecordPlateSurface] highlight update failed", error);
-        setLocalUserAssets(previousAssets);
-        setWriteState({
-          kind: "error",
-          action: "highlight",
-          message: "高亮更新失败，请稍后重试。",
-        });
-      }
+      await saveHighlightColorById(activeMenu.mark.assetId, color, {
+        closeMenu: true,
+      });
     },
-    [highlightMenu, localUserAssets, onRequestSnapshotReload, writeState.kind],
+    [highlightMenu, saveHighlightColorById, writeState.kind],
   );
 
   useEffect(() => {
@@ -2671,6 +3246,9 @@ export function ReaderRecordPlateSurface({
 
   const handleActivateNote = useCallback(
     (mark: ReaderRecordPlateUserNoteMark, anchor: HTMLElement) => {
+      if (hasNonCollapsedNativeSelection()) {
+        return;
+      }
       setNoteAnchorDraft(null);
       setNoteDraft("");
       setNoteDuplicateAcknowledged(false);
@@ -2690,15 +3268,87 @@ export function ReaderRecordPlateSurface({
     commentApiRef.current?.setActiveId(noteMenu.mark.assetId);
   }, [commentApiReady, noteMenu?.mark.assetId, noteMenu]);
 
-  // 把 mark 点击回调打包为 Context value，供 Plate leaf plugin 消费。
-  const leafActions = useMemo(
-    () => ({
-      onActivateVocabulary: handleActivateVocabulary,
-      onActivateHighlight: handleActivateHighlight,
-      onActivateNote: handleActivateNote,
-    }),
-    [handleActivateVocabulary, handleActivateHighlight, handleActivateNote],
+  const pulseGrammarItemId = useCallback((itemId: string) => {
+    if (grammarPulseTimerRef.current !== null) {
+      window.clearTimeout(grammarPulseTimerRef.current);
+      grammarPulseTimerRef.current = null;
+    }
+    setActiveGrammarItemId(itemId);
+    grammarPulseTimerRef.current = window.setTimeout(() => {
+      setActiveGrammarItemId((current) => (current === itemId ? null : current));
+      grammarPulseTimerRef.current = null;
+    }, 1600);
+  }, []);
+
+  const handleActivateGrammar = useCallback(
+    (mark: ReaderRecordPlateGrammarMark) => {
+      if (hasNonCollapsedNativeSelection()) {
+        return;
+      }
+      setLookupState({ kind: "idle" });
+      setInspectState(null);
+      quickPeekAnchorRef.current = null;
+      setActiveGrammarItemId(mark.itemId);
+
+      const callout = surfaceRef.current?.querySelector<HTMLElement>(
+        `[data-callout-variant="grammar"]${dataAttributeEqualsSelector(
+          "data-reader-record-grammar-item-id",
+          mark.itemId,
+        )}`,
+      );
+      if (callout) {
+        callout.scrollIntoView({ behavior: "smooth", block: "center" });
+        callout.focus({ preventScroll: true });
+      }
+    },
+    [],
   );
+
+  const handleLeafClickIntent = useCallback<ReaderLeafClickResolver>(
+    (leaf, anchor, event) => {
+      if (suppressNextMarkClickRef.current || hasNonCollapsedNativeSelection()) {
+        suppressNextMarkClickRef.current = false;
+        return;
+      }
+
+      if (hasNonCollapsedReaderSelection(activeSelection)) {
+        return;
+      }
+
+      if (leaf.vocabulary_data) {
+        event.preventDefault();
+        handleActivateVocabulary(leaf.vocabulary_data, anchor);
+        return;
+      }
+
+      if (leaf.grammar_data) {
+        event.preventDefault();
+        handleActivateGrammar(leaf.grammar_data);
+        return;
+      }
+
+      const noteMark = userNoteMarksFromLeaf(leaf)[0];
+      if (noteMark) {
+        event.preventDefault();
+        handleActivateNote(noteMark, anchor);
+        return;
+      }
+
+      if (leaf.user_highlight_data) {
+        event.preventDefault();
+        handleActivateHighlight(leaf.user_highlight_data, anchor);
+      }
+    },
+    [
+      activeSelection,
+      handleActivateGrammar,
+      handleActivateHighlight,
+      handleActivateNote,
+      handleActivateVocabulary,
+    ],
+  );
+
+  leafClickResolverRef.current = handleLeafClickIntent;
 
   const sentenceAnalysisInteraction = useMemo(
     () => ({
@@ -2706,6 +3356,15 @@ export function ReaderRecordPlateSurface({
       setActiveChunkId: setActiveSentenceChunkId,
     }),
     [activeSentenceChunkId],
+  );
+
+  const grammarInteraction = useMemo(
+    () => ({
+      activeGrammarItemId,
+      setActiveGrammarItemId,
+      pulseGrammarItemId,
+    }),
+    [activeGrammarItemId, pulseGrammarItemId],
   );
 
   const toolbarActionState = useMemo<ReaderToolbarActions["state"]>(() => {
@@ -2995,7 +3654,7 @@ export function ReaderRecordPlateSurface({
         {highlightMenu ? (
           <ReaderFloatingSurface
             floatingRef={highlightMenuFloating.refs.setFloating}
-            style={highlightMenuFloating.floatingStyles}
+            style={highlightMenuFloating.floatingStyles as CSSProperties}
             data-reader-record-floating-toolbar="highlight-menu"
           >
             <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-background/95 p-2 shadow-md backdrop-blur-sm">
@@ -3036,7 +3695,7 @@ export function ReaderRecordPlateSurface({
                 node.setAttribute("data-testid", "reader-record-plate-lookup-panel");
               }
             }}
-            style={quickPeekFloating.floatingStyles}
+            style={quickPeekFloating.floatingStyles as CSSProperties}
             onDismiss={() => {
               setLookupState({ kind: "idle" });
               setInspectState(null);
@@ -3051,7 +3710,7 @@ export function ReaderRecordPlateSurface({
         {feedbackTarget ? (
           <ReaderFloatingSurface
             floatingRef={feedbackFloating.refs.setFloating}
-            style={feedbackFloating.floatingStyles}
+            style={feedbackFloating.floatingStyles as CSSProperties}
             className="w-44 rounded-lg border border-border bg-popover p-1 shadow-lg"
             role="dialog"
             aria-label="反馈选项"
@@ -3105,7 +3764,7 @@ export function ReaderRecordPlateSurface({
             ) : null}
           </ReaderFloatingSurface>
         ) : null}
-        <ReaderLeafActionsContext.Provider value={leafActions}>
+        <ReaderGrammarInteractionContext.Provider value={grammarInteraction}>
           <ReaderSentenceAnalysisInteractionContext.Provider
             value={sentenceAnalysisInteraction}
           >
@@ -3146,14 +3805,14 @@ export function ReaderRecordPlateSurface({
                   onAskFromNote={handleAskFromNote}
                   isSaving={commentIsSaving}
                   statusMessage={commentStatusMessage}
-                  onClose={handleCloseCommentPanel}
-                  floatingRef={commentFloating.refs.setFloating}
-                  floatingStyles={commentFloating.floatingStyles}
-                />
+                onClose={handleCloseCommentPanel}
+                floatingRef={commentFloating.refs.setFloating}
+                floatingStyles={commentFloating.floatingStyles as CSSProperties}
+              />
               </Plate>
             </ReaderToolbarActionsProvider>
           </ReaderSentenceAnalysisInteractionContext.Provider>
-        </ReaderLeafActionsContext.Provider>
+        </ReaderGrammarInteractionContext.Provider>
         {feedbackState.kind !== "idle" ? (
           <div
             data-reader-record-feedback-status={feedbackState.kind}
