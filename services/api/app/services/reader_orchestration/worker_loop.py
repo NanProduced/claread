@@ -238,8 +238,17 @@ class ReaderEnhancementWorkerLoopService:
                     )
 
                 recorder = get_default_recorder()
+                # Reuse the trace_id the orchestrator assigned and persisted
+                # into reader_runs.envelope_json so the span tree links back
+                # to the run (gap report #3). Falls back to a fresh uuid4()
+                # for legacy rows without trace_id in the envelope.
+                trace_id = await self._repository.read_trace_id_for_record(
+                    candidate.record_id
+                )
+                if trace_id is None:
+                    trace_id = uuid4()
                 pipeline_span = await recorder.start_span(
-                    trace_id=uuid4(),
+                    trace_id=trace_id,
                     span_kind=SPAN_KIND_PIPELINE_ROOT,
                     reading_record_id=candidate.record_id,
                     metadata={"lease_owner": lease_owner},

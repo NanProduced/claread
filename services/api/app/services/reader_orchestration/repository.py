@@ -45,6 +45,7 @@ from .base_builder import (
     StableReadingBase,
     validate_reading_base_build_result,
 )
+from .span_recorder import parse_trace_id_from_envelope
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +102,28 @@ class ReaderOrchestrationRepository:
         if pool is None:
             raise RuntimeError("Database pool not initialized")
         return pool
+
+    async def read_trace_id_for_record(self, record_id: UUID) -> UUID | None:
+        """Return the ``trace_id`` from the latest run's envelope for a record.
+
+        Used by the worker loop to link the ``pipeline_root`` span to the
+        trace_id the orchestrator assigned at submit time (gap report #3).
+        Returns ``None`` when the record has no runs or the envelope lacks
+        a ``trace_id`` (legacy rows); the caller falls back to ``uuid4()``.
+        """
+
+        async with self.get_pool().acquire() as conn:
+            envelope_json = await conn.fetchval(
+                """
+                SELECT envelope_json
+                FROM reader_runs
+                WHERE reading_record_id = $1
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                record_id,
+            )
+        return parse_trace_id_from_envelope(envelope_json)
 
     async def insert_reading_record(
         self,

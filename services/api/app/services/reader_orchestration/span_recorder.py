@@ -35,7 +35,7 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.database import connection as db_connection
-from app.database.json_compat import jsonb_param
+from app.database.json_compat import ensure_json_object, jsonb_param
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +46,8 @@ logger = logging.getLogger(__name__)
 
 SPAN_KIND_PIPELINE_ROOT = "pipeline_root"
 SPAN_KIND_WORKER_TICK = "worker_tick"
-SPAN_KIND_LLM_CALL = "llm_call"
 SPAN_KIND_PUBLISH_FENCE = "publish_fence"
 SPAN_KIND_CLAIM = "claim"
-SPAN_KIND_BOOTSTRAP = "bootstrap"
 
 STATUS_STARTED = "started"
 STATUS_SUCCEEDED = "succeeded"
@@ -106,6 +104,26 @@ def derive_retry_class(
     if transient_attempt_count > 0:
         return RETRY_CLASS_TRANSIENT
     return None
+
+
+def parse_trace_id_from_envelope(envelope_json: Any) -> UUID | None:
+    """Extract ``trace_id`` from a ``reader_runs.envelope_json`` value.
+
+    Centralises the parsing so both the claim path (``job_runtime``) and
+    the pipeline-root path (``worker_loop`` via ``repository``) share one
+    implementation. Legacy rows without ``trace_id`` yield ``None``.
+    """
+
+    if envelope_json is None:
+        return None
+    envelope = ensure_json_object(envelope_json)
+    trace_id_str = envelope.get("trace_id")
+    if not trace_id_str:
+        return None
+    try:
+        return UUID(str(trace_id_str))
+    except (ValueError, TypeError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -355,3 +373,103 @@ def now_utc() -> datetime:
     """Public helper for sites that need a UTC timestamp before start_span."""
 
     return datetime.now(UTC)
+
+
+# ---------------------------------------------------------------------------
+# Worker span lifecycle helpers
+# ---------------------------------------------------------------------------
+#
+# Concentrates the 5 outcome paths (success / fence_violation /
+# execution_error / generic_exception) shared by the 4 workers
+# (translation / vocabulary / grammar / display_title). Each worker's
+# except block becomes a single call instead of a 8-17 line
+# ``current_span() + end_span(...)`` block.
+#
+# All helpers are no-ops when no span is active — matching the best-effort
+# contract of :class:`ReaderSpanRecorder`.
+
+
+async def end_worker_span_success(
+    *,
+    ai_usage_event_id: UUID | None,
+    usage_data: dict[str, Any] | None,
+    model_route: str | None,
+    model_name: str | None,
+    model_provider: str | None,
+    capability_code: str,
+) -> None:
+    """End the current worker_tick span as succeeded with token/model fields."""
+
+    span = current_span()
+    if span is None:
+        return
+    usage = usage_data or {}
+    await get_default_recorder().end_span(
+        span,
+        status=STATUS_SUCCEEDED,
+        ai_usage_event_id=ai_usage_event_id,
+        input_tokens=usage.get("input_tokens"),
+        output_tokens=usage.get("output_tokens"),
+        total_tokens=usage.get("total_tokens"),
+        cache_read_tokens=usage.get("cache_read_tokens"),
+        cache_write_tokens=usage.get("cache_write_tokens"),
+        model_route=model_route,
+        model_name=model_name,
+        model_provider=model_provider,
+        capability_code=capability_code,
+    )
+
+
+async def end_worker_span_fence_violation() -> None:
+    """End the current worker_tick span as superseded by a publish fence failure."""
+
+    await _end_worker_span_failure(
+        status=STATUS_SUPERSEDED,
+        failure_class="publish_fence",
+        failure_code="publish_fence_failed",
+    )
+
+
+async def end_worker_span_execution_error(
+    *,
+    failure_class: str,
+    failure_code: str,
+) -> None:
+    """End the current worker_tick span as failed with the execution error's class/code."""
+
+    await _end_worker_span_failure(
+        status=STATUS_FAILED,
+        failure_class=failure_class,
+        failure_code=failure_code,
+    )
+
+
+async def end_worker_span_generic_exception(
+    *,
+    layer: str,
+    exc: Exception,
+) -> None:
+    """End the current worker_tick span as failed with a layer-prefixed failure class."""
+
+    await _end_worker_span_failure(
+        status=STATUS_FAILED,
+        failure_class=f"{layer}_execution",
+        failure_code=type(exc).__name__,
+    )
+
+
+async def _end_worker_span_failure(
+    *,
+    status: str,
+    failure_class: str,
+    failure_code: str,
+) -> None:
+    span = current_span()
+    if span is None:
+        return
+    await get_default_recorder().end_span(
+        span,
+        status=status,
+        failure_class=failure_class,
+        failure_code=failure_code,
+    )

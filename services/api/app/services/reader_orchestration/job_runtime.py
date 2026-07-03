@@ -35,12 +35,14 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.database import connection as db_connection
-from app.database.json_compat import ensure_json_object, jsonb_param
+from app.database.json_compat import jsonb_param
 from app.services.reader_orchestration.span_recorder import (
     SPAN_KIND_CLAIM,
     STATUS_SUCCEEDED,
     current_span,
+    derive_retry_class,
     get_default_recorder,
+    parse_trace_id_from_envelope,
 )
 
 # ---------------------------------------------------------------------------
@@ -138,8 +140,13 @@ class ClaimResult:
     # reader_runs.envelope_json so workers can use it as the parent_span_id
     # root for the reader_runtime_spans tree. claim_wait_ms measures the
     # wall-clock time from entering claim_next_job to the successful UPDATE.
+    # Per-retry-class attempt counts feed derive_retry_class() so the claim
+    # span records why this attempt is happening (gap report #6).
     trace_id: UUID | None = None
     claim_wait_ms: int | None = None
+    transient_attempt_count: int = 0
+    repair_attempt_count: int = 0
+    replan_attempt_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,7 +366,11 @@ class ReaderJobRuntime:
                         reader_job_id=claim.job_id,
                         claim_wait_ms=claim.claim_wait_ms,
                         attempt_number=claim.attempt_count,
-                        retry_class=None,
+                        retry_class=derive_retry_class(
+                            transient_attempt_count=claim.transient_attempt_count,
+                            repair_attempt_count=claim.repair_attempt_count,
+                            replan_attempt_count=claim.replan_attempt_count,
+                        ),
                         metadata={"lease_owner": lease_owner},
                     )
                     await recorder.end_span(claim_span, status=STATUS_SUCCEEDED)
@@ -857,15 +868,7 @@ def _claim_result_from_row(
     # as the parent_span_id root for the reader_runtime_spans tree.
     # Defensive: legacy rows without trace_id in envelope yield None, and
     # the span recorder falls back to generating a fresh trace_id.
-    trace_id: UUID | None = None
-    if run_envelope_json is not None:
-        envelope = ensure_json_object(run_envelope_json)
-        trace_id_str = envelope.get("trace_id")
-        if trace_id_str:
-            try:
-                trace_id = UUID(str(trace_id_str))
-            except (ValueError, TypeError):
-                trace_id = None
+    trace_id = parse_trace_id_from_envelope(run_envelope_json)
 
     return ClaimResult(
         job_id=row["id"],
@@ -883,6 +886,9 @@ def _claim_result_from_row(
         lease_expires_at=lease_expires_at,
         trace_id=trace_id,
         claim_wait_ms=claim_wait_ms,
+        transient_attempt_count=int(row["transient_attempt_count"]),
+        repair_attempt_count=int(row["repair_attempt_count"]),
+        replan_attempt_count=int(row["replan_attempt_count"]),
     )
 
 

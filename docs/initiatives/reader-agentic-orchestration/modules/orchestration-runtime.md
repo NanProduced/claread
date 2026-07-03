@@ -422,10 +422,8 @@ Span kind（与 migration CHECK 约束对齐）：
 | span_kind | 触发点 | 说明 |
 |---|---|---|
 | `pipeline_root` | `ReaderOrchestrator.submit_plain_text_and_bootstrap_translation` | 一次 submit 的根 span，承载 `trace_id` |
-| `bootstrap` | `TranslationJobBootstrapService.bootstrap_translation_run` | run / job bootstrap 阶段 |
 | `claim` | `ReaderJobRuntime.claim_next_job` | SKIP LOCKED claim，含 `claim_wait_ms` |
-| `worker_tick` | `pipeline_runner._dispatch_worker_attempt` | 单 worker tick |
-| `llm_call` | `TranslationWorkerService.process_claimed_translation_job` 等同类 worker | LLM 执行 + usage attribution |
+| `worker_tick` | `pipeline_runner._dispatch_worker_attempt` | 单 worker tick，LLM token / model 字段也合并到此 span（通过 `end_worker_span_success`） |
 | `publish_fence` | `TranslationLayerPublisher.publish_unit_*` 三个 wrapper | 发布 fence + DB write 阶段 |
 
 Status：`started` / `succeeded` / `failed` / `superseded` / `skipped`。
@@ -450,7 +448,7 @@ processor 在 `_configure_pydantic_ai_otel` 中通过 `tracer_provider.add_span_
 
 `publish_fence` span 在 `TranslationLayerPublisher.publish_unit_*` wrapper 入口处启动，**早于** publisher 事务内 `SELECT reader_jobs` 读取 `reading_record_id`。因此 `reader_runtime_spans.reading_record_id` 列为 **NULLable**，publish_fence span 行的该字段为 NULL。Console 应通过 `trace_id` 或 `reader_job_id` 查询 publish_fence span，不应假设 `reading_record_id` 一定有值。
 
-其他 span kind（`pipeline_root` / `worker_tick` / `claim` / `bootstrap` / `llm_call`）在启动时已知 `reading_record_id`，正常写入。
+其他 span kind（`pipeline_root` / `worker_tick` / `claim`）在启动时已知 `reading_record_id`，正常写入。
 
 ### Console endpoint 契约
 

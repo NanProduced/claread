@@ -40,6 +40,7 @@ from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
 from app.services.reader_orchestration.span_recorder import (
     SPAN_KIND_WORKER_TICK,
     STATUS_FAILED,
+    STATUS_SKIPPED,
     current_span,
     get_default_recorder,
 )
@@ -359,9 +360,12 @@ class ReaderEnhancementPipelineRunner:
                     display_title_retry_delay=display_title_retry_delay,
                 )
             # Worker ends the worker_tick span itself via current_span()
-            # in process_claimed_*_job. If the worker returned without
-            # ending it (e.g. no_job outcome), the span stays "started"
-            # but that's acceptable — the row is still queryable.
+            # in process_claimed_*_job. The no_job outcome is the exception:
+            # the worker found no claimable job, so it returns without
+            # ending the span. End it as skipped so Console's "active span"
+            # view doesn't accumulate zombie rows.
+            if attempt.outcome == "no_job":
+                await recorder.end_span(span_ctx, status=STATUS_SKIPPED)
             return attempt
         except Exception as exc:
             # Uncaught exception fallback: worker didn't end the span.

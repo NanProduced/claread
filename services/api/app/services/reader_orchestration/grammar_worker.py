@@ -54,9 +54,10 @@ from .reading_strategy import (
     resolve_reader_variant_strategy,
 )
 from .span_recorder import (
-    STATUS_SUPERSEDED,
-    current_span,
-    get_default_recorder,
+    end_worker_span_execution_error,
+    end_worker_span_fence_violation,
+    end_worker_span_generic_exception,
+    end_worker_span_success,
 )
 
 DEFAULT_GRAMMAR_RETRY_DELAY = timedelta(minutes=5)
@@ -597,23 +598,14 @@ class GrammarBundleWorkerService:
                 published_bundle=published_bundle,
                 status=STATUS_SUCCEEDED,
             )
-            span = current_span()
-            if span is not None:
-                usage = execution.usage_data or {}
-                await get_default_recorder().end_span(
-                    span,
-                    status=STATUS_SUCCEEDED,
-                    ai_usage_event_id=event_id,
-                    input_tokens=usage.get("input_tokens"),
-                    output_tokens=usage.get("output_tokens"),
-                    total_tokens=usage.get("total_tokens"),
-                    cache_read_tokens=usage.get("cache_read_tokens"),
-                    cache_write_tokens=usage.get("cache_write_tokens"),
-                    model_route=execution.model_route,
-                    model_name=execution.model_name,
-                    model_provider=execution.model_provider,
-                    capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
-                )
+            await end_worker_span_success(
+                ai_usage_event_id=event_id,
+                usage_data=execution.usage_data,
+                model_route=execution.model_route,
+                model_name=execution.model_name,
+                model_provider=execution.model_provider,
+                capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
+            )
             return GrammarJobProcessResult(
                 claim=claim,
                 context=context,
@@ -628,14 +620,7 @@ class GrammarBundleWorkerService:
                 model_name=execution.model_name,
             )
         except FenceViolationError:
-            span = current_span()
-            if span is not None:
-                await get_default_recorder().end_span(
-                    span,
-                    status=STATUS_SUPERSEDED,
-                    failure_class="publish_fence",
-                    failure_code="publish_fence_failed",
-                )
+            await end_worker_span_fence_violation()
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="superseded",
@@ -677,14 +662,10 @@ class GrammarBundleWorkerService:
                     model_provider=exc.model_provider,
                     model_name=exc.model_name,
                 )
-                span = current_span()
-                if span is not None:
-                    await get_default_recorder().end_span(
-                        span,
-                        status=STATUS_FAILED,
-                        failure_class=exc.failure_class,
-                        failure_code=exc.failure_code,
-                    )
+                await end_worker_span_execution_error(
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                )
                 return GrammarJobProcessResult(
                     claim=claim,
                     context=context,
@@ -717,14 +698,10 @@ class GrammarBundleWorkerService:
                 model_provider=exc.model_provider,
                 model_name=exc.model_name,
             )
-            span = current_span()
-            if span is not None:
-                await get_default_recorder().end_span(
-                    span,
-                    status=STATUS_FAILED,
-                    failure_class=exc.failure_class,
-                    failure_code=exc.failure_code,
-                )
+            await end_worker_span_execution_error(
+                failure_class=exc.failure_class,
+                failure_code=exc.failure_code,
+            )
             return GrammarJobProcessResult(
                 claim=claim,
                 context=context,
@@ -752,14 +729,7 @@ class GrammarBundleWorkerService:
                 error_code=type(exc).__name__,
                 error_message=str(exc),
             )
-            span = current_span()
-            if span is not None:
-                await get_default_recorder().end_span(
-                    span,
-                    status=STATUS_FAILED,
-                    failure_class="grammar_bundle_execution",
-                    failure_code=type(exc).__name__,
-                )
+            await end_worker_span_generic_exception(layer="grammar_bundle", exc=exc)
             return GrammarJobProcessResult(
                 claim=claim,
                 context=context,

@@ -4,9 +4,9 @@
 --
 -- This table is the PG fact source for the reader_orchestration observability
 -- gap (see docs/tmp/reader-orchestration/TMP-reader-orchestration-observability-gap-2026-07-01.md).
--- It stores one row per actor boundary span (bootstrap / pipeline_root /
--- worker_tick / llm_call / publish_fence / claim) and links to ai_usage_events
--- for token / model / cost columns and to LangSmith runs via langsmith_run_id.
+-- It stores one row per actor boundary span (pipeline_root / worker_tick /
+-- publish_fence / claim) and links to ai_usage_events for token / model /
+-- cost columns and to LangSmith runs via langsmith_run_id.
 --
 -- Design notes:
 -- * trace_id is generated in ReaderOrchestrator.submit_plain_text_and_bootstrap_translation
@@ -20,14 +20,19 @@
 --   ai_usage_events to keep that table focused on token/cost facts.
 -- * model_* columns are denormalized from ai_usage_events so Console panels
 --   can build model cost / latency heatmaps without an extra JOIN.
+-- * span_kind enum is intentionally limited to the four kinds actually
+--   produced by reader_orchestration today. The earlier 'bootstrap' and
+--   'llm_call' candidates were removed because no production code creates
+--   them: run/job bootstrap is a side-effect of submit (covered by
+--   pipeline_root) and LLM token attribution is folded into the worker_tick
+--   span via end_worker_span_success.
 
 CREATE TABLE reader_runtime_spans (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     trace_id             UUID NOT NULL,
     parent_span_id       UUID REFERENCES reader_runtime_spans(id) ON DELETE SET NULL,
     span_kind            TEXT NOT NULL CHECK (span_kind IN (
-        'pipeline_root', 'worker_tick', 'llm_call', 'publish_fence',
-        'claim', 'bootstrap'
+        'pipeline_root', 'worker_tick', 'publish_fence', 'claim'
     )),
     -- No FK on reader_run_id / reader_job_id / reading_record_id / ai_usage_event_id:
     -- observability spans must outlive the business entities they reference
@@ -38,7 +43,7 @@ CREATE TABLE reader_runtime_spans (
     reader_job_id        UUID,
     -- NULLable so publish_fence spans can start before the publisher reads
     -- reader_jobs.reading_record_id inside its transaction. Non-publish
-    -- spans (pipeline_root / worker_tick / claim / bootstrap) always set it.
+    -- spans (pipeline_root / worker_tick / claim) always set it.
     reading_record_id    UUID,
     worker_type          TEXT CHECK (worker_type IN (
         'display_title', 'translation', 'vocabulary', 'grammar_bundle',

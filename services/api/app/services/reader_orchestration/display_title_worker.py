@@ -49,9 +49,10 @@ from .job_runtime import (
     STATUS_SUCCEEDED as JOB_STATUS_SUCCEEDED,
 )
 from .span_recorder import (
-    STATUS_SUPERSEDED,
-    current_span,
-    get_default_recorder,
+    end_worker_span_execution_error,
+    end_worker_span_fence_violation,
+    end_worker_span_generic_exception,
+    end_worker_span_success,
 )
 
 DEFAULT_DISPLAY_TITLE_RETRY_DELAY = timedelta(minutes=5)
@@ -388,23 +389,14 @@ class DisplayTitleWorkerService:
                 execution=execution,
                 status=STATUS_SUCCEEDED,
             )
-            span = current_span()
-            if span is not None:
-                usage = execution.usage_data or {}
-                await get_default_recorder().end_span(
-                    span,
-                    status=STATUS_SUCCEEDED,
-                    ai_usage_event_id=event_id,
-                    input_tokens=usage.get("input_tokens"),
-                    output_tokens=usage.get("output_tokens"),
-                    total_tokens=usage.get("total_tokens"),
-                    cache_read_tokens=usage.get("cache_read_tokens"),
-                    cache_write_tokens=usage.get("cache_write_tokens"),
-                    model_route=execution.model_route,
-                    model_name=execution.model_name,
-                    model_provider=execution.model_provider,
-                    capability_code=CAPABILITY_READER_TITLE_GENERATION,
-                )
+            await end_worker_span_success(
+                ai_usage_event_id=event_id,
+                usage_data=execution.usage_data,
+                model_route=execution.model_route,
+                model_name=execution.model_name,
+                model_provider=execution.model_provider,
+                capability_code=CAPABILITY_READER_TITLE_GENERATION,
+            )
             return DisplayTitleJobProcessResult(
                 claim=claim,
                 context=context,
@@ -418,14 +410,7 @@ class DisplayTitleWorkerService:
                 model_name=execution.model_name,
             )
         except FenceViolationError:
-            span = current_span()
-            if span is not None:
-                await get_default_recorder().end_span(
-                    span,
-                    status=STATUS_SUPERSEDED,
-                    failure_class="publish_fence",
-                    failure_code="publish_fence_failed",
-                )
+            await end_worker_span_fence_violation()
             await self._mark_claimed_job_superseded(claim, rationale_code="publish_fence_failed")
             raise
         except DisplayTitleGenerationError as exc:
@@ -440,14 +425,7 @@ class DisplayTitleWorkerService:
                     available_at=datetime.now(UTC) + retry_delay,
                 )
             except FenceViolationError:
-                span = current_span()
-                if span is not None:
-                    await get_default_recorder().end_span(
-                        span,
-                        status=STATUS_SUPERSEDED,
-                        failure_class="publish_fence",
-                        failure_code="publish_fence_failed",
-                    )
+                await end_worker_span_fence_violation()
                 await self._mark_claimed_job_superseded(
                     claim,
                     rationale_code="publish_fence_failed",
@@ -462,14 +440,10 @@ class DisplayTitleWorkerService:
                 model_name=exc.model_name,
                 prompt_version=exc.prompt_version,
             )
-            span = current_span()
-            if span is not None:
-                await get_default_recorder().end_span(
-                    span,
-                    status=STATUS_FAILED,
-                    failure_class=exc.failure_class,
-                    failure_code=exc.failure_code,
-                )
+            await end_worker_span_execution_error(
+                failure_class=exc.failure_class,
+                failure_code=exc.failure_code,
+            )
             return DisplayTitleJobProcessResult(
                 claim=claim,
                 context=context,
@@ -489,14 +463,7 @@ class DisplayTitleWorkerService:
                     available_at=datetime.now(UTC) + retry_delay,
                 )
             except FenceViolationError:
-                span = current_span()
-                if span is not None:
-                    await get_default_recorder().end_span(
-                        span,
-                        status=STATUS_SUPERSEDED,
-                        failure_class="publish_fence",
-                        failure_code="publish_fence_failed",
-                    )
+                await end_worker_span_fence_violation()
                 await self._mark_claimed_job_superseded(
                     claim,
                     rationale_code="publish_fence_failed",
@@ -507,14 +474,7 @@ class DisplayTitleWorkerService:
                 error_code=failure_code,
                 error_message=failure_message,
             )
-            span = current_span()
-            if span is not None:
-                await get_default_recorder().end_span(
-                    span,
-                    status=STATUS_FAILED,
-                    failure_class="display_title_execution",
-                    failure_code=failure_code,
-                )
+            await end_worker_span_generic_exception(layer="display_title", exc=exc)
             return DisplayTitleJobProcessResult(
                 claim=claim,
                 context=context,

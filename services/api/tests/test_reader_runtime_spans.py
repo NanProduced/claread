@@ -20,8 +20,10 @@ and P3 (LangSmith run_id backfill):
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -29,6 +31,7 @@ from uuid import UUID, uuid4
 import asyncpg
 import pytest
 
+from app.contracts.annotation import utf16_code_unit_length
 from app.observability.langsmith_span_processor import (
     LangSmithIdBridgeProcessor,
     LangSmithIds,
@@ -36,7 +39,10 @@ from app.observability.langsmith_span_processor import (
     clear_langsmith_ids,
     get_current_langsmith_ids,
 )
-from app.services.reader_orchestration.job_runtime import FenceViolationError
+from app.services.reader_orchestration.job_runtime import (
+    FenceViolationError,
+    ReaderJobRuntime,
+)
 from app.services.reader_orchestration.layer_publisher import (
     TranslationLayerPublisher,
 )
@@ -44,15 +50,22 @@ from app.services.reader_orchestration.span_recorder import (
     RETRY_CLASS_REPAIR,
     RETRY_CLASS_REPLAN,
     RETRY_CLASS_TRANSIENT,
+    SPAN_KIND_CLAIM,
     SPAN_KIND_PIPELINE_ROOT,
     SPAN_KIND_PUBLISH_FENCE,
     SPAN_KIND_WORKER_TICK,
     STATUS_FAILED,
     STATUS_STARTED,
+    STATUS_SKIPPED,
     STATUS_SUCCEEDED,
+    STATUS_SUPERSEDED,
     ReaderSpanRecorder,
     current_span,
     derive_retry_class,
+    end_worker_span_execution_error,
+    end_worker_span_fence_violation,
+    end_worker_span_generic_exception,
+    end_worker_span_success,
     set_default_recorder,
 )
 from tests.reader_orchestration_test_support import (
@@ -551,3 +564,351 @@ async def test_end_span_explicit_langsmith_run_id_wins(
 
     row = await _fetch_span_row(pool, span.span_id)
     assert row["langsmith_run_id"] == "explicit-trace/explicit-span"
+
+
+# ---------------------------------------------------------------------------
+# Worker span lifecycle helpers (Candidate 1 deepening)
+# ---------------------------------------------------------------------------
+
+
+async def test_end_worker_span_success_writes_token_and_model_fields(
+    span_recorder_env: tuple[asyncpg.Pool, ReaderSpanRecorder],
+) -> None:
+    """end_worker_span_success maps usage_data + execution fields to the span row."""
+
+    pool, recorder = span_recorder_env
+    span = await recorder.start_span(
+        trace_id=uuid4(),
+        span_kind=SPAN_KIND_WORKER_TICK,
+    )
+    event_id = uuid4()
+    async with recorder.use_span(span):
+        await end_worker_span_success(
+            ai_usage_event_id=event_id,
+            usage_data={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+                "cache_read_tokens": 10,
+                "cache_write_tokens": 5,
+            },
+            model_route="reader-translation",
+            model_name="gpt-4",
+            model_provider="openai",
+            capability_code="reader_translation",
+        )
+
+    row = await _fetch_span_row(pool, span.span_id)
+    assert row["status"] == STATUS_SUCCEEDED
+    assert row["ai_usage_event_id"] == event_id
+    assert row["input_tokens"] == 100
+    assert row["output_tokens"] == 50
+    assert row["total_tokens"] == 150
+    assert row["cache_read_tokens"] == 10
+    assert row["cache_write_tokens"] == 5
+    assert row["model_route"] == "reader-translation"
+    assert row["model_name"] == "gpt-4"
+    assert row["model_provider"] == "openai"
+    assert row["capability_code"] == "reader_translation"
+    assert row["ended_at"] is not None
+    assert row["duration_ms"] is not None
+
+
+async def test_end_worker_span_fence_violation_writes_superseded(
+    span_recorder_env: tuple[asyncpg.Pool, ReaderSpanRecorder],
+) -> None:
+    """end_worker_span_fence_violation writes superseded + publish_fence failure."""
+
+    pool, recorder = span_recorder_env
+    span = await recorder.start_span(
+        trace_id=uuid4(),
+        span_kind=SPAN_KIND_WORKER_TICK,
+    )
+    async with recorder.use_span(span):
+        await end_worker_span_fence_violation()
+
+    row = await _fetch_span_row(pool, span.span_id)
+    assert row["status"] == STATUS_SUPERSEDED
+    assert row["failure_class"] == "publish_fence"
+    assert row["failure_code"] == "publish_fence_failed"
+
+
+async def test_end_worker_span_execution_error_writes_failed(
+    span_recorder_env: tuple[asyncpg.Pool, ReaderSpanRecorder],
+) -> None:
+    """end_worker_span_execution_error writes failed + the exc's class/code."""
+
+    pool, recorder = span_recorder_env
+    span = await recorder.start_span(
+        trace_id=uuid4(),
+        span_kind=SPAN_KIND_WORKER_TICK,
+    )
+    async with recorder.use_span(span):
+        await end_worker_span_execution_error(
+            failure_class="translation_timeout",
+            failure_code="TranslationTimeoutError",
+        )
+
+    row = await _fetch_span_row(pool, span.span_id)
+    assert row["status"] == STATUS_FAILED
+    assert row["failure_class"] == "translation_timeout"
+    assert row["failure_code"] == "TranslationTimeoutError"
+
+
+async def test_end_worker_span_generic_exception_writes_layer_prefixed(
+    span_recorder_env: tuple[asyncpg.Pool, ReaderSpanRecorder],
+) -> None:
+    """end_worker_span_generic_exception writes failed + layer_execution + type name."""
+
+    pool, recorder = span_recorder_env
+    span = await recorder.start_span(
+        trace_id=uuid4(),
+        span_kind=SPAN_KIND_WORKER_TICK,
+    )
+    exc = RuntimeError("boom")
+    async with recorder.use_span(span):
+        await end_worker_span_generic_exception(layer="vocabulary", exc=exc)
+
+    row = await _fetch_span_row(pool, span.span_id)
+    assert row["status"] == STATUS_FAILED
+    assert row["failure_class"] == "vocabulary_execution"
+    assert row["failure_code"] == "RuntimeError"
+
+
+async def test_worker_span_helpers_are_noop_when_no_span_active(
+    span_recorder_env: tuple[asyncpg.Pool, ReaderSpanRecorder],
+) -> None:
+    """All 4 helpers are no-ops when no span is bound to the ContextVar."""
+
+    # No start_span / use_span — current_span() returns None.
+    # These should silently return without raising.
+    await end_worker_span_success(
+        ai_usage_event_id=uuid4(),
+        usage_data=None,
+        model_route=None,
+        model_name=None,
+        model_provider=None,
+        capability_code="reader_translation",
+    )
+    await end_worker_span_fence_violation()
+    await end_worker_span_execution_error(
+        failure_class="x",
+        failure_code="y",
+    )
+    await end_worker_span_generic_exception(
+        layer="translation",
+        exc=RuntimeError("noop"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Claim span retry_class (Candidate 5 deepening)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_claim_test_job(
+    pool: asyncpg.Pool,
+    *,
+    transient: int = 0,
+    repair: int = 0,
+    replan: int = 0,
+) -> tuple[UUID, UUID]:
+    """Seed user + record + active base + run + one queued job with the
+    given per-class retry counts. Returns (job_id, run_id)."""
+
+    text = "retry class test text"
+    content_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    async with pool.acquire() as conn:
+        user_id = await conn.fetchval(
+            "INSERT INTO users DEFAULT VALUES RETURNING id"
+        )
+        record_id = await conn.fetchval(
+            """
+            INSERT INTO reading_records (user_id, source_type, title, language, generation)
+            VALUES ($1, 'text', 'retry class test', 'en', 1)
+            RETURNING id
+            """,
+            user_id,
+        )
+        base_id = await conn.fetchval(
+            """
+            INSERT INTO reading_bases (
+                reading_record_id, base_version, record_generation, text,
+                content_sha256, content_utf16_length,
+                canonicalizer_version, builder_version, segmenter_version,
+                language, title_snapshot, navigation_json, status
+            )
+            VALUES (
+                $1, 1, 1, $2,
+                $3, $4,
+                'canon', 'builder', 'segmenter',
+                'en', 'title', '{"units":[]}'::jsonb, 'active'
+            )
+            RETURNING id
+            """,
+            record_id,
+            text,
+            content_sha,
+            utf16_code_unit_length(text),
+        )
+        await conn.execute(
+            "UPDATE reading_records SET active_base_id = $2 WHERE id = $1",
+            record_id,
+            base_id,
+        )
+        run_id = await conn.fetchval(
+            """
+            INSERT INTO reader_runs (
+                reading_record_id, user_id, run_type, status,
+                record_generation, envelope_json, policy_version, trigger_kind
+            )
+            VALUES ($1, $2, 'initial_build', 'queued', 1, '{}'::jsonb, 'd3-p4', 'user')
+            RETURNING id
+            """,
+            record_id,
+            user_id,
+        )
+        job_id = await conn.fetchval(
+            """
+            INSERT INTO reader_jobs (
+                reading_record_id, base_id, run_id, user_id,
+                job_type, target_type, target_key, status,
+                priority, available_at,
+                expected_generation, operation_fingerprint, idempotency_key,
+                max_attempts, attempt_count,
+                transient_attempt_count, repair_attempt_count, replan_attempt_count
+            )
+            VALUES (
+                $1, $2, $3, $4,
+                'translate_unit', 'unit', 'u1', 'queued',
+                0, NOW(),
+                1, 'fp', 'id-claim-test',
+                3, 0,
+                $5, $6, $7
+            )
+            RETURNING id
+            """,
+            record_id,
+            base_id,
+            run_id,
+            user_id,
+            transient,
+            repair,
+            replan,
+        )
+    return job_id, run_id
+
+
+async def test_claim_span_writes_retry_class_transient(
+    span_recorder_env: tuple[asyncpg.Pool, ReaderSpanRecorder],
+) -> None:
+    """claim span records retry_class='transient' when transient_attempt_count>0."""
+
+    pool, recorder = span_recorder_env
+    job_id, _run_id = await _seed_claim_test_job(
+        pool, transient=2, repair=0, replan=0
+    )
+    runtime = ReaderJobRuntime(pool=pool)
+    claim = await runtime.claim_next_job(
+        lease_owner="w-transient",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None
+    assert claim.transient_attempt_count == 2
+    assert claim.repair_attempt_count == 0
+    assert claim.replan_attempt_count == 0
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM reader_runtime_spans "
+            "WHERE span_kind = $1 AND reader_job_id = $2",
+            SPAN_KIND_CLAIM,
+            job_id,
+        )
+    assert row is not None
+    assert row["retry_class"] == RETRY_CLASS_TRANSIENT
+    assert row["status"] == STATUS_SUCCEEDED
+    assert row["attempt_number"] == 1  # claim increments attempt_count
+
+
+async def test_claim_span_writes_retry_class_repair_over_transient(
+    span_recorder_env: tuple[asyncpg.Pool, ReaderSpanRecorder],
+) -> None:
+    """repair wins over transient per derive_retry_class priority."""
+
+    pool, recorder = span_recorder_env
+    job_id, _run_id = await _seed_claim_test_job(
+        pool, transient=3, repair=1, replan=0
+    )
+    runtime = ReaderJobRuntime(pool=pool)
+    claim = await runtime.claim_next_job(
+        lease_owner="w-repair",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None
+    assert claim.repair_attempt_count == 1
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT retry_class FROM reader_runtime_spans "
+            "WHERE span_kind = $1 AND reader_job_id = $2",
+            SPAN_KIND_CLAIM,
+            job_id,
+        )
+    assert row is not None
+    assert row["retry_class"] == RETRY_CLASS_REPAIR
+
+
+async def test_claim_span_writes_retry_class_replan_over_repair(
+    span_recorder_env: tuple[asyncpg.Pool, ReaderSpanRecorder],
+) -> None:
+    """replan wins over repair per derive_retry_class priority."""
+
+    pool, recorder = span_recorder_env
+    job_id, _run_id = await _seed_claim_test_job(
+        pool, transient=2, repair=3, replan=1
+    )
+    runtime = ReaderJobRuntime(pool=pool)
+    claim = await runtime.claim_next_job(
+        lease_owner="w-replan",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None
+    assert claim.replan_attempt_count == 1
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT retry_class FROM reader_runtime_spans "
+            "WHERE span_kind = $1 AND reader_job_id = $2",
+            SPAN_KIND_CLAIM,
+            job_id,
+        )
+    assert row is not None
+    assert row["retry_class"] == RETRY_CLASS_REPLAN
+
+
+async def test_claim_span_writes_null_retry_class_on_first_attempt(
+    span_recorder_env: tuple[asyncpg.Pool, ReaderSpanRecorder],
+) -> None:
+    """retry_class is NULL on the first attempt (all counts zero)."""
+
+    pool, recorder = span_recorder_env
+    job_id, _run_id = await _seed_claim_test_job(
+        pool, transient=0, repair=0, replan=0
+    )
+    runtime = ReaderJobRuntime(pool=pool)
+    claim = await runtime.claim_next_job(
+        lease_owner="w-fresh",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT retry_class FROM reader_runtime_spans "
+            "WHERE span_kind = $1 AND reader_job_id = $2",
+            SPAN_KIND_CLAIM,
+            job_id,
+        )
+    assert row is not None
+    assert row["retry_class"] is None
