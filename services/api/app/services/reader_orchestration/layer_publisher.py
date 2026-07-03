@@ -36,6 +36,13 @@ from .job_runtime import (
     _assert_lease_valid,
 )
 from .repository import ReaderOrchestrationRepository
+from .span_recorder import (
+    SPAN_KIND_PUBLISH_FENCE,
+    STATUS_FAILED,
+    STATUS_SUCCEEDED,
+    current_span,
+    get_default_recorder,
+)
 from .translation_parsed_decision import (
     TRANSLATION_PARSED_POLICY_CODE,
     TRANSLATION_PARSED_RATIONALE_CODE,
@@ -143,6 +150,65 @@ class TranslationLayerPublisher:
         return pool
 
     async def publish_unit_translation(
+        self,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        output: TranslationLayerOutput,
+        quality_json: dict[str, Any] | None = None,
+    ) -> PublishedTranslationLayer:
+        """Wrap the publish fence + DB write in a ``publish_fence`` span.
+
+        Captures fence violations, validation errors, and DB write failures
+        as span ``status='failed'`` with ``failure_class`` /
+        ``failure_code``. ``reading_record_id`` is left NULL at span start
+        (PG column is NULLable); the row is queryable via ``trace_id``.
+        """
+
+        parent = current_span()
+        recorder = get_default_recorder()
+        publish_span = await recorder.start_span(
+            trace_id=parent.trace_id if parent is not None else uuid4(),
+            span_kind=SPAN_KIND_PUBLISH_FENCE,
+            parent_span_id=parent.span_id if parent is not None else None,
+            reader_job_id=job_id,
+            metadata={"layer_type": "translation"},
+        )
+        try:
+            result = await self._publish_unit_translation_inner(
+                job_id=job_id,
+                lease_token=lease_token,
+                output=output,
+                quality_json=quality_json,
+            )
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_SUCCEEDED,
+                extra_metadata={
+                    "layer_id": str(result.layer_id),
+                    "unit_id": result.unit_id,
+                    "generation": result.generation,
+                },
+            )
+            return result
+        except FenceViolationError:
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_FAILED,
+                failure_class="fence_violation",
+                failure_code="fence_failed",
+            )
+            raise
+        except Exception as exc:
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_FAILED,
+                failure_class="publish_exception",
+                failure_code=type(exc).__name__,
+            )
+            raise
+
+    async def _publish_unit_translation_inner(
         self,
         *,
         job_id: UUID,
@@ -399,6 +465,59 @@ class VocabularyLayerPublisher:
         output: VocabularyLayerOutput,
         quality_json: dict[str, Any] | None = None,
     ) -> PublishedVocabularyLayer:
+        """Wrap the publish fence + DB write in a ``publish_fence`` span."""
+
+        parent = current_span()
+        recorder = get_default_recorder()
+        publish_span = await recorder.start_span(
+            trace_id=parent.trace_id if parent is not None else uuid4(),
+            span_kind=SPAN_KIND_PUBLISH_FENCE,
+            parent_span_id=parent.span_id if parent is not None else None,
+            reader_job_id=job_id,
+            metadata={"layer_type": "vocabulary"},
+        )
+        try:
+            result = await self._publish_unit_vocabulary_inner(
+                job_id=job_id,
+                lease_token=lease_token,
+                output=output,
+                quality_json=quality_json,
+            )
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_SUCCEEDED,
+                extra_metadata={
+                    "layer_id": str(result.layer_id),
+                    "unit_id": result.unit_id,
+                    "generation": result.generation,
+                },
+            )
+            return result
+        except FenceViolationError:
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_FAILED,
+                failure_class="fence_violation",
+                failure_code="fence_failed",
+            )
+            raise
+        except Exception as exc:
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_FAILED,
+                failure_class="publish_exception",
+                failure_code=type(exc).__name__,
+            )
+            raise
+
+    async def _publish_unit_vocabulary_inner(
+        self,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        output: VocabularyLayerOutput,
+        quality_json: dict[str, Any] | None = None,
+    ) -> PublishedVocabularyLayer:
         payload = output.model_dump(mode="json")
         published_at = datetime.now(UTC)
 
@@ -628,6 +747,61 @@ class GrammarBundleLayerPublisher:
         return pool
 
     async def publish_unit_grammar_bundle(
+        self,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        grammar_note_output: GrammarNoteLayerOutput | None,
+        sentence_analysis_output: SentenceAnalysisLayerOutput | None,
+        quality_json: dict[str, Any] | None = None,
+    ) -> PublishedGrammarBundle:
+        """Wrap the publish fence + DB write in a ``publish_fence`` span."""
+
+        parent = current_span()
+        recorder = get_default_recorder()
+        publish_span = await recorder.start_span(
+            trace_id=parent.trace_id if parent is not None else uuid4(),
+            span_kind=SPAN_KIND_PUBLISH_FENCE,
+            parent_span_id=parent.span_id if parent is not None else None,
+            reader_job_id=job_id,
+            metadata={"layer_type": "grammar_bundle"},
+        )
+        try:
+            result = await self._publish_unit_grammar_bundle_inner(
+                job_id=job_id,
+                lease_token=lease_token,
+                grammar_note_output=grammar_note_output,
+                sentence_analysis_output=sentence_analysis_output,
+                quality_json=quality_json,
+            )
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_SUCCEEDED,
+                extra_metadata={
+                    "unit_id": result.unit_id,
+                    "generation": result.generation,
+                    "no_op": result.no_op,
+                },
+            )
+            return result
+        except FenceViolationError:
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_FAILED,
+                failure_class="fence_violation",
+                failure_code="fence_failed",
+            )
+            raise
+        except Exception as exc:
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_FAILED,
+                failure_class="publish_exception",
+                failure_code=type(exc).__name__,
+            )
+            raise
+
+    async def _publish_unit_grammar_bundle_inner(
         self,
         *,
         job_id: UUID,

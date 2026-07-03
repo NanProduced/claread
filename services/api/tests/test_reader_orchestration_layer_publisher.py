@@ -22,6 +22,11 @@ from app.services.reader_orchestration.layer_publisher import (
     TranslationLayerPublisher,
     TranslationPublishValidationError,
 )
+from app.services.reader_orchestration.span_recorder import (
+    SPAN_KIND_PUBLISH_FENCE,
+    ReaderSpanRecorder,
+    set_default_recorder,
+)
 from app.services.reader_orchestration.orchestrator import (
     TRANSLATION_PARSED_POLICY_CODE,
     TRANSLATION_PARSED_RATIONALE_CODE,
@@ -844,3 +849,72 @@ def test_layer_publisher_module_does_not_reference_render_scene_json() -> None:
 
 def test_translation_job_bootstrap_uses_expected_fingerprint_base() -> None:
     assert TRANSLATION_OPERATION_FINGERPRINT == "translation_unit"
+
+
+async def test_publish_unit_translation_writes_publish_fence_span(
+    layer_publisher_env: asyncpg.Pool,
+) -> None:
+    """Successful publish_unit_translation should also write a
+    ``publish_fence`` span row to ``reader_runtime_spans`` with
+    ``status='succeeded'`` and ``metadata.layer_type='translation'``.
+
+    Covers the P2-c observability contract: the publish wrapper
+    surrounds ``_publish_unit_translation_inner`` with a span that
+    records success / fence_violation / publish_exception outcomes.
+    """
+    _user_id, _article, claim = await _bootstrap_and_claim(
+        layer_publisher_env,
+        plain_text="Alpha. Beta.",
+    )
+    publisher = TranslationLayerPublisher(pool=layer_publisher_env)
+    output = await _translation_output_for_claim(layer_publisher_env, claim)
+
+    # Inject a recorder bound to the test pool so span rows land in the
+    # same schema as the rest of the test fixture. The default recorder
+    # would otherwise hit db_connection.DB_POOL (unavailable in tests)
+    # and silently swallow the span write.
+    recorder = ReaderSpanRecorder(pool=layer_publisher_env)
+    set_default_recorder(recorder)
+    try:
+        published = await publisher.publish_unit_translation(
+            job_id=claim.job_id,
+            lease_token=claim.lease_token,
+            output=output,
+            quality_json={"prompt_version": "publisher-span-test"},
+        )
+        assert published is not None
+
+        async with layer_publisher_env.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT status, failure_class, failure_code,
+                       reading_record_id, reader_job_id, metadata_json
+                FROM reader_runtime_spans
+                WHERE span_kind = $1
+                  AND reader_job_id = $2
+                ORDER BY started_at ASC
+                """,
+                SPAN_KIND_PUBLISH_FENCE,
+                claim.job_id,
+            )
+        assert len(rows) == 1, (
+            f"expected exactly one publish_fence span row for job "
+            f"{claim.job_id}, got {len(rows)}"
+        )
+        row = rows[0]
+        assert row["status"] == "succeeded"
+        assert row["failure_class"] is None
+        assert row["failure_code"] is None
+        assert row["reader_job_id"] == claim.job_id
+        # publish_fence span starts before the publisher reads
+        # job_row["reading_record_id"] inside its transaction; the
+        # column is NULLable and the wrapper intentionally leaves it
+        # NULL. Console queries publish_fence spans via trace_id, not
+        # reading_record_id.
+        assert row["reading_record_id"] is None
+        assert row["metadata_json"]["layer_type"] == "translation"
+        assert row["metadata_json"]["layer_id"] == str(published.layer_id)
+        assert row["metadata_json"]["unit_id"] == published.unit_id
+        assert row["metadata_json"]["generation"] == published.generation
+    finally:
+        set_default_recorder(None)

@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     langsmith_api_key: str = ""
     langsmith_endpoint: str = "https://api.smith.langchain.com"
     langsmith_workspace_id: str = ""
+    # PydanticAI 1.x ships ``Agent.instrument_all()`` which emits OpenTelemetry
+    # spans for every ``agent.run``. LangSmith's official OTEL integration
+    # (``langsmith.integrations.otel.configure``) wires those spans to the
+    # LangSmith project. Disabled by default for tests; production should set
+    # ``LANGSMITH_OTEL_ENABLED=true``.
+    langsmith_otel_enabled: bool = False
 
     # 数据库
     database_url: str = "postgresql://claread:claread_dev@127.0.0.1:5432/claread"

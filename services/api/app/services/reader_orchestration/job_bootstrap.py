@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import asyncpg
 
@@ -270,6 +270,7 @@ class TranslationJobBootstrapService:
         *,
         record_id: UUID,
         user_id: UUID,
+        trace_id: UUID | None = None,
     ) -> TranslationBootstrapResult:
         """Enqueue the first translation job for the active base.
 
@@ -288,6 +289,11 @@ class TranslationJobBootstrapService:
                     record_id=record_id,
                     user_id=user_id,
                 )
+                if trace_id is None:
+                    # Caller did not provide a shared trace_id; generate one
+                    # so envelope still carries the linkage. Tests that don't
+                    # care about tracing can omit the parameter.
+                    trace_id = uuid4()
                 operation_fingerprint = _compose_operation_fingerprint(
                     TRANSLATION_OPERATION_FINGERPRINT, state.strategy
                 )
@@ -385,6 +391,7 @@ class TranslationJobBootstrapService:
                         "target_scope": TRANSLATION_TARGET_SCOPE,
                         "target_unit_id": str(unit_row["unit_id"]),
                         "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+                        "trace_id": str(trace_id),
                     },
                     input_signature_suffix=(
                         f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}"
@@ -422,6 +429,7 @@ class VocabularyJobBootstrapService:
         *,
         record_id: UUID,
         user_id: UUID,
+        trace_id: UUID | None = None,
     ) -> VocabularyBootstrapResult:
         """Enqueue the first vocabulary job for the active base.
 
@@ -440,6 +448,8 @@ class VocabularyJobBootstrapService:
                     record_id=record_id,
                     user_id=user_id,
                 )
+                if trace_id is None:
+                    trace_id = uuid4()
                 operation_fingerprint = _compose_operation_fingerprint(
                     VOCABULARY_OPERATION_FINGERPRINT, state.strategy
                 )
@@ -535,6 +545,7 @@ class VocabularyJobBootstrapService:
                         "target_scope": VOCABULARY_TARGET_SCOPE,
                         "target_unit_id": str(unit_row["unit_id"]),
                         "layer_type": "vocabulary",
+                        "trace_id": str(trace_id),
                     },
                     input_signature_suffix=f"{state.base_language}:vocabulary:1",
                     input_json={
@@ -570,6 +581,7 @@ class GrammarJobBootstrapService:
         *,
         record_id: UUID,
         user_id: UUID,
+        trace_id: UUID | None = None,
     ) -> GrammarBootstrapResult:
         """Enqueue the first grammar bundle job for the active base.
 
@@ -588,6 +600,8 @@ class GrammarJobBootstrapService:
                     record_id=record_id,
                     user_id=user_id,
                 )
+                if trace_id is None:
+                    trace_id = uuid4()
                 operation_fingerprint = _compose_operation_fingerprint(
                     GRAMMAR_OPERATION_FINGERPRINT, state.strategy
                 )
@@ -698,6 +712,7 @@ class GrammarJobBootstrapService:
                         "target_scope": GRAMMAR_TARGET_SCOPE,
                         "target_unit_id": str(unit_row["unit_id"]),
                         "layer_types": ["grammar_note", "sentence_analysis"],
+                        "trace_id": str(trace_id),
                     },
                     input_signature_suffix=f"{state.base_language}:grammar_bundle:1",
                     input_json={
@@ -733,6 +748,7 @@ class DisplayTitleJobBootstrapService:
         *,
         record_id: UUID,
         user_id: UUID,
+        trace_id: UUID | None = None,
     ) -> DisplayTitleBootstrapResult | None:
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
@@ -741,7 +757,11 @@ class DisplayTitleJobBootstrapService:
                     record_id=record_id,
                     user_id=user_id,
                 )
-                results = await _bootstrap_display_title_job(conn, state=state)
+                if trace_id is None:
+                    trace_id = uuid4()
+                results = await _bootstrap_display_title_job(
+                    conn, state=state, trace_id=trace_id
+                )
         return results[0] if results else None
 
 
@@ -760,6 +780,7 @@ class EnhancementJobBootstrapService:
         *,
         record_id: UUID,
         user_id: UUID,
+        trace_id: UUID | None = None,
     ) -> EnhancementBootstrapSummary:
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
@@ -768,21 +789,27 @@ class EnhancementJobBootstrapService:
                     record_id=record_id,
                     user_id=user_id,
                 )
+                if trace_id is None:
+                    trace_id = uuid4()
                 display_title_results = await _bootstrap_display_title_job(
                     conn,
                     state=state,
+                    trace_id=trace_id,
                 )
                 translation_results = await self._bootstrap_translation_jobs(
                     conn,
                     state=state,
+                    trace_id=trace_id,
                 )
                 vocabulary_results = await self._bootstrap_vocabulary_jobs(
                     conn,
                     state=state,
+                    trace_id=trace_id,
                 )
                 grammar_results = await self._bootstrap_grammar_jobs(
                     conn,
                     state=state,
+                    trace_id=trace_id,
                 )
 
         return EnhancementBootstrapSummary(
@@ -807,7 +834,10 @@ class EnhancementJobBootstrapService:
         conn: asyncpg.Connection,
         *,
         state: _LockedActiveBaseState,
+        trace_id: UUID | None = None,
     ) -> list[TranslationBootstrapResult]:
+        if trace_id is None:
+            trace_id = uuid4()
         operation_fingerprint = _compose_operation_fingerprint(
             TRANSLATION_OPERATION_FINGERPRINT, state.strategy
         )
@@ -882,6 +912,7 @@ class EnhancementJobBootstrapService:
                     "target_scope": TRANSLATION_TARGET_SCOPE,
                     "target_unit_id": str(row["unit_id"]),
                     "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+                    "trace_id": str(trace_id),
                 },
                 input_signature_suffix=(
                     f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}"
@@ -913,7 +944,10 @@ class EnhancementJobBootstrapService:
         conn: asyncpg.Connection,
         *,
         state: _LockedActiveBaseState,
+        trace_id: UUID | None = None,
     ) -> list[VocabularyBootstrapResult]:
+        if trace_id is None:
+            trace_id = uuid4()
         operation_fingerprint = _compose_operation_fingerprint(
             VOCABULARY_OPERATION_FINGERPRINT, state.strategy
         )
@@ -988,6 +1022,7 @@ class EnhancementJobBootstrapService:
                     "target_scope": VOCABULARY_TARGET_SCOPE,
                     "target_unit_id": str(row["unit_id"]),
                     "layer_type": "vocabulary",
+                    "trace_id": str(trace_id),
                 },
                 input_signature_suffix=f"{state.base_language}:vocabulary:1",
                 input_json={
@@ -1017,7 +1052,10 @@ class EnhancementJobBootstrapService:
         conn: asyncpg.Connection,
         *,
         state: _LockedActiveBaseState,
+        trace_id: UUID | None = None,
     ) -> list[GrammarBootstrapResult]:
+        if trace_id is None:
+            trace_id = uuid4()
         operation_fingerprint = _compose_operation_fingerprint(
             GRAMMAR_OPERATION_FINGERPRINT, state.strategy
         )
@@ -1092,6 +1130,7 @@ class EnhancementJobBootstrapService:
                     "target_scope": GRAMMAR_TARGET_SCOPE,
                     "target_unit_id": str(row["unit_id"]),
                     "layer_types": ["grammar_note", "sentence_analysis"],
+                    "trace_id": str(trace_id),
                 },
                 input_signature_suffix=f"{state.base_language}:grammar_bundle:1",
                 input_json={
@@ -1200,7 +1239,10 @@ async def _bootstrap_display_title_job(
     conn: asyncpg.Connection,
     *,
     state: _LockedActiveBaseState,
+    trace_id: UUID | None = None,
 ) -> list[DisplayTitleBootstrapResult]:
+    if trace_id is None:
+        trace_id = uuid4()
     operation_fingerprint = _compose_operation_fingerprint(
         DISPLAY_TITLE_OPERATION_FINGERPRINT, state.strategy
     )
@@ -1291,6 +1333,7 @@ async def _bootstrap_display_title_job(
             "base_id": str(state.base_id),
             "target_scope": DISPLAY_TITLE_TARGET_SCOPE,
             "target_language": "zh-CN",
+            "trace_id": str(trace_id),
         },
         input_signature_suffix=f"{state.base_language}:display_title_zh:1",
         input_json={

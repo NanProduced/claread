@@ -38,6 +38,11 @@ SURFACE_ANALYZE_DIRECT = "analyze_direct"
 SURFACE_EVAL_WORKFLOW_LAB = "eval_workflow_lab"
 SURFACE_DAILY_READER_PIPELINE = "daily_reader_pipeline"
 SURFACE_OVERVIEW_WORKER = "overview_worker"
+# Reader orchestration actor chain (worker_loop → pipeline_runner →
+# translation/vocabulary/grammar_bundle/display_title workers). Used as a
+# LangSmith tag and as a ContextVar binding so downstream spans label
+# themselves with this surface without each layer plumbing the value through.
+SURFACE_READER_ORCHESTRATION = "reader_orchestration"
 
 KNOWN_SURFACES: frozenset[str] = frozenset(
     {
@@ -45,6 +50,7 @@ KNOWN_SURFACES: frozenset[str] = frozenset(
         SURFACE_EVAL_WORKFLOW_LAB,
         SURFACE_DAILY_READER_PIPELINE,
         SURFACE_OVERVIEW_WORKER,
+        SURFACE_READER_ORCHESTRATION,
     }
 )
 

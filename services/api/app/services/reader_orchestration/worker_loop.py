@@ -6,7 +6,7 @@ import socket
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import asyncpg
 
@@ -26,6 +26,12 @@ from .product_state import (
     decide_product_state_for_pipeline_summary,
 )
 from .repository import ReaderOrchestrationRepository
+from .span_recorder import (
+    SPAN_KIND_PIPELINE_ROOT,
+    STATUS_FAILED,
+    STATUS_SUCCEEDED,
+    get_default_recorder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -231,45 +237,71 @@ class ReaderEnhancementWorkerLoopService:
                         outcome="lock_unavailable",
                     )
 
-                summary = await self._pipeline_runner.run(
-                    record_id=candidate.record_id,
-                    user_id=candidate.user_id,
-                    lease_owner=lease_owner,
-                    lease_duration=lease_duration,
-                    max_ticks=max_ticks,
-                    max_jobs=max_jobs,
+                recorder = get_default_recorder()
+                pipeline_span = await recorder.start_span(
+                    trace_id=uuid4(),
+                    span_kind=SPAN_KIND_PIPELINE_ROOT,
+                    reading_record_id=candidate.record_id,
+                    metadata={"lease_owner": lease_owner},
                 )
-                product_state_decision = decide_product_state_for_pipeline_summary(summary)
-                product_state_updated = False
-                product_state_event_sequence: int | None = None
-                if product_state_decision.should_update_record:
-                    updated_at = datetime.now(UTC)
-                    async with lock_conn.transaction():
-                        product_state_updated = (
-                            await self._repository.update_record_product_state_if_active(
-                                lock_conn,
-                                record_id=candidate.record_id,
-                                expected_generation=candidate.expected_generation,
-                                next_product_state=product_state_decision.next_product_state,
-                                updated_at=updated_at,
-                            )
+                try:
+                    async with recorder.use_span(pipeline_span):
+                        summary = await self._pipeline_runner.run(
+                            record_id=candidate.record_id,
+                            user_id=candidate.user_id,
+                            lease_owner=lease_owner,
+                            lease_duration=lease_duration,
+                            max_ticks=max_ticks,
+                            max_jobs=max_jobs,
                         )
-                        if product_state_updated:
-                            published_event = await (
-                                self._event_runtime.publish_event_in_transaction(
-                                    lock_conn,
-                                    record_id=candidate.record_id,
-                                    event_type=PRODUCT_STATE_UPDATED_EVENT_TYPE,
-                                    payload_json=build_product_state_event_payload(
-                                        decision=product_state_decision,
-                                        attention_code=summary.attention_code,
-                                        stopped_reason=summary.stopped_reason,
-                                        stopped_outcome=summary.stopped_outcome,
-                                    ),
-                                    created_at=updated_at,
+                        product_state_decision = decide_product_state_for_pipeline_summary(summary)
+                        product_state_updated = False
+                        product_state_event_sequence: int | None = None
+                        if product_state_decision.should_update_record:
+                            updated_at = datetime.now(UTC)
+                            async with lock_conn.transaction():
+                                product_state_updated = (
+                                    await self._repository.update_record_product_state_if_active(
+                                        lock_conn,
+                                        record_id=candidate.record_id,
+                                        expected_generation=candidate.expected_generation,
+                                        next_product_state=product_state_decision.next_product_state,
+                                        updated_at=updated_at,
+                                    )
                                 )
-                            )
-                            product_state_event_sequence = published_event.sequence
+                                if product_state_updated:
+                                    published_event = await (
+                                        self._event_runtime.publish_event_in_transaction(
+                                            lock_conn,
+                                            record_id=candidate.record_id,
+                                            event_type=PRODUCT_STATE_UPDATED_EVENT_TYPE,
+                                            payload_json=build_product_state_event_payload(
+                                                decision=product_state_decision,
+                                                attention_code=summary.attention_code,
+                                                stopped_reason=summary.stopped_reason,
+                                                stopped_outcome=summary.stopped_outcome,
+                                            ),
+                                            created_at=updated_at,
+                                        )
+                                    )
+                                    product_state_event_sequence = published_event.sequence
+                    await recorder.end_span(
+                        pipeline_span,
+                        status=STATUS_SUCCEEDED,
+                        extra_metadata={
+                            "stopped_reason": summary.stopped_reason,
+                            "total_ticks": summary.total_ticks,
+                            "total_jobs": summary.total_jobs,
+                        },
+                    )
+                except Exception as exc:
+                    await recorder.end_span(
+                        pipeline_span,
+                        status=STATUS_FAILED,
+                        failure_class="pipeline_exception",
+                        failure_code=type(exc).__name__,
+                    )
+                    raise
             finally:
                 if user_locked:
                     user_unlocked = await lock_conn.fetchval(

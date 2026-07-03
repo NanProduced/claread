@@ -1,7 +1,7 @@
 # Orchestration Runtime
 
 > 状态：`D6 ongoing; display title worker added`
-> 最后更新：2026-06-29
+> 最后更新：2026-07-03
 > 范围：bounded run/job、worker lease、Authorization Envelope、并发和框架边界。
 
 ## Runtime 形态
@@ -408,3 +408,57 @@ D2 需要验证：
 - cancel / supersede 后 worker late result 被正确拦截。
 - deterministic planner 是否足以支撑 D4。
 - 是否确实需要 LangGraph。
+
+## Observability
+
+reader_orchestration 的可观测性采用 PG span 为主、LangSmith 为 dashboard 的双轨设计。
+
+### `reader_runtime_spans` 表契约
+
+PG `reader_runtime_spans` 是 actor 链路 span 树的事实源（Temporal / Cadence history table 模式），单表覆盖一次 record 从 submit 到 publish 的端到端链路。schema 详见 `infra/migrations/0014_reader_runtime_spans.sql`。
+
+Span kind（与 migration CHECK 约束对齐）：
+
+| span_kind | 触发点 | 说明 |
+|---|---|---|
+| `pipeline_root` | `ReaderOrchestrator.submit_plain_text_and_bootstrap_translation` | 一次 submit 的根 span，承载 `trace_id` |
+| `bootstrap` | `TranslationJobBootstrapService.bootstrap_translation_run` | run / job bootstrap 阶段 |
+| `claim` | `ReaderJobRuntime.claim_next_job` | SKIP LOCKED claim，含 `claim_wait_ms` |
+| `worker_tick` | `pipeline_runner._dispatch_worker_attempt` | 单 worker tick |
+| `llm_call` | `TranslationWorkerService.process_claimed_translation_job` 等同类 worker | LLM 执行 + usage attribution |
+| `publish_fence` | `TranslationLayerPublisher.publish_unit_*` 三个 wrapper | 发布 fence + DB write 阶段 |
+
+Status：`started` / `succeeded` / `failed` / `superseded` / `skipped`。
+
+Retry class（gap report #4 retry budget transparency）：`transient` / `repair` / `replan`，优先级 replan > repair > transient，由 `derive_retry_class()` 推导。
+
+Claim contention（gap report #2）：`claim_wait_ms` 字段在 `claim` span 上记录 SKIP LOCKED 等待耗时。
+
+### LangSmith 双轨链接
+
+- **PG 为事实源**：所有 actor 边界 span 都写入 `reader_runtime_spans`，含 status / duration / token / model_name / failure_class 等字段。
+- **LangSmith 为 dashboard**：通过 `langsmith.integrations.otel.configure()` + `Agent.instrument_all()` 自动收集 PydanticAI LLM spans，含 GenAI 语义约定的 token / model / cost。
+- **链接字段 `langsmith_run_id`**：采用 `"<trace_id>/<span_id>"` 复合格式，方便 Console deep-link 到 `https://smith.langchain.com/runs/<trace_id>/r/<span_id>`。
+
+### `LangSmithIdBridgeProcessor` 与 ContextVar 桥接
+
+`services/api/app/observability/langsmith_span_processor.py` 的 `LangSmithIdBridgeProcessor` 在每个 PydanticAI LLM span 的 `on_end` 时读取 `langsmith.trace.id` / `langsmith.span.id` attributes，写入 `contextvars.ContextVar`。`ReaderSpanRecorder.end_span` 在调用方未显式传 `langsmith_run_id` 时通过 lazy import `get_current_langsmith_ids()` 自动回填。这样无需在每个 worker 调用点显式串接 LangSmith run id。
+
+processor 在 `_configure_pydantic_ai_otel` 中通过 `tracer_provider.add_span_processor()` 挂载，并用 `_claread_bridge_attached` 标志保证幂等（防止 `setup_langsmith` 多次调用造成重复注册）。
+
+### publish_fence span 与 reading_record_id
+
+`publish_fence` span 在 `TranslationLayerPublisher.publish_unit_*` wrapper 入口处启动，**早于** publisher 事务内 `SELECT reader_jobs` 读取 `reading_record_id`。因此 `reader_runtime_spans.reading_record_id` 列为 **NULLable**，publish_fence span 行的该字段为 NULL。Console 应通过 `trace_id` 或 `reader_job_id` 查询 publish_fence span，不应假设 `reading_record_id` 一定有值。
+
+其他 span kind（`pipeline_root` / `worker_tick` / `claim` / `bootstrap` / `llm_call`）在启动时已知 `reading_record_id`，正常写入。
+
+### Console endpoint 契约
+
+Directus endpoints-bundle 的 `parse-run-observability/reader-orch.js` 已实现 4 个 SQL endpoint：
+
+- `GET /reader-orch/trace/:trace_id` — 按 trace_id 查询完整 span 树
+- `GET /reader-orch/run/:run_id` — 按 reader_run_id 查询并 LEFT JOIN `ai_usage_events` 取 billing 信息
+- `GET /reader-orch/record/:record_id/summary` — 按 reading_record_id 聚合 worker_type 维度的 latency / token 统计
+- `GET /reader-orch/worker/:worker_type/summary` — 按 worker_type 跨 record 聚合
+
+Console 前端从这些 endpoint 取数据渲染 latency / token / model cost heatmap 与 span tree 可视化。`langsmith_run_id` 字段作为 Console 跳转 LangSmith trace UI 的链接源。

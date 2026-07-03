@@ -37,6 +37,8 @@ BASELINE_SQL = (
     REPO_ROOT / "infra" / "migrations" / "0012_reader_record_reading_strategy.sql"
 ).read_text(encoding="utf-8") + "\n" + (
     REPO_ROOT / "infra" / "migrations" / "0013_user_annotation_color_palette.sql"
+).read_text(encoding="utf-8") + "\n" + (
+    REPO_ROOT / "infra" / "migrations" / "0014_reader_runtime_spans.sql"
 ).read_text(encoding="utf-8")
 
 

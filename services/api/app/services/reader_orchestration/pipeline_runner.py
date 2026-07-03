@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import asyncpg
 
@@ -37,6 +37,12 @@ from app.services.reader_orchestration.job_bootstrap import (
 )
 from app.services.reader_orchestration.job_runtime import FenceViolationError
 from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
+from app.services.reader_orchestration.span_recorder import (
+    SPAN_KIND_WORKER_TICK,
+    STATUS_FAILED,
+    current_span,
+    get_default_recorder,
+)
 from app.services.reader_orchestration.translation_worker import (
     DEFAULT_TRANSLATION_RETRY_DELAY,
 )
@@ -314,6 +320,60 @@ class ReaderEnhancementPipelineRunner:
         )
 
     async def _run_worker_attempt(
+        self,
+        *,
+        worker_type: WorkerType,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+        translation_retry_delay: timedelta,
+        vocabulary_retry_delay: timedelta,
+        grammar_retry_delay: timedelta,
+        display_title_retry_delay: timedelta,
+    ) -> ReaderPipelineWorkerAttempt:
+        recorder = get_default_recorder()
+        parent = current_span()
+        trace_id = parent.trace_id if parent is not None else uuid4()
+        span_ctx = await recorder.start_span(
+            trace_id=trace_id,
+            span_kind=SPAN_KIND_WORKER_TICK,
+            reading_record_id=record_id,
+            parent_span_id=parent.span_id if parent is not None else None,
+            worker_type=worker_type,
+            metadata={"lease_owner": lease_owner},
+        )
+        try:
+            async with recorder.use_span(span_ctx):
+                attempt = await self._dispatch_worker_attempt(
+                    worker_type=worker_type,
+                    record_id=record_id,
+                    base_id=base_id,
+                    expected_generation=expected_generation,
+                    lease_owner=lease_owner,
+                    lease_duration=lease_duration,
+                    translation_retry_delay=translation_retry_delay,
+                    vocabulary_retry_delay=vocabulary_retry_delay,
+                    grammar_retry_delay=grammar_retry_delay,
+                    display_title_retry_delay=display_title_retry_delay,
+                )
+            # Worker ends the worker_tick span itself via current_span()
+            # in process_claimed_*_job. If the worker returned without
+            # ending it (e.g. no_job outcome), the span stays "started"
+            # but that's acceptable — the row is still queryable.
+            return attempt
+        except Exception as exc:
+            # Uncaught exception fallback: worker didn't end the span.
+            await recorder.end_span(
+                span_ctx,
+                status=STATUS_FAILED,
+                failure_class="worker_exception",
+                failure_code=type(exc).__name__,
+            )
+            raise
+
+    async def _dispatch_worker_attempt(
         self,
         *,
         worker_type: WorkerType,

@@ -26,6 +26,7 @@ Key invariants enforced here:
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -34,7 +35,13 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.database import connection as db_connection
-from app.database.json_compat import jsonb_param
+from app.database.json_compat import ensure_json_object, jsonb_param
+from app.services.reader_orchestration.span_recorder import (
+    SPAN_KIND_CLAIM,
+    STATUS_SUCCEEDED,
+    current_span,
+    get_default_recorder,
+)
 
 # ---------------------------------------------------------------------------
 # Status constants
@@ -127,6 +134,12 @@ class ClaimResult:
     lease_owner: str
     lease_token: UUID
     lease_expires_at: datetime
+    # Observability fields (gap report #2 + #4). trace_id is parsed from
+    # reader_runs.envelope_json so workers can use it as the parent_span_id
+    # root for the reader_runtime_spans tree. claim_wait_ms measures the
+    # wall-clock time from entering claim_next_job to the successful UPDATE.
+    trace_id: UUID | None = None
+    claim_wait_ms: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +242,10 @@ class ReaderJobRuntime:
         """
         lease_token = uuid4()
         lease_expires_at = datetime.now(UTC) + lease_duration
+        # Measure claim contention (gap report #2). Starts before the
+        # SKIP LOCKED SELECT loop and ends when a job is successfully
+        # claimed, including any fence-violation retries.
+        claim_started_at = time.monotonic()
 
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
@@ -303,12 +320,50 @@ class ReaderJobRuntime:
                         },
                     )
 
-                    return _claim_result_from_row(
+                    # Fetch run envelope to extract trace_id for span tree
+                    # linkage (gap report #3). Primary key lookup, negligible
+                    # cost compared to the SKIP LOCKED scan above.
+                    run_envelope_json = await conn.fetchval(
+                        "SELECT envelope_json FROM reader_runs WHERE id = $1",
+                        updated["run_id"],
+                    )
+                    claim_wait_ms = int(
+                        (time.monotonic() - claim_started_at) * 1000
+                    )
+
+                    claim = _claim_result_from_row(
                         updated,
                         lease_owner=lease_owner,
                         lease_token=lease_token,
                         lease_expires_at=lease_expires_at,
+                        claim_wait_ms=claim_wait_ms,
+                        run_envelope_json=run_envelope_json,
                     )
+                    # Record claim span (best-effort, gap report #2 + #4).
+                    # Claim is a leaf span: start + end immediately, no use_span
+                    # wrapping. trace_id prefers parent (pipeline_root) then
+                    # falls back to envelope trace_id, then uuid4().
+                    parent = current_span()
+                    claim_trace_id = (
+                        parent.trace_id
+                        if parent is not None
+                        else (claim.trace_id or uuid4())
+                    )
+                    recorder = get_default_recorder()
+                    claim_span = await recorder.start_span(
+                        trace_id=claim_trace_id,
+                        span_kind=SPAN_KIND_CLAIM,
+                        reading_record_id=claim.reading_record_id,
+                        parent_span_id=parent.span_id if parent is not None else None,
+                        reader_run_id=claim.run_id,
+                        reader_job_id=claim.job_id,
+                        claim_wait_ms=claim.claim_wait_ms,
+                        attempt_number=claim.attempt_count,
+                        retry_class=None,
+                        metadata={"lease_owner": lease_owner},
+                    )
+                    await recorder.end_span(claim_span, status=STATUS_SUCCEEDED)
+                    return claim
 
     # ------------------------------------------------------------------
     # Heartbeat
@@ -795,7 +850,23 @@ def _claim_result_from_row(
     lease_owner: str,
     lease_token: UUID,
     lease_expires_at: datetime,
+    claim_wait_ms: int | None = None,
+    run_envelope_json: Any = None,
 ) -> ClaimResult:
+    # Parse trace_id from reader_runs.envelope_json so workers can use it
+    # as the parent_span_id root for the reader_runtime_spans tree.
+    # Defensive: legacy rows without trace_id in envelope yield None, and
+    # the span recorder falls back to generating a fresh trace_id.
+    trace_id: UUID | None = None
+    if run_envelope_json is not None:
+        envelope = ensure_json_object(run_envelope_json)
+        trace_id_str = envelope.get("trace_id")
+        if trace_id_str:
+            try:
+                trace_id = UUID(str(trace_id_str))
+            except (ValueError, TypeError):
+                trace_id = None
+
     return ClaimResult(
         job_id=row["id"],
         run_id=row["run_id"],
@@ -810,6 +881,8 @@ def _claim_result_from_row(
         lease_owner=lease_owner,
         lease_token=lease_token,
         lease_expires_at=lease_expires_at,
+        trace_id=trace_id,
+        claim_wait_ms=claim_wait_ms,
     )
 
 

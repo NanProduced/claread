@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import asyncpg
 
@@ -114,13 +114,20 @@ class ReaderOrchestrator:
         bootstrap is idempotent: repeated calls reuse the active job.
         """
         result = await self._article_ready_service.submit_plain_text(request)
+        # Generate a single trace_id at the entry point; both bootstrap
+        # services persist it into reader_runs.envelope_json so workers can
+        # read it back from the claim result and use it as the
+        # parent_span_id root for the reader_runtime_spans tree.
+        trace_id = uuid4()
         await self._title_bootstrap_service.bootstrap_display_title_job(
             record_id=result.record_id,
             user_id=request.user_id,
+            trace_id=trace_id,
         )
         await self._bootstrap_service.bootstrap_translation_run(
             record_id=result.record_id,
             user_id=request.user_id,
+            trace_id=trace_id,
         )
         return result
 
