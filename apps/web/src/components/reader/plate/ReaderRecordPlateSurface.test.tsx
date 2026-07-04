@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { computeUtf16FNV1a } from "@claread/contracts";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -17,6 +18,7 @@ import {
   type ReaderPlateSnapshotDto,
   type ReaderSourceBlockNodeDto,
   type ReaderSnapshotUserAssetDto,
+  type ReaderTitleGenerationStatus,
   type ReaderUnitNodeDto,
   type ReaderVocabularyMarkDto,
 } from "@/types/api/reader-plate";
@@ -95,6 +97,22 @@ beforeEach(() => {
       unobserve() {}
       disconnect() {}
     },
+  );
+  // 默认 mock 收藏接口，避免 TopBar 中的 FavoriteButton 触发未处理请求。
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname.startsWith("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("Not Found", { status: 404 }));
+    }),
   );
   window.getSelection()?.removeAllRanges();
 });
@@ -2706,7 +2724,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(titleEl?.dataset.readerRecordTitleState).not.toBe("succeeded");
   });
 
-  it("renders pending title state and does not promote record.title to the Chinese masthead", () => {
+  it("renders pending title state as a skeleton and does not promote record.title to the Chinese masthead", () => {
     const snapshot = makeSnapshot();
     snapshot.record.display_title_zh = null;
     snapshot.record.title_generation_status = "pending";
@@ -2717,7 +2735,8 @@ describe("ReaderRecordPlateSurface", () => {
     );
     expect(titleEl).not.toBeNull();
     expect(titleEl?.tagName).toBe("H1");
-    expect(titleEl?.textContent).toBe("标题生成中…");
+    expect(titleEl?.textContent).not.toContain("标题生成中");
+    expect(titleEl?.querySelector(".reader-skeleton")).not.toBeNull();
     expect(titleEl?.dataset.readerRecordTitleState).toBe("pending");
     expect(headerSourceTitleElement(container)).toBeNull();
   });
@@ -2758,14 +2777,14 @@ describe("ReaderRecordPlateSurface", () => {
     expect(titleEl).toBeNull();
   });
 
-  it("renders header eyebrow with mode label and date", () => {
+  it("does not render a header eyebrow with mode label and date", () => {
     render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
     const header = screen.getByTestId("reader-record-plate-header");
     expect(header).toBeTruthy();
-    expect(header.textContent).toContain("精读模式");
-    // 旧 snapshot 默认 created_at = 2026-06-24T00:00:00Z
-    expect(header.textContent).toContain("2026年6月24日");
+    // Hero eyebrow 已在 R1 中移除；模式标签只出现在 More Menu 与 action bar tab。
+    expect(header.textContent).not.toContain("精读模式 · 2026年6月24日");
+    expect(header.textContent).not.toContain("2026年6月24日");
   });
 
   it("renders header with progress status and metadata", () => {
@@ -2773,7 +2792,6 @@ describe("ReaderRecordPlateSurface", () => {
 
     const header = screen.getByTestId("reader-record-plate-header");
     expect(header).toBeTruthy();
-    expect(header.textContent).toContain("精读模式");
     expect(header.textContent).toContain("解析生成中");
 
     const progressStatus = container.querySelector<HTMLElement>(
@@ -2806,12 +2824,27 @@ describe("ReaderRecordPlateSurface", () => {
     render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
     const surface = screen.getByTestId("reader-record-plate-surface");
-    const headerColumn = surface.firstElementChild as HTMLElement | null;
-    const contentColumn = surface.children[1] as HTMLElement | null;
+    // Surface-level sticky top bar is a sibling of the padded content section, not inside it.
+    const topBar = surface.querySelector<HTMLElement>('[data-testid="reader-record-top-bar"]');
+    expect(topBar).not.toBeNull();
+    expect(topBar?.parentElement).toBe(surface);
+    expect(topBar?.dataset.readerRecordTopBarLayer).toBe("surface");
 
+    // Top bar 不再使用内容列居中约束。
+    expect(topBar?.className).not.toContain("mx-auto");
+    expect(topBar?.className).not.toContain("max-w-[82ch]");
+
+    const contentSection = surface.querySelector("section");
+    expect(contentSection).not.toBeNull();
+    // Hero / header 仍保留 editorial 内容列约束。
+    const headerColumn = contentSection?.querySelector(".reader-header-band-inner");
+    expect(headerColumn).not.toBeNull();
+    expect(headerColumn?.className).toContain("mx-auto");
     expect(headerColumn?.className).toContain("max-w-[82ch]");
     expect(headerColumn?.querySelector('[data-testid="reader-record-plate-header"]')).not.toBeNull();
-    expect(contentColumn?.className).toContain("max-w-[46rem]");
+
+    const contentColumn = contentSection?.querySelector('[class*="max-w-[46rem]"]');
+    expect(contentColumn).not.toBeNull();
     expect(contentColumn?.querySelector(".reader-record-plate-document")).not.toBeNull();
   });
 
@@ -2866,20 +2899,23 @@ describe("ReaderRecordPlateSurface", () => {
     expect(header.textContent).toContain("来源 粘贴导入");
     expect(header.textContent).not.toContain("来源 text");
     expect(header.textContent).not.toContain("数据来源 text");
+    // 无 sourceUrl 时底部来源标签只出现一次，不在右侧重复显示。
+    expect((header.textContent?.match(/来源 粘贴导入/g) ?? []).length).toBe(1);
   });
 
   it("renders the right action buttons with icon + label + sublabel", () => {
     render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
     const header = screen.getByTestId("reader-record-plate-header");
-    // FavoriteButton 是独立状态组件，其在 header 中占位即可。
-    expect(header.textContent).toContain("收藏");
+    // Hero action bar 右侧只保留精读/沉浸两个阅读状态 tab。
     expect(header.textContent).toContain("精读");
     expect(header.textContent).toContain("逐句解析");
     expect(header.textContent).toContain("沉浸");
     expect(header.textContent).toContain("专注阅读");
-    expect(header.textContent).toContain("阅读设置");
-    expect(header.textContent).toContain("版式与偏好");
+    // 收藏与阅读设置已迁移到 sticky top bar。
+    expect(header.textContent).not.toContain("收藏");
+    expect(header.textContent).not.toContain("阅读设置");
+    expect(header.textContent).not.toContain("版式与偏好");
   });
 
   it("shows source-only word count from stable source text in the header", () => {
@@ -3049,7 +3085,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(labelEl).toBeNull();
   });
 
-  it("keeps favorite, intensive, immersive and reading settings actions on the right side of the action bar", () => {
+  it("keeps only intensive and immersive mode tabs on the right side of the action bar", () => {
     const { container } = render(
       <ReaderRecordPlateSurface snapshot={makeSnapshot()} />,
     );
@@ -3065,46 +3101,272 @@ describe("ReaderRecordPlateSurface", () => {
     expect(
       container.querySelector('[data-reader-record-mode-option="immersive"]'),
     ).not.toBeNull();
+    // 阅读设置入口已移除，收藏已迁移到 sticky top bar。
     expect(
       container.querySelector('[data-reader-record-action="open-settings"]'),
-    ).not.toBeNull();
-    // FavoriteButton 渲染为 aria-pressed 收藏按钮
+    ).toBeNull();
     expect(
-      container.querySelector('button[aria-pressed]'),
-    ).not.toBeNull();
+      actionBar?.querySelector('button[title="收藏"]'),
+    ).toBeNull();
     // 旧版 pill segmented control 已被移除，新版使用 hairline action bar
     expect(
       container.querySelector('[data-reader-record-mode-switch="intensive"][role="group"]'),
     ).toBeNull();
-    // 仍保留 favorite、精读、沉浸、阅读设置四个右侧按钮
+    // Hero action bar 只保留精读、沉浸两个状态 tab
     expect(
       screen.getByRole("button", { name: "切换到精读模式" }),
     ).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "切换到沉浸模式" }),
     ).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "打开阅读设置" }),
-    ).toBeTruthy();
   });
 
-  it("opens reading settings as a floating compact popover", () => {
+  it("renders a sticky top bar with title, favorite, and more menu trigger", () => {
+    const snapshot = makeSnapshot();
+    snapshot.record.display_title_zh = "顶部标题测试";
+    snapshot.record.title_generation_status = "succeeded";
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+
+    const topBar = screen.getByTestId("reader-record-top-bar");
+    expect(topBar).toBeTruthy();
+    expect(topBar.className).toContain("sticky");
+    expect(topBar.className).toContain("z-20");
+    // Top bar 必须是页面级 operation layer，不能再被内容列居中约束。
+    expect(topBar.className).not.toContain("-mx-5");
+    expect(topBar.className).not.toContain("mx-auto");
+    expect(topBar.className).not.toContain("max-w-[82ch]");
+
+    const titleEl = topBar.querySelector<HTMLElement>(
+      '[data-reader-record-top-bar-title-state="succeeded"]',
+    );
+    expect(titleEl).not.toBeNull();
+    expect(titleEl?.textContent).toBe("顶部标题测试");
+
+    // 收藏按钮只在 top bar（ FavoriteButton icon-only 默认 title="收藏"）
+    expect(topBar.querySelector('button[title="收藏"]')).not.toBeNull();
+    expect(
+      screen.getByTestId("reader-record-plate-header").querySelector('button[title="收藏"]'),
+    ).toBeNull();
+
+    const moreTrigger = screen.getByTestId("reader-record-more-menu-trigger");
+    expect(moreTrigger).toBeTruthy();
+
+    // 标题 cluster 居左，操作 cluster 居右，不跟随 82ch 内容列
+    const titleCluster = topBar.querySelector<HTMLElement>(
+      '[data-reader-record-top-bar-title-state]',
+    )?.parentElement;
+    expect(titleCluster?.className).toContain("truncate");
+    expect(titleCluster?.className).toContain("text-left");
+    expect(titleCluster?.className).toContain("max-w-[min(46vw,36rem)]");
+
+    const actionCluster = moreTrigger.parentElement;
+    expect(actionCluster?.className).toContain("ml-auto");
+    expect(actionCluster?.className).toContain("shrink-0");
+  });
+
+  it("renders top bar title skeleton when title generation is pending", () => {
+    const snapshot = makeSnapshot();
+    snapshot.record.display_title_zh = null;
+    snapshot.record.title_generation_status = "pending";
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+
+    const topBar = screen.getByTestId("reader-record-top-bar");
+    const titleEl = topBar.querySelector<HTMLElement>(
+      '[data-reader-record-top-bar-title-state="pending"]',
+    );
+    expect(titleEl).not.toBeNull();
+    expect(titleEl?.textContent).not.toContain("标题生成中");
+    expect(titleEl?.className).toContain("reader-skeleton");
+  });
+
+  it("renders top bar fallback labels for failed_retryable, migration, and empty states", () => {
+    const retrySnapshot = makeSnapshot();
+    retrySnapshot.record.display_title_zh = null;
+    retrySnapshot.record.title_generation_status = "failed_retryable";
+    const { container: retryContainer } = render(
+      <ReaderRecordPlateSurface snapshot={retrySnapshot} />,
+    );
+    expect(
+      retryContainer.querySelector(
+        '[data-reader-record-top-bar-title-state="failed_retryable"]',
+      )?.textContent,
+    ).toContain("标题生成失败");
+
+    cleanup();
+
+    const migrationSnapshot = makeSnapshot();
+    migrationSnapshot.record.display_title_zh = null;
+    migrationSnapshot.record.title_generation_status = null as unknown as ReaderTitleGenerationStatus;
+    const { container: migrationContainer } = render(
+      <ReaderRecordPlateSurface snapshot={migrationSnapshot} />,
+    );
+    // migration fallback 使用 record.title，此处 fixture 为 "Reader Record Plate Surface Fixture"
+    expect(
+      migrationContainer.querySelector(
+        '[data-reader-record-top-bar-title-state="migration_fallback"]',
+      )?.textContent,
+    ).toContain("Reader Record Plate Surface Fixture");
+
+    cleanup();
+
+    const emptySnapshot = makeSnapshot();
+    emptySnapshot.record.title = "";
+    emptySnapshot.record.display_title_zh = null;
+    emptySnapshot.record.title_generation_status = null as unknown as ReaderTitleGenerationStatus;
+    const { container: emptyContainer } = render(
+      <ReaderRecordPlateSurface snapshot={emptySnapshot} />,
+    );
+    expect(
+      emptyContainer.querySelector(
+        '[data-reader-record-top-bar-title-state="empty"]',
+      )?.textContent,
+    ).toContain("阅读记录");
+  });
+
+  it("opens the more menu and exposes reading mode, typography, and article actions", async () => {
+    const user = userEvent.setup();
     render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
-    fireEvent.click(screen.getByLabelText("打开阅读设置"));
+    await user.click(screen.getByTestId("reader-record-more-menu-trigger"));
 
-    const popover = screen.getByTestId("reader-record-settings-popover");
-    expect(popover.dataset.readerRecordSettingsPanel).toBe("open");
+    const menu = screen.getByTestId("reader-record-more-menu-content");
+    expect(menu).toBeTruthy();
+    expect(menu.dataset.readerRecordMoreMenuPanel).toBe("true");
+    expect(menu.className).toContain("w-[340px]");
+    expect(menu.textContent).toContain("阅读体验");
+    expect(menu.querySelector('[data-reader-record-more-mode="intensive"]')).not.toBeNull();
+    expect(menu.querySelector('[data-reader-record-more-mode="immersive"]')).not.toBeNull();
+    expect(menu.querySelector('[data-reader-record-more-theme="paper"]')).not.toBeNull();
+    expect(menu.querySelector('[data-reader-record-more-font-scale="md"]')).not.toBeNull();
+    expect(menu.querySelector('[data-reader-record-more-font-family="sans"]')).not.toBeNull();
+    expect(menu.querySelector('[data-reader-record-more-action="copy-link"]')).not.toBeNull();
+    expect(menu.querySelector('[data-reader-record-more-metadata="true"]')).not.toBeNull();
+    // Font preview cards render an "Ag" sample in each font family option.
+    expect(menu.textContent).toContain("Ag");
+  });
+
+  it("switches reading mode from the more menu and keeps it in sync with the hero tabs", async () => {
+    const user = userEvent.setup();
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+      clear: () => storage.clear(),
+    });
+    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const heroTab = screen.getByRole("button", { name: "切换到沉浸模式" });
+    expect(heroTab).toBeTruthy();
+    expect(heroTab.getAttribute("aria-pressed")).toBe("false");
+
+    await user.click(screen.getByTestId("reader-record-more-menu-trigger"));
+    const menu = await waitFor(() =>
+      screen.getByTestId("reader-record-more-menu-content"),
+    );
+    const immersiveItem = menu.querySelector<HTMLElement>(
+      '[data-reader-record-more-mode="immersive"]',
+    );
+    expect(immersiveItem).not.toBeNull();
+    await user.click(immersiveItem!);
+
+    // 关闭菜单后再验证 Hero tab，避免 Radix portal 的 aria-hidden 阻塞查询
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "切换到沉浸模式" }).getAttribute("aria-pressed"),
+      ).toBe("true");
+      expect(
+        screen.getByRole("button", { name: "切换到精读模式" }).getAttribute("aria-pressed"),
+      ).toBe("false");
+    });
+
+    // 模式变化应持久化到 localStorage
+    const stored = window.localStorage.getItem("claread.reader.settings.v4");
+    expect(stored).toBeTruthy();
+    expect(JSON.parse(stored!).mode).toBe("immersive");
+  });
+
+  it("updates theme, font scale, and font family from the more menu", async () => {
+    const user = userEvent.setup();
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+      clear: () => storage.clear(),
+    });
+    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    await user.click(screen.getByTestId("reader-record-more-menu-trigger"));
+    const menu = await waitFor(() => screen.getByTestId("reader-record-more-menu-content"));
+
+    await user.click(menu.querySelector('[data-reader-record-more-theme="dark"]')!);
+    await waitFor(() => {
+      expect(window.localStorage.getItem("claread.reader.themeName")).toBe("dark");
+    });
+
+    await user.click(menu.querySelector('[data-reader-record-more-font-scale="lg"]')!);
+    await waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem("claread.reader.settings.v4")!);
+      expect(stored.fontScale).toBe("lg");
+    });
+
+    await user.click(menu.querySelector('[data-reader-record-more-font-family="editorial"]')!);
+    await waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem("claread.reader.settings.v4")!);
+      expect(stored.fontFamily).toBe("editorial");
+    });
+  });
+
+  it("shows the source url action in the more menu only when sourceUrl exists", async () => {
+    const user = userEvent.setup();
+    const withUrl = makeSnapshot();
+    withUrl.record.source_metadata = {
+      source_url: "https://example.com/article",
+      source_name: "Example Source",
+    };
+    const { unmount } = render(
+      <ReaderRecordPlateSurface snapshot={withUrl} />,
+    );
+
+    await user.click(screen.getByTestId("reader-record-more-menu-trigger"));
+    const menu = await waitFor(() =>
+      screen.getByTestId("reader-record-more-menu-content"),
+    );
+    const link = menu.querySelector<HTMLAnchorElement>(
+      '[data-reader-record-more-action="open-source-url"]',
+    );
+    expect(link).not.toBeNull();
+    expect(link?.href).toBe("https://example.com/article");
+
+    unmount();
+
+    const withoutUrl = makeSnapshot();
+    render(<ReaderRecordPlateSurface snapshot={withoutUrl} />);
+    await user.click(screen.getByTestId("reader-record-more-menu-trigger"));
+    const menu2 = await waitFor(() =>
+      screen.getByTestId("reader-record-more-menu-content"),
+    );
     expect(
-      popover.querySelector('[data-reader-settings-panel="floating"]'),
-    ).toBeTruthy();
+      menu2.querySelector('[data-reader-record-more-action="open-source-url"]'),
+    ).toBeNull();
+  });
 
-    expect(popover.classList.contains("reader-lookup-preview")).toBe(false);
-    const shells = popover.querySelectorAll(".reader-tool-panel");
-    expect(shells.length).toBe(1);
+  it("renders low-weight metadata in the more menu footer", async () => {
+    const user = userEvent.setup();
+    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
-    fireEvent.keyDown(popover, { key: "Escape" });
-    expect(screen.queryByTestId("reader-record-settings-popover")).toBeNull();
+    await user.click(screen.getByTestId("reader-record-more-menu-trigger"));
+    const menu = await waitFor(() =>
+      screen.getByTestId("reader-record-more-menu-content"),
+    );
+    const metadata = menu.querySelector<HTMLElement>(
+      '[data-reader-record-more-metadata="true"]',
+    );
+    expect(metadata).not.toBeNull();
+    expect(metadata?.textContent).toContain("5 词");
+    expect(metadata?.textContent).toContain("粘贴导入");
   });
 
   it("keeps Plate toolbar as the only selection action surface and disables it when idle", () => {
@@ -5209,8 +5471,8 @@ describe("ReaderRecordPlateSurface", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
     const surface = screen.getByTestId("reader-record-plate-surface");
-    const headerColumn = surface.firstElementChild as HTMLElement | null;
-    const contentColumn = surface.children[1] as HTMLElement | null;
+    const headerColumn = surface.querySelector<HTMLElement>(".reader-header-band-inner");
+    const contentColumn = surface.querySelector<HTMLElement>('[class*="max-w-[46rem]"]');
     const documentSurface = container.querySelector<HTMLElement>(
       ".reader-record-plate-document",
     );

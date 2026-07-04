@@ -4520,3 +4520,37 @@ select {
     animation: none;
     mix-blend-mode: normal;
 }
+
+/* Reader Record Header / Top Bar skeleton */
+.reader-skeleton {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--ink) 8%, transparent) 25%,
+      color-mix(in srgb, var(--ink) 14%, transparent) 50%,
+      color-mix(in srgb, var(--ink) 8%, transparent) 75%
+    );
+  background-size: 200% 100%;
+  animation: reader-skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
+.reader-skeleton--title {
+  max-width: 18ch;
+}
+
+@keyframes reader-skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reader-skeleton {
+    animation: none;
+    background: color-mix(in srgb, var(--ink) 10%, transparent);
+  }
+}

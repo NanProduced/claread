@@ -50,15 +50,29 @@ import type {
   ReaderAskEntryActionDto,
 } from "@/types/api/reader-ask";
 import type { ThemeName } from "@/lib/appearance";
-import { BookOpen, Eye, Globe, SlidersHorizontal, Sparkles } from "lucide-react";
-import { FavoriteButton } from "@/components/reader/FavoriteButton";
-import { readerCommandControl } from "@/components/reader/interaction";
 import {
-  ReaderSettingsPanel,
+  BookOpen,
+  Check,
+  Copy,
+  Eye,
+  Globe,
+  MoreVertical,
+  Sparkles,
+} from "lucide-react";
+import { FavoriteButton } from "@/components/reader/FavoriteButton";
+import { readerCommandControl, readerTopBarAction } from "@/components/reader/interaction";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   readStoredReaderSettings,
   persistReaderSettings,
   readerRecordPlateTypography,
   readerThemeClassName,
+  type ReaderFontFamily,
+  type ReaderFontScale,
   type ReaderSettingsState,
 } from "@/components/reader/settings";
 import {
@@ -1102,37 +1116,53 @@ function readerRecordSourceTypeLabel(sourceType: string): string {
   }
 }
 
+type ReaderRecordTitleState =
+  | { kind: "succeeded"; title: string }
+  | { kind: "pending" }
+  | { kind: "failed_retryable"; sourceTitle: string | null }
+  | { kind: "migration_fallback"; title: string }
+  | { kind: "empty" };
+
+function resolveReaderRecordTitleState(
+  record: ReaderPlateSnapshotDto["record"],
+): ReaderRecordTitleState {
+  const displayTitleZh = record.display_title_zh?.trim() || "";
+  const recordTitle = record.title?.trim() || "";
+  const titleGenerationStatus = record.title_generation_status ?? null;
+
+  if (displayTitleZh) {
+    return { kind: "succeeded", title: displayTitleZh };
+  }
+
+  if (titleGenerationStatus === "pending") {
+    return { kind: "pending" };
+  }
+
+  if (titleGenerationStatus === "failed_retryable") {
+    return { kind: "failed_retryable", sourceTitle: recordTitle || null };
+  }
+
+  if (titleGenerationStatus === null && recordTitle) {
+    return { kind: "migration_fallback", title: recordTitle };
+  }
+
+  return { kind: "empty" };
+}
+
 function ReaderRecordHeader({
   snapshot,
   progress,
   surfaceMode,
   onModeChange,
-  onOpenSettings,
 }: {
   snapshot: ReaderPlateSnapshotDto;
   progress: ReaderRecordPlateProgress;
   surfaceMode: "intensive" | "immersive";
   onModeChange: (mode: "intensive" | "immersive") => void;
-  onOpenSettings: (anchor: HTMLElement) => void;
 }) {
   const record = snapshot.record;
-  const displayTitleZh = record.display_title_zh?.trim() || "";
-  const recordTitle = record.title?.trim() || "";
-  const titleGenerationStatus = record.title_generation_status ?? null;
-  const hasChineseTitle = displayTitleZh.length > 0;
-  const titlePending =
-    !hasChineseTitle && titleGenerationStatus === "pending";
-  const titleFailed =
-    !hasChineseTitle && titleGenerationStatus === "failed_retryable";
-  // 迁移期防崩溃降级：只有旧 snapshot 完全没有 title_generation_status 时，
-  // 才允许用 record.title 作为兼容 H1。如果后端明确返回 succeeded/pending/failed_retryable，
-  // 则必须遵守对应合同，不能将英文源标题提升为中文 masthead。
-  const titleMigrationFallback =
-    !hasChineseTitle &&
-    titleGenerationStatus === null &&
-    recordTitle.length > 0;
+  const titleState = resolveReaderRecordTitleState(record);
 
-  const createdAt = record.created_at;
   const sourceType = record.source_type;
   const sourceMetadata = record.source_metadata ?? {};
   const sourceUrl =
@@ -1151,8 +1181,6 @@ function ReaderRecordHeader({
       : null;
 
   const statusLabel = overallProgressLabel(progress.overallStatus);
-  const formattedDate = formatReaderRecordDate(createdAt);
-  const modeLabel = surfaceMode === "immersive" ? "沉浸模式" : "精读模式";
 
   // source-only word count：仅基于 snapshot.value 的稳定原文 segment_text 叶子计算，
   // 不包含 translation / grammar note / sentence_analysis / Ask supplement。
@@ -1180,34 +1208,30 @@ function ReaderRecordHeader({
     <header
       data-testid="reader-record-plate-header"
       data-reader-record-reading-header={surfaceMode}
-      className="reader-header-band reader-header-band--clean mb-8 border-b border-border/60 pb-6"
+      className="reader-header-band reader-header-band--clean mb-8 border-b border-border/60 pb-6 pt-12"
     >
-      {/* Zone 1: Eyebrow — mode label + date */}
-      <div className="flex items-center gap-1.5 text-[0.8rem] font-semibold tracking-wide leading-none">
-        <span className="text-lens-blue">{modeLabel}</span>
-        <span className="text-muted/60">·</span>
-        <span className="text-muted font-medium">{formattedDate}</span>
-      </div>
-
-      {/* Zone 2: H1 editorial masthead / title state */}
-      {hasChineseTitle ? (
+      {/* Zone 1: H1 editorial masthead / title state */}
+      {titleState.kind === "succeeded" ? (
         <h1
           data-reader-record-reading-title
           data-reader-record-title-state="succeeded"
-          className="mt-4 font-headline text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] tracking-normal text-ink"
+          className="font-headline text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] tracking-normal text-ink"
         >
-          {displayTitleZh}
+          {titleState.title}
         </h1>
-      ) : titlePending ? (
+      ) : titleState.kind === "pending" ? (
         <h1
           data-reader-record-reading-title
           data-reader-record-title-state="pending"
-          className="mt-4 font-headline text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] tracking-normal text-muted"
+          className="font-headline text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] tracking-normal"
         >
-          标题生成中…
+          <span className="block space-y-3" aria-hidden="true">
+            <span className="reader-skeleton reader-skeleton--title block h-[1em] w-[min(92%,32ch)] rounded" />
+            <span className="reader-skeleton reader-skeleton--title block h-[1em] w-[min(64%,20ch)] rounded" />
+          </span>
         </h1>
-      ) : titleFailed ? (
-        <div className="mt-4">
+      ) : titleState.kind === "failed_retryable" ? (
+        <div>
           <h1
             data-reader-record-reading-title
             data-reader-record-title-state="failed_retryable"
@@ -1215,26 +1239,26 @@ function ReaderRecordHeader({
           >
             标题生成失败
           </h1>
-          {recordTitle ? (
+          {titleState.sourceTitle ? (
             <p
               data-reader-record-source-title="true"
               className="mt-1.5 text-[0.8rem] font-medium text-subtle"
             >
-              源标题：{recordTitle}
+              源标题：{titleState.sourceTitle}
             </p>
           ) : null}
         </div>
-      ) : titleMigrationFallback ? (
+      ) : titleState.kind === "migration_fallback" ? (
         <h1
           data-reader-record-reading-title
           data-reader-record-title-state="migration_fallback"
-          className="mt-4 font-headline text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] tracking-normal text-ink"
+          className="font-headline text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] tracking-normal text-ink"
         >
-          {recordTitle}
+          {titleState.title}
         </h1>
       ) : null}
 
-      {/* Zone 3: Action bar — hairline shell, left metadata + right action buttons */}
+      {/* Zone 2: Action bar — hairline shell, left metadata + right mode tabs */}
       <div
         className="mt-6 w-full border-t border-b border-hairline bg-transparent py-0 flex flex-col sm:flex-row items-stretch justify-between min-h-[56px]"
         data-reader-record-action-bar="true"
@@ -1272,9 +1296,8 @@ function ReaderRecordHeader({
           ) : null}
         </div>
 
-        {/* Right action buttons */}
+        {/* Right mode tabs */}
         <div className="flex items-stretch divide-x divide-hairline border-t border-hairline sm:border-t-0 select-none">
-          <FavoriteButton recordId={snapshot.record_id} variant="action-bar" />
           <button
             type="button"
             aria-pressed={surfaceMode === "intensive"}
@@ -1331,34 +1354,10 @@ function ReaderRecordHeader({
               </span>
             </span>
           </button>
-          <button
-            type="button"
-            aria-label="打开阅读设置"
-            data-reader-record-action="open-settings"
-            onClick={(event) => onOpenSettings(event.currentTarget)}
-            className={cn(
-              actionButtonBaseClassName,
-              actionButtonIdleClassName,
-            )}
-          >
-            <SlidersHorizontal
-              aria-hidden="true"
-              className="h-[18px] w-[18px] shrink-0"
-              strokeWidth={1.5}
-            />
-            <span className="flex min-w-0 flex-col items-start leading-none whitespace-nowrap">
-              <span className="text-[0.85rem] font-semibold whitespace-nowrap">
-                阅读设置
-              </span>
-              <span className="hidden sm:block mt-1 text-[0.65rem] font-medium text-subtle whitespace-nowrap">
-                版式与偏好
-              </span>
-            </span>
-          </button>
         </div>
       </div>
 
-      {/* Zone 4: Bottom metadata — source / date / word count / import type */}
+      {/* Zone 3: Bottom metadata — source label on the left, original link on the right only when sourceUrl exists */}
       <div className="mt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-0 text-[0.78rem] text-muted tracking-wide leading-normal sm:leading-none select-none">
         <div className="flex flex-wrap items-center gap-1.5 font-medium">
           <span>
@@ -1366,40 +1365,469 @@ function ReaderRecordHeader({
               ? `来源 ${sourceName ?? sourceDomain}`
               : `来源 ${sourceLabel}`}
           </span>
-          {formattedDate && (
-            <>
-              <span className="text-muted/60">·</span>
-              <span>{formattedDate}</span>
-            </>
-          )}
-          {sourceWordCount !== null && (
-            <>
-              <span className="text-muted/60">·</span>
-              <span>{sourceWordCount} 词</span>
-            </>
-          )}
         </div>
 
-        <div>
-          {sourceUrl ? (
-            <a
-              href={sourceUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="focus-ring inline-flex items-center gap-1.5 font-semibold text-muted transition-colors hover:text-ink"
-            >
-              <Globe className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-              <span>英文原文</span>
-            </a>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 text-muted/60">
-              <Globe className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-              <span>{sourceLabel}</span>
-            </span>
-          )}
-        </div>
+        {sourceUrl ? (
+          <a
+            href={sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="focus-ring inline-flex items-center gap-1.5 font-semibold text-muted transition-colors hover:text-ink"
+          >
+            <Globe className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+            <span>英文原文</span>
+          </a>
+        ) : null}
       </div>
     </header>
+  );
+}
+
+function ReaderRecordTopBarTitle({
+  titleState,
+}: {
+  titleState: ReaderRecordTitleState;
+}) {
+  if (titleState.kind === "succeeded") {
+    return (
+      <span
+        className="min-w-0 truncate text-[0.95rem] font-semibold text-ink"
+        data-reader-record-top-bar-title-state="succeeded"
+      >
+        {titleState.title}
+      </span>
+    );
+  }
+
+  if (titleState.kind === "pending") {
+    return (
+      <span
+        className="block h-[1em] w-[min(60%,16ch)] rounded reader-skeleton reader-skeleton--title"
+        aria-label="标题生成中"
+        data-reader-record-top-bar-title-state="pending"
+      />
+    );
+  }
+
+  if (titleState.kind === "failed_retryable") {
+    return (
+      <span
+        className="min-w-0 truncate text-[0.95rem] font-semibold text-muted"
+        data-reader-record-top-bar-title-state="failed_retryable"
+      >
+        标题生成失败
+      </span>
+    );
+  }
+
+  if (titleState.kind === "migration_fallback") {
+    return (
+      <span
+        className="min-w-0 truncate text-[0.95rem] font-semibold text-ink"
+        data-reader-record-top-bar-title-state="migration_fallback"
+      >
+        {titleState.title}
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className="min-w-0 truncate text-[0.95rem] font-semibold text-muted"
+      data-reader-record-top-bar-title-state="empty"
+    >
+      阅读记录
+    </span>
+  );
+}
+
+function ReaderRecordTopBar({
+  snapshot,
+  surfaceMode,
+  onModeChange,
+  readerSettings,
+  themeName,
+  onSettingsChange,
+  onThemeChange,
+}: {
+  snapshot: ReaderPlateSnapshotDto;
+  surfaceMode: "intensive" | "immersive";
+  onModeChange: (mode: "intensive" | "immersive") => void;
+  readerSettings: ReaderSettingsState;
+  themeName: ThemeName;
+  onSettingsChange: (next: ReaderSettingsState) => void;
+  onThemeChange: (next: ThemeName) => void;
+}) {
+  const titleState = resolveReaderRecordTitleState(snapshot.record);
+
+  return (
+    <div
+      data-testid="reader-record-top-bar"
+      data-reader-record-top-bar-layer="surface"
+      className="reader-record-top-bar sticky top-0 z-20 flex h-11 w-full items-center justify-between border-b border-hairline/80 bg-[var(--reading-paper-surface)] px-4 sm:px-6"
+    >
+      <div className="min-w-0 max-w-[min(46vw,36rem)] truncate text-left">
+        <ReaderRecordTopBarTitle titleState={titleState} />
+      </div>
+      <div className="ml-auto flex shrink-0 items-center">
+        <FavoriteButton recordId={snapshot.record_id} variant="icon-only" />
+        <ReaderRecordMoreMenu
+          snapshot={snapshot}
+          surfaceMode={surfaceMode}
+          onModeChange={onModeChange}
+          readerSettings={readerSettings}
+          themeName={themeName}
+          onSettingsChange={onSettingsChange}
+          onThemeChange={onThemeChange}
+        />
+      </div>
+    </div>
+  );
+}
+
+function readerRecordPageUrl(recordId: string): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return `${window.location.origin}/app/reader-record/${encodeURIComponent(recordId)}`;
+}
+
+async function copyReaderRecordLink(recordId: string): Promise<boolean> {
+  const url = readerRecordPageUrl(recordId);
+  if (!url) {
+    return false;
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+      return true;
+    }
+    const textArea = document.createElement("textarea");
+    textArea.value = url;
+    textArea.setAttribute("readonly", "");
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    document.body.appendChild(textArea);
+    textArea.select();
+    const success = document.execCommand("copy");
+    document.body.removeChild(textArea);
+    return success;
+  } catch {
+    return false;
+  }
+}
+
+const MORE_MENU_THEME_OPTIONS: Array<{ value: ThemeName; label: string }> = [
+  { value: "paper", label: "Paper" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
+
+const MORE_MENU_FONT_SCALE_OPTIONS: Array<{ value: ReaderFontScale; label: string }> = [
+  { value: "sm", label: "小" },
+  { value: "md", label: "中" },
+  { value: "lg", label: "大" },
+];
+
+const MORE_MENU_FONT_FAMILY_OPTIONS: Array<{ value: ReaderFontFamily; label: string }> = [
+  { value: "editorial", label: "Editorial" },
+  { value: "book", label: "Book" },
+  { value: "sans", label: "Sans" },
+];
+
+function ReaderRecordMoreMenu({
+  snapshot,
+  surfaceMode,
+  onModeChange,
+  readerSettings,
+  themeName,
+  onSettingsChange,
+  onThemeChange,
+}: {
+  snapshot: ReaderPlateSnapshotDto;
+  surfaceMode: "intensive" | "immersive";
+  onModeChange: (mode: "intensive" | "immersive") => void;
+  readerSettings: ReaderSettingsState;
+  themeName: ThemeName;
+  onSettingsChange: (next: ReaderSettingsState) => void;
+  onThemeChange: (next: ThemeName) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const record = snapshot.record;
+  const sourceType = record.source_type;
+  const sourceMetadata = record.source_metadata ?? {};
+  const sourceUrl =
+    typeof sourceMetadata.source_url === "string" &&
+    (sourceMetadata.source_url.startsWith("http:") ||
+      sourceMetadata.source_url.startsWith("https:"))
+      ? sourceMetadata.source_url
+      : null;
+  const sourceName =
+    typeof sourceMetadata.source_name === "string"
+      ? sourceMetadata.source_name
+      : null;
+  const sourceDomain =
+    typeof sourceMetadata.source_domain === "string"
+      ? sourceMetadata.source_domain
+      : null;
+  const sourceLabel = readerRecordSourceTypeLabel(sourceType);
+  const hasExternalSource = Boolean(sourceName || sourceDomain || sourceUrl);
+
+  const sourceWordCount = computeSourceOnlyWordCount(snapshot);
+  const formattedDate = formatReaderRecordDate(record.created_at);
+
+  async function handleCopyLink() {
+    const success = await copyReaderRecordLink(snapshot.record_id);
+    if (success) {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    }
+  }
+
+  function updateSettings<K extends keyof ReaderSettingsState>(
+    key: K,
+    value: ReaderSettingsState[K],
+  ) {
+    const next = { ...readerSettings, [key]: value };
+    onSettingsChange(next);
+  }
+
+  const modeLabel = surfaceMode === "immersive" ? "沉浸模式" : "精读模式";
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="更多操作"
+          data-testid="reader-record-more-menu-trigger"
+          className={cn(readerTopBarAction, "text-muted/90 hover:text-ink")}
+        >
+          <MoreVertical className="h-[18px] w-[18px]" strokeWidth={1.5} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        sideOffset={8}
+        className={cn(
+          readerThemeClassName(themeName),
+          "w-[340px] overflow-hidden rounded-xl border border-hairline/80 p-0 shadow-[0_8px_30px_rgba(23,21,17,0.08)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+          "bg-[var(--reading-paper-surface)] text-ink",
+        )}
+        data-testid="reader-record-more-menu-content"
+        data-reader-record-more-menu-panel="true"
+      >
+        {/* Compact header */}
+        <div className="flex items-center justify-between border-b border-hairline/60 px-3.5 py-2.5">
+          <span className="text-sm font-semibold text-ink">阅读体验</span>
+          <span className="text-xs font-medium text-muted">{modeLabel}</span>
+        </div>
+
+        <div className="p-2">
+          {/* Mode section */}
+          <div className="space-y-0.5">
+            <button
+              type="button"
+              onClick={() => onModeChange("intensive")}
+              data-reader-record-more-mode="intensive"
+              className={cn(
+                "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors",
+                "hover:bg-ink/[0.04] active:bg-ink/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+                surfaceMode === "intensive"
+                  ? "bg-lens-blue/[0.08] text-ink"
+                  : "text-ink/90",
+              )}
+            >
+              <span className="flex items-center gap-2.5">
+                <BookOpen className="h-4 w-4 text-muted" strokeWidth={1.5} />
+                <span className="flex flex-col">
+                  <span>精读</span>
+                  <span className="text-[0.7rem] font-normal text-muted">逐句解析</span>
+                </span>
+              </span>
+              {surfaceMode === "intensive" ? (
+                <Check className="h-4 w-4 text-lens-blue" strokeWidth={2} />
+              ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => onModeChange("immersive")}
+              data-reader-record-more-mode="immersive"
+              className={cn(
+                "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors",
+                "hover:bg-ink/[0.04] active:bg-ink/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+                surfaceMode === "immersive"
+                  ? "bg-lens-blue/[0.08] text-ink"
+                  : "text-ink/90",
+              )}
+            >
+              <span className="flex items-center gap-2.5">
+                <Eye className="h-4 w-4 text-muted" strokeWidth={1.5} />
+                <span className="flex flex-col">
+                  <span>沉浸</span>
+                  <span className="text-[0.7rem] font-normal text-muted">专注阅读</span>
+                </span>
+              </span>
+              {surfaceMode === "immersive" ? (
+                <Check className="h-4 w-4 text-lens-blue" strokeWidth={2} />
+              ) : null}
+            </button>
+          </div>
+
+          <div className="my-2 h-px bg-hairline/60" />
+
+          {/* Font preview section */}
+          <div className="space-y-2">
+            <span className="block px-1 text-xs font-semibold text-muted">字体</span>
+            <div className="grid grid-cols-3 gap-2">
+              {MORE_MENU_FONT_FAMILY_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => updateSettings("fontFamily", option.value)}
+                  data-reader-record-more-font-family={option.value}
+                  className={cn(
+                    "flex flex-col items-center gap-1.5 rounded-lg border px-2 py-2.5 text-center transition-colors",
+                    "border-hairline/60 hover:border-hairline hover:bg-ink/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+                    readerSettings.fontFamily === option.value
+                      ? "border-surface-warm bg-surface-warm/60"
+                      : "bg-transparent",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "text-[1.35rem] leading-none text-ink",
+                      option.value === "sans"
+                        ? "reader-font-sans"
+                        : option.value === "book"
+                          ? "reader-font-book"
+                          : "reader-font-editorial",
+                    )}
+                  >
+                    Ag
+                  </span>
+                  <span className="text-[0.7rem] font-medium text-muted">{option.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="my-2 h-px bg-hairline/60" />
+
+          {/* Theme section */}
+          <div className="space-y-2">
+            <span className="block px-1 text-xs font-semibold text-muted">主题</span>
+            <div className="grid grid-cols-3 gap-2">
+              {MORE_MENU_THEME_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => onThemeChange(option.value)}
+                  data-reader-record-more-theme={option.value}
+                  className={cn(
+                    "rounded-lg border px-2 py-1.5 text-xs font-semibold transition-colors",
+                    "border-hairline/60 hover:border-hairline hover:bg-ink/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+                    themeName === option.value
+                      ? "border-surface-warm bg-surface-warm/60 text-ink"
+                      : "bg-transparent text-muted",
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="my-2 h-px bg-hairline/60" />
+
+          {/* Font scale section */}
+          <div className="space-y-2">
+            <span className="block px-1 text-xs font-semibold text-muted">字号</span>
+            <div className="flex rounded-lg border border-hairline/60 p-0.5">
+              {MORE_MENU_FONT_SCALE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => updateSettings("fontScale", option.value)}
+                  data-reader-record-more-font-scale={option.value}
+                  className={cn(
+                    "flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors",
+                    "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+                    readerSettings.fontScale === option.value
+                      ? "bg-surface-warm/70 text-ink shadow-sm"
+                      : "text-muted hover:bg-ink/[0.03]",
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="my-2 h-px bg-hairline/60" />
+
+          {/* Article actions */}
+          <div className="space-y-0.5">
+            <button
+              type="button"
+              onClick={handleCopyLink}
+              disabled={copied}
+              data-reader-record-more-action="copy-link"
+              className={cn(
+                "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors",
+                "hover:bg-ink/[0.04] active:bg-ink/[0.08] disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+                copied ? "text-structure-green" : "text-ink/90",
+              )}
+            >
+              {copied ? (
+                <Check className="h-4 w-4" strokeWidth={1.5} />
+              ) : (
+                <Copy className="h-4 w-4 text-muted" strokeWidth={1.5} />
+              )}
+              <span>{copied ? "已复制链接" : "复制链接"}</span>
+            </button>
+            {sourceUrl ? (
+              <a
+                href={sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-reader-record-more-action="open-source-url"
+                className={cn(
+                  "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
+                  "hover:bg-ink/[0.04] active:bg-ink/[0.08] text-ink/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+                )}
+              >
+                <Globe className="h-4 w-4 text-muted" strokeWidth={1.5} />
+                <span>英文原文</span>
+              </a>
+            ) : null}
+            <div
+              data-reader-record-more-action="source-info"
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-muted/80"
+            >
+              <Globe className="h-4 w-4 text-muted/60" strokeWidth={1.5} />
+              <span>
+                {hasExternalSource
+                  ? `来源 ${sourceName ?? sourceDomain ?? sourceLabel}`
+                  : `来源 ${sourceLabel}`}
+              </span>
+            </div>
+          </div>
+
+          <div className="my-2 h-px bg-hairline/60" />
+
+          {/* Footer metadata */}
+          <div
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 py-1 text-[0.7rem] text-muted"
+            data-reader-record-more-metadata="true"
+          >
+            {sourceWordCount !== null ? <span>{sourceWordCount} 词</span> : null}
+            {formattedDate !== "今日" ? <span>{formattedDate}</span> : null}
+            <span>{sourceLabel}</span>
+          </div>
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -1565,8 +1993,6 @@ export function ReaderRecordPlateSurface({
       }
     };
   }, []);
-  const [settingsPanelOpen, setSettingsPanelOpen] = useState(false);
-  const settingsAnchorRef = useRef<HTMLElement | null>(null);
   const surfaceMode = readerSettings.mode;
   const [localUserAssets, setLocalUserAssets] = useState<
     ReaderPlateSnapshotDto["user_assets"]
@@ -1918,58 +2344,10 @@ export function ReaderRecordPlateSurface({
     [activeGrammarItemId, activeSentenceChunkId, hoverNoteAssetId, noteMenu],
   );
 
-  const settingsFloating = useReaderFloatingLayer({
-    open: settingsPanelOpen,
-    placement: "bottom-end",
-    offsetPx: 10,
-    collisionPadding: 16,
-    strategy: "fixed",
-  });
-
   const handleSettingsChange = useCallback((next: ReaderSettingsState) => {
     setReaderSettings(next);
     persistReaderSettings(next);
   }, []);
-
-  const handleOpenSettingsPanel = useCallback(
-    (anchor: HTMLElement) => {
-      settingsAnchorRef.current = anchor;
-      settingsFloating.refs.setPositionReference?.({
-        getBoundingClientRect: () => anchor.getBoundingClientRect(),
-        contextElement: anchor,
-      });
-      setSettingsPanelOpen(true);
-    },
-    [settingsFloating.refs],
-  );
-
-  const { refs: settingsFloatingRefs, update: settingsFloatingUpdate } =
-    settingsFloating;
-  useEffect(() => {
-    if (!settingsPanelOpen) {
-      return;
-    }
-
-    function updateReference() {
-      const anchor = settingsAnchorRef.current;
-      if (!anchor) {
-        return;
-      }
-      settingsFloatingRefs.setPositionReference?.({
-        getBoundingClientRect: () => anchor.getBoundingClientRect(),
-        contextElement: anchor,
-      });
-      settingsFloatingUpdate?.();
-    }
-
-    updateReference();
-    window.addEventListener("resize", updateReference);
-    window.addEventListener("scroll", updateReference, true);
-    return () => {
-      window.removeEventListener("resize", updateReference);
-      window.removeEventListener("scroll", updateReference, true);
-    };
-  }, [settingsFloatingRefs, settingsFloatingUpdate, settingsPanelOpen]);
 
   const handleModeChange = useCallback(
     (mode: "intensive" | "immersive") => {
@@ -2146,39 +2524,6 @@ export function ReaderRecordPlateSurface({
       window.document.removeEventListener("pointerdown", handlePointerDown);
     };
   }, [inspectState, lookupState.kind, quickPeekFloating.refs.floating]);
-
-  useEffect(() => {
-    if (!settingsPanelOpen) {
-      return;
-    }
-
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node | null;
-      if (!target) {
-        return;
-      }
-      if (settingsFloating.refs.floating.current?.contains(target)) {
-        return;
-      }
-      if (settingsAnchorRef.current?.contains(target)) {
-        return;
-      }
-      setSettingsPanelOpen(false);
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setSettingsPanelOpen(false);
-      }
-    }
-
-    window.document.addEventListener("pointerdown", handlePointerDown);
-    window.document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.document.removeEventListener("pointerdown", handlePointerDown);
-      window.document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [settingsFloating.refs.floating, settingsPanelOpen]);
 
   useEffect(() => {
     if (writeState.kind !== "saved" && writeState.kind !== "error") {
@@ -3721,323 +4066,306 @@ export function ReaderRecordPlateSurface({
   }, [noteMenu, localUserAssets, onRequestSnapshotReload, writeState.kind]);
 
   return (
-    <section
-      ref={surfaceRef}
+    <div
       data-testid="reader-record-plate-surface"
       data-reader-record-surface="plate-readonly-reading"
-      className={`${className} ${themeClassName}`}
+      className={themeClassName}
     >
-      {/* Header sits in its own wider editorial column, decoupled from the reading column. */}
-      <div className="reader-header-band-inner mx-auto w-full max-w-[82ch]">
-        <ReaderRecordHeader
-          snapshot={snapshot}
-          progress={plateDocument.progress}
-          surfaceMode={surfaceMode}
-          onModeChange={handleModeChange}
-          onOpenSettings={handleOpenSettingsPanel}
-        />
-        {settingsPanelOpen ? (
-          <ReaderFloatingSurface
-            chrome="bare"
-            floatingRef={settingsFloating.refs.setFloating}
-            style={settingsFloating.floatingStyles as CSSProperties}
-            data-reader-record-settings-panel="open"
-            data-testid="reader-record-settings-popover"
-            onClick={(event) => event.stopPropagation()}
-            onPointerDown={(event) => event.stopPropagation()}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.stopPropagation();
-                setSettingsPanelOpen(false);
-              }
-            }}
-          >
-            <ReaderSettingsPanel
-              variant="floating"
-              themeName={themeName}
-              value={readerSettings}
-              onChange={handleSettingsChange}
-              onThemeChange={setThemeName}
-              onClose={() => setSettingsPanelOpen(false)}
-            />
-          </ReaderFloatingSurface>
-        ) : null}
-      </div>
-
-      <div className={contentColumnClassName}>
-        <SelectionActionState
-          copyStatus={copyStatus}
-          selection={activeSelection}
-          writeState={writeState}
-        />
-        {highlightMenu ? (
-          <ReaderFloatingSurface
-            floatingRef={highlightMenuFloating.refs.setFloating}
-            style={highlightMenuFloating.floatingStyles as CSSProperties}
-            data-reader-record-floating-toolbar="highlight-menu"
-          >
-            <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-background/95 p-2 shadow-md backdrop-blur-sm">
-              <span className="px-1 text-xs text-muted">改色</span>
-              {HIGHLIGHT_COLOR_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  aria-label={`切换为${option.label}`}
-                  data-reader-record-highlight-color={option.value}
-                  onClick={() => handleUpdateHighlightColor(option.value)}
-                  className={`h-4 w-4 rounded-[4px] ring-1 ring-inset ring-border/70 transition-transform hover:scale-110 ${option.swatchClassName}`}
-                />
-              ))}
-              <span className="mx-1 h-4 w-px bg-border/40" />
-              <button
-                type="button"
-                aria-label="删除高亮"
-                data-reader-record-highlight-action="delete"
-                onClick={handleDeleteHighlight}
-                className="rounded-md px-2 py-1 text-xs text-rose-600 transition-colors hover:bg-rose-50"
-              >
-                删除
-              </button>
-            </div>
-          </ReaderFloatingSurface>
-        ) : null}
-        {/* noteMenu 浮层已迁移到 InlineCommentPanel（CommentKit activeId 驱动） */}
-        {quickPeekOpen ? (
-          <ReaderQuickPeek
-            lookup={activeLookupSnapshot}
-            inspect={inspectState}
-            className="reader-tool-float"
-            floatingRef={(node) => {
-              quickPeekFloating.refs.setFloating(node);
-              if (node) {
-                node.setAttribute("data-reader-record-quick-peek", lookupState.kind);
-                node.setAttribute("data-testid", "reader-record-plate-lookup-panel");
-              }
-            }}
-            style={quickPeekFloating.floatingStyles as CSSProperties}
-            onDismiss={() => {
-              setLookupState({ kind: "idle" });
-              setInspectState(null);
-              quickPeekAnchorRef.current = null;
-            }}
-            onOpenDetail={activeLookupSnapshot ? openDictionaryRail : undefined}
-            onLookupPhrase={inspectState ? handleLookupFromInspect : undefined}
-            onAttachToAsk={inspectState ? handleAttachInspectToAsk : undefined}
-            onFeedback={inspectState ? handleInspectFeedback : undefined}
+      {/* Surface-level sticky operation bar: spans the available document viewport. */}
+      <ReaderRecordTopBar
+        snapshot={snapshot}
+        surfaceMode={surfaceMode}
+        onModeChange={handleModeChange}
+        readerSettings={readerSettings}
+        themeName={themeName}
+        onSettingsChange={handleSettingsChange}
+        onThemeChange={setThemeName}
+      />
+      <section ref={surfaceRef} className={className}>
+        <div className="reader-header-band-inner mx-auto w-full max-w-[82ch]">
+          <ReaderRecordHeader
+            snapshot={snapshot}
+            progress={plateDocument.progress}
+            surfaceMode={surfaceMode}
+            onModeChange={handleModeChange}
           />
-        ) : null}
-        {feedbackTarget ? (
-          <ReaderFloatingSurface
-            floatingRef={feedbackFloating.refs.setFloating}
-            style={feedbackFloating.floatingStyles as CSSProperties}
-            className="w-44 rounded-lg border border-border bg-popover p-1 shadow-lg"
-            role="dialog"
-            aria-label="反馈选项"
-            data-reader-record-feedback-menu="open"
-            onClick={(event) => event.stopPropagation()}
-            onPointerDown={(event) => event.stopPropagation()}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.stopPropagation();
-                setFeedbackTarget(null);
-              }
-            }}
-          >
-            {feedbackTarget.feedbackScope === "annotation" ? (
+        </div>
+
+        <div className={contentColumnClassName}>
+          <SelectionActionState
+            copyStatus={copyStatus}
+            selection={activeSelection}
+            writeState={writeState}
+          />
+          {highlightMenu ? (
+            <ReaderFloatingSurface
+              floatingRef={highlightMenuFloating.refs.setFloating}
+              style={highlightMenuFloating.floatingStyles as CSSProperties}
+              data-reader-record-floating-toolbar="highlight-menu"
+            >
+              <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-background/95 p-2 shadow-md backdrop-blur-sm">
+                <span className="px-1 text-xs text-muted">改色</span>
+                {HIGHLIGHT_COLOR_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-label={`切换为${option.label}`}
+                    data-reader-record-highlight-color={option.value}
+                    onClick={() => handleUpdateHighlightColor(option.value)}
+                    className={`h-4 w-4 rounded-[4px] ring-1 ring-inset ring-border/70 transition-transform hover:scale-110 ${option.swatchClassName}`}
+                  />
+                ))}
+                <span className="mx-1 h-4 w-px bg-border/40" />
+                <button
+                  type="button"
+                  aria-label="删除高亮"
+                  data-reader-record-highlight-action="delete"
+                  onClick={handleDeleteHighlight}
+                  className="rounded-md px-2 py-1 text-xs text-rose-600 transition-colors hover:bg-rose-50"
+                >
+                  删除
+                </button>
+              </div>
+            </ReaderFloatingSurface>
+          ) : null}
+          {/* noteMenu 浮层已迁移到 InlineCommentPanel（CommentKit activeId 驱动） */}
+          {quickPeekOpen ? (
+            <ReaderQuickPeek
+              lookup={activeLookupSnapshot}
+              inspect={inspectState}
+              className="reader-tool-float"
+              floatingRef={(node) => {
+                quickPeekFloating.refs.setFloating(node);
+                if (node) {
+                  node.setAttribute("data-reader-record-quick-peek", lookupState.kind);
+                  node.setAttribute("data-testid", "reader-record-plate-lookup-panel");
+                }
+              }}
+              style={quickPeekFloating.floatingStyles as CSSProperties}
+              onDismiss={() => {
+                setLookupState({ kind: "idle" });
+                setInspectState(null);
+                quickPeekAnchorRef.current = null;
+              }}
+              onOpenDetail={activeLookupSnapshot ? openDictionaryRail : undefined}
+              onLookupPhrase={inspectState ? handleLookupFromInspect : undefined}
+              onAttachToAsk={inspectState ? handleAttachInspectToAsk : undefined}
+              onFeedback={inspectState ? handleInspectFeedback : undefined}
+            />
+          ) : null}
+          {feedbackTarget ? (
+            <ReaderFloatingSurface
+              floatingRef={feedbackFloating.refs.setFloating}
+              style={feedbackFloating.floatingStyles as CSSProperties}
+              className="w-44 rounded-lg border border-border bg-popover p-1 shadow-lg"
+              role="dialog"
+              aria-label="反馈选项"
+              data-reader-record-feedback-menu="open"
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.stopPropagation();
+                  setFeedbackTarget(null);
+                }
+              }}
+            >
+              {feedbackTarget.feedbackScope === "annotation" ? (
+                <button
+                  type="button"
+                  className="block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-structure-green/10 disabled:cursor-not-allowed disabled:text-muted disabled:hover:bg-transparent"
+                  disabled={!feedbackTarget.analysisRecordId}
+                  data-reader-record-disabled-reason={
+                    feedbackTarget.analysisRecordId
+                      ? undefined
+                      : "当前标注反馈需要 analysisRecordId"
+                  }
+                  onClick={() => handleSubmitFeedback("positive")}
+                >
+                  有帮助
+                </button>
+              ) : null}
               <button
                 type="button"
-                className="block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-structure-green/10 disabled:cursor-not-allowed disabled:text-muted disabled:hover:bg-transparent"
-                disabled={!feedbackTarget.analysisRecordId}
-                data-reader-record-disabled-reason={
-                  feedbackTarget.analysisRecordId
-                    ? undefined
-                    : "当前标注反馈需要 analysisRecordId"
+                className="mt-0.5 block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-error-red/10 disabled:cursor-not-allowed disabled:text-muted disabled:hover:bg-transparent"
+                disabled={
+                  feedbackTarget.feedbackScope === "annotation" &&
+                  !feedbackTarget.analysisRecordId
                 }
-                onClick={() => handleSubmitFeedback("positive")}
+                data-reader-record-disabled-reason={
+                  feedbackTarget.feedbackScope === "annotation" &&
+                  !feedbackTarget.analysisRecordId
+                    ? "当前标注反馈需要 analysisRecordId"
+                    : undefined
+                }
+                onClick={() => handleSubmitFeedback("negative")}
               >
-                有帮助
+                {feedbackTarget.feedbackScope === "dictionary" ? "释义有问题" : "有问题"}
               </button>
-            ) : null}
-            <button
-              type="button"
-              className="mt-0.5 block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-error-red/10 disabled:cursor-not-allowed disabled:text-muted disabled:hover:bg-transparent"
-              disabled={
-                feedbackTarget.feedbackScope === "annotation" &&
-                !feedbackTarget.analysisRecordId
-              }
-              data-reader-record-disabled-reason={
-                feedbackTarget.feedbackScope === "annotation" &&
-                !feedbackTarget.analysisRecordId
-                  ? "当前标注反馈需要 analysisRecordId"
-                  : undefined
-              }
-              onClick={() => handleSubmitFeedback("negative")}
+              {feedbackTarget.feedbackScope === "annotation" &&
+              !feedbackTarget.analysisRecordId ? (
+                <p className="mt-1 px-3 py-1 text-xs leading-5 text-muted" role="status">
+                  当前标注反馈暂不可用
+                </p>
+              ) : null}
+            </ReaderFloatingSurface>
+          ) : null}
+          <ReaderGrammarInteractionContext.Provider value={grammarInteraction}>
+            <ReaderCalloutActionContext.Provider value={calloutActions}>
+              <ReaderSentenceAnalysisInteractionContext.Provider
+                value={sentenceAnalysisInteraction}
+              >
+                <ReaderToolbarActionsProvider value={toolbarActions}>
+                  <Plate editor={editor} readOnly>
+                    <CommentPluginBridge
+                      apiRef={commentApiRef}
+                      onReadyChange={setCommentApiReady}
+                    />
+                    <SelectionAnchorBridge
+                      snapshot={snapshot}
+                      onChange={handleSelectionChange}
+                    />
+                    <EditorContainer
+                      className={`reader-record-plate-document reader-record-plate-document--notion px-0 py-0 outline-none cursor-default overflow-visible bg-transparent ${readingClassName} ${typography.bodyClassName} ${typography.paragraphDensityClassName}`.trim()}
+                      data-reader-record-mode={surfaceMode}
+                      onCopyCapture={handleDocumentCopyCapture}
+                    >
+                      <Editor readOnly disableDefaultStyles renderLeaf={renderLeaf as never} />
+                    </EditorContainer>
+                    <InlineCommentPanel
+                      draftText={noteDraft}
+                      draftQuoteText={noteAnchorDraft?.selected_text ?? null}
+                      onDraftTextChange={setNoteDraft}
+                      onSaveDraft={handleSaveNote}
+                      onCancelDraft={handleCancelNote}
+                      duplicateNote={duplicateNoteForDraft}
+                      duplicateAcknowledged={noteDuplicateAcknowledged}
+                      onViewDuplicateNote={handleViewDuplicateNote}
+                      onContinueDuplicateNote={handleContinueDuplicateNote}
+                      activeNote={noteMenu?.mark ?? null}
+                      noteEditMode={noteMenu?.mode ?? "view"}
+                      noteEditDraft={noteMenu?.draft ?? ""}
+                      onNoteEditDraftChange={handleNoteEditDraftChange}
+                      onStartEditNote={handleStartEditNote}
+                      onCancelEditNote={handleCancelEditNote}
+                      onSaveNoteEdit={handleSaveNoteEdit}
+                      onDeleteNote={handleDeleteNote}
+                      onAskFromNote={handleAskFromNote}
+                      isSaving={commentIsSaving}
+                      statusMessage={commentStatusMessage}
+                      onClose={handleCloseCommentPanel}
+                      floatingRef={commentFloating.refs.setFloating}
+                      floatingStyles={commentFloating.floatingStyles as CSSProperties}
+                    />
+                  </Plate>
+                </ReaderToolbarActionsProvider>
+              </ReaderSentenceAnalysisInteractionContext.Provider>
+            </ReaderCalloutActionContext.Provider>
+          </ReaderGrammarInteractionContext.Provider>
+          {feedbackState.kind !== "idle" ? (
+            <div
+              data-reader-record-feedback-status={feedbackState.kind}
+              className={`mt-3 text-sm ${
+                feedbackState.kind === "error"
+                  ? "text-rose-700"
+                  : feedbackState.kind === "saved"
+                    ? "text-emerald-700"
+                    : "text-muted"
+              }`}
+              role="status"
+              aria-live="polite"
             >
-              {feedbackTarget.feedbackScope === "dictionary" ? "释义有问题" : "有问题"}
-            </button>
-            {feedbackTarget.feedbackScope === "annotation" &&
-            !feedbackTarget.analysisRecordId ? (
-              <p className="mt-1 px-3 py-1 text-xs leading-5 text-muted" role="status">
-                当前标注反馈暂不可用
-              </p>
-            ) : null}
-          </ReaderFloatingSurface>
-        ) : null}
-        <ReaderGrammarInteractionContext.Provider value={grammarInteraction}>
-          <ReaderCalloutActionContext.Provider value={calloutActions}>
-            <ReaderSentenceAnalysisInteractionContext.Provider
-              value={sentenceAnalysisInteraction}
-            >
-              <ReaderToolbarActionsProvider value={toolbarActions}>
-                <Plate editor={editor} readOnly>
-                  <CommentPluginBridge
-                    apiRef={commentApiRef}
-                    onReadyChange={setCommentApiReady}
-                  />
-                  <SelectionAnchorBridge
-                    snapshot={snapshot}
-                    onChange={handleSelectionChange}
-                  />
-                  <EditorContainer
-                    className={`reader-record-plate-document reader-record-plate-document--notion px-0 py-0 outline-none cursor-default overflow-visible bg-transparent ${readingClassName} ${typography.bodyClassName} ${typography.paragraphDensityClassName}`.trim()}
-                    data-reader-record-mode={surfaceMode}
-                    onCopyCapture={handleDocumentCopyCapture}
-                  >
-                    <Editor readOnly disableDefaultStyles renderLeaf={renderLeaf as never} />
-                  </EditorContainer>
-                  <InlineCommentPanel
-                    draftText={noteDraft}
-                    draftQuoteText={noteAnchorDraft?.selected_text ?? null}
-                    onDraftTextChange={setNoteDraft}
-                    onSaveDraft={handleSaveNote}
-                    onCancelDraft={handleCancelNote}
-                    duplicateNote={duplicateNoteForDraft}
-                    duplicateAcknowledged={noteDuplicateAcknowledged}
-                    onViewDuplicateNote={handleViewDuplicateNote}
-                    onContinueDuplicateNote={handleContinueDuplicateNote}
-                    activeNote={noteMenu?.mark ?? null}
-                    noteEditMode={noteMenu?.mode ?? "view"}
-                    noteEditDraft={noteMenu?.draft ?? ""}
-                    onNoteEditDraftChange={handleNoteEditDraftChange}
-                    onStartEditNote={handleStartEditNote}
-                    onCancelEditNote={handleCancelEditNote}
-                    onSaveNoteEdit={handleSaveNoteEdit}
-                    onDeleteNote={handleDeleteNote}
-                    onAskFromNote={handleAskFromNote}
-                    isSaving={commentIsSaving}
-                    statusMessage={commentStatusMessage}
-                    onClose={handleCloseCommentPanel}
-                    floatingRef={commentFloating.refs.setFloating}
-                    floatingStyles={commentFloating.floatingStyles as CSSProperties}
-                  />
-                </Plate>
-              </ReaderToolbarActionsProvider>
-            </ReaderSentenceAnalysisInteractionContext.Provider>
-          </ReaderCalloutActionContext.Provider>
-        </ReaderGrammarInteractionContext.Provider>
-        {feedbackState.kind !== "idle" ? (
+              {feedbackState.kind === "saving"
+                ? "正在提交反馈"
+                : feedbackState.kind === "saved" || feedbackState.kind === "error"
+                  ? feedbackState.message
+                  : ""}
+            </div>
+          ) : null}
+        </div>
+        <AiWorkspacePanel
+          open={askOpen}
+          presentation={surfaceMode}
+          pageIdentity={askPageIdentity}
+          recordId={snapshot.record_id}
+          recordScope="reading_record"
+          hideClosedLauncher
+          recordTitle={snapshot.record.title}
+          attachments={askAttachments}
+          pendingQuickActionRequest={pendingAskRequest}
+          onRemoveAttachment={handleRemoveAskAttachment}
+          onClearAttachments={() => setAskAttachments([])}
+          onPendingQuickActionConsumed={() => setPendingAskRequest(null)}
+          onToggle={() => setAskOpen(false)}
+          onActionExecuted={handleAskActionExecuted}
+          onSupplementDeleted={handleAskSupplementDeleted}
+        />
+        {dictionaryOpen ? (
           <div
-            data-reader-record-feedback-status={feedbackState.kind}
-            className={`mt-3 text-sm ${
-              feedbackState.kind === "error"
-                ? "text-rose-700"
-                : feedbackState.kind === "saved"
-                  ? "text-emerald-700"
-                  : "text-muted"
-            }`}
-            role="status"
-            aria-live="polite"
+            className="reader-tool-surface reader-tool-surface--rail fixed top-3 bottom-3 left-3 z-40 hidden xl:block w-[420px]"
+            data-reader-record-dictionary-rail="docked"
           >
-            {feedbackState.kind === "saving"
-              ? "正在提交反馈"
-              : feedbackState.kind === "saved" || feedbackState.kind === "error"
-                ? feedbackState.message
-                : ""}
+            <ReaderDictionaryRail
+              className="h-full"
+              lookup={activeLookupSnapshot}
+              history={dictionaryHistory}
+              readingGoal=""
+              saveState={dictionarySaveState}
+              dictionaryAI={dictionaryAI}
+              dictionaryAIPanelOpen={dictionaryAIPanelOpen}
+              dictionaryAINoteState={dictionaryAINoteState}
+              searchQuery={dictionarySearchQuery}
+              searchExpanded={dictionarySearchExpanded}
+              onSave={handleSaveVocabulary}
+              onRequestAI={handleRequestAI}
+              onCreateAINote={() => undefined}
+              onSelectAISuggestedQuery={() => undefined}
+              onSearchQueryChange={setDictionarySearchQuery}
+              onSearchSubmit={handleDictionarySearch}
+              onSelectCandidate={handleSelectCandidate}
+              onToggleAIPanel={() => setDictionaryAIPanelOpen((v) => !v)}
+              onToggleSearchExpanded={() => setDictionarySearchExpanded((v) => !v)}
+              onDismiss={closeDictionaryRail}
+              variant="card"
+              canSaveVocabulary={Boolean(activeLookupSnapshot?.contextSentence.trim())}
+              canCreateAINote={false}
+              onSelectHistory={handleSelectHistory}
+            />
           </div>
         ) : null}
-      </div>
-      <AiWorkspacePanel
-        open={askOpen}
-        presentation={surfaceMode}
-        pageIdentity={askPageIdentity}
-        recordId={snapshot.record_id}
-        recordScope="reading_record"
-        hideClosedLauncher
-        recordTitle={snapshot.record.title}
-        attachments={askAttachments}
-        pendingQuickActionRequest={pendingAskRequest}
-        onRemoveAttachment={handleRemoveAskAttachment}
-        onClearAttachments={() => setAskAttachments([])}
-        onPendingQuickActionConsumed={() => setPendingAskRequest(null)}
-        onToggle={() => setAskOpen(false)}
-        onActionExecuted={handleAskActionExecuted}
-        onSupplementDeleted={handleAskSupplementDeleted}
-      />
-      {dictionaryOpen ? (
-        <div
-          className="reader-tool-surface reader-tool-surface--rail fixed top-3 bottom-3 left-3 z-40 hidden xl:block w-[420px]"
-          data-reader-record-dictionary-rail="docked"
-        >
-          <ReaderDictionaryRail
-            className="h-full"
-            lookup={activeLookupSnapshot}
-            history={dictionaryHistory}
-            readingGoal=""
-            saveState={dictionarySaveState}
-            dictionaryAI={dictionaryAI}
-            dictionaryAIPanelOpen={dictionaryAIPanelOpen}
-            dictionaryAINoteState={dictionaryAINoteState}
-            searchQuery={dictionarySearchQuery}
-            searchExpanded={dictionarySearchExpanded}
-            onSave={handleSaveVocabulary}
-            onRequestAI={handleRequestAI}
-            onCreateAINote={() => undefined}
-            onSelectAISuggestedQuery={() => undefined}
-            onSearchQueryChange={setDictionarySearchQuery}
-            onSearchSubmit={handleDictionarySearch}
-            onSelectCandidate={handleSelectCandidate}
-            onToggleAIPanel={() => setDictionaryAIPanelOpen((v) => !v)}
-            onToggleSearchExpanded={() => setDictionarySearchExpanded((v) => !v)}
-            onDismiss={closeDictionaryRail}
-            variant="card"
-            canSaveVocabulary={Boolean(activeLookupSnapshot?.contextSentence.trim())}
-            canCreateAINote={false}
-            onSelectHistory={handleSelectHistory}
-          />
-        </div>
-      ) : null}
-      {dictionaryOpen ? (
-        <div
-          className="reader-tool-surface reader-tool-surface--compact fixed inset-x-3 bottom-3 z-50 flex max-h-[72vh] flex-col xl:hidden"
-          data-reader-record-dictionary-rail="sheet"
-        >
-          <ReaderDictionaryRail
-            lookup={activeLookupSnapshot}
-            history={dictionaryHistory}
-            readingGoal=""
-            saveState={dictionarySaveState}
-            dictionaryAI={dictionaryAI}
-            dictionaryAIPanelOpen={dictionaryAIPanelOpen}
-            dictionaryAINoteState={dictionaryAINoteState}
-            searchQuery={dictionarySearchQuery}
-            searchExpanded={dictionarySearchExpanded}
-            onSave={handleSaveVocabulary}
-            onRequestAI={handleRequestAI}
-            onCreateAINote={() => undefined}
-            onSelectAISuggestedQuery={() => undefined}
-            onSearchQueryChange={setDictionarySearchQuery}
-            onSearchSubmit={handleDictionarySearch}
-            onSelectCandidate={handleSelectCandidate}
-            onToggleAIPanel={() => setDictionaryAIPanelOpen((v) => !v)}
-            onToggleSearchExpanded={() => setDictionarySearchExpanded((v) => !v)}
-            onDismiss={closeDictionaryRail}
-            variant="sheet"
-            canSaveVocabulary={Boolean(activeLookupSnapshot?.contextSentence.trim())}
-            canCreateAINote={false}
-            onSelectHistory={handleSelectHistory}
-          />
-        </div>
-      ) : null}
-    </section>
+        {dictionaryOpen ? (
+          <div
+            className="reader-tool-surface reader-tool-surface--compact fixed inset-x-3 bottom-3 z-50 flex max-h-[72vh] flex-col xl:hidden"
+            data-reader-record-dictionary-rail="sheet"
+          >
+            <ReaderDictionaryRail
+              lookup={activeLookupSnapshot}
+              history={dictionaryHistory}
+              readingGoal=""
+              saveState={dictionarySaveState}
+              dictionaryAI={dictionaryAI}
+              dictionaryAIPanelOpen={dictionaryAIPanelOpen}
+              dictionaryAINoteState={dictionaryAINoteState}
+              searchQuery={dictionarySearchQuery}
+              searchExpanded={dictionarySearchExpanded}
+              onSave={handleSaveVocabulary}
+              onRequestAI={handleRequestAI}
+              onCreateAINote={() => undefined}
+              onSelectAISuggestedQuery={() => undefined}
+              onSearchQueryChange={setDictionarySearchQuery}
+              onSearchSubmit={handleDictionarySearch}
+              onSelectCandidate={handleSelectCandidate}
+              onToggleAIPanel={() => setDictionaryAIPanelOpen((v) => !v)}
+              onToggleSearchExpanded={() => setDictionarySearchExpanded((v) => !v)}
+              onDismiss={closeDictionaryRail}
+              variant="sheet"
+              canSaveVocabulary={Boolean(activeLookupSnapshot?.contextSentence.trim())}
+              canCreateAINote={false}
+              onSelectHistory={handleSelectHistory}
+            />
+          </div>
+        ) : null}
+      </section>
+    </div>
   );
 }

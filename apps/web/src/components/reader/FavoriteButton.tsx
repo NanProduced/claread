@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Heart } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { readerCommandControl } from "@/components/reader/interaction";
+import { readerCommandControl, readerTopBarAction } from "@/components/reader/interaction";
 
 type FavoriteState = "loading" | "ready" | "saving" | "error";
 
@@ -22,10 +22,19 @@ type FavoriteApiResult =
 
 interface FavoriteButtonProps {
   recordId: string;
-  variant?: "default" | "action-bar";
+  variant?: "default" | "action-bar" | "icon-only";
 }
 
 function favoriteButtonShellClassName(favorited: boolean, variant: FavoriteButtonProps["variant"]) {
+  if (variant === "icon-only") {
+    return cn(
+      readerTopBarAction,
+      favorited
+        ? "text-vocab-amber hover:bg-vocab-amber/10 active:bg-vocab-amber/16"
+        : "text-muted/90 hover:text-ink",
+    );
+  }
+
   return cn(
     readerCommandControl,
     variant === "action-bar"
@@ -153,6 +162,33 @@ export function FavoriteButton({ recordId, variant = "default" }: FavoriteButton
           : favorited
             ? "已收藏此文"
             : "加入阅读资产";
+
+  if (variant === "icon-only") {
+    return (
+      <>
+        <button
+          type="button"
+          aria-pressed={favorited}
+          aria-label={favorited ? "已收藏此文" : "加入阅读资产"}
+          title={favorited ? "已收藏" : "收藏"}
+          disabled={disabled}
+          onClick={toggleFavorite}
+          className={favoriteButtonShellClassName(favorited, variant)}
+        >
+          <Heart
+            aria-hidden="true"
+            className={`h-[18px] w-[18px] shrink-0 ${
+              favorited ? "fill-vocab-amber text-vocab-amber" : "text-current"
+            }`}
+            strokeWidth={1.5}
+          />
+        </button>
+        <p aria-live="polite" className="sr-only">
+          {message}
+        </p>
+      </>
+    );
+  }
 
   if (variant === "action-bar") {
     return (

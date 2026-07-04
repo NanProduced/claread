@@ -27,6 +27,15 @@ export const readerCommandControl = cn(
   "hover:bg-ink/[0.02] hover:text-ink-soft active:bg-ink/[0.04]",
 );
 
+export const readerTopBarAction = cn(
+  "inline-flex items-center justify-center rounded-lg border border-transparent",
+  "h-9 w-9 shrink-0 text-muted/90",
+  primitiveFocusRing,
+  readerTransitionFast,
+  "hover:bg-ink/[0.05] hover:text-ink active:bg-ink/[0.09]",
+  "disabled:pointer-events-none disabled:opacity-50",
+);
+
 export const readerFloatingAction = cn(
   "inline-flex items-center justify-center border border-transparent text-ink/80",
   primitiveFocusRing,

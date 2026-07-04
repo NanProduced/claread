@@ -9,6 +9,7 @@ import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 
 import { getReaderRecordSurfaceMode } from "./reader-record-surface-mode";
 import { CandidateConfirmCallout } from "./CandidateConfirmCallout";
+import { ArticleRagStatusPanel } from "./ArticleRagStatusPanel";
 
 type SnapshotState =
   | { kind: "loading"; recordId: string }
@@ -204,6 +205,10 @@ export default function ReadingRecordPage({
     return (
       <>
         <CandidateConfirmCallout recordId={recordId} />
+        <ArticleRagStatusPanel
+          recordId={recordId}
+          generation={snapshotState.snapshot.record.generation}
+        />
 
         {showInlineStrip ? (
           <div className="paper-grain border-b border-hairline/70 bg-background/90 backdrop-blur">

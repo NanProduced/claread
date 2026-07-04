@@ -508,6 +508,22 @@ function installReaderRecordFetchMock(
       });
     }
 
+    if (
+      requestUrl.pathname ===
+      `/api/web/reader-plate/records/${snapshot.record_id}/article-rag-index/status`
+    ) {
+      // Default: quiet "unavailable" — the ArticleRagStatusPanel surfaces the
+      // "准备引用问答" button in this state and tests can override by
+      // adding a specific handler above.
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          status: "unavailable",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+
     throw new Error(`Unexpected fetch: ${String(input)}`);
   });
 
@@ -873,6 +889,31 @@ describe("ReadingRecordPage direct load", () => {
         expect.objectContaining({ method: "GET" }),
       );
     });
+  });
+
+  it("renders ArticleRagStatusPanel in the loaded branch and routes /article-rag-index/status through the mock", async () => {
+    const snapshot = makeSnapshot("rec_product_1", {}, {
+      translationScope: "unit",
+      userAssets: [makeUserHighlightAsset()],
+    });
+    const fetchMock = installReaderRecordFetchMock(snapshot);
+
+    renderReadingRecordPage("rec_product_1");
+
+    // The plate surface still renders — adding the RAG panel does not block it.
+    await screen.findByTestId("reader-record-plate-surface");
+
+    // The RAG panel is mounted and eventually reports its initial status.
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("article-rag-status-panel").getAttribute("data-rag-status"),
+      ).toBe("unavailable");
+    });
+
+    // The status endpoint was actually called with the right URL.
+    expect(fetchMock.mock.calls.some(([u]) =>
+      String(u).endsWith("/article-rag-index/status"),
+    )).toBe(true);
   });
 
   it("keeps Workbench fallback available without changing the default Plate page", async () => {

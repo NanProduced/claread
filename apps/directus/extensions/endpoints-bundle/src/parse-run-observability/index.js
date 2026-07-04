@@ -1,3 +1,5 @@
+import registerReaderOrch from "./reader-orch.js";
+
 function clampLimit(value) {
   const parsed = Number.parseInt(String(value ?? "5"), 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return 5;
@@ -211,7 +213,9 @@ function normalizeReasonRows(rows, keyField) {
   }));
 }
 
-export default (router, { database }) => {
+export default (router, ctx) => {
+  const { database } = ctx;
+
   router.get("/recent-failures", async (req, res, next) => {
     if (!buildAuthGuard(req, res)) return;
 
@@ -659,4 +663,6 @@ export default (router, { database }) => {
       next(error);
     }
   });
+
+  registerReaderOrch(router, ctx);
 };
