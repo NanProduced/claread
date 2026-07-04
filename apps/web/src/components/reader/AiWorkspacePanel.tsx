@@ -67,6 +67,7 @@ import { Loader } from "@/components/ui/loader";
 import { SystemMessage } from "@/components/ui/system-message";
 import { IconButton } from "@/components/primitives/icon-button";
 import { AskComposer } from "@/components/reader/ask-chat/AskComposer";
+import { ArticleRagCitationList } from "@/components/reader/ask-chat/ArticleRagCitationList";
 import { AssistantMessage } from "@/components/reader/ask-chat/AssistantMessage";
 import { CitationList } from "@/components/reader/ask-chat/CitationList";
 import { ConversationShell } from "@/components/reader/ask-chat/ConversationShell";
@@ -88,6 +89,7 @@ import {
   type ReaderAskAttachment,
   type ReaderAskPageIdentity,
 } from "@/lib/reader-plate";
+import { mapAskArticleRagSidecar } from "@/lib/reader-orchestration/status-mapper";
 import type {
   ReaderAskActionConfirmResponseDto,
   ReaderAskActionProposalDto,
@@ -204,6 +206,7 @@ type AskPanelBlockKind =
   | "context_summary"
   | "evidence"
   | "trace_summary"
+  | "article_rag_citations"
   | "citations"
   | "tool_trace"
   | "follow_up_suggestions";
@@ -853,6 +856,10 @@ export function createSseMessageHandler(
               compacting: false,
               regenerate_preview: false,
               usage_event_id: payload.usage_event_id ?? message.usage_event_id ?? null,
+              // Map raw article_rag sidecar into a UI-safe shape: strips
+              // debug-only fields, coerces unknown statuses, and only
+              // retains citations when status === "available".
+              article_rag: mapAskArticleRagSidecar(payload.article_rag ?? null),
             };
           }
           const isPriorUser =
@@ -1354,6 +1361,57 @@ async function copyMessageText(text: string) {
   }
 }
 
+/**
+ * Decide whether the article RAG sidecar should render a citation block.
+ *
+ * This is the single render gate for article_rag citations: status MUST be
+ * `available` (already coerced by `mapAskArticleRagSidecar`),
+ * `should_attach` MUST be strictly `true`, and the citations list MUST be
+ * non-empty. Anything else (silent fallback, debug-only paths, stale or
+ * disabled sidecars) returns false so the Ask surface falls back to the
+ * ordinary answer with no user-visible error state.
+ */
+function hasRenderableArticleRagCitations(
+  sidecar: ReaderAskUiMessageDto["article_rag"],
+): sidecar is NonNullable<NonNullable<ReaderAskUiMessageDto["article_rag"]>> {
+  if (!sidecar) return false;
+  if (sidecar.status !== "available") return false;
+  if (sidecar.should_attach !== true) return false;
+  return Array.isArray(sidecar.citations) && sidecar.citations.length > 0;
+}
+
+/**
+ * Normalize thread-detail / thread-list messages into UI state.
+ *
+ * The backend `GET /reader-ask/threads/{id}` returns the raw `article_rag`
+ * sidecar on each assistant message — that shape contains debug-only
+ * fields (`failure_code`, `retryable`, `fallback_allowed`,
+ * `source_pack_hash`, `query_sha256`) which MUST NOT enter React state
+ * unfiltered. Running every loaded message through `mapAskArticleRagSidecar`
+ * guarantees that the field on `ReaderAskUiMessageDto.article_rag` is
+ * always the UI-safe projection, regardless of whether the message
+ * arrived via SSE `message.completed`, thread-detail fetch, or reset.
+ *
+ * The SSE merge path already calls the mapper inline; this helper covers
+ * the cold-load / reset paths that bypass streaming. The mapper is
+ * idempotent — it only reads `status` / `should_attach` / `context_ids`
+ * / `citations` and produces the safe shape — so re-running it on a
+ * message that already carries a safe sidecar is a no-op.
+ */
+function normalizeReaderAskMessages(
+  messages: ReaderAskMessageDto[] | ReaderAskUiMessageDto[],
+): ReaderAskUiMessageDto[] {
+  return messages.map((message) => {
+    const uiState = message as Partial<ReaderAskMessageUiStateDto>;
+    return {
+      ...message,
+      article_rag: mapAskArticleRagSidecar(
+        (uiState.article_rag ?? null) as Parameters<typeof mapAskArticleRagSidecar>[0],
+      ),
+    } as ReaderAskUiMessageDto;
+  });
+}
+
 function buildAssistantBlocks(message: ReaderAskUiMessageDto): AskPanelBlock[] {
   const blocks: AskPanelBlock[] = [];
 
@@ -1382,6 +1440,15 @@ function buildAssistantBlocks(message: ReaderAskUiMessageDto): AskPanelBlock[] {
   }
   if ((message.follow_up_suggestions ?? []).length > 0) {
     blocks.push({ kind: "follow_up_suggestions" });
+  }
+  // Article RAG sidecar citations render before ordinary citations so they
+  // stay anchored to the answer body. The block only fires when the
+  // normalized sidecar is `available`, `should_attach === true`, and at
+  // least one citation was retained by `mapAskArticleRagSidecar`. All
+  // other statuses (stale_due_to_repair, disabled, composer_rejected,
+  // not_indexed_or_unavailable, empty, unknown) silently fall through.
+  if (hasRenderableArticleRagCitations(message.article_rag)) {
+    blocks.push({ kind: "article_rag_citations" });
   }
   if (message.citations.length > 0) {
     blocks.push({ kind: "citations" });
@@ -2520,6 +2587,18 @@ function MessageBubble({
                 );
               case "citations":
                 return <CitationList key={`${message.id}-${block.kind}-${index}`} citations={message.citations} />;
+              case "article_rag_citations":
+                // `hasRenderableArticleRagCitations` is the render gate in
+                // `buildAssistantBlocks`; the sidecar here is guaranteed to
+                // be `available` with `should_attach === true` and at least
+                // one citation. The component also re-checks internally as a
+                // defensive double gate.
+                return message.article_rag ? (
+                  <ArticleRagCitationList
+                    key={`${message.id}-${block.kind}-${index}`}
+                    sidecar={message.article_rag}
+                  />
+                ) : null;
               case "context_summary":
                 return (
                   <div key={`${message.id}-${block.kind}-${index}`} className="space-y-3">
@@ -2906,7 +2985,7 @@ export function AiWorkspacePanel({
   async function loadThread(threadId: string, nextThreads?: ReaderAskThreadSummaryDto[]) {
     const detail = await fetchThreadDetail(threadId);
     setActiveThreadId(threadId);
-    setMessages(detail.messages);
+    setMessages(normalizeReaderAskMessages(detail.messages));
     setSupplementNotice(null);
     const nextSummary = toThreadSummary(detail);
     setSelectedModelKey(detail.selected_model?.key ?? defaultModelKey ?? null);
@@ -3112,7 +3191,7 @@ export function AiWorkspacePanel({
         "重置会话失败。",
       );
       setActiveThreadId(detail.id);
-      setMessages(detail.messages);
+      setMessages(normalizeReaderAskMessages(detail.messages));
       setSelectedModelKey(detail.selected_model?.key ?? defaultModelKey ?? null);
       setThreads([toThreadSummary(detail)]);
       setSupplementNotice(null);
@@ -3362,6 +3441,7 @@ export function AiWorkspacePanel({
       reasoning_status: null,
       regenerate_preview: false,
       usage_event_id: null,
+      article_rag: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -3394,6 +3474,9 @@ export function AiWorkspacePanel({
       compacting: false,
       regenerate_preview: false,
       usage_event_id: null,
+      // No article_rag sidecar until message.completed arrives — streaming
+      // must not show partial citations.
+      article_rag: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -3511,6 +3594,9 @@ export function AiWorkspacePanel({
               reasoning_md: "",
               follow_up_suggestions: [],
               compacting: false,
+              // Clear any prior article_rag sidecar so streaming doesn't
+              // render stale citations from the previous attempt.
+              article_rag: null,
             }
           : message,
       ),

@@ -37,6 +37,7 @@ import type {
 } from "@/types/api/reader-plate";
 import type {
   ReaderAskArticleRagSidecarDto,
+  ReaderAskArticleRagSidecarSafeDto,
   ReaderAskArticleRagStatusDto,
 } from "@/types/api/reader-ask";
 
@@ -229,13 +230,6 @@ export type ReaderArticleRagIndexEnsureSafeDto = Omit<
   ReaderArticleRagIndexEnsureResponseDto,
   "reason_code"
 >;
-
-export interface ReaderAskArticleRagSidecarSafeDto {
-  status: ReaderAskArticleRagStatusDto;
-  should_attach: boolean;
-  context_ids: string[];
-  citations: ReaderAskArticleRagSidecarDto["citations"];
-}
 
 // ---------------------------------------------------------------------------
 // Whole-DTO mappers — strip debug-only fields and coerce unknown enums

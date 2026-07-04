@@ -3,7 +3,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReaderAskAttachment, ReaderAskPageIdentity } from "@/lib/reader-plate";
-import type { ReaderAskUiMessageDto } from "@/types/api/reader-ask";
+import type {
+  ReaderAskArticleRagCitationDto,
+  ReaderAskArticleRagSidecarSafeDto,
+  ReaderAskUiMessageDto,
+} from "@/types/api/reader-ask";
 import { consumeReaderAskSse } from "./ask/sse";
 import {
   AiWorkspacePanel,
@@ -2567,6 +2571,233 @@ describe("AiWorkspacePanel", () => {
         screen.getByText("当前积分不足：剩余 1 点，本次 Ask Claread 至少需要 10 点。本轮请求未发送给模型。"),
       ).not.toBeNull();
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // F6 — Ask article RAG sidecar UI integration
+  // -------------------------------------------------------------------------
+  // Covers: completed SSE article_rag rendering, status fallbacks,
+  // strict should_attach === true gate, debug-only field stripping, and
+  // coexistence with ordinary ReaderAsk citations.
+  // -------------------------------------------------------------------------
+
+  function makeArticleRagCitation(overrides: Partial<ReaderAskArticleRagCitationDto> = {}): ReaderAskArticleRagCitationDto {
+    return {
+      context_id: "ctx_1",
+      chunk_id: "chunk_1",
+      citation: {
+        reading_record_id: "record-1",
+        stable_document_id: "sd-1",
+        base_id: "base-1",
+        record_generation: 3,
+        block_ids: ["block-1"],
+        unit_ids: ["unit-1"],
+        anchor_segment_ids: ["seg-1"],
+        canonical_text_start_utf16: 0,
+        canonical_text_end_utf16: 100,
+      },
+      ...overrides,
+    };
+  }
+
+  function makeRawArticleRagSidecar(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      status: "available",
+      // DEBUG-ONLY — must not appear in DOM
+      failure_code: "internal_error",
+      // DEBUG-ONLY — must not appear in DOM
+      retryable: true,
+      // DEBUG-ONLY — must not appear in DOM
+      fallback_allowed: false,
+      should_attach: true,
+      context_ids: ["ctx_1", "ctx_2"],
+      // DEBUG-ONLY — must not appear in DOM
+      source_pack_hash: "pack_hash_secret",
+      // DEBUG-ONLY — must not appear in DOM
+      query_sha256: "query_hash_secret",
+      citations: [makeArticleRagCitation()],
+      ...overrides,
+    };
+  }
+
+  function makeSafeArticleRagSidecar(
+    overrides: Partial<ReaderAskArticleRagSidecarSafeDto> = {},
+  ): ReaderAskArticleRagSidecarSafeDto {
+    return {
+      status: "available",
+      should_attach: true,
+      context_ids: ["ctx_1"],
+      citations: [makeArticleRagCitation()],
+      ...overrides,
+    };
+  }
+
+  function mockArticleRagCompletedPayload(articleRag: unknown) {
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({
+        event: "message.completed",
+        data: { ...completedPayload, article_rag: articleRag },
+      });
+    });
+  }
+
+  async function sendArticleRagMessage() {
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "这篇里有没有提到 climate policy？" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => {
+      expect(screen.getByText("解释完成。")).not.toBeNull();
+    });
+  }
+
+  it("renders article RAG citation list when completed payload has available sidecar with should_attach=true", async () => {
+    mockArticleRagCompletedPayload(makeRawArticleRagSidecar());
+
+    renderPanel();
+
+    await sendArticleRagMessage();
+
+    expect(screen.getByText("文章引用")).not.toBeNull();
+    expect(screen.getByText("引用 1")).not.toBeNull();
+    // Short stable identifier tags render; chunk text / hash / provider do not.
+    expect(screen.getByText(/block:block-1/)).not.toBeNull();
+    expect(screen.getByText(/unit:unit-1/)).not.toBeNull();
+    expect(screen.getByText(/seg:seg-1/)).not.toBeNull();
+  });
+
+  it.each([
+    ["string 'true'", { should_attach: "true" }],
+    ["number 1", { should_attach: 1 }],
+  ])("does not render article RAG citations when should_attach is truthy %s", async (_label, override) => {
+    mockArticleRagCompletedPayload(makeRawArticleRagSidecar(override));
+
+    renderPanel();
+
+    await sendArticleRagMessage();
+
+    expect(screen.queryByText("文章引用")).toBeNull();
+    expect(screen.queryByText("引用 1")).toBeNull();
+  });
+
+  it.each([
+    ["stale_due_to_repair"],
+    ["disabled"],
+    ["composer_rejected"],
+    ["not_indexed_or_unavailable"],
+    ["empty"],
+    ["totally_unknown_sidecar_status"],
+  ])("silently falls back when article_rag sidecar status is %s (no citation, no error)", async (status) => {
+    mockArticleRagCompletedPayload(makeRawArticleRagSidecar({ status }));
+
+    renderPanel();
+
+    await sendArticleRagMessage();
+
+    expect(screen.queryByText("文章引用")).toBeNull();
+    expect(screen.queryByText("引用 1")).toBeNull();
+    // The Ask answer body still renders — fail-soft, no user-visible error.
+    expect(screen.getByText("解释完成。")).not.toBeNull();
+  });
+
+  it("strips debug-only fields from the DOM when rendering article RAG citations", async () => {
+    mockArticleRagCompletedPayload(makeRawArticleRagSidecar());
+
+    renderPanel();
+
+    await sendArticleRagMessage();
+
+    // Citation list IS rendered for the available sidecar.
+    expect(screen.getByText("文章引用")).not.toBeNull();
+    // DEBUG-ONLY fields must NOT leak to the DOM.
+    expect(screen.queryByText("internal_error")).toBeNull();
+    expect(screen.queryByText("pack_hash_secret")).toBeNull();
+    expect(screen.queryByText("query_hash_secret")).toBeNull();
+    // `retryable` / `fallback_allowed` are booleans; assert their text form
+    // doesn't appear anywhere on the page.
+    expect(screen.queryByText("retryable")).toBeNull();
+    expect(screen.queryByText("fallback_allowed")).toBeNull();
+    expect(screen.queryByText("true")).toBeNull();
+    expect(screen.queryByText("false")).toBeNull();
+  });
+
+  it("renders ordinary ReaderAsk citations alongside article RAG citations without regression", async () => {
+    const safeSidecar = makeSafeArticleRagSidecar();
+    const assistantMessage = createAssistantMessage({
+      article_rag: safeSidecar,
+      citations: [
+        {
+          citation_id: "c1",
+          kind: "anchor",
+          label: "第3句",
+          metadata_json: {},
+        },
+      ],
+    });
+    // The thread-detail endpoint nominally returns ReaderAskMessageDto[] —
+    // the article_rag UI field is preserved through setMessages because it
+    // is an optional field on the ReaderAskUiMessageDto intersection type.
+    mockThreadMessages([assistantMessage]);
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("Here is the answer.")).not.toBeNull();
+    });
+
+    // Article RAG citation list renders.
+    expect(screen.getByText("文章引用")).not.toBeNull();
+    expect(screen.getByText("引用 1")).not.toBeNull();
+    // Ordinary ReaderAsk citations still render via CitationList.
+    expect(screen.getByText("第3句")).not.toBeNull();
+  });
+
+  it("normalizes raw article_rag sidecar from thread-detail load before it reaches React state", async () => {
+    // Backend thread-detail returns raw `article_rag` (containing debug-only
+    // fields). The cold-load path must run mapAskArticleRagSidecar so the
+    // debug-only fields never enter React state — otherwise they would be
+    // typed as ReaderAskArticleRagSidecarSafeDto and could leak into the
+    // DOM via future component code that trusts the type.
+    const rawSidecar = makeRawArticleRagSidecar();
+    const assistantMessage = createAssistantMessage({
+      article_rag: rawSidecar as unknown as ReaderAskArticleRagSidecarSafeDto,
+    });
+    mockThreadMessages([assistantMessage]);
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("Here is the answer.")).not.toBeNull();
+    });
+
+    // Article RAG citations render because the raw sidecar's `available`
+    // status + `should_attach === true` survive normalization.
+    expect(screen.getByText("文章引用")).not.toBeNull();
+    expect(screen.getByText("引用 1")).not.toBeNull();
+
+    // Debug-only fields from the raw sidecar MUST NOT leak to the DOM.
+    expect(screen.queryByText("internal_error")).toBeNull();
+    expect(screen.queryByText("pack_hash_secret")).toBeNull();
+    expect(screen.queryByText("query_hash_secret")).toBeNull();
+    expect(screen.queryByText("retryable")).toBeNull();
+    expect(screen.queryByText("fallback_allowed")).toBeNull();
+  });
+
+  it("source guard: thread-detail messages must pass through article RAG normalizer", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve: pathResolve } = await import("node:path");
+    const source = readFileSync(
+      pathResolve(process.cwd(), "src/components/reader/AiWorkspacePanel.tsx"),
+      "utf-8",
+    );
+
+    expect(source).toContain("function normalizeReaderAskMessages");
+    expect(source).toContain("mapAskArticleRagSidecar");
+    expect(source).toContain("setMessages(normalizeReaderAskMessages(detail.messages))");
+    expect(source).not.toContain("setMessages(detail.messages)");
   });
 });
 

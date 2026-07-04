@@ -471,6 +471,14 @@ export interface ReaderAskMessageUiStateDto {
   replan_status?: "idle" | "replanning" | null;
   compacting?: boolean | null;
   regenerate_preview?: boolean | null;
+  /**
+   * UI-safe Ask article RAG sidecar. Frontend-only projection of the raw
+   * `article_rag` field on {@link ReaderAskCompletedPayloadDto}. MUST be
+   * produced via `mapAskArticleRagSidecar` so debug-only fields are
+   * stripped and unknown statuses are coerced. `null` means the sidecar
+   * was not present on the completed payload (silent fallback).
+   */
+  article_rag?: ReaderAskArticleRagSidecarSafeDto | null;
 }
 
 export type ReaderAskUiMessageDto = ReaderAskMessageDto & ReaderAskMessageUiStateDto;
@@ -662,5 +670,22 @@ export interface ReaderAskArticleRagSidecarDto {
   source_pack_hash: string | null;
   // DEBUG-ONLY — must NOT be rendered to end users.
   query_sha256: string | null;
+  citations: ReaderAskArticleRagCitationDto[];
+}
+
+/**
+ * UI-safe projection of {@link ReaderAskArticleRagSidecarDto}.
+ *
+ * This shape is produced by `mapAskArticleRagSidecar` in
+ * `lib/reader-orchestration/status-mapper.ts`: every debug-only field
+ * (`failure_code`, `retryable`, `fallback_allowed`, `source_pack_hash`,
+ * `query_sha256`) is stripped at the type level so UI components cannot
+ * accidentally read them off mapped state. `citations` is retained but
+ * is only populated when `status === "available"`.
+ */
+export interface ReaderAskArticleRagSidecarSafeDto {
+  status: ReaderAskArticleRagStatusDto;
+  should_attach: boolean;
+  context_ids: string[];
   citations: ReaderAskArticleRagCitationDto[];
 }
