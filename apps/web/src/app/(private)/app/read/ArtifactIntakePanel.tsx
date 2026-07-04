@@ -17,6 +17,7 @@ import type {
 } from "@/services/bff/reader-plate";
 import { appReadingRecordRoute } from "@/lib/routes";
 import type { ReaderRecordReadingGoal, ReaderRecordReadingVariant } from "@/lib/reading-defaults";
+import { savePendingCandidate } from "./pending-candidate";
 
 const ACCEPT = ".pdf,.txt,.md,.markdown,image/png,image/jpeg,image/jpg,image/webp,image/gif";
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB sanity ceiling
@@ -247,11 +248,40 @@ export function ArtifactIntakePanel({ readingGoal, readingVariant, onUseTextMode
         });
         return;
       }
-      setStage({
-        kind: "candidate",
+      // The safe DTO carries candidate_document.candidate_document_id on
+      // candidate outcomes. Persist it (plus the canonical preview when
+      // available) so the /app/reader-record/{id} confirm-callout can
+      // identify and surface this candidate without an extra round-trip.
+      const candidateDocumentId = status.candidate_document?.candidate_document_id;
+      if (!candidateDocumentId) {
+        setStage({
+          kind: "error",
+          filename: currentFilename,
+          message: "已生成候选文档，但缺少 candidate_document_id，请稍后重试。",
+        });
+        return;
+      }
+      const saved = savePendingCandidate({
         readingRecordId,
+        candidateDocumentId,
+        originalInputId: null,
+        inputSnapshot: null,
         filename: currentFilename,
+        canonicalTextPreview: status.candidate_document?.canonical_text_preview ?? null,
       });
+      if (saved) {
+        setStage({
+          kind: "candidate",
+          readingRecordId,
+          filename: currentFilename,
+        });
+      } else {
+        setStage({
+          kind: "error",
+          filename: currentFilename,
+          message: "已生成候选文档，但本地暂存失败，请稍后再试。",
+        });
+      }
       return;
     }
     if (outcome === "input_rejected_or_action_required" || nextAction === "revise_input") {

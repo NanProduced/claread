@@ -47,8 +47,8 @@ type SubmitState =
       kind: "candidate";
       readingRecordId: string;
       candidateDocumentId: string;
-      originalInputId: string;
-      inputSnapshot: string;
+      originalInputId: string | null;
+      inputSnapshot: string | null;
     }
   | {
       kind: "rejected";
@@ -580,13 +580,13 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
 
       const pending = readPendingCandidate();
       if (pending) {
-        setText(pending.inputSnapshot);
+        setText(pending.inputSnapshot ?? "");
         setState({
           kind: "candidate",
           readingRecordId: pending.readingRecordId,
           candidateDocumentId: pending.candidateDocumentId,
-          originalInputId: pending.originalInputId,
-          inputSnapshot: pending.inputSnapshot,
+          originalInputId: pending.originalInputId ?? null,
+          inputSnapshot: pending.inputSnapshot ?? null,
         });
       }
     }, 0);
@@ -665,8 +665,8 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
               kind: "candidate",
               readingRecordId: pending.readingRecordId,
               candidateDocumentId: pending.candidateDocumentId,
-              originalInputId: pending.originalInputId,
-              inputSnapshot: pending.inputSnapshot,
+              originalInputId: pending.originalInputId ?? null,
+              inputSnapshot: pending.inputSnapshot ?? null,
             });
           } else {
             setState({
@@ -963,7 +963,7 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
               size="sm"
               onClick={() => {
                 clearPendingCandidate();
-                setText(state.inputSnapshot);
+                setText(state.inputSnapshot ?? "");
                 setState({ kind: "idle" });
               }}
             >

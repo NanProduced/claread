@@ -730,3 +730,80 @@ describe("ArtifactIntakePanel review-fix source guards", () => {
     expect(source).toMatch(/applyOutcome\(\s*status\s*,\s*currentFilename\s*\)/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Candidate-confirm route guard (F3)
+// ---------------------------------------------------------------------------
+
+describe("candidate-confirm route guard", () => {
+  const ROUTE_PATH =
+    "src/app/api/web/reader-plate/records/[recordId]/candidate-documents/[candidateDocumentId]/confirm/route.ts";
+
+  it("calls confirmReaderCandidateDocumentFromWeb and forwards path params + body, no legacy analysis", () => {
+    const source = readFileSync(resolve(process.cwd(), ROUTE_PATH), "utf-8");
+    expect(source).toContain("confirmReaderCandidateDocumentFromWeb");
+    expect(source).toContain("recordId");
+    expect(source).toContain("candidateDocumentId");
+    expect(source).toContain("language");
+    expect(source).not.toContain("submitAnalysisFromWeb");
+    expect(source).not.toContain("legacyAppReaderRoute");
+    expect(source).not.toContain("analysis-tasks");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F3 handoff shape guards (source-level)
+//   pending-candidate and CandidateConfirmCallout are unit-tested via
+//   source-grep here to keep the jsdom env config untouched. Behavioral
+//   tests for these modules require either a project-level jsdom default
+//   in vitest.config.ts or per-file directives applied uniformly; this
+//   project currently relies on the latter, so source guards stay portable.
+// ---------------------------------------------------------------------------
+
+describe("pending-candidate helper shape (source guard)", () => {
+  const HELPER_PATH = "src/app/(private)/app/read/pending-candidate.ts";
+
+  it("exposes the unified handoff fields required by F3 (filename, canonicalTextPreview) and tolerates text-only legacy fields", () => {
+    const source = readFileSync(resolve(process.cwd(), HELPER_PATH), "utf-8");
+    expect(source).toContain("readingRecordId");
+    expect(source).toContain("candidateDocumentId");
+    expect(source).toContain("originalInputId");
+    expect(source).toContain("inputSnapshot");
+    expect(source).toContain("filename");
+    expect(source).toContain("canonicalTextPreview");
+    expect(source).toContain("savedAt");
+  });
+
+  it("treats originalInputId and inputSnapshot as optional (artifact path does not always have them)", () => {
+    const source = readFileSync(resolve(process.cwd(), HELPER_PATH), "utf-8");
+    // The validator must allow null/undefined for the optional fields.
+    expect(source).toMatch(/originalInputId\?: string \| null/);
+    expect(source).toMatch(/inputSnapshot\?: string \| null/);
+    expect(source).toMatch(/filename\?: string \| null/);
+    expect(source).toMatch(/canonicalTextPreview\?: string \| null/);
+  });
+});
+
+describe("CandidateConfirmCallout shape (source guard)", () => {
+  const CALLOUT_PATH =
+    "src/app/(private)/app/reader-record/[recordId]/CandidateConfirmCallout.tsx";
+
+  it("wires matching pending candidate → 409 candidate_conflict → 其它 BFF error → success refresh", () => {
+    const source = readFileSync(resolve(process.cwd(), CALLOUT_PATH), "utf-8");
+    // success path: clearPendingCandidate + window.location.reload
+    expect(source).toContain("clearPendingCandidate");
+    expect(source).toContain("window.location.reload");
+    // 409 / candidate_conflict branch
+    expect(source).toContain("candidate_conflict");
+    expect(source).toContain("候选文档状态已变化");
+    // error branch surfaces BFF message verbatim, not raw debug fields
+    expect(source).toContain("payload.message");
+    // 确认并开始阅读 / 稍后处理 / 重新提交 are all present
+    expect(source).toContain("确认并开始阅读");
+    expect(source).toContain("稍后处理");
+    expect(source).toContain("重新提交");
+    // debug fields not exposed in the DOM
+    expect(source).not.toMatch(/failure_class|failure_code|rationale_code/);
+    expect(source).not.toMatch(/english_word_ratio|natural_language_score/);
+  });
+});

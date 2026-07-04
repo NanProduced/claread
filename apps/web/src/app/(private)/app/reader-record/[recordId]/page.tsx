@@ -8,6 +8,7 @@ import { useReaderPlatePolling } from "@/lib/reader-plate-snapshot/polling";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 
 import { getReaderRecordSurfaceMode } from "./reader-record-surface-mode";
+import { CandidateConfirmCallout } from "./CandidateConfirmCallout";
 
 type SnapshotState =
   | { kind: "loading"; recordId: string }
@@ -202,6 +203,8 @@ export default function ReadingRecordPage({
 
     return (
       <>
+        <CandidateConfirmCallout recordId={recordId} />
+
         {showInlineStrip ? (
           <div className="paper-grain border-b border-hairline/70 bg-background/90 backdrop-blur">
             <div

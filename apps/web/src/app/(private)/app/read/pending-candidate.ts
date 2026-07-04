@@ -4,13 +4,37 @@ export const PENDING_CANDIDATE_STORAGE_KEY =
 export interface PendingCandidateInput {
   readingRecordId: string;
   candidateDocumentId: string;
-  originalInputId: string;
-  inputSnapshot: string;
+  /**
+   * Upstream original_input_id when the candidate is created from a unified
+   * input submit. Optional because the artifact-pipeline candidate path may
+   * not surface this id on the polling endpoint yet.
+   */
+  originalInputId?: string | null;
+  /**
+   * Snapshot of the user-provided text (text path) or the original filename
+   * (artifact path). Used to restore the form when the user clicks "重新编辑".
+   * Optional for non-form paths (e.g. zero-data pipeline candidate).
+   */
+  inputSnapshot?: string | null;
+  filename?: string | null;
+  /**
+   * Short preview from `candidate_document.canonical_text_preview` so the
+   * confirm-callout can show the user what they're about to confirm.
+   */
+  canonicalTextPreview?: string | null;
   savedAt?: string;
 }
 
 export interface PendingCandidate extends PendingCandidateInput {
   savedAt: string;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === null || value === undefined || typeof value === "string";
 }
 
 function isValidPendingCandidate(value: unknown): value is PendingCandidate {
@@ -20,23 +44,13 @@ function isValidPendingCandidate(value: unknown): value is PendingCandidate {
 
   const candidate = value as Record<string, unknown>;
 
-  if (
-    typeof candidate.readingRecordId !== "string" ||
-    candidate.readingRecordId.trim().length === 0 ||
-    typeof candidate.candidateDocumentId !== "string" ||
-    candidate.candidateDocumentId.trim().length === 0 ||
-    typeof candidate.originalInputId !== "string" ||
-    candidate.originalInputId.trim().length === 0
-  ) {
-    return false;
-  }
+  if (!isNonEmptyString(candidate.readingRecordId)) return false;
+  if (!isNonEmptyString(candidate.candidateDocumentId)) return false;
 
-  if (
-    typeof candidate.inputSnapshot !== "string" ||
-    candidate.inputSnapshot.length === 0
-  ) {
-    return false;
-  }
+  if (!isOptionalString(candidate.originalInputId)) return false;
+  if (!isOptionalString(candidate.inputSnapshot)) return false;
+  if (!isOptionalString(candidate.filename)) return false;
+  if (!isOptionalString(candidate.canonicalTextPreview)) return false;
 
   if (typeof candidate.savedAt !== "string" || Number.isNaN(Date.parse(candidate.savedAt))) {
     return false;
@@ -73,8 +87,10 @@ export function savePendingCandidate(
   const record: PendingCandidate = {
     readingRecordId: input.readingRecordId,
     candidateDocumentId: input.candidateDocumentId,
-    originalInputId: input.originalInputId,
-    inputSnapshot: input.inputSnapshot,
+    originalInputId: input.originalInputId ?? null,
+    inputSnapshot: input.inputSnapshot ?? null,
+    filename: input.filename ?? null,
+    canonicalTextPreview: input.canonicalTextPreview ?? null,
     savedAt: input.savedAt ?? new Date().toISOString(),
   };
 
