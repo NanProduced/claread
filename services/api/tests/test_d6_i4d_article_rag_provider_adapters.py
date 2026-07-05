@@ -513,7 +513,11 @@ async def test_embedding_error_message_omits_chunk_text(monkeypatch: pytest.Monk
 
 
 def test_embedding_factory_unconfigured_by_default():
-    settings = Settings()
+    settings = Settings(
+        reader_article_rag_embedding_provider="",
+        rag_embedding_model_profile="",
+        default_model_profile="",
+    )
     provider = build_default_article_rag_embedding_provider(settings)
     assert isinstance(provider, UnconfiguredArticleRagEmbeddingProvider)
 
@@ -809,13 +813,18 @@ def _pymilvus_clean(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_zilliz_writer_unconfigured_when_factory_default():
-    settings = Settings()
+    settings = Settings(
+        reader_article_rag_vector_provider="",
+        reader_article_rag_zilliz_uri="",
+        reader_article_rag_zilliz_token="",
+    )
     writer = build_default_article_rag_vector_writer(settings)
     assert isinstance(writer, UnconfiguredArticleRagVectorWriter)
 
 
 def test_zilliz_writer_unconfigured_when_provider_name_blank():
     settings = Settings(
+        reader_article_rag_vector_provider="",
         reader_article_rag_zilliz_uri=_FAKE_ZILLIZ_URI,
         reader_article_rag_zilliz_token=_FAKE_ZILLIZ_TOKEN,
         reader_article_rag_zilliz_collection=_FAKE_ZILLIZ_COLLECTION,
@@ -825,7 +834,12 @@ def test_zilliz_writer_unconfigured_when_provider_name_blank():
     assert isinstance(writer, UnconfiguredArticleRagVectorWriter)
 
 
-def test_zilliz_writer_unconfigured_when_token_blank():
+def test_zilliz_writer_unconfigured_when_token_blank(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        Settings,
+        "resolve_external_env_var",
+        lambda self, env_name, *, fallback="": fallback,
+    )
     settings = Settings(
         reader_article_rag_vector_provider="zilliz",
         reader_article_rag_zilliz_uri=_FAKE_ZILLIZ_URI,
@@ -860,6 +874,32 @@ def test_zilliz_writer_configured_when_all_settings_present():
     writer = build_default_article_rag_vector_writer(settings)
     assert isinstance(writer, ZillizArticleRagVectorWriter)
     assert writer.provider_name == READER_ARTICLE_RAG_VECTOR_PROVIDER_ZILLIZ
+    assert writer.collection == _FAKE_ZILLIZ_COLLECTION
+
+
+def test_zilliz_writer_falls_back_to_few_shot_zilliz_env(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Article RAG may reuse the existing few-shot RAG Zilliz URI/token
+    while keeping an Article-specific collection."""
+
+    monkeypatch.delenv("READER_ARTICLE_RAG_ZILLIZ_URI", raising=False)
+    monkeypatch.delenv("READER_ARTICLE_RAG_ZILLIZ_TOKEN", raising=False)
+    monkeypatch.setenv("ZILLIZ_URI", _FAKE_ZILLIZ_URI)
+    monkeypatch.setenv("ZILLIZ_TOKEN", _FAKE_ZILLIZ_TOKEN)
+
+    settings = Settings(
+        reader_article_rag_vector_provider="zilliz",
+        reader_article_rag_zilliz_uri="",
+        reader_article_rag_zilliz_token="",
+        reader_article_rag_zilliz_collection=_FAKE_ZILLIZ_COLLECTION,
+        reader_article_rag_vector_dim=1024,
+    )
+    writer = build_default_article_rag_vector_writer(settings)
+
+    assert isinstance(writer, ZillizArticleRagVectorWriter)
+    assert writer._uri == _FAKE_ZILLIZ_URI
+    assert writer._token == _FAKE_ZILLIZ_TOKEN
     assert writer.collection == _FAKE_ZILLIZ_COLLECTION
 
 

@@ -768,6 +768,14 @@ class _FakeSettings:
             raise AttributeError(name) from exc
 
 
+class _FakeSettingsWithZillizFallback(_FakeSettings):
+    def resolve_reader_article_rag_zilliz_uri(self) -> str:
+        return "https://fallback-zilliz.example.com"
+
+    def resolve_reader_article_rag_zilliz_token(self) -> str:
+        return "fallback-token"
+
+
 def test_factory_returns_none_when_feature_disabled() -> None:
     settings = _FakeSettings(reader_article_rag_enabled=False)
     result = build_default_article_rag_prompt_integration(settings)
@@ -805,6 +813,18 @@ def test_factory_returns_none_when_zilliz_collection_missing() -> None:
     )
     result = build_default_article_rag_prompt_integration(settings)
     assert result is None
+
+
+def test_factory_uses_resolved_zilliz_fallback_when_dedicated_fields_blank() -> None:
+    settings = _FakeSettingsWithZillizFallback(
+        reader_article_rag_enabled=True,
+        reader_article_rag_zilliz_uri="",
+        reader_article_rag_zilliz_token="",
+        reader_article_rag_zilliz_collection="article-rag-only",
+        reader_article_rag_vector_provider="zilliz",
+    )
+    result = build_default_article_rag_prompt_integration(settings)
+    assert isinstance(result, ArticleRagPromptIntegration)
 
 
 def test_factory_returns_none_when_zilliz_provider_not_zilliz() -> None:

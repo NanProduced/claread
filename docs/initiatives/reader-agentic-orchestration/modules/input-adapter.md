@@ -295,10 +295,11 @@ LLM reviewer 是输入适配节点，不是 Reader orchestration planner。
 
 - `source_artifacts` 保存上传对象引用、checksum、owner scope、状态机和 source metadata；二进制对象存 OSS，不写 PostgreSQL。
 - `/reader/source-artifacts/init-upload` 与 `/complete-upload` 支持原始文件上传初始化和完成确认；开发 bucket 为 `claread-dev`，真实 presigned upload 通过 OSS presigner adapter，缺凭证时 fail closed 到 pending-credentials 形态。
+- 本地 OSS 配置不要求复制 AccessKey secret：`ALIYUN_OSS_PRESIGN_ENABLED=true` 开启签名；成对的 `ALIYUN_OSS_ACCESS_KEY_ID` / `ALIYUN_OSS_ACCESS_KEY_SECRET` 优先，二者都为空时 fallback 到通用 `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET`；不允许混用半组 OSS 专用凭证和半组通用阿里云凭证。API 与 `reader-artifact-pipeline-worker` 的 Python 环境都必须安装 `oss` extra，且 OSS bucket 需要允许浏览器来源的 PUT/OPTIONS CORS。
 - `/reader/source-artifacts/{artifact_id}/submit-input` 把 available artifact 绑定为 `reading_records` + `original_inputs`，随后 enqueue `input_artifact_extraction` job。
 - `reader-artifact-pipeline-worker` 先处理 extraction job，再 enqueue / drain `extracted_artifact_materialization` job；API submit 不同步执行文件解析。
-- extraction provider router 当前支持 text/Markdown、PDF text-layer extraction、OCR provider foundation 三类 provider。`text/plain`、`text/markdown`、`.txt` / `.md` 可直接抽取文本；`application/pdf` 通过 deterministic PDF text extractor 抽取可复制文本；`image/*` 委派 OCR provider。
-- OCR 默认未配置时 image job terminal fail closed 为 `ocr_provider_unconfigured`。已定义 OCR provider contract、confidence quality/warnings 与 Qwen stub，但真实 Qwen / DashScope 网络调用仍未实现。
+- extraction provider router 当前支持 text/Markdown、PDF text-layer extraction、OCR provider 三类 provider。`text/plain`、`text/markdown`、`.txt` / `.md` 可直接抽取文本；`application/pdf` 通过 deterministic PDF text extractor 抽取可复制文本；`image/*` 委派 OCR provider。
+- OCR 默认未配置时 image job terminal fail closed 为 `ocr_provider_unconfigured`。本地启用 qwen3.5-ocr 需要 `READER_OCR_PROVIDER_ENABLED=true`、`READER_OCR_PROVIDER_NAME=qwen`、`READER_OCR_QWEN_MODEL=qwen3.5-ocr`，并提供 `DASHSCOPE_API_KEY`（进程 env 或 `services/api/.env`）。
 - materialization 阶段根据 artifact content type 派生 `txt_file` / `markdown_file` / `pdf_text` / `ocr_text`。`pdf_text` 和 `ocr_text` 默认进入 Candidate Document required，不会绕过用户确认直写 Stable Reading Document。
 
 仍未完成：
@@ -315,7 +316,7 @@ LLM reviewer 是输入适配节点，不是 Reader orchestration planner。
 - 文件上传正式产品路径使用阿里云 OSS，开发环境提供 local artifact adapter；object metadata、checksum、owner scope 必须与 OSS adapter 一致。
 - 后端不把二进制文件塞进 PostgreSQL。
 - Source Artifact 对已确认 Reading Record 默认随 record 生命周期保留；未完成、失败或放弃导入的临时 artifacts 可过期清理。
-- OCR / 富文档解析通过 `OcrProviderAdapter` / `DocumentParserAdapter` 接入。部署可把 `reader_input_ocr` route 配置到 `qwen3.5-ocr`（如当前环境可用）或其他 Qwen VL / Omni profile；产品和领域合同不绑定具体模型名。
+- OCR / 富文档解析通过 `OcrProviderAdapter` / `DocumentParserAdapter` 接入。当前本地 OCR provider 可配置为 `qwen3.5-ocr`；产品和领域合同不绑定具体模型名。
 - PDF/富文本 parser 只能生成 Extraction Result / Candidate Document，不能直接写 Stable Reading Document。
 - 所有 provider 通过 adapter 接入，不能成为 Claread 业务事实源。
 

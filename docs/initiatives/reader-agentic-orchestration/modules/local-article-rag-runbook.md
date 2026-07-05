@@ -37,6 +37,9 @@ article_ready
 Article RAG 的所有开关集中在 `services/api/app/config/settings.py` 的 `reader_article_rag_*` 字段。下面是 `services/api/.env.example` 的标准模板（参考值，**不要**直接把真实 key 写进 `.env.example`）：
 
 ```text
+# Embedding route。启用 DashScope/Bailian embedding 时建议走 registry profile。
+RAG_EMBEDDING_MODEL_PROFILE="rag-embedding-v4"
+
 # Article RAG feature flag. 关闭时 auto-ensure hook 是 no-op；
 # 关闭不影响 article_ready 主流程。手动 GET status / POST ensure
 # 仍走 lifecycle service 语义，不被该 flag gate。
@@ -44,11 +47,11 @@ READER_ARTICLE_RAG_ENABLED=false
 
 # Embedding provider 选择与模型。空字符串 / 未配置 = 走 Unconfigured 兜底，
 # worker 会在第一个 job 上以 embedding_provider_unconfigured 失败。
-READER_ARTICLE_RAG_EMBEDDING_PROVIDER=""
+READER_ARTICLE_RAG_EMBEDDING_PROVIDER="dashscope"
 READER_ARTICLE_RAG_EMBEDDING_MODEL=""
 
 # Vector store provider 选择。Zilliz 要求四件套同时非空：uri + token + collection + dim > 0。
-READER_ARTICLE_RAG_VECTOR_PROVIDER=""
+READER_ARTICLE_RAG_VECTOR_PROVIDER="zilliz"
 READER_ARTICLE_RAG_ZILLIZ_URI=""
 READER_ARTICLE_RAG_ZILLIZ_TOKEN=""
 READER_ARTICLE_RAG_ZILLIZ_COLLECTION="article_rag_index_v1"
@@ -65,7 +68,9 @@ READER_ARTICLE_RAG_WORKER_MAX_TICKS=100
 READER_ARTICLE_RAG_SMOKE=false
 ```
 
-实际 key 放在 `services/api/.env`（不进 git），或者由外部 secret manager 注入。`DASHSCOPE_API_KEY` / `BAILIAN_API_KEY` 的语义与 Article RAG 嵌入 provider 解耦 —— 当且仅当 `READER_ARTICLE_RAG_EMBEDDING_PROVIDER=dashscope` 且 Bailian key 解析得到非空值时，I4D 工厂才会构造真实 `DashScopeArticleRagEmbeddingProvider`。
+实际 key 放在 `services/api/.env`（不进 git），或者由外部 secret manager 注入。`rag-embedding-v4` 在 `services/api/config/model-profiles.json` 中解析到 `text-embedding-v4` / `dashscope_embedding`，该 provider 使用 `DASHSCOPE_API_KEY`。如果 `RAG_EMBEDDING_MODEL_PROFILE` 留空，运行时才会退回 deprecated `BAILIAN_API_KEY` / `BAILIAN_EMBEDDING_MODEL` 路径。换句话说：当且仅当 `READER_ARTICLE_RAG_EMBEDDING_PROVIDER=dashscope` 且 embedding route 或 legacy fallback 解析得到非空 key 时，I4D 工厂才会构造真实 `DashScopeArticleRagEmbeddingProvider`。
+
+Zilliz URI/token 支持本地复用 few-shot/Grammar RAG 的配置：`READER_ARTICLE_RAG_ZILLIZ_URI/TOKEN` 优先；二者为空时 fallback 到 `ZILLIZ_URI/TOKEN`。但 collection 不能复用 few-shot collection：`READER_ARTICLE_RAG_ZILLIZ_COLLECTION` 必须保持 Article RAG 专用（例如 `article_rag_index_v1`），避免把文章 chunk 写进 `grammar_note_examples` / `sentence_analysis_examples`。
 
 ### Secret 红线
 

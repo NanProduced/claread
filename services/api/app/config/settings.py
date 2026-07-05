@@ -216,6 +216,55 @@ class Settings(BaseSettings):
             return runtime_value
         return _load_local_env_values().get(env_name, fallback)
 
+    def resolve_aliyun_oss_credentials(self) -> tuple[str, str]:
+        """Resolve OSS AccessKey credentials as a pair.
+
+        OSS may use dedicated ``ALIYUN_OSS_*`` credentials in production. For
+        local development, fall back to the common Alibaba Cloud SDK variables
+        so users do not have to duplicate secrets in ``.env``.
+
+        Do not mix one OSS-specific value with one generic Alibaba Cloud value:
+        if either OSS-specific credential is configured, both must be present.
+        """
+        if self.aliyun_oss_access_key_id or self.aliyun_oss_access_key_secret:
+            return (
+                self.aliyun_oss_access_key_id,
+                self.aliyun_oss_access_key_secret,
+            )
+        return (
+            self.resolve_external_env_var("ALIBABA_CLOUD_ACCESS_KEY_ID", fallback=""),
+            self.resolve_external_env_var("ALIBABA_CLOUD_ACCESS_KEY_SECRET", fallback=""),
+        )
+
+    def resolve_aliyun_oss_access_key_id(self) -> str:
+        """Resolve OSS AccessKey id."""
+        access_key_id, _ = self.resolve_aliyun_oss_credentials()
+        return access_key_id
+
+    def resolve_aliyun_oss_access_key_secret(self) -> str:
+        """Resolve OSS AccessKey secret without exposing it to API responses."""
+        _, access_key_secret = self.resolve_aliyun_oss_credentials()
+        return access_key_secret
+
+    def resolve_reader_article_rag_zilliz_uri(self) -> str:
+        """Resolve Article RAG Zilliz URI.
+
+        Article RAG may use dedicated ``READER_ARTICLE_RAG_ZILLIZ_URI`` in
+        deployment.  For local development, fall back to the existing
+        few-shot/Grammar RAG ``ZILLIZ_URI`` so users do not duplicate the
+        same secret-bearing endpoint.  The Article RAG collection remains
+        independent via ``reader_article_rag_zilliz_collection``.
+        """
+        if self.reader_article_rag_zilliz_uri:
+            return self.reader_article_rag_zilliz_uri
+        return self.resolve_external_env_var("ZILLIZ_URI", fallback="")
+
+    def resolve_reader_article_rag_zilliz_token(self) -> str:
+        """Resolve Article RAG Zilliz token without exposing it in logs."""
+        if self.reader_article_rag_zilliz_token:
+            return self.reader_article_rag_zilliz_token
+        return self.resolve_external_env_var("ZILLIZ_TOKEN", fallback="")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

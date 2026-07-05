@@ -81,6 +81,20 @@ Response includes:
 The response never includes an AccessKey secret. A presigned URL may include
 the AccessKey id in the query string.
 
+Operational config:
+
+- `ALIYUN_OSS_PRESIGN_ENABLED=true` enables presigned PUT URLs.
+- Paired OSS-specific credentials `ALIYUN_OSS_ACCESS_KEY_ID` /
+  `ALIYUN_OSS_ACCESS_KEY_SECRET` take precedence.
+- If both OSS-specific values are empty, local development may reuse
+  `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET`.
+- The runtime never mixes one OSS-specific credential with one generic
+  Alibaba Cloud credential; if either OSS-specific value is set, both are
+  required.
+- API and `reader-artifact-pipeline-worker` must run in a Python environment
+  with the `oss` extra installed, and the OSS bucket must allow browser
+  `PUT` / `OPTIONS` CORS for the web origin.
+
 ### `POST /reader/source-artifacts/{artifact_id}/complete-upload`
 
 Marks a pending OSS upload as available. The call is idempotent only when the

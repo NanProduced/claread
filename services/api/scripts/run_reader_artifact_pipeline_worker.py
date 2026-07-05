@@ -80,8 +80,7 @@ def build_storage_reader(settings: Settings) -> StorageObjectReader | None:
     This function never raises — missing SDK/credentials is a startup-time
     degradation, not a crash.
     """
-    ak_id = settings.aliyun_oss_access_key_id
-    ak_secret = settings.aliyun_oss_access_key_secret
+    ak_id, ak_secret = settings.resolve_aliyun_oss_credentials()
     if not ak_id or not ak_secret:
         logger.info(
             "artifact pipeline worker: OSS credentials not configured; "
@@ -148,24 +147,25 @@ def _build_ocr_extractor(settings: Settings) -> OcrTextExtractor:
       image job).
     - ``reader_ocr_provider_enabled=True`` + ``reader_ocr_provider_name="qwen"``
       → :class:`QwenOcrTextExtractor` with a real
-      :class:`DashScopeQwenOcrClient`. ``DASHSCOPE_API_KEY`` is read from
-      ``os.environ`` (never stored in settings defaults, never logged).
+      :class:`DashScopeQwenOcrClient`. ``DASHSCOPE_API_KEY`` is resolved from
+      the runtime env or local ``services/api/.env`` (never stored in settings
+      defaults, never logged).
       Missing key → ``ocr_provider_unconfigured`` on first call (terminal).
     - Unknown provider name → :class:`UnconfiguredOcrTextExtractor`.
 
     No OCR secrets are read from settings defaults. ``DASHSCOPE_API_KEY``
-    is read from ``os.environ`` only and is never logged or surfaced in
-    error messages / job output.
+    is resolved via ``Settings.resolve_external_env_var`` and is never logged
+    or surfaced in error messages / job output.
     """
     if not settings.reader_ocr_provider_enabled:
         return UnconfiguredOcrTextExtractor()
 
     name = (settings.reader_ocr_provider_name or "").strip().lower()
     if name == "qwen":
-        # DASHSCOPE_API_KEY is read from env (not settings) so no secret
-        # lands in settings defaults or config files. The key is passed
-        # to DashScopeQwenOcrClient only — never logged or surfaced.
-        api_key = os.environ.get("DASHSCOPE_API_KEY") or ""
+        # DASHSCOPE_API_KEY is resolved outside settings defaults so no secret
+        # lands in API schemas or config examples. The key is passed to
+        # DashScopeQwenOcrClient only — never logged or surfaced.
+        api_key = settings.resolve_external_env_var("DASHSCOPE_API_KEY")
         if not api_key:
             # Construct the extractor anyway; it will fail closed with
             # ocr_provider_unconfigured on first extract_text call.

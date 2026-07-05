@@ -957,7 +957,7 @@ def test_build_ocr_extractor_default_disabled_returns_unconfigured() -> None:
     """Default settings (OCR disabled) → UnconfiguredOcrTextExtractor."""
     from scripts.run_reader_artifact_pipeline_worker import _build_ocr_extractor
 
-    extractor = _build_ocr_extractor(Settings())
+    extractor = _build_ocr_extractor(Settings(reader_ocr_provider_enabled=False))
     assert isinstance(extractor, UnconfiguredOcrTextExtractor)
 
 
@@ -969,8 +969,12 @@ def test_build_ocr_extractor_enabled_qwen_without_api_key_fails_closed(
     with ``ocr_provider_unconfigured`` on first call (D6-I3U contract)."""
     from scripts.run_reader_artifact_pipeline_worker import _build_ocr_extractor
 
-    # Ensure DASHSCOPE_API_KEY is not set in the test environment.
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    monkeypatch.setattr(
+        Settings,
+        "resolve_external_env_var",
+        lambda self, env_name, *, fallback="": fallback,
+    )
 
     settings = Settings(
         reader_ocr_provider_enabled=True,
@@ -991,8 +995,8 @@ def test_build_ocr_extractor_enabled_qwen_with_api_key_constructs_real_adapter(
     constructs a :class:`QwenOcrTextExtractor` with a real
     :class:`DashScopeQwenOcrClient` (D6-I3U: no longer a stub).
 
-    The API key is read from env only and is never logged or surfaced in
-    the extractor's public attributes. We verify construction without
+    The API key is resolved outside settings defaults and is never logged or
+    surfaced in the extractor's public attributes. We verify construction without
     calling ``extract_text`` (which would make a real network call).
     """
     from scripts.run_reader_artifact_pipeline_worker import _build_ocr_extractor
@@ -1041,7 +1045,7 @@ async def test_build_pipeline_service_default_ocr_unconfigured_image_job_fails_c
     raw_bytes = _png_bytes()
     reader = FakeStorageObjectReader(data=raw_bytes)
     service = build_pipeline_service(
-        settings=Settings(),  # OCR disabled
+        settings=Settings(reader_ocr_provider_enabled=False),  # OCR disabled
         pool=object(),
         storage_reader=reader,  # type: ignore[arg-type]
     )

@@ -242,15 +242,13 @@ def build_default_presigner() -> Presigner:
     settings = get_settings()
     if not settings.aliyun_oss_presign_enabled:
         return NullPresigner()
-    if (
-        not settings.aliyun_oss_access_key_id
-        or not settings.aliyun_oss_access_key_secret
-    ):
+    access_key_id, access_key_secret = settings.resolve_aliyun_oss_credentials()
+    if not access_key_id or not access_key_secret:
         return NullPresigner()
     try:
         return AliyunOssPresigner(
-            access_key_id=settings.aliyun_oss_access_key_id,
-            access_key_secret=settings.aliyun_oss_access_key_secret,
+            access_key_id=access_key_id,
+            access_key_secret=access_key_secret,
             bucket=settings.aliyun_oss_bucket,
             endpoint=settings.aliyun_oss_endpoint,
         )

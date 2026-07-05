@@ -15,7 +15,7 @@ Coverage map (per D6-I3U spec):
 5. 401 / 403 → terminal ``ocr_permission_denied``.
 6. Malformed response → terminal ``ocr_response_invalid``.
 7. Missing API key → ``ocr_provider_unconfigured``.
-8. ``_build_ocr_extractor`` reads ``DASHSCOPE_API_KEY`` from env only and
+8. ``_build_ocr_extractor`` resolves ``DASHSCOPE_API_KEY`` via settings and
    does not log/return it.
 9. OCR disabled → :class:`UnconfiguredOcrTextExtractor` unchanged.
 10. Text / PDF router paths still work with OCR enabled but fake/unavailable.
@@ -476,20 +476,37 @@ def test_qwen_extractor_empty_api_key_raises_provider_unconfigured() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 8. _build_ocr_extractor reads DASHSCOPE_API_KEY from env only
+# 8. _build_ocr_extractor resolves DASHSCOPE_API_KEY via settings
 # ---------------------------------------------------------------------------
 
 
-def test_build_ocr_extractor_reads_api_key_from_env_only(
+def test_build_ocr_extractor_reads_api_key_from_settings_resolver(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``_build_ocr_extractor`` reads ``DASHSCOPE_API_KEY`` from ``os.environ``
-    only. The key is never stored in settings defaults, never logged, and
-    never appears in the extractor's repr or public attributes."""
+    """``_build_ocr_extractor`` resolves ``DASHSCOPE_API_KEY`` through
+    ``Settings.resolve_external_env_var``. The key is never stored in settings
+    defaults, never logged, and never appears in the extractor's repr or public
+    attributes."""
     from scripts.run_reader_artifact_pipeline_worker import _build_ocr_extractor
 
-    test_key = "sk-env-only-key-not-in-settings"
-    monkeypatch.setenv("DASHSCOPE_API_KEY", test_key)
+    test_key = "sk-resolved-key-not-in-settings"
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+
+    def _fake_resolve_external_env_var(
+        self: Settings,
+        env_name: str,
+        *,
+        fallback: str = "",
+    ) -> str:
+        if env_name == "DASHSCOPE_API_KEY":
+            return test_key
+        return fallback
+
+    monkeypatch.setattr(
+        Settings,
+        "resolve_external_env_var",
+        _fake_resolve_external_env_var,
+    )
 
     settings = Settings(
         reader_ocr_provider_enabled=True,
@@ -511,11 +528,16 @@ def test_build_ocr_extractor_reads_api_key_from_env_only(
 def test_build_ocr_extractor_missing_env_key_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When ``DASHSCOPE_API_KEY`` is absent from env, the constructed
-    extractor fails closed with ``ocr_provider_unconfigured`` on first call."""
+    """When ``DASHSCOPE_API_KEY`` cannot be resolved, the constructed extractor
+    fails closed with ``ocr_provider_unconfigured`` on first call."""
     from scripts.run_reader_artifact_pipeline_worker import _build_ocr_extractor
 
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    monkeypatch.setattr(
+        Settings,
+        "resolve_external_env_var",
+        lambda self, env_name, *, fallback="": fallback,
+    )
 
     settings = Settings(
         reader_ocr_provider_enabled=True,
@@ -582,7 +604,7 @@ def test_build_ocr_extractor_disabled_returns_unconfigured() -> None:
     """OCR disabled (default) → UnconfiguredOcrTextExtractor (unchanged)."""
     from scripts.run_reader_artifact_pipeline_worker import _build_ocr_extractor
 
-    extractor = _build_ocr_extractor(Settings())
+    extractor = _build_ocr_extractor(Settings(reader_ocr_provider_enabled=False))
     assert isinstance(extractor, UnconfiguredOcrTextExtractor)
 
 

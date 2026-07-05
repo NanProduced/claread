@@ -128,7 +128,11 @@ def _make_pipeline_result(
 # ---------------------------------------------------------------------------
 
 
-def test_build_storage_reader_returns_none_when_credentials_missing() -> None:
+def test_build_storage_reader_returns_none_when_credentials_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ALIBABA_CLOUD_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", raising=False)
     settings = Settings(
         aliyun_oss_access_key_id="",
         aliyun_oss_access_key_secret="",
@@ -137,12 +141,34 @@ def test_build_storage_reader_returns_none_when_credentials_missing() -> None:
     assert reader is None
 
 
-def test_build_storage_reader_returns_none_when_only_id_present() -> None:
+def test_build_storage_reader_returns_none_when_only_id_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "GENERIC_ID")
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "GENERIC_SECRET")
     settings = Settings(
         aliyun_oss_access_key_id="LTAI123",
         aliyun_oss_access_key_secret="",
     )
     assert build_storage_reader(settings) is None
+
+
+def test_build_storage_reader_falls_back_to_alibaba_cloud_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_oss2(monkeypatch)
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "LTAI123")
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "secret456")
+
+    settings = Settings(
+        aliyun_oss_access_key_id="",
+        aliyun_oss_access_key_secret="",
+        aliyun_oss_bucket="claread-dev",
+        aliyun_oss_endpoint="https://oss-cn-shenzhen.aliyuncs.com",
+    )
+    reader = build_storage_reader(settings)
+    assert reader is not None
+    assert isinstance(reader, AliyunOssObjectReader)
 
 
 def test_build_storage_reader_returns_none_when_sdk_missing(

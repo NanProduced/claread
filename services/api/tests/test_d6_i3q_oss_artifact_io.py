@@ -677,14 +677,61 @@ def test_build_default_presigner_returns_null_when_credentials_missing(
             "ALIYUN_OSS_PRESIGN_ENABLED": "True",
             "ALIYUN_OSS_ACCESS_KEY_ID": "",
             "ALIYUN_OSS_ACCESS_KEY_SECRET": "",
+            "ALIBABA_CLOUD_ACCESS_KEY_ID": "",
+            "ALIBABA_CLOUD_ACCESS_KEY_SECRET": "",
         },
-        clear=False,
+        clear=True,
     ):
         from app.config import settings as settings_module
 
         settings_module.get_settings.cache_clear()
         presigner = build_default_presigner()
     assert isinstance(presigner, NullPresigner)
+
+
+def test_build_default_presigner_does_not_mix_partial_oss_credentials_with_fallback(
+    _clear_settings_cache,
+) -> None:
+    with patch.dict(
+        "os.environ",
+        {
+            "ALIYUN_OSS_PRESIGN_ENABLED": "True",
+            "ALIYUN_OSS_ACCESS_KEY_ID": _ACCESS_KEY_ID,
+            "ALIYUN_OSS_ACCESS_KEY_SECRET": "",
+            "ALIBABA_CLOUD_ACCESS_KEY_ID": "GENERIC_ID",
+            "ALIBABA_CLOUD_ACCESS_KEY_SECRET": "GENERIC_SECRET",
+        },
+        clear=True,
+    ):
+        from app.config import settings as settings_module
+
+        settings_module.get_settings.cache_clear()
+        presigner = build_default_presigner()
+    assert isinstance(presigner, NullPresigner)
+
+
+def test_build_default_presigner_falls_back_to_alibaba_cloud_credentials(
+    _clear_settings_cache,
+) -> None:
+    with patch.dict(
+        "os.environ",
+        {
+            "ALIYUN_OSS_PRESIGN_ENABLED": "True",
+            "ALIYUN_OSS_ACCESS_KEY_ID": "",
+            "ALIYUN_OSS_ACCESS_KEY_SECRET": "",
+            "ALIBABA_CLOUD_ACCESS_KEY_ID": _ACCESS_KEY_ID,
+            "ALIBABA_CLOUD_ACCESS_KEY_SECRET": _ACCESS_KEY_SECRET,
+            "ALIYUN_OSS_BUCKET": _BUCKET,
+            "ALIYUN_OSS_ENDPOINT": _ENDPOINT,
+        },
+        clear=True,
+    ):
+        from app.config import settings as settings_module
+
+        settings_module.get_settings.cache_clear()
+        presigner = build_default_presigner()
+    assert isinstance(presigner, AliyunOssPresigner)
+    assert presigner._access_key_id == _ACCESS_KEY_ID
 
 
 def test_build_default_presigner_returns_aliyun_when_enabled_with_credentials(

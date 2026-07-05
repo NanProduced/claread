@@ -909,8 +909,8 @@ def build_default_article_rag_vector_writer(
     Returns:
       * :class:`ZillizArticleRagVectorWriter` only when
         ``settings.reader_article_rag_vector_provider == "zilliz"``
-        AND ``reader_article_rag_zilliz_uri`` is non-empty AND
-        ``reader_article_rag_zilliz_token`` is non-empty AND
+        AND resolved ``reader_article_rag_zilliz_uri`` is non-empty AND
+        resolved ``reader_article_rag_zilliz_token`` is non-empty AND
         ``reader_article_rag_zilliz_collection`` is non-empty AND
         ``reader_article_rag_vector_dim`` is a positive integer;
       * otherwise :class:`UnconfiguredArticleRagVectorWriter`.
@@ -932,12 +932,23 @@ def build_default_article_rag_vector_writer(
         )
         return UnconfiguredArticleRagVectorWriter()
 
+    resolve_uri = getattr(settings, "resolve_reader_article_rag_zilliz_uri", None)
     uri = (
-        getattr(settings, "reader_article_rag_zilliz_uri", "") or ""
-    ).strip()
+        resolve_uri()
+        if callable(resolve_uri)
+        else getattr(settings, "reader_article_rag_zilliz_uri", "")
+    )
+    uri = (uri or "").strip()
+
+    resolve_token = getattr(
+        settings, "resolve_reader_article_rag_zilliz_token", None
+    )
     token = (
-        getattr(settings, "reader_article_rag_zilliz_token", "") or ""
-    ).strip()
+        resolve_token()
+        if callable(resolve_token)
+        else getattr(settings, "reader_article_rag_zilliz_token", "")
+    )
+    token = (token or "").strip()
     collection = (
         getattr(settings, "reader_article_rag_zilliz_collection", "") or ""
     ).strip()

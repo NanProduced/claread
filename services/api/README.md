@@ -89,6 +89,20 @@ uv run mypy app
 - `ALIYUN_DYPNSAPI_SIGN_NAME`
 - `ALIYUN_DYPNSAPI_LOGIN_TEMPLATE_CODE`（赠送登录/注册模板默认 `100001`）
 - `ALIYUN_DYPNSAPI_*` 或本地已有的 `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET`
+- Reader 文件上传 OSS：
+  - `ALIYUN_OSS_PRESIGN_ENABLED=true`
+  - `ALIYUN_OSS_BUCKET` / `ALIYUN_OSS_ENDPOINT`
+  - 凭证优先读取成对的 `ALIYUN_OSS_ACCESS_KEY_ID` / `ALIYUN_OSS_ACCESS_KEY_SECRET`；两者都为空时 fallback 到本地已有的 `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET`
+  - 不允许混用半组 OSS 专用凭证和半组通用阿里云凭证；如果配置了任意一个 `ALIYUN_OSS_ACCESS_KEY_*`，必须同时配置另一项
+  - 启动 API 和 `reader-artifact-pipeline-worker` 的 Python 环境必须安装 OSS extra：`uv sync --extra oss`
+- Reader OCR：
+  - 本地启用 qwen3.5-ocr：`READER_OCR_PROVIDER_ENABLED=true`、`READER_OCR_PROVIDER_NAME=qwen`、`READER_OCR_QWEN_MODEL=qwen3.5-ocr`
+  - Qwen OCR 凭证读取 `DASHSCOPE_API_KEY`，可以来自进程环境或 `services/api/.env`
+- Article RAG：
+  - 本地启用：`READER_ARTICLE_RAG_ENABLED=true`、`READER_ARTICLE_RAG_EMBEDDING_PROVIDER=dashscope`、`READER_ARTICLE_RAG_VECTOR_PROVIDER=zilliz`
+  - Embedding 路由使用 `RAG_EMBEDDING_MODEL_PROFILE=rag-embedding-v4`，该 profile 在 `config/model-profiles.json` 中解析到 `text-embedding-v4` / `dashscope_embedding`
+  - Zilliz 优先读取 `READER_ARTICLE_RAG_ZILLIZ_URI/TOKEN`；二者为空时 fallback 到 few-shot/Grammar RAG 的 `ZILLIZ_URI/TOKEN`
+  - `READER_ARTICLE_RAG_ZILLIZ_COLLECTION` 仍必须保持 Article RAG 专用，例如 `article_rag_index_v1`，不要复用 `grammar_note_examples` / `sentence_analysis_examples`
 - `DEFAULT_MODEL_PROFILE` / `ANNOTATION_MODEL_PROFILE` / `ASK_CLAREAD_PROFILE`
 - `READER_ASK_REPLAN_MODEL_PROFILE`
 - `RAG_EMBEDDING_MODEL_PROFILE` / `RAG_RERANK_MODEL_PROFILE`

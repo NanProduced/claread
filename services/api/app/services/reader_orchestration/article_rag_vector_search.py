@@ -619,8 +619,8 @@ def build_default_article_rag_vector_searcher(
     Returns:
       * :class:`ZillizArticleRagVectorSearcher` only when
         ``settings.reader_article_rag_vector_provider == "zilliz"``
-        AND ``reader_article_rag_zilliz_uri`` is non-empty AND
-        ``reader_article_rag_zilliz_token`` is non-empty AND
+        AND resolved ``reader_article_rag_zilliz_uri`` is non-empty AND
+        resolved ``reader_article_rag_zilliz_token`` is non-empty AND
         ``reader_article_rag_zilliz_collection`` is non-empty;
       * otherwise :class:`UnconfiguredArticleRagVectorSearcher`.
 
@@ -631,10 +631,10 @@ def build_default_article_rag_vector_searcher(
     failure.
 
     The factory intentionally reuses the **write-side** Zilliz
-    configuration (``reader_article_rag_zilliz_uri`` / ``_token`` /
-    ``_collection``) — the reader and the writer target the same
-    collection.  Future work may split these into dedicated fields if
-    the searcher ever needs to target a different read replica.
+    configuration (resolved ``reader_article_rag_zilliz_uri`` / ``_token`` /
+    ``_collection``) — the reader and the writer target the same collection.
+    Future work may split these into dedicated fields if the searcher ever
+    needs to target a different read replica.
     """
     provider_name = (
         getattr(settings, "reader_article_rag_vector_provider", "") or ""
@@ -648,12 +648,23 @@ def build_default_article_rag_vector_searcher(
         )
         return UnconfiguredArticleRagVectorSearcher()
 
+    resolve_uri = getattr(settings, "resolve_reader_article_rag_zilliz_uri", None)
     uri = (
-        getattr(settings, "reader_article_rag_zilliz_uri", "") or ""
-    ).strip()
+        resolve_uri()
+        if callable(resolve_uri)
+        else getattr(settings, "reader_article_rag_zilliz_uri", "")
+    )
+    uri = (uri or "").strip()
+
+    resolve_token = getattr(
+        settings, "resolve_reader_article_rag_zilliz_token", None
+    )
     token = (
-        getattr(settings, "reader_article_rag_zilliz_token", "") or ""
-    ).strip()
+        resolve_token()
+        if callable(resolve_token)
+        else getattr(settings, "reader_article_rag_zilliz_token", "")
+    )
+    token = (token or "").strip()
     collection = (
         getattr(settings, "reader_article_rag_zilliz_collection", "") or ""
     ).strip()

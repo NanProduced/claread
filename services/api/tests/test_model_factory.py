@@ -13,6 +13,7 @@ from app.llm.routes import (
     MODEL_ROUTE_ANNOTATION_GENERATION,
     MODEL_ROUTE_DAILY_ANALYSIS,
     MODEL_ROUTE_DICT_AI,
+    MODEL_ROUTE_RAG_EMBEDDING,
     MODEL_ROUTE_READER_ASK_REPLAN,
 )
 from app.llm.types import ModelSelection, ResolvedModelConfig, RouteModelSelection, RunModelSettings
@@ -164,6 +165,59 @@ def test_resolve_model_config_uses_daily_route_default() -> None:
     assert daily_model is not None
     assert daily_model.profile_name == "daily_quality"
     assert daily_model.model_name == "daily-quality-model"
+
+
+def test_resolve_model_config_uses_rag_embedding_profile() -> None:
+    settings = Settings(
+        rag_embedding_model_profile="rag-embedding-v4",
+        model_profiles_json=json.dumps(
+            {
+                "providers": {
+                    "dashscope_embedding": {
+                        "adapter": "dashscope_embedding",
+                        "api_key": "sk-test",
+                        "provider_options": {"dimension": 1024},
+                    },
+                },
+                "models": {
+                    "text-embedding-v4": {
+                        "provider": "dashscope_embedding",
+                        "model_name": "text-embedding-v4",
+                        "provider_options": {"dimension": 1024},
+                    },
+                },
+                "profiles": {
+                    "rag-embedding-v4": {"model": "text-embedding-v4"},
+                },
+            }
+        ),
+    )
+
+    rag_embedding_model = resolve_model_config(settings, MODEL_ROUTE_RAG_EMBEDDING)
+
+    assert rag_embedding_model is not None
+    assert rag_embedding_model.profile_name == "rag-embedding-v4"
+    assert rag_embedding_model.adapter == "dashscope_embedding"
+    assert rag_embedding_model.model_name == "text-embedding-v4"
+    assert rag_embedding_model.provider_options["dimension"] == 1024
+
+
+def test_model_profiles_example_documents_rag_embedding_profile() -> None:
+    document = json.loads(
+        (PROJECT_ROOT / "config" / "model-profiles.example.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert document["providers"]["dashscope_embedding"]["adapter"] == (
+        "dashscope_embedding"
+    )
+    assert document["models"]["text-embedding-v4"]["provider"] == (
+        "dashscope_embedding"
+    )
+    assert document["profiles"]["rag-embedding-v4"]["model"] == (
+        "text-embedding-v4"
+    )
 
 
 def test_resolve_model_config_uses_dict_ai_route_default_with_annotation_fallback() -> None:

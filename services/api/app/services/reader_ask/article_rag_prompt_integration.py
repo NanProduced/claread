@@ -427,12 +427,23 @@ def build_default_article_rag_prompt_integration(
         return None
 
     # 2. Zilliz vector search configuration.
+    resolve_uri = getattr(settings, "resolve_reader_article_rag_zilliz_uri", None)
     zilliz_uri = (
-        getattr(settings, "reader_article_rag_zilliz_uri", "") or ""
-    ).strip()
+        resolve_uri()
+        if callable(resolve_uri)
+        else getattr(settings, "reader_article_rag_zilliz_uri", "")
+    )
+    zilliz_uri = (zilliz_uri or "").strip()
+
+    resolve_token = getattr(
+        settings, "resolve_reader_article_rag_zilliz_token", None
+    )
     zilliz_token = (
-        getattr(settings, "reader_article_rag_zilliz_token", "") or ""
-    ).strip()
+        resolve_token()
+        if callable(resolve_token)
+        else getattr(settings, "reader_article_rag_zilliz_token", "")
+    )
+    zilliz_token = (zilliz_token or "").strip()
     zilliz_collection = (
         getattr(settings, "reader_article_rag_zilliz_collection", "")
         or ""

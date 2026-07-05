@@ -622,6 +622,14 @@ class _FakeSettings:
         )
 
 
+class _FakeSettingsWithZillizFallback(_FakeSettings):
+    def resolve_reader_article_rag_zilliz_uri(self) -> str:
+        return _FAKE_URI
+
+    def resolve_reader_article_rag_zilliz_token(self) -> str:
+        return _FAKE_TOKEN
+
+
 def test_factory_returns_unconfigured_when_provider_blank() -> None:
     settings = _FakeSettings()
     searcher = build_default_article_rag_vector_searcher(settings)  # type: ignore[arg-type]
@@ -674,6 +682,21 @@ def test_factory_returns_real_zilliz_when_all_settings_present() -> None:
     searcher = build_default_article_rag_vector_searcher(settings)  # type: ignore[arg-type]
     assert isinstance(searcher, ZillizArticleRagVectorSearcher)
     assert searcher.provider_name == READER_ARTICLE_RAG_VECTOR_SEARCHER_ZILLIZ
+
+
+def test_factory_uses_resolved_zilliz_fallback_when_dedicated_fields_blank() -> None:
+    settings = _FakeSettingsWithZillizFallback(
+        reader_article_rag_vector_provider="zilliz",
+        reader_article_rag_zilliz_uri="",
+        reader_article_rag_zilliz_token="",
+        reader_article_rag_zilliz_collection=_FAKE_COLLECTION,
+    )
+    searcher = build_default_article_rag_vector_searcher(settings)  # type: ignore[arg-type]
+
+    assert isinstance(searcher, ZillizArticleRagVectorSearcher)
+    assert searcher._uri == _FAKE_URI
+    assert searcher._token == _FAKE_TOKEN
+    assert searcher._collection == _FAKE_COLLECTION
 
 
 def test_factory_provider_name_constant() -> None:
