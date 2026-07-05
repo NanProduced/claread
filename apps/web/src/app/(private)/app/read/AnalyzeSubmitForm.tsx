@@ -700,7 +700,7 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
   const loadingStageTitle = "正在透读这篇文章";
 
   return (
-    <div className="flex min-h-0 flex-1 w-full flex-col">
+    <div className="flex min-h-0 flex-1 w-full flex-col overflow-y-auto">
       {recentReadingRecord && !isWaiting ? (
         <RecentReadingRecordResume
           record={recentReadingRecord}
@@ -920,7 +920,7 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
         <section
           role="status"
           aria-live="polite"
-          className="mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-ink lg:mx-12"
+          className="relative z-30 mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-ink lg:mx-12"
         >
           <p className="font-semibold">已收到候选文档，需要确认后开始阅读</p>
           <dl className="mt-2 grid grid-cols-1 gap-x-4 gap-y-1 text-[0.74rem] text-muted">

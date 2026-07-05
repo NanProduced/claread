@@ -267,7 +267,6 @@ export function ReaderAskToolbarButton() {
             </label>
             <AIMenuInput
               id={inputId}
-              autoFocus
               value={prompt}
               onValueChange={setPrompt}
               onKeyDown={(event) => {
