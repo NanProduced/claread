@@ -18,17 +18,19 @@ import asyncio
 import json
 from datetime import timedelta
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
 import asyncpg
 
+from app.contracts.annotation import slice_by_utf16_offsets
 from app.database import connection as db_connection
 from app.services.reader_orchestration.job_runtime import (
     ClaimResult,
     IllegalTransitionError,
     ReaderJobRuntime,
 )
+from app.services.reader_orchestration.window_selector import CandidateItem
 
 
 class PreflightResult(Enum):
@@ -44,19 +46,45 @@ _TERMINAL_WINDOW_STATUSES: frozenset[str] = frozenset({
 })
 
 
+class GrammarWindowExecutionError(Exception):
+    """Raised when the grammar window executor is not configured or fails."""
+
+
+class GrammarWindowExecutorProtocol(Protocol):
+    """Protocol for Z+ grammar window LLM executors."""
+
+    async def generate(self, context: dict[str, Any]) -> list[CandidateItem]:
+        """Generate candidates from a window LLM context."""
+        ...
+
+
+class UnconfiguredGrammarWindowExecutor:
+    """Default executor that raises when no real executor is configured."""
+
+    async def generate(self, context: dict[str, Any]) -> list[CandidateItem]:
+        del context
+        raise GrammarWindowExecutionError(
+            "GrammarWindowWorkerService has no executor configured. "
+            "Pass an executor= parameter to the constructor."
+        )
+
+
 class GrammarWindowWorkerService:
     """Z+ grammar window worker.
 
-    Responsibilities (current phase):
+    Responsibilities:
       1. ``preflight_window_job`` — §8.2 pending → running transition.
       2. ``_heartbeat_loop`` — §8.6 lease renewal during the LLM call.
       3. ``process_window_job`` — orchestrates preflight → context load →
-         LLM (with heartbeat) → publish (publisher lands in C2).
+         LLM (with heartbeat) → return candidates. The pipeline runner
+         wires the publisher after ``candidates_ready`` is returned.
 
-    The LLM call (``_call_llm``) and full context loading
-    (``_load_window_context``) are skeletons; the C5 regression phase wires
-    the PydanticAI agent + prompt template. Tests in this phase exercise
-    preflight, heartbeat, and the ALREADY_TERMINAL short-circuit.
+    The LLM call (``_call_llm``) delegates to an injected executor that
+    implements ``GrammarWindowExecutorProtocol``. The default
+    ``UnconfiguredGrammarWindowExecutor`` raises so a real executor must be
+    passed for end-to-end processing. Context loading
+    (``_load_window_context``) JOINs anchor_segments + reading_units +
+    reading_bases to slice ``source_text`` for each target anchor.
     """
 
     def __init__(
@@ -66,11 +94,15 @@ class GrammarWindowWorkerService:
         job_runtime: ReaderJobRuntime | None = None,
         lease_duration: timedelta = timedelta(seconds=120),
         heartbeat_interval: timedelta = timedelta(seconds=30),
+        executor: GrammarWindowExecutorProtocol | None = None,
     ) -> None:
         self._pool = pool
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
         self._lease_duration = lease_duration
         self._heartbeat_interval = heartbeat_interval
+        self._executor: GrammarWindowExecutorProtocol = (
+            executor or UnconfiguredGrammarWindowExecutor()
+        )
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -183,11 +215,11 @@ class GrammarWindowWorkerService:
           1. ``preflight_window_job`` — §8.2 state transition. Short-circuits
              on ``ALREADY_TERMINAL``.
           2. ``_load_window_context`` — load target anchors + source text.
-          3. ``_call_llm`` — PydanticAI agent (skeleton). Heartbeat task
-             renews the lease every ~30s while the LLM call is in flight.
-          4. publish — delegates to ``GrammarWindowPublisher`` (C2 phase).
-             The current skeleton returns ``candidates_ready`` so the caller
-             can hand off to the publisher once it lands.
+          3. ``_call_llm`` — delegates to the injected executor. Heartbeat
+             task renews the lease every ~30s while the LLM call is in flight.
+          4. Return ``candidates_ready`` with the candidate list. The
+             pipeline runner (``_run_grammar_window_attempt``) hands off to
+             ``GrammarWindowPublisher.publish_window_grammar_bundle``.
         """
         # 1. preflight
         preflight = await self.preflight_window_job(
@@ -217,8 +249,8 @@ class GrammarWindowWorkerService:
             except asyncio.CancelledError:
                 pass
 
-        # 4. publish (GrammarWindowPublisher, C2 phase). Returned here so the
-        # caller can wire the publisher; the skeleton returns candidates.
+        # 4. Return candidates_ready. The pipeline runner wires the publisher
+        # after this return (see ``_run_grammar_window_attempt``).
         return {
             "status": "candidates_ready",
             "candidates": candidates,
@@ -247,63 +279,154 @@ class GrammarWindowWorkerService:
             )
 
     # ------------------------------------------------------------------
-    # §8.3 context loading (skeleton — C5 fills in source_text slicing)
+    # §8.3 context loading
     # ------------------------------------------------------------------
 
     async def _load_window_context(self, job_id: UUID) -> dict[str, Any]:
         """Load window target anchors + context anchors + source text.
 
-        Skeleton: returns the job/input_json fields needed by the prompt
-        builder. Full source-text slicing (JOIN anchor_segments +
-        reading_units, hash verification) mirrors ``grammar_worker._load_job_context``
-        (lines 739-891) and is wired in the C5 regression phase.
+        JOINs ``anchor_segments`` + ``reading_units`` + ``reading_bases`` to
+        slice ``source_text`` for each target anchor using UTF-16 code unit
+        offsets (mirrors ``grammar_worker._load_job_context``). Context
+        anchors (prev/next) are loaded with the same metadata structure.
         """
         async with self.get_pool().acquire() as conn:
             job_row = await conn.fetchrow(
-                "SELECT input_json, base_id, reading_record_id "
-                "FROM reader_jobs WHERE id = $1",
+                """
+                SELECT job.input_json,
+                       job.base_id,
+                       job.reading_record_id,
+                       base.text AS base_text
+                FROM reader_jobs job
+                JOIN reading_bases base
+                  ON base.id = job.base_id
+                 AND base.reading_record_id = job.reading_record_id
+                WHERE job.id = $1
+                """,
                 job_id,
             )
             if job_row is None:
                 raise LookupError(f"reader job {job_id} not found")
 
-        input_data: Any = job_row["input_json"]
-        if isinstance(input_data, str):
-            input_data = json.loads(input_data)
+            input_data: Any = job_row["input_json"]
+            if isinstance(input_data, str):
+                input_data = json.loads(input_data)
+
+            base_id = job_row["base_id"]
+            base_text = str(job_row["base_text"])
+
+            target_anchor_ids: list[str] = list(
+                input_data.get("target_anchor_ids", [])
+            )
+            context_anchor_prev_ids: list[str] = list(
+                input_data.get("context_anchor_prev", [])
+            )
+            context_anchor_next_ids: list[str] = list(
+                input_data.get("context_anchor_next", [])
+            )
+
+            target_anchors = await self._load_anchor_rows(
+                conn,
+                base_id=base_id,
+                anchor_ids=target_anchor_ids,
+                base_text=base_text,
+            )
+            context_anchor_prev = await self._load_anchor_rows(
+                conn,
+                base_id=base_id,
+                anchor_ids=context_anchor_prev_ids,
+                base_text=base_text,
+            )
+            context_anchor_next = await self._load_anchor_rows(
+                conn,
+                base_id=base_id,
+                anchor_ids=context_anchor_next_ids,
+                base_text=base_text,
+            )
 
         return {
             "job_id": job_id,
             "window_id": UUID(str(input_data["window_id"])),
-            "base_id": job_row["base_id"],
+            "base_id": base_id,
             "reading_record_id": job_row["reading_record_id"],
-            "target_anchor_ids": input_data["target_anchor_ids"],
-            "target_unit_ids": input_data["target_unit_ids"],
-            "context_anchor_prev": input_data.get("context_anchor_prev", []),
-            "context_anchor_next": input_data.get("context_anchor_next", []),
+            "plan_id": str(input_data["plan_id"]),
+            "window_index": int(input_data["window_index"]),
+            "target_anchors": target_anchors,
+            "context_anchor_prev": context_anchor_prev,
+            "context_anchor_next": context_anchor_next,
             "window_budget": input_data.get("window_budget", {}),
+            "target_unit_ids": list(input_data.get("target_unit_ids", [])),
+            "target_anchor_ids": target_anchor_ids,
         }
 
-    # ------------------------------------------------------------------
-    # §8.3 LLM call (skeleton — C5 wires PydanticAI agent + prompt)
-    # ------------------------------------------------------------------
+    async def _load_anchor_rows(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        base_id: UUID,
+        anchor_ids: list[str],
+        base_text: str,
+    ) -> list[dict[str, Any]]:
+        """Load anchor segment + unit metadata and slice source_text.
 
-    async def _call_llm(self, context: dict[str, Any]) -> list[dict[str, Any]]:
-        """Call the PydanticAI grammar_bundle agent and return candidates.
-
-        Output is a candidate list (not ``GrammarNoteLayerOutput``); the
-        selector filters candidates before the publisher persists them.
-
-        TODO (C5 regression):
-          1. Build the prompt (context_anchor_prev / target_anchors /
-             context_anchor_next) — see ``grammar_worker._build_grammar_prompt``
-             (lines 1042-1069) for the per-unit template; the window variant
-             wraps multiple units.
-          2. Invoke the PydanticAI agent on ``MODEL_ROUTE_READER_LAYER_GRAMMAR_BUNDLE``.
-          3. Parse the structured output into ``CandidateItem`` objects.
-          4. Extract usage events for the span recorder.
-
-        The skeleton returns an empty list so ``process_window_job`` can be
-        exercised end-to-end once a real LLM is mocked in the regression suite.
+        JOINs ``anchor_segments`` + ``reading_units`` to get both the anchor
+        range (``base_start_utf16`` / ``base_end_utf16``) and the unit range
+        (``unit_base_start_utf16`` / ``unit_base_end_utf16``). ``source_text``
+        is sliced from ``reading_bases.text`` using UTF-16 code unit offsets.
         """
-        del context  # unused in skeleton; C5 consumes it
-        return []
+        if not anchor_ids:
+            return []
+        rows = await conn.fetch(
+            """
+            SELECT seg.anchor_segment_id,
+                   seg.unit_id,
+                   seg.unit_order_index,
+                   seg.base_start_utf16,
+                   seg.base_end_utf16,
+                   unit.base_start_utf16 AS unit_base_start_utf16,
+                   unit.base_end_utf16 AS unit_base_end_utf16
+            FROM anchor_segments seg
+            JOIN reading_units unit
+              ON unit.base_id = seg.base_id
+             AND unit.unit_id = seg.unit_id
+            WHERE seg.base_id = $1
+              AND seg.anchor_segment_id = ANY($2::text[])
+            ORDER BY seg.unit_order_index ASC
+            """,
+            base_id,
+            anchor_ids,
+        )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            source_text = slice_by_utf16_offsets(
+                base_text,
+                int(row["base_start_utf16"]),
+                int(row["base_end_utf16"]),
+            )
+            result.append({
+                "anchor_segment_id": str(row["anchor_segment_id"]),
+                "unit_id": str(row["unit_id"]),
+                "unit_order_index": int(row["unit_order_index"]),
+                "base_start_utf16": int(row["base_start_utf16"]),
+                "base_end_utf16": int(row["base_end_utf16"]),
+                "unit_base_start_utf16": int(row["unit_base_start_utf16"]),
+                "unit_base_end_utf16": int(row["unit_base_end_utf16"]),
+                "source_text": source_text or "",
+            })
+        return result
+
+    # ------------------------------------------------------------------
+    # §8.3 LLM call (delegates to injected executor)
+    # ------------------------------------------------------------------
+
+    async def _call_llm(self, context: dict[str, Any]) -> list[CandidateItem]:
+        """Call the grammar window executor and return candidates.
+
+        Delegates to ``self._executor.generate(context)``. The executor is
+        responsible for building the prompt, invoking the LLM, and parsing
+        the structured output into ``CandidateItem`` objects.
+
+        Raises ``GrammarWindowExecutionError`` when no executor is
+        configured (the default ``UnconfiguredGrammarWindowExecutor``).
+        """
+        return await self._executor.generate(context)

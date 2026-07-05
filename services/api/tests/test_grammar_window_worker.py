@@ -29,12 +29,15 @@ import asyncpg
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+from app.contracts.annotation import slice_by_utf16_offsets
 from app.database import connection as db_connection
 from app.services.reader_orchestration.grammar_window_worker import (
+    GrammarWindowExecutionError,
     GrammarWindowWorkerService,
     PreflightResult,
 )
 from app.services.reader_orchestration.job_runtime import ClaimResult
+from app.services.reader_orchestration.window_selector import CandidateItem
 from app.services.reader_orchestration.zplus_bootstrap import (
     ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
     ZPlusBootstrapService,
@@ -403,3 +406,184 @@ async def test_process_window_job_skips_when_already_terminal() -> None:
     assert result["status"] == "already_terminal"
     service._load_window_context.assert_not_called()
     service._call_llm.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# C5a: _load_window_context + _call_llm executor delegation tests
+# ---------------------------------------------------------------------------
+
+
+async def test_load_window_context_loads_source_text(
+    test_db_pool_with_window_job: tuple[asyncpg.Pool, UUID, UUID, UUID],
+) -> None:
+    """_load_window_context returns target_anchors with source_text sliced
+    from the base text using UTF-16 code unit offsets."""
+    pool, job_id, _lease_token, _window_id = test_db_pool_with_window_job
+    service = GrammarWindowWorkerService(pool=pool)
+    context = await service._load_window_context(job_id)
+
+    assert "target_anchors" in context
+    assert isinstance(context["target_anchors"], list)
+    assert len(context["target_anchors"]) >= 1
+
+    for anchor in context["target_anchors"]:
+        assert "anchor_segment_id" in anchor
+        assert "unit_id" in anchor
+        assert "unit_order_index" in anchor
+        assert "base_start_utf16" in anchor
+        assert "base_end_utf16" in anchor
+        assert "unit_base_start_utf16" in anchor
+        assert "unit_base_end_utf16" in anchor
+        assert "source_text" in anchor
+        assert isinstance(anchor["source_text"], str)
+        assert len(anchor["source_text"]) > 0
+
+    # Independently verify source_text matches the base text slice.
+    async with pool.acquire() as conn:
+        job_base = await conn.fetchrow(
+            "SELECT base_id FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+        base_row = await conn.fetchrow(
+            "SELECT text FROM reading_bases WHERE id = $1",
+            job_base["base_id"],
+        )
+        first_anchor_id = context["target_anchors"][0]["anchor_segment_id"]
+        seg_row = await conn.fetchrow(
+            """
+            SELECT base_start_utf16, base_end_utf16
+            FROM anchor_segments
+            WHERE base_id = $1 AND anchor_segment_id = $2
+            """,
+            job_base["base_id"],
+            first_anchor_id,
+        )
+
+    expected_text = slice_by_utf16_offsets(
+        str(base_row["text"]),
+        int(seg_row["base_start_utf16"]),
+        int(seg_row["base_end_utf16"]),
+    )
+    assert context["target_anchors"][0]["source_text"] == expected_text
+
+
+async def test_load_window_context_includes_context_anchors(
+    test_db_pool_with_record_and_base: tuple[asyncpg.Pool, UUID, UUID],
+) -> None:
+    """_load_window_context populates context_anchor_prev / context_anchor_next
+    with anchor metadata when the window has context anchors."""
+    pool, record_id, base_id = test_db_pool_with_record_and_base
+    service = ZPlusBootstrapService(pool=pool)
+    result = await service.bootstrap_grammar_window_plan(
+        record_id=record_id, base_id=base_id
+    )
+
+    # Pick the window with the most context anchors (middle window if any).
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, job_id, context_anchor_prev, context_anchor_next
+            FROM analysis_windows
+            WHERE plan_id = $1
+            ORDER BY window_index
+            """,
+            result.plan_id,
+        )
+    best_row = rows[0]
+    best_count = -1
+    for row in rows:
+        prev = list(row["context_anchor_prev"] or [])
+        nxt = list(row["context_anchor_next"] or [])
+        if len(prev) + len(nxt) > best_count:
+            best_count = len(prev) + len(nxt)
+            best_row = row
+
+    job_id = best_row["job_id"]
+    expected_prev = list(best_row["context_anchor_prev"] or [])
+    expected_next = list(best_row["context_anchor_next"] or [])
+
+    worker = GrammarWindowWorkerService(pool=pool)
+    context = await worker._load_window_context(job_id)
+
+    assert "context_anchor_prev" in context
+    assert "context_anchor_next" in context
+    assert isinstance(context["context_anchor_prev"], list)
+    assert isinstance(context["context_anchor_next"], list)
+    assert len(context["context_anchor_prev"]) == len(expected_prev)
+    assert len(context["context_anchor_next"]) == len(expected_next)
+
+    for anchor in context["context_anchor_prev"]:
+        assert "anchor_segment_id" in anchor
+        assert "source_text" in anchor
+    for anchor in context["context_anchor_next"]:
+        assert "anchor_segment_id" in anchor
+        assert "source_text" in anchor
+
+
+async def test_call_llm_delegates_to_executor() -> None:
+    """_call_llm delegates to the injected executor.generate()."""
+    mock_executor = AsyncMock()
+    expected_candidates: list[CandidateItem] = [
+        CandidateItem(
+            item_type="grammar_note",
+            anchor_segment_id="anchor-1",
+            spans=[{"unit_id": "unit-1"}],
+            semantic_dedup_key="dedup-1",
+            pattern_key="pattern-1",
+            quality_score=0.8,
+        )
+    ]
+    mock_executor.generate.return_value = expected_candidates
+
+    service = GrammarWindowWorkerService(
+        pool=MagicMock(),
+        executor=mock_executor,
+    )
+    context = {"window_id": "test-window", "target_anchors": []}
+    result = await service._call_llm(context)
+
+    assert result == expected_candidates
+    mock_executor.generate.assert_called_once_with(context)
+
+
+async def test_process_window_job_calls_executor_and_returns_candidates() -> None:
+    """process_window_job with PROCEED path calls executor and returns candidates_ready."""
+    mock_executor = AsyncMock()
+    expected_candidates: list[CandidateItem] = [
+        CandidateItem(
+            item_type="grammar_note",
+            anchor_segment_id="anchor-1",
+            spans=[{"unit_id": "unit-1"}],
+            semantic_dedup_key="dedup-1",
+            pattern_key="pattern-1",
+            quality_score=0.8,
+        )
+    ]
+    mock_executor.generate.return_value = expected_candidates
+
+    service = GrammarWindowWorkerService(
+        pool=MagicMock(),
+        executor=mock_executor,
+        heartbeat_interval=timedelta(seconds=100),
+    )
+    service.preflight_window_job = AsyncMock(  # type: ignore[method-assign]
+        return_value=PreflightResult.PROCEED
+    )
+    service._load_window_context = AsyncMock(  # type: ignore[method-assign]
+        return_value={"window_id": "test"}
+    )
+
+    claim = _make_claim()
+    result = await service.process_window_job(claim=claim)
+
+    assert result["status"] == "candidates_ready"
+    assert result["candidates"] == expected_candidates
+    mock_executor.generate.assert_called_once()
+    service._load_window_context.assert_called_once_with(claim.job_id)
+
+
+async def test_unconfigured_executor_raises_error() -> None:
+    """GrammarWindowWorkerService with no executor raises GrammarWindowExecutionError."""
+    service = GrammarWindowWorkerService(pool=MagicMock())
+    with pytest.raises(GrammarWindowExecutionError):
+        await service._call_llm({"window_id": "test"})
