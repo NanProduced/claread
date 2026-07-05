@@ -2820,11 +2820,11 @@ describe("ReaderRecordPlateSurface", () => {
     expect(header.textContent).not.toMatch(/\d+\s*句/);
   });
 
-  it("renders the header in a wide editorial column decoupled from the reading column", () => {
+  it("centers the main document column independently and attaches the outline to its right", () => {
     render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
     const surface = screen.getByTestId("reader-record-plate-surface");
-    // Surface-level sticky top bar is a sibling of the padded content section, not inside it.
+    // Surface-level sticky top bar is a sibling of the canvas section, not inside it.
     const topBar = surface.querySelector<HTMLElement>('[data-testid="reader-record-top-bar"]');
     expect(topBar).not.toBeNull();
     expect(topBar?.parentElement).toBe(surface);
@@ -2832,20 +2832,91 @@ describe("ReaderRecordPlateSurface", () => {
 
     // Top bar 不再使用内容列居中约束。
     expect(topBar?.className).not.toContain("mx-auto");
-    expect(topBar?.className).not.toContain("max-w-[82ch]");
+    expect(topBar?.className).not.toContain("max-w-[var(--reader-record-main-width)]");
 
     const contentSection = surface.querySelector("section");
     expect(contentSection).not.toBeNull();
-    // Hero / header 仍保留 editorial 内容列约束。
-    const headerColumn = contentSection?.querySelector(".reader-header-band-inner");
+
+    // Hero / header 与正文主列共享同一个独立居中的主列。
+    const canvas = contentSection?.querySelector(".reader-record-canvas");
+    expect(canvas).not.toBeNull();
+    const body = canvas?.querySelector(".reader-record-canvas__body");
+    expect(body).not.toBeNull();
+
+    const mainColumn = body?.querySelector(".reader-record-main");
+    expect(mainColumn).not.toBeNull();
+    expect(mainColumn?.className).toContain("reader-record-main");
+
+    const headerColumn = mainColumn?.querySelector(".reader-header-band-inner");
     expect(headerColumn).not.toBeNull();
-    expect(headerColumn?.className).toContain("mx-auto");
-    expect(headerColumn?.className).toContain("max-w-[82ch]");
+    expect(headerColumn?.className).toContain("max-w-[var(--reader-record-main-width)]");
     expect(headerColumn?.querySelector('[data-testid="reader-record-plate-header"]')).not.toBeNull();
 
-    const contentColumn = contentSection?.querySelector('[class*="max-w-[46rem]"]');
-    expect(contentColumn).not.toBeNull();
-    expect(contentColumn?.querySelector(".reader-record-plate-document")).not.toBeNull();
+    const plateDocument = mainColumn?.querySelector(".reader-record-plate-document");
+    expect(plateDocument).not.toBeNull();
+    const contentColumn = plateDocument?.parentElement;
+    expect(contentColumn?.className).toContain("max-w-[var(--reader-record-main-width)]");
+
+    // Outline slot is a sibling of the main column, absolutely positioned to the right.
+    const outlineSlot = body?.querySelector(".reader-record-outline-slot");
+    expect(outlineSlot).not.toBeNull();
+    expect(outlineSlot?.parentElement).toBe(body);
+
+    const globalsSource = readFileSync(
+      resolve(process.cwd(), "src/app/globals.css"),
+      "utf-8",
+    );
+    expect(globalsSource).toContain(".reader-record-outline-slot {");
+    expect(globalsSource).toContain("position: absolute;");
+    expect(globalsSource).toContain(
+      "right: var(--reader-record-outline-right-offset);",
+    );
+  });
+
+  it("anchors the navigation rail inside the canvas outline slot", () => {
+    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const outlineSlot = document.querySelector(".reader-record-outline-slot");
+    expect(outlineSlot).not.toBeNull();
+
+    const rail = outlineSlot?.querySelector('[data-testid="reader-record-navigation-rail"]');
+    expect(rail).not.toBeNull();
+    expect(rail?.getAttribute("data-layout")).toBe("canvas");
+  });
+
+  it("opens Ask Claread and adds the ask-open modifier to the canvas without overlapping the outline slot", async () => {
+    installReaderAskFetchMock();
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    const canvas = container.querySelector(".reader-record-canvas");
+    expect(canvas).not.toBeNull();
+    // Ask closed by default: modifier not applied yet.
+    expect(canvas?.className).not.toContain("reader-record-canvas--ask-open");
+
+    // Rail lives inside the canvas outline slot.
+    const outlineSlot = canvas?.querySelector(".reader-record-outline-slot");
+    expect(outlineSlot).not.toBeNull();
+
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+    const askButton = await waitForSelectionAction(container, "ask");
+    await openAskPanelFromToolbar(askButton);
+
+    await waitFor(() => {
+      expect(canvas?.className).toContain("reader-record-canvas--ask-open");
+    });
+
+    // Ask panel is rendered as a sibling of the canvas, not nested inside it.
+    const askPanel = container.querySelector(".ai-workspace-panel");
+    expect(askPanel).not.toBeNull();
+    expect(askPanel?.parentElement).toBe(canvas?.parentElement);
   });
 
   it("renders the action bar as a single horizontal control strip on desktop", () => {
@@ -5472,7 +5543,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     const surface = screen.getByTestId("reader-record-plate-surface");
     const headerColumn = surface.querySelector<HTMLElement>(".reader-header-band-inner");
-    const contentColumn = surface.querySelector<HTMLElement>('[class*="max-w-[46rem]"]');
+    const contentColumn = surface.querySelector<HTMLElement>("[class*='max-w-[var(--reader-record-main-width)]']");
     const documentSurface = container.querySelector<HTMLElement>(
       ".reader-record-plate-document",
     );
@@ -5483,8 +5554,8 @@ describe("ReaderRecordPlateSurface", () => {
       '[data-reader-record-node="sentence-analysis"]',
     );
 
-    expect(headerColumn?.className).toContain("max-w-[82ch]");
-    expect(contentColumn?.className).toContain("max-w-[46rem]");
+    expect(headerColumn?.className).toContain("max-w-[var(--reader-record-main-width)]");
+    expect(contentColumn?.className).toContain("max-w-[var(--reader-record-main-width)]");
     expect(documentSurface?.className).toContain("reader-record-plate-font-sans");
     expect(documentSurface?.className).toContain("reader-record-plate-type-md");
     expect(documentSurface?.className).toContain(

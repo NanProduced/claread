@@ -2030,6 +2030,97 @@ select {
   margin-top: var(--reader-record-unit-gap);
 }
 
+.reader-record-plate-document
+  > [data-reader-record-unit-start="true"],
+.reader-record-plate-document
+  [data-slate-node="value"]
+  > [data-reader-record-unit-start="true"] {
+  scroll-margin-top: 3.5rem;
+}
+
+/*
+ * Reader Record layout tokens.
+ *
+ * These are defined on :root so they can be shared between the reader canvas,
+ * the navigation rail, and the Ask Claread sidecar without duplicating magic
+ * numbers in component classes.
+ */
+:root {
+  --reader-record-main-width: 78ch;
+  --reader-record-outline-mini-width: 2.5rem;
+  --reader-record-outline-right-offset: 0.75rem;
+  --reader-record-outline-gap: 2.5rem;
+  --reader-record-app-sidebar-width: 124px;
+  --reader-record-ask-panel-width: clamp(
+    31rem,
+    calc(
+      (100vw - var(--reader-record-app-sidebar-width) - var(--reader-record-main-width)) /
+        2 - var(--reader-record-outline-gap)
+    ),
+    37.5rem
+  );
+}
+
+/*
+ * Reader Record Plate Canvas (R1c)
+ *
+ * The main document column is centered independently inside the reading viewport.
+ * The right outline rail is a far-right contextual affordance: by default it only
+ * shows a minimal vertical tick strip hugging the right edge of the reading area.
+ * On wider screens it expands into a floating outline panel on hover, without
+ * pushing the main text off-center.
+ */
+.reader-record-canvas {
+  position: relative;
+  width: 100%;
+  overflow-x: clip;
+  container-type: inline-size;
+  container-name: reader-record-canvas;
+}
+
+.reader-record-canvas__body {
+  position: relative;
+  width: 100%;
+}
+
+.reader-record-main {
+  width: 100%;
+  max-width: var(--reader-record-main-width);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.reader-record-outline-slot {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: var(--reader-record-outline-right-offset);
+  display: none;
+  width: var(--reader-record-outline-mini-width);
+}
+
+/* Mini rail visible once the reading area is wide enough for a right-edge strip. */
+@container reader-record-canvas (min-width: 900px) {
+  .reader-record-outline-slot {
+    display: block;
+  }
+}
+
+/* Ask Claread sidecar docks on the right only at 2xl and above. When it opens,
+ * hide the outline to avoid overlap; restore only at ultra-wide viewports. */
+@media (min-width: 1536px) {
+  .reader-record-canvas--ask-open .reader-record-outline-slot {
+    display: none;
+  }
+}
+
+@media (min-width: 2100px) {
+  .reader-record-canvas--ask-open .reader-record-outline-slot {
+    display: block;
+    width: var(--reader-record-outline-mini-width);
+  }
+}
+
 .reader-record-plate-paragraph {
   font-size: var(--reader-record-source-size);
   line-height: var(--reader-record-source-leading);

@@ -16,6 +16,7 @@ import type {
 } from "react";
 
 import { AiWorkspacePanel } from "@/components/reader/AiWorkspacePanel";
+import { ReaderRecordNavigationRail } from "@/components/reader/plate/ReaderRecordNavigationRail";
 import type { DictLookupTypeDto, WebDictResult } from "@/types/api/dict";
 import {
   projectReaderPlateSnapshotToReaderRecordPlateDocument,
@@ -2046,7 +2047,7 @@ export function ReaderRecordPlateSurface({
   const typography = readerRecordPlateTypography(readerSettings);
   const themeClassName = readerThemeClassName(themeName);
   const contentColumnClassName =
-    columnClassName ?? `mx-auto w-full ${typography.columnClassName}`;
+    columnClassName ?? `mx-auto w-full max-w-[var(--reader-record-main-width)]`;
   const visibleBlocks = useMemo(() => {
     return plateDocument.children.flatMap((block) => {
       const visibleBlock = visibleBlockForMode(block, surfaceMode);
@@ -4082,16 +4083,24 @@ export function ReaderRecordPlateSurface({
         onThemeChange={setThemeName}
       />
       <section ref={surfaceRef} className={className}>
-        <div className="reader-header-band-inner mx-auto w-full max-w-[82ch]">
-          <ReaderRecordHeader
-            snapshot={snapshot}
-            progress={plateDocument.progress}
-            surfaceMode={surfaceMode}
-            onModeChange={handleModeChange}
-          />
-        </div>
+        <div
+          className={cn(
+            "reader-record-canvas",
+            askOpen && "reader-record-canvas--ask-open",
+          )}
+        >
+          <div className="reader-record-canvas__body">
+            <div className="reader-record-main">
+              <div className="reader-header-band-inner mx-auto w-full max-w-[var(--reader-record-main-width)]">
+                <ReaderRecordHeader
+                  snapshot={snapshot}
+                  progress={plateDocument.progress}
+                  surfaceMode={surfaceMode}
+                  onModeChange={handleModeChange}
+                />
+              </div>
 
-        <div className={contentColumnClassName}>
+              <div className={contentColumnClassName}>
           <SelectionActionState
             copyStatus={copyStatus}
             selection={activeSelection}
@@ -4282,8 +4291,19 @@ export function ReaderRecordPlateSurface({
                   : ""}
             </div>
           ) : null}
+            </div>
+          </div>
+          <aside className="reader-record-outline-slot">
+            <ReaderRecordNavigationRail
+              snapshot={snapshot}
+              plateDocument={plateDocument}
+              askOpen={askOpen}
+              layout="canvas"
+            />
+          </aside>
         </div>
-        <AiWorkspacePanel
+      </div>
+      <AiWorkspacePanel
           open={askOpen}
           presentation={surfaceMode}
           pageIdentity={askPageIdentity}
