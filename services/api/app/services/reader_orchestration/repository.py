@@ -78,11 +78,13 @@ _JOB_CAPABILITY_BY_TYPE = {
     "translate_unit": "translation",
     "build_vocabulary_layer": "vocabulary",
     "build_grammar_bundle": "grammar",
+    "build_grammar_bundle_window": "grammar",
 }
 _JOB_LAYER_TYPE_BY_TYPE = {
     "translate_unit": "translation",
     "build_vocabulary_layer": "vocabulary",
     "build_grammar_bundle": None,
+    "build_grammar_bundle_window": None,
 }
 _LAYER_CAPABILITY_BY_TYPE = {
     "translation": "translation",
@@ -918,7 +920,8 @@ class ReaderOrchestrationRepository:
               AND job_type IN (
                 'translate_unit',
                 'build_vocabulary_layer',
-                'build_grammar_bundle'
+                'build_grammar_bundle',
+                'build_grammar_bundle_window'
               )
             ORDER BY created_at, id
             """,
