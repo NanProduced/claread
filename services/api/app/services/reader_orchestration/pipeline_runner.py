@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 import asyncpg
 
 from app.database import connection as db_connection
+from app.services.reader_orchestration.grammar_window_publisher import (
+    GrammarWindowPublisher,
+)
+from app.services.reader_orchestration.grammar_window_worker import (
+    GrammarWindowWorkerService,
+)
 from app.services.reader_orchestration.grammar_worker import (
     DEFAULT_GRAMMAR_RETRY_DELAY,
     GrammarBundleWorkerService,
@@ -35,7 +42,10 @@ from app.services.reader_orchestration.job_bootstrap import (
     EnhancementBootstrapSummary,
     EnhancementJobBootstrapService,
 )
-from app.services.reader_orchestration.job_runtime import FenceViolationError
+from app.services.reader_orchestration.job_runtime import (
+    FenceViolationError,
+    ReaderJobRuntime,
+)
 from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
 from app.services.reader_orchestration.span_recorder import (
     SPAN_KIND_WORKER_TICK,
@@ -52,8 +62,19 @@ from app.services.reader_orchestration.vocabulary_worker import (
     VocabularyJobProcessResult,
     VocabularyWorkerService,
 )
+from app.services.reader_orchestration.zplus_bootstrap import (
+    ZPLUS_GRAMMAR_JOB_TYPE,
+    ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+    ZPLUS_TARGET_TYPE,
+)
 
-WorkerType = Literal["display_title", "translation", "vocabulary", "grammar_bundle"]
+WorkerType = Literal[
+    "display_title",
+    "translation",
+    "vocabulary",
+    "grammar_bundle",  # legacy per-unit
+    "grammar_bundle_window",  # Z+ window
+]
 PipelineAttemptOutcome = Literal[
     "succeeded",
     "retry_later",
@@ -78,6 +99,7 @@ class EnhancementWorkerTickCounts:
     translation: int = 0
     vocabulary: int = 0
     grammar_bundle: int = 0
+    grammar_bundle_window: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +159,9 @@ class ReaderEnhancementPipelineRunner:
         translation_orchestrator: ReaderOrchestrator | None = None,
         vocabulary_worker_service: VocabularyWorkerService | None = None,
         grammar_worker_service: GrammarBundleWorkerService | None = None,
+        grammar_window_worker_service: GrammarWindowWorkerService | None = None,
+        grammar_window_publisher: GrammarWindowPublisher | None = None,
+        job_runtime: ReaderJobRuntime | None = None,
     ) -> None:
         self._pool = pool
         self._bootstrap_service = bootstrap_service or EnhancementJobBootstrapService(
@@ -154,6 +179,13 @@ class ReaderEnhancementPipelineRunner:
         self._grammar_worker_service = grammar_worker_service or GrammarBundleWorkerService(
             pool=pool
         )
+        # Z+ window worker + publisher. Default to None so the pipeline runner
+        # only dispatches ``grammar_bundle_window`` jobs when the caller
+        # explicitly opts in (preserves backward compatibility for existing
+        # tests / deployments that have not yet enabled Z+).
+        self._grammar_window_worker = grammar_window_worker_service
+        self._grammar_window_publisher = grammar_window_publisher
+        self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -202,6 +234,7 @@ class ReaderEnhancementPipelineRunner:
             "translation": 0,
             "vocabulary": 0,
             "grammar_bundle": 0,
+            "grammar_bundle_window": 0,
         }
         outcome_counts = {
             "succeeded": 0,
@@ -217,12 +250,26 @@ class ReaderEnhancementPipelineRunner:
         stopped_outcome: PipelineAttemptOutcome | None = None
         attention_code: str | None = None
 
-        worker_order: tuple[WorkerType, ...] = (
-            "display_title",
-            "translation",
-            "vocabulary",
-            "grammar_bundle",
-        )
+        # Z+ window worker is dispatched ahead of legacy grammar_bundle to
+        # avoid legacy / Z+ contention. When ``grammar_window_worker`` is not
+        # registered (legacy deployments / existing tests), the pipeline keeps
+        # the legacy 4-worker order so baseline tick / job counts are
+        # preserved.
+        if self._grammar_window_worker is not None:
+            worker_order: tuple[WorkerType, ...] = (
+                "display_title",
+                "translation",
+                "vocabulary",
+                "grammar_bundle_window",  # Z+ 优先
+                "grammar_bundle",  # legacy
+            )
+        else:
+            worker_order = (
+                "display_title",
+                "translation",
+                "vocabulary",
+                "grammar_bundle",
+            )
 
         while True:
             round_no_job_count = 0
@@ -301,6 +348,7 @@ class ReaderEnhancementPipelineRunner:
                 translation=tick_counts["translation"],
                 vocabulary=tick_counts["vocabulary"],
                 grammar_bundle=tick_counts["grammar_bundle"],
+                grammar_bundle_window=tick_counts["grammar_bundle_window"],
             ),
             outcome_counts=EnhancementOutcomeCounts(
                 succeeded=outcome_counts["succeeded"],
@@ -417,6 +465,14 @@ class ReaderEnhancementPipelineRunner:
                 lease_owner=lease_owner,
                 lease_duration=lease_duration,
                 retry_delay=vocabulary_retry_delay,
+            )
+        if worker_type == "grammar_bundle_window":
+            return await self._run_grammar_window_attempt(
+                record_id=record_id,
+                base_id=base_id,
+                expected_generation=expected_generation,
+                lease_owner=lease_owner,
+                lease_duration=lease_duration,
             )
         return await self._run_grammar_attempt(
             record_id=record_id,
@@ -683,6 +739,134 @@ class ReaderEnhancementPipelineRunner:
             before_superseded=before_superseded,
             result=result,
         )
+
+    async def _run_grammar_window_attempt(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+    ) -> ReaderPipelineWorkerAttempt:
+        """Dispatch a Z+ ``build_grammar_bundle_window`` reader_job.
+
+        Flow (§9 worker migration):
+          1. ``claim_next_job`` filtered to the Z+ job_type / target_type /
+             operation_fingerprint.
+          2. ``GrammarWindowWorkerService.process_window_job`` runs preflight
+             (§8.2 pending → running) + LLM (with heartbeat).
+          3. If the worker returns ``candidates_ready``, hand off to
+             ``GrammarWindowPublisher.publish_window_grammar_bundle`` (§8.4
+             publish transaction). If the worker short-circuits with
+             ``already_terminal`` (window already completed / no_op / failed),
+             the publisher is skipped — there is nothing to publish.
+        """
+        if self._grammar_window_worker is None or self._grammar_window_publisher is None:
+            return ReaderPipelineWorkerAttempt(
+                worker_type="grammar_bundle_window",
+                outcome="no_job",
+                processed_job=False,
+            )
+
+        claim = await self._job_runtime.claim_next_job(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            job_type=ZPLUS_GRAMMAR_JOB_TYPE,
+            target_type=ZPLUS_TARGET_TYPE,
+            operation_fingerprint=ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+            reading_record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if claim is None:
+            return ReaderPipelineWorkerAttempt(
+                worker_type="grammar_bundle_window",
+                outcome="no_job",
+                processed_job=False,
+            )
+
+        await self._mark_window_run_running(claim.run_id)
+
+        result = await self._grammar_window_worker.process_window_job(claim=claim)
+        status = result.get("status")
+
+        if status == "candidates_ready":
+            plan_id, window_id = await self._load_window_ids_from_job(claim.job_id)
+            try:
+                await self._grammar_window_publisher.publish_window_grammar_bundle(
+                    job_id=claim.job_id,
+                    lease_token=claim.lease_token,
+                    plan_id=plan_id,
+                    window_id=window_id,
+                    candidates=result.get("candidates", []),
+                )
+            except FenceViolationError:
+                return ReaderPipelineWorkerAttempt(
+                    worker_type="grammar_bundle_window",
+                    outcome="superseded",
+                    processed_job=True,
+                    job_id=claim.job_id,
+                    run_id=claim.run_id,
+                    attention_code="publish_fence_failed",
+                )
+
+        # already_terminal: window already completed (no-op). The publisher is
+        # skipped; the worker has not produced candidates. Treat as succeeded
+        # so the pipeline moves on without flagging attention.
+        return ReaderPipelineWorkerAttempt(
+            worker_type="grammar_bundle_window",
+            outcome="succeeded",
+            processed_job=True,
+            job_id=claim.job_id,
+            run_id=claim.run_id,
+        )
+
+    async def _load_window_ids_from_job(
+        self,
+        job_id: UUID,
+    ) -> tuple[UUID, UUID]:
+        """Extract (plan_id, window_id) from a Z+ window reader_job's input_json.
+
+        The publisher needs both UUIDs to lock the plan + window rows. They are
+        stored as strings in ``reader_jobs.input_json`` by
+        ``ZPlusBootstrapService._create_window_job``.
+        """
+        async with self.get_pool().acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT input_json FROM reader_jobs WHERE id = $1",
+                job_id,
+            )
+        if row is None:
+            raise LookupError(f"reader job {job_id} not found")
+        input_data: Any = row["input_json"]
+        if isinstance(input_data, str):
+            input_data = json.loads(input_data)
+        return (
+            UUID(str(input_data["plan_id"])),
+            UUID(str(input_data["window_id"])),
+        )
+
+    async def _mark_window_run_running(self, run_id: UUID) -> None:
+        """Mark a reader_run as ``running`` (mirrors grammar_worker._mark_run_running).
+
+        Keeps reader_runs.status consistent with the existing per-unit worker
+        so progress / observability queries see Z+ runs as in-flight.
+        """
+        async with self.get_pool().acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE reader_runs
+                SET status = 'running',
+                    failure_class = NULL,
+                    failure_code = NULL,
+                    finished_at = NULL,
+                    started_at = COALESCE(started_at, NOW()),
+                    updated_at = NOW()
+                WHERE id = $1
+                """,
+                run_id,
+            )
 
     async def _build_worker_attempt_from_result(
         self,
