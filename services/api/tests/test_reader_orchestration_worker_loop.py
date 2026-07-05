@@ -77,6 +77,10 @@ from tests.reader_orchestration_test_support import (
 pytestmark = pytest.mark.anyio
 
 API_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_MIGRATION_0015_SQL = (
+    _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
+).read_text(encoding="utf-8")
 LEASE_DURATION = timedelta(seconds=30)
 
 
@@ -306,6 +310,7 @@ async def worker_loop_env() -> asyncpg.Pool:
     await admin.execute(f'CREATE SCHEMA "{schema_name}"')
     await admin.execute(f'SET search_path TO "{schema_name}", public')
     await admin.execute(BASELINE_SQL)
+    await admin.execute(_MIGRATION_0015_SQL)
     await admin.close()
     pool = await make_pool(schema_name)
     db_connection.DB_POOL = pool
