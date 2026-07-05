@@ -1,0 +1,223 @@
+"""Tests for ZPlusBootstrapService: bootstrap plan + windows + reader_jobs.
+
+Design source:
+  docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
+  §3.2 (Window Job contract) + §4.1 (layer_analysis_plans) + §7.3 (budget caps)
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import AsyncIterator
+from pathlib import Path
+from uuid import UUID, uuid4
+
+import asyncpg
+import pytest
+
+from app.database import connection as db_connection
+from app.services.reader_orchestration.zplus_bootstrap import (
+    ZPLUS_GRAMMAR_JOB_TYPE,
+    ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+    ZPlusBootstrapResult,
+    ZPlusBootstrapService,
+)
+from tests.reader_orchestration_test_support import (
+    BASELINE_SQL,
+    connect_admin,
+    insert_user,
+    make_pool,
+    submit_article_ready,
+)
+
+pytestmark = pytest.mark.anyio
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+MIGRATION_0015_SQL = (
+    REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
+).read_text(encoding="utf-8")
+
+ZPLUS_ARTICLE_TEXT = (
+    "Not only did the team revise the plan, but they also clarified the timeline. "
+    "Everyone understood the tradeoff.\n\n"
+    "The committee, which had spent six months reviewing export data, "
+    "labor surveys, and municipal tax receipts that rarely lined up neatly, "
+    "claimed that the recovery was broad enough to justify ending the emergency "
+    "grant program.\n\n"
+    "Several shop owners warned that the headline numbers hid a "
+    "more fragile street-level reality, because customers were still delaying "
+    "purchases whenever wages, school fees, and transport costs rose in the same "
+    "week."
+)
+
+
+@pytest.fixture
+async def test_db_pool_with_record_and_base() -> AsyncIterator[
+    tuple[asyncpg.Pool, UUID, UUID]
+]:
+    """Create a test schema with baseline + migration 0015, submit an article,
+    and return (pool, record_id, base_id).
+    """
+    schema_name = f"test_zplus_bootstrap_{uuid4().hex}"
+    admin_conn = await connect_admin()
+    original_pool = db_connection.DB_POOL
+    try:
+        await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
+        await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
+        await admin_conn.execute(BASELINE_SQL)
+        await admin_conn.execute(MIGRATION_0015_SQL)
+        pool = await make_pool(schema_name)
+        db_connection.DB_POOL = pool
+        try:
+            user_id = await insert_user(pool)
+            article = await submit_article_ready(
+                pool,
+                user_id=user_id,
+                plain_text=ZPLUS_ARTICLE_TEXT,
+                title="Z+ Bootstrap Slice",
+                language="en",
+            )
+            yield pool, article.record_id, article.base_id
+        finally:
+            await pool.close()
+    finally:
+        db_connection.DB_POOL = original_pool
+        await admin_conn.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
+        await admin_conn.close()
+
+
+async def test_bootstrap_creates_plan_windows_and_jobs(
+    test_db_pool_with_record_and_base: tuple[asyncpg.Pool, UUID, UUID],
+) -> None:
+    """Z+ bootstrap creates 1 plan + N windows + N reader_jobs."""
+    pool, record_id, base_id = test_db_pool_with_record_and_base
+    service = ZPlusBootstrapService(pool=pool)
+    result = await service.bootstrap_grammar_window_plan(
+        record_id=record_id, base_id=base_id
+    )
+    assert result.plan_id is not None
+    assert isinstance(result.plan_id, UUID)
+    assert len(result.windows) >= 1
+    assert len(result.job_ids) == len(result.windows)
+
+    # Verify DB state.
+    async with pool.acquire() as conn:
+        plan = await conn.fetchrow(
+            "SELECT * FROM layer_analysis_plans WHERE id = $1",
+            result.plan_id,
+        )
+        assert plan is not None
+        assert plan["layer_type"] == "grammar_bundle"
+        assert plan["status"] == "active"
+        assert plan["policy_version"] == "zplus_grammar_bundle_v1"
+
+        windows = await conn.fetch(
+            "SELECT * FROM analysis_windows WHERE plan_id = $1 ORDER BY window_index",
+            result.plan_id,
+        )
+        assert len(windows) == len(result.windows)
+        for w in windows:
+            assert w["status"] == "pending"
+            assert w["job_id"] is not None
+
+        # Verify reader_jobs.
+        for job_id in result.job_ids:
+            job = await conn.fetchrow(
+                "SELECT * FROM reader_jobs WHERE id = $1",
+                job_id,
+            )
+            assert job is not None
+            assert job["job_type"] == ZPLUS_GRAMMAR_JOB_TYPE
+            assert job["target_type"] == "unit_range"
+            assert job["operation_fingerprint"] == ZPLUS_GRAMMAR_OPERATION_FINGERPRINT
+            assert job["status"] == "queued"
+            assert job["input_json"]["plan_id"] == str(result.plan_id)
+
+
+async def test_bootstrap_idempotent_skips_existing_active_plan(
+    test_db_pool_with_record_and_base: tuple[asyncpg.Pool, UUID, UUID],
+) -> None:
+    """Same record/base with existing active plan does not re-create."""
+    pool, record_id, base_id = test_db_pool_with_record_and_base
+    service = ZPlusBootstrapService(pool=pool)
+    result1 = await service.bootstrap_grammar_window_plan(
+        record_id=record_id, base_id=base_id
+    )
+    result2 = await service.bootstrap_grammar_window_plan(
+        record_id=record_id, base_id=base_id
+    )
+    assert result1.plan_id == result2.plan_id  # reuse existing plan
+    assert len(result2.windows) == len(result1.windows)
+    assert set(result2.job_ids) == set(result1.job_ids)
+
+
+async def test_bootstrap_budget_total_uses_section_7_3_formula(
+    test_db_pool_with_record_and_base: tuple[asyncpg.Pool, UUID, UUID],
+) -> None:
+    """§7.3 budget caps: grammar_note = min(ceil(chars/1000)*2, 18),
+    sentence = min(max(round(chars/2000), 1), 5).
+    """
+    pool, record_id, base_id = test_db_pool_with_record_and_base
+    service = ZPlusBootstrapService(pool=pool)
+    result = await service.bootstrap_grammar_window_plan(
+        record_id=record_id, base_id=base_id
+    )
+    async with pool.acquire() as conn:
+        plan = await conn.fetchrow(
+            "SELECT budget_total FROM layer_analysis_plans WHERE id = $1",
+            result.plan_id,
+        )
+        budget = (
+            plan["budget_total"]
+            if isinstance(plan["budget_total"], dict)
+            else json.loads(plan["budget_total"])
+        )
+        assert "grammar_note" in budget
+        assert "sentence_analysis" in budget
+        assert budget["grammar_note"]["count"] <= 18
+        assert budget["sentence_analysis"]["count"] <= 5
+        assert budget["sentence_analysis"]["count"] >= 1
+
+
+async def test_bootstrap_result_type_is_zplus_bootstrap_result(
+    test_db_pool_with_record_and_base: tuple[asyncpg.Pool, UUID, UUID],
+) -> None:
+    """Bootstrap returns ZPlusBootstrapResult with correct field types."""
+    pool, record_id, base_id = test_db_pool_with_record_and_base
+    service = ZPlusBootstrapService(pool=pool)
+    result = await service.bootstrap_grammar_window_plan(
+        record_id=record_id, base_id=base_id
+    )
+    assert isinstance(result, ZPlusBootstrapResult)
+    assert isinstance(result.plan_id, UUID)
+    assert isinstance(result.windows, tuple)
+    assert isinstance(result.job_ids, tuple)
+    for job_id in result.job_ids:
+        assert isinstance(job_id, UUID)
+
+
+async def test_bootstrap_window_input_json_contains_window_contract_fields(
+    test_db_pool_with_record_and_base: tuple[asyncpg.Pool, UUID, UUID],
+) -> None:
+    """§3.2 input_json must contain plan_id, window_id, window_index,
+    target_unit_ids, target_anchor_ids.
+    """
+    pool, record_id, base_id = test_db_pool_with_record_and_base
+    service = ZPlusBootstrapService(pool=pool)
+    result = await service.bootstrap_grammar_window_plan(
+        record_id=record_id, base_id=base_id
+    )
+    async with pool.acquire() as conn:
+        for job_id in result.job_ids:
+            job = await conn.fetchrow(
+                "SELECT input_json, target_key FROM reader_jobs WHERE id = $1",
+                job_id,
+            )
+            input_json = job["input_json"]
+            assert "plan_id" in input_json
+            assert "window_id" in input_json
+            assert "window_index" in input_json
+            assert "target_unit_ids" in input_json
+            assert "target_anchor_ids" in input_json
+            # target_key = window_id (UUID string)
+            assert job["target_key"] == input_json["window_id"]
