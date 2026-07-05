@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import timedelta
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -58,6 +59,16 @@ from tests.reader_orchestration_test_support import (
     make_pool,
     submit_article_ready,
 )
+
+# Migration 0015 adds ``layer_analysis_plans`` + ``analysis_windows`` tables.
+# Required because ``bootstrap_missing_jobs`` now routes grammar bootstrap
+# based on Z+ plan existence in ``layer_analysis_plans`` (Task C3), and the
+# pipeline runner's worker_order dispatch depends on whether a window worker
+# is registered (Task C4).
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_MIGRATION_0015_SQL = (
+    _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
+).read_text(encoding="utf-8")
 
 LEASE_DURATION = timedelta(seconds=30)
 WORD_RE = re.compile(r"[A-Za-z]+")
@@ -285,6 +296,7 @@ async def pipeline_runner_env() -> asyncpg.Pool:
     await admin.execute(f'CREATE SCHEMA "{schema_name}"')
     await admin.execute(f'SET search_path TO "{schema_name}", public')
     await admin.execute(BASELINE_SQL)
+    await admin.execute(_MIGRATION_0015_SQL)
     await admin.close()
 
     pool = await make_pool(schema_name)
