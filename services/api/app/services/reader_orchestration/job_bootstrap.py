@@ -782,6 +782,7 @@ class EnhancementJobBootstrapService:
         user_id: UUID,
         trace_id: UUID | None = None,
     ) -> EnhancementBootstrapSummary:
+        use_zplus_grammar_path = False
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
                 state = await _load_locked_active_base_state(
@@ -806,11 +807,29 @@ class EnhancementJobBootstrapService:
                     state=state,
                     trace_id=trace_id,
                 )
-                grammar_results = await self._bootstrap_grammar_jobs(
-                    conn,
-                    state=state,
-                    trace_id=trace_id,
+                grammar_results, use_zplus_grammar_path = (
+                    await self._bootstrap_grammar_jobs_or_zplus(
+                        conn,
+                        state=state,
+                        trace_id=trace_id,
+                    )
                 )
+
+        # Z+ path: dispatch to ZPlusBootstrapService AFTER the outer
+        # transaction commits. ZPlusBootstrapService.bootstrap_grammar_window_plan
+        # opens its own transaction and acquires its own FOR UPDATE lock on
+        # reading_records, so calling it inside the outer transaction would
+        # deadlock against the lock we already hold. Idempotent: if the plan
+        # already exists with its windows/jobs, it is reused as-is.
+        # Design: analysis-window-zplus-design.md §9 worker migration.
+        if use_zplus_grammar_path:
+            from .zplus_bootstrap import ZPlusBootstrapService
+
+            zplus_service = ZPlusBootstrapService(pool=self._pool)
+            await zplus_service.bootstrap_grammar_window_plan(
+                record_id=state.record_id,
+                base_id=state.base_id,
+            )
 
         return EnhancementBootstrapSummary(
             record_id=state.record_id,
@@ -1154,6 +1173,48 @@ class EnhancementJobBootstrapService:
                 )
             )
         return results
+
+    async def _bootstrap_grammar_jobs_or_zplus(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        state: _LockedActiveBaseState,
+        trace_id: UUID | None = None,
+    ) -> tuple[list[GrammarBootstrapResult], bool]:
+        """Z+ vs legacy grammar bootstrap routing.
+
+        Checks ``layer_analysis_plans`` for an active Z+ plan:
+        - plan exists → Z+ path: return ``([], True)``. The caller is
+          responsible for dispatching to
+          ``ZPlusBootstrapService.bootstrap_grammar_window_plan`` after the
+          outer transaction commits (ZPlusBootstrapService opens its own
+          transaction and acquires its own ``FOR UPDATE`` lock, which would
+          deadlock against the lock held here).
+        - plan absent → legacy path: delegate to ``_bootstrap_grammar_jobs``
+          and return ``(results, False)``.
+
+        Design: docs/initiatives/reader-agentic-orchestration/
+        analysis-window-zplus-design.md §9 worker migration.
+        """
+        zplus_plan_id = await conn.fetchval(
+            """
+            SELECT id FROM layer_analysis_plans
+            WHERE reading_record_id = $1
+              AND base_id = $2
+              AND layer_type = 'grammar_bundle'
+              AND status IN ('planning', 'active')
+            """,
+            state.record_id,
+            state.base_id,
+        )
+        if zplus_plan_id is not None:
+            return [], True
+        results = await self._bootstrap_grammar_jobs(
+            conn,
+            state=state,
+            trace_id=trace_id,
+        )
+        return results, False
 
 
 async def _load_locked_active_base_state(
