@@ -3683,7 +3683,7 @@ export function AiWorkspacePanel({
 
   return (
     <aside
-      className={`ai-workspace-panel ai-workspace-panel--${presentation} fixed inset-x-3 bottom-3 z-50 flex max-h-[82vh] flex-col overflow-hidden rounded-xl border bg-background shadow-lg 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[clamp(31rem,calc((100vw-124px-96ch)/2-0.5rem),37.5rem)] 2xl:min-w-0 2xl:max-h-none`}
+      className={`ai-workspace-panel ai-workspace-panel--${presentation} fixed inset-x-3 bottom-3 z-50 flex max-h-[82vh] flex-col overflow-hidden rounded-xl border bg-background shadow-lg 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[var(--reader-record-ask-panel-width)] 2xl:min-w-0 2xl:max-h-none`}
       onPointerDownCapture={(event) => {
         const target = event.target instanceof HTMLElement ? event.target : null;
         if (!target) {

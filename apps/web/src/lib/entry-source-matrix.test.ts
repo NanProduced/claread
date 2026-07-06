@@ -70,9 +70,6 @@ describe("entry source matrix - Track D convergence", () => {
     const formSource = readSource(
       "src/app/(private)/app/read/AnalyzeSubmitForm.tsx",
     );
-    const recentSource = readSource(
-      "src/app/(private)/app/read/recent-reading-record.ts",
-    );
     const submitModeSource = readSource(
       "src/app/(private)/app/read/submit-mode.ts",
     );
@@ -81,10 +78,10 @@ describe("entry source matrix - Track D convergence", () => {
     expect(formSource).not.toContain("fetchAnalysisTaskStatus");
     expect(formSource).not.toContain("legacyAppReaderRoute");
     expect(formSource).not.toContain("saveRecentReadingRecordForSubmitMode");
-
-    expect(recentSource).not.toContain("/app/reader/");
-    expect(recentSource).toContain("/app/reader-record/");
-    expect(recentSource).not.toContain("saveRecentReadingRecordForSubmitMode");
+    expect(formSource).not.toContain("readRecentReadingRecord");
+    expect(formSource).not.toContain("saveRecentReadingRecord");
+    expect(formSource).not.toContain("intakeMethods");
+    expect(formSource).not.toContain("上传图片");
 
     expect(submitModeSource).toContain('export type ReadPageSubmitMode = "reader-plate-input"');
     expect(submitModeSource).toContain("/api/web/reader-plate/input");
