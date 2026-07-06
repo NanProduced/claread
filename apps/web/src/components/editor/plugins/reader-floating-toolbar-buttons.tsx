@@ -17,7 +17,7 @@
  */
 "use client";
 
-import { createContext, useContext, useId, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useState, type ReactNode } from "react";
 import {
   BookOpenText,
   Copy,
@@ -78,7 +78,9 @@ const preventFocusLoss = {
 
 const toolbarGroupClassName = "items-center";
 const toolbarButtonClassName =
-  "disabled:cursor-not-allowed disabled:opacity-40";
+  "rounded-[8px] text-ink/80 transition-colors hover:bg-lens-blue-soft/35 hover:text-ink active:bg-lens-blue-soft/50 disabled:cursor-not-allowed disabled:opacity-40";
+const toolbarShortcutClassName =
+  "ml-1 inline-flex min-w-0 items-center rounded bg-background/14 px-1.5 py-0.5 font-sans text-[10px] font-semibold leading-none text-background/78";
 
 function actionState(
   actions: ReaderToolbarActions | null,
@@ -94,27 +96,46 @@ function toolbarTitle(label: string, state: ReaderToolbarActionState) {
   return state.disabled && state.reason ? `${label}不可用：${state.reason}` : label;
 }
 
+function toolbarTooltip(
+  label: string,
+  state: ReaderToolbarActionState,
+  shortcut?: string,
+) {
+  const title = toolbarTitle(label, state);
+  if (!shortcut || state.disabled) {
+    return title;
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span>{title}</span>
+      <kbd className={toolbarShortcutClassName}>{shortcut}</kbd>
+    </span>
+  );
+}
+
 function ReaderActionToolbarButton({
   actionId,
   label,
   onAction,
   children,
+  shortcut,
 }: {
   actionId: ReaderToolbarActionId;
   label: string;
   onAction: (actions: ReaderToolbarActions) => void;
   children: ReactNode;
+  shortcut?: string;
 }) {
   const actions = useContext(ReaderToolbarActionsContext);
   const state = actionState(actions, actionId);
-  const title = toolbarTitle(label, state);
+  const tooltip = toolbarTooltip(label, state, shortcut);
 
   return (
     <ToolbarButton
       className={toolbarButtonClassName}
       size="default"
-      tooltip={title}
-      title={title}
+      tooltip={tooltip}
       aria-label={label}
       data-reader-record-action={actionId}
       data-reader-record-toolbar-action={actionId}
@@ -145,6 +166,7 @@ export function ReaderCopyToolbarButton() {
     <ReaderActionToolbarButton
       actionId="copy"
       label="复制"
+      shortcut="Ctrl+C"
       onAction={(actions) => actions.onCopy()}
     >
       <Copy className="size-4" />
@@ -185,10 +207,32 @@ const askQuickActions: Array<{
 export function ReaderAskToolbarButton() {
   const actions = useContext(ReaderToolbarActionsContext);
   const state = actionState(actions, "ask");
-  const title = toolbarTitle("Ask Claread", state);
+  const tooltip = toolbarTooltip("Ask Claread", state, "Ctrl+J");
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const inputId = useId();
+
+  useEffect(() => {
+    if (state.disabled || !actions) {
+      return;
+    }
+
+    function handleAskShortcut(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey) {
+        return;
+      }
+      if (event.key.toLowerCase() !== "j") {
+        return;
+      }
+      event.preventDefault();
+      setOpen(true);
+    }
+
+    window.addEventListener("keydown", handleAskShortcut);
+    return () => {
+      window.removeEventListener("keydown", handleAskShortcut);
+    };
+  }, [actions, state.disabled]);
 
   const submitPrompt = () => {
     const content = prompt.trim();
@@ -226,10 +270,11 @@ export function ReaderAskToolbarButton() {
         <AIMenuAnchor>
           <span>
             <ToolbarButton
-              className={`${toolbarButtonClassName} gap-1.5 px-3 text-lens-blue hover:text-lens-blue`}
+              className={`${toolbarButtonClassName} ${
+                open ? "bg-lens-blue-soft/60 " : ""
+              }gap-1.5 px-3 text-lens-blue hover:bg-lens-blue-soft/50 hover:text-lens-blue active:bg-lens-blue-soft/65`}
               size="default"
-              tooltip={title}
-              title={title}
+              tooltip={tooltip}
               aria-label="Ask Claread"
               aria-expanded={open}
               aria-controls={open ? inputId : undefined}
@@ -277,6 +322,7 @@ export function ReaderAskToolbarButton() {
               }}
               placeholder="Ask Claread anything..."
               data-reader-record-ask-prompt="true"
+              autoFocus
             />
             <AIMenuList>
               <AIMenuEmpty>输入问题后按 Enter 发送给 Ask Claread。</AIMenuEmpty>

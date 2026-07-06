@@ -3456,6 +3456,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(toolbarButtons).toHaveLength(5);
     for (const button of toolbarButtons) {
       expect(button.disabled).toBe(true);
+      expect(button.getAttribute("title")).toBeNull();
       expect(button.dataset.readerRecordDisabledReason).toBe("请选择稳定原文后再操作");
     }
     expect(container.querySelector('[data-reader-record-action="feedback"]')).toBeNull();
@@ -3475,6 +3476,9 @@ describe("ReaderRecordPlateSurface", () => {
     );
     expect(toolbarButtons).toHaveLength(5);
     expect(container.querySelector("[data-reader-record-test-action]")).toBeNull();
+    for (const button of toolbarButtons) {
+      expect(button.getAttribute("title")).toBeNull();
+    }
 
     const lookup = container.querySelector<HTMLButtonElement>(
       '[data-reader-record-toolbar-action="lookup"]',
@@ -3531,6 +3535,7 @@ describe("ReaderRecordPlateSurface", () => {
       );
       expect(enabledButton).not.toBeNull();
       expect(enabledButton?.disabled).toBe(false);
+      expect(enabledButton?.getAttribute("title")).toBeNull();
       if (!enabledButton) {
         throw new Error(`Expected enabled toolbar button: ${item.action}`);
       }
@@ -3558,6 +3563,7 @@ describe("ReaderRecordPlateSurface", () => {
       );
       expect(disabledButton).not.toBeNull();
       expect(disabledButton?.disabled).toBe(true);
+      expect(disabledButton?.getAttribute("title")).toBeNull();
       expect(disabledButton?.dataset.readerRecordDisabledReason).toBe(
         "暂不支持跨段或非稳定原文选区",
       );
@@ -3568,6 +3574,25 @@ describe("ReaderRecordPlateSurface", () => {
       expect(disabledActions[item.handler]).not.toHaveBeenCalled();
       disabledHarness.unmount();
     }
+  });
+
+  it("opens the Ask menu with the Plate AI shortcut while keeping native title tooltips out", () => {
+    const { container } = renderToolbarHarness();
+    const askButton = container.querySelector<HTMLButtonElement>(
+      '[data-reader-record-toolbar-action="ask"]',
+    );
+
+    expect(askButton).not.toBeNull();
+    expect(askButton?.getAttribute("title")).toBeNull();
+    expect(document.querySelector('[data-reader-record-ask-menu="open"]')).toBeNull();
+
+    fireEvent.keyDown(window, {
+      code: "KeyJ",
+      ctrlKey: true,
+      key: "j",
+    });
+
+    expect(document.querySelector('[data-reader-record-ask-menu="open"]')).not.toBeNull();
   });
 
   it("maps a stable source selection to an anchor draft with unit-local UTF-16 offsets", async () => {
@@ -5444,11 +5469,25 @@ describe("ReaderRecordPlateSurface", () => {
       resolve(process.cwd(), "src/components/editor/plugins/floating-toolbar-kit.tsx"),
       "utf8",
     );
+    const toolbarSource = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/components/editor/plugins/reader-floating-toolbar-buttons.tsx",
+      ),
+      "utf8",
+    );
 
     expect(floatingToolbarKitSource).toContain("FloatingToolbar");
     expect(floatingToolbarKitSource).toContain(
       'data-reader-record-floating-toolbar="plate"',
     );
+    expect(floatingToolbarKitSource).toContain("!shadow-[0_8px_20px");
+    expect(floatingToolbarKitSource).toContain(
+      "[&_[data-slot=separator][data-orientation=vertical]]:h-6",
+    );
+    expect(toolbarSource).toContain("rounded-[8px]");
+    expect(toolbarSource).toContain("hover:bg-lens-blue-soft/35");
+    expect(toolbarSource).not.toMatch(/hover:bg-ink/);
     expect(surfaceSource).toContain("SelectionActionState");
     expect(surfaceSource).not.toMatch(/SelectionActionStrip/);
     expect(surfaceSource).not.toMatch(/data-reader-record-test-action/);

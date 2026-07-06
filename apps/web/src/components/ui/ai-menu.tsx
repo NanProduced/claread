@@ -46,7 +46,7 @@ export function AIMenuContent({
         collisionPadding={12}
         data-plate-focus="true"
         className={cn(
-          "z-50 w-[min(44rem,calc(100vw-2rem))] overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-md outline-hidden data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
+          "z-50 w-[min(44rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-border/75 bg-popover text-popover-foreground shadow-[0_14px_34px_rgba(23,21,17,0.12),0_1px_2px_rgba(23,21,17,0.08)] outline-hidden data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
           className,
         )}
         onOpenAutoFocus={(event) => event.preventDefault()}
@@ -65,7 +65,7 @@ export function AIMenuCommand({
   return (
     <Command
       className={cn(
-        "rounded-lg bg-popover text-popover-foreground [&_[data-slot=command-input-wrapper]]:h-11 [&_[data-slot=command-input-wrapper]]:border-border/70 [&_[data-slot=command-input-wrapper]]:px-3 [&_[data-slot=command-input]]:h-11 [&_[data-slot=command-input]]:text-sm [&_[data-slot=command-item]]:rounded-md [&_[data-slot=command-item]]:px-3 [&_[data-slot=command-item]]:py-2.5",
+        "rounded-lg bg-popover text-popover-foreground [&_[data-slot=command-input-wrapper]>svg]:hidden [&_[data-slot=command-input-wrapper]]:h-11 [&_[data-slot=command-input-wrapper]]:border-border/70 [&_[data-slot=command-input-wrapper]]:px-3 [&_[data-slot=command-input]]:h-11 [&_[data-slot=command-input]]:text-sm [&_[data-slot=command-list]]:p-1 [&_[data-slot=command-item]]:rounded-[7px] [&_[data-slot=command-item]]:px-3 [&_[data-slot=command-item]]:py-2.5",
         className,
       )}
       {...props}
@@ -92,7 +92,7 @@ export function AIMenuItem({
   return (
     <CommandItem
       className={cn(
-        "cursor-pointer gap-3 aria-selected:bg-muted data-[selected=true]:bg-muted",
+        "cursor-pointer gap-3 transition-colors hover:bg-lens-blue-soft/30 aria-selected:bg-lens-blue-soft/40 aria-selected:text-foreground data-[selected=true]:bg-lens-blue-soft/40 data-[selected=true]:text-foreground",
         className,
       )}
       {...props}
