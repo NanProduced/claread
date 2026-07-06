@@ -13,7 +13,6 @@ import {
   readPageSubmitRequestBody,
 } from "./submit-mode";
 import { PENDING_CANDIDATE_STORAGE_KEY } from "./pending-candidate";
-import { RECENT_READING_RECORD_STORAGE_KEY } from "./recent-reading-record";
 
 const navigationMock = vi.hoisted(() => ({
   push: vi.fn(),
@@ -46,6 +45,107 @@ function createMemoryStorage(): Storage {
       store.set(key, value);
     },
   };
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function makeFile(name = "article.pdf", type = "application/pdf"): File {
+  return new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], name, { type });
+}
+
+function makeInitResponse(artifactId = "art_1") {
+  return {
+    ok: true as const,
+    artifact_id: artifactId,
+    presigned_url: `https://oss.example.com/${artifactId}?sig=x`,
+    presigned_method: "PUT",
+    headers: {},
+  };
+}
+
+function makeCompleteResponse(artifactId = "art_1") {
+  return {
+    ok: true as const,
+    artifact_id: artifactId,
+    upload_completed: true,
+  };
+}
+
+function makeArtifactSubmitResponse(readingRecordId = "rec_artifact_stable") {
+  return {
+    ok: true as const,
+    reading_record_id: readingRecordId,
+  };
+}
+
+function makePipelineStableResponse(readingRecordId = "rec_artifact_stable") {
+  return {
+    ok: true as const,
+    artifact: {
+      artifact_id: "art_1",
+      status: "available",
+      artifact_kind: "original_upload",
+      storage_provider: "oss",
+      bucket: "claread",
+      endpoint: "https://oss.example.com",
+      object_key: "artifacts/art_1.bin",
+      content_type: "application/pdf",
+      byte_size: 4,
+      content_sha256: "abc",
+      source_filename: "article.pdf",
+      reading_record_id: readingRecordId,
+      original_input_id: "inp_1",
+    },
+    record: {
+      reading_record_id: readingRecordId,
+      generation: 1,
+      product_state: "processing",
+      readiness_state: "submitted",
+      active_base_id: null,
+      source_type: "pdf_text",
+      title: null,
+      language: null,
+    },
+    original_input: null,
+    extraction_job: null,
+    materialization_job: null,
+    candidate_document: null,
+    stable_document: null,
+    outcome: "stable_document_ready",
+    next_action: "open_reader",
+  };
+}
+
+function installStableArtifactFetchMock(readingRecordId = "rec_artifact_stable") {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/init-upload")) {
+      return jsonResponse(makeInitResponse());
+    }
+    if (url.startsWith("https://oss.example.com/")) {
+      return new Response(null, { status: 200 });
+    }
+    if (url.endsWith("/complete-upload")) {
+      return jsonResponse(makeCompleteResponse());
+    }
+    if (url.endsWith("/submit-input")) {
+      expect(init?.body ? JSON.parse(String(init.body)) : {}).toMatchObject({
+        language: "en",
+      });
+      return jsonResponse(makeArtifactSubmitResponse(readingRecordId));
+    }
+    if (url.endsWith("/pipeline-status")) {
+      return jsonResponse(makePipelineStableResponse(readingRecordId));
+    }
+    throw new Error(`Unexpected fetch ${url}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 beforeEach(() => {
@@ -304,16 +404,6 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
       );
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-
-    const saved = JSON.parse(
-      window.localStorage.getItem(RECENT_READING_RECORD_STORAGE_KEY) ?? "null",
-    ) as Record<string, unknown>;
-    expect(saved).toMatchObject({
-      readingRecordId: "rec_unified_1",
-      readerUrl: "/app/reader-record/rec_unified_1",
-      title: "Unified stable fixture",
-      createdAt: expect.any(String),
-    });
     expect(window.localStorage.getItem(PENDING_CANDIDATE_STORAGE_KEY)).toBeNull();
   });
 
@@ -441,11 +531,11 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     );
 
     expect(source).toMatch(
-      /async function handleSubmit\(\)\s*\{[\s\S]{0,200}?if \(state\.kind === "pending"\)\s*\{\s*return;\s*\}/,
+      /async function handleSubmit\(\)\s*\{[\s\S]{0,200}?if \(isWaiting\)\s*\{\s*return;\s*\}/,
     );
   });
 
-  it("candidate_document_required outcome shows the candidate card and does not navigate", async () => {
+  it("candidate_document_required outcome opens the confirm dialog and keeps internal ids out of the DOM", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify(makeUnifiedInputCandidateResponse()), {
         status: 200,
@@ -467,16 +557,20 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
 
     await waitFor(() => {
-      expect(screen.getByText(/已收到候选文档/)).toBeTruthy();
+      expect(screen.getByTestId("candidate-confirm-dialog")).toBeTruthy();
     });
-    expect(screen.getByText("rec_unified_2")).toBeTruthy();
-    expect(screen.getByText("cand_1")).toBeTruthy();
-    expect(screen.getByText("inp_cand_1")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "去阅读记录确认" }),
-    ).toBeTruthy();
+    expect(screen.getByText("确认提取出的英文文章")).toBeTruthy();
+    expect(screen.getByTestId("candidate-confirm-preview").textContent).toContain(
+      "Markdown article needing confirmation.",
+    );
+    expect(screen.getByTestId("candidate-confirm-button")).toBeTruthy();
     expect(screen.getByRole("button", { name: "稍后处理" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "重新编辑" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "重新提交" })).toBeTruthy();
+    expect(screen.queryByText("rec_unified_2")).toBeNull();
+    expect(screen.queryByText("cand_1")).toBeNull();
+    expect(screen.queryByText("inp_cand_1")).toBeNull();
+    expect(screen.queryByText("candidate_document_id")).toBeNull();
+    expect(screen.queryByText("reading_record_id")).toBeNull();
     expect(navigationMock.push).not.toHaveBeenCalled();
 
     const pending = JSON.parse(
@@ -524,17 +618,9 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     expect(navigationMock.push).not.toHaveBeenCalled();
   });
 
-  it("loads a valid recent Reading Record from localStorage and continues reading", async () => {
-    window.localStorage.setItem(
-      RECENT_READING_RECORD_STORAGE_KEY,
-      JSON.stringify({
-        readingRecordId: "reading_record_recent",
-        readerUrl: "/app/reader-record/reading_record_recent",
-        title: "Saved recent article",
-        createdAt: "2026-06-22T12:00:00.000Z",
-      }),
-    );
-
+  it("selects a file inside the same input surface without starting upload", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
     render(
       <AnalyzeSubmitForm
         readingGoal="daily_reading"
@@ -542,28 +628,25 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
       />,
     );
 
-    await waitFor(() => {
-      expect(screen.getByText("Saved recent article")).toBeTruthy();
+    const file = makeFile("paper.md", "text/markdown");
+    fireEvent.change(screen.getByTestId("source-file-input"), {
+      target: { files: [file] },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /继续阅读/ }));
-
-    expect(navigationMock.push).toHaveBeenCalledWith(
-      "/app/reader-record/reading_record_recent",
-    );
+    expect(screen.queryByPlaceholderText("Paste an English article here")).toBeNull();
+    expect(screen.getByTestId("source-file-preview")).toBeTruthy();
+    expect(screen.getByTestId("attached-source").textContent).toContain("paper.md");
+    expect(screen.getByTestId("attached-source").textContent).toContain("Markdown 文档");
+    expect(screen.getByTestId("source-file-preview").textContent).toContain("MD");
+    expect(screen.getByRole("button", { name: "替换文件" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "移除文件" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "开始透读" })).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("ignores invalid recent Reading Record localStorage payloads", async () => {
-    window.localStorage.setItem(
-      RECENT_READING_RECORD_STORAGE_KEY,
-      JSON.stringify({
-        readingRecordId: "legacy_record",
-        readerUrl: "/app/reader/legacy_record",
-        title: "Legacy record should not render",
-        createdAt: "2026-06-22T12:00:00.000Z",
-      }),
-    );
-
+  it("accepts a dragged image file on the text input surface without starting upload", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
     render(
       <AnalyzeSubmitForm
         readingGoal="daily_reading"
@@ -571,10 +654,71 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
       />,
     );
 
-    await waitFor(() => {
-      expect(screen.queryByText("Legacy record should not render")).toBeNull();
+    const file = makeFile("scan.png", "image/png");
+    fireEvent.drop(screen.getByTestId("read-source-input"), {
+      dataTransfer: {
+        files: [file],
+        types: ["Files"],
+      },
     });
-    expect(screen.queryByRole("button", { name: /继续阅读/ })).toBeNull();
+
+    expect(screen.queryByPlaceholderText("Paste an English article here")).toBeNull();
+    expect(screen.getByTestId("source-file-preview")).toBeTruthy();
+    expect(screen.getByTestId("attached-source").textContent).toContain("scan.png");
+    expect(screen.getByTestId("attached-source").textContent).toContain("图片 OCR");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsupported uploaded formats before preview or upload", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AnalyzeSubmitForm
+        readingGoal="daily_reading"
+        readingVariant="intermediate_reading"
+      />,
+    );
+
+    const file = makeFile("archive.zip", "application/zip");
+    fireEvent.change(screen.getByTestId("source-file-input"), {
+      target: { files: [file] },
+    });
+
+    expect(screen.queryByTestId("source-file-preview")).toBeNull();
+    expect(screen.getByText(/暂不支持/).textContent).toContain("archive.zip");
+    expect(screen.getByText(/PDF \/ Markdown \/ TXT \/ PNG \/ JPG \/ WEBP \/ GIF/)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("starts artifact upload only after clicking 开始透读", async () => {
+    const fetchMock = installStableArtifactFetchMock("rec_artifact_from_form");
+    render(
+      <AnalyzeSubmitForm
+        readingGoal="exam"
+        readingVariant="cet"
+      />,
+    );
+
+    const file = makeFile("article.pdf", "application/pdf");
+    fireEvent.change(screen.getByTestId("source-file-input"), {
+      target: { files: [file] },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
+
+    await waitFor(() => {
+      expect(navigationMock.push).toHaveBeenCalledWith(
+        "/app/reader-record/rec_artifact_from_form",
+      );
+    });
+
+    const calls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(calls.some((url) => url.endsWith("/init-upload"))).toBe(true);
+    expect(calls.some((url) => url.startsWith("https://oss.example.com/"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/complete-upload"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/submit-input"))).toBe(true);
+    expect(calls.some((url) => url.endsWith("/pipeline-status"))).toBe(true);
   });
 
   it("removes legacy analysis-task polling from AnalyzeSubmitForm", () => {
@@ -589,16 +733,16 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     expect(source).not.toContain("legacyAppReaderRoute");
   });
 
-  it("keeps the recent Reading Record helper free of legacy analysis wiring", () => {
+  it("does not render the old recent Reading Record resume entry in the input form", () => {
     const source = readFileSync(
-      resolve(process.cwd(), "src/app/(private)/app/read/recent-reading-record.ts"),
+      resolve(process.cwd(), "src/app/(private)/app/read/AnalyzeSubmitForm.tsx"),
       "utf-8",
     );
 
-    expect(source).not.toContain("legacyAppReaderRoute");
-    expect(source).not.toContain("/app/reader/");
-    expect(source).not.toContain("analysis-tasks");
-    expect(source).not.toContain("saveRecentReadingRecordForSubmitMode");
+    expect(source).not.toContain("RecentReadingRecordResume");
+    expect(source).not.toContain("readRecentReadingRecord");
+    expect(source).not.toContain("saveRecentReadingRecord");
+    expect(source).not.toContain("最近阅读记录");
   });
 
   it("keeps the unified reader-plate/input route free of legacy analysis wiring", () => {
@@ -678,56 +822,57 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ArtifactIntakePanel review-fix source guards
-//   These assert the F2 review fixes to ArtifactIntakePanel.
-//   Each is a deterministic source check — they prove the panel's
-//   architectural shape and behaviour wiring without depending on jsdom's
-//   fragile FileList propagation through React's synthetic event system.
+// Unified read intake source guards
 // ---------------------------------------------------------------------------
 
-describe("ArtifactIntakePanel review-fix source guards", () => {
-  const PANEL_PATH = "src/app/(private)/app/read/ArtifactIntakePanel.tsx";
+describe("unified read intake source guards", () => {
+  const FORM_PATH = "src/app/(private)/app/read/AnalyzeSubmitForm.tsx";
+  const INTAKE_PATH = "src/app/(private)/app/read/ReadPageIntake.tsx";
 
-  function readPanelSource(): string {
-    return readFileSync(resolve(process.cwd(), PANEL_PATH), "utf-8");
+  function readFormSource(): string {
+    return readFileSync(resolve(process.cwd(), FORM_PATH), "utf-8");
   }
 
-  it("does NOT import the raw ReaderArtifactPipelineStatusResponseDto", () => {
-    const source = readPanelSource();
-    expect(source).not.toMatch(/ReaderArtifactPipelineStatusResponseDto/);
+  it("keeps one upload entry and does not render paste/file/image tabs", () => {
+    const source = readFormSource();
+    expect(source).toContain("SOURCE_ACCEPT");
+    expect(source).toContain("SUPPORTED_SOURCE_FORMATS");
+    expect(source).toContain("validateSourceFile");
+    expect(source).toContain("source-file-input");
+    expect(source).toContain("attached-source");
+    expect(source).toContain("descriptor.badge");
+    expect(source).toContain("break-words");
+    expect(source).not.toContain("truncate text-[0.94rem]");
+    expect(source).not.toContain("intakeMethods");
+    expect(source).not.toContain("上传图片");
+    expect(source).not.toContain("onSelectFileSource");
+    expect(source).not.toContain("onSelectImageSource");
+  });
+
+  it("accepts dropped files on the manuscript input surface", () => {
+    const source = readFormSource();
+    expect(source).toContain("onDrop={handleDrop}");
+    expect(source).toContain("data-testid=\"read-source-input\"");
+    expect(source).toContain("hasFileTransfer");
+  });
+
+  it("keeps the artifact pipeline inside AnalyzeSubmitForm and clears polling on unmount", () => {
+    const source = readFormSource();
     expect(source).toContain("ReaderArtifactPipelineStatusSafeDto");
-    expect(source).toContain("@/lib/reader-orchestration/status-mapper");
-  });
-
-  it("never reads failure_class / failure_code / rationale_code / english_word_ratio / natural_language_score", () => {
-    const source = readPanelSource();
-    expect(source).not.toMatch(/failure_class|failure_code|rationale_code/);
-    expect(source).not.toMatch(/english_word_ratio|natural_language_score/);
-  });
-
-  it("clears the polling interval on unmount via useEffect cleanup", () => {
-    const source = readPanelSource();
-    expect(source).toMatch(/useEffect\(\s*\(\)\s*=>\s*\{\s*return\s*\(\)\s*=>\s*\{/);
-    expect(source).toContain("clearInterval(pollTimerRef.current)");
-  });
-
-  it("keeps the last File in a ref so 重试 can re-run startArtifactFlow without re-opening the picker", () => {
-    const source = readPanelSource();
+    expect(source).toContain("startArtifactFlow");
     expect(source).toContain("lastFileRef");
     expect(source).toMatch(/lastFileRef\.current\s*=\s*file/);
-    expect(source).toMatch(/function retryLast/);
-    expect(source).toMatch(/startArtifactFlow\(lastFile\)/);
+    expect(source).toContain("clearInterval(pollTimerRef.current)");
+    expect(source).toMatch(/pollUntilTerminal\(\s*artifactId,\s*file\.name/);
+    expect(source).toMatch(/applyArtifactOutcome\(\s*status,\s*currentFilename\s*\)/);
   });
 
-  it("'重新选择文件' button clears input.value before re-opening the picker (so same file re-fires change)", () => {
-    const source = readPanelSource();
-    expect(source).toMatch(/fileInputRef\.current\.value\s*=\s*""/);
-  });
-
-  it("passes currentFilename explicitly into pollUntilTerminal / applyOutcome (no stale closure)", () => {
-    const source = readPanelSource();
-    expect(source).toMatch(/pollUntilTerminal\(\s*artifact\s*,\s*file\.name/);
-    expect(source).toMatch(/applyOutcome\(\s*status\s*,\s*currentFilename\s*\)/);
+  it("ReadPageIntake renders only the unified form, no artifact-mode branch", () => {
+    const source = readFileSync(resolve(process.cwd(), INTAKE_PATH), "utf-8");
+    expect(source).toContain("<AnalyzeSubmitForm");
+    expect(source).not.toContain("ArtifactIntakePanel");
+    expect(source).not.toContain("setMode");
+    expect(source).not.toContain("initialSourceKind");
   });
 });
 
@@ -784,22 +929,25 @@ describe("pending-candidate helper shape (source guard)", () => {
   });
 });
 
-describe("CandidateConfirmCallout shape (source guard)", () => {
+describe("CandidateConfirmDialog shape (source guard)", () => {
+  const DIALOG_PATH =
+    "src/app/(private)/app/read/CandidateConfirmDialog.tsx";
   const CALLOUT_PATH =
     "src/app/(private)/app/reader-record/[recordId]/CandidateConfirmCallout.tsx";
 
   it("wires matching pending candidate → 409 candidate_conflict → 其它 BFF error → success refresh", () => {
-    const source = readFileSync(resolve(process.cwd(), CALLOUT_PATH), "utf-8");
-    // success path: clearPendingCandidate + window.location.reload
+    const source = readFileSync(resolve(process.cwd(), DIALOG_PATH), "utf-8");
+    const fallbackSource = readFileSync(resolve(process.cwd(), CALLOUT_PATH), "utf-8");
+    // success path: clearPendingCandidate + fallback refresh hook.
     expect(source).toContain("clearPendingCandidate");
-    expect(source).toContain("window.location.reload");
+    expect(fallbackSource).toContain("window.location.reload");
     // 409 / candidate_conflict branch
     expect(source).toContain("candidate_conflict");
-    expect(source).toContain("候选文档状态已变化");
+    expect(source).toContain("提取结果需要重新确认");
     // error branch surfaces BFF message verbatim, not raw debug fields
     expect(source).toContain("payload.message");
-    // 确认并开始阅读 / 稍后处理 / 重新提交 are all present
-    expect(source).toContain("确认并开始阅读");
+    // 确认并开始透读 / 稍后处理 / 重新提交 are all present
+    expect(source).toContain("确认并开始透读");
     expect(source).toContain("稍后处理");
     expect(source).toContain("重新提交");
     // debug fields not exposed in the DOM

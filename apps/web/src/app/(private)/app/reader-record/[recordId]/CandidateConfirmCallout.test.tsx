@@ -91,7 +91,7 @@ describe("CandidateConfirmCallout (real DOM behavior)", () => {
   it("does NOT render when there is no matching pending candidate", async () => {
     render(<CandidateConfirmCallout recordId="rec_other" />);
     await waitFor(() => {
-      expect(screen.queryByTestId("candidate-confirm-callout")).toBeNull();
+      expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();
     });
   });
 
@@ -102,7 +102,7 @@ describe("CandidateConfirmCallout (real DOM behavior)", () => {
     });
     render(<CandidateConfirmCallout recordId="rec_b" />);
     await waitFor(() => {
-      expect(screen.queryByTestId("candidate-confirm-callout")).toBeNull();
+      expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();
     });
   });
 
@@ -116,7 +116,7 @@ describe("CandidateConfirmCallout (real DOM behavior)", () => {
     render(<CandidateConfirmCallout recordId="rec_match" />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("candidate-confirm-callout")).toBeTruthy();
+      expect(screen.getByTestId("candidate-confirm-dialog")).toBeTruthy();
     });
     expect(screen.getByText(/thesis\.pdf/)).toBeTruthy();
     expect(
@@ -125,7 +125,7 @@ describe("CandidateConfirmCallout (real DOM behavior)", () => {
     expect(screen.getByTestId("candidate-confirm-button")).toBeTruthy();
   });
 
-  it("点击 确认并开始阅读 POSTs the confirm route, clears localStorage, and triggers page reload on success", async () => {
+  it("点击 确认并开始透读 POSTs the confirm route, clears localStorage, and triggers page reload on success", async () => {
     seedPendingCandidate({
       readingRecordId: "rec_ok",
       candidateDocumentId: "cand_ok",
@@ -182,12 +182,12 @@ describe("CandidateConfirmCallout (real DOM behavior)", () => {
     fireEvent.click(screen.getByTestId("candidate-defer-button"));
 
     await waitFor(() => {
-      expect(screen.queryByTestId("candidate-confirm-callout")).toBeNull();
+      expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();
     });
     expect(window.localStorage.getItem("claread:web:pending-candidate")).not.toBeNull();
   });
 
-  it("409 candidate_conflict: shows 候选文档状态已变化 copy with 刷新页面 / 重试确认 / 重新提交 buttons", async () => {
+  it("409 candidate_conflict: shows changed-state copy with 刷新页面 / 重试确认 / 重新提交 buttons", async () => {
     seedPendingCandidate({
       readingRecordId: "rec_conflict",
       candidateDocumentId: "cand_conflict",
@@ -219,7 +219,7 @@ describe("CandidateConfirmCallout (real DOM behavior)", () => {
     fireEvent.click(screen.getByTestId("candidate-confirm-button"));
 
     await waitFor(() => {
-      expect(screen.getByText(/候选文档状态已变化/)).toBeTruthy();
+      expect(screen.getByText(/提取结果需要重新确认/)).toBeTruthy();
     });
     expect(screen.getByRole("button", { name: "刷新页面" })).toBeTruthy();
     expect(screen.getByTestId("candidate-retry-confirm-button")).toBeTruthy();

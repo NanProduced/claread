@@ -1,14 +1,16 @@
 "use client";
 
-import { ArrowRight, BookOpen, Check, ChevronDown, ClipboardPaste, FileUp, Link2, X, FileText, Target } from "lucide-react";
+import { ArrowRight, BookOpen, Check, ChevronDown, FileCheck2, FileText, FileUp, ImageIcon, RefreshCw, Target, X } from "lucide-react";
 import Image from "next/image";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import { Button } from "@/components/primitives/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/primitives/tooltip";
 import { cn } from "@/lib/cn";
+import type {
+  ReaderArtifactPipelineStatusSafeDto,
+} from "@/lib/reader-orchestration/status-mapper";
 import {
   READER_RECORD_READING_GOAL_OPTIONS,
   READER_RECORD_READING_VARIANT_OPTIONS,
@@ -20,19 +22,20 @@ import {
 } from "@/lib/reading-defaults";
 import { appReadingRecordRoute } from "@/lib/routes";
 import type { ReaderUnifiedInputSubmitResponseDto } from "@/types/api/reader-plate";
-import type { ReaderPlateBffError } from "@/services/bff/reader-plate";
-import {
-  readRecentReadingRecord,
-  recentReadingRecordTitleFromText,
-  saveRecentReadingRecord,
-  type RecentReadingRecord,
-  type RecentReadingRecordInput,
-} from "./recent-reading-record";
+import type {
+  ReaderArtifactPipelineStatusResult,
+  ReaderPlateBffError,
+  ReaderSourceArtifactSubmitInputResult,
+  ReaderSourceArtifactUploadCompleteResult,
+  ReaderSourceArtifactUploadInitResult,
+} from "@/services/bff/reader-plate";
 import {
   clearPendingCandidate,
   readPendingCandidate,
   savePendingCandidate,
+  type PendingCandidate,
 } from "./pending-candidate";
+import { CandidateConfirmDialog } from "./CandidateConfirmDialog";
 import {
   readPageSubmitEndpoint,
   readPageSubmitRequestBody,
@@ -41,14 +44,13 @@ import {
 type SubmitState =
   | { kind: "idle" }
   | { kind: "pending"; message: string }
+  | { kind: "artifact-uploading"; filename: string; message: string }
+  | { kind: "artifact-polling"; filename: string; message: string }
   | { kind: "success"; message: string }
   | { kind: "error"; message: string }
   | {
       kind: "candidate";
-      readingRecordId: string;
-      candidateDocumentId: string;
-      originalInputId: string | null;
-      inputSnapshot: string | null;
+      candidate: PendingCandidate;
     }
   | {
       kind: "rejected";
@@ -60,6 +62,27 @@ type UnifiedSubmitPayload =
   | ({ ok: true } & ReaderUnifiedInputSubmitResponseDto)
   | ReaderPlateBffError;
 
+type ArtifactSourceKind = "file" | "image";
+type SourceFileKind = "pdf" | "markdown" | "text" | "image";
+
+interface SourceFileDescriptor {
+  kind: SourceFileKind;
+  sourceKind: ArtifactSourceKind;
+  label: string;
+  badge: string;
+  previewStatus: string;
+}
+
+interface AttachedSource {
+  file: File;
+  sourceKind: ArtifactSourceKind;
+  descriptor: SourceFileDescriptor;
+  previewUrl: string | null;
+}
+
+type PipelineOutcome = ReaderArtifactPipelineStatusSafeDto["outcome"];
+type PipelineNextAction = ReaderArtifactPipelineStatusSafeDto["next_action"];
+
 const LOADING_MESSAGES = [
   "正在梳理文章结构",
   "正在识别关键表达",
@@ -67,12 +90,19 @@ const LOADING_MESSAGES = [
   "正在生成精读批注",
   "正在准备阅读视图",
 ];
-const intakeMethods = [
-  { key: "paste", label: "贴入文本", icon: ClipboardPaste, available: true },
-  { key: "link", label: "链接导入", icon: Link2, available: false },
-  { key: "upload", label: "上传文档", icon: FileUp, available: false },
-  { key: "sample", label: "示例文章", icon: BookOpen, available: false },
-] as const;
+
+const SOURCE_ACCEPT = ".pdf,.txt,.md,.markdown,image/png,image/jpeg,image/jpg,image/webp,image/gif";
+const SUPPORTED_SOURCE_FORMATS = "PDF / Markdown / TXT / PNG / JPG / WEBP / GIF";
+const MAX_ARTIFACT_BYTES = 25 * 1024 * 1024;
+const POLL_INTERVAL_MS = 3000;
+const SUPPORTED_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
+const SUPPORTED_IMAGE_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+  "image/gif",
+]);
 
 const SHORT_DESC: Record<string, string> = {
   daily_reading: "自然读懂",
@@ -85,6 +115,173 @@ const GOAL_ICONS: Record<string, React.ElementType> = {
   academic: FileText,
   exam: Target,
 };
+
+function isBffError(value: ReaderArtifactPipelineStatusResult): value is ReaderPlateBffError {
+  return value.ok === false;
+}
+
+function describeNextAction(action: PipelineNextAction, outcome: PipelineOutcome): string {
+  if (action === "wait_for_worker" || action === "retry_later") {
+    return "继续等待，文档还在后台处理中";
+  }
+  if (action === "open_reader" || outcome === "stable_document_ready") {
+    return "文档已就绪，正在打开 Reader";
+  }
+  if (action === "confirm_candidate_document" || outcome === "candidate_document_required") {
+    return "已提取出候选正文，需要你确认后再开始阅读";
+  }
+  if (action === "revise_input" || outcome === "input_rejected_or_action_required") {
+    return "暂时没能识别这份来源，可以换一个文件或改用粘贴文本";
+  }
+  if (action === "show_error") {
+    return "处理过程中出现错误，可以重试或重新选择文件";
+  }
+  if (action === "submit_input") {
+    return "正在提交文件";
+  }
+  if (action === "complete_upload") {
+    return "正在确认上传";
+  }
+  return "处理中";
+}
+
+function isTerminalOutcome(outcome: PipelineOutcome): boolean {
+  return (
+    outcome === "stable_document_ready" ||
+    outcome === "candidate_document_required" ||
+    outcome === "input_rejected_or_action_required" ||
+    outcome === "extraction_failed" ||
+    outcome === "materialization_failed"
+  );
+}
+
+function isTerminalAction(action: PipelineNextAction): boolean {
+  return (
+    action === "open_reader" ||
+    action === "confirm_candidate_document" ||
+    action === "revise_input" ||
+    action === "show_error"
+  );
+}
+
+function summarizeOutcome(outcome: PipelineOutcome): string {
+  switch (outcome) {
+    case "extraction_failed":
+      return "文本提取失败";
+    case "materialization_failed":
+      return "排版失败";
+    default:
+      return "处理失败";
+  }
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024 * 1024) {
+    return `${Math.max(1, Math.round(bytes / 1024)).toLocaleString("en-US")} KB`;
+  }
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function sourceFileExtension(filename: string): string {
+  const dotIndex = filename.lastIndexOf(".");
+  if (dotIndex < 0 || dotIndex === filename.length - 1) {
+    return "";
+  }
+  return filename.slice(dotIndex + 1).trim().toLowerCase();
+}
+
+function normalizedMimeType(file: File): string {
+  return (file.type || "").split(";")[0]?.trim().toLowerCase() ?? "";
+}
+
+function imageBadge(extension: string, mimeType: string): string {
+  if (extension === "jpeg") {
+    return "JPG";
+  }
+  if (extension) {
+    return extension.toUpperCase();
+  }
+  const subtype = mimeType.split("/")[1] ?? "";
+  return subtype === "jpeg" ? "JPG" : subtype.toUpperCase() || "IMG";
+}
+
+function describeSourceFile(file: File): SourceFileDescriptor | null {
+  const extension = sourceFileExtension(file.name);
+  const mimeType = normalizedMimeType(file);
+
+  if (extension === "pdf" || mimeType === "application/pdf") {
+    return {
+      kind: "pdf",
+      sourceKind: "file",
+      label: "PDF 文档",
+      badge: "PDF",
+      previewStatus: "PDF 待提取",
+    };
+  }
+
+  if (
+    extension === "md" ||
+    extension === "markdown" ||
+    mimeType === "text/markdown" ||
+    mimeType === "text/x-markdown"
+  ) {
+    return {
+      kind: "markdown",
+      sourceKind: "file",
+      label: "Markdown 文档",
+      badge: "MD",
+      previewStatus: "Markdown 待提取",
+    };
+  }
+
+  if (extension === "txt" || mimeType === "text/plain") {
+    return {
+      kind: "text",
+      sourceKind: "file",
+      label: "TXT 文本",
+      badge: "TXT",
+      previewStatus: "TXT 待提取",
+    };
+  }
+
+  if (SUPPORTED_IMAGE_EXTENSIONS.has(extension) || SUPPORTED_IMAGE_MIME_TYPES.has(mimeType)) {
+    return {
+      kind: "image",
+      sourceKind: "image",
+      label: "图片 OCR",
+      badge: imageBadge(extension, mimeType),
+      previewStatus: "图片待提取",
+    };
+  }
+
+  return null;
+}
+
+function validateSourceFile(file: File):
+  | { ok: true; descriptor: SourceFileDescriptor }
+  | { ok: false; message: string } {
+  const descriptor = describeSourceFile(file);
+  if (!descriptor) {
+    const filename = file.name ? `“${file.name}”` : "这个文件";
+    return {
+      ok: false,
+      message: `暂不支持 ${filename}。请上传 ${SUPPORTED_SOURCE_FORMATS}。`,
+    };
+  }
+
+  if (file.size > MAX_ARTIFACT_BYTES) {
+    return {
+      ok: false,
+      message: `文件太大（${(file.size / 1024 / 1024).toFixed(1)} MB），请选择 25 MB 以内的文件。`,
+    };
+  }
+
+  return { ok: true, descriptor };
+}
+
+function hasFileTransfer(dataTransfer: DataTransfer): boolean {
+  return Array.from(dataTransfer.types ?? []).includes("Files");
+}
 
 function GoalCard({
   goal,
@@ -235,7 +432,7 @@ function AnalysisLoadingArtwork() {
           top: 46.2%;
           transform: translate(-50%, -50%) scale(0.92);
           border-radius: 999px;
-          border: 1px solid rgba(31, 94, 255, 0.16);
+          border: 1px solid color-mix(in srgb, var(--lens-blue) 16%, transparent);
           opacity: 0;
           animation: loading-stage-pulse 3.1s cubic-bezier(0.22, 1, 0.36, 1) infinite;
         }
@@ -295,7 +492,7 @@ function AnalysisLoadingArtwork() {
           top: 50%;
           transform: translate(-50%, -50%);
           border-radius: 999px;
-          background: rgba(245, 186, 63, 0.92);
+          background: color-mix(in srgb, var(--reader-paper) 72%, var(--lens-blue) 28%);
         }
 
         .loading-stage__glint::before {
@@ -530,72 +727,570 @@ export function AnalysisLoadingStatusBar({
   );
 }
 
-function RecentReadingRecordResume({
-  record,
-  onContinue,
+function SourceFilePreview({
+  source,
+  imagePreviewUrl,
+  hasTextDraft,
+  onReplace,
+  onRemove,
 }: {
-  record: RecentReadingRecord;
-  onContinue: () => void;
+  source: AttachedSource;
+  imagePreviewUrl: string | null;
+  hasTextDraft: boolean;
+  onReplace: () => void;
+  onRemove: () => void;
 }) {
+  const { descriptor } = source;
+  const isImage = descriptor.kind === "image";
+
   return (
-    <div className="mb-3 flex min-h-14 items-center justify-between gap-4 rounded-[8px] border border-hairline/65 bg-surface/45 px-4 py-3 font-sans">
-      <div className="min-w-0">
-        <p className="text-[0.7rem] font-semibold tracking-[0.12em] text-muted">
-          最近阅读记录
-        </p>
-        <p className="mt-1 truncate text-[0.86rem] font-semibold text-ink">
-          {record.title}
-        </p>
+    <div
+      data-testid="source-file-preview"
+      className="relative z-10 flex min-h-0 flex-1 items-center px-8 py-8 sm:px-14 sm:py-10 xl:px-20 xl:py-12"
+    >
+      <div className="mx-auto grid w-full max-w-[60rem] gap-7 lg:grid-cols-[minmax(0,1fr)_14rem] lg:items-center lg:gap-10">
+        <div className="min-w-0 font-sans">
+          <div
+            data-testid="attached-source"
+            className="max-w-[46rem] border-y border-hairline/70 py-5"
+          >
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-ink/10 bg-reader-paper/70 text-ink">
+                {isImage ? (
+                  <ImageIcon aria-hidden className="h-4.5 w-4.5" />
+                ) : (
+                  <FileText aria-hidden className="h-4.5 w-4.5" />
+                )}
+              </span>
+              <div className="min-w-0">
+                <p
+                  className="max-w-[44rem] break-words text-[0.96rem] font-semibold leading-6 text-ink"
+                  title={source.file.name}
+                >
+                  {source.file.name}
+                </p>
+                <p className="mt-1 text-[0.76rem] font-medium text-muted">
+                  {descriptor.label} · {formatFileSize(source.file.size)} · 点击开始透读后提取正文
+                </p>
+                {hasTextDraft ? (
+                  <p className="mt-2 text-[0.74rem] font-medium text-subtle">
+                    移除文件后可继续编辑原文本。
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-2 font-sans">
+            <Button type="button" variant="secondary" size="sm" onClick={onReplace}>
+              替换文件
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={onRemove}>
+              移除文件
+            </Button>
+          </div>
+        </div>
+
+        <div className="relative min-h-[12rem] overflow-hidden rounded-[10px] border border-hairline/70 bg-[rgba(255,255,255,0.32)]">
+          {isImage && imagePreviewUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element -- object URLs from local files are not suitable for next/image.
+            <img
+              src={imagePreviewUrl}
+              alt=""
+              className="absolute inset-0 h-full w-full object-contain p-4"
+              data-testid="source-image-preview"
+            />
+          ) : (
+            <div className="flex h-full min-h-[12rem] flex-col justify-between p-5">
+              <div className="flex items-center justify-between gap-4 font-sans">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] border border-hairline/70 bg-reader-paper/76 text-ink">
+                  <FileCheck2 aria-hidden className="h-5 w-5" />
+                </span>
+                <span className="rounded-full border border-hairline/70 bg-surface/58 px-2.5 py-1 text-[0.68rem] font-bold tracking-[0.12em] text-muted">
+                  {descriptor.badge}
+                </span>
+              </div>
+              <div className="space-y-3" aria-hidden="true">
+                {[0.82, 0.66, 0.74, 0.52, 0.62].map((width, index) => (
+                  <span
+                    key={index}
+                    className="block h-px rounded-full bg-ink/18"
+                    style={{ width: `${width * 100}%` }}
+                  />
+                ))}
+              </div>
+              <p className="font-sans text-[0.76rem] font-semibold text-muted">
+                {descriptor.previewStatus}
+              </p>
+            </div>
+          )}
+        </div>
       </div>
-      <button
-        type="button"
-        className="focus-ring inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-[8px] border border-ink/10 bg-reader-paper/58 px-3 text-[0.78rem] font-semibold text-ink transition-colors hover:border-lens-blue/32 hover:text-lens-blue"
-        onClick={onContinue}
-      >
-        <span>继续阅读</span>
-        <ArrowRight aria-hidden className="h-3.5 w-3.5" />
-      </button>
     </div>
   );
 }
 
 type AnalyzeSubmitFormProps = ReadingDefaultState;
 
-export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: initialVariant }: AnalyzeSubmitFormProps) {
+export function AnalyzeSubmitForm({
+  readingGoal: initialGoal,
+  readingVariant: initialVariant,
+}: AnalyzeSubmitFormProps) {
   const router = useRouter();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const lastFileRef = useRef<File | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const dragDepthRef = useRef(0);
+  const attachedSourceRef = useRef<AttachedSource | null>(null);
   const [text, setText] = useState("");
+  const [attachedSource, setAttachedSource] = useState<AttachedSource | null>(null);
+  const [isDragActive, setDragActive] = useState(false);
   const defaults = normalizeReaderRecordReadingDefaults({ readingGoal: initialGoal, readingVariant: initialVariant });
   const [readingGoal, setReadingGoal] = useState<ReaderRecordReadingGoal>(defaults.readingGoal);
   const [readingVariant, setReadingVariant] = useState<ReaderRecordReadingVariant>(defaults.readingVariant);
   const [state, setState] = useState<SubmitState>({ kind: "idle" });
-  const [recentReadingRecord, setRecentReadingRecord] =
-    useState<RecentReadingRecord | null>(null);
-  const isWaiting = state.kind === "pending";
+  const [isCandidateDialogOpen, setCandidateDialogOpen] = useState(false);
+  const isWaiting =
+    state.kind === "pending" ||
+    state.kind === "artifact-uploading" ||
+    state.kind === "artifact-polling";
   const isSubmitting: boolean = isWaiting;
+  const isReadyToSubmit = Boolean(attachedSource || text.trim().length > 0);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setRecentReadingRecord(readRecentReadingRecord());
-
       const pending = readPendingCandidate();
       if (pending) {
         setText(pending.inputSnapshot ?? "");
         setState({
           kind: "candidate",
-          readingRecordId: pending.readingRecordId,
-          candidateDocumentId: pending.candidateDocumentId,
-          originalInputId: pending.originalInputId ?? null,
-          inputSnapshot: pending.inputSnapshot ?? null,
+          candidate: pending,
         });
+        setCandidateDialogOpen(true);
       }
     }, 0);
 
     return () => window.clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    return () => {
+      stopPolling();
+      revokePreviewUrl(attachedSourceRef.current);
+    };
+  }, []);
+
+  function stopPolling() {
+    if (pollTimerRef.current !== null) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }
+
+  function revokePreviewUrl(source: AttachedSource | null) {
+    if (source?.previewUrl) {
+      URL.revokeObjectURL(source.previewUrl);
+    }
+  }
+
+  function setCurrentAttachedSource(source: AttachedSource | null) {
+    revokePreviewUrl(attachedSourceRef.current);
+    attachedSourceRef.current = source;
+    setAttachedSource(source);
+  }
+
+  function makeAttachedSource(file: File, descriptor: SourceFileDescriptor): AttachedSource {
+    const sourceKind = descriptor.sourceKind;
+    const previewUrl =
+      sourceKind === "image" && typeof URL.createObjectURL === "function"
+        ? URL.createObjectURL(file)
+        : null;
+    return {
+      file,
+      sourceKind,
+      descriptor,
+      previewUrl,
+    };
+  }
+
+  function resetFileInput() {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }
+
+  function clearAttachedSource() {
+    stopPolling();
+    clearPendingCandidate();
+    lastFileRef.current = null;
+    setCurrentAttachedSource(null);
+    setCandidateDialogOpen(false);
+    setState({ kind: "idle" });
+    resetFileInput();
+    textareaRef.current?.focus();
+  }
+
+  function selectSourceFile(file: File) {
+    stopPolling();
+    clearPendingCandidate();
+    setCandidateDialogOpen(false);
+    setDragActive(false);
+    dragDepthRef.current = 0;
+
+    const validation = validateSourceFile(file);
+    if (!validation.ok) {
+      lastFileRef.current = null;
+      setCurrentAttachedSource(null);
+      setState({
+        kind: "error",
+        message: validation.message,
+      });
+      return;
+    }
+
+    lastFileRef.current = file;
+    setCurrentAttachedSource(makeAttachedSource(file, validation.descriptor));
+    setState({ kind: "idle" });
+  }
+
+  function openFilePicker() {
+    if (isWaiting) {
+      return;
+    }
+    resetFileInput();
+    fileInputRef.current?.click();
+  }
+
+  function handleFileInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    selectSourceFile(file);
+  }
+
+  function handleDragEnter(event: DragEvent<HTMLDivElement>) {
+    if (!hasFileTransfer(event.dataTransfer) || isWaiting) {
+      return;
+    }
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setDragActive(true);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLDivElement>) {
+    if (!hasFileTransfer(event.dataTransfer) || isWaiting) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLDivElement>) {
+    if (!hasFileTransfer(event.dataTransfer)) {
+      return;
+    }
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
+      setDragActive(false);
+    }
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    if (!hasFileTransfer(event.dataTransfer) || isWaiting) {
+      return;
+    }
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setDragActive(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file) {
+      selectSourceFile(file);
+    }
+  }
+
+  function retryLastFile() {
+    const file = lastFileRef.current;
+    if (!file) {
+      openFilePicker();
+      return;
+    }
+    void startArtifactFlow(file);
+  }
+
+  async function postInitUpload(body: unknown): Promise<ReaderSourceArtifactUploadInitResult> {
+    const response = await fetch("/api/web/reader-plate/source-artifacts/init-upload", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return (await response.json()) as ReaderSourceArtifactUploadInitResult;
+  }
+
+  async function postCompleteUpload(
+    artifactId: string,
+    body: unknown,
+  ): Promise<ReaderSourceArtifactUploadCompleteResult> {
+    const response = await fetch(
+      `/api/web/reader-plate/source-artifacts/${encodeURIComponent(artifactId)}/complete-upload`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+    return (await response.json()) as ReaderSourceArtifactUploadCompleteResult;
+  }
+
+  async function postSubmitInput(
+    artifactId: string,
+    body: unknown,
+  ): Promise<ReaderSourceArtifactSubmitInputResult> {
+    const response = await fetch(
+      `/api/web/reader-plate/source-artifacts/${encodeURIComponent(artifactId)}/submit-input`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+    return (await response.json()) as ReaderSourceArtifactSubmitInputResult;
+  }
+
+  async function fetchPipelineStatus(artifactId: string): Promise<ReaderArtifactPipelineStatusResult> {
+    const response = await fetch(
+      `/api/web/reader-plate/source-artifacts/${encodeURIComponent(artifactId)}/pipeline-status`,
+    );
+    return (await response.json()) as ReaderArtifactPipelineStatusResult;
+  }
+
+  async function pollUntilTerminal(artifactId: string, currentFilename: string) {
+    const tick = async () => {
+      const result = await fetchPipelineStatus(artifactId);
+      if (isBffError(result)) {
+        stopPolling();
+        setState({
+          kind: "error",
+          message: result.message || "查询处理进度失败，请稍后重试。",
+        });
+        return;
+      }
+
+      const status = result;
+      setState({
+        kind: "artifact-polling",
+        filename: currentFilename,
+        message: describeNextAction(status.next_action, status.outcome),
+      });
+      if (isTerminalOutcome(status.outcome) || isTerminalAction(status.next_action)) {
+        stopPolling();
+        applyArtifactOutcome(status, currentFilename);
+      }
+    };
+
+    void tick();
+    pollTimerRef.current = setInterval(() => {
+      void tick();
+    }, POLL_INTERVAL_MS);
+  }
+
+  function applyArtifactOutcome(status: ReaderArtifactPipelineStatusSafeDto, currentFilename: string) {
+    const { outcome, next_action: nextAction, record } = status;
+    if (outcome === "stable_document_ready" || nextAction === "open_reader") {
+      const readingRecordId = record?.reading_record_id;
+      if (!readingRecordId) {
+        setState({
+          kind: "error",
+          message: "文档已就绪，但缺少阅读记录信息，请重新提交。",
+        });
+        return;
+      }
+      clearPendingCandidate();
+      setState({ kind: "success", message: "阅读记录已创建，正在打开 Reader。" });
+      router.push(appReadingRecordRoute(readingRecordId) as Route);
+      return;
+    }
+
+    if (outcome === "candidate_document_required" || nextAction === "confirm_candidate_document") {
+      const readingRecordId = record?.reading_record_id;
+      if (!readingRecordId) {
+        setState({
+          kind: "error",
+          message: "已生成候选文档，但缺少阅读记录信息。",
+        });
+        return;
+      }
+      const candidateDocumentId = status.candidate_document?.candidate_document_id;
+      if (!candidateDocumentId) {
+        setState({
+          kind: "error",
+          message: "已生成候选文档，但暂时无法打开确认窗口，请稍后重试。",
+        });
+        return;
+      }
+      const saved = savePendingCandidate({
+        readingRecordId,
+        candidateDocumentId,
+        originalInputId: null,
+        inputSnapshot: null,
+        filename: currentFilename,
+        canonicalTextPreview: status.candidate_document?.canonical_text_preview ?? null,
+      });
+      if (saved) {
+        setState({
+          kind: "candidate",
+          candidate: saved,
+        });
+        setCandidateDialogOpen(true);
+      } else {
+        setState({
+          kind: "error",
+          message: "已生成候选文档，但本地暂存失败，请稍后再试。",
+        });
+      }
+      return;
+    }
+
+    if (outcome === "input_rejected_or_action_required" || nextAction === "revise_input") {
+      setState({
+        kind: "error",
+        message: "系统没能识别这份文件，可以换一份文件或改用粘贴文本。",
+      });
+      return;
+    }
+
+    if (nextAction === "show_error" || outcome === "extraction_failed" || outcome === "materialization_failed") {
+      setState({
+        kind: "error",
+        message: `处理失败（${summarizeOutcome(outcome)}），可以重试或重新选择文件。`,
+      });
+    }
+  }
+
+  async function startArtifactFlow(file: File) {
+    const validation = validateSourceFile(file);
+    if (!validation.ok) {
+      setState({
+        kind: "error",
+        message: validation.message,
+      });
+      return;
+    }
+
+    lastFileRef.current = file;
+    setCurrentAttachedSource(makeAttachedSource(file, validation.descriptor));
+    setState({
+      kind: "artifact-uploading",
+      filename: file.name,
+      message: "正在准备上传...",
+    });
+
+    try {
+      const initResult = await postInitUpload({
+        artifactKind: "original_upload",
+        sourceFilename: file.name,
+        contentType: file.type || "application/octet-stream",
+        byteSize: file.size,
+      });
+      if (!initResult.ok) {
+        setState({
+          kind: "error",
+          message: initResult.message || "无法开始上传，请稍后重试。",
+        });
+        return;
+      }
+
+      const artifactId = initResult.artifact_id;
+      const presignedUrl = initResult.presigned_url;
+      const presignedMethod = initResult.presigned_method ?? "PUT";
+      const presignedHeaders = initResult.headers ?? {};
+      if (!artifactId || !presignedUrl) {
+        setState({
+          kind: "error",
+          message: "上传服务暂时不可用，请稍后重试或重新选择文件。",
+        });
+        return;
+      }
+
+      setState({
+        kind: "artifact-uploading",
+        filename: file.name,
+        message: "正在上传文件...",
+      });
+
+      let putOk = false;
+      try {
+        const putResponse = await fetch(presignedUrl, {
+          method: presignedMethod,
+          headers: presignedHeaders,
+          body: file,
+        });
+        putOk = putResponse.ok;
+      } catch {
+        putOk = false;
+      }
+      if (!putOk) {
+        setState({
+          kind: "error",
+          message: "文件上传失败，请检查网络后重试。",
+        });
+        return;
+      }
+
+      const completeResult = await postCompleteUpload(artifactId, {
+        contentType: file.type || "application/octet-stream",
+        byteSize: file.size,
+      });
+      if (!completeResult.ok) {
+        setState({
+          kind: "error",
+          message: completeResult.message || "确认上传失败，请稍后重试。",
+        });
+        return;
+      }
+
+      setState({
+        kind: "artifact-uploading",
+        filename: file.name,
+        message: "正在提交文件...",
+      });
+
+      const submitResult = await postSubmitInput(artifactId, {
+        title: file.name,
+        language: "en",
+        readingGoal,
+        readingVariant,
+      });
+      if (!submitResult.ok) {
+        setState({
+          kind: "error",
+          message: submitResult.message || "提交文件失败，请稍后重试。",
+        });
+        return;
+      }
+
+      setState({
+        kind: "artifact-polling",
+        filename: file.name,
+        message: "已提交，正在等待后台处理...",
+      });
+      await pollUntilTerminal(artifactId, file.name);
+    } catch (error: unknown) {
+      setState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "文件处理失败，请稍后重试。",
+      });
+    }
+  }
+
   async function handleSubmit() {
-    if (state.kind === "pending") {
+    if (isWaiting) {
+      return;
+    }
+
+    if (attachedSource) {
+      await startArtifactFlow(attachedSource.file);
       return;
     }
 
@@ -632,19 +1327,6 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
       switch (payload.outcome) {
         case "stable_document_ready": {
           const readerUrl = appReadingRecordRoute(payload.reading_record_id);
-          const title =
-            payload.title?.trim() || recentReadingRecordTitleFromText(trimmed);
-          const recordInput: RecentReadingRecordInput = {
-            readingRecordId: payload.reading_record_id,
-            readerUrl,
-            title,
-          };
-          if (saveRecentReadingRecord(recordInput)) {
-            setRecentReadingRecord({
-              ...recordInput,
-              createdAt: new Date().toISOString(),
-            });
-          }
           clearPendingCandidate();
           setState({
             kind: "success",
@@ -663,11 +1345,9 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
           if (pending) {
             setState({
               kind: "candidate",
-              readingRecordId: pending.readingRecordId,
-              candidateDocumentId: pending.candidateDocumentId,
-              originalInputId: pending.originalInputId ?? null,
-              inputSnapshot: pending.inputSnapshot ?? null,
+              candidate: pending,
             });
+            setCandidateDialogOpen(true);
           } else {
             setState({
               kind: "error",
@@ -697,45 +1377,95 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
   const selectedVariantLabel = READER_RECORD_READING_VARIANT_OPTIONS[readingGoal].find(
     (option) => option.value === readingVariant,
   )?.label;
-  const loadingStageTitle = "正在透读这篇文章";
+  const loadingStageTitle =
+    state.kind === "artifact-uploading" || state.kind === "artifact-polling"
+      ? "正在提取这份来源"
+      : "正在透读这篇文章";
+  const waitingMessagePrefix =
+    state.kind === "artifact-uploading" || state.kind === "artifact-polling"
+      ? "正在提取"
+      : "正在透读";
 
   return (
     <div className="flex min-h-0 flex-1 w-full flex-col overflow-y-auto">
-      {recentReadingRecord && !isWaiting ? (
-        <RecentReadingRecordResume
-          record={recentReadingRecord}
-          onContinue={() => {
-            router.push(recentReadingRecord.readerUrl as Route);
-          }}
-        />
-      ) : null}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={SOURCE_ACCEPT}
+        onChange={handleFileInputChange}
+        className="sr-only"
+        data-testid="source-file-input"
+        tabIndex={-1}
+      />
       <div className="flex min-h-0 flex-1 flex-col">
         <label htmlFor="analysis-text" className="sr-only">
           在此贴入或导入英文文章
         </label>
 
-        <div className="group/manuscript relative flex min-h-[22rem] flex-1 w-full shrink-0 flex-col overflow-hidden rounded-[10px] bg-[linear-gradient(180deg,rgba(251,247,238,0.62),rgba(251,247,238,0.18)_48%,rgba(251,247,238,0)_100%)] ring-1 ring-hairline/35 transition-[box-shadow,background-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus-within:shadow-[0_18px_44px_rgba(23,21,17,0.055)] lg:min-h-[31rem] lg:shrink 2xl:min-h-[34rem]">
+        <div
+          data-testid="read-source-input"
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className={cn(
+            "group/manuscript relative flex min-h-[22rem] flex-1 w-full shrink-0 flex-col overflow-hidden rounded-[10px] bg-[linear-gradient(180deg,rgba(251,247,238,0.62),rgba(251,247,238,0.18)_48%,rgba(251,247,238,0)_100%)] ring-1 ring-hairline/35 transition-[box-shadow,background-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus-within:shadow-[0_18px_44px_rgba(23,21,17,0.055)] lg:min-h-[31rem] lg:shrink 2xl:min-h-[34rem]",
+            isDragActive && "bg-[linear-gradient(180deg,rgba(235,241,255,0.52),rgba(251,247,238,0.22)_52%,rgba(251,247,238,0)_100%)] ring-lens-blue/34 shadow-[0_22px_54px_rgba(31,94,255,0.08)]",
+          )}
+        >
           <div
             aria-hidden="true"
-            className="absolute inset-0 z-0 cursor-text"
-            onClick={() => textareaRef.current?.focus()}
+            className={cn("absolute inset-0 z-0", !attachedSource && "cursor-text")}
+            onClick={() => {
+              if (!attachedSource) {
+                textareaRef.current?.focus();
+              }
+            }}
           />
-          <div className="pointer-events-none absolute left-4 top-5 h-[calc(100%-2.5rem)] w-px bg-hairline/75 transition-colors duration-300 group-focus-within/manuscript:bg-lens-blue/28 xl:left-5" />
-          <div className="pointer-events-none absolute left-12 top-9 h-[3.4rem] w-[2px] bg-ink/22 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-focus-within/manuscript:h-[4.4rem] group-focus-within/manuscript:bg-lens-blue/58 xl:left-16" />
+          {!attachedSource ? (
+            <>
+              <div className="pointer-events-none absolute left-4 top-5 h-[calc(100%-2.5rem)] w-px bg-hairline/75 transition-colors duration-300 group-focus-within/manuscript:bg-lens-blue/28 xl:left-5" />
+              <div className="pointer-events-none absolute left-12 top-9 h-[3.4rem] w-[2px] bg-ink/22 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-focus-within/manuscript:h-[4.4rem] group-focus-within/manuscript:bg-lens-blue/58 xl:left-16" />
+            </>
+          ) : null}
 
-          {!isWaiting && !text.trim() ? (
+          {!isWaiting && !attachedSource && !text.trim() ? (
             <div className="pointer-events-none absolute left-16 top-9 z-10 max-w-[26rem] xl:left-24 xl:top-11">
               <p className="font-reading text-[1.16rem] leading-tight text-ink/78 xl:text-[1.28rem]">
                 Paste an English article here
               </p>
               <p className="mt-2 max-w-[21rem] font-sans text-[0.78rem] leading-6 text-muted">
-                粘贴英文文章，Claread 会带你进入透读。
+                粘贴英文文章，或拖入 PDF / Markdown / TXT / 图片。
               </p>
+            </div>
+          ) : null}
+
+          {isDragActive && !isWaiting ? (
+            <div className="pointer-events-none absolute inset-3 z-30 flex items-center justify-center rounded-[12px] border border-dashed border-lens-blue/42 bg-[rgba(246,249,255,0.78)] backdrop-blur-[2px]">
+              <div className="flex flex-col items-center gap-3 text-center font-sans">
+                <span className="inline-flex h-11 w-11 items-center justify-center rounded-[12px] border border-lens-blue/24 bg-white/72 text-lens-blue shadow-sm">
+                  <FileUp aria-hidden className="h-5 w-5" />
+                </span>
+                <div>
+                  <p className="text-[0.92rem] font-semibold text-ink">松开以上传文件</p>
+                  <p className="mt-1 text-[0.76rem] font-medium text-muted">
+                    支持 PDF / Markdown / TXT / 图片，单个文件最大 25 MB
+                  </p>
+                </div>
+              </div>
             </div>
           ) : null}
 
           {isWaiting ? (
             <AnalysisLoadingStage title={loadingStageTitle} />
+          ) : attachedSource ? (
+            <SourceFilePreview
+              source={attachedSource}
+              imagePreviewUrl={attachedSource.previewUrl}
+              hasTextDraft={text.trim().length > 0}
+              onReplace={openFilePicker}
+              onRemove={clearAttachedSource}
+            />
           ) : (
             <textarea
               ref={textareaRef}
@@ -753,7 +1483,7 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
             />
           )}
 
-          {!isWaiting && text.length > 0 && (
+          {!isWaiting && !attachedSource && text.length > 0 && (
             <button
               type="button"
               className="absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-full text-subtle transition-colors hover:bg-surface/70 hover:text-ink focus-ring"
@@ -770,58 +1500,31 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
           <div className="relative z-20 mx-5 mb-4 shrink-0 border-t border-hairline/68 px-0 pt-3 sm:mx-10 xl:mx-14">
             {isWaiting ? (
               <AnalysisLoadingStatusBar
-                messagePrefix="正在透读"
+                messagePrefix={waitingMessagePrefix}
               />
             ) : (
               <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-                <TooltipProvider delayDuration={180}>
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 font-sans">
-                    {intakeMethods.map((method) => {
-                      const Icon = method.icon;
-                      const content = (
-                        <button
-                          type="button"
-                          aria-disabled={!method.available}
-                          className={`focus-ring group/source inline-flex min-h-9 items-center gap-2 px-0 text-[0.78rem] font-medium leading-none transition-colors duration-200 ${
-                            method.available
-                              ? "text-ink hover:text-lens-blue"
-                              : "cursor-default text-subtle/62 hover:text-muted"
-                          }`}
-                          onClick={() => {
-                            if (method.available) {
-                              textareaRef.current?.focus();
-                            }
-                          }}
-                        >
-                          <span
-                            className={`inline-flex h-6 w-6 items-center justify-center rounded-[7px] border transition-colors duration-200 ${
-                              method.available
-                                ? "border-ink/12 bg-reader-paper/54 text-ink group-hover/source:border-lens-blue/34 group-hover/source:text-lens-blue"
-                                : "border-transparent bg-transparent text-subtle/62"
-                            }`}
-                          >
-                            <Icon aria-hidden className="h-3.5 w-3.5" />
-                          </span>
-                          <span>{method.label}</span>
-                        </button>
-                      );
-                      const node = method.available ? (
-                        content
-                      ) : (
-                        <Tooltip>
-                          <TooltipTrigger asChild>{content}</TooltipTrigger>
-                          <TooltipContent side="top">即将支持</TooltipContent>
-                        </Tooltip>
-                      );
-
-                      return (
-                        <span key={method.key} className="inline-flex items-center">
-                          {node}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </TooltipProvider>
+                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 font-sans">
+                  {!attachedSource ? (
+                    <button
+                      type="button"
+                      className="focus-ring group/source inline-flex min-h-9 items-center gap-2 px-0 text-[0.78rem] font-medium leading-none text-ink transition-colors duration-200 hover:text-lens-blue"
+                      onClick={openFilePicker}
+                    >
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] border border-ink/12 bg-reader-paper/54 text-ink transition-colors duration-200 group-hover/source:border-lens-blue/34 group-hover/source:text-lens-blue">
+                        <FileUp aria-hidden className="h-3.5 w-3.5" />
+                      </span>
+                      <span>上传文件</span>
+                    </button>
+                  ) : (
+                    <div className="inline-flex min-h-9 items-center gap-2 text-[0.78rem] font-semibold text-ink">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] border border-ink/12 bg-reader-paper/54 text-ink">
+                        <FileCheck2 aria-hidden className="h-3.5 w-3.5" />
+                      </span>
+                      <span>文件来源已就绪</span>
+                    </div>
+                  )}
+                </div>
 
                 <div className="flex flex-col-reverse items-stretch gap-3 sm:flex-row sm:items-center sm:justify-end">
                   <Popover>
@@ -888,7 +1591,7 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
                     </PopoverContent>
                   </Popover>
 
-                  {text.length > 0 ? (
+                  {!attachedSource && text.length > 0 ? (
                     <span className="self-center font-sans text-[0.72rem] font-medium text-subtle">
                       {text.trim().length.toLocaleString("en-US")} chars
                     </span>
@@ -896,7 +1599,7 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
 
                   <ApertureCornerSubmitButton
                     isPending={isSubmitting}
-                    isReady={text.trim().length > 0}
+                    isReady={isReadyToSubmit}
                     onClick={handleSubmit}
                   />
                 </div>
@@ -913,64 +1616,93 @@ export function AnalyzeSubmitForm({ readingGoal: initialGoal, readingVariant: in
           }`}
         >
           {state.message}
+          {state.kind === "error" && (attachedSource || lastFileRef.current) ? (
+            <div className="mt-3 flex flex-wrap gap-2 font-sans">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={retryLastFile}
+              >
+                重试
+                <RefreshCw aria-hidden className="ml-1 h-3.5 w-3.5" />
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={openFilePicker}
+              >
+                重新选择文件
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={clearAttachedSource}
+              >
+                移除文件
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
       {state.kind === "candidate" ? (
-        <section
-          role="status"
-          aria-live="polite"
-          className="relative z-30 mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-ink lg:mx-12"
-        >
-          <p className="font-semibold">已收到候选文档，需要确认后开始阅读</p>
-          <dl className="mt-2 grid grid-cols-1 gap-x-4 gap-y-1 text-[0.74rem] text-muted">
-            <div>
-              <dt className="inline font-semibold text-ink/80">reading_record_id</dt>
-              {": "}
-              <code className="font-mono text-ink/90">{state.readingRecordId}</code>
-            </div>
-            <div>
-              <dt className="inline font-semibold text-ink/80">candidate_document_id</dt>
-              {": "}
-              <code className="font-mono text-ink/90">{state.candidateDocumentId}</code>
-            </div>
-            <div>
-              <dt className="inline font-semibold text-ink/80">original_input_id</dt>
-              {": "}
-              <code className="font-mono text-ink/90">{state.originalInputId}</code>
-            </div>
-          </dl>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="primary-ink"
-              size="sm"
-              onClick={() => router.push(appReadingRecordRoute(state.readingRecordId))}
+        <>
+          {!isCandidateDialogOpen ? (
+            <section
+              role="status"
+              aria-live="polite"
+              className="relative z-30 mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-ink lg:mx-12"
             >
-              去阅读记录确认
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => setState({ kind: "idle" })}
-            >
-              稍后处理
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                clearPendingCandidate();
-                setText(state.inputSnapshot ?? "");
-                setState({ kind: "idle" });
-              }}
-            >
-              重新编辑
-            </Button>
-          </div>
-        </section>
+              <div className="min-w-0">
+                <p className="font-semibold">已提取出待确认的英文正文</p>
+                <p className="mt-1 text-[0.76rem] text-muted">
+                  请确认正文完整后进入透读。
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="primary-ink"
+                  size="sm"
+                  onClick={() => setCandidateDialogOpen(true)}
+                >
+                  查看并确认
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    clearPendingCandidate();
+                    setText(state.candidate.inputSnapshot ?? "");
+                    setCurrentAttachedSource(null);
+                    setState({ kind: "idle" });
+                    setCandidateDialogOpen(false);
+                  }}
+                >
+                  重新编辑
+                </Button>
+              </div>
+            </section>
+          ) : null}
+          <CandidateConfirmDialog
+            candidate={state.candidate}
+            open={isCandidateDialogOpen}
+            onOpenChange={setCandidateDialogOpen}
+            onConfirmed={(candidate) => {
+              router.push(appReadingRecordRoute(candidate.readingRecordId));
+            }}
+            onRestart={(candidate) => {
+              setText(candidate.inputSnapshot ?? "");
+              setCurrentAttachedSource(null);
+              setState({ kind: "idle" });
+              setCandidateDialogOpen(false);
+            }}
+          />
+        </>
       ) : null}
 
       {state.kind === "rejected" ? (
