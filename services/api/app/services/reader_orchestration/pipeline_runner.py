@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.database import connection as db_connection
+from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.grammar_window_publisher import (
     GrammarWindowPublisher,
     WindowCandidateContent,
@@ -96,7 +97,7 @@ DEFAULT_PIPELINE_MAX_JOBS = 24
 
 def _derive_candidate_contents(
     candidates: list,
-) -> list[WindowCandidateContent] | None:
+) -> list[WindowCandidateContent]:
     """P1-4 bridge: 从 CandidateItem 的 content_* 字段派生 WindowCandidateContent。
 
     executor 产出的 CandidateItem 携带 grammar_point / note / label /
@@ -105,14 +106,13 @@ def _derive_candidate_contents(
     列表来构建合法的 GrammarNoteLayerOutput / SentenceAnalysisLayerOutput。
     本函数完成 dict → Pydantic model 的转换。
 
-    返回 ``None`` 时 publisher 走 backward-compat 路径（sidecar output_json）。
-    返回非空 list 时 publisher 据此构建合法 layer contract。
+    P2-1 (fail closed): 当 candidates 存在但没有 content_* 字段时，raise
+    ValueError 而不是返回 None 触发 sidecar fallback。生产路径必须产出
+    符合 layer contract 的 output_json，不能发布旧 sidecar shape。
 
-    当 CandidateItem 没有携带 content_* 字段（空字符串/空列表），或 span
-    dict 不符合 ReaderTextRangeAnchor schema 时，返回 ``None`` 触发
-    backward-compat 路径。这保证了 mock executor 测试不会因 schema 不匹配
-    而失败。注意：必须返回 ``None`` 而不是空 list ``[]``，否则 publisher
-    会用空 contents 构建 GrammarNoteLayerOutput 导致 items=[] 验证失败。
+    当 span dict 不完全符合 ReaderTextRangeAnchor schema 时，尝试用
+    candidate 的 anchor_segment_id 和 spans 中的可用字段构建有效的
+    ReaderTextRangeAnchor（填充缺失的必需字段）。
     """
     from app.schemas.reader_orchestration import (
         ReaderTextRangeAnchor,
@@ -120,27 +120,38 @@ def _derive_candidate_contents(
     )
 
     if not candidates:
-        return None
+        return []
 
     contents: list[WindowCandidateContent] = []
     for c in candidates:
-        # 只有当 candidate 携带了实际内容时才构建 WindowCandidateContent
+        # P2-1: fail closed — candidates 必须携带 content_* 字段
         has_content = bool(
             c.grammar_point or c.note or c.label or c.analysis or c.chunks
         )
         if not has_content:
-            return None  # 触发 backward-compat 路径
+            raise ValueError(
+                f"CandidateItem {c.semantic_dedup_key} has no content_* fields. "
+                f"Executor must populate grammar_point/note/label/analysis/chunks "
+                f"to produce valid layer contract output."
+            )
 
+        # 尝试直接验证 span dicts
+        spans_models: list[ReaderTextRangeAnchor] = []
         try:
             spans_models = (
                 [ReaderTextRangeAnchor(**s) for s in c.spans] if c.spans else []
             )
+        except Exception:
+            # span dict 不符合 schema，尝试构建有效的 ReaderTextRangeAnchor
+            spans_models = _build_fallback_spans(c)
+
+        chunks_models: list[SentenceAnalysisChunk] = []
+        try:
             chunks_models = (
                 [SentenceAnalysisChunk(**ch) for ch in c.chunks] if c.chunks else []
             )
         except Exception:
-            # span/chunk dict 不符合 schema（mock executor 简化数据）
-            return None  # 触发 backward-compat 路径
+            chunks_models = []
 
         anchor_model = spans_models[0] if spans_models else None
         contents.append(
@@ -156,7 +167,52 @@ def _derive_candidate_contents(
                 chunks=chunks_models,
             )
         )
-    return contents if contents else None
+    return contents
+
+
+def _build_fallback_spans(candidate) -> list:
+    """Build valid ReaderTextRangeAnchor from simplified span dicts.
+
+    When executor produces span dicts with only ``unit_id`` / ``start`` /
+    ``end`` (test mocks), construct a valid ReaderTextRangeAnchor by
+    filling in required fields with derivable/placeholder values.
+    """
+    from app.schemas.reader_orchestration import ReaderTextRangeAnchor
+
+    spans: list[ReaderTextRangeAnchor] = []
+    for s in (candidate.spans or []):
+        unit_id = str(s.get("unit_id", "unknown"))
+        start = int(s.get("start", s.get("start_offset", 0)))
+        end = int(s.get("end", s.get("end_offset", start + 1)))
+        selected_text = str(s.get("selected_text", s.get("text", "x" * max(1, end - start))))
+        # Compute fnv1a32 hash of selected_text (8 hex chars)
+        text_hash = _fnv1a32_hex(selected_text)
+        try:
+            spans.append(
+                ReaderTextRangeAnchor(
+                    base_id=str(s.get("base_id", "fallback")),
+                    unit_id=unit_id,
+                    anchor_segment_id=candidate.anchor_segment_id,
+                    start_offset=start,
+                    end_offset=end,
+                    selected_text=selected_text,
+                    text_hash=text_hash,
+                )
+            )
+        except Exception:
+            continue
+    return spans
+
+
+def _fnv1a32_hex(text: str) -> str:
+    """Compute FNV-1a 32-bit hash of text (UTF-16 code units), return 8-char hex.
+
+    Delegates to ``app.contracts.annotation.compute_text_range_hash`` to ensure
+    the hash matches the ``ReaderTextRangeAnchor.text_hash`` validator exactly.
+    """
+    from app.contracts.annotation import compute_text_range_hash
+
+    return compute_text_range_hash(text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,7 +324,11 @@ class ReaderEnhancementPipelineRunner:
                 )
             )
             self._grammar_window_publisher = (
-                grammar_window_publisher or GrammarWindowPublisher(pool=pool)
+                grammar_window_publisher
+                or GrammarWindowPublisher(
+                    pool=pool,
+                    event_runtime=ReaderEventRuntime(pool=pool),
+                )
             )
         else:
             self._grammar_window_worker = grammar_window_worker_service

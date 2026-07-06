@@ -947,7 +947,7 @@ async def test_publisher_emits_layer_published_event(
     )
 
 
-async def test_publisher_legacy_fallback_when_candidate_contents_none(
+async def test_publisher_fail_closed_when_candidate_contents_none_but_candidates_exist(
     test_db_pool_with_window_and_candidates: tuple[
         asyncpg.Pool,
         UUID,
@@ -960,13 +960,16 @@ async def test_publisher_legacy_fallback_when_candidate_contents_none(
         UUID,
     ],
 ) -> None:
-    """Backward compatibility: candidate_contents=None uses legacy sidecar shape.
+    """P2-1 fail closed: candidate_contents=None + candidates → ValueError.
 
-    When called without ``candidate_contents`` (existing callers such as the
-    pipeline runner / BBC regression), output_json retains the legacy
-    selector-sidecar shape (items with semantic_dedup_key / pattern_key /
-    quality_score) so ``_extract_dedup_keys`` in test_zplus_bbc_regression
-    keeps working.
+    Previously the publisher fell back to a legacy selector-sidecar
+    ``output_json`` shape when ``candidate_contents`` was None, which
+    violated the §8.3 layer contract (no schema_version, sidecar fields
+    in output_json). P2-1 removed that escape hatch: when candidates
+    exist, the publisher must raise ValueError instead of publishing a
+    non-contract shape. Production callers must derive
+    ``candidate_contents`` from the executor output (see
+    ``pipeline_runner._derive_candidate_contents``).
     """
     (
         pool,
@@ -980,34 +983,12 @@ async def test_publisher_legacy_fallback_when_candidate_contents_none(
         _record_id,
     ) = test_db_pool_with_window_and_candidates
     publisher = GrammarWindowPublisher(pool=pool)
-    result = await publisher.publish_window_grammar_bundle(
-        job_id=job_id,
-        lease_token=lease_token,
-        plan_id=plan_id,
-        window_id=window_id,
-        candidates=candidates,
-        candidate_contents=None,
-    )
-    assert result.accepted_count > 0
-    assert len(result.grammar_note_layer_ids) >= 1
-
-    async with pool.acquire() as conn:
-        layer = await conn.fetchrow(
-            "SELECT output_json, quality_json FROM enhancement_layers WHERE id = $1",
-            result.grammar_note_layer_ids[0],
+    with pytest.raises(ValueError, match="candidate_contents is required"):
+        await publisher.publish_window_grammar_bundle(
+            job_id=job_id,
+            lease_token=lease_token,
+            plan_id=plan_id,
+            window_id=window_id,
+            candidates=candidates,
+            candidate_contents=None,
         )
-    output = layer["output_json"]
-    if isinstance(output, str):
-        output = json.loads(output)
-    quality = layer["quality_json"]
-    if isinstance(quality, str):
-        quality = json.loads(quality)
-
-    # Legacy shape: items carry sidecar fields
-    item = output["items"][0]
-    assert "semantic_dedup_key" in item
-    assert "pattern_key" in item
-    assert "quality_score" in item
-    # quality_json still carries plan_id / window_id
-    assert quality["plan_id"] == str(plan_id)
-    assert quality["window_id"] == str(window_id)

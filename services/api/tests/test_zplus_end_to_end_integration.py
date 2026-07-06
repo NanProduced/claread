@@ -20,26 +20,17 @@ Test flow:
   6. Verify ``reader_events`` has ``layer_published`` events (progressive
      refresh)
 
-Executor→publisher bridge gap (documented):
-  The production ``pipeline_runner._run_grammar_window_attempt`` does NOT
-  pass ``candidate_contents`` to ``publish_window_grammar_bundle``. Without
-  ``candidate_contents``, the publisher falls back to the legacy
-  selector-sidecar ``output_json`` shape, which lacks ``schema_version``,
-  ``grammar_point``, ``note``, ``anchor``, ``label``, ``analysis``,
-  ``chunks`` required by §8.3.
+Executor→publisher bridge (P2-1 fix):
+  The production ``pipeline_runner._run_grammar_window_attempt`` calls
+  ``_derive_candidate_contents(candidates)`` to bridge
+  ``CandidateItem.content_*`` fields into ``WindowCandidateContent``,
+  which the publisher uses to build proper
+  ``GrammarNoteLayerOutput`` / ``SentenceAnalysisLayerOutput``.
 
-  This test file demonstrates the bridge via ``_ContractPublisher`` (test
-  helper, not production code) which injects ``candidate_contents`` from
-  the executor into the publisher. Production needs to implement this
-  bridge by either:
-    1. Extending ``GrammarWindowExecutorProtocol`` to also return
-       ``WindowCandidateContent`` (or expose it via a side channel)
-    2. Updating ``pipeline_runner._run_grammar_window_attempt`` to pass
-       ``candidate_contents`` to ``publish_window_grammar_bundle``
-
-  See ``test_zplus_end_to_end_legacy_fallback_documents_bridge_gap`` for
-  the production code path (legacy fallback) which documents what's
-  missing when the bridge is not implemented.
+  Both test paths (``_ContractPublisher`` wrapper and the production
+  path) now produce §8.3 contract-compliant ``output_json``. The
+  sidecar fallback was removed (P2-1 fail closed): if candidates exist
+  but ``candidate_contents`` is None, the publisher raises ValueError.
 """
 
 from __future__ import annotations
@@ -264,11 +255,15 @@ class _RealisticMockExecutor:
                 CandidateItem(
                     item_type="grammar_note",
                     anchor_segment_id=anchor_id,
-                    spans=[{"unit_id": unit_id}],
+                    spans=[text_anchor.model_dump()],
                     semantic_dedup_key=dedup_key,
                     pattern_key=f"pattern:{anchor_id}",
                     quality_score=0.8,
                     reading_blocker=False,
+                    # P2-1: populate content_* fields for contract output
+                    grammar_point=f"grammar_point:{anchor_id}",
+                    pattern=f"pattern:{anchor_id}",
+                    note=f"Realistic grammar note for anchor {anchor_id}.",
                 )
             )
             self.last_candidate_contents.append(
@@ -296,11 +291,19 @@ class _RealisticMockExecutor:
                 CandidateItem(
                     item_type="sentence_analysis",
                     anchor_segment_id=anchor_id,
-                    spans=[{"unit_id": str(anchor["unit_id"])}],
+                    spans=[text_anchor.model_dump()],
                     semantic_dedup_key=dedup_key,
                     pattern_key=None,
                     quality_score=0.9,
                     reading_blocker=False,
+                    # P2-1: populate content_* fields for contract output
+                    label=f"main_clause:{anchor_id}",
+                    analysis=f"Sentence analysis for anchor {anchor_id}.",
+                    chunks=[{
+                        "order": 1,
+                        "label": "clause",
+                        "text": text_anchor.selected_text,
+                    }],
                 )
             )
             self.last_candidate_contents.append(
@@ -772,30 +775,29 @@ async def test_zplus_end_to_end_no_precreated_plan(
 
 
 # ---------------------------------------------------------------------------
-# Test 2: legacy fallback path documents the bridge gap
+# Test 2: production path (no contract publisher wrapper) produces §8.3 contract
 # ---------------------------------------------------------------------------
 
 
-async def test_zplus_end_to_end_legacy_fallback_documents_bridge_gap(
+async def test_zplus_end_to_end_production_path_publishes_contract(
     zplus_e2e_env: asyncpg.Pool,
 ) -> None:
-    """Legacy fallback path: production pipeline_runner as-is (no bridge).
+    """Production path: pipeline_runner derives candidate_contents internally.
 
-    This test documents what production code produces when the
-    executor→publisher bridge is NOT implemented. The publisher falls
-    back to the legacy selector-sidecar ``output_json`` shape, which:
+    P2-1 removed the sidecar fallback. The production pipeline_runner now
+    calls ``_derive_candidate_contents(candidates)`` to bridge
+    ``CandidateItem.content_*`` fields into ``WindowCandidateContent``,
+    which the publisher uses to build a proper
+    ``GrammarNoteLayerOutput`` / ``SentenceAnalysisLayerOutput``.
 
-      - LACKS ``schema_version`` (§8.3 contract violation)
-      - LACKS ``grammar_point`` / ``note`` / ``anchor`` / ``label`` /
-        ``analysis`` / ``chunks`` (no layer output model)
-      - HAS selector sidecar fields (``semantic_dedup_key``,
-        ``pattern_key``, ``quality_score``) directly in ``output_json``
-        (should be in ``quality_json`` per §8.3)
-
-    The test verifies the legacy shape so the gap is explicitly documented
-    and any future regression in the fallback path is caught. When the
-    bridge is implemented in production, this test should be removed or
-    updated to assert the §8.3 contract.
+    This test verifies the production path (no ``_ContractPublisher``
+    wrapper) produces §8.3 contract-compliant ``output_json``:
+      - HAS ``schema_version``
+      - HAS ``grammar_point`` / ``note`` / ``spans`` (grammar_note)
+      - HAS ``anchor`` / ``label`` / ``analysis`` / ``chunks``
+        (sentence_analysis)
+      - Provenance (``semantic_dedup_key`` / ``pattern_key`` /
+        ``quality_score``) lives in ``quality_json``, not ``output_json``
     """
     pool = zplus_e2e_env
     user_id = await insert_user(pool)
@@ -804,11 +806,12 @@ async def test_zplus_end_to_end_legacy_fallback_documents_bridge_gap(
         pool,
         user_id=user_id,
         plain_text=ZPLUS_E2E_ARTICLE_TEXT,
-        title="Z+ E2E Legacy Fallback",
+        title="Z+ E2E Production Path",
     )
 
     executor = _RealisticMockExecutor(pool=pool)
-    # use_contract_publisher=False → production publisher as-is (no bridge)
+    # use_contract_publisher=False → production publisher as-is, but
+    # pipeline_runner._derive_candidate_contents bridges content_* fields.
     runner = _make_zplus_runner(
         pool,
         executor=executor,
@@ -818,7 +821,7 @@ async def test_zplus_end_to_end_legacy_fallback_documents_bridge_gap(
     run_summary = await runner.run(
         record_id=article.record_id,
         user_id=user_id,
-        lease_owner="e2e-legacy-fallback",
+        lease_owner="e2e-production-path",
         lease_duration=LEASE_DURATION,
         max_ticks=30,
         max_jobs=20,
@@ -843,7 +846,7 @@ async def test_zplus_end_to_end_legacy_fallback_documents_bridge_gap(
             article.record_id,
         )
         assert len(layers) > 0, (
-            "Legacy fallback path should still publish layers"
+            "Production path should publish layers"
         )
 
         for layer in layers:
@@ -854,22 +857,37 @@ async def test_zplus_end_to_end_legacy_fallback_documents_bridge_gap(
             if isinstance(quality, str):
                 quality = json.loads(quality)
 
-            # Legacy shape: output_json LACKS schema_version (gap)
-            assert "schema_version" not in output, (
-                "Legacy fallback output_json should NOT have schema_version "
-                "(this is the bridge gap — see _ContractPublisher for the "
-                "contract path)"
+            # §8.3 contract: output_json HAS schema_version
+            assert output.get("schema_version") == 1, (
+                f"output_json should have schema_version=1, got: {output}"
             )
 
-            # Legacy shape: output_json has selector sidecar fields (gap)
+            # §8.3 contract: output_json.items have layer output model
+            # fields, NOT sidecar fields.
             assert len(output.get("items", [])) > 0
             item = output["items"][0]
-            assert "semantic_dedup_key" in item, (
-                "Legacy fallback output_json.items[0] should have "
-                "semantic_dedup_key (sidecar field — this is the bridge gap)"
+            assert "semantic_dedup_key" not in item, (
+                "output_json.items[0] should NOT have semantic_dedup_key "
+                "(provenance must live in quality_json per §8.3)"
             )
+            assert "pattern_key" not in item
+            assert "quality_score" not in item
 
-            # quality_json still carries plan_id / window_id (these are
-            # written by both the legacy and contract paths).
+            if layer["layer_type"] == "grammar_note":
+                assert "grammar_point" in item
+                assert "note" in item
+                assert "spans" in item
+                assert len(item["spans"]) >= 1
+            elif layer["layer_type"] == "sentence_analysis":
+                assert "anchor" in item
+                assert "label" in item
+                assert "analysis" in item
+                assert "chunks" in item
+
+            # §8.3 contract: provenance lives in quality_json
             assert "plan_id" in quality
             assert "window_id" in quality
+            quality_items = quality.get("items", [])
+            if quality_items:
+                qitem = quality_items[0]
+                assert "semantic_dedup_key" in qitem

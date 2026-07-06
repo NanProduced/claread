@@ -31,6 +31,7 @@ from uuid import UUID, uuid4
 import asyncpg
 import pytest
 
+from app.contracts.annotation import compute_text_range_hash
 from app.database import connection as db_connection
 from app.services.reader_orchestration.display_title_worker import (
     DisplayTitleWorkerService,
@@ -119,6 +120,8 @@ class _StaticGrammarWindowExecutor:
         if not target_anchors:
             return candidates
 
+        base_id = str(context.get("base_id", ""))
+
         window_budget = context.get("window_budget", {})
         if isinstance(window_budget, dict):
             grammar_budget = int(
@@ -135,36 +138,64 @@ class _StaticGrammarWindowExecutor:
         for anchor in target_anchors[:grammar_budget]:
             anchor_id = str(anchor["anchor_segment_id"])
             unit_id = str(anchor["unit_id"])
+            source_text = str(anchor.get("source_text", "x" * 10))[:10] or "xxxxxxxxxx"
+            text_hash = compute_text_range_hash(source_text)
             candidates.append(
                 CandidateItem(
                     item_type="grammar_note",
                     anchor_segment_id=anchor_id,
-                    spans=[{"unit_id": unit_id, "start": 0, "end": 10}],
+                    spans=[{
+                        "base_id": base_id,
+                        "unit_id": unit_id,
+                        "anchor_segment_id": anchor_id,
+                        "start_offset": 0,
+                        "end_offset": max(1, len(source_text)),
+                        "selected_text": source_text,
+                        "text_hash": text_hash,
+                    }],
                     semantic_dedup_key=f"grammar:{anchor_id}",
                     pattern_key=f"pattern:{anchor_id}",
                     quality_score=0.8,
                     reading_blocker=False,
+                    # P2-1: populate content_* fields for contract output
+                    grammar_point=f"grammar_point:{anchor_id}",
+                    pattern=f"pattern:{anchor_id}",
+                    note=f"Grammar note for {anchor_id}.",
                 )
             )
 
         # sentence_analysis: only for the first 3 windows, 1 per window.
         if self._sentence_windows_emitted < 3 and sentence_budget > 0:
             anchor = target_anchors[0]
+            anchor_id = str(anchor["anchor_segment_id"])
+            unit_id = str(anchor["unit_id"])
+            source_text = str(anchor.get("source_text", "x" * 10))[:10] or "xxxxxxxxxx"
+            text_hash = compute_text_range_hash(source_text)
             candidates.append(
                 CandidateItem(
                     item_type="sentence_analysis",
-                    anchor_segment_id=str(anchor["anchor_segment_id"]),
-                    spans=[
-                        {
-                            "unit_id": str(anchor["unit_id"]),
-                            "start": 0,
-                            "end": 10,
-                        }
-                    ],
-                    semantic_dedup_key=f"sentence:{anchor['anchor_segment_id']}",
+                    anchor_segment_id=anchor_id,
+                    spans=[{
+                        "base_id": base_id,
+                        "unit_id": unit_id,
+                        "anchor_segment_id": anchor_id,
+                        "start_offset": 0,
+                        "end_offset": max(1, len(source_text)),
+                        "selected_text": source_text,
+                        "text_hash": text_hash,
+                    }],
+                    semantic_dedup_key=f"sentence:{anchor_id}",
                     pattern_key=None,
                     quality_score=0.9,
                     reading_blocker=False,
+                    # P2-1: populate content_* fields for contract output
+                    label=f"main_clause:{anchor_id}",
+                    analysis=f"Sentence analysis for {anchor_id}.",
+                    chunks=[{
+                        "order": 1,
+                        "label": "clause",
+                        "text": source_text,
+                    }],
                 )
             )
             self._sentence_windows_emitted += 1
@@ -288,13 +319,17 @@ def _make_runner(
 
 
 def _extract_dedup_keys(rows: list[asyncpg.Record]) -> list[str]:
-    """Extract semantic_dedup_key values from published layer output_json."""
+    """Extract semantic_dedup_key values from published layer quality_json.
+
+    P2-1: semantic_dedup_key is now stored in quality_json (provenance),
+    not output_json (which holds the GrammarNoteLayerOutput contract).
+    """
     keys: list[str] = []
     for row in rows:
-        output = row["output_json"]
-        if isinstance(output, str):
-            output = json.loads(output)
-        for item in output.get("items", []):
+        quality = row["quality_json"]
+        if isinstance(quality, str):
+            quality = json.loads(quality)
+        for item in quality.get("items", []):
             keys.append(str(item["semantic_dedup_key"]))
     return keys
 
@@ -343,13 +378,13 @@ async def test_bbc_record_grammar_calls_reduced_from_37_to_3_5(
     # Query DB for published layers.
     async with pool.acquire() as conn:
         grammar_layers = await conn.fetch(
-            "SELECT target_key, output_json FROM enhancement_layers "
+            "SELECT target_key, output_json, quality_json FROM enhancement_layers "
             "WHERE reading_record_id = $1 AND layer_type = 'grammar_note' "
             "AND status = 'published'",
             record_id,
         )
         sentence_layers = await conn.fetch(
-            "SELECT target_key, output_json FROM enhancement_layers "
+            "SELECT target_key, output_json, quality_json FROM enhancement_layers "
             "WHERE reading_record_id = $1 AND layer_type = 'sentence_analysis' "
             "AND status = 'published'",
             record_id,

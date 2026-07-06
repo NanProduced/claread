@@ -187,6 +187,10 @@ class WindowRoundState:
             "sentence_analysis": 0,
         }
     )
+    # P1-4: 跨 item_type 的已接受 anchor 集合（gate 7 ANCHOR_RATIO 用）。
+    # gate 7 是跨 item_type 聚合的，所以不能用 anchor_counts_by_type，
+    # 需要独立的 set 追踪所有 item_type 接受过的 anchor。
+    accepted_anchors: set[str] = field(default_factory=set)
 
     def add(self, candidate: CandidateItem) -> None:
         """接受一个 candidate 后，将其贡献累计到本 window 的 running state。"""
@@ -199,6 +203,9 @@ class WindowRoundState:
         anchor_counts = self.anchor_counts_by_type.setdefault(item_type, {})
         anchor_id = candidate.anchor_segment_id
         anchor_counts[anchor_id] = anchor_counts.get(anchor_id, 0) + 1
+
+        # P1-4: gate 7 跨 item_type 聚合
+        self.accepted_anchors.add(anchor_id)
 
         if candidate.pattern_key:
             self.pattern_keys_by_type.setdefault(item_type, []).append(
@@ -398,14 +405,23 @@ def _check_gates(
             f"record {item_type} budget {used} >= total {total}",
         )
 
-    # gate 7 (ANCHOR_RATIO): annotated_anchor_ratio > 0.30（跨 item_type 聚合）
-    # 检查 ledger 当前状态；candidate 接受后由调用方更新 annotated_anchors。
+    # gate 7 (ANCHOR_RATIO): projected annotated_anchor_ratio > 0.30
+    # P1-4: 必须检查 projected ratio（含当前 candidate + 同 window 已接受），
+    # 不能只看 ledger 当前值。否则同一 window 内可以接受到 40%+ ratio。
+    # projected = (ledger 已有 + 同 window 已接受 + 当前 candidate 如果是新 anchor) / total
     if ledger.total_anchors > 0:
-        current_ratio = len(ledger.annotated_anchors) / ledger.total_anchors
-        if current_ratio > ANCHOR_RATIO_THRESHOLD:
+        projected_anchors = set(ledger.annotated_anchors) | window_round.accepted_anchors
+        candidate_anchor_is_new = (
+            candidate.anchor_segment_id not in projected_anchors
+        )
+        if candidate_anchor_is_new:
+            projected_anchors.add(candidate.anchor_segment_id)
+        projected_ratio = len(projected_anchors) / ledger.total_anchors
+        if projected_ratio > ANCHOR_RATIO_THRESHOLD:
             return (
                 SelectionGate.ANCHOR_RATIO,
-                f"annotated ratio {current_ratio:.2f} > {ANCHOR_RATIO_THRESHOLD}",
+                f"projected annotated ratio {projected_ratio:.2f} "
+                f"> {ANCHOR_RATIO_THRESHOLD}",
             )
 
     # gate 8 (MULTI_UNIT_SPAN): candidate spans 跨多个 unit_id

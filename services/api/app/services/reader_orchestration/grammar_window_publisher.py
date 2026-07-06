@@ -699,40 +699,34 @@ class GrammarWindowPublisher:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Build ``output_json`` + ``quality_json`` for the layer INSERT.
 
-        P1-4: when ``contents_by_dedup`` is provided, produces a proper
-        ``GrammarNoteLayerOutput`` / ``SentenceAnalysisLayerOutput`` for
-        ``output_json`` and stores provenance (dedup_key/pattern_key/
-        quality_score) in ``quality_json``. Otherwise falls back to the
-        legacy selector-sidecar shape.
+        P1-4 + P2-1: always produces a proper ``GrammarNoteLayerOutput`` /
+        ``SentenceAnalysisLayerOutput`` for ``output_json`` and stores
+        provenance (dedup_key/pattern_key/quality_score) in ``quality_json``.
+
+        P2-1 (fail closed): when ``contents_by_dedup`` is None but candidates
+        exist, raises ValueError instead of falling back to sidecar shape.
+        Production path must always produce contract-compliant output_json.
         """
-        if contents_by_dedup is not None:
-            return self._build_layer_payload_contract(
-                layer_type=layer_type,
-                candidates=candidates,
-                plan_id=plan_id,
-                window_id=window_id,
-                window_index=window_index,
-                contents_by_dedup=contents_by_dedup,
-            )
-        # Legacy fallback: selector sidecar fields in output_json
-        output_json: dict[str, Any] = {
-            "items": [
-                {
-                    "anchor_segment_id": c.anchor_segment_id,
-                    "spans": c.spans,
-                    "semantic_dedup_key": c.semantic_dedup_key,
-                    "pattern_key": c.pattern_key,
-                    "quality_score": c.quality_score,
-                }
-                for c in candidates
-            ],
-        }
-        quality_json: dict[str, Any] = {
-            "plan_id": str(plan_id),
-            "window_id": str(window_id),
-            "window_index": window_index,
-        }
-        return output_json, quality_json
+        if contents_by_dedup is None:
+            if candidates:
+                raise ValueError(
+                    "candidate_contents is required when candidates exist "
+                    "(P2-1 fail closed: sidecar fallback removed)"
+                )
+            # No candidates → empty output (no-op window)
+            return {"schema_version": 1, "items": []}, {
+                "plan_id": str(plan_id),
+                "window_id": str(window_id),
+                "window_index": window_index,
+            }
+        return self._build_layer_payload_contract(
+            layer_type=layer_type,
+            candidates=candidates,
+            plan_id=plan_id,
+            window_id=window_id,
+            window_index=window_index,
+            contents_by_dedup=contents_by_dedup,
+        )
 
     def _build_layer_payload_contract(
         self,

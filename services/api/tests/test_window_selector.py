@@ -137,26 +137,34 @@ def test_gate_record_budget_rejects_when_total_exhausted():
 
 
 def test_gate_anchor_ratio_rejects_when_threshold_exceeded():
-    """gate 7: annotated ratio > 0.30"""
+    """gate 7: projected annotated ratio > 0.30 (P1-4 fix).
+
+    With projected ratio, accepting a candidate on a NEW anchor pushes
+    the ratio up by 1/total. So 3/10 + new anchor → 4/10=0.40 > 0.30 → reject.
+    A candidate on an ALREADY annotated anchor doesn't increase ratio.
+    """
+    # 3/10 annotated. Candidate on new anchor a4 → projected 4/10=0.40 > 0.30 → reject
     ledger = SelectorLedger(
         total_anchors=10,
-        annotated_anchors={"a1", "a2", "a3"},  # 3/10 = 0.30，加一个会到 0.40 > 0.30
+        annotated_anchors={"a1", "a2", "a3"},
     )
-    candidate = make_candidate(anchor_segment_id="a4", semantic_dedup_key="k4")
-    result = select_candidates([candidate], ledger=ledger, window_budget={"grammar_note": 2})
-    # 0.30 不 > 0.30，应该通过；再加一个 a5 才 > 0.30
-    # 但实际上 3/10 = 0.30, +1 = 4/10 = 0.40 > 0.30
-    assert len(result.accepted) == 1  # a4 通过
+    candidate_new = make_candidate(anchor_segment_id="a4", semantic_dedup_key="k4")
+    result = select_candidates([candidate_new], ledger=ledger, window_budget={"grammar_note": 2})
+    assert len(result.rejected) == 1
+    assert result.rejected[0].gate == SelectionGate.ANCHOR_RATIO
 
-    # 再加 a5 应被拒绝
-    ledger2 = SelectorLedger(
-        total_anchors=10,
-        annotated_anchors={"a1", "a2", "a3", "a4"},  # 4/10 = 0.40
+    # Candidate on already-annotated anchor a3 → projected 3/10=0.30, not > 0.30 → pass
+    # Use sentence_analysis to avoid ANCHOR_CAP (grammar_note already has a3:1)
+    candidate_existing = make_candidate(
+        item_type="sentence_analysis",
+        anchor_segment_id="a3",
+        semantic_dedup_key="k_existing",
     )
-    candidate2 = make_candidate(anchor_segment_id="a5", semantic_dedup_key="k5")
-    result2 = select_candidates([candidate2], ledger=ledger2, window_budget={"grammar_note": 2})
-    assert len(result2.rejected) == 1
-    assert result2.rejected[0].gate == SelectionGate.ANCHOR_RATIO
+    result2 = select_candidates(
+        [candidate_existing], ledger=ledger, window_budget={"sentence_analysis": 2}
+    )
+    assert len(result2.accepted) == 1
+    assert len(result2.rejected) == 0
 
 
 def test_gate_multi_unit_span_rejects_cross_unit():
@@ -426,20 +434,26 @@ def test_invalid_anchor_not_filtered_when_target_anchor_ids_is_empty():
 
 
 def test_gate7_anchor_ratio_accumulates_across_windows():
-    """P1-1: gate 7 reads ledger.annotated_anchors which accumulates across
-    windows via publisher's _update_ledger.
+    """P1-4: gate 7 checks projected ratio including current candidate +
+    same-window accepted anchors (cross item_type).
 
-    Per design contract §7.2: gate 7 checks the ledger's current state
-    (cross-window accumulated). Within a single window, accepting a
-    candidate does NOT update annotated_anchors for subsequent gate 7
-    checks — the update happens in the publisher's _update_ledger after
-    the window's publish transaction.
+    Per design §7.3: per_record <= 30% anchor ratio. The gate must check
+    the PROJECTED ratio (what it would be AFTER accepting this candidate),
+    not just the current ledger ratio.
 
-    This test verifies the cross-window accumulation:
-    - Window 1: ledger has 3/10 annotated (ratio 0.30, not > 0.30) → pass
-    - Window 2: ledger has 5/10 annotated (ratio 0.50 > 0.30) → reject all
+    Cross-window accumulation via ledger.annotated_anchors (updated by
+    publisher's _update_ledger after each window).
+
+    Scenarios:
+    - Window 1: ledger has 3/10 annotated (ratio 0.30). Candidate on a4
+      (new anchor) → projected 4/10=0.40 > 0.30 → REJECT (P1-4 fix).
+      Candidate on a3 (already annotated) → projected 3/10=0.30 → pass.
+    - Window 2: ledger has 2/10 annotated (ratio 0.20). Two candidates on
+      a3, a4 (both new) → a3: projected 3/10=0.30, pass; a4: projected
+      4/10=0.40 > 0.30, reject (same window, after accepting a3).
     """
-    # Window 1: ledger after previous windows published 3 anchors
+    # Window 1: ledger has 3/10 annotated. Candidate on new anchor a4
+    # → projected 4/10=0.40 > 0.30 → REJECT (P1-4 fix)
     ledger_window1 = SelectorLedger(
         published_anchor_counts_by_type={
             "grammar_note": {"a1": 1, "a2": 1, "a3": 1},
@@ -448,37 +462,75 @@ def test_gate7_anchor_ratio_accumulates_across_windows():
         total_anchors=10,
         annotated_anchors={"a1", "a2", "a3"},
     )
-    candidate_w1 = make_candidate(
+    candidate_new = make_candidate(
         anchor_segment_id="a4", semantic_dedup_key="key4"
     )
-    result_w1 = select_candidates(
-        [candidate_w1], ledger=ledger_window1, window_budget={"grammar_note": 5}
+    result = select_candidates(
+        [candidate_new], ledger=ledger_window1, window_budget={"grammar_note": 5}
     )
-    # ratio 3/10=0.30, not > 0.30 → pass
-    assert len(result_w1.accepted) == 1, (
-        f"window 1 candidate should pass gate 7 (ratio 0.30 not > 0.30), "
-        f"got: {result_w1.rejected}"
+    # projected 4/10=0.40 > 0.30 → REJECT
+    assert len(result.rejected) == 1, (
+        f"candidate on new anchor should be rejected by ANCHOR_RATIO "
+        f"(projected 0.40 > 0.30), got accepted: {result.accepted}"
     )
+    assert result.rejected[0].gate == SelectionGate.ANCHOR_RATIO
 
-    # Window 2: ledger updated by publisher after window 1 → 4 annotated
-    # Now add more: 5/10 = 0.50 > 0.30 → reject
+    # Window 2: ledger has 2/10. Candidate on a2 (already annotated by grammar_note)
+    # → projected 2/10=0.20 (no new anchor) → pass
+    # Use sentence_analysis to avoid ANCHOR_CAP (grammar_note already has a2:1)
     ledger_window2 = SelectorLedger(
         published_anchor_counts_by_type={
-            "grammar_note": {"a1": 1, "a2": 1, "a3": 1, "a4": 1, "a5": 1},
+            "grammar_note": {"a1": 1, "a2": 1},
             "sentence_analysis": {},
         },
         total_anchors=10,
-        annotated_anchors={"a1", "a2", "a3", "a4", "a5"},
+        annotated_anchors={"a1", "a2"},
     )
-    candidate_w2 = make_candidate(
-        anchor_segment_id="a6", semantic_dedup_key="key6"
+    candidate_existing = make_candidate(
+        item_type="sentence_analysis",
+        anchor_segment_id="a2",
+        semantic_dedup_key="key_existing",
     )
-    result_w2 = select_candidates(
-        [candidate_w2], ledger=ledger_window2, window_budget={"grammar_note": 5}
+    result2 = select_candidates(
+        [candidate_existing], ledger=ledger_window2, window_budget={"sentence_analysis": 5}
     )
-    # ratio 5/10=0.50 > 0.30 → reject
-    assert len(result_w2.rejected) == 1, (
-        f"window 2 candidate should be rejected by ANCHOR_RATIO "
-        f"(ratio 0.50 > 0.30), got accepted: {result_w2.accepted}"
+    # projected 2/10=0.20 (a2 already annotated) → pass
+    assert len(result2.accepted) == 1, (
+        f"candidate on already-annotated anchor should pass gate 7, "
+        f"got: {result2.rejected}"
     )
-    assert result_w2.rejected[0].gate == SelectionGate.ANCHOR_RATIO
+
+    # Window 3: same window, two candidates on new anchors a3, a4
+    # a3: projected 3/10=0.30, not > 0.30 → pass
+    # a4: projected 4/10=0.40 > 0.30 → reject (after accepting a3 in same window)
+    ledger_window3 = SelectorLedger(
+        published_anchor_counts_by_type={
+            "grammar_note": {"a1": 1, "a2": 1},
+            "sentence_analysis": {},
+        },
+        total_anchors=10,
+        annotated_anchors={"a1", "a2"},
+    )
+    candidate_a3 = make_candidate(
+        anchor_segment_id="a3", semantic_dedup_key="key_a3"
+    )
+    candidate_a4 = make_candidate(
+        anchor_segment_id="a4", semantic_dedup_key="key_a4"
+    )
+    result3 = select_candidates(
+        [candidate_a3, candidate_a4],
+        ledger=ledger_window3,
+        window_budget={"grammar_note": 5},
+    )
+    accepted_ids = {c.anchor_segment_id for c in result3.accepted}
+    assert "a3" in accepted_ids, (
+        f"a3 should pass (projected 0.30 not > 0.30), got: {result3.rejected}"
+    )
+    a4_rejection = [
+        r for r in result3.rejected if r.candidate.anchor_segment_id == "a4"
+    ]
+    assert len(a4_rejection) == 1, (
+        f"a4 should be rejected by ANCHOR_RATIO (projected 0.40 > 0.30 "
+        f"after accepting a3 in same window), got: {result3.rejected}"
+    )
+    assert a4_rejection[0].gate == SelectionGate.ANCHOR_RATIO
