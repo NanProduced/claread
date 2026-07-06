@@ -108,10 +108,15 @@ def test_gate_window_cap_rejects_when_window_budget_exhausted():
 
 
 def test_gate_record_density_rejects_when_cap_reached():
-    """gate 5: density_by_record >= density_cap"""
+    """gate 5: per-1000-chars density >= density_cap（P2-6 新语义）
+
+    base_text_length_utf16=1000，density_denom=1.0
+    ledger 已发布 3 个 grammar_note，density=3/1.0=3.0，>= cap 3.0 → reject
+    """
     ledger = SelectorLedger(
         density_by_record={"grammar_note": 3, "sentence_analysis": 0},
-        density_cap={"grammar_note": 3, "sentence_analysis": 1},
+        density_cap={"grammar_note": 3.0, "sentence_analysis": 1.0},
+        base_text_length_utf16=1000,
     )
     candidate = make_candidate()
     result = select_candidates([candidate], ledger=ledger, window_budget={"grammar_note": 2})
@@ -231,3 +236,128 @@ def test_constants():
     assert PER_ANCHOR_CAP == 1
     assert PATTERN_DENSE_THRESHOLD == 3
     assert ANCHOR_RATIO_THRESHOLD == 0.30
+
+
+# ---------------------------------------------------------------------------
+# P1-5: 同 window 内 dedup / anchor / budget 累计 gate 检查
+# ---------------------------------------------------------------------------
+
+
+def test_selector_rejects_duplicate_semantic_key_within_same_window():
+    """P1-5: 同 window 内两个 candidate 共用 semantic_dedup_key，第二个必须被 DUP 拒绝。
+
+    旧实现只读 ledger，未累计 window 内已接受的 dedup key，所以会同时接受两个
+    重复 key 的 candidate。修复后 window_round 累计 dedup key 到 DUP gate。
+    """
+    ledger = SelectorLedger()  # ledger 中无任何 dedup key
+    c1 = make_candidate(anchor_segment_id="a1", semantic_dedup_key="shared_key")
+    c2 = make_candidate(anchor_segment_id="a2", semantic_dedup_key="shared_key")
+    result = select_candidates(
+        [c1, c2], ledger=ledger, window_budget={"grammar_note": 5}
+    )
+    assert len(result.accepted) == 1
+    assert result.accepted[0].anchor_segment_id == "a1"
+    assert len(result.rejected) == 1
+    assert result.rejected[0].gate == SelectionGate.DUP
+    assert result.rejected[0].candidate.anchor_segment_id == "a2"
+
+
+def test_selector_rejects_second_item_for_same_anchor_within_same_window():
+    """P1-5: 同 window 内两个 candidate 落在相同 anchor + 相同 item_type，
+    第二个必须被 ANCHOR_CAP 拒绝（per_anchor_cap=1）。
+
+    旧实现只读 ledger.published_anchor_counts，未累计 window 内已接受的同 anchor
+    item，所以会接受两个同 anchor 的 item。修复后 window_round 累计 anchor count。
+    """
+    ledger = SelectorLedger()  # ledger 中 anchor_counts 为空
+    c1 = make_candidate(anchor_segment_id="a1", semantic_dedup_key="k1")
+    c2 = make_candidate(anchor_segment_id="a1", semantic_dedup_key="k2")
+    result = select_candidates(
+        [c1, c2], ledger=ledger, window_budget={"grammar_note": 5}
+    )
+    assert len(result.accepted) == 1
+    assert result.accepted[0].semantic_dedup_key == "k1"
+    assert len(result.rejected) == 1
+    assert result.rejected[0].gate == SelectionGate.ANCHOR_CAP
+    assert result.rejected[0].candidate.semantic_dedup_key == "k2"
+
+
+def test_selector_rejects_when_window_round_exceeds_record_budget():
+    """P1-5: ledger budget_used 接近 total，window 内多个 candidate 累计后超 total，
+    第一个通过，第二个必须被 RECORD_BUDGET 拒绝。
+
+    旧实现只读 ledger.budget_used，window 内已接受的 candidate 不会累计到 budget
+    检查上，导致 window 接受数超过 record budget。修复后 window_round.budget_used
+    叠加在 ledger.budget_used 之上。
+    """
+    ledger = SelectorLedger(
+        budget_used={"grammar_note": {"count": 13}, "sentence_analysis": {"count": 0}},
+        budget_total={"grammar_note": {"count": 14}, "sentence_analysis": {"count": 5}},
+    )
+    c1 = make_candidate(anchor_segment_id="a1", semantic_dedup_key="k1")
+    c2 = make_candidate(anchor_segment_id="a2", semantic_dedup_key="k2")
+    c3 = make_candidate(anchor_segment_id="a3", semantic_dedup_key="k3")
+    result = select_candidates(
+        [c1, c2, c3], ledger=ledger, window_budget={"grammar_note": 5}
+    )
+    # c1: ledger_used=13 + window_used=0 = 13 < 14 → accept, window_used=1
+    # c2: ledger_used=13 + window_used=1 = 14 >= 14 → reject by RECORD_BUDGET
+    # c3: ledger_used=13 + window_used=1 = 14 >= 14 → reject by RECORD_BUDGET
+    assert len(result.accepted) == 1
+    assert result.accepted[0].anchor_segment_id == "a1"
+    assert len(result.rejected) == 2
+    for rej in result.rejected:
+        assert rej.gate == SelectionGate.RECORD_BUDGET
+
+
+# ---------------------------------------------------------------------------
+# P2-6: density gate 改为 per-1000-chars ratio
+# ---------------------------------------------------------------------------
+
+
+def test_density_gate_uses_per_1000_chars_ratio():
+    """P2-6: density = total_published_count / max(base_text_length_utf16/1000, 1.0)。
+
+    base_text_length_utf16=2000 → density_denom=2.0
+    density_cap grammar_note=3.0 → 最多容纳 6 个 grammar_note（density=3.0），
+    第 7 个会触发 RECORD_DENSITY。
+
+    ledger 已有 5 个，window 内接受第 6 个（density=2.5 → 3.0），第 7 个被拒。
+    """
+    ledger = SelectorLedger(
+        density_by_record={"grammar_note": 5, "sentence_analysis": 0},
+        density_cap={"grammar_note": 3.0, "sentence_analysis": 1.0},
+        base_text_length_utf16=2000,
+    )
+    c1 = make_candidate(anchor_segment_id="a1", semantic_dedup_key="k1")
+    c2 = make_candidate(anchor_segment_id="a2", semantic_dedup_key="k2")
+    result = select_candidates(
+        [c1, c2], ledger=ledger, window_budget={"grammar_note": 5}
+    )
+    # c1: total=5+0=5, density=5/2.0=2.5 < 3.0 → accept, window_round density=1
+    # c2: total=5+1=6, density=6/2.0=3.0 >= 3.0 → reject by RECORD_DENSITY
+    assert len(result.accepted) == 1
+    assert result.accepted[0].anchor_segment_id == "a1"
+    assert len(result.rejected) == 1
+    assert result.rejected[0].gate == SelectionGate.RECORD_DENSITY
+
+
+def test_density_gate_rejects_when_density_exceeds_cap():
+    """P2-6: base_text_length_utf16=1000，已发布 3 个 grammar_note（density=3.0），
+    第 4 个必须被 RECORD_DENSITY 拒绝。
+    """
+    ledger = SelectorLedger(
+        density_by_record={"grammar_note": 3, "sentence_analysis": 0},
+        density_cap={"grammar_note": 3.0, "sentence_analysis": 1.0},
+        base_text_length_utf16=1000,
+    )
+    candidate = make_candidate(
+        anchor_segment_id="a_new", semantic_dedup_key="new_key"
+    )
+    result = select_candidates(
+        [candidate], ledger=ledger, window_budget={"grammar_note": 2}
+    )
+    # total=3+0=3, density=3/1.0=3.0 >= 3.0 → reject
+    assert len(result.rejected) == 1
+    assert result.rejected[0].gate == SelectionGate.RECORD_DENSITY
+    assert len(result.accepted) == 0

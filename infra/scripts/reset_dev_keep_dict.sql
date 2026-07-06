@@ -18,6 +18,8 @@ TRUNCATE TABLE
   reader_ask_messages,
   reader_ask_threads,
   parsed_decisions,
+  analysis_windows,
+  layer_analysis_plans,
   enhancement_layers,
   reader_events,
   reader_event_sequences,

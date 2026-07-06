@@ -82,12 +82,17 @@ class SelectorLedger:
             "sentence_analysis": 0,
         }
     )
-    density_cap: dict[str, int] = field(
+    # §7.3 density_cap：每 1000 UTF-16 chars 的最大 annotation 数（ratio 上限）。
+    # 旧实现误把它当作 raw count，P2-6 修正为 per-1000-chars ratio。
+    density_cap: dict[str, float] = field(
         default_factory=lambda: {
-            "grammar_note": 3,
-            "sentence_analysis": 1,
+            "grammar_note": 3.0,
+            "sentence_analysis": 1.0,
         }
     )
+    # base text 总长度（UTF-16 code units），用于将 density_by_record 折算为
+    # 每 1000 chars 的 ratio。默认 0 时 density_denom 退化为 1.0，等价于 raw count。
+    base_text_length_utf16: int = 0
     total_anchors: int = 0
     annotated_anchors: set[str] = field(default_factory=set)
 
@@ -118,6 +123,77 @@ class SelectionResult:
     rejected: list[RejectedCandidate]
 
 
+@dataclass(slots=True)
+class WindowRoundState:
+    """当前 window 内已接受 candidate 的累计贡献（P1-5）。
+
+    旧实现只读 ``ledger`` 的 pre-existing 状态，未把同一 window 内已接受的
+    candidate 累计到后续 gate 检查上，导致：
+      - 同一 window 内接受重复 ``semantic_dedup_key``
+      - 同一 anchor 接受多个同 item_type item
+      - 超过 record budget / density
+
+    本类在每个 candidate 被接受后追加其贡献，``_check_gates`` 在检查
+    DUP / PATTERN_DENSE / ANCHOR_CAP / RECORD_DENSITY / RECORD_BUDGET 时
+    把这些值叠加到 ``ledger`` 之上。
+    """
+
+    dedup_keys_by_type: dict[str, list[str]] = field(
+        default_factory=lambda: {
+            "grammar_note": [],
+            "sentence_analysis": [],
+        }
+    )
+    anchor_counts_by_type: dict[str, dict[str, int]] = field(
+        default_factory=lambda: {
+            "grammar_note": {},
+            "sentence_analysis": {},
+        }
+    )
+    pattern_keys_by_type: dict[str, list[str]] = field(
+        default_factory=lambda: {
+            "grammar_note": [],
+            "sentence_analysis": [],
+        }
+    )
+    density_by_type: dict[str, int] = field(
+        default_factory=lambda: {
+            "grammar_note": 0,
+            "sentence_analysis": 0,
+        }
+    )
+    budget_used_by_type: dict[str, int] = field(
+        default_factory=lambda: {
+            "grammar_note": 0,
+            "sentence_analysis": 0,
+        }
+    )
+
+    def add(self, candidate: CandidateItem) -> None:
+        """接受一个 candidate 后，将其贡献累计到本 window 的 running state。"""
+        item_type = candidate.item_type
+
+        self.dedup_keys_by_type.setdefault(item_type, []).append(
+            candidate.semantic_dedup_key
+        )
+
+        anchor_counts = self.anchor_counts_by_type.setdefault(item_type, {})
+        anchor_id = candidate.anchor_segment_id
+        anchor_counts[anchor_id] = anchor_counts.get(anchor_id, 0) + 1
+
+        if candidate.pattern_key:
+            self.pattern_keys_by_type.setdefault(item_type, []).append(
+                candidate.pattern_key
+            )
+
+        self.density_by_type[item_type] = (
+            self.density_by_type.get(item_type, 0) + 1
+        )
+        self.budget_used_by_type[item_type] = (
+            self.budget_used_by_type.get(item_type, 0) + 1
+        )
+
+
 def select_candidates(
     candidates: list[CandidateItem],
     *,
@@ -131,10 +207,15 @@ def select_candidates(
       - reading_blocker true first
       - sentence_analysis > grammar_note
     所有 counter 按 ``candidate.item_type`` 查询 ledger 的对应分桶。
+
+    P1-5：维护 ``WindowRoundState`` 把当前 window 内已接受的 candidate 累计
+    到后续 gate 检查上，避免同 window 内接受重复 dedup key / 同 anchor
+    多 item / 超 budget / density。
     """
     accepted: list[CandidateItem] = []
     rejected: list[RejectedCandidate] = []
     window_count_by_type: dict[str, int] = {"grammar_note": 0, "sentence_analysis": 0}
+    window_round = WindowRoundState()
 
     sorted_candidates = sorted(
         candidates,
@@ -147,7 +228,9 @@ def select_candidates(
     )
 
     for candidate in sorted_candidates:
-        gate_failure = _check_gates(candidate, ledger, window_count_by_type, window_budget)
+        gate_failure = _check_gates(
+            candidate, ledger, window_count_by_type, window_budget, window_round
+        )
         if gate_failure is not None:
             rejected.append(
                 RejectedCandidate(
@@ -161,6 +244,9 @@ def select_candidates(
         window_count_by_type[candidate.item_type] = (
             window_count_by_type.get(candidate.item_type, 0) + 1
         )
+        # P1-5：同 window 内接受的 candidate 累计到 window_round，
+        # 后续 gate 检查时叠加在 ledger 之上
+        window_round.add(candidate)
 
     return SelectionResult(accepted=accepted, rejected=rejected)
 
@@ -170,26 +256,44 @@ def _check_gates(
     ledger: SelectorLedger,
     window_count_by_type: dict[str, int],
     window_budget: dict[str, int],
+    window_round: WindowRoundState,
 ) -> tuple[SelectionGate, str] | None:
     """按顺序检查 8 个 gates，返回第一个失败的 (gate, reason)，全部通过返回 None。
 
     所有 counter 按 ``candidate.item_type`` 查询 ledger 的对应分桶，
     gate 7 (ANCHOR_RATIO) 跨 item_type 聚合。
+
+    P1-5：DUP / PATTERN_DENSE / ANCHOR_CAP / RECORD_DENSITY / RECORD_BUDGET
+    的 counter 在 ledger 之上叠加 ``window_round`` 的同 window 已接受累计值。
     """
     item_type = candidate.item_type
 
-    # gate 1 (DUP): semantic_dedup_key(item_type) 已在 ledger
-    if candidate.semantic_dedup_key in ledger.published_dedup_keys_by_type.get(item_type, []):
+    # gate 1 (DUP): semantic_dedup_key(item_type) 已在 ledger 或当前 window 已接受
+    if (
+        candidate.semantic_dedup_key
+        in ledger.published_dedup_keys_by_type.get(item_type, [])
+        or candidate.semantic_dedup_key
+        in window_round.dedup_keys_by_type.get(item_type, [])
+    ):
         return (
             SelectionGate.DUP,
             f"semantic_dedup_key {candidate.semantic_dedup_key} already published for {item_type}",
         )
 
     # gate 2 (PATTERN_DENSE): pattern_key 出现 >= 3 次（仅 grammar_note）
+    # 统计 ledger + 当前 window 已接受的累计
     if item_type == "grammar_note" and candidate.pattern_key:
-        pattern_count = (
-            ledger.published_pattern_keys_by_type.get(item_type, []).count(candidate.pattern_key)
+        ledger_pattern_count = (
+            ledger.published_pattern_keys_by_type.get(item_type, []).count(
+                candidate.pattern_key
+            )
         )
+        window_pattern_count = (
+            window_round.pattern_keys_by_type.get(item_type, []).count(
+                candidate.pattern_key
+            )
+        )
+        pattern_count = ledger_pattern_count + window_pattern_count
         if pattern_count >= PATTERN_DENSE_THRESHOLD:
             return (
                 SelectionGate.PATTERN_DENSE,
@@ -197,11 +301,18 @@ def _check_gates(
             )
 
     # gate 3 (ANCHOR_CAP): anchor 已达 cap (per_anchor_cap=1)
-    anchor_count = (
+    # ledger + 当前 window 已接受的累计
+    ledger_anchor_count = (
         ledger.published_anchor_counts_by_type.get(item_type, {}).get(
             candidate.anchor_segment_id, 0
         )
     )
+    window_anchor_count = (
+        window_round.anchor_counts_by_type.get(item_type, {}).get(
+            candidate.anchor_segment_id, 0
+        )
+    )
+    anchor_count = ledger_anchor_count + window_anchor_count
     if anchor_count >= PER_ANCHOR_CAP:
         return (
             SelectionGate.ANCHOR_CAP,
@@ -216,16 +327,27 @@ def _check_gates(
         )
 
     # gate 5 (RECORD_DENSITY): record density >= density_cap
-    density = ledger.density_by_record.get(item_type, 0)
-    density_cap = ledger.density_cap.get(item_type, 0)
-    if density >= density_cap:
+    # §7.3 P2-6：density = total_published_count / max(base_text_length_utf16 / 1000, 1.0)
+    # total_published_count = ledger.density_by_record[type] + window_round 已接受累计
+    total_published_count = (
+        ledger.density_by_record.get(item_type, 0)
+        + window_round.density_by_type.get(item_type, 0)
+    )
+    base_length = ledger.base_text_length_utf16
+    density_denom = max(base_length / 1000, 1.0)
+    current_density = total_published_count / density_denom
+    density_cap = ledger.density_cap.get(item_type, 0.0)
+    if current_density >= density_cap:
         return (
             SelectionGate.RECORD_DENSITY,
-            f"record {item_type} density {density} >= cap {density_cap}",
+            f"record {item_type} density {current_density:.4f} >= cap {density_cap} (base_len={base_length})",
         )
 
     # gate 6 (RECORD_BUDGET): budget_used.count >= budget_total.count
-    used = ledger.budget_used.get(item_type, {"count": 0}).get("count", 0)
+    # ledger + 当前 window 已接受的累计
+    ledger_used = ledger.budget_used.get(item_type, {"count": 0}).get("count", 0)
+    window_used = window_round.budget_used_by_type.get(item_type, 0)
+    used = ledger_used + window_used
     total = ledger.budget_total.get(item_type, {"count": 0}).get("count", 0)
     if used >= total:
         return (
