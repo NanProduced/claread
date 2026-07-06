@@ -18,7 +18,7 @@ Key invariant:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -27,6 +27,15 @@ import asyncpg
 
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
+from app.schemas.reader_orchestration import (
+    GrammarNoteItem,
+    GrammarNoteLayerOutput,
+    ReaderTextRangeAnchor,
+    SentenceAnalysisChunk,
+    SentenceAnalysisItem,
+    SentenceAnalysisLayerOutput,
+)
+from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.job_runtime import (
     FenceViolationError,
     IllegalTransitionError,
@@ -69,6 +78,33 @@ class PublishedWindowResult:
     skipped: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class WindowCandidateContent:
+    """Content for layer output (P1-4 fix).
+
+    Carries the actual grammar_note/sentence_analysis content needed to
+    build proper GrammarNoteLayerOutput / SentenceAnalysisLayerOutput.
+    Matched to CandidateItem by ``semantic_dedup_key``.
+
+    Design source: §8.3 contract — ``output_json`` must contain the layer
+    output model (schema_version + items with grammar_point/pattern/note
+    for grammar_note, or anchor/label/analysis/chunks for sentence_analysis).
+    Provenance (dedup_key/pattern_key/quality_score) goes to ``quality_json``.
+    """
+
+    semantic_dedup_key: str
+    # grammar_note content
+    grammar_point: str = ""
+    pattern: str | None = None
+    note: str = ""
+    spans: list[ReaderTextRangeAnchor] = field(default_factory=list)
+    # sentence_analysis content
+    label: str = ""
+    analysis: str = ""
+    chunks: list[SentenceAnalysisChunk] = field(default_factory=list)
+    anchor: ReaderTextRangeAnchor | None = None
+
+
 class GrammarWindowPublisher:
     """Publish multi-unit grammar/sentence layers for a Z+ analysis window.
 
@@ -82,9 +118,11 @@ class GrammarWindowPublisher:
         *,
         pool: asyncpg.Pool | None = None,
         job_runtime: ReaderJobRuntime | None = None,
+        event_runtime: ReaderEventRuntime | None = None,
     ) -> None:
         self._pool = pool
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
+        self._event_runtime = event_runtime
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -100,6 +138,7 @@ class GrammarWindowPublisher:
         plan_id: UUID,
         window_id: UUID,
         candidates: list[CandidateItem],
+        candidate_contents: list[WindowCandidateContent] | None = None,
     ) -> PublishedWindowResult:
         """§8.4 publish transaction.
 
@@ -107,6 +146,13 @@ class GrammarWindowPublisher:
         target_type / fingerprint / lease / fence) and then calls
         ``_apply_transition`` + ``_insert_job_event`` within the same
         transaction as the ledger + layers writes.
+
+        When ``candidate_contents`` is provided, ``output_json`` is built as a
+        proper ``GrammarNoteLayerOutput`` / ``SentenceAnalysisLayerOutput``
+        (§8.3 contract) and provenance (dedup_key/pattern_key/quality_score)
+        is stored in ``quality_json``. When ``candidate_contents`` is ``None``,
+        falls back to the legacy selector-sidecar ``output_json`` shape so
+        existing callers (e.g. pipeline runner) remain backward compatible.
         """
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
@@ -184,6 +230,14 @@ class GrammarWindowPublisher:
                 sentence_layer_ids: list[UUID] = []
                 accepted_by_unit: dict[str, dict[str, list[CandidateItem]]] = {}
 
+                # P1-4: build contents lookup by semantic_dedup_key so _insert_layer
+                # can produce proper GrammarNoteLayerOutput / SentenceAnalysisLayerOutput.
+                contents_by_dedup: dict[str, WindowCandidateContent] | None = (
+                    {c.semantic_dedup_key: c for c in candidate_contents}
+                    if candidate_contents is not None
+                    else None
+                )
+
                 for candidate in selection.accepted:
                     unit_id = (
                         candidate.spans[0].get("unit_id", "")
@@ -216,6 +270,7 @@ class GrammarWindowPublisher:
                             plan_id=plan_id,
                             window_id=window_id,
                             window_index=window_index,
+                            contents_by_dedup=contents_by_dedup,
                         )
                         grammar_layer_ids.append(layer_id)
                     if items[SENTENCE_ANALYSIS_LAYER_TYPE]:
@@ -230,6 +285,7 @@ class GrammarWindowPublisher:
                             plan_id=plan_id,
                             window_id=window_id,
                             window_index=window_index,
+                            contents_by_dedup=contents_by_dedup,
                         )
                         sentence_layer_ids.append(layer_id)
 
@@ -517,34 +573,37 @@ class GrammarWindowPublisher:
         plan_id: UUID,
         window_id: UUID,
         window_index: int,
+        contents_by_dedup: dict[str, WindowCandidateContent] | None = None,
     ) -> UUID:
         """INSERT one unit-targeted enhancement layer (status='published').
 
         Uses a unit-scoped operation fingerprint to satisfy the
         ``uq_enhancement_layers_source_job_fingerprint`` unique constraint when
         publishing multiple unit layers from the same window job.
+
+        P1-4: When ``contents_by_dedup`` is provided, ``output_json`` is built
+        as a proper ``GrammarNoteLayerOutput`` / ``SentenceAnalysisLayerOutput``
+        (§8.3 contract) and provenance goes to ``quality_json``. When
+        ``contents_by_dedup`` is ``None``, falls back to the legacy
+        selector-sidecar ``output_json`` shape for backward compatibility.
+
+        P2-7: When ``self._event_runtime`` is not None, emits a
+        ``layer_published`` reader_event so frontend polling can detect the
+        new layer without snapshot reload.
         """
         layer_id = uuid4()
-        output_json: dict[str, Any] = {
-            "items": [
-                {
-                    "anchor_segment_id": c.anchor_segment_id,
-                    "spans": c.spans,
-                    "semantic_dedup_key": c.semantic_dedup_key,
-                    "pattern_key": c.pattern_key,
-                    "quality_score": c.quality_score,
-                }
-                for c in candidates
-            ],
-        }
-        quality_json: dict[str, Any] = {
-            "plan_id": str(plan_id),
-            "window_id": str(window_id),
-            "window_index": window_index,
-        }
+        generation = int(job_row["expected_generation"])
         # Unit-scoped fingerprint ensures uniqueness across multiple units
         layer_operation_fingerprint = f"{layer_fp_prefix}:{unit_id}"
-        generation = int(job_row["expected_generation"])
+
+        output_json, quality_json = self._build_layer_payload(
+            layer_type=layer_type,
+            candidates=candidates,
+            plan_id=plan_id,
+            window_id=window_id,
+            window_index=window_index,
+            contents_by_dedup=contents_by_dedup,
+        )
 
         await conn.execute(
             """
@@ -577,4 +636,141 @@ class GrammarWindowPublisher:
             job_row["id"],
             published_at,
         )
+
+        # P2-7: emit layer_published reader_event for progressive publish
+        if self._event_runtime is not None:
+            await self._event_runtime.publish_event_in_transaction(
+                conn,
+                record_id=UUID(str(job_row["reading_record_id"])),
+                event_type="layer_published",
+                payload_json={
+                    "record_id": str(job_row["reading_record_id"]),
+                    "base_id": str(job_row["base_id"]),
+                    "layer_id": str(layer_id),
+                    "layer_type": layer_type,
+                    "target_scope": "unit",
+                    "target_key": unit_id,
+                    "generation": generation,
+                    "source": "grammar_bundle_window",
+                    "plan_id": str(plan_id),
+                    "window_id": str(window_id),
+                },
+                source_run_id=UUID(str(job_row["run_id"])),
+                source_job_id=UUID(str(job_row["id"])),
+                source_layer_id=layer_id,
+                created_at=published_at,
+            )
         return layer_id
+
+    def _build_layer_payload(
+        self,
+        *,
+        layer_type: str,
+        candidates: tuple[CandidateItem, ...],
+        plan_id: UUID,
+        window_id: UUID,
+        window_index: int,
+        contents_by_dedup: dict[str, WindowCandidateContent] | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Build ``output_json`` + ``quality_json`` for the layer INSERT.
+
+        P1-4: when ``contents_by_dedup`` is provided, produces a proper
+        ``GrammarNoteLayerOutput`` / ``SentenceAnalysisLayerOutput`` for
+        ``output_json`` and stores provenance (dedup_key/pattern_key/
+        quality_score) in ``quality_json``. Otherwise falls back to the
+        legacy selector-sidecar shape.
+        """
+        if contents_by_dedup is not None:
+            return self._build_layer_payload_contract(
+                layer_type=layer_type,
+                candidates=candidates,
+                plan_id=plan_id,
+                window_id=window_id,
+                window_index=window_index,
+                contents_by_dedup=contents_by_dedup,
+            )
+        # Legacy fallback: selector sidecar fields in output_json
+        output_json: dict[str, Any] = {
+            "items": [
+                {
+                    "anchor_segment_id": c.anchor_segment_id,
+                    "spans": c.spans,
+                    "semantic_dedup_key": c.semantic_dedup_key,
+                    "pattern_key": c.pattern_key,
+                    "quality_score": c.quality_score,
+                }
+                for c in candidates
+            ],
+        }
+        quality_json: dict[str, Any] = {
+            "plan_id": str(plan_id),
+            "window_id": str(window_id),
+            "window_index": window_index,
+        }
+        return output_json, quality_json
+
+    def _build_layer_payload_contract(
+        self,
+        *,
+        layer_type: str,
+        candidates: tuple[CandidateItem, ...],
+        plan_id: UUID,
+        window_id: UUID,
+        window_index: int,
+        contents_by_dedup: dict[str, WindowCandidateContent],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """§8.3 contract: proper layer output model + provenance in quality_json."""
+        if layer_type == GRAMMAR_NOTE_LAYER_TYPE:
+            items: list[GrammarNoteItem] = []
+            for c in candidates:
+                content = contents_by_dedup.get(c.semantic_dedup_key)
+                if content is None:
+                    continue
+                items.append(
+                    GrammarNoteItem(
+                        spans=content.spans,
+                        grammar_point=content.grammar_point,
+                        pattern=content.pattern,
+                        note=content.note,
+                    )
+                )
+            output_model = GrammarNoteLayerOutput(items=items)
+        elif layer_type == SENTENCE_ANALYSIS_LAYER_TYPE:
+            sentence_items: list[SentenceAnalysisItem] = []
+            for c in candidates:
+                content = contents_by_dedup.get(c.semantic_dedup_key)
+                if content is None or content.anchor is None:
+                    continue
+                sentence_items.append(
+                    SentenceAnalysisItem(
+                        anchor=content.anchor,
+                        label=content.label,
+                        analysis=content.analysis,
+                        chunks=content.chunks,
+                    )
+                )
+            output_model = SentenceAnalysisLayerOutput(items=sentence_items)
+        else:  # pragma: no cover - defensive fallback
+            raise ValueError(f"unsupported layer_type: {layer_type}")
+
+        output_json = output_model.model_dump(mode="json")
+        # quality_json stores provenance (§8.3): plan_id / window_id /
+        # window_index / dedup_key / pattern_key / quality_score. These fields
+        # MUST NOT appear in output_json.
+        quality_json: dict[str, Any] = {
+            "plan_id": str(plan_id),
+            "window_id": str(window_id),
+            "window_index": window_index,
+            "semantic_dedup_key": candidates[0].semantic_dedup_key,
+            "pattern_key": candidates[0].pattern_key,
+            "quality_score": candidates[0].quality_score,
+            "items": [
+                {
+                    "semantic_dedup_key": c.semantic_dedup_key,
+                    "pattern_key": c.pattern_key,
+                    "quality_score": c.quality_score,
+                }
+                for c in candidates
+            ],
+        }
+        return output_json, quality_json
