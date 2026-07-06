@@ -361,3 +361,124 @@ def test_density_gate_rejects_when_density_exceeds_cap():
     assert len(result.rejected) == 1
     assert result.rejected[0].gate == SelectionGate.RECORD_DENSITY
     assert len(result.accepted) == 0
+
+
+# ---------------------------------------------------------------------------
+# P1-3: anchor_segment_id ∈ target_anchor_ids pre-filter
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_anchor_rejected_when_target_anchor_ids_provided():
+    """P1-3: candidate with anchor_segment_id ∉ target_anchor_ids is rejected."""
+    ledger = SelectorLedger()
+    candidate_valid = make_candidate(
+        anchor_segment_id="a1", semantic_dedup_key="key1"
+    )
+    candidate_invalid = make_candidate(
+        anchor_segment_id="a999", semantic_dedup_key="key2"
+    )
+    result = select_candidates(
+        [candidate_valid, candidate_invalid],
+        ledger=ledger,
+        window_budget={"grammar_note": 5},
+        target_anchor_ids={"a1", "a2", "a3"},
+    )
+    assert len(result.accepted) == 1
+    assert result.accepted[0].anchor_segment_id == "a1"
+    assert len(result.rejected) == 1
+    assert result.rejected[0].gate == SelectionGate.INVALID_ANCHOR
+    assert "a999" in result.rejected[0].reason
+
+
+def test_invalid_anchor_not_filtered_when_target_anchor_ids_is_none():
+    """P1-3: when target_anchor_ids is None, no pre-filter (backward-compat)."""
+    ledger = SelectorLedger()
+    candidate = make_candidate(
+        anchor_segment_id="a_unknown", semantic_dedup_key="key1"
+    )
+    result = select_candidates(
+        [candidate], ledger=ledger, window_budget={"grammar_note": 5}
+    )
+    assert len(result.accepted) == 1
+    assert len(result.rejected) == 0
+
+
+def test_invalid_anchor_not_filtered_when_target_anchor_ids_is_empty():
+    """P1-3: empty set is treated as None (defensive, skip pre-filter)."""
+    ledger = SelectorLedger()
+    candidate = make_candidate(
+        anchor_segment_id="a1", semantic_dedup_key="key1"
+    )
+    result = select_candidates(
+        [candidate],
+        ledger=ledger,
+        window_budget={"grammar_note": 5},
+        target_anchor_ids=set(),
+    )
+    # Empty set → None → no pre-filter
+    assert len(result.accepted) == 1
+    assert len(result.rejected) == 0
+
+
+# ---------------------------------------------------------------------------
+# P1-1: gate 7 (ANCHOR_RATIO) cross-window accumulation
+# ---------------------------------------------------------------------------
+
+
+def test_gate7_anchor_ratio_accumulates_across_windows():
+    """P1-1: gate 7 reads ledger.annotated_anchors which accumulates across
+    windows via publisher's _update_ledger.
+
+    Per design contract §7.2: gate 7 checks the ledger's current state
+    (cross-window accumulated). Within a single window, accepting a
+    candidate does NOT update annotated_anchors for subsequent gate 7
+    checks — the update happens in the publisher's _update_ledger after
+    the window's publish transaction.
+
+    This test verifies the cross-window accumulation:
+    - Window 1: ledger has 3/10 annotated (ratio 0.30, not > 0.30) → pass
+    - Window 2: ledger has 5/10 annotated (ratio 0.50 > 0.30) → reject all
+    """
+    # Window 1: ledger after previous windows published 3 anchors
+    ledger_window1 = SelectorLedger(
+        published_anchor_counts_by_type={
+            "grammar_note": {"a1": 1, "a2": 1, "a3": 1},
+            "sentence_analysis": {},
+        },
+        total_anchors=10,
+        annotated_anchors={"a1", "a2", "a3"},
+    )
+    candidate_w1 = make_candidate(
+        anchor_segment_id="a4", semantic_dedup_key="key4"
+    )
+    result_w1 = select_candidates(
+        [candidate_w1], ledger=ledger_window1, window_budget={"grammar_note": 5}
+    )
+    # ratio 3/10=0.30, not > 0.30 → pass
+    assert len(result_w1.accepted) == 1, (
+        f"window 1 candidate should pass gate 7 (ratio 0.30 not > 0.30), "
+        f"got: {result_w1.rejected}"
+    )
+
+    # Window 2: ledger updated by publisher after window 1 → 4 annotated
+    # Now add more: 5/10 = 0.50 > 0.30 → reject
+    ledger_window2 = SelectorLedger(
+        published_anchor_counts_by_type={
+            "grammar_note": {"a1": 1, "a2": 1, "a3": 1, "a4": 1, "a5": 1},
+            "sentence_analysis": {},
+        },
+        total_anchors=10,
+        annotated_anchors={"a1", "a2", "a3", "a4", "a5"},
+    )
+    candidate_w2 = make_candidate(
+        anchor_segment_id="a6", semantic_dedup_key="key6"
+    )
+    result_w2 = select_candidates(
+        [candidate_w2], ledger=ledger_window2, window_budget={"grammar_note": 5}
+    )
+    # ratio 5/10=0.50 > 0.30 → reject
+    assert len(result_w2.rejected) == 1, (
+        f"window 2 candidate should be rejected by ANCHOR_RATIO "
+        f"(ratio 0.50 > 0.30), got accepted: {result_w2.accepted}"
+    )
+    assert result_w2.rejected[0].gate == SelectionGate.ANCHOR_RATIO

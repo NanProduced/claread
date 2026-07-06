@@ -20,8 +20,14 @@ from typing import Any
 
 
 class SelectionGate(str, Enum):
-    """§7.2 8 个 hard gates（按顺序检查，第一个不通过即拒绝）。"""
+    """§7.2 8 个 hard gates + INVALID_ANCHOR pre-filter（按顺序检查，第一个不通过即拒绝）。
 
+    INVALID_ANCHOR 是 §7.2 step 2 的 pre-filter（非 8 gates 之一），用于拒绝
+    anchor_segment_id ∉ target_anchor_ids 的 candidate。放在 gate 管道之前，
+    使 rejection 可追踪。
+    """
+
+    INVALID_ANCHOR = "INVALID_ANCHOR"
     DUP = "DUP"
     PATTERN_DENSE = "PATTERN_DENSE"
     ANCHOR_CAP = "ANCHOR_CAP"
@@ -212,6 +218,7 @@ def select_candidates(
     *,
     ledger: SelectorLedger,
     window_budget: dict[str, int],
+    target_anchor_ids: set[str] | None = None,
 ) -> SelectionResult:
     """§7.2 处理流程：8 个 hard gates 按 item_type 拆分查询。
 
@@ -224,6 +231,10 @@ def select_candidates(
     P1-5：维护 ``WindowRoundState`` 把当前 window 内已接受的 candidate 累计
     到后续 gate 检查上，避免同 window 内接受重复 dedup key / 同 anchor
     多 item / 超 budget / density。
+
+    P1-3（§7.2 step 2 pre-filter）：当 ``target_anchor_ids`` 提供时，拒绝
+    ``anchor_segment_id`` 不在该集合内的 candidate。防止 LLM 返回 window
+    范围外的 anchor 导致非法 layer。
     """
     accepted: list[CandidateItem] = []
     rejected: list[RejectedCandidate] = []
@@ -241,6 +252,25 @@ def select_candidates(
     )
 
     for candidate in sorted_candidates:
+        # P1-3: §7.2 step 2 pre-filter — anchor_segment_id ∈ target_anchor_ids
+        # Empty set is treated as None (defensive: skip pre-filter when no
+        # target anchors are available, e.g. malformed window_row).
+        if (
+            target_anchor_ids
+            and candidate.anchor_segment_id not in target_anchor_ids
+        ):
+            rejected.append(
+                RejectedCandidate(
+                    candidate=candidate,
+                    gate=SelectionGate.INVALID_ANCHOR,
+                    reason=(
+                        f"anchor_segment_id {candidate.anchor_segment_id} "
+                        f"not in target_anchor_ids"
+                    ),
+                )
+            )
+            continue
+
         gate_failure = _check_gates(
             candidate, ledger, window_count_by_type, window_budget, window_round
         )

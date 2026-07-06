@@ -219,10 +219,15 @@ class GrammarWindowPublisher:
                     conn, plan_row, job_row["base_id"]
                 )
                 window_budget = self._parse_window_budget(window_row)
+                # P1-3: pass target_anchor_ids from window_row so selector
+                # can reject candidates whose anchor_segment_id is outside
+                # the window's target anchor set (§7.2 step 2 pre-filter).
+                target_anchor_ids = self._parse_target_anchor_ids(window_row)
                 selection = select_candidates(
                     candidates,
                     ledger=ledger,
                     window_budget=window_budget,
+                    target_anchor_ids=target_anchor_ids,
                 )
 
                 # 6. Insert accepted layers (per-unit, target_scope='unit')
@@ -422,6 +427,26 @@ class GrammarWindowPublisher:
             item_type: int(raw.get(item_type, {}).get("count", 0))
             for item_type in _ITEM_TYPES
         }
+
+    @staticmethod
+    def _parse_target_anchor_ids(
+        window_row: asyncpg.Record,
+    ) -> set[str] | None:
+        """Parse ``target_anchor_ids`` JSONB from window row (P1-3).
+
+        Returns ``set[str]`` of valid anchor_segment_ids for the window,
+        or ``None`` if the column is missing/empty (defensive: allows
+        callers that don't set target_anchor_ids to skip the pre-filter).
+        """
+        raw = window_row["target_anchor_ids"]
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        if raw is None:
+            return None
+        if not isinstance(raw, list):
+            return None
+        ids = {str(a) for a in raw}
+        return ids if ids else None
 
     async def _load_ledger_from_plan(
         self,
