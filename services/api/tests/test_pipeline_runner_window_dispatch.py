@@ -17,6 +17,7 @@ Coverage:
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
@@ -338,3 +339,224 @@ async def test_pipeline_runner_without_window_worker_excludes_window_dispatch(
     assert summary.worker_tick_counts.grammar_bundle_window == 0
     # Pipeline ran without dispatching the window worker, even though window
     # jobs exist in the DB — the Z+ path is opt-in only.
+
+
+# ---------------------------------------------------------------------------
+# Test 5 + 6: window job failure transitions job to retry_later / failed_terminal
+# (P1-3 third-round review: failures must not leave job stuck in `claimed`)
+# ---------------------------------------------------------------------------
+
+
+async def _query_job_status(pool: asyncpg.Pool, job_id: UUID) -> str:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+    return str(row["status"]) if row else "missing"
+
+
+async def _query_run_status(pool: asyncpg.Pool, run_id: UUID) -> str:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status FROM reader_runs WHERE id = $1",
+            run_id,
+        )
+    return str(row["status"]) if row else "missing"
+
+
+async def _query_window_status(pool: asyncpg.Pool, job_id: UUID) -> str | None:
+    """Look up analysis_windows.status tied to a window job's input_json."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT input_json FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+        if row is None:
+            return None
+        input_data = row["input_json"]
+        if isinstance(input_data, str):
+            input_data = json.loads(input_data)
+        window_id = UUID(str(input_data["window_id"]))
+        win_row = await conn.fetchrow(
+            "SELECT status FROM analysis_windows WHERE id = $1",
+            window_id,
+        )
+    return str(win_row["status"]) if win_row else None
+
+
+async def test_pipeline_runner_window_llm_failure_transitions_job_to_retry_later(
+    test_db_pool_with_window_job_only: tuple[asyncpg.Pool, UUID, UUID, UUID],
+) -> None:
+    """GrammarWindowExecutionError (LLM transient) -> reader_jobs.retry_later.
+
+    Verifies P1-3 third-round fix: when ``process_window_job`` raises
+    ``GrammarWindowExecutionError``, the runner transitions the job out of
+    ``claimed`` to ``retry_later`` and marks the run as ``failed_retryable``,
+    rather than leaving the job stuck waiting for lease expiry.
+    """
+    from app.services.reader_orchestration.grammar_window_worker import (
+        GrammarWindowExecutionError,
+    )
+
+    pool, record_id, user_id, base_id = test_db_pool_with_window_job_only
+    runner = _make_runner(pool, record_id, base_id)
+
+    captured_job_id: list[UUID] = []
+    captured_run_id: list[UUID] = []
+
+    async def _failing_process(*, claim: Any) -> dict[str, Any]:
+        captured_job_id.append(claim.job_id)
+        captured_run_id.append(claim.run_id)
+        raise GrammarWindowExecutionError(
+            "simulated LLM timeout (test fixture)"
+        )
+
+    mock_worker = AsyncMock()
+    mock_worker.process_window_job = AsyncMock(side_effect=_failing_process)
+    mock_publisher = AsyncMock()
+
+    runner._grammar_window_worker = mock_worker
+    runner._grammar_window_publisher = mock_publisher
+
+    summary = await runner.run(
+        record_id=record_id,
+        user_id=user_id,
+        lease_owner="test-llm-failure-retry",
+        lease_duration=LEASE_DURATION,
+        max_ticks=10,
+        max_jobs=10,
+    )
+
+    assert captured_job_id, "window worker must have been called at least once"
+    job_status = await _query_job_status(pool, captured_job_id[0])
+    assert job_status == "retry_later", (
+        f"LLM failure must transition job to retry_later; got {job_status!r}"
+    )
+    run_status = await _query_run_status(pool, captured_run_id[0])
+    assert run_status == "failed_retryable", (
+        f"LLM failure must mark run as failed_retryable; got {run_status!r}"
+    )
+    # Publisher must NOT be called when the executor fails before producing
+    # candidates.
+    mock_publisher.publish_window_grammar_bundle.assert_not_called()
+    # Pipeline summary must reflect the retry_later outcome.
+    assert summary.outcome_counts.retry_later >= 1
+
+
+async def test_pipeline_runner_window_value_error_transitions_job_to_failed_terminal(
+    test_db_pool_with_window_job_only: tuple[asyncpg.Pool, UUID, UUID, UUID],
+) -> None:
+    """ValueError (P2-1 fail-closed contract violation) -> failed_terminal.
+
+    Verifies P1-3 third-round fix: when ``process_window_job`` raises
+    ``ValueError`` (e.g. P2-1 fail-closed from publisher / candidate
+    contents derivation), the runner transitions the job to
+    ``failed_terminal`` (not retryable — code bug) and marks the run as
+    ``failed_terminal`` + the analysis_window as ``failed``.
+    """
+    pool, record_id, user_id, base_id = test_db_pool_with_window_job_only
+    runner = _make_runner(pool, record_id, base_id)
+
+    captured_job_id: list[UUID] = []
+    captured_run_id: list[UUID] = []
+
+    async def _contract_violation_process(*, claim: Any) -> dict[str, Any]:
+        captured_job_id.append(claim.job_id)
+        captured_run_id.append(claim.run_id)
+        raise ValueError(
+            "candidate_contents is required when candidates exist "
+            "(P2-1 fail closed: sidecar fallback removed)"
+        )
+
+    mock_worker = AsyncMock()
+    mock_worker.process_window_job = AsyncMock(
+        side_effect=_contract_violation_process
+    )
+    mock_publisher = AsyncMock()
+
+    runner._grammar_window_worker = mock_worker
+    runner._grammar_window_publisher = mock_publisher
+
+    summary = await runner.run(
+        record_id=record_id,
+        user_id=user_id,
+        lease_owner="test-contract-violation-terminal",
+        lease_duration=LEASE_DURATION,
+        max_ticks=10,
+        max_jobs=10,
+    )
+
+    assert captured_job_id, "window worker must have been called at least once"
+    job_status = await _query_job_status(pool, captured_job_id[0])
+    assert job_status == "failed_terminal", (
+        f"ValueError must transition job to failed_terminal; got {job_status!r}"
+    )
+    run_status = await _query_run_status(pool, captured_run_id[0])
+    assert run_status == "failed_terminal", (
+        f"ValueError must mark run as failed_terminal; got {run_status!r}"
+    )
+    mock_publisher.publish_window_grammar_bundle.assert_not_called()
+    assert summary.outcome_counts.failed_terminal >= 1
+
+
+async def test_pipeline_runner_window_publisher_value_error_marks_window_failed(
+    test_db_pool_with_window_job_only: tuple[asyncpg.Pool, UUID, UUID, UUID],
+) -> None:
+    """When publisher raises ValueError after candidates_ready, the
+    analysis_window is marked ``failed`` (not stuck in ``running``).
+
+    Verifies the ``window_id`` propagation path: ``process_window_job``
+    succeeds with ``candidates_ready``, then ``publish_window_grammar_bundle``
+    raises ValueError (P2-1 fail-closed inside publisher). The runner must
+    look up the window_id from the job's input_json and mark
+    ``analysis_windows.status = 'failed'``.
+    """
+    pool, record_id, user_id, base_id = test_db_pool_with_window_job_only
+    runner = _make_runner(pool, record_id, base_id)
+
+    captured_job_id: list[UUID] = []
+    captured_run_id: list[UUID] = []
+
+    async def _candidates_ready_process(*, claim: Any) -> dict[str, Any]:
+        captured_job_id.append(claim.job_id)
+        captured_run_id.append(claim.run_id)
+        return {"status": "candidates_ready", "candidates": []}
+
+    async def _failing_publish(**kwargs: Any) -> None:
+        raise ValueError(
+            "publisher contract violation (test fixture)"
+        )
+
+    mock_worker = AsyncMock()
+    mock_worker.process_window_job = AsyncMock(
+        side_effect=_candidates_ready_process
+    )
+    mock_publisher = AsyncMock()
+    mock_publisher.publish_window_grammar_bundle = AsyncMock(
+        side_effect=_failing_publish
+    )
+
+    runner._grammar_window_worker = mock_worker
+    runner._grammar_window_publisher = mock_publisher
+
+    await runner.run(
+        record_id=record_id,
+        user_id=user_id,
+        lease_owner="test-publisher-failure-window",
+        lease_duration=LEASE_DURATION,
+        max_ticks=10,
+        max_jobs=10,
+    )
+
+    assert captured_job_id, "window worker must have been called at least once"
+    job_status = await _query_job_status(pool, captured_job_id[0])
+    assert job_status == "failed_terminal", (
+        f"publisher ValueError must transition job to failed_terminal; "
+        f"got {job_status!r}"
+    )
+    window_status = await _query_window_status(pool, captured_job_id[0])
+    assert window_status == "failed", (
+        f"analysis_windows.status must be 'failed' after publisher failure; "
+        f"got {window_status!r}"
+    )

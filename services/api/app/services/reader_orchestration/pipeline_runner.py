@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -15,6 +15,7 @@ from app.services.reader_orchestration.grammar_window_publisher import (
     WindowCandidateContent,
 )
 from app.services.reader_orchestration.grammar_window_worker import (
+    GrammarWindowExecutionError,
     GrammarWindowWorkerService,
 )
 from app.services.reader_orchestration.grammar_worker import (
@@ -45,6 +46,7 @@ from app.services.reader_orchestration.job_bootstrap import (
     EnhancementJobBootstrapService,
 )
 from app.services.reader_orchestration.job_runtime import (
+    ClaimResult,
     FenceViolationError,
     ReaderJobRuntime,
 )
@@ -624,6 +626,7 @@ class ReaderEnhancementPipelineRunner:
                 expected_generation=expected_generation,
                 lease_owner=lease_owner,
                 lease_duration=lease_duration,
+                retry_delay=grammar_retry_delay,
             )
         return await self._run_grammar_attempt(
             record_id=record_id,
@@ -899,6 +902,7 @@ class ReaderEnhancementPipelineRunner:
         expected_generation: int,
         lease_owner: str,
         lease_duration: timedelta,
+        retry_delay: timedelta,
     ) -> ReaderPipelineWorkerAttempt:
         """Dispatch a Z+ ``build_grammar_bundle_window`` reader_job.
 
@@ -912,6 +916,16 @@ class ReaderEnhancementPipelineRunner:
              publish transaction). If the worker short-circuits with
              ``already_terminal`` (window already completed / no_op / failed),
              the publisher is skipped — there is nothing to publish.
+
+        Failure handling (P1-3 third-round review):
+          ``GrammarWindowExecutionError`` (LLM transient / config / validation)
+          → ``retry_later``. ``ValueError`` (P2-1 fail-closed contract
+          violation from ``_derive_candidate_contents`` or publisher) →
+          ``failed_terminal`` (code bug, not retryable). Generic ``Exception``
+          → ``failed_terminal`` (defensive). On any failure the job is
+          transitioned out of ``claimed`` and the run + analysis_window are
+          marked failed, so the pipeline never leaves a job stuck in
+          ``claimed`` waiting for lease expiry.
         """
         if self._grammar_window_worker is None or self._grammar_window_publisher is None:
             return ReaderPipelineWorkerAttempt(
@@ -939,7 +953,42 @@ class ReaderEnhancementPipelineRunner:
 
         await self._mark_window_run_running(claim.run_id)
 
-        result = await self._grammar_window_worker.process_window_job(claim=claim)
+        try:
+            result = await self._grammar_window_worker.process_window_job(claim=claim)
+        except GrammarWindowExecutionError as exc:
+            return await self._handle_window_job_failure(
+                claim=claim,
+                exc=exc,
+                retryable=True,
+                retry_delay=retry_delay,
+                failure_class="grammar_window_execution",
+                failure_code="llm_execution_failed",
+                rationale_code="grammar_window_llm_failed",
+                message=str(exc),
+            )
+        except ValueError as exc:
+            return await self._handle_window_job_failure(
+                claim=claim,
+                exc=exc,
+                retryable=False,
+                retry_delay=retry_delay,
+                failure_class="grammar_window_contract_violation",
+                failure_code=type(exc).__name__,
+                rationale_code="grammar_window_contract_violation",
+                message=str(exc),
+            )
+        except Exception as exc:
+            return await self._handle_window_job_failure(
+                claim=claim,
+                exc=exc,
+                retryable=False,
+                retry_delay=retry_delay,
+                failure_class="grammar_window_unexpected",
+                failure_code=type(exc).__name__,
+                rationale_code="grammar_window_unexpected_failure",
+                message=str(exc),
+            )
+
         status = result.get("status")
 
         if status == "candidates_ready":
@@ -949,7 +998,20 @@ class ReaderEnhancementPipelineRunner:
             # content_* fields so publisher can build proper layer output
             # (GrammarNoteLayerOutput / SentenceAnalysisLayerOutput) instead
             # of falling back to selector-sidecar output_json shape.
-            candidate_contents = _derive_candidate_contents(candidates)
+            try:
+                candidate_contents = _derive_candidate_contents(candidates)
+            except ValueError as exc:
+                return await self._handle_window_job_failure(
+                    claim=claim,
+                    exc=exc,
+                    retryable=False,
+                    retry_delay=retry_delay,
+                    failure_class="grammar_window_contract_violation",
+                    failure_code="candidate_contents_derivation_failed",
+                    rationale_code="candidate_contents_derivation_failed",
+                    message=str(exc),
+                    window_id=window_id,
+                )
             try:
                 await self._grammar_window_publisher.publish_window_grammar_bundle(
                     job_id=claim.job_id,
@@ -968,6 +1030,30 @@ class ReaderEnhancementPipelineRunner:
                     run_id=claim.run_id,
                     attention_code="publish_fence_failed",
                 )
+            except ValueError as exc:
+                return await self._handle_window_job_failure(
+                    claim=claim,
+                    exc=exc,
+                    retryable=False,
+                    retry_delay=retry_delay,
+                    failure_class="grammar_window_contract_violation",
+                    failure_code="publisher_fail_closed",
+                    rationale_code="publisher_fail_closed",
+                    message=str(exc),
+                    window_id=window_id,
+                )
+            except Exception as exc:
+                return await self._handle_window_job_failure(
+                    claim=claim,
+                    exc=exc,
+                    retryable=False,
+                    retry_delay=retry_delay,
+                    failure_class="grammar_window_publisher_unexpected",
+                    failure_code=type(exc).__name__,
+                    rationale_code="publisher_unexpected_failure",
+                    message=str(exc),
+                    window_id=window_id,
+                )
 
         # already_terminal: window already completed (no-op). The publisher is
         # skipped; the worker has not produced candidates. Treat as succeeded
@@ -978,6 +1064,77 @@ class ReaderEnhancementPipelineRunner:
             processed_job=True,
             job_id=claim.job_id,
             run_id=claim.run_id,
+        )
+
+    async def _handle_window_job_failure(
+        self,
+        *,
+        claim: ClaimResult,
+        exc: BaseException,
+        retryable: bool,
+        retry_delay: timedelta,
+        failure_class: str,
+        failure_code: str,
+        rationale_code: str,
+        message: str,
+        window_id: UUID | None = None,
+    ) -> ReaderPipelineWorkerAttempt:
+        """Transition a failed Z+ window job to retry_later / failed_terminal.
+
+        Mirrors ``grammar_worker._process_grammar_job``'s exception handlers:
+          - ``retryable=True``  → ``reader_jobs.retry_later`` +
+            ``reader_runs.failed_retryable`` (LLM transient).
+          - ``retryable=False`` → ``reader_jobs.failed_terminal`` +
+            ``reader_runs.failed_terminal`` (contract violation / code bug).
+
+        Also marks ``analysis_windows.status = 'failed'`` when ``window_id``
+        is known (preflight may have already transitioned it to ``running``;
+        without this fix the window would be stuck in ``running`` forever).
+        """
+        target_status = "retry_later" if retryable else "failed_terminal"
+        run_status = "failed_retryable" if retryable else "failed_terminal"
+
+        transition_kwargs: dict[str, Any] = {
+            "job_id": claim.job_id,
+            "target_status": target_status,
+            "lease_token": claim.lease_token,
+            "failure_class": failure_class,
+            "failure_code": failure_code,
+            "failure_message": message,
+            "rationale_code": rationale_code,
+        }
+        if retryable:
+            available_at = datetime.now(UTC) + retry_delay
+            transition_kwargs["available_at"] = available_at
+
+        try:
+            await self._job_runtime.transition(**transition_kwargs)
+        except Exception:
+            # If the job row is no longer in ``claimed`` (e.g. lease already
+            # expired and recovered by another tick), we still want to mark
+            # the run + window as failed so observability stays consistent.
+            pass
+
+        await self._mark_window_run_failed(
+            claim.run_id,
+            status=run_status,
+            failure_class=failure_class,
+            failure_code=failure_code,
+        )
+
+        if window_id is not None:
+            await self._mark_analysis_window_failed(window_id)
+
+        outcome: PipelineAttemptOutcome = (
+            "retry_later" if retryable else "failed_terminal"
+        )
+        return ReaderPipelineWorkerAttempt(
+            worker_type="grammar_bundle_window",
+            outcome=outcome,
+            processed_job=True,
+            job_id=claim.job_id,
+            run_id=claim.run_id,
+            attention_code=rationale_code,
         )
 
     async def _load_window_ids_from_job(
@@ -1024,6 +1181,63 @@ class ReaderEnhancementPipelineRunner:
                 WHERE id = $1
                 """,
                 run_id,
+            )
+
+    async def _mark_window_run_failed(
+        self,
+        run_id: UUID,
+        *,
+        status: str,
+        failure_class: str,
+        failure_code: str,
+    ) -> None:
+        """Mark a Z+ reader_run as failed (mirrors grammar_worker failure path).
+
+        ``status`` should be ``failed_retryable`` or ``failed_terminal`` to
+        match ``reader_runs.status`` CHECK constraint. ``finished_at`` is set
+        only for terminal failures; retryable runs stay open so the next
+        attempt can re-enter ``running``.
+        """
+        is_terminal = status == "failed_terminal"
+        async with self.get_pool().acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE reader_runs
+                SET status = $2,
+                    failure_class = $3,
+                    failure_code = $4,
+                    finished_at = CASE WHEN $5 THEN NOW() ELSE finished_at END,
+                    updated_at = NOW()
+                WHERE id = $1
+                """,
+                run_id,
+                status,
+                failure_class,
+                failure_code,
+                is_terminal,
+            )
+
+    async def _mark_analysis_window_failed(self, window_id: UUID) -> None:
+        """Mark ``analysis_windows.status = 'failed'`` on job failure.
+
+        Preflight (§8.2) transitions the window from ``pending`` to
+        ``running`` before the LLM call. If the executor / publisher raises,
+        the window would otherwise be stuck in ``running`` (or ``pending``
+        if preflight itself failed) forever. This marks it ``failed`` so
+        observability queries and re-bootstrap logic see the window as
+        terminal. Already-terminal windows (``completed`` / ``no_op`` /
+        ``failed``) are left untouched.
+        """
+        async with self.get_pool().acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE analysis_windows
+                SET status = 'failed',
+                    completed_at = COALESCE(completed_at, NOW())
+                WHERE id = $1
+                  AND status NOT IN ('completed', 'no_op', 'failed')
+                """,
+                window_id,
             )
 
     async def _build_worker_attempt_from_result(
