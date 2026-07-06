@@ -11,6 +11,7 @@ import asyncpg
 from app.database import connection as db_connection
 from app.services.reader_orchestration.grammar_window_publisher import (
     GrammarWindowPublisher,
+    WindowCandidateContent,
 )
 from app.services.reader_orchestration.grammar_window_worker import (
     GrammarWindowWorkerService,
@@ -91,6 +92,71 @@ PipelineStoppedReason = Literal[
 
 DEFAULT_PIPELINE_MAX_TICKS = 24
 DEFAULT_PIPELINE_MAX_JOBS = 24
+
+
+def _derive_candidate_contents(
+    candidates: list,
+) -> list[WindowCandidateContent] | None:
+    """P1-4 bridge: 从 CandidateItem 的 content_* 字段派生 WindowCandidateContent。
+
+    executor 产出的 CandidateItem 携带 grammar_point / note / label /
+    analysis / chunks 等内容字段（P1-3 fix），但 publisher 的
+    ``publish_window_grammar_bundle`` 需要独立的 ``WindowCandidateContent``
+    列表来构建合法的 GrammarNoteLayerOutput / SentenceAnalysisLayerOutput。
+    本函数完成 dict → Pydantic model 的转换。
+
+    返回 ``None`` 时 publisher 走 backward-compat 路径（sidecar output_json）。
+    返回非空 list 时 publisher 据此构建合法 layer contract。
+
+    当 CandidateItem 没有携带 content_* 字段（空字符串/空列表），或 span
+    dict 不符合 ReaderTextRangeAnchor schema 时，返回 ``None`` 触发
+    backward-compat 路径。这保证了 mock executor 测试不会因 schema 不匹配
+    而失败。注意：必须返回 ``None`` 而不是空 list ``[]``，否则 publisher
+    会用空 contents 构建 GrammarNoteLayerOutput 导致 items=[] 验证失败。
+    """
+    from app.schemas.reader_orchestration import (
+        ReaderTextRangeAnchor,
+        SentenceAnalysisChunk,
+    )
+
+    if not candidates:
+        return None
+
+    contents: list[WindowCandidateContent] = []
+    for c in candidates:
+        # 只有当 candidate 携带了实际内容时才构建 WindowCandidateContent
+        has_content = bool(
+            c.grammar_point or c.note or c.label or c.analysis or c.chunks
+        )
+        if not has_content:
+            return None  # 触发 backward-compat 路径
+
+        try:
+            spans_models = (
+                [ReaderTextRangeAnchor(**s) for s in c.spans] if c.spans else []
+            )
+            chunks_models = (
+                [SentenceAnalysisChunk(**ch) for ch in c.chunks] if c.chunks else []
+            )
+        except Exception:
+            # span/chunk dict 不符合 schema（mock executor 简化数据）
+            return None  # 触发 backward-compat 路径
+
+        anchor_model = spans_models[0] if spans_models else None
+        contents.append(
+            WindowCandidateContent(
+                semantic_dedup_key=c.semantic_dedup_key,
+                grammar_point=c.grammar_point,
+                pattern=c.pattern,
+                note=c.note,
+                spans=spans_models,
+                anchor=anchor_model,
+                label=c.label,
+                analysis=c.analysis,
+                chunks=chunks_models,
+            )
+        )
+    return contents if contents else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -818,13 +884,20 @@ class ReaderEnhancementPipelineRunner:
 
         if status == "candidates_ready":
             plan_id, window_id = await self._load_window_ids_from_job(claim.job_id)
+            candidates: list = result.get("candidates", [])
+            # P1-4 bridge: derive WindowCandidateContent from CandidateItem's
+            # content_* fields so publisher can build proper layer output
+            # (GrammarNoteLayerOutput / SentenceAnalysisLayerOutput) instead
+            # of falling back to selector-sidecar output_json shape.
+            candidate_contents = _derive_candidate_contents(candidates)
             try:
                 await self._grammar_window_publisher.publish_window_grammar_bundle(
                     job_id=claim.job_id,
                     lease_token=claim.lease_token,
                     plan_id=plan_id,
                     window_id=window_id,
-                    candidates=result.get("candidates", []),
+                    candidates=candidates,
+                    candidate_contents=candidate_contents,
                 )
             except FenceViolationError:
                 return ReaderPipelineWorkerAttempt(

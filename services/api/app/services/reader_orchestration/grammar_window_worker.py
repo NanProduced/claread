@@ -358,6 +358,9 @@ class PydanticAIGrammarWindowExecutor:
                     pattern_key=note.pattern,
                     quality_score=0.0,
                     reading_blocker=False,
+                    grammar_point=note.grammar_point,
+                    pattern=note.pattern,
+                    note=note.note,
                 )
             )
         for analysis in output.sentence_analyses:
@@ -374,6 +377,9 @@ class PydanticAIGrammarWindowExecutor:
                     pattern_key=None,
                     quality_score=0.0,
                     reading_blocker=False,
+                    label=analysis.label,
+                    analysis=analysis.analysis,
+                    chunks=[chunk.model_dump() for chunk in analysis.chunks],
                 )
             )
         return candidates
@@ -571,6 +577,7 @@ class GrammarWindowWorkerService:
 
         # 4. Return candidates_ready. The pipeline runner wires the publisher
         # after this return (see ``_run_grammar_window_attempt``).
+        # candidates 携带 content_* 字段，publisher 据此构建合法 layer output。
         return {
             "status": "candidates_ready",
             "candidates": candidates,

@@ -99,7 +99,13 @@ class SelectorLedger:
 
 @dataclass(frozen=True, slots=True)
 class CandidateItem:
-    """Selector 输入：LLM 产出的候选标注。"""
+    """Selector 输入：LLM 产出的候选标注。
+
+    content_* 字段携带 layer contract 所需的实际内容（grammar_point /
+    note / label / analysis / chunks），由 executor 填充，publisher 据此
+    构建 GrammarNoteLayerOutput / SentenceAnalysisLayerOutput。selector
+    本身不读这些字段（只读 dedup/anchor/pattern/quality 字段）。
+    """
 
     item_type: str  # "grammar_note" | "sentence_analysis"
     anchor_segment_id: str
@@ -108,6 +114,13 @@ class CandidateItem:
     pattern_key: str | None
     quality_score: float = 0.0
     reading_blocker: bool = False
+    # Layer content fields (P1-4 bridge: executor → publisher)
+    grammar_point: str = ""
+    pattern: str | None = None
+    note: str = ""
+    label: str = ""
+    analysis: str = ""
+    chunks: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
