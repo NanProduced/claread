@@ -15,6 +15,7 @@ phase (window_locked.status == 'running' fence) rejects the output.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from datetime import timedelta
 from enum import Enum
@@ -23,12 +24,22 @@ from uuid import UUID
 
 import asyncpg
 
+from app.config.settings import Settings
 from app.contracts.annotation import slice_by_utf16_offsets
 from app.database import connection as db_connection
+from app.schemas.reader_orchestration import GrammarBundleOutput
+from app.services.reader_orchestration.grammar_worker import (
+    GrammarAnchorSegmentContext,
+    GrammarJobContext,
+    PydanticAIGrammarBundleExecutor,
+)
 from app.services.reader_orchestration.job_runtime import (
     ClaimResult,
     IllegalTransitionError,
     ReaderJobRuntime,
+)
+from app.services.reader_orchestration.reading_strategy import (
+    resolve_reader_variant_strategy,
 )
 from app.services.reader_orchestration.window_selector import CandidateItem
 
@@ -67,6 +78,315 @@ class UnconfiguredGrammarWindowExecutor:
             "GrammarWindowWorkerService has no executor configured. "
             "Pass an executor= parameter to the constructor."
         )
+
+
+# design §8.3 中 ``_GRAMMAR_LAYER_NAME`` 的字符串常量，用于从 resolver
+# 取出 grammar_bundle layer 的 policy_hash + prompt_lines。
+_GRAMMAR_LAYER_NAME = "grammar_bundle"
+
+
+class PydanticAIGrammarWindowExecutor:
+    """适配 legacy PydanticAIGrammarBundleExecutor 到 Z+ window executor 协议。
+
+    实现 ``GrammarWindowExecutorProtocol.generate(context) -> list[CandidateItem]``。
+    v1 过渡实现：对 window 内每个 unit 调用一次 legacy
+    ``PydanticAIGrammarBundleExecutor.generate(GrammarJobContext)``，将
+    ``GrammarBundleOutput`` 转换为 ``list[CandidateItem]`` 后收集返回。
+
+    设计权衡（design §8.3）：
+      - v1：LLM 调用次数与 per-unit 路径相同（每 unit 一次），但 selector
+        + density gates 仍然减少最终标注数量。复用 legacy prompt + 输出
+        schema，避免重新设计 window-aware prompt。
+      - TODO(v1.1)：替换为单一 window-aware prompt，一次 LLM 调用覆盖
+        整个 window 的所有 unit，从而减少 LLM 调用次数。
+
+    context dict 结构（由 ``GrammarWindowWorkerService._load_window_context``
+    返回）：
+      - ``target_anchors``: list[dict]，每个 dict 含 anchor_segment_id /
+        unit_id / unit_order_index / base_start_utf16 / base_end_utf16 /
+        unit_base_start_utf16 / unit_base_end_utf16 / source_text
+      - ``base_id`` / ``reading_record_id`` / ``job_id``: 用于构造
+        GrammarJobContext 的 placeholder 字段（executor 不依赖 reader_jobs
+        行，只读取 reading_records / reading_bases / reading_units /
+        anchor_segments）
+    """
+
+    def __init__(
+        self,
+        *,
+        pool: asyncpg.Pool | None = None,
+        settings: Settings | None = None,
+        executor: PydanticAIGrammarBundleExecutor | None = None,
+    ) -> None:
+        self._pool = pool
+        self._settings = settings
+        self._executor = executor or PydanticAIGrammarBundleExecutor(
+            settings=settings
+        )
+
+    def get_pool(self) -> asyncpg.Pool:
+        pool = self._pool or db_connection.DB_POOL
+        if pool is None:
+            raise RuntimeError("Database pool not initialized")
+        return pool
+
+    async def generate(self, context: dict[str, Any]) -> list[CandidateItem]:
+        """对 window 内每个 unit 调用 legacy executor，收集 candidates。
+
+        ``context`` 是 ``GrammarWindowWorkerService._load_window_context``
+        返回的 dict。target_anchors 按 unit_id 分组，每个 unit 构造一个
+        ``GrammarJobContext`` 后调用 legacy executor。任一 unit 失败时
+        跳过并继续处理其他 unit（best-effort，不中断整个 window）。
+        """
+        target_anchors: list[dict[str, Any]] = list(
+            context.get("target_anchors", [])
+        )
+        if not target_anchors:
+            return []
+
+        # 按 unit_id 分组，保持出现顺序。
+        units: dict[str, list[dict[str, Any]]] = {}
+        for anchor in target_anchors:
+            unit_id = str(anchor["unit_id"])
+            units.setdefault(unit_id, []).append(anchor)
+
+        candidates: list[CandidateItem] = []
+        for unit_id, unit_anchors in units.items():
+            job_context = await self._build_unit_context(
+                context=context,
+                unit_id=unit_id,
+                unit_anchors=unit_anchors,
+            )
+            if job_context is None:
+                continue
+            try:
+                result = await self._executor.generate(job_context)
+            except Exception:
+                # legacy executor 失败时跳过该 unit，继续处理其他 unit。
+                # 错误由上层 worker / pipeline 的 retry 机制处理。
+                continue
+            candidates.extend(self._convert_output(result.output))
+        return candidates
+
+    async def _build_unit_context(
+        self,
+        *,
+        context: dict[str, Any],
+        unit_id: str,
+        unit_anchors: list[dict[str, Any]],
+    ) -> GrammarJobContext | None:
+        """为单个 unit 构造 GrammarJobContext。
+
+        查询 reading_records / reading_bases / reading_units /
+        anchor_segments 构建 legacy executor 所需的完整 context。anchor
+        列表限定为 window 内的 target_anchors（subset of unit's anchors），
+        避免处理 window 外的 anchor。
+        """
+        record_id = context["reading_record_id"]
+        base_id = context["base_id"]
+        window_job_id = context.get("job_id")
+
+        async with self.get_pool().acquire() as conn:
+            record_row = await conn.fetchrow(
+                """
+                SELECT reading_goal, reading_variant, generation
+                FROM reading_records
+                WHERE id = $1
+                """,
+                record_id,
+            )
+            if record_row is None:
+                return None
+
+            base_row = await conn.fetchrow(
+                """
+                SELECT language, text
+                FROM reading_bases
+                WHERE id = $1 AND reading_record_id = $2
+                """,
+                base_id,
+                record_id,
+            )
+            if base_row is None:
+                return None
+
+            base_text = str(base_row["text"])
+            source_language = str(base_row["language"] or "en")
+
+            unit_row = await conn.fetchrow(
+                """
+                SELECT order_index, base_start_utf16, base_end_utf16, text_hash
+                FROM reading_units
+                WHERE reading_record_id = $1
+                  AND base_id = $2
+                  AND unit_id = $3
+                """,
+                record_id,
+                base_id,
+                unit_id,
+            )
+            if unit_row is None:
+                return None
+
+            source_text = slice_by_utf16_offsets(
+                base_text,
+                int(unit_row["base_start_utf16"]),
+                int(unit_row["base_end_utf16"]),
+            )
+            if not source_text:
+                return None
+
+            # 只加载 window 内的 target_anchors（subset of unit's anchors）。
+            anchor_ids = [str(a["anchor_segment_id"]) for a in unit_anchors]
+            segment_rows = await conn.fetch(
+                """
+                SELECT anchor_segment_id,
+                       sentence_id,
+                       segment_type,
+                       unit_start_utf16,
+                       unit_end_utf16,
+                       text_hash
+                FROM anchor_segments
+                WHERE reading_record_id = $1
+                  AND base_id = $2
+                  AND unit_id = $3
+                  AND anchor_segment_id = ANY($4::text[])
+                ORDER BY order_index ASC
+                """,
+                record_id,
+                base_id,
+                unit_id,
+                anchor_ids,
+            )
+
+            anchor_segments: list[GrammarAnchorSegmentContext] = []
+            for seg_row in segment_rows:
+                seg_text = slice_by_utf16_offsets(
+                    source_text,
+                    int(seg_row["unit_start_utf16"]),
+                    int(seg_row["unit_end_utf16"]),
+                )
+                if not seg_text:
+                    continue
+                anchor_segments.append(
+                    GrammarAnchorSegmentContext(
+                        anchor_segment_id=str(seg_row["anchor_segment_id"]),
+                        sentence_id=str(
+                            seg_row["sentence_id"]
+                            or seg_row["anchor_segment_id"]
+                        ),
+                        segment_type=str(seg_row["segment_type"]),
+                        unit_start_utf16=int(seg_row["unit_start_utf16"]),
+                        unit_end_utf16=int(seg_row["unit_end_utf16"]),
+                        text_hash=str(seg_row["text_hash"]),
+                        text=seg_text,
+                    )
+                )
+
+            if not anchor_segments:
+                return None
+
+        # 解析 variant-first strategy（与 grammar_worker._validate_grammar_strategy_metadata
+        # 一致，但不校验 input_json hash —— window job 的 input_json 不携带
+        # strategy metadata，直接从 reading_records 列读取）。
+        reading_goal = str(record_row["reading_goal"])
+        reading_variant = str(record_row["reading_variant"])
+        try:
+            strategy = resolve_reader_variant_strategy(
+                reading_goal, reading_variant
+            )
+        except Exception:
+            return None
+        layer = strategy.layers.get(_GRAMMAR_LAYER_NAME)
+        if layer is None:
+            return None
+
+        # job_id / run_id / user_id 使用 placeholder：legacy executor 的
+        # generate() 仅使用 context 构建 prompt + 转换输出，不写入 DB
+        # 也不记录 usage event（usage 由上层 GrammarWindowWorkerService /
+        # GrammarWindowPublisher 统一处理）。
+        placeholder_id = window_job_id or UUID(int=0)
+
+        return GrammarJobContext(
+            job_id=placeholder_id,
+            run_id=placeholder_id,
+            reading_record_id=record_id,
+            user_id=placeholder_id,
+            base_id=base_id,
+            unit_id=unit_id,
+            order_index=int(unit_row["order_index"]),
+            expected_generation=int(record_row["generation"]),
+            operation_fingerprint="",
+            source_language=source_language,
+            source_text=source_text,
+            text_hash=str(unit_row["text_hash"]),
+            anchor_segments=tuple(anchor_segments),
+            reading_goal=reading_goal,
+            reading_variant=reading_variant,
+            strategy_version=strategy.strategy_version,
+            strategy_hash=strategy.strategy_hash,
+            layer_policy_hash=layer.policy_hash,
+            grammar_prompt_lines=layer.prompt_lines,
+        )
+
+    @staticmethod
+    def _convert_output(
+        output: GrammarBundleOutput,
+    ) -> list[CandidateItem]:
+        """将 GrammarBundleOutput 转换为 list[CandidateItem]。
+
+        - grammar_note: anchor_segment_id 取第一个 span；spans 直接
+          model_dump；semantic_dedup_key 从 grammar_point + note 计算。
+        - sentence_analysis: anchor_segment_id 取 anchor；spans 为
+          [anchor.model_dump()]；semantic_dedup_key 从 label + analysis 计算。
+        - quality_score / reading_blocker 使用默认值（LLM 不产出这些字段）。
+        """
+        candidates: list[CandidateItem] = []
+        for note in output.grammar_notes:
+            if not note.spans:
+                continue
+            anchor_segment_id = note.spans[0].anchor_segment_id
+            dedup_key = PydanticAIGrammarWindowExecutor._compute_dedup_key(
+                note.grammar_point, note.note
+            )
+            candidates.append(
+                CandidateItem(
+                    item_type="grammar_note",
+                    anchor_segment_id=anchor_segment_id,
+                    spans=[span.model_dump() for span in note.spans],
+                    semantic_dedup_key=dedup_key,
+                    pattern_key=note.pattern,
+                    quality_score=0.0,
+                    reading_blocker=False,
+                )
+            )
+        for analysis in output.sentence_analyses:
+            anchor_segment_id = analysis.anchor.anchor_segment_id
+            dedup_key = PydanticAIGrammarWindowExecutor._compute_dedup_key(
+                analysis.label, analysis.analysis
+            )
+            candidates.append(
+                CandidateItem(
+                    item_type="sentence_analysis",
+                    anchor_segment_id=anchor_segment_id,
+                    spans=[analysis.anchor.model_dump()],
+                    semantic_dedup_key=dedup_key,
+                    pattern_key=None,
+                    quality_score=0.0,
+                    reading_blocker=False,
+                )
+            )
+        return candidates
+
+    @staticmethod
+    def _compute_dedup_key(*parts: str) -> str:
+        """从多个字符串字段计算稳定的 semantic dedup key。
+
+        使用 sha1 前 16 字符作为 dedup key，足够区分不同 grammar_point /
+        note 组合，避免长字符串污染 ledger。
+        """
+        raw = "|".join(parts)
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
 class GrammarWindowWorkerService:

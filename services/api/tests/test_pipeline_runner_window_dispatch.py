@@ -153,10 +153,15 @@ def _make_runner(
 
     ``_grammar_window_worker`` / ``_grammar_window_publisher`` are NOT set
     here — each test overrides them with mocks after construction.
+    ``enable_zplus_grammar=False`` 保证构造时不创建 real Z+ worker /
+    publisher（避免触达 real LLM）；测试通过 override ``_grammar_window_worker``
+    / ``_grammar_window_publisher`` 属性来注入 mock，``run()`` 在运行时
+    根据 ``self._grammar_window_worker is not None`` 决定 worker_order。
     """
     return ReaderEnhancementPipelineRunner(
         pool=pool,
         bootstrap_service=_make_mock_bootstrap(record_id, base_id),
+        enable_zplus_grammar=False,
     )
 
 

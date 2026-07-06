@@ -352,6 +352,10 @@ class ReaderEnhancementSmokeHarness:
             translation_orchestrator=orchestrator,
             vocabulary_worker_service=vocabulary_worker,
             grammar_worker_service=grammar_worker,
+            # fake 模式使用 legacy DevFakeGrammarBundleExecutor，不兼容
+            # Z+ window executor。回退到 4-worker 路径以保持 smoke harness
+            # 的 legacy 行为不变。real 模式保持 Z+ 默认（生产路径）。
+            enable_zplus_grammar=False,
         )
 
     @staticmethod

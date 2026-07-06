@@ -162,6 +162,7 @@ class ReaderEnhancementPipelineRunner:
         grammar_window_worker_service: GrammarWindowWorkerService | None = None,
         grammar_window_publisher: GrammarWindowPublisher | None = None,
         job_runtime: ReaderJobRuntime | None = None,
+        enable_zplus_grammar: bool = True,
     ) -> None:
         self._pool = pool
         self._bootstrap_service = bootstrap_service or EnhancementJobBootstrapService(
@@ -179,12 +180,33 @@ class ReaderEnhancementPipelineRunner:
         self._grammar_worker_service = grammar_worker_service or GrammarBundleWorkerService(
             pool=pool
         )
-        # Z+ window worker + publisher. Default to None so the pipeline runner
-        # only dispatches ``grammar_bundle_window`` jobs when the caller
-        # explicitly opts in (preserves backward compatibility for existing
-        # tests / deployments that have not yet enabled Z+).
-        self._grammar_window_worker = grammar_window_worker_service
-        self._grammar_window_publisher = grammar_window_publisher
+        # Z+ window worker + publisher。默认启用 Z+ 路径（design §9）：
+        # 当 enable_zplus_grammar=True 且调用方未显式注入时，自动构造
+        # GrammarWindowWorkerService + GrammarWindowPublisher +
+        # PydanticAIGrammarWindowExecutor，使生产路径默认走 Z+ window
+        # 调度。legacy 测试可传 enable_zplus_grammar=False 回退到 4-worker
+        # 模式（_grammar_window_worker / _grammar_window_publisher 保持
+        # None，worker_order 不包含 grammar_bundle_window）。
+        self._enable_zplus_grammar = enable_zplus_grammar
+        if enable_zplus_grammar:
+            # 延迟导入避免循环依赖（grammar_window_worker → grammar_worker
+            # → job_bootstrap 已在模块顶部导入，此处仅导入 executor）。
+            from app.services.reader_orchestration.grammar_window_worker import (
+                PydanticAIGrammarWindowExecutor,
+            )
+            self._grammar_window_worker = (
+                grammar_window_worker_service
+                or GrammarWindowWorkerService(
+                    pool=pool,
+                    executor=PydanticAIGrammarWindowExecutor(pool=pool),
+                )
+            )
+            self._grammar_window_publisher = (
+                grammar_window_publisher or GrammarWindowPublisher(pool=pool)
+            )
+        else:
+            self._grammar_window_worker = grammar_window_worker_service
+            self._grammar_window_publisher = grammar_window_publisher
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
 
     def get_pool(self) -> asyncpg.Pool:
@@ -199,9 +221,12 @@ class ReaderEnhancementPipelineRunner:
         record_id: UUID,
         user_id: UUID,
     ) -> EnhancementBootstrapSummary:
+        # enable_zplus_grammar=False 时强制走 legacy per-unit 路径，
+        # 保持 4-worker 模式下的 bootstrap 行为不变。
         return await self._bootstrap_service.bootstrap_missing_jobs(
             record_id=record_id,
             user_id=user_id,
+            force_legacy_grammar=not self._enable_zplus_grammar,
         )
 
     async def run(

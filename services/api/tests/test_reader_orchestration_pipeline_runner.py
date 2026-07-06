@@ -356,12 +356,17 @@ def _make_runner(
         pool=pool,
         generator=title_generator or _StaticTitleGenerator(),
     )
+    # enable_zplus_grammar=False: 这些是 legacy 4-worker 路径测试，
+    # 期望 bootstrap 创建 per-unit grammar_bundle jobs 并由 4-worker
+    # 顺序处理。Z+ window 路径由 test_pipeline_runner_window_dispatch.py
+    # 和 test_grammar_window_worker.py 单独覆盖。
     return ReaderEnhancementPipelineRunner(
         pool=pool,
         display_title_worker_service=display_title_worker,
         translation_orchestrator=orchestrator,
         vocabulary_worker_service=vocabulary_worker,
         grammar_worker_service=grammar_worker,
+        enable_zplus_grammar=False,
     )
 
 

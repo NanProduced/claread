@@ -781,6 +781,7 @@ class EnhancementJobBootstrapService:
         record_id: UUID,
         user_id: UUID,
         trace_id: UUID | None = None,
+        force_legacy_grammar: bool = False,
     ) -> EnhancementBootstrapSummary:
         use_zplus_grammar_path = False
         async with self.get_pool().acquire() as conn:
@@ -812,6 +813,7 @@ class EnhancementJobBootstrapService:
                         conn,
                         state=state,
                         trace_id=trace_id,
+                        force_legacy_grammar=force_legacy_grammar,
                     )
                 )
 
@@ -1180,41 +1182,32 @@ class EnhancementJobBootstrapService:
         *,
         state: _LockedActiveBaseState,
         trace_id: UUID | None = None,
+        force_legacy_grammar: bool = False,
     ) -> tuple[list[GrammarBootstrapResult], bool]:
         """Z+ vs legacy grammar bootstrap routing.
 
-        Checks ``layer_analysis_plans`` for an active Z+ plan:
-        - plan exists → Z+ path: return ``([], True)``. The caller is
-          responsible for dispatching to
-          ``ZPlusBootstrapService.bootstrap_grammar_window_plan`` after the
-          outer transaction commits (ZPlusBootstrapService opens its own
-          transaction and acquires its own ``FOR UPDATE`` lock, which would
-          deadlock against the lock held here).
-        - plan absent → legacy path: delegate to ``_bootstrap_grammar_jobs``
-          and return ``(results, False)``.
+        默认走 Z+ 路径（design §9.1）：返回 ``([], True)``，由调用方在
+        外层事务提交后调用 ``ZPlusBootstrapService.bootstrap_grammar_window_plan``
+        创建 plan + windows + jobs。``ZPlusBootstrapService`` 内部幂等，
+        plan 已存在时直接复用，不重复创建。
+
+        仅当 ``force_legacy_grammar=True`` 时回退到 legacy per-unit
+        ``_bootstrap_grammar_jobs``（保留旧代码作为 fallback，符合"在
+        agentic orchestration 验证完成前不删除旧 AI workflow"的约束）。
 
         Design: docs/initiatives/reader-agentic-orchestration/
-        analysis-window-zplus-design.md §9 worker migration.
+        analysis-window-zplus-design.md §9.1 worker migration.
         """
-        zplus_plan_id = await conn.fetchval(
-            """
-            SELECT id FROM layer_analysis_plans
-            WHERE reading_record_id = $1
-              AND base_id = $2
-              AND layer_type = 'grammar_bundle'
-              AND status IN ('planning', 'active')
-            """,
-            state.record_id,
-            state.base_id,
-        )
-        if zplus_plan_id is not None:
-            return [], True
-        results = await self._bootstrap_grammar_jobs(
-            conn,
-            state=state,
-            trace_id=trace_id,
-        )
-        return results, False
+        if force_legacy_grammar:
+            results = await self._bootstrap_grammar_jobs(
+                conn,
+                state=state,
+                trace_id=trace_id,
+            )
+            return results, False
+        # 默认 Z+ 路径。ZPlusBootstrapService 在外层事务提交后被调用，
+        # 其内部幂等：plan 已存在时直接复用。
+        return [], True
 
 
 async def _load_locked_active_base_state(

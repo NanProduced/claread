@@ -360,6 +360,7 @@ def _make_runner(
         translation_orchestrator=translation_orchestrator,
         vocabulary_worker_service=vocabulary_worker,
         grammar_worker_service=grammar_worker,
+        enable_zplus_grammar=False,
     )
 
 
@@ -747,7 +748,10 @@ async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload
         user_id=user_id,
         title="Real Chain Smoke",
     )
-    await ReaderEnhancementPipelineRunner(pool=worker_loop_env).bootstrap_missing_jobs(
+    await ReaderEnhancementPipelineRunner(
+        pool=worker_loop_env,
+        enable_zplus_grammar=False,
+    ).bootstrap_missing_jobs(
         record_id=article.record_id,
         user_id=user_id,
     )

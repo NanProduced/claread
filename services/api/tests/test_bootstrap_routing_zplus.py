@@ -4,11 +4,11 @@ Design source:
   docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
   §9 worker migration (bootstrap routing)
 
-Routing contract:
-    - record 已有 Z+ plan (``layer_analysis_plans.status IN ('planning', 'active')``)
-      → 走 Z+ 路径 (调用 ``ZPlusBootstrapService.bootstrap_grammar_window_plan``)
-    - record 无 Z+ plan
-      → 走 legacy per-unit 路径 (现有 ``_bootstrap_grammar_jobs``)
+Routing contract (P1-1 修正后):
+    - 默认走 Z+ 路径 (调用 ``ZPlusBootstrapService.bootstrap_grammar_window_plan``)，
+      无论 record 是否已有 Z+ plan。``ZPlusBootstrapService`` 内部幂等。
+    - ``force_legacy_grammar=True`` 时回退到 legacy per-unit 路径
+      (现有 ``_bootstrap_grammar_jobs``)。
 """
 
 from __future__ import annotations
@@ -144,7 +144,7 @@ async def test_db_pool_without_plan() -> AsyncIterator[
 async def test_bootstrap_uses_zplus_path_when_plan_exists(
     test_db_pool_with_zplus_plan: tuple[asyncpg.Pool, UUID, UUID, UUID],
 ) -> None:
-    """record 已有 Z+ plan 时，grammar bootstrap 走 Z+ 路径。"""
+    """record 已有 Z+ plan 时，grammar bootstrap 走 Z+ 路径（幂等复用）。"""
     pool, record_id, base_id, user_id = test_db_pool_with_zplus_plan
     service = EnhancementJobBootstrapService(pool=pool)
     await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
@@ -161,13 +161,42 @@ async def test_bootstrap_uses_zplus_path_when_plan_exists(
         assert len(legacy_jobs) == 0
 
 
-async def test_bootstrap_uses_legacy_path_when_no_plan(
+async def test_bootstrap_uses_zplus_path_by_default(
     test_db_pool_without_plan: tuple[asyncpg.Pool, UUID, UUID, UUID],
 ) -> None:
-    """record 无 Z+ plan 时，grammar bootstrap 走 legacy per-unit 路径。"""
+    """P1-1: 默认走 Z+ 路径，无需 pre-create plan。
+
+    ``bootstrap_missing_jobs`` 不传 ``force_legacy_grammar`` 时默认走 Z+，
+    由 ``ZPlusBootstrapService.bootstrap_grammar_window_plan`` 创建 plan +
+    windows + window jobs。
+    """
     pool, record_id, base_id, user_id = test_db_pool_without_plan
     service = EnhancementJobBootstrapService(pool=pool)
     await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    async with pool.acquire() as conn:
+        window_jobs = await conn.fetch(
+            "SELECT * FROM reader_jobs WHERE job_type = 'build_grammar_bundle_window'"
+        )
+        legacy_jobs = await conn.fetch(
+            "SELECT * FROM reader_jobs "
+            "WHERE job_type = 'build_grammar_bundle' AND target_type = 'unit'"
+        )
+        assert len(window_jobs) > 0
+        assert len(legacy_jobs) == 0
+
+
+async def test_bootstrap_uses_legacy_path_when_forced(
+    test_db_pool_without_plan: tuple[asyncpg.Pool, UUID, UUID, UUID],
+) -> None:
+    """``force_legacy_grammar=True`` 时回退到 legacy per-unit 路径。"""
+    pool, record_id, base_id, user_id = test_db_pool_without_plan
+    service = EnhancementJobBootstrapService(pool=pool)
+    await service.bootstrap_missing_jobs(
+        record_id=record_id,
+        user_id=user_id,
+        force_legacy_grammar=True,
+    )
 
     async with pool.acquire() as conn:
         window_jobs = await conn.fetch(

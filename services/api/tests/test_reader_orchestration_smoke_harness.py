@@ -211,7 +211,10 @@ async def test_prepare_record_keeps_other_record_jobs_queued(
             title="Older queued record",
         )
     )
-    await ReaderEnhancementPipelineRunner(pool=smoke_harness_env).bootstrap_missing_jobs(
+    await ReaderEnhancementPipelineRunner(
+        pool=smoke_harness_env,
+        enable_zplus_grammar=False,
+    ).bootstrap_missing_jobs(
         record_id=older_record.record_id,
         user_id=user_id,
     )

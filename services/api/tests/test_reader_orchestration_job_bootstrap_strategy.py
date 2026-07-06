@@ -235,6 +235,8 @@ async def test_vocabulary_job_input_contains_strategy_metadata(
 async def test_grammar_job_input_contains_strategy_metadata(
     strategy_env: asyncpg.Pool,
 ) -> None:
+    # 该测试校验 legacy ``build_grammar_bundle`` job 的策略元数据契约。
+    # P1-1 之后 Z+ 成为默认路径，这里显式走 legacy 路径以保留原始测试意图。
     user_id = await insert_user(strategy_env)
     record_id = await _submit_with_strategy(
         strategy_env,
@@ -243,7 +245,9 @@ async def test_grammar_job_input_contains_strategy_metadata(
         reading_variant="intermediate_reading",
     )
     service = EnhancementJobBootstrapService(pool=strategy_env)
-    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+    await service.bootstrap_missing_jobs(
+        record_id=record_id, user_id=user_id, force_legacy_grammar=True
+    )
 
     jobs = await _load_jobs(strategy_env, record_id)
     grammar_jobs = [j for j in jobs if j["job_type"] == "build_grammar_bundle"]
@@ -342,6 +346,10 @@ async def test_exam_cet_variant_records_strategy_metadata(
 async def test_different_variants_produce_different_fingerprints(
     strategy_env: asyncpg.Pool,
 ) -> None:
+    # 该测试校验 legacy per-unit grammar job 指纹随 variant 变化。
+    # P1-1 之后 Z+ window job 指纹为 ``grammar_bundle_window_v1``（record-scoped，
+    # 不含 variant hash），无法体现 variant 差异；这里显式走 legacy 路径以保留
+    # 原始 fingerprint differentiation 契约。
     user_id = await insert_user(strategy_env)
     record_daily = await _submit_with_strategy(
         strategy_env,
@@ -357,8 +365,12 @@ async def test_different_variants_produce_different_fingerprints(
     )
 
     service = EnhancementJobBootstrapService(pool=strategy_env)
-    await service.bootstrap_missing_jobs(record_id=record_daily, user_id=user_id)
-    await service.bootstrap_missing_jobs(record_id=record_exam, user_id=user_id)
+    await service.bootstrap_missing_jobs(
+        record_id=record_daily, user_id=user_id, force_legacy_grammar=True
+    )
+    await service.bootstrap_missing_jobs(
+        record_id=record_exam, user_id=user_id, force_legacy_grammar=True
+    )
 
     daily_jobs = await _load_jobs(strategy_env, record_daily)
     exam_jobs = await _load_jobs(strategy_env, record_exam)
