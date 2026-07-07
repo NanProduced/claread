@@ -61,11 +61,19 @@ import {
   Globe,
   MessageSquareText,
   MoreVertical,
+  Palette,
   Sparkles,
   ThumbsDown,
   ThumbsUp,
+  Trash2,
 } from "lucide-react";
 import { FavoriteButton } from "@/components/reader/FavoriteButton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   readerCommandControl,
   readerInlineFocusRing,
@@ -166,6 +174,34 @@ type ReaderRecordLookupPositionReference = {
   getRect: () => DOMRectReadOnly | DOMRect;
   contextElement?: HTMLElement;
 };
+
+const READER_RECORD_DRAFT_COMMENT_SELECTOR =
+  '[data-reader-record-comment-draft="true"]';
+
+function boundingRectForElements(elements: HTMLElement[]): DOMRectReadOnly | null {
+  const rects = elements
+    .map((element) => element.getBoundingClientRect())
+    .filter((rect) => rect.width > 0 && rect.height > 0);
+  if (rects.length === 0) {
+    return null;
+  }
+
+  const left = Math.min(...rects.map((rect) => rect.left));
+  const top = Math.min(...rects.map((rect) => rect.top));
+  const right = Math.max(...rects.map((rect) => rect.right));
+  const bottom = Math.max(...rects.map((rect) => rect.bottom));
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+    toJSON: () => ({ x: left, y: top, left, top, right, bottom, width: right - left, height: bottom - top }),
+  };
+}
 
 type ReaderRecordCopyStatus = "idle" | "copied" | "error";
 
@@ -322,9 +358,9 @@ const HIGHLIGHT_COLOR_OPTIONS: Array<{
   label: string;
   swatchClassName: string;
 }> = [
-  { value: "warm_yellow", label: "重点", swatchClassName: "bg-vocab-amber/75 ring-vocab-amber/25" },
-  { value: "soft_mint", label: "疑问", swatchClassName: "bg-emerald-200/80 ring-emerald-300/50" },
-  { value: "soft_rose", label: "难点", swatchClassName: "bg-rose-200/80 ring-rose-300/50" },
+  { value: "warm_yellow", label: "黄色", swatchClassName: "bg-vocab-amber/75 ring-vocab-amber/25" },
+  { value: "soft_mint", label: "绿色", swatchClassName: "bg-emerald-200/80 ring-emerald-300/50" },
+  { value: "soft_rose", label: "粉色", swatchClassName: "bg-rose-200/80 ring-rose-300/50" },
 ];
 
 function overallProgressLabel(status: ReaderRecordPlateProgress["overallStatus"]) {
@@ -2738,8 +2774,10 @@ export function ReaderRecordPlateSurface({
   } | null>(null);
   const highlightMenuFloating = useReaderFloatingLayer({
     open: highlightMenu !== null,
-    placement: "bottom",
-    offsetPx: 8,
+    placement: "bottom-start",
+    offsetPx: 6,
+    collisionPadding: 10,
+    strategy: "fixed",
   });
   const [dictionaryOpen, setDictionaryOpen] = useState(false);
   const quickPeekOpen =
@@ -2858,33 +2896,69 @@ export function ReaderRecordPlateSurface({
     open: commentPanelOpen,
     placement: "bottom",
     offsetPx: 8,
+    collisionPadding: 10,
+    strategy: "fixed",
   });
 
   // 选区或激活笔记变化时，更新浮动层的 reference 元素
   useEffect(() => {
     if (!commentPanelOpen) return;
 
-    // draft 模式：用选区 rect
-    if (noteAnchorDraft && activeSelection?.rect) {
-      const rect = activeSelection.rect;
-      commentFloating.refs.setReference({
-        getBoundingClientRect: () => rect,
-      });
-      return;
+    function updateCommentReference() {
+      // draft 模式：优先锚定 Plate CommentKit 已渲染的 draft mark DOM。
+      if (noteAnchorDraft) {
+        const draftAnchors = Array.from(
+          surfaceRef.current?.querySelectorAll<HTMLElement>(
+            READER_RECORD_DRAFT_COMMENT_SELECTOR,
+          ) ?? [],
+        );
+        const anchor = draftAnchors[0] ?? null;
+        const fallbackRect = activeSelection?.rect ?? null;
+        if (anchor) {
+          commentFloating.refs.setPositionReference?.({
+            getBoundingClientRect: () =>
+              boundingRectForElements(draftAnchors) ??
+              fallbackRect ??
+              anchor.getBoundingClientRect(),
+            contextElement: anchor,
+          });
+          commentFloating.update?.();
+          return;
+        }
+      }
+      if (noteAnchorDraft && activeSelection?.rect) {
+        const rect = activeSelection.rect;
+        commentFloating.refs.setPositionReference?.({
+          getBoundingClientRect: () => rect,
+        });
+        commentFloating.update?.();
+        return;
+      }
+      // existing note 模式：用笔记 mark 的 DOM element
+      if (noteMenu?.anchor) {
+        const anchor = noteMenu.anchor;
+        commentFloating.refs.setPositionReference?.({
+          getBoundingClientRect: () => anchor.getBoundingClientRect(),
+          contextElement: anchor,
+        });
+        commentFloating.update?.();
+      }
     }
-    // existing note 模式：用笔记 mark 的 DOM element
-    if (noteMenu?.anchor) {
-      const anchor = noteMenu.anchor;
-      commentFloating.refs.setReference({
-        getBoundingClientRect: () => anchor.getBoundingClientRect(),
-      });
-    }
+
+    updateCommentReference();
+    window.addEventListener("resize", updateCommentReference);
+    window.addEventListener("scroll", updateCommentReference, true);
+    return () => {
+      window.removeEventListener("resize", updateCommentReference);
+      window.removeEventListener("scroll", updateCommentReference, true);
+    };
   }, [
     commentPanelOpen,
     noteAnchorDraft,
     noteMenu,
     activeSelection,
     commentFloating.refs,
+    commentFloating.update,
   ]);
 
   // SelectionAnchorBridge 在 <Plate> 内通过 useEditorSelection 订阅选区，
@@ -2895,6 +2969,11 @@ export function ReaderRecordPlateSurface({
       activeSelectionRef.current = nextSelection;
       setActiveSelection(nextSelection);
       setCopyStatus("idle");
+      if (nextSelection?.selectedText.trim()) {
+        setHighlightMenu(null);
+        setNoteMenu(null);
+        commentApiRef.current?.setActiveId(null);
+      }
       setWriteState((current) => (current.kind === "saving" ? current : { kind: "idle" }));
     },
     [],
@@ -3988,8 +4067,7 @@ export function ReaderRecordPlateSurface({
     setNoteDraft("");
     setNoteDuplicateAcknowledged(false);
     // 移除 draft comment mark 并清除 activeId，关闭 InlineCommentPanel。
-    commentApiRef.current?.removeMark();
-    commentApiRef.current?.setActiveId(null);
+    commentApiRef.current?.removeDraftMark();
   }, [writeState.kind]);
 
   const handleViewDuplicateNote = useCallback(() => {
@@ -4007,7 +4085,7 @@ export function ReaderRecordPlateSurface({
     setNoteAnchorDraft(null);
     setNoteDraft("");
     setNoteDuplicateAcknowledged(false);
-    commentApiRef.current?.removeMark();
+    commentApiRef.current?.removeDraftMark();
     setNoteMenu({
       mark: duplicateNote,
       anchor,
@@ -4084,12 +4162,12 @@ export function ReaderRecordPlateSurface({
       if (hasNonCollapsedNativeSelection()) {
         return;
       }
+      setNoteAnchorDraft(null);
+      setNoteMenu(null);
+      commentApiRef.current?.setActiveId(null);
       setHighlightMenu({ mark, anchor });
-      highlightMenuFloating.refs.setReference({
-        getBoundingClientRect: () => anchor.getBoundingClientRect(),
-      });
     },
-    [highlightMenuFloating.refs],
+    [],
   );
 
   const handleDeleteHighlight = useCallback(async () => {
@@ -4153,6 +4231,14 @@ export function ReaderRecordPlateSurface({
       return;
     }
     const activeMenu = highlightMenu;
+    function updateHighlightReference() {
+      const anchor = activeMenu.anchor;
+      highlightMenuFloating.refs.setPositionReference?.({
+        getBoundingClientRect: () => anchor.getBoundingClientRect(),
+        contextElement: anchor,
+      });
+      highlightMenuFloating.update?.();
+    }
     function handlePointerDown(event: PointerEvent) {
       const target = event.target as Node | null;
       if (!target) {
@@ -4166,17 +4252,23 @@ export function ReaderRecordPlateSurface({
       }
       setHighlightMenu(null);
     }
+    updateHighlightReference();
+    window.addEventListener("resize", updateHighlightReference);
+    window.addEventListener("scroll", updateHighlightReference, true);
     window.document.addEventListener("pointerdown", handlePointerDown);
     return () => {
+      window.removeEventListener("resize", updateHighlightReference);
+      window.removeEventListener("scroll", updateHighlightReference, true);
       window.document.removeEventListener("pointerdown", handlePointerDown);
     };
-  }, [highlightMenu, highlightMenuFloating.refs.floating]);
+  }, [highlightMenu, highlightMenuFloating.refs, highlightMenuFloating.update]);
 
   const handleActivateNote = useCallback(
     (mark: ReaderRecordPlateUserNoteMark, anchor: HTMLElement) => {
       if (hasNonCollapsedNativeSelection()) {
         return;
       }
+      setHighlightMenu(null);
       setNoteAnchorDraft(null);
       setNoteDraft("");
       setNoteDuplicateAcknowledged(false);
@@ -4604,31 +4696,63 @@ export function ReaderRecordPlateSurface({
             <ReaderFloatingSurface
               floatingRef={highlightMenuFloating.refs.setFloating}
               style={highlightMenuFloating.floatingStyles as CSSProperties}
+              chrome="bare"
               data-reader-record-floating-toolbar="highlight-menu"
             >
-              <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-background/95 p-2 shadow-md backdrop-blur-sm">
-                <span className="px-1 text-xs text-muted">改色</span>
-                {HIGHLIGHT_COLOR_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    aria-label={`切换为${option.label}`}
-                    data-reader-record-highlight-color={option.value}
-                    onClick={() => handleUpdateHighlightColor(option.value)}
-                    className={`h-4 w-4 rounded-[4px] ring-1 ring-inset ring-border/70 transition-transform hover:scale-110 ${option.swatchClassName}`}
-                  />
-                ))}
-                <span className="mx-1 h-4 w-px bg-border/40" />
-                <button
-                  type="button"
-                  aria-label="删除高亮"
-                  data-reader-record-highlight-action="delete"
-                  onClick={handleDeleteHighlight}
-                  className="rounded-md px-2 py-1 text-xs text-rose-600 transition-colors hover:bg-rose-50"
-                >
-                  删除
-                </button>
-              </div>
+              <TooltipProvider delayDuration={200}>
+                <div className="flex h-10 items-center gap-1 rounded-[7px] border border-border/75 bg-background/95 p-1 shadow-[0_10px_26px_rgba(15,23,42,0.12),0_1px_2px_rgba(15,23,42,0.08)] backdrop-blur-md">
+                  <span className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted">
+                    <Palette className="h-3.5 w-3.5" aria-hidden="true" />
+                    改色
+                  </span>
+                  {HIGHLIGHT_COLOR_OPTIONS.map((option) => {
+                    const isActive = highlightMenu.mark.color === option.value;
+                    return (
+                      <Tooltip key={option.value}>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label={`切换为${option.label}`}
+                            data-reader-record-highlight-color={option.value}
+                            onClick={() => handleUpdateHighlightColor(option.value)}
+                            className="group grid h-8 w-8 place-items-center rounded-md transition-transform hover:bg-transparent active:scale-[0.96] focus-visible:outline-none"
+                          >
+                            <span
+                              className={cn(
+                                "h-4 w-4 rounded-[4px] ring-1 ring-inset ring-border/70 transition-[box-shadow,transform] group-hover:ring-foreground/30",
+                                isActive && "ring-2 ring-foreground/60",
+                                option.swatchClassName,
+                              )}
+                            />
+                            <span className="sr-only">{option.label}</span>
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="text-xs">
+                          {option.label}
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  })}
+                  <span className="mx-1 h-5 w-px bg-border/55" />
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label="删除高亮"
+                        data-reader-record-highlight-action="delete"
+                        onClick={handleDeleteHighlight}
+                        className="grid h-8 w-8 place-items-center rounded-md text-muted transition-[color,transform] hover:bg-transparent hover:text-rose-600 active:scale-[0.96] focus-visible:outline-none focus-visible:text-rose-600"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span className="sr-only">删除</span>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="text-xs">
+                      删除高亮
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              </TooltipProvider>
             </ReaderFloatingSurface>
           ) : null}
           {/* noteMenu 浮层已迁移到 InlineCommentPanel（CommentKit activeId 驱动） */}

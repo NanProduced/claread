@@ -5,7 +5,7 @@ import * as React from "react";
 import type { TCommentText } from "platejs";
 import type { PlateLeafProps } from "platejs/react";
 
-import { getCommentCount } from "@platejs/comment";
+import { getCommentCount, getDraftCommentKey } from "@platejs/comment";
 import { PlateLeaf, useEditorPlugin, usePluginOption } from "platejs/react";
 
 import { cn } from "@/lib/cn";
@@ -35,6 +35,7 @@ export function CommentLeaf(props: PlateLeafProps<TCommentText>) {
   const currentId = api.comment.nodeId(leaf);
   const isActive = activeId === currentId;
   const isHover = hoverId === currentId;
+  const isDraft = currentId === getDraftCommentKey();
 
   return (
     <PlateLeaf
@@ -47,6 +48,8 @@ export function CommentLeaf(props: PlateLeafProps<TCommentText>) {
       )}
       attributes={{
         ...props.attributes,
+        "data-reader-record-comment-id": currentId ?? undefined,
+        "data-reader-record-comment-draft": isDraft ? "true" : undefined,
         onClick: () => setOption("activeId", currentId ?? null),
         onMouseEnter: () => setOption("hoverId", currentId ?? null),
         onMouseLeave: () => setOption("hoverId", null),

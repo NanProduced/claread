@@ -4426,7 +4426,7 @@ describe("ReaderRecordPlateSurface", () => {
     }
 
     fireEvent.click(highlight);
-    fireEvent.click(await screen.findByLabelText("切换为难点"));
+    fireEvent.click(await screen.findByLabelText("切换为粉色"));
 
     await waitFor(() => {
       const patchCall = fetchMock.mock.calls.find(
@@ -4688,7 +4688,7 @@ describe("ReaderRecordPlateSurface", () => {
     fireEvent.change(noteInput, {
       target: { value: "Keep this policy concept for review." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存笔记" }));
 
     await waitFor(() => {
       const nonFavoritesCalls = fetchMock.mock.calls.filter(
@@ -4745,7 +4745,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(duplicateWarning.textContent).toContain("这个选区已有笔记");
     expect(duplicateWarning.textContent).toContain("Existing note for memory.");
     expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "保存" }).disabled,
+      screen.getByRole<HTMLButtonElement>("button", { name: "保存笔记" }).disabled,
     ).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "仍新增一条" }));
@@ -4762,7 +4762,7 @@ describe("ReaderRecordPlateSurface", () => {
     fireEvent.change(noteInput, {
       target: { value: "Second note on the same quote." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存笔记" }));
 
     await waitFor(() => {
       const noteCall = fetchMock.mock.calls.find(
@@ -4922,6 +4922,8 @@ describe("ReaderRecordPlateSurface", () => {
       expect(panel.dataset.readerRecordCommentMode).toBe("view");
     });
     expect(panel.textContent).toContain("Keep this policy concept for review.");
+    expect(panel.textContent).not.toContain("我的笔记");
+    expect(panel.textContent).not.toContain("已保存");
     expect(
       panel.querySelector('[data-reader-record-note-quote="true"]')?.textContent,
     ).toContain("policy");
@@ -5129,6 +5131,20 @@ describe("ReaderRecordPlateSurface", () => {
       name: "删除笔记",
     });
     fireEvent.click(deleteButton);
+    expect(screen.getByText("确认删除？")).toBeTruthy();
+    expect(
+      fetchMock.mock.calls.some(
+        ([url]) =>
+          typeof url === "string" &&
+          url === "/api/web/reading-record/notes/asset_note_1",
+      ),
+    ).toBe(false);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "确认删除笔记",
+      }),
+    );
 
     await waitFor(() => {
       const deleteCall = fetchMock.mock.calls.find(
@@ -5191,8 +5207,10 @@ describe("ReaderRecordPlateSurface", () => {
       "reader-record-plate-note-input",
     );
     expect(noteInput).not.toBeNull();
+    const panel = await screen.findByTestId("reader-record-inline-comment-panel");
+    expect(panel.textContent).not.toContain("新建笔记");
 
-    const cancelButton = screen.getByRole("button", { name: "取消" });
+    const cancelButton = screen.getByRole("button", { name: "关闭笔记面板" });
     fireEvent.click(cancelButton);
 
     await waitFor(() => {
@@ -5850,6 +5868,14 @@ describe("ReaderRecordPlateSurface", () => {
       resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
       "utf8",
     );
+    const inlineCommentPanelSource = readFileSync(
+      resolve(process.cwd(), "src/components/reader/plate/InlineCommentPanel.tsx"),
+      "utf8",
+    );
+    const commentNodeSource = readFileSync(
+      resolve(process.cwd(), "src/components/ui/comment-node.tsx"),
+      "utf8",
+    );
     const toolbarSource = readFileSync(
       resolve(
         process.cwd(),
@@ -5864,7 +5890,16 @@ describe("ReaderRecordPlateSurface", () => {
     expect(toolbarSource).toContain("AIMenu");
     expect(surfaceSource).toContain("commentApiRef.current?.setDraft()");
     expect(surfaceSource).toContain("commentApiRef.current?.setActiveId");
+    expect(surfaceSource).toContain("commentApiRef.current?.removeDraftMark()");
     expect(surfaceSource).not.toMatch(/ReaderRecordNoteComposer/);
+    expect(surfaceSource).toContain("READER_RECORD_DRAFT_COMMENT_SELECTOR");
+    expect(surfaceSource).toContain("boundingRectForElements(draftAnchors)");
+    expect(inlineCommentPanelSource).toContain("api.comment.nodes({ at: [], isDraft: true })");
+    expect(inlineCommentPanelSource).toContain("getCommentCount(node) > 0");
+    expect(commentNodeSource).toContain('"data-reader-record-comment-draft"');
+    expect(inlineCommentPanelSource).toMatch(
+      /if \(isDraft\) \{\s+props\.onCancelDraft\(\);\s+return;\s+\}\s+setOption\("activeId", null\);/,
+    );
   });
 
   it("keeps new user highlight choices to yellow, mint, and rose", () => {
