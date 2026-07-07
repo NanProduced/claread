@@ -234,3 +234,70 @@ async def test_bootstrap_zplus_idempotent(
         )
 
     assert jobs_after_first == jobs_after_second
+
+
+async def test_bootstrap_shares_trace_id_across_display_translation_vocab_window_runs(
+    test_db_pool_without_plan: tuple[asyncpg.Pool, UUID, UUID, UUID],
+) -> None:
+    """Requirement 5: ``bootstrap_missing_jobs`` propagates one ``trace_id``
+    into the envelope_json of display_title / translation / vocabulary /
+    grammar_bundle_window runs so downstream workers can build a single
+    ``reader_runtime_spans`` trace tree per record.
+    """
+    import json
+
+    pool, record_id, base_id, user_id = test_db_pool_without_plan
+    service = EnhancementJobBootstrapService(pool=pool)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT ON (job.job_type)
+                   job.job_type,
+                   run.envelope_json
+            FROM reader_jobs job
+            JOIN reader_runs run ON run.id = job.run_id
+            WHERE job.reading_record_id = $1
+              AND job.job_type IN (
+                    'generate_display_title_zh',
+                    'translate_unit',
+                    'build_vocabulary_layer',
+                    'build_grammar_bundle_window'
+                  )
+            """,
+            record_id,
+        )
+
+    assert len(rows) == 4, (
+        f"expected 4 distinct job_types with envelope_json; got {len(rows)}"
+    )
+
+    trace_ids: dict[str, str] = {}
+    for row in rows:
+        envelope = row["envelope_json"]
+        if isinstance(envelope, str):
+            envelope = json.loads(envelope)
+        assert envelope is not None, (
+            f"envelope_json must not be NULL for job_type={row['job_type']}"
+        )
+        trace_id = envelope.get("trace_id")
+        assert trace_id, (
+            f"envelope_json must carry trace_id for job_type={row['job_type']}"
+        )
+        trace_ids[row["job_type"]] = str(trace_id)
+
+    # All 4 run types must share the same trace_id (requirement 5).
+    shared = trace_ids["generate_display_title_zh"]
+    assert trace_ids["translate_unit"] == shared, (
+        f"translation run trace_id {trace_ids['translate_unit']!r} "
+        f"!= display trace_id {shared!r}"
+    )
+    assert trace_ids["build_vocabulary_layer"] == shared, (
+        f"vocabulary run trace_id {trace_ids['build_vocabulary_layer']!r} "
+        f"!= display trace_id {shared!r}"
+    )
+    assert trace_ids["build_grammar_bundle_window"] == shared, (
+        f"window run trace_id {trace_ids['build_grammar_bundle_window']!r} "
+        f"!= display trace_id {shared!r}"
+    )

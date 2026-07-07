@@ -45,13 +45,40 @@ DISPLAY_TITLE_OPERATION_FINGERPRINT = "display_title_zh_v1"
 DEFAULT_DISPLAY_TITLE_MAX_ATTEMPTS = 5
 _BOOTSTRAP_READY_PRODUCT_STATES = frozenset({"readable_enhancing", "processing"})
 
+# T1.1 Short-article batch path: whole-article batch compute, per-unit publish.
+# When the active base text is below the short-article char threshold, the
+# bootstrap creates a single batch job per layer (translation / vocabulary)
+# instead of N per-unit jobs. The batch worker makes one LLM call covering all
+# units; the batch publisher splits the output back into per-unit
+# enhancement_layers rows so the existing frontend snapshot contract is
+# preserved.
+#
+# Design: docs/initiatives/reader-agentic-orchestration/
+# adaptive-reader-orchestration-design.md §6.2 (Short Article Recovery Path).
+TRANSLATION_BATCH_JOB_TYPE = "translate_article"
+TRANSLATION_BATCH_TARGET_SCOPE = "unit_range"
+TRANSLATION_BATCH_OPERATION_FINGERPRINT = "translation_article_v1"
+TRANSLATION_BATCH_POLICY_VERSION = "reader_translation_batch_bootstrap_v1"
+VOCABULARY_BATCH_JOB_TYPE = "build_vocabulary_layer_article"
+VOCABULARY_BATCH_TARGET_SCOPE = "unit_range"
+VOCABULARY_BATCH_OPERATION_FINGERPRINT = "vocabulary_article_v1"
+VOCABULARY_BATCH_POLICY_VERSION = "reader_vocabulary_batch_bootstrap_v1"
+
+# Short-article threshold: content_chars <= 6000 covers the reuters_bbc_970
+# golden sample (5982 chars / 984 words) and aligns with design §6.1
+# ``estimated_token_count < 2000`` (≈ 1400 tokens for 984 English words).
+# Above this threshold the per-unit / windowed path is used.
+SHORT_ARTICLE_MAX_CHAR_COUNT = 6000
+
 # Maps each enhancement job_type to the variant policy layer name it belongs
 # to. ``generate_display_title_zh`` has no entry because the display title job
 # does not consume a per-layer prompt policy; T5 only records strategy metadata
 # and fingerprint coverage. T6/T7/T8 will wire layer prompts into the workers.
 _LAYER_NAME_BY_JOB_TYPE: dict[str, str] = {
     TRANSLATION_JOB_TYPE: "translation",
+    TRANSLATION_BATCH_JOB_TYPE: "translation",
     VOCABULARY_JOB_TYPE: "vocabulary",
+    VOCABULARY_BATCH_JOB_TYPE: "vocabulary",
     GRAMMAR_JOB_TYPE: "grammar_bundle",
 }
 
@@ -253,6 +280,42 @@ class _LockedActiveBaseState:
     base_language: str
     last_event_sequence: int
     strategy: ReaderVariantStrategy
+    # T1.1 short-article batch path: cached active base text. Populated
+    # lazily by ``_is_short_article`` so the per-article batch router does
+    # not issue a second ``reading_bases.text`` SELECT when both the
+    # translation and vocabulary bootstrap checks run for the same record.
+    # ``None`` means "not loaded yet"; an empty string is a valid text.
+    base_text: str | None = None
+
+
+async def _is_short_article(
+    conn: asyncpg.Connection,
+    *,
+    state: _LockedActiveBaseState,
+) -> bool:
+    """Return ``True`` when the active base text is below the short-article
+    threshold.
+
+    The text is loaded once from ``reading_bases.text`` and cached on the
+    state object via ``object.__setattr__`` (the dataclass is frozen so
+    direct assignment would raise). Subsequent calls — e.g. the
+    vocabulary bootstrap running right after translation bootstrap —
+    reuse the cached value and skip the second SELECT.
+    """
+    if state.base_text is None:
+        row = await conn.fetchrow(
+            "SELECT text FROM reading_bases WHERE id = $1",
+            state.base_id,
+        )
+        if row is None:
+            # Defensive: _load_locked_active_base_state already validated
+            # the base row. A missing row here means the base was deleted
+            # between the lock and this check; treat as not-short so the
+            # per-unit path handles the missing base via its own validation.
+            object.__setattr__(state, "base_text", "")
+            return False
+        object.__setattr__(state, "base_text", str(row["text"] or ""))
+    return len(state.base_text) <= SHORT_ARTICLE_MAX_CHAR_COUNT
 
 
 class TranslationJobBootstrapService:
@@ -824,6 +887,9 @@ class EnhancementJobBootstrapService:
         # deadlock against the lock we already hold. Idempotent: if the plan
         # already exists with its windows/jobs, it is reused as-is.
         # Design: analysis-window-zplus-design.md §9 worker migration.
+        # Pass the same trace_id used by display/translation/vocab runs so
+        # window reader_runs.envelope_json carries the shared trace root
+        # (requirement 5: same-record runs share one trace_id).
         if use_zplus_grammar_path:
             from .zplus_bootstrap import ZPlusBootstrapService
 
@@ -831,6 +897,7 @@ class EnhancementJobBootstrapService:
             await zplus_service.bootstrap_grammar_window_plan(
                 record_id=state.record_id,
                 base_id=state.base_id,
+                trace_id=trace_id,
             )
 
         return EnhancementBootstrapSummary(
@@ -857,6 +924,15 @@ class EnhancementJobBootstrapService:
         state: _LockedActiveBaseState,
         trace_id: UUID | None = None,
     ) -> list[TranslationBootstrapResult]:
+        # T1.1 short-article batch path: route to a single batch job when
+        # the active base text is below SHORT_ARTICLE_MAX_CHAR_COUNT. The
+        # batch worker makes one LLM call covering all units; the batch
+        # publisher splits the output back into per-unit
+        # enhancement_layers rows.
+        if await _is_short_article(conn, state=state):
+            return await self._bootstrap_translation_batch_job(
+                conn, state=state, trace_id=trace_id
+            )
         if trace_id is None:
             trace_id = uuid4()
         operation_fingerprint = _compose_operation_fingerprint(
@@ -967,6 +1043,12 @@ class EnhancementJobBootstrapService:
         state: _LockedActiveBaseState,
         trace_id: UUID | None = None,
     ) -> list[VocabularyBootstrapResult]:
+        # T1.1 short-article batch path: route to a single batch job when
+        # the active base text is below SHORT_ARTICLE_MAX_CHAR_COUNT.
+        if await _is_short_article(conn, state=state):
+            return await self._bootstrap_vocabulary_batch_job(
+                conn, state=state, trace_id=trace_id
+            )
         if trace_id is None:
             trace_id = uuid4()
         operation_fingerprint = _compose_operation_fingerprint(
@@ -1208,6 +1290,261 @@ class EnhancementJobBootstrapService:
         # 默认 Z+ 路径。ZPlusBootstrapService 在外层事务提交后被调用，
         # 其内部幂等：plan 已存在时直接复用。
         return [], True
+
+    async def _bootstrap_translation_batch_job(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        state: _LockedActiveBaseState,
+        trace_id: UUID | None = None,
+    ) -> list[TranslationBootstrapResult]:
+        """T1.1 short-article batch bootstrap: 1 translation job per article.
+
+        Creates a single ``translate_article`` / ``unit_range`` reader job
+        whose ``input_json.target_unit_ids`` lists every unit that still
+        needs a translation layer. The batch worker makes one LLM call
+        covering all units; the batch publisher splits the output back
+        into per-unit ``enhancement_layers`` rows.
+
+        Idempotent: if a batch job already exists for this record / base /
+        generation / fingerprint with status in
+        ``('queued', 'claimed', 'retry_later', 'paused', 'succeeded')``,
+        no new job is created.
+
+        Returns a single-element list (or empty list when nothing to do).
+        The ``unit_id`` field on the result is informational only; the
+        pipeline runner only inspects ``job_id`` for the batch path.
+        """
+        if trace_id is None:
+            trace_id = uuid4()
+        operation_fingerprint = _compose_operation_fingerprint(
+            TRANSLATION_BATCH_OPERATION_FINGERPRINT, state.strategy
+        )
+        await _supersede_stale_fingerprint_jobs(
+            conn,
+            record_id=state.record_id,
+            base_id=state.base_id,
+            expected_generation=state.expected_generation,
+            job_type=TRANSLATION_BATCH_JOB_TYPE,
+            target_scope=TRANSLATION_BATCH_TARGET_SCOPE,
+            current_fingerprint=operation_fingerprint,
+        )
+        rows = await conn.fetch(
+            """
+            SELECT u.unit_id, u.order_index, u.text_hash
+            FROM reading_units u
+            WHERE u.reading_record_id = $1
+              AND u.base_id = $2
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM enhancement_layers layer
+                  WHERE layer.reading_record_id = u.reading_record_id
+                    AND layer.base_id = u.base_id
+                    AND layer.generation = $3
+                    AND layer.layer_type = 'translation'
+                    AND layer.target_scope = 'unit'
+                    AND layer.target_key = u.unit_id
+                    AND layer.status = 'published'
+              )
+            ORDER BY u.order_index ASC
+            """,
+            state.record_id,
+            state.base_id,
+            state.expected_generation,
+        )
+        if not rows:
+            return []
+        target_unit_ids = [str(row["unit_id"]) for row in rows]
+
+        existing_job = await conn.fetchrow(
+            """
+            SELECT id, run_id
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND base_id = $2
+              AND job_type = $3
+              AND target_type = $4
+              AND target_key = $5
+              AND expected_generation = $6
+              AND operation_fingerprint = $7
+              AND status IN ('queued', 'claimed', 'retry_later', 'paused', 'succeeded')
+            LIMIT 1
+            """,
+            state.record_id,
+            state.base_id,
+            TRANSLATION_BATCH_JOB_TYPE,
+            TRANSLATION_BATCH_TARGET_SCOPE,
+            str(state.record_id),
+            state.expected_generation,
+            operation_fingerprint,
+        )
+        if existing_job is not None:
+            # Idempotent: batch job already exists for this record / base /
+            # generation / fingerprint. Return empty list to match per-unit
+            # bootstrap semantics where units with existing queued jobs are
+            # filtered out and produce no new results.
+            return []
+
+        run_id, job_id = await _insert_unit_range_job(
+            conn,
+            state=state,
+            run_type=TRANSLATION_RUN_TYPE,
+            job_type=TRANSLATION_BATCH_JOB_TYPE,
+            target_scope=TRANSLATION_BATCH_TARGET_SCOPE,
+            policy_version=TRANSLATION_BATCH_POLICY_VERSION,
+            trigger_kind=TRANSLATION_TRIGGER_KIND,
+            operation_fingerprint=operation_fingerprint,
+            max_attempts=DEFAULT_TRANSLATION_MAX_ATTEMPTS,
+            envelope_json={
+                "record_id": str(state.record_id),
+                "base_id": str(state.base_id),
+                "target_scope": TRANSLATION_BATCH_TARGET_SCOPE,
+                "target_unit_ids": target_unit_ids,
+                "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+                "trace_id": str(trace_id),
+            },
+            input_signature_suffix=(
+                f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}:batch"
+            ),
+            input_json={
+                "target_scope": TRANSLATION_BATCH_TARGET_SCOPE,
+                "target_unit_ids": target_unit_ids,
+                "base_language": state.base_language,
+                "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+            },
+            layer_name=_LAYER_NAME_BY_JOB_TYPE[TRANSLATION_BATCH_JOB_TYPE],
+        )
+        return [
+            TranslationBootstrapResult(
+                run_id=run_id,
+                job_id=job_id,
+                reading_record_id=state.record_id,
+                base_id=state.base_id,
+                unit_id=target_unit_ids[0],
+                expected_generation=state.expected_generation,
+                operation_fingerprint=operation_fingerprint,
+            )
+        ]
+
+    async def _bootstrap_vocabulary_batch_job(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        state: _LockedActiveBaseState,
+        trace_id: UUID | None = None,
+    ) -> list[VocabularyBootstrapResult]:
+        """T1.1 short-article batch bootstrap: 1 vocabulary job per article.
+
+        Mirrors :meth:`_bootstrap_translation_batch_job` for the vocabulary
+        layer. Same idempotency contract; ``target_unit_ids`` lists every
+        unit that still needs a vocabulary layer.
+        """
+        if trace_id is None:
+            trace_id = uuid4()
+        operation_fingerprint = _compose_operation_fingerprint(
+            VOCABULARY_BATCH_OPERATION_FINGERPRINT, state.strategy
+        )
+        await _supersede_stale_fingerprint_jobs(
+            conn,
+            record_id=state.record_id,
+            base_id=state.base_id,
+            expected_generation=state.expected_generation,
+            job_type=VOCABULARY_BATCH_JOB_TYPE,
+            target_scope=VOCABULARY_BATCH_TARGET_SCOPE,
+            current_fingerprint=operation_fingerprint,
+        )
+        rows = await conn.fetch(
+            """
+            SELECT u.unit_id, u.order_index, u.text_hash
+            FROM reading_units u
+            WHERE u.reading_record_id = $1
+              AND u.base_id = $2
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM enhancement_layers layer
+                  WHERE layer.reading_record_id = u.reading_record_id
+                    AND layer.base_id = u.base_id
+                    AND layer.generation = $3
+                    AND layer.layer_type = 'vocabulary'
+                    AND layer.target_scope = 'unit'
+                    AND layer.target_key = u.unit_id
+                    AND layer.status = 'published'
+              )
+            ORDER BY u.order_index ASC
+            """,
+            state.record_id,
+            state.base_id,
+            state.expected_generation,
+        )
+        if not rows:
+            return []
+        target_unit_ids = [str(row["unit_id"]) for row in rows]
+
+        existing_job = await conn.fetchrow(
+            """
+            SELECT id, run_id
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND base_id = $2
+              AND job_type = $3
+              AND target_type = $4
+              AND target_key = $5
+              AND expected_generation = $6
+              AND operation_fingerprint = $7
+              AND status IN ('queued', 'claimed', 'retry_later', 'paused', 'succeeded')
+            LIMIT 1
+            """,
+            state.record_id,
+            state.base_id,
+            VOCABULARY_BATCH_JOB_TYPE,
+            VOCABULARY_BATCH_TARGET_SCOPE,
+            str(state.record_id),
+            state.expected_generation,
+            operation_fingerprint,
+        )
+        if existing_job is not None:
+            # Idempotent: batch job already exists. Return empty list to
+            # match per-unit bootstrap semantics.
+            return []
+
+        run_id, job_id = await _insert_unit_range_job(
+            conn,
+            state=state,
+            run_type=VOCABULARY_RUN_TYPE,
+            job_type=VOCABULARY_BATCH_JOB_TYPE,
+            target_scope=VOCABULARY_BATCH_TARGET_SCOPE,
+            policy_version=VOCABULARY_BATCH_POLICY_VERSION,
+            trigger_kind=VOCABULARY_TRIGGER_KIND,
+            operation_fingerprint=operation_fingerprint,
+            max_attempts=DEFAULT_VOCABULARY_MAX_ATTEMPTS,
+            envelope_json={
+                "record_id": str(state.record_id),
+                "base_id": str(state.base_id),
+                "target_scope": VOCABULARY_BATCH_TARGET_SCOPE,
+                "target_unit_ids": target_unit_ids,
+                "layer_type": "vocabulary",
+                "trace_id": str(trace_id),
+            },
+            input_signature_suffix=f"{state.base_language}:vocabulary:1:batch",
+            input_json={
+                "target_scope": VOCABULARY_BATCH_TARGET_SCOPE,
+                "target_unit_ids": target_unit_ids,
+                "base_language": state.base_language,
+                "layer_type": "vocabulary",
+            },
+            layer_name=_LAYER_NAME_BY_JOB_TYPE[VOCABULARY_BATCH_JOB_TYPE],
+        )
+        return [
+            VocabularyBootstrapResult(
+                run_id=run_id,
+                job_id=job_id,
+                reading_record_id=state.record_id,
+                base_id=state.base_id,
+                unit_id=target_unit_ids[0],
+                expected_generation=state.expected_generation,
+                operation_fingerprint=operation_fingerprint,
+            )
+        ]
 
 
 async def _load_locked_active_base_state(
@@ -1532,6 +1869,147 @@ async def _insert_record_job(
         state.expected_generation,
         operation_fingerprint,
         f"{operation_fingerprint}:{state.record_id}",
+        input_hash,
+        jsonb_param(
+            {
+                **input_json,
+                **strategy_metadata,
+                "record_id": str(state.record_id),
+                "base_id": str(state.base_id),
+                "expected_generation": state.expected_generation,
+            }
+        ),
+        max_attempts,
+    )
+    if job_row is None:
+        raise RuntimeError("reader_jobs insert did not return a row")
+    return run_row["id"], job_row["id"]
+
+
+async def _insert_unit_range_job(
+    conn: asyncpg.Connection,
+    *,
+    state: _LockedActiveBaseState,
+    run_type: str,
+    job_type: str,
+    target_scope: str,
+    policy_version: str,
+    trigger_kind: str,
+    operation_fingerprint: str,
+    max_attempts: int,
+    envelope_json: dict[str, Any],
+    input_signature_suffix: str,
+    input_json: dict[str, Any],
+    layer_name: str,
+) -> tuple[UUID, UUID]:
+    """T1.1 short-article batch path: insert one record-level batch job.
+
+    Mirrors :func:`_insert_unit_job` but covers a range of units in a single
+    job. Differences from the per-unit helper:
+
+    - ``target_key`` is ``str(state.record_id)`` (record-level, like the
+      display-title job), not a single ``unit_id``.
+    - ``input_json`` carries ``target_scope: "unit_range"`` and
+      ``target_unit_ids: [...]`` (list of every unit id covered by the
+      batch). The caller is responsible for putting these fields in
+      ``input_json``; this helper only adds the standard record-level
+      metadata (record_id / base_id / expected_generation) and the
+      strategy metadata block.
+    - ``idempotency_key`` is suffixed ``:batch`` so the per-unit and
+      per-article idempotency spaces do not collide.
+    - ``input_hash`` is derived from the record-level signature
+      (``base_id:record_id:input_signature_suffix:strategy_hash``) so the
+      same unit range + strategy produces a stable hash.
+    """
+    strategy_metadata = _build_strategy_metadata(state.strategy, layer_name)
+    run_row = await conn.fetchrow(
+        """
+        INSERT INTO reader_runs (
+            reading_record_id,
+            user_id,
+            run_type,
+            status,
+            record_generation,
+            envelope_json,
+            policy_version,
+            trigger_kind
+        )
+        VALUES (
+            $1,
+            $2,
+            $3,
+            'queued',
+            $4,
+            $5::jsonb,
+            $6,
+            $7
+        )
+        RETURNING id
+        """,
+        state.record_id,
+        state.user_id,
+        run_type,
+        state.expected_generation,
+        jsonb_param({**envelope_json, "strategy": strategy_metadata}),
+        policy_version,
+        trigger_kind,
+    )
+    if run_row is None:
+        raise RuntimeError("reader_runs insert did not return a row")
+
+    unit_range_signature = (
+        f"{state.base_id}:{state.record_id}:{input_signature_suffix}:"
+        f"{state.strategy.strategy_hash}"
+    )
+    input_hash = hashlib.sha256(unit_range_signature.encode("utf-8")).hexdigest()
+    job_row = await conn.fetchrow(
+        """
+        INSERT INTO reader_jobs (
+            reading_record_id,
+            base_id,
+            run_id,
+            user_id,
+            job_type,
+            target_type,
+            target_key,
+            status,
+            priority,
+            expected_generation,
+            operation_fingerprint,
+            idempotency_key,
+            input_hash,
+            input_json,
+            max_attempts
+        )
+        VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6,
+            $7,
+            'queued',
+            0,
+            $8,
+            $9,
+            $10,
+            $11,
+            $12::jsonb,
+            $13
+        )
+        RETURNING id
+        """,
+        state.record_id,
+        state.base_id,
+        run_row["id"],
+        state.user_id,
+        job_type,
+        target_scope,
+        str(state.record_id),
+        state.expected_generation,
+        operation_fingerprint,
+        f"{operation_fingerprint}:{state.record_id}:batch",
         input_hash,
         jsonb_param(
             {

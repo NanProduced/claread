@@ -17,6 +17,8 @@ from app.llm.call_guard import assert_real_llm_allowed
 from app.llm.router import build_model_for_route
 from app.llm.routes import MODEL_ROUTE_READER_LAYER_TRANSLATION
 from app.schemas.reader_orchestration import (
+    TranslationBatchGenerationOutput,
+    TranslationBatchUnitOutput,
     TranslationGroup,
     TranslationLayerGenerationOutput,
     TranslationLayerOutput,
@@ -37,12 +39,19 @@ from app.services.analysis.prompting.prompt_loader import (
 
 from .job_bootstrap import (
     DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+    TRANSLATION_BATCH_JOB_TYPE,
+    TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+    TRANSLATION_BATCH_TARGET_SCOPE,
     TRANSLATION_JOB_TYPE,
     TRANSLATION_OPERATION_FINGERPRINT,
     TRANSLATION_TARGET_SCOPE,
 )
 from .job_runtime import ClaimResult, FenceViolationError, ReaderJobRuntime
-from .layer_publisher import PublishedTranslationLayer, TranslationLayerPublisher
+from .layer_publisher import (
+    PublishedTranslationBatch,
+    PublishedTranslationLayer,
+    TranslationLayerPublisher,
+)
 from .reading_strategy import (
     ReaderStrategyResolverError,
     resolve_reader_variant_strategy,
@@ -220,6 +229,279 @@ class PydanticAITranslationExecutor:
         )
 
 
+# ---------------------------------------------------------------------------#
+# T1.1 short-article batch path: batch compute, unit publish.
+# ---------------------------------------------------------------------------#
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationBatchUnitContext:
+    """Per-unit slice within a batch translation context."""
+
+    unit_id: str
+    order_index: int
+    source_text: str
+    text_hash: str
+    anchor_segments: tuple[TranslationAnchorSegmentTarget, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationBatchJobContext:
+    """Batch translation job context: covers all units of a short article.
+
+    The batch executor receives every unit's source text + anchor segments
+    in a single LLM call. The worker then splits the output back into
+    per-unit :class:`TranslationLayerOutput` objects for publish.
+    """
+
+    job_id: UUID
+    run_id: UUID
+    reading_record_id: UUID
+    user_id: UUID
+    base_id: UUID
+    expected_generation: int
+    operation_fingerprint: str
+    source_language: str
+    target_language: str
+    target_unit_ids: tuple[str, ...]
+    units: tuple[TranslationBatchUnitContext, ...]
+    # T6 strategy fields (same contract as TranslationJobContext).
+    reading_goal: str
+    reading_variant: str
+    strategy_version: str
+    strategy_hash: str
+    layer_policy_hash: str
+    translation_prompt_lines: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationBatchExecutionResult:
+    output: TranslationBatchGenerationOutput
+    usage_data: dict[str, Any] | None = None
+    prompt_version: str | None = None
+    model_route: str = MODEL_ROUTE_READER_LAYER_TRANSLATION
+    model_profile: str | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationBatchJobProcessResult:
+    claim: ClaimResult
+    context: TranslationBatchJobContext | None
+    status: str
+    published_batch: PublishedTranslationBatch | None = None
+    usage_data: dict[str, Any] | None = None
+    prompt_version: str | None = None
+    model_route: str | None = None
+    model_profile: str | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
+
+
+class TranslationBatchExecutor(Protocol):
+    async def translate_batch(
+        self,
+        context: TranslationBatchJobContext,
+    ) -> TranslationBatchExecutionResult: ...
+
+
+class PydanticAITranslationBatchExecutor:
+    """Batch translation executor: 1 LLM call covering all units.
+
+    Uses :class:`TranslationBatchGenerationOutput` as the structured output
+    type so the model returns one ``TranslationBatchUnitOutput`` per unit.
+    """
+
+    def __init__(self, *, settings: Settings | None = None) -> None:
+        self._settings = settings
+
+    async def translate_batch(
+        self,
+        context: TranslationBatchJobContext,
+    ) -> TranslationBatchExecutionResult:
+        settings = self._settings or get_settings()
+        model, model_config = build_model_for_route(
+            settings,
+            MODEL_ROUTE_READER_LAYER_TRANSLATION,
+        )
+        if model is None:
+            raise TranslationExecutionError(
+                "reader_layer_translation model route is not configured",
+                retryable=False,
+                failure_class="configuration",
+                failure_code="model_route_unavailable",
+            )
+
+        assert_real_llm_allowed(
+            "app.services.reader_orchestration.translation_worker.PydanticAITranslationBatchExecutor",
+            model_config=model_config,
+        )
+
+        agent = Agent(
+            model=model,
+            output_type=TranslationBatchGenerationOutput,
+            instructions=load_agent_instructions(TRANSLATION_PROMPT_AGENT_NAME),
+            name="reader_layer_translation_batch_agent",
+            retries={"tools": 1, "output": 2},
+        )
+        result = await agent.run(_build_translation_batch_prompt(context))
+        output = TranslationBatchGenerationOutput.model_validate(result.output)
+        usage_data = extract_run_usage(result)
+
+        return TranslationBatchExecutionResult(
+            output=output,
+            usage_data=usage_data,
+            prompt_version=get_prompt_version(),
+            model_profile=(
+                str(model_config.profile_name) if model_config is not None else None
+            ),
+            model_provider=(
+                str(model_config.provider) if model_config is not None else None
+            ),
+            model_name=(
+                str(model_config.model_name) if model_config is not None else None
+            ),
+        )
+
+
+def hydrate_translation_batch_output(
+    *,
+    context: TranslationBatchJobContext,
+    generation: TranslationBatchGenerationOutput,
+) -> list[tuple[str, TranslationLayerOutput]]:
+    """Split a batch generation output into per-unit ``TranslationLayerOutput``.
+
+    For each ``TranslationBatchUnitOutput`` the function builds a temporary
+    per-unit :class:`TranslationJobContext` so the existing
+    :func:`hydrate_translation_layer_output` can add ``group_id`` and
+    ``source_text_hash`` using the unit's anchor segments.
+
+    Fail-closed: any unit_id in the batch output that does not match a
+    unit in the batch context raises
+    :class:`TranslationExecutionError` (``translation_batch_unknown_unit``).
+    """
+    units_by_id = {unit.unit_id: unit for unit in context.units}
+    outputs: list[tuple[str, TranslationLayerOutput]] = []
+    for batch_unit in generation.units:
+        unit_context = units_by_id.get(batch_unit.unit_id)
+        if unit_context is None:
+            raise TranslationExecutionError(
+                f"translation batch output references unknown unit_id "
+                f"{batch_unit.unit_id!r}",
+                retryable=False,
+                failure_class="validation",
+                failure_code="translation_batch_unknown_unit",
+            )
+        # Build a per-unit TranslationJobContext so the existing
+        # hydrate_translation_layer_output can resolve anchor segments
+        # and compute group_id / source_text_hash exactly as the per-unit
+        # path does.
+        per_unit_context = TranslationJobContext(
+            job_id=context.job_id,
+            run_id=context.run_id,
+            reading_record_id=context.reading_record_id,
+            user_id=context.user_id,
+            base_id=context.base_id,
+            unit_id=batch_unit.unit_id,
+            order_index=unit_context.order_index,
+            expected_generation=context.expected_generation,
+            operation_fingerprint=context.operation_fingerprint,
+            source_language=context.source_language,
+            target_language=context.target_language,
+            source_text=unit_context.source_text,
+            text_hash=unit_context.text_hash,
+            anchor_segments=unit_context.anchor_segments,
+            reading_goal=context.reading_goal,
+            reading_variant=context.reading_variant,
+            strategy_version=context.strategy_version,
+            strategy_hash=context.strategy_hash,
+            layer_policy_hash=context.layer_policy_hash,
+            translation_prompt_lines=context.translation_prompt_lines,
+        )
+        unit_generation = TranslationLayerGenerationOutput(
+            groups=list(batch_unit.groups),
+        )
+        hydrated = hydrate_translation_layer_output(
+            context=per_unit_context,
+            generation=unit_generation,
+        )
+        outputs.append((batch_unit.unit_id, hydrated))
+    return outputs
+
+
+def _build_translation_batch_prompt(context: TranslationBatchJobContext) -> str:
+    strategy_section = _format_translation_strategy_section_from_batch(context)
+    grouping_section = _format_grouping_guidance_section()
+    units_section = _format_batch_units_section(context)
+    return (
+        "Translate the following reading units for a short article batch.\n"
+        f"source_language: {context.source_language}\n"
+        f"target_language: {context.target_language}\n"
+        f"{strategy_section}"
+        f"{grouping_section}"
+        "Return only the structured TranslationBatchGenerationOutput.\n"
+        "Each unit must appear exactly once in units[] with its unit_id and "
+        "the translation groups covering all of that unit's anchor_segment_ids.\n"
+        "Do not output source_text, source_text_hash, group_id, segment_sources, "
+        "profile, source_language, target_language, diagnostics, confidence, "
+        "reason, notes, coverage_json, quality_json, or any UI, Plate, Slate, "
+        "or DOM fields.\n"
+        f"{units_section}"
+    )
+
+
+def _format_translation_strategy_section_from_batch(
+    context: TranslationBatchJobContext,
+) -> str:
+    if not context.translation_prompt_lines:
+        return ""
+    rendered = "\n".join(context.translation_prompt_lines)
+    return f"<strategy>\n{rendered}\n</strategy>\n"
+
+
+def _format_batch_units_section(context: TranslationBatchJobContext) -> str:
+    parts: list[str] = ["<units>"]
+    for unit in context.units:
+        parts.append(f'<unit unit_id="{unit.unit_id}">')
+        parts.append("<source_text>")
+        parts.append(unit.source_text)
+        parts.append("</source_text>")
+        parts.append("<target_segments>")
+        for segment in unit.anchor_segments:
+            parts.append(
+                f'<segment anchor_segment_id="{segment.anchor_segment_id}" '
+                f'order_index="{segment.order_index}" '
+                f'boundary_quality="{segment.boundary_quality}" />'
+            )
+        parts.append("</target_segments>")
+        parts.append("</unit>")
+    parts.append("</units>")
+    return "\n".join(parts) + "\n"
+
+
+def _build_batch_quality_json(
+    execution: TranslationBatchExecutionResult,
+    *,
+    unit_count: int,
+) -> dict[str, Any]:
+    quality_json: dict[str, Any] = {
+        "unit_count": unit_count,
+        "batch": True,
+    }
+    if execution.prompt_version is not None:
+        quality_json["prompt_version"] = execution.prompt_version
+    if execution.model_route:
+        quality_json["model_route"] = execution.model_route
+    if execution.model_profile is not None:
+        quality_json["model_profile"] = execution.model_profile
+    if execution.model_provider is not None:
+        quality_json["model_provider"] = execution.model_provider
+    if execution.model_name is not None:
+        quality_json["model_name"] = execution.model_name
+    return quality_json
+
+
 class TranslationWorkerService:
     def __init__(
         self,
@@ -228,11 +510,13 @@ class TranslationWorkerService:
         job_runtime: ReaderJobRuntime | None = None,
         layer_publisher: TranslationLayerPublisher | None = None,
         translator: TranslationExecutor | None = None,
+        batch_translator: TranslationBatchExecutor | None = None,
     ) -> None:
         self._pool = pool
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
         self._layer_publisher = layer_publisher or TranslationLayerPublisher(pool=pool)
         self._translator = translator or PydanticAITranslationExecutor()
+        self._batch_translator = batch_translator or PydanticAITranslationBatchExecutor()
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -501,6 +785,517 @@ class TranslationWorkerService:
                 context=context,
                 status="failed_terminal",
             )
+
+    # ------------------------------------------------------------------#
+    # T1.1 short-article batch path: claim / process / context loading.
+    # ------------------------------------------------------------------#
+
+    async def claim_translation_batch_job_for_record(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+    ) -> ClaimResult | None:
+        """Claim a pending ``translate_article`` batch job for the record."""
+        claim = await self._job_runtime.claim_next_job(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            job_type=TRANSLATION_BATCH_JOB_TYPE,
+            target_type=TRANSLATION_BATCH_TARGET_SCOPE,
+            operation_fingerprint=TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+            reading_record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if claim is None:
+            return None
+        if (
+            claim.job_type != TRANSLATION_BATCH_JOB_TYPE
+            or claim.target_type != TRANSLATION_BATCH_TARGET_SCOPE
+        ):
+            raise RuntimeError(
+                "translation batch worker claimed unsupported job "
+                f"{claim.job_type}/{claim.target_type}"
+            )
+        await self._mark_run_running(claim.run_id)
+        return claim
+
+    async def process_next_translation_batch_job_for_record(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+        retry_delay: timedelta = DEFAULT_TRANSLATION_RETRY_DELAY,
+    ) -> TranslationBatchJobProcessResult | None:
+        """Claim and process the next translation batch job for the record."""
+        claim = await self.claim_translation_batch_job_for_record(
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if claim is None:
+            return None
+        return await self.process_claimed_translation_batch_job(
+            claim=claim,
+            retry_delay=retry_delay,
+        )
+
+    async def process_claimed_translation_batch_job(
+        self,
+        *,
+        claim: ClaimResult,
+        retry_delay: timedelta = DEFAULT_TRANSLATION_RETRY_DELAY,
+    ) -> TranslationBatchJobProcessResult:
+        """Run the batch LLM call and publish N per-unit translation layers.
+
+        Exception handling mirrors :meth:`process_claimed_translation_job`:
+        ``FenceViolationError`` → ``superseded``;
+        ``TranslationExecutionError`` (retryable) → ``retry_later``;
+        ``TranslationExecutionError`` (non-retryable) → ``failed_terminal``;
+        any other ``Exception`` → ``failed_terminal``.
+        """
+        context: TranslationBatchJobContext | None = None
+
+        try:
+            context = await self._load_batch_job_context(claim.job_id)
+            execution = await self._batch_translator.translate_batch(context)
+            outputs = hydrate_translation_batch_output(
+                context=context,
+                generation=execution.output,
+            )
+            published_batch = await self._layer_publisher.publish_article_translation_batch(
+                job_id=claim.job_id,
+                lease_token=claim.lease_token,
+                outputs=outputs,
+                quality_json=_build_batch_quality_json(
+                    execution,
+                    unit_count=len(context.units),
+                ),
+            )
+            event_id = await self._record_batch_usage_event(
+                context=context,
+                execution=execution,
+                published_batch=published_batch,
+                status=STATUS_SUCCEEDED,
+            )
+            await end_worker_span_success(
+                ai_usage_event_id=event_id,
+                usage_data=execution.usage_data,
+                model_route=execution.model_route,
+                model_name=execution.model_name,
+                model_provider=execution.model_provider,
+                capability_code=CAPABILITY_READER_TRANSLATION,
+            )
+            return TranslationBatchJobProcessResult(
+                claim=claim,
+                context=context,
+                status="succeeded",
+                published_batch=published_batch,
+                usage_data=execution.usage_data,
+                prompt_version=execution.prompt_version,
+                model_route=execution.model_route,
+                model_profile=execution.model_profile,
+                model_provider=execution.model_provider,
+                model_name=execution.model_name,
+            )
+        except FenceViolationError:
+            await self._job_runtime.transition(
+                job_id=claim.job_id,
+                target_status="superseded",
+                lease_token=claim.lease_token,
+                rationale_code="publish_fence_failed",
+            )
+            await self._mark_run_status(
+                claim.run_id,
+                status="superseded",
+                failure_class="publish_guard",
+                failure_code="publish_fence_failed",
+                finished_at=datetime.now(UTC),
+            )
+            raise
+        except TranslationExecutionError as exc:
+            if exc.retryable:
+                available_at = datetime.now(UTC) + retry_delay
+                await self._job_runtime.transition(
+                    job_id=claim.job_id,
+                    target_status="retry_later",
+                    lease_token=claim.lease_token,
+                    available_at=available_at,
+                    rationale_code=exc.rationale_code,
+                )
+                await self._mark_run_status(
+                    claim.run_id,
+                    status="failed_retryable",
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    finished_at=None,
+                )
+                await self._record_batch_failed_usage_event(
+                    context=context,
+                    error_code=exc.failure_code,
+                    error_message=str(exc),
+                )
+                await end_worker_span_execution_error(
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                )
+                return TranslationBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="retry_later",
+                )
+
+            await self._job_runtime.transition(
+                job_id=claim.job_id,
+                target_status="failed_terminal",
+                lease_token=claim.lease_token,
+                failure_class=exc.failure_class,
+                failure_code=exc.failure_code,
+                failure_message=str(exc),
+                rationale_code=exc.rationale_code,
+            )
+            await self._mark_run_status(
+                claim.run_id,
+                status="failed_terminal",
+                failure_class=exc.failure_class,
+                failure_code=exc.failure_code,
+                finished_at=datetime.now(UTC),
+            )
+            await self._record_batch_failed_usage_event(
+                context=context,
+                error_code=exc.failure_code,
+                error_message=str(exc),
+            )
+            await end_worker_span_execution_error(
+                failure_class=exc.failure_class,
+                failure_code=exc.failure_code,
+            )
+            return TranslationBatchJobProcessResult(
+                claim=claim,
+                context=context,
+                status="failed_terminal",
+            )
+        except Exception as exc:
+            await self._job_runtime.transition(
+                job_id=claim.job_id,
+                target_status="failed_terminal",
+                lease_token=claim.lease_token,
+                failure_class="translation_batch_execution",
+                failure_code=type(exc).__name__,
+                failure_message=str(exc),
+                rationale_code="translation_batch_execution_failed",
+            )
+            await self._mark_run_status(
+                claim.run_id,
+                status="failed_terminal",
+                failure_class="translation_batch_execution",
+                failure_code=type(exc).__name__,
+                finished_at=datetime.now(UTC),
+            )
+            await self._record_batch_failed_usage_event(
+                context=context,
+                error_code=type(exc).__name__,
+                error_message=str(exc),
+            )
+            await end_worker_span_generic_exception(layer="translation", exc=exc)
+            return TranslationBatchJobProcessResult(
+                claim=claim,
+                context=context,
+                status="failed_terminal",
+            )
+
+    async def _load_batch_job_context(
+        self,
+        job_id: UUID,
+    ) -> TranslationBatchJobContext:
+        """Load the batch job context covering all units in ``target_unit_ids``.
+
+        Mirrors :meth:`_load_job_context` but loads every unit listed in the
+        job ``input_json.target_unit_ids`` and validates each unit's text hash
+        + anchor segment hashes (same fail-closed contract as the per-unit
+        path).
+        """
+        async with self.get_pool().acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT job.id,
+                       job.run_id,
+                       job.reading_record_id,
+                       job.user_id,
+                       job.base_id,
+                       job.target_key,
+                       job.expected_generation,
+                       job.operation_fingerprint,
+                       job.input_json,
+                       COALESCE(job.input_json->>'target_language', $2) AS target_language,
+                       base.language AS source_language,
+                       base.text AS base_text
+                FROM reader_jobs job
+                JOIN reading_bases base
+                  ON base.id = job.base_id
+                 AND base.reading_record_id = job.reading_record_id
+                WHERE job.id = $1
+                """,
+                job_id,
+                DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+            )
+            if row is None:
+                raise LookupError(f"reader job {job_id} not found")
+
+            input_json = row["input_json"]
+            target_unit_ids: list[str] = list(input_json.get("target_unit_ids") or [])
+            if not target_unit_ids:
+                raise TranslationExecutionError(
+                    f"translation batch job {job_id} has no target_unit_ids",
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code="translation_batch_empty_target_units",
+                )
+
+            base_text = str(row["base_text"])
+            unit_rows = await conn.fetch(
+                """
+                SELECT unit_id, order_index, base_start_utf16, base_end_utf16, text_hash
+                FROM reading_units
+                WHERE reading_record_id = $1
+                  AND base_id = $2
+                  AND unit_id = ANY($3::text[])
+                ORDER BY order_index ASC
+                """,
+                row["reading_record_id"],
+                row["base_id"],
+                target_unit_ids,
+            )
+            if len(unit_rows) != len(target_unit_ids):
+                missing = set(target_unit_ids) - {
+                    str(r["unit_id"]) for r in unit_rows
+                }
+                raise TranslationExecutionError(
+                    f"translation batch job {job_id} references missing units "
+                    f"{sorted(missing)!r}",
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code="translation_batch_missing_unit",
+                )
+
+            units: list[TranslationBatchUnitContext] = []
+            for unit_row in unit_rows:
+                unit_id = str(unit_row["unit_id"])
+                source_text = slice_by_utf16_offsets(
+                    base_text,
+                    int(unit_row["base_start_utf16"]),
+                    int(unit_row["base_end_utf16"]),
+                )
+                if source_text is None or not source_text:
+                    raise TranslationExecutionError(
+                        f"translation batch unit {unit_id} could not be sliced from base text",
+                        retryable=False,
+                        failure_class="validation",
+                        failure_code="unit_slice_failed",
+                    )
+                actual_hash = compute_text_range_hash(source_text)
+                expected_hash = str(unit_row["text_hash"])
+                if actual_hash != expected_hash:
+                    raise TranslationExecutionError(
+                        f"translation batch unit {unit_id} hash mismatch: "
+                        f"{actual_hash} != {expected_hash}",
+                        retryable=False,
+                        failure_class="validation",
+                        failure_code="unit_hash_mismatch",
+                    )
+
+                segment_rows = await conn.fetch(
+                    """
+                    SELECT anchor_segment_id,
+                           sentence_id,
+                           order_index,
+                           segment_type,
+                           boundary_quality,
+                           unit_start_utf16,
+                           unit_end_utf16,
+                           text_hash
+                    FROM anchor_segments
+                    WHERE reading_record_id = $1
+                      AND base_id = $2
+                      AND unit_id = $3
+                    ORDER BY order_index ASC
+                    """,
+                    row["reading_record_id"],
+                    row["base_id"],
+                    unit_id,
+                )
+                anchor_segments: list[TranslationAnchorSegmentTarget] = []
+                for segment_row in segment_rows:
+                    segment_text = slice_by_utf16_offsets(
+                        source_text,
+                        int(segment_row["unit_start_utf16"]),
+                        int(segment_row["unit_end_utf16"]),
+                    )
+                    if segment_text is None or not segment_text:
+                        raise TranslationExecutionError(
+                            f"translation batch anchor segment "
+                            f"{segment_row['anchor_segment_id']} could not be sliced",
+                            retryable=False,
+                            failure_class="validation",
+                            failure_code="anchor_segment_slice_failed",
+                        )
+                    segment_hash = str(segment_row["text_hash"])
+                    actual_segment_hash = compute_text_range_hash(segment_text)
+                    if actual_segment_hash != segment_hash:
+                        raise TranslationExecutionError(
+                            f"translation batch anchor segment "
+                            f"{segment_row['anchor_segment_id']} hash mismatch",
+                            retryable=False,
+                            failure_class="validation",
+                            failure_code="anchor_segment_hash_mismatch",
+                        )
+                    anchor_segments.append(
+                        TranslationAnchorSegmentTarget(
+                            anchor_segment_id=str(segment_row["anchor_segment_id"]),
+                            sentence_id=(
+                                str(segment_row["sentence_id"])
+                                if segment_row["sentence_id"] is not None
+                                else None
+                            ),
+                            order_index=int(segment_row["order_index"]),
+                            segment_type=str(segment_row["segment_type"]),
+                            boundary_quality=str(
+                                segment_row["boundary_quality"] or "normal"
+                            ),
+                            unit_start_utf16=int(segment_row["unit_start_utf16"]),
+                            unit_end_utf16=int(segment_row["unit_end_utf16"]),
+                            text_hash=segment_hash,
+                            source_text=segment_text,
+                        )
+                    )
+                if not anchor_segments:
+                    raise TranslationExecutionError(
+                        f"translation batch unit {unit_id} has no anchor segments",
+                        retryable=False,
+                        failure_class="validation",
+                        failure_code="anchor_segments_missing",
+                    )
+                units.append(
+                    TranslationBatchUnitContext(
+                        unit_id=unit_id,
+                        order_index=int(unit_row["order_index"]),
+                        source_text=source_text,
+                        text_hash=expected_hash,
+                        anchor_segments=tuple(anchor_segments),
+                    )
+                )
+
+            strategy_metadata = _validate_translation_strategy_metadata(input_json)
+
+            return TranslationBatchJobContext(
+                job_id=row["id"],
+                run_id=row["run_id"],
+                reading_record_id=row["reading_record_id"],
+                user_id=row["user_id"],
+                base_id=row["base_id"],
+                expected_generation=int(row["expected_generation"]),
+                operation_fingerprint=str(row["operation_fingerprint"]),
+                source_language=str(row["source_language"] or "en"),
+                target_language=str(
+                    row["target_language"] or DEFAULT_TRANSLATION_TARGET_LANGUAGE
+                ),
+                target_unit_ids=tuple(target_unit_ids),
+                units=tuple(units),
+                reading_goal=strategy_metadata.reading_goal,
+                reading_variant=strategy_metadata.reading_variant,
+                strategy_version=strategy_metadata.strategy_version,
+                strategy_hash=strategy_metadata.strategy_hash,
+                layer_policy_hash=strategy_metadata.layer_policy_hash,
+                translation_prompt_lines=strategy_metadata.translation_prompt_lines,
+            )
+
+    async def _record_batch_usage_event(
+        self,
+        *,
+        context: TranslationBatchJobContext,
+        execution: TranslationBatchExecutionResult,
+        published_batch: PublishedTranslationBatch,
+        status: str,
+    ) -> UUID | None:
+        return await record_ai_usage_event(
+            AIUsageEventCreate(
+                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
+                capability_code=CAPABILITY_READER_TRANSLATION,
+                billing_mode=BILLING_MODE_INTERNAL_ONLY,
+                status=status,
+                user_id=context.user_id,
+                reading_record_id=context.reading_record_id,
+                reader_run_id=context.run_id,
+                reader_job_id=context.job_id,
+                enhancement_layer_id=published_batch.layers[0].layer_id
+                if published_batch.layers
+                else None,
+                workflow_name="reader_orchestration",
+                workflow_version="t1-1-translation-batch-worker",
+                prompt_version=execution.prompt_version,
+                model_route=execution.model_route,
+                model_profile_id=execution.model_profile,
+                model_profile=execution.model_profile,
+                model_provider=execution.model_provider,
+                model_name=execution.model_name,
+                planner_kind="llm_worker",
+                usage_data=execution.usage_data,
+                operation_fingerprint=context.operation_fingerprint,
+                metadata_json={
+                    "base_id": str(context.base_id),
+                    "target_unit_ids": list(context.target_unit_ids),
+                    "unit_count": len(context.units),
+                    "target_language": context.target_language,
+                    "source_language": context.source_language,
+                    "batch": True,
+                },
+            )
+        )
+
+    async def _record_batch_failed_usage_event(
+        self,
+        *,
+        context: TranslationBatchJobContext | None,
+        error_code: str,
+        error_message: str,
+    ) -> UUID | None:
+        if context is None:
+            return None
+        return await record_ai_usage_event(
+            AIUsageEventCreate(
+                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
+                capability_code=CAPABILITY_READER_TRANSLATION,
+                billing_mode=BILLING_MODE_INTERNAL_ONLY,
+                status=STATUS_FAILED,
+                user_id=context.user_id,
+                reading_record_id=context.reading_record_id,
+                reader_run_id=context.run_id,
+                reader_job_id=context.job_id,
+                workflow_name="reader_orchestration",
+                workflow_version="t1-1-translation-batch-worker",
+                model_route=MODEL_ROUTE_READER_LAYER_TRANSLATION,
+                planner_kind="llm_worker",
+                operation_fingerprint=context.operation_fingerprint,
+                error_code=error_code,
+                error_message=error_message,
+                metadata_json={
+                    "base_id": str(context.base_id),
+                    "target_unit_ids": list(context.target_unit_ids),
+                    "unit_count": len(context.units),
+                    "target_language": context.target_language,
+                    "source_language": context.source_language,
+                    "batch": True,
+                },
+            )
+        )
 
     async def _load_job_context(self, job_id: UUID) -> TranslationJobContext:
         async with self.get_pool().acquire() as conn:

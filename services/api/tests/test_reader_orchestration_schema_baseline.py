@@ -1294,3 +1294,81 @@ async def test_parsed_decisions_unique_constraint(reader_schema: str) -> None:
             )
     finally:
         await conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Migration 0016: reader_runtime_spans.worker_type CHECK includes
+# 'grammar_bundle_window' (Z+ Analysis Window observability).
+# ---------------------------------------------------------------------------
+
+
+_MIGRATION_0016_SQL = (
+    REPO_ROOT / "infra" / "migrations" / "0016_reader_runtime_spans_grammar_bundle_window.sql"
+).read_text(encoding="utf-8")
+
+
+async def test_migration_0016_adds_grammar_bundle_window_worker_type() -> None:
+    """0016 extends ``reader_runtime_spans.worker_type`` CHECK so the Z+
+    window worker can write ``worker_tick`` spans.
+
+    Verifies:
+      1. ``worker_type='grammar_bundle_window'`` is accepted after 0016.
+      2. Legacy worker_types remain accepted (no regression).
+      3. Unknown worker_types are still rejected.
+    """
+    schema_name = f"test_migration_0016_{uuid4().hex}"
+    admin_conn = await _connect()
+    try:
+        await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
+        await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
+        await admin_conn.execute(BASELINE_SQL)
+        await admin_conn.execute(_MIGRATION_0016_SQL)
+
+        # grammar_bundle_window is accepted (the whole point of 0016).
+        await admin_conn.execute(
+            """
+            INSERT INTO reader_runtime_spans (
+                trace_id, span_kind, worker_type, status
+            )
+            VALUES ($1, 'worker_tick', 'grammar_bundle_window', 'started')
+            """,
+            uuid4(),
+        )
+
+        # Legacy worker_types still accepted (no regression).
+        for legacy_type in (
+            "display_title",
+            "translation",
+            "vocabulary",
+            "grammar_bundle",
+            "article_rag_index",
+            "artifact_extraction",
+            "artifact_materialization",
+        ):
+            await admin_conn.execute(
+                """
+                INSERT INTO reader_runtime_spans (
+                    trace_id, span_kind, worker_type, status
+                )
+                VALUES ($1, 'worker_tick', $2, 'started')
+                """,
+                uuid4(),
+                legacy_type,
+            )
+
+        # Unknown worker_type is rejected by the CHECK constraint.
+        with pytest.raises(asyncpg.CheckViolationError):
+            await admin_conn.execute(
+                """
+                INSERT INTO reader_runtime_spans (
+                    trace_id, span_kind, worker_type, status
+                )
+                VALUES ($1, 'worker_tick', 'bogus_worker_type', 'started')
+                """,
+                uuid4(),
+            )
+    finally:
+        await admin_conn.execute(
+            f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'
+        )
+        await admin_conn.close()

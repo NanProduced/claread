@@ -54,6 +54,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 MIGRATION_0015_SQL = (
     REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
 ).read_text(encoding="utf-8")
+MIGRATION_0016_SQL = (
+    REPO_ROOT / "infra" / "migrations" / "0016_reader_runtime_spans_grammar_bundle_window.sql"
+).read_text(encoding="utf-8")
 
 ZPLUS_ARTICLE_TEXT = (
     "Not only did the team revise the plan, but they also clarified the timeline. "
@@ -94,6 +97,7 @@ async def test_db_pool_with_window_job_only() -> AsyncIterator[
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
         await admin_conn.execute(BASELINE_SQL)
         await admin_conn.execute(MIGRATION_0015_SQL)
+        await admin_conn.execute(MIGRATION_0016_SQL)
         pool = await make_pool(schema_name)
         db_connection.DB_POOL = pool
         try:
@@ -216,10 +220,16 @@ async def test_pipeline_runner_skips_already_terminal_window(
     pool, record_id, user_id, base_id = test_db_pool_with_window_job_only
     runner = _make_runner(pool, record_id, base_id)
 
+    captured_job_id: list[UUID] = []
+    captured_run_id: list[UUID] = []
+
+    async def _already_terminal_process(*, claim: Any) -> dict[str, Any]:
+        captured_job_id.append(claim.job_id)
+        captured_run_id.append(claim.run_id)
+        return {"status": "already_terminal"}
+
     mock_worker = AsyncMock()
-    mock_worker.process_window_job = AsyncMock(
-        return_value={"status": "already_terminal"}
-    )
+    mock_worker.process_window_job = AsyncMock(side_effect=_already_terminal_process)
     mock_publisher = AsyncMock()
 
     runner._grammar_window_worker = mock_worker
@@ -236,6 +246,18 @@ async def test_pipeline_runner_skips_already_terminal_window(
 
     mock_worker.process_window_job.assert_called()
     mock_publisher.publish_window_grammar_bundle.assert_not_called()
+    assert captured_job_id, "window worker must have claimed a job"
+    assert captured_run_id, "window worker must have a run"
+    job_status = await _query_job_status(pool, captured_job_id[0])
+    assert job_status == "skipped", (
+        "already_terminal must close the claimed job as skipped; "
+        f"got {job_status!r}"
+    )
+    run_status = await _query_run_status(pool, captured_run_id[0])
+    assert run_status == "completed", (
+        "already_terminal must close the reader_run as completed; "
+        f"got {run_status!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -409,7 +431,10 @@ async def test_pipeline_runner_window_llm_failure_transitions_job_to_retry_later
         captured_job_id.append(claim.job_id)
         captured_run_id.append(claim.run_id)
         raise GrammarWindowExecutionError(
-            "simulated LLM timeout (test fixture)"
+            "simulated LLM timeout (test fixture)",
+            retryable=True,
+            failure_class="provider",
+            failure_code="TimeoutError",
         )
 
     mock_worker = AsyncMock()
@@ -558,5 +583,291 @@ async def test_pipeline_runner_window_publisher_value_error_marks_window_failed(
     window_status = await _query_window_status(pool, captured_job_id[0])
     assert window_status == "failed", (
         f"analysis_windows.status must be 'failed' after publisher failure; "
+        f"got {window_status!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Requirement 1: FenceViolationError → job=superseded, run=superseded
+# ---------------------------------------------------------------------------
+
+
+async def test_pipeline_runner_window_fence_violation_transitions_superseded(
+    test_db_pool_with_window_job_only: tuple[asyncpg.Pool, UUID, UUID, UUID],
+) -> None:
+    """FenceViolationError from publisher → job=superseded, run=superseded.
+
+    Verifies requirement 1: aligns with legacy grammar_worker — the runner
+    transitions the job to ``superseded``, marks the reader_run as
+    ``superseded``, and returns ``outcome='superseded'``. The previous code
+    only returned superseded without transitioning the job or marking the
+    run, leaving both stuck in claimed/running.
+    """
+    from app.services.reader_orchestration.job_runtime import FenceViolationError
+
+    pool, record_id, user_id, base_id = test_db_pool_with_window_job_only
+    runner = _make_runner(pool, record_id, base_id)
+
+    captured_job_id: list[UUID] = []
+    captured_run_id: list[UUID] = []
+
+    async def _candidates_ready_process(*, claim: Any) -> dict[str, Any]:
+        captured_job_id.append(claim.job_id)
+        captured_run_id.append(claim.run_id)
+        return {"status": "candidates_ready", "candidates": []}
+
+    async def _fence_violation_publish(**kwargs: Any) -> None:
+        raise FenceViolationError("publish fence failed: stale generation")
+
+    mock_worker = AsyncMock()
+    mock_worker.process_window_job = AsyncMock(
+        side_effect=_candidates_ready_process
+    )
+    mock_publisher = AsyncMock()
+    mock_publisher.publish_window_grammar_bundle = AsyncMock(
+        side_effect=_fence_violation_publish
+    )
+
+    runner._grammar_window_worker = mock_worker
+    runner._grammar_window_publisher = mock_publisher
+
+    summary = await runner.run(
+        record_id=record_id,
+        user_id=user_id,
+        lease_owner="test-fence-violation-superseded",
+        lease_duration=LEASE_DURATION,
+        max_ticks=10,
+        max_jobs=10,
+    )
+
+    assert captured_job_id, "window worker must have been called at least once"
+    job_status = await _query_job_status(pool, captured_job_id[0])
+    assert job_status == "superseded", (
+        f"FenceViolationError must transition job to superseded; got {job_status!r}"
+    )
+    run_status = await _query_run_status(pool, captured_run_id[0])
+    assert run_status == "superseded", (
+        f"FenceViolationError must mark run as superseded; got {run_status!r}"
+    )
+    window_status = await _query_window_status(pool, captured_job_id[0])
+    assert window_status == "failed", (
+        "FenceViolationError must close the running analysis_window as failed; "
+        f"got {window_status!r}"
+    )
+    assert summary.outcome_counts.superseded >= 1
+
+
+# ---------------------------------------------------------------------------
+# Requirement 2: non-retryable config error → failed_terminal
+# ---------------------------------------------------------------------------
+
+
+async def test_pipeline_runner_window_config_error_transitions_failed_terminal(
+    test_db_pool_with_window_job_only: tuple[asyncpg.Pool, UUID, UUID, UUID],
+) -> None:
+    """Non-retryable GrammarWindowExecutionError (config) → failed_terminal.
+
+    Verifies requirement 2: when the executor raises a non-retryable
+    ``GrammarWindowExecutionError`` (e.g. configuration missing, route
+    unavailable, output validation invalid), the runner transitions the
+    job to ``failed_terminal`` (not ``retry_later``). The previous code
+    fixed ``retryable=True`` for all ``GrammarWindowExecutionError`` which
+    caused config errors to retry indefinitely.
+    """
+    from app.services.reader_orchestration.grammar_window_worker import (
+        GrammarWindowExecutionError,
+    )
+
+    pool, record_id, user_id, base_id = test_db_pool_with_window_job_only
+    runner = _make_runner(pool, record_id, base_id)
+
+    captured_job_id: list[UUID] = []
+    captured_run_id: list[UUID] = []
+
+    async def _config_error_process(*, claim: Any) -> dict[str, Any]:
+        captured_job_id.append(claim.job_id)
+        captured_run_id.append(claim.run_id)
+        raise GrammarWindowExecutionError(
+            "grammar window executor is not configured",
+            retryable=False,
+            failure_class="configuration",
+            failure_code="grammar_window_executor_unconfigured",
+        )
+
+    mock_worker = AsyncMock()
+    mock_worker.process_window_job = AsyncMock(side_effect=_config_error_process)
+    mock_publisher = AsyncMock()
+
+    runner._grammar_window_worker = mock_worker
+    runner._grammar_window_publisher = mock_publisher
+
+    summary = await runner.run(
+        record_id=record_id,
+        user_id=user_id,
+        lease_owner="test-config-error-terminal",
+        lease_duration=LEASE_DURATION,
+        max_ticks=10,
+        max_jobs=10,
+    )
+
+    assert captured_job_id, "window worker must have been called at least once"
+    job_status = await _query_job_status(pool, captured_job_id[0])
+    assert job_status == "failed_terminal", (
+        f"non-retryable config error must transition job to failed_terminal; "
+        f"got {job_status!r}"
+    )
+    run_status = await _query_run_status(pool, captured_run_id[0])
+    assert run_status == "failed_terminal", (
+        f"non-retryable config error must mark run as failed_terminal; "
+        f"got {run_status!r}"
+    )
+    # Requirement 3: non-retryable failure marks analysis_window failed.
+    window_status = await _query_window_status(pool, captured_job_id[0])
+    assert window_status == "failed", (
+        f"non-retryable failure must mark analysis_window as failed; "
+        f"got {window_status!r}"
+    )
+    mock_publisher.publish_window_grammar_bundle.assert_not_called()
+    assert summary.outcome_counts.failed_terminal >= 1
+
+
+# ---------------------------------------------------------------------------
+# Requirement 2+3: retryable provider error → retry_later, window stays running
+# ---------------------------------------------------------------------------
+
+
+async def test_pipeline_runner_window_provider_error_retry_keeps_window_running(
+    test_db_pool_with_window_job_only: tuple[asyncpg.Pool, UUID, UUID, UUID],
+) -> None:
+    """Retryable GrammarWindowExecutionError (provider) → retry_later, window
+    stays in its current status (not marked failed).
+
+    Verifies requirement 2+3: when the executor raises a retryable
+    ``GrammarWindowExecutionError`` (e.g. provider timeout), the runner
+    transitions the job to ``retry_later`` and does NOT mark
+    ``analysis_windows.status = 'failed'`` — the window stays in its
+    preflight state (``running`` or ``pending``) so the same job retry
+    can resume.
+    """
+    from app.services.reader_orchestration.grammar_window_worker import (
+        GrammarWindowExecutionError,
+    )
+
+    pool, record_id, user_id, base_id = test_db_pool_with_window_job_only
+    runner = _make_runner(pool, record_id, base_id)
+
+    captured_job_id: list[UUID] = []
+    captured_run_id: list[UUID] = []
+
+    async def _provider_error_process(*, claim: Any) -> dict[str, Any]:
+        captured_job_id.append(claim.job_id)
+        captured_run_id.append(claim.run_id)
+        raise GrammarWindowExecutionError(
+            "provider timeout",
+            retryable=True,
+            failure_class="provider",
+            failure_code="TimeoutError",
+        )
+
+    mock_worker = AsyncMock()
+    mock_worker.process_window_job = AsyncMock(side_effect=_provider_error_process)
+    mock_publisher = AsyncMock()
+
+    runner._grammar_window_worker = mock_worker
+    runner._grammar_window_publisher = mock_publisher
+
+    summary = await runner.run(
+        record_id=record_id,
+        user_id=user_id,
+        lease_owner="test-provider-error-retry",
+        lease_duration=LEASE_DURATION,
+        max_ticks=10,
+        max_jobs=10,
+    )
+
+    assert captured_job_id, "window worker must have been called at least once"
+    job_status = await _query_job_status(pool, captured_job_id[0])
+    assert job_status == "retry_later", (
+        f"retryable provider error must transition job to retry_later; "
+        f"got {job_status!r}"
+    )
+    run_status = await _query_run_status(pool, captured_run_id[0])
+    assert run_status == "failed_retryable", (
+        f"retryable provider error must mark run as failed_retryable; "
+        f"got {run_status!r}"
+    )
+    # Requirement 3: retryable failure must NOT mark analysis_window failed.
+    # The window stays in its pre-failure status (pending, since the mock
+    # raises before preflight runs) so the retry can resume.
+    window_status = await _query_window_status(pool, captured_job_id[0])
+    assert window_status != "failed", (
+        f"retryable failure must NOT mark analysis_window as failed; "
+        f"got {window_status!r}"
+    )
+    assert summary.outcome_counts.retry_later >= 1
+
+
+# ---------------------------------------------------------------------------
+# Requirement 3: generic terminal exception after preflight → window=failed
+# ---------------------------------------------------------------------------
+
+
+async def test_pipeline_runner_window_generic_exception_marks_window_failed(
+    test_db_pool_with_window_job_only: tuple[asyncpg.Pool, UUID, UUID, UUID],
+) -> None:
+    """Generic Exception from process_window_job → window=failed.
+
+    Verifies requirement 3: when ``process_window_job`` raises a generic
+    ``Exception`` (not ``GrammarWindowExecutionError`` / ``ValueError``),
+    the runner transitions the job to ``failed_terminal`` and marks
+    ``analysis_windows.status = 'failed'``. The ``window_id`` is resolved
+    from the job's ``input_json`` immediately after claim, so the failure
+    handler can mark the window even when the exception fires before
+    ``candidates_ready`` is returned.
+    """
+    pool, record_id, user_id, base_id = test_db_pool_with_window_job_only
+    runner = _make_runner(pool, record_id, base_id)
+
+    captured_job_id: list[UUID] = []
+    captured_run_id: list[UUID] = []
+
+    async def _generic_exception_process(*, claim: Any) -> dict[str, Any]:
+        captured_job_id.append(claim.job_id)
+        captured_run_id.append(claim.run_id)
+        raise RuntimeError("unexpected worker crash (test fixture)")
+
+    mock_worker = AsyncMock()
+    mock_worker.process_window_job = AsyncMock(
+        side_effect=_generic_exception_process
+    )
+    mock_publisher = AsyncMock()
+
+    runner._grammar_window_worker = mock_worker
+    runner._grammar_window_publisher = mock_publisher
+
+    await runner.run(
+        record_id=record_id,
+        user_id=user_id,
+        lease_owner="test-generic-exception-terminal",
+        lease_duration=LEASE_DURATION,
+        max_ticks=10,
+        max_jobs=10,
+    )
+
+    assert captured_job_id, "window worker must have been called at least once"
+    job_status = await _query_job_status(pool, captured_job_id[0])
+    assert job_status == "failed_terminal", (
+        f"generic Exception must transition job to failed_terminal; "
+        f"got {job_status!r}"
+    )
+    run_status = await _query_run_status(pool, captured_run_id[0])
+    assert run_status == "failed_terminal", (
+        f"generic Exception must mark run as failed_terminal; "
+        f"got {run_status!r}"
+    )
+    # Requirement 3: generic terminal failure must mark analysis_window failed.
+    window_status = await _query_window_status(pool, captured_job_id[0])
+    assert window_status == "failed", (
+        f"generic terminal failure must mark analysis_window as failed; "
         f"got {window_status!r}"
     )

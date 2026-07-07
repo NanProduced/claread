@@ -140,7 +140,98 @@ class GrammarWindowPublisher:
         candidates: list[CandidateItem],
         candidate_contents: list[WindowCandidateContent] | None = None,
     ) -> PublishedWindowResult:
-        """§8.4 publish transaction.
+        """§8.4 publish transaction wrapped in a ``publish_fence`` span.
+
+        Requirement 7: mirrors the legacy
+        ``GrammarBundleLayerPublisher.publish_unit_grammar_bundle`` pattern —
+        starts a ``publish_fence`` span, delegates to
+        ``_publish_window_grammar_bundle_inner`` for the actual transaction,
+        and ends the span with success / failure metadata.
+
+        - Success: ``status='succeeded'`` + extra_metadata with
+          ``layer_type`` / ``plan_id`` / ``window_id`` / ``accepted_count``
+          / ``no_op`` / ``layer_ids``.
+        - ``FenceViolationError``: ``status='failed'`` +
+          ``failure_class='fence_violation'``.
+        - Other ``Exception``: ``status='failed'`` +
+          ``failure_class='publish_exception'`` + ``failure_code=type(exc).__name__``.
+        """
+        from app.services.reader_orchestration.span_recorder import (
+            SPAN_KIND_PUBLISH_FENCE,
+            STATUS_FAILED,
+            STATUS_SUCCEEDED,
+            current_span,
+            get_default_recorder,
+        )
+
+        parent = current_span()
+        recorder = get_default_recorder()
+        publish_span = await recorder.start_span(
+            trace_id=parent.trace_id if parent is not None else uuid4(),
+            span_kind=SPAN_KIND_PUBLISH_FENCE,
+            parent_span_id=parent.span_id if parent is not None else None,
+            reader_job_id=job_id,
+            metadata={
+                "layer_type": "grammar_bundle_window",
+                "plan_id": str(plan_id),
+                "window_id": str(window_id),
+            },
+        )
+        try:
+            result = await self._publish_window_grammar_bundle_inner(
+                job_id=job_id,
+                lease_token=lease_token,
+                plan_id=plan_id,
+                window_id=window_id,
+                candidates=candidates,
+                candidate_contents=candidate_contents,
+            )
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_SUCCEEDED,
+                extra_metadata={
+                    "layer_type": "grammar_bundle_window",
+                    "plan_id": str(plan_id),
+                    "window_id": str(window_id),
+                    "accepted_count": result.accepted_count,
+                    "no_op": result.skipped or result.accepted_count == 0,
+                    "grammar_note_layer_ids": [
+                        str(lid) for lid in result.grammar_note_layer_ids
+                    ],
+                    "sentence_analysis_layer_ids": [
+                        str(lid) for lid in result.sentence_analysis_layer_ids
+                    ],
+                },
+            )
+            return result
+        except FenceViolationError:
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_FAILED,
+                failure_class="fence_violation",
+                failure_code="fence_failed",
+            )
+            raise
+        except Exception as exc:
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_FAILED,
+                failure_class="publish_exception",
+                failure_code=type(exc).__name__,
+            )
+            raise
+
+    async def _publish_window_grammar_bundle_inner(
+        self,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        plan_id: UUID,
+        window_id: UUID,
+        candidates: list[CandidateItem],
+        candidate_contents: list[WindowCandidateContent] | None = None,
+    ) -> PublishedWindowResult:
+        """§8.4 publish transaction (inner — no span wrapping).
 
         Manually replicates ``transition()`` validation (status / job_type /
         target_type / fingerprint / lease / fence) and then calls

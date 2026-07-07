@@ -9,9 +9,22 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.database import connection as db_connection
+from app.services.ai_usage import (
+    BILLING_MODE_INTERNAL_ONLY,
+    CAPABILITY_READER_GRAMMAR_BUNDLE,
+    USAGE_SCOPE_SYSTEM_INTERNAL,
+    AIUsageEventCreate,
+    record_ai_usage_event,
+)
+from app.services.reader_orchestration.display_title_worker import (
+    DEFAULT_DISPLAY_TITLE_RETRY_DELAY,
+    DisplayTitleJobProcessResult,
+    DisplayTitleWorkerService,
+)
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.grammar_window_publisher import (
     GrammarWindowPublisher,
+    PublishedWindowResult,
     WindowCandidateContent,
 )
 from app.services.reader_orchestration.grammar_window_worker import (
@@ -20,13 +33,9 @@ from app.services.reader_orchestration.grammar_window_worker import (
 )
 from app.services.reader_orchestration.grammar_worker import (
     DEFAULT_GRAMMAR_RETRY_DELAY,
+    GRAMMAR_WORKFLOW_VERSION,
     GrammarBundleWorkerService,
     GrammarJobProcessResult,
-)
-from app.services.reader_orchestration.display_title_worker import (
-    DEFAULT_DISPLAY_TITLE_RETRY_DELAY,
-    DisplayTitleJobProcessResult,
-    DisplayTitleWorkerService,
 )
 from app.services.reader_orchestration.job_bootstrap import (
     DISPLAY_TITLE_JOB_TYPE,
@@ -35,9 +44,15 @@ from app.services.reader_orchestration.job_bootstrap import (
     GRAMMAR_JOB_TYPE,
     GRAMMAR_OPERATION_FINGERPRINT,
     GRAMMAR_TARGET_SCOPE,
+    TRANSLATION_BATCH_JOB_TYPE,
+    TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+    TRANSLATION_BATCH_TARGET_SCOPE,
     TRANSLATION_JOB_TYPE,
     TRANSLATION_OPERATION_FINGERPRINT,
     TRANSLATION_TARGET_SCOPE,
+    VOCABULARY_BATCH_JOB_TYPE,
+    VOCABULARY_BATCH_OPERATION_FINGERPRINT,
+    VOCABULARY_BATCH_TARGET_SCOPE,
     VOCABULARY_JOB_TYPE,
     VOCABULARY_OPERATION_FINGERPRINT,
     VOCABULARY_TARGET_SCOPE,
@@ -48,6 +63,7 @@ from app.services.reader_orchestration.job_bootstrap import (
 from app.services.reader_orchestration.job_runtime import (
     ClaimResult,
     FenceViolationError,
+    IllegalTransitionError,
     ReaderJobRuntime,
 )
 from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
@@ -55,14 +71,22 @@ from app.services.reader_orchestration.span_recorder import (
     SPAN_KIND_WORKER_TICK,
     STATUS_FAILED,
     STATUS_SKIPPED,
+    STATUS_SUCCEEDED,
     current_span,
+    end_worker_span_execution_error,
+    end_worker_span_fence_violation,
+    end_worker_span_generic_exception,
+    end_worker_span_success,
     get_default_recorder,
 )
 from app.services.reader_orchestration.translation_worker import (
     DEFAULT_TRANSLATION_RETRY_DELAY,
+    TranslationBatchJobProcessResult,
+    TranslationWorkerService,
 )
 from app.services.reader_orchestration.vocabulary_worker import (
     DEFAULT_VOCABULARY_RETRY_DELAY,
+    VocabularyBatchJobProcessResult,
     VocabularyJobProcessResult,
     VocabularyWorkerService,
 )
@@ -75,7 +99,9 @@ from app.services.reader_orchestration.zplus_bootstrap import (
 WorkerType = Literal[
     "display_title",
     "translation",
+    "translation_batch",  # T1.1 short-article batch
     "vocabulary",
+    "vocabulary_batch",  # T1.1 short-article batch
     "grammar_bundle",  # legacy per-unit
     "grammar_bundle_window",  # Z+ window
 ]
@@ -93,8 +119,19 @@ PipelineStoppedReason = Literal[
     "attention_required",
 ]
 
-DEFAULT_PIPELINE_MAX_TICKS = 24
-DEFAULT_PIPELINE_MAX_JOBS = 24
+# T1 acceptance: the fake executor baseline showed reuters_bbc_970 needs
+# 60 ticks (6 workers × 10 rounds) in fake mode and ~70 in 7-worker Z+ mode.
+# 96 / 48 covers medium samples (≤12 units) in both 6- and 7-worker modes
+# with ~30% margin. Every worker attempt (including ``no_job``) consumes a
+# tick, so the budget must scale with ``workers × (units + 1)``.
+DEFAULT_PIPELINE_MAX_TICKS = 96
+DEFAULT_PIPELINE_MAX_JOBS = 48
+
+# Z+ window worker observability constants (requirement 6).
+# operation_fingerprint mirrors the reader_jobs.operation_fingerprint so
+# Console can group window worker spans with their parent job rows.
+ZPLUS_WINDOW_WORKFLOW_VERSION = GRAMMAR_WORKFLOW_VERSION
+ZPLUS_WINDOW_OPERATION_FINGERPRINT = ZPLUS_GRAMMAR_OPERATION_FINGERPRINT
 
 
 def _derive_candidate_contents(
@@ -221,7 +258,9 @@ def _fnv1a32_hex(text: str) -> str:
 class EnhancementWorkerTickCounts:
     display_title: int = 0
     translation: int = 0
+    translation_batch: int = 0
     vocabulary: int = 0
+    vocabulary_batch: int = 0
     grammar_bundle: int = 0
     grammar_bundle_window: int = 0
 
@@ -281,6 +320,7 @@ class ReaderEnhancementPipelineRunner:
         bootstrap_service: EnhancementJobBootstrapService | None = None,
         display_title_worker_service: DisplayTitleWorkerService | None = None,
         translation_orchestrator: ReaderOrchestrator | None = None,
+        translation_batch_worker_service: TranslationWorkerService | None = None,
         vocabulary_worker_service: VocabularyWorkerService | None = None,
         grammar_worker_service: GrammarBundleWorkerService | None = None,
         grammar_window_worker_service: GrammarWindowWorkerService | None = None,
@@ -297,6 +337,14 @@ class ReaderEnhancementPipelineRunner:
         )
         self._translation_orchestrator = translation_orchestrator or ReaderOrchestrator(
             pool=pool
+        )
+        # T1.1 short-article batch path: bypass the orchestrator and call the
+        # batch worker service directly. The batch methods live on the same
+        # TranslationWorkerService class; a dedicated instance is wired here so
+        # tests can inject a fake batch executor without affecting the
+        # per-unit orchestrator path.
+        self._translation_batch_worker_service = (
+            translation_batch_worker_service or TranslationWorkerService(pool=pool)
         )
         self._vocabulary_worker_service = vocabulary_worker_service or VocabularyWorkerService(
             pool=pool
@@ -385,7 +433,9 @@ class ReaderEnhancementPipelineRunner:
         tick_counts = {
             "display_title": 0,
             "translation": 0,
+            "translation_batch": 0,
             "vocabulary": 0,
+            "vocabulary_batch": 0,
             "grammar_bundle": 0,
             "grammar_bundle_window": 0,
         }
@@ -407,11 +457,15 @@ class ReaderEnhancementPipelineRunner:
         # avoid legacy / Z+ contention. When ``grammar_window_worker`` is not
         # registered (legacy deployments / existing tests), the pipeline keeps
         # the legacy 4-worker order so baseline tick / job counts are
-        # preserved.
+        # preserved. T1.1 batch workers are dispatched ahead of their per-unit
+        # counterparts so short-article batch jobs are processed before the
+        # per-unit workers (which will find no_job for short articles).
         if self._grammar_window_worker is not None:
             worker_order: tuple[WorkerType, ...] = (
                 "display_title",
+                "translation_batch",  # T1.1 short-article batch
                 "translation",
+                "vocabulary_batch",  # T1.1 short-article batch
                 "vocabulary",
                 "grammar_bundle_window",  # Z+ 优先
                 "grammar_bundle",  # legacy
@@ -419,7 +473,9 @@ class ReaderEnhancementPipelineRunner:
         else:
             worker_order = (
                 "display_title",
+                "translation_batch",  # T1.1 short-article batch
                 "translation",
+                "vocabulary_batch",  # T1.1 short-article batch
                 "vocabulary",
                 "grammar_bundle",
             )
@@ -499,7 +555,9 @@ class ReaderEnhancementPipelineRunner:
             worker_tick_counts=EnhancementWorkerTickCounts(
                 display_title=tick_counts["display_title"],
                 translation=tick_counts["translation"],
+                translation_batch=tick_counts["translation_batch"],
                 vocabulary=tick_counts["vocabulary"],
+                vocabulary_batch=tick_counts["vocabulary_batch"],
                 grammar_bundle=tick_counts["grammar_bundle"],
                 grammar_bundle_window=tick_counts["grammar_bundle_window"],
             ),
@@ -610,8 +668,26 @@ class ReaderEnhancementPipelineRunner:
                 lease_duration=lease_duration,
                 retry_delay=translation_retry_delay,
             )
+        if worker_type == "translation_batch":
+            return await self._run_translation_batch_attempt(
+                record_id=record_id,
+                base_id=base_id,
+                expected_generation=expected_generation,
+                lease_owner=lease_owner,
+                lease_duration=lease_duration,
+                retry_delay=translation_retry_delay,
+            )
         if worker_type == "vocabulary":
             return await self._run_vocabulary_attempt(
+                record_id=record_id,
+                base_id=base_id,
+                expected_generation=expected_generation,
+                lease_owner=lease_owner,
+                lease_duration=lease_duration,
+                retry_delay=vocabulary_retry_delay,
+            )
+        if worker_type == "vocabulary_batch":
+            return await self._run_vocabulary_batch_attempt(
                 record_id=record_id,
                 base_id=base_id,
                 expected_generation=expected_generation,
@@ -656,13 +732,15 @@ class ReaderEnhancementPipelineRunner:
             operation_fingerprint=DISPLAY_TITLE_OPERATION_FINGERPRINT,
         )
         try:
-            result = await self._display_title_worker_service.process_next_display_title_job_for_record(
-                record_id=record_id,
-                base_id=base_id,
-                expected_generation=expected_generation,
-                lease_owner=lease_owner,
-                lease_duration=lease_duration,
-                retry_delay=retry_delay,
+            result = await (
+                self._display_title_worker_service.process_next_display_title_job_for_record(
+                    record_id=record_id,
+                    base_id=base_id,
+                    expected_generation=expected_generation,
+                    lease_owner=lease_owner,
+                    lease_duration=lease_duration,
+                    retry_delay=retry_delay,
+                )
             )
         except FenceViolationError:
             superseded_jobs = (
@@ -835,6 +913,139 @@ class ReaderEnhancementPipelineRunner:
             result=result,
         )
 
+    async def _run_translation_batch_attempt(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+        retry_delay: timedelta,
+    ) -> ReaderPipelineWorkerAttempt:
+        """T1.1 short-article batch dispatch for the translation layer.
+
+        Bypasses the orchestrator and calls the batch worker service directly
+        so a single LLM call covers all units of a short article. For long
+        articles the bootstrap creates no batch jobs, so this attempt returns
+        ``no_job`` and the per-unit ``_run_translation_attempt`` handles them.
+        """
+        before_superseded = await self._count_superseded_jobs(
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            job_type=TRANSLATION_BATCH_JOB_TYPE,
+            target_scope=TRANSLATION_BATCH_TARGET_SCOPE,
+            operation_fingerprint=TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+        )
+        try:
+            result = await self._translation_batch_worker_service.process_next_translation_batch_job_for_record(
+                record_id=record_id,
+                base_id=base_id,
+                expected_generation=expected_generation,
+                lease_owner=lease_owner,
+                lease_duration=lease_duration,
+                retry_delay=retry_delay,
+            )
+        except FenceViolationError:
+            superseded_jobs = (
+                await self._count_superseded_jobs(
+                    record_id=record_id,
+                    base_id=base_id,
+                    expected_generation=expected_generation,
+                    job_type=TRANSLATION_BATCH_JOB_TYPE,
+                    target_scope=TRANSLATION_BATCH_TARGET_SCOPE,
+                    operation_fingerprint=TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+                )
+                - before_superseded
+            )
+            return ReaderPipelineWorkerAttempt(
+                worker_type="translation_batch",
+                outcome="superseded",
+                processed_job=True,
+                attention_code="publish_fence_failed",
+                superseded_jobs=max(1, superseded_jobs),
+            )
+
+        return await self._build_worker_attempt_from_result(
+            worker_type="translation_batch",
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            job_type=TRANSLATION_BATCH_JOB_TYPE,
+            target_scope=TRANSLATION_BATCH_TARGET_SCOPE,
+            operation_fingerprint=TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+            before_superseded=before_superseded,
+            result=result,
+        )
+
+    async def _run_vocabulary_batch_attempt(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+        retry_delay: timedelta,
+    ) -> ReaderPipelineWorkerAttempt:
+        """T1.1 short-article batch dispatch for the vocabulary layer.
+
+        Reuses the existing ``vocabulary_worker_service`` (the batch methods
+        live on the same ``VocabularyWorkerService`` class) and calls
+        ``process_next_vocabulary_batch_job_for_record`` directly. For long
+        articles the bootstrap creates no batch jobs, so this attempt returns
+        ``no_job`` and the per-unit ``_run_vocabulary_attempt`` handles them.
+        """
+        before_superseded = await self._count_superseded_jobs(
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            job_type=VOCABULARY_BATCH_JOB_TYPE,
+            target_scope=VOCABULARY_BATCH_TARGET_SCOPE,
+            operation_fingerprint=VOCABULARY_BATCH_OPERATION_FINGERPRINT,
+        )
+        try:
+            result = await self._vocabulary_worker_service.process_next_vocabulary_batch_job_for_record(
+                record_id=record_id,
+                base_id=base_id,
+                expected_generation=expected_generation,
+                lease_owner=lease_owner,
+                lease_duration=lease_duration,
+                retry_delay=retry_delay,
+            )
+        except FenceViolationError:
+            superseded_jobs = (
+                await self._count_superseded_jobs(
+                    record_id=record_id,
+                    base_id=base_id,
+                    expected_generation=expected_generation,
+                    job_type=VOCABULARY_BATCH_JOB_TYPE,
+                    target_scope=VOCABULARY_BATCH_TARGET_SCOPE,
+                    operation_fingerprint=VOCABULARY_BATCH_OPERATION_FINGERPRINT,
+                )
+                - before_superseded
+            )
+            return ReaderPipelineWorkerAttempt(
+                worker_type="vocabulary_batch",
+                outcome="superseded",
+                processed_job=True,
+                attention_code="publish_fence_failed",
+                superseded_jobs=max(1, superseded_jobs),
+            )
+
+        return await self._build_worker_attempt_from_result(
+            worker_type="vocabulary_batch",
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            job_type=VOCABULARY_BATCH_JOB_TYPE,
+            target_scope=VOCABULARY_BATCH_TARGET_SCOPE,
+            operation_fingerprint=VOCABULARY_BATCH_OPERATION_FINGERPRINT,
+            before_superseded=before_superseded,
+            result=result,
+        )
+
     async def _run_grammar_attempt(
         self,
         *,
@@ -909,23 +1120,40 @@ class ReaderEnhancementPipelineRunner:
         Flow (§9 worker migration):
           1. ``claim_next_job`` filtered to the Z+ job_type / target_type /
              operation_fingerprint.
-          2. ``GrammarWindowWorkerService.process_window_job`` runs preflight
+          2. Resolve ``plan_id`` / ``window_id`` from the job's input_json
+             immediately after claim (requirement 3) so failure handlers can
+             mark ``analysis_windows.status = 'failed'`` even when
+             ``process_window_job`` raises before returning ``candidates_ready``.
+          3. ``GrammarWindowWorkerService.process_window_job`` runs preflight
              (§8.2 pending → running) + LLM (with heartbeat).
-          3. If the worker returns ``candidates_ready``, hand off to
+          4. If the worker returns ``candidates_ready``, hand off to
              ``GrammarWindowPublisher.publish_window_grammar_bundle`` (§8.4
              publish transaction). If the worker short-circuits with
              ``already_terminal`` (window already completed / no_op / failed),
              the publisher is skipped — there is nothing to publish.
 
-        Failure handling (P1-3 third-round review):
-          ``GrammarWindowExecutionError`` (LLM transient / config / validation)
-          → ``retry_later``. ``ValueError`` (P2-1 fail-closed contract
-          violation from ``_derive_candidate_contents`` or publisher) →
-          ``failed_terminal`` (code bug, not retryable). Generic ``Exception``
-          → ``failed_terminal`` (defensive). On any failure the job is
-          transitioned out of ``claimed`` and the run + analysis_window are
-          marked failed, so the pipeline never leaves a job stuck in
-          ``claimed`` waiting for lease expiry.
+        Failure handling (requirements 1 / 2 / 3 / 4 / 6):
+          - ``GrammarWindowExecutionError``: routes via ``exc.retryable`` —
+            config / validation errors go to ``failed_terminal``, provider
+            errors go to ``retry_later`` (requirement 2).
+          - ``ValueError`` (P2-1 fail-closed contract violation): ``failed_terminal``.
+          - Generic ``Exception``: ``failed_terminal`` (defensive).
+          - ``FenceViolationError`` from publisher: transition job →
+            ``superseded``, mark run ``superseded``, end worker span as
+            fence violation (requirement 1 — aligns with legacy grammar_worker).
+          - Non-retryable / generic terminal failure marks
+            ``analysis_windows.status = 'failed'``. Retryable failures leave
+            the window in ``running`` so the same job retry can resume
+            (requirement 3).
+          - ``_handle_window_job_failure`` only swallows
+            ``IllegalTransitionError`` (lease race / illegal transition);
+            other transition exceptions propagate so the outer worker span
+            fallback can record them (requirement 4 — no broad-swallow).
+          - Success path records ``ai_usage_events`` + ends the worker_tick
+            span with token / model fields (requirement 6). Failure path
+            records a failed ``ai_usage_event`` when model metadata is
+            available and ends the span via ``end_worker_span_execution_error``
+            / ``end_worker_span_generic_exception``.
         """
         if self._grammar_window_worker is None or self._grammar_window_publisher is None:
             return ReaderPipelineWorkerAttempt(
@@ -951,20 +1179,33 @@ class ReaderEnhancementPipelineRunner:
                 processed_job=False,
             )
 
+        # Requirement 3: resolve plan_id / window_id immediately after claim
+        # so failure handlers can mark the analysis_window failed even when
+        # process_window_job raises before returning candidates_ready.
+        plan_id, window_id = await self._load_window_ids_from_job(claim.job_id)
+
         await self._mark_window_run_running(claim.run_id)
 
         try:
             result = await self._grammar_window_worker.process_window_job(claim=claim)
         except GrammarWindowExecutionError as exc:
+            # Requirement 2: route via exc.retryable instead of fixed True.
             return await self._handle_window_job_failure(
                 claim=claim,
                 exc=exc,
-                retryable=True,
+                retryable=exc.retryable,
                 retry_delay=retry_delay,
-                failure_class="grammar_window_execution",
-                failure_code="llm_execution_failed",
-                rationale_code="grammar_window_llm_failed",
+                failure_class=exc.failure_class,
+                failure_code=exc.failure_code,
+                rationale_code=exc.rationale_code,
                 message=str(exc),
+                window_id=window_id,
+                prompt_version=exc.prompt_version,
+                model_route=exc.model_route,
+                model_profile=exc.model_profile,
+                model_provider=exc.model_provider,
+                model_name=exc.model_name,
+                end_span="execution_error",
             )
         except ValueError as exc:
             return await self._handle_window_job_failure(
@@ -976,6 +1217,8 @@ class ReaderEnhancementPipelineRunner:
                 failure_code=type(exc).__name__,
                 rationale_code="grammar_window_contract_violation",
                 message=str(exc),
+                window_id=window_id,
+                end_span="execution_error",
             )
         except Exception as exc:
             return await self._handle_window_job_failure(
@@ -987,77 +1230,191 @@ class ReaderEnhancementPipelineRunner:
                 failure_code=type(exc).__name__,
                 rationale_code="grammar_window_unexpected_failure",
                 message=str(exc),
+                window_id=window_id,
+                end_span="generic_exception",
             )
 
         status = result.get("status")
 
-        if status == "candidates_ready":
-            plan_id, window_id = await self._load_window_ids_from_job(claim.job_id)
-            candidates: list = result.get("candidates", [])
-            # P1-4 bridge: derive WindowCandidateContent from CandidateItem's
-            # content_* fields so publisher can build proper layer output
-            # (GrammarNoteLayerOutput / SentenceAnalysisLayerOutput) instead
-            # of falling back to selector-sidecar output_json shape.
+        if status != "candidates_ready":
+            # already_terminal: window already completed (no_op / failed /
+            # completed by a previous run). The publisher is skipped; no LLM
+            # call was made. Close the claimed job/run so it does not wait for
+            # lease recovery, then end the worker_tick span as skipped.
+            transition_succeeded = False
             try:
-                candidate_contents = _derive_candidate_contents(candidates)
-            except ValueError as exc:
-                return await self._handle_window_job_failure(
-                    claim=claim,
-                    exc=exc,
-                    retryable=False,
-                    retry_delay=retry_delay,
-                    failure_class="grammar_window_contract_violation",
-                    failure_code="candidate_contents_derivation_failed",
-                    rationale_code="candidate_contents_derivation_failed",
-                    message=str(exc),
-                    window_id=window_id,
-                )
-            try:
-                await self._grammar_window_publisher.publish_window_grammar_bundle(
+                await self._job_runtime.transition(
                     job_id=claim.job_id,
+                    target_status="skipped",
                     lease_token=claim.lease_token,
-                    plan_id=plan_id,
-                    window_id=window_id,
-                    candidates=candidates,
-                    candidate_contents=candidate_contents,
+                    output_ref={
+                        "plan_id": str(plan_id),
+                        "window_id": str(window_id),
+                        "reason": "analysis_window_already_terminal",
+                    },
+                    rationale_code="analysis_window_already_terminal",
                 )
-            except FenceViolationError:
-                return ReaderPipelineWorkerAttempt(
-                    worker_type="grammar_bundle_window",
-                    outcome="superseded",
-                    processed_job=True,
-                    job_id=claim.job_id,
-                    run_id=claim.run_id,
-                    attention_code="publish_fence_failed",
+                transition_succeeded = True
+            except IllegalTransitionError:
+                pass
+            if transition_succeeded:
+                await self._mark_window_run_status(
+                    claim.run_id,
+                    status="completed",
+                    failure_class=None,
+                    failure_code=None,
+                    finished_at=datetime.now(UTC),
                 )
-            except ValueError as exc:
-                return await self._handle_window_job_failure(
-                    claim=claim,
-                    exc=exc,
-                    retryable=False,
-                    retry_delay=retry_delay,
-                    failure_class="grammar_window_contract_violation",
-                    failure_code="publisher_fail_closed",
-                    rationale_code="publisher_fail_closed",
-                    message=str(exc),
-                    window_id=window_id,
-                )
-            except Exception as exc:
-                return await self._handle_window_job_failure(
-                    claim=claim,
-                    exc=exc,
-                    retryable=False,
-                    retry_delay=retry_delay,
-                    failure_class="grammar_window_publisher_unexpected",
-                    failure_code=type(exc).__name__,
-                    rationale_code="publisher_unexpected_failure",
-                    message=str(exc),
-                    window_id=window_id,
-                )
+            recorder = get_default_recorder()
+            span = current_span()
+            if span is not None:
+                await recorder.end_span(span, status=STATUS_SKIPPED)
+            return ReaderPipelineWorkerAttempt(
+                worker_type="grammar_bundle_window",
+                outcome="succeeded",
+                processed_job=True,
+                job_id=claim.job_id,
+                run_id=claim.run_id,
+            )
 
-        # already_terminal: window already completed (no-op). The publisher is
-        # skipped; the worker has not produced candidates. Treat as succeeded
-        # so the pipeline moves on without flagging attention.
+        candidates: list = result.get("candidates", [])
+        # P1-4 bridge: derive WindowCandidateContent from CandidateItem's
+        # content_* fields so publisher can build proper layer output
+        # (GrammarNoteLayerOutput / SentenceAnalysisLayerOutput) instead
+        # of falling back to selector-sidecar output_json shape.
+        try:
+            candidate_contents = _derive_candidate_contents(candidates)
+        except ValueError as exc:
+            return await self._handle_window_job_failure(
+                claim=claim,
+                exc=exc,
+                retryable=False,
+                retry_delay=retry_delay,
+                failure_class="grammar_window_contract_violation",
+                failure_code="candidate_contents_derivation_failed",
+                rationale_code="candidate_contents_derivation_failed",
+                message=str(exc),
+                window_id=window_id,
+                prompt_version=result.get("prompt_version"),
+                model_route=result.get("model_route"),
+                model_profile=result.get("model_profile"),
+                model_provider=result.get("model_provider"),
+                model_name=result.get("model_name"),
+                usage_data=result.get("usage_data"),
+                end_span="execution_error",
+            )
+        try:
+            published = await self._grammar_window_publisher.publish_window_grammar_bundle(
+                job_id=claim.job_id,
+                lease_token=claim.lease_token,
+                plan_id=plan_id,
+                window_id=window_id,
+                candidates=candidates,
+                candidate_contents=candidate_contents,
+            )
+        except FenceViolationError:
+            # Requirement 1: align with legacy grammar_worker — transition
+            # job → superseded, mark reader_run superseded, end worker span
+            # as fence violation. Do NOT just return superseded and leave
+            # the job/run in claimed/running.
+            await end_worker_span_fence_violation()
+            try:
+                await self._job_runtime.transition(
+                    job_id=claim.job_id,
+                    target_status="superseded",
+                    lease_token=claim.lease_token,
+                    rationale_code="publish_fence_failed",
+                )
+            except IllegalTransitionError:
+                # Job no longer in claimed (e.g. lease expired and recovered
+                # by another tick). Span already ended above; fall through to
+                # mark the run superseded for observability consistency.
+                pass
+            await self._mark_window_run_status(
+                claim.run_id,
+                status="superseded",
+                failure_class="publish_guard",
+                failure_code="publish_fence_failed",
+                finished_at=datetime.now(UTC),
+            )
+            if window_id is not None:
+                await self._mark_analysis_window_failed(window_id)
+            return ReaderPipelineWorkerAttempt(
+                worker_type="grammar_bundle_window",
+                outcome="superseded",
+                processed_job=True,
+                job_id=claim.job_id,
+                run_id=claim.run_id,
+                attention_code="publish_fence_failed",
+                # Mirror legacy grammar worker: count this job as superseded
+                # so the pipeline summary's outcome_counts.superseded reflects
+                # the fence violation (requirement 1 alignment).
+                superseded_jobs=1,
+            )
+        except ValueError as exc:
+            return await self._handle_window_job_failure(
+                claim=claim,
+                exc=exc,
+                retryable=False,
+                retry_delay=retry_delay,
+                failure_class="grammar_window_contract_violation",
+                failure_code="publisher_fail_closed",
+                rationale_code="publisher_fail_closed",
+                message=str(exc),
+                window_id=window_id,
+                prompt_version=result.get("prompt_version"),
+                model_route=result.get("model_route"),
+                model_profile=result.get("model_profile"),
+                model_provider=result.get("model_provider"),
+                model_name=result.get("model_name"),
+                usage_data=result.get("usage_data"),
+                end_span="execution_error",
+            )
+        except Exception as exc:
+            return await self._handle_window_job_failure(
+                claim=claim,
+                exc=exc,
+                retryable=False,
+                retry_delay=retry_delay,
+                failure_class="grammar_window_publisher_unexpected",
+                failure_code=type(exc).__name__,
+                rationale_code="publisher_unexpected_failure",
+                message=str(exc),
+                window_id=window_id,
+                prompt_version=result.get("prompt_version"),
+                model_route=result.get("model_route"),
+                model_profile=result.get("model_profile"),
+                model_provider=result.get("model_provider"),
+                model_name=result.get("model_name"),
+                usage_data=result.get("usage_data"),
+                end_span="generic_exception",
+            )
+
+        # Requirement 6: success path — record ai_usage_events + end worker
+        # span with token / model fields. The event carries plan_id /
+        # window_id / window_index / target_unit_ids / target_anchor_ids /
+        # accepted_count / no_op / layer_ids in metadata so Console can
+        # correlate Z+ window runs with their LLM cost.
+        window_meta = await self._load_window_publish_metadata(
+            claim.job_id, window_id
+        )
+        event_id = await self._record_window_success_usage(
+            claim=claim,
+            result=result,
+            plan_id=plan_id,
+            window_id=window_id,
+            window_meta=window_meta,
+            published=published,
+        )
+        await end_worker_span_success(
+            ai_usage_event_id=event_id,
+            usage_data=result.get("usage_data"),
+            model_route=result.get("model_route"),
+            model_name=result.get("model_name"),
+            model_provider=result.get("model_provider"),
+            capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
+        )
+
         return ReaderPipelineWorkerAttempt(
             worker_type="grammar_bundle_window",
             outcome="succeeded",
@@ -1078,6 +1435,13 @@ class ReaderEnhancementPipelineRunner:
         rationale_code: str,
         message: str,
         window_id: UUID | None = None,
+        prompt_version: str | None = None,
+        model_route: str | None = None,
+        model_profile: str | None = None,
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        usage_data: dict[str, Any] | None = None,
+        end_span: Literal["execution_error", "generic_exception"] = "execution_error",
     ) -> ReaderPipelineWorkerAttempt:
         """Transition a failed Z+ window job to retry_later / failed_terminal.
 
@@ -1087,9 +1451,23 @@ class ReaderEnhancementPipelineRunner:
           - ``retryable=False`` → ``reader_jobs.failed_terminal`` +
             ``reader_runs.failed_terminal`` (contract violation / code bug).
 
-        Also marks ``analysis_windows.status = 'failed'`` when ``window_id``
-        is known (preflight may have already transitioned it to ``running``;
-        without this fix the window would be stuck in ``running`` forever).
+        Requirement 3: ``analysis_windows.status`` is marked ``failed`` only
+        on non-retryable / terminal failures. Retryable failures leave the
+        window in ``running`` so the same job retry can resume from the
+        preflight state.
+
+        Requirement 4: only ``IllegalTransitionError`` (lease race / illegal
+        transition) is swallowed — the job row may have been recovered by
+        another tick. Other transition exceptions propagate so the outer
+        ``_run_worker_attempt`` fallback can record them on the worker_tick
+        span. The previous broad ``except Exception: pass`` masked real
+        bugs and left observability in an inconsistent state.
+
+        Requirement 6: records a failed ``ai_usage_event`` when model
+        metadata is available (``prompt_version`` / ``model_route`` /
+        ``model_provider`` / ``model_name``) and ends the worker_tick span
+        via ``end_worker_span_execution_error`` or
+        ``end_worker_span_generic_exception``.
         """
         target_status = "retry_later" if retryable else "failed_terminal"
         run_status = "failed_retryable" if retryable else "failed_terminal"
@@ -1107,12 +1485,15 @@ class ReaderEnhancementPipelineRunner:
             available_at = datetime.now(UTC) + retry_delay
             transition_kwargs["available_at"] = available_at
 
+        # Requirement 4: only swallow IllegalTransitionError (lease race /
+        # illegal transition). Other exceptions propagate to the outer
+        # _run_worker_attempt which ends the span as failed.
         try:
             await self._job_runtime.transition(**transition_kwargs)
-        except Exception:
-            # If the job row is no longer in ``claimed`` (e.g. lease already
-            # expired and recovered by another tick), we still want to mark
-            # the run + window as failed so observability stays consistent.
+        except IllegalTransitionError:
+            # Job no longer in claimed (e.g. lease expired and recovered by
+            # another tick). Continue to mark the run + window for
+            # observability consistency.
             pass
 
         await self._mark_window_run_failed(
@@ -1122,8 +1503,37 @@ class ReaderEnhancementPipelineRunner:
             failure_code=failure_code,
         )
 
-        if window_id is not None:
+        # Requirement 3: mark analysis_window failed only on non-retryable
+        # failures. Retryable failures leave the window in running so the
+        # same job retry can resume.
+        if window_id is not None and not retryable:
             await self._mark_analysis_window_failed(window_id)
+
+        # Requirement 6: record failed ai_usage_event when model metadata
+        # is available (LLM call was attempted).
+        if prompt_version is not None or model_route is not None:
+            await self._record_window_failure_usage(
+                claim=claim,
+                failure_code=failure_code,
+                message=message,
+                prompt_version=prompt_version,
+                model_route=model_route,
+                model_profile=model_profile,
+                model_provider=model_provider,
+                model_name=model_name,
+                usage_data=usage_data,
+            )
+
+        # Requirement 6: end worker_tick span with the failure class/code.
+        if end_span == "generic_exception":
+            await end_worker_span_generic_exception(
+                layer="grammar_bundle_window", exc=exc
+            )
+        else:
+            await end_worker_span_execution_error(
+                failure_class=failure_class,
+                failure_code=failure_code,
+            )
 
         outcome: PipelineAttemptOutcome = (
             "retry_later" if retryable else "failed_terminal"
@@ -1217,6 +1627,193 @@ class ReaderEnhancementPipelineRunner:
                 is_terminal,
             )
 
+    async def _mark_window_run_status(
+        self,
+        run_id: UUID,
+        *,
+        status: str,
+        failure_class: str | None,
+        failure_code: str | None,
+        finished_at: datetime | None,
+    ) -> None:
+        """Mark a Z+ reader_run with an explicit status + finished_at.
+
+        Used by the FenceViolationError branch (requirement 1) to mark the
+        run ``superseded`` with ``finished_at=NOW()`` — mirroring
+        ``grammar_worker._mark_run_status``. Unlike ``_mark_window_run_failed``
+        which derives ``finished_at`` from ``is_terminal``, this method lets
+        the caller set ``finished_at`` explicitly because ``superseded`` is
+        not ``failed_terminal`` but still closes the run.
+        """
+        async with self.get_pool().acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE reader_runs
+                SET status = $2,
+                    failure_class = $3,
+                    failure_code = $4,
+                    finished_at = $5,
+                    updated_at = NOW()
+                WHERE id = $1
+                """,
+                run_id,
+                status,
+                failure_class,
+                failure_code,
+                finished_at,
+            )
+
+    async def _load_window_publish_metadata(
+        self,
+        job_id: UUID,
+        window_id: UUID,
+    ) -> dict[str, Any]:
+        """Load window_index / target_unit_ids / target_anchor_ids for ai_usage_event.
+
+        ``window_index`` and ``target_unit_ids`` are read from the job's
+        ``input_json`` (written by ``ZPlusBootstrapService._create_window_job``).
+        ``target_anchor_ids`` is read from the ``analysis_windows`` row so
+        it reflects any post-bootstrap corrections.
+        """
+        async with self.get_pool().acquire() as conn:
+            job_row = await conn.fetchrow(
+                "SELECT input_json FROM reader_jobs WHERE id = $1",
+                job_id,
+            )
+            if job_row is None:
+                return {"window_index": None, "target_unit_ids": [], "target_anchor_ids": []}
+            input_data: Any = job_row["input_json"]
+            if isinstance(input_data, str):
+                input_data = json.loads(input_data)
+
+            window_row = await conn.fetchrow(
+                "SELECT target_anchor_ids FROM analysis_windows WHERE id = $1",
+                window_id,
+            )
+            target_anchor_ids_raw: Any = (
+                window_row["target_anchor_ids"] if window_row is not None else None
+            )
+            if isinstance(target_anchor_ids_raw, str):
+                target_anchor_ids_raw = json.loads(target_anchor_ids_raw)
+
+        target_anchor_ids: list[str] = (
+            [str(a) for a in target_anchor_ids_raw]
+            if isinstance(target_anchor_ids_raw, list)
+            else []
+        )
+        return {
+            "window_index": int(input_data.get("window_index", 0)),
+            "target_unit_ids": list(input_data.get("target_unit_ids", [])),
+            "target_anchor_ids": target_anchor_ids,
+        }
+
+    async def _record_window_success_usage(
+        self,
+        *,
+        claim: ClaimResult,
+        result: dict[str, Any],
+        plan_id: UUID,
+        window_id: UUID,
+        window_meta: dict[str, Any],
+        published: PublishedWindowResult,
+    ) -> UUID | None:
+        """Record a succeeded ``ai_usage_event`` for a Z+ window publish.
+
+        Requirement 6: ``capability_code`` uses ``reader_grammar_bundle``,
+        ``operation_fingerprint`` uses ``grammar_bundle_window_v1``, and
+        ``metadata`` includes ``plan_id`` / ``window_id`` / ``window_index`` /
+        ``target_unit_ids`` / ``target_anchor_ids`` / ``accepted_count`` /
+        ``no_op`` / ``layer_ids`` so Console can correlate Z+ window runs
+        with their LLM cost.
+        """
+        layer_ids = list(published.grammar_note_layer_ids) + list(
+            published.sentence_analysis_layer_ids
+        )
+        return await record_ai_usage_event(
+            AIUsageEventCreate(
+                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
+                capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
+                billing_mode=BILLING_MODE_INTERNAL_ONLY,
+                status=STATUS_SUCCEEDED,
+                user_id=claim.user_id,
+                reading_record_id=claim.reading_record_id,
+                reader_run_id=claim.run_id,
+                reader_job_id=claim.job_id,
+                workflow_name="reader_orchestration",
+                workflow_version=ZPLUS_WINDOW_WORKFLOW_VERSION,
+                prompt_version=result.get("prompt_version"),
+                model_route=result.get("model_route"),
+                model_profile_id=result.get("model_profile"),
+                model_profile=result.get("model_profile"),
+                model_provider=result.get("model_provider"),
+                model_name=result.get("model_name"),
+                planner_kind="llm_worker",
+                usage_data=result.get("usage_data"),
+                operation_fingerprint=ZPLUS_WINDOW_OPERATION_FINGERPRINT,
+                metadata_json={
+                    "plan_id": str(plan_id),
+                    "window_id": str(window_id),
+                    "window_index": window_meta.get("window_index"),
+                    "target_unit_ids": window_meta.get("target_unit_ids", []),
+                    "target_anchor_ids": window_meta.get("target_anchor_ids", []),
+                    "accepted_count": published.accepted_count,
+                    "no_op": published.skipped or published.accepted_count == 0,
+                    "layer_ids": [str(lid) for lid in layer_ids],
+                    "grammar_note_layer_ids": [
+                        str(lid) for lid in published.grammar_note_layer_ids
+                    ],
+                    "sentence_analysis_layer_ids": [
+                        str(lid) for lid in published.sentence_analysis_layer_ids
+                    ],
+                },
+            )
+        )
+
+    async def _record_window_failure_usage(
+        self,
+        *,
+        claim: ClaimResult,
+        failure_code: str,
+        message: str,
+        prompt_version: str | None = None,
+        model_route: str | None = None,
+        model_profile: str | None = None,
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        usage_data: dict[str, Any] | None = None,
+    ) -> UUID | None:
+        """Record a failed ``ai_usage_event`` for a Z+ window LLM call.
+
+        Mirrors ``grammar_worker._record_failed_usage_event``: captures the
+        LLM cost even when the window publish failed, so Console's
+        cost-per-window panel can surface wasted tokens.
+        """
+        return await record_ai_usage_event(
+            AIUsageEventCreate(
+                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
+                capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
+                billing_mode=BILLING_MODE_INTERNAL_ONLY,
+                status=STATUS_FAILED,
+                user_id=claim.user_id,
+                reading_record_id=claim.reading_record_id,
+                reader_run_id=claim.run_id,
+                reader_job_id=claim.job_id,
+                workflow_name="reader_orchestration",
+                workflow_version=ZPLUS_WINDOW_WORKFLOW_VERSION,
+                prompt_version=prompt_version,
+                model_route=model_route,
+                model_profile_id=model_profile,
+                model_profile=model_profile,
+                model_provider=model_provider,
+                model_name=model_name,
+                planner_kind="llm_worker",
+                usage_data=usage_data,
+                operation_fingerprint=ZPLUS_WINDOW_OPERATION_FINGERPRINT,
+                error_code=failure_code,
+                error_message=message,
+            )
+        )
+
     async def _mark_analysis_window_failed(self, window_id: UUID) -> None:
         """Mark ``analysis_windows.status = 'failed'`` on job failure.
 
@@ -1253,7 +1850,9 @@ class ReaderEnhancementPipelineRunner:
         before_superseded: int,
         result: (
             DisplayTitleJobProcessResult
+            | TranslationBatchJobProcessResult
             | VocabularyJobProcessResult
+            | VocabularyBatchJobProcessResult
             | GrammarJobProcessResult
             | None
         ),

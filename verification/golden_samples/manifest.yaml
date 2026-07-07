@@ -1,0 +1,58 @@
+- id: short_news
+  shape: short_news
+  source_attribution: synthetic
+  expected_char_band: [400, 900]
+  expected_word_band: [70, 180]
+  reading_goal: daily_reading
+  reading_variant: intermediate_reading
+  notes: |
+    A short single-genre news blurb. Should land cleanly on the
+    short-article path. Used to confirm that the new chain does not
+    fan out per-unit for trivially short input.
+- id: reuters_bbc_970
+  shape: medium_news
+  source_attribution: synthetic
+  expected_char_band: [5500, 6200]
+  expected_word_band: [900, 1050]
+  reading_goal: exam
+  reading_variant: ielts_toefl
+  notes: |
+    ~970-word Reuters/BBC-style article. The D5 short-form diagnosis
+    cited this band as the regression case where per-unit fan-out
+    produced ~7.8x more tokens and ~10x more latency than the old
+    chain. This sample is the fixed corpus for that comparison.
+- id: fragmented_news
+  shape: fragmented_news
+  source_attribution: synthetic
+  expected_char_band: [1500, 2500]
+  expected_word_band: [260, 420]
+  reading_goal: daily_reading
+  reading_variant: beginner_reading
+  notes: |
+    Short news with many short paragraphs and a couple of bold-style
+    lead-ins, typical of syndicated feeds. Useful for observing how
+    the new chain handles paragraph fragmentation and vocabulary
+    dedup across many small units.
+- id: long_article
+  shape: long_article
+  source_attribution: synthetic
+  expected_char_band: [4500, 5500]
+  expected_word_band: [800, 1000]
+  reading_goal: daily_reading
+  reading_variant: intensive_reading
+  notes: |
+    Single long article without strong section structure. Crosses
+    the medium/long boundary. Used to confirm the new chain can
+    finish a long plain article end-to-end and to observe how many
+    translation / vocabulary / grammar fan-out jobs it creates.
+- id: long_article_headings
+  shape: long_article_headings
+  source_attribution: synthetic
+  expected_char_band: [5000, 6000]
+  expected_word_band: [850, 1050]
+  reading_goal: daily_reading
+  reading_variant: intensive_reading
+  notes: |
+    Long article with explicit H2 / H3 headings. Used to seed the
+    section-oriented longform path (M5) once the planner is in.
+    Included now so the corpus is fixed and reproducible.

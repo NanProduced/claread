@@ -18,6 +18,8 @@ from app.schemas.reader_orchestration import (
     ReaderTextRangeAnchor,
     SentenceAnalysisChunk,
     SentenceAnalysisItem,
+    TranslationBatchGenerationOutput,
+    TranslationBatchUnitOutput,
     TranslationGenerationGroup,
     TranslationLayerGenerationOutput,
     VocabularyHighlightItem,
@@ -45,12 +47,19 @@ from app.services.reader_orchestration.pipeline_runner import (
     ReaderPipelineRunSummary,
 )
 from app.services.reader_orchestration.translation_worker import (
+    TranslationBatchExecutionResult,
+    TranslationBatchJobContext,
     TranslationExecutionResult,
     TranslationJobContext,
     TranslationWorkerService,
 )
 from app.services.reader_orchestration.vocabulary_worker import (
+    VocabularyBatchCandidateOutput,
+    VocabularyBatchExecutionResult,
+    VocabularyBatchJobContext,
+    VocabularyBatchUnitCandidateOutput,
     VocabularyExecutionResult,
+    VocabularyHighlightCandidateItem,
     VocabularyJobContext,
     VocabularyWorkerService,
 )
@@ -237,6 +246,91 @@ class DevFakeDisplayTitleGenerator:
         )
 
 
+class DevFakeTranslationBatchExecutor:
+    """T1.1 fake batch translation executor for the smoke harness.
+
+    Produces one ``TranslationBatchUnitOutput`` per unit, mirroring the
+    per-unit ``DevFakeTranslationExecutor`` output shape (1 group covering
+    all anchor_segment_ids with a ``[DEV FAKE BATCH]`` prefix).
+    """
+
+    async def translate_batch(
+        self,
+        context: TranslationBatchJobContext,
+    ) -> TranslationBatchExecutionResult:
+        units: list[TranslationBatchUnitOutput] = []
+        for unit in context.units:
+            units.append(
+                TranslationBatchUnitOutput(
+                    unit_id=unit.unit_id,
+                    groups=[
+                        TranslationGenerationGroup(
+                            anchor_segment_ids=[
+                                anchor_segment.anchor_segment_id
+                                for anchor_segment in unit.anchor_segments
+                            ],
+                            translated_text=f"[DEV FAKE BATCH] {unit.source_text}",
+                        )
+                    ],
+                )
+            )
+        return TranslationBatchExecutionResult(
+            output=TranslationBatchGenerationOutput(units=units),
+            usage_data={"input_tokens": 1, "output_tokens": 1},
+            prompt_version=DEV_FAKE_TRANSLATION_PROMPT_VERSION,
+            model_profile=f"{DEV_FAKE_MODEL_PROFILE_PREFIX}_translation_batch",
+            model_provider="fake",
+            model_name="reader-d5-smoke-fake-translation-batch",
+        )
+
+
+class DevFakeVocabularyBatchExecutor:
+    """T1.1 fake batch vocabulary executor for the smoke harness.
+
+    Produces one ``VocabularyBatchUnitCandidateOutput`` per unit with a
+    single ``vocab_highlight`` candidate item (mirroring the per-unit
+    ``DevFakeVocabularyExecutor``). The batch worker resolves the
+    candidates into per-unit ``VocabularyLayerOutput`` via
+    ``_build_vocabulary_batch_outputs``.
+    """
+
+    async def generate_batch(
+        self,
+        context: VocabularyBatchJobContext,
+    ) -> VocabularyBatchExecutionResult:
+        units: list[VocabularyBatchUnitCandidateOutput] = []
+        for unit in context.units:
+            anchor_segment = unit.anchor_segments[0]
+            word_match = _WORD_RE.search(anchor_segment.text)
+            if word_match is None:
+                raise ValueError(
+                    "dev fake vocabulary batch executor requires at least one word"
+                )
+            selected_text = word_match.group(0)
+            units.append(
+                VocabularyBatchUnitCandidateOutput(
+                    unit_id=unit.unit_id,
+                    items=[
+                        VocabularyHighlightCandidateItem(
+                            anchor_segment_id=anchor_segment.anchor_segment_id,
+                            selected_text=selected_text,
+                            headword=selected_text.lower(),
+                            brief_explanation="Dev smoke batch keyword",
+                            reason="reader_d5_smoke_fake_batch",
+                        )
+                    ],
+                )
+            )
+        return VocabularyBatchExecutionResult(
+            output=VocabularyBatchCandidateOutput(schema_version=1, units=units),
+            usage_data={"input_tokens": 1, "output_tokens": 1},
+            prompt_version=DEV_FAKE_VOCABULARY_PROMPT_VERSION,
+            model_profile=f"{DEV_FAKE_MODEL_PROFILE_PREFIX}_vocabulary_batch",
+            model_provider="fake",
+            model_name="reader-d5-smoke-fake-vocabulary-batch",
+        )
+
+
 class ReaderEnhancementSmokeHarness:
     def __init__(
         self,
@@ -267,21 +361,34 @@ class ReaderEnhancementSmokeHarness:
         lease_duration: timedelta = DEFAULT_SMOKE_LEASE_DURATION,
         max_ticks: int = DEFAULT_PIPELINE_MAX_TICKS,
         max_jobs: int = DEFAULT_PIPELINE_MAX_JOBS,
+        # Optional reading metadata. When ``None`` (the default) the
+        # existing ``PlainTextArticleReadySubmitRequest`` defaults
+        # are kept, which preserves the smoke harness's production
+        # behaviour. The baseline harness and the focused tests pass
+        # these explicitly so the persisted ``reading_records`` row
+        # matches the manifest / CLI override.
+        reading_goal: str | None = None,
+        reading_variant: str | None = None,
     ) -> ReaderSmokeHarnessResult:
         if executor_mode == "fake":
             self._assert_fake_mode_allowed(allow_fake_executors=allow_fake_executors)
 
+        submit_kwargs: dict[str, Any] = {
+            "user_id": user_id,
+            "plain_text": plain_text,
+            "title": title,
+            "language": language,
+            "source_metadata": {
+                "origin": "reader_d5_smoke_harness",
+                "executor_mode": executor_mode,
+            },
+        }
+        if reading_goal is not None:
+            submit_kwargs["reading_goal"] = reading_goal
+        if reading_variant is not None:
+            submit_kwargs["reading_variant"] = reading_variant
         submit_result = await self._article_service.submit_plain_text(
-            PlainTextArticleReadySubmitRequest(
-                user_id=user_id,
-                plain_text=plain_text,
-                title=title,
-                language=language,
-                source_metadata={
-                    "origin": "reader_d5_smoke_harness",
-                    "executor_mode": executor_mode,
-                },
-            )
+            PlainTextArticleReadySubmitRequest(**submit_kwargs)
         )
         runner = self._build_pipeline_runner(executor_mode=executor_mode)
         pipeline_summary = await runner.run(
@@ -334,9 +441,17 @@ class ReaderEnhancementSmokeHarness:
             pool=pool,
             worker_service=translation_worker,
         )
+        # T1.1: dedicated batch translation worker with a fake batch executor.
+        # Bypasses the orchestrator so the batch path can be exercised in
+        # smoke / fake mode independently of the per-unit orchestrator path.
+        translation_batch_worker = TranslationWorkerService(
+            pool=pool,
+            batch_translator=DevFakeTranslationBatchExecutor(),
+        )
         vocabulary_worker = VocabularyWorkerService(
             pool=pool,
             executor=DevFakeVocabularyExecutor(),
+            batch_executor=DevFakeVocabularyBatchExecutor(),
         )
         grammar_worker = GrammarBundleWorkerService(
             pool=pool,
@@ -350,6 +465,7 @@ class ReaderEnhancementSmokeHarness:
             pool=pool,
             display_title_worker_service=display_title_worker,
             translation_orchestrator=orchestrator,
+            translation_batch_worker_service=translation_batch_worker,
             vocabulary_worker_service=vocabulary_worker,
             grammar_worker_service=grammar_worker,
             # fake 模式使用 legacy DevFakeGrammarBundleExecutor，不兼容

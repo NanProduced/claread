@@ -40,13 +40,20 @@ from app.services.analysis.prompting.prompt_loader import (
 )
 
 from .job_bootstrap import (
+    VOCABULARY_BATCH_JOB_TYPE,
+    VOCABULARY_BATCH_OPERATION_FINGERPRINT,
+    VOCABULARY_BATCH_TARGET_SCOPE,
     VOCABULARY_JOB_TYPE,
     VOCABULARY_OPERATION_FINGERPRINT,
     VOCABULARY_TARGET_SCOPE,
     _fingerprint_matches_base,
 )
 from .job_runtime import ClaimResult, FenceViolationError, ReaderJobRuntime
-from .layer_publisher import PublishedVocabularyLayer, VocabularyLayerPublisher
+from .layer_publisher import (
+    PublishedVocabularyBatch,
+    PublishedVocabularyLayer,
+    VocabularyLayerPublisher,
+)
 from .reading_strategy import (
     ReaderStrategyResolverError,
     resolve_reader_variant_strategy,
@@ -196,6 +203,37 @@ class VocabularyCandidateOutput(BaseModel):
         default_factory=list,
         max_length=MAX_VOCABULARY_ITEMS,
     )
+
+
+class VocabularyBatchUnitCandidateOutput(BaseModel):
+    """Per-unit vocabulary candidate output within a batch result.
+
+    T1.1 short-article batch path: a single LLM call covers all units of a
+    short article. Each entry pairs a ``unit_id`` with the vocabulary
+    candidate items emitted for that unit.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    unit_id: str = Field(min_length=1)
+    items: list[VocabularyCandidateItem] = Field(
+        default_factory=list,
+        max_length=MAX_VOCABULARY_ITEMS,
+    )
+
+
+class VocabularyBatchCandidateOutput(BaseModel):
+    """Structured output for the vocabulary batch LLM call.
+
+    The model returns one ``VocabularyBatchUnitCandidateOutput`` per unit;
+    the batch worker validates that the set of ``unit_id`` values exactly
+    matches the batch job's ``target_unit_ids``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    units: list[VocabularyBatchUnitCandidateOutput] = Field(min_length=1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -427,6 +465,316 @@ class UnconfiguredVocabularyExecutor:
         )
 
 
+# ---------------------------------------------------------------------------#
+# T1.1 short-article batch path: batch compute, unit publish.
+# ---------------------------------------------------------------------------#
+
+
+@dataclass(frozen=True, slots=True)
+class VocabularyBatchUnitContext:
+    """Per-unit slice within a batch vocabulary context."""
+
+    unit_id: str
+    order_index: int
+    source_text: str
+    text_hash: str
+    anchor_segments: tuple[VocabularyAnchorSegmentContext, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class VocabularyBatchJobContext:
+    """Batch vocabulary job context: covers all units of a short article."""
+
+    job_id: UUID
+    run_id: UUID
+    reading_record_id: UUID
+    user_id: UUID
+    base_id: UUID
+    expected_generation: int
+    operation_fingerprint: str
+    source_language: str
+    target_unit_ids: tuple[str, ...]
+    units: tuple[VocabularyBatchUnitContext, ...]
+    reading_goal: str
+    reading_variant: str
+    strategy_version: str
+    strategy_hash: str
+    layer_policy_hash: str
+    vocabulary_prompt_lines: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class VocabularyBatchExecutionResult:
+    output: VocabularyBatchCandidateOutput
+    usage_data: dict[str, Any] | None = None
+    prompt_version: str | None = FAKE_VOCABULARY_PROMPT_VERSION
+    model_route: str = MODEL_ROUTE_READER_LAYER_VOCABULARY
+    model_profile: str | None = FAKE_VOCABULARY_MODEL_PROFILE
+    model_provider: str | None = FAKE_VOCABULARY_MODEL_PROVIDER
+    model_name: str | None = FAKE_VOCABULARY_MODEL_NAME
+
+
+@dataclass(frozen=True, slots=True)
+class VocabularyBatchJobProcessResult:
+    claim: ClaimResult
+    context: VocabularyBatchJobContext | None
+    status: str
+    published_batch: PublishedVocabularyBatch | None = None
+    usage_data: dict[str, Any] | None = None
+    prompt_version: str | None = None
+    model_route: str | None = None
+    model_profile: str | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
+
+
+class VocabularyBatchExecutor(Protocol):
+    async def generate_batch(
+        self,
+        context: VocabularyBatchJobContext,
+    ) -> VocabularyBatchExecutionResult: ...
+
+
+class PydanticAIVocabularyBatchExecutor:
+    """Batch vocabulary executor: 1 LLM call covering all units."""
+
+    def __init__(self, *, settings: Settings | None = None) -> None:
+        self._settings = settings
+
+    async def generate_batch(
+        self,
+        context: VocabularyBatchJobContext,
+    ) -> VocabularyBatchExecutionResult:
+        settings = self._settings or get_settings()
+        prompt_version = get_prompt_version()
+        if not str(settings.reader_vocabulary_model_profile or "").strip():
+            raise VocabularyExecutionError(
+                (
+                    "vocabulary batch executor is not configured; set "
+                    "reader_vocabulary_model_profile or inject an explicit fake "
+                    "executor for tests"
+                ),
+                retryable=False,
+                failure_class="configuration",
+                failure_code="vocabulary_executor_unconfigured",
+                prompt_version=prompt_version,
+            )
+        model, model_config = build_model_for_route(
+            settings,
+            MODEL_ROUTE_READER_LAYER_VOCABULARY,
+        )
+        if model is None:
+            raise VocabularyExecutionError(
+                "reader_layer_vocabulary model route is not configured",
+                retryable=False,
+                failure_class="configuration",
+                failure_code="model_route_unavailable",
+                prompt_version=prompt_version,
+            )
+
+        assert_real_llm_allowed(
+            (
+                "app.services.reader_orchestration.vocabulary_worker."
+                "PydanticAIVocabularyBatchExecutor"
+            ),
+            model_config=model_config,
+        )
+
+        agent = Agent(
+            model=model,
+            output_type=VocabularyBatchCandidateOutput,
+            instructions=load_agent_instructions(VOCABULARY_PROMPT_AGENT_NAME),
+            name="reader_layer_vocabulary_batch_agent",
+            retries={"tools": 1, "output": 2},
+        )
+        try:
+            result = await agent.run(_build_vocabulary_batch_prompt(context))
+        except Exception as exc:
+            raise VocabularyExecutionError(
+                f"reader_layer_vocabulary batch agent execution failed: {exc}",
+                retryable=True,
+                failure_class="provider",
+                failure_code=type(exc).__name__,
+                prompt_version=prompt_version,
+                model_profile=(
+                    str(model_config.profile_name) if model_config is not None else None
+                ),
+                model_provider=(
+                    str(model_config.provider) if model_config is not None else None
+                ),
+                model_name=(
+                    str(model_config.model_name) if model_config is not None else None
+                ),
+            ) from exc
+
+        try:
+            candidate_output = VocabularyBatchCandidateOutput.model_validate(
+                result.output
+            )
+        except ValidationError as exc:
+            raise VocabularyExecutionError(
+                f"reader_layer_vocabulary batch produced invalid structured output: {exc}",
+                retryable=False,
+                failure_class="validation",
+                failure_code="model_output_invalid",
+                prompt_version=prompt_version,
+                model_profile=(
+                    str(model_config.profile_name) if model_config is not None else None
+                ),
+                model_provider=(
+                    str(model_config.provider) if model_config is not None else None
+                ),
+                model_name=(
+                    str(model_config.model_name) if model_config is not None else None
+                ),
+            ) from exc
+
+        usage_data = extract_run_usage(result)
+        return VocabularyBatchExecutionResult(
+            output=candidate_output,
+            usage_data=usage_data,
+            prompt_version=prompt_version,
+            model_profile=(
+                str(model_config.profile_name) if model_config is not None else None
+            ),
+            model_provider=(
+                str(model_config.provider) if model_config is not None else None
+            ),
+            model_name=(
+                str(model_config.model_name) if model_config is not None else None
+            ),
+        )
+
+
+def _build_vocabulary_batch_prompt(context: VocabularyBatchJobContext) -> str:
+    strategy_section = _format_vocabulary_batch_strategy_section(context)
+    units_section = _format_vocabulary_batch_units_section(context)
+    return (
+        "Generate vocabulary highlights for the following reading units of a "
+        "short article batch.\n"
+        f"source_language: {context.source_language}\n"
+        f"{strategy_section}"
+        "Return only the structured VocabularyBatchCandidateOutput.\n"
+        "Each unit must appear exactly once in units[] with its unit_id and "
+        "the vocabulary candidate items for that unit.\n"
+        f"{units_section}"
+    )
+
+
+def _format_vocabulary_batch_strategy_section(
+    context: VocabularyBatchJobContext,
+) -> str:
+    if not context.vocabulary_prompt_lines:
+        return ""
+    rendered = "\n".join(context.vocabulary_prompt_lines)
+    return f"<strategy>\n{rendered}\n</strategy>\n"
+
+
+def _format_vocabulary_batch_units_section(
+    context: VocabularyBatchJobContext,
+) -> str:
+    parts: list[str] = ["<units>"]
+    for unit in context.units:
+        parts.append(f'<unit unit_id="{unit.unit_id}">')
+        parts.append("<source_text>")
+        parts.append(unit.source_text)
+        parts.append("</source_text>")
+        parts.append("<target_segments>")
+        for segment in unit.anchor_segments:
+            parts.append(
+                f'<segment anchor_segment_id="{segment.anchor_segment_id}" '
+                f'sentence_id="{segment.sentence_id}" '
+                f'segment_type="{segment.segment_type}" '
+                f'boundary_quality="{segment.boundary_quality}" />'
+            )
+        parts.append("</target_segments>")
+        parts.append("</unit>")
+    parts.append("</units>")
+    return "\n".join(parts) + "\n"
+
+
+def _build_vocabulary_batch_outputs(
+    *,
+    context: VocabularyBatchJobContext,
+    candidate_output: VocabularyBatchCandidateOutput,
+) -> list[tuple[str, VocabularyLayerOutput]]:
+    """Split a batch candidate output into per-unit ``VocabularyLayerOutput``.
+
+    For each ``VocabularyBatchUnitCandidateOutput`` the function builds a
+    temporary per-unit :class:`VocabularyJobContext` so the existing
+    :func:`_build_vocabulary_output_from_candidates` can resolve anchors and
+    produce the final :class:`VocabularyLayerOutput`.
+
+    Fail-closed: any unit_id in the batch output that does not match a unit
+    in the batch context raises :class:`VocabularyExecutionError`.
+    """
+    units_by_id = {unit.unit_id: unit for unit in context.units}
+    outputs: list[tuple[str, VocabularyLayerOutput]] = []
+    for batch_unit in candidate_output.units:
+        unit_context = units_by_id.get(batch_unit.unit_id)
+        if unit_context is None:
+            raise VocabularyExecutionError(
+                f"vocabulary batch output references unknown unit_id "
+                f"{batch_unit.unit_id!r}",
+                retryable=False,
+                failure_class="validation",
+                failure_code="vocabulary_batch_unknown_unit",
+            )
+        per_unit_context = VocabularyJobContext(
+            job_id=context.job_id,
+            run_id=context.run_id,
+            reading_record_id=context.reading_record_id,
+            user_id=context.user_id,
+            base_id=context.base_id,
+            unit_id=batch_unit.unit_id,
+            order_index=unit_context.order_index,
+            expected_generation=context.expected_generation,
+            operation_fingerprint=context.operation_fingerprint,
+            source_language=context.source_language,
+            source_text=unit_context.source_text,
+            text_hash=unit_context.text_hash,
+            anchor_segments=unit_context.anchor_segments,
+            reading_goal=context.reading_goal,
+            reading_variant=context.reading_variant,
+            strategy_version=context.strategy_version,
+            strategy_hash=context.strategy_hash,
+            layer_policy_hash=context.layer_policy_hash,
+            vocabulary_prompt_lines=context.vocabulary_prompt_lines,
+        )
+        unit_candidate = VocabularyCandidateOutput(
+            schema_version=candidate_output.schema_version,
+            items=list(batch_unit.items),
+        )
+        output, _diagnostics = _build_vocabulary_output_from_candidates(
+            per_unit_context,
+            unit_candidate,
+        )
+        outputs.append((batch_unit.unit_id, output))
+    return outputs
+
+
+def _build_vocabulary_batch_quality_json(
+    execution: VocabularyBatchExecutionResult,
+    *,
+    unit_count: int,
+) -> dict[str, Any]:
+    quality_json: dict[str, Any] = {
+        "unit_count": unit_count,
+        "batch": True,
+    }
+    if execution.prompt_version is not None:
+        quality_json["prompt_version"] = execution.prompt_version
+    if execution.model_route:
+        quality_json["model_route"] = execution.model_route
+    if execution.model_profile is not None:
+        quality_json["model_profile"] = execution.model_profile
+    if execution.model_provider is not None:
+        quality_json["model_provider"] = execution.model_provider
+    if execution.model_name is not None:
+        quality_json["model_name"] = execution.model_name
+    return quality_json
+
+
 class VocabularyWorkerService:
     def __init__(
         self,
@@ -435,11 +783,13 @@ class VocabularyWorkerService:
         job_runtime: ReaderJobRuntime | None = None,
         layer_publisher: VocabularyLayerPublisher | None = None,
         executor: VocabularyExecutor | None = None,
+        batch_executor: VocabularyBatchExecutor | None = None,
     ) -> None:
         self._pool = pool
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
         self._layer_publisher = layer_publisher or VocabularyLayerPublisher(pool=pool)
         self._executor = executor or PydanticAIVocabularyExecutor()
+        self._batch_executor = batch_executor or PydanticAIVocabularyBatchExecutor()
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -727,6 +1077,526 @@ class VocabularyWorkerService:
                 context=context,
                 status="failed_terminal",
             )
+
+    # ------------------------------------------------------------------#
+    # T1.1 short-article batch path: claim / process / context loading.
+    # ------------------------------------------------------------------#
+
+    async def claim_vocabulary_batch_job_for_record(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+    ) -> ClaimResult | None:
+        """Claim a pending ``vocabulary_article`` batch job for the record."""
+        claim = await self._job_runtime.claim_next_job(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            job_type=VOCABULARY_BATCH_JOB_TYPE,
+            target_type=VOCABULARY_BATCH_TARGET_SCOPE,
+            operation_fingerprint=VOCABULARY_BATCH_OPERATION_FINGERPRINT,
+            reading_record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if claim is None:
+            return None
+        if (
+            claim.job_type != VOCABULARY_BATCH_JOB_TYPE
+            or claim.target_type != VOCABULARY_BATCH_TARGET_SCOPE
+        ):
+            raise RuntimeError(
+                "vocabulary batch worker claimed unsupported job "
+                f"{claim.job_type}/{claim.target_type}"
+            )
+        await self._mark_run_running(claim.run_id)
+        return claim
+
+    async def process_next_vocabulary_batch_job_for_record(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+        retry_delay: timedelta = DEFAULT_VOCABULARY_RETRY_DELAY,
+    ) -> VocabularyBatchJobProcessResult | None:
+        """Claim and process the next vocabulary batch job for the record."""
+        claim = await self.claim_vocabulary_batch_job_for_record(
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if claim is None:
+            return None
+        return await self.process_claimed_vocabulary_batch_job(
+            claim=claim,
+            retry_delay=retry_delay,
+        )
+
+    async def process_claimed_vocabulary_batch_job(
+        self,
+        *,
+        claim: ClaimResult,
+        retry_delay: timedelta = DEFAULT_VOCABULARY_RETRY_DELAY,
+    ) -> VocabularyBatchJobProcessResult:
+        """Run the batch LLM call and publish N per-unit vocabulary layers.
+
+        Exception handling mirrors :meth:`process_claimed_vocabulary_job`:
+        ``FenceViolationError`` → ``superseded``;
+        ``VocabularyExecutionError`` (retryable) → ``retry_later``;
+        ``VocabularyExecutionError`` (non-retryable) → ``failed_terminal``;
+        any other ``Exception`` → ``failed_terminal``.
+        """
+        context: VocabularyBatchJobContext | None = None
+
+        try:
+            context = await self._load_batch_job_context(claim.job_id)
+            execution = await self._batch_executor.generate_batch(context)
+            outputs = _build_vocabulary_batch_outputs(
+                context=context,
+                candidate_output=execution.output,
+            )
+            published_batch = await self._layer_publisher.publish_article_vocabulary_batch(
+                job_id=claim.job_id,
+                lease_token=claim.lease_token,
+                outputs=outputs,
+                quality_json=_build_vocabulary_batch_quality_json(
+                    execution,
+                    unit_count=len(context.units),
+                ),
+            )
+            event_id = await self._record_batch_usage_event(
+                context=context,
+                execution=execution,
+                published_batch=published_batch,
+                status=STATUS_SUCCEEDED,
+            )
+            await end_worker_span_success(
+                ai_usage_event_id=event_id,
+                usage_data=execution.usage_data,
+                model_route=execution.model_route,
+                model_name=execution.model_name,
+                model_provider=execution.model_provider,
+                capability_code=CAPABILITY_READER_VOCABULARY,
+            )
+            return VocabularyBatchJobProcessResult(
+                claim=claim,
+                context=context,
+                status="succeeded",
+                published_batch=published_batch,
+                usage_data=execution.usage_data,
+                prompt_version=execution.prompt_version,
+                model_route=execution.model_route,
+                model_profile=execution.model_profile,
+                model_provider=execution.model_provider,
+                model_name=execution.model_name,
+            )
+        except FenceViolationError:
+            await self._job_runtime.transition(
+                job_id=claim.job_id,
+                target_status="superseded",
+                lease_token=claim.lease_token,
+                rationale_code="publish_fence_failed",
+            )
+            await self._mark_run_status(
+                claim.run_id,
+                status="superseded",
+                failure_class="publish_guard",
+                failure_code="publish_fence_failed",
+                finished_at=datetime.now(UTC),
+            )
+            raise
+        except VocabularyExecutionError as exc:
+            if exc.retryable:
+                available_at = datetime.now(UTC) + retry_delay
+                await self._job_runtime.transition(
+                    job_id=claim.job_id,
+                    target_status="retry_later",
+                    lease_token=claim.lease_token,
+                    available_at=available_at,
+                    rationale_code=exc.rationale_code,
+                )
+                await self._mark_run_status(
+                    claim.run_id,
+                    status="failed_retryable",
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    finished_at=None,
+                )
+                await self._record_batch_failed_usage_event(
+                    context=context,
+                    error_code=exc.failure_code,
+                    error_message=str(exc),
+                    prompt_version=exc.prompt_version,
+                    model_route=exc.model_route,
+                    model_profile=exc.model_profile,
+                    model_provider=exc.model_provider,
+                    model_name=exc.model_name,
+                )
+                await end_worker_span_execution_error(
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                )
+                return VocabularyBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="retry_later",
+                )
+
+            await self._job_runtime.transition(
+                job_id=claim.job_id,
+                target_status="failed_terminal",
+                lease_token=claim.lease_token,
+                failure_class=exc.failure_class,
+                failure_code=exc.failure_code,
+                failure_message=str(exc),
+                rationale_code=exc.rationale_code,
+            )
+            await self._mark_run_status(
+                claim.run_id,
+                status="failed_terminal",
+                failure_class=exc.failure_class,
+                failure_code=exc.failure_code,
+                finished_at=datetime.now(UTC),
+            )
+            await self._record_batch_failed_usage_event(
+                context=context,
+                error_code=exc.failure_code,
+                error_message=str(exc),
+                prompt_version=exc.prompt_version,
+                model_route=exc.model_route,
+                model_profile=exc.model_profile,
+                model_provider=exc.model_provider,
+                model_name=exc.model_name,
+            )
+            await end_worker_span_execution_error(
+                failure_class=exc.failure_class,
+                failure_code=exc.failure_code,
+            )
+            return VocabularyBatchJobProcessResult(
+                claim=claim,
+                context=context,
+                status="failed_terminal",
+            )
+        except Exception as exc:
+            await self._job_runtime.transition(
+                job_id=claim.job_id,
+                target_status="failed_terminal",
+                lease_token=claim.lease_token,
+                failure_class="vocabulary_batch_execution",
+                failure_code=type(exc).__name__,
+                failure_message=str(exc),
+                rationale_code="vocabulary_batch_execution_failed",
+            )
+            await self._mark_run_status(
+                claim.run_id,
+                status="failed_terminal",
+                failure_class="vocabulary_batch_execution",
+                failure_code=type(exc).__name__,
+                finished_at=datetime.now(UTC),
+            )
+            await self._record_batch_failed_usage_event(
+                context=context,
+                error_code=type(exc).__name__,
+                error_message=str(exc),
+            )
+            await end_worker_span_generic_exception(layer="vocabulary", exc=exc)
+            return VocabularyBatchJobProcessResult(
+                claim=claim,
+                context=context,
+                status="failed_terminal",
+            )
+
+    async def _load_batch_job_context(
+        self,
+        job_id: UUID,
+    ) -> VocabularyBatchJobContext:
+        """Load the batch job context covering all units in ``target_unit_ids``.
+
+        Mirrors :meth:`_load_job_context` but loads every unit listed in the
+        job ``input_json.target_unit_ids`` and validates each unit's text hash
+        + anchor segment hashes (same fail-closed contract as the per-unit
+        path).
+        """
+        async with self.get_pool().acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT job.id,
+                       job.run_id,
+                       job.reading_record_id,
+                       job.user_id,
+                       job.base_id,
+                       job.target_key,
+                       job.expected_generation,
+                       job.operation_fingerprint,
+                       job.input_json,
+                       base.language AS source_language,
+                       base.text AS base_text
+                FROM reader_jobs job
+                JOIN reading_bases base
+                  ON base.id = job.base_id
+                 AND base.reading_record_id = job.reading_record_id
+                WHERE job.id = $1
+                """,
+                job_id,
+            )
+            if row is None:
+                raise LookupError(f"reader job {job_id} not found")
+
+            input_json = row["input_json"]
+            target_unit_ids: list[str] = list(input_json.get("target_unit_ids") or [])
+            if not target_unit_ids:
+                raise VocabularyExecutionError(
+                    f"vocabulary batch job {job_id} has no target_unit_ids",
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code="vocabulary_batch_empty_target_units",
+                )
+
+            base_text = str(row["base_text"])
+            unit_rows = await conn.fetch(
+                """
+                SELECT unit_id, order_index, base_start_utf16, base_end_utf16, text_hash
+                FROM reading_units
+                WHERE reading_record_id = $1
+                  AND base_id = $2
+                  AND unit_id = ANY($3::text[])
+                ORDER BY order_index ASC
+                """,
+                row["reading_record_id"],
+                row["base_id"],
+                target_unit_ids,
+            )
+            if len(unit_rows) != len(target_unit_ids):
+                missing = set(target_unit_ids) - {
+                    str(r["unit_id"]) for r in unit_rows
+                }
+                raise VocabularyExecutionError(
+                    f"vocabulary batch job {job_id} references missing units "
+                    f"{sorted(missing)!r}",
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code="vocabulary_batch_missing_unit",
+                )
+
+            units: list[VocabularyBatchUnitContext] = []
+            for unit_row in unit_rows:
+                unit_id = str(unit_row["unit_id"])
+                source_text = slice_by_utf16_offsets(
+                    base_text,
+                    int(unit_row["base_start_utf16"]),
+                    int(unit_row["base_end_utf16"]),
+                )
+                if source_text is None or not source_text:
+                    raise VocabularyExecutionError(
+                        f"vocabulary batch unit {unit_id} could not be sliced from base text",
+                        retryable=False,
+                        failure_class="validation",
+                        failure_code="unit_slice_failed",
+                    )
+                actual_hash = compute_text_range_hash(source_text)
+                expected_hash = str(unit_row["text_hash"])
+                if actual_hash != expected_hash:
+                    raise VocabularyExecutionError(
+                        f"vocabulary batch unit {unit_id} hash mismatch: "
+                        f"{actual_hash} != {expected_hash}",
+                        retryable=False,
+                        failure_class="validation",
+                        failure_code="unit_hash_mismatch",
+                    )
+
+                segment_rows = await conn.fetch(
+                    """
+                    SELECT anchor_segment_id,
+                           sentence_id,
+                           segment_type,
+                           unit_start_utf16,
+                           unit_end_utf16,
+                           text_hash,
+                           boundary_quality
+                    FROM anchor_segments
+                    WHERE reading_record_id = $1
+                      AND base_id = $2
+                      AND unit_id = $3
+                    ORDER BY order_index ASC
+                    """,
+                    row["reading_record_id"],
+                    row["base_id"],
+                    unit_id,
+                )
+                anchor_segments: list[VocabularyAnchorSegmentContext] = []
+                for segment_row in segment_rows:
+                    segment_text = slice_by_utf16_offsets(
+                        source_text,
+                        int(segment_row["unit_start_utf16"]),
+                        int(segment_row["unit_end_utf16"]),
+                    )
+                    if segment_text is None or not segment_text:
+                        raise VocabularyExecutionError(
+                            f"vocabulary batch anchor segment "
+                            f"{segment_row['anchor_segment_id']} could not be sliced",
+                            retryable=False,
+                            failure_class="validation",
+                            failure_code="anchor_segment_slice_failed",
+                        )
+                    segment_hash = str(segment_row["text_hash"])
+                    if compute_text_range_hash(segment_text) != segment_hash:
+                        raise VocabularyExecutionError(
+                            f"vocabulary batch anchor segment "
+                            f"{segment_row['anchor_segment_id']} hash mismatch",
+                            retryable=False,
+                            failure_class="validation",
+                            failure_code="anchor_segment_hash_mismatch",
+                        )
+                    anchor_segments.append(
+                        VocabularyAnchorSegmentContext(
+                            anchor_segment_id=str(segment_row["anchor_segment_id"]),
+                            sentence_id=str(
+                                segment_row["sentence_id"]
+                                or segment_row["anchor_segment_id"]
+                            ),
+                            segment_type=str(segment_row["segment_type"]),
+                            unit_start_utf16=int(segment_row["unit_start_utf16"]),
+                            unit_end_utf16=int(segment_row["unit_end_utf16"]),
+                            text_hash=segment_hash,
+                            text=segment_text,
+                            boundary_quality=str(
+                                segment_row.get("boundary_quality") or "normal"
+                            ),
+                        )
+                    )
+                if not anchor_segments:
+                    raise VocabularyExecutionError(
+                        f"vocabulary batch unit {unit_id} has no anchor segments",
+                        retryable=False,
+                        failure_class="validation",
+                        failure_code="missing_anchor_segments",
+                    )
+                units.append(
+                    VocabularyBatchUnitContext(
+                        unit_id=unit_id,
+                        order_index=int(unit_row["order_index"]),
+                        source_text=source_text,
+                        text_hash=expected_hash,
+                        anchor_segments=tuple(anchor_segments),
+                    )
+                )
+
+            strategy_metadata = _validate_vocabulary_strategy_metadata(input_json)
+
+            return VocabularyBatchJobContext(
+                job_id=row["id"],
+                run_id=row["run_id"],
+                reading_record_id=row["reading_record_id"],
+                user_id=row["user_id"],
+                base_id=row["base_id"],
+                expected_generation=int(row["expected_generation"]),
+                operation_fingerprint=str(row["operation_fingerprint"]),
+                source_language=str(row["source_language"] or "en"),
+                target_unit_ids=tuple(target_unit_ids),
+                units=tuple(units),
+                reading_goal=strategy_metadata.reading_goal,
+                reading_variant=strategy_metadata.reading_variant,
+                strategy_version=strategy_metadata.strategy_version,
+                strategy_hash=strategy_metadata.strategy_hash,
+                layer_policy_hash=strategy_metadata.layer_policy_hash,
+                vocabulary_prompt_lines=strategy_metadata.vocabulary_prompt_lines,
+            )
+
+    async def _record_batch_usage_event(
+        self,
+        *,
+        context: VocabularyBatchJobContext,
+        execution: VocabularyBatchExecutionResult,
+        published_batch: PublishedVocabularyBatch,
+        status: str,
+    ) -> UUID | None:
+        return await record_ai_usage_event(
+            AIUsageEventCreate(
+                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
+                capability_code=CAPABILITY_READER_VOCABULARY,
+                billing_mode=BILLING_MODE_INTERNAL_ONLY,
+                status=status,
+                user_id=context.user_id,
+                reading_record_id=context.reading_record_id,
+                reader_run_id=context.run_id,
+                reader_job_id=context.job_id,
+                enhancement_layer_id=published_batch.layers[0].layer_id
+                if published_batch.layers
+                else None,
+                workflow_name="reader_orchestration",
+                workflow_version="t1-1-vocabulary-batch-worker",
+                prompt_version=execution.prompt_version,
+                model_route=execution.model_route,
+                model_profile_id=execution.model_profile,
+                model_profile=execution.model_profile,
+                model_provider=execution.model_provider,
+                model_name=execution.model_name,
+                planner_kind="llm_worker",
+                usage_data=execution.usage_data,
+                operation_fingerprint=context.operation_fingerprint,
+                metadata_json={
+                    "base_id": str(context.base_id),
+                    "target_unit_ids": list(context.target_unit_ids),
+                    "unit_count": len(context.units),
+                    "source_language": context.source_language,
+                    "batch": True,
+                },
+            )
+        )
+
+    async def _record_batch_failed_usage_event(
+        self,
+        *,
+        context: VocabularyBatchJobContext | None,
+        error_code: str,
+        error_message: str,
+        prompt_version: str | None = None,
+        model_route: str = MODEL_ROUTE_READER_LAYER_VOCABULARY,
+        model_profile: str | None = None,
+        model_provider: str | None = None,
+        model_name: str | None = None,
+    ) -> UUID | None:
+        if context is None:
+            return None
+        return await record_ai_usage_event(
+            AIUsageEventCreate(
+                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
+                capability_code=CAPABILITY_READER_VOCABULARY,
+                billing_mode=BILLING_MODE_INTERNAL_ONLY,
+                status=STATUS_FAILED,
+                user_id=context.user_id,
+                reading_record_id=context.reading_record_id,
+                reader_run_id=context.run_id,
+                reader_job_id=context.job_id,
+                workflow_name="reader_orchestration",
+                workflow_version="t1-1-vocabulary-batch-worker",
+                prompt_version=prompt_version,
+                model_route=model_route,
+                model_profile_id=model_profile,
+                model_profile=model_profile,
+                model_provider=model_provider,
+                model_name=model_name,
+                planner_kind="llm_worker",
+                operation_fingerprint=context.operation_fingerprint,
+                error_code=error_code,
+                error_message=error_message,
+                metadata_json={
+                    "base_id": str(context.base_id),
+                    "target_unit_ids": list(context.target_unit_ids),
+                    "unit_count": len(context.units),
+                    "source_language": context.source_language,
+                    "batch": True,
+                },
+            )
+        )
 
     async def _load_job_context(self, job_id: UUID) -> VocabularyJobContext:
         async with self.get_pool().acquire() as conn:

@@ -36,6 +36,12 @@ _MIGRATION_0015_SQL = (
     _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
 ).read_text(encoding="utf-8")
 
+# T1.1 short-article batch path: migration 0017 adds the new batch job types
+# and worker types to the CHECK constraints (see pipeline runner fixture).
+_MIGRATION_0017_SQL = (
+    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
+).read_text(encoding="utf-8")
+
 
 @pytest.fixture
 async def smoke_harness_env() -> asyncpg.Pool:
@@ -46,6 +52,7 @@ async def smoke_harness_env() -> asyncpg.Pool:
     await admin.execute(f'SET search_path TO "{schema_name}", public')
     await admin.execute(BASELINE_SQL)
     await admin.execute(_MIGRATION_0015_SQL)
+    await admin.execute(_MIGRATION_0017_SQL)
     await admin.close()
 
     pool = await make_pool(schema_name)

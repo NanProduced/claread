@@ -62,11 +62,31 @@ _MIGRATION_0015_SQL = (
     _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
 ).read_text(encoding="utf-8")
 
+# T1.1 short-article batch path: migration 0017 adds the new batch job types
+# and worker types to the CHECK constraints (see pipeline runner fixture).
+_MIGRATION_0017_SQL = (
+    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
+).read_text(encoding="utf-8")
+
 _PLAIN_TEXT = (
     "First sentence for strategy bootstrap.\n\n"
     "Second paragraph for strategy bootstrap.\n\n"
     "Third paragraph for strategy bootstrap."
 )
+
+# T1.1: long text (>6000 chars) forces the per-unit path so tests that
+# specifically validate the ``translate_unit`` supersede/claim contract
+# are not accidentally routed to the batch (``translate_article``) path.
+_LONG_TEXT = "\n\n".join(
+    [
+        " ".join(
+            f"Word{i} placeholder sentence for long-form strategy bootstrap."
+            for i in range(40)
+        )
+        for _ in range(8)
+    ]
+)
+assert len(_LONG_TEXT) > 6000
 
 
 @pytest.fixture
@@ -78,6 +98,7 @@ async def strategy_env() -> asyncpg.Pool:
     await admin.execute(f'SET search_path TO "{schema_name}", public')
     await admin.execute(BASELINE_SQL)
     await admin.execute(_MIGRATION_0015_SQL)
+    await admin.execute(_MIGRATION_0017_SQL)
     await admin.close()
 
     pool = await make_pool(schema_name)
@@ -99,13 +120,14 @@ async def _submit_with_strategy(
     user_id: UUID,
     reading_goal: str,
     reading_variant: str,
+    plain_text: str = _PLAIN_TEXT,
 ) -> UUID:
     """Submit a plain-text article with explicit strategy fields; return record_id."""
     service = ArticleReadyPersistenceService(pool=pool)
     result = await service.submit_plain_text(
         PlainTextArticleReadySubmitRequest(
             user_id=user_id,
-            plain_text=_PLAIN_TEXT,
+            plain_text=plain_text,
             title="Strategy Bootstrap Slice",
             language="en",
             reading_goal=reading_goal,  # type: ignore[arg-type]
@@ -190,7 +212,11 @@ async def test_translation_job_input_contains_strategy_metadata(
     await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
 
     jobs = await _load_jobs(strategy_env, record_id)
-    translation_jobs = [j for j in jobs if j["job_type"] == "translate_unit"]
+    # T1.1: short articles route to the batch path (translate_article)
+    # instead of per-unit (translate_unit). Accept either.
+    translation_jobs = [
+        j for j in jobs if j["job_type"] in ("translate_unit", "translate_article")
+    ]
     assert len(translation_jobs) >= 1
 
     strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
@@ -220,7 +246,15 @@ async def test_vocabulary_job_input_contains_strategy_metadata(
     await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
 
     jobs = await _load_jobs(strategy_env, record_id)
-    vocab_jobs = [j for j in jobs if j["job_type"] == "build_vocabulary_layer"]
+    # T1.1: short articles route to the batch path
+    # (build_vocabulary_layer_article) instead of per-unit
+    # (build_vocabulary_layer). Accept either.
+    vocab_jobs = [
+        j
+        for j in jobs
+        if j["job_type"]
+        in ("build_vocabulary_layer", "build_vocabulary_layer_article")
+    ]
     assert len(vocab_jobs) >= 1
 
     strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
@@ -481,10 +515,22 @@ async def test_policy_hash_change_changes_fingerprint(
     # fingerprint, which differs from the real one.
     await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
     jobs = await _load_jobs(strategy_env, record_id)
-    translation_jobs = [j for j in jobs if j["job_type"] == "translate_unit"]
+    # T1.1: short articles route to the batch path (translate_article).
+    # Accept either job type; both compose fingerprint from the same base.
+    translation_jobs = [
+        j for j in jobs if j["job_type"] in ("translate_unit", "translate_article")
+    ]
     assert len(translation_jobs) >= 1
+    # The composed fingerprint uses the batch base for translate_article and
+    # the per-unit base for translate_unit. Recompute the expected fingerprint
+    # from the job's own base constant so the assertion holds for either path.
     for job in translation_jobs:
-        assert job["operation_fingerprint"] == modified_fingerprint
+        if job["job_type"] == "translate_article":
+            expected_base = job_bootstrap.TRANSLATION_BATCH_OPERATION_FINGERPRINT
+        else:
+            expected_base = job_bootstrap.TRANSLATION_OPERATION_FINGERPRINT
+        expected_fp = f"{expected_base}:{modified_strategy.strategy_hash}"
+        assert job["operation_fingerprint"] == expected_fp
         assert job["operation_fingerprint"] != real_fingerprint
 
 
@@ -688,13 +734,14 @@ async def test_stale_fingerprint_jobs_are_superseded_on_strategy_change(
     first_fp = first.translation_results[0].operation_fingerprint
 
     # Capture old job IDs before re-bootstrap.
+    # T1.1: short articles route to batch (translate_article) not per-unit.
     async with strategy_env.acquire() as conn:
         old_jobs = await conn.fetch(
             """
             SELECT id, operation_fingerprint, status, rationale_code
             FROM reader_jobs
             WHERE reading_record_id = $1
-              AND job_type = 'translate_unit'
+              AND job_type IN ('translate_unit', 'translate_article')
             ORDER BY created_at ASC
             """,
             record_id,
@@ -735,7 +782,7 @@ async def test_stale_fingerprint_jobs_are_superseded_on_strategy_change(
             SELECT id, operation_fingerprint, status, rationale_code
             FROM reader_jobs
             WHERE reading_record_id = $1
-              AND job_type = 'translate_unit'
+              AND job_type IN ('translate_unit', 'translate_article')
             ORDER BY created_at ASC
             """,
             record_id,
@@ -776,6 +823,11 @@ async def test_superseded_stale_jobs_are_not_claimed_by_worker(
         user_id=user_id,
         reading_goal="daily_reading",
         reading_variant="intermediate_reading",
+        # T1.1: use long text so enhancement bootstrap creates translate_unit
+        # jobs (not translate_article batch jobs). The standalone service
+        # always creates translate_unit; the enhancement bootstrap must
+        # match so the supersede logic applies.
+        plain_text=_LONG_TEXT,
     )
 
     # Step 1: enqueue via standalone service (plain-text submit path).
@@ -853,6 +905,69 @@ def test_fingerprint_matches_base_accepts_exact_and_composed() -> None:
     assert _fingerprint_matches_base(
         "display_title_zh_v1:def456", "display_title_zh_v1"
     )
+
+
+# ---------------------------------------------------------------------------#
+# T1.1: short-article threshold routing (batch vs per-unit)
+# ---------------------------------------------------------------------------#
+
+
+async def test_t11_short_article_routes_to_batch_path(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T1.1: Article ≤ SHORT_ARTICLE_MAX_CHAR_COUNT (6000) creates batch jobs
+    (translate_article + build_vocabulary_layer_article), NOT per-unit jobs."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_PLAIN_TEXT,
+    )
+    assert len(_PLAIN_TEXT) <= job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
+
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    jobs = await _load_jobs(strategy_env, record_id)
+    job_types = {j["job_type"] for j in jobs}
+
+    # Short article → batch path
+    assert "translate_article" in job_types
+    assert "build_vocabulary_layer_article" in job_types
+    # Must NOT create per-unit jobs for short articles
+    assert "translate_unit" not in job_types
+    assert "build_vocabulary_layer" not in job_types
+
+
+async def test_t11_long_article_routes_to_per_unit_path(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T1.1: Article > SHORT_ARTICLE_MAX_CHAR_COUNT (6000) creates per-unit
+    jobs (translate_unit + build_vocabulary_layer), NOT batch jobs."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_LONG_TEXT,
+    )
+    assert len(_LONG_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
+
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    jobs = await _load_jobs(strategy_env, record_id)
+    job_types = {j["job_type"] for j in jobs}
+
+    # Long article → per-unit path
+    assert "translate_unit" in job_types
+    assert "build_vocabulary_layer" in job_types
+    # Must NOT create batch jobs for long articles
+    assert "translate_article" not in job_types
+    assert "build_vocabulary_layer_article" not in job_types
 
 
 def test_fingerprint_matches_base_rejects_different_base() -> None:

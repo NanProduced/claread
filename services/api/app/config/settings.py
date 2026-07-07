@@ -47,8 +47,11 @@ class Settings(BaseSettings):
     reader_title_model_profile: str = ""
     reader_worker_scan_interval_seconds: int = 5
     reader_worker_batch_size: int = 10
-    reader_worker_max_ticks: int = 24
-    reader_worker_max_jobs: int = 24
+    # T1 acceptance: aligned with pipeline_runner.DEFAULT_PIPELINE_MAX_TICKS /
+    # DEFAULT_PIPELINE_MAX_JOBS so the CLI, worker loop, and smoke harness all
+    # share the same medium-sample budget. See pipeline_runner.py for the math.
+    reader_worker_max_ticks: int = 96
+    reader_worker_max_jobs: int = 48
     reader_worker_lease_duration_seconds: int = 120
     reader_worker_lease_owner_prefix: str = "reader-enhancement-worker"
     # Round 16: ``reader_ask_planner_model_profile`` has been removed.

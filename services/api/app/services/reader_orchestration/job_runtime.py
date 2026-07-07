@@ -38,7 +38,6 @@ from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 from app.services.reader_orchestration.span_recorder import (
     SPAN_KIND_CLAIM,
-    STATUS_SUCCEEDED,
     current_span,
     derive_retry_class,
     get_default_recorder,
@@ -126,6 +125,7 @@ class ClaimResult:
     job_id: UUID
     run_id: UUID
     reading_record_id: UUID
+    user_id: UUID
     base_id: UUID | None
     job_type: str
     target_type: str
@@ -874,6 +874,7 @@ def _claim_result_from_row(
         job_id=row["id"],
         run_id=row["run_id"],
         reading_record_id=row["reading_record_id"],
+        user_id=row["user_id"],
         base_id=row["base_id"],
         job_type=row["job_type"],
         target_type=row["target_type"],

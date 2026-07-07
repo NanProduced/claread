@@ -40,6 +40,7 @@ from app.services.reader_orchestration.grammar_window_publisher import (
     GrammarWindowPublisher,
 )
 from app.services.reader_orchestration.grammar_window_worker import (
+    GrammarWindowExecutionResult,
     GrammarWindowWorkerService,
 )
 from app.services.reader_orchestration.grammar_worker import GrammarBundleWorkerService
@@ -82,6 +83,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _MIGRATION_0015_SQL = (
     _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
 ).read_text(encoding="utf-8")
+_MIGRATION_0016_SQL = (
+    _REPO_ROOT / "infra" / "migrations" / "0016_reader_runtime_spans_grammar_bundle_window.sql"
+).read_text(encoding="utf-8")
 
 LEASE_DURATION = timedelta(seconds=30)
 
@@ -111,14 +115,16 @@ class _StaticGrammarWindowExecutor:
         self.window_calls: list[dict[str, Any]] = []
         self._sentence_windows_emitted = 0
 
-    async def generate(self, context: dict[str, Any]) -> list[CandidateItem]:
+    async def generate(
+        self, context: dict[str, Any]
+    ) -> GrammarWindowExecutionResult:
         self.call_count += 1
         self.window_calls.append(context)
 
         candidates: list[CandidateItem] = []
         target_anchors = context.get("target_anchors", [])
         if not target_anchors:
-            return candidates
+            return GrammarWindowExecutionResult(candidates=candidates)
 
         base_id = str(context.get("base_id", ""))
 
@@ -200,7 +206,7 @@ class _StaticGrammarWindowExecutor:
             )
             self._sentence_windows_emitted += 1
 
-        return candidates
+        return GrammarWindowExecutionResult(candidates=candidates)
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +233,7 @@ async def bbc_regression_env() -> AsyncIterator[
     await admin.execute(f'SET search_path TO "{schema_name}", public')
     await admin.execute(BASELINE_SQL)
     await admin.execute(_MIGRATION_0015_SQL)
+    await admin.execute(_MIGRATION_0016_SQL)
     await admin.close()
 
     pool = await make_pool(schema_name)

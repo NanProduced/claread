@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 执行简报
 
 > 状态：`权威简报`
-> 最后更新：2026-06-22
+> 最后更新：2026-07-08
 
 给 coding agent 分配 Reader agentic orchestration 重构任务时，使用本简报作为最小上下文。
 
@@ -12,18 +12,23 @@
 3. `docs/initiatives/reader-agentic-orchestration/README.md`
 4. `docs/initiatives/reader-agentic-orchestration/target-architecture.md`
 5. `docs/initiatives/reader-agentic-orchestration/concepts.md`
-6. 当前任务涉及的 `docs/initiatives/reader-agentic-orchestration/modules/*.md`
-7. D2 spike 任务读取 `docs/initiatives/reader-agentic-orchestration/spikes/README.md`
-8. `docs/initiatives/reader-agentic-orchestration/implementation-plan.md`
-9. 涉及代码目录最近的 `AGENTS.md`
+6. `docs/initiatives/reader-agentic-orchestration/adaptive-reader-orchestration-design.md`
+7. 当前任务涉及的 `docs/initiatives/reader-agentic-orchestration/modules/*.md`
+8. D2 spike 任务读取 `docs/initiatives/reader-agentic-orchestration/spikes/README.md`
+9. `docs/initiatives/reader-agentic-orchestration/implementation-plan.md`
+10. 涉及代码目录最近的 `AGENTS.md`
 
-除非任务明确要求研究回溯，不要读取 `docs/tmp/reader-orchestration/` 下的全部文件。
+除非任务明确要求研究回溯，不要读取 `docs/initiatives/reader-agentic-orchestration/tmp/` 下的过程材料。
 
 ## 任务目标
 
-把用户提交内容的 `learning` 解析，从固定 AI Workflow 重构为 bounded agentic Reader orchestration。
+把用户提交内容的 `learning` 解析，从固定 AI Workflow 重构为 bounded, adaptive Reader orchestration。
 
 产品对象是 `Reading Record`，不是 workflow run。
+
+当前新增设计入口是 `adaptive-reader-orchestration-design.md`。短期实现应先恢复短文质量/成本和稳定发布；完整 adaptive planner、SSE/patch merge、长文/超长文 lazy enhancement 应按设计文档分阶段推进，不要混进一个任务。
+
+2026-07-08 当前状态：M0 baseline harness 与 M1 short article recovery 已完成首轮验收。短文 translation / vocabulary 已走 whole-article batch compute、per-unit publish；grammar window worker 已恢复 reading strategy 注入并修复 budget key。下一轮优先处理 M2 stable progressive delivery，不要直接跳到完整 adaptive planner 或 semantic outline。
 
 ## 不可违反的决策
 
@@ -95,7 +100,8 @@
 - Worker loop 扫描候选 record 时，粗筛可用 `product_state in ('processing','readable_enhancing')`、active base/generation/status 和 `readiness_state in ('article_ready','initial_enhancement_ready')`；exact missing work 仍由 `EnhancementJobBootstrapService` / `ReaderEnhancementPipelineRunner` 决定。
 - D5-W2 worker loop 已完成：`ReaderEnhancementWorkerLoopService` 通过 coarse scan + per-record / per-user advisory locks 调用 `ReaderEnhancementPipelineRunner`，CLI `scripts/run_reader_enhancement_worker.py` 支持 `--once` 与持续 loop。
 - D5-R3 真实本地链路 runbook 已补充：见 `docs/initiatives/reader-agentic-orchestration/modules/local-real-chain-runbook.md`。当前只验证 worker CLI help / 参数解析和配置连线，未实跑真实 provider / LLM。
-- 当前下一步进入 D5 worker/runtime hardening：projection ops consistency spike、页面输入到 worker 结果回刷路径；parsed decision same-tx、vocabulary boundary policy、worker loop 与本地真实链路 runbook 已完成。
+- 2026-07-08 M0/M1 自适应解析恢复已完成首轮验收：`compare_reader_chains.py` baseline harness、golden samples、short article translation/vocabulary batch path、grammar window strategy 注入、grammar/sentence budget key 对齐已落地；默认 worker/baseline budget 为 `max_ticks=96`、`max_jobs=48`。
+- 当前下一步进入 M2 stable progressive delivery：前端 reload 防抖与状态保留、后端 reading-order release policy、reader event payload audit。不要先做完整 adaptive planner、semantic outline worker 或 SSE patch merge。
 - D4 worker 实现中不得临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK；如 D3-P4 runtime tests 暴露缺口，先形成单独 closeout/update，再改依赖。
 - LangGraph v1+ 的 persistence、streaming、interrupt/resume、subgraph 和 runtime observability 只作为 D6+ 隔离 spike 候选；具体版本能力和 breaking changes 必须在 spike 中用当时官方文档与 lockfile 实测确认，不改变 PostgreSQL run/job/event 主控。
 - Grammar Bundle Worker 可以一次生成 `grammar_note` 与 `sentence_analysis`，但发布、存储、RAG、projection、policy、eval 必须按 subtype 独立处理。`long_sentence` 不是权威 layer type，只是触发 `sentence_analysis` 的适用场景。

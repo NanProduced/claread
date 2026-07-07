@@ -12,7 +12,10 @@ from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
     PlainTextArticleReadySubmitRequest,
 )
-from app.services.reader_orchestration.layer_publisher import TranslationLayerPublisher
+from app.services.reader_orchestration.layer_publisher import (
+    TranslationLayerPublisher,
+    VocabularyLayerPublisher,
+)
 from tests.test_reader_orchestration_schema_baseline import (
     BASELINE_SQL as _BASELINE_SQL,
 )
@@ -25,6 +28,16 @@ _WORD_RE = re.compile(r"[A-Za-z]+")
 
 
 class CompatTranslationLayerPublisher:
+    """Compatibility wrapper used by pipeline runner tests.
+
+    T1.1 short-article batch path: the translation batch worker calls
+    ``publish_article_translation_batch`` on the layer publisher. The real
+    ``TranslationLayerPublisher`` implements it, but tests that want to
+    observe published outputs need a compat wrapper that records both
+    per-unit and batch publish calls while delegating to the real publisher
+    for fence / persistence.
+    """
+
     def __init__(
         self,
         *,
@@ -32,6 +45,7 @@ class CompatTranslationLayerPublisher:
     ) -> None:
         self._publisher = TranslationLayerPublisher(pool=pool)
         self.published_outputs: list[Any] = []
+        self.published_batch_outputs: list[tuple[str, Any]] = []
 
     async def publish_unit_translation(
         self,
@@ -46,6 +60,74 @@ class CompatTranslationLayerPublisher:
             job_id=job_id,
             lease_token=lease_token,
             output=output,
+            quality_json=quality_json,
+        )
+
+    async def publish_article_translation_batch(
+        self,
+        *,
+        job_id,
+        lease_token,
+        outputs,
+        quality_json: dict[str, Any] | None = None,
+    ):
+        for unit_id, output in outputs:
+            self.published_batch_outputs.append((unit_id, output))
+        return await self._publisher.publish_article_translation_batch(
+            job_id=job_id,
+            lease_token=lease_token,
+            outputs=outputs,
+            quality_json=quality_json,
+        )
+
+
+class CompatVocabularyLayerPublisher:
+    """Compatibility wrapper for the vocabulary layer publisher.
+
+    Mirrors :class:`CompatTranslationLayerPublisher` so tests can observe
+    both per-unit and batch vocabulary publish calls. The real
+    ``VocabularyLayerPublisher`` is used for fence / persistence.
+    """
+
+    def __init__(
+        self,
+        *,
+        pool: asyncpg.Pool,
+    ) -> None:
+        self._publisher = VocabularyLayerPublisher(pool=pool)
+        self.published_outputs: list[Any] = []
+        self.published_batch_outputs: list[tuple[str, Any]] = []
+
+    async def publish_unit_vocabulary(
+        self,
+        *,
+        job_id,
+        lease_token,
+        output,
+        quality_json: dict[str, Any] | None = None,
+    ):
+        self.published_outputs.append(output)
+        return await self._publisher.publish_unit_vocabulary(
+            job_id=job_id,
+            lease_token=lease_token,
+            output=output,
+            quality_json=quality_json,
+        )
+
+    async def publish_article_vocabulary_batch(
+        self,
+        *,
+        job_id,
+        lease_token,
+        outputs,
+        quality_json: dict[str, Any] | None = None,
+    ):
+        for unit_id, output in outputs:
+            self.published_batch_outputs.append((unit_id, output))
+        return await self._publisher.publish_article_vocabulary_batch(
+            job_id=job_id,
+            lease_token=lease_token,
+            outputs=outputs,
             quality_json=quality_json,
         )
 

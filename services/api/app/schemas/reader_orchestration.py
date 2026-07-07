@@ -246,6 +246,34 @@ class TranslationLayerGenerationOutput(BaseModel):
     groups: list[TranslationGenerationGroup] = Field(min_length=1)
 
 
+class TranslationBatchUnitOutput(BaseModel):
+    """Per-unit translation output within a batch generation result.
+
+    T1.1 short-article batch path: a single LLM call covers all units of
+    a short article. Each entry pairs a ``unit_id`` with the translation
+    groups emitted for that unit. The batch worker splits the list back
+    into per-unit :class:`TranslationLayerOutput` objects before publish.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    unit_id: str = Field(min_length=1)
+    groups: list[TranslationGenerationGroup] = Field(min_length=1)
+
+
+class TranslationBatchGenerationOutput(BaseModel):
+    """Structured output for the translation batch LLM call.
+
+    The model returns one ``TranslationBatchUnitOutput`` per unit; the
+    batch worker validates that the set of ``unit_id`` values exactly
+    matches the batch job's ``target_unit_ids``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    units: list[TranslationBatchUnitOutput] = Field(min_length=1)
+
+
 class TranslationGroup(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

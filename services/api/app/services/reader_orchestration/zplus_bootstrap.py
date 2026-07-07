@@ -102,12 +102,20 @@ class ZPlusBootstrapService:
         *,
         record_id: UUID,
         base_id: UUID,
+        trace_id: UUID | None = None,
     ) -> ZPlusBootstrapResult:
         """Create plan + windows + reader_jobs (idempotent).
 
         If an active plan already exists for the same record/base/layer, the
         existing plan, windows, and reader_jobs are returned without
         re-creating anything.
+
+        ``trace_id`` is the shared observability trace root for the record.
+        When provided, it is written into every window ``reader_runs.envelope_json``
+        so downstream workers can propagate it into ``reader_runtime_spans``
+        (requirement 5). When ``None``, a fresh UUID is generated so the
+        window runs always carry a trace_id even when the caller did not
+        supply one (e.g. direct ZPlusBootstrapService callers).
         """
         pool = self.get_pool()
 
@@ -189,6 +197,11 @@ class ZPlusBootstrapService:
                 )
 
                 # 7. INSERT windows + reader_runs + reader_jobs.
+                # Resolve trace_id: caller-supplied (shared with display/
+                # translation/vocab runs) or a fresh UUID so window runs
+                # always carry a trace_id for span propagation.
+                effective_trace_id = trace_id if trace_id is not None else uuid4()
+
                 job_ids: list[UUID] = []
                 for window in windows:
                     window_id = uuid4()
@@ -198,6 +211,7 @@ class ZPlusBootstrapService:
                         plan_id=plan_id,
                         window_id=window_id,
                         window=window,
+                        trace_id=effective_trace_id,
                     )
                     await conn.execute(
                         """
@@ -251,11 +265,16 @@ class ZPlusBootstrapService:
         plan_id: UUID,
         window_id: UUID,
         window: PlannedWindow,
+        trace_id: UUID,
     ) -> UUID:
         """Create one reader_runs row + one reader_jobs row for a window job.
 
         Follows the per-unit-run pattern from ``_insert_unit_job``: each window
         gets its own reader_runs row so it can be tracked independently.
+
+        ``trace_id`` is written into ``reader_runs.envelope_json`` so the
+        pipeline runner's worker_tick span can propagate the same trace root
+        shared by display / translation / vocabulary runs (requirement 5).
         """
         strategy_metadata = _build_strategy_metadata(
             state.strategy, ZPLUS_STRATEGY_LAYER_NAME
@@ -285,6 +304,7 @@ class ZPlusBootstrapService:
                     "plan_id": str(plan_id),
                     "layer_types": ["grammar_note", "sentence_analysis"],
                     "strategy": strategy_metadata,
+                    "trace_id": str(trace_id),
                 }
             ),
             ZPLUS_POLICY_VERSION,

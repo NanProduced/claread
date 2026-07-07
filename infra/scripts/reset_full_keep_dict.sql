@@ -22,6 +22,7 @@ DROP TABLE IF EXISTS
   reader_ask_threads,
   parsed_decisions,
   enhancement_layers,
+  reader_runtime_spans,
   reader_events,
   reader_event_sequences,
   reader_job_events,

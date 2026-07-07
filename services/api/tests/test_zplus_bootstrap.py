@@ -221,3 +221,80 @@ async def test_bootstrap_window_input_json_contains_window_contract_fields(
             assert "target_anchor_ids" in input_json
             # target_key = window_id (UUID string)
             assert job["target_key"] == input_json["window_id"]
+
+
+async def test_bootstrap_propagates_trace_id_into_window_run_envelope(
+    test_db_pool_with_record_and_base: tuple[asyncpg.Pool, UUID, UUID],
+) -> None:
+    """Requirement 5: ``bootstrap_grammar_window_plan(trace_id=...)`` writes
+    the same ``trace_id`` into every window ``reader_runs.envelope_json`` so
+    downstream workers can propagate it into ``reader_runtime_spans``.
+
+    When called without ``trace_id``, the service generates a fresh UUID so
+    window runs always carry a trace_id (no NULL envelope trace_id for Z+
+    runs).
+    """
+    pool, record_id, base_id = test_db_pool_with_record_and_base
+    service = ZPlusBootstrapService(pool=pool)
+    shared_trace_id = uuid4()
+    result = await service.bootstrap_grammar_window_plan(
+        record_id=record_id, base_id=base_id, trace_id=shared_trace_id
+    )
+
+    async with pool.acquire() as conn:
+        for job_id in result.job_ids:
+            row = await conn.fetchrow(
+                """
+                SELECT run.envelope_json
+                FROM reader_jobs job
+                JOIN reader_runs run ON run.id = job.run_id
+                WHERE job.id = $1
+                """,
+                job_id,
+            )
+            assert row is not None, f"reader_run for job {job_id} not found"
+            envelope = row["envelope_json"]
+            if isinstance(envelope, str):
+                envelope = json.loads(envelope)
+            assert envelope is not None, "envelope_json must not be NULL"
+            assert str(envelope.get("trace_id")) == str(shared_trace_id), (
+                f"window run envelope trace_id must equal shared trace_id; "
+                f"got {envelope.get('trace_id')!r}"
+            )
+
+
+async def test_bootstrap_without_trace_id_still_writes_envelope_trace_id(
+    test_db_pool_with_record_and_base: tuple[asyncpg.Pool, UUID, UUID],
+) -> None:
+    """Requirement 5: when ``trace_id`` is ``None``, the service generates a
+    fresh UUID so window runs always carry a trace_id (defensive).
+    """
+    pool, record_id, base_id = test_db_pool_with_record_and_base
+    service = ZPlusBootstrapService(pool=pool)
+    result = await service.bootstrap_grammar_window_plan(
+        record_id=record_id, base_id=base_id, trace_id=None
+    )
+
+    async with pool.acquire() as conn:
+        for job_id in result.job_ids:
+            row = await conn.fetchrow(
+                """
+                SELECT run.envelope_json
+                FROM reader_jobs job
+                JOIN reader_runs run ON run.id = job.run_id
+                WHERE job.id = $1
+                """,
+                job_id,
+            )
+            assert row is not None
+            envelope = row["envelope_json"]
+            if isinstance(envelope, str):
+                envelope = json.loads(envelope)
+            assert envelope is not None, "envelope_json must not be NULL"
+            trace_id_str = envelope.get("trace_id")
+            assert trace_id_str, (
+                f"window run envelope must carry a generated trace_id when "
+                f"caller did not pass one; got {trace_id_str!r}"
+            )
+            # Must be a valid UUID
+            UUID(str(trace_id_str))

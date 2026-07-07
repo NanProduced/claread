@@ -23,6 +23,7 @@ TRUNCATE TABLE
   enhancement_layers,
   reader_events,
   reader_event_sequences,
+  reader_runtime_spans,
   reader_job_events,
   reader_jobs,
   reader_runs,

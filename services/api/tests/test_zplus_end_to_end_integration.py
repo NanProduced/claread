@@ -64,6 +64,7 @@ from app.services.reader_orchestration.grammar_window_publisher import (
     WindowCandidateContent,
 )
 from app.services.reader_orchestration.grammar_window_worker import (
+    GrammarWindowExecutionResult,
     GrammarWindowWorkerService,
 )
 from app.services.reader_orchestration.grammar_worker import GrammarBundleWorkerService
@@ -94,6 +95,9 @@ pytestmark = pytest.mark.anyio
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _MIGRATION_0015_SQL = (
     _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
+).read_text(encoding="utf-8")
+_MIGRATION_0016_SQL = (
+    _REPO_ROOT / "infra" / "migrations" / "0016_reader_runtime_spans_grammar_bundle_window.sql"
 ).read_text(encoding="utf-8")
 
 LEASE_DURATION = timedelta(seconds=30)
@@ -215,13 +219,15 @@ class _RealisticMockExecutor:
         self.last_candidate_contents: list[WindowCandidateContent] = []
         self.call_count = 0
 
-    async def generate(self, context: dict[str, Any]) -> list[CandidateItem]:
+    async def generate(
+        self, context: dict[str, Any]
+    ) -> GrammarWindowExecutionResult:
         self.call_count += 1
         self.last_candidate_contents = []
 
         target_anchors = context.get("target_anchors", [])
         if not target_anchors:
-            return []
+            return GrammarWindowExecutionResult(candidates=[])
 
         window_budget = context.get("window_budget", {})
         if isinstance(window_budget, dict):
@@ -322,7 +328,7 @@ class _RealisticMockExecutor:
                 )
             )
 
-        return candidates
+        return GrammarWindowExecutionResult(candidates=candidates)
 
 
 # ---------------------------------------------------------------------------
@@ -393,6 +399,7 @@ async def zplus_e2e_env() -> AsyncIterator[asyncpg.Pool]:
     await admin.execute(f'SET search_path TO "{schema_name}", public')
     await admin.execute(BASELINE_SQL)
     await admin.execute(_MIGRATION_0015_SQL)
+    await admin.execute(_MIGRATION_0016_SQL)
     await admin.close()
 
     pool = await make_pool(schema_name)

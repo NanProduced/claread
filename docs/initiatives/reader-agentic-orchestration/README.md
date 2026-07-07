@@ -1,10 +1,10 @@
 # Reader Agentic Orchestration 重构专项
 
-> 状态：`进行中专项（D6 产品硬化阶段）`
-> 最后更新：2026-06-25
+> 状态：`进行中专项（Adaptive Reader Orchestration 分阶段落地）`
+> 最后更新：2026-07-08
 > 权威性：本目录是 Reader AI Workflow -> agentic orchestration 重构期间的专项事实源。
 
-本目录用于管理 Reader agentic orchestration 重构的目标架构、阶段计划和 coding agent 上下文。它与当前稳定产品/架构文档分开，因为当前系统仍是旧 AI Workflow 形态，而本目录描述本轮重构的目标状态。
+本目录用于管理 Reader agentic orchestration 重构的目标架构、阶段计划和 coding agent 上下文。它与当前稳定产品/架构文档分开，因为当前系统处于旧 AI Workflow 与新 Reader orchestration 双线并存、验证和切换阶段，而本目录描述本轮重构的目标状态与过渡设计。
 
 ## 范围
 
@@ -54,10 +54,11 @@
 
 1. `target-architecture.md`：目标产品形态与架构边界。
 2. `concepts.md`：术语、概念定义和统一口径。
-3. `modules/`：D1 模块合同。
-4. `implementation-plan.md`：阶段计划、门禁、任务包和验收标准。
-5. `spikes/README.md`：D2 spikes 启动清单和执行顺序。
-6. `agent-brief.md`：发给 coding agent 的最小上下文。
+3. `adaptive-reader-orchestration-design.md`：Reader 自适应解析策略、分析窗口、渐进发布、长文/超长文处理的当前设计入口。
+4. `modules/`：D1 模块合同。
+5. `implementation-plan.md`：阶段计划、门禁、任务包和验收标准。
+6. `spikes/README.md`：D2 spikes 启动清单和执行顺序。
+7. `agent-brief.md`：发给 coding agent 的最小上下文。
 
 ## 模块文档
 
@@ -74,11 +75,11 @@
 | `modules/rag-substrate.md` | record-scoped RAG、block-scoped citation DTO、provider adapter |
 | `modules/cutover-and-old-workflow.md` | 停服重构、旧 workflow 移除、旧依赖审计 |
 
-`docs/tmp/reader-orchestration/` 下的研究材料只作为证据库。除非任务明确要求回看某份研究报告，否则 coding agent 不应默认读取 TMP 研究文档。
+`tmp/` 下的研究、验收、诊断材料只作为过程证据库。除非任务明确要求回看某份研究报告，否则 coding agent 不应默认读取 TMP 研究文档。2026-07-07 之后，自适应解析相关结论以 `adaptive-reader-orchestration-design.md` 为准；任务状态、验收结果和下一步实现顺序以 `implementation-plan.md` 为准。
 
 ## 文档治理规则
 
-- 不在 `modules/` 之外新增长期设计文档，除非 `implementation-plan.md` 明确要求。
+- 长期设计入口应尽量收敛；如确需新增模块外设计文档，必须在本 README 的权威文档列表登记，并说明与 `target-architecture.md` / `modules/` 的关系。
 - 新决策写入 `target-architecture.md` 的决策记录。
 - 进度和阶段状态写入 `implementation-plan.md`，不要写进研究报告。
 - coding agent 默认从 `agent-brief.md` 开始，不从 TMP 文档堆里找上下文。

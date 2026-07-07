@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
 from typing import Any, Literal, Protocol
@@ -41,12 +43,141 @@ from app.schemas.reader_orchestration import (
     GrammarBundleOutput,
     ReaderTextRangeAnchor,
 )
+from app.services.analysis.prompting.prompt_loader import get_prompt_version
+from app.services.reader_orchestration.grammar_worker import (
+    FAKE_GRAMMAR_MODEL_NAME,
+    FAKE_GRAMMAR_MODEL_PROFILE,
+    FAKE_GRAMMAR_MODEL_PROVIDER,
+    FAKE_GRAMMAR_PROMPT_VERSION,
+)
 from app.services.reader_orchestration.job_runtime import (
     ClaimResult,
     IllegalTransitionError,
     ReaderJobRuntime,
 )
+from app.services.reader_orchestration.reading_strategy import (
+    ReaderStrategyResolverError,
+    resolve_reader_variant_strategy,
+)
 from app.services.reader_orchestration.window_selector import CandidateItem
+
+# Strategy metadata keys written by zplus_bootstrap into reader_jobs.input_json
+# (via _build_strategy_metadata). _load_window_context reads them back and
+# cross-validates against the live resolver output. Fail-closed contract:
+# missing metadata or hash mismatch never falls back to a default strategy.
+_WINDOW_STRATEGY_INPUT_KEYS: tuple[str, ...] = (
+    "reading_goal",
+    "reading_variant",
+    "strategy_version",
+    "strategy_hash",
+    "layer_policy_hash",
+)
+_WINDOW_GRAMMAR_LAYER_NAME = "grammar_bundle"
+_WINDOW_STRATEGY_METADATA_MISSING_CODE = "strategy_metadata_missing"
+_WINDOW_STRATEGY_HASH_MISMATCH_CODE = "strategy_hash_mismatch"
+_WINDOW_LAYER_POLICY_HASH_MISMATCH_CODE = "layer_policy_hash_mismatch"
+_WINDOW_STRATEGY_VERSION_MISMATCH_CODE = "strategy_version_mismatch"
+
+
+def _resolve_window_strategy(input_data: Any) -> dict[str, Any]:
+    """Read strategy metadata from window job ``input_json`` and validate.
+
+    Mirrors ``grammar_worker._validate_grammar_strategy_metadata`` but
+    raises :class:`GrammarWindowExecutionError` on failure so the window
+    worker's error handling path applies. Fail-closed contract: missing
+    metadata or hash mismatch never falls back to a default strategy.
+
+    Returns a dict with ``reading_goal`` / ``reading_variant`` /
+    ``strategy_version`` / ``strategy_hash`` / ``layer_policy_hash`` /
+    ``grammar_prompt_lines``.
+    """
+    if not isinstance(input_data, Mapping):
+        raise GrammarWindowExecutionError(
+            "window job input_json is not a mapping; "
+            "strategy metadata cannot be read",
+            retryable=False,
+            failure_class="validation",
+            failure_code=_WINDOW_STRATEGY_METADATA_MISSING_CODE,
+        )
+
+    missing: list[str] = []
+    for key in _WINDOW_STRATEGY_INPUT_KEYS:
+        value = input_data.get(key)
+        if not isinstance(value, str) or not value:
+            missing.append(key)
+    if missing:
+        raise GrammarWindowExecutionError(
+            "window job input_json is missing strategy metadata: "
+            + ", ".join(missing),
+            retryable=False,
+            failure_class="validation",
+            failure_code=_WINDOW_STRATEGY_METADATA_MISSING_CODE,
+        )
+
+    reading_goal = str(input_data["reading_goal"])
+    reading_variant = str(input_data["reading_variant"])
+    expected_strategy_version = str(input_data["strategy_version"])
+    expected_strategy_hash = str(input_data["strategy_hash"])
+    expected_layer_policy_hash = str(input_data["layer_policy_hash"])
+
+    try:
+        strategy = resolve_reader_variant_strategy(reading_goal, reading_variant)
+    except ReaderStrategyResolverError as exc:
+        raise GrammarWindowExecutionError(
+            f"window strategy resolver rejected pair "
+            f"({reading_goal!r}, {reading_variant!r}): {exc}",
+            retryable=False,
+            failure_class="strategy_resolution",
+            failure_code="strategy_resolver_error",
+        ) from exc
+
+    if strategy.strategy_version != expected_strategy_version:
+        raise GrammarWindowExecutionError(
+            f"window strategy_version mismatch: input_json has "
+            f"{expected_strategy_version!r} but resolver produced "
+            f"{strategy.strategy_version!r}",
+            retryable=False,
+            failure_class="validation",
+            failure_code=_WINDOW_STRATEGY_VERSION_MISMATCH_CODE,
+        )
+
+    if strategy.strategy_hash != expected_strategy_hash:
+        raise GrammarWindowExecutionError(
+            f"window strategy_hash mismatch: input_json has "
+            f"{expected_strategy_hash!r} but resolver produced "
+            f"{strategy.strategy_hash!r}",
+            retryable=False,
+            failure_class="validation",
+            failure_code=_WINDOW_STRATEGY_HASH_MISMATCH_CODE,
+        )
+
+    layer = strategy.layers.get(_WINDOW_GRAMMAR_LAYER_NAME)
+    if layer is None:
+        raise GrammarWindowExecutionError(
+            f"resolved strategy has no layer {_WINDOW_GRAMMAR_LAYER_NAME!r}",
+            retryable=False,
+            failure_class="strategy_resolution",
+            failure_code="strategy_resolver_error",
+        )
+
+    if layer.policy_hash != expected_layer_policy_hash:
+        raise GrammarWindowExecutionError(
+            f"window layer_policy_hash mismatch: input_json has "
+            f"{expected_layer_policy_hash!r} but resolver produced "
+            f"{layer.policy_hash!r}",
+            retryable=False,
+            failure_class="validation",
+            failure_code=_WINDOW_LAYER_POLICY_HASH_MISMATCH_CODE,
+        )
+
+    return {
+        "reading_goal": reading_goal,
+        "reading_variant": reading_variant,
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash,
+        "layer_policy_hash": layer.policy_hash,
+        "grammar_prompt_lines": list(layer.prompt_lines),
+    }
 
 
 class PreflightResult(Enum):
@@ -62,26 +193,83 @@ _TERMINAL_WINDOW_STATUSES: frozenset[str] = frozenset({
 })
 
 
-class GrammarWindowExecutionError(Exception):
-    """Raised when the grammar window executor is not configured or fails."""
+class GrammarWindowExecutionError(RuntimeError):
+    """Raised when the grammar window executor is not configured or fails.
+
+    Mirrors :class:`GrammarExecutionError` so the pipeline runner can route
+    retryable vs non-retryable failures to ``retry_later`` vs
+    ``failed_terminal`` without guessing. Configuration / route /
+    validation errors are non-retryable (code bug); provider / agent.run
+    errors are retryable (transient).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool,
+        failure_class: str,
+        failure_code: str,
+        rationale_code: str | None = None,
+        prompt_version: str | None = None,
+        model_route: str = MODEL_ROUTE_READER_LAYER_GRAMMAR_BUNDLE,
+        model_profile: str | None = None,
+        model_provider: str | None = None,
+        model_name: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+        self.failure_class = failure_class
+        self.failure_code = failure_code
+        self.rationale_code = rationale_code or failure_code
+        self.prompt_version = prompt_version
+        self.model_route = model_route
+        self.model_profile = model_profile
+        self.model_provider = model_provider
+        self.model_name = model_name
+
+
+@dataclass(frozen=True, slots=True)
+class GrammarWindowExecutionResult:
+    """Result of a successful window-scoped LLM call.
+
+    Carries the candidate list plus the usage / model metadata needed by
+    the pipeline runner to record ``ai_usage_events`` and end the
+    ``worker_tick`` span with token / model fields (requirement 6).
+    """
+
+    candidates: list[CandidateItem]
+    usage_data: dict[str, Any] | None = None
+    prompt_version: str | None = FAKE_GRAMMAR_PROMPT_VERSION
+    model_route: str = MODEL_ROUTE_READER_LAYER_GRAMMAR_BUNDLE
+    model_profile: str | None = FAKE_GRAMMAR_MODEL_PROFILE
+    model_provider: str | None = FAKE_GRAMMAR_MODEL_PROVIDER
+    model_name: str | None = FAKE_GRAMMAR_MODEL_NAME
 
 
 class GrammarWindowExecutorProtocol(Protocol):
     """Protocol for Z+ grammar window LLM executors."""
 
-    async def generate(self, context: dict[str, Any]) -> list[CandidateItem]:
-        """Generate candidates from a window LLM context."""
+    async def generate(
+        self, context: dict[str, Any]
+    ) -> GrammarWindowExecutionResult:
+        """Generate candidates + usage/model metadata from a window context."""
         ...
 
 
 class UnconfiguredGrammarWindowExecutor:
     """Default executor that raises when no real executor is configured."""
 
-    async def generate(self, context: dict[str, Any]) -> list[CandidateItem]:
+    async def generate(
+        self, context: dict[str, Any]
+    ) -> GrammarWindowExecutionResult:
         del context
         raise GrammarWindowExecutionError(
             "GrammarWindowWorkerService has no executor configured. "
-            "Pass an executor= parameter to the constructor."
+            "Pass an executor= parameter to the constructor.",
+            retryable=False,
+            failure_class="configuration",
+            failure_code="grammar_window_executor_unconfigured",
         )
 
 
@@ -170,13 +358,18 @@ You must produce grammar_note and sentence_analysis candidates for the most valu
 
 ## Critical Rules
 
-1. OUTPUT ANCHOR CONSTRAINT: Every output item's anchor_segment_id MUST be one of the [TARGET] anchor IDs. Never invent anchor IDs.
+1. OUTPUT ANCHOR CONSTRAINT: Every output item's anchor_segment_id MUST be one \
+of the [TARGET] anchor IDs. Never invent anchor IDs.
 
-2. CONTEXT-ONLY ANCHORS: Anchors marked [CONTEXT_ONLY] are for understanding context only. NEVER output items anchored to context-only anchors.
+2. CONTEXT-ONLY ANCHORS: Anchors marked [CONTEXT_ONLY] are for understanding \
+context only. NEVER output items anchored to context-only anchors.
 
-3. BUDGET CONSTRAINT: The [WINDOW_BUDGET] section specifies max grammar_note and sentence_analysis counts. Exceeding the budget is a validation error. NO-OP (empty output) is valid when nothing is worth annotating.
+3. BUDGET CONSTRAINT: The [WINDOW_BUDGET] section specifies max grammar_note \
+and sentence_analysis counts. Exceeding the budget is a validation error. \
+NO-OP (empty output) is valid when nothing is worth annotating.
 
-4. NO-OP IS VALID: If no anchor has a grammar pattern worth annotating, return empty arrays. This is a successful result, not a failure.
+4. NO-OP IS VALID: If no anchor has a grammar pattern worth annotating, return \
+empty arrays. This is a successful result, not a failure.
 
 5. QUALITY OVER QUANTITY: Only annotate anchors that have:
    - A clear grammar pattern (grammar_note)
@@ -188,11 +381,13 @@ You must produce grammar_note and sentence_analysis candidates for the most valu
 6. SELF-RATING REQUIRED: Every item MUST include:
    - quality_score (1-5): window-local priority (5=highest)
    - reading_blocker (bool): does this prevent understanding the sentence?
-   - reason_code: one of grammar_pattern | long_sentence | exam_relevant | meaning_blocker | discourse_signal | low_value
+   - reason_code: one of grammar_pattern | long_sentence | exam_relevant | \
+meaning_blocker | discourse_signal | low_value
    - confidence (0.0-1.0): how confident are you in this annotation?
    - dedup_hint: a short canonical key for this grammar pattern (e.g. "though_concession")
 
-7. SAME-UNIT SPANS: All spans within a single grammar_note item MUST belong to the same unit_id. Cross-unit spans are rejected.
+7. SAME-UNIT SPANS: All spans within a single grammar_note item MUST belong \
+to the same unit_id. Cross-unit spans are rejected.
 
 ## Output Format
 
@@ -272,7 +467,9 @@ class PydanticAIGrammarWindowExecutor:
             raise RuntimeError("Database pool not initialized")
         return pool
 
-    async def generate(self, context: dict[str, Any]) -> list[CandidateItem]:
+    async def generate(
+        self, context: dict[str, Any]
+    ) -> GrammarWindowExecutionResult:
         """Window-scoped single LLM call covering all target anchors.
 
         构建包含所有 target anchor + context anchor 的 window prompt，发起
@@ -280,19 +477,38 @@ class PydanticAIGrammarWindowExecutor:
         ``selected_text`` ground 到 UTF-16 offset + text_hash，转换为
         ``CandidateItem`` 列表。LLM 失败时 raise（不吞掉），触发
         reader_jobs → retry_later/failed_terminal。
+
+        Returns a :class:`GrammarWindowExecutionResult` carrying the
+        candidate list plus ``usage_data`` / ``prompt_version`` /
+        ``model_route`` / ``model_profile`` / ``model_provider`` /
+        ``model_name`` so the pipeline runner can record
+        ``ai_usage_events`` and end the ``worker_tick`` span with token
+        + model fields (requirement 6).
         """
         target_anchors: list[dict[str, Any]] = list(
             context.get("target_anchors", [])
         )
+        prompt_version = get_prompt_version()
+
         if not target_anchors:
-            return []
+            # No-op window: return an empty result with model metadata
+            # so ai_usage_events can still be recorded for observability.
+            return GrammarWindowExecutionResult(
+                candidates=[],
+                usage_data=None,
+                prompt_version=prompt_version,
+            )
 
         settings = self._settings or get_settings()
         if not str(settings.reader_grammar_bundle_model_profile or "").strip():
             raise GrammarWindowExecutionError(
                 "grammar window executor is not configured; set "
                 "reader_grammar_bundle_model_profile or inject settings "
-                "with a configured model profile"
+                "with a configured model profile",
+                retryable=False,
+                failure_class="configuration",
+                failure_code="grammar_window_executor_unconfigured",
+                prompt_version=prompt_version,
             )
 
         model, model_config = build_model_for_route(
@@ -301,7 +517,11 @@ class PydanticAIGrammarWindowExecutor:
         )
         if model is None:
             raise GrammarWindowExecutionError(
-                "reader_layer_grammar_bundle model route is not configured"
+                "reader_layer_grammar_bundle model route is not configured",
+                retryable=False,
+                failure_class="configuration",
+                failure_code="model_route_unavailable",
+                prompt_version=prompt_version,
             )
 
         assert_real_llm_allowed(
@@ -314,9 +534,30 @@ class PydanticAIGrammarWindowExecutor:
         agent = self._build_window_agent(model=model)
         try:
             result = await self._run_agent(agent, prompt)
+        except GrammarWindowExecutionError:
+            raise
         except Exception as exc:
             raise GrammarWindowExecutionError(
-                f"window grammar agent execution failed: {exc}"
+                f"window grammar agent execution failed: {exc}",
+                retryable=True,
+                failure_class="provider",
+                failure_code=type(exc).__name__,
+                prompt_version=prompt_version,
+                model_profile=(
+                    str(model_config.profile_name)
+                    if model_config is not None
+                    else None
+                ),
+                model_provider=(
+                    str(model_config.provider)
+                    if model_config is not None
+                    else None
+                ),
+                model_name=(
+                    str(model_config.model_name)
+                    if model_config is not None
+                    else None
+                ),
             ) from exc
 
         try:
@@ -325,16 +566,55 @@ class PydanticAIGrammarWindowExecutor:
             )
         except ValidationError as exc:
             raise GrammarWindowExecutionError(
-                f"window grammar agent produced invalid structured output: {exc}"
+                f"window grammar agent produced invalid structured output: {exc}",
+                retryable=False,
+                failure_class="validation",
+                failure_code="model_output_invalid",
+                prompt_version=prompt_version,
+                model_profile=(
+                    str(model_config.profile_name)
+                    if model_config is not None
+                    else None
+                ),
+                model_provider=(
+                    str(model_config.provider)
+                    if model_config is not None
+                    else None
+                ),
+                model_name=(
+                    str(model_config.model_name)
+                    if model_config is not None
+                    else None
+                ),
             ) from exc
 
-        self._last_usage_data = extract_run_usage(result)
+        usage_data = extract_run_usage(result)
+        self._last_usage_data = usage_data
 
         candidates = self._ground_and_convert_candidates(
             candidate_output=candidate_output,
             context=context,
         )
-        return candidates
+        return GrammarWindowExecutionResult(
+            candidates=candidates,
+            usage_data=usage_data,
+            prompt_version=prompt_version,
+            model_profile=(
+                str(model_config.profile_name)
+                if model_config is not None
+                else None
+            ),
+            model_provider=(
+                str(model_config.provider)
+                if model_config is not None
+                else None
+            ),
+            model_name=(
+                str(model_config.model_name)
+                if model_config is not None
+                else None
+            ),
+        )
 
     def _build_window_prompt(self, context: dict[str, Any]) -> str:
         """构建 window-scoped prompt，包含 target + context anchor。
@@ -342,6 +622,15 @@ class PydanticAIGrammarWindowExecutor:
         Target anchor 标记为 ``[TARGET]``（可标注），context anchor 标记为
         ``[CONTEXT_ONLY]``（仅用于理解上下文，不可标注）。Window budget
         约束写入 ``[WINDOW_BUDGET]`` 段。
+
+        T1.2: ``<reader_strategy>`` section 注入 variant-first policy lines
+        (reading_goal / reading_variant / strategy_hash / layer_policy_hash
+        / prompt_lines)，使 LLM 能按 variant 调整 grammar_note /
+        sentence_analysis 的产出风格和密度。
+
+        T1.3: budget key 从 ``max_grammar_notes`` / ``max_sentence_analyses``
+        修正为 ``grammar_note.count`` / ``sentence_analysis.count``，与
+        zplus_bootstrap 写入格式和 grammar_window_publisher 读取格式对齐。
         """
         target_anchors: list[dict[str, Any]] = list(
             context.get("target_anchors", [])
@@ -355,10 +644,15 @@ class PydanticAIGrammarWindowExecutor:
         window_budget: dict[str, Any] = dict(
             context.get("window_budget", {})
         )
-        max_grammar_notes = int(window_budget.get("max_grammar_notes", 4))
-        max_sentence_analyses = int(
-            window_budget.get("max_sentence_analyses", 3)
-        )
+        # T1.3: zplus_bootstrap writes {"grammar_note": {"count": N},
+        # "sentence_analysis": {"count": M}}. The old keys
+        # "max_grammar_notes" / "max_sentence_analyses" never matched, so
+        # the worker always fell back to 4/3 while the selector/publisher
+        # enforced the real 2/1 cap — LLM output was silently truncated.
+        grammar_note_budget = window_budget.get("grammar_note", {})
+        sentence_analysis_budget = window_budget.get("sentence_analysis", {})
+        max_grammar_notes = int(grammar_note_budget.get("count", 4))
+        max_sentence_analyses = int(sentence_analysis_budget.get("count", 3))
 
         lines: list[str] = []
         lines.append("# READING WINDOW")
@@ -367,6 +661,31 @@ class PydanticAIGrammarWindowExecutor:
         lines.append(f"- max_grammar_notes: {max_grammar_notes}")
         lines.append(f"- max_sentence_analyses: {max_sentence_analyses}")
         lines.append("")
+
+        # T1.2: inject variant strategy section so the LLM can vary output
+        # by reading_goal / reading_variant. Mirrors the
+        # <reader_strategy> section in grammar_worker._format_grammar_strategy_section.
+        prompt_lines: list[str] = list(
+            context.get("grammar_prompt_lines", [])
+        )
+        if prompt_lines:
+            reading_goal = str(context.get("reading_goal", ""))
+            reading_variant = str(context.get("reading_variant", ""))
+            strategy_version = str(context.get("strategy_version", ""))
+            strategy_hash = str(context.get("strategy_hash", ""))
+            layer_policy_hash = str(context.get("layer_policy_hash", ""))
+            lines.append("<reader_strategy>")
+            lines.append(f"reading_goal: {reading_goal}")
+            lines.append(f"reading_variant: {reading_variant}")
+            lines.append(f"strategy_version: {strategy_version}")
+            lines.append(f"strategy_hash: {strategy_hash}")
+            lines.append(f"layer_policy_hash: {layer_policy_hash}")
+            lines.append("<policy_lines>")
+            for policy_line in prompt_lines:
+                lines.append(f"- {policy_line}")
+            lines.append("</policy_lines>")
+            lines.append("</reader_strategy>")
+            lines.append("")
 
         lines.append("## [TARGET] Anchors (you may annotate these)")
         lines.append("")
@@ -532,7 +851,7 @@ class PydanticAIGrammarWindowExecutor:
         """将 LLM 产出的 selected_text ground 到 UTF-16 offset + text_hash。
 
         在 anchor 的 source_text 中查找 selected_text 的唯一出现位置，
-        计算 base-relative UTF-16 offset，构建 ReaderTextRangeAnchor。
+        计算 unit-relative UTF-16 offset，构建 ReaderTextRangeAnchor。
         如果出现 0 次或 >1 次，返回 None（无法 ground）。
         """
         source_text = str(anchor.get("source_text", ""))
@@ -544,12 +863,14 @@ class PydanticAIGrammarWindowExecutor:
             return None
 
         start_offset, end_offset = occurrences[0]
-        # anchor 的 base_start_utf16 是 anchor 在 base_text 中的起始偏移；
-        # source_text 是 anchor 的切片，所以需要加上 base_start_utf16
-        # 得到 base-relative offset。
-        base_start = int(anchor.get("base_start_utf16", 0))
-        absolute_start = base_start + start_offset
-        absolute_end = base_start + end_offset
+        # ReaderTextRangeAnchor offsets are unit-relative. Anchor metadata keeps
+        # base-relative positions for slicing ``source_text``, so convert the
+        # anchor start back into the unit coordinate system before grounding.
+        anchor_unit_start = int(anchor.get("base_start_utf16", 0)) - int(
+            anchor.get("unit_base_start_utf16", 0)
+        )
+        unit_start = anchor_unit_start + start_offset
+        unit_end = anchor_unit_start + end_offset
 
         try:
             return ReaderTextRangeAnchor(
@@ -558,8 +879,8 @@ class PydanticAIGrammarWindowExecutor:
                 anchor_segment_id=str(anchor["anchor_segment_id"]),
                 sentence_id=str(anchor["anchor_segment_id"]),
                 segment_type="sentence",
-                start_offset=absolute_start,
-                end_offset=absolute_end,
+                start_offset=unit_start,
+                end_offset=unit_end,
                 selected_text=selected_text,
                 text_hash=compute_text_range_hash(selected_text),
             )
@@ -804,7 +1125,7 @@ class GrammarWindowWorkerService:
             )
         )
         try:
-            candidates = await self._call_llm(context)
+            execution = await self._call_llm(context)
         finally:
             heartbeat_task.cancel()
             try:
@@ -815,9 +1136,18 @@ class GrammarWindowWorkerService:
         # 4. Return candidates_ready. The pipeline runner wires the publisher
         # after this return (see ``_run_grammar_window_attempt``).
         # candidates 携带 content_* 字段，publisher 据此构建合法 layer output。
+        # execution (GrammarWindowExecutionResult) carries usage_data +
+        # prompt_version + model metadata for ai_usage_events recording
+        # and worker_tick span ending (requirement 6).
         return {
             "status": "candidates_ready",
-            "candidates": candidates,
+            "candidates": execution.candidates,
+            "usage_data": execution.usage_data,
+            "prompt_version": execution.prompt_version,
+            "model_route": execution.model_route,
+            "model_profile": execution.model_profile,
+            "model_provider": execution.model_provider,
+            "model_name": execution.model_name,
         }
 
     # ------------------------------------------------------------------
@@ -853,6 +1183,14 @@ class GrammarWindowWorkerService:
         slice ``source_text`` for each target anchor using UTF-16 code unit
         offsets (mirrors ``grammar_worker._load_job_context``). Context
         anchors (prev/next) are loaded with the same metadata structure.
+
+        T1.2: Also resolves the variant-first strategy (reading_goal /
+        reading_variant / strategy_hash / layer_policy_hash) from
+        ``input_json`` and cross-validates against the live resolver. The
+        resolved ``grammar_prompt_lines`` are placed in the context dict so
+        ``_build_window_prompt`` can inject them into the LLM prompt. Fail-
+        closed: missing metadata or hash mismatch raises
+        ``GrammarWindowExecutionError``; there is no default fallback.
         """
         async with self.get_pool().acquire() as conn:
             job_row = await conn.fetchrow(
@@ -908,6 +1246,9 @@ class GrammarWindowWorkerService:
                 base_text=base_text,
             )
 
+        # T1.2: resolve + validate variant strategy from input_json metadata.
+        strategy_info = _resolve_window_strategy(input_data)
+
         return {
             "job_id": job_id,
             "window_id": UUID(str(input_data["window_id"])),
@@ -921,6 +1262,13 @@ class GrammarWindowWorkerService:
             "window_budget": input_data.get("window_budget", {}),
             "target_unit_ids": list(input_data.get("target_unit_ids", [])),
             "target_anchor_ids": target_anchor_ids,
+            # T1.2 strategy fields consumed by _build_window_prompt.
+            "reading_goal": strategy_info["reading_goal"],
+            "reading_variant": strategy_info["reading_variant"],
+            "strategy_version": strategy_info["strategy_version"],
+            "strategy_hash": strategy_info["strategy_hash"],
+            "layer_policy_hash": strategy_info["layer_policy_hash"],
+            "grammar_prompt_lines": strategy_info["grammar_prompt_lines"],
         }
 
     async def _load_anchor_rows(
@@ -983,12 +1331,15 @@ class GrammarWindowWorkerService:
     # §8.3 LLM call (delegates to injected executor)
     # ------------------------------------------------------------------
 
-    async def _call_llm(self, context: dict[str, Any]) -> list[CandidateItem]:
-        """Call the grammar window executor and return candidates.
+    async def _call_llm(
+        self, context: dict[str, Any]
+    ) -> GrammarWindowExecutionResult:
+        """Call the grammar window executor and return the execution result.
 
         Delegates to ``self._executor.generate(context)``. The executor is
         responsible for building the prompt, invoking the LLM, and parsing
-        the structured output into ``CandidateItem`` objects.
+        the structured output into ``CandidateItem`` objects, plus
+        returning usage/model metadata for observability.
 
         Raises ``GrammarWindowExecutionError`` when no executor is
         configured (the default ``UnconfiguredGrammarWindowExecutor``).

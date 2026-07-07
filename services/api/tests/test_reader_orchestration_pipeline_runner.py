@@ -17,6 +17,8 @@ from app.schemas.reader_orchestration import (
     ReaderTextRangeAnchor,
     SentenceAnalysisChunk,
     SentenceAnalysisItem,
+    TranslationBatchGenerationOutput,
+    TranslationBatchUnitOutput,
     TranslationGenerationGroup,
     TranslationLayerGenerationOutput,
     VocabularyHighlightItem,
@@ -40,13 +42,21 @@ from app.services.reader_orchestration.pipeline_runner import (
     ReaderEnhancementPipelineRunner,
 )
 from app.services.reader_orchestration.translation_worker import (
+    TranslationBatchExecutionResult,
+    TranslationBatchJobContext,
     TranslationExecutionResult,
     TranslationJobContext,
     TranslationWorkerService,
 )
 from app.services.reader_orchestration.vocabulary_worker import (
     UnconfiguredVocabularyExecutor,
+    VocabularyBatchCandidateOutput,
+    VocabularyBatchExecutionResult,
+    VocabularyBatchJobContext,
+    VocabularyBatchUnitCandidateOutput,
+    VocabularyCandidateOutput,
     VocabularyExecutionResult,
+    VocabularyHighlightCandidateItem,
     VocabularyJobContext,
     VocabularyWorkerService,
 )
@@ -68,6 +78,14 @@ from tests.reader_orchestration_test_support import (
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _MIGRATION_0015_SQL = (
     _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
+).read_text(encoding="utf-8")
+
+# T1.1 short-article batch path: migration 0017 adds ``translate_article`` and
+# ``build_vocabulary_layer_article`` to the ``reader_jobs.job_type`` CHECK
+# constraint, and ``translation_batch`` / ``vocabulary_batch`` to the
+# ``reader_runtime_spans.worker_type`` CHECK constraint.
+_MIGRATION_0017_SQL = (
+    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
 ).read_text(encoding="utf-8")
 
 LEASE_DURATION = timedelta(seconds=30)
@@ -162,6 +180,96 @@ class _MutatingTranslator:
                     new_base_id,
                 )
         return await _StaticTranslator().translate(context)
+
+
+class _MutatingBatchTranslator:
+    """T1.1 batch version of _MutatingTranslator: mutates the base during
+    the batch LLM call so the publish fence fails with superseded.
+    """
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+
+    async def translate_batch(
+        self,
+        context: TranslationBatchJobContext,
+    ) -> TranslationBatchExecutionResult:
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "UPDATE reading_bases SET status = 'superseded' WHERE id = $1",
+                    context.base_id,
+                )
+                new_base_id = await conn.fetchval(
+                    """
+                    INSERT INTO reading_bases (
+                        reading_record_id,
+                        base_version,
+                        record_generation,
+                        text,
+                        content_sha256,
+                        content_utf16_length,
+                        canonicalizer_version,
+                        builder_version,
+                        segmenter_version,
+                        language,
+                        title_snapshot,
+                        navigation_json,
+                        status
+                    )
+                    SELECT
+                        reading_record_id,
+                        base_version + 1,
+                        record_generation + 1,
+                        text,
+                        content_sha256,
+                        content_utf16_length,
+                        canonicalizer_version,
+                        builder_version,
+                        segmenter_version,
+                        language,
+                        title_snapshot,
+                        navigation_json,
+                        'active'
+                    FROM reading_bases
+                    WHERE id = $1
+                    RETURNING id
+                    """,
+                    context.base_id,
+                )
+                assert new_base_id is not None
+                await conn.execute(
+                    """
+                    UPDATE reading_records
+                    SET generation = generation + 1,
+                        active_base_id = $2
+                    WHERE id = $1
+                    """,
+                    context.reading_record_id,
+                    new_base_id,
+                )
+        return await _StaticBatchTranslator().translate_batch(context)
+
+
+class _UnconfiguredVocabularyBatchExecutor:
+    """T1.1 batch version of UnconfiguredVocabularyExecutor: always raises
+    vocabulary_executor_unconfigured so the fail-closed path is exercised.
+    """
+
+    async def generate_batch(
+        self,
+        context: VocabularyBatchJobContext,
+    ) -> VocabularyBatchExecutionResult:
+        from app.services.reader_orchestration.vocabulary_worker import (
+            VocabularyExecutionError,
+        )
+
+        raise VocabularyExecutionError(
+            "vocabulary batch executor is not configured",
+            retryable=False,
+            failure_class="configuration",
+            failure_code="vocabulary_executor_unconfigured",
+        )
 
 
 class _StaticVocabularyExecutor:
@@ -273,6 +381,94 @@ class _StaticGrammarExecutor:
         )
 
 
+class _StaticBatchTranslator:
+    """T1.1 fake batch translator: 1 LLM call → N per-unit translation groups.
+
+    Mirrors :class:`_StaticTranslator` but accepts the batch context and
+    returns :class:`TranslationBatchGenerationOutput` with one
+    :class:`TranslationBatchUnitOutput` per unit.
+    """
+
+    async def translate_batch(
+        self,
+        context: TranslationBatchJobContext,
+    ) -> TranslationBatchExecutionResult:
+        units_output = [
+            TranslationBatchUnitOutput(
+                unit_id=unit.unit_id,
+                groups=[
+                    TranslationGenerationGroup(
+                        anchor_segment_ids=[
+                            anchor_segment.anchor_segment_id
+                            for anchor_segment in unit.anchor_segments
+                        ],
+                        translated_text=f"译文：{unit.source_text}",
+                    )
+                ],
+            )
+            for unit in context.units
+        ]
+        return TranslationBatchExecutionResult(
+            output=TranslationBatchGenerationOutput(units=units_output),
+            usage_data={"input_tokens": 1, "output_tokens": 1},
+            prompt_version="pipeline-test-translation-batch",
+            model_profile="fake_translation_batch",
+            model_provider="fake",
+            model_name="fake-translation-batch",
+        )
+
+
+class _StaticBatchVocabularyExecutor:
+    """T1.1 fake batch vocabulary executor: 1 LLM call → N per-unit candidates.
+
+    Mirrors :class:`_StaticVocabularyExecutor` but accepts the batch context
+    and returns :class:`VocabularyBatchCandidateOutput` with one
+    :class:`VocabularyBatchUnitCandidateOutput` per unit.
+    """
+
+    async def generate_batch(
+        self,
+        context: VocabularyBatchJobContext,
+    ) -> VocabularyBatchExecutionResult:
+        units_output: list[VocabularyBatchUnitCandidateOutput] = []
+        for unit in context.units:
+            if not unit.anchor_segments:
+                units_output.append(
+                    VocabularyBatchUnitCandidateOutput(unit_id=unit.unit_id, items=[])
+                )
+                continue
+            anchor_segment = unit.anchor_segments[0]
+            word_match = WORD_RE.search(anchor_segment.text)
+            if word_match is None:
+                units_output.append(
+                    VocabularyBatchUnitCandidateOutput(unit_id=unit.unit_id, items=[])
+                )
+                continue
+            selected_text = word_match.group(0)
+            units_output.append(
+                VocabularyBatchUnitCandidateOutput(
+                    unit_id=unit.unit_id,
+                    items=[
+                        VocabularyHighlightCandidateItem(
+                            anchor_segment_id=anchor_segment.anchor_segment_id,
+                            selected_text=selected_text,
+                            headword=selected_text.lower(),
+                            brief_explanation="关键词",
+                            reason="pipeline_runner_test_batch",
+                        )
+                    ],
+                )
+            )
+        return VocabularyBatchExecutionResult(
+            output=VocabularyBatchCandidateOutput(units=units_output),
+            usage_data={"input_tokens": 1, "output_tokens": 1},
+            prompt_version="pipeline-test-vocabulary-batch",
+            model_profile="fake_vocabulary_batch",
+            model_provider="fake",
+            model_name="fake-vocabulary-batch",
+        )
+
+
 class _StaticTitleGenerator:
     async def generate(
         self,
@@ -297,6 +493,7 @@ async def pipeline_runner_env() -> asyncpg.Pool:
     await admin.execute(f'SET search_path TO "{schema_name}", public')
     await admin.execute(BASELINE_SQL)
     await admin.execute(_MIGRATION_0015_SQL)
+    await admin.execute(_MIGRATION_0017_SQL)
     await admin.close()
 
     pool = await make_pool(schema_name)
@@ -328,12 +525,20 @@ def _make_runner(
     translator: object | None = None,
     vocabulary_executor: object | None = None,
     grammar_executor: object | None = None,
+    batch_translator: object | None = None,
+    batch_vocabulary_executor: object | None = None,
 ) -> ReaderEnhancementPipelineRunner:
+    # T1.1 short-article batch path: 短文现在走 batch worker 而非 per-unit。
+    # 即使测试传入 per-unit translator / vocabulary_executor，我们也必须
+    # 注入 fake batch executors，否则 batch worker 会回退到
+    # PydanticAITranslationBatchExecutor 并尝试调用真实 LLM。
+    # per-unit translator 仍然保留给长文路径和 _MutatingTranslator 测试。
     translation_worker = (
         TranslationWorkerService(
             pool=pool,
             layer_publisher=CompatTranslationLayerPublisher(pool=pool),
             translator=translator,
+            batch_translator=batch_translator or _StaticBatchTranslator(),
         )
         if translator is not None
         else None
@@ -343,7 +548,12 @@ def _make_runner(
         worker_service=translation_worker,
     )
     vocabulary_worker = (
-        VocabularyWorkerService(pool=pool, executor=vocabulary_executor)
+        VocabularyWorkerService(
+            pool=pool,
+            executor=vocabulary_executor,
+            batch_executor=batch_vocabulary_executor
+            or _StaticBatchVocabularyExecutor(),
+        )
         if vocabulary_executor is not None
         else None
     )
@@ -358,12 +568,13 @@ def _make_runner(
     )
     # enable_zplus_grammar=False: 这些是 legacy 4-worker 路径测试，
     # 期望 bootstrap 创建 per-unit grammar_bundle jobs 并由 4-worker
-    # 顺序处理。Z+ window 路径由 test_pipeline_runner_window_dispatch.py
+    # 顺序处理。Z+ window 路由由 test_pipeline_runner_window_dispatch.py
     # 和 test_grammar_window_worker.py 单独覆盖。
     return ReaderEnhancementPipelineRunner(
         pool=pool,
         display_title_worker_service=display_title_worker,
         translation_orchestrator=orchestrator,
+        translation_batch_worker_service=translation_worker,
         vocabulary_worker_service=vocabulary_worker,
         grammar_worker_service=grammar_worker,
         enable_zplus_grammar=False,
@@ -507,11 +718,13 @@ async def test_bootstrap_missing_jobs_covers_all_units_and_is_idempotent(
     )
     assert unit_count == 3
     assert first.job_counts.display_title == 1
-    assert first.job_counts.translation == unit_count
-    assert first.job_counts.vocabulary == unit_count
+    # T1.1 short-article batch path: 短文走 batch，translation/vocabulary
+    # 各创建 1 个 batch job（而非 per-unit N 个）。
+    assert first.job_counts.translation == 1
+    assert first.job_counts.vocabulary == 1
     assert first.job_counts.grammar_bundle == unit_count
-    assert len(first.translation_results) == unit_count
-    assert len(first.vocabulary_results) == unit_count
+    assert len(first.translation_results) == 1
+    assert len(first.vocabulary_results) == 1
     assert len(first.grammar_results) == unit_count
 
     second = await runner.bootstrap_missing_jobs(
@@ -528,16 +741,27 @@ async def test_bootstrap_missing_jobs_covers_all_units_and_is_idempotent(
         article.record_id,
         "generate_display_title_zh",
     ) == 1
+    # T1.1: short article creates translate_article batch job, not per-unit
     assert await _count_jobs(
         pipeline_runner_env,
         article.record_id,
         "translate_unit",
-    ) == unit_count
+    ) == 0
+    assert await _count_jobs(
+        pipeline_runner_env,
+        article.record_id,
+        "translate_article",
+    ) == 1
     assert await _count_jobs(
         pipeline_runner_env,
         article.record_id,
         "build_vocabulary_layer",
-    ) == unit_count
+    ) == 0
+    assert await _count_jobs(
+        pipeline_runner_env,
+        article.record_id,
+        "build_vocabulary_layer_article",
+    ) == 1
     assert await _count_jobs(
         pipeline_runner_env,
         article.record_id,
@@ -582,17 +806,21 @@ async def test_run_only_drains_jobs_for_target_record(
         user_id=user_id,
         lease_owner="pipeline-record-scope",
         lease_duration=LEASE_DURATION,
-        max_ticks=4,
+        # T1.1: worker_order 现在包含 batch workers（6 个 worker），
+        # 需要 6 个 tick 才能在一轮内完成 4 个 job（display_title,
+        # translation_batch, vocabulary_batch, grammar_bundle）。
+        max_ticks=6,
         max_jobs=4,
     )
 
     assert summary.record_id == target_article.record_id
     assert summary.base_id == target_article.base_id
     assert summary.total_jobs == 4
-    assert summary.total_ticks == 4
+    assert summary.total_ticks == 6
     assert summary.stopped_reason == "max_jobs_reached"
     assert summary.outcome_counts.succeeded == 4
-    assert summary.outcome_counts.no_job == 0
+    # T1.1: translation 和 vocabulary per-unit worker 在短文路径下 no_job
+    assert summary.outcome_counts.no_job == 2
 
     assert await _count_layers(
         pipeline_runner_env,
@@ -670,25 +898,37 @@ async def test_run_with_fake_executors_publishes_all_layers_and_snapshot_reload_
         user_id=user_id,
         lease_owner="pipeline-success",
         lease_duration=LEASE_DURATION,
-        max_ticks=13,
+        # T1.1: batch path 下 5 jobs (display_title + translation_batch
+        # + vocabulary_batch + 2 grammar_bundle), 6 workers per round.
+        # 3 rounds = 18 ticks; max_ticks=19 lets round 3 finish so the
+        # ``all_workers_no_job`` check fires instead of ``max_ticks_reached``.
+        max_ticks=19,
         max_jobs=12,
     )
 
-    assert summary.bootstrapped_job_counts.translation == 2
-    assert summary.bootstrapped_job_counts.vocabulary == 2
+    # T1.1: 短文走 batch，translation/vocabulary 各 1 个 batch job
+    assert summary.bootstrapped_job_counts.translation == 1
+    assert summary.bootstrapped_job_counts.vocabulary == 1
     assert summary.bootstrapped_job_counts.grammar_bundle == 2
     assert summary.bootstrapped_job_counts.display_title == 1
+    # 6 workers × 3 rounds = 18 ticks; each worker ticks once per round.
+    # Round 1: display_title/translation_batch/vocabulary_batch/grammar_bundle(1)
+    #          succeed (4 jobs), translation/vocabulary no_job.
+    # Round 2: grammar_bundle(1) succeeds, rest no_job.
+    # Round 3: all no_job → loop breaks.
     assert summary.worker_tick_counts.display_title == 3
+    assert summary.worker_tick_counts.translation_batch == 3
     assert summary.worker_tick_counts.translation == 3
+    assert summary.worker_tick_counts.vocabulary_batch == 3
     assert summary.worker_tick_counts.vocabulary == 3
     assert summary.worker_tick_counts.grammar_bundle == 3
-    assert summary.outcome_counts.succeeded == 7
+    assert summary.outcome_counts.succeeded == 5
     assert summary.outcome_counts.retry_later == 0
     assert summary.outcome_counts.failed_terminal == 0
     assert summary.outcome_counts.superseded == 0
-    assert summary.outcome_counts.no_job == 5
-    assert summary.total_jobs == 7
-    assert summary.total_ticks == 12
+    assert summary.outcome_counts.no_job == 13
+    assert summary.total_jobs == 5
+    assert summary.total_ticks == 18
     assert summary.stopped_reason == "all_workers_no_job"
     assert summary.stopped_worker_type is None
     assert summary.snapshot_reload_recommended is True
@@ -898,6 +1138,8 @@ async def test_run_reports_superseded_when_publish_fence_fails(
     runner = _make_runner(
         pipeline_runner_env,
         translator=_MutatingTranslator(pipeline_runner_env),
+        # T1.1: 短文走 batch 路径，需要用 batch mutating translator 触发 fence
+        batch_translator=_MutatingBatchTranslator(pipeline_runner_env),
         vocabulary_executor=_StaticVocabularyExecutor(),
         grammar_executor=_StaticGrammarExecutor(),
     )
@@ -912,7 +1154,8 @@ async def test_run_reports_superseded_when_publish_fence_fails(
     )
 
     assert summary.stopped_reason == "attention_required"
-    assert summary.stopped_worker_type == "translation"
+    # T1.1: 短文走 batch 路径，fence violation 来自 translation_batch worker
+    assert summary.stopped_worker_type == "translation_batch"
     assert summary.stopped_outcome == "superseded"
     assert summary.attention_code == "publish_fence_failed"
     assert summary.outcome_counts.succeeded == 1
@@ -941,6 +1184,9 @@ async def test_run_fail_closed_on_unconfigured_vocabulary_executor(
         pipeline_runner_env,
         translator=_StaticTranslator(),
         vocabulary_executor=UnconfiguredVocabularyExecutor(),
+        # T1.1: 短文走 batch 路径，需要用 batch unconfigured executor
+        # 触发 fail-closed
+        batch_vocabulary_executor=_UnconfiguredVocabularyBatchExecutor(),
     )
 
     summary = await runner.run(
@@ -953,7 +1199,8 @@ async def test_run_fail_closed_on_unconfigured_vocabulary_executor(
     )
 
     assert summary.stopped_reason == "attention_required"
-    assert summary.stopped_worker_type == "vocabulary"
+    # T1.1: 短文走 batch 路径，fail-closed 来自 vocabulary_batch worker
+    assert summary.stopped_worker_type == "vocabulary_batch"
     assert summary.stopped_outcome == "failed_terminal"
     assert summary.attention_code == "vocabulary_executor_unconfigured"
     assert summary.outcome_counts.succeeded == 2
@@ -1064,3 +1311,201 @@ async def test_run_respects_max_jobs(
         article.record_id,
         "grammar_note",
     ) == 0
+
+
+class _ReversedBatchTranslator:
+    """T1 acceptance fake: returns units in REVERSE order to verify the
+    publisher reorders outputs to match ``target_unit_ids`` (reading order).
+    """
+
+    async def translate_batch(
+        self,
+        context: TranslationBatchJobContext,
+    ) -> TranslationBatchExecutionResult:
+        units_output = [
+            TranslationBatchUnitOutput(
+                unit_id=unit.unit_id,
+                groups=[
+                    TranslationGenerationGroup(
+                        anchor_segment_ids=[
+                            anchor_segment.anchor_segment_id
+                            for anchor_segment in unit.anchor_segments
+                        ],
+                        translated_text=f"译文：{unit.source_text}",
+                    )
+                ],
+            )
+            for unit in reversed(context.units)
+        ]
+        return TranslationBatchExecutionResult(
+            output=TranslationBatchGenerationOutput(units=units_output),
+            usage_data={"input_tokens": 1, "output_tokens": 1},
+            prompt_version="pipeline-test-translation-batch-reversed",
+            model_profile="fake_translation_batch_reversed",
+            model_provider="fake",
+            model_name="fake-translation-batch-reversed",
+        )
+
+
+class _ReversedBatchVocabularyExecutor:
+    """T1 acceptance fake: returns units in REVERSE order to verify the
+    publisher reorders outputs to match ``target_unit_ids`` (reading order).
+    """
+
+    async def generate_batch(
+        self,
+        context: VocabularyBatchJobContext,
+    ) -> VocabularyBatchExecutionResult:
+        units_output: list[VocabularyBatchUnitCandidateOutput] = []
+        for unit in reversed(context.units):
+            if not unit.anchor_segments:
+                units_output.append(
+                    VocabularyBatchUnitCandidateOutput(unit_id=unit.unit_id, items=[])
+                )
+                continue
+            anchor_segment = unit.anchor_segments[0]
+            word_match = WORD_RE.search(anchor_segment.text)
+            if word_match is None:
+                units_output.append(
+                    VocabularyBatchUnitCandidateOutput(unit_id=unit.unit_id, items=[])
+                )
+                continue
+            selected_text = word_match.group(0)
+            units_output.append(
+                VocabularyBatchUnitCandidateOutput(
+                    unit_id=unit.unit_id,
+                    items=[
+                        VocabularyHighlightCandidateItem(
+                            anchor_segment_id=anchor_segment.anchor_segment_id,
+                            selected_text=selected_text,
+                            headword=selected_text.lower(),
+                            brief_explanation="关键词",
+                            reason="pipeline_runner_test_reversed",
+                        )
+                    ],
+                )
+            )
+        return VocabularyBatchExecutionResult(
+            output=VocabularyBatchCandidateOutput(units=units_output),
+            usage_data={"input_tokens": 1, "output_tokens": 1},
+            prompt_version="pipeline-test-vocabulary-batch-reversed",
+            model_profile="fake_vocabulary_batch_reversed",
+            model_provider="fake",
+            model_name="fake-vocabulary-batch-reversed",
+        )
+
+
+@pytest.mark.anyio
+async def test_t1_batch_publish_reorders_outputs_to_reading_order(
+    pipeline_runner_env: asyncpg.Pool,
+) -> None:
+    """T1 acceptance: batch executor returns units in reverse order, but
+    published layers/events follow reading order (target_unit_ids order)."""
+    user_id = await insert_user(pipeline_runner_env)
+    article = await submit_article_ready(
+        pipeline_runner_env,
+        user_id=user_id,
+        plain_text=_plain_text(3),
+        title="Batch Publish Order",
+    )
+    runner = _make_runner(
+        pipeline_runner_env,
+        translator=_StaticTranslator(),
+        vocabulary_executor=_StaticVocabularyExecutor(),
+        grammar_executor=_StaticGrammarExecutor(),
+        batch_translator=_ReversedBatchTranslator(),
+        batch_vocabulary_executor=_ReversedBatchVocabularyExecutor(),
+    )
+
+    summary = await runner.run(
+        record_id=article.record_id,
+        user_id=user_id,
+        lease_owner="batch-publish-order",
+        lease_duration=LEASE_DURATION,
+        # 3 units → batch path: 6 jobs (display_title + translation_batch
+        # + vocabulary_batch + 3 grammar_bundle). 6 workers × 4 rounds = 24
+        # ticks; max_ticks=30 lets round 4 (all no_job) finish so the
+        # ``all_workers_no_job`` check fires instead of ``max_ticks_reached``.
+        max_ticks=30,
+        max_jobs=20,
+    )
+    assert summary.stopped_reason == "all_workers_no_job"
+    # 3 translation + 3 vocabulary layers published (one per unit).
+    assert await _count_layers(
+        pipeline_runner_env,
+        article.record_id,
+        "translation",
+    ) == 3
+    assert await _count_layers(
+        pipeline_runner_env,
+        article.record_id,
+        "vocabulary",
+    ) == 3
+
+    async with pipeline_runner_env.acquire() as conn:
+        # Expected reading order from reading_units.order_index.
+        expected_units = [
+            row["unit_id"]
+            for row in await conn.fetch(
+                """
+                SELECT unit_id
+                FROM reading_units
+                WHERE reading_record_id = $1 AND base_id = $2
+                ORDER BY order_index ASC
+                """,
+                article.record_id,
+                article.base_id,
+            )
+        ]
+        # Actual publish order from enhancement_layers.published_at.
+        translation_order = [
+            row["target_key"]
+            for row in await conn.fetch(
+                """
+                SELECT target_key
+                FROM enhancement_layers
+                WHERE reading_record_id = $1
+                  AND layer_type = 'translation'
+                  AND status = 'published'
+                ORDER BY published_at ASC
+                """,
+                article.record_id,
+            )
+        ]
+        vocabulary_order = [
+            row["target_key"]
+            for row in await conn.fetch(
+                """
+                SELECT target_key
+                FROM enhancement_layers
+                WHERE reading_record_id = $1
+                  AND layer_type = 'vocabulary'
+                  AND status = 'published'
+                ORDER BY published_at ASC
+                """,
+                article.record_id,
+            )
+        ]
+
+    assert len(expected_units) == 3
+    # Reversed executor returned units in reverse order, but the publisher
+    # must have reordered them back to reading order before publishing.
+    assert translation_order == expected_units
+    assert vocabulary_order == expected_units
+
+
+def test_t1_reorder_outputs_by_target_unit_ids_helper() -> None:
+    """Unit test for _reorder_outputs_by_target_unit_ids."""
+    from app.services.reader_orchestration.layer_publisher import (
+        _reorder_outputs_by_target_unit_ids,
+    )
+
+    target_unit_ids = ["unit-0", "unit-1", "unit-2"]
+    outputs: list[tuple[str, str]] = [
+        ("unit-2", "c"),
+        ("unit-0", "a"),
+        ("unit-1", "b"),
+    ]
+    reordered = _reorder_outputs_by_target_unit_ids(outputs, target_unit_ids)
+    assert [uid for uid, _ in reordered] == target_unit_ids
+    assert [val for _, val in reordered] == ["a", "b", "c"]

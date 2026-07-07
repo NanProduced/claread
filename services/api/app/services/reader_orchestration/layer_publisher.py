@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -24,7 +24,13 @@ from .job_bootstrap import (
     GRAMMAR_JOB_TYPE,
     GRAMMAR_OPERATION_FINGERPRINT,
     GRAMMAR_TARGET_SCOPE,
+    TRANSLATION_BATCH_JOB_TYPE,
+    TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+    TRANSLATION_BATCH_TARGET_SCOPE,
     TRANSLATION_OPERATION_FINGERPRINT,
+    VOCABULARY_BATCH_JOB_TYPE,
+    VOCABULARY_BATCH_OPERATION_FINGERPRINT,
+    VOCABULARY_BATCH_TARGET_SCOPE,
     VOCABULARY_JOB_TYPE,
     VOCABULARY_OPERATION_FINGERPRINT,
     VOCABULARY_TARGET_SCOPE,
@@ -49,6 +55,8 @@ from .translation_parsed_decision import (
     build_translation_parsed_decision_documents,
     build_translation_parsed_decision_event_payload,
 )
+
+_T = TypeVar("_T")
 
 GRAMMAR_NOTE_LAYER_OPERATION_FINGERPRINT = "grammar_note_unit_v1"
 SENTENCE_ANALYSIS_LAYER_OPERATION_FINGERPRINT = "sentence_analysis_unit_v1"
@@ -96,6 +104,31 @@ class PublishedGrammarBundle:
     sentence_analysis_layer: PublishedGrammarLayer | None
     events: tuple[ReaderEventEnvelope, ...]
     no_op: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedTranslationBatch:
+    """T1.1 short-article batch publish result.
+
+    One batch job produces N per-unit ``enhancement_layers`` rows (one per
+    unit covered by the batch). ``layers`` preserves the unit order from
+    the batch output.
+    """
+
+    reading_record_id: UUID
+    base_id: UUID
+    generation: int
+    layers: tuple[PublishedTranslationLayer, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedVocabularyBatch:
+    """T1.1 short-article batch publish result for the vocabulary layer."""
+
+    reading_record_id: UUID
+    base_id: UUID
+    generation: int
+    layers: tuple[PublishedVocabularyLayer, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -438,6 +471,383 @@ class TranslationLayerPublisher:
                     event=event,
                 )
 
+    async def publish_article_translation_batch(
+        self,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        outputs: list[tuple[str, TranslationLayerOutput]],
+        quality_json: dict[str, Any] | None = None,
+    ) -> PublishedTranslationBatch:
+        """T1.1 short-article batch publish: wrap fence + N per-unit writes in
+        a ``publish_fence`` span.
+
+        ``outputs`` is a list of ``(unit_id, TranslationLayerOutput)`` pairs
+        produced by the batch worker. The publisher validates each per-unit
+        output against the existing anchor validation contract, inserts one
+        ``enhancement_layers`` row per unit (``target_scope='unit'``), and
+        transitions the single batch job → ``succeeded``.
+        """
+
+        parent = current_span()
+        recorder = get_default_recorder()
+        publish_span = await recorder.start_span(
+            trace_id=parent.trace_id if parent is not None else uuid4(),
+            span_kind=SPAN_KIND_PUBLISH_FENCE,
+            parent_span_id=parent.span_id if parent is not None else None,
+            reader_job_id=job_id,
+            metadata={"layer_type": "translation", "batch": True},
+        )
+        try:
+            result = await self._publish_article_translation_batch_inner(
+                job_id=job_id,
+                lease_token=lease_token,
+                outputs=outputs,
+                quality_json=quality_json,
+            )
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_SUCCEEDED,
+                extra_metadata={
+                    "unit_count": len(result.layers),
+                    "generation": result.generation,
+                    "layer_ids": [str(layer.layer_id) for layer in result.layers],
+                },
+            )
+            return result
+        except FenceViolationError:
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_FAILED,
+                failure_class="fence_violation",
+                failure_code="fence_failed",
+            )
+            raise
+        except Exception as exc:
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_FAILED,
+                failure_class="publish_exception",
+                failure_code=type(exc).__name__,
+            )
+            raise
+
+    async def _publish_article_translation_batch_inner(
+        self,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        outputs: list[tuple[str, TranslationLayerOutput]],
+        quality_json: dict[str, Any] | None = None,
+    ) -> PublishedTranslationBatch:
+        published_at = datetime.now(UTC)
+
+        async with self.get_pool().acquire() as conn:
+            async with conn.transaction():
+                job_row = await conn.fetchrow(
+                    "SELECT * FROM reader_jobs WHERE id = $1 FOR UPDATE",
+                    job_id,
+                )
+                if job_row is None:
+                    raise LookupError(f"reader job {job_id} not found")
+                if job_row["status"] != "claimed":
+                    raise ValueError(
+                        "translation batch publish requires a claimed job"
+                    )
+                if (
+                    job_row["job_type"] != TRANSLATION_BATCH_JOB_TYPE
+                    or job_row["target_type"] != TRANSLATION_BATCH_TARGET_SCOPE
+                ):
+                    raise ValueError(
+                        "translation batch publish requires a "
+                        "translate_article/unit_range job"
+                    )
+
+                _assert_lease_valid(job_row, job_id, lease_token)
+                fence_error = await self._job_runtime._validate_fence(conn, job_row)  # type: ignore[attr-defined]
+                if fence_error is not None:
+                    raise FenceViolationError(
+                        f"publish fence failed for job {job_id}: {fence_error}"
+                    )
+
+                base_id = job_row["base_id"]
+                if base_id is None:
+                    raise FenceViolationError(
+                        f"publish fence failed for job {job_id}: missing_base"
+                    )
+                reading_record_id = job_row["reading_record_id"]
+                generation = int(job_row["expected_generation"])
+                operation_fingerprint = str(job_row["operation_fingerprint"] or "")
+
+                if not _fingerprint_matches_base(
+                    operation_fingerprint,
+                    TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+                ):
+                    raise TranslationPublishValidationError(
+                        "translation_batch_fingerprint_mismatch",
+                        (
+                            f"translation batch publish fingerprint "
+                            f"{operation_fingerprint!r} does not match "
+                            f"{TRANSLATION_BATCH_OPERATION_FINGERPRINT!r}"
+                        ),
+                    )
+
+                # Fail-closed: the batch output must cover exactly the units
+                # listed in the job input_json ``target_unit_ids``. Any
+                # mismatch (missing unit, extra unit, duplicate unit) fails
+                # the entire batch job before any layer is written.
+                input_json = job_row["input_json"]
+                target_unit_ids: list[str] = list(input_json.get("target_unit_ids") or [])
+                output_unit_ids = [unit_id for unit_id, _ in outputs]
+                if sorted(target_unit_ids) != sorted(output_unit_ids):
+                    raise TranslationPublishValidationError(
+                        "translation_batch_unit_id_mismatch",
+                        (
+                            f"translation batch output unit_ids "
+                            f"{output_unit_ids!r} do not match target_unit_ids "
+                            f"{target_unit_ids!r}"
+                        ),
+                    )
+                seen_unit_ids: set[str] = set()
+                for unit_id, _ in outputs:
+                    if unit_id in seen_unit_ids:
+                        raise TranslationPublishValidationError(
+                            "translation_batch_duplicate_unit_id",
+                            f"translation batch output has duplicate unit_id {unit_id!r}",
+                        )
+                    seen_unit_ids.add(unit_id)
+
+                # T1 acceptance: reorder outputs to match target_unit_ids
+                # (reading order) so published layers/events appear in the
+                # order the reader reads them, regardless of the order the
+                # batch executor returned.
+                outputs = _reorder_outputs_by_target_unit_ids(
+                    outputs, target_unit_ids
+                )
+
+                published_layers: list[PublishedTranslationLayer] = []
+                layer_ids: list[str] = []
+                event_ids: list[str] = []
+                for unit_id, unit_output in outputs:
+                    validation = await _validate_translation_unit_output_core(
+                        conn,
+                        reading_record_id=reading_record_id,
+                        base_id=base_id,
+                        unit_id=unit_id,
+                        parsed_output=unit_output,
+                    )
+                    await _assert_no_published_layer(
+                        conn,
+                        reading_record_id=reading_record_id,
+                        base_id=base_id,
+                        unit_id=unit_id,
+                        generation=generation,
+                        layer_type="translation",
+                    )
+
+                    payload = validation.output.model_dump(mode="json")
+                    coverage_summary = _build_translation_coverage_summary(
+                        unit_id=unit_id,
+                        generation=generation,
+                        validation=validation,
+                    )
+                    layer_id = uuid4()
+                    coverage_json, decision_json = (
+                        build_translation_parsed_decision_documents(
+                            layer_id=layer_id,
+                            coverage_summary=coverage_summary,
+                        )
+                    )
+                    effective_quality_json = dict(quality_json or {})
+                    effective_quality_json["group_count"] = len(validation.groups)
+                    effective_quality_json["covered_anchor_segment_count"] = len(
+                        validation.covered_anchor_segment_ids
+                    )
+                    effective_quality_json["batch"] = True
+
+                    # T1.1: append ``:unit_id`` to the per-unit layer
+                    # fingerprint so the ``uq_enhancement_layers_source_job_fingerprint``
+                    # unique constraint ``(source_job_id, operation_fingerprint)``
+                    # is not violated when N per-unit layers are published from
+                    # one batch job. The batch job's own fingerprint is
+                    # preserved on ``reader_jobs.operation_fingerprint``; the
+                    # per-unit layer's fingerprint is only used for
+                    # traceability and the unique constraint.
+                    unit_layer_fingerprint = (
+                        f"{job_row['operation_fingerprint']}:{unit_id}"
+                    )
+
+                    layer_row = await conn.fetchrow(
+                        """
+                        INSERT INTO enhancement_layers (
+                            id,
+                            reading_record_id,
+                            base_id,
+                            layer_type,
+                            layer_subtype,
+                            target_scope,
+                            target_key,
+                            generation,
+                            status,
+                            operation_fingerprint,
+                            schema_version,
+                            output_json,
+                            coverage_json,
+                            quality_json,
+                            source_run_id,
+                            source_job_id,
+                            published_at
+                        )
+                        VALUES (
+                            $1,
+                            $2,
+                            $3,
+                            'translation',
+                            NULL,
+                            'unit',
+                            $4,
+                            $5,
+                            'published',
+                            $6,
+                            $7,
+                            $8::jsonb,
+                            $9::jsonb,
+                            $10::jsonb,
+                            $11,
+                            $12,
+                            $13
+                        )
+                        RETURNING id
+                        """,
+                        layer_id,
+                        reading_record_id,
+                        base_id,
+                        unit_id,
+                        generation,
+                        unit_layer_fingerprint,
+                        TRANSLATION_LAYER_SCHEMA_VERSION,
+                        jsonb_param(payload),
+                        jsonb_param(coverage_json),
+                        jsonb_param(effective_quality_json),
+                        job_row["run_id"],
+                        job_id,
+                        published_at,
+                    )
+                    if layer_row is None:
+                        raise RuntimeError(
+                            "enhancement_layers insert did not return a row"
+                        )
+
+                    event = await self._event_runtime.publish_event_in_transaction(
+                        conn,
+                        record_id=reading_record_id,
+                        event_type="layer_published",
+                        payload_json={
+                            "record_id": str(reading_record_id),
+                            "base_id": str(base_id),
+                            "layer_id": str(layer_row["id"]),
+                            "layer_type": "translation",
+                            "target_scope": "unit",
+                            "target_key": unit_id,
+                            "generation": generation,
+                        },
+                        source_run_id=job_row["run_id"],
+                        source_job_id=job_id,
+                        source_layer_id=layer_row["id"],
+                        created_at=published_at,
+                    )
+                    await self._repository.upsert_parsed_decision(
+                        conn,
+                        reading_record_id=reading_record_id,
+                        base_id=base_id,
+                        unit_id=unit_id,
+                        policy_code=TRANSLATION_PARSED_POLICY_CODE,
+                        parsed_state="parsed",
+                        rationale_code=TRANSLATION_PARSED_RATIONALE_CODE,
+                        coverage_json=coverage_json,
+                        source_layer_id=layer_row["id"],
+                        source_job_id=job_id,
+                        decision_json=decision_json,
+                    )
+                    await self._event_runtime.publish_event_in_transaction(
+                        conn,
+                        record_id=reading_record_id,
+                        event_type="parsed_decision_updated",
+                        payload_json=build_translation_parsed_decision_event_payload(
+                            reading_record_id=reading_record_id,
+                            base_id=base_id,
+                            unit_id=unit_id,
+                            source_layer_id=layer_row["id"],
+                            source_job_id=job_id,
+                        ),
+                        source_run_id=job_row["run_id"],
+                        source_job_id=job_id,
+                        source_layer_id=layer_row["id"],
+                        created_at=published_at,
+                    )
+
+                    published_layers.append(
+                        PublishedTranslationLayer(
+                            layer_id=layer_row["id"],
+                            reading_record_id=reading_record_id,
+                            base_id=base_id,
+                            unit_id=unit_id,
+                            generation=generation,
+                            event=event,
+                        )
+                    )
+                    layer_ids.append(str(layer_row["id"]))
+                    event_ids.append(str(event.event_id))
+
+                updated_job = await self._job_runtime._apply_transition(  # type: ignore[attr-defined]
+                    conn,
+                    job_row=job_row,
+                    target_status="succeeded",
+                    available_at=None,
+                    pause_owner=None,
+                    output_ref={
+                        "layer_ids": layer_ids,
+                        "event_ids": event_ids,
+                        "unit_count": len(published_layers),
+                    },
+                    failure_class=None,
+                    failure_code=None,
+                    failure_message=None,
+                    rationale_code="translation_batch_published",
+                )
+                await self._job_runtime._insert_job_event(  # type: ignore[attr-defined]
+                    conn,
+                    reading_record_id=updated_job["reading_record_id"],
+                    run_id=updated_job["run_id"],
+                    job_id=updated_job["id"],
+                    event_type="job_succeeded",
+                    payload={
+                        "previous_status": job_row["status"],
+                        "target_status": "succeeded",
+                        "rationale_code": "translation_batch_published",
+                    },
+                )
+                await conn.execute(
+                    """
+                    UPDATE reader_runs
+                    SET status = 'completed',
+                        failure_class = NULL,
+                        failure_code = NULL,
+                        finished_at = $2,
+                        updated_at = $2
+                    WHERE id = $1
+                    """,
+                    job_row["run_id"],
+                    published_at,
+                )
+
+                return PublishedTranslationBatch(
+                    reading_record_id=reading_record_id,
+                    base_id=base_id,
+                    generation=generation,
+                    layers=tuple(published_layers),
+                )
+
 
 class VocabularyLayerPublisher:
     def __init__(
@@ -725,6 +1135,349 @@ class VocabularyLayerPublisher:
                     unit_id=unit_id,
                     generation=generation,
                     event=event,
+                )
+
+    async def publish_article_vocabulary_batch(
+        self,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        outputs: list[tuple[str, VocabularyLayerOutput]],
+        quality_json: dict[str, Any] | None = None,
+    ) -> PublishedVocabularyBatch:
+        """T1.1 short-article batch publish for the vocabulary layer.
+
+        Mirrors :meth:`TranslationLayerPublisher.publish_article_translation_batch`
+        but without the parsed-decision upsert (vocabulary has no
+        parsed_decision contract).
+        """
+
+        parent = current_span()
+        recorder = get_default_recorder()
+        publish_span = await recorder.start_span(
+            trace_id=parent.trace_id if parent is not None else uuid4(),
+            span_kind=SPAN_KIND_PUBLISH_FENCE,
+            parent_span_id=parent.span_id if parent is not None else None,
+            reader_job_id=job_id,
+            metadata={"layer_type": "vocabulary", "batch": True},
+        )
+        try:
+            result = await self._publish_article_vocabulary_batch_inner(
+                job_id=job_id,
+                lease_token=lease_token,
+                outputs=outputs,
+                quality_json=quality_json,
+            )
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_SUCCEEDED,
+                extra_metadata={
+                    "unit_count": len(result.layers),
+                    "generation": result.generation,
+                    "layer_ids": [str(layer.layer_id) for layer in result.layers],
+                },
+            )
+            return result
+        except FenceViolationError:
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_FAILED,
+                failure_class="fence_violation",
+                failure_code="fence_failed",
+            )
+            raise
+        except Exception as exc:
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_FAILED,
+                failure_class="publish_exception",
+                failure_code=type(exc).__name__,
+            )
+            raise
+
+    async def _publish_article_vocabulary_batch_inner(
+        self,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        outputs: list[tuple[str, VocabularyLayerOutput]],
+        quality_json: dict[str, Any] | None = None,
+    ) -> PublishedVocabularyBatch:
+        published_at = datetime.now(UTC)
+
+        async with self.get_pool().acquire() as conn:
+            async with conn.transaction():
+                job_row = await conn.fetchrow(
+                    "SELECT * FROM reader_jobs WHERE id = $1 FOR UPDATE",
+                    job_id,
+                )
+                if job_row is None:
+                    raise LookupError(f"reader job {job_id} not found")
+                if job_row["status"] != "claimed":
+                    raise ValueError(
+                        "vocabulary batch publish requires a claimed job"
+                    )
+                if (
+                    job_row["job_type"] != VOCABULARY_BATCH_JOB_TYPE
+                    or job_row["target_type"] != VOCABULARY_BATCH_TARGET_SCOPE
+                ):
+                    raise ValueError(
+                        "vocabulary batch publish requires a "
+                        "build_vocabulary_layer_article/unit_range job"
+                    )
+
+                _assert_lease_valid(job_row, job_id, lease_token)
+                fence_error = await self._job_runtime._validate_fence(conn, job_row)  # type: ignore[attr-defined]
+                if fence_error is not None:
+                    raise FenceViolationError(
+                        f"publish fence failed for job {job_id}: {fence_error}"
+                    )
+
+                base_id = job_row["base_id"]
+                if base_id is None:
+                    raise FenceViolationError(
+                        f"publish fence failed for job {job_id}: missing_base"
+                    )
+                reading_record_id = job_row["reading_record_id"]
+                generation = int(job_row["expected_generation"])
+                operation_fingerprint = str(job_row["operation_fingerprint"] or "")
+
+                if not _fingerprint_matches_base(
+                    operation_fingerprint,
+                    VOCABULARY_BATCH_OPERATION_FINGERPRINT,
+                ):
+                    raise ValueError(
+                        f"vocabulary batch publish fingerprint "
+                        f"{operation_fingerprint!r} does not match "
+                        f"{VOCABULARY_BATCH_OPERATION_FINGERPRINT!r}"
+                    )
+
+                input_json = job_row["input_json"]
+                target_unit_ids: list[str] = list(input_json.get("target_unit_ids") or [])
+                output_unit_ids = [unit_id for unit_id, _ in outputs]
+                if sorted(target_unit_ids) != sorted(output_unit_ids):
+                    raise ValueError(
+                        f"vocabulary batch output unit_ids {output_unit_ids!r} "
+                        f"do not match target_unit_ids {target_unit_ids!r}"
+                    )
+                seen_unit_ids: set[str] = set()
+                for unit_id, _ in outputs:
+                    if unit_id in seen_unit_ids:
+                        raise ValueError(
+                            f"vocabulary batch output has duplicate unit_id {unit_id!r}"
+                        )
+                    seen_unit_ids.add(unit_id)
+
+                # T1 acceptance: reorder outputs to match target_unit_ids
+                # (reading order) so published layers/events appear in the
+                # order the reader reads them, regardless of the order the
+                # batch executor returned.
+                outputs = _reorder_outputs_by_target_unit_ids(
+                    outputs, target_unit_ids
+                )
+
+                published_layers: list[PublishedVocabularyLayer] = []
+                layer_ids: list[str] = []
+                event_ids: list[str] = []
+                for unit_id, unit_output in outputs:
+                    unit_row = await conn.fetchrow(
+                        """
+                        SELECT unit_id
+                        FROM reading_units
+                        WHERE reading_record_id = $1
+                          AND base_id = $2
+                          AND unit_id = $3
+                        """,
+                        reading_record_id,
+                        base_id,
+                        unit_id,
+                    )
+                    if unit_row is None:
+                        raise ValueError(
+                            f"vocabulary batch publish target unit {unit_id} does not exist"
+                        )
+
+                    existing_layer = await conn.fetchrow(
+                        """
+                        SELECT id
+                        FROM enhancement_layers
+                        WHERE reading_record_id = $1
+                          AND base_id = $2
+                          AND layer_type = 'vocabulary'
+                          AND target_scope = 'unit'
+                          AND target_key = $3
+                          AND generation = $4
+                          AND status = 'published'
+                        LIMIT 1
+                        """,
+                        reading_record_id,
+                        base_id,
+                        unit_id,
+                        generation,
+                    )
+                    if existing_layer is not None:
+                        raise ValueError(
+                            f"vocabulary layer already published for unit {unit_id}"
+                        )
+
+                    await _validate_vocabulary_items(
+                        conn,
+                        reading_record_id=reading_record_id,
+                        base_id=base_id,
+                        unit_id=unit_id,
+                        output=unit_output,
+                    )
+
+                    payload = unit_output.model_dump(mode="json")
+                    effective_quality_json = dict(quality_json or {})
+                    effective_quality_json["batch"] = True
+
+                    # T1.1: append ``:unit_id`` to the per-unit layer
+                    # fingerprint so the ``uq_enhancement_layers_source_job_fingerprint``
+                    # unique constraint ``(source_job_id, operation_fingerprint)``
+                    # is not violated when N per-unit layers are published from
+                    # one batch job. See ``publish_article_translation_batch``
+                    # for the same pattern.
+                    unit_layer_fingerprint = (
+                        f"{job_row['operation_fingerprint']}:{unit_id}"
+                    )
+
+                    layer_row = await conn.fetchrow(
+                        """
+                        INSERT INTO enhancement_layers (
+                            reading_record_id,
+                            base_id,
+                            layer_type,
+                            layer_subtype,
+                            target_scope,
+                            target_key,
+                            generation,
+                            status,
+                            operation_fingerprint,
+                            schema_version,
+                            output_json,
+                            coverage_json,
+                            quality_json,
+                            source_run_id,
+                            source_job_id,
+                            published_at
+                        )
+                        VALUES (
+                            $1,
+                            $2,
+                            'vocabulary',
+                            NULL,
+                            'unit',
+                            $3,
+                            $4,
+                            'published',
+                            $5,
+                            $6,
+                            $7::jsonb,
+                            '{}'::jsonb,
+                            $8::jsonb,
+                            $9,
+                            $10,
+                            $11
+                        )
+                        RETURNING id
+                        """,
+                        reading_record_id,
+                        base_id,
+                        unit_id,
+                        generation,
+                        unit_layer_fingerprint,
+                        int(unit_output.schema_version),
+                        jsonb_param(payload),
+                        jsonb_param(effective_quality_json),
+                        job_row["run_id"],
+                        job_id,
+                        published_at,
+                    )
+                    if layer_row is None:
+                        raise RuntimeError(
+                            "enhancement_layers insert did not return a row"
+                        )
+
+                    event = await self._event_runtime.publish_event_in_transaction(
+                        conn,
+                        record_id=reading_record_id,
+                        event_type="layer_published",
+                        payload_json={
+                            "record_id": str(reading_record_id),
+                            "base_id": str(base_id),
+                            "layer_id": str(layer_row["id"]),
+                            "layer_type": "vocabulary",
+                            "target_scope": "unit",
+                            "target_key": unit_id,
+                            "generation": generation,
+                        },
+                        source_run_id=job_row["run_id"],
+                        source_job_id=job_id,
+                        source_layer_id=layer_row["id"],
+                        created_at=published_at,
+                    )
+
+                    published_layers.append(
+                        PublishedVocabularyLayer(
+                            layer_id=layer_row["id"],
+                            reading_record_id=reading_record_id,
+                            base_id=base_id,
+                            unit_id=unit_id,
+                            generation=generation,
+                            event=event,
+                        )
+                    )
+                    layer_ids.append(str(layer_row["id"]))
+                    event_ids.append(str(event.event_id))
+
+                updated_job = await self._job_runtime._apply_transition(  # type: ignore[attr-defined]
+                    conn,
+                    job_row=job_row,
+                    target_status="succeeded",
+                    available_at=None,
+                    pause_owner=None,
+                    output_ref={
+                        "layer_ids": layer_ids,
+                        "event_ids": event_ids,
+                        "unit_count": len(published_layers),
+                    },
+                    failure_class=None,
+                    failure_code=None,
+                    failure_message=None,
+                    rationale_code="vocabulary_batch_published",
+                )
+                await self._job_runtime._insert_job_event(  # type: ignore[attr-defined]
+                    conn,
+                    reading_record_id=updated_job["reading_record_id"],
+                    run_id=updated_job["run_id"],
+                    job_id=updated_job["id"],
+                    event_type="job_succeeded",
+                    payload={
+                        "previous_status": job_row["status"],
+                        "target_status": "succeeded",
+                        "rationale_code": "vocabulary_batch_published",
+                    },
+                )
+                await conn.execute(
+                    """
+                    UPDATE reader_runs
+                    SET status = 'completed',
+                        failure_class = NULL,
+                        failure_code = NULL,
+                        finished_at = $2,
+                        updated_at = $2
+                    WHERE id = $1
+                    """,
+                    job_row["run_id"],
+                    published_at,
+                )
+
+                return PublishedVocabularyBatch(
+                    reading_record_id=reading_record_id,
+                    base_id=base_id,
+                    generation=generation,
+                    layers=tuple(published_layers),
                 )
 
 
@@ -1052,6 +1805,23 @@ async def _assert_no_published_layer(
         raise ValueError(f"{layer_type} layer already published for unit {unit_id}")
 
 
+def _reorder_outputs_by_target_unit_ids(
+    outputs: list[tuple[str, _T]],
+    target_unit_ids: list[str],
+) -> list[tuple[str, _T]]:
+    """Reorder batch outputs to match ``target_unit_ids`` (reading order).
+
+    T1 acceptance: the batch executor may return unit outputs in any order
+    (e.g. parallel LLM call completion order). The publisher must publish
+    per-unit layers/events in reading order so the frontend snapshot reload
+    sees layers appear in the same order the reader reads them. The unit set
+    has already been validated by the caller, so every ``target_unit_ids``
+    entry has exactly one matching output.
+    """
+    output_by_unit: dict[str, _T] = {uid: out for uid, out in outputs}
+    return [(uid, output_by_unit[uid]) for uid in target_unit_ids]
+
+
 def _build_translation_coverage_summary(
     *,
     unit_id: str,
@@ -1106,6 +1876,31 @@ async def _validate_translation_output_for_publish(
             "translation output must match current group-native TranslationLayerOutput",
         ) from exc
 
+    return await _validate_translation_unit_output_core(
+        conn,
+        reading_record_id=reading_record_id,
+        base_id=base_id,
+        unit_id=unit_id,
+        parsed_output=parsed_output,
+    )
+
+
+async def _validate_translation_unit_output_core(
+    conn: asyncpg.Connection,
+    *,
+    reading_record_id: UUID,
+    base_id: UUID,
+    unit_id: str,
+    parsed_output: TranslationLayerOutput,
+) -> _ValidatedTranslationOutput:
+    """Validate a parsed translation output against unit anchor segments.
+
+    T1.1 short-article batch path: the batch publisher splits the LLM output
+    into per-unit :class:`TranslationLayerOutput` objects and calls this
+    core for each unit. The per-unit fingerprint check is intentionally NOT
+    performed here; the batch publish method validates the batch job
+    fingerprint once at the top.
+    """
     context = await _load_unit_anchor_validation_context(
         conn,
         reading_record_id=reading_record_id,

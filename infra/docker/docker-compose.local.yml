@@ -25,6 +25,10 @@ services:
       - ../migrations/0011_reader_display_title_generation.sql:/docker-entrypoint-initdb.d/0011_reader_display_title_generation.sql:ro
       - ../migrations/0012_reader_record_reading_strategy.sql:/docker-entrypoint-initdb.d/0012_reader_record_reading_strategy.sql:ro
       - ../migrations/0013_user_annotation_color_palette.sql:/docker-entrypoint-initdb.d/0013_user_annotation_color_palette.sql:ro
+      - ../migrations/0014_reader_runtime_spans.sql:/docker-entrypoint-initdb.d/0014_reader_runtime_spans.sql:ro
+      - ../migrations/0015_layer_analysis_plans.sql:/docker-entrypoint-initdb.d/0015_layer_analysis_plans.sql:ro
+      - ../migrations/0016_reader_runtime_spans_grammar_bundle_window.sql:/docker-entrypoint-initdb.d/0016_reader_runtime_spans_grammar_bundle_window.sql:ro
+      - ../migrations/0017_reader_jobs_batch_path_job_types.sql:/docker-entrypoint-initdb.d/0017_reader_jobs_batch_path_job_types.sql:ro
       - ../migrations/eval-center/0001_eval_center_control_plane.sql:/docker-entrypoint-initdb.d/0001_eval_center_control_plane.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-claread} -d ${POSTGRES_DB:-claread}"]

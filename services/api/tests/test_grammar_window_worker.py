@@ -18,29 +18,38 @@ The process_window_job test verifies ALREADY_TERMINAL short-circuits the LLM.
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import asyncpg
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 from app.contracts.annotation import slice_by_utf16_offsets
 from app.database import connection as db_connection
 from app.services.reader_orchestration.grammar_window_worker import (
     GrammarWindowExecutionError,
+    GrammarWindowExecutionResult,
     GrammarWindowWorkerService,
     PreflightResult,
+    PydanticAIGrammarWindowExecutor,
+    _resolve_window_strategy,
 )
-from app.services.reader_orchestration.job_runtime import ClaimResult
+from app.services.reader_orchestration.job_runtime import (
+    ClaimResult,
+    IllegalTransitionError,
+)
+from app.services.reader_orchestration.reading_strategy import (
+    resolve_reader_variant_strategy,
+)
 from app.services.reader_orchestration.window_selector import CandidateItem
 from app.services.reader_orchestration.zplus_bootstrap import (
     ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
     ZPlusBootstrapService,
+    _compute_window_budget,
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
@@ -316,7 +325,7 @@ async def test_preflight_rejects_running_window_with_different_job_id(
     """§8.2 running window + different job_id → IllegalTransitionError."""
     pool, job_id, lease_token, window_id = test_db_pool_with_running_window_other_job
     service = GrammarWindowWorkerService(pool=pool)
-    with pytest.raises(Exception):
+    with pytest.raises(IllegalTransitionError):
         await service.preflight_window_job(
             job_id=job_id,
             lease_token=lease_token,
@@ -332,7 +341,7 @@ async def test_preflight_raises_on_unknown_status(
     """§8.2 unknown status → IllegalTransitionError (defensive)."""
     pool, job_id, lease_token, window_id = test_db_pool_with_unknown_status_window
     service = GrammarWindowWorkerService(pool=pool)
-    with pytest.raises(Exception):
+    with pytest.raises(IllegalTransitionError):
         await service.preflight_window_job(
             job_id=job_id,
             lease_token=lease_token,
@@ -379,6 +388,7 @@ def _make_claim() -> ClaimResult:
         job_id=uuid4(),
         run_id=uuid4(),
         reading_record_id=uuid4(),
+        user_id=uuid4(),
         base_id=uuid4(),
         job_type="build_grammar_bundle_window",
         target_type="unit_range",
@@ -406,6 +416,38 @@ async def test_process_window_job_skips_when_already_terminal() -> None:
     assert result["status"] == "already_terminal"
     service._load_window_context.assert_not_called()
     service._call_llm.assert_not_called()
+
+
+async def test_ground_span_returns_unit_relative_offsets_for_later_unit() -> None:
+    """Grounding must emit offsets relative to the target unit, not base text.
+
+    Snapshot validation checks spans against ``anchor_segments.unit_*``. This
+    regression covers non-zero ``unit_base_start_utf16`` so Z+ windows cannot
+    accidentally publish base-relative offsets for unit 2+.
+    """
+    executor = PydanticAIGrammarWindowExecutor()
+    base_id = uuid4()
+
+    grounded = executor._ground_span(
+        anchor={
+            "anchor_segment_id": "s2",
+            "unit_id": "u2",
+            "base_start_utf16": 120,
+            "base_end_utf16": 131,
+            "unit_base_start_utf16": 100,
+            "unit_base_end_utf16": 180,
+            "source_text": "Hello world",
+        },
+        selected_text="world",
+        context={"base_id": str(base_id)},
+    )
+
+    assert grounded is not None
+    assert grounded.base_id == str(base_id)
+    assert grounded.unit_id == "u2"
+    assert grounded.anchor_segment_id == "s2"
+    assert grounded.start_offset == 26
+    assert grounded.end_offset == 31
 
 
 # ---------------------------------------------------------------------------
@@ -533,7 +575,8 @@ async def test_call_llm_delegates_to_executor() -> None:
             quality_score=0.8,
         )
     ]
-    mock_executor.generate.return_value = expected_candidates
+    expected_result = GrammarWindowExecutionResult(candidates=expected_candidates)
+    mock_executor.generate.return_value = expected_result
 
     service = GrammarWindowWorkerService(
         pool=MagicMock(),
@@ -542,7 +585,7 @@ async def test_call_llm_delegates_to_executor() -> None:
     context = {"window_id": "test-window", "target_anchors": []}
     result = await service._call_llm(context)
 
-    assert result == expected_candidates
+    assert result is expected_result
     mock_executor.generate.assert_called_once_with(context)
 
 
@@ -559,7 +602,8 @@ async def test_process_window_job_calls_executor_and_returns_candidates() -> Non
             quality_score=0.8,
         )
     ]
-    mock_executor.generate.return_value = expected_candidates
+    expected_result = GrammarWindowExecutionResult(candidates=expected_candidates)
+    mock_executor.generate.return_value = expected_result
 
     service = GrammarWindowWorkerService(
         pool=MagicMock(),
@@ -587,3 +631,208 @@ async def test_unconfigured_executor_raises_error() -> None:
     service = GrammarWindowWorkerService(pool=MagicMock())
     with pytest.raises(GrammarWindowExecutionError):
         await service._call_llm({"window_id": "test"})
+
+
+# ---------------------------------------------------------------------------
+# T1.2: variant strategy injection in grammar window worker
+# ---------------------------------------------------------------------------
+
+
+def _make_valid_strategy_input(
+    *,
+    reading_goal: str = "daily_reading",
+    reading_variant: str = "intermediate_reading",
+) -> dict[str, Any]:
+    """Build a valid window job input_json with strategy metadata.
+
+    Resolves the live strategy and embeds its version/hash/layer_policy_hash
+    so ``_resolve_window_strategy`` can cross-validate.
+    """
+    strategy = resolve_reader_variant_strategy(reading_goal, reading_variant)
+    grammar_layer = strategy.layers["grammar_bundle"]
+    return {
+        "reading_goal": reading_goal,
+        "reading_variant": reading_variant,
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash,
+        "layer_policy_hash": grammar_layer.policy_hash,
+        "window_id": str(uuid4()),
+        "plan_id": str(uuid4()),
+        "window_index": 0,
+        "target_anchor_ids": [],
+        "context_anchor_prev": [],
+        "context_anchor_next": [],
+        "target_unit_ids": [],
+        "window_budget": _compute_window_budget(),
+    }
+
+
+async def test_t12_resolve_window_strategy_returns_strategy_fields() -> None:
+    """T1.2: _resolve_window_strategy returns reading_goal/reading_variant/
+    strategy_hash/layer_policy_hash/grammar_prompt_lines from input_json."""
+    input_data = _make_valid_strategy_input()
+    result = _resolve_window_strategy(input_data)
+
+    assert result["reading_goal"] == "daily_reading"
+    assert result["reading_variant"] == "intermediate_reading"
+    assert result["strategy_version"] == input_data["strategy_version"]
+    assert result["strategy_hash"] == input_data["strategy_hash"]
+    assert result["layer_policy_hash"] == input_data["layer_policy_hash"]
+    # grammar_prompt_lines must be a non-empty list of policy lines
+    assert isinstance(result["grammar_prompt_lines"], list)
+    assert len(result["grammar_prompt_lines"]) >= 1
+
+
+async def test_t12_resolve_window_strategy_rejects_missing_metadata() -> None:
+    """T1.2: Missing strategy metadata raises GrammarWindowExecutionError
+    (fail-closed, no default fallback)."""
+    input_data: dict[str, Any] = {
+        "window_id": str(uuid4()),
+        "plan_id": str(uuid4()),
+        "window_index": 0,
+    }
+    with pytest.raises(GrammarWindowExecutionError) as exc_info:
+        _resolve_window_strategy(input_data)
+    assert "strategy_metadata_missing" in str(exc_info.value.failure_code)
+
+
+async def test_t12_resolve_window_strategy_rejects_hash_mismatch() -> None:
+    """T1.2: strategy_hash mismatch raises GrammarWindowExecutionError."""
+    input_data = _make_valid_strategy_input()
+    input_data["strategy_hash"] = "stale_hash_value"
+    with pytest.raises(GrammarWindowExecutionError) as exc_info:
+        _resolve_window_strategy(input_data)
+    assert "strategy_hash_mismatch" in str(exc_info.value.failure_code)
+
+
+async def test_t12_build_window_prompt_injects_reader_strategy_section() -> None:
+    """T1.2: _build_window_prompt injects <reader_strategy> section with
+    reading_goal/reading_variant/strategy_hash/layer_policy_hash/policy_lines."""
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    grammar_layer = strategy.layers["grammar_bundle"]
+
+    executor = PydanticAIGrammarWindowExecutor()
+    context: dict[str, Any] = {
+        "target_anchors": [
+            {
+                "anchor_segment_id": "anchor-1",
+                "unit_id": "unit-1",
+                "unit_order_index": 0,
+                "source_text": "Test sentence.",
+            }
+        ],
+        "context_anchor_prev": [],
+        "context_anchor_next": [],
+        "window_budget": _compute_window_budget(),
+        "reading_goal": "daily_reading",
+        "reading_variant": "intermediate_reading",
+        "strategy_version": strategy.strategy_version,
+        "strategy_hash": strategy.strategy_hash,
+        "layer_policy_hash": grammar_layer.policy_hash,
+        "grammar_prompt_lines": list(grammar_layer.prompt_lines),
+    }
+
+    prompt = executor._build_window_prompt(context)
+
+    assert "<reader_strategy>" in prompt
+    assert "</reader_strategy>" in prompt
+    assert "reading_goal: daily_reading" in prompt
+    assert "reading_variant: intermediate_reading" in prompt
+    assert f"strategy_hash: {strategy.strategy_hash}" in prompt
+    assert f"layer_policy_hash: {grammar_layer.policy_hash}" in prompt
+    assert "<policy_lines>" in prompt
+    for line in grammar_layer.prompt_lines:
+        assert f"- {line}" in prompt
+
+
+async def test_t12_build_window_prompt_omits_strategy_when_no_prompt_lines() -> None:
+    """T1.2: When grammar_prompt_lines is empty, no <reader_strategy> section."""
+    executor = PydanticAIGrammarWindowExecutor()
+    context: dict[str, Any] = {
+        "target_anchors": [],
+        "context_anchor_prev": [],
+        "context_anchor_next": [],
+        "window_budget": _compute_window_budget(),
+        "grammar_prompt_lines": [],
+    }
+
+    prompt = executor._build_window_prompt(context)
+
+    assert "<reader_strategy>" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# T1.3: budget key consistency (grammar_note.count / sentence_analysis.count)
+# ---------------------------------------------------------------------------
+
+
+async def test_t13_build_window_prompt_reads_nested_budget_keys() -> None:
+    """T1.3: _build_window_prompt reads grammar_note.count / sentence_analysis.count
+    from window_budget (the format zplus_bootstrap writes), NOT the old
+    max_grammar_notes / max_sentence_analyses flat keys."""
+    executor = PydanticAIGrammarWindowExecutor()
+    context: dict[str, Any] = {
+        "target_anchors": [],
+        "context_anchor_prev": [],
+        "context_anchor_next": [],
+        "window_budget": {
+            "grammar_note": {"count": 7},
+            "sentence_analysis": {"count": 4},
+        },
+        "grammar_prompt_lines": [],
+    }
+
+    prompt = executor._build_window_prompt(context)
+
+    # The nested {grammar_note: {count: 7}} must be read correctly.
+    assert "- max_grammar_notes: 7" in prompt
+    assert "- max_sentence_analyses: 4" in prompt
+
+
+async def test_t13_build_window_prompt_budget_keys_match_bootstrap_format() -> None:
+    """T1.3: The budget keys read by the worker match the format written by
+    zplus_bootstrap._compute_window_budget. This is the regression test for
+    the silent budget mismatch bug (old worker read max_grammar_notes /
+    max_sentence_analyses which never matched the nested format)."""
+    # zplus_bootstrap writes this exact shape
+    bootstrap_budget = _compute_window_budget()
+    assert bootstrap_budget == {
+        "grammar_note": {"count": 2},
+        "sentence_analysis": {"count": 1},
+    }
+
+    executor = PydanticAIGrammarWindowExecutor()
+    context: dict[str, Any] = {
+        "target_anchors": [],
+        "context_anchor_prev": [],
+        "context_anchor_next": [],
+        "window_budget": bootstrap_budget,
+        "grammar_prompt_lines": [],
+    }
+
+    prompt = executor._build_window_prompt(context)
+
+    # Worker must read the nested keys correctly, not fall back to 4/3 defaults.
+    assert "- max_grammar_notes: 2" in prompt
+    assert "- max_sentence_analyses: 1" in prompt
+    # Explicitly verify the old-bug defaults (4/3) are NOT present.
+    assert "- max_grammar_notes: 4" not in prompt
+    assert "- max_sentence_analyses: 3" not in prompt
+
+
+async def test_t13_build_window_prompt_falls_back_when_budget_missing() -> None:
+    """T1.3: When window_budget is missing or empty, worker falls back to
+    safe defaults (4/3). This is defensive, not the happy path."""
+    executor = PydanticAIGrammarWindowExecutor()
+    context: dict[str, Any] = {
+        "target_anchors": [],
+        "context_anchor_prev": [],
+        "context_anchor_next": [],
+        "window_budget": {},
+        "grammar_prompt_lines": [],
+    }
+
+    prompt = executor._build_window_prompt(context)
+
+    assert "- max_grammar_notes: 4" in prompt
+    assert "- max_sentence_analyses: 3" in prompt

@@ -26,6 +26,7 @@ services/api/static/covers/
 apps/directus/.runtime/
 apps/directus/runtime-evals/
 evals/runs/
+verification/reader_baseline/runs/
 
 # Local configuration and secrets
 .env
