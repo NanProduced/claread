@@ -137,6 +137,7 @@ export interface ReaderRecordPlateCalloutData {
   layerId: string;
   // grammar
   itemId?: string;
+  analysisId?: string;
   grammarPoint?: string;
   pattern?: string | null;
   note?: string;
@@ -1106,6 +1107,11 @@ function buildGrammarCalloutBlocks(
         continue;
       }
       seenGrammarItems.add(calloutId);
+      const rawAnalysisId = (mark as { analysis_id?: unknown }).analysis_id;
+      const analysisId =
+        typeof rawAnalysisId === "string"
+          ? rawAnalysisId.trim() || undefined
+          : undefined;
       callouts.push({
         type: "callout",
         id: calloutId,
@@ -1117,6 +1123,7 @@ function buildGrammarCalloutBlocks(
           unitId: segment.unit_id,
           layerId: mark.layer_id,
           itemId: mark.item_id,
+          ...(analysisId ? { analysisId } : {}),
           grammarPoint: mark.grammar_point,
           pattern: mark.pattern,
           note: mark.note,

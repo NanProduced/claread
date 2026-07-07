@@ -1472,7 +1472,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(content.hidden).toBe(true);
     expect(toggle.textContent?.trim()).toBe("");
     expect(toggle.getAttribute("aria-label")).toBe("展开语法解析");
-    expect(toggle.title).toBe("展开解析");
+    expect(toggle.getAttribute("title")).toBeNull();
     const pointerDownResult = fireEvent.pointerDown(toggle);
     const mouseDownResult = fireEvent.mouseDown(toggle);
     expect(pointerDownResult).toBe(false);
@@ -1505,7 +1505,7 @@ describe("ReaderRecordPlateSurface", () => {
     });
     expect(toggle.textContent?.trim()).toBe("");
     expect(toggle.getAttribute("aria-label")).toBe("收起语法解析");
-    expect(toggle.title).toBe("收起解析");
+    expect(toggle.getAttribute("title")).toBeNull();
 
     fireEvent.click(toggle);
     await waitFor(() => {
@@ -1708,7 +1708,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(content.hidden).toBe(true);
     expect(toggle.textContent?.trim()).toBe("");
     expect(toggle.getAttribute("aria-label")).toBe("展开长句拆析");
-    expect(toggle.title).toBe("展开解析");
+    expect(toggle.getAttribute("title")).toBeNull();
 
     fireEvent.click(toggle);
     await waitFor(() => {
@@ -1721,7 +1721,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(toggle.getAttribute("aria-label")).toBe("收起长句拆析");
   });
 
-  it("disables Ask from grammar callout actions and disables unsupported grammar feedback", () => {
+  it("hides unavailable Ask and grammar feedback actions when the grammar item lacks a real analysis id", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
     const grammarCallout = container.querySelector<HTMLElement>(
       '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_1"]',
@@ -1737,91 +1737,69 @@ describe("ReaderRecordPlateSurface", () => {
     const feedbackButton = grammarCallout.querySelector<HTMLButtonElement>(
       '[data-reader-record-callout-action="feedback"]',
     );
-    expect(askButton).not.toBeNull();
-    expect(feedbackButton).not.toBeNull();
-    if (!askButton || !feedbackButton) {
-      throw new Error("Expected grammar callout actions");
-    }
-    expect(askButton.disabled).toBe(true);
-    expect(askButton.getAttribute("aria-label")).toBe("带这条解析提问");
-    expect(askButton.title).toBe("当前解析暂不能加入 Ask Claread");
-    expect(feedbackButton.disabled).toBe(true);
-    expect(feedbackButton.title).toBe("当前解析缺少可反馈的记录 ID");
-    expect(
-      askButton.querySelector("svg")?.classList.contains(
-        "lucide-message-circle-question",
-      ),
-    ).toBe(true);
+    const toggleButton = grammarCallout.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
 
-    fireEvent.click(feedbackButton);
-    expect(screen.queryByRole("dialog", { name: "反馈选项" })).toBeNull();
-    fireEvent.click(askButton);
-    expect(screen.queryByRole("button", { name: "发送" })).toBeNull();
+    expect(askButton).toBeNull();
+    expect(feedbackButton).toBeNull();
+    expect(toggleButton).not.toBeNull();
+    expect(toggleButton?.getAttribute("title")).toBeNull();
   });
 
-  it("submits sentence analysis callout feedback only when analysis id is available", async () => {
+  it("renders article feedback as local UI without posting to the legacy feedback endpoint", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const requestUrl = new URL(String(input), "https://example.test");
-      if (requestUrl.pathname === "/api/web/feedback") {
-        return Promise.resolve(
-          new Response(JSON.stringify({ ok: true, message: "ok" }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        );
-      }
       return Promise.resolve(
-        new Response(JSON.stringify({ ok: true, favorited: false }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
+        requestUrl.pathname.startsWith("/api/web/favorites")
+          ? new Response(JSON.stringify({ ok: true, favorited: false }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            })
+          : new Response("Not Found", { status: 404 }),
       );
     });
     vi.stubGlobal("fetch", fetchMock);
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const prompt = container.querySelector<HTMLElement>(
+      '[data-reader-record-article-feedback="ready"]',
+    );
+    expect(prompt).not.toBeNull();
+    if (!prompt) {
+      throw new Error("Expected article feedback prompt");
+    }
+    expect(prompt.dataset.readerRecordBottomSpacer).toBe("article-feedback");
+    expect(within(prompt).getByText("这次解析有帮助吗？")).toBeTruthy();
+
+    const helpfulButton = within(prompt).getByRole("button", { name: "有帮助" });
+    fireEvent.click(helpfulButton);
+    expect(helpfulButton.getAttribute("aria-pressed")).toBe("true");
+    expect(within(prompt).getByRole("status").textContent).toContain(
+      "已选择：有帮助",
+    );
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input) === "/api/web/feedback"),
+    ).toBe(false);
+  });
+
+  it("keeps grammar and sentence callout feedback hidden until the new reader feedback contract exists", () => {
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const grammarCallout = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_1"]',
+    );
     const analysisBlock = container.querySelector<HTMLElement>(
       '[data-reader-record-node="sentence-analysis"]',
     );
-    const feedbackButton = analysisBlock?.querySelector<HTMLButtonElement>(
+    const grammarFeedbackButton = grammarCallout?.querySelector<HTMLButtonElement>(
       '[data-reader-record-callout-action="feedback"]',
     );
-    expect(analysisBlock).not.toBeNull();
-    expect(feedbackButton).not.toBeNull();
-    if (!analysisBlock || !feedbackButton) {
-      throw new Error("Expected sentence analysis feedback action");
-    }
-    expect(feedbackButton.disabled).toBe(false);
-
-    fireEvent.click(feedbackButton);
-    const menu = await screen.findByRole("dialog", { name: "反馈选项" });
-    fireEvent.click(within(menu).getByText("有问题"));
-
-    await waitFor(() => {
-      expect(
-        fetchMock.mock.calls.some(([url]) => url === "/api/web/feedback"),
-      ).toBe(true);
-    });
-    const feedbackCall = fetchMock.mock.calls.find(
-      ([url]) => url === "/api/web/feedback",
+    const sentenceFeedbackButton = analysisBlock?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-action="feedback"]',
     );
-    const body = JSON.parse(
-      String((feedbackCall?.[1] as RequestInit | undefined)?.body),
-    ) as Record<string, unknown>;
-    expect(body).toMatchObject({
-      feedbackScope: "annotation",
-      targetId: "sentence_analysis:analysis_1",
-      sentiment: "negative",
-      feedbackType: "inaccurate",
-      analysisRecordId: "analysis_1",
-      annotationType: "sentence_analysis",
-      entryPoint: "reader_record_callout",
-      clientSurface: "reader_record",
-    });
-    expect(body.contextJson).toMatchObject({
-      readingRecordId: "record_1",
-      annotationType: "sentence_analysis",
-      targetVariant: "sentence_analysis",
-    });
+    expect(grammarCallout).not.toBeNull();
+    expect(analysisBlock).not.toBeNull();
+    expect(grammarFeedbackButton).toBeNull();
+    expect(sentenceFeedbackButton).toBeNull();
   });
 
   it("marks callout chrome controls as excluded from copied content", () => {
@@ -5691,6 +5669,9 @@ describe("ReaderRecordPlateSurface", () => {
     }
 
     expect(chunk.dataset.readerRecordSentenceAnalysisChunkMatch).toBe("true");
+    expect(chunk.getAttribute("role")).toBe("button");
+    expect(chunk.getAttribute("aria-label")).toContain("定位原文片段：subject");
+    expect(chunk.tabIndex).toBe(0);
     expect(chunk.dataset.readerRecordSentenceAnalysisChunkSourceMarkId).toBe(
       "sentence_chunk:analysis_1:1:subject",
     );
@@ -5757,6 +5738,11 @@ describe("ReaderRecordPlateSurface", () => {
       for (const leaf of sourceLeaves) {
         expect(leaf.dataset.readerRecordSentenceAnalysisChunkActive).toBe("true");
       }
+    });
+
+    fireEvent.keyDown(chunk, { key: "Enter" });
+    await waitFor(() => {
+      expect(chunk.dataset.readerRecordSentenceAnalysisChunkActive).toBe("true");
     });
   });
 

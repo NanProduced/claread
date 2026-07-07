@@ -292,8 +292,12 @@ function ReaderCalloutActionButtons({
   feedbackDisabled?: boolean;
 }) {
   const { onAskFromCallout, onFeedbackFromCallout } = useReaderCalloutActions();
-  const askUnavailable = askDisabled || !target.text.trim() || !onAskFromCallout;
-  const feedbackUnavailable = feedbackDisabled || !onFeedbackFromCallout;
+  const askAvailable = Boolean(!askDisabled && target.text.trim() && onAskFromCallout);
+  const feedbackAvailable = Boolean(!feedbackDisabled && onFeedbackFromCallout);
+
+  if (!askAvailable && !feedbackAvailable) {
+    return null;
+  }
 
   return (
     <div
@@ -301,52 +305,40 @@ function ReaderCalloutActionButtons({
       data-reader-record-callout-actions={target.kind}
       {...copyExcludeProps}
     >
-      <button
-        type="button"
-        className="reader-record-plate-callout-icon-button"
-        aria-label="带这条解析提问"
-        title={
-          askUnavailable
-            ? "当前解析暂不能加入 Ask Claread"
-            : "带这条解析提问"
-        }
-        disabled={askUnavailable}
-        data-reader-record-callout-action="ask"
-        {...copyExcludeProps}
-        onPointerDown={stopReaderCalloutControlEvent}
-        onMouseDown={stopReaderCalloutControlEvent}
-        onClick={(event) => {
-          stopReaderCalloutControlEvent(event);
-          if (!askUnavailable) {
+      {askAvailable ? (
+        <button
+          type="button"
+          className="reader-record-plate-callout-icon-button"
+          aria-label="带这条解析提问"
+          data-reader-record-callout-action="ask"
+          {...copyExcludeProps}
+          onPointerDown={stopReaderCalloutControlEvent}
+          onMouseDown={stopReaderCalloutControlEvent}
+          onClick={(event) => {
+            stopReaderCalloutControlEvent(event);
             onAskFromCallout?.(target, event.currentTarget);
-          }
-        }}
-      >
-        <MessageCircleQuestion aria-hidden="true" size={15} strokeWidth={1.9} />
-      </button>
-      <button
-        type="button"
-        className="reader-record-plate-callout-icon-button"
-        aria-label="反馈解析"
-        title={
-          feedbackUnavailable
-            ? "当前解析缺少可反馈的记录 ID"
-            : "反馈解析"
-        }
-        disabled={feedbackUnavailable}
-        data-reader-record-callout-action="feedback"
-        {...copyExcludeProps}
-        onPointerDown={stopReaderCalloutControlEvent}
-        onMouseDown={stopReaderCalloutControlEvent}
-        onClick={(event) => {
-          stopReaderCalloutControlEvent(event);
-          if (!feedbackUnavailable) {
+          }}
+        >
+          <MessageCircleQuestion aria-hidden="true" size={15} strokeWidth={1.9} />
+        </button>
+      ) : null}
+      {feedbackAvailable ? (
+        <button
+          type="button"
+          className="reader-record-plate-callout-icon-button"
+          aria-label="反馈解析"
+          data-reader-record-callout-action="feedback"
+          {...copyExcludeProps}
+          onPointerDown={stopReaderCalloutControlEvent}
+          onMouseDown={stopReaderCalloutControlEvent}
+          onClick={(event) => {
+            stopReaderCalloutControlEvent(event);
             onFeedbackFromCallout?.(target, event.currentTarget);
-          }
-        }}
-      >
-        <Flag aria-hidden="true" size={15} strokeWidth={1.9} />
-      </button>
+          }}
+        >
+          <Flag aria-hidden="true" size={15} strokeWidth={1.9} />
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -566,6 +558,7 @@ function ReaderCalloutComponent({
         unitId: data?.unitId ?? "",
         layerId: data?.layerId ?? "",
         itemId: grammarItemId,
+        analysisId: data?.analysisId,
         title: title || label,
         preview,
         text: fullText,
@@ -693,7 +686,6 @@ function ReaderCalloutComponent({
                 aria-expanded={expanded}
                 aria-controls={contentId}
                 aria-label={expanded ? "收起语法解析" : "展开语法解析"}
-                title={expanded ? "收起解析" : "展开解析"}
                 data-reader-record-callout-toggle="grammar"
                 {...copyExcludeProps}
                 onPointerDown={stopReaderCalloutControlEvent}
@@ -712,7 +704,8 @@ function ReaderCalloutComponent({
               {actionTarget ? (
                 <ReaderCalloutActionButtons
                   target={actionTarget}
-                  feedbackDisabled
+                  askDisabled
+                  feedbackDisabled={!actionTarget.analysisId}
                 />
               ) : null}
             </div>
@@ -818,7 +811,6 @@ function ReaderSentenceAnalysisComponent({
               aria-expanded={expanded}
               aria-controls={contentId}
               aria-label={expanded ? "收起长句拆析" : "展开长句拆析"}
-              title={expanded ? "收起解析" : "展开解析"}
               data-reader-record-callout-toggle="sentence-analysis"
               {...copyExcludeProps}
               onPointerDown={stopReaderCalloutControlEvent}
@@ -892,6 +884,12 @@ function ReaderSentenceAnalysisChunkComponent({
   const chunkId = sentenceChunkDomId(chunk);
   const hasSourceMatch = Boolean(chunk.sourceMatch);
   const active = hasSourceMatch && activeChunkId === chunkId;
+  const chunkDescription = sentenceChunkDescription(chunk.label);
+  const activateChunk = React.useCallback(() => {
+    if (hasSourceMatch) {
+      setActiveChunkId(chunkId);
+    }
+  }, [chunkId, hasSourceMatch, setActiveChunkId]);
 
   return (
     <div
@@ -912,24 +910,39 @@ function ReaderSentenceAnalysisChunkComponent({
         chunk.sourceMatch ? String(chunk.sourceMatch.endOffset) : undefined
       }
       data-reader-record-sentence-analysis-chunk-active={active ? "true" : "false"}
+      role={hasSourceMatch ? "button" : undefined}
+      aria-label={
+        hasSourceMatch
+          ? `定位原文片段：${chunk.label}，${chunkDescription}`
+          : undefined
+      }
       tabIndex={hasSourceMatch ? 0 : undefined}
       onMouseEnter={() => {
-        if (hasSourceMatch) setActiveChunkId(chunkId);
+        activateChunk();
       }}
       onMouseLeave={() => {
         if (hasSourceMatch) setActiveChunkId(null);
       }}
       onFocus={() => {
-        if (hasSourceMatch) setActiveChunkId(chunkId);
+        activateChunk();
       }}
       onBlur={() => {
         if (hasSourceMatch) setActiveChunkId(null);
       }}
       onPointerDown={() => {
-        if (hasSourceMatch) setActiveChunkId(chunkId);
+        activateChunk();
       }}
       onClick={() => {
-        if (hasSourceMatch) setActiveChunkId(chunkId);
+        activateChunk();
+      }}
+      onKeyDown={(event) => {
+        if (!hasSourceMatch) {
+          return;
+        }
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          activateChunk();
+        }
       }}
     >
       <dt className="min-w-0">
@@ -937,7 +950,7 @@ function ReaderSentenceAnalysisChunkComponent({
           {chunk.label}
         </span>
         <span className="reader-record-plate-sentence-analysis-chunk-kind mt-0.5 block truncate font-sans text-muted/75">
-          {sentenceChunkDescription(chunk.label)}
+          {chunkDescription}
         </span>
       </dt>
       <dd className="reader-record-plate-sentence-analysis-chunk-body min-w-0 font-sans text-ink-soft/92">

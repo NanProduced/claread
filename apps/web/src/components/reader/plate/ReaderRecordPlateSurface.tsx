@@ -12,6 +12,7 @@ import type {
   HTMLAttributes,
   MouseEvent,
   PointerEvent as ReactPointerEvent,
+  ReactNode,
   Ref,
 } from "react";
 
@@ -58,11 +59,19 @@ import {
   Copy,
   Eye,
   Globe,
+  MessageSquareText,
   MoreVertical,
   Sparkles,
+  ThumbsDown,
+  ThumbsUp,
 } from "lucide-react";
 import { FavoriteButton } from "@/components/reader/FavoriteButton";
-import { readerCommandControl, readerTopBarAction } from "@/components/reader/interaction";
+import {
+  readerCommandControl,
+  readerInlineFocusRing,
+  readerTopBarAction,
+  readerTransitionFast,
+} from "@/components/reader/interaction";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -109,7 +118,6 @@ import {
   ReaderCalloutActionContext,
   ReaderGrammarInteractionContext,
   ReaderSentenceAnalysisInteractionContext,
-  type ReaderCalloutActionTarget,
 } from "@/components/editor/plugins/reader-blocks-kit";
 import {
   CommentPluginBridge,
@@ -168,6 +176,146 @@ type ReaderRecordWriteState =
   | { kind: "saving"; action: ReaderRecordWriteAction }
   | { kind: "saved"; action: ReaderRecordWriteAction; message: string }
   | { kind: "error"; action: ReaderRecordWriteAction; message: string };
+
+type ReaderRecordArticleFeedbackChoice = "helpful" | "issue" | "suggestion";
+
+const ARTICLE_FEEDBACK_STATUS: Record<ReaderRecordArticleFeedbackChoice, string> = {
+  helpful: "已选择：有帮助",
+  issue: "已选择：有问题",
+  suggestion: "已选择：写建议",
+};
+
+function ReaderRecordArticleFeedbackButton({
+  children,
+  choice,
+  icon,
+  selected,
+  onSelect,
+}: {
+  children: ReactNode;
+  choice: ReaderRecordArticleFeedbackChoice;
+  icon: ReactNode;
+  selected: boolean;
+  onSelect: (choice: ReaderRecordArticleFeedbackChoice) => void;
+}) {
+  const selectedClassName = {
+    helpful:
+      "bg-structure-green/10 text-structure-green",
+    issue:
+      "bg-error-red/10 text-error-red",
+    suggestion:
+      "bg-lens-blue/10 text-lens-blue",
+  }[choice];
+
+  const hoverClassName = {
+    helpful: "hover:bg-structure-green/10 hover:text-structure-green",
+    issue: "hover:bg-error-red/10 hover:text-error-red",
+    suggestion: "hover:bg-lens-blue/10 hover:text-lens-blue",
+  }[choice];
+
+  const dotClassName = {
+    helpful: "bg-structure-green",
+    issue: "bg-error-red",
+    suggestion: "bg-lens-blue",
+  }[choice];
+
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      data-reader-record-article-feedback-action={choice}
+      onClick={() => onSelect(choice)}
+      className={cn(
+        "group relative inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-transparent px-2.5 text-[13px] font-medium text-muted",
+        "flex-1 bg-transparent sm:flex-none",
+        readerInlineFocusRing,
+        readerTransitionFast,
+        "active:bg-background motion-reduce:transform-none motion-reduce:transition-none",
+        selected ? selectedClassName : hoverClassName,
+      )}
+    >
+      <span
+        className={cn(
+          "inline-flex size-4 items-center justify-center text-current",
+          "transition-transform duration-[160ms] ease-[var(--cl-ease-standard)] motion-reduce:transition-none",
+          selected
+            ? "scale-105"
+            : "group-hover:-translate-y-px group-active:translate-y-0",
+        )}
+      >
+        {icon}
+      </span>
+      <span>{children}</span>
+      {selected ? (
+        <span
+          aria-hidden="true"
+          className={cn("ml-0.5 size-1.5 rounded-full", dotClassName)}
+        />
+      ) : null}
+    </button>
+  );
+}
+
+function ReaderRecordArticleFeedback({
+  selectedChoice,
+  onSelect,
+}: {
+  selectedChoice: ReaderRecordArticleFeedbackChoice | null;
+  onSelect: (choice: ReaderRecordArticleFeedbackChoice) => void;
+}) {
+  return (
+    <section
+      aria-label="文章反馈"
+      data-reader-record-article-feedback="ready"
+      data-reader-record-bottom-spacer="article-feedback"
+      className="mt-[clamp(5rem,9vh,7rem)] border-t border-hairline/65 pb-[clamp(7rem,16vh,12rem)] pt-7"
+    >
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-[13px] font-semibold text-ink">
+            这次解析有帮助吗？
+          </p>
+          {selectedChoice ? (
+            <p
+              className="mt-1.5 text-xs leading-5 text-muted"
+              role="status"
+              aria-live="polite"
+            >
+              {ARTICLE_FEEDBACK_STATUS[selectedChoice]}
+            </p>
+          ) : null}
+        </div>
+
+        <div className="-mx-1 flex w-full flex-wrap items-center gap-1 sm:mx-0 sm:w-auto sm:justify-end">
+          <ReaderRecordArticleFeedbackButton
+            choice="helpful"
+            icon={<ThumbsUp className="size-3.5" aria-hidden="true" />}
+            selected={selectedChoice === "helpful"}
+            onSelect={onSelect}
+          >
+            有帮助
+          </ReaderRecordArticleFeedbackButton>
+          <ReaderRecordArticleFeedbackButton
+            choice="issue"
+            icon={<ThumbsDown className="size-3.5" aria-hidden="true" />}
+            selected={selectedChoice === "issue"}
+            onSelect={onSelect}
+          >
+            有问题
+          </ReaderRecordArticleFeedbackButton>
+          <ReaderRecordArticleFeedbackButton
+            choice="suggestion"
+            icon={<MessageSquareText className="size-3.5" aria-hidden="true" />}
+            selected={selectedChoice === "suggestion"}
+            onSelect={onSelect}
+          >
+            写建议
+          </ReaderRecordArticleFeedbackButton>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 const HIGHLIGHT_COLOR_OPTIONS: Array<{
   value: string;
@@ -2682,6 +2830,8 @@ export function ReaderRecordPlateSurface({
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
   const [pendingAskRequest, setPendingAskRequest] =
     useState<PendingReaderRecordAskRequest | null>(null);
+  const [articleFeedbackChoice, setArticleFeedbackChoice] =
+    useState<ReaderRecordArticleFeedbackChoice | null>(null);
   const [feedbackState, setFeedbackState] = useState<SaveState>({ kind: "idle" });
   const [feedbackTarget, setFeedbackTarget] = useState<{
     blockId: string;
@@ -2689,6 +2839,8 @@ export function ReaderRecordPlateSurface({
     feedbackScope: "annotation" | "dictionary";
     analysisRecordId?: string;
     anchorSegmentId: string;
+    layerId?: string;
+    itemId?: string;
     title: string;
     annotationType?: string;
   } | null>(null);
@@ -3366,27 +3518,6 @@ export function ReaderRecordPlateSurface({
     });
   }, [askPageIdentity, noteMenu, openAskPanel, snapshot.record.generation, snapshot.record_id]);
 
-  const handleFeedbackFromCallout = useCallback(
-    (target: ReaderCalloutActionTarget, anchor: HTMLElement) => {
-      if (target.kind !== "sentence_analysis" || !target.analysisId) {
-        return;
-      }
-      feedbackFloating.refs.setReference({
-        getBoundingClientRect: () => anchor.getBoundingClientRect(),
-      });
-      setFeedbackTarget({
-        blockId: target.blockId,
-        variant: "sentence_analysis",
-        feedbackScope: "annotation",
-        analysisRecordId: target.analysisId,
-        anchorSegmentId: target.anchorSegmentId,
-        title: target.title,
-        annotationType: "sentence_analysis",
-      });
-    },
-    [feedbackFloating.refs],
-  );
-
   const handleRequestAI = useCallback(() => {
     openAskPanel(currentAskSelectionAttachment);
   }, [currentAskSelectionAttachment, openAskPanel]);
@@ -3592,6 +3723,9 @@ export function ReaderRecordPlateSurface({
               readingRecordId: snapshot.record_id,
               annotationType: target.annotationType,
               targetVariant: target.variant,
+              anchorSegmentId: target.anchorSegmentId,
+              layerId: target.layerId,
+              itemId: target.itemId,
             },
             contextSummary: target.title,
             clientPlatform: "web",
@@ -4185,10 +4319,8 @@ export function ReaderRecordPlateSurface({
   );
 
   const calloutActions = useMemo(
-    () => ({
-      onFeedbackFromCallout: handleFeedbackFromCallout,
-    }),
-    [handleFeedbackFromCallout],
+    () => ({}),
+    [],
   );
 
   const toolbarActionState = useMemo<ReaderToolbarActions["state"]>(() => {
@@ -4637,6 +4769,10 @@ export function ReaderRecordPlateSurface({
               </ReaderSentenceAnalysisInteractionContext.Provider>
             </ReaderCalloutActionContext.Provider>
           </ReaderGrammarInteractionContext.Provider>
+          <ReaderRecordArticleFeedback
+            selectedChoice={articleFeedbackChoice}
+            onSelect={setArticleFeedbackChoice}
+          />
           {feedbackState.kind !== "idle" ? (
             <div
               data-reader-record-feedback-status={feedbackState.kind}
