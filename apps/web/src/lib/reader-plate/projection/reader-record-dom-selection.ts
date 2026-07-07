@@ -253,17 +253,26 @@ function buildSegmentFromGroup(
     })
     .join("");
 
-  if (!selectedText.trim()) {
+  const trimmedSelectedText = selectedText.trim();
+  if (!trimmedSelectedText) {
+    return null;
+  }
+  const leadingWhitespaceLength = selectedText.length - selectedText.trimStart().length;
+  const trailingWhitespaceLength = selectedText.length - selectedText.trimEnd().length;
+  const normalizedStartOffset = startOffset + leadingWhitespaceLength;
+  const normalizedEndOffset = endOffset - trailingWhitespaceLength;
+
+  if (normalizedEndOffset <= normalizedStartOffset) {
     return null;
   }
 
   return {
     paragraphId: metadata.unitId,
     sentenceId: metadata.sentenceId,
-    selectedText,
-    startOffset,
-    endOffset,
-    textHash: computeUtf16FNV1a(selectedText),
+    selectedText: trimmedSelectedText,
+    startOffset: normalizedStartOffset,
+    endOffset: normalizedEndOffset,
+    textHash: computeUtf16FNV1a(trimmedSelectedText),
   };
 }
 

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { hashAnchorText } from "@/lib/reader-plate";
 import { ReaderDictionaryDetailPanel } from "./ReaderDictionaryDetailPanel";
 import type { DictionaryLookupSnapshot } from "./contracts";
@@ -66,6 +66,93 @@ function createTaggedEntryLookup(): DictionaryLookupSnapshot {
         entry: {
           ...lookup.state.result.entry,
           tags: ["cet4", "cet6", "gaokao", "kaoyan", "gre"],
+        },
+      },
+    },
+  };
+}
+
+function createPhraseGlossLookup(): DictionaryLookupSnapshot {
+  return {
+    ...createEntryLookup(),
+    query: "policy choices",
+    lookupType: "phrase",
+    anchorText: "policy choices",
+    title: "短语",
+    label: "短语",
+    annotationType: "phrase_gloss",
+    visualTone: "phrase",
+    glossary: {
+      gloss: "政策选择",
+      phraseType: "collocation",
+      example: "Policy choices shape institutions.",
+    },
+    state: {
+      kind: "ready",
+      result: {
+        kind: "entry",
+        query: "policy choices",
+        provider: "mock-dict",
+        cached: false,
+        entry: {
+          id: 32,
+          word: "policy choices",
+          baseWord: "policy choice",
+          phonetic: undefined,
+          meanings: [
+            {
+              partOfSpeech: "n.",
+              definitions: [{ meaning: "choices about public policy" }],
+            },
+          ],
+          examples: [],
+          phrases: [],
+          entryKind: "entry",
+          exchange: [],
+          tags: [],
+        },
+      },
+    },
+  };
+}
+
+function createContextGlossPhraseLookup(): DictionaryLookupSnapshot {
+  return {
+    ...createEntryLookup(),
+    query: "allegedly",
+    lookupType: "phrase",
+    anchorText: "allegedly",
+    title: "语境义",
+    label: "语境义",
+    annotationType: "context_gloss",
+    visualTone: "context",
+    glossary: {
+      gloss: "据称，据说",
+      reason: "allegedly 是高考阅读中常见的副词，表示‘据称’，暗示所述内容未必属实。",
+    },
+    state: {
+      kind: "ready",
+      result: {
+        kind: "entry",
+        query: "allegedly",
+        provider: "mock-dict",
+        cached: false,
+        entry: {
+          id: 33,
+          word: "allegedly",
+          baseWord: "allegedly",
+          phonetic: "/əˈledʒɪdli/",
+          meanings: [
+            {
+              partOfSpeech: "adv.",
+              definitions: [{ meaning: "根据(人们)宣称" }],
+            },
+          ],
+          examples: [],
+          phrases: [],
+          entryKind: "entry",
+          exchange: [],
+          tags: [],
         },
       },
     },
@@ -206,7 +293,17 @@ describe("ReaderDictionaryDetailPanel", () => {
   });
 
   it("keeps recent history fully collapsible and removes the fake dictionary page action", () => {
-    render(
+    const history = [
+      createEntryLookup(),
+      ...["policy", "warning", "appeared", "stationary", "Thursday", "asphalt-curling"].map((query, index) => ({
+        ...createEntryLookup(),
+        query,
+        anchorText: query,
+        occurrence: index + 2,
+        textHash: hashAnchorText(query),
+      })),
+    ];
+    const { container } = render(
       <ReaderDictionaryDetailPanel
         lookup={createEntryLookup()}
         readingGoal="general"
@@ -225,16 +322,7 @@ describe("ReaderDictionaryDetailPanel", () => {
         onSelectCandidate={vi.fn()}
         onToggleAIPanel={vi.fn()}
         onToggleSearchExpanded={vi.fn()}
-        history={[
-          createEntryLookup(),
-          {
-            ...createEntryLookup(),
-            query: "policy",
-            anchorText: "policy",
-            occurrence: 2,
-            textHash: hashAnchorText("policy"),
-          },
-        ]}
+        history={history}
         onSelectHistory={vi.fn()}
       />,
     );
@@ -246,6 +334,12 @@ describe("ReaderDictionaryDetailPanel", () => {
 
     fireEvent.click(screen.getByText("最近查阅"));
     expect(screen.getByText("policy")).toBeTruthy();
+    const historyScroll = container.querySelector<HTMLElement>(
+      '[data-reader-record-dictionary-history-scroll="active"]',
+    );
+    expect(historyScroll).not.toBeNull();
+    expect(historyScroll?.className).toContain("h-64");
+    expect(historyScroll?.className).toContain("scroll-area-thumb");
   });
 
   it("uses icon-only save feedback and collapses exam tags with a chevron action", () => {
@@ -286,6 +380,84 @@ describe("ReaderDictionaryDetailPanel", () => {
 
     fireEvent.click(screen.getByText("+2"));
     expect(screen.getByLabelText("收起考试标签")).toBeTruthy();
+  });
+
+  it("keeps phrase_gloss as an inserted reading hint while the rail remains dictionary-led", () => {
+    render(
+      <ReaderDictionaryDetailPanel
+        lookup={createPhraseGlossLookup()}
+        readingGoal="general"
+        saveState={{ kind: "idle" }}
+        dictionaryAI={{ kind: "idle" }}
+        dictionaryAIPanelOpen={false}
+        dictionaryAINoteState={{ kind: "idle" }}
+        searchQuery="policy choices"
+        searchExpanded={false}
+        onSave={vi.fn()}
+        onRequestAI={vi.fn()}
+        onCreateAINote={vi.fn()}
+        onSelectAISuggestedQuery={vi.fn()}
+        onSearchQueryChange={vi.fn()}
+        onSearchSubmit={vi.fn()}
+        onSelectCandidate={vi.fn()}
+        onToggleAIPanel={vi.fn()}
+        onToggleSearchExpanded={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("policy choices")).toBeTruthy();
+    expect(screen.getByText("解析提示")).toBeTruthy();
+    expect(screen.getByText("短语")).toBeTruthy();
+    expect(screen.getByText("固定搭配")).toBeTruthy();
+    expect(screen.getByText("政策选择")).toBeTruthy();
+    expect(screen.getByText("Policy choices shape institutions.")).toBeTruthy();
+    expect(screen.getByText("choices about public policy")).toBeTruthy();
+    const annotation = screen
+      .getByText("解析提示")
+      .closest("[data-reader-dictionary-contextual-annotation]");
+    expect(annotation).not.toBeNull();
+    expect(annotation?.className).toContain("space-y-1.5");
+    expect(annotation?.className).not.toContain("border");
+    expect(annotation?.className).not.toContain("rounded");
+  });
+
+  it("keeps context_gloss typography blue even when the lookup itself is phrase-shaped", () => {
+    render(
+      <ReaderDictionaryDetailPanel
+        lookup={createContextGlossPhraseLookup()}
+        readingGoal="general"
+        saveState={{ kind: "idle" }}
+        dictionaryAI={{ kind: "idle" }}
+        dictionaryAIPanelOpen={false}
+        dictionaryAINoteState={{ kind: "idle" }}
+        searchQuery="allegedly"
+        searchExpanded={false}
+        onSave={vi.fn()}
+        onRequestAI={vi.fn()}
+        onCreateAINote={vi.fn()}
+        onSelectAISuggestedQuery={vi.fn()}
+        onSearchQueryChange={vi.fn()}
+        onSearchSubmit={vi.fn()}
+        onSelectCandidate={vi.fn()}
+        onToggleAIPanel={vi.fn()}
+        onToggleSearchExpanded={vi.fn()}
+      />,
+    );
+
+    const label = screen.getByText("语境提示");
+    const annotation = label.closest("[data-reader-dictionary-contextual-annotation]");
+    expect(label.className).toContain("text-context-blue");
+    expect(label.className).not.toContain("text-phrase-lavender");
+    expect(annotation).not.toBeNull();
+    expect(annotation?.className).toContain("space-y-1.5");
+    expect(annotation?.className).not.toContain("border");
+    if (!annotation) {
+      throw new Error("Expected contextual annotation typography");
+    }
+    expect(within(annotation as HTMLElement).getByText("语境义")).toBeTruthy();
+    expect(within(annotation as HTMLElement).queryByText("短语")).toBeNull();
+    expect(screen.getByText("据称，据说")).toBeTruthy();
+    expect(screen.getByText("根据(人们)宣称")).toBeTruthy();
   });
 
   it("shows a lighter current-context save action for a new sentence on the same lemma", () => {

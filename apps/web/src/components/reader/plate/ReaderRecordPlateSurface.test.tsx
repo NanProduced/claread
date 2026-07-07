@@ -90,6 +90,9 @@ beforeEach(() => {
   if (!HTMLElement.prototype.scrollIntoView) {
     HTMLElement.prototype.scrollIntoView = vi.fn();
   }
+  if (!HTMLElement.prototype.scrollTo) {
+    HTMLElement.prototype.scrollTo = vi.fn();
+  }
   vi.stubGlobal(
     "ResizeObserver",
     class ResizeObserver {
@@ -831,6 +834,37 @@ function makeDictionaryEntryResult(query = "memory"): WebDictResult {
       exchange: [],
       tags: [],
     },
+  };
+}
+
+function makePolicyChoicesDisambiguationResult(): WebDictResult {
+  return {
+    kind: "disambiguation",
+    query: "policy choices",
+    provider: "test",
+    cached: false,
+    ambiguityKind: "lemma_competing",
+    selectionRequired: true,
+    candidates: [
+      {
+        entryId: 42,
+        label: "policy choices",
+        preview: "choices about public policy",
+        entryKind: "entry",
+        matchKind: "exact",
+        lookupType: "phrase",
+        candidateKind: "phrase",
+      },
+      {
+        entryId: 43,
+        label: "policy choice",
+        preview: "a single policy option",
+        entryKind: "entry",
+        matchKind: "variant",
+        lookupType: "phrase",
+        candidateKind: "variant",
+      },
+    ],
   };
 }
 
@@ -3196,7 +3230,7 @@ describe("ReaderRecordPlateSurface", () => {
     const snapshot = makeSnapshot();
     snapshot.record.display_title_zh = "顶部标题测试";
     snapshot.record.title_generation_status = "succeeded";
-    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    render(<ReaderRecordPlateSurface snapshot={snapshot} />);
 
     const topBar = screen.getByTestId("reader-record-top-bar");
     expect(topBar).toBeTruthy();
@@ -3239,7 +3273,7 @@ describe("ReaderRecordPlateSurface", () => {
     const snapshot = makeSnapshot();
     snapshot.record.display_title_zh = null;
     snapshot.record.title_generation_status = "pending";
-    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    render(<ReaderRecordPlateSurface snapshot={snapshot} />);
 
     const topBar = screen.getByTestId("reader-record-top-bar");
     const titleEl = topBar.querySelector<HTMLElement>(
@@ -3701,6 +3735,7 @@ describe("ReaderRecordPlateSurface", () => {
         example: "Institutional memory shapes choices.",
       }),
       expectedText: "记忆",
+      expectedExample: "Institutional memory shapes choices.",
     },
     {
       label: "context_gloss",
@@ -3711,10 +3746,11 @@ describe("ReaderRecordPlateSurface", () => {
         reason: "这里强调制度在时间中的延续性。",
       }),
       expectedText: "此处指制度延续下来的经验",
+      expectedExample: null,
     },
   ])(
     "opens structured inspect for $label vocabulary marks without dictionary lookup",
-    async ({ mark, expectedText }) => {
+    async ({ mark, expectedExample, expectedText }) => {
       const fetchMock = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ ok: true }), {
           status: 200,
@@ -3734,14 +3770,19 @@ describe("ReaderRecordPlateSurface", () => {
       if (!memoryMark) {
         throw new Error("Expected vocabulary mark");
       }
+      expect(memoryMark.hasAttribute("title")).toBe(false);
 
       fireEvent.click(memoryMark);
 
       const panel = await screen.findByTestId("reader-record-plate-lookup-panel");
       const inspectPanel = within(panel);
       expect(inspectPanel.getByText(expectedText)).toBeTruthy();
+      if (expectedExample) {
+        expect(inspectPanel.getByText(expectedExample)).toBeTruthy();
+      }
       expect(panel.textContent).not.toContain("当前词典暂未收录");
-      expect(inspectPanel.getByLabelText("查短语")).toBeTruthy();
+      expect(inspectPanel.queryByLabelText("查短语")).toBeNull();
+      expect(inspectPanel.getByLabelText("打开词典")).toBeTruthy();
       expect(inspectPanel.getByLabelText("带入 Ask")).toBeTruthy();
       expect(inspectPanel.getByLabelText("反馈")).toBeTruthy();
       expect(
@@ -3752,7 +3793,7 @@ describe("ReaderRecordPlateSurface", () => {
     },
   );
 
-  it("uses the seg_2 source sentence for grouped phrase_gloss lookup context", async () => {
+  it("opens grouped phrase_gloss in the dictionary rail with the AI gloss inserted above definitions", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (typeof url === "string" && url.includes("/api/web/favorites")) {
         return Promise.resolve(
@@ -3785,24 +3826,111 @@ describe("ReaderRecordPlateSurface", () => {
     fireEvent.click(seg2Mark);
 
     const panel = await screen.findByTestId("reader-record-plate-lookup-panel");
-    fireEvent.click(within(panel).getByLabelText("查短语"));
+    expect(within(panel).queryByLabelText("查短语")).toBeNull();
+    fireEvent.click(within(panel).getByLabelText("打开词典"));
 
     await waitFor(() => {
-      expect(
-        fetchMock.mock.calls.some(
-          ([url]) =>
-            typeof url === "string" && url.includes("/api/web/dict/lookup"),
-        ),
-      ).toBe(true);
+      const rail = container.querySelector<HTMLElement>(
+        '[data-reader-record-dictionary-rail="docked"]',
+      );
+      if (!rail) {
+        throw new Error("Expected dictionary rail");
+      }
+      expect(within(rail).getByText("policy choices")).toBeTruthy();
+      expect(within(rail).getByText("政策选择")).toBeTruthy();
+      expect(within(rail).getByText("解析提示")).toBeTruthy();
+      expect(within(rail).getByText("Policy choices shape institutions.")).toBeTruthy();
     });
 
-    const lookupCall = fetchMock.mock.calls.find(
+    const lookupCalls = fetchMock.mock.calls.filter(
       ([url]) => typeof url === "string" && url.includes("/api/web/dict/lookup"),
     );
-    const lookupUrl = String(lookupCall?.[0]);
-    const lookupParams = new URL(lookupUrl, "http://claread.test").searchParams;
-    expect(lookupParams.get("word")).toBe("policy choices");
-    expect(lookupParams.get("context")).toBe("shapes policy choices.");
+    expect(lookupCalls).toHaveLength(1);
+    const lookupUrl = new URL(lookupCalls[0]![0] as string, "http://localhost");
+    expect(lookupUrl.searchParams.get("word")).toBe("policy choices");
+    expect(lookupUrl.searchParams.get("type")).toBe("phrase");
+    expect(lookupUrl.searchParams.get("context")).toContain("policy choices");
+  });
+
+  it("drops AI annotation context after a dictionary disambiguation candidate is selected", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      if (typeof url === "string" && url.includes("/api/web/dict/lookup")) {
+        return Promise.resolve(
+          new Response(JSON.stringify(makePolicyChoicesDisambiguationResult()), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      if (typeof url === "string" && url.includes("/api/web/dict/entry")) {
+        return Promise.resolve(
+          new Response(JSON.stringify(makeDictionaryEntryResult("policy choices")), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("Not Found", { status: 404 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeGroupedSeg2PhraseGlossSnapshot()} />,
+    );
+    const seg2Mark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_seg_2"]',
+    );
+    expect(seg2Mark).not.toBeNull();
+    if (!seg2Mark) {
+      throw new Error("Expected seg_2 vocabulary mark");
+    }
+
+    fireEvent.click(seg2Mark);
+
+    const panel = await screen.findByTestId("reader-record-plate-lookup-panel");
+    fireEvent.click(within(panel).getByLabelText("打开词典"));
+
+    const rail = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>(
+        '[data-reader-record-dictionary-rail="docked"]',
+      );
+      if (!element) {
+        throw new Error("Expected dictionary rail");
+      }
+      expect(within(element).getByText("解析提示")).toBeTruthy();
+      expect(within(element).getByText("Policy choices shape institutions.")).toBeTruthy();
+      expect(within(element).getByText("choices about public policy")).toBeTruthy();
+      return element;
+    });
+
+    const candidateText = within(rail).getByText("choices about public policy");
+    const candidateButton = candidateText.closest("button");
+    expect(candidateButton).not.toBeNull();
+    if (!candidateButton) {
+      throw new Error("Expected candidate button");
+    }
+    fireEvent.click(candidateButton);
+
+    await waitFor(() => {
+      expect(within(rail).getByText("the ability to remember information")).toBeTruthy();
+      expect(within(rail).queryByText("解析提示")).toBeNull();
+      expect(within(rail).queryByText("Policy choices shape institutions.")).toBeNull();
+    });
+
+    const entryCalls = fetchMock.mock.calls.filter(
+      ([url]) => typeof url === "string" && url.includes("/api/web/dict/entry"),
+    );
+    expect(entryCalls).toHaveLength(1);
+    const entryUrl = new URL(entryCalls[0]![0] as string, "http://localhost");
+    expect(entryUrl.searchParams.get("id")).toBe("42");
   });
 
   it("submits vocabulary inspect feedback through the dictionary feedback scope", async () => {
@@ -3878,8 +4006,12 @@ describe("ReaderRecordPlateSurface", () => {
           }),
         );
       }
+      const query =
+        typeof url === "string" && url.includes("/api/web/dict/lookup")
+          ? new URL(url, "http://claread.test").searchParams.get("word") ?? "memory"
+          : "memory";
       return Promise.resolve(
-        new Response(JSON.stringify(makeDictionaryEntryResult("memory")), {
+        new Response(JSON.stringify(makeDictionaryEntryResult(query)), {
           status: 200,
           headers: { "content-type": "application/json" },
         }),
@@ -3907,7 +4039,10 @@ describe("ReaderRecordPlateSurface", () => {
 
     fireEvent.click(memoryMark);
 
-    await screen.findByTestId("reader-record-plate-lookup-panel");
+    const panel = await screen.findByTestId("reader-record-plate-lookup-panel");
+    await waitFor(() => {
+      expect(within(panel).getAllByText("重点词汇")).toHaveLength(1);
+    });
     const lookupCalls = fetchMock.mock.calls.filter(
       ([url]) => typeof url === "string" && url.includes("/api/web/dict/lookup"),
     );
@@ -3917,7 +4052,9 @@ describe("ReaderRecordPlateSurface", () => {
     expect(lookupParams.get("word")).toBe("memory");
     expect(lookupParams.get("type")).toBe("word");
     expect(lookupParams.get("context")).toBe(SOURCE_TEXT);
-    expect(await screen.findByText("the ability to remember information")).toBeTruthy();
+    expect(await within(panel).findByText("词典释义")).toBeTruthy();
+    expect(within(panel).getByText("阅读提示")).toBeTruthy();
+    expect(within(panel).getByText("Useful for this source sentence.")).toBeTruthy();
   });
 
   it("runs dictionary lookup only for a valid single anchor draft", async () => {
@@ -3965,6 +4102,232 @@ describe("ReaderRecordPlateSurface", () => {
     expect(lookupUrl).toContain("/api/web/dict/lookup?");
     expect(lookupUrl).toContain("word=memory");
     expect(screen.getByText("the ability to remember information")).toBeTruthy();
+  });
+
+  it("keeps the lookup context when opening the dictionary rail from quick peek", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(makeDictionaryEntryResult("memory")), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+    const lookupButton = await waitForSelectionAction(container, "lookup");
+    fireEvent.click(lookupButton);
+
+    const quickPeek = await screen.findByTestId("reader-record-plate-lookup-panel");
+    fireEvent.click(within(quickPeek).getByLabelText("打开词典"));
+
+    await waitFor(() => {
+      const rail = container.querySelector<HTMLElement>(
+        '[data-reader-record-dictionary-rail="docked"]',
+      );
+      if (!rail) {
+        throw new Error("Expected dictionary rail");
+      }
+      expect(within(rail).getByText("memory")).toBeTruthy();
+      expect(within(rail).getByText("the ability to remember information")).toBeTruthy();
+    });
+    expect(screen.queryByText("先从正文点一个词")).toBeNull();
+  });
+
+  it("routes structured vocabulary clicks into the open dictionary rail", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(makeDictionaryEntryResult("memory")), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+    const lookupButton = await waitForSelectionAction(container, "lookup");
+    fireEvent.click(lookupButton);
+
+    const quickPeek = await screen.findByTestId("reader-record-plate-lookup-panel");
+    fireEvent.click(within(quickPeek).getByLabelText("打开词典"));
+
+    const rail = await waitFor(() => {
+      const node = container.querySelector<HTMLElement>(
+        '[data-reader-record-dictionary-rail="docked"]',
+      );
+      if (!node) {
+        throw new Error("Expected dictionary rail");
+      }
+      return node;
+    });
+    expect(within(rail).getByText("the ability to remember information")).toBeTruthy();
+
+    fireEvent.click(memoryMark);
+
+    await waitFor(() => {
+      expect(within(rail).getByText("记忆")).toBeTruthy();
+      expect(within(rail).getByText("the ability to remember information")).toBeTruthy();
+    });
+    expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+
+    fireEvent.pointerDown(document.body);
+    expect(within(rail).getByText("记忆")).toBeTruthy();
+    expect(within(rail).queryByText("先从正文点一个词")).toBeNull();
+  });
+
+  it("adds manual dictionary searches to recent history while the rail is open", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      const query =
+        typeof url === "string" && url.includes("/api/web/dict/lookup")
+          ? new URL(url, "http://claread.test").searchParams.get("word") ?? "memory"
+          : "memory";
+      return Promise.resolve(
+        new Response(JSON.stringify(makeDictionaryEntryResult(query)), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+    const lookupButton = await waitForSelectionAction(container, "lookup");
+    fireEvent.click(lookupButton);
+    const quickPeek = await screen.findByTestId("reader-record-plate-lookup-panel");
+    fireEvent.click(within(quickPeek).getByLabelText("打开词典"));
+
+    const rail = await waitFor(() => {
+      const node = container.querySelector<HTMLElement>(
+        '[data-reader-record-dictionary-rail="docked"]',
+      );
+      if (!node) {
+        throw new Error("Expected dictionary rail");
+      }
+      return node;
+    });
+
+    fireEvent.click(within(rail).getByLabelText("搜索词典"));
+    const searchInput = within(rail).getByRole("textbox", { name: "搜索词典" });
+    fireEvent.change(searchInput, { target: { value: "policy" } });
+    const searchForm = searchInput.closest("form");
+    expect(searchForm).not.toBeNull();
+    fireEvent.submit(searchForm!);
+
+    await waitFor(() => {
+      expect(within(rail).getAllByText("policy").length).toBeGreaterThan(0);
+    });
+
+    const historyToggle = within(rail).getByText("最近查阅").closest("button");
+    expect(historyToggle).not.toBeNull();
+    fireEvent.click(historyToggle!);
+
+    await waitFor(() => {
+      expect(within(rail).getAllByText("policy").length).toBeGreaterThan(0);
+      expect(within(rail).getAllByText("memory").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("runs direct word lookup after double-clicking an unmarked source word", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(makeDictionaryEntryResult("memory")), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const snapshot = {
+      ...makeSnapshot(),
+      value: [makeUnit({ vocabularyMarks: [], grammarMarks: [] })],
+    };
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    const sourceLeaf = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-reader-record-leaf="segment_text"]'),
+    ).find((leaf) => leaf.textContent?.includes("shapes"));
+    expect(sourceLeaf).not.toBeNull();
+    if (!sourceLeaf) {
+      throw new Error("Expected source leaf");
+    }
+
+    const startOffset = sourceLeaf.textContent?.indexOf("shapes") ?? -1;
+    expect(startOffset).toBeGreaterThanOrEqual(0);
+    selectTextInElement(sourceLeaf, startOffset, startOffset + "shapes ".length);
+    const lookupButton = await waitForSelectionAction(container, "lookup");
+    await waitFor(() => {
+      expect(lookupButton.disabled).toBe(false);
+    });
+    expect(window.getSelection()?.toString()).toBe("shapes ");
+    fireEvent.doubleClick(sourceLeaf);
+
+    await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(selectionActionButton(container, "lookup")).toBeNull();
+    expect(window.getSelection()?.toString()).not.toBe("shapes ");
+    const lookupCall = fetchMock.mock.calls.find(
+      ([url]) => typeof url === "string" && url.includes("/api/web/dict/lookup"),
+    );
+    const lookupUrl = String(lookupCall?.[0]);
+    const lookupParams = new URL(lookupUrl, "http://claread.test").searchParams;
+    expect(lookupParams.get("word")).toBe("shapes");
+    expect(lookupParams.get("context")).toBe(SOURCE_TEXT);
   });
 
   it("saves highlight through the Reading Record write endpoint with nested anchor", async () => {
@@ -5397,7 +5760,7 @@ describe("ReaderRecordPlateSurface", () => {
     });
   });
 
-  it("freezes Quick Peek reference rect and does not resolve mark intent from DOM JSON payloads", () => {
+  it("keeps Quick Peek mark references live and does not resolve mark intent from DOM JSON payloads", () => {
     const surfaceSource = readFileSync(
       resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
       "utf8",
@@ -5407,8 +5770,10 @@ describe("ReaderRecordPlateSurface", () => {
       "utf8",
     );
 
-    expect(surfaceSource).toContain("const rect = anchor.getBoundingClientRect();");
     expect(surfaceSource).toContain(
+      'quickPeekAnchorRef.current = { kind: "element", element: anchor };',
+    );
+    expect(surfaceSource).not.toContain(
       'quickPeekAnchorRef.current = { kind: "range", getRect: () => rect };',
     );
     expect(surfaceSource).toContain("handleLeafClickIntent");

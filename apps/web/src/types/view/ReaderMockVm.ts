@@ -127,6 +127,8 @@ export interface InlineGlossary {
   zh?: string
   gloss?: string
   reason?: string
+  example?: string
+  exampleTranslation?: string
   phraseType?: PhraseType
 }
 

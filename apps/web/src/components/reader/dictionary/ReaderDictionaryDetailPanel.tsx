@@ -15,7 +15,6 @@ import {
   Search,
   Sparkles,
   Tag,
-  Volume2,
   X,
 } from "lucide-react";
 import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
@@ -27,22 +26,23 @@ import type { SaveState, DictionaryLookupSnapshot } from "./contracts";
 import { getSaveActionCopy, type LookupSaveState, type ReaderVocabularyLookupMatch } from "./lookupSaveState";
 import {
   type DictionaryContentTab,
-  type DictionarySenseItem,
   contextualGlossaryTitle,
   contextualGlossaryText,
+  contextualGlossaryReason,
+  contextualGlossaryExample,
+  contextualGlossaryExampleTranslation,
   dictionaryAIActionLabel,
   dictionaryAIClassificationLabel as dictionaryAIClassificationBadgeLabel,
-  dictionaryAIRequestForLookup,
   dictionaryAITranslationVisible,
   dictionaryDisplayTags,
   dictionaryEntrySummary,
   dictionaryIsManualLookup,
   dictionarySenseItems,
   groupDisambiguationCandidates,
-  isDictionaryAIErrorResult,
   normalizeDictionaryText,
   dictionaryLookupHistoryKey,
   dictionaryLookupHistorySummary,
+  phraseGlossarySubtypeLabel,
 } from "./shared";
 import { ReaderStructuredInspectCard } from "./ReaderStructuredInspectCard";
 
@@ -101,7 +101,6 @@ function DictionaryIconAction({
           disabled={disabled}
           aria-label={label}
           aria-pressed={pressed}
-          title={label}
         >
           {children}
         </button>
@@ -220,6 +219,21 @@ export function ReaderDictionaryDetailPanel({
   const conciseMeaning = entryResult ? dictionaryEntrySummary(entryResult, lookup) : "";
   const glossaryTitle = lookup ? contextualGlossaryTitle(lookup) : null;
   const glossaryText = contextualGlossaryText(lookup?.glossary);
+  const glossaryReason = contextualGlossaryReason(lookup?.glossary);
+  const glossaryExample = contextualGlossaryExample(lookup?.glossary);
+  const glossaryExampleTranslation = contextualGlossaryExampleTranslation(lookup?.glossary);
+  const glossarySubtype = phraseGlossarySubtypeLabel(lookup?.glossary);
+  const isVocabHighlightLookup = lookup?.annotationType === "vocab_highlight";
+  const glossaryDuplicatesDictionaryMeaning =
+    isVocabHighlightLookup &&
+    Boolean(glossaryText.trim()) &&
+    Boolean(conciseMeaning.trim()) &&
+    glossaryText.trim().toLowerCase() === conciseMeaning.trim().toLowerCase();
+  const hasContextualAnnotationInset = Boolean(
+    glossaryTitle &&
+      ((!isVocabHighlightLookup && glossaryText) ||
+        (isVocabHighlightLookup && ((!glossaryDuplicatesDictionaryMeaning && glossaryText) || glossaryReason))),
+  );
   const isManualLookup = dictionaryIsManualLookup(lookup);
   const canRequestContextExplain = Boolean(entryResult && lookup?.contextSentence.trim() && !isManualLookup);
   const canRequestMissingFallback = Boolean(notFoundResult && lookup?.contextSentence.trim() && !isManualLookup);
@@ -413,6 +427,62 @@ export function ReaderDictionaryDetailPanel({
         </div>
         <ChevronDown aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-subtle" />
       </button>
+    );
+  }
+
+  function renderContextualAnnotationInset() {
+    if (!lookup || !hasContextualAnnotationInset) {
+      return null;
+    }
+
+    const toneClassName =
+      lookup.annotationType === "context_gloss"
+        ? "text-context-blue"
+        : lookup.annotationType === "phrase_gloss" || lookup.lookupType === "phrase"
+          ? "text-phrase-lavender"
+          : "text-vocab-amber";
+    const label = isVocabHighlightLookup
+      ? "阅读提示"
+      : lookup.annotationType === "context_gloss"
+        ? "语境提示"
+        : "解析提示";
+
+    return (
+      <div
+        data-reader-dictionary-contextual-annotation={lookup.annotationType ?? lookup.lookupType}
+        className="space-y-1.5"
+      >
+        <div className="flex flex-wrap items-center gap-1.5">
+          <p className={`text-[0.68rem] font-semibold tracking-[0.08em] ${toneClassName}`}>{label}</p>
+          {!isVocabHighlightLookup && glossaryTitle ? (
+            <span className="rounded-[5px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-semibold leading-none text-muted">
+              {glossaryTitle}
+            </span>
+          ) : null}
+          {glossarySubtype ? (
+            <span className="rounded-[5px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-semibold leading-none text-muted">
+              {glossarySubtype}
+            </span>
+          ) : null}
+        </div>
+        {glossaryText && !glossaryDuplicatesDictionaryMeaning ? (
+          <p className="text-[0.86rem] leading-6 text-ink-soft/92 select-text">{glossaryText}</p>
+        ) : null}
+        {glossaryExample ? (
+          <div className="space-y-1 pt-1">
+            <p className="text-[0.68rem] font-semibold text-muted">例句</p>
+            <p className="mt-1 text-xs leading-5 text-ink-soft select-text">{glossaryExample}</p>
+            {glossaryExampleTranslation ? (
+              <p className="mt-0.5 text-[0.72rem] leading-5 text-muted select-text">
+                {glossaryExampleTranslation}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {glossaryReason ? (
+          <p className="text-xs leading-5 text-muted select-text">{glossaryReason}</p>
+        ) : null}
+      </div>
     );
   }
 
@@ -739,6 +809,7 @@ export function ReaderDictionaryDetailPanel({
     if (!history || history.length === 0) {
       return null;
     }
+    const historyNeedsScroll = history.length > 5;
 
     return (
       <div className="mt-auto border-t border-hairline/70 bg-ink/[0.01]">
@@ -767,40 +838,52 @@ export function ReaderDictionaryDetailPanel({
         {!historyCollapsed ? (
           <div className="px-5 pb-4 select-none">
             <div className="space-y-1.5 border-t border-hairline/50 pt-3">
-              {history.map((item) => {
-                const active =
-                  lookup ? dictionaryLookupHistoryKey(lookup) === dictionaryLookupHistoryKey(item) : false;
-                const summary = dictionaryLookupHistorySummary(item);
+              <ScrollArea
+                data-reader-record-dictionary-history-scroll={historyNeedsScroll ? "active" : "passive"}
+                className={cn(
+                  historyNeedsScroll ? "h-64" : "max-h-64",
+                  "overflow-hidden pr-1",
+                  "[&_[data-slot=scroll-area-scrollbar]]:w-1.5 [&_[data-slot=scroll-area-scrollbar]]:border-l-0",
+                  "[&_[data-slot=scroll-area-thumb]]:bg-ink/15 hover:[&_[data-slot=scroll-area-thumb]]:bg-ink/25",
+                )}
+              >
+                <div className="space-y-1.5 pr-2">
+                  {history.map((item) => {
+                    const active =
+                      lookup ? dictionaryLookupHistoryKey(lookup) === dictionaryLookupHistoryKey(item) : false;
+                    const summary = dictionaryLookupHistorySummary(item);
 
-                return (
-                  <button
-                    key={dictionaryLookupHistoryKey(item)}
-                    type="button"
-                    className={cn(
-                      readerPanelItem,
-                      "group flex w-full items-start rounded-[8px] px-2.5 py-2 text-left",
-                      active ? "bg-ink/[0.02] text-ink" : "hover:bg-ink/[0.015]",
-                    )}
-                    onClick={() => onSelectHistory?.(item)}
-                    title={`${item.query}: ${summary}`}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${
-                        active ? "bg-vocab-amber" : "bg-hairline group-hover:bg-muted"
-                      }`}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className={`block truncate text-[0.8rem] font-semibold leading-none ${active ? "text-vocab-amber" : "text-ink group-hover:text-ink-soft"}`}>
-                        {item.query}
-                      </span>
-                      <span className="mt-1 block line-clamp-1 text-[0.7rem] leading-none text-muted">
-                        {summary}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
+                    return (
+                      <button
+                        key={dictionaryLookupHistoryKey(item)}
+                        type="button"
+                        className={cn(
+                          readerPanelItem,
+                          "group flex w-full items-start rounded-[8px] px-2.5 py-2 text-left",
+                          active ? "bg-ink/[0.02] text-ink" : "hover:bg-ink/[0.015]",
+                        )}
+                        onClick={() => onSelectHistory?.(item)}
+                        title={`${item.query}: ${summary}`}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${
+                            active ? "bg-vocab-amber" : "bg-hairline group-hover:bg-muted"
+                          }`}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className={`block truncate text-[0.8rem] font-semibold leading-none ${active ? "text-vocab-amber" : "text-ink group-hover:text-ink-soft"}`}>
+                            {item.query}
+                          </span>
+                          <span className="mt-1 block line-clamp-1 text-[0.7rem] leading-none text-muted">
+                            {summary}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
             </div>
           </div>
         ) : null}
@@ -830,16 +913,6 @@ export function ReaderDictionaryDetailPanel({
     <TooltipProvider>
       <section className={`reader-tool-panel reader-dictionary-panel ${isCard ? "reader-dictionary-card" : ""} relative flex flex-col overflow-hidden ${panelWidthClass} shadow-surface-quiet bg-paper-warm border border-hairline/80 ${panelSizing}`}>
       
-      {/* Absolute Folder Tab Index Handle (Decorative/Affordance) */}
-      <div
-        aria-hidden="true"
-        className="absolute -right-4.5 top-1/2 -translate-y-1/2 hidden md:flex flex-col items-center justify-center w-4.5 h-20 bg-[#e4dcce] dark:bg-[#252422] border-t border-r border-b border-hairline rounded-r-[0.6rem] shadow-[3px_0_6px_rgba(0,0,0,0.04)] group cursor-pointer select-none transition-all duration-300 hover:translate-x-[2px] hover:bg-[#ded5c5] z-10"
-      >
-        <span className="text-[0.65rem] font-bold text-vocab-amber/80 group-hover:text-vocab-amber transition-colors">
-          📖
-        </span>
-      </div>
-
       {/* Top Header Section with manual lookup entry & light tools */}
       <div className="flex items-center gap-2 border-b border-hairline/80 px-4.5 py-3 select-none">
         <div className="min-w-0 flex-1">
@@ -899,10 +972,39 @@ export function ReaderDictionaryDetailPanel({
         
         {/* Default empty state */}
         {!lookup && !inspectVisible ? (
-          <div className="flex min-h-[16rem] flex-col justify-center px-6 text-center select-none">
-            <span className="text-[1.8rem] mb-2">📖</span>
-            <h3 className="font-headline text-[1.45rem] font-bold text-ink leading-tight">先从正文点一个词</h3>
-            <p className="mt-2 text-xs leading-normal text-muted max-w-[24ch] mx-auto">点正文中的任意英文单词，或使用顶部搜索框直接查阅词典。</p>
+          <div className="flex min-h-[18rem] flex-col justify-center px-6 py-8 text-left select-none">
+            <div className="mx-auto w-full max-w-[19rem]">
+              <div className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-hairline/75 bg-surface text-muted">
+                <BookOpen aria-hidden="true" className="h-4 w-4" />
+              </div>
+              <h3 className="mt-4 font-headline text-[1.35rem] font-bold text-ink leading-tight">从正文打开词典</h3>
+              <p className="mt-2 text-xs leading-5 text-muted">
+                双击单词查词，点击短语或语境标注查看 AI 解释，也可以用顶部搜索直接查询。
+              </p>
+              {history.length > 0 ? (
+                <div className="mt-5 border-t border-hairline/60 pt-3.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[0.68rem] font-semibold tracking-[0.08em] text-muted">最近查阅</p>
+                    <span className="rounded-[4px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-mono font-semibold text-muted">
+                      {history.length}
+                    </span>
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    {history.slice(0, 3).map((item) => (
+                      <button
+                        key={dictionaryLookupHistoryKey(item)}
+                        type="button"
+                        className={cn(readerPanelItem, "block w-full rounded-[7px] px-2 py-1.5 text-left hover:bg-ink/[0.015]")}
+                        onClick={() => onSelectHistory?.(item)}
+                      >
+                        <span className="block truncate text-[0.76rem] font-semibold leading-5 text-ink">{item.query}</span>
+                        <span className="block truncate text-[0.68rem] leading-4 text-muted">{dictionaryLookupHistorySummary(item)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -912,7 +1014,13 @@ export function ReaderDictionaryDetailPanel({
             <ReaderStructuredInspectCard
               intent={inspect}
               onAttachToAsk={onAttachToAsk ? () => onAttachToAsk(inspect) : undefined}
-              onLookupPhrase={onLookupPhraseFromInspect ? () => onLookupPhraseFromInspect(inspect) : undefined}
+              onLookupPhrase={
+                onLookupPhraseFromInspect &&
+                inspect.annotationType !== "phrase_gloss" &&
+                inspect.annotationType !== "context_gloss"
+                  ? () => onLookupPhraseFromInspect(inspect)
+                  : undefined
+              }
               onFeedback={onInspectFeedback ? () => onInspectFeedback(inspect) : undefined}
               variant="rail"
             />
@@ -965,13 +1073,6 @@ export function ReaderDictionaryDetailPanel({
                       {phoneticLabel}
                     </span>
                   )}
-                  <button
-                    type="button"
-                    className={cn(readerIconAction, "inline-flex items-center justify-center rounded-[0.5rem] p-1 text-muted")}
-                    aria-label="发音"
-                  >
-                    <Volume2 className="h-3.5 w-3.5" />
-                  </button>
                   {lemmaLabel || homographLabel ? (
                     <div className="flex flex-wrap items-center gap-1.5 text-[0.68rem] font-mono leading-none">
                       {lemmaLabel ? <span className="rounded bg-ink/[0.03] px-1.5 py-0.5 text-muted">原形 {lemmaWord}</span> : null}
@@ -979,23 +1080,6 @@ export function ReaderDictionaryDetailPanel({
                     </div>
                   ) : null}
                 </div>
-
-                {glossaryTitle && glossaryText ? (
-                  <div className="mt-4 rounded-[8px] border border-hairline/70 bg-ink/[0.015] px-3.5 py-3">
-                    <p
-                      className={`text-[0.68rem] font-semibold tracking-[0.08em] ${
-                        lookup?.annotationType === "phrase_gloss" || lookup?.lookupType === "phrase"
-                          ? "text-phrase-lavender"
-                          : lookup?.annotationType === "context_gloss"
-                            ? "text-context-blue"
-                            : "text-vocab-amber"
-                      }`}
-                    >
-                      {glossaryTitle}
-                    </p>
-                    <p className="mt-1.5 text-[0.86rem] leading-6 text-ink-soft/92 select-text">{glossaryText}</p>
-                  </div>
-                ) : null}
 
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-hairline/60 pt-3">
                   <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -1082,6 +1166,11 @@ export function ReaderDictionaryDetailPanel({
                     ) : null}
                   </div>
                 </div>
+                {hasContextualAnnotationInset ? (
+                  <div className="mt-3">
+                    {renderContextualAnnotationInset()}
+                  </div>
+                ) : null}
               </div>
 
               {/* Main operational tabs selection layout */}
@@ -1137,6 +1226,7 @@ export function ReaderDictionaryDetailPanel({
               <p className="text-[0.66rem] font-bold tracking-wider text-muted">歧义选择</p>
               <h3 className="mt-1 font-headline text-[1.8rem] font-bold tracking-tight text-ink leading-none">{lookup.query}</h3>
             </div>
+            {hasContextualAnnotationInset ? renderContextualAnnotationInset() : null}
             <div className="space-y-5">
               {candidateGroups.map((group) => (
                 <section key={group.key} className="border-t border-hairline/70 pt-4 first:border-t-0 first:pt-0">
@@ -1178,6 +1268,7 @@ export function ReaderDictionaryDetailPanel({
               <p className="text-[0.66rem] font-bold tracking-wider text-muted select-none">未收录结果</p>
               <h3 className="mt-1 font-headline text-[1.8rem] font-bold tracking-tight text-ink leading-none">{lookup.query}</h3>
             </div>
+            {hasContextualAnnotationInset ? renderContextualAnnotationInset() : null}
             <div className="space-y-3.5 rounded-[8px] border border-hairline bg-ink/[0.005] px-4 py-4">
               <p className="text-xs font-semibold text-ink select-none">当前词典没有匹配到这个词条。</p>
               {onNotFoundFeedback ? (

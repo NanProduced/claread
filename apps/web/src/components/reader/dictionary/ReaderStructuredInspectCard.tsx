@@ -4,7 +4,15 @@ import { Sparkles } from "lucide-react";
 import { readerCommandControl, readerIconAction } from "@/components/reader/interaction";
 import { cn } from "@/lib/cn";
 import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
-import { contextualGlossaryText, structuredInspectLabel } from "./shared";
+import {
+  contextualGlossaryExample,
+  contextualGlossaryExampleTranslation,
+  contextualGlossaryReason,
+  contextualGlossaryText,
+  phraseGlossarySubtypeLabel,
+  structuredInspectCategoryLabel,
+  structuredInspectToneClass,
+} from "./shared";
 
 interface ReaderStructuredInspectCardProps {
   intent: ReaderStructuredInspectIntent;
@@ -21,13 +29,22 @@ export function ReaderStructuredInspectCard({
   onFeedback,
   variant = "peek",
 }: ReaderStructuredInspectCardProps) {
-  const title = structuredInspectLabel(intent.annotationType, intent.glossary?.phraseType);
+  const category = structuredInspectCategoryLabel(intent.annotationType);
+  const subtype = phraseGlossarySubtypeLabel(intent.glossary);
+  const toneClassName = structuredInspectToneClass(intent.annotationType);
   const displayAnchorText = intent.lookupText ?? intent.anchorText;
   const summary =
     contextualGlossaryText(intent.glossary) ||
     intent.lookupText ||
     "该标注更适合先查看结构化解释，再决定是否继续查词。";
+  const example = contextualGlossaryExample(intent.glossary);
+  const exampleTranslation = contextualGlossaryExampleTranslation(intent.glossary);
+  const reason = contextualGlossaryReason(intent.glossary);
   const compact = variant === "peek";
+  const showLookupPhrase =
+    Boolean(onLookupPhrase) &&
+    intent.annotationType !== "phrase_gloss" &&
+    intent.annotationType !== "context_gloss";
 
   return (
     <div
@@ -39,25 +56,45 @@ export function ReaderStructuredInspectCard({
     >
       {!compact ? (
         <div>
-          <p className="text-[0.7rem] font-semibold tracking-[0.12em] text-muted">{title}</p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className={`text-[0.7rem] font-semibold tracking-[0.08em] ${toneClassName}`}>
+              {category}
+            </span>
+            {subtype ? (
+              <span className="rounded-[5px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.66rem] font-semibold leading-none text-muted">
+                {subtype}
+              </span>
+            ) : null}
+          </div>
           <h3 className="mt-2 reader-serif text-[1.25rem] leading-tight text-ink">{displayAnchorText}</h3>
         </div>
       ) : null}
       <div className="space-y-2">
         <p className="text-sm leading-6 text-ink-soft">{summary}</p>
-        {intent.glossary?.reason ? (
-          <p className="text-xs leading-5 text-muted">{intent.glossary.reason}</p>
+        {example ? (
+          <div className="rounded-[7px] border border-hairline/60 bg-ink/[0.012] px-2.5 py-2">
+            <p className="text-[0.68rem] font-semibold text-muted">例句</p>
+            <p className="mt-1 text-xs leading-5 text-ink-soft">{example}</p>
+            {exampleTranslation ? (
+              <p className="mt-0.5 text-[0.72rem] leading-5 text-muted">{exampleTranslation}</p>
+            ) : null}
+          </div>
+        ) : null}
+        {reason ? (
+          <p className="text-xs leading-5 text-muted">
+            {reason}
+          </p>
         ) : null}
       </div>
-      {variant === "rail" && (onLookupPhrase || onAttachToAsk || onFeedback) ? (
+      {variant === "rail" && (showLookupPhrase || onAttachToAsk || onFeedback) ? (
         <div className="mt-3 flex items-center gap-2 border-t border-hairline/60 pt-3">
-          {onLookupPhrase ? (
+          {showLookupPhrase ? (
             <button
               type="button"
               className={cn(readerCommandControl, "h-8 rounded-md px-2.5 text-[0.72rem] font-semibold")}
               onClick={onLookupPhrase}
             >
-              查短语
+              查词典释义
             </button>
           ) : null}
           {onFeedback ? (
@@ -74,7 +111,6 @@ export function ReaderStructuredInspectCard({
               type="button"
               className={cn(readerIconAction, "h-8 w-8 rounded-[0.7rem]")}
               onClick={onAttachToAsk}
-              title="带入 Ask"
               aria-label="带入 Ask"
             >
               <Sparkles className="h-3.5 w-3.5" />

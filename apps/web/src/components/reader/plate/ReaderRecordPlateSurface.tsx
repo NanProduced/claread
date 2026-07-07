@@ -34,6 +34,7 @@ import {
 } from "@/lib/reader-plate/projection/reader-record-dom-selection";
 import {
   askAttachmentKey,
+  hashAnchorText,
   type ReaderAskAttachment,
   type ReaderAskPageIdentity,
   type ReaderStructuredInspectIntent,
@@ -94,6 +95,7 @@ import { ReaderQuickPeek } from "../dictionary/ReaderQuickPeek";
 import { ReaderDictionaryRail } from "../dictionary/ReaderDictionaryRail";
 import type { DictionaryLookupSnapshot, SaveState } from "../dictionary/contracts";
 import { firstMeaning, meaningsJson } from "../dictionary/contracts";
+import { dictionaryLookupHistoryKey } from "../dictionary/shared";
 import type { DictionaryAIViewState } from "@/types/api/dict-ai";
 import { Plate, usePlateEditor, type RenderLeaf } from "platejs/react";
 import { Editor, EditorContainer } from "@/components/ui/editor";
@@ -142,7 +144,20 @@ interface ReaderRecordLookupContext {
   anchorText: string;
   lookupType: DictLookupTypeDto;
   source: "vocabulary" | "selection";
+  label?: string;
+  annotationType?: DictionaryLookupSnapshot["annotationType"];
+  visualTone?: DictionaryLookupSnapshot["visualTone"];
+  glossary?: DictionaryLookupSnapshot["glossary"];
+  sourceContext?: string;
+  anchorOffsets?: DictionaryLookupSnapshot["anchorOffsets"];
+  occurrence?: DictionaryLookupSnapshot["occurrence"];
+  textHash?: DictionaryLookupSnapshot["textHash"];
 }
+
+type ReaderRecordLookupPositionReference = {
+  getRect: () => DOMRectReadOnly | DOMRect;
+  contextElement?: HTMLElement;
+};
 
 type ReaderRecordCopyStatus = "idle" | "copied" | "error";
 
@@ -182,6 +197,66 @@ function overallProgressLabel(status: ReaderRecordPlateProgress["overallStatus"]
 
 function lookupTypeForSelection(text: string): DictLookupTypeDto {
   return /\s/.test(text.trim()) ? "phrase" : "word";
+}
+
+function trimDraftForLookup(draft: ReaderRecordAnchorDraft) {
+  const selectedText = draft.selected_text;
+  const query = selectedText.trim();
+  const leadingTrim = selectedText.length - selectedText.trimStart().length;
+  const trailingTrim = selectedText.length - selectedText.trimEnd().length;
+  const startOffset = draft.start_offset + leadingTrim;
+  const endOffset = draft.end_offset - trailingTrim;
+
+  return {
+    query,
+    startOffset,
+    endOffset,
+    textHash: leadingTrim > 0 || trailingTrim > 0 ? hashAnchorText(query) : draft.text_hash,
+  };
+}
+
+function trimNativeSelectionToQuery(container: HTMLElement, query: string): Range | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return null;
+  }
+
+  const selectedText = selection.toString();
+  if (selectedText === query || selectedText.trim() !== query) {
+    return selection.getRangeAt(0);
+  }
+
+  const range = selection.getRangeAt(0);
+  const rangeElement =
+    range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+      ? (range.commonAncestorContainer as Element)
+      : range.commonAncestorContainer.parentElement;
+  if (!rangeElement || !container.contains(rangeElement)) {
+    return range;
+  }
+  if (range.startContainer !== range.endContainer || range.startContainer.nodeType !== Node.TEXT_NODE) {
+    return range;
+  }
+
+  const textNode = range.startContainer as Text;
+  let startOffset = range.startOffset;
+  let endOffset = range.endOffset;
+  while (startOffset < endOffset && /\s/.test(textNode.data[startOffset] ?? "")) {
+    startOffset += 1;
+  }
+  while (endOffset > startOffset && /\s/.test(textNode.data[endOffset - 1] ?? "")) {
+    endOffset -= 1;
+  }
+  if (startOffset === range.startOffset && endOffset === range.endOffset) {
+    return range;
+  }
+
+  const trimmedRange = document.createRange();
+  trimmedRange.setStart(textNode, startOffset);
+  trimmedRange.setEnd(textNode, endOffset);
+  selection.collapse(textNode, startOffset);
+  selection.extend(textNode, endOffset);
+  return trimmedRange;
 }
 
 function singleRangeDraft(
@@ -782,18 +857,73 @@ function buildDictionaryLookupSnapshot(
     state.kind === "loading"
       ? { kind: "loading" }
       : state.kind === "ready"
-        ? { kind: "ready", result: state.result }
-        : { kind: "error", message: state.message };
+      ? { kind: "ready", result: state.result }
+      : { kind: "error", message: state.message };
+  return buildDictionaryLookupSnapshotFromContext(
+    snapshot,
+    state.query,
+    state.context,
+    lookupState,
+  );
+}
+
+function lookupLabelFromContext(context: ReaderRecordLookupContext) {
+  if (context.label) {
+    return context.label;
+  }
+  if (context.annotationType === "vocab_highlight") {
+    return "重点词汇";
+  }
+  if (context.source === "vocabulary") {
+    return "词典查询";
+  }
+  return "选区查词";
+}
+
+function buildDictionaryLookupSnapshotFromContext(
+  snapshot: ReaderPlateSnapshotDto,
+  query: string,
+  context: ReaderRecordLookupContext,
+  state: DictionaryLookupSnapshot["state"],
+): DictionaryLookupSnapshot {
   return {
-    query: state.query,
-    lookupType: state.context.lookupType,
-    contextSentence: state.context.contextSentence,
+    query,
+    lookupType: context.lookupType,
+    contextSentence: context.contextSentence,
+    sourceContext: context.sourceContext,
     recordId: snapshot.record_id,
-    sentenceId: state.context.sentenceId,
-    anchorText: state.context.anchorText,
-    title: state.query,
-    label: state.context.source === "vocabulary" ? "词汇查询" : "选区查词",
-    state: lookupState,
+    sentenceId: context.sentenceId,
+    anchorText: context.anchorText,
+    anchorOffsets: context.anchorOffsets,
+    occurrence: context.occurrence,
+    textHash: context.textHash,
+    title: query,
+    label: lookupLabelFromContext(context),
+    annotationType: context.annotationType,
+    visualTone: context.visualTone,
+    glossary: context.glossary,
+    state,
+  };
+}
+
+function lookupContextFromSnapshot(
+  lookup: DictionaryLookupSnapshot,
+  source: ReaderRecordLookupContext["source"] = "selection",
+): ReaderRecordLookupContext {
+  return {
+    contextSentence: lookup.contextSentence,
+    sentenceId: lookup.sentenceId,
+    anchorText: lookup.anchorText,
+    lookupType: lookup.lookupType,
+    source,
+    label: lookup.label,
+    annotationType: lookup.annotationType,
+    visualTone: lookup.visualTone,
+    glossary: lookup.glossary,
+    sourceContext: lookup.sourceContext,
+    anchorOffsets: lookup.anchorOffsets,
+    occurrence: lookup.occurrence,
+    textHash: lookup.textHash,
   };
 }
 
@@ -853,6 +983,48 @@ function vocabularyTitle(mark: ReaderRecordPlateVocabularyMark) {
   return mark.vocabulary.display;
 }
 
+function vocabularyVisualTone(mark: ReaderRecordPlateVocabularyMark): ReaderRecordLookupContext["visualTone"] {
+  if (mark.vocabulary.itemType === "phrase_gloss") {
+    return "phrase";
+  }
+  if (mark.vocabulary.itemType === "context_gloss") {
+    return "context";
+  }
+  return "vocab";
+}
+
+function vocabularyLabel(mark: ReaderRecordPlateVocabularyMark): string {
+  if (mark.vocabulary.itemType === "vocab_highlight") {
+    return "重点词汇";
+  }
+  if (mark.vocabulary.itemType === "phrase_gloss") {
+    return "短语";
+  }
+  return "语境义";
+}
+
+function vocabularyGlossary(mark: ReaderRecordPlateVocabularyMark): ReaderRecordLookupContext["glossary"] {
+  if (mark.vocabulary.itemType === "vocab_highlight") {
+    return mark.vocabulary.briefExplanation || mark.vocabulary.reason
+      ? {
+          gloss: mark.vocabulary.briefExplanation ?? undefined,
+          reason: mark.vocabulary.reason ?? undefined,
+        }
+      : undefined;
+  }
+  if (mark.vocabulary.itemType === "phrase_gloss") {
+    return {
+      gloss: mark.vocabulary.gloss,
+      phraseType: phraseTypeForInspect(mark.vocabulary.phraseType),
+      example: mark.vocabulary.example ?? undefined,
+    };
+  }
+  return {
+    gloss: mark.vocabulary.gloss,
+    reason: mark.vocabulary.reason,
+  };
+}
+
 function phraseTypeForInspect(
   phraseType: string | undefined,
 ): NonNullable<ReaderStructuredInspectIntent["glossary"]>["phraseType"] {
@@ -888,6 +1060,54 @@ function sourceTextForAnchorSegment(
     .join("");
 }
 
+function lookupContextFromInspectIntent(
+  intent: ReaderStructuredInspectIntent,
+): ReaderRecordLookupContext {
+  const query = intent.lookupText ?? intent.anchorText;
+  return {
+    contextSentence: intent.contextSentence,
+    sentenceId: intent.sentenceId,
+    anchorText: intent.anchorText,
+    lookupType: intent.lookupKind === "phrase" ? "phrase" : lookupTypeForSelection(query),
+    source: "vocabulary",
+    label: intent.annotationType === "phrase_gloss" ? "短语" : intent.label ?? "语境义",
+    annotationType: intent.annotationType,
+    visualTone: intent.visualTone,
+    glossary: intent.glossary,
+    sourceContext: intent.sourceContext,
+    anchorOffsets: intent.anchorOffsets,
+    occurrence: intent.occurrence,
+  };
+}
+
+function sentenceIdForAnchorSegment(
+  blocks: ReaderRecordPlateBlock[],
+  anchorSegmentId: string,
+): string {
+  const paragraph = blocks.find(
+    (block): block is ReaderRecordPlateParagraphBlock =>
+      block.type === "paragraph" &&
+      block.data.coveredAnchorSegmentIds.includes(anchorSegmentId),
+  );
+  return paragraph?.data.sentenceId ?? "";
+}
+
+function markStackBlocksDoubleClickLookup(markStackKinds: string | undefined): boolean {
+  if (!markStackKinds) {
+    return false;
+  }
+  return markStackKinds
+    .split(/\s+/)
+    .some((kind) =>
+      kind === "vocab_highlight" ||
+      kind === "phrase_gloss" ||
+      kind === "context_gloss" ||
+      kind === "grammar_note" ||
+      kind === "user_highlight" ||
+      kind === "user_note",
+    );
+}
+
 function structuredInspectIntentFromVocabularyMark(
   mark: ReaderRecordPlateVocabularyMark,
   contextSentence: string,
@@ -910,9 +1130,7 @@ function structuredInspectIntentFromVocabularyMark(
       glossary: {
         gloss: mark.vocabulary.gloss,
         phraseType: phraseTypeForInspect(mark.vocabulary.phraseType),
-        reason: mark.vocabulary.example
-          ? `例句：${mark.vocabulary.example}`
-          : undefined,
+        example: mark.vocabulary.example ?? undefined,
       },
       anchorOffsets: {
         startOffset: mark.anchor.segmentStartOffset,
@@ -1918,6 +2136,8 @@ export function ReaderRecordPlateSurface({
   const [commentApiReady, setCommentApiReady] = useState(false);
   const [activeSelection, setActiveSelection] =
     useState<ReaderRecordSelectionAnchorBridgeResult | null>(null);
+  const activeSelectionRef =
+    useRef<ReaderRecordSelectionAnchorBridgeResult | null>(null);
   const [copyStatus, setCopyStatus] = useState<ReaderRecordCopyStatus>("idle");
   const [writeState, setWriteState] = useState<ReaderRecordWriteState>({
     kind: "idle",
@@ -1968,6 +2188,9 @@ export function ReaderRecordPlateSurface({
     }
   });
 
+  useEffect(() => {
+    activeSelectionRef.current = activeSelection;
+  }, [activeSelection]);
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -2299,7 +2522,6 @@ export function ReaderRecordPlateSurface({
             {...userNoteDataAttrs}
             className={mergedClassName || undefined}
             aria-label={visual.ariaLabel}
-            title={visual.title}
             data-reader-record-leaf="segment_text"
             data-anchor-segment-id={anchorSegmentId}
             data-segment-start-utf16={leaf.segment_start_utf16}
@@ -2331,7 +2553,6 @@ export function ReaderRecordPlateSurface({
           {...userNoteDataAttrs}
           className={mergedClassName || undefined}
           aria-label={visual.ariaLabel}
-          title={visual.title}
           data-reader-record-mark-stack-kinds={
             visual.kinds.length > 0 ? visual.kinds.join(" ") : undefined
           }
@@ -2372,7 +2593,9 @@ export function ReaderRecordPlateSurface({
     placement: "bottom",
     offsetPx: 8,
   });
-  const quickPeekOpen = lookupState.kind !== "idle" || inspectState !== null;
+  const [dictionaryOpen, setDictionaryOpen] = useState(false);
+  const quickPeekOpen =
+    !dictionaryOpen && (lookupState.kind !== "idle" || inspectState !== null);
   const quickPeekAnchorRef = useRef<
     | { kind: "element"; element: HTMLElement }
     | { kind: "range"; getRect: () => DOMRectReadOnly | DOMRect }
@@ -2420,7 +2643,10 @@ export function ReaderRecordPlateSurface({
     };
   }, [quickPeekFloatingRefs, quickPeekFloatingUpdate, quickPeekOpen]);
 
-  const [dictionaryOpen, setDictionaryOpen] = useState(false);
+  const [dictionaryLookup, setDictionaryLookup] =
+    useState<DictionaryLookupSnapshot | null>(null);
+  const [dictionaryInspect, setDictionaryInspect] =
+    useState<ReaderStructuredInspectIntent | null>(null);
   const [dictionaryHistory, setDictionaryHistory] = useState<
     DictionaryLookupSnapshot[]
   >([]);
@@ -2436,6 +2662,22 @@ export function ReaderRecordPlateSurface({
   const [dictionaryAINoteState, setDictionaryAINoteState] = useState<SaveState>({
     kind: "idle",
   });
+  const commitDictionaryLookup = useCallback((lookup: DictionaryLookupSnapshot) => {
+    setDictionaryLookup(lookup);
+    setDictionaryInspect(null);
+    setDictionarySearchQuery(lookup.query);
+    setDictionarySaveState({ kind: "idle" });
+    setDictionaryAI({ kind: "idle" });
+    setDictionaryAIPanelOpen(false);
+    setDictionaryAINoteState({ kind: "idle" });
+    setDictionaryHistory((current) => {
+      const lookupKey = dictionaryLookupHistoryKey(lookup);
+      const filtered = current.filter(
+        (item) => dictionaryLookupHistoryKey(item) !== lookupKey,
+      );
+      return [lookup, ...filtered].slice(0, 20);
+    });
+  }, []);
   const [askOpen, setAskOpen] = useState(false);
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
   const [pendingAskRequest, setPendingAskRequest] =
@@ -2498,6 +2740,7 @@ export function ReaderRecordPlateSurface({
   // 替代旧的 selectionchange DOM 监听 + readReaderRecordSelectionAnchorDrafts。
   const handleSelectionChange = useCallback(
     (nextSelection: ReaderRecordSelectionAnchorBridgeResult | null) => {
+      activeSelectionRef.current = nextSelection;
       setActiveSelection(nextSelection);
       setCopyStatus("idle");
       setWriteState((current) => (current.kind === "saving" ? current : { kind: "idle" }));
@@ -2570,6 +2813,83 @@ export function ReaderRecordPlateSurface({
     };
   }, [feedbackState]);
 
+  const runDictionaryLookupRequest = useCallback(async ({
+    query,
+    context,
+    positionReference,
+    warningLabel = "dictionary",
+  }: {
+    query: string;
+    context: ReaderRecordLookupContext;
+    positionReference?: ReaderRecordLookupPositionReference;
+    warningLabel?: string;
+  }) => {
+    if (positionReference) {
+      quickPeekAnchorRef.current = {
+        kind: "range",
+        getRect: positionReference.getRect,
+      };
+      quickPeekFloating.refs.setPositionReference?.({
+        getBoundingClientRect: positionReference.getRect,
+        contextElement: positionReference.contextElement,
+      });
+    }
+
+    setInspectState(null);
+    setDictionaryInspect(null);
+    setLookupState({ kind: "loading", query, context });
+
+    try {
+      const params = new URLSearchParams({
+        word: query,
+        type: context.lookupType,
+        context: context.contextSentence,
+        sentenceId: context.sentenceId,
+      });
+      const response = await fetch(`/api/web/dict/lookup?${params.toString()}`);
+      const payload = (await response.json().catch(() => null)) as
+        | WebDictResult
+        | null;
+
+      if (!payload) {
+        setLookupState({
+          kind: "error",
+          query,
+          context,
+          message: "词典查询失败。",
+        });
+        return;
+      }
+
+      if (!response.ok && payload.kind !== "error") {
+        setLookupState({
+          kind: "error",
+          query,
+          context,
+          message: "词典查询失败。",
+        });
+        return;
+      }
+
+      const readySnapshot = buildDictionaryLookupSnapshotFromContext(
+        snapshot,
+        query,
+        context,
+        { kind: "ready", result: payload },
+      );
+      setLookupState({ kind: "ready", query, context, result: payload });
+      commitDictionaryLookup(readySnapshot);
+    } catch (error) {
+      console.warn(`[ReaderRecordPlateSurface] ${warningLabel} lookup failed`, error);
+      setLookupState({
+        kind: "error",
+        query,
+        context,
+        message: "词典查询失败，请稍后重试。",
+      });
+    }
+  }, [commitDictionaryLookup, quickPeekFloating.refs, snapshot]);
+
   const handleActivateVocabulary = useCallback(
     (mark: ReaderRecordPlateVocabularyMark, anchor: HTMLElement) => {
       if (hasNonCollapsedNativeSelection()) {
@@ -2590,11 +2910,20 @@ export function ReaderRecordPlateSurface({
         anchorText: mark.anchor.selectedText,
         lookupType: lookupTypeForSelection(query),
         source: "vocabulary",
+        label: vocabularyLabel(mark),
+        annotationType: mark.vocabulary.itemType,
+        visualTone: vocabularyVisualTone(mark),
+        glossary: vocabularyGlossary(mark),
+        anchorOffsets: {
+          startOffset: mark.anchor.segmentStartOffset,
+          endOffset: mark.anchor.segmentEndOffset,
+        },
+        textHash: mark.anchor.textHash,
       };
-      const rect = anchor.getBoundingClientRect();
-      quickPeekAnchorRef.current = { kind: "range", getRect: () => rect };
+      quickPeekAnchorRef.current = { kind: "element", element: anchor };
       quickPeekFloating.refs.setPositionReference?.({
-        getBoundingClientRect: () => rect,
+        getBoundingClientRect: () => anchor.getBoundingClientRect(),
+        contextElement: anchor,
       });
 
       const inspectIntent = structuredInspectIntentFromVocabularyMark(
@@ -2603,58 +2932,30 @@ export function ReaderRecordPlateSurface({
       );
       if (inspectIntent) {
         setLookupState({ kind: "idle" });
-        setInspectState(inspectIntent);
+        if (dictionaryOpen) {
+          setInspectState(null);
+          setDictionarySaveState({ kind: "idle" });
+          setDictionaryAI({ kind: "idle" });
+          setDictionaryAIPanelOpen(false);
+          setDictionaryAINoteState({ kind: "idle" });
+          void runDictionaryLookupRequest({
+            query,
+            context,
+            warningLabel: "vocabulary",
+          });
+        } else {
+          setInspectState(inspectIntent);
+        }
         return;
       }
 
-      setInspectState(null);
-      setLookupState({ kind: "loading", query, context });
-      void (async () => {
-        try {
-          const params = new URLSearchParams({
-            word: query,
-            type: context.lookupType,
-            context: contextSentence,
-            sentenceId: mark.anchor.sentenceId,
-          });
-          const response = await fetch(`/api/web/dict/lookup?${params.toString()}`);
-          const payload = (await response.json().catch(() => null)) as
-            | WebDictResult
-            | null;
-
-          if (!payload) {
-            setLookupState({
-              kind: "error",
-              query,
-              context,
-              message: "词典查询失败。",
-            });
-            return;
-          }
-
-          if (!response.ok && payload.kind !== "error") {
-            setLookupState({
-              kind: "error",
-              query,
-              context,
-              message: "词典查询失败。",
-            });
-            return;
-          }
-
-          setLookupState({ kind: "ready", query, context, result: payload });
-        } catch (error) {
-          console.warn("[ReaderRecordPlateSurface] vocabulary lookup failed", error);
-          setLookupState({
-            kind: "error",
-            query,
-            context,
-            message: "词典查询失败，请稍后重试。",
-          });
-        }
-      })();
+      void runDictionaryLookupRequest({
+        query,
+        context,
+        warningLabel: "vocabulary",
+      });
     },
-    [plateDocument.children, quickPeekFloating.refs],
+    [dictionaryOpen, plateDocument.children, quickPeekFloating.refs, runDictionaryLookupRequest],
   );
 
   const handleCopy = useCallback(async () => {
@@ -2688,144 +2989,195 @@ export function ReaderRecordPlateSurface({
     [],
   );
 
-  const handleLookup = useCallback(async () => {
-    const selection = activeSelection;
+  const runLookupForSelection = useCallback(async (
+    selection: ReaderRecordSelectionAnchorBridgeResult | null,
+    options: { label?: string; clearSelectionAfterAnchor?: boolean } = {},
+  ) => {
     const draft = singleRangeDraft(selection);
     if (!selection || !draft) {
-      return;
+      return false;
     }
 
-    const query = draft.selected_text.trim();
+    const lookupDraft = trimDraftForLookup(draft);
+    const query = lookupDraft.query;
     if (!query) {
-      return;
+      return false;
     }
 
+    const contextSentence =
+      sourceTextForAnchorSegment(plateDocument.children, draft.anchor_segment_id) ||
+      selection.contextSentence;
     const context: ReaderRecordLookupContext = {
-      contextSentence: selection.contextSentence,
+      contextSentence,
       sentenceId: selection.sentenceId,
-      anchorText: draft.selected_text,
+      anchorText: query,
       lookupType: lookupTypeForSelection(query),
       source: "selection",
+      label: options.label ?? "选区查词",
+      anchorOffsets: {
+        startOffset: lookupDraft.startOffset,
+        endOffset: lookupDraft.endOffset,
+      },
+      textHash: lookupDraft.textHash,
     };
 
-    if (selection.rect) {
-      const liveSelection = window.getSelection();
-      const liveRange =
-        liveSelection && liveSelection.rangeCount > 0
-          ? liveSelection.getRangeAt(0)
-          : null;
-      const getRect = () => liveRange?.getBoundingClientRect() ?? selection.rect!;
-      quickPeekAnchorRef.current = { kind: "range", getRect };
-      quickPeekFloating.refs.setPositionReference?.({
-        getBoundingClientRect: getRect,
-      });
+    if (options.clearSelectionAfterAnchor) {
+      setActiveSelection(null);
     }
 
-    setInspectState(null);
-    setLookupState({ kind: "loading", query, context });
+    const liveSelection = window.getSelection();
+    const liveRange =
+      liveSelection && liveSelection.rangeCount > 0
+        ? liveSelection.getRangeAt(0)
+        : null;
+    const positionReference = selection.rect
+      ? {
+          getRect: () => liveRange?.getBoundingClientRect() ?? selection.rect!,
+        }
+      : undefined;
 
-    try {
-      const params = new URLSearchParams({
-        word: query,
-        type: context.lookupType,
-        context: selection.contextSentence,
-        sentenceId: selection.sentenceId,
-      });
-      const response = await fetch(`/api/web/dict/lookup?${params.toString()}`);
-      const payload = (await response.json().catch(() => null)) as
-        | WebDictResult
-        | null;
+    await runDictionaryLookupRequest({
+      query,
+      context,
+      positionReference,
+    });
+    return true;
+  }, [plateDocument.children, runDictionaryLookupRequest]);
 
-      if (!payload) {
-        setLookupState({
-          kind: "error",
-          query,
-          context,
-          message: "词典查询失败。",
-        });
-        return;
-      }
+  const handleLookup = useCallback(async () => {
+    await runLookupForSelection(activeSelection);
+  }, [activeSelection, runLookupForSelection]);
 
-      if (!response.ok && payload.kind !== "error") {
-        setLookupState({
-          kind: "error",
-          query,
-          context,
-          message: "词典查询失败。",
-        });
-        return;
-      }
-
-      setLookupState({ kind: "ready", query, context, result: payload });
-    } catch (error) {
-      console.warn("[ReaderRecordPlateSurface] dictionary lookup failed", error);
-      setLookupState({
-        kind: "error",
-        query,
-        context,
-        message: "词典查询失败，请稍后重试。",
-      });
+  const runLookupFromNativeDoubleClickSelection = useCallback(async (
+    sourceLeaf: HTMLElement,
+  ) => {
+    const nativeSelection = window.getSelection();
+    if (
+      !nativeSelection ||
+      nativeSelection.rangeCount === 0 ||
+      nativeSelection.isCollapsed
+    ) {
+      return false;
     }
-  }, [activeSelection, quickPeekFloating.refs]);
 
-  const handleLookupFromInspect = useCallback(async () => {
-    const intent = inspectState;
-    if (!intent) {
-      return;
+    const query = nativeSelection.toString().trim();
+    if (!query || lookupTypeForSelection(query) !== "word") {
+      return false;
     }
-    const query = (intent.lookupText ?? intent.anchorText).trim();
-    if (!query) {
-      return;
+    if (!/^[A-Za-z][A-Za-z'-]*$/.test(query)) {
+      return false;
     }
-    const lookupType =
-      intent.lookupKind === "phrase" || /\s/.test(query) ? "phrase" : "word";
+
+    const range = trimNativeSelectionToQuery(sourceLeaf, query) ?? nativeSelection.getRangeAt(0);
+    const rangeElement =
+      range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+        ? (range.commonAncestorContainer as Element)
+        : range.commonAncestorContainer.parentElement;
+    if (!rangeElement || !sourceLeaf.contains(rangeElement)) {
+      return false;
+    }
+
+    const anchorSegmentId = sourceLeaf.dataset.anchorSegmentId;
+    if (!anchorSegmentId) {
+      return false;
+    }
+    const sentenceId = sentenceIdForAnchorSegment(
+      plateDocument.children,
+      anchorSegmentId,
+    );
+    if (!sentenceId) {
+      return false;
+    }
+    const contextSentence =
+      sourceTextForAnchorSegment(plateDocument.children, anchorSegmentId) ||
+      sourceLeaf.textContent?.trim() ||
+      query;
     const context: ReaderRecordLookupContext = {
-      contextSentence: intent.contextSentence,
-      sentenceId: intent.sentenceId,
-      anchorText: intent.anchorText,
-      lookupType,
-      source: "vocabulary",
+      contextSentence,
+      sentenceId,
+      anchorText: query,
+      lookupType: "word",
+      source: "selection",
+      label: "查词",
+    };
+    const getRect = () => {
+      const rect = range.getBoundingClientRect();
+      return rect.width > 0 || rect.height > 0
+        ? rect
+        : sourceLeaf.getBoundingClientRect();
     };
 
-    setInspectState(null);
-    setLookupState({ kind: "loading", query, context });
+    setActiveSelection(null);
+    await runDictionaryLookupRequest({
+      query,
+      context,
+      positionReference: {
+        getRect,
+        contextElement: sourceLeaf,
+      },
+    });
+    return true;
+  }, [plateDocument.children, runDictionaryLookupRequest]);
 
-    try {
-      const params = new URLSearchParams({
-        word: query,
-        type: lookupType,
-        context: intent.contextSentence,
-        sentenceId: intent.sentenceId,
-      });
-      const response = await fetch(`/api/web/dict/lookup?${params.toString()}`);
-      const payload = (await response.json().catch(() => null)) as
-        | WebDictResult
-        | null;
-      if (!payload || (!response.ok && payload.kind !== "error")) {
-        setLookupState({
-          kind: "error",
-          query,
-          context,
-          message: "词典查询失败。",
-        });
+  const handleDocumentDoubleClickTarget = useCallback((eventTarget: EventTarget | null) => {
+    const target = eventTarget instanceof Element ? eventTarget : null;
+    if (!target) {
+      return;
+    }
+
+    const sourceLeaf = target.closest<HTMLElement>(
+      '[data-reader-record-leaf="segment_text"]',
+    );
+    if (
+      !sourceLeaf ||
+      markStackBlocksDoubleClickLookup(
+        sourceLeaf.dataset.readerRecordMarkStackKinds,
+      )
+    ) {
+      return;
+    }
+
+    window.setTimeout(() => {
+      const runNativeFallback = () => {
+        void runLookupFromNativeDoubleClickSelection(sourceLeaf);
+      };
+      const selection = activeSelectionRef.current;
+      const draft = singleRangeDraft(selection);
+      const query = draft?.selected_text.trim() ?? "";
+      if (!selection || !draft || !query || lookupTypeForSelection(query) !== "word") {
+        runNativeFallback();
         return;
       }
-      setLookupState({ kind: "ready", query, context, result: payload });
-    } catch (error) {
-      console.warn("[ReaderRecordPlateSurface] inspect phrase lookup failed", error);
-      setLookupState({
-        kind: "error",
-        query,
-        context,
-        message: "词典查询失败，请稍后重试。",
+      if (!/^[A-Za-z][A-Za-z'-]*$/.test(query)) {
+        runNativeFallback();
+        return;
+      }
+
+      trimNativeSelectionToQuery(sourceLeaf, query);
+      void runLookupForSelection(selection, {
+        label: "查词",
+        clearSelectionAfterAnchor: true,
+      }).then((handled) => {
+        if (!handled) {
+          void runLookupFromNativeDoubleClickSelection(sourceLeaf);
+        }
       });
-    }
-  }, [inspectState]);
+    }, 0);
+  }, [runLookupForSelection, runLookupFromNativeDoubleClickSelection]);
+
+  const handleSurfaceDoubleClickCapture = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      handleDocumentDoubleClickTarget(event.target);
+    },
+    [handleDocumentDoubleClickTarget],
+  );
 
   const activeLookupSnapshot = useMemo(
     () => buildDictionaryLookupSnapshot(snapshot, lookupState),
     [snapshot, lookupState],
   );
+  const dictionaryPanelLookup = activeLookupSnapshot ?? dictionaryLookup;
+  const dictionaryPanelInspect = activeLookupSnapshot ? null : dictionaryInspect;
   const currentAskSelectionAttachment = useMemo<ReaderAskAttachment | null>(() => {
     const selection = activeSelection;
     const draft = singleRangeDraft(selection);
@@ -2870,20 +3222,34 @@ export function ReaderRecordPlateSurface({
   }, [activeSelection, askPageIdentity, snapshot.record_id]);
 
   const openDictionaryRail = useCallback(() => {
+    const lookupForRail = activeLookupSnapshot;
+    const inspectForRail = inspectState;
     setDictionaryOpen(true);
+    quickPeekAnchorRef.current = null;
+    if (lookupForRail) {
+      setLookupState({ kind: "idle" });
+      setInspectState(null);
+      setDictionaryInspect(null);
+      commitDictionaryLookup(lookupForRail);
+      return;
+    }
+    if (inspectForRail) {
+      setInspectState(null);
+      setDictionarySaveState({ kind: "idle" });
+      setDictionaryAI({ kind: "idle" });
+      setDictionaryAIPanelOpen(false);
+      setDictionaryAINoteState({ kind: "idle" });
+      const query = inspectForRail.lookupText ?? inspectForRail.anchorText;
+      void runDictionaryLookupRequest({
+        query,
+        context: lookupContextFromInspectIntent(inspectForRail),
+        warningLabel: "vocabulary",
+      });
+      return;
+    }
     setLookupState({ kind: "idle" });
     setInspectState(null);
-    quickPeekAnchorRef.current = null;
-    if (activeLookupSnapshot) {
-      setDictionaryHistory((current) => {
-        const filtered = current.filter(
-          (item) => item.query !== activeLookupSnapshot.query,
-        );
-        return [activeLookupSnapshot, ...filtered].slice(0, 20);
-      });
-      setDictionarySearchQuery(activeLookupSnapshot.query);
-    }
-  }, [activeLookupSnapshot]);
+  }, [activeLookupSnapshot, commitDictionaryLookup, inspectState, runDictionaryLookupRequest]);
 
   const closeDictionaryRail = useCallback(() => {
     setDictionaryOpen(false);
@@ -2928,6 +3294,7 @@ export function ReaderRecordPlateSurface({
     setDictionaryAI({ kind: "idle" });
     setLookupState({ kind: "idle" });
     setInspectState(null);
+    setDictionaryInspect(null);
     setHighlightMenu(null);
     setNoteMenu(null);
     setFeedbackTarget(null);
@@ -3039,60 +3406,28 @@ export function ReaderRecordPlateSurface({
         anchorText: trimmed,
         lookupType,
         source: "selection",
+        label: "手动查词",
       };
-      setInspectState(null);
-      setLookupState({ kind: "loading", query: trimmed, context });
-      try {
-        const params = new URLSearchParams({
-          word: trimmed,
-          type: lookupType,
-          context: "",
-          sentenceId: "__manual__",
-        });
-        const response = await fetch(
-          `/api/web/dict/lookup?${params.toString()}`,
-        );
-        const payload = (await response.json().catch(() => null)) as
-          | WebDictResult
-          | null;
-        if (!payload || (!response.ok && payload.kind !== "error")) {
-          setLookupState({
-            kind: "error",
-            query: trimmed,
-            context,
-            message: "词典查询失败。",
-          });
-          return;
-        }
-        setLookupState({ kind: "ready", query: trimmed, context, result: payload });
-      } catch (error) {
-        console.warn("[ReaderRecordPlateSurface] dictionary search failed", error);
-        setLookupState({
-          kind: "error",
-          query: trimmed,
-          context,
-          message: "词典查询失败，请稍后重试。",
-        });
-      }
+      await runDictionaryLookupRequest({
+        query: trimmed,
+        context,
+        warningLabel: "dictionary search",
+      });
     },
-    [],
+    [runDictionaryLookupRequest],
   );
 
   const handleSelectHistory = useCallback(
     (historyLookup: DictionaryLookupSnapshot) => {
       setDictionarySearchQuery(historyLookup.query);
+      setDictionaryLookup(historyLookup);
       setDictionarySaveState({ kind: "idle" });
       setDictionaryAI({ kind: "idle" });
       setDictionaryAIPanelOpen(false);
       setDictionaryAINoteState({ kind: "idle" });
-      const context: ReaderRecordLookupContext = {
-        contextSentence: historyLookup.contextSentence,
-        sentenceId: historyLookup.sentenceId,
-        anchorText: historyLookup.anchorText,
-        lookupType: historyLookup.lookupType,
-        source: "selection",
-      };
+      const context = lookupContextFromSnapshot(historyLookup);
       setInspectState(null);
+      setDictionaryInspect(null);
       if (historyLookup.state.kind === "ready") {
         setLookupState({
           kind: "ready",
@@ -3115,18 +3450,23 @@ export function ReaderRecordPlateSurface({
   );
 
   const handleSaveVocabulary = useCallback(async () => {
-    if (!activeLookupSnapshot) {
+    const lookupForSave = dictionaryPanelLookup;
+    if (!lookupForSave) {
       return;
     }
-    if (lookupState.kind !== "ready" || lookupState.result.kind !== "entry") {
+    if (
+      lookupForSave.state.kind !== "ready" ||
+      lookupForSave.state.result.kind !== "entry"
+    ) {
       setDictionarySaveState({
         kind: "error",
         message: "当前词条暂不支持保存，请先完成词典查询。",
       });
       return;
     }
-    const entry = lookupState.result.entry;
-    const shortMeaning = firstMeaning(lookupState.result);
+    const result = lookupForSave.state.result;
+    const entry = result.entry;
+    const shortMeaning = firstMeaning(result);
     if (!shortMeaning) {
       setDictionarySaveState({
         kind: "error",
@@ -3134,7 +3474,7 @@ export function ReaderRecordPlateSurface({
       });
       return;
     }
-    if (!activeLookupSnapshot.contextSentence.trim()) {
+    if (!lookupForSave.contextSentence.trim()) {
       setDictionarySaveState({
         kind: "error",
         message: "请先选中包含该词的句子后再保存。",
@@ -3154,17 +3494,17 @@ export function ReaderRecordPlateSurface({
           display_word: entry.word,
           phonetic: entry.phonetic ?? null,
           short_meaning: shortMeaning,
-          meanings_json: meaningsJson(lookupState.result),
+          meanings_json: meaningsJson(result),
           source_provider: "reader_record",
           dict_entry_id: entry.id,
-          source_sentence: activeLookupSnapshot.contextSentence,
-          source_context: activeLookupSnapshot.contextSentence,
+          source_sentence: lookupForSave.contextSentence,
+          source_context: lookupForSave.contextSentence,
           payload_json: {
             source_refs: [
               {
                 reading_record_id: snapshot.record_id,
-                source_sentence_id: activeLookupSnapshot.sentenceId,
-                source_anchor_text: activeLookupSnapshot.anchorText,
+                source_sentence_id: lookupForSave.sentenceId,
+                source_anchor_text: lookupForSave.anchorText,
                 collected_at: new Date().toISOString(),
               },
             ],
@@ -3188,7 +3528,7 @@ export function ReaderRecordPlateSurface({
         message: "词汇保存失败，请稍后重试。",
       });
     }
-  }, [activeLookupSnapshot, lookupState, snapshot.record_id]);
+  }, [dictionaryPanelLookup, snapshot.record_id]);
 
   const handleSubmitFeedback = useCallback(
     async (sentiment: "positive" | "negative") => {
@@ -3302,19 +3642,26 @@ export function ReaderRecordPlateSurface({
 
   const handleSelectCandidate = useCallback(
     async (entryId: number) => {
-      if (!activeLookupSnapshot) {
+      const lookupForCandidate = dictionaryPanelLookup;
+      if (!lookupForCandidate) {
         return;
       }
+      const snapshotContext = lookupContextFromSnapshot(lookupForCandidate);
       const baseContext: ReaderRecordLookupContext = {
-        contextSentence: activeLookupSnapshot.contextSentence,
-        sentenceId: activeLookupSnapshot.sentenceId,
-        anchorText: activeLookupSnapshot.anchorText,
-        lookupType: activeLookupSnapshot.lookupType,
-        source: "selection",
+        contextSentence: snapshotContext.contextSentence,
+        sentenceId: snapshotContext.sentenceId,
+        anchorText: snapshotContext.anchorText,
+        lookupType: snapshotContext.lookupType,
+        source: snapshotContext.source,
+        label: lookupForCandidate.lookupType === "phrase" ? "短语查询" : "词典查询",
+        sourceContext: snapshotContext.sourceContext,
+        anchorOffsets: snapshotContext.anchorOffsets,
+        occurrence: snapshotContext.occurrence,
+        textHash: snapshotContext.textHash,
       };
       setLookupState({
         kind: "loading",
-        query: activeLookupSnapshot.query,
+        query: lookupForCandidate.query,
         context: baseContext,
       });
       try {
@@ -3327,29 +3674,36 @@ export function ReaderRecordPlateSurface({
         if (!payload || (!response.ok && payload.kind !== "error")) {
           setLookupState({
             kind: "error",
-            query: activeLookupSnapshot.query,
+            query: lookupForCandidate.query,
             context: baseContext,
             message: "词典候选加载失败。",
           });
           return;
         }
+        const readySnapshot = buildDictionaryLookupSnapshotFromContext(
+          snapshot,
+          lookupForCandidate.query,
+          baseContext,
+          { kind: "ready", result: payload },
+        );
         setLookupState({
           kind: "ready",
-          query: activeLookupSnapshot.query,
+          query: lookupForCandidate.query,
           context: baseContext,
           result: payload,
         });
+        commitDictionaryLookup(readySnapshot);
       } catch (error) {
         console.warn("[ReaderRecordPlateSurface] candidate select failed", error);
         setLookupState({
           kind: "error",
-          query: activeLookupSnapshot.query,
+          query: lookupForCandidate.query,
           context: baseContext,
           message: "词典候选加载失败，请稍后重试。",
         });
       }
     },
-    [activeLookupSnapshot],
+    [commitDictionaryLookup, dictionaryPanelLookup, snapshot],
   );
 
   const saveHighlightColorById = useCallback(
@@ -3797,7 +4151,14 @@ export function ReaderRecordPlateSurface({
     ],
   );
 
-  leafClickResolverRef.current = handleLeafClickIntent;
+  useEffect(() => {
+    leafClickResolverRef.current = handleLeafClickIntent;
+    return () => {
+      if (leafClickResolverRef.current === handleLeafClickIntent) {
+        leafClickResolverRef.current = null;
+      }
+    };
+  }, [handleLeafClickIntent]);
 
   const sentenceAnalysisInteraction = useMemo(
     () => ({
@@ -4070,6 +4431,7 @@ export function ReaderRecordPlateSurface({
     <div
       data-testid="reader-record-plate-surface"
       data-reader-record-surface="plate-readonly-reading"
+      onDoubleClickCapture={handleSurfaceDoubleClickCapture}
       className={themeClassName}
     >
       {/* Surface-level sticky operation bar: spans the available document viewport. */}
@@ -4156,8 +4518,8 @@ export function ReaderRecordPlateSurface({
                 setInspectState(null);
                 quickPeekAnchorRef.current = null;
               }}
-              onOpenDetail={activeLookupSnapshot ? openDictionaryRail : undefined}
-              onLookupPhrase={inspectState ? handleLookupFromInspect : undefined}
+              onOpenDetail={activeLookupSnapshot || inspectState ? openDictionaryRail : undefined}
+              onSelectCandidate={activeLookupSnapshot ? handleSelectCandidate : undefined}
               onAttachToAsk={inspectState ? handleAttachInspectToAsk : undefined}
               onFeedback={inspectState ? handleInspectFeedback : undefined}
             />
@@ -4239,7 +4601,11 @@ export function ReaderRecordPlateSurface({
                       data-reader-record-mode={surfaceMode}
                       onCopyCapture={handleDocumentCopyCapture}
                     >
-                      <Editor readOnly disableDefaultStyles renderLeaf={renderLeaf as never} />
+                      <Editor
+                        readOnly
+                        disableDefaultStyles
+                        renderLeaf={renderLeaf as never}
+                      />
                     </EditorContainer>
                     <InlineCommentPanel
                       draftText={noteDraft}
@@ -4322,14 +4688,15 @@ export function ReaderRecordPlateSurface({
         />
         {dictionaryOpen ? (
           <div
-            className="reader-tool-surface reader-tool-surface--rail fixed top-3 bottom-3 left-3 z-40 hidden xl:block w-[420px]"
+            className="reader-tool-surface reader-tool-surface--rail fixed top-14 bottom-3 left-[calc(var(--reader-record-app-sidebar-width)+0.75rem)] z-40 hidden w-[420px] xl:block"
             data-reader-record-dictionary-rail="docked"
           >
             <ReaderDictionaryRail
               className="h-full"
-              lookup={activeLookupSnapshot}
+              lookup={dictionaryPanelLookup}
+              inspect={dictionaryPanelInspect}
               history={dictionaryHistory}
-              readingGoal=""
+              readingGoal={snapshot.record.reading_goal}
               saveState={dictionarySaveState}
               dictionaryAI={dictionaryAI}
               dictionaryAIPanelOpen={dictionaryAIPanelOpen}
@@ -4347,8 +4714,11 @@ export function ReaderRecordPlateSurface({
               onToggleSearchExpanded={() => setDictionarySearchExpanded((v) => !v)}
               onDismiss={closeDictionaryRail}
               variant="card"
-              canSaveVocabulary={Boolean(activeLookupSnapshot?.contextSentence.trim())}
+              canSaveVocabulary={Boolean(dictionaryPanelLookup?.contextSentence.trim())}
               canCreateAINote={false}
+              onAttachToAsk={(intent) =>
+                openAskPanel(askAttachmentFromVocabularyInspect(askPageIdentity, intent))
+              }
               onSelectHistory={handleSelectHistory}
             />
           </div>
@@ -4359,9 +4729,10 @@ export function ReaderRecordPlateSurface({
             data-reader-record-dictionary-rail="sheet"
           >
             <ReaderDictionaryRail
-              lookup={activeLookupSnapshot}
+              lookup={dictionaryPanelLookup}
+              inspect={dictionaryPanelInspect}
               history={dictionaryHistory}
-              readingGoal=""
+              readingGoal={snapshot.record.reading_goal}
               saveState={dictionarySaveState}
               dictionaryAI={dictionaryAI}
               dictionaryAIPanelOpen={dictionaryAIPanelOpen}
@@ -4379,8 +4750,11 @@ export function ReaderRecordPlateSurface({
               onToggleSearchExpanded={() => setDictionarySearchExpanded((v) => !v)}
               onDismiss={closeDictionaryRail}
               variant="sheet"
-              canSaveVocabulary={Boolean(activeLookupSnapshot?.contextSentence.trim())}
+              canSaveVocabulary={Boolean(dictionaryPanelLookup?.contextSentence.trim())}
               canCreateAINote={false}
+              onAttachToAsk={(intent) =>
+                openAskPanel(askAttachmentFromVocabularyInspect(askPageIdentity, intent))
+              }
               onSelectHistory={handleSelectHistory}
             />
           </div>

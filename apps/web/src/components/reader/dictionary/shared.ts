@@ -93,17 +93,59 @@ const dictionaryTagLabelMap: Record<string, string> = {
 };
 
 export function contextualGlossaryTitle(lookup: DictionaryLookupSnapshot) {
-  if (lookup.annotationType === "phrase_gloss" || lookup.lookupType === "phrase") {
-    return lookup.glossary?.phraseType ? phraseTypeLabel[lookup.glossary.phraseType] : "短语含义";
+  if (lookup.annotationType === "vocab_highlight") {
+    return "重点词汇";
   }
   if (lookup.annotationType === "context_gloss") {
-    return "本文含义";
+    return "语境义";
+  }
+  if (lookup.annotationType === "phrase_gloss" || lookup.lookupType === "phrase") {
+    return "短语";
   }
   return null;
 }
 
 export function contextualGlossaryText(glossary?: InlineGlossary) {
   return glossary?.zh ?? glossary?.gloss ?? "";
+}
+
+export function phraseGlossarySubtypeLabel(glossary?: InlineGlossary) {
+  return glossary?.phraseType ? phraseTypeLabel[glossary.phraseType] : null;
+}
+
+export function structuredInspectCategoryLabel(annotationType: string) {
+  if (annotationType === "phrase_gloss") {
+    return "短语";
+  }
+  if (annotationType === "context_gloss") {
+    return "语境义";
+  }
+  if (annotationType === "vocab_highlight") {
+    return "重点词汇";
+  }
+  return "词典";
+}
+
+export function structuredInspectToneClass(annotationType: string) {
+  if (annotationType === "phrase_gloss") {
+    return "text-phrase-lavender";
+  }
+  if (annotationType === "context_gloss") {
+    return "text-context-blue";
+  }
+  return "text-vocab-amber";
+}
+
+export function contextualGlossaryExample(glossary?: InlineGlossary) {
+  return glossary?.example?.trim() || "";
+}
+
+export function contextualGlossaryExampleTranslation(glossary?: InlineGlossary) {
+  return glossary?.exampleTranslation?.trim() || "";
+}
+
+export function contextualGlossaryReason(glossary?: InlineGlossary) {
+  return glossary?.reason?.trim() || "";
 }
 
 export function normalizeDictionaryText(value?: string) {
@@ -258,7 +300,8 @@ export function dictionaryAIContextKey(lookup: DictionaryLookupSnapshot | null) 
 }
 
 export function dictionaryLookupBase(lookup: DictionaryLookupSnapshot) {
-  const { state: _state, ...base } = lookup;
+  const { state, ...base } = lookup;
+  void state;
   return base;
 }
 
@@ -521,6 +564,10 @@ export function dictionaryEntrySummary(
   result: Extract<WebDictResult, { kind: "entry" }>,
   lookup?: DictionaryLookupSnapshot | null,
 ) {
+  if (lookup?.annotationType === "vocab_highlight") {
+    return firstMeaning(result) || contextualGlossaryText(lookup?.glossary) || "";
+  }
+
   return contextualGlossaryText(lookup?.glossary) || firstMeaning(result) || "";
 }
 
