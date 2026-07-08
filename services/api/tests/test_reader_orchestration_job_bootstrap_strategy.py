@@ -945,7 +945,9 @@ async def test_t11_long_article_routes_to_per_unit_path(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T1.1: Article > SHORT_ARTICLE_MAX_CHAR_COUNT (6000) creates per-unit
-    jobs (translate_unit + build_vocabulary_layer), NOT batch jobs."""
+    translation jobs (translate_unit). T3.2b: vocabulary now uses grouped
+    batch jobs (build_vocabulary_layer_article) instead of per-unit
+    build_vocabulary_layer."""
     user_id = await insert_user(strategy_env)
     record_id = await _submit_with_strategy(
         strategy_env,
@@ -962,12 +964,12 @@ async def test_t11_long_article_routes_to_per_unit_path(
     jobs = await _load_jobs(strategy_env, record_id)
     job_types = {j["job_type"] for j in jobs}
 
-    # Long article → per-unit path
+    # Long article → translation still per-unit (T3.1 not yet done)
     assert "translate_unit" in job_types
-    assert "build_vocabulary_layer" in job_types
-    # Must NOT create batch jobs for long articles
     assert "translate_article" not in job_types
-    assert "build_vocabulary_layer_article" not in job_types
+    # T3.2b: vocabulary now uses grouped batch jobs, NOT per-unit
+    assert "build_vocabulary_layer_article" in job_types
+    assert "build_vocabulary_layer" not in job_types
 
 
 def test_fingerprint_matches_base_rejects_different_base() -> None:
@@ -978,3 +980,329 @@ def test_fingerprint_matches_base_rejects_different_base() -> None:
     assert not _fingerprint_matches_base(
         "grammar_bundle_unit_v1:hash", "vocabulary_unit_v1"
     )
+
+
+# ---------------------------------------------------------------------------#
+# T3.2b: Non-short vocabulary grouped execution (window planner + bootstrap)
+# ---------------------------------------------------------------------------#
+
+
+def test_plan_vocabulary_windows_covers_all_units_no_overlap() -> None:
+    """T3.2b: window planner covers every unit, consecutive, no overlap."""
+    from app.services.reader_orchestration.job_bootstrap import (
+        VocabularyWindowUnit,
+        plan_vocabulary_windows,
+    )
+
+    units = [
+        VocabularyWindowUnit(unit_id=f"u{i}", order_index=i, text_length=1500)
+        for i in range(6)
+    ]
+    windows = plan_vocabulary_windows(units)
+    # Every unit appears in exactly one window
+    all_windowed = [u for w in windows for u in w.units]
+    assert len(all_windowed) == len(units)
+    assert {u.unit_id for u in all_windowed} == {u.unit_id for u in units}
+    # Windows are consecutive and ordered by reading order
+    for w in windows:
+        orders = [u.order_index for u in w.units]
+        assert orders == sorted(orders)
+    # No overlap: each unit_id appears in exactly one window
+    seen: set[str] = set()
+    for w in windows:
+        for u in w.units:
+            assert u.unit_id not in seen
+            seen.add(u.unit_id)
+    # Windows are ordered by reading order
+    first_orders = [w.units[0].order_index for w in windows]
+    assert first_orders == sorted(first_orders)
+
+
+def test_plan_vocabulary_windows_respects_safety_max() -> None:
+    """T3.2b: a single unit larger than safety max becomes its own window."""
+    from app.services.reader_orchestration.job_bootstrap import (
+        VocabularyWindowUnit,
+        plan_vocabulary_windows,
+    )
+
+    units = [
+        VocabularyWindowUnit(unit_id="small1", order_index=0, text_length=1000),
+        VocabularyWindowUnit(unit_id="huge", order_index=1, text_length=6000),
+        VocabularyWindowUnit(unit_id="small2", order_index=2, text_length=1000),
+    ]
+    windows = plan_vocabulary_windows(
+        units,
+        target_char_count=3000,
+        safety_max_char_count=5000,
+    )
+    # "huge" must be in its own window (6000 > 5000 safety max)
+    assert len(windows) == 3
+    assert [w.units[0].unit_id for w in windows] == ["small1", "huge", "small2"]
+
+
+def test_plan_vocabulary_windows_empty_input() -> None:
+    """T3.2b: empty unit list produces empty window list."""
+    from app.services.reader_orchestration.job_bootstrap import (
+        plan_vocabulary_windows,
+    )
+
+    assert plan_vocabulary_windows([]) == []
+
+
+def test_plan_vocabulary_windows_single_unit() -> None:
+    """T3.2b: a single unit produces a single window."""
+    from app.services.reader_orchestration.job_bootstrap import (
+        VocabularyWindowUnit,
+        plan_vocabulary_windows,
+    )
+
+    units = [VocabularyWindowUnit(unit_id="u1", order_index=0, text_length=500)]
+    windows = plan_vocabulary_windows(units)
+    assert len(windows) == 1
+    assert windows[0].target_unit_ids == ("u1",)
+
+
+def test_vocabulary_window_plan_window_id_is_stable() -> None:
+    """T3.2b: window_id is a stable hash of sorted unit_ids."""
+    from app.services.reader_orchestration.job_bootstrap import (
+        VocabularyWindowUnit,
+        VocabularyWindowPlan,
+    )
+
+    w1 = VocabularyWindowPlan(
+        units=(
+            VocabularyWindowUnit(unit_id="u2", order_index=1, text_length=100),
+            VocabularyWindowUnit(unit_id="u1", order_index=0, text_length=100),
+        )
+    )
+    w2 = VocabularyWindowPlan(
+        units=(
+            VocabularyWindowUnit(unit_id="u1", order_index=0, text_length=100),
+            VocabularyWindowUnit(unit_id="u2", order_index=1, text_length=100),
+        )
+    )
+    # Same unit set → same window_id regardless of tuple order
+    assert w1.window_id == w2.window_id
+    # Different unit set → different window_id
+    w3 = VocabularyWindowPlan(
+        units=(
+            VocabularyWindowUnit(unit_id="u1", order_index=0, text_length=100),
+        )
+    )
+    assert w1.window_id != w3.window_id
+
+
+async def test_t32b_non_short_article_creates_multiple_vocabulary_window_jobs(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T3.2b: non-short article creates multiple build_vocabulary_layer_article
+    window jobs (not per-unit build_vocabulary_layer)."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_LONG_TEXT,
+    )
+    assert len(_LONG_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
+
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    jobs = await _load_jobs(strategy_env, record_id)
+    vocab_batch_jobs = [
+        j for j in jobs if j["job_type"] == "build_vocabulary_layer_article"
+    ]
+    # Non-short article must create at least 1 window job; with 8 units of
+    # ~1600 chars each and target=3000, expect ~4 windows.
+    assert len(vocab_batch_jobs) >= 2, (
+        f"expected >=2 vocabulary window jobs, got {len(vocab_batch_jobs)}"
+    )
+    # Must NOT create per-unit vocabulary jobs
+    per_unit_vocab = [j for j in jobs if j["job_type"] == "build_vocabulary_layer"]
+    assert len(per_unit_vocab) == 0
+
+    # Each window job must have distinct target_key, input_hash, and window_id
+    target_keys = [j["input_json"].get("window_id") for j in vocab_batch_jobs]
+    assert len(set(target_keys)) == len(vocab_batch_jobs), (
+        "window_ids must be distinct across window jobs"
+    )
+    input_hashes = [j["input_hash"] for j in vocab_batch_jobs]
+    assert len(set(input_hashes)) == len(vocab_batch_jobs), (
+        "input_hashes must be distinct across window jobs"
+    )
+
+    # target_unit_ids across all windows must cover every unit exactly once
+    all_target_unit_ids: list[str] = []
+    for j in vocab_batch_jobs:
+        ids = j["input_json"].get("target_unit_ids") or []
+        all_target_unit_ids.extend(ids)
+    assert len(set(all_target_unit_ids)) == len(all_target_unit_ids), (
+        "units must not overlap across windows"
+    )
+
+
+async def test_t32b_vocabulary_window_jobs_idempotent_rebootstrap(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T3.2b: re-running bootstrap does not duplicate window jobs."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_LONG_TEXT,
+    )
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+    jobs_after_first = await _load_jobs(strategy_env, record_id)
+    vocab_batch_first = [
+        j for j in jobs_after_first if j["job_type"] == "build_vocabulary_layer_article"
+    ]
+
+    # Re-run bootstrap — should not create duplicate window jobs
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+    jobs_after_second = await _load_jobs(strategy_env, record_id)
+    vocab_batch_second = [
+        j for j in jobs_after_second if j["job_type"] == "build_vocabulary_layer_article"
+    ]
+
+    assert len(vocab_batch_second) == len(vocab_batch_first)
+    first_ids = {j["job_id"] for j in vocab_batch_first}
+    second_ids = {j["job_id"] for j in vocab_batch_second}
+    assert first_ids == second_ids
+
+
+async def test_t32b_vocabulary_window_jobs_partial_publish_only_fills_missing(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T3.2b: when some units already have published vocabulary layers,
+    bootstrap only creates windows for the missing units."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_LONG_TEXT,
+    )
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+    jobs_first = await _load_jobs(strategy_env, record_id)
+    vocab_batch_first = [
+        j for j in jobs_first if j["job_type"] == "build_vocabulary_layer_article"
+    ]
+    assert len(vocab_batch_first) >= 2
+
+    # Simulate publishing vocabulary layers for the units in the first window
+    first_window_unit_ids = vocab_batch_first[0]["input_json"]["target_unit_ids"]
+    async with strategy_env.acquire() as conn:
+        base_id = await conn.fetchval(
+            "SELECT active_base_id FROM reading_records WHERE id = $1",
+            record_id,
+        )
+        generation = await conn.fetchval(
+            "SELECT generation FROM reading_records WHERE id = $1",
+            record_id,
+        )
+        for unit_id in first_window_unit_ids:
+            await conn.execute(
+                """
+                INSERT INTO enhancement_layers (
+                    reading_record_id,
+                    base_id,
+                    layer_type,
+                    target_scope,
+                    target_key,
+                    generation,
+                    status,
+                    operation_fingerprint,
+                    schema_version,
+                    output_json,
+                    coverage_json,
+                    quality_json,
+                    source_run_id,
+                    source_job_id,
+                    published_at
+                )
+                VALUES ($1, $2, 'vocabulary', 'unit', $3, $4, 'published',
+                    $5, 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+                    $6, $7, NOW())
+                """,
+                record_id,
+                base_id,
+                unit_id,
+                generation,
+                f"fake_published_vocabulary:{unit_id}",
+                vocab_batch_first[0]["run_id"],
+                vocab_batch_first[0]["job_id"],
+            )
+        # Mark the first window job as succeeded so it's not re-created
+        await conn.execute(
+            "UPDATE reader_jobs SET status = 'succeeded' WHERE id = $1",
+            vocab_batch_first[0]["job_id"],
+        )
+
+    # Re-run bootstrap — should only create windows for unpublished units
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+    jobs_second = await _load_jobs(strategy_env, record_id)
+    first_job_id = vocab_batch_first[0]["job_id"]
+    vocab_batch_second = [
+        j for j in jobs_second if j["job_type"] == "build_vocabulary_layer_article"
+    ]
+
+    # The succeeded first-window job should still be present
+    assert first_job_id in {j["job_id"] for j in vocab_batch_second}
+
+    # NEW window jobs (not the succeeded first window) must NOT include
+    # any of the first window's already-published unit_ids.
+    new_window_jobs = [j for j in vocab_batch_second if j["job_id"] != first_job_id]
+    assert len(new_window_jobs) >= 1
+    for j in new_window_jobs:
+        ids = set(j["input_json"]["target_unit_ids"])
+        assert not ids.intersection(first_window_unit_ids), (
+            f"window {j['job_id']} includes already-published units {ids & set(first_window_unit_ids)}"
+        )
+
+
+async def test_t32b_vocabulary_window_jobs_target_key_distinct(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T3.2b: each window job has a distinct target_key containing the
+    window_id, so idempotency checks do not false-positive across windows."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_LONG_TEXT,
+    )
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    async with strategy_env.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT target_key, operation_fingerprint, idempotency_key, input_hash
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND job_type = 'build_vocabulary_layer_article'
+            ORDER BY created_at ASC
+            """,
+            record_id,
+        )
+
+    assert len(rows) >= 2
+    target_keys = [r["target_key"] for r in rows]
+    idempotency_keys = [r["idempotency_key"] for r in rows]
+    input_hashes = [r["input_hash"] for r in rows]
+    # All distinct
+    assert len(set(target_keys)) == len(rows)
+    assert len(set(idempotency_keys)) == len(rows)
+    assert len(set(input_hashes)) == len(rows)
+    # target_key format: {record_id}:window:{window_id}
+    for tk in target_keys:
+        assert ":window:" in tk

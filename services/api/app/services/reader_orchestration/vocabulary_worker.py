@@ -73,6 +73,12 @@ FAKE_VOCABULARY_MODEL_PROFILE = "fake-reader-layer-vocabulary"
 FAKE_VOCABULARY_MODEL_PROVIDER = "fake-provider"
 FAKE_VOCABULARY_MODEL_NAME = "fake-vocabulary-model"
 MAX_VOCABULARY_ITEMS = 5
+# T3.2 P1-1: The LLM candidate schema allows more candidates than the
+# published cap (MAX_VOCABULARY_ITEMS) so duplicates / grounding failures
+# don't consume published slots. The worker applies the duplicate policy
+# first, then caps at MAX_VOCABULARY_ITEMS. Keeping the candidate bound
+# above the published cap is what makes "dedup before cap" meaningful.
+MAX_VOCABULARY_CANDIDATE_ITEMS = 10
 MAX_VOCABULARY_CANDIDATE_TEXT_LENGTH = 160
 MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH = 240
 MAX_VOCABULARY_DIAGNOSTIC_ITEMS = 8
@@ -201,7 +207,7 @@ class VocabularyCandidateOutput(BaseModel):
     schema_version: Literal[1] = 1
     items: list[VocabularyCandidateItem] = Field(
         default_factory=list,
-        max_length=MAX_VOCABULARY_ITEMS,
+        max_length=MAX_VOCABULARY_CANDIDATE_ITEMS,
     )
 
 
@@ -218,7 +224,7 @@ class VocabularyBatchUnitCandidateOutput(BaseModel):
     unit_id: str = Field(min_length=1)
     items: list[VocabularyCandidateItem] = Field(
         default_factory=list,
-        max_length=MAX_VOCABULARY_ITEMS,
+        max_length=MAX_VOCABULARY_CANDIDATE_ITEMS,
     )
 
 
@@ -653,6 +659,15 @@ def _build_vocabulary_batch_prompt(context: VocabularyBatchJobContext) -> str:
         "Generate vocabulary highlights for the following reading units of a "
         "short article batch.\n"
         f"source_language: {context.source_language}\n"
+        # T3.2a P2: surface the per-unit published cap and the LLM candidate
+        # cap explicitly in the batch prompt, mirroring the per-unit prompt.
+        # The schema (VocabularyBatchUnitCandidateOutput.items max_length)
+        # already enforces MAX_VOCABULARY_CANDIDATE_ITEMS, but the prompt
+        # must state both bounds so the LLM doesn't over- or under-emit.
+        # The worker applies the duplicate policy first, then caps at
+        # MAX_VOCABULARY_ITEMS; duplicates don't consume published slots.
+        f"max_published_items_per_unit: {MAX_VOCABULARY_ITEMS}\n"
+        f"max_candidate_items_per_unit: {MAX_VOCABULARY_CANDIDATE_ITEMS}\n"
         f"{strategy_section}"
         "Return only the structured VocabularyBatchCandidateOutput.\n"
         "Each unit must appear exactly once in units[] with its unit_id and "
@@ -697,19 +712,31 @@ def _build_vocabulary_batch_outputs(
     *,
     context: VocabularyBatchJobContext,
     candidate_output: VocabularyBatchCandidateOutput,
-) -> list[tuple[str, VocabularyLayerOutput]]:
+) -> tuple[list[tuple[str, VocabularyLayerOutput]], list[dict[str, Any]]]:
     """Split a batch candidate output into per-unit ``VocabularyLayerOutput``.
 
     For each ``VocabularyBatchUnitCandidateOutput`` the function builds a
     temporary per-unit :class:`VocabularyJobContext` so the existing
     :func:`_build_vocabulary_output_from_candidates` can resolve anchors and
-    produce the final :class:`VocabularyLayerOutput`.
+    produce the final :class:`VocabularyLayerOutput``.
+
+    After all per-unit outputs are built, a cross-unit duplicate pass
+    removes same-headword / same-phrase / same-context duplicates that
+    appear in multiple units. The first occurrence (by unit reading order)
+    wins; subsequent duplicates are dropped from later units. This prevents
+    the same headword being strongly highlighted in every unit of a short
+    article.
+
+    Returns ``(outputs, batch_diagnostics)`` where ``batch_diagnostics`` is
+    a flat list of per-unit diagnostics (each enriched with ``unit_id``)
+    plus cross-unit duplicate skip diagnostics.
 
     Fail-closed: any unit_id in the batch output that does not match a unit
     in the batch context raises :class:`VocabularyExecutionError`.
     """
     units_by_id = {unit.unit_id: unit for unit in context.units}
     outputs: list[tuple[str, VocabularyLayerOutput]] = []
+    batch_diagnostics: list[dict[str, Any]] = []
     for batch_unit in candidate_output.units:
         unit_context = units_by_id.get(batch_unit.unit_id)
         if unit_context is None:
@@ -745,18 +772,180 @@ def _build_vocabulary_batch_outputs(
             schema_version=candidate_output.schema_version,
             items=list(batch_unit.items),
         )
-        output, _diagnostics = _build_vocabulary_output_from_candidates(
+        output, unit_diagnostics = _build_vocabulary_output_from_candidates(
             per_unit_context,
             unit_candidate,
         )
+        # T3.2 P1-2: collect per-unit diagnostics, enriched with unit_id.
+        for diag in unit_diagnostics.get("skipped_items", []):
+            enriched = dict(diag)
+            enriched["unit_id"] = batch_unit.unit_id
+            batch_diagnostics.append(enriched)
         outputs.append((batch_unit.unit_id, output))
-    return outputs
+
+    # T3.2: Cross-unit duplicate pass. Per-unit dedup already ran inside
+    # _build_vocabulary_output_from_candidates; this pass removes duplicates
+    # across units. Sort by unit reading order (order_index) BEFORE dedup
+    # so "first occurrence wins" follows the article's reading flow, not
+    # the LLM's output order. The original LLM-order is restored after
+    # dedup so the publisher's reorder-by-target_unit_ids contract is
+    # unchanged.
+    outputs, cross_unit_skipped = _apply_cross_unit_vocabulary_duplicate_policy(
+        outputs, context=context
+    )
+    batch_diagnostics.extend(cross_unit_skipped)
+    return outputs, batch_diagnostics
+
+
+def _apply_cross_unit_vocabulary_duplicate_policy(
+    outputs: list[tuple[str, VocabularyLayerOutput]],
+    *,
+    context: VocabularyBatchJobContext | None = None,
+) -> tuple[list[tuple[str, VocabularyLayerOutput]], list[dict[str, Any]]]:
+    """Apply the v1 duplicate highlight policy across units in a batch.
+
+    When ``context`` is provided, units are sorted by their reading order
+    (``order_index``) before dedup so "first occurrence wins" follows the
+    article's reading flow. The original output order is restored after
+    dedup. When ``context`` is None (e.g. in unit tests), the input order
+    is used as-is.
+
+    The first occurrence of each dedup key across all units is kept;
+    subsequent duplicates in later units are removed from that unit's
+    ``VocabularyLayerOutput.items``. An item is only removed if it is a
+    duplicate per the per-item-type policy (same headword / same phrase+
+    type+gloss / same display+gloss). Different senses are kept.
+
+    Returns ``(deduped_outputs, skipped_diagnostics)``. Each skipped
+    diagnostic includes ``unit_id``, ``reason_code``, ``item_type``,
+    ``anchor_segment_id``, and ``selected_text`` so reviewers can trace
+    which occurrence was skipped in which unit. Units that become empty
+    after dedup are kept with an empty items list (the publisher accepts
+    empty vocabulary layers; empty is preferable to publishing a duplicate).
+    """
+    # Build a reading-order index if context is available.
+    if context is not None:
+        order_by_unit_id = {
+            unit.unit_id: unit.order_index for unit in context.units
+        }
+        # Pair each output with its original index for stable restore.
+        indexed = list(enumerate(outputs))
+        # Sort by reading order for dedup; stable sort preserves original
+        # order for units with the same order_index (should not happen in
+        # practice, but defensive).
+        reading_order_sorted = sorted(
+            indexed,
+            key=lambda pair: order_by_unit_id.get(pair[1][0], 0),
+        )
+        dedup_input = [output for _, output in reading_order_sorted]
+    else:
+        dedup_input = list(outputs)
+
+    seen_vocab_highlight: set[str] = set()
+    seen_phrase_gloss: set[tuple[str, str, str]] = set()
+    seen_context_gloss: set[tuple[str, str]] = set()
+    deduped: list[tuple[str, VocabularyLayerOutput]] = []
+    skipped: list[dict[str, Any]] = []
+
+    for unit_id, layer in dedup_input:
+        kept_items: list[
+            VocabularyHighlightItem
+            | VocabularyPhraseGlossItem
+            | VocabularyContextGlossItem
+        ] = []
+        for item in layer.items:
+            if isinstance(item, VocabularyHighlightItem):
+                key = _vocab_highlight_dedup_key(item)
+                if key in seen_vocab_highlight:
+                    skipped.append(
+                        _build_cross_unit_duplicate_skip_diagnostic(
+                            unit_id=unit_id,
+                            item=item,
+                            reason_code=_VOCAB_HIGHLIGHT_DUPLICATE_REASON,
+                        )
+                    )
+                    continue
+                seen_vocab_highlight.add(key)
+                kept_items.append(item)
+            elif isinstance(item, VocabularyPhraseGlossItem):
+                key = _phrase_gloss_dedup_key(item)
+                if key in seen_phrase_gloss:
+                    skipped.append(
+                        _build_cross_unit_duplicate_skip_diagnostic(
+                            unit_id=unit_id,
+                            item=item,
+                            reason_code=_PHRASE_GLOSS_DUPLICATE_REASON,
+                        )
+                    )
+                    continue
+                seen_phrase_gloss.add(key)
+                kept_items.append(item)
+            elif isinstance(item, VocabularyContextGlossItem):
+                key = _context_gloss_dedup_key(item)
+                if key in seen_context_gloss:
+                    skipped.append(
+                        _build_cross_unit_duplicate_skip_diagnostic(
+                            unit_id=unit_id,
+                            item=item,
+                            reason_code=_CONTEXT_GLOSS_DUPLICATE_REASON,
+                        )
+                    )
+                    continue
+                seen_context_gloss.add(key)
+                kept_items.append(item)
+            else:  # pragma: no cover - defensive
+                kept_items.append(item)
+        deduped.append(
+            (unit_id, VocabularyLayerOutput(items=kept_items))
+        )
+
+    if context is not None:
+        # Restore original LLM output order by matching unit_id.
+        deduped_by_unit_id = dict(deduped)
+        restored = [
+            (unit_id, deduped_by_unit_id[unit_id])
+            for _orig_idx, (unit_id, _layer) in indexed
+        ]
+        return restored, skipped
+    return deduped, skipped
+
+
+def _build_cross_unit_duplicate_skip_diagnostic(
+    *,
+    unit_id: str,
+    item: (
+        VocabularyHighlightItem
+        | VocabularyPhraseGlossItem
+        | VocabularyContextGlossItem
+    ),
+    reason_code: str,
+) -> dict[str, Any]:
+    """Build a skip diagnostic for a cross-unit duplicate vocabulary item.
+
+    Includes ``unit_id`` so reviewers can trace which unit's item was
+    skipped during the cross-unit dedup pass.
+    """
+    if isinstance(item, VocabularyHighlightItem):
+        dedup_text = item.headword
+    elif isinstance(item, VocabularyPhraseGlossItem):
+        dedup_text = item.phrase
+    else:
+        dedup_text = item.display
+    return {
+        "item_index": -1,
+        "item_type": item.item_type,
+        "unit_id": unit_id,
+        "anchor_segment_id": item.anchor.anchor_segment_id,
+        "selected_text": _truncate_diagnostic_text(dedup_text),
+        "reason_code": reason_code,
+    }
 
 
 def _build_vocabulary_batch_quality_json(
     execution: VocabularyBatchExecutionResult,
     *,
     unit_count: int,
+    batch_diagnostics: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     quality_json: dict[str, Any] = {
         "unit_count": unit_count,
@@ -772,6 +961,17 @@ def _build_vocabulary_batch_quality_json(
         quality_json["model_provider"] = execution.model_provider
     if execution.model_name is not None:
         quality_json["model_name"] = execution.model_name
+    # T3.2 P1-2: surface batch duplicate / candidate-limit diagnostics into
+    # the published layer quality_json so reviewers can trace skipped items
+    # across per-unit resolve + cross-unit dedup. Truncate to the same cap
+    # used by the per-unit path for parity.
+    if batch_diagnostics is not None:
+        trimmed = batch_diagnostics[:MAX_VOCABULARY_DIAGNOSTIC_ITEMS]
+        quality_json["skipped_items"] = trimmed
+        quality_json["skipped_item_count"] = len(batch_diagnostics)
+        quality_json["skipped_items_truncated_count"] = max(
+            0, len(batch_diagnostics) - len(trimmed)
+        )
     return quality_json
 
 
@@ -1159,7 +1359,7 @@ class VocabularyWorkerService:
         try:
             context = await self._load_batch_job_context(claim.job_id)
             execution = await self._batch_executor.generate_batch(context)
-            outputs = _build_vocabulary_batch_outputs(
+            outputs, batch_diagnostics = _build_vocabulary_batch_outputs(
                 context=context,
                 candidate_output=execution.output,
             )
@@ -1170,6 +1370,7 @@ class VocabularyWorkerService:
                 quality_json=_build_vocabulary_batch_quality_json(
                     execution,
                     unit_count=len(context.units),
+                    batch_diagnostics=batch_diagnostics,
                 ),
             )
             event_id = await self._record_batch_usage_event(
@@ -1904,7 +2105,8 @@ def _build_vocabulary_prompt(context: VocabularyJobContext) -> str:
         "Generate high-value vocabulary annotations for a single reading unit.\n"
         f"source_language: {context.source_language}\n"
         f"unit_id: {context.unit_id}\n"
-        f"max_items: {MAX_VOCABULARY_ITEMS}\n"
+        f"max_published_items: {MAX_VOCABULARY_ITEMS}\n"
+        f"max_candidate_items: {MAX_VOCABULARY_CANDIDATE_ITEMS}\n"
         f"{strategy_section}"
         "Return only the structured candidate output.\n"
         "<source_text>\n"
@@ -2191,17 +2393,10 @@ def _build_vocabulary_output_from_candidates(
                 )
                 continue
 
-        elif len(resolved_spans) >= MAX_VOCABULARY_ITEMS:
-            skipped_items.append(
-                _build_skip_diagnostic(
-                    item_index=item_index,
-                    item_type=item.item_type,
-                    anchor_segment_id=item.anchor_segment_id,
-                    selected_text=item.selected_text,
-                    reason_code="candidate_limit_exceeded",
-                )
-            )
-            continue
+        # NOTE: The MAX_VOCABULARY_ITEMS cap is intentionally NOT applied
+        # here. It is applied AFTER the duplicate highlight policy so that
+        # duplicate candidates don't consume item slots and push later
+        # unique items into candidate_limit_exceeded. See T3.2 P1-1 fix.
 
         anchor = ReaderTextRangeAnchor(
             base_id=str(context.base_id),
@@ -2261,6 +2456,38 @@ def _build_vocabulary_output_from_candidates(
             key=lambda candidate: candidate.order_index,
         )
     ]
+
+    # T3.2 P1-1: Apply duplicate highlight policy AFTER span dedup and
+    # resolved-item construction, but BEFORE the MAX_VOCABULARY_ITEMS cap.
+    # This ensures duplicate candidates don't consume item slots and push
+    # later unique items into candidate_limit_exceeded. Items are already
+    # sorted by order_index (reading order), so "first occurrence wins".
+    resolved_items, duplicate_skipped = _apply_vocabulary_duplicate_policy(
+        resolved_items
+    )
+    skipped_items.extend(duplicate_skipped)
+
+    # T3.2 P1-1: Apply MAX_VOCABULARY_ITEMS cap AFTER dedup. Excess items
+    # are skipped with reason_code=candidate_limit_exceeded so diagnostics
+    # still record them.
+    if len(resolved_items) > MAX_VOCABULARY_ITEMS:
+        for excess_item in resolved_items[MAX_VOCABULARY_ITEMS:]:
+            if isinstance(excess_item, VocabularyHighlightItem):
+                excess_text = excess_item.headword
+            elif isinstance(excess_item, VocabularyPhraseGlossItem):
+                excess_text = excess_item.phrase
+            else:
+                excess_text = excess_item.display
+            skipped_items.append(
+                {
+                    "item_index": -1,
+                    "item_type": excess_item.item_type,
+                    "anchor_segment_id": excess_item.anchor.anchor_segment_id,
+                    "selected_text": _truncate_diagnostic_text(excess_text),
+                    "reason_code": "candidate_limit_exceeded",
+                }
+            )
+        resolved_items = resolved_items[:MAX_VOCABULARY_ITEMS]
 
     trimmed_skipped_items = _trim_skipped_diagnostics(skipped_items)
     return VocabularyLayerOutput(items=resolved_items), {
@@ -2331,6 +2558,156 @@ def _vocabulary_item_priority(item_type: str) -> int:
         "vocab_highlight": 2,
     }
     return priority.get(item_type, 99)
+
+
+# ---------------------------------------------------------------------------
+# T3.2 Vocabulary duplicate highlight policy
+# ---------------------------------------------------------------------------
+#
+# A Translation Group is a semantic reading group; a vocabulary highlight is
+# a "this word is worth noticing" marker. The product contract for v1 is:
+#
+#   - vocab_highlight: first occurrence wins. The same headword (normalized
+#     to lowercase) appearing multiple times in the same call (per-unit or
+#     batch) is published only once — at its first reading-order position.
+#     Subsequent duplicates are skipped with diagnostics, NOT published as
+#     additional strong highlights. This prevents the "every occurrence of
+#     'bank' is strongly highlighted" regression.
+#   - phrase_gloss: same phrase + same phrase_type + same gloss is a
+#     duplicate. Same phrase with a different gloss (different sense) is
+#     NOT a duplicate and is kept.
+#   - context_gloss: same display + same gloss is a duplicate. Same display
+#     with a different gloss (different context sense) is kept.
+#   - Cross item_type: never deduplicated. A vocab_highlight with
+#     headword="bank" and a context_gloss with display="bank" are different
+#     product semantics and both are kept.
+#
+# The policy runs AFTER span dedup and resolved-item construction, BEFORE
+# the MAX_VOCABULARY_ITEMS cap. This keeps anchor grounding intact and
+# records every skipped duplicate in diagnostics.
+
+_VOCAB_HIGHLIGHT_DUPLICATE_REASON = "duplicate_vocab_highlight_headword"
+_PHRASE_GLOSS_DUPLICATE_REASON = "duplicate_phrase_gloss"
+_CONTEXT_GLOSS_DUPLICATE_REASON = "duplicate_context_gloss"
+
+
+def _vocab_highlight_dedup_key(item: VocabularyHighlightItem) -> str:
+    return item.headword.lower()
+
+
+def _phrase_gloss_dedup_key(item: VocabularyPhraseGlossItem) -> tuple[str, str, str]:
+    return (item.phrase.lower(), item.phrase_type, item.gloss.lower())
+
+
+def _context_gloss_dedup_key(item: VocabularyContextGlossItem) -> tuple[str, str]:
+    return (item.display.lower(), item.gloss.lower())
+
+
+def _apply_vocabulary_duplicate_policy(
+    resolved_items: list[
+        VocabularyHighlightItem
+        | VocabularyPhraseGlossItem
+        | VocabularyContextGlossItem
+    ],
+) -> tuple[
+    list[
+        VocabularyHighlightItem
+        | VocabularyPhraseGlossItem
+        | VocabularyContextGlossItem
+    ],
+    list[dict[str, Any]],
+]:
+    """Apply the v1 duplicate highlight policy to resolved vocabulary items.
+
+    Items MUST be in reading order (caller sorts by ``order_index`` before
+    calling). The first occurrence of each dedup key is kept; subsequent
+    duplicates are skipped. Returns ``(kept_items, skipped_diagnostics)``.
+
+    Dedup keys (per item_type, cross item_type never deduplicated):
+        - vocab_highlight: ``headword.lower()``
+        - phrase_gloss: ``(phrase.lower(), phrase_type, gloss.lower())``
+        - context_gloss: ``(display.lower(), gloss.lower())``
+    """
+    seen_vocab_highlight: set[str] = set()
+    seen_phrase_gloss: set[tuple[str, str, str]] = set()
+    seen_context_gloss: set[tuple[str, str]] = set()
+    kept: list[
+        VocabularyHighlightItem
+        | VocabularyPhraseGlossItem
+        | VocabularyContextGlossItem
+    ] = []
+    skipped: list[dict[str, Any]] = []
+
+    for item in resolved_items:
+        if isinstance(item, VocabularyHighlightItem):
+            key = _vocab_highlight_dedup_key(item)
+            if key in seen_vocab_highlight:
+                skipped.append(
+                    _build_duplicate_skip_diagnostic(
+                        item=item,
+                        reason_code=_VOCAB_HIGHLIGHT_DUPLICATE_REASON,
+                    )
+                )
+                continue
+            seen_vocab_highlight.add(key)
+            kept.append(item)
+        elif isinstance(item, VocabularyPhraseGlossItem):
+            key = _phrase_gloss_dedup_key(item)
+            if key in seen_phrase_gloss:
+                skipped.append(
+                    _build_duplicate_skip_diagnostic(
+                        item=item,
+                        reason_code=_PHRASE_GLOSS_DUPLICATE_REASON,
+                    )
+                )
+                continue
+            seen_phrase_gloss.add(key)
+            kept.append(item)
+        elif isinstance(item, VocabularyContextGlossItem):
+            key = _context_gloss_dedup_key(item)
+            if key in seen_context_gloss:
+                skipped.append(
+                    _build_duplicate_skip_diagnostic(
+                        item=item,
+                        reason_code=_CONTEXT_GLOSS_DUPLICATE_REASON,
+                    )
+                )
+                continue
+            seen_context_gloss.add(key)
+            kept.append(item)
+        else:  # pragma: no cover - defensive, should not happen
+            kept.append(item)
+
+    return kept, skipped
+
+
+def _build_duplicate_skip_diagnostic(
+    *,
+    item: (
+        VocabularyHighlightItem
+        | VocabularyPhraseGlossItem
+        | VocabularyContextGlossItem
+    ),
+    reason_code: str,
+) -> dict[str, Any]:
+    """Build a skip diagnostic for a duplicate vocabulary item.
+
+    Uses the item's anchor + headword/phrase/display for diagnostics so
+    reviewers can trace which occurrence was skipped.
+    """
+    if isinstance(item, VocabularyHighlightItem):
+        dedup_text = item.headword
+    elif isinstance(item, VocabularyPhraseGlossItem):
+        dedup_text = item.phrase
+    else:
+        dedup_text = item.display
+    return {
+        "item_index": -1,  # duplicates are detected post-resolution; no LLM index
+        "item_type": item.item_type,
+        "anchor_segment_id": item.anchor.anchor_segment_id,
+        "selected_text": _truncate_diagnostic_text(dedup_text),
+        "reason_code": reason_code,
+    }
 
 
 def _build_skip_diagnostic(

@@ -70,6 +70,16 @@ VOCABULARY_BATCH_POLICY_VERSION = "reader_vocabulary_batch_bootstrap_v1"
 # Above this threshold the per-unit / windowed path is used.
 SHORT_ARTICLE_MAX_CHAR_COUNT = 6000
 
+# T3.2b non-short vocabulary grouped execution: when the active base text
+# exceeds SHORT_ARTICLE_MAX_CHAR_COUNT, vocabulary bootstrap splits the
+# unpublished units into consecutive windows and creates one
+# ``build_vocabulary_layer_article`` batch job per window. Each window is
+# bounded by a target char count (close the window once reached) and a
+# safety max (never exceed). A single unit larger than safety max becomes
+# its own window. The unit is the minimum boundary — units are never split.
+VOCABULARY_WINDOW_TARGET_CHAR_COUNT = 3000
+VOCABULARY_WINDOW_SAFETY_MAX_CHAR_COUNT = 5000
+
 # Maps each enhancement job_type to the variant policy layer name it belongs
 # to. ``generate_display_title_zh`` has no entry because the display title job
 # does not consume a per-layer prompt policy; T5 only records strategy metadata
@@ -139,6 +149,107 @@ def _fingerprint_matches_base(fingerprint: str, base: str) -> bool:
     composed fingerprint (T5 strategy-aware) is accepted.
     """
     return fingerprint == base or fingerprint.startswith(base + ":")
+
+
+# ---------------------------------------------------------------------------#
+# T3.2b: Non-short vocabulary batch window planner
+# ---------------------------------------------------------------------------#
+# Pure dataclasses + function. No DB access, no side effects. The bootstrap
+# method loads unit metadata (unit_id, order_index, text_length) and calls
+# ``plan_vocabulary_windows`` to get a list of consecutive, non-overlapping
+# windows. Each window becomes one ``build_vocabulary_layer_article`` job.
+#
+# Design constraints (see implementation-plan.md T3.2b):
+# - Unit is the minimum boundary; never split a unit across windows.
+# - Windows must be consecutive and non-overlapping, ordered by reading order.
+# - A single unit larger than safety max becomes its own window.
+# - ``window_id`` is a stable hash of the sorted unit_ids in the window, so
+#   re-planning after partial publish produces the same window_id for
+#   unchanged windows (idempotency relies on this).
+
+
+@dataclass(frozen=True, slots=True)
+class VocabularyWindowUnit:
+    """A single unit's metadata for window planning."""
+
+    unit_id: str
+    order_index: int
+    text_length: int
+
+
+@dataclass(frozen=True, slots=True)
+class VocabularyWindowPlan:
+    """A planned vocabulary batch window: a consecutive range of units."""
+
+    units: tuple[VocabularyWindowUnit, ...]
+
+    @property
+    def window_id(self) -> str:
+        """Stable 12-char hex hash of the sorted unit_ids in this window.
+
+        Two windows with the same unit set produce the same window_id
+        regardless of planning order, so idempotency checks on
+        ``target_key = f"{record_id}:window:{window_id}"`` correctly
+        detect that a window job already exists.
+        """
+        sorted_ids = ":".join(sorted(u.unit_id for u in self.units))
+        return hashlib.sha256(sorted_ids.encode("utf-8")).hexdigest()[:12]
+
+    @property
+    def target_unit_ids(self) -> tuple[str, ...]:
+        return tuple(u.unit_id for u in self.units)
+
+
+def plan_vocabulary_windows(
+    units: list[VocabularyWindowUnit] | tuple[VocabularyWindowUnit, ...],
+    *,
+    target_char_count: int = VOCABULARY_WINDOW_TARGET_CHAR_COUNT,
+    safety_max_char_count: int = VOCABULARY_WINDOW_SAFETY_MAX_CHAR_COUNT,
+) -> list[VocabularyWindowPlan]:
+    """Plan vocabulary batch windows for non-short articles.
+
+    Greedy accumulator over units ordered by ``order_index``:
+
+    1. Start a new window with the first remaining unit.
+    2. Add the next unit if ``current_chars + next.text_length`` does not
+       exceed ``safety_max_char_count``.
+    3. If adding would exceed safety max, close the current window and
+       start a new one with that unit.
+    4. If the current window reaches ``target_char_count``, close it.
+
+    A single unit larger than safety max becomes its own window (step 2
+    skips it, step 3 starts a new window, and on the next iteration step 2
+    again skips — but the unit is already in the current window from step 1
+    or 3, so it closes immediately at step 4 or end-of-list).
+
+    Returns an empty list if ``units`` is empty. Every input unit appears
+    in exactly one output window (coverage + no-overlap).
+    """
+    if not units:
+        return []
+    sorted_units = sorted(units, key=lambda u: u.order_index)
+    windows: list[VocabularyWindowPlan] = []
+    current: list[VocabularyWindowUnit] = []
+    current_chars = 0
+    for unit in sorted_units:
+        if not current:
+            current.append(unit)
+            current_chars = unit.text_length
+            continue
+        if current_chars + unit.text_length > safety_max_char_count:
+            windows.append(VocabularyWindowPlan(units=tuple(current)))
+            current = [unit]
+            current_chars = unit.text_length
+            continue
+        current.append(unit)
+        current_chars += unit.text_length
+        if current_chars >= target_char_count:
+            windows.append(VocabularyWindowPlan(units=tuple(current)))
+            current = []
+            current_chars = 0
+    if current:
+        windows.append(VocabularyWindowPlan(units=tuple(current)))
+    return windows
 
 
 # rationale_code written when a queued/retry_later/paused job is superseded
@@ -1049,26 +1160,57 @@ class EnhancementJobBootstrapService:
             return await self._bootstrap_vocabulary_batch_job(
                 conn, state=state, trace_id=trace_id
             )
+        # T3.2b non-short grouped path: split unpublished units into
+        # consecutive windows and create one batch job per window.
+        return await self._bootstrap_vocabulary_grouped_jobs(
+            conn, state=state, trace_id=trace_id
+        )
+
+    async def _bootstrap_vocabulary_grouped_jobs(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        state: _LockedActiveBaseState,
+        trace_id: UUID | None = None,
+    ) -> list[VocabularyBootstrapResult]:
+        """T3.2b: non-short vocabulary grouped/window execution.
+
+        Queries unpublished units (ordered by ``order_index``), plans
+        consecutive windows via :func:`plan_vocabulary_windows`, and
+        creates one ``build_vocabulary_layer_article`` batch job per
+        window. Each window job has a distinct ``target_key`` /
+        ``idempotency_key`` / ``input_hash`` so multiple windows on the
+        same record do not collide.
+
+        Cross-window duplicate headword policy (v1): each window may
+        independently highlight the same headword once. Cross-window
+        dedup is NOT performed; this is acceptable for v1 and is locked
+        by tests. See implementation-plan.md T3.2b risk A.
+        """
         if trace_id is None:
             trace_id = uuid4()
         operation_fingerprint = _compose_operation_fingerprint(
-            VOCABULARY_OPERATION_FINGERPRINT, state.strategy
+            VOCABULARY_BATCH_OPERATION_FINGERPRINT, state.strategy
         )
         await _supersede_stale_fingerprint_jobs(
             conn,
             record_id=state.record_id,
             base_id=state.base_id,
             expected_generation=state.expected_generation,
-            job_type=VOCABULARY_JOB_TYPE,
-            target_scope=VOCABULARY_TARGET_SCOPE,
+            job_type=VOCABULARY_BATCH_JOB_TYPE,
+            target_scope=VOCABULARY_BATCH_TARGET_SCOPE,
             current_fingerprint=operation_fingerprint,
         )
+        # Load unpublished units with their UTF-16 char length for windowing.
+        # ``base_end_utf16 - base_start_utf16`` matches the worker's
+        # ``slice_by_utf16_offsets`` unit text length exactly.
         rows = await conn.fetch(
             """
             SELECT
                 u.unit_id,
                 u.order_index,
-                u.text_hash
+                u.base_start_utf16,
+                u.base_end_utf16
             FROM reading_units u
             WHERE u.reading_record_id = $1
               AND u.base_id = $2
@@ -1083,59 +1225,85 @@ class EnhancementJobBootstrapService:
                     AND layer.target_key = u.unit_id
                     AND layer.status = 'published'
               )
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM reader_jobs job
-                  WHERE job.reading_record_id = u.reading_record_id
-                    AND job.base_id = u.base_id
-                    AND job.job_type = $4
-                    AND job.target_type = $5
-                    AND job.target_key = u.unit_id
-                    AND job.expected_generation = $3
-                    AND job.operation_fingerprint = $6
-                    AND job.status IN ('queued', 'claimed', 'retry_later', 'paused', 'succeeded')
-              )
             ORDER BY u.order_index ASC
             """,
             state.record_id,
             state.base_id,
             state.expected_generation,
-            VOCABULARY_JOB_TYPE,
-            VOCABULARY_TARGET_SCOPE,
-            operation_fingerprint,
         )
+        if not rows:
+            return []
+        window_units = [
+            VocabularyWindowUnit(
+                unit_id=str(row["unit_id"]),
+                order_index=int(row["order_index"]),
+                text_length=int(row["base_end_utf16"]) - int(row["base_start_utf16"]),
+            )
+            for row in rows
+        ]
+        windows = plan_vocabulary_windows(window_units)
         results: list[VocabularyBootstrapResult] = []
-        for row in rows:
-            run_id, job_id = await _insert_unit_job(
+        for window in windows:
+            target_unit_ids = list(window.target_unit_ids)
+            window_target_key = f"{state.record_id}:window:{window.window_id}"
+            # Per-window idempotency: skip if an active job already exists
+            # for this window's target_key + fingerprint.
+            existing_job = await conn.fetchrow(
+                """
+                SELECT id, run_id
+                FROM reader_jobs
+                WHERE reading_record_id = $1
+                  AND base_id = $2
+                  AND job_type = $3
+                  AND target_type = $4
+                  AND target_key = $5
+                  AND expected_generation = $6
+                  AND operation_fingerprint = $7
+                  AND status IN ('queued', 'claimed', 'retry_later', 'paused', 'succeeded')
+                LIMIT 1
+                """,
+                state.record_id,
+                state.base_id,
+                VOCABULARY_BATCH_JOB_TYPE,
+                VOCABULARY_BATCH_TARGET_SCOPE,
+                window_target_key,
+                state.expected_generation,
+                operation_fingerprint,
+            )
+            if existing_job is not None:
+                continue
+            run_id, job_id = await _insert_unit_range_job(
                 conn,
                 state=state,
-                unit_id=str(row["unit_id"]),
-                unit_order_index=int(row["order_index"]),
-                unit_text_hash=str(row["text_hash"]),
                 run_type=VOCABULARY_RUN_TYPE,
-                job_type=VOCABULARY_JOB_TYPE,
-                target_scope=VOCABULARY_TARGET_SCOPE,
-                policy_version=VOCABULARY_POLICY_VERSION,
+                job_type=VOCABULARY_BATCH_JOB_TYPE,
+                target_scope=VOCABULARY_BATCH_TARGET_SCOPE,
+                policy_version=VOCABULARY_BATCH_POLICY_VERSION,
                 trigger_kind=VOCABULARY_TRIGGER_KIND,
                 operation_fingerprint=operation_fingerprint,
                 max_attempts=DEFAULT_VOCABULARY_MAX_ATTEMPTS,
                 envelope_json={
                     "record_id": str(state.record_id),
                     "base_id": str(state.base_id),
-                    "target_scope": VOCABULARY_TARGET_SCOPE,
-                    "target_unit_id": str(row["unit_id"]),
+                    "target_scope": VOCABULARY_BATCH_TARGET_SCOPE,
+                    "target_unit_ids": target_unit_ids,
                     "layer_type": "vocabulary",
                     "trace_id": str(trace_id),
+                    "window_id": window.window_id,
                 },
-                input_signature_suffix=f"{state.base_language}:vocabulary:1",
+                input_signature_suffix=(
+                    f"{state.base_language}:vocabulary:window:{window.window_id}:1:batch"
+                ),
                 input_json={
-                    "unit_id": str(row["unit_id"]),
-                    "unit_order_index": int(row["order_index"]),
-                    "unit_text_hash": str(row["text_hash"]),
+                    "target_scope": VOCABULARY_BATCH_TARGET_SCOPE,
+                    "target_unit_ids": target_unit_ids,
                     "base_language": state.base_language,
                     "layer_type": "vocabulary",
+                    "window_id": window.window_id,
                 },
-                layer_name=_LAYER_NAME_BY_JOB_TYPE[VOCABULARY_JOB_TYPE],
+                layer_name=_LAYER_NAME_BY_JOB_TYPE[VOCABULARY_BATCH_JOB_TYPE],
+                target_key_override=window_target_key,
+                idempotency_key_suffix=f"window:{window.window_id}",
             )
             results.append(
                 VocabularyBootstrapResult(
@@ -1143,7 +1311,7 @@ class EnhancementJobBootstrapService:
                     job_id=job_id,
                     reading_record_id=state.record_id,
                     base_id=state.base_id,
-                    unit_id=str(row["unit_id"]),
+                    unit_id=target_unit_ids[0],
                     expected_generation=state.expected_generation,
                     operation_fingerprint=operation_fingerprint,
                 )
@@ -1901,22 +2069,28 @@ async def _insert_unit_range_job(
     input_signature_suffix: str,
     input_json: dict[str, Any],
     layer_name: str,
+    target_key_override: str | None = None,
+    idempotency_key_suffix: str = "batch",
 ) -> tuple[UUID, UUID]:
     """T1.1 short-article batch path: insert one record-level batch job.
 
     Mirrors :func:`_insert_unit_job` but covers a range of units in a single
     job. Differences from the per-unit helper:
 
-    - ``target_key`` is ``str(state.record_id)`` (record-level, like the
-      display-title job), not a single ``unit_id``.
+    - ``target_key`` defaults to ``str(state.record_id)`` (record-level,
+      like the display-title job), not a single ``unit_id``.
+      ``target_key_override`` (T3.2b) lets the caller set a window-specific
+      target_key for non-short grouped vocabulary jobs.
     - ``input_json`` carries ``target_scope: "unit_range"`` and
       ``target_unit_ids: [...]`` (list of every unit id covered by the
       batch). The caller is responsible for putting these fields in
       ``input_json``; this helper only adds the standard record-level
       metadata (record_id / base_id / expected_generation) and the
       strategy metadata block.
-    - ``idempotency_key`` is suffixed ``:batch`` so the per-unit and
-      per-article idempotency spaces do not collide.
+    - ``idempotency_key`` is suffixed with ``idempotency_key_suffix``
+      (default ``:batch``) so the per-unit and per-article idempotency
+      spaces do not collide. T3.2b passes ``window:{window_id}`` to keep
+      multiple window jobs on the same record distinct.
     - ``input_hash`` is derived from the record-level signature
       (``base_id:record_id:input_signature_suffix:strategy_hash``) so the
       same unit range + strategy produces a stable hash.
@@ -2006,10 +2180,10 @@ async def _insert_unit_range_job(
         state.user_id,
         job_type,
         target_scope,
-        str(state.record_id),
+        target_key_override if target_key_override is not None else str(state.record_id),
         state.expected_generation,
         operation_fingerprint,
-        f"{operation_fingerprint}:{state.record_id}:batch",
+        f"{operation_fingerprint}:{state.record_id}:{idempotency_key_suffix}",
         input_hash,
         jsonb_param(
             {

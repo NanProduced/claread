@@ -233,6 +233,14 @@ D5-V3 real vocabulary executor facts：
 - 后端在 `anchor_segment_id` 指定的 segment 内 exact-match `selected_text`，再生成 unit-local UTF-16 offsets 和 `fnv1a32-utf16` hash。
 - 同一 span 冲突按 `context_gloss > phrase_gloss > vocab_highlight` 仲裁；candidate 数量、字段长度和 diagnostics 都必须有上限。
 - 空有效 vocabulary output 可以发布，但必须保留 diagnostics 解释 skipped / no-op 原因。
+- T3.2a duplicate highlight policy v1（T3.2b non-short vocabulary grouped execution 已完成实施/待验收）：在 span dedup 之后、`MAX_VOCABULARY_ITEMS` 上限之前执行，按 reading order "首次出现 wins"。candidate schema 允许 `MAX_VOCABULARY_CANDIDATE_ITEMS`（> `MAX_VOCABULARY_ITEMS`）条候选，确保重复 candidate 不占用 published slot；dedup 后才执行 `MAX_VOCABULARY_ITEMS` cap，超出项 reason_code `candidate_limit_exceeded`。
+  - `vocab_highlight`：同 `headword.lower()` 只发布首次强高亮，后续 skip `duplicate_vocab_highlight_headword`。大小写不敏感。
+  - `phrase_gloss`：同 `(phrase.lower(), phrase_type, gloss.lower())` 去重；不同 gloss（不同义项）保留。
+  - `context_gloss`：同 `(display.lower(), gloss.lower())` 去重；不同 gloss 保留。
+  - cross item_type 永不去重：`vocab_highlight` 的 `headword=bank` 与 `context_gloss` 的 `display=bank` 是不同产品语义，两者都保留。
+  - batch path 额外做跨 unit dedup：按 unit reading order 遍历，首次出现的 headword/phrase/display 跨 unit 保留，后续 unit 的重复项从该 unit 的 `VocabularyLayerOutput.items` 移除。unit 变空仍发布空 layer（优于发布重复）。
+  - T3.2b v1 行为：跨窗口（不同 `build_vocabulary_layer_article` job）的重复 headword 不做 dedup，每个窗口各自首次高亮一次。跨 unit dedup 只在单 batch job（窗口）内生效。不声称全文 dedup 已完成。
+  - 所有 skipped duplicate 记录在 diagnostics 的 `skipped_items` 中，带 `reason_code`、`item_type`、`anchor_segment_id`、`selected_text`（headword/phrase/display 截断值）。batch path 的 `quality_json.skipped_items` 同时包含 per-unit resolve diagnostics（enriched with `unit_id`）和 cross-unit duplicate skips；每条 skipped duplicate 包含 `reason_code`、`item_type`、`unit_id`、`anchor_segment_id`、`selected_text`。
 
 Grammar bundle 的输出必须拆成两个 subtype：
 

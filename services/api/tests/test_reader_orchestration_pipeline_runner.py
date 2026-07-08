@@ -1569,3 +1569,91 @@ def test_t1_reorder_outputs_by_target_unit_ids_helper() -> None:
     reordered = _reorder_outputs_by_target_unit_ids(outputs, target_unit_ids)
     assert [uid for uid, _ in reordered] == target_unit_ids
     assert [val for _, val in reordered] == ["a", "b", "c"]
+
+
+# T3.2b: Non-short vocabulary grouped execution. Text >6000 chars triggers
+# the grouped path: bootstrap creates multiple build_vocabulary_layer_article
+# window jobs; the pipeline runner processes each window via the batch
+# vocabulary worker; the publisher still publishes per-unit vocabulary layers.
+_T32B_LONG_TEXT = "\n\n".join(
+    [
+        " ".join(
+            f"Word{i} placeholder sentence for grouped vocabulary window test."
+            for i in range(40)
+        )
+        for _ in range(8)
+    ]
+)
+assert len(_T32B_LONG_TEXT) > 6000
+
+
+@pytest.mark.anyio
+async def test_t32b_pipeline_runner_processes_multiple_vocabulary_windows_and_publishes_per_unit_layers(
+    pipeline_runner_env: asyncpg.Pool,
+) -> None:
+    """T3.2b: pipeline runner processes multiple vocabulary batch window jobs
+    and publishes one per-unit vocabulary layer per unit."""
+    from app.services.reader_orchestration import job_bootstrap
+
+    user_id = await insert_user(pipeline_runner_env)
+    article = await submit_article_ready(
+        pipeline_runner_env,
+        user_id=user_id,
+        plain_text=_T32B_LONG_TEXT,
+        title="T3.2b Grouped Vocabulary",
+    )
+    assert len(_T32B_LONG_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
+
+    runner = _make_runner(
+        pipeline_runner_env,
+        translator=_StaticTranslator(),
+        vocabulary_executor=_StaticVocabularyExecutor(),
+        grammar_executor=_StaticGrammarExecutor(),
+    )
+
+    summary = await runner.run(
+        record_id=article.record_id,
+        user_id=user_id,
+        lease_owner="t32b-grouped-vocab",
+        lease_duration=LEASE_DURATION,
+        max_ticks=48,
+        max_jobs=48,
+    )
+
+    unit_count = await _count_units(
+        pipeline_runner_env,
+        article.record_id,
+        article.base_id,
+    )
+    assert unit_count >= 2
+
+    # No failures
+    assert summary.outcome_counts.failed_terminal == 0
+    assert summary.outcome_counts.retry_later == 0
+
+    # Multiple vocabulary batch jobs were created (windows)
+    vocab_batch_job_count = await _count_jobs(
+        pipeline_runner_env,
+        article.record_id,
+        "build_vocabulary_layer_article",
+    )
+    assert vocab_batch_job_count >= 2, (
+        f"expected >=2 vocabulary window jobs, got {vocab_batch_job_count}"
+    )
+    # No per-unit vocabulary jobs
+    per_unit_vocab_count = await _count_jobs(
+        pipeline_runner_env,
+        article.record_id,
+        "build_vocabulary_layer",
+    )
+    assert per_unit_vocab_count == 0
+
+    # Per-unit vocabulary layers published: one per unit
+    vocab_layer_count = await _count_layers(
+        pipeline_runner_env,
+        article.record_id,
+        "vocabulary",
+    )
+    assert vocab_layer_count == unit_count, (
+        f"expected {unit_count} vocabulary layers, got {vocab_layer_count}"
+    )

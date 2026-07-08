@@ -35,11 +35,21 @@ from app.services.reader_orchestration.vocabulary_worker import (
     FakeVocabularyExecutor,
     PydanticAIVocabularyExecutor,
     VocabularyAnchorSegmentContext,
+    VocabularyBatchCandidateOutput,
+    VocabularyBatchExecutionResult,
+    VocabularyBatchJobContext,
+    VocabularyBatchUnitCandidateOutput,
+    VocabularyBatchUnitContext,
     VocabularyCandidateOutput,
     VocabularyExecutionError,
     VocabularyExecutionResult,
     VocabularyJobContext,
     VocabularyWorkerService,
+    _apply_cross_unit_vocabulary_duplicate_policy,
+    _apply_vocabulary_duplicate_policy,
+    _build_vocabulary_batch_outputs,
+    _build_vocabulary_batch_prompt,
+    _build_vocabulary_batch_quality_json,
     _build_vocabulary_output_from_candidates,
     _build_vocabulary_prompt,
     _validate_vocabulary_strategy_metadata,
@@ -1766,3 +1776,1289 @@ async def test_worker_fail_closed_on_missing_strategy_metadata_moves_job_to_fail
     # not explicitly set; the worker's VocabularyExecutionError branch
     # propagates exc.rationale_code to the transition call.
     assert job_row["rationale_code"] == "strategy_metadata_missing"
+
+
+# ---------------------------------------------------------------------------
+# T3.2 Vocabulary duplicate highlight policy tests
+# ---------------------------------------------------------------------------
+#
+# These tests cover the v1 duplicate policy:
+#   - vocab_highlight: same headword (lowercase) only published once (first
+#     occurrence wins).
+#   - phrase_gloss: same phrase + phrase_type + gloss only published once;
+#     different gloss (different sense) kept.
+#   - context_gloss: same display + gloss only published once; different
+#     gloss kept.
+#   - Cross item_type: never deduplicated.
+#   - Batch path: cross-unit dedup removes duplicates across units.
+
+
+def _make_segment_with_offset(
+    *,
+    anchor_segment_id: str,
+    text: str,
+    unit_start_utf16: int,
+    segment_type: str = "sentence",
+    boundary_quality: str = "normal",
+) -> VocabularyAnchorSegmentContext:
+    """Like _make_segment but with explicit unit_start_utf16 for multi-segment units."""
+    return VocabularyAnchorSegmentContext(
+        anchor_segment_id=anchor_segment_id,
+        sentence_id=anchor_segment_id,
+        segment_type=segment_type,
+        unit_start_utf16=unit_start_utf16,
+        unit_end_utf16=unit_start_utf16
+        + len(text.encode("utf-16-le", "surrogatepass")) // 2,
+        text_hash=compute_text_range_hash(text),
+        text=text,
+        boundary_quality=boundary_quality,
+    )
+
+
+def _build_multi_segment_context(
+    *,
+    unit_text: str,
+    segments: list[VocabularyAnchorSegmentContext],
+) -> VocabularyJobContext:
+    """Build a VocabularyJobContext with multiple anchor segments."""
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer = strategy.layers["vocabulary"]
+    return VocabularyJobContext(
+        job_id=UUID("11111111-1111-1111-1111-111111111111"),
+        run_id=UUID("22222222-2222-2222-2222-222222222222"),
+        reading_record_id=UUID("33333333-3333-3333-3333-333333333333"),
+        user_id=UUID("44444444-4444-4444-4444-444444444444"),
+        base_id=UUID("55555555-5555-5555-5555-555555555555"),
+        unit_id="u_test",
+        order_index=1,
+        expected_generation=1,
+        operation_fingerprint="vocabulary_unit_v1",
+        source_language="en",
+        source_text=unit_text,
+        text_hash=compute_text_range_hash(unit_text),
+        anchor_segments=tuple(segments),
+        reading_goal=strategy.reading_goal,
+        reading_variant=strategy.reading_variant,
+        strategy_version=strategy.strategy_version,
+        strategy_hash=strategy.strategy_hash,
+        layer_policy_hash=layer.policy_hash,
+        vocabulary_prompt_lines=layer.prompt_lines,
+    )
+
+
+def _build_batch_context(
+    *,
+    units: list[tuple[str, int, str, list[VocabularyAnchorSegmentContext]]],
+) -> VocabularyBatchJobContext:
+    """Build a VocabularyBatchJobContext for batch dedup tests.
+
+    Each tuple: (unit_id, order_index, source_text, segments).
+    """
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer = strategy.layers["vocabulary"]
+    batch_units = tuple(
+        VocabularyBatchUnitContext(
+            unit_id=unit_id,
+            order_index=order_index,
+            source_text=source_text,
+            text_hash=compute_text_range_hash(source_text),
+            anchor_segments=tuple(segments),
+        )
+        for unit_id, order_index, source_text, segments in units
+    )
+    return VocabularyBatchJobContext(
+        job_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        run_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+        reading_record_id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+        user_id=UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+        base_id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+        expected_generation=1,
+        operation_fingerprint="vocabulary_article_v1",
+        source_language="en",
+        target_unit_ids=tuple(u[0] for u in units),
+        units=batch_units,
+        reading_goal=strategy.reading_goal,
+        reading_variant=strategy.reading_variant,
+        strategy_version=strategy.strategy_version,
+        strategy_hash=strategy.strategy_hash,
+        layer_policy_hash=layer.policy_hash,
+        vocabulary_prompt_lines=layer.prompt_lines,
+    )
+
+
+def test_vocab_highlight_same_headword_only_published_once() -> None:
+    """T3.2: same headword appearing in multiple segments only published
+    once (first occurrence wins). Subsequent duplicates are skipped with
+    diagnostics."""
+    # Two segments, both containing "bank" as a vocab_highlight.
+    seg1_text = "The bank approved the loan."
+    seg2_text = "The river bank was flooded."
+    unit_text = f"{seg1_text} {seg2_text}"
+    seg1_start = 0
+    seg2_start = len(seg1_text) + 1  # +1 for the space
+    context = _build_multi_segment_context(
+        unit_text=unit_text,
+        segments=[
+            _make_segment_with_offset(
+                anchor_segment_id="s1",
+                text=seg1_text,
+                unit_start_utf16=seg1_start,
+            ),
+            _make_segment_with_offset(
+                anchor_segment_id="s2",
+                text=seg2_text,
+                unit_start_utf16=seg2_start,
+            ),
+        ],
+    )
+    candidate = VocabularyCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "bank",
+                    "headword": "bank",
+                    "brief_explanation": "银行",
+                    "reason": "common",
+                },
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "s2",
+                    "selected_text": "bank",
+                    "headword": "bank",
+                    "brief_explanation": "银行",
+                    "reason": "common",
+                },
+            ],
+        }
+    )
+
+    output, diagnostics = _build_vocabulary_output_from_candidates(
+        context, candidate
+    )
+
+    # Only the first "bank" highlight is published.
+    assert len(output.items) == 1
+    assert output.items[0].item_type == "vocab_highlight"
+    assert output.items[0].headword == "bank"
+    assert output.items[0].anchor.anchor_segment_id == "s1"
+    # Diagnostics record the skipped duplicate.
+    reason_codes = [
+        entry.get("reason_code")
+        for entry in diagnostics.get("skipped_items", [])
+        if isinstance(entry, dict)
+    ]
+    assert "duplicate_vocab_highlight_headword" in reason_codes
+    assert diagnostics["skipped_item_count"] >= 1
+
+
+def test_vocab_highlight_case_insensitive_dedup() -> None:
+    """T3.2: headword dedup is case-insensitive. 'Bank' and 'bank' are
+    the same headword."""
+    seg1_text = "The Bank approved the loan."
+    seg2_text = "The river bank was flooded."
+    unit_text = f"{seg1_text} {seg2_text}"
+    seg1_start = 0
+    seg2_start = len(seg1_text) + 1
+    context = _build_multi_segment_context(
+        unit_text=unit_text,
+        segments=[
+            _make_segment_with_offset(
+                anchor_segment_id="s1",
+                text=seg1_text,
+                unit_start_utf16=seg1_start,
+            ),
+            _make_segment_with_offset(
+                anchor_segment_id="s2",
+                text=seg2_text,
+                unit_start_utf16=seg2_start,
+            ),
+        ],
+    )
+    candidate = VocabularyCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "Bank",
+                    "headword": "Bank",
+                    "brief_explanation": "银行",
+                    "reason": "common",
+                },
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "s2",
+                    "selected_text": "bank",
+                    "headword": "bank",
+                    "brief_explanation": "银行",
+                    "reason": "common",
+                },
+            ],
+        }
+    )
+
+    output, _diagnostics = _build_vocabulary_output_from_candidates(
+        context, candidate
+    )
+
+    assert len(output.items) == 1
+    assert output.items[0].headword == "Bank"
+
+
+def test_phrase_gloss_same_phrase_same_gloss_only_published_once() -> None:
+    """T3.2: same phrase + same phrase_type + same gloss only published
+    once. Different gloss (different sense) is kept.
+
+    Note: span dedup runs first. Two candidates on the same span with the
+    same item_type (same priority) keep only the first. So the "different
+    sense" candidate must be on a DIFFERENT span (different segment) to
+    survive span dedup and reach the duplicate policy stage.
+    """
+    seg1_text = "The team took off on time."
+    seg2_text = "The plane took off later."
+    seg3_text = "Her career took off after the film."
+    unit_text = f"{seg1_text} {seg2_text} {seg3_text}"
+    seg1_start = 0
+    seg2_start = len(seg1_text) + 1
+    seg3_start = seg2_start + len(seg2_text) + 1
+    context = _build_multi_segment_context(
+        unit_text=unit_text,
+        segments=[
+            _make_segment_with_offset(
+                anchor_segment_id="s1",
+                text=seg1_text,
+                unit_start_utf16=seg1_start,
+            ),
+            _make_segment_with_offset(
+                anchor_segment_id="s2",
+                text=seg2_text,
+                unit_start_utf16=seg2_start,
+            ),
+            _make_segment_with_offset(
+                anchor_segment_id="s3",
+                text=seg3_text,
+                unit_start_utf16=seg3_start,
+            ),
+        ],
+    )
+    candidate = VocabularyCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "phrase_gloss",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "took off",
+                    "phrase": "take off",
+                    "phrase_type": "phrasal_verb",
+                    "gloss": "起飞",
+                },
+                {
+                    "item_type": "phrase_gloss",
+                    "anchor_segment_id": "s2",
+                    "selected_text": "took off",
+                    "phrase": "take off",
+                    "phrase_type": "phrasal_verb",
+                    "gloss": "起飞",
+                },
+                {
+                    "item_type": "phrase_gloss",
+                    "anchor_segment_id": "s3",
+                    "selected_text": "took off",
+                    "phrase": "take off",
+                    "phrase_type": "phrasal_verb",
+                    "gloss": "突然成功",
+                },
+            ],
+        }
+    )
+
+    output, diagnostics = _build_vocabulary_output_from_candidates(
+        context, candidate
+    )
+
+    # Two items: "起飞" (first occurrence, s1) + "突然成功" (different sense, s3).
+    # The "起飞" on s2 is a duplicate and skipped.
+    assert len(output.items) == 2
+    glosses = [item.gloss for item in output.items]
+    assert "起飞" in glosses
+    assert "突然成功" in glosses
+    # The duplicate "起飞" on s2 is skipped.
+    reason_codes = [
+        entry.get("reason_code")
+        for entry in diagnostics.get("skipped_items", [])
+        if isinstance(entry, dict)
+    ]
+    assert "duplicate_phrase_gloss" in reason_codes
+
+
+def test_context_gloss_same_display_same_gloss_only_published_once() -> None:
+    """T3.2: same display + same gloss only published once. Different
+    gloss (different context sense) is kept.
+
+    Note: span dedup runs first. Two candidates on the same span with the
+    same item_type (same priority) keep only the first. So the "different
+    sense" candidate must be on a DIFFERENT span (different segment) to
+    survive span dedup and reach the duplicate policy stage.
+    """
+    seg1_text = "The bank raised interest rates."
+    seg2_text = "The bank denied the request."
+    seg3_text = "The river bank was muddy."
+    unit_text = f"{seg1_text} {seg2_text} {seg3_text}"
+    seg1_start = 0
+    seg2_start = len(seg1_text) + 1
+    seg3_start = seg2_start + len(seg2_text) + 1
+    context = _build_multi_segment_context(
+        unit_text=unit_text,
+        segments=[
+            _make_segment_with_offset(
+                anchor_segment_id="s1",
+                text=seg1_text,
+                unit_start_utf16=seg1_start,
+            ),
+            _make_segment_with_offset(
+                anchor_segment_id="s2",
+                text=seg2_text,
+                unit_start_utf16=seg2_start,
+            ),
+            _make_segment_with_offset(
+                anchor_segment_id="s3",
+                text=seg3_text,
+                unit_start_utf16=seg3_start,
+            ),
+        ],
+    )
+    candidate = VocabularyCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "context_gloss",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "bank",
+                    "display": "bank",
+                    "gloss": "金融机构",
+                    "reason": "当前语境指金融机构",
+                },
+                {
+                    "item_type": "context_gloss",
+                    "anchor_segment_id": "s2",
+                    "selected_text": "bank",
+                    "display": "bank",
+                    "gloss": "金融机构",
+                    "reason": "当前语境指金融机构",
+                },
+                {
+                    "item_type": "context_gloss",
+                    "anchor_segment_id": "s3",
+                    "selected_text": "bank",
+                    "display": "bank",
+                    "gloss": "河岸",
+                    "reason": "当前语境指河岸",
+                },
+            ],
+        }
+    )
+
+    output, diagnostics = _build_vocabulary_output_from_candidates(
+        context, candidate
+    )
+
+    # Two items: "金融机构" (first, s1) + "河岸" (different sense, s3).
+    # The "金融机构" on s2 is a duplicate and skipped.
+    assert len(output.items) == 2
+    glosses = [item.gloss for item in output.items]
+    assert "金融机构" in glosses
+    assert "河岸" in glosses
+    reason_codes = [
+        entry.get("reason_code")
+        for entry in diagnostics.get("skipped_items", [])
+        if isinstance(entry, dict)
+    ]
+    assert "duplicate_context_gloss" in reason_codes
+
+
+def test_cross_item_type_never_deduplicated() -> None:
+    """T3.2: vocab_highlight with headword='bank' and context_gloss with
+    display='bank' are different product semantics; both are kept.
+
+    Note: span dedup runs first and keeps the higher-priority item_type
+    (context_gloss priority 0 > vocab_highlight priority 2) when they share
+    the same span. So the two candidates must be on DIFFERENT spans
+    (different segments) to both survive span dedup and reach the
+    duplicate policy stage, where cross item_type dedup never fires.
+    """
+    seg1_text = "The bank approved the loan."
+    seg2_text = "The bank denied the request."
+    unit_text = f"{seg1_text} {seg2_text}"
+    seg1_start = 0
+    seg2_start = len(seg1_text) + 1
+    context = _build_multi_segment_context(
+        unit_text=unit_text,
+        segments=[
+            _make_segment_with_offset(
+                anchor_segment_id="s1",
+                text=seg1_text,
+                unit_start_utf16=seg1_start,
+            ),
+            _make_segment_with_offset(
+                anchor_segment_id="s2",
+                text=seg2_text,
+                unit_start_utf16=seg2_start,
+            ),
+        ],
+    )
+    candidate = VocabularyCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "bank",
+                    "headword": "bank",
+                    "brief_explanation": "银行",
+                    "reason": "common",
+                },
+                {
+                    "item_type": "context_gloss",
+                    "anchor_segment_id": "s2",
+                    "selected_text": "bank",
+                    "display": "bank",
+                    "gloss": "金融机构",
+                    "reason": "当前语境强调机构属性",
+                },
+            ],
+        }
+    )
+
+    output, _diagnostics = _build_vocabulary_output_from_candidates(
+        context, candidate
+    )
+
+    # Both kept — cross item_type never deduplicated.
+    assert len(output.items) == 2
+    item_types = {item.item_type for item in output.items}
+    assert item_types == {"vocab_highlight", "context_gloss"}
+
+
+def test_different_phrases_not_deduplicated() -> None:
+    """T3.2: different phrases are never deduplicated even if they share
+    a word."""
+    seg1_text = "She took off the coat. She took over the company."
+    unit_text = seg1_text
+    context = _build_multi_segment_context(
+        unit_text=unit_text,
+        segments=[
+            _make_segment_with_offset(
+                anchor_segment_id="s1",
+                text=seg1_text,
+                unit_start_utf16=0,
+            ),
+        ],
+    )
+    candidate = VocabularyCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "phrase_gloss",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "took off",
+                    "phrase": "take off",
+                    "phrase_type": "phrasal_verb",
+                    "gloss": "脱下",
+                },
+                {
+                    "item_type": "phrase_gloss",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "took over",
+                    "phrase": "take over",
+                    "phrase_type": "phrasal_verb",
+                    "gloss": "接管",
+                },
+            ],
+        }
+    )
+
+    output, _diagnostics = _build_vocabulary_output_from_candidates(
+        context, candidate
+    )
+
+    assert len(output.items) == 2
+
+
+def test_batch_cross_unit_dedup_removes_duplicate_vocab_highlight() -> None:
+    """T3.2: batch path cross-unit dedup. Same headword in unit1 and
+    unit2 only published in unit1 (first reading-order unit wins)."""
+    seg1_text = "The bank approved the loan."
+    seg2_text = "The bank denied the request."
+    batch_context = _build_batch_context(
+        units=[
+            (
+                "u1",
+                1,
+                seg1_text,
+                [
+                    _make_segment_with_offset(
+                        anchor_segment_id="s1",
+                        text=seg1_text,
+                        unit_start_utf16=0,
+                    )
+                ],
+            ),
+            (
+                "u2",
+                2,
+                seg2_text,
+                [
+                    _make_segment_with_offset(
+                        anchor_segment_id="s2",
+                        text=seg2_text,
+                        unit_start_utf16=0,
+                    )
+                ],
+            ),
+        ],
+    )
+    candidate = VocabularyBatchCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "units": [
+                {
+                    "unit_id": "u1",
+                    "items": [
+                        {
+                            "item_type": "vocab_highlight",
+                            "anchor_segment_id": "s1",
+                            "selected_text": "bank",
+                            "headword": "bank",
+                            "brief_explanation": "银行",
+                            "reason": "common",
+                        }
+                    ],
+                },
+                {
+                    "unit_id": "u2",
+                    "items": [
+                        {
+                            "item_type": "vocab_highlight",
+                            "anchor_segment_id": "s2",
+                            "selected_text": "bank",
+                            "headword": "bank",
+                            "brief_explanation": "银行",
+                            "reason": "common",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    outputs, batch_diagnostics = _build_vocabulary_batch_outputs(
+        context=batch_context,
+        candidate_output=candidate,
+    )
+
+    assert len(outputs) == 2
+    # u1 keeps the highlight; u2's duplicate is removed.
+    u1_id, u1_layer = outputs[0]
+    u2_id, u2_layer = outputs[1]
+    assert u1_id == "u1"
+    assert u2_id == "u2"
+    assert len(u1_layer.items) == 1
+    assert u1_layer.items[0].item_type == "vocab_highlight"
+    assert len(u2_layer.items) == 0
+    # T3.2 P1-2: cross-unit duplicate skip must be surfaced in diagnostics.
+    assert len(batch_diagnostics) == 1
+    diag = batch_diagnostics[0]
+    assert diag["reason_code"] == "duplicate_vocab_highlight_headword"
+    assert diag["item_type"] == "vocab_highlight"
+    assert diag["unit_id"] == "u2"
+    assert diag["anchor_segment_id"] == "s2"
+    assert diag["selected_text"] == "bank"
+
+
+def test_batch_cross_unit_dedup_keeps_different_senses() -> None:
+    """T3.2: batch cross-unit dedup keeps different senses (different
+    gloss) even if the phrase/display is the same."""
+    seg1_text = "The team took off on time."
+    seg2_text = "Her career took off after the film."
+    batch_context = _build_batch_context(
+        units=[
+            (
+                "u1",
+                1,
+                seg1_text,
+                [
+                    _make_segment_with_offset(
+                        anchor_segment_id="s1",
+                        text=seg1_text,
+                        unit_start_utf16=0,
+                    )
+                ],
+            ),
+            (
+                "u2",
+                2,
+                seg2_text,
+                [
+                    _make_segment_with_offset(
+                        anchor_segment_id="s2",
+                        text=seg2_text,
+                        unit_start_utf16=0,
+                    )
+                ],
+            ),
+        ],
+    )
+    candidate = VocabularyBatchCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "units": [
+                {
+                    "unit_id": "u1",
+                    "items": [
+                        {
+                            "item_type": "phrase_gloss",
+                            "anchor_segment_id": "s1",
+                            "selected_text": "took off",
+                            "phrase": "take off",
+                            "phrase_type": "phrasal_verb",
+                            "gloss": "起飞",
+                        }
+                    ],
+                },
+                {
+                    "unit_id": "u2",
+                    "items": [
+                        {
+                            "item_type": "phrase_gloss",
+                            "anchor_segment_id": "s2",
+                            "selected_text": "took off",
+                            "phrase": "take off",
+                            "phrase_type": "phrasal_verb",
+                            "gloss": "突然成功",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    outputs, batch_diagnostics = _build_vocabulary_batch_outputs(
+        context=batch_context,
+        candidate_output=candidate,
+    )
+
+    # Both kept — different gloss = different sense.
+    assert len(outputs) == 2
+    for _unit_id, layer in outputs:
+        assert len(layer.items) == 1
+    # No cross-unit duplicates; diagnostics is empty.
+    assert batch_diagnostics == []
+
+
+def test_batch_outputs_follow_llm_unit_order() -> None:
+    """T3.2: batch outputs follow the LLM's unit output order. The
+    publisher (``_reorder_outputs_by_target_unit_ids``) is responsible
+    for reordering to reading order before publish; the batch builder
+    itself preserves the LLM's order. This test documents that contract
+    so future changes don't silently break it."""
+    seg1_text = "First unit sentence."
+    seg2_text = "Second unit sentence."
+    batch_context = _build_batch_context(
+        units=[
+            ("u1", 1, seg1_text, [_make_segment_with_offset(anchor_segment_id="s1", text=seg1_text, unit_start_utf16=0)]),
+            ("u2", 2, seg2_text, [_make_segment_with_offset(anchor_segment_id="s2", text=seg2_text, unit_start_utf16=0)]),
+        ],
+    )
+    # LLM returns units in reversed order; the batch builder preserves
+    # the LLM's order (u2 first, u1 second). The publisher reorders to
+    # reading order (u1, u2) before publish.
+    candidate = VocabularyBatchCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "units": [
+                {
+                    "unit_id": "u2",
+                    "items": [],
+                },
+                {
+                    "unit_id": "u1",
+                    "items": [],
+                },
+            ],
+        }
+    )
+
+    outputs, batch_diagnostics = _build_vocabulary_batch_outputs(
+        context=batch_context,
+        candidate_output=candidate,
+    )
+
+    # Builder follows LLM order; publisher reorders later.
+    assert [unit_id for unit_id, _ in outputs] == ["u2", "u1"]
+    # Empty candidates → no diagnostics.
+    assert batch_diagnostics == []
+
+
+def test_apply_vocabulary_duplicate_policy_empty_list() -> None:
+    """T3.2: empty input returns empty output and empty diagnostics."""
+    kept, skipped = _apply_vocabulary_duplicate_policy([])
+    assert kept == []
+    assert skipped == []
+
+
+def test_apply_cross_unit_dedup_empty_list() -> None:
+    """T3.2: empty batch returns empty list and empty diagnostics."""
+    outputs, skipped = _apply_cross_unit_vocabulary_duplicate_policy([])
+    assert outputs == []
+    assert skipped == []
+
+
+def test_duplicate_policy_runs_before_max_items_cap() -> None:
+    """T3.2 P1-1: duplicate policy must run BEFORE the MAX_VOCABULARY_ITEMS
+    cap. Regression: 5 candidates share the same headword "bank" (on 5
+    different spans) followed by a 6th unique candidate "river". After
+    dedup the 4 duplicate "bank" items are removed, leaving 1 "bank" + 1
+    "river" = 2 items — well under the cap. The 6th unique item must
+    survive; it must NOT be rejected as candidate_limit_exceeded.
+
+    Under the OLD (buggy) ordering the in-loop cap would see 5 resolved
+    spans after processing the 5 "bank" candidates and reject the 6th
+    "river" candidate before dedup ever ran. After dedup only 1 "bank"
+    would remain and "river" would be lost.
+    """
+    # 6 segments, each containing a target word on a unique span.
+    seg1 = "The bank approved the loan."
+    seg2 = "The river bank was flooded."
+    seg3 = "The bank closed early."
+    seg4 = "That bank is new."
+    seg5 = "One bank failed."
+    seg6 = "The river flows fast."
+    parts = [seg1, seg2, seg3, seg4, seg5, seg6]
+    # Concatenate with spaces; compute unit_start_utf16 per segment.
+    unit_text = " ".join(parts)
+    segments: list[VocabularyAnchorSegmentContext] = []
+    cursor = 0
+    for idx, text in enumerate(parts, start=1):
+        segments.append(
+            _make_segment_with_offset(
+                anchor_segment_id=f"s{idx}",
+                text=text,
+                unit_start_utf16=cursor,
+            )
+        )
+        # Advance cursor by this segment's UTF-16 length + 1 for the space.
+        cursor += len(text.encode("utf-16-le", "surrogatepass")) // 2 + 1
+
+    context = _build_multi_segment_context(
+        unit_text=unit_text,
+        segments=segments,
+    )
+    candidate = VocabularyCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "items": [
+                # 5 candidates with the same headword "bank" on 5 different
+                # spans (so span dedup does NOT collapse them; the duplicate
+                # policy is what removes them).
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "bank",
+                    "headword": "bank",
+                    "brief_explanation": "银行",
+                    "reason": "common",
+                },
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "s2",
+                    "selected_text": "bank",
+                    "headword": "bank",
+                    "brief_explanation": "银行",
+                    "reason": "common",
+                },
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "s3",
+                    "selected_text": "bank",
+                    "headword": "bank",
+                    "brief_explanation": "银行",
+                    "reason": "common",
+                },
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "s4",
+                    "selected_text": "bank",
+                    "headword": "bank",
+                    "brief_explanation": "银行",
+                    "reason": "common",
+                },
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "s5",
+                    "selected_text": "bank",
+                    "headword": "bank",
+                    "brief_explanation": "银行",
+                    "reason": "common",
+                },
+                # 6th candidate: unique headword "river" — must survive.
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "s6",
+                    "selected_text": "river",
+                    "headword": "river",
+                    "brief_explanation": "河流",
+                    "reason": "common",
+                },
+            ],
+        }
+    )
+
+    output, diagnostics = _build_vocabulary_output_from_candidates(
+        context, candidate
+    )
+
+    # Dedup removed 4 of the 5 "bank" candidates; "river" survives.
+    headwords = [item.headword for item in output.items]
+    assert headwords.count("bank") == 1
+    assert "river" in headwords
+    assert len(output.items) == 2
+
+    # Diagnostics: 4 duplicate skips, NO candidate_limit_exceeded.
+    reason_codes = [
+        entry.get("reason_code")
+        for entry in diagnostics.get("skipped_items", [])
+        if isinstance(entry, dict)
+    ]
+    assert reason_codes.count("duplicate_vocab_highlight_headword") == 4
+    assert "candidate_limit_exceeded" not in reason_codes
+
+
+def test_max_items_cap_runs_after_dedup_with_candidate_limit() -> None:
+    """T3.2 P1-1: when resolved (post-dedup) items exceed MAX_VOCABULARY_ITEMS,
+    the cap fires with reason_code=candidate_limit_exceeded and trims to
+    MAX_VOCABULARY_ITEMS. This verifies the cap is still enforced, just
+    moved after dedup.
+    """
+    # 6 unique headwords on 6 unique spans — no dedup, all survive to cap.
+    segs = [
+        "Alpha begins.",
+        "Bravo follows.",
+        "Charlie comes next.",
+        "Delta arrives.",
+        "Echo echoes.",
+        "Foxtrot ends.",
+    ]
+    unit_text = " ".join(segs)
+    segments: list[VocabularyAnchorSegmentContext] = []
+    cursor = 0
+    for idx, text in enumerate(segs, start=1):
+        segments.append(
+            _make_segment_with_offset(
+                anchor_segment_id=f"s{idx}",
+                text=text,
+                unit_start_utf16=cursor,
+            )
+        )
+        cursor += len(text.encode("utf-16-le", "surrogatepass")) // 2 + 1
+
+    context = _build_multi_segment_context(
+        unit_text=unit_text,
+        segments=segments,
+    )
+    headwords = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"]
+    candidate = VocabularyCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": f"s{idx}",
+                    "selected_text": hw,
+                    "headword": hw,
+                    "brief_explanation": "test",
+                    "reason": "common",
+                }
+                for idx, hw in enumerate(headwords, start=1)
+            ],
+        }
+    )
+
+    output, diagnostics = _build_vocabulary_output_from_candidates(
+        context, candidate
+    )
+
+    # Cap trims to MAX_VOCABULARY_ITEMS (5); the 6th is skipped.
+    assert len(output.items) == 5
+    published = [item.headword for item in output.items]
+    assert published == ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]
+
+    reason_codes = [
+        entry.get("reason_code")
+        for entry in diagnostics.get("skipped_items", [])
+        if isinstance(entry, dict)
+    ]
+    assert "candidate_limit_exceeded" in reason_codes
+
+
+def test_batch_quality_json_contains_duplicate_diagnostics() -> None:
+    """T3.2 P1-2: batch path duplicate diagnostics must reach quality_json.
+
+    When a cross-unit duplicate headword is removed, the published
+    layer's quality_json must include a diagnostics entry with
+    reason_code=duplicate_vocab_highlight_headword, plus the item_type,
+    unit_id, anchor_segment_id and selected_text of the skipped item.
+    """
+    seg1_text = "The bank approved the loan."
+    seg2_text = "The bank denied the request."
+    batch_context = _build_batch_context(
+        units=[
+            (
+                "u1",
+                1,
+                seg1_text,
+                [
+                    _make_segment_with_offset(
+                        anchor_segment_id="s1",
+                        text=seg1_text,
+                        unit_start_utf16=0,
+                    )
+                ],
+            ),
+            (
+                "u2",
+                2,
+                seg2_text,
+                [
+                    _make_segment_with_offset(
+                        anchor_segment_id="s2",
+                        text=seg2_text,
+                        unit_start_utf16=0,
+                    )
+                ],
+            ),
+        ],
+    )
+    candidate = VocabularyBatchCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "units": [
+                {
+                    "unit_id": "u1",
+                    "items": [
+                        {
+                            "item_type": "vocab_highlight",
+                            "anchor_segment_id": "s1",
+                            "selected_text": "bank",
+                            "headword": "bank",
+                            "brief_explanation": "银行",
+                            "reason": "common",
+                        }
+                    ],
+                },
+                {
+                    "unit_id": "u2",
+                    "items": [
+                        {
+                            "item_type": "vocab_highlight",
+                            "anchor_segment_id": "s2",
+                            "selected_text": "bank",
+                            "headword": "bank",
+                            "brief_explanation": "银行",
+                            "reason": "common",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    outputs, batch_diagnostics = _build_vocabulary_batch_outputs(
+        context=batch_context,
+        candidate_output=candidate,
+    )
+
+    # Build quality_json with the collected batch diagnostics.
+    execution = VocabularyBatchExecutionResult(
+        output=candidate,
+        usage_data={"aggregate": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}},
+        prompt_version="test-batch",
+        model_profile="fake",
+        model_provider="fake-provider",
+        model_name="fake-model",
+    )
+    quality_json = _build_vocabulary_batch_quality_json(
+        execution,
+        unit_count=len(batch_context.units),
+        batch_diagnostics=batch_diagnostics,
+    )
+
+    # quality_json must carry the diagnostics block.
+    assert "skipped_items" in quality_json
+    assert quality_json["skipped_item_count"] >= 1
+    assert "skipped_items_truncated_count" in quality_json
+
+    # Find the cross-unit duplicate diagnostic.
+    dup_diags = [
+        d for d in quality_json["skipped_items"]
+        if isinstance(d, dict)
+        and d.get("reason_code") == "duplicate_vocab_highlight_headword"
+    ]
+    assert len(dup_diags) == 1
+    diag = dup_diags[0]
+    assert diag["item_type"] == "vocab_highlight"
+    assert diag["unit_id"] == "u2"
+    assert diag["anchor_segment_id"] == "s2"
+    assert diag["selected_text"] == "bank"
+
+    # The u2 layer should be empty (duplicate removed); u1 keeps its item.
+    assert len(outputs) == 2
+    for unit_id, layer in outputs:
+        if unit_id == "u1":
+            assert len(layer.items) == 1
+        else:
+            assert len(layer.items) == 0
+
+
+def test_build_vocabulary_batch_prompt_exposes_item_caps() -> None:
+    """T3.2a P2: the batch prompt must explicitly surface both the per-unit
+    published cap (MAX_VOCABULARY_ITEMS) and the per-unit candidate cap
+    (MAX_VOCABULARY_CANDIDATE_ITEMS), mirroring the per-unit prompt.
+
+    The schema (VocabularyBatchUnitCandidateOutput.items max_length) already
+    enforces the candidate cap, but the prompt must state both bounds so the
+    LLM doesn't over-emit duplicates that would be dropped by the duplicate
+    policy, or under-emit by treating the published cap as the candidate
+    cap.
+    """
+    from app.services.reader_orchestration.vocabulary_worker import (
+        MAX_VOCABULARY_CANDIDATE_ITEMS,
+        MAX_VOCABULARY_ITEMS,
+    )
+
+    seg1_text = "The bank approved the loan."
+    seg2_text = "The river bank was flooded."
+    batch_context = _build_batch_context(
+        units=[
+            (
+                "u1",
+                1,
+                seg1_text,
+                [
+                    _make_segment_with_offset(
+                        anchor_segment_id="s1",
+                        text=seg1_text,
+                        unit_start_utf16=0,
+                    )
+                ],
+            ),
+            (
+                "u2",
+                2,
+                seg2_text,
+                [
+                    _make_segment_with_offset(
+                        anchor_segment_id="s2",
+                        text=seg2_text,
+                        unit_start_utf16=0,
+                    )
+                ],
+            ),
+        ],
+    )
+
+    prompt = _build_vocabulary_batch_prompt(batch_context)
+
+    # Both caps must be present with their concrete values.
+    assert f"max_published_items_per_unit: {MAX_VOCABULARY_ITEMS}" in prompt
+    assert (
+        f"max_candidate_items_per_unit: {MAX_VOCABULARY_CANDIDATE_ITEMS}"
+        in prompt
+    )
+    # Sanity: the candidate cap must be strictly greater than the published
+    # cap, otherwise "dedup before cap" is meaningless.
+    assert MAX_VOCABULARY_CANDIDATE_ITEMS > MAX_VOCABULARY_ITEMS
+    # The prompt must still carry the batch structure and strategy section.
+    assert "<units>" in prompt
+    assert "<strategy>" in prompt
+    # Both units must appear.
+    assert 'unit_id="u1"' in prompt
+    assert 'unit_id="u2"' in prompt
+
+
+# ---------------------------------------------------------------------------#
+# T3.2b: Cross-window duplicate headword v1 behavior lock
+# ---------------------------------------------------------------------------#
+# When a non-short article is split into multiple vocabulary windows, the
+# cross-unit dedup policy only applies WITHIN a single window (single batch
+# job). The same headword may independently appear in different windows.
+# This is the documented v1 behavior (implementation-plan.md T3.2b risk A):
+# each window may highlight the same headword once. Full-text dedup is NOT
+# claimed.
+
+
+def test_t32b_cross_window_duplicate_headword_v1_both_windows_keep_highlight() -> None:
+    """T3.2b v1 lock: the same headword in two separate windows is kept
+    by BOTH windows. Cross-unit dedup only applies within a single batch
+    job (window), not across windows.
+
+    This test simulates the scenario: window 1 processes units [u1, u2]
+    and window 2 processes units [u3, u4]. Both windows contain the
+    headword "bank". The v1 behavior is that both windows keep their
+    highlight — cross-window dedup is NOT performed.
+    """
+    # Window 1: units u1, u2 — both have "bank"
+    seg1_text = "The bank approved the loan."
+    seg2_text = "The bank denied the request."
+    window1_context = _build_batch_context(
+        units=[
+            (
+                "u1",
+                1,
+                seg1_text,
+                [
+                    _make_segment_with_offset(
+                        anchor_segment_id="s1",
+                        text=seg1_text,
+                        unit_start_utf16=0,
+                    )
+                ],
+            ),
+            (
+                "u2",
+                2,
+                seg2_text,
+                [
+                    _make_segment_with_offset(
+                        anchor_segment_id="s2",
+                        text=seg2_text,
+                        unit_start_utf16=0,
+                    )
+                ],
+            ),
+        ],
+    )
+    window1_candidate = VocabularyBatchCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "units": [
+                {
+                    "unit_id": "u1",
+                    "items": [
+                        {
+                            "item_type": "vocab_highlight",
+                            "anchor_segment_id": "s1",
+                            "selected_text": "bank",
+                            "headword": "bank",
+                            "brief_explanation": "银行",
+                            "reason": "common",
+                        }
+                    ],
+                },
+                {
+                    "unit_id": "u2",
+                    "items": [
+                        {
+                            "item_type": "vocab_highlight",
+                            "anchor_segment_id": "s2",
+                            "selected_text": "bank",
+                            "headword": "bank",
+                            "brief_explanation": "银行",
+                            "reason": "common",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    # Window 1: cross-unit dedup removes u2's "bank" (within-window dedup)
+    w1_outputs, w1_diagnostics = _build_vocabulary_batch_outputs(
+        context=window1_context,
+        candidate_output=window1_candidate,
+    )
+    assert len(w1_outputs) == 2
+    u1_layer = next(layer for uid, layer in w1_outputs if uid == "u1")
+    u2_layer = next(layer for uid, layer in w1_outputs if uid == "u2")
+    assert len(u1_layer.items) == 1  # u1 keeps "bank"
+    assert len(u2_layer.items) == 0  # u2's "bank" is deduped within window 1
+    assert len(w1_diagnostics) == 1  # cross-unit dedup diagnostic
+
+    # Window 2: units u3, u4 — u3 also has "bank"
+    seg3_text = "The bank opened a new branch."
+    seg4_text = "The store sold out."
+    window2_context = _build_batch_context(
+        units=[
+            (
+                "u3",
+                3,
+                seg3_text,
+                [
+                    _make_segment_with_offset(
+                        anchor_segment_id="s3",
+                        text=seg3_text,
+                        unit_start_utf16=0,
+                    )
+                ],
+            ),
+            (
+                "u4",
+                4,
+                seg4_text,
+                [
+                    _make_segment_with_offset(
+                        anchor_segment_id="s4",
+                        text=seg4_text,
+                        unit_start_utf16=0,
+                    )
+                ],
+            ),
+        ],
+    )
+    window2_candidate = VocabularyBatchCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "units": [
+                {
+                    "unit_id": "u3",
+                    "items": [
+                        {
+                            "item_type": "vocab_highlight",
+                            "anchor_segment_id": "s3",
+                            "selected_text": "bank",
+                            "headword": "bank",
+                            "brief_explanation": "银行",
+                            "reason": "common",
+                        }
+                    ],
+                },
+                {
+                    "unit_id": "u4",
+                    "items": [],
+                },
+            ],
+        }
+    )
+
+    # Window 2: u3's "bank" is NOT deduped against window 1's "bank".
+    # v1 behavior: cross-window dedup is NOT performed.
+    w2_outputs, w2_diagnostics = _build_vocabulary_batch_outputs(
+        context=window2_context,
+        candidate_output=window2_candidate,
+    )
+    assert len(w2_outputs) == 2
+    u3_layer = next(layer for uid, layer in w2_outputs if uid == "u3")
+    u4_layer = next(layer for uid, layer in w2_outputs if uid == "u4")
+    # v1 lock: u3 keeps "bank" even though window 1 already highlighted it.
+    assert len(u3_layer.items) == 1
+    assert u3_layer.items[0].headword == "bank"
+    assert len(u4_layer.items) == 0
+    # No cross-unit dedup diagnostic in window 2 (u4 has no items)
+    assert len(w2_diagnostics) == 0
