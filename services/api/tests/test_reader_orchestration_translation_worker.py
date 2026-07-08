@@ -1822,6 +1822,40 @@ def _build_batch_context_with_segments(
     )
 
 
+# Contiguous segments for multi-anchor grouping tests (s10/s11/s12).
+_S10_SOURCE = "Workers at restaurants in the US can earn as little as $2.13 per hour."
+_S11_SOURCE = "They rely on diners to tip for their service."
+_S12_SOURCE = "Without tips, staff may not earn enough money to live on."
+
+
+def _build_contiguous_unit_source_text() -> str:
+    return "\n\n".join([_S10_SOURCE, _S11_SOURCE, _S12_SOURCE])
+
+
+def _build_batch_context_with_contiguous_segments(
+    *,
+    unit_id: str = "u2",
+    reading_goal: str = "daily_reading",
+    reading_variant: str = "intermediate_reading",
+) -> TranslationBatchJobContext:
+    """Build a TranslationBatchJobContext with 3 contiguous anchor segments.
+
+    Segments s10/s11/s12 (order_index 10/11/12) form a single contiguous
+    run short enough to produce ONE deterministic translation group.
+    """
+    segment_specs = [
+        ("s10", _S10_SOURCE, 10),
+        ("s11", _S11_SOURCE, 11),
+        ("s12", _S12_SOURCE, 12),
+    ]
+    return _build_batch_context_with_segments(
+        unit_id=unit_id,
+        segment_specs=segment_specs,
+        reading_goal=reading_goal,
+        reading_variant=reading_variant,
+    )
+
+
 def _batch_unit_output(
     unit_id: str,
     groups: list[tuple[str, str]],
@@ -1835,7 +1869,10 @@ def _batch_unit_output(
     )
 
 
-def test_build_deterministic_translation_groups_one_per_anchor_segment() -> None:
+def test_build_deterministic_translation_groups_splits_non_contiguous_anchors() -> None:
+    """Non-contiguous anchor segments (gap in order_index) get separate
+    groups because the publisher requires contiguous order_index within
+    a group. The s15/s17 pair (no s16) produces two single-segment groups."""
     context = _build_batch_context_with_segments()
     unit = context.units[0]
 
@@ -1849,6 +1886,53 @@ def test_build_deterministic_translation_groups_one_per_anchor_segment() -> None
     assert groups[1].source_text_hash == compute_text_range_hash(_S17_SOURCE)
     assert groups[0].source_text == _S15_SOURCE
     assert groups[1].source_text == _S17_SOURCE
+
+
+def test_build_deterministic_translation_groups_one_group_for_short_contiguous_unit() -> None:
+    """A short reading unit with contiguous anchor segments produces ONE
+    display-friendly group covering all anchors (regression for a75d742a
+    where a 624-char unit with 10 anchors was split into 10 per-sentence
+    groups, degrading the page to one-sentence-per-line display)."""
+    context = _build_batch_context_with_contiguous_segments()
+    unit = context.units[0]
+
+    groups = build_deterministic_translation_groups(unit)
+
+    # One group covering all 3 contiguous segments s10/s11/s12.
+    assert len(groups) == 1
+    assert groups[0].group_id == "u2_g10_12"
+    assert list(groups[0].anchor_segment_ids) == ["s10", "s11", "s12"]
+    assert groups[0].order_index == 10
+    # source_text is the full span from s10.start to s12.end.
+    assert groups[0].source_text == _build_contiguous_unit_source_text()
+    # source_text_hash is the hash of that span, not a single segment hash.
+    assert groups[0].source_text_hash == compute_text_range_hash(
+        _build_contiguous_unit_source_text()
+    )
+
+
+def test_build_deterministic_translation_groups_splits_long_unit_at_anchor_boundary() -> None:
+    """A unit exceeding TRANSLATION_GROUP_SAFETY_MAX_CHARS is split at
+    anchor-segment boundaries into bounded groups."""
+    # Build a unit whose total span exceeds the safety max.
+    long_segment_a = "A" * 800 + "."
+    long_segment_b = "B" * 800 + "."
+    context = _build_batch_context_with_segments(
+        segment_specs=[
+            ("s1", long_segment_a, 1),
+            ("s2", long_segment_b, 2),
+        ]
+    )
+    unit = context.units[0]
+
+    groups = build_deterministic_translation_groups(unit)
+
+    # Two segments, total > 1400 chars → split into two groups.
+    assert len(groups) == 2
+    assert groups[0].group_id == "u2_g1_1"
+    assert groups[0].anchor_segment_ids == ("s1",)
+    assert groups[1].group_id == "u2_g2_2"
+    assert groups[1].anchor_segment_ids == ("s2",)
 
 
 def test_batch_group_output_schema_rejects_anchor_segment_ids() -> None:
@@ -2144,8 +2228,7 @@ def test_build_translation_batch_prompt_emits_predefined_groups_and_forbids_llm_
 
 def test_build_translation_batch_prompt_does_not_ask_for_semantic_grouping() -> None:
     """The batch prompt must NOT carry the per-unit semantic-grouping
-    guidance (which would contradict the deterministic one-per-segment
-    contract)."""
+    guidance (which would contradict the deterministic grouping contract)."""
     context = _build_batch_context_with_segments()
     prompt = _build_translation_batch_prompt(context)
 
@@ -2155,3 +2238,84 @@ def test_build_translation_batch_prompt_does_not_ask_for_semantic_grouping() -> 
     assert "<grouping_contract>" in prompt
     # The batch prompt must not invite the LLM to choose anchor handles.
     assert "anchor handle" not in prompt
+
+
+# ---------------------------------------------------------------------------#
+# Multi-anchor display group regression tests (a75d742a display degradation)
+#
+# Verifies that a short reading unit with contiguous anchor segments
+# produces ONE translation group (not per-sentence), so the page displays
+# one paragraph-level translation instead of one-sentence-per-line.
+# ---------------------------------------------------------------------------#
+
+
+def test_hydrate_batch_output_multi_anchor_group_binds_all_anchors() -> None:
+    """A multi-anchor deterministic group (s10/s11/s12) hydrates with all
+    three anchor_segment_ids and the correct span source_text_hash."""
+    context = _build_batch_context_with_contiguous_segments()
+    # LLM returns one group_id for the whole unit.
+    generation = TranslationBatchGenerationOutput(
+        units=[
+            _batch_unit_output(
+                "u2",
+                [("u2_g10_12", "整段译文。")],
+            )
+        ]
+    )
+
+    outputs = hydrate_translation_batch_output(context=context, generation=generation)
+
+    assert len(outputs) == 1
+    unit_id, layer = outputs[0]
+    assert unit_id == "u2"
+    assert len(layer.groups) == 1
+    group = layer.groups[0]
+    assert group.group_id == "u2_g10_12"
+    assert list(group.anchor_segment_ids) == ["s10", "s11", "s12"]
+    assert group.source_text_hash == compute_text_range_hash(
+        _build_contiguous_unit_source_text()
+    )
+    assert group.translated_text == "整段译文。"
+
+
+def test_hydrate_batch_output_multi_anchor_group_fail_closed_on_wrong_group_id() -> None:
+    """If the LLM returns a per-segment group_id for a unit that has a
+    single multi-anchor group, hydrate must fail closed."""
+    context = _build_batch_context_with_contiguous_segments()
+    # LLM wrongly splits the unit into per-segment groups.
+    generation = TranslationBatchGenerationOutput(
+        units=[
+            _batch_unit_output(
+                "u2",
+                [
+                    ("u2_g10_10", "译文1"),
+                    ("u2_g11_11", "译文2"),
+                    ("u2_g12_12", "译文3"),
+                ],
+            )
+        ]
+    )
+
+    with pytest.raises(TranslationExecutionError) as exc_info:
+        hydrate_translation_batch_output(context=context, generation=generation)
+    # The predefined group is u2_g10_12, so the per-segment ids are "extra".
+    assert exc_info.value.failure_code == "translation_batch_extra_group"
+
+
+def test_build_translation_batch_prompt_emits_multi_anchor_group() -> None:
+    """The batch prompt emits a single <translation_group> with multiple
+    anchor_segment_ids for a short contiguous unit."""
+    context = _build_batch_context_with_contiguous_segments()
+    prompt = _build_translation_batch_prompt(context)
+
+    # One group covering s10/s11/s12.
+    assert 'group_id="u2_g10_12"' in prompt
+    assert 'anchor_segment_ids="s10,s11,s12"' in prompt
+    # The full span source_text is included.
+    assert _S10_SOURCE in prompt
+    assert _S11_SOURCE in prompt
+    assert _S12_SOURCE in prompt
+    # The prompt does not emit per-segment groups for this unit.
+    assert 'group_id="u2_g10_10"' not in prompt
+    assert 'group_id="u2_g11_11"' not in prompt
+    assert 'group_id="u2_g12_12"' not in prompt

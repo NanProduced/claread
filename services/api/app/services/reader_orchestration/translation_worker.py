@@ -78,10 +78,11 @@ TRANSLATION_PROMPT_AGENT_NAME = "reader_layer_translation"
 # injected via the ``<strategy>`` section of the per-call prompt.
 _TRANSLATION_BATCH_AGENT_INSTRUCTIONS = (
     "You are a batch translation agent for short reading articles.\n"
-    "The translation groups are PRE-DEFINED by the backend: exactly one "
-    "group per anchor segment, listed in <translation_groups> in reading "
-    "order. Each group declares its group_id, unit_id, anchor_segment_ids, "
-    "source_text_hash, and source_text.\n"
+    "The translation groups are PRE-DEFINED by the backend, listed in "
+    "<translation_groups> in reading order. Each group covers one or more "
+    "contiguous anchor segments within a reading unit and declares its "
+    "group_id, unit_id, anchor_segment_ids, source_text_hash, and "
+    "source_text.\n"
     "Your ONLY job is to translate each group's <source_text> into the "
     "target language and return group_id + translated_text for that group.\n"
     "Hard rules:\n"
@@ -278,20 +279,36 @@ class TranslationBatchUnitContext:
     anchor_segments: tuple[TranslationAnchorSegmentTarget, ...]
 
 
+# Display-friendly translation group sizing for the batch path.
+#
+# A reading unit that fits within ``TRANSLATION_GROUP_SAFETY_MAX_CHARS`` is
+# translated as a single group (one translation for the whole unit),
+# matching the natural-paragraph display the translation strategy expects.
+# Longer units are split at anchor-segment boundaries into bounded groups so
+# no single LLM translation call exceeds the safety ceiling.
+TRANSLATION_GROUP_TARGET_MAX_CHARS = 900
+TRANSLATION_GROUP_SAFETY_MAX_CHARS = 1400
+
+
 @dataclass(frozen=True, slots=True)
 class DeterministicTranslationGroup:
     """A backend-predefined translation group for the batch path.
 
     The batch path no longer lets the LLM choose which anchor segments
     belong to a translation group. The backend deterministically builds
-    one group per anchor segment (``group_id = {unit_id}_g{order}_{order}``,
-    ``anchor_segment_ids = (segment_id,)``, ``source_text_hash`` = the
-    segment's own text hash). The prompt emits these groups to the LLM
-    with their source text; the LLM only returns ``group_id`` +
-    ``translated_text``. The hydrate step maps each returned ``group_id``
-    back to this predefined group, removing the previous LLM-selected
-    anchor misalignment vector. Semantic matching between ``translated_text``
-    and this group's source text still depends on model quality.
+    display-friendly groups: by default one group per reading unit
+    (covering all of its contiguous anchor segments); only when a unit is
+    too long does it split at anchor-segment boundaries into bounded groups.
+    ``group_id = {unit_id}_g{first_order}_{last_order}``,
+    ``anchor_segment_ids`` = the contiguous anchor ids in this group,
+    ``source_text_hash`` = hash of the span from the first anchor's
+    ``unit_start_utf16`` to the last anchor's ``unit_end_utf16``. The
+    prompt emits these groups to the LLM with their source text; the LLM
+    only returns ``group_id`` + ``translated_text``. The hydrate step maps
+    each returned ``group_id`` back to this predefined group, removing the
+    previous LLM-selected anchor misalignment vector. Semantic matching
+    between ``translated_text`` and this group's source text still depends
+    on model quality.
     """
 
     group_id: str
@@ -307,28 +324,117 @@ def build_deterministic_translation_groups(
 ) -> list[DeterministicTranslationGroup]:
     """Build deterministic translation groups for a batch unit.
 
-    Minimal safe contract: one group per anchor segment, in reading order.
+    Display-friendly grouping contract:
+        - By default, one group covering the entire unit (all contiguous
+          anchor segments).
+        - If the unit's span exceeds ``TRANSLATION_GROUP_SAFETY_MAX_CHARS``,
+          split at anchor-segment boundaries into bounded groups.
+        - Non-contiguous anchor segments (gaps in ``order_index``) are
+          always split into separate groups (the publisher requires
+          contiguity within a group).
+        - ``group_id`` / ``anchor_segment_ids`` / ``source_text_hash`` are
+          derived from the unit's anchor segments, so the hydrate step can
+          re-derive the same mapping and reject any LLM output whose
+          ``group_id`` set does not exactly match.
+
     The LLM is NOT allowed to choose, merge, split, reorder, add, or drop
-    groups. Each group's ``group_id`` / ``anchor_segment_ids`` /
-    ``source_text_hash`` are derived from the unit's anchor segments, so
-    the hydrate step can re-derive the same mapping and reject any LLM
-    output whose ``group_id`` set does not exactly match.
+    groups.
     """
+    segments = list(unit.anchor_segments)
+    if not segments:
+        return []
+
+    # Sort defensively by order_index (callers already preserve reading
+    # order, but sorting makes the contract explicit).
+    segments.sort(key=lambda s: s.order_index)
+
+    # First pass: split into contiguous runs. The publisher requires
+    # anchor_segment_ids within a group to be ordered and consecutive in
+    # order_index, so a gap (e.g. order 15 then 17 with no 16) forces a
+    # group boundary.
+    contiguous_runs: list[list[TranslationAnchorSegmentTarget]] = []
+    current_run: list[TranslationAnchorSegmentTarget] = [segments[0]]
+    for previous, current in zip(segments, segments[1:], strict=False):
+        if current.order_index == previous.order_index + 1:
+            current_run.append(current)
+        else:
+            contiguous_runs.append(current_run)
+            current_run = [current]
+    contiguous_runs.append(current_run)
+
+    # Second pass: for each contiguous run, split into bounded groups if
+    # the run's span exceeds the safety ceiling.
     groups: list[DeterministicTranslationGroup] = []
-    for segment in unit.anchor_segments:
-        groups.append(
-            DeterministicTranslationGroup(
-                group_id=(
-                    f"{unit.unit_id}_g{segment.order_index}_{segment.order_index}"
-                ),
-                unit_id=unit.unit_id,
-                anchor_segment_ids=(segment.anchor_segment_id,),
-                source_text=segment.source_text,
-                source_text_hash=segment.text_hash,
-                order_index=segment.order_index,
-            )
-        )
+    for run in contiguous_runs:
+        groups.extend(_split_run_into_bounded_groups(unit, run))
     return groups
+
+
+def _split_run_into_bounded_groups(
+    unit: TranslationBatchUnitContext,
+    segments: list[TranslationAnchorSegmentTarget],
+) -> list[DeterministicTranslationGroup]:
+    """Split a contiguous run of anchor segments into bounded groups.
+
+    If the entire run fits within ``TRANSLATION_GROUP_SAFETY_MAX_CHARS``,
+    emit a single group. Otherwise, greedily accumulate segments until
+    adding the next would exceed the safety ceiling, then close the group.
+    """
+    first = segments[0]
+    last = segments[-1]
+    run_span_length = last.unit_end_utf16 - first.unit_start_utf16
+    if run_span_length <= TRANSLATION_GROUP_SAFETY_MAX_CHARS or len(segments) == 1:
+        return [_build_deterministic_group(unit, segments)]
+
+    groups: list[DeterministicTranslationGroup] = []
+    current: list[TranslationAnchorSegmentTarget] = [segments[0]]
+    current_start = segments[0].unit_start_utf16
+    for segment in segments[1:]:
+        candidate_length = segment.unit_end_utf16 - current_start
+        if candidate_length > TRANSLATION_GROUP_SAFETY_MAX_CHARS and len(current) >= 1:
+            groups.append(_build_deterministic_group(unit, current))
+            current = [segment]
+            current_start = segment.unit_start_utf16
+        else:
+            current.append(segment)
+    if current:
+        groups.append(_build_deterministic_group(unit, current))
+    return groups
+
+
+def _build_deterministic_group(
+    unit: TranslationBatchUnitContext,
+    segments: list[TranslationAnchorSegmentTarget],
+) -> DeterministicTranslationGroup:
+    """Build a single deterministic translation group from a segment range."""
+    first = segments[0]
+    last = segments[-1]
+    group_source_text = slice_by_utf16_offsets(
+        unit.source_text,
+        first.unit_start_utf16,
+        last.unit_end_utf16,
+    )
+    if group_source_text is None or not group_source_text:
+        raise TranslationExecutionError(
+            f"failed to slice deterministic translation group source_text "
+            f"for unit {unit.unit_id!r} "
+            f"(span {first.unit_start_utf16}:{last.unit_end_utf16})",
+            retryable=False,
+            failure_class="validation",
+            failure_code="translation_group_slice_failed",
+        )
+    return DeterministicTranslationGroup(
+        group_id=(
+            f"{unit.unit_id}_g{first.order_index}_{last.order_index}"
+        ),
+        unit_id=unit.unit_id,
+        anchor_segment_ids=tuple(
+            segment.anchor_segment_id for segment in segments
+        ),
+        source_text=group_source_text,
+        source_text_hash=compute_text_range_hash(group_source_text),
+        order_index=first.order_index,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -458,8 +564,9 @@ def hydrate_translation_batch_output(
 ) -> list[tuple[str, TranslationLayerOutput]]:
     """Split a batch generation output into per-unit ``TranslationLayerOutput``.
 
-    Deterministic-grouping contract: the backend pre-defines one
-    translation group per anchor segment (see
+    Deterministic-grouping contract: the backend pre-defines display-friendly
+    translation groups (by default one per reading unit; split at anchor
+    boundaries only when the unit is too long — see
     :func:`build_deterministic_translation_groups`). The LLM only returns
     ``group_id`` + ``translated_text`` per group; it MUST NOT choose
     ``anchor_segment_ids``. This function maps each returned
@@ -635,10 +742,11 @@ def _format_batch_grouping_contract_section() -> str:
     """
     return (
         "<grouping_contract>\n"
-        "Translation groups are fixed by the backend, one per anchor "
-        "segment, listed in <translation_groups> below in reading order. "
-        "Each group already declares its group_id, unit_id, "
-        "anchor_segment_ids, source_text_hash, and source_text.\n"
+        "Translation groups are fixed by the backend, listed in "
+        "<translation_groups> below in reading order. Each group covers "
+        "one or more contiguous anchor segments within a reading unit and "
+        "already declares its group_id, unit_id, anchor_segment_ids, "
+        "source_text_hash, and source_text.\n"
         "You MUST return exactly one group entry per listed "
         "<translation_group>, echoing its group_id and providing the "
         "translated_text for that group's source_text only.\n"
@@ -655,10 +763,11 @@ def _format_batch_translation_groups_section(
 ) -> str:
     """Render the predefined translation groups for the batch LLM call.
 
-    For each unit, emit one ``<translation_group>`` per anchor segment with
-    its group_id, unit_id, anchor_segment_ids, source_text_hash, and the
-    segment's source_text. The LLM only needs to translate each group's
-    source_text and echo the group_id; it never chooses anchor coverage.
+    For each unit, emit one ``<translation_group>`` per deterministic
+    group with its group_id, unit_id, anchor_segment_ids (one or more
+    contiguous ids), source_text_hash, and the group's full source_text
+    span. The LLM only needs to translate each group's source_text and
+    echo the group_id; it never chooses anchor coverage.
     """
     parts: list[str] = ["<translation_groups>"]
     for unit in context.units:

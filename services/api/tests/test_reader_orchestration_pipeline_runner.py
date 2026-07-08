@@ -48,6 +48,7 @@ from app.services.reader_orchestration.translation_worker import (
     TranslationExecutionResult,
     TranslationJobContext,
     TranslationWorkerService,
+    build_deterministic_translation_groups,
 )
 from app.services.reader_orchestration.vocabulary_worker import (
     UnconfiguredVocabularyExecutor,
@@ -389,10 +390,10 @@ class _StaticBatchTranslator:
     returns :class:`TranslationBatchGenerationOutput` with one
     :class:`TranslationBatchUnitOutput` per unit.
 
-    Deterministic-grouping contract: the backend pre-defines one
-    translation group per anchor segment (group_id = ``{unit_id}_g{order}_{order}``).
-    The fake echoes exactly those group_ids and returns a per-segment
-    translated_text, matching what the hydrate step expects.
+    Deterministic-grouping contract: the backend pre-defines display-friendly
+    groups via :func:`build_deterministic_translation_groups` (one per unit by
+    default, split for long units). The fake echoes exactly those group_ids
+    and returns a per-group translated_text.
     """
 
     async def translate_batch(
@@ -404,12 +405,10 @@ class _StaticBatchTranslator:
                 unit_id=unit.unit_id,
                 groups=[
                     TranslationBatchGroupOutput(
-                        group_id=(
-                            f"{unit.unit_id}_g{segment.order_index}_{segment.order_index}"
-                        ),
-                        translated_text=f"译文：{segment.source_text}",
+                        group_id=group.group_id,
+                        translated_text=f"译文：{group.source_text}",
                     )
-                    for segment in unit.anchor_segments
+                    for group in build_deterministic_translation_groups(unit)
                 ],
             )
             for unit in context.units
@@ -1323,8 +1322,8 @@ class _ReversedBatchTranslator:
     """T1 acceptance fake: returns units in REVERSE order to verify the
     publisher reorders outputs to match ``target_unit_ids`` (reading order).
 
-    Deterministic-grouping contract: echoes the predefined per-segment
-    group_ids (``{unit_id}_g{order}_{order}``) but returns the units in
+    Deterministic-grouping contract: echoes the predefined group_ids from
+    :func:`build_deterministic_translation_groups` but returns the units in
     reverse order, so the publisher's reorder-to-reading-order path is
     still exercised.
     """
@@ -1338,12 +1337,10 @@ class _ReversedBatchTranslator:
                 unit_id=unit.unit_id,
                 groups=[
                     TranslationBatchGroupOutput(
-                        group_id=(
-                            f"{unit.unit_id}_g{segment.order_index}_{segment.order_index}"
-                        ),
-                        translated_text=f"译文：{segment.source_text}",
+                        group_id=group.group_id,
+                        translated_text=f"译文：{group.source_text}",
                     )
-                    for segment in unit.anchor_segments
+                    for group in build_deterministic_translation_groups(unit)
                 ],
             )
             for unit in reversed(context.units)
@@ -1413,10 +1410,17 @@ async def test_t1_batch_publish_reorders_outputs_to_reading_order(
     """T1 acceptance: batch executor returns units in reverse order, but
     published layers/events follow reading order (target_unit_ids order)."""
     user_id = await insert_user(pipeline_runner_env)
+    plain_text = "\n\n".join(
+        [
+            "First paragraph starts here. It has a second sentence.",
+            "Second paragraph starts here. It has a second sentence.",
+            "Third paragraph starts here. It has a second sentence.",
+        ]
+    )
     article = await submit_article_ready(
         pipeline_runner_env,
         user_id=user_id,
-        plain_text=_plain_text(3),
+        plain_text=plain_text,
         title="Batch Publish Order",
     )
     runner = _make_runner(
@@ -1493,6 +1497,24 @@ async def test_t1_batch_publish_reorders_outputs_to_reading_order(
                 article.record_id,
             )
         ]
+        translation_group_rows = await conn.fetch(
+            """
+            SELECT el.target_key,
+                   jsonb_array_length(el.output_json->'groups') AS group_count,
+                   jsonb_array_length(
+                       el.output_json->'groups'->0->'anchor_segment_ids'
+                   ) AS first_group_anchor_count
+            FROM enhancement_layers el
+            JOIN reader_events re
+              ON re.source_layer_id = el.id
+             AND re.event_type = 'layer_published'
+            WHERE el.reading_record_id = $1
+              AND el.layer_type = 'translation'
+              AND el.status = 'published'
+            ORDER BY re.sequence ASC
+            """,
+            article.record_id,
+        )
         vocabulary_order = [
             row["target_key"]
             for row in await conn.fetch(
@@ -1516,6 +1538,11 @@ async def test_t1_batch_publish_reorders_outputs_to_reading_order(
     # must have reordered them back to reading order before publishing.
     assert translation_order == expected_units
     assert vocabulary_order == expected_units
+    assert [row["target_key"] for row in translation_group_rows] == expected_units
+    assert all(row["group_count"] == 1 for row in translation_group_rows)
+    assert all(
+        row["first_group_anchor_count"] >= 2 for row in translation_group_rows
+    )
 
 
 def test_t1_reorder_outputs_by_target_unit_ids_helper() -> None:

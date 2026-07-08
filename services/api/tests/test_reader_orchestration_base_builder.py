@@ -1301,3 +1301,69 @@ def test_reader_plate_snapshot_rejects_parsed_decision_for_unknown_unit() -> Non
             last_event_sequence=17,
             parsed_decisions=[parsed_decision],
         )
+
+
+# ---------------------------------------------------------------------------#
+# Decimal sentence boundary guard
+#
+# Regression for record a75d742a...: "$2.13 per hour" was split into
+# "$2." and "13 per hour." because _is_sentence_boundary treated the
+# decimal dot as a sentence terminator (digit . digit pattern).
+# ---------------------------------------------------------------------------#
+
+
+def test_segmenter_does_not_split_decimal_dollar_amount() -> None:
+    """The decimal guard prevents '$2.13 per hour.' from splitting at '$2.'."""
+    source_text = (
+        "Workers at restaurants in the US can earn as little as $2.13 per hour. "
+        "They rely on diners to tip."
+    )
+    result = _build_result(source_text)
+    segments = _unit_segments(result, 0)
+
+    segment_texts = [seg.text for seg in segments]
+    # The decimal number must stay intact in a single segment.
+    assert any("$2.13" in text for text in segment_texts), segment_texts
+    assert not any(text.rstrip().endswith("$2.") for text in segment_texts), segment_texts
+    assert not any(text.startswith("13 per hour") for text in segment_texts), segment_texts
+
+
+def test_segmenter_does_not_split_decimal_in_general_numbers() -> None:
+    """The decimal guard covers any 'digit . digit' pattern, not just currency."""
+    source_text = (
+        "About 3.5 million people attended the event. The turnout was record-breaking."
+    )
+    result = _build_result(source_text)
+    segments = _unit_segments(result, 0)
+
+    segment_texts = [seg.text for seg in segments]
+    assert any("3.5 million" in text for text in segment_texts), segment_texts
+    assert not any(text.rstrip().endswith("3.") for text in segment_texts), segment_texts
+
+
+def test_segmenter_still_splits_real_sentence_boundary_after_decimal() -> None:
+    """A real sentence boundary after a decimal number is still split."""
+    source_text = (
+        "It costs $2.13 per hour. They rely on diners to tip."
+    )
+    result = _build_result(source_text)
+    segments = _unit_segments(result, 0)
+
+    segment_texts = [seg.text for seg in segments]
+    # Two sentences should be split.
+    assert len(segments) >= 2, segment_texts
+    # First segment contains the decimal number intact.
+    assert "$2.13" in segments[0].text
+    # Second segment starts with the next sentence.
+    assert "They rely" in segments[1].text
+
+
+def test_segmenter_handles_version_numbers_without_splitting() -> None:
+    """Multi-dot numeric patterns like version numbers (1.2.3) don't split."""
+    source_text = "The library version is 1.2.3. It was released yesterday."
+    result = _build_result(source_text)
+    segments = _unit_segments(result, 0)
+
+    segment_texts = [seg.text for seg in segments]
+    assert any("1.2.3" in text for text in segment_texts), segment_texts
+    assert not any(text.rstrip().endswith("1.2.") for text in segment_texts), segment_texts

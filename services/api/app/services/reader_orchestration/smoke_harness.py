@@ -53,6 +53,7 @@ from app.services.reader_orchestration.translation_worker import (
     TranslationExecutionResult,
     TranslationJobContext,
     TranslationWorkerService,
+    build_deterministic_translation_groups,
 )
 from app.services.reader_orchestration.vocabulary_worker import (
     VocabularyBatchCandidateOutput,
@@ -251,8 +252,9 @@ class DevFakeTranslationBatchExecutor:
     """T1.1 fake batch translation executor for the smoke harness.
 
     Deterministic-grouping contract: echoes the backend-predefined
-    per-segment group_ids (``{unit_id}_g{order}_{order}``) and returns a
-    per-segment translated_text with a ``[DEV FAKE BATCH]`` prefix.
+    group_ids from :func:`build_deterministic_translation_groups` (which
+    may be one group per unit or split for long units) and returns a
+    translated_text with a ``[DEV FAKE BATCH]`` prefix per group.
     """
 
     async def translate_batch(
@@ -263,12 +265,10 @@ class DevFakeTranslationBatchExecutor:
         for unit in context.units:
             groups = [
                 TranslationBatchGroupOutput(
-                    group_id=(
-                        f"{unit.unit_id}_g{anchor.order_index}_{anchor.order_index}"
-                    ),
-                    translated_text=f"[DEV FAKE BATCH] {anchor.source_text}",
+                    group_id=group.group_id,
+                    translated_text=f"[DEV FAKE BATCH] {group.source_text}",
                 )
-                for anchor in unit.anchor_segments
+                for group in build_deterministic_translation_groups(unit)
             ]
             units.append(
                 TranslationBatchUnitOutput(

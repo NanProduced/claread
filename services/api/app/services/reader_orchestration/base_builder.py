@@ -499,6 +499,25 @@ def _is_sentence_boundary(block_text: str, start: int, boundary_end: int) -> boo
     if visible_next >= len(block_text):
         return True
 
+    # Locate the sentence-ending punctuation (. ! ?) that triggered this
+    # check. ``boundary_end`` is advanced past the punctuation and any
+    # trailing closing punctuation (quotes, brackets), so scan backwards
+    # through closing punctuation to find the actual sentence terminator.
+    punct_index = boundary_end - 1
+    while punct_index >= start and block_text[punct_index] in _CLOSING_PUNCTUATION:
+        punct_index -= 1
+
+    # Decimal number guard: "digit . digit" is NOT a sentence boundary.
+    # This prevents splitting "$2.13 per hour" at "$2." and "3.5 million"
+    # at "3.". The dot is a decimal separator, not a sentence terminator.
+    if (
+        punct_index > start
+        and block_text[punct_index] == "."
+        and block_text[punct_index - 1].isdigit()
+        and block_text[visible_next].isdigit()
+    ):
+        return False
+
     tail = block_text[max(start, boundary_end - 20):boundary_end].lower()
     if block_text[boundary_end - 1] == "." and any(
         tail.endswith(abbreviation) for abbreviation in _ABBREVIATION_SUFFIXES
