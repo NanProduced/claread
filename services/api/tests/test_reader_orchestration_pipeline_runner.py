@@ -390,9 +390,11 @@ class _StaticBatchTranslator:
     returns :class:`TranslationBatchGenerationOutput` with one
     :class:`TranslationBatchUnitOutput` per unit.
 
-    Deterministic-grouping contract: the backend pre-defines display-friendly
-    groups via :func:`build_deterministic_translation_groups` (one per unit by
-    default, split for long units). The fake echoes exactly those group_ids
+    Semantic-grouping contract (T1.1a): the backend pre-defines semantic
+    translation groups via :func:`build_deterministic_translation_groups`
+    (paragraph boundaries + sentence clustering; never one-unit-one-group /
+    one-sentence-one-group / one-anchor-one-group). The fake echoes exactly
+    those group_ids
     and returns a per-group translated_text.
     """
 
@@ -1322,10 +1324,10 @@ class _ReversedBatchTranslator:
     """T1 acceptance fake: returns units in REVERSE order to verify the
     publisher reorders outputs to match ``target_unit_ids`` (reading order).
 
-    Deterministic-grouping contract: echoes the predefined group_ids from
-    :func:`build_deterministic_translation_groups` but returns the units in
-    reverse order, so the publisher's reorder-to-reading-order path is
-    still exercised.
+    Semantic-grouping contract (T1.1a): echoes the predefined group_ids
+    from :func:`build_deterministic_translation_groups` but returns the
+    units in reverse order, so the publisher's reorder-to-reading-order
+    path is still exercised.
     """
 
     async def translate_batch(
@@ -1539,6 +1541,13 @@ async def test_t1_batch_publish_reorders_outputs_to_reading_order(
     assert translation_order == expected_units
     assert vocabulary_order == expected_units
     assert [row["target_key"] for row in translation_group_rows] == expected_units
+    # Each unit is a single short paragraph (2 sentences, space-joined
+    # within the unit). The semantic planner clusters 1-3 short sentences
+    # into one group, so each unit produces exactly 1 translation group
+    # with both anchors. This is NOT one-unit-one-group: the grouping
+    # follows paragraph structure + sentence count, not unit boundaries.
+    # Multi-paragraph units would produce multiple groups (tested in
+    # test_reader_orchestration_translation_worker.py).
     assert all(row["group_count"] == 1 for row in translation_group_rows)
     assert all(
         row["first_group_anchor_count"] >= 2 for row in translation_group_rows

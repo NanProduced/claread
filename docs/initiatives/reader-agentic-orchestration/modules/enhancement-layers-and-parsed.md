@@ -1,7 +1,7 @@
 # Enhancement Layers 与 Parsed Decision
 
 > 状态：`D6 输入与文档层口径同步`
-> 最后更新：2026-06-30
+> 最后更新：2026-07-08
 > 范围：增强层 schema、anchor 合同、发布门禁和 parsed coverage。
 
 ## Layer 原则
@@ -134,6 +134,34 @@ Translation `output_json` 只保存翻译事实与投影所需事实；诊断、
 `quality_json`、worker / publisher events、failure metadata 或后续 reviewer/eval layer。
 Claread Reader 当前固定为面向中文母语用户的英译中能力，语言方向与策略身份不重复写入
 translation `output_json`。
+
+Translation Group 粒度是产品阅读体验合同，不是 worker 调度细节：
+
+- Translation Group 应覆盖一个连续的语义阅读组，通常是一个语义动作、论证步骤、
+  例子、转折或解释链。
+- Translation Group 不等于 Anchor Segment、sentence、Reading Unit 或 worker
+  analysis window。
+- 禁止机械地一条 Anchor Segment / 一句原文生成一个 group；这会导致译文碎片化。
+- 也禁止默认把一个 Reading Unit 的所有 Anchor Segment 合并成一个 group；这会回到
+  整段译文，破坏 group-native translation 的阅读节奏。
+- 允许一个 group 覆盖多个连续 Anchor Segment；也允许标题、列表项、孤立长难句或
+  语义上独立的句子单独成组。决定依据是语义阅读组，而不是固定字符数或固定句数。
+
+短文 batch、windowed execution 或未来 longform section execution 只改变计算方式，不改变
+Translation Layer 的公开输出语义。无论 worker 是 per-unit、whole-article batch 还是
+window/group call，最终发布到 `enhancement_layers.output_json` 的仍然必须是上述
+group-native payload。
+
+如果 batch translation 为避免 LLM 错绑 `anchor_segment_ids` 而采用后端预设
+`group_id`，必须先有独立的 group planning 边界：
+
+1. planner 只返回连续 anchor 范围或 `anchor_segment_ids`，不返回译文；
+2. 后端校验 coverage、contiguity、no-overlap 和 anchor 所属 base/unit；
+3. 后端 hydrate `group_id`、`source_text_hash` 和 source span；
+4. translator 只按后端预设的 `group_id + source_text` 返回 `translated_text`。
+
+不得用“后端预设 group”为理由退化成 one-unit-one-group。Publisher 负责验证合同，
+不负责猜测或重写 group 粒度。
 
 D5 vocabulary layer 保留旧 AI Workflow 的三类词汇批注语义，但它们是同一个 `vocabulary` layer 内的 `item_type`，不是三个顶层 layer type：
 

@@ -28,7 +28,7 @@
 
 当前新增设计入口是 `adaptive-reader-orchestration-design.md`。短期实现应先恢复短文质量/成本和稳定发布；完整 adaptive planner、SSE/patch merge、长文/超长文 lazy enhancement 应按设计文档分阶段推进，不要混进一个任务。
 
-2026-07-08 当前状态：M0 baseline harness 与 M1 short article recovery 已完成首轮验收。短文 translation / vocabulary 已走 whole-article batch compute、per-unit publish；grammar window worker 已恢复 reading strategy 注入并修复 budget key。下一轮优先处理 M2 stable progressive delivery，不要直接跳到完整 adaptive planner 或 semantic outline。
+2026-07-08 当前状态：M0 baseline harness 与 M1 short article recovery 已完成调度降本首轮实现。短文 translation / vocabulary 已走 whole-article batch compute、per-unit publish；grammar window worker 已恢复 reading strategy 注入并修复 budget key。真实页面验证曾发现短文 `translate_article` batch path 把 group-native translation 退化为 one-unit-one-group，破坏 Translation Group 语义阅读组合同；T1.1a 已通过后端 group planning / hydration 合同修复，并用真实页面记录完成抽查。下一轮不要直接做完整 adaptive planner 或 semantic outline worker，应在 T1.4/M2 页面稳定性、T3.2 vocabulary grouped execution、T3.1 grouped translation 设计、T5.1 deterministic navigation outline 中选择单一任务推进。
 
 ## 不可违反的决策
 
@@ -45,6 +45,7 @@
 - 高影响输入适配必须先进行 Candidate Reading Base 预览与确认。
 - 译文是 parsed 的最低门槛。
 - 禁止用固定批注数量判断 parsed。
+- Translation Group 是产品阅读体验合同，不是 worker 调度单位。Batch/window/longform 只能改变计算形态，不能把 group-native translation 退化成 one-anchor-one-group、one-sentence-one-group 或 one-unit-one-group。
 - Ask Claread 是侧边助手；侧边动作必须走同一 Authorization Envelope。
 - RAG 只服务当前 Reading Record，不做全局 User Editorial Assets RAG。
 - RAG/OCR/OSS 等外部服务必须 adapter 化，不能成为 Claread 业务事实源。
@@ -100,8 +101,8 @@
 - Worker loop 扫描候选 record 时，粗筛可用 `product_state in ('processing','readable_enhancing')`、active base/generation/status 和 `readiness_state in ('article_ready','initial_enhancement_ready')`；exact missing work 仍由 `EnhancementJobBootstrapService` / `ReaderEnhancementPipelineRunner` 决定。
 - D5-W2 worker loop 已完成：`ReaderEnhancementWorkerLoopService` 通过 coarse scan + per-record / per-user advisory locks 调用 `ReaderEnhancementPipelineRunner`，CLI `scripts/run_reader_enhancement_worker.py` 支持 `--once` 与持续 loop。
 - D5-R3 真实本地链路 runbook 已补充：见 `docs/initiatives/reader-agentic-orchestration/modules/local-real-chain-runbook.md`。当前只验证 worker CLI help / 参数解析和配置连线，未实跑真实 provider / LLM。
-- 2026-07-08 M0/M1 自适应解析恢复已完成首轮验收：`compare_reader_chains.py` baseline harness、golden samples、short article translation/vocabulary batch path、grammar window strategy 注入、grammar/sentence budget key 对齐已落地；默认 worker/baseline budget 为 `max_ticks=96`、`max_jobs=48`。
-- 当前下一步进入 M2 stable progressive delivery：前端 reload 防抖与状态保留、后端 reading-order release policy、reader event payload audit。不要先做完整 adaptive planner、semantic outline worker 或 SSE patch merge。
+- 2026-07-08 M0/M1 自适应解析恢复已完成首轮调度实现：`compare_reader_chains.py` baseline harness、golden samples、short article translation/vocabulary batch path、grammar window strategy 注入、grammar/sentence budget key 对齐已落地；默认 worker/baseline budget 为 `max_ticks=96`、`max_jobs=48`。
+- T1.1a 已完成并通过本轮代码层与页面抽查验收：短文 `translate_article` batch path 使用后端 `plan_translation_groups` 规划连续 semantic Translation Groups，后端 hydrate `group_id` / `source_text_hash` / `source_text`，translator 只返回 `group_id` + `translated_text`。M2 stable progressive delivery、T3 grouped execution 和 T5 deterministic outline 可以按 `implementation-plan.md` 的顺序单项推进；完整 adaptive planner、semantic outline worker 和 SSE patch merge 仍暂缓。
 - D4 worker 实现中不得临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK；如 D3-P4 runtime tests 暴露缺口，先形成单独 closeout/update，再改依赖。
 - LangGraph v1+ 的 persistence、streaming、interrupt/resume、subgraph 和 runtime observability 只作为 D6+ 隔离 spike 候选；具体版本能力和 breaking changes 必须在 spike 中用当时官方文档与 lockfile 实测确认，不改变 PostgreSQL run/job/event 主控。
 - Grammar Bundle Worker 可以一次生成 `grammar_note` 与 `sentence_analysis`，但发布、存储、RAG、projection、policy、eval 必须按 subtype 独立处理。`long_sentence` 不是权威 layer type，只是触发 `sentence_analysis` 的适用场景。

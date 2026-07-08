@@ -82,7 +82,9 @@
 - 长期设计入口应尽量收敛；如确需新增模块外设计文档，必须在本 README 的权威文档列表登记，并说明与 `target-architecture.md` / `modules/` 的关系。
 - 新决策写入 `target-architecture.md` 的决策记录。
 - 进度和阶段状态写入 `implementation-plan.md`，不要写进研究报告。
+- `implementation-plan.md` 只记录任务、依赖、状态和验收口径；coding agent prompt、长验收报告和过程讨论不写入长期计划文档。
 - coding agent 默认从 `agent-brief.md` 开始，不从 TMP 文档堆里找上下文。
+- 每轮 coding agent prompt 由人工在会话中单独给出。若 prompt 中出现新的长期约束，应在评审后压缩成正式文档条目，而不是原文粘贴。
 - 如果实现发现目标架构与代码事实冲突，先暂停并记录冲突，不要自行发明新架构。
 
 ## 与稳定文档的关系

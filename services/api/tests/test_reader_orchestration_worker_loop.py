@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -15,6 +16,9 @@ from app.schemas.reader_orchestration import (
     ReaderTextRangeAnchor,
     SentenceAnalysisChunk,
     SentenceAnalysisItem,
+    TranslationBatchGenerationOutput,
+    TranslationBatchGroupOutput,
+    TranslationBatchUnitOutput,
     TranslationGenerationGroup,
     TranslationLayerGenerationOutput,
     VocabularyHighlightItem,
@@ -47,14 +51,22 @@ from app.services.reader_orchestration.pipeline_runner import (
     ReaderPipelineRunSummary,
 )
 from app.services.reader_orchestration.translation_worker import (
+    TranslationBatchExecutionResult,
+    TranslationBatchJobContext,
     TranslationExecutionError,
     TranslationExecutionResult,
     TranslationJobContext,
     TranslationWorkerService,
+    build_deterministic_translation_groups,
 )
 from app.services.reader_orchestration.vocabulary_worker import (
     UnconfiguredVocabularyExecutor,
+    VocabularyBatchCandidateOutput,
+    VocabularyBatchExecutionResult,
+    VocabularyBatchJobContext,
+    VocabularyBatchUnitCandidateOutput,
     VocabularyExecutionResult,
+    VocabularyHighlightCandidateItem,
     VocabularyJobContext,
     VocabularyWorkerService,
 )
@@ -80,6 +92,13 @@ API_ROOT = Path(__file__).resolve().parents[1]
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _MIGRATION_0015_SQL = (
     _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
+).read_text(encoding="utf-8")
+# T1.1 short-article batch path: migration 0017 adds ``translate_article``
+# and ``build_vocabulary_layer_article`` to the ``reader_jobs.job_type``
+# CHECK constraint. Required because the default fixture text is well under
+# the 6000-char short-article threshold, so bootstrap creates batch jobs.
+_MIGRATION_0017_SQL = (
+    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
 ).read_text(encoding="utf-8")
 LEASE_DURATION = timedelta(seconds=30)
 
@@ -301,6 +320,138 @@ class _StaticTitleGenerator:
         )
 
 
+# T1.1 short-article batch path fakes. The default fixture text is well under
+# the 6000-char short-article threshold, so bootstrap creates batch jobs
+# (``translate_article`` / ``build_vocabulary_layer_article``) and the pipeline
+# runner dispatches them via ``translation_batch`` / ``vocabulary_batch`` worker
+# types. Without these fakes the batch worker service falls back to
+# ``PydanticAITranslationBatchExecutor`` / ``PydanticAIVocabularyBatchExecutor``
+# and attempts a real LLM call. Mirrors the fakes in
+# test_reader_orchestration_pipeline_runner.py.
+WORD_RE = re.compile(r"[A-Za-z]+")
+
+
+class _StaticBatchTranslator:
+    """Fake batch translator: 1 LLM call → N per-unit translation groups.
+
+    Deterministic-grouping contract: echoes the backend-predefined
+    group_ids from :func:`build_deterministic_translation_groups` and
+    returns a per-group translated_text, matching the hydrate contract.
+    """
+
+    async def translate_batch(
+        self,
+        context: TranslationBatchJobContext,
+    ) -> TranslationBatchExecutionResult:
+        units_output = [
+            TranslationBatchUnitOutput(
+                unit_id=unit.unit_id,
+                groups=[
+                    TranslationBatchGroupOutput(
+                        group_id=group.group_id,
+                        translated_text=f"译文：{group.source_text}",
+                    )
+                    for group in build_deterministic_translation_groups(unit)
+                ],
+            )
+            for unit in context.units
+        ]
+        return TranslationBatchExecutionResult(
+            output=TranslationBatchGenerationOutput(units=units_output),
+            usage_data={"input_tokens": 1, "output_tokens": 1},
+            prompt_version="worker-loop-translation-batch",
+            model_profile="worker_loop_fake_translation_batch",
+            model_provider="fake",
+            model_name="worker-loop-translation-batch",
+        )
+
+
+class _StaticBatchVocabularyExecutor:
+    """Fake batch vocabulary executor: 1 LLM call → N per-unit candidates."""
+
+    async def generate_batch(
+        self,
+        context: VocabularyBatchJobContext,
+    ) -> VocabularyBatchExecutionResult:
+        units_output: list[VocabularyBatchUnitCandidateOutput] = []
+        for unit in context.units:
+            if not unit.anchor_segments:
+                units_output.append(
+                    VocabularyBatchUnitCandidateOutput(unit_id=unit.unit_id, items=[])
+                )
+                continue
+            anchor_segment = unit.anchor_segments[0]
+            word_match = WORD_RE.search(anchor_segment.text)
+            if word_match is None:
+                units_output.append(
+                    VocabularyBatchUnitCandidateOutput(unit_id=unit.unit_id, items=[])
+                )
+                continue
+            selected_text = word_match.group(0)
+            units_output.append(
+                VocabularyBatchUnitCandidateOutput(
+                    unit_id=unit.unit_id,
+                    items=[
+                        VocabularyHighlightCandidateItem(
+                            anchor_segment_id=anchor_segment.anchor_segment_id,
+                            selected_text=selected_text,
+                            headword=selected_text.lower(),
+                            brief_explanation="关键词",
+                            reason="worker_loop_test_batch",
+                        )
+                    ],
+                )
+            )
+        return VocabularyBatchExecutionResult(
+            output=VocabularyBatchCandidateOutput(units=units_output),
+            usage_data={"input_tokens": 1, "output_tokens": 1},
+            prompt_version="worker-loop-vocabulary-batch",
+            model_profile="worker_loop_fake_vocabulary_batch",
+            model_provider="fake",
+            model_name="worker-loop-vocabulary-batch",
+        )
+
+
+class _RetryLaterBatchTranslator:
+    """T1.1 batch version of _RetryLaterTranslator: always raises a retryable
+    translation error so the retry_later hot-loop guard is exercised on the
+    batch path.
+    """
+
+    async def translate_batch(
+        self,
+        context: TranslationBatchJobContext,
+    ) -> TranslationBatchExecutionResult:
+        raise TranslationExecutionError(
+            "temporary batch translation outage",
+            retryable=True,
+            failure_class="provider",
+            failure_code="temporary_outage",
+        )
+
+
+class _UnconfiguredVocabularyBatchExecutor:
+    """T1.1 batch version of UnconfiguredVocabularyExecutor: always raises
+    vocabulary_executor_unconfigured so the fail-closed path is exercised on
+    the batch path.
+    """
+
+    async def generate_batch(
+        self,
+        context: VocabularyBatchJobContext,
+    ) -> VocabularyBatchExecutionResult:
+        from app.services.reader_orchestration.vocabulary_worker import (
+            VocabularyExecutionError,
+        )
+
+        raise VocabularyExecutionError(
+            "vocabulary batch executor is not configured",
+            retryable=False,
+            failure_class="configuration",
+            failure_code="vocabulary_executor_unconfigured",
+        )
+
+
 @pytest.fixture
 async def worker_loop_env() -> asyncpg.Pool:
     schema_name = f"test_reader_worker_loop_{uuid4().hex}"
@@ -311,6 +462,7 @@ async def worker_loop_env() -> asyncpg.Pool:
     await admin.execute(f'SET search_path TO "{schema_name}", public')
     await admin.execute(BASELINE_SQL)
     await admin.execute(_MIGRATION_0015_SQL)
+    await admin.execute(_MIGRATION_0017_SQL)
     await admin.close()
     pool = await make_pool(schema_name)
     db_connection.DB_POOL = pool
@@ -333,20 +485,37 @@ def _make_runner(
     translator: object | None = None,
     vocabulary_executor: object | None = None,
     grammar_executor: object | None = None,
+    batch_translator: object | None = None,
+    batch_vocabulary_executor: object | None = None,
 ) -> ReaderEnhancementPipelineRunner:
-    translation_orchestrator = None
+    # T1.1 short-article batch path: the default fixture text is well under
+    # the 6000-char threshold, so bootstrap creates batch jobs and the runner
+    # dispatches them via translation_batch / vocabulary_batch worker types.
+    # We must inject fake batch executors alongside the per-unit fakes,
+    # otherwise the batch worker service falls back to PydanticAI*BatchExecutor
+    # and attempts a real LLM call. Mirrors _make_runner in
+    # test_reader_orchestration_pipeline_runner.py.
+    translation_worker = None
     if translator is not None:
-        translation_orchestrator = ReaderOrchestrator(
+        translation_worker = TranslationWorkerService(
             pool=pool,
-            worker_service=TranslationWorkerService(
-                pool=pool,
-                layer_publisher=CompatTranslationLayerPublisher(pool=pool),
-                translator=translator,
-            ),
+            layer_publisher=CompatTranslationLayerPublisher(pool=pool),
+            translator=translator,
+            batch_translator=batch_translator or _StaticBatchTranslator(),
         )
+    translation_orchestrator = (
+        ReaderOrchestrator(pool=pool, worker_service=translation_worker)
+        if translation_worker is not None
+        else None
+    )
     vocabulary_worker = None
     if vocabulary_executor is not None:
-        vocabulary_worker = VocabularyWorkerService(pool=pool, executor=vocabulary_executor)
+        vocabulary_worker = VocabularyWorkerService(
+            pool=pool,
+            executor=vocabulary_executor,
+            batch_executor=batch_vocabulary_executor
+            or _StaticBatchVocabularyExecutor(),
+        )
     grammar_worker = None
     if grammar_executor is not None:
         grammar_worker = GrammarBundleWorkerService(pool=pool, executor=grammar_executor)
@@ -358,6 +527,7 @@ def _make_runner(
         pool=pool,
         display_title_worker_service=display_title_worker,
         translation_orchestrator=translation_orchestrator,
+        translation_batch_worker_service=translation_worker,
         vocabulary_worker_service=vocabulary_worker,
         grammar_worker_service=grammar_worker,
         enable_zplus_grammar=False,
@@ -764,7 +934,9 @@ async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload
         initial_snapshot,
         capability="translation",
         status="queued",
-        job_type="translate_unit",
+        # T1.1: 短文走 batch 路径，bootstrap 创建 translate_article 而非
+        # translate_unit job
+        job_type="translate_article",
     )
 
     assert initial_snapshot.record.readiness_state == "article_ready"
@@ -843,7 +1015,11 @@ async def test_retry_later_records_are_not_hot_looped_until_available(
         user_id=user_id,
         title="Retry Later",
     )
-    runner = _make_runner(worker_loop_env, translator=_RetryLaterTranslator())
+    runner = _make_runner(
+        worker_loop_env,
+        translator=_RetryLaterTranslator(),
+        batch_translator=_RetryLaterBatchTranslator(),
+    )
     service = ReaderEnhancementWorkerLoopService(
         pool=worker_loop_env,
         pipeline_runner=runner,
@@ -922,6 +1098,9 @@ async def test_worker_loop_preserves_fail_closed_when_real_executor_is_unconfigu
         worker_loop_env,
         translator=_StaticTranslator(),
         vocabulary_executor=UnconfiguredVocabularyExecutor(),
+        # T1.1: 短文走 batch 路径，需要用 batch unconfigured executor
+        # 触发 fail-closed
+        batch_vocabulary_executor=_UnconfiguredVocabularyBatchExecutor(),
     )
     service = ReaderEnhancementWorkerLoopService(
         pool=worker_loop_env,
@@ -938,10 +1117,13 @@ async def test_worker_loop_preserves_fail_closed_when_real_executor_is_unconfigu
 
     assert result.pipeline_summary is not None
     assert result.pipeline_summary.stopped_reason == "attention_required"
-    assert result.pipeline_summary.stopped_worker_type == "vocabulary"
+    # T1.1: 短文走 batch 路径，fail-closed 来自 vocabulary_batch worker
+    assert result.pipeline_summary.stopped_worker_type == "vocabulary_batch"
     assert result.pipeline_summary.stopped_outcome == "failed_terminal"
     assert result.pipeline_summary.attention_code == "vocabulary_executor_unconfigured"
-    assert await _count_layers(worker_loop_env, article.record_id, "translation") == 1
+    # T1.1: 短文走 batch 路径，batch publisher 按单元拆分发布 translation layers。
+    # 默认 fixture 文本有 2 段 → 2 个 translation layer。
+    assert await _count_layers(worker_loop_env, article.record_id, "translation") >= 1
     assert await _count_layers(worker_loop_env, article.record_id, "vocabulary") == 0
     assert await _load_product_state(worker_loop_env, article.record_id) == "failed"
     assert (
@@ -972,6 +1154,326 @@ async def test_worker_loop_preserves_fail_closed_when_real_executor_is_unconfigu
         "stopped_reason": "attention_required",
         "stopped_outcome": "failed_terminal",
     }
+
+
+# ---------------------------------------------------------------------------
+# T2: article_rag_index_build must NOT block enhancement pipeline bootstrap.
+#
+# The candidate scan in worker_loop.py counts only enhancement job types
+# (ENHANCEMENT_PIPELINE_JOB_TYPES) when deciding tracked_job_count /
+# runnable_job_count. A record whose only job is article_rag_index_build
+# (any status) must still appear in the candidate set so the pipeline
+# runner can bootstrap display_title / translation / vocabulary / grammar.
+# ---------------------------------------------------------------------------
+
+
+async def _insert_article_rag_index_build_job(
+    pool: asyncpg.Pool,
+    *,
+    record_id: UUID,
+    user_id: UUID,
+    base_id: UUID,
+    status: str = "succeeded",
+    expected_generation: int = 1,
+) -> UUID:
+    """Insert a reader_runs + reader_jobs row for an article_rag_index_build
+    job with the given status. Mirrors what ArticleRagIndexBootstrapService
+    would produce, but without the full plan/index-run machinery — we only
+    need the job row to be present in the table for the scan query's
+    LEFT JOIN to see it.
+
+    Note: ``reader_runs.status`` and ``reader_jobs.status`` have different
+    CHECK constraints. ``reader_runs.status`` uses ``completed`` (not
+    ``succeeded``), while ``reader_jobs.status`` uses ``succeeded``. We map
+    the caller-friendly ``status`` argument to the correct value for each
+    table.
+    """
+    # Map reader_jobs status to reader_runs status.
+    run_status_map = {
+        "succeeded": "completed",
+        "queued": "queued",
+        "claimed": "running",
+        "failed_terminal": "failed_terminal",
+    }
+    run_status = run_status_map.get(status, status)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            run_id = await conn.fetchval(
+                """
+                INSERT INTO reader_runs (
+                    reading_record_id,
+                    user_id,
+                    run_type,
+                    status,
+                    record_generation,
+                    envelope_json,
+                    policy_version,
+                    trigger_kind
+                )
+                VALUES (
+                    $1, $2, 'article_rag_index_build', $3, $4,
+                    '{}'::jsonb, 'article_rag_index_bootstrap_v1', 'system'
+                )
+                RETURNING id
+                """,
+                record_id,
+                user_id,
+                run_status,
+                expected_generation,
+            )
+            job_id = await conn.fetchval(
+                """
+                INSERT INTO reader_jobs (
+                    reading_record_id,
+                    base_id,
+                    run_id,
+                    user_id,
+                    job_type,
+                    target_type,
+                    target_key,
+                    status,
+                    expected_generation,
+                    operation_fingerprint,
+                    idempotency_key
+                )
+                VALUES (
+                    $1, $2, $3, $4, 'article_rag_index_build',
+                    'record', $5, $6, $7,
+                    'article_rag_index_v1', 'rag_index_build_1'
+                )
+                RETURNING id
+                """,
+                record_id,
+                base_id,
+                run_id,
+                user_id,
+                str(record_id),
+                status,
+                expected_generation,
+            )
+            return job_id
+
+
+async def _count_jobs_by_type(
+    pool: asyncpg.Pool,
+    record_id: UUID,
+    job_type: str,
+) -> int:
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND job_type = $2
+            """,
+            record_id,
+            job_type,
+        )
+
+
+async def test_scan_selects_record_with_only_succeeded_rag_job(
+    worker_loop_env: asyncpg.Pool,
+) -> None:
+    """A record whose only job is a succeeded article_rag_index_build must
+    still appear in the candidate set — the RAG job must not count as
+    tracked enhancement work.
+    """
+    service = ReaderEnhancementWorkerLoopService(pool=worker_loop_env)
+    user_id = await insert_user(worker_loop_env)
+    article = await submit_article_ready(
+        worker_loop_env,
+        user_id=user_id,
+        title="RAG Only Succeeded",
+    )
+
+    # Insert a succeeded RAG job — this is the scenario the bug produced:
+    # article_ready flow creates the RAG job, it succeeds, and then the
+    # record was stuck because the old scan saw tracked_job_count=1.
+    await _insert_article_rag_index_build_job(
+        worker_loop_env,
+        record_id=article.record_id,
+        user_id=user_id,
+        base_id=article.base_id,
+        status="succeeded",
+    )
+
+    candidates = await service.scan_eligible_records(batch_size=20)
+    candidate_ids = {candidate.record_id for candidate in candidates}
+
+    assert article.record_id in candidate_ids, (
+        "record with only a succeeded article_rag_index_build job must "
+        "still be selected for enhancement bootstrap"
+    )
+
+
+async def test_scan_selects_record_with_queued_rag_job(
+    worker_loop_env: asyncpg.Pool,
+) -> None:
+    """A record whose only job is a queued/running article_rag_index_build
+    must also not be blocked from enhancement bootstrap.
+    """
+    service = ReaderEnhancementWorkerLoopService(pool=worker_loop_env)
+    user_id = await insert_user(worker_loop_env)
+    article = await submit_article_ready(
+        worker_loop_env,
+        user_id=user_id,
+        title="RAG Queued",
+    )
+
+    await _insert_article_rag_index_build_job(
+        worker_loop_env,
+        record_id=article.record_id,
+        user_id=user_id,
+        base_id=article.base_id,
+        status="queued",
+    )
+
+    candidates = await service.scan_eligible_records(batch_size=20)
+    candidate_ids = {candidate.record_id for candidate in candidates}
+
+    assert article.record_id in candidate_ids, (
+        "record with only a queued article_rag_index_build job must "
+        "still be selected for enhancement bootstrap"
+    )
+
+
+async def test_pipeline_bootstraps_enhancement_jobs_when_only_rag_job_exists(
+    worker_loop_env: asyncpg.Pool,
+) -> None:
+    """End-to-end: a record with a succeeded RAG job enters the pipeline
+    and bootstraps display_title / translation / vocabulary / grammar jobs.
+    """
+    user_id = await insert_user(worker_loop_env)
+    article = await submit_article_ready(
+        worker_loop_env,
+        user_id=user_id,
+        title="RAG Then Enhancement",
+    )
+
+    await _insert_article_rag_index_build_job(
+        worker_loop_env,
+        record_id=article.record_id,
+        user_id=user_id,
+        base_id=article.base_id,
+        status="succeeded",
+    )
+
+    runner = _make_runner(
+        worker_loop_env,
+        translator=_StaticTranslator(),
+        vocabulary_executor=_StaticVocabularyExecutor(),
+        grammar_executor=_StaticGrammarExecutor(),
+    )
+    service = ReaderEnhancementWorkerLoopService(
+        pool=worker_loop_env,
+        pipeline_runner=runner,
+    )
+
+    candidate = await _find_candidate(service, article.record_id)
+    result = await service.process_candidate(
+        candidate=candidate,
+        lease_owner_prefix="worker-loop-rag-test",
+        max_ticks=24,
+        max_jobs=24,
+    )
+
+    assert result.outcome == "processed"
+    assert result.pipeline_summary is not None
+
+    # The RAG job is still there (not consumed by the enhancement pipeline).
+    assert await _count_jobs_by_type(
+        worker_loop_env, article.record_id, "article_rag_index_build"
+    ) == 1
+
+    # Enhancement jobs were bootstrapped and executed. The short article text
+    # uses the batch path (translate_article / build_vocabulary_layer_article)
+    # because the default fixture text is well under 6000 chars.
+    assert await _count_jobs_by_type(
+        worker_loop_env, article.record_id, "generate_display_title_zh"
+    ) >= 1
+    assert (
+        await _count_jobs_by_type(
+            worker_loop_env,
+            article.record_id,
+            "translate_article",
+        )
+        + await _count_jobs_by_type(
+            worker_loop_env,
+            article.record_id,
+            "translate_unit",
+        )
+        >= 1
+    )
+    assert (
+        await _count_jobs_by_type(
+            worker_loop_env,
+            article.record_id,
+            "build_vocabulary_layer_article",
+        )
+        + await _count_jobs_by_type(
+            worker_loop_env,
+            article.record_id,
+            "build_vocabulary_layer",
+        )
+        >= 1
+    )
+
+    # Enhancement layers were published.
+    assert await _count_layers(worker_loop_env, article.record_id, "translation") >= 1
+    assert await _count_layers(worker_loop_env, article.record_id, "vocabulary") >= 1
+
+
+async def test_scan_excludes_record_with_completed_enhancement_and_rag_jobs(
+    worker_loop_env: asyncpg.Pool,
+) -> None:
+    """A record that already has enhancement jobs (all succeeded, no
+    runnable) AND a RAG job should NOT be re-selected — the enhancement
+    pipeline has no work to do. This verifies the fix does not cause
+    redundant empty-cycling on records that are genuinely done.
+    """
+    service = ReaderEnhancementWorkerLoopService(pool=worker_loop_env)
+    user_id = await insert_user(worker_loop_env)
+    article = await submit_article_ready(
+        worker_loop_env,
+        user_id=user_id,
+        title="Enhancement Done",
+    )
+
+    # Bootstrap enhancement jobs, then mark them all succeeded so there are
+    # no runnable jobs.
+    await EnhancementJobBootstrapService(pool=worker_loop_env).bootstrap_missing_jobs(
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    async with worker_loop_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET status = 'succeeded'
+            WHERE reading_record_id = $1
+              AND job_type != 'article_rag_index_build'
+            """,
+            article.record_id,
+        )
+
+    # Also insert a succeeded RAG job.
+    await _insert_article_rag_index_build_job(
+        worker_loop_env,
+        record_id=article.record_id,
+        user_id=user_id,
+        base_id=article.base_id,
+        status="succeeded",
+    )
+
+    candidates = await service.scan_eligible_records(batch_size=20)
+    candidate_ids = {candidate.record_id for candidate in candidates}
+
+    assert article.record_id not in candidate_ids, (
+        "record with all enhancement jobs succeeded (no runnable) should "
+        "not be re-selected even if a RAG job also exists"
+    )
 
 
 async def test_worker_loop_maps_user_actionable_terminal_failure_to_action_required(

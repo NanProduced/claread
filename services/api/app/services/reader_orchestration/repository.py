@@ -76,13 +76,17 @@ class ReaderRecordSummary:
 _PROGRESS_CAPABILITIES = ("translation", "vocabulary", "grammar")
 _JOB_CAPABILITY_BY_TYPE = {
     "translate_unit": "translation",
+    "translate_article": "translation",
     "build_vocabulary_layer": "vocabulary",
+    "build_vocabulary_layer_article": "vocabulary",
     "build_grammar_bundle": "grammar",
     "build_grammar_bundle_window": "grammar",
 }
 _JOB_LAYER_TYPE_BY_TYPE = {
     "translate_unit": "translation",
+    "translate_article": "translation",
     "build_vocabulary_layer": "vocabulary",
+    "build_vocabulary_layer_article": "vocabulary",
     "build_grammar_bundle": None,
     "build_grammar_bundle_window": None,
 }
@@ -919,7 +923,9 @@ class ReaderOrchestrationRepository:
               AND user_id = $4
               AND job_type IN (
                 'translate_unit',
+                'translate_article',
                 'build_vocabulary_layer',
+                'build_vocabulary_layer_article',
                 'build_grammar_bundle',
                 'build_grammar_bundle_window'
               )

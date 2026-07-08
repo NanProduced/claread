@@ -249,16 +249,17 @@ class TranslationLayerGenerationOutput(BaseModel):
 class TranslationBatchGroupOutput(BaseModel):
     """Per-group LLM output within a batch translation unit.
 
-    Deterministic-grouping contract (T1.1 alignment fix): the backend
-    pre-defines translation groups — one per anchor segment — and gives
-    each a stable ``group_id`` plus its source text in the prompt. The
-    LLM MUST NOT decide ``anchor_segment_ids``; it only returns
-    ``group_id`` + ``translated_text`` for each pre-defined group. The
-    backend hydrates ``anchor_segment_ids`` / ``source_text_hash`` from
-    the pre-defined group mapping. This removes the previous
-    LLM-selected-anchor misalignment vector; semantic matching between
-    ``translated_text`` and the pre-defined source text still depends on
-    model quality.
+    Semantic-grouping contract (T1.1a): the backend pre-defines semantic
+    translation groups via :func:`plan_translation_groups` (sentence
+    clustering across soft paragraph gaps; never one-unit-one-group /
+    one-sentence-one-group / one-anchor-one-group) and gives each a stable
+    ``group_id`` plus its source text in the prompt. The LLM MUST NOT
+    decide ``anchor_segment_ids``; it only returns ``group_id`` +
+    ``translated_text`` for each pre-defined group. The backend hydrates
+    ``anchor_segment_ids`` / ``source_text_hash`` from the pre-defined
+    group mapping. This removes the previous LLM-selected-anchor
+    misalignment vector; semantic matching between ``translated_text``
+    and the pre-defined source text still depends on model quality.
     """
 
     model_config = ConfigDict(extra="forbid")

@@ -1,7 +1,7 @@
 # Adaptive Reader Orchestration Design
 
 > Status: formal design draft
-> Last updated: 2026-07-07
+> Last updated: 2026-07-08
 > Scope: Reader enhancement execution strategy, quality/cost control, progressive publishing, and longform handling.
 
 This document consolidates the previous analysis-window design notes and temporary research reports into one business-facing architecture document. Temporary development labels are intentionally removed; future work should use the terminology in this document.
@@ -59,6 +59,21 @@ The main strategy families are:
 | Windowed article | Medium/long article where batch risks schema or grounding failure | Window/group calls with target/context anchors | Reading-order-oriented group/window release |
 | Section-oriented longform | Long document with natural sections | Section-level grouped/windowed execution | Current/early sections first |
 | Selective longform | Very long document or user reads only part | Outline/metadata first, lazy section enhancement | Current section or requested region first |
+
+Implementation checkpoint as of 2026-07-08:
+
+- Translation and vocabulary currently have only two implemented branches:
+  short-article batch jobs and non-short per-unit jobs.
+- Grammar has a windowed implementation path, but this is not yet a complete
+  document-level short / long / very-long strategy planner.
+- Section-oriented longform, selective longform, and semantic outline are
+  design targets only. They must not be described to implementation agents as
+  already available runtime modes.
+- "Batch computation" is a worker/cost strategy. It must not rewrite layer
+  display semantics. In particular, the translation layer remains
+  group-native: a Translation Group is a semantic reading group inside a
+  Reading Unit, not mechanically one sentence, one anchor segment, or one
+  whole unit.
 
 ### 4.3 Analysis Window
 
@@ -152,7 +167,17 @@ Do not multiply the route matrix by every reading variant unless evaluation data
 
 Short article recovery is the immediate priority.
 
-Implementation status as of 2026-07-08: the first M1 slice is implemented for the current Reader orchestration path. Short articles route translation and vocabulary through whole-article batch jobs with per-unit layer publishing; grammar window execution now receives reading strategy metadata and aligned window budgets. This does not close the UX stability work: page reload behavior, panel state preservation, and reading-order release remain M2 responsibilities.
+Implementation status as of 2026-07-08: the first M1 slice is partially
+implemented for the current Reader orchestration path. Short articles route
+translation and vocabulary through whole-article batch jobs with per-unit layer
+publishing; grammar window execution now receives reading strategy metadata and
+aligned window budgets. However, the short-article batch translation path
+regressed the product-level Translation Group contract by collapsing groups to
+whole Reading Units. That regression must be fixed before M1 is treated as
+accepted.
+
+This also does not close the UX stability work: page reload behavior, panel
+state preservation, and reading-order release remain M2 responsibilities.
 
 ### 6.1 Entry Criteria
 
@@ -176,11 +201,28 @@ Short article path:
 5. Avoid per-unit translation and vocabulary fan-out.
 6. Deduplicate vocabulary across the whole record.
 
+Translation-specific guardrail:
+
+- A short-article `translate_article` batch job may analyze and translate all
+  units in one worker call, but the published `translation` layer must still
+  use semantic Translation Groups.
+- The batch path must not replace semantic groups with one group per anchor
+  segment, one sentence per group, or one whole Reading Unit per group.
+- If the translation step needs backend-predefined `group_id` values to avoid
+  anchor remapping, use a bounded group-planning step first: the planner
+  returns schema-constrained contiguous anchor ranges; backend code validates
+  coverage/contiguity/no-overlap and hydrates `group_id`, `source_text_hash`,
+  and source text; the translator then returns only `group_id` and
+  `translated_text`.
+
 ### 6.3 Acceptance
 
 Short-form recovery is not complete unless:
 
 - Translation and vocabulary no longer create one job per short reading unit.
+- Translation Groups remain semantic reading groups in the published layer.
+  A short-article batch implementation that collapses groups to whole units
+  is not accepted.
 - Translation becomes visible before grammar/vocabulary completion.
 - Grammar output materially recovers against the old workflow baseline for exam samples.
 - Total token usage is near the old workflow range or any excess has a documented quality reason.

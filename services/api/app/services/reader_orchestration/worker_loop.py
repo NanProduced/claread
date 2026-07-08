@@ -40,6 +40,29 @@ READER_WORKER_USER_ADVISORY_LOCK_NAMESPACE = 1_431_459_667
 _RUNNABLE_RECORD_READYNESS_STATES = ("article_ready", "initial_enhancement_ready")
 _RUNNABLE_RECORD_PRODUCT_STATES = ("processing", "readable_enhancing")
 
+# Enhancement pipeline job types that the worker loop tracks. The candidate
+# scan counts ONLY these job types when deciding whether a record already has
+# tracked/runnable enhancement work. Non-enhancement jobs (notably
+# ``article_rag_index_build`` from the D6-I4B RAG bootstrap) must NOT keep a
+# record out of the enhancement candidate set — otherwise an article_ready
+# record whose only job is a succeeded/queued RAG index job would be treated
+# as "already has tracked jobs" and never enter the enhancement pipeline,
+# leaving display_title / translation / vocabulary / grammar unbootstrapped.
+#
+# Keep this list in sync with the job_type constants in job_bootstrap.py and
+# zplus_bootstrap.py. The CHECK constraint on reader_jobs.job_type is the
+# authoritative source of allowed values; this tuple is the subset that the
+# enhancement worker loop owns.
+ENHANCEMENT_PIPELINE_JOB_TYPES: tuple[str, ...] = (
+    "generate_display_title_zh",
+    "translate_unit",
+    "translate_article",
+    "build_vocabulary_layer",
+    "build_vocabulary_layer_article",
+    "build_grammar_bundle",
+    "build_grammar_bundle_window",
+)
+
 WorkerLoopRecordOutcome = Literal["processed", "lock_unavailable"]
 
 
@@ -153,6 +176,7 @@ class ReaderEnhancementWorkerLoopService:
                       ON job.reading_record_id = record.id
                      AND job.base_id = record.active_base_id
                      AND job.expected_generation = record.generation
+                     AND job.job_type = ANY($4::text[])
                     WHERE record.deleted_at IS NULL
                       AND record.lifecycle_status = 'active'
                       AND record.product_state = ANY($1::text[])
@@ -184,6 +208,7 @@ class ReaderEnhancementWorkerLoopService:
                 list(_RUNNABLE_RECORD_PRODUCT_STATES),
                 list(_RUNNABLE_RECORD_READYNESS_STATES),
                 batch_size,
+                list(ENHANCEMENT_PIPELINE_JOB_TYPES),
             )
 
         return tuple(

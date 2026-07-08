@@ -8,8 +8,19 @@ from uuid import UUID, uuid4
 
 import asyncpg
 import pytest
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AgentRunResult
+
+# Pre-existing environment guard: pydantic_ai._warnings.PydanticAIDeprecationWarning
+# only exists in pydantic_ai >=1.107 (per services/api/pyproject.toml). When the
+# installed version is older (e.g. 1.75 in CI/local), the symbol is absent and no
+# such warning can be emitted, so the deprecation-absence assertion below degrades
+# to vacuously true. This guard only unblocks test collection; it does not alter
+# T1.1a translation-group semantics.
+try:  # pragma: no cover - version-dependent import
+    from pydantic_ai._warnings import PydanticAIDeprecationWarning  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - older pydantic_ai without the submodule
+    class PydanticAIDeprecationWarning(DeprecationWarning):  # type: ignore[no-redef]
+        """Fallback sentinel so ``issubclass`` checks remain valid on old versions."""
 
 from app.contracts.annotation import (
     compute_text_range_hash,
@@ -44,18 +55,23 @@ from app.services.reader_orchestration.reading_strategy import (
 from app.services.reader_orchestration.translation_worker import (
     PydanticAITranslationExecutor,
     TranslationAnchorSegmentTarget,
+    TranslationBatchExecutionResult,
     TranslationBatchJobContext,
     TranslationBatchUnitContext,
     TranslationExecutionError,
     TranslationExecutionResult,
+    TranslationGroupPlan,
     TranslationJobContext,
     TranslationWorkerService,
     _build_translation_batch_prompt,
     _build_translation_prompt,
+    _hydrate_translation_groups,
+    _validate_translation_group_plan,
     _validate_translation_strategy_metadata,
     build_deterministic_translation_groups,
     hydrate_translation_batch_output,
     hydrate_translation_layer_output,
+    plan_translation_groups,
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
@@ -1756,15 +1772,27 @@ def _build_batch_context_with_segments(
     *,
     unit_id: str = "u2",
     segment_specs: list[tuple[str, str, int]] | None = None,
+    joiner: str = "\n\n",
     reading_goal: str = "daily_reading",
     reading_variant: str = "intermediate_reading",
 ) -> TranslationBatchJobContext:
     """Build a TranslationBatchJobContext with one unit and given segments.
 
     ``segment_specs`` is a list of ``(anchor_segment_id, source_text,
-    order_index)``. The unit source_text is the segments joined by ``"\\n\\n"``;
-    each segment's unit_start_utf16 / unit_end_utf16 are computed from the
-    join so slice_by_utf16_offsets can recover each segment exactly.
+    order_index)``. The unit source_text is the segments joined by
+    ``joiner``; each segment's unit_start_utf16 / unit_end_utf16 are
+    computed from the join so slice_by_utf16_offsets can recover each
+    segment exactly.
+
+    ``joiner`` controls the gap text between segments but does NOT
+    control group boundaries (newlines are a SOFT hint only):
+
+    - ``"\\n\\n"``: each segment is visually its own paragraph. The
+      planner still merges consecutive short single-sentence paragraphs
+      into 2-3-anchor reading groups (Reuters/BBC news feed scenario).
+    - ``" "``: all segments form one paragraph. The planner clusters
+      1-3 short sentences into one group, or splits long runs into
+      bounded groups.
     """
     strategy = resolve_reader_variant_strategy(reading_goal, reading_variant)
     layer = strategy.layers["translation"]
@@ -1774,7 +1802,8 @@ def _build_batch_context_with_segments(
             ("s17", _S17_SOURCE, 17),
         ]
     texts = [spec[1] for spec in segment_specs]
-    unit_source_text = "\n\n".join(texts)
+    unit_source_text = joiner.join(texts)
+    joiner_utf16_len = utf16_code_unit_length(joiner)
     anchor_segments: list[TranslationAnchorSegmentTarget] = []
     cursor = 0
     for anchor_segment_id, segment_text, order_index in segment_specs:
@@ -1793,7 +1822,7 @@ def _build_batch_context_with_segments(
                 source_text=segment_text,
             )
         )
-        cursor = end + 2  # skip "\n\n"
+        cursor = end + joiner_utf16_len
     unit = TranslationBatchUnitContext(
         unit_id=unit_id,
         order_index=1,
@@ -1823,13 +1852,18 @@ def _build_batch_context_with_segments(
 
 
 # Contiguous segments for multi-anchor grouping tests (s10/s11/s12).
+# These three sentences form ONE paragraph (joined by a single space) so
+# the semantic planner clusters them into a single translation group.
+# The first sentence carries the `$2.13 per hour` decimal boundary, which
+# must NOT be split by the planner (the planner only groups whole anchor
+# segments; it never re-segments sentence text).
 _S10_SOURCE = "Workers at restaurants in the US can earn as little as $2.13 per hour."
 _S11_SOURCE = "They rely on diners to tip for their service."
 _S12_SOURCE = "Without tips, staff may not earn enough money to live on."
 
 
 def _build_contiguous_unit_source_text() -> str:
-    return "\n\n".join([_S10_SOURCE, _S11_SOURCE, _S12_SOURCE])
+    return " ".join([_S10_SOURCE, _S11_SOURCE, _S12_SOURCE])
 
 
 def _build_batch_context_with_contiguous_segments(
@@ -1838,10 +1872,14 @@ def _build_batch_context_with_contiguous_segments(
     reading_goal: str = "daily_reading",
     reading_variant: str = "intermediate_reading",
 ) -> TranslationBatchJobContext:
-    """Build a TranslationBatchJobContext with 3 contiguous anchor segments.
+    """Build a TranslationBatchJobContext with 3 contiguous anchor segments
+    forming ONE paragraph (space-joined).
 
-    Segments s10/s11/s12 (order_index 10/11/12) form a single contiguous
-    run short enough to produce ONE deterministic translation group.
+    Segments s10/s11/s12 (order_index 10/11/12) form a single short
+    paragraph. The semantic planner clusters 1-3 short sentences into
+    ONE translation group (semantic reading group for the paragraph).
+    This is the a75d742a regression fixture: a short paragraph with
+    multiple sentences must NOT be split into one-sentence-per-group.
     """
     segment_specs = [
         ("s10", _S10_SOURCE, 10),
@@ -1851,6 +1889,7 @@ def _build_batch_context_with_contiguous_segments(
     return _build_batch_context_with_segments(
         unit_id=unit_id,
         segment_specs=segment_specs,
+        joiner=" ",
         reading_goal=reading_goal,
         reading_variant=reading_variant,
     )
@@ -1888,46 +1927,63 @@ def test_build_deterministic_translation_groups_splits_non_contiguous_anchors() 
     assert groups[1].source_text == _S17_SOURCE
 
 
-def test_build_deterministic_translation_groups_one_group_for_short_contiguous_unit() -> None:
-    """A short reading unit with contiguous anchor segments produces ONE
-    display-friendly group covering all anchors (regression for a75d742a
-    where a 624-char unit with 10 anchors was split into 10 per-sentence
-    groups, degrading the page to one-sentence-per-line display)."""
+def test_build_deterministic_translation_groups_one_semantic_group_for_short_paragraph() -> None:
+    """A short paragraph with 2-3 contiguous anchor segments produces ONE
+    semantic translation group covering the whole paragraph.
+
+    This is the a75d742a regression fixture (one-sentence-per-line display
+    degradation): a short paragraph with multiple sentences must NOT be
+    split into one-sentence-per-group. The semantic planner clusters 1-3
+    short sentences into one group. This is NOT one-unit-one-group: the
+    grouping decision is based on paragraph structure + sentence count,
+    not on unit boundaries.
+
+    The fixture joins s10/s11/s12 with a single space (one paragraph).
+    The first sentence carries the ``$2.13 per hour`` decimal boundary,
+    which must NOT be split by the planner (the planner only groups whole
+    anchor segments; it never re-segments sentence text)."""
     context = _build_batch_context_with_contiguous_segments()
     unit = context.units[0]
 
     groups = build_deterministic_translation_groups(unit)
 
-    # One group covering all 3 contiguous segments s10/s11/s12.
+    # One semantic group covering all 3 sentences in the paragraph.
     assert len(groups) == 1
     assert groups[0].group_id == "u2_g10_12"
     assert list(groups[0].anchor_segment_ids) == ["s10", "s11", "s12"]
     assert groups[0].order_index == 10
-    # source_text is the full span from s10.start to s12.end.
+    # source_text is the full paragraph span from s10.start to s12.end.
     assert groups[0].source_text == _build_contiguous_unit_source_text()
     # source_text_hash is the hash of that span, not a single segment hash.
     assert groups[0].source_text_hash == compute_text_range_hash(
         _build_contiguous_unit_source_text()
     )
+    # Decimal boundary regression: the $2.13 per hour token must survive
+    # intact inside the group's source_text (the planner must not split
+    # the sentence at the decimal).
+    assert "$2.13 per hour" in groups[0].source_text
 
 
-def test_build_deterministic_translation_groups_splits_long_unit_at_anchor_boundary() -> None:
-    """A unit exceeding TRANSLATION_GROUP_SAFETY_MAX_CHARS is split at
-    anchor-segment boundaries into bounded groups."""
-    # Build a unit whose total span exceeds the safety max.
+def test_build_deterministic_translation_groups_splits_long_paragraph_at_safety_max() -> None:
+    """A single paragraph whose total span exceeds
+    ``TRANSLATION_GROUP_SAFETY_MAX_CHARS`` is split at anchor-segment
+    boundaries into bounded groups (safety-max split within a paragraph)."""
+    # Build a unit whose single paragraph exceeds the safety max.
     long_segment_a = "A" * 800 + "."
     long_segment_b = "B" * 800 + "."
     context = _build_batch_context_with_segments(
         segment_specs=[
             ("s1", long_segment_a, 1),
             ("s2", long_segment_b, 2),
-        ]
+        ],
+        joiner=" ",  # one paragraph, two long sentences
     )
     unit = context.units[0]
 
     groups = build_deterministic_translation_groups(unit)
 
-    # Two segments, total > 1400 chars → split into two groups.
+    # One paragraph, but total span > 1400 chars → safety-max split into
+    # two single-sentence groups.
     assert len(groups) == 2
     assert groups[0].group_id == "u2_g1_1"
     assert groups[0].anchor_segment_ids == ("s1",)
@@ -2304,18 +2360,499 @@ def test_hydrate_batch_output_multi_anchor_group_fail_closed_on_wrong_group_id()
 
 def test_build_translation_batch_prompt_emits_multi_anchor_group() -> None:
     """The batch prompt emits a single <translation_group> with multiple
-    anchor_segment_ids for a short contiguous unit."""
+    anchor_segment_ids for a short paragraph (3 sentences clustered into
+    one semantic group)."""
     context = _build_batch_context_with_contiguous_segments()
     prompt = _build_translation_batch_prompt(context)
 
-    # One group covering s10/s11/s12.
+    # One group covering s10/s11/s12 (one semantic paragraph).
     assert 'group_id="u2_g10_12"' in prompt
     assert 'anchor_segment_ids="s10,s11,s12"' in prompt
     # The full span source_text is included.
     assert _S10_SOURCE in prompt
     assert _S11_SOURCE in prompt
     assert _S12_SOURCE in prompt
-    # The prompt does not emit per-segment groups for this unit.
+    # The prompt does not emit per-segment groups for this paragraph.
     assert 'group_id="u2_g10_10"' not in prompt
     assert 'group_id="u2_g11_11"' not in prompt
     assert 'group_id="u2_g12_12"' not in prompt
+
+
+# ---------------------------------------------------------------------------#
+# T1.1a semantic translation group planner tests.
+#
+# The batch path must NOT mechanically collapse to one-anchor-one-group,
+# one-sentence-one-group, or one-unit-one-group. The planner produces
+# semantic groups by splitting at paragraph boundaries and clustering
+# 1-3 short sentences within a paragraph.
+# ---------------------------------------------------------------------------#
+
+
+def test_plan_translation_groups_returns_only_anchor_segment_ids() -> None:
+    """Planner/translator boundary: ``plan_translation_groups`` returns ONLY
+    ``anchor_segment_ids`` ranges. It does NOT return ``group_id``,
+    ``source_text``, ``source_text_hash``, or ``translated_text`` — those
+    are hydrated by the backend after validation. This keeps the planner
+    replaceable (deterministic heuristic today, LLM-based planner later)
+    without changing the translator contract."""
+    context = _build_batch_context_with_contiguous_segments()
+    unit = context.units[0]
+
+    plans = plan_translation_groups(unit)
+
+    assert len(plans) == 1
+    plan = plans[0]
+    assert isinstance(plan, TranslationGroupPlan)
+    # The plan ONLY carries anchor_segment_ids.
+    assert plan.anchor_segment_ids == ("s10", "s11", "s12")
+    # The plan does NOT carry hydrated fields.
+    assert not hasattr(plan, "group_id")
+    assert not hasattr(plan, "source_text")
+    assert not hasattr(plan, "source_text_hash")
+    assert not hasattr(plan, "translated_text")
+
+
+def test_plan_translation_groups_merges_short_single_sentence_paragraphs() -> None:
+    """A unit with multiple short single-sentence "paragraphs" (``\\n\\n``
+    gaps between segments) must NOT produce one group per paragraph.
+    Newlines are a SOFT hint only. Consecutive short single-sentence
+    paragraphs (common in Reuters/BBC news feeds) are merged into 2-3-anchor
+    reading groups so the page does not regress to per-sentence fragmented
+    translation."""
+    context = _build_batch_context_with_segments(
+        segment_specs=[
+            ("s10", _S10_SOURCE, 10),
+            ("s11", _S11_SOURCE, 11),
+            ("s12", _S12_SOURCE, 12),
+        ],
+        joiner="\n\n",  # 3 single-sentence paragraphs
+    )
+    unit = context.units[0]
+
+    plans = plan_translation_groups(unit)
+
+    # 3 short single-sentence "paragraphs" → 1 semantic group (NOT 3
+    # per-paragraph groups). Newlines do NOT force a group boundary.
+    assert len(plans) == 1
+    assert plans[0].anchor_segment_ids == ("s10", "s11", "s12")
+    # Explicitly forbid the one-paragraph-one-group regression.
+    assert len(plans) != len(unit.anchor_segments)
+
+
+def test_plan_translation_groups_long_paragraph_cluster() -> None:
+    """A single paragraph with 4+ sentences is clustered into 2-3 bounded
+    semantic groups (NOT one-unit-one-group, NOT one-sentence-one-group)."""
+    # 6 short sentences in one paragraph (space-joined).
+    sentences = [
+        ("s1", "First sentence here.", 1),
+        ("s2", "Second sentence here.", 2),
+        ("s3", "Third sentence here.", 3),
+        ("s4", "Fourth sentence here.", 4),
+        ("s5", "Fifth sentence here.", 5),
+        ("s6", "Sixth sentence here.", 6),
+    ]
+    context = _build_batch_context_with_segments(
+        segment_specs=sentences,
+        joiner=" ",  # one paragraph
+    )
+    unit = context.units[0]
+
+    plans = plan_translation_groups(unit)
+
+    # 6 sentences, MAX_SENTENCES_PER_GROUP=3 → 2 groups (3+3).
+    assert len(plans) == 2
+    assert plans[0].anchor_segment_ids == ("s1", "s2", "s3")
+    assert plans[1].anchor_segment_ids == ("s4", "s5", "s6")
+
+
+def test_plan_translation_groups_decimal_boundary_preserved() -> None:
+    """The ``$2.13 per hour`` decimal boundary must NOT be split by the
+    planner. The planner only groups whole anchor segments; it never
+    re-segments sentence text. The segment containing the decimal stays
+    intact inside one group."""
+    context = _build_batch_context_with_contiguous_segments()
+    unit = context.units[0]
+
+    plans = plan_translation_groups(unit)
+    groups = _hydrate_translation_groups(unit, plans)
+
+    # The decimal-bearing segment s10 is fully inside one group's
+    # source_text (not split across groups).
+    assert any(
+        "$2.13 per hour" in group.source_text for group in groups
+    )
+    # No group's source_text starts or ends mid-decimal: each group's
+    # source_text boundaries align with anchor-segment boundaries.
+    for group in groups:
+        assert not group.source_text.startswith("13")
+        assert not group.source_text.endswith("$2")
+
+
+def test_plan_translation_groups_never_one_unit_one_group_for_multi_paragraph() -> None:
+    """Regression assertion: a multi-paragraph unit must NOT collapse to
+    one-unit-one-group. Newlines are a SOFT hint only, so 4 short
+    single-sentence "paragraphs" are merged into bounded reading groups
+    (2 groups of 2-3 anchors), NOT 1 group for the whole unit and NOT
+    4 per-paragraph groups."""
+    context = _build_batch_context_with_segments(
+        segment_specs=[
+            ("s1", "First paragraph sentence.", 1),
+            ("s2", "Second paragraph sentence.", 2),
+            ("s3", "Third paragraph sentence.", 3),
+            ("s4", "Fourth paragraph sentence.", 4),
+        ],
+        joiner="\n\n",  # 4 single-sentence paragraphs
+    )
+    unit = context.units[0]
+
+    plans = plan_translation_groups(unit)
+
+    # 4 short single-sentence "paragraphs" → 2 groups (3+1), NOT 4
+    # per-paragraph groups and NOT 1 whole-unit group.
+    assert len(plans) == 2
+    assert plans[0].anchor_segment_ids == ("s1", "s2", "s3")
+    assert plans[1].anchor_segment_ids == ("s4",)
+    # Explicitly forbid the one-unit-one-group regression.
+    assert len(plans) != 1 or len(unit.anchor_segments) == 1
+    # Explicitly forbid the one-paragraph-one-group regression.
+    assert len(plans) != len(unit.anchor_segments)
+
+
+def test_plan_translation_groups_merges_six_single_sentence_paragraphs() -> None:
+    """Regression assertion (P1 fix): 6 short single-sentence "paragraphs"
+    joined by ``\\n\\n`` must NOT produce 6 per-sentence groups. Newlines
+    are a SOFT hint only. The planner merges consecutive short
+    single-sentence paragraphs into 2-3-anchor reading groups so
+    Reuters/BBC-style news feeds (where each sentence is its own line)
+    do not regress to per-sentence fragmented translation."""
+    context = _build_batch_context_with_segments(
+        segment_specs=[
+            ("s1", "First sentence here.", 1),
+            ("s2", "Second sentence here.", 2),
+            ("s3", "Third sentence here.", 3),
+            ("s4", "Fourth sentence here.", 4),
+            ("s5", "Fifth sentence here.", 5),
+            ("s6", "Sixth sentence here.", 6),
+        ],
+        joiner="\n\n",  # 6 single-sentence paragraphs
+    )
+    unit = context.units[0]
+
+    plans = plan_translation_groups(unit)
+
+    # 6 short single-sentence "paragraphs" → 2 groups (3+3), NOT 6
+    # per-sentence groups. Newlines do NOT force a group boundary.
+    assert len(plans) == 2
+    assert plans[0].anchor_segment_ids == ("s1", "s2", "s3")
+    assert plans[1].anchor_segment_ids == ("s4", "s5", "s6")
+    # Explicitly forbid the one-paragraph-one-group regression.
+    assert len(plans) != len(unit.anchor_segments)
+    # Explicitly forbid the one-unit-one-group regression.
+    assert len(plans) != 1
+
+
+def test_plan_translation_groups_never_one_anchor_one_group_for_multi_sentence_paragraph() -> None:
+    """Regression assertion: a single paragraph with 2-3 short sentences
+    must NOT be split into one-anchor-one-group. The planner clusters them
+    into ONE semantic group."""
+    context = _build_batch_context_with_contiguous_segments()
+    unit = context.units[0]
+
+    plans = plan_translation_groups(unit)
+
+    # 3 short sentences in one paragraph → 1 group (NOT 3 per-sentence
+    # groups).
+    assert len(plans) == 1
+    assert plans[0].anchor_segment_ids == ("s10", "s11", "s12")
+    # Explicitly forbid the one-anchor-one-group regression for this
+    # multi-sentence paragraph.
+    assert len(plans) != len(unit.anchor_segments)
+
+
+def test_hydrate_translation_groups_assigns_stable_group_ids_and_hashes() -> None:
+    """Hydration produces stable ``group_id`` / ``source_text_hash`` /
+    ``source_text`` from the plan's anchor ranges. The group_id follows
+    ``{unit_id}_g{first_order}_{last_order}`` so the hydrate step in
+    ``hydrate_translation_batch_output`` can re-derive the same mapping
+    and reject any LLM output whose group_id set does not exactly match."""
+    context = _build_batch_context_with_segments(
+        segment_specs=[
+            ("s1", "First sentence here.", 1),
+            ("s2", "Second sentence here.", 2),
+            ("s3", "Third sentence here.", 3),
+            ("s4", "Fourth sentence here.", 4),
+            ("s5", "Fifth sentence here.", 5),
+            ("s6", "Sixth sentence here.", 6),
+        ],
+        joiner=" ",  # one paragraph → clustered into 2 groups
+    )
+    unit = context.units[0]
+
+    plans = plan_translation_groups(unit)
+    groups = _hydrate_translation_groups(unit, plans)
+
+    assert len(groups) == 2
+    # Stable group_ids derived from anchor order_index ranges.
+    assert groups[0].group_id == "u2_g1_3"
+    assert groups[1].group_id == "u2_g4_6"
+    # source_text_hash is the fnv1a32 hash of each group's span.
+    assert groups[0].source_text_hash == compute_text_range_hash(
+        groups[0].source_text
+    )
+    assert groups[1].source_text_hash == compute_text_range_hash(
+        groups[1].source_text
+    )
+    # source_text is the slice from first anchor start to last anchor end.
+    assert "First sentence here." in groups[0].source_text
+    assert "Third sentence here." in groups[0].source_text
+    assert "Fourth sentence here." in groups[1].source_text
+    assert "Sixth sentence here." in groups[1].source_text
+    # Reading order is stable.
+    assert groups[0].order_index < groups[1].order_index
+
+
+def test_validate_translation_group_plan_rejects_incomplete_coverage() -> None:
+    """A plan that does not cover all unit anchors fails closed."""
+    context = _build_batch_context_with_contiguous_segments()
+    unit = context.units[0]
+
+    # Plan covers only s10/s11, missing s12.
+    incomplete_plan = [TranslationGroupPlan(anchor_segment_ids=("s10", "s11"))]
+
+    with pytest.raises(TranslationExecutionError) as exc_info:
+        _validate_translation_group_plan(unit, incomplete_plan)
+    assert exc_info.value.failure_code == "translation_group_plan_incomplete_coverage"
+    assert "s12" in str(exc_info.value)
+    assert exc_info.value.retryable is False
+
+
+def test_validate_translation_group_plan_rejects_overlap() -> None:
+    """A plan where two groups cover the same anchor fails closed."""
+    context = _build_batch_context_with_contiguous_segments()
+    unit = context.units[0]
+
+    overlapping_plans = [
+        TranslationGroupPlan(anchor_segment_ids=("s10", "s11")),
+        TranslationGroupPlan(anchor_segment_ids=("s11", "s12")),  # s11 overlap
+    ]
+
+    with pytest.raises(TranslationExecutionError) as exc_info:
+        _validate_translation_group_plan(unit, overlapping_plans)
+    assert exc_info.value.failure_code == "translation_group_plan_overlap"
+    assert "s11" in str(exc_info.value)
+
+
+def test_validate_translation_group_plan_rejects_unknown_anchor() -> None:
+    """A plan referencing an anchor not in the unit fails closed."""
+    context = _build_batch_context_with_contiguous_segments()
+    unit = context.units[0]
+
+    bad_plan = [TranslationGroupPlan(anchor_segment_ids=("s10", "s99"))]
+
+    with pytest.raises(TranslationExecutionError) as exc_info:
+        _validate_translation_group_plan(unit, bad_plan)
+    assert exc_info.value.failure_code == "translation_group_plan_unknown_anchor"
+    assert "s99" in str(exc_info.value)
+
+
+def test_validate_translation_group_plan_rejects_non_contiguous_group() -> None:
+    """A plan whose group has non-consecutive order_index fails closed
+    (the publisher requires contiguity within a group)."""
+    context = _build_batch_context_with_segments()  # s15/s17 (order 15/17)
+    unit = context.units[0]
+
+    # Forbid a single group spanning s15+s17 (order 15 then 17, no 16).
+    non_contiguous_plan = [
+        TranslationGroupPlan(anchor_segment_ids=("s15", "s17"))
+    ]
+
+    with pytest.raises(TranslationExecutionError) as exc_info:
+        _validate_translation_group_plan(unit, non_contiguous_plan)
+    assert exc_info.value.failure_code == "translation_group_plan_non_contiguous"
+
+
+def test_validate_translation_group_plan_rejects_unstable_order() -> None:
+    """A plan whose groups are not in ascending reading order fails closed."""
+    context = _build_batch_context_with_segments(
+        segment_specs=[
+            ("s1", "First sentence here.", 1),
+            ("s2", "Second sentence here.", 2),
+            ("s3", "Third sentence here.", 3),
+            ("s4", "Fourth sentence here.", 4),
+        ],
+        joiner="\n\n",  # gap text does not affect manual invalid plan
+    )
+    unit = context.units[0]
+
+    # Reversed order: s4 group before s1 group.
+    reversed_plans = [
+        TranslationGroupPlan(anchor_segment_ids=("s4",)),
+        TranslationGroupPlan(anchor_segment_ids=("s3",)),
+        TranslationGroupPlan(anchor_segment_ids=("s2",)),
+        TranslationGroupPlan(anchor_segment_ids=("s1",)),
+    ]
+
+    with pytest.raises(TranslationExecutionError) as exc_info:
+        _validate_translation_group_plan(unit, reversed_plans)
+    assert exc_info.value.failure_code == "translation_group_plan_unstable_order"
+
+
+def test_hydrate_translation_groups_full_coverage_contiguous_no_overlap() -> None:
+    """End-to-end planner + hydrate assertion: published groups have full
+    anchor coverage, contiguous anchor_segment_ids within each group, no
+    overlap across groups, stable reading order, and correct
+    source_text_hash per group."""
+    # 6 sentences in one paragraph → 2 clustered groups (3+3).
+    context = _build_batch_context_with_segments(
+        segment_specs=[
+            ("s1", "First sentence here.", 1),
+            ("s2", "Second sentence here.", 2),
+            ("s3", "Third sentence here.", 3),
+            ("s4", "Fourth sentence here.", 4),
+            ("s5", "Fifth sentence here.", 5),
+            ("s6", "Sixth sentence here.", 6),
+        ],
+        joiner=" ",
+    )
+    unit = context.units[0]
+
+    plans = plan_translation_groups(unit)
+    groups = _hydrate_translation_groups(unit, plans)
+
+    # 2-4 semantic groups for a 6-sentence paragraph.
+    assert 2 <= len(groups) <= 4
+
+    all_anchor_ids = [seg.anchor_segment_id for seg in unit.anchor_segments]
+    covered: list[str] = []
+    previous_order: int | None = None
+    seen: set[str] = set()
+    for group in groups:
+        # No overlap.
+        for aid in group.anchor_segment_ids:
+            assert aid not in seen
+            seen.add(aid)
+            covered.append(aid)
+        # Contiguity within a group (order_index consecutive).
+        orders = [
+            next(
+                seg.order_index
+                for seg in unit.anchor_segments
+                if seg.anchor_segment_id == aid
+            )
+            for aid in group.anchor_segment_ids
+        ]
+        for prev_order, curr_order in zip(orders, orders[1:], strict=False):
+            assert curr_order == prev_order + 1
+        # Stable reading order across groups.
+        if previous_order is not None:
+            assert orders[0] > previous_order
+        previous_order = orders[-1]
+        # source_text_hash is correct for the group's span.
+        assert group.source_text_hash == compute_text_range_hash(
+            group.source_text
+        )
+
+    # Full coverage.
+    assert covered == all_anchor_ids
+
+
+class _FakePlannerTranslator:
+    """Fake planner + translator for the batch path. Mirrors the real
+    planner/translator boundary: the planner decides anchor ranges (via
+    ``plan_translation_groups``), the backend hydrates group_id /
+    source_text / source_text_hash, and the translator only echoes
+    group_id + a per-group translated_text. No real LLM is invoked."""
+
+    def __init__(self) -> None:
+        self.translate_calls: list[TranslationBatchJobContext] = []
+
+    async def translate_batch(
+        self,
+        context: TranslationBatchJobContext,
+    ) -> TranslationBatchExecutionResult:
+        self.translate_calls.append(context)
+        units_output = []
+        for unit in context.units:
+            groups = build_deterministic_translation_groups(unit)
+            units_output.append(
+                TranslationBatchUnitOutput(
+                    unit_id=unit.unit_id,
+                    groups=[
+                        TranslationBatchGroupOutput(
+                            group_id=group.group_id,
+                            translated_text=f"译文：{group.source_text}",
+                        )
+                        for group in groups
+                    ],
+                )
+            )
+        return TranslationBatchExecutionResult(
+            output=TranslationBatchGenerationOutput(units=units_output),
+            usage_data={"input_tokens": 1, "output_tokens": 1},
+            prompt_version="test-fake-planner-translator",
+            model_profile="fake_planner_translator",
+            model_provider="fake",
+            model_name="fake-planner-translator",
+        )
+
+
+@pytest.mark.anyio
+async def test_batch_path_with_fake_planner_translator_produces_semantic_groups() -> None:
+    """End-to-end batch path test using a fake planner/translator. The
+    fake translator consumes the backend-hydrated groups (group_id +
+    source_text) and returns group_id + translated_text. The hydrated
+    output must have semantic groups (NOT one-unit-one-group, NOT
+    one-paragraph-one-group) with full coverage, correct anchor binding,
+    and correct source_text_hash."""
+    # 6 short single-sentence "paragraphs" (Reuters/BBC news feed scenario)
+    # → 2 semantic groups (3+3), NOT 6 per-paragraph groups.
+    context = _build_batch_context_with_segments(
+        segment_specs=[
+            ("s1", "First sentence here.", 1),
+            ("s2", "Second sentence here.", 2),
+            ("s3", "Third sentence here.", 3),
+            ("s4", "Fourth sentence here.", 4),
+            ("s5", "Fifth sentence here.", 5),
+            ("s6", "Sixth sentence here.", 6),
+        ],
+        joiner="\n\n",
+    )
+
+    fake = _FakePlannerTranslator()
+    result = await fake.translate_batch(context)
+
+    outputs = hydrate_translation_batch_output(
+        context=context, generation=result.output
+    )
+
+    assert len(outputs) == 1
+    unit_id, layer = outputs[0]
+    assert unit_id == "u2"
+    # 6 short single-sentence "paragraphs" → 2 semantic groups (3+3),
+    # NOT 6 per-paragraph groups and NOT 1 whole-unit group.
+    assert len(layer.groups) == 2
+    # Full coverage, no overlap, stable order.
+    all_anchors = [seg.anchor_segment_id for seg in context.units[0].anchor_segments]
+    covered = [aid for group in layer.groups for aid in group.anchor_segment_ids]
+    assert covered == all_anchors
+    # group_ids are the stable hydrated ids derived from anchor order ranges.
+    assert [group.group_id for group in layer.groups] == [
+        "u2_g1_3",
+        "u2_g4_6",
+    ]
+    # source_text_hash matches the fnv1a32 hash of each group's full span
+    # (from the first anchor's unit_start_utf16 to the last anchor's
+    # unit_end_utf16, including gap text between segments).
+    segments_by_id = {
+        seg.anchor_segment_id: seg for seg in context.units[0].anchor_segments
+    }
+    for group in layer.groups:
+        first_seg = segments_by_id[group.anchor_segment_ids[0]]
+        last_seg = segments_by_id[group.anchor_segment_ids[-1]]
+        span_text = slice_by_utf16_offsets(
+            context.units[0].source_text,
+            first_seg.unit_start_utf16,
+            last_seg.unit_end_utf16,
+        )
+        assert span_text is not None
+        assert group.source_text_hash == compute_text_range_hash(span_text)

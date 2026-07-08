@@ -70,12 +70,13 @@ TRANSLATION_PROMPT_AGENT_NAME = "reader_layer_translation"
 # Dedicated batch-path agent instructions. The per-unit
 # ``reader_layer_translation`` instructions teach the model to choose
 # semantic reading groups and forbid one-group-per-anchor-segment; that
-# guidance directly contradicts the batch deterministic-grouping contract
-# (one backend-predefined group per anchor segment, LLM only echoes
-# ``group_id`` + ``translated_text``). Feeding both to the batch agent
-# would give the real LLM contradictory signals. The batch path therefore
-# uses this dedicated instruction set; the variant policy lines are still
-# injected via the ``<strategy>`` section of the per-call prompt.
+# guidance directly contradicts the batch semantic-grouping contract
+# (backend-predefined semantic groups via :func:`plan_translation_groups`,
+# LLM only echoes ``group_id`` + ``translated_text``). Feeding both to the
+# batch agent would give the real LLM contradictory signals. The batch
+# path therefore uses this dedicated instruction set; the variant policy
+# lines are still injected via the ``<strategy>`` section of the per-call
+# prompt.
 _TRANSLATION_BATCH_AGENT_INSTRUCTIONS = (
     "You are a batch translation agent for short reading articles.\n"
     "The translation groups are PRE-DEFINED by the backend, listed in "
@@ -279,27 +280,57 @@ class TranslationBatchUnitContext:
     anchor_segments: tuple[TranslationAnchorSegmentTarget, ...]
 
 
-# Display-friendly translation group sizing for the batch path.
+# Semantic translation group sizing for the batch path.
 #
-# A reading unit that fits within ``TRANSLATION_GROUP_SAFETY_MAX_CHARS`` is
-# translated as a single group (one translation for the whole unit),
-# matching the natural-paragraph display the translation strategy expects.
-# Longer units are split at anchor-segment boundaries into bounded groups so
-# no single LLM translation call exceeds the safety ceiling.
+# A Translation Group is a continuous semantic reading group, NOT a worker
+# scheduling unit, NOT a sentence, NOT a paragraph, NOT an anchor segment.
+# The batch path must NOT mechanically collapse to one-anchor-one-group,
+# one-sentence-one-group, one-paragraph-one-group, or one-unit-one-group.
+#
+# The planner below produces semantic groups by:
+#   1. Splitting anchor segments into contiguous runs at order_index gaps
+#      (the publisher requires contiguity within a group).
+#   2. Within each contiguous run, clustering 1-3 short sentences into one
+#      group; splitting into bounded groups when the run has 4+ sentences
+#      or exceeds the safety char ceiling. Newlines (``\n``) in gap text
+#      are a SOFT hint only — they do NOT force a group boundary.
+#      Consecutive short single-sentence "paragraphs" (common in
+#      Reuters/BBC news feeds) are merged into 2-3-anchor reading groups
+#      so the page does not regress to per-sentence fragmented translation.
+#   3. Hard caps: ``TRANSLATION_GROUP_SAFETY_MAX_CHARS`` per group,
+#      ``TRANSLATION_GROUP_MAX_SENTENCES_PER_GROUP`` sentences per group.
+#
+# The planner returns ONLY ``anchor_segment_ids`` ranges. The backend then
+# validates the plan (coverage / contiguity / no-overlap / membership /
+# stable order) and hydrates ``group_id`` / ``source_text`` /
+# ``source_text_hash``. The translator (LLM) only sees hydrated groups in
+# the prompt and returns ``group_id`` + ``translated_text`` per group.
 TRANSLATION_GROUP_TARGET_MAX_CHARS = 900
 TRANSLATION_GROUP_SAFETY_MAX_CHARS = 1400
+TRANSLATION_GROUP_MAX_SENTENCES_PER_GROUP = 3
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationGroupPlan:
+    """Planner output: a contiguous range of anchor segments within a unit.
+
+    The planner ONLY decides ``anchor_segment_ids``. It does NOT decide
+    ``group_id``, ``source_text``, ``source_text_hash``, or
+    ``translated_text`` — those are hydrated by the backend after
+    validation (see :func:`_hydrate_translation_groups`). This boundary
+    keeps the planner replaceable (deterministic heuristic today, LLM-based
+    planner later) without changing the translator contract.
+    """
+
+    anchor_segment_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class DeterministicTranslationGroup:
     """A backend-predefined translation group for the batch path.
 
-    The batch path no longer lets the LLM choose which anchor segments
-    belong to a translation group. The backend deterministically builds
-    display-friendly groups: by default one group per reading unit
-    (covering all of its contiguous anchor segments); only when a unit is
-    too long does it split at anchor-segment boundaries into bounded groups.
-    ``group_id = {unit_id}_g{first_order}_{last_order}``,
+    Produced by :func:`build_deterministic_translation_groups` (plan +
+    hydrate). ``group_id = {unit_id}_g{first_order}_{last_order}``,
     ``anchor_segment_ids`` = the contiguous anchor ids in this group,
     ``source_text_hash`` = hash of the span from the first anchor's
     ``unit_start_utf16`` to the last anchor's ``unit_end_utf16``. The
@@ -319,26 +350,42 @@ class DeterministicTranslationGroup:
     order_index: int
 
 
-def build_deterministic_translation_groups(
+def plan_translation_groups(
     unit: TranslationBatchUnitContext,
-) -> list[DeterministicTranslationGroup]:
-    """Build deterministic translation groups for a batch unit.
+) -> list[TranslationGroupPlan]:
+    """Plan semantic translation groups for a batch unit.
 
-    Display-friendly grouping contract:
-        - By default, one group covering the entire unit (all contiguous
-          anchor segments).
-        - If the unit's span exceeds ``TRANSLATION_GROUP_SAFETY_MAX_CHARS``,
-          split at anchor-segment boundaries into bounded groups.
+    Semantic grouping contract (NOT mechanical):
+        - A Translation Group is a continuous semantic reading group. It is
+          NOT a sentence, NOT a paragraph, NOT an anchor segment, NOT a
+          worker scheduling unit.
+        - Newlines (``\\n``) in the gap text between consecutive anchor
+          segments are a SOFT hint only. They do NOT force a group
+          boundary. Consecutive short single-sentence "paragraphs" (common
+          in Reuters/BBC news feeds where each sentence is its own line)
+          MUST be merged into 2-3-anchor reading groups so the page does
+          not regress to per-sentence fragmented translation.
+        - Cluster 1-3 short sentences into one group. Split into multiple
+          groups only when the run has 4+ sentences or exceeds
+          ``TRANSLATION_GROUP_SAFETY_MAX_CHARS``.
         - Non-contiguous anchor segments (gaps in ``order_index``) are
           always split into separate groups (the publisher requires
           contiguity within a group).
-        - ``group_id`` / ``anchor_segment_ids`` / ``source_text_hash`` are
-          derived from the unit's anchor segments, so the hydrate step can
-          re-derive the same mapping and reject any LLM output whose
-          ``group_id`` set does not exactly match.
+        - NEVER one-unit-one-group for a multi-anchor unit.
+        - NEVER one-sentence-one-group for consecutive short sentences.
+        - NEVER one-anchor-one-group.
+        - NEVER one-paragraph-one-group (a ``\\n`` gap does not create a
+          group boundary).
 
-    The LLM is NOT allowed to choose, merge, split, reorder, add, or drop
-    groups.
+    The planner returns ONLY ``anchor_segment_ids``. ``group_id``,
+    ``source_text``, ``source_text_hash`` are hydrated by
+    :func:`build_deterministic_translation_groups` after validation.
+
+    The plan is validated (coverage / contiguity / no-overlap / membership)
+    before being returned, so callers can trust the plan is structurally
+    legal. The publisher's
+    :func:`_validate_translation_unit_output_core` still runs as a second
+    layer of defense against the live DB anchor segments.
     """
     segments = list(unit.anchor_segments)
     if not segments:
@@ -362,79 +409,283 @@ def build_deterministic_translation_groups(
             current_run = [current]
     contiguous_runs.append(current_run)
 
-    # Second pass: for each contiguous run, split into bounded groups if
-    # the run's span exceeds the safety ceiling.
-    groups: list[DeterministicTranslationGroup] = []
+    # Second pass: cluster each contiguous run into bounded semantic
+    # groups. Newlines in gap text are a SOFT hint only and do NOT force
+    # a group boundary — consecutive short single-sentence "paragraphs"
+    # are merged into 2-3-anchor reading groups.
+    plans: list[TranslationGroupPlan] = []
     for run in contiguous_runs:
-        groups.extend(_split_run_into_bounded_groups(unit, run))
-    return groups
+        plans.extend(_cluster_run_into_plans(unit, run))
+
+    _validate_translation_group_plan(unit, plans)
+    return plans
 
 
-def _split_run_into_bounded_groups(
+def _cluster_run_into_plans(
     unit: TranslationBatchUnitContext,
     segments: list[TranslationAnchorSegmentTarget],
-) -> list[DeterministicTranslationGroup]:
-    """Split a contiguous run of anchor segments into bounded groups.
+) -> list[TranslationGroupPlan]:
+    """Cluster contiguous anchor segments into bounded semantic translation
+    groups.
 
-    If the entire run fits within ``TRANSLATION_GROUP_SAFETY_MAX_CHARS``,
-    emit a single group. Otherwise, greedily accumulate segments until
-    adding the next would exceed the safety ceiling, then close the group.
+    Newlines (``\\n``) in the gap text between segments are a SOFT hint
+    only — they do NOT force a group boundary. Consecutive short
+    single-sentence "paragraphs" (common in Reuters/BBC news feeds) are
+    merged into 2-3-anchor reading groups so the page does not regress to
+    per-sentence fragmented translation.
+
+    Rules:
+        - 1 segment → 1 group (a lone anchor stands alone; this is NOT
+          one-anchor-one-group when the unit has multiple anchors, it is
+          just the tail of a greedy cluster or a genuinely isolated
+          sentence).
+        - 2-3 segments AND total span ≤ ``TRANSLATION_GROUP_SAFETY_MAX_CHARS``
+          → 1 group (a short reading run is one semantic group).
+        - 4+ segments OR total span > ``TRANSLATION_GROUP_SAFETY_MAX_CHARS``
+          → greedily cluster 2-3 segments per group, respecting
+          ``TRANSLATION_GROUP_MAX_SENTENCES_PER_GROUP`` and the safety
+          char ceiling.
     """
+    if not segments:
+        return []
+
+    if len(segments) == 1:
+        return [
+            TranslationGroupPlan(
+                anchor_segment_ids=(segments[0].anchor_segment_id,)
+            )
+        ]
+
     first = segments[0]
     last = segments[-1]
-    run_span_length = last.unit_end_utf16 - first.unit_start_utf16
-    if run_span_length <= TRANSLATION_GROUP_SAFETY_MAX_CHARS or len(segments) == 1:
-        return [_build_deterministic_group(unit, segments)]
+    total_span = last.unit_end_utf16 - first.unit_start_utf16
 
-    groups: list[DeterministicTranslationGroup] = []
+    if (
+        len(segments) <= TRANSLATION_GROUP_MAX_SENTENCES_PER_GROUP
+        and total_span <= TRANSLATION_GROUP_SAFETY_MAX_CHARS
+    ):
+        # Short reading run → one semantic group.
+        return [
+            TranslationGroupPlan(
+                anchor_segment_ids=tuple(
+                    segment.anchor_segment_id for segment in segments
+                )
+            )
+        ]
+
+    # Greedy clustering: accumulate segments until adding the next would
+    # exceed the safety ceiling, the target ceiling (with at least 2
+    # segments already in), or the max-sentences cap.
+    plans: list[TranslationGroupPlan] = []
     current: list[TranslationAnchorSegmentTarget] = [segments[0]]
     current_start = segments[0].unit_start_utf16
     for segment in segments[1:]:
-        candidate_length = segment.unit_end_utf16 - current_start
-        if candidate_length > TRANSLATION_GROUP_SAFETY_MAX_CHARS and len(current) >= 1:
-            groups.append(_build_deterministic_group(unit, current))
+        candidate_span = segment.unit_end_utf16 - current_start
+        would_exceed_safety = (
+            candidate_span > TRANSLATION_GROUP_SAFETY_MAX_CHARS
+        )
+        would_exceed_target = (
+            candidate_span > TRANSLATION_GROUP_TARGET_MAX_CHARS
+            and len(current) >= 2
+        )
+        would_exceed_count = (
+            len(current) >= TRANSLATION_GROUP_MAX_SENTENCES_PER_GROUP
+        )
+        if would_exceed_safety or would_exceed_target or would_exceed_count:
+            plans.append(
+                TranslationGroupPlan(
+                    anchor_segment_ids=tuple(
+                        seg.anchor_segment_id for seg in current
+                    )
+                )
+            )
             current = [segment]
             current_start = segment.unit_start_utf16
         else:
             current.append(segment)
     if current:
-        groups.append(_build_deterministic_group(unit, current))
+        plans.append(
+            TranslationGroupPlan(
+                anchor_segment_ids=tuple(
+                    seg.anchor_segment_id for seg in current
+                )
+            )
+        )
+    return plans
+
+
+def _validate_translation_group_plan(
+    unit: TranslationBatchUnitContext,
+    plans: list[TranslationGroupPlan],
+) -> None:
+    """Validate planner output before hydration.
+
+    Fail-closed checks:
+        - Each plan has at least one anchor.
+        - Every anchor id is a member of the unit's anchor segments.
+        - No anchor id is covered by more than one plan (no overlap).
+        - Every unit anchor is covered (complete coverage).
+        - Anchors within a plan are contiguous in ``order_index`` (the
+          publisher requires contiguity within a group).
+        - Plan order is stable: plans are returned in ascending
+          ``order_index`` of their first anchor (reading order).
+    """
+    if not plans:
+        if unit.anchor_segments:
+            raise TranslationExecutionError(
+                f"translation group plan for unit {unit.unit_id!r} is empty "
+                f"but the unit has "
+                f"{len(unit.anchor_segments)} anchor segments",
+                retryable=False,
+                failure_class="validation",
+                failure_code="translation_group_plan_empty",
+            )
+        return
+
+    all_anchor_ids = {
+        segment.anchor_segment_id for segment in unit.anchor_segments
+    }
+    segments_by_id = {
+        segment.anchor_segment_id: segment
+        for segment in unit.anchor_segments
+    }
+    covered: set[str] = set()
+    previous_first_order: int | None = None
+    for plan in plans:
+        if not plan.anchor_segment_ids:
+            raise TranslationExecutionError(
+                f"translation group plan for unit {unit.unit_id!r} has an "
+                f"empty anchor_segment_ids entry",
+                retryable=False,
+                failure_class="validation",
+                failure_code="translation_group_plan_empty_anchor_ids",
+            )
+        orders: list[int] = []
+        for anchor_id in plan.anchor_segment_ids:
+            if anchor_id not in all_anchor_ids:
+                raise TranslationExecutionError(
+                    f"translation group plan for unit {unit.unit_id!r} "
+                    f"references unknown anchor {anchor_id!r}",
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code="translation_group_plan_unknown_anchor",
+                )
+            if anchor_id in covered:
+                raise TranslationExecutionError(
+                    f"translation group plan for unit {unit.unit_id!r} "
+                    f"overlaps on anchor {anchor_id!r}",
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code="translation_group_plan_overlap",
+                )
+            covered.add(anchor_id)
+            orders.append(segments_by_id[anchor_id].order_index)
+        # Contiguity within a group.
+        for prev_order, curr_order in zip(
+            orders, orders[1:], strict=False
+        ):
+            if curr_order != prev_order + 1:
+                raise TranslationExecutionError(
+                    f"translation group plan for unit {unit.unit_id!r} has "
+                    f"non-contiguous anchors in group {plan.anchor_segment_ids!r}",
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code="translation_group_plan_non_contiguous",
+                )
+        # Stable reading order across plans.
+        if previous_first_order is not None and orders[0] <= previous_first_order:
+            raise TranslationExecutionError(
+                f"translation group plan for unit {unit.unit_id!r} is not "
+                f"in stable reading order (group starting at order "
+                f"{orders[0]} follows group starting at order "
+                f"{previous_first_order})",
+                retryable=False,
+                failure_class="validation",
+                failure_code="translation_group_plan_unstable_order",
+            )
+        previous_first_order = orders[0]
+
+    missing = all_anchor_ids - covered
+    if missing:
+        raise TranslationExecutionError(
+            f"translation group plan for unit {unit.unit_id!r} does not "
+            f"cover anchors {sorted(missing)!r}",
+            retryable=False,
+            failure_class="validation",
+            failure_code="translation_group_plan_incomplete_coverage",
+        )
+
+
+def _hydrate_translation_groups(
+    unit: TranslationBatchUnitContext,
+    plans: list[TranslationGroupPlan],
+) -> list[DeterministicTranslationGroup]:
+    """Hydrate validated planner output into ``DeterministicTranslationGroup``.
+
+    Adds ``group_id`` / ``source_text`` / ``source_text_hash`` /
+    ``order_index`` derived from the unit's anchor segments. The plan is
+    re-validated here so callers that build plans directly (bypassing
+    :func:`plan_translation_groups`) still get fail-closed validation.
+    """
+    _validate_translation_group_plan(unit, plans)
+    segments_by_id = {
+        segment.anchor_segment_id: segment
+        for segment in unit.anchor_segments
+    }
+    groups: list[DeterministicTranslationGroup] = []
+    for plan in plans:
+        plan_segments = [
+            segments_by_id[anchor_id] for anchor_id in plan.anchor_segment_ids
+        ]
+        first = plan_segments[0]
+        last = plan_segments[-1]
+        group_source_text = slice_by_utf16_offsets(
+            unit.source_text,
+            first.unit_start_utf16,
+            last.unit_end_utf16,
+        )
+        if group_source_text is None or not group_source_text:
+            raise TranslationExecutionError(
+                f"failed to slice deterministic translation group "
+                f"source_text for unit {unit.unit_id!r} "
+                f"(span {first.unit_start_utf16}:{last.unit_end_utf16})",
+                retryable=False,
+                failure_class="validation",
+                failure_code="translation_group_slice_failed",
+            )
+        groups.append(
+            DeterministicTranslationGroup(
+                group_id=(
+                    f"{unit.unit_id}_g{first.order_index}_{last.order_index}"
+                ),
+                unit_id=unit.unit_id,
+                anchor_segment_ids=plan.anchor_segment_ids,
+                source_text=group_source_text,
+                source_text_hash=compute_text_range_hash(group_source_text),
+                order_index=first.order_index,
+            )
+        )
     return groups
 
 
-def _build_deterministic_group(
+def build_deterministic_translation_groups(
     unit: TranslationBatchUnitContext,
-    segments: list[TranslationAnchorSegmentTarget],
-) -> DeterministicTranslationGroup:
-    """Build a single deterministic translation group from a segment range."""
-    first = segments[0]
-    last = segments[-1]
-    group_source_text = slice_by_utf16_offsets(
-        unit.source_text,
-        first.unit_start_utf16,
-        last.unit_end_utf16,
-    )
-    if group_source_text is None or not group_source_text:
-        raise TranslationExecutionError(
-            f"failed to slice deterministic translation group source_text "
-            f"for unit {unit.unit_id!r} "
-            f"(span {first.unit_start_utf16}:{last.unit_end_utf16})",
-            retryable=False,
-            failure_class="validation",
-            failure_code="translation_group_slice_failed",
-        )
-    return DeterministicTranslationGroup(
-        group_id=(
-            f"{unit.unit_id}_g{first.order_index}_{last.order_index}"
-        ),
-        unit_id=unit.unit_id,
-        anchor_segment_ids=tuple(
-            segment.anchor_segment_id for segment in segments
-        ),
-        source_text=group_source_text,
-        source_text_hash=compute_text_range_hash(group_source_text),
-        order_index=first.order_index,
-    )
+) -> list[DeterministicTranslationGroup]:
+    """Plan + hydrate semantic translation groups for a batch unit.
+
+    Canonical entry point. Tests that need ONLY the planner output (no
+    hydration) should call :func:`plan_translation_groups`. Tests that
+    need to inspect the planner/translator boundary should call plan +
+    hydrate separately.
+
+    The LLM is NOT allowed to choose, merge, split, reorder, add, or drop
+    groups. The planner output is validated (coverage / contiguity /
+    no-overlap / membership / stable order) before hydration, and the
+    publisher re-validates against the live DB anchor segments as a second
+    layer of defense.
+    """
+    plans = plan_translation_groups(unit)
+    return _hydrate_translation_groups(unit, plans)
 
 
 @dataclass(frozen=True, slots=True)
@@ -564,11 +815,12 @@ def hydrate_translation_batch_output(
 ) -> list[tuple[str, TranslationLayerOutput]]:
     """Split a batch generation output into per-unit ``TranslationLayerOutput``.
 
-    Deterministic-grouping contract: the backend pre-defines display-friendly
-    translation groups (by default one per reading unit; split at anchor
-    boundaries only when the unit is too long — see
-    :func:`build_deterministic_translation_groups`). The LLM only returns
-    ``group_id`` + ``translated_text`` per group; it MUST NOT choose
+    Semantic-grouping contract: the backend pre-defines semantic translation
+    groups via :func:`build_deterministic_translation_groups` (paragraph
+    boundaries + sentence clustering; never one-unit-one-group /
+    one-sentence-one-group / one-anchor-one-group — see
+    :func:`plan_translation_groups`). The LLM only returns ``group_id`` +
+    ``translated_text`` per group; it MUST NOT choose
     ``anchor_segment_ids``. This function maps each returned
     ``group_id`` back to the predefined group's ``anchor_segment_ids``
     and ``source_text_hash``, then assembles a per-unit
