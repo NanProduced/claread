@@ -20,6 +20,9 @@ from app.database import connection as db_connection
 from app.llm.agent_runner import extract_run_usage
 from app.services.analysis.prompting.prompt_loader import load_agent_instructions
 from app.schemas.reader_orchestration import (
+    TranslationBatchGenerationOutput,
+    TranslationBatchGroupOutput,
+    TranslationBatchUnitOutput,
     TranslationGenerationGroup,
     TranslationLayerGenerationOutput,
     TranslationLayerOutput,
@@ -29,6 +32,7 @@ from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
 from app.services.reader_orchestration.job_bootstrap import (
+    TRANSLATION_BATCH_OPERATION_FINGERPRINT,
     TRANSLATION_OPERATION_FINGERPRINT,
     TranslationJobBootstrapService,
     _fingerprint_matches_base,
@@ -40,12 +44,17 @@ from app.services.reader_orchestration.reading_strategy import (
 from app.services.reader_orchestration.translation_worker import (
     PydanticAITranslationExecutor,
     TranslationAnchorSegmentTarget,
+    TranslationBatchJobContext,
+    TranslationBatchUnitContext,
     TranslationExecutionError,
     TranslationExecutionResult,
     TranslationJobContext,
     TranslationWorkerService,
+    _build_translation_batch_prompt,
     _build_translation_prompt,
     _validate_translation_strategy_metadata,
+    build_deterministic_translation_groups,
+    hydrate_translation_batch_output,
     hydrate_translation_layer_output,
 )
 from tests.reader_orchestration_test_support import (
@@ -1723,3 +1732,426 @@ async def test_worker_fail_closed_on_missing_strategy_metadata_moves_job_to_fail
     # not explicitly set; the worker's TranslationExecutionError branch
     # propagates exc.rationale_code to the transition call.
     assert job_row["rationale_code"] == "strategy_metadata_missing"
+
+
+# ---------------------------------------------------------------------------#
+# T1.1 batch deterministic-grouping alignment fix
+#
+# Regression coverage for the short-article batch translation misalignment
+# bug (record a1812e99...: the s17 translation was anchored to s15 because
+# the LLM freely chose anchor_segment_ids). The batch path now pre-defines
+# one translation group per anchor segment and the LLM only returns
+# group_id + translated_text; the backend binds anchors deterministically.
+# ---------------------------------------------------------------------------#
+
+
+# The actual misaligned sentences from the bug report.
+_S15_SOURCE = "Without tips, staff may not earn enough money to live on."
+_S17_SOURCE = "In many host cities, restaurants have automatically added tips to their bills."
+_S15_ZH = "如果没有小费，员工可能挣不到足够的钱维持生活。"
+_S17_ZH = "在许多主办城市，餐厅已经自动将小费添加到账单中。"
+
+
+def _build_batch_context_with_segments(
+    *,
+    unit_id: str = "u2",
+    segment_specs: list[tuple[str, str, int]] | None = None,
+    reading_goal: str = "daily_reading",
+    reading_variant: str = "intermediate_reading",
+) -> TranslationBatchJobContext:
+    """Build a TranslationBatchJobContext with one unit and given segments.
+
+    ``segment_specs`` is a list of ``(anchor_segment_id, source_text,
+    order_index)``. The unit source_text is the segments joined by ``"\\n\\n"``;
+    each segment's unit_start_utf16 / unit_end_utf16 are computed from the
+    join so slice_by_utf16_offsets can recover each segment exactly.
+    """
+    strategy = resolve_reader_variant_strategy(reading_goal, reading_variant)
+    layer = strategy.layers["translation"]
+    if segment_specs is None:
+        segment_specs = [
+            ("s15", _S15_SOURCE, 15),
+            ("s17", _S17_SOURCE, 17),
+        ]
+    texts = [spec[1] for spec in segment_specs]
+    unit_source_text = "\n\n".join(texts)
+    anchor_segments: list[TranslationAnchorSegmentTarget] = []
+    cursor = 0
+    for anchor_segment_id, segment_text, order_index in segment_specs:
+        start = cursor
+        end = cursor + utf16_code_unit_length(segment_text)
+        anchor_segments.append(
+            TranslationAnchorSegmentTarget(
+                anchor_segment_id=anchor_segment_id,
+                sentence_id=anchor_segment_id,
+                order_index=order_index,
+                segment_type="sentence",
+                boundary_quality="normal",
+                unit_start_utf16=start,
+                unit_end_utf16=end,
+                text_hash=compute_text_range_hash(segment_text),
+                source_text=segment_text,
+            )
+        )
+        cursor = end + 2  # skip "\n\n"
+    unit = TranslationBatchUnitContext(
+        unit_id=unit_id,
+        order_index=1,
+        source_text=unit_source_text,
+        text_hash=compute_text_range_hash(unit_source_text),
+        anchor_segments=tuple(anchor_segments),
+    )
+    return TranslationBatchJobContext(
+        job_id=UUID("11111111-1111-1111-1111-111111111111"),
+        run_id=UUID("22222222-2222-2222-2222-222222222222"),
+        reading_record_id=UUID("33333333-3333-3333-3333-333333333333"),
+        user_id=UUID("44444444-4444-4444-4444-444444444444"),
+        base_id=UUID("55555555-5555-5555-5555-555555555555"),
+        expected_generation=1,
+        operation_fingerprint=TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+        source_language="en",
+        target_language="zh-CN",
+        target_unit_ids=(unit_id,),
+        units=(unit,),
+        reading_goal=strategy.reading_goal,
+        reading_variant=strategy.reading_variant,
+        strategy_version=strategy.strategy_version,
+        strategy_hash=strategy.strategy_hash,
+        layer_policy_hash=layer.policy_hash,
+        translation_prompt_lines=layer.prompt_lines,
+    )
+
+
+def _batch_unit_output(
+    unit_id: str,
+    groups: list[tuple[str, str]],
+) -> TranslationBatchUnitOutput:
+    return TranslationBatchUnitOutput(
+        unit_id=unit_id,
+        groups=[
+            TranslationBatchGroupOutput(group_id=gid, translated_text=text)
+            for gid, text in groups
+        ],
+    )
+
+
+def test_build_deterministic_translation_groups_one_per_anchor_segment() -> None:
+    context = _build_batch_context_with_segments()
+    unit = context.units[0]
+
+    groups = build_deterministic_translation_groups(unit)
+
+    assert [g.group_id for g in groups] == ["u2_g15_15", "u2_g17_17"]
+    assert [g.anchor_segment_ids for g in groups] == [("s15",), ("s17",)]
+    assert [g.order_index for g in groups] == [15, 17]
+    # source_text_hash must come from the segment, not the LLM.
+    assert groups[0].source_text_hash == compute_text_range_hash(_S15_SOURCE)
+    assert groups[1].source_text_hash == compute_text_range_hash(_S17_SOURCE)
+    assert groups[0].source_text == _S15_SOURCE
+    assert groups[1].source_text == _S17_SOURCE
+
+
+def test_batch_group_output_schema_rejects_anchor_segment_ids() -> None:
+    """The misalignment vector (LLM choosing anchor_segment_ids) is removed
+    at the schema level: TranslationBatchGroupOutput forbids any field
+    other than group_id and translated_text."""
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        TranslationBatchGroupOutput(  # type: ignore[call-arg]
+            group_id="u2_g15_15",
+            translated_text=_S15_ZH,
+            anchor_segment_ids=["s17"],  # must be rejected (extra="forbid")
+        )
+
+
+def test_hydrate_batch_output_binds_anchors_from_backend_mapping_not_llm() -> None:
+    """Regression for the s15/s17 misalignment: even if the LLM returns the
+    s17 translation under group_id g15, the hydrated group g15 is anchored
+    to s15 by the backend mapping. The LLM can no longer reassign anchors
+    to translations; only the translated_text is taken from the LLM.
+
+    Residual risk: this test proves the anchor binding is deterministic, NOT
+    that translated_text semantically matches source_text. If the LLM puts
+    wrong text under the right group_id, the published layer still carries a
+    structurally-legal but textually-misaligned translation. Semantic
+    verification requires LLM-as-a-Judge and is out of scope here.
+    """
+    context = _build_batch_context_with_segments()
+    # LLM "misaligns" by putting the s17 translation under g15.
+    generation = TranslationBatchGenerationOutput(
+        units=[
+            _batch_unit_output(
+                "u2",
+                [
+                    ("u2_g15_15", _S17_ZH),  # wrong text for this anchor
+                    ("u2_g17_17", _S15_ZH),  # wrong text for this anchor
+                ],
+            )
+        ]
+    )
+
+    outputs = hydrate_translation_batch_output(
+        context=context,
+        generation=generation,
+    )
+
+    assert len(outputs) == 1
+    unit_id, layer = outputs[0]
+    assert unit_id == "u2"
+    by_group = {g.group_id: g for g in layer.groups}
+    # The anchor binding is deterministic: g15 -> s15, g17 -> s17,
+    # regardless of which translated_text the LLM attached.
+    assert by_group["u2_g15_15"].anchor_segment_ids == ["s15"]
+    assert by_group["u2_g15_15"].source_text_hash == compute_text_range_hash(_S15_SOURCE)
+    assert by_group["u2_g15_15"].translated_text == _S17_ZH
+    assert by_group["u2_g17_17"].anchor_segment_ids == ["s17"]
+    assert by_group["u2_g17_17"].source_text_hash == compute_text_range_hash(_S17_SOURCE)
+    assert by_group["u2_g17_17"].translated_text == _S15_ZH
+
+
+def test_hydrate_batch_output_correct_alignment_preserves_translations() -> None:
+    """When the LLM returns the correct translation per group_id, the
+    hydrated layer has the right anchor + translated_text pairing."""
+    context = _build_batch_context_with_segments()
+    generation = TranslationBatchGenerationOutput(
+        units=[
+            _batch_unit_output(
+                "u2",
+                [
+                    ("u2_g15_15", _S15_ZH),
+                    ("u2_g17_17", _S17_ZH),
+                ],
+            )
+        ]
+    )
+
+    outputs = hydrate_translation_batch_output(
+        context=context,
+        generation=generation,
+    )
+
+    by_group = {g.group_id: g for g in outputs[0][1].groups}
+    assert by_group["u2_g15_15"].anchor_segment_ids == ["s15"]
+    assert by_group["u2_g15_15"].translated_text == _S15_ZH
+    assert by_group["u2_g17_17"].anchor_segment_ids == ["s17"]
+    assert by_group["u2_g17_17"].translated_text == _S17_ZH
+
+
+def test_hydrate_batch_output_fail_closed_on_missing_group() -> None:
+    context = _build_batch_context_with_segments()
+    generation = TranslationBatchGenerationOutput(
+        units=[_batch_unit_output("u2", [("u2_g15_15", _S15_ZH)])]  # missing g17
+    )
+
+    with pytest.raises(TranslationExecutionError) as exc_info:
+        hydrate_translation_batch_output(context=context, generation=generation)
+    assert exc_info.value.failure_code == "translation_batch_missing_group"
+    assert "u2_g17_17" in str(exc_info.value)
+    assert exc_info.value.retryable is False
+
+
+def test_hydrate_batch_output_fail_closed_on_extra_group() -> None:
+    context = _build_batch_context_with_segments()
+    generation = TranslationBatchGenerationOutput(
+        units=[
+            _batch_unit_output(
+                "u2",
+                [
+                    ("u2_g15_15", _S15_ZH),
+                    ("u2_g17_17", _S17_ZH),
+                    ("u2_g16_16", "bogus"),  # not a predefined group
+                ],
+            )
+        ]
+    )
+
+    with pytest.raises(TranslationExecutionError) as exc_info:
+        hydrate_translation_batch_output(context=context, generation=generation)
+    assert exc_info.value.failure_code == "translation_batch_extra_group"
+    assert "u2_g16_16" in str(exc_info.value)
+    assert exc_info.value.retryable is False
+
+
+def test_hydrate_batch_output_fail_closed_on_duplicate_group_id() -> None:
+    context = _build_batch_context_with_segments()
+    generation = TranslationBatchGenerationOutput(
+        units=[
+            TranslationBatchUnitOutput(
+                unit_id="u2",
+                groups=[
+                    TranslationBatchGroupOutput(
+                        group_id="u2_g15_15", translated_text=_S15_ZH
+                    ),
+                    TranslationBatchGroupOutput(
+                        group_id="u2_g15_15", translated_text="duplicate"
+                    ),
+                    TranslationBatchGroupOutput(
+                        group_id="u2_g17_17", translated_text=_S17_ZH
+                    ),
+                ],
+            )
+        ]
+    )
+
+    with pytest.raises(TranslationExecutionError) as exc_info:
+        hydrate_translation_batch_output(context=context, generation=generation)
+    assert exc_info.value.failure_code == "translation_batch_duplicate_group_id"
+    assert "u2_g15_15" in str(exc_info.value)
+
+
+def test_hydrate_batch_output_fail_closed_on_unknown_unit() -> None:
+    context = _build_batch_context_with_segments()
+    generation = TranslationBatchGenerationOutput(
+        units=[_batch_unit_output("u99", [("u2_g15_15", _S15_ZH)])]
+    )
+
+    with pytest.raises(TranslationExecutionError) as exc_info:
+        hydrate_translation_batch_output(context=context, generation=generation)
+    assert exc_info.value.failure_code == "translation_batch_unknown_unit"
+    assert "u99" in str(exc_info.value)
+
+
+def test_hydrate_batch_output_fail_closed_on_blank_translated_text() -> None:
+    context = _build_batch_context_with_segments()
+    generation = TranslationBatchGenerationOutput(
+        units=[
+            _batch_unit_output(
+                "u2",
+                [("u2_g15_15", "   "), ("u2_g17_17", _S17_ZH)],
+            )
+        ]
+    )
+
+    with pytest.raises(TranslationExecutionError) as exc_info:
+        hydrate_translation_batch_output(context=context, generation=generation)
+    assert exc_info.value.failure_code == "translation_batch_empty_translated_text"
+    assert "u2_g15_15" in str(exc_info.value)
+
+
+def test_hydrate_batch_output_preserves_reading_order_regardless_of_llm_order() -> None:
+    """Even if the LLM returns groups out of order, the hydrated layer is
+    assembled in deterministic reading order (by anchor order_index)."""
+    context = _build_batch_context_with_segments()
+    # LLM returns g17 before g15.
+    generation = TranslationBatchGenerationOutput(
+        units=[
+            _batch_unit_output(
+                "u2",
+                [("u2_g17_17", _S17_ZH), ("u2_g15_15", _S15_ZH)],
+            )
+        ]
+    )
+
+    outputs = hydrate_translation_batch_output(context=context, generation=generation)
+    layer = outputs[0][1]
+
+    assert [g.group_id for g in layer.groups] == ["u2_g15_15", "u2_g17_17"]
+    assert [g.anchor_segment_ids for g in layer.groups] == [["s15"], ["s17"]]
+
+
+def test_hydrate_batch_output_covers_multiple_units_in_reading_order() -> None:
+    """A batch with multiple units hydrates each unit's groups in reading
+    order and the result list keeps the LLM's unit order (the publisher
+    reorders to target_unit_ids; the hydrate just splits per unit)."""
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer_policy = strategy.layers["translation"]
+
+    def _unit(uid: str, order: int) -> TranslationBatchUnitContext:
+        seg_text = f"{uid} sentence."
+        return TranslationBatchUnitContext(
+            unit_id=uid,
+            order_index=order,
+            source_text=seg_text,
+            text_hash=compute_text_range_hash(seg_text),
+            anchor_segments=(
+                TranslationAnchorSegmentTarget(
+                    anchor_segment_id=f"{uid}_s1",
+                    sentence_id=f"{uid}_s1",
+                    order_index=1,
+                    segment_type="sentence",
+                    boundary_quality="normal",
+                    unit_start_utf16=0,
+                    unit_end_utf16=utf16_code_unit_length(seg_text),
+                    text_hash=compute_text_range_hash(seg_text),
+                    source_text=seg_text,
+                ),
+            ),
+        )
+
+    context = TranslationBatchJobContext(
+        job_id=UUID("11111111-1111-1111-1111-111111111111"),
+        run_id=UUID("22222222-2222-2222-2222-222222222222"),
+        reading_record_id=UUID("33333333-3333-3333-3333-333333333333"),
+        user_id=UUID("44444444-4444-4444-4444-444444444444"),
+        base_id=UUID("55555555-5555-5555-5555-555555555555"),
+        expected_generation=1,
+        operation_fingerprint=TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+        source_language="en",
+        target_language="zh-CN",
+        target_unit_ids=("u1", "u2"),
+        units=(_unit("u1", 1), _unit("u2", 2)),
+        reading_goal=strategy.reading_goal,
+        reading_variant=strategy.reading_variant,
+        strategy_version=strategy.strategy_version,
+        strategy_hash=strategy.strategy_hash,
+        layer_policy_hash=layer_policy.policy_hash,
+        translation_prompt_lines=layer_policy.prompt_lines,
+    )
+    generation = TranslationBatchGenerationOutput(
+        units=[
+            _batch_unit_output("u2", [("u2_g1_1", "译文u2")]),
+            _batch_unit_output("u1", [("u1_g1_1", "译文u1")]),
+        ]
+    )
+
+    outputs = hydrate_translation_batch_output(context=context, generation=generation)
+
+    assert [uid for uid, _ in outputs] == ["u2", "u1"]
+    assert outputs[0][1].groups[0].anchor_segment_ids == ["u2_s1"]
+    assert outputs[1][1].groups[0].anchor_segment_ids == ["u1_s1"]
+
+
+def test_build_translation_batch_prompt_emits_predefined_groups_and_forbids_llm_anchor_choice() -> None:
+    """The batch prompt must hand the LLM pre-defined groups (group_id +
+    source_text) and forbid it from choosing anchor_segment_ids."""
+    context = _build_batch_context_with_segments()
+    prompt = _build_translation_batch_prompt(context)
+
+    # The prompt must NOT ask the LLM to output anchor_segment_ids.
+    assert "Do not output anchor_segment_ids" in prompt
+    # The predefined groups are emitted with their group_id + source_text_hash.
+    assert '<translation_group group_id="u2_g15_15"' in prompt
+    assert '<translation_group group_id="u2_g17_17"' in prompt
+    assert "anchor_segment_ids=\"s15\"" in prompt
+    assert "anchor_segment_ids=\"s17\"" in prompt
+    # Each group carries its source_text inline so the LLM translates the
+    # right span per group_id.
+    assert _S15_SOURCE in prompt
+    assert _S17_SOURCE in prompt
+    # The grouping contract forbids adding/merging/splitting/reordering.
+    assert "<grouping_contract>" in prompt
+    assert "PRE-DEFINED" in prompt
+    assert "MUST NOT add new groups" in prompt or "never invent" in prompt
+    # The prompt must not overpromise semantic validation. The backend
+    # prevents LLM-selected anchor remapping, but cannot prove the returned
+    # translated_text semantically matches the group's source_text.
+    assert "rejected before publish" not in prompt
+    assert "semantically-misaligned" not in prompt
+    assert "translation-quality failure" in prompt
+
+
+def test_build_translation_batch_prompt_does_not_ask_for_semantic_grouping() -> None:
+    """The batch prompt must NOT carry the per-unit semantic-grouping
+    guidance (which would contradict the deterministic one-per-segment
+    contract)."""
+    context = _build_batch_context_with_segments()
+    prompt = _build_translation_batch_prompt(context)
+
+    # The per-unit grouping_guidance block must not appear in the batch
+    # prompt; the batch uses grouping_contract instead.
+    assert "<grouping_guidance>" not in prompt
+    assert "<grouping_contract>" in prompt
+    # The batch prompt must not invite the LLM to choose anchor handles.
+    assert "anchor handle" not in prompt

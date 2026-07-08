@@ -19,6 +19,7 @@ from app.schemas.reader_orchestration import (
     SentenceAnalysisChunk,
     SentenceAnalysisItem,
     TranslationBatchGenerationOutput,
+    TranslationBatchGroupOutput,
     TranslationBatchUnitOutput,
     TranslationGenerationGroup,
     TranslationLayerGenerationOutput,
@@ -249,9 +250,9 @@ class DevFakeDisplayTitleGenerator:
 class DevFakeTranslationBatchExecutor:
     """T1.1 fake batch translation executor for the smoke harness.
 
-    Produces one ``TranslationBatchUnitOutput`` per unit, mirroring the
-    per-unit ``DevFakeTranslationExecutor`` output shape (1 group covering
-    all anchor_segment_ids with a ``[DEV FAKE BATCH]`` prefix).
+    Deterministic-grouping contract: echoes the backend-predefined
+    per-segment group_ids (``{unit_id}_g{order}_{order}``) and returns a
+    per-segment translated_text with a ``[DEV FAKE BATCH]`` prefix.
     """
 
     async def translate_batch(
@@ -260,18 +261,19 @@ class DevFakeTranslationBatchExecutor:
     ) -> TranslationBatchExecutionResult:
         units: list[TranslationBatchUnitOutput] = []
         for unit in context.units:
+            groups = [
+                TranslationBatchGroupOutput(
+                    group_id=(
+                        f"{unit.unit_id}_g{anchor.order_index}_{anchor.order_index}"
+                    ),
+                    translated_text=f"[DEV FAKE BATCH] {anchor.source_text}",
+                )
+                for anchor in unit.anchor_segments
+            ]
             units.append(
                 TranslationBatchUnitOutput(
                     unit_id=unit.unit_id,
-                    groups=[
-                        TranslationGenerationGroup(
-                            anchor_segment_ids=[
-                                anchor_segment.anchor_segment_id
-                                for anchor_segment in unit.anchor_segments
-                            ],
-                            translated_text=f"[DEV FAKE BATCH] {unit.source_text}",
-                        )
-                    ],
+                    groups=groups,
                 )
             )
         return TranslationBatchExecutionResult(

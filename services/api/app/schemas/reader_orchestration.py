@@ -246,6 +246,27 @@ class TranslationLayerGenerationOutput(BaseModel):
     groups: list[TranslationGenerationGroup] = Field(min_length=1)
 
 
+class TranslationBatchGroupOutput(BaseModel):
+    """Per-group LLM output within a batch translation unit.
+
+    Deterministic-grouping contract (T1.1 alignment fix): the backend
+    pre-defines translation groups — one per anchor segment — and gives
+    each a stable ``group_id`` plus its source text in the prompt. The
+    LLM MUST NOT decide ``anchor_segment_ids``; it only returns
+    ``group_id`` + ``translated_text`` for each pre-defined group. The
+    backend hydrates ``anchor_segment_ids`` / ``source_text_hash`` from
+    the pre-defined group mapping. This removes the previous
+    LLM-selected-anchor misalignment vector; semantic matching between
+    ``translated_text`` and the pre-defined source text still depends on
+    model quality.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    group_id: str = Field(min_length=1)
+    translated_text: str = Field(min_length=1)
+
+
 class TranslationBatchUnitOutput(BaseModel):
     """Per-unit translation output within a batch generation result.
 
@@ -253,12 +274,16 @@ class TranslationBatchUnitOutput(BaseModel):
     a short article. Each entry pairs a ``unit_id`` with the translation
     groups emitted for that unit. The batch worker splits the list back
     into per-unit :class:`TranslationLayerOutput` objects before publish.
+
+    The per-group entries use :class:`TranslationBatchGroupOutput`
+    (``group_id`` + ``translated_text`` only). Anchor selection is a
+    backend-deterministic contract, not an LLM decision.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     unit_id: str = Field(min_length=1)
-    groups: list[TranslationGenerationGroup] = Field(min_length=1)
+    groups: list[TranslationBatchGroupOutput] = Field(min_length=1)
 
 
 class TranslationBatchGenerationOutput(BaseModel):
@@ -266,7 +291,9 @@ class TranslationBatchGenerationOutput(BaseModel):
 
     The model returns one ``TranslationBatchUnitOutput`` per unit; the
     batch worker validates that the set of ``unit_id`` values exactly
-    matches the batch job's ``target_unit_ids``.
+    matches the batch job's ``target_unit_ids`` and that each unit's
+    ``group_id`` set exactly matches the pre-defined deterministic
+    groups.
     """
 
     model_config = ConfigDict(extra="forbid")

@@ -18,6 +18,7 @@ from app.schemas.reader_orchestration import (
     SentenceAnalysisChunk,
     SentenceAnalysisItem,
     TranslationBatchGenerationOutput,
+    TranslationBatchGroupOutput,
     TranslationBatchUnitOutput,
     TranslationGenerationGroup,
     TranslationLayerGenerationOutput,
@@ -387,6 +388,11 @@ class _StaticBatchTranslator:
     Mirrors :class:`_StaticTranslator` but accepts the batch context and
     returns :class:`TranslationBatchGenerationOutput` with one
     :class:`TranslationBatchUnitOutput` per unit.
+
+    Deterministic-grouping contract: the backend pre-defines one
+    translation group per anchor segment (group_id = ``{unit_id}_g{order}_{order}``).
+    The fake echoes exactly those group_ids and returns a per-segment
+    translated_text, matching what the hydrate step expects.
     """
 
     async def translate_batch(
@@ -397,13 +403,13 @@ class _StaticBatchTranslator:
             TranslationBatchUnitOutput(
                 unit_id=unit.unit_id,
                 groups=[
-                    TranslationGenerationGroup(
-                        anchor_segment_ids=[
-                            anchor_segment.anchor_segment_id
-                            for anchor_segment in unit.anchor_segments
-                        ],
-                        translated_text=f"译文：{unit.source_text}",
+                    TranslationBatchGroupOutput(
+                        group_id=(
+                            f"{unit.unit_id}_g{segment.order_index}_{segment.order_index}"
+                        ),
+                        translated_text=f"译文：{segment.source_text}",
                     )
+                    for segment in unit.anchor_segments
                 ],
             )
             for unit in context.units
@@ -1316,6 +1322,11 @@ async def test_run_respects_max_jobs(
 class _ReversedBatchTranslator:
     """T1 acceptance fake: returns units in REVERSE order to verify the
     publisher reorders outputs to match ``target_unit_ids`` (reading order).
+
+    Deterministic-grouping contract: echoes the predefined per-segment
+    group_ids (``{unit_id}_g{order}_{order}``) but returns the units in
+    reverse order, so the publisher's reorder-to-reading-order path is
+    still exercised.
     """
 
     async def translate_batch(
@@ -1326,13 +1337,13 @@ class _ReversedBatchTranslator:
             TranslationBatchUnitOutput(
                 unit_id=unit.unit_id,
                 groups=[
-                    TranslationGenerationGroup(
-                        anchor_segment_ids=[
-                            anchor_segment.anchor_segment_id
-                            for anchor_segment in unit.anchor_segments
-                        ],
-                        translated_text=f"译文：{unit.source_text}",
+                    TranslationBatchGroupOutput(
+                        group_id=(
+                            f"{unit.unit_id}_g{segment.order_index}_{segment.order_index}"
+                        ),
+                        translated_text=f"译文：{segment.source_text}",
                     )
+                    for segment in unit.anchor_segments
                 ],
             )
             for unit in reversed(context.units)

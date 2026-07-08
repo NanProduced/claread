@@ -18,6 +18,7 @@ from app.llm.router import build_model_for_route
 from app.llm.routes import MODEL_ROUTE_READER_LAYER_TRANSLATION
 from app.schemas.reader_orchestration import (
     TranslationBatchGenerationOutput,
+    TranslationBatchGroupOutput,
     TranslationBatchUnitOutput,
     TranslationGroup,
     TranslationLayerGenerationOutput,
@@ -65,6 +66,38 @@ from .span_recorder import (
 
 DEFAULT_TRANSLATION_RETRY_DELAY = timedelta(minutes=5)
 TRANSLATION_PROMPT_AGENT_NAME = "reader_layer_translation"
+
+# Dedicated batch-path agent instructions. The per-unit
+# ``reader_layer_translation`` instructions teach the model to choose
+# semantic reading groups and forbid one-group-per-anchor-segment; that
+# guidance directly contradicts the batch deterministic-grouping contract
+# (one backend-predefined group per anchor segment, LLM only echoes
+# ``group_id`` + ``translated_text``). Feeding both to the batch agent
+# would give the real LLM contradictory signals. The batch path therefore
+# uses this dedicated instruction set; the variant policy lines are still
+# injected via the ``<strategy>`` section of the per-call prompt.
+_TRANSLATION_BATCH_AGENT_INSTRUCTIONS = (
+    "You are a batch translation agent for short reading articles.\n"
+    "The translation groups are PRE-DEFINED by the backend: exactly one "
+    "group per anchor segment, listed in <translation_groups> in reading "
+    "order. Each group declares its group_id, unit_id, anchor_segment_ids, "
+    "source_text_hash, and source_text.\n"
+    "Your ONLY job is to translate each group's <source_text> into the "
+    "target language and return group_id + translated_text for that group.\n"
+    "Hard rules:\n"
+    "- Return exactly one group entry per listed <translation_group>, in "
+    "the same unit_id grouping.\n"
+    "- Echo the group_id exactly as given; never invent, merge, split, "
+    "reorder, add, or drop groups.\n"
+    "- Never output anchor_segment_ids, source_text, source_text_hash, or "
+    "any field other than group_id and translated_text.\n"
+    "- Never shift a translation onto a different group_id than the one "
+    "whose source_text it translates. The backend binds each group_id to "
+    "its source anchor deterministically; wrong translated_text under a "
+    "group_id is a translation-quality failure, not an anchor remapping.\n"
+    "- Translate each group's source_text faithfully and idiomatically "
+    "into the target language, respecting the <strategy> policy lines.\n"
+)
 
 # Strategy metadata keys that T5 bootstrap writes into reader_jobs.input_json.
 # T6 reads them back and validates against the live resolver output. Missing
@@ -246,6 +279,59 @@ class TranslationBatchUnitContext:
 
 
 @dataclass(frozen=True, slots=True)
+class DeterministicTranslationGroup:
+    """A backend-predefined translation group for the batch path.
+
+    The batch path no longer lets the LLM choose which anchor segments
+    belong to a translation group. The backend deterministically builds
+    one group per anchor segment (``group_id = {unit_id}_g{order}_{order}``,
+    ``anchor_segment_ids = (segment_id,)``, ``source_text_hash`` = the
+    segment's own text hash). The prompt emits these groups to the LLM
+    with their source text; the LLM only returns ``group_id`` +
+    ``translated_text``. The hydrate step maps each returned ``group_id``
+    back to this predefined group, removing the previous LLM-selected
+    anchor misalignment vector. Semantic matching between ``translated_text``
+    and this group's source text still depends on model quality.
+    """
+
+    group_id: str
+    unit_id: str
+    anchor_segment_ids: tuple[str, ...]
+    source_text: str
+    source_text_hash: str
+    order_index: int
+
+
+def build_deterministic_translation_groups(
+    unit: TranslationBatchUnitContext,
+) -> list[DeterministicTranslationGroup]:
+    """Build deterministic translation groups for a batch unit.
+
+    Minimal safe contract: one group per anchor segment, in reading order.
+    The LLM is NOT allowed to choose, merge, split, reorder, add, or drop
+    groups. Each group's ``group_id`` / ``anchor_segment_ids`` /
+    ``source_text_hash`` are derived from the unit's anchor segments, so
+    the hydrate step can re-derive the same mapping and reject any LLM
+    output whose ``group_id`` set does not exactly match.
+    """
+    groups: list[DeterministicTranslationGroup] = []
+    for segment in unit.anchor_segments:
+        groups.append(
+            DeterministicTranslationGroup(
+                group_id=(
+                    f"{unit.unit_id}_g{segment.order_index}_{segment.order_index}"
+                ),
+                unit_id=unit.unit_id,
+                anchor_segment_ids=(segment.anchor_segment_id,),
+                source_text=segment.source_text,
+                source_text_hash=segment.text_hash,
+                order_index=segment.order_index,
+            )
+        )
+    return groups
+
+
+@dataclass(frozen=True, slots=True)
 class TranslationBatchJobContext:
     """Batch translation job context: covers all units of a short article.
 
@@ -341,7 +427,7 @@ class PydanticAITranslationBatchExecutor:
         agent = Agent(
             model=model,
             output_type=TranslationBatchGenerationOutput,
-            instructions=load_agent_instructions(TRANSLATION_PROMPT_AGENT_NAME),
+            instructions=_TRANSLATION_BATCH_AGENT_INSTRUCTIONS,
             name="reader_layer_translation_batch_agent",
             retries={"tools": 1, "output": 2},
         )
@@ -372,82 +458,161 @@ def hydrate_translation_batch_output(
 ) -> list[tuple[str, TranslationLayerOutput]]:
     """Split a batch generation output into per-unit ``TranslationLayerOutput``.
 
-    For each ``TranslationBatchUnitOutput`` the function builds a temporary
-    per-unit :class:`TranslationJobContext` so the existing
-    :func:`hydrate_translation_layer_output` can add ``group_id`` and
-    ``source_text_hash`` using the unit's anchor segments.
+    Deterministic-grouping contract: the backend pre-defines one
+    translation group per anchor segment (see
+    :func:`build_deterministic_translation_groups`). The LLM only returns
+    ``group_id`` + ``translated_text`` per group; it MUST NOT choose
+    ``anchor_segment_ids``. This function maps each returned
+    ``group_id`` back to the predefined group's ``anchor_segment_ids``
+    and ``source_text_hash``, then assembles a per-unit
+    :class:`TranslationLayerOutput` for publish.
 
-    Fail-closed: any unit_id in the batch output that does not match a
-    unit in the batch context raises
-    :class:`TranslationExecutionError` (``translation_batch_unknown_unit``).
+    Fail-closed contract:
+        - ``unit_id`` not in batch context → ``translation_batch_unknown_unit``
+        - ``group_id`` set does not exactly match the predefined groups
+          (missing / extra / duplicate) → dedicated failure codes
+        - blank ``translated_text`` → ``translation_batch_empty_translated_text``
+        - no attempt is made to auto-align or repair a misaligned output
+
+    The publisher's :func:`_validate_translation_unit_output_core` still
+    runs as a second layer of defense against the live DB anchor segments.
     """
     units_by_id = {unit.unit_id: unit for unit in context.units}
+    # Cache the deterministic group mapping per unit so we only build it
+    # once even if the LLM returns duplicate unit_ids (the duplicate is
+    # rejected below before any lookup, but the cache is harmless).
+    deterministic_by_unit: dict[str, dict[str, DeterministicTranslationGroup]] = {}
+    for unit in context.units:
+        deterministic_by_unit[unit.unit_id] = {
+            group.group_id: group
+            for group in build_deterministic_translation_groups(unit)
+        }
+
     outputs: list[tuple[str, TranslationLayerOutput]] = []
+    seen_unit_ids: set[str] = set()
     for batch_unit in generation.units:
-        unit_context = units_by_id.get(batch_unit.unit_id)
-        if unit_context is None:
+        unit_id = batch_unit.unit_id
+        if unit_id in seen_unit_ids:
+            raise TranslationExecutionError(
+                f"translation batch output has duplicate unit_id {unit_id!r}",
+                retryable=False,
+                failure_class="validation",
+                failure_code="translation_batch_duplicate_unit_id",
+            )
+        seen_unit_ids.add(unit_id)
+
+        if unit_id not in units_by_id:
             raise TranslationExecutionError(
                 f"translation batch output references unknown unit_id "
-                f"{batch_unit.unit_id!r}",
+                f"{unit_id!r}",
                 retryable=False,
                 failure_class="validation",
                 failure_code="translation_batch_unknown_unit",
             )
-        # Build a per-unit TranslationJobContext so the existing
-        # hydrate_translation_layer_output can resolve anchor segments
-        # and compute group_id / source_text_hash exactly as the per-unit
-        # path does.
-        per_unit_context = TranslationJobContext(
-            job_id=context.job_id,
-            run_id=context.run_id,
-            reading_record_id=context.reading_record_id,
-            user_id=context.user_id,
-            base_id=context.base_id,
-            unit_id=batch_unit.unit_id,
-            order_index=unit_context.order_index,
-            expected_generation=context.expected_generation,
-            operation_fingerprint=context.operation_fingerprint,
-            source_language=context.source_language,
-            target_language=context.target_language,
-            source_text=unit_context.source_text,
-            text_hash=unit_context.text_hash,
-            anchor_segments=unit_context.anchor_segments,
-            reading_goal=context.reading_goal,
-            reading_variant=context.reading_variant,
-            strategy_version=context.strategy_version,
-            strategy_hash=context.strategy_hash,
-            layer_policy_hash=context.layer_policy_hash,
-            translation_prompt_lines=context.translation_prompt_lines,
+
+        deterministic_by_id = deterministic_by_unit[unit_id]
+        expected_group_ids = set(deterministic_by_id.keys())
+
+        # Walk the LLM-returned groups and validate against the predefined
+        # mapping. Track seen group_ids to catch duplicates; track which
+        # predefined groups have been covered so we can detect missing
+        # groups after the loop.
+        seen_group_ids: set[str] = set()
+        resolved_pairs: list[tuple[DeterministicTranslationGroup, str]] = []
+        extra_group_ids: list[str] = []
+        for llm_group in batch_unit.groups:
+            group_id = llm_group.group_id
+            predefined = deterministic_by_id.get(group_id)
+            if predefined is None:
+                extra_group_ids.append(group_id)
+                continue
+            if group_id in seen_group_ids:
+                raise TranslationExecutionError(
+                    f"translation batch unit {unit_id!r} has duplicate "
+                    f"group_id {group_id!r}",
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code="translation_batch_duplicate_group_id",
+                )
+            seen_group_ids.add(group_id)
+            if not llm_group.translated_text.strip():
+                raise TranslationExecutionError(
+                    f"translation batch group {group_id!r} in unit "
+                    f"{unit_id!r} has blank translated_text",
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code="translation_batch_empty_translated_text",
+                )
+            resolved_pairs.append((predefined, llm_group.translated_text))
+
+        if extra_group_ids:
+            raise TranslationExecutionError(
+                f"translation batch unit {unit_id!r} returned unknown "
+                f"group_ids {extra_group_ids!r}; expected exactly "
+                f"{sorted(expected_group_ids)!r}",
+                retryable=False,
+                failure_class="validation",
+                failure_code="translation_batch_extra_group",
+            )
+
+        missing_group_ids = expected_group_ids - seen_group_ids
+        if missing_group_ids:
+            raise TranslationExecutionError(
+                f"translation batch unit {unit_id!r} is missing groups "
+                f"{sorted(missing_group_ids)!r}; expected exactly "
+                f"{sorted(expected_group_ids)!r}",
+                retryable=False,
+                failure_class="validation",
+                failure_code="translation_batch_missing_group",
+            )
+
+        # Re-assemble in deterministic reading order so the published layer
+        # is independent of the order the LLM returned the groups.
+        resolved_pairs.sort(key=lambda pair: pair[0].order_index)
+        hydrated_groups: list[TranslationGroup] = []
+        for predefined, translated_text in resolved_pairs:
+            hydrated_groups.append(
+                TranslationGroup(
+                    group_id=predefined.group_id,
+                    anchor_segment_ids=list(predefined.anchor_segment_ids),
+                    source_text_hash=predefined.source_text_hash,
+                    translated_text=translated_text,
+                )
+            )
+        outputs.append(
+            (unit_id, TranslationLayerOutput(groups=hydrated_groups))
         )
-        unit_generation = TranslationLayerGenerationOutput(
-            groups=list(batch_unit.groups),
-        )
-        hydrated = hydrate_translation_layer_output(
-            context=per_unit_context,
-            generation=unit_generation,
-        )
-        outputs.append((batch_unit.unit_id, hydrated))
     return outputs
 
 
 def _build_translation_batch_prompt(context: TranslationBatchJobContext) -> str:
     strategy_section = _format_translation_strategy_section_from_batch(context)
-    grouping_section = _format_grouping_guidance_section()
-    units_section = _format_batch_units_section(context)
+    grouping_section = _format_batch_grouping_contract_section()
+    groups_section = _format_batch_translation_groups_section(context)
     return (
-        "Translate the following reading units for a short article batch.\n"
+        "Translate the following short article batch.\n"
+        "The translation groups are PRE-DEFINED by the backend. You MUST NOT "
+        "choose, merge, split, reorder, add, or drop groups. For each "
+        "<translation_group> below, return its group_id and the translated_text "
+        "that translates ONLY that group's <source_text> into the target "
+        "language. Do not translate across groups and do not shift a "
+        "translation to a different group_id. The backend binds each "
+        "group_id to its source anchor deterministically; wrong "
+        "translated_text under a group_id is a translation-quality failure, "
+        "not an anchor remapping.\n"
         f"source_language: {context.source_language}\n"
         f"target_language: {context.target_language}\n"
         f"{strategy_section}"
         f"{grouping_section}"
         "Return only the structured TranslationBatchGenerationOutput.\n"
         "Each unit must appear exactly once in units[] with its unit_id and "
-        "the translation groups covering all of that unit's anchor_segment_ids.\n"
-        "Do not output source_text, source_text_hash, group_id, segment_sources, "
-        "profile, source_language, target_language, diagnostics, confidence, "
-        "reason, notes, coverage_json, quality_json, or any UI, Plate, Slate, "
-        "or DOM fields.\n"
-        f"{units_section}"
+        "one group entry per pre-defined translation_group, each carrying "
+        "only group_id and translated_text.\n"
+        "Do not output anchor_segment_ids, source_text, source_text_hash, "
+        "segment_sources, profile, source_language, target_language, "
+        "diagnostics, confidence, reason, notes, coverage_json, quality_json, "
+        "or any UI, Plate, Slate, or DOM fields.\n"
+        f"{groups_section}"
     )
 
 
@@ -460,23 +625,58 @@ def _format_translation_strategy_section_from_batch(
     return f"<strategy>\n{rendered}\n</strategy>\n"
 
 
-def _format_batch_units_section(context: TranslationBatchJobContext) -> str:
-    parts: list[str] = ["<units>"]
+def _format_batch_grouping_contract_section() -> str:
+    """State the deterministic-grouping contract for the batch LLM call.
+
+    Unlike the per-unit path (where the LLM may choose semantic reading
+    groups), the batch path uses backend-predefined translation groups.
+    This section makes the contract explicit so the model cannot treat the
+    group list as a registry it is free to re-shape.
+    """
+    return (
+        "<grouping_contract>\n"
+        "Translation groups are fixed by the backend, one per anchor "
+        "segment, listed in <translation_groups> below in reading order. "
+        "Each group already declares its group_id, unit_id, "
+        "anchor_segment_ids, source_text_hash, and source_text.\n"
+        "You MUST return exactly one group entry per listed "
+        "<translation_group>, echoing its group_id and providing the "
+        "translated_text for that group's source_text only.\n"
+        "You MUST NOT add new groups, drop a group, merge groups, split a "
+        "group, reorder groups, or output anchor_segment_ids. You MUST NOT "
+        "shift a translation onto a different group_id than the one whose "
+        "source_text it translates.\n"
+        "</grouping_contract>\n"
+    )
+
+
+def _format_batch_translation_groups_section(
+    context: TranslationBatchJobContext,
+) -> str:
+    """Render the predefined translation groups for the batch LLM call.
+
+    For each unit, emit one ``<translation_group>`` per anchor segment with
+    its group_id, unit_id, anchor_segment_ids, source_text_hash, and the
+    segment's source_text. The LLM only needs to translate each group's
+    source_text and echo the group_id; it never chooses anchor coverage.
+    """
+    parts: list[str] = ["<translation_groups>"]
     for unit in context.units:
         parts.append(f'<unit unit_id="{unit.unit_id}">')
-        parts.append("<source_text>")
-        parts.append(unit.source_text)
-        parts.append("</source_text>")
-        parts.append("<target_segments>")
-        for segment in unit.anchor_segments:
+        for group in build_deterministic_translation_groups(unit):
+            anchor_ids = ",".join(group.anchor_segment_ids)
             parts.append(
-                f'<segment anchor_segment_id="{segment.anchor_segment_id}" '
-                f'order_index="{segment.order_index}" '
-                f'boundary_quality="{segment.boundary_quality}" />'
+                f'<translation_group group_id="{group.group_id}" '
+                f'unit_id="{group.unit_id}" '
+                f'anchor_segment_ids="{anchor_ids}" '
+                f'source_text_hash="{group.source_text_hash}">'
             )
-        parts.append("</target_segments>")
+            parts.append("<source_text>")
+            parts.append(group.source_text)
+            parts.append("</source_text>")
+            parts.append("</translation_group>")
         parts.append("</unit>")
-    parts.append("</units>")
+    parts.append("</translation_groups>")
     return "\n".join(parts) + "\n"
 
 
