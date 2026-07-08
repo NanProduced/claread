@@ -150,32 +150,6 @@ function sentenceChunkDomId(chunk: {
   return chunk.sourceMatch?.markId ?? `unmatched:${chunk.order}:${chunk.label}`;
 }
 
-function sentenceChunkDescription(label: string): string {
-  const normalized = label.trim().toLowerCase();
-  if (normalized.includes("subject") || normalized.includes("主语")) {
-    return "主语 / 话题核心";
-  }
-  if (normalized.includes("predicate") || normalized.includes("verb") || normalized.includes("谓语")) {
-    return "谓语 / 动作核心";
-  }
-  if (normalized.includes("object") || normalized.includes("宾语")) {
-    return "宾语 / 承接对象";
-  }
-  if (normalized.includes("modifier") || normalized.includes("修饰")) {
-    return "修饰 / 补充限定";
-  }
-  if (normalized.includes("clause") || normalized.includes("从句")) {
-    return "从句 / 信息层";
-  }
-  if (normalized.includes("condition") || normalized.includes("条件")) {
-    return "条件 / 前提信息";
-  }
-  if (normalized.includes("reason") || normalized.includes("cause") || normalized.includes("原因")) {
-    return "原因 / 解释关系";
-  }
-  return "结构片段";
-}
-
 function calloutTypeLabel(variant: ReaderCalloutElement["variant"]): string {
   return variant === "grammar" ? "语法解析" : "补充说明";
 }
@@ -884,7 +858,6 @@ function ReaderSentenceAnalysisChunkComponent({
   const chunkId = sentenceChunkDomId(chunk);
   const hasSourceMatch = Boolean(chunk.sourceMatch);
   const active = hasSourceMatch && activeChunkId === chunkId;
-  const chunkDescription = sentenceChunkDescription(chunk.label);
   const activateChunk = React.useCallback(() => {
     if (hasSourceMatch) {
       setActiveChunkId(chunkId);
@@ -913,7 +886,7 @@ function ReaderSentenceAnalysisChunkComponent({
       role={hasSourceMatch ? "button" : undefined}
       aria-label={
         hasSourceMatch
-          ? `定位原文片段：${chunk.label}，${chunkDescription}`
+          ? `定位原文片段：${chunk.label}`
           : undefined
       }
       tabIndex={hasSourceMatch ? 0 : undefined}
@@ -948,9 +921,6 @@ function ReaderSentenceAnalysisChunkComponent({
       <dt className="min-w-0">
         <span className="reader-record-plate-sentence-analysis-chunk-label block truncate text-context-blue/90">
           {chunk.label}
-        </span>
-        <span className="reader-record-plate-sentence-analysis-chunk-kind mt-0.5 block truncate font-sans text-muted/75">
-          {chunkDescription}
         </span>
       </dt>
       <dd className="reader-record-plate-sentence-analysis-chunk-body min-w-0 font-sans text-ink-soft/92">

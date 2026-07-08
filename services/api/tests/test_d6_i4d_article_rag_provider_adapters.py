@@ -650,20 +650,45 @@ def test_embedding_factory_constants_align():
 class _FakeMilvusClient:
     """Records every SDK call.  No network.  Idempotent by default."""
 
-    def __init__(self, *, upserted_count: int | None = None, raise_exc: Exception | None = None):
+    def __init__(
+        self,
+        *,
+        upserted_count: int | None = None,
+        raise_exc: Exception | None = None,
+        existing_indexes: list[str] | None = None,
+        collection_exists: bool = False,
+    ):
         self.has_collection_calls: list[str] = []
         self.create_collection_calls: list[dict[str, Any]] = []
+        self.list_indexes_calls: list[dict[str, Any]] = []
+        self.create_index_calls: list[dict[str, Any]] = []
         self.upsert_calls: list[dict[str, Any]] = []
         self.upserted_count_override = upserted_count
         self.raise_exc = raise_exc
+        self.existing_indexes = list(existing_indexes or [])
+        self.collection_exists = collection_exists
 
     def has_collection(self, *, collection_name: str) -> bool:  # noqa: D401
         self.has_collection_calls.append(collection_name)
-        return False  # always create so the schema builder is exercised
+        return self.collection_exists
 
     def create_collection(self, *, collection_name: str, schema: dict[str, Any]) -> None:
         self.create_collection_calls.append(
             {"collection_name": collection_name, "schema": schema}
+        )
+
+    def list_indexes(self, *, collection_name: str, field_name: str) -> list[str]:
+        self.list_indexes_calls.append(
+            {"collection_name": collection_name, "field_name": field_name}
+        )
+        return list(self.existing_indexes)
+
+    def prepare_index_params(self):
+        return _FakeIndexParams()
+
+    def create_index(self, *, collection_name: str, index_params) -> None:
+        self.create_index_calls.append(
+            {"collection_name": collection_name, "index_params": list(index_params)}
         )
 
     def upsert(self, *, collection_name: str, data: list[dict[str, Any]]) -> dict[str, Any]:
@@ -675,7 +700,26 @@ class _FakeMilvusClient:
             if self.upserted_count_override is not None
             else len(data)
         )
-        return {"upserted_count": count}
+        return {"upsert_count": count}
+
+
+class _FakeIndexParams(list):
+    def add_index(
+        self,
+        *,
+        field_name: str,
+        index_type: str = "",
+        index_name: str = "",
+        **kwargs,
+    ):
+        self.append(
+            {
+                "field_name": field_name,
+                "index_type": index_type,
+                "index_name": index_name,
+                **kwargs,
+            }
+        )
 
 
 def _install_pymilvus_stub(
@@ -683,6 +727,8 @@ def _install_pymilvus_stub(
     *,
     upserted_count: int | None = None,
     raise_exc: Exception | None = None,
+    existing_indexes: list[str] | None = None,
+    collection_exists: bool = False,
 ) -> _FakeMilvusClient:
     """Install a fake pymilvus module that exposes the symbols both the
     client constructor and ``_build_pymilvus_collection_schema`` import.
@@ -724,7 +770,10 @@ def _install_pymilvus_stub(
 
     fake_module = types.ModuleType("pymilvus")
     client = _FakeMilvusClient(
-        upserted_count=upserted_count, raise_exc=raise_exc
+        upserted_count=upserted_count,
+        raise_exc=raise_exc,
+        existing_indexes=existing_indexes,
+        collection_exists=collection_exists,
     )
     fake_module.MilvusClient = lambda *, uri, token: client  # type: ignore[assignment]
     fake_module.CollectionSchema = _StubCollectionSchema  # type: ignore[assignment]
@@ -779,13 +828,31 @@ def _install_pymilvus_stub_with_raising_upsert(
         def __init__(self):
             self.has_collection_calls: list[str] = []
             self.create_collection_calls: list[dict[str, Any]] = []
+            self.list_indexes_calls: list[dict[str, Any]] = []
+            self.create_index_calls: list[dict[str, Any]] = []
 
         def has_collection(self, *, collection_name: str) -> bool:
             self.has_collection_calls.append(collection_name)
             return False
 
         def create_collection(self, *, collection_name, schema) -> None:
-            self.create_collection_calls.append({"collection_name": collection_name, "schema": schema})
+            self.create_collection_calls.append(
+                {"collection_name": collection_name, "schema": schema}
+            )
+
+        def list_indexes(self, *, collection_name: str, field_name: str) -> list[str]:
+            self.list_indexes_calls.append(
+                {"collection_name": collection_name, "field_name": field_name}
+            )
+            return []
+
+        def prepare_index_params(self):
+            return _FakeIndexParams()
+
+        def create_index(self, *, collection_name: str, index_params) -> None:
+            self.create_index_calls.append(
+                {"collection_name": collection_name, "index_params": list(index_params)}
+            )
 
         def upsert(self, *, collection_name, data):
             raise exc
@@ -1080,6 +1147,22 @@ async def test_zilliz_writer_lazy_sdk_init(
     )
     assert fake_client.has_collection_calls == [_FAKE_ZILLIZ_COLLECTION]
     assert len(fake_client.create_collection_calls) == 1
+    assert fake_client.list_indexes_calls == [
+        {"collection_name": _FAKE_ZILLIZ_COLLECTION, "field_name": "vector"}
+    ]
+    assert fake_client.create_index_calls == [
+        {
+            "collection_name": _FAKE_ZILLIZ_COLLECTION,
+            "index_params": [
+                {
+                    "field_name": "vector",
+                    "index_type": "AUTOINDEX",
+                    "index_name": "article_rag_vector_autoin",
+                    "metric_type": "COSINE",
+                }
+            ],
+        }
+    ]
     created_schema = fake_client.create_collection_calls[0]["schema"]
     # Fix 2: the writer now passes a real ``CollectionSchema`` (ORM-style),
     # not the structural dict.  ``CollectionSchema`` exposes ``fields``
@@ -1109,6 +1192,84 @@ async def test_zilliz_writer_lazy_sdk_init(
         "citation_metadata_json",
         "metadata_json",
     } == field_names
+
+
+@pytest.mark.anyio
+async def test_zilliz_writer_repairs_existing_collection_without_vector_index(
+    _pymilvus_clean: None, monkeypatch: pytest.MonkeyPatch,
+):
+    """Existing dev collections created before index wiring must be repaired.
+
+    Zilliz Cloud refuses to load a collection with "index not found" when
+    the vector field has no index.  The writer therefore checks indexes
+    even when the collection already exists.
+    """
+    fake_client = _install_pymilvus_stub(
+        monkeypatch,
+        collection_exists=True,
+        existing_indexes=[],
+    )
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_FAKE_ZILLIZ_COLLECTION,
+        dim=8,
+    )
+
+    result = await writer.upsert_chunks(
+        collection=_FAKE_ZILLIZ_COLLECTION,
+        chunks_with_embeddings=[_make_chunk(text="legacy collection")],
+        metadata=_make_write_metadata(chunk_count=1),
+    )
+
+    assert result.upserted_count == 1
+    assert fake_client.create_collection_calls == []
+    assert fake_client.list_indexes_calls == [
+        {"collection_name": _FAKE_ZILLIZ_COLLECTION, "field_name": "vector"}
+    ]
+    assert fake_client.create_index_calls == [
+        {
+            "collection_name": _FAKE_ZILLIZ_COLLECTION,
+            "index_params": [
+                {
+                    "field_name": "vector",
+                    "index_type": "AUTOINDEX",
+                    "index_name": "article_rag_vector_autoin",
+                    "metric_type": "COSINE",
+                }
+            ],
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_zilliz_writer_skips_index_creation_when_vector_index_exists(
+    _pymilvus_clean: None, monkeypatch: pytest.MonkeyPatch,
+):
+    fake_client = _install_pymilvus_stub(
+        monkeypatch,
+        collection_exists=True,
+        existing_indexes=["article_rag_vector_autoin"],
+    )
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_FAKE_ZILLIZ_COLLECTION,
+        dim=8,
+    )
+
+    result = await writer.upsert_chunks(
+        collection=_FAKE_ZILLIZ_COLLECTION,
+        chunks_with_embeddings=[_make_chunk(text="indexed collection")],
+        metadata=_make_write_metadata(chunk_count=1),
+    )
+
+    assert result.upserted_count == 1
+    assert fake_client.create_collection_calls == []
+    assert fake_client.list_indexes_calls == [
+        {"collection_name": _FAKE_ZILLIZ_COLLECTION, "field_name": "vector"}
+    ]
+    assert fake_client.create_index_calls == []
 
 
 @pytest.mark.anyio

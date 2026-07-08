@@ -35,8 +35,8 @@ Contract
 * ``upsert_chunks`` is idempotent on ``chunk_id`` (the pymilvus primary
   key).  Re-upserting the same chunk overwrites prior vector; no error
   raised.
-* ``upserted_count`` returned by pymilvus propagates **verbatim** to
-  ``ArticleRagVectorWriteResult``.  Partial upserts (``upserted_count
+* ``upsert_count`` returned by pymilvus propagates **verbatim** to
+  ``ArticleRagVectorWriteResult``.  Partial upserts (``upsert_count
   != len(chunks)``) are NOT silently coerced — D6-I4C's Phase-4 check
   surfaces them as retryable ``FAILURE_CODE_VECTOR_WRITE_FAILED``.
 * Constructor does **not** open a network connection.  The first
@@ -104,6 +104,10 @@ _ARTICLE_RAG_VERSION_MAX_LEN = 32
 _ARTICLE_RAG_UUID_MAX_LEN = 64
 _ARTICLE_RAG_ID_LIST_MAX_LEN = 2048
 _ARTICLE_RAG_JSON_MAX_LEN = 8192
+_ARTICLE_RAG_VECTOR_FIELD_NAME = "vector"
+_ARTICLE_RAG_VECTOR_INDEX_NAME = "article_rag_vector_autoin"
+_ARTICLE_RAG_VECTOR_INDEX_TYPE = "AUTOINDEX"
+_ARTICLE_RAG_VECTOR_METRIC_TYPE = "COSINE"
 
 # Forbidden keys — sourced from D6-I4C test 3 (input_json denylist) +
 # safety extensions for vector payload.  Any overlap between the row
@@ -527,7 +531,11 @@ def _build_article_rag_collection_schema(dim: int) -> dict[str, Any]:
             {"name": "content_sha256", "type": "VARCHAR", "max_length": _ARTICLE_RAG_HASH_MAX_LEN},
             {"name": "embedding_text_sha256", "type": "VARCHAR", "max_length": _ARTICLE_RAG_HASH_MAX_LEN},
             {"name": "embedding_model", "type": "VARCHAR", "max_length": _ARTICLE_RAG_MODEL_MAX_LEN},
-            {"name": "vector", "type": "FLOAT_VECTOR", "dim": int(dim)},
+            {
+                "name": _ARTICLE_RAG_VECTOR_FIELD_NAME,
+                "type": "FLOAT_VECTOR",
+                "dim": int(dim),
+            },
             {"name": "reading_record_id", "type": "VARCHAR", "max_length": _ARTICLE_RAG_UUID_MAX_LEN},
             {"name": "stable_document_id", "type": "VARCHAR", "max_length": _ARTICLE_RAG_UUID_MAX_LEN},
             {"name": "base_id", "type": "VARCHAR", "max_length": _ARTICLE_RAG_UUID_MAX_LEN},
@@ -608,7 +616,7 @@ def _build_pymilvus_collection_schema(dim: int) -> Any:
             max_length=_ARTICLE_RAG_MODEL_MAX_LEN,
         ),
         FieldSchema(
-            name="vector",
+            name=_ARTICLE_RAG_VECTOR_FIELD_NAME,
             dtype=DataType.FLOAT_VECTOR,
             dim=int(dim),
         ),
@@ -690,6 +698,45 @@ def _build_pymilvus_collection_schema(dim: int) -> Any:
     )
 
 
+def _build_pymilvus_vector_index_params(client: Any) -> Any:
+    """Build index params for the article RAG vector field.
+
+    Zilliz Cloud requires a vector index before a collection can be
+    loaded/searched.  AUTOINDEX lets Zilliz pick the concrete index
+    implementation while the metric stays aligned with the embedding
+    and search path's cosine contract.
+    """
+    index_params = client.prepare_index_params()
+    index_params.add_index(
+        field_name=_ARTICLE_RAG_VECTOR_FIELD_NAME,
+        index_type=_ARTICLE_RAG_VECTOR_INDEX_TYPE,
+        index_name=_ARTICLE_RAG_VECTOR_INDEX_NAME,
+        metric_type=_ARTICLE_RAG_VECTOR_METRIC_TYPE,
+    )
+    return index_params
+
+
+def _ensure_pymilvus_vector_index(client: Any, *, collection: str) -> None:
+    """Ensure the article RAG vector field has a Milvus/Zilliz index.
+
+    This runs for both newly created collections and pre-existing local
+    collections.  Older dev collections may already exist without an
+    index; those collections fail with "index not found" when loaded in
+    Zilliz Cloud until the index is added.
+    """
+    existing_indexes = client.list_indexes(
+        collection_name=collection,
+        field_name=_ARTICLE_RAG_VECTOR_FIELD_NAME,
+    )
+    if existing_indexes:
+        return
+
+    client.create_index(
+        collection_name=collection,
+        index_params=_build_pymilvus_vector_index_params(client),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Real adapter
 # ---------------------------------------------------------------------------
@@ -708,14 +755,15 @@ class ZillizArticleRagVectorWriter:
     ``dim``.  No network call happens until the first
     :meth:`upsert_chunks` — at which point the writer constructs
     :class:`pymilvus.MilvusClient` inside :func:`asyncio.to_thread`
-    and ensures the collection exists with
-    :func:`_build_article_rag_collection_schema`.
+    ensures the collection exists with
+    :func:`_build_article_rag_collection_schema`, and ensures a vector
+    index exists before writing.
 
     Idempotency: re-upserting the same ``chunk_id`` overwrites the
     prior vector — no error is raised.  pymilvus enforces uniqueness on
     the primary key.
 
-    Partial upserts: the ``upserted_count`` returned by pymilvus is
+    Partial upserts: the ``upsert_count`` returned by pymilvus is
     propagated **verbatim** to
     :class:`ArticleRagVectorWriteResult`.  The D6-I4C Phase-4 check
     surfaces any ``upserted_count != len(chunks)`` mismatch as a
@@ -817,10 +865,13 @@ class ZillizArticleRagVectorWriter:
           * The collection is created on first call if it does not
             exist (idempotent — re-running with the same schema is a
             no-op).
+          * The vector field index is created when missing. This also
+            repairs pre-existing dev collections created before index
+            creation was wired.
           * ``upsert`` is called once with the full list of rows
             keyed on ``chunk_id`` (pymilvus primary key).
 
-        ``upserted_count`` is propagated verbatim — partial upserts
+        ``upsert_count`` is propagated verbatim — partial upserts
         surface to the worker as retryable
         :data:`FAILURE_CODE_VECTOR_WRITE_FAILED` via D6-I4C's Phase-4
         check.
@@ -858,6 +909,7 @@ class ZillizArticleRagVectorWriter:
                     collection_name=collection,
                     schema=schema,
                 )
+            _ensure_pymilvus_vector_index(client, collection=collection)
             return client.upsert(collection_name=collection, data=rows)
 
         try:
@@ -880,12 +932,16 @@ class ZillizArticleRagVectorWriter:
                 failure_code=FAILURE_CODE_VECTOR_WRITE_FAILED,
             ) from exc
 
-        # Forward verbatim.  Never silently coerce.
-        upserted_count_raw = (
-            result_dict.get("upserted_count", 0)
-            if isinstance(result_dict, dict)
-            else 0
-        )
+        # Forward verbatim.  Never silently coerce.  pymilvus 2.6.x
+        # returns ``upsert_count``; keep the legacy ``upserted_count``
+        # fallback only for older fakes / SDK variants.
+        if isinstance(result_dict, dict):
+            upserted_count_raw = result_dict.get(
+                "upsert_count",
+                result_dict.get("upserted_count", 0),
+            )
+        else:
+            upserted_count_raw = 0
         try:
             upserted_count = int(upserted_count_raw)
         except (TypeError, ValueError):

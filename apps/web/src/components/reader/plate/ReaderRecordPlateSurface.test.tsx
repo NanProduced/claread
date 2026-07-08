@@ -1717,6 +1717,10 @@ describe("ReaderRecordPlateSurface", () => {
     });
     expect(chunkRows.textContent).toContain("subject");
     expect(chunkRows.textContent).toContain("modifier");
+    expect(chunkRows.textContent).not.toContain("结构片段");
+    expect(chunkRows.textContent).not.toContain("从句 / 信息层");
+    expect(chunkRows.textContent).not.toContain("主语 / 话题核心");
+    expect(chunkRows.textContent).not.toContain("修饰 / 补充限定");
     expect(toggle.textContent?.trim()).toBe("");
     expect(toggle.getAttribute("aria-label")).toBe("收起长句拆析");
   });

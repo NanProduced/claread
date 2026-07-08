@@ -443,6 +443,67 @@ describe("ReaderRecordNavigationRail", () => {
     expect(screen.getByText("第 2 段")).toBeTruthy();
   });
 
+  it("lets the detail panel size to its rows instead of inheriting the full tick rail height", () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+      { unit_id: "unit_2", order_index: 1, label: "Beta" },
+    ]);
+    const plateDocument = makePlateDocument([
+      makeParagraph("unit_1", "Alpha paragraph."),
+      makeParagraph("unit_2", "Beta paragraph."),
+    ]);
+    renderTargets(["unit_1", "unit_2"]);
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    const panelSurface = panel.firstElementChild as HTMLElement | null;
+    const panelScrollArea = panelSurface?.firstElementChild as HTMLElement | null;
+
+    expect(panel.className).toContain("top-1/2");
+    expect(panel.className).toContain("-translate-y-1/2");
+    expect(panel.className).toContain("max-h-[min(72vh,42rem)]");
+    expect(panel.className).not.toContain("h-full");
+    expect(panelSurface?.className).toContain("max-h-[min(72vh,42rem)]");
+    expect(panelSurface?.className).not.toContain("h-full");
+    expect(panelScrollArea?.className).toContain("overflow-y-auto");
+    expect(panelScrollArea?.className).not.toContain("flex-1");
+  });
+
+  it("opens the detail panel at the current mini-rail hover position", async () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+      { unit_id: "unit_2", order_index: 1, label: "Beta" },
+      { unit_id: "unit_3", order_index: 2, label: "Gamma" },
+    ]);
+    const plateDocument = makePlateDocument([
+      makeParagraph("unit_1", "Alpha paragraph."),
+      makeParagraph("unit_2", "Beta paragraph."),
+      makeParagraph("unit_3", "Gamma paragraph."),
+    ]);
+    renderTargets(["unit_1", "unit_2", "unit_3"]);
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    const rail = screen.getByTestId("reader-record-navigation-rail");
+    const miniRail = screen.getByTestId("reader-record-mini-rail");
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    setRectTop(rail, 100, 420);
+
+    fireEvent.mouseEnter(miniRail, { clientY: 260 });
+    await waitFor(() => {
+      expect(panel.classList.contains("pointer-events-none")).toBe(false);
+      expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBe("160");
+    });
+    expect(panel.style.top).toBe("160px");
+
+    fireEvent.mouseMove(miniRail, { clientY: 440 });
+    await waitFor(() => {
+      expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBe("340");
+    });
+    expect(panel.style.top).toBe("340px");
+  });
+
   it("scrolls the unit start target into view using window.scrollTo", () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },

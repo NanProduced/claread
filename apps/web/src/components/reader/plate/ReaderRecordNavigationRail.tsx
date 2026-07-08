@@ -13,6 +13,7 @@ import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 const TOPBAR_SAFE_HEIGHT = 56; // px, sticky topbar + small gap
 const SCROLL_LOCK_MS = 700;
 const ACTIVE_SAFE_OFFSET = 8;
+const PANEL_ANCHOR_EDGE_PADDING = 18;
 
 /**
  * Locate the best scroll target for a reading unit inside the Reader Record
@@ -72,6 +73,12 @@ function computeActiveUnitId(
   return lastAbove ?? firstBelow ?? items[0]?.unitId ?? null;
 }
 
+function clampPanelAnchorTop(top: number, railHeight: number): number {
+  const lower = PANEL_ANCHOR_EDGE_PADDING;
+  const upper = Math.max(lower, railHeight - PANEL_ANCHOR_EDGE_PADDING);
+  return Math.min(Math.max(top, lower), upper);
+}
+
 /**
  * Find the real scroll container for the Reader Record body. The app shell
  * wraps content in a Radix ScrollArea, so `window` is not always the element
@@ -110,8 +117,9 @@ interface MiniRailTicksProps {
     event: React.KeyboardEvent<HTMLButtonElement>,
     unitId: string,
   ) => void;
-  onMouseEnter: () => void;
-  onFocusCapture: () => void;
+  onMouseEnter: (event: React.MouseEvent<HTMLDivElement>) => void;
+  onMouseMove: (event: React.MouseEvent<HTMLDivElement>) => void;
+  onFocusCapture: (event: React.FocusEvent<HTMLDivElement>) => void;
 }
 
 function MiniRailTicks({
@@ -122,6 +130,7 @@ function MiniRailTicks({
   onItemClick,
   onItemKeyDown,
   onMouseEnter,
+  onMouseMove,
   onFocusCapture,
 }: MiniRailTicksProps) {
   return (
@@ -132,6 +141,7 @@ function MiniRailTicks({
         className,
       )}
       onMouseEnter={onMouseEnter}
+      onMouseMove={onMouseMove}
       onFocusCapture={onFocusCapture}
     >
       {items.map((item) => (
@@ -165,6 +175,7 @@ interface NavigationPanelProps {
   items: ReaderRecordNavigationItem[];
   activeUnitId: string | null;
   panelOpen: boolean;
+  panelAnchorTopPx: number | null;
   className?: string;
   onItemClick: (unitId: string) => void;
   onItemKeyDown: (
@@ -179,6 +190,7 @@ function NavigationPanel({
   items,
   activeUnitId,
   panelOpen,
+  panelAnchorTopPx,
   className,
   onItemClick,
   onItemKeyDown,
@@ -189,27 +201,31 @@ function NavigationPanel({
     <div
       data-testid="reader-record-navigation-panel"
       data-reader-record-navigation-panel="true"
+      data-reader-record-navigation-panel-anchor-y={
+        panelAnchorTopPx !== null ? String(Math.round(panelAnchorTopPx)) : undefined
+      }
       className={cn(
         "reader-record-navigation-panel motion-reduce:transition-none",
         "transition-[transform,opacity,visibility] duration-200 ease-[var(--cl-ease-standard)]",
-        "absolute right-0 top-0 z-10 h-full origin-right",
+        "absolute right-0 top-1/2 z-10 max-h-[min(72vh,42rem)] -translate-y-1/2 origin-right",
         panelOpen
           ? "visible translate-x-0 opacity-100"
           : "invisible translate-x-2 scale-[0.98] opacity-0 pointer-events-none",
         className,
       )}
+      style={panelAnchorTopPx !== null ? { top: `${panelAnchorTopPx}px` } : undefined}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       aria-hidden={!panelOpen}
     >
       <div
         className={cn(
-          "flex h-full flex-col overflow-hidden rounded-lg border border-hairline/50",
+          "flex max-h-[min(72vh,42rem)] flex-col overflow-hidden rounded-lg border border-hairline/50",
           "bg-[var(--surface-raised)]/95 shadow-[0_10px_24px_rgba(23,21,17,0.08)] backdrop-blur-sm",
-          "w-64 max-h-[min(72vh,42rem)]",
+          "w-64",
         )}
       >
-        <div className="flex-1 overflow-y-auto py-2">
+        <div className="max-h-[min(72vh,42rem)] overflow-y-auto py-2">
           <ol className="flex flex-col">
             {items.map((item) => (
               <NavigationPanelRow
@@ -255,6 +271,7 @@ export function ReaderRecordNavigationRail({
 
   const [activeUnitId, setActiveUnitId] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [panelAnchorTopPx, setPanelAnchorTopPx] = useState<number | null>(null);
   const wrapperRef = useRef<HTMLElement>(null);
   const closeTimerRef = useRef<number | null>(null);
   const scrollLockTimerRef = useRef<number | null>(null);
@@ -284,6 +301,35 @@ export function ReaderRecordNavigationRail({
     clearCloseTimer();
     setPanelOpen(true);
   }, [clearCloseTimer]);
+
+  const setPanelAnchorFromClientY = useCallback((clientY: number) => {
+    if (!Number.isFinite(clientY)) {
+      return;
+    }
+    const wrapper = wrapperRef.current;
+    if (!wrapper) {
+      return;
+    }
+    const rect = wrapper.getBoundingClientRect();
+    setPanelAnchorTopPx(
+      clampPanelAnchorTop(clientY - rect.top, rect.height),
+    );
+  }, []);
+
+  const setPanelAnchorFromElement = useCallback((element: Element) => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) {
+      return;
+    }
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    setPanelAnchorTopPx(
+      clampPanelAnchorTop(
+        elementRect.top + elementRect.height / 2 - wrapperRect.top,
+        wrapperRect.height,
+      ),
+    );
+  }, []);
 
   const keepOpenPanel = useCallback(() => {
     if (!panelOpen) return;
@@ -435,6 +481,31 @@ export function ReaderRecordNavigationRail({
     [scheduleClose],
   );
 
+  const handleMiniRailMouseEnter = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      setPanelAnchorFromClientY(event.clientY);
+      openPanel();
+    },
+    [openPanel, setPanelAnchorFromClientY],
+  );
+
+  const handleMiniRailMouseMove = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      setPanelAnchorFromClientY(event.clientY);
+    },
+    [setPanelAnchorFromClientY],
+  );
+
+  const handleMiniRailFocusCapture = useCallback(
+    (event: React.FocusEvent<HTMLDivElement>) => {
+      if (event.target instanceof Element) {
+        setPanelAnchorFromElement(event.target);
+      }
+      openPanel();
+    },
+    [openPanel, setPanelAnchorFromElement],
+  );
+
   if (items.length === 0) {
     return null;
   }
@@ -467,6 +538,7 @@ export function ReaderRecordNavigationRail({
         items={items}
         activeUnitId={activeUnitId}
         panelOpen={panelOpen}
+        panelAnchorTopPx={panelAnchorTopPx}
         onItemClick={handleItemClick}
         onItemKeyDown={handleItemKeyDown}
         onMouseEnter={keepOpenPanel}
@@ -481,8 +553,9 @@ export function ReaderRecordNavigationRail({
         className={cn(isCanvas && "absolute inset-y-0 right-0")}
         onItemClick={handleItemClick}
         onItemKeyDown={handleItemKeyDown}
-        onMouseEnter={openPanel}
-        onFocusCapture={openPanel}
+        onMouseEnter={handleMiniRailMouseEnter}
+        onMouseMove={handleMiniRailMouseMove}
+        onFocusCapture={handleMiniRailFocusCapture}
       />
     </nav>
   );
