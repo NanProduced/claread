@@ -1408,6 +1408,85 @@ def test_build_grammar_prompt_strategy_section_order() -> None:
     assert unit_id_idx < strategy_idx < return_idx < source_idx
 
 
+def test_legacy_agent_instructions_contain_markdown_contract() -> None:
+    """The legacy path agent instructions (reader_layer_grammar_bundle.yaml)
+    must declare the Markdown output contract: note/analysis are Simplified
+    Chinese Markdown, allow bold/inline-code/short bullets, forbid raw HTML
+    and headings (hard forbid, no "除非确有需要"). Must declare unified
+    language requirements (grammar_point can be Chinese/mixed, pattern/
+    dedup_hint stay English).
+    """
+    from app.services.analysis.prompting.prompt_loader import (
+        load_agent_instructions,
+    )
+
+    instructions = load_agent_instructions(
+        grammar_worker_module.GRAMMAR_PROMPT_AGENT_NAME
+    )
+
+    assert "Markdown" in instructions
+    assert "**加粗**" in instructions
+    assert "`inline code`" in instructions
+    assert "raw HTML" in instructions
+    # The instructions must explicitly forbid HTML tags (mentioning them in
+    # backticks as forbidden examples is the correct form).
+    assert "禁止的 Markdown" in instructions or "Forbidden" in instructions
+    # Heading forbid must be hard — no soft "除非确有需要" escape
+    assert "除非确有需要" not in instructions
+    # Language requirements: grammar_point can be Chinese or mixed
+    assert "中英混合" in instructions
+    # Frontend deserialization (not backend)
+    assert "前端" in instructions
+
+
+def test_legacy_field_descriptions_forbid_raw_html() -> None:
+    """Legacy candidate Field descriptions for note/analysis must declare the
+    Markdown contract and forbid raw HTML, matching the window path. Must say
+    "前端" (not "后端") for deserialization, and hard-forbid headings.
+    """
+    from app.services.reader_orchestration.grammar_worker import (
+        GrammarNoteCandidateItem,
+        SentenceAnalysisCandidateItem,
+    )
+
+    note_desc = GrammarNoteCandidateItem.model_fields["note"].description or ""
+    analysis_desc = (
+        SentenceAnalysisCandidateItem.model_fields["analysis"].description or ""
+    )
+
+    assert "Markdown" in note_desc
+    assert "raw HTML" in note_desc
+    assert "Markdown" in analysis_desc
+    assert "raw HTML" in analysis_desc
+    # Deserialization is done by the frontend, not the backend
+    assert "前端" in note_desc
+    assert "前端" in analysis_desc
+    assert "后端" not in note_desc
+    assert "后端" not in analysis_desc
+    # Heading forbid must be hard
+    assert "除非确有需要" not in note_desc
+    assert "除非确有需要" not in analysis_desc
+
+
+def test_legacy_prompt_injects_gaokao_policy_without_stale_field_names() -> None:
+    """Gaokao grammar_bundle policy lines must enter the legacy prompt, and
+    must not carry stale field names (note_zh / analysis_zh / teach).
+    """
+    context = _build_context_for_variant(
+        reading_goal="exam",
+        reading_variant="gaokao",
+    )
+    prompt = _build_grammar_prompt(context)
+
+    assert "reading_goal: exam" in prompt
+    assert "reading_variant: gaokao" in prompt
+    assert "高考" in prompt
+    assert "显性教学" in prompt
+    # Stale field names from old grammar.yaml must NOT appear
+    assert "note_zh" not in prompt
+    assert "analysis_zh" not in prompt
+
+
 # ---------------------------------------------------------------------------#
 # T8: _validate_grammar_strategy_metadata fail-closed unit tests
 # ---------------------------------------------------------------------------#

@@ -347,7 +347,14 @@ class GrammarNoteItem(BaseModel):
     spans: list[ReaderTextRangeAnchor] = Field(min_length=1, max_length=4)
     grammar_point: str = Field(min_length=1)
     pattern: str | None = None
-    note: str = Field(min_length=1)
+    note: str = Field(
+        min_length=1,
+        description=(
+            "简体中文 Markdown string。允许 **加粗**、`inline code`、短无序列表；"
+            "禁止 raw HTML 和 Markdown 标题（# / ## / ###）。前端会把 Markdown "
+            "反序列化为 Plate children 渲染。"
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_same_unit_spans(self) -> GrammarNoteItem:
@@ -374,7 +381,15 @@ class SentenceAnalysisItem(BaseModel):
     item_type: Literal["sentence_analysis"] = "sentence_analysis"
     anchor: ReaderTextRangeAnchor
     label: str = Field(min_length=1)
-    analysis: str = Field(min_length=1)
+    analysis: str = Field(
+        min_length=1,
+        description=(
+            "简体中文 Markdown string。允许 **加粗**、`inline code`、短无序列表；"
+            "禁止 raw HTML 和 Markdown 标题（# / ## / ###）。讲解结构关系和阅读"
+            "顺序，不要逐块复述 chunks。前端会把 Markdown 反序列化为 Plate "
+            "children 渲染。"
+        ),
+    )
     chunks: list[SentenceAnalysisChunk] = Field(min_length=1)
 
 

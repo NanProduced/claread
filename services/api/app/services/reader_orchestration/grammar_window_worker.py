@@ -302,7 +302,15 @@ class _WindowGrammarNoteCandidate(BaseModel):
     spans: list[_WindowGrammarSpan] = Field(min_length=1, max_length=4)
     grammar_point: str = Field(min_length=1, max_length=120)
     pattern: str | None = Field(default=None, max_length=120)
-    note: str = Field(min_length=1, max_length=360)
+    note: str = Field(
+        min_length=1,
+        max_length=360,
+        description=(
+            "简体中文 Markdown string。允许 **加粗**、`inline code`、短无序列表；"
+            "禁止 raw HTML 和 Markdown 标题（# / ## / ###）。前端会把 Markdown "
+            "反序列化为 Plate children 渲染。"
+        ),
+    )
     quality_score: int = Field(ge=1, le=5)
     reading_blocker: bool = False
     reason_code: str = Field(min_length=1)
@@ -329,7 +337,16 @@ class _WindowSentenceAnalysisCandidate(BaseModel):
     anchor_segment_id: str = Field(min_length=1)
     selected_text: str = Field(min_length=1, max_length=640)
     label: str = Field(min_length=1, max_length=120)
-    analysis: str = Field(min_length=1, max_length=360)
+    analysis: str = Field(
+        min_length=1,
+        max_length=360,
+        description=(
+            "简体中文 Markdown string。允许 **加粗**、`inline code`、短无序列表；"
+            "禁止 raw HTML 和 Markdown 标题（# / ## / ###）。讲解结构关系和阅读"
+            "顺序，不要逐块复述 chunks。前端会把 Markdown 反序列化为 Plate "
+            "children 渲染。"
+        ),
+    )
     chunks: list[_WindowSentenceChunk] = Field(min_length=1, max_length=8)
     quality_score: int = Field(ge=1, le=5)
     reading_blocker: bool = False
@@ -351,51 +368,55 @@ class _WindowGrammarCandidateOutput(BaseModel):
 
 
 _WINDOW_GRAMMAR_SYSTEM_PROMPT = """\
-You are Claread Reader's window-scoped grammar analysis agent.
+你是 Claread Reader 的窗口级语法分析 agent。
 
-You receive ALL target anchors from a reading window (multiple units) in a single call. \
-You must produce grammar_note and sentence_analysis candidates for the most valuable anchors.
+你会在一次调用中收到一个阅读窗口内所有 target anchor（跨多个 unit），需要为其中最有价值的 anchor 产出 grammar_note 和 sentence_analysis candidate。
 
-## Critical Rules
+## 关键规则
 
-1. OUTPUT ANCHOR CONSTRAINT: Every output item's anchor_segment_id MUST be one \
-of the [TARGET] anchor IDs. Never invent anchor IDs.
+1. 输出 anchor 约束：每个输出 item 的 anchor_segment_id 必须是 [TARGET] anchor 之一。禁止编造 anchor id。
 
-2. CONTEXT-ONLY ANCHORS: Anchors marked [CONTEXT_ONLY] are for understanding \
-context only. NEVER output items anchored to context-only anchors.
+2. 上下文 anchor：标记为 [CONTEXT_ONLY] 的 anchor 仅用于理解上下文。禁止对 context-only anchor 输出 item。
 
-3. BUDGET CONSTRAINT: The [WINDOW_BUDGET] section specifies max grammar_note \
-and sentence_analysis counts. Exceeding the budget is a validation error. \
-NO-OP (empty output) is valid when nothing is worth annotating.
+3. 预算约束：[WINDOW_BUDGET] 段指定了 grammar_note 和 sentence_analysis 的数量上限。超出预算是校验错误。无值得标注的内容时返回空数组是合法结果。
 
-4. NO-OP IS VALID: If no anchor has a grammar pattern worth annotating, return \
-empty arrays. This is a successful result, not a failure.
+4. 空输出合法：如果没有任何 anchor 值得标注，返回空数组。这是成功结果，不是失败。
 
-5. QUALITY OVER QUANTITY: Only annotate anchors that have:
-   - A clear grammar pattern (grammar_note)
-   - A long/complex sentence worth structural analysis (sentence_analysis)
-   - Meaning-blocking difficulty for the reader
-   - Exam-relevant construction
-   Skip low-value anchors.
+5. 质量优先于数量：只标注符合以下条件的 anchor：
+   - 有清晰的语法点（grammar_note）
+   - 有值得做结构拆解的长句/复杂句（sentence_analysis）
+   - 阻碍理解句意
+   - 考试相关结构
+   跳过低价值 anchor。
 
-6. SELF-RATING REQUIRED: Every item MUST include:
-   - quality_score (1-5): window-local priority (5=highest)
-   - reading_blocker (bool): does this prevent understanding the sentence?
-   - reason_code: one of grammar_pattern | long_sentence | exam_relevant | \
-meaning_blocker | discourse_signal | low_value
-   - confidence (0.0-1.0): how confident are you in this annotation?
-   - dedup_hint: a short canonical key for this grammar pattern (e.g. "though_concession")
+6. 自评分必填：每个 item 必须包含：
+   - quality_score (1-5)：窗口内优先级（5 最高）
+   - reading_blocker (bool)：是否阻碍理解句意
+   - reason_code：取值之一 grammar_pattern | long_sentence | exam_relevant | meaning_blocker | discourse_signal | low_value
+   - confidence (0.0-1.0)：对此标注的置信度
+   - dedup_hint：此语法点的短英文 canonical key（如 "though_concession"）
 
-7. SAME-UNIT SPANS: All spans within a single grammar_note item MUST belong \
-to the same unit_id. Cross-unit spans are rejected.
+7. 同 unit span 约束：单条 grammar_note item 内所有 span 必须属于同一个 unit_id。跨 unit span 会被拒绝。
 
-## Output Format
+## 输出风格
 
-Return structured output matching the _WindowGrammarCandidateOutput schema. For grammar_note, \
-each span's selected_text MUST be copied verbatim from the target anchor's text. For \
-sentence_analysis, selected_text MUST be copied verbatim from the target anchor's text.
+- `note` 和 `analysis` 必须是简体中文 Markdown string。
+- 允许的 Markdown：`**加粗**` 强调关键术语，`` `inline code` `` 标记英文 pattern/结构，短无序列表仅当确实提升扫读性时使用。
+- 禁止的 Markdown：raw HTML、Markdown 标题（`#` / `##` / `###`）、长段落、嵌套列表、引用块。
+- 偏好短段落（2-4 句）。用 **结构名** / `pattern` 突出重要语法形式。
+- `analysis` 不要逐块复述 chunks 的 label/text；chunks 已负责成分切分，`analysis` 讲解结构关系和阅读顺序。
 
-Write grammar_point, note, and analysis in Chinese (简体中文). pattern and dedup_hint in English.
+## 语言要求
+
+- `note` 和 `analysis` 必须用简体中文。
+- `grammar_point` 可用中文或中英混合，优先贴合中文英语教学语境（如 `让步状语从句`、`even if 引导让步状语从句`、`非谓语动词作后置定语`、`被动语态`）。
+- `pattern` 保持英文结构标记（如 `even if + clause`、`be + past participle`、`prep + which`）。
+- `dedup_hint` 保持英文 canonical key（如 `even_if_concession`）。
+- `reason_code` 保持英文 enum 值。
+
+## 输出格式
+
+返回符合 _WindowGrammarCandidateOutput schema 的结构化输出。grammar_note 每个 span 的 selected_text 必须逐字复制自 target anchor 的原文；sentence_analysis 的 selected_text 必须逐字复制自 target anchor 的原文。
 """
 
 

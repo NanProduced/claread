@@ -146,7 +146,15 @@ class GrammarNoteCandidateItem(BaseModel):
     )
     grammar_point: str = Field(min_length=1, max_length=MAX_GRAMMAR_LABEL_LENGTH)
     pattern: str | None = Field(default=None, max_length=MAX_GRAMMAR_LABEL_LENGTH)
-    note: str = Field(min_length=1, max_length=MAX_GRAMMAR_FIELD_LENGTH)
+    note: str = Field(
+        min_length=1,
+        max_length=MAX_GRAMMAR_FIELD_LENGTH,
+        description=(
+            "简体中文 Markdown string。允许 **加粗**、`inline code`、短无序列表；"
+            "禁止 raw HTML 和 Markdown 标题（# / ## / ###）。前端会把 Markdown "
+            "反序列化为 Plate children 渲染。"
+        ),
+    )
 
 
 class SentenceAnalysisChunkCandidate(BaseModel):
@@ -166,7 +174,16 @@ class SentenceAnalysisCandidateItem(BaseModel):
         max_length=MAX_SENTENCE_ANALYSIS_TEXT_LENGTH,
     )
     label: str = Field(min_length=1, max_length=MAX_GRAMMAR_LABEL_LENGTH)
-    analysis: str = Field(min_length=1, max_length=MAX_GRAMMAR_FIELD_LENGTH)
+    analysis: str = Field(
+        min_length=1,
+        max_length=MAX_GRAMMAR_FIELD_LENGTH,
+        description=(
+            "简体中文 Markdown string。允许 **加粗**、`inline code`、短无序列表；"
+            "禁止 raw HTML 和 Markdown 标题（# / ## / ###）。讲解结构关系和阅读"
+            "顺序，不要逐块复述 chunks。前端会把 Markdown 反序列化为 Plate "
+            "children 渲染。"
+        ),
+    )
     chunks: list[SentenceAnalysisChunkCandidate] = Field(
         min_length=1,
         max_length=MAX_GRAMMAR_CHUNKS_PER_ANALYSIS,

@@ -15,9 +15,27 @@ content: |
   - 所有 `selected_text` 和 chunk `text` 都必须逐字复制自对应原文；大小写、标点、撇号和空格都不能改。
   - 不要输出 start/end offset，不要输出 text hash；这些由后端 deterministic 生成。
   - 不要发明不存在的 segment、selected_text、grammar point 或 chunk。
-  - 输出语言必须是中文（简体）；即使原文和 schema 字段名是英文，`grammar_note.note` 和 `sentence_analysis.analysis` 都用中文撰写。
-  - `grammar_note.note` 和 `sentence_analysis.analysis` 允许且鼓励使用 Markdown 格式（加粗、斜体、行内代码、无序列表、有序列表、引用块、标题）以提升讲解可读性；后端会把 Markdown 渲染成 Plate 节点树。
+  - 语言要求：`note` 和 `analysis` 必须用简体中文；`grammar_point` 可用中文或中英混合，优先贴合中文英语教学语境（如 `让步状语从句`、`even if 引导让步状语从句`、`非谓语动词作后置定语`）；`pattern` 和 `dedup_hint` 保持英文。
   - 不要输出 schema 外的字段或解释段落。
+
+  ## Markdown 输出合同
+
+  `note` 和 `analysis` 是简体中文 Markdown string，前端会把 Markdown 反序列化为 Plate children 渲染。
+
+  允许的 Markdown：
+  - `**加粗**` 用于强调关键术语或结构名。
+  - `` `inline code` `` 用于英文 pattern / 结构标记（如 `prep + which`）。
+  - 短的无序列表，仅当确实能提升扫读性时使用。
+
+  禁止的 Markdown：
+  - raw HTML（`<b>`、`<span>` 等）。
+  - Markdown 标题（`#` / `##` / `###`）。
+  - 长段落、嵌套列表、引用块。
+
+  风格要求：
+  - 短段落（2-4 句），用 **结构名** / `pattern` 突出重要语法形式。
+  - `analysis` 不要逐块复述 chunks 的 label/text；chunks 已负责成分切分，`analysis` 讲解结构关系和阅读顺序。
+  - `grammar_point` 可用中文或中英混合；`note`、`analysis` 用简体中文；`pattern` 保持英文。
 
   `grammar_note` 规则：
   - 一个 item 表达一个明确语法点。
