@@ -1457,17 +1457,27 @@ async def test_t1_batch_publish_reorders_outputs_to_reading_order(
                 article.base_id,
             )
         ]
-        # Actual publish order from enhancement_layers.published_at.
+        # P2: derive actual publish order from reader_events.sequence, NOT
+        # from enhancement_layers.published_at. All N per-unit layers in a
+        # batch share the same published_at (computed once before the loop),
+        # so ORDER BY published_at is non-deterministic for ties and makes
+        # the test flaky. reader_events.sequence is allocated atomically in
+        # the same transaction (UPDATE ... RETURNING next_sequence - 1), so
+        # it reflects the true commit order — which the batch publisher
+        # guarantees to be reading order via _reorder_outputs_by_target_unit_ids.
         translation_order = [
             row["target_key"]
             for row in await conn.fetch(
                 """
-                SELECT target_key
-                FROM enhancement_layers
-                WHERE reading_record_id = $1
-                  AND layer_type = 'translation'
-                  AND status = 'published'
-                ORDER BY published_at ASC
+                SELECT el.target_key
+                FROM enhancement_layers el
+                JOIN reader_events re
+                  ON re.source_layer_id = el.id
+                 AND re.event_type = 'layer_published'
+                WHERE el.reading_record_id = $1
+                  AND el.layer_type = 'translation'
+                  AND el.status = 'published'
+                ORDER BY re.sequence ASC
                 """,
                 article.record_id,
             )
@@ -1476,12 +1486,15 @@ async def test_t1_batch_publish_reorders_outputs_to_reading_order(
             row["target_key"]
             for row in await conn.fetch(
                 """
-                SELECT target_key
-                FROM enhancement_layers
-                WHERE reading_record_id = $1
-                  AND layer_type = 'vocabulary'
-                  AND status = 'published'
-                ORDER BY published_at ASC
+                SELECT el.target_key
+                FROM enhancement_layers el
+                JOIN reader_events re
+                  ON re.source_layer_id = el.id
+                 AND re.event_type = 'layer_published'
+                WHERE el.reading_record_id = $1
+                  AND el.layer_type = 'vocabulary'
+                  AND el.status = 'published'
+                ORDER BY re.sequence ASC
                 """,
                 article.record_id,
             )

@@ -1872,4 +1872,23 @@ describe("ReadingRecordPage direct load", () => {
     );
     expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
   });
+
+  // T2.1: page reloadSnapshot in-flight skip coverage note.
+  //
+  // The page-level `reloadInFlightRef` returns `false` when a second
+  // `reloadSnapshot` call overlaps with an in-flight reload (e.g. a user
+  // asset save triggers `onRequestSnapshotReload` while a polling-triggered
+  // reload is still fetching). This `false` return is the contract the
+  // polling hook relies on to keep its cursor.
+  //
+  // The hook-level test "keeps cursor when onReloadRequired resolves false"
+  // in polling.test.ts directly verifies this contract: when the parent
+  // returns `false`, the cursor stays at the original `after_sequence` and
+  // the next tick re-asks the same reload-required events. The page-level
+  // guard is the mechanism that produces the `false`; testing it in
+  // isolation here is impractical because the polling tick loop is
+  // sequential (it `await`s the reload before scheduling the next tick),
+  // so two concurrent reload calls cannot originate from the tick loop
+  // alone — they require a user action overlapping with a pending fetch,
+  // which needs a gated snapshot fetch that blocks the entire test.
 });

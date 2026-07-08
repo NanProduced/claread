@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 
 import { ReaderRecordWorkbenchSurface } from "@/components/reader/ReaderRecordWorkbenchSurface";
 import { ReaderRecordPlateSurface } from "@/components/reader/plate";
@@ -90,15 +90,39 @@ export default function ReadingRecordPage({
   const [activeReloadReason, setActiveReloadReason] = useState<string | null>(null);
   const [surfaceMode] = useState(getReaderRecordSurfaceMode);
 
+  // T2.1: ref-based re-entry guard. `isReloading` (state) cannot prevent
+  // same-tick re-entry because React batches and the boolean only commits
+  // after the render. The polling hook + the in-flight guard in polling.ts
+  // already debounce reloads, but user-triggered reloads (e.g. manual refresh
+  // button) and polling-triggered reloads can still overlap. The ref lets us
+  // decline a second concurrent reload synchronously.
+  const reloadInFlightRef = useRef(false);
+
   const snapshot = snapshotState.kind === "loaded" ? snapshotState.snapshot : null;
   const initialCursor = snapshot?.last_event_sequence ?? 0;
 
+  // T2.1 contract: returns `true` only when a fresh snapshot was actually
+  // applied (so the polling hook can advance its cursor). Returns `false`
+  // when skipped (in-flight / not loaded) or when the fetch failed — in
+  // those cases the polling hook keeps the original cursor and the next
+  // tick re-asks with the same `after_sequence`, so reload-required events
+  // are not silently consumed.
   const reloadSnapshot = useCallback(
-    async (reason: string) => {
+    async (reason: string): Promise<boolean> => {
       if (!recordId || snapshotState.kind !== "loaded") {
-        return;
+        return false;
       }
 
+      // T2.1: a reload is already in flight — decline the second caller and
+      // return false so the polling hook does NOT advance its cursor. The
+      // in-flight reload will push a fresh snapshot on success (which resets
+      // the cursor via the prevResetKey effect), or fail and leave the
+      // cursor untouched so the next tick retries the same events.
+      if (reloadInFlightRef.current) {
+        return false;
+      }
+
+      reloadInFlightRef.current = true;
       setIsReloading(true);
       setReloadError(null);
       setActiveReloadReason(reason);
@@ -111,7 +135,7 @@ export default function ReadingRecordPage({
 
         if (!result.ok) {
           setReloadError(result.message);
-          return;
+          return false;
         }
 
         setSnapshotState({
@@ -119,11 +143,14 @@ export default function ReadingRecordPage({
           recordId,
           snapshot: result.snapshot,
         });
+        return true;
       } catch (err) {
         setReloadError(
           err instanceof Error ? err.message : "阅读内容刷新发生未知错误。",
         );
+        return false;
       } finally {
+        reloadInFlightRef.current = false;
         setIsReloading(false);
         setActiveReloadReason(null);
       }
@@ -241,7 +268,9 @@ export default function ReadingRecordPage({
         {surfaceMode === "plate" ? (
           <ReaderRecordPlateSurface
             snapshot={snapshotState.snapshot}
-            onRequestSnapshotReload={() => reloadSnapshot("user_asset_written")}
+            onRequestSnapshotReload={() => {
+              void reloadSnapshot("user_asset_written");
+            }}
           />
         ) : (
           <ReaderRecordWorkbenchSurface snapshot={snapshotState.snapshot} />

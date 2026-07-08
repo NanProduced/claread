@@ -1,12 +1,16 @@
-import { describe, expect, it } from "vitest";
+/** @vitest-environment jsdom */
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   decidePollingAction,
   RELOAD_TRIGGER_EVENT_TYPES,
+  useReaderPlatePolling,
 } from "@/lib/reader-plate-snapshot/polling";
 import type {
   ReaderEventPollResponseDto,
   ReaderEventResponseDto,
+  ReaderEventType,
 } from "@/types/api/reader-plate";
 
 function makeEvent(overrides: Partial<ReaderEventResponseDto>): ReaderEventResponseDto {
@@ -245,5 +249,295 @@ describe("decidePollingAction", () => {
     expect(RELOAD_TRIGGER_EVENT_TYPES.has("record_product_state_updated")).toBe(true);
     expect(RELOAD_TRIGGER_EVENT_TYPES.has("projection_reset_required")).toBe(true);
     expect(RELOAD_TRIGGER_EVENT_TYPES.has("article_ready")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T2.1 goal #4: reader event payload audit.
+// Enumerate every ReaderEventType and classify it as either a full-snapshot
+// reload trigger or a lightweight event. This is the contract the polling
+// hook relies on: only the 3 reload-trigger types force a snapshot reload on
+// the client side; the other 8 are consumed via `advance`/`caught_up` and
+// rely on the server's `reload_required` flag (set on sequence gaps / counter
+// mismatches) to force a reload when the projection is actually stale.
+//
+// This test is intentionally exhaustive so that adding a new ReaderEventType
+// forces the author to decide its classification here.
+// ---------------------------------------------------------------------------
+
+const ALL_READER_EVENT_TYPES: readonly ReaderEventType[] = [
+  "article_ready",
+  "record_product_state_updated",
+  "layer_published",
+  "layer_failed",
+  "parsed_decision_updated",
+  "record_state_changed",
+  "action_required",
+  "run_completed",
+  "record_superseded",
+  "projection_ops",
+  "projection_reset_required",
+] as const;
+
+const EXPECTED_RELOAD_TRIGGERS: readonly ReaderEventType[] = [
+  "record_product_state_updated",
+  "layer_published",
+  "projection_reset_required",
+] as const;
+
+describe("reader event reload audit (T2.1 goal #4)", () => {
+  it("every ReaderEventType is classified exactly once", () => {
+    const seen = new Set(ALL_READER_EVENT_TYPES);
+    expect(seen.size).toBe(ALL_READER_EVENT_TYPES.length);
+
+    const triggers = new Set(EXPECTED_RELOAD_TRIGGERS);
+    for (const eventType of ALL_READER_EVENT_TYPES) {
+      // Each event type must be either a reload trigger or a lightweight
+      // event — no event type should be unclassified.
+      const isTrigger = RELOAD_TRIGGER_EVENT_TYPES.has(eventType);
+      const expectedTrigger = triggers.has(eventType);
+      expect(isTrigger).toBe(expectedTrigger);
+    }
+  });
+
+  it("exactly 3 reload-trigger event types force a full snapshot reload", () => {
+    expect(RELOAD_TRIGGER_EVENT_TYPES.size).toBe(3);
+    for (const eventType of EXPECTED_RELOAD_TRIGGERS) {
+      expect(RELOAD_TRIGGER_EVENT_TYPES.has(eventType)).toBe(true);
+    }
+  });
+
+  it("8 lightweight event types do NOT trigger a client-side reload", () => {
+    const lightweight = ALL_READER_EVENT_TYPES.filter(
+      (eventType) => !EXPECTED_RELOAD_TRIGGERS.includes(eventType),
+    );
+    expect(lightweight).toHaveLength(8);
+    for (const eventType of lightweight) {
+      expect(RELOAD_TRIGGER_EVENT_TYPES.has(eventType)).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T2.1: hook-level tests for reload cursor semantics.
+// The cursor advances to `next_after_sequence` ONLY when `onReloadRequired`
+// resolves to `true` (a fresh snapshot was applied). On `false` (skip /
+// in-flight) or rejection, the cursor stays put so the next tick re-asks
+// with the same `after_sequence` and the reload-required events are not
+// silently consumed. The success path also verifies no regression to the
+// duplicate-reload bug (only one reload call after the second tick).
+// ---------------------------------------------------------------------------
+
+describe("useReaderPlatePolling reload cursor semantics (T2.1)", () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function installFetch(eventsByCursor: Map<number, ReaderEventPollResponseDto>) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (!url.pathname.endsWith("/events")) {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
+      const payload = eventsByCursor.get(afterSequence);
+      if (!payload) {
+        throw new Error(`no mock for after_sequence=${afterSequence}`);
+      }
+      return new Response(JSON.stringify({ ok: true, ...payload }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+    return fetchMock;
+  }
+
+  function makeReloadResponse(): ReaderEventPollResponseDto {
+    return makeResponse({
+      after_sequence: 1,
+      next_after_sequence: 2,
+      last_event_sequence: 2,
+      events: [
+        makeEvent({
+          sequence: 2,
+          event_type: "layer_published",
+        }),
+      ],
+    });
+  }
+
+  it("advances cursor only when onReloadRequired resolves true (success path, no regression)", async () => {
+    const onReloadRequired = vi.fn(async (): Promise<boolean> => {
+      // Simulate the parent successfully applying a fresh snapshot.
+      return true;
+    });
+
+    const eventsAtCursor1 = makeReloadResponse();
+    const eventsAtCursor2 = makeResponse({
+      after_sequence: 2,
+      next_after_sequence: 2,
+      last_event_sequence: 2,
+      events: [],
+    });
+    const fetchMock = installFetch(
+      new Map([
+        [1, eventsAtCursor1],
+        [2, eventsAtCursor2],
+      ]),
+    );
+
+    const { result } = renderHook(() =>
+      useReaderPlatePolling({
+        recordId: "rec_1",
+        initialCursor: 1,
+        enabled: true,
+        pollIntervalMs: 3000,
+        onReloadRequired,
+      }),
+    );
+
+    // First tick: fire the polling interval.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onReloadRequired).toHaveBeenCalledTimes(1);
+    expect(onReloadRequired).toHaveBeenCalledWith("layer_published");
+    // Cursor advanced to next_after_sequence (2) because reload returned true.
+    expect(result.current.cursor).toBe(2);
+
+    // Second tick: polls with the advanced cursor (2), sees no events,
+    // hits caught_up — no second reload (regression check).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    expect(onReloadRequired).toHaveBeenCalledTimes(1);
+    const secondEventCall = fetchMock.mock.calls.find(
+      ([input], idx) =>
+        idx >= 1 && String(input).includes("/events?after_sequence=2"),
+    );
+    expect(secondEventCall).toBeTruthy();
+  });
+
+  it("keeps cursor when onReloadRequired resolves false (skip / in-flight)", async () => {
+    const onReloadRequired = vi.fn(async (): Promise<boolean> => {
+      // Simulate the parent skipping the reload (e.g. in-flight guard).
+      return false;
+    });
+
+    const eventsAtCursor1 = makeReloadResponse();
+    const fetchMock = installFetch(
+      new Map([
+        [1, eventsAtCursor1],
+        // Same events still visible at cursor 1 on retry.
+        [1, eventsAtCursor1],
+      ]),
+    );
+
+    const { result } = renderHook(() =>
+      useReaderPlatePolling({
+        recordId: "rec_1",
+        initialCursor: 1,
+        enabled: true,
+        pollIntervalMs: 3000,
+        onReloadRequired,
+      }),
+    );
+
+    // First tick: reload decision, onReloadRequired returns false.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onReloadRequired).toHaveBeenCalledTimes(1);
+    // Cursor NOT advanced — stays at 1 so the next tick re-asks the same
+    // reload-required events.
+    expect(result.current.cursor).toBe(1);
+
+    // Second tick: re-asks with after_sequence=1 (original cursor), sees
+    // the same layer_published event, triggers another reload attempt.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onReloadRequired).toHaveBeenCalledTimes(2);
+    // Still at cursor 1 — events not consumed.
+    expect(result.current.cursor).toBe(1);
+
+    // Verify the second poll used after_sequence=1 (NOT 2).
+    const secondPollUrl = String(fetchMock.mock.calls[1]?.[0]);
+    expect(secondPollUrl).toContain("after_sequence=1");
+  });
+
+  it("keeps cursor and surfaces error when onReloadRequired rejects", async () => {
+    const onReloadRequired = vi.fn(async (): Promise<boolean> => {
+      throw new Error("snapshot fetch exploded");
+    });
+
+    const eventsAtCursor1 = makeReloadResponse();
+    installFetch(
+      new Map([
+        [1, eventsAtCursor1],
+        [1, eventsAtCursor1],
+      ]),
+    );
+
+    const { result } = renderHook(() =>
+      useReaderPlatePolling({
+        recordId: "rec_1",
+        initialCursor: 1,
+        enabled: true,
+        pollIntervalMs: 3000,
+        onReloadRequired,
+      }),
+    );
+
+    // First tick: reload decision, onReloadRequired rejects.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onReloadRequired).toHaveBeenCalledTimes(1);
+    // Cursor NOT advanced — stays at 1.
+    expect(result.current.cursor).toBe(1);
+    // Error surfaced from the rejected reload promise.
+    expect(result.current.error).toBe("snapshot fetch exploded");
+
+    // Second tick: re-asks with after_sequence=1 (cursor kept), retries.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onReloadRequired).toHaveBeenCalledTimes(2);
+    expect(result.current.cursor).toBe(1);
   });
 });

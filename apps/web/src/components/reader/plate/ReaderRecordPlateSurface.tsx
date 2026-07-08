@@ -2308,6 +2308,78 @@ function SelectionActionState({
   );
 }
 
+// T2.1: helpers for preserving scroll + selection across `editor.tf.setValue`.
+// A snapshot reload replaces the entire editor children; without these, the
+// reader jumps to the top and the caret/selection disappears on every
+// layer_published event. Helpers are module-scoped so they keep a stable
+// identity across renders.
+
+/**
+ * Minimal structural shape we need to walk a Plate children tree when checking
+ * whether a selection path still resolves. We intentionally avoid importing
+ * Plate's full Descendant type here — this is a pure structural check and
+ * keeps the helper free of runtime dependencies.
+ */
+interface PlateDescendantLike {
+  children?: PlateDescendantLike[];
+  [key: string]: unknown;
+}
+
+/**
+ * Find the real scroll container for the Reader Record body. The app shell
+ * wraps content in a Radix ScrollArea, so `window` is not always the element
+ * that scrolls. We walk up from `.reader-record-plate-document` until we find
+ * an element with overflow auto/scroll, falling back to `window`. Mirrors the
+ * logic in `ReaderRecordNavigationRail.getScrollContainer` so both the
+ * navigation rail and the scroll-preservation path agree on the container.
+ */
+function findReaderRecordScrollContainer(): Window | HTMLElement | null {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return null;
+  }
+  const body = document.querySelector<HTMLElement>(
+    ".reader-record-plate-document",
+  );
+  if (!body) return window;
+  let el: HTMLElement | null = body.parentElement;
+  while (el && el !== document.body && el !== document.documentElement) {
+    const style = window.getComputedStyle(el);
+    if (/(auto|scroll)/.test(style.overflowY + style.overflow)) {
+      return el;
+    }
+    el = el.parentElement;
+  }
+  return window;
+}
+
+/**
+ * Return true if a Plate selection path (an array of child indices) still
+ * resolves in the given children tree. Plate paths are arrays of numbers like
+ * `[0, 1, 2]` meaning "child 0 → its child 1 → its child 2". After a snapshot
+ * reload the tree shape can change (new layers appended, blocks reordered),
+ * so we must verify before restoring selection or `editor.tf.setSelection`
+ * may throw / clamp to a wrong node.
+ */
+function pathExistsInPlateChildren(
+  children: PlateDescendantLike[],
+  path: number[],
+): boolean {
+  if (!Array.isArray(path) || path.length === 0) {
+    return false;
+  }
+  let current: PlateDescendantLike | PlateDescendantLike[] = children;
+  for (const index of path) {
+    if (!Array.isArray(current)) {
+      return false;
+    }
+    if (typeof index !== "number" || index < 0 || index >= current.length) {
+      return false;
+    }
+    current = current[index];
+  }
+  return true;
+}
+
 export function ReaderRecordPlateSurface({
   snapshot,
   className = "px-5 py-8 sm:px-8 lg:px-10",
@@ -2482,9 +2554,73 @@ export function ReaderRecordPlateSurface({
     [],
   );
   // plateValue 变化时同步 editor 内容，避免重新创建 editor 实例。
+  // T2.1: `editor.tf.setValue` replaces the entire editor children, which
+  // wipes scroll position, DOM selection, and any in-progress draft marks.
+  // Snapshot reloads fire this effect on every layer_published event, so
+  // without preservation the reader visibly jumps to the top and the user's
+  // caret/selection disappears. We save the scroll container's scrollTop
+  // and the editor's selection before the swap, then restore them after.
+  // Selection is only restored when its anchor path still exists in the new
+  // tree; otherwise we leave it cleared (the user's scroll is the critical
+  // UX, and a stale selection path would crash Plate).
   useEffect(() => {
-    if (editor.children !== plateValue) {
-      editor.tf.setValue(plateValue as never[]);
+    if (editor.children === plateValue) {
+      return;
+    }
+
+    // Capture pre-swap state. `editor.selection` is the Plate selection
+    // (a Range-like object or null). The scroll container is found by
+    // walking up from the plate document element.
+    const savedSelection = editor.selection ?? null;
+    const scrollContainer = findReaderRecordScrollContainer();
+    const savedScrollTop =
+      scrollContainer === null
+        ? null
+        : scrollContainer === window
+          ? window.scrollY
+          : (scrollContainer as HTMLElement).scrollTop;
+
+    editor.tf.setValue(plateValue as never[]);
+
+    // Restore selection only if the anchor/focus path still resolves in the
+    // new children. We avoid `editor.tf.setSelection` when the path is gone
+    // because Plate will throw or clamp unpredictably.
+    if (savedSelection) {
+      const anchorPath = savedSelection.anchor?.path;
+      const focusPath = savedSelection.focus?.path;
+      if (Array.isArray(anchorPath) && Array.isArray(focusPath)) {
+        try {
+          const anchorOk = pathExistsInPlateChildren(
+            editor.children as unknown as PlateDescendantLike[],
+            anchorPath,
+          );
+          const focusOk = pathExistsInPlateChildren(
+            editor.children as unknown as PlateDescendantLike[],
+            focusPath,
+          );
+          if (anchorOk && focusOk) {
+            editor.tf.setSelection(savedSelection);
+          }
+        } catch {
+          // Selection restore is best-effort; never block the reload.
+        }
+      }
+    }
+
+    // Restore scroll on the next frame so React has committed the new DOM.
+    if (savedScrollTop !== null && savedScrollTop > 0) {
+      const targetTop = savedScrollTop;
+      const rafId = window.requestAnimationFrame(() => {
+        if (scrollContainer === null) return;
+        if (scrollContainer === window) {
+          window.scrollTo(0, targetTop);
+        } else {
+          (scrollContainer as HTMLElement).scrollTop = targetTop;
+        }
+      });
+      return () => {
+        window.cancelAnimationFrame(rafId);
+      };
     }
   }, [plateValue, editor]);
 

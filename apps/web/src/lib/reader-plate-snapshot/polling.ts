@@ -83,7 +83,21 @@ export interface UseReaderPlatePollingOptions {
   enabled: boolean;
   pollIntervalMs?: number;
   pollLimit?: number;
-  onReloadRequired: (reason: string) => Promise<void>;
+  /**
+   * Called when the polling hook decides the snapshot must be reloaded.
+   *
+   * T2.1 contract: the callback MUST resolve to `true` only when a fresh
+   * snapshot was actually applied (parent pushed a new `initialCursor` via
+   * props). Resolve to `false` when the reload was skipped (e.g. an
+   * in-flight reload is already running in the parent), rejected, or the
+   * fetch returned an error — in all those cases the polling hook keeps the
+   * original cursor so the next tick re-asks with the same `after_sequence`
+   * and the reload-required events are not silently consumed.
+   *
+   * Rejecting the promise is treated identically to returning `false`:
+   * cursor stays put and the error is surfaced via `error`.
+   */
+  onReloadRequired: (reason: string) => Promise<boolean>;
   onCursorChange?: (cursor: number) => void;
 }
 
@@ -103,8 +117,13 @@ const DEFAULT_POLL_LIMIT = 100;
  * Flow:
  * 1. Poll `GET /api/web/reader-plate/{recordId}/events?after_sequence={cursor}`.
  * 2. Feed the response to {@link decidePollingAction}.
- * 3. On `reload` → call `onReloadRequired` (the parent reloads the snapshot
- *    and pushes a new `initialCursor`).
+ * 3. On `reload` → call `onReloadRequired`. The cursor is advanced to
+ *    `next_after_sequence` ONLY when the callback resolves to `true` (a fresh
+ *    snapshot was applied). On `false` (skip / fetch error) or rejection the
+ *    cursor stays put so the next tick re-asks with the same `after_sequence`
+ *    and the reload-required events are not silently consumed. While a reload
+ *    is in flight, subsequent reload decisions skip without advancing the
+ *    cursor.
  * 4. On `advance` → update the local cursor; if `hasMore`, poll again sooner.
  * 5. On `caught_up` → wait for the next interval tick (no error).
  *
@@ -133,6 +152,15 @@ export function useReaderPlatePolling(
   const onReloadRequiredRef = useRef(onReloadRequired);
   const onCursorChangeRef = useRef(onCursorChange);
   const cursorRef = useRef(cursor);
+
+  // T2.1: in-flight guard prevents stacking concurrent reloads. While a
+  // reload is awaiting the parent's snapshot fetch, additional reload
+  // decisions from subsequent polls skip WITHOUT advancing the cursor —
+  // the reload-required events must stay visible so the next tick can
+  // retry them if the in-flight reload fails (returns false / rejects).
+  // The parent pushes a fresh initialCursor from the snapshot on success,
+  // which resets this cursor via the prevResetKey effect.
+  const reloadInFlightRef = useRef(false);
 
   useEffect(() => {
     onReloadRequiredRef.current = onReloadRequired;
@@ -215,9 +243,49 @@ export function useReaderPlatePolling(
         });
 
         if (decision.kind === "reload") {
+          // T2.1: in-flight skip — DO NOT advance the cursor. A previous
+          // reload is still pending in the parent. If we advanced here, the
+          // reload-required events (layer_published etc.) would be silently
+          // consumed even though no snapshot was applied. Keeping the cursor
+          // lets the next tick re-see the same events and retry once the
+          // in-flight reload completes and pushes a fresh initialCursor.
+          if (reloadInFlightRef.current) {
+            setLastReloadReason(decision.reason);
+            return;
+          }
+
+          reloadInFlightRef.current = true;
           setLastReloadReason(decision.reason);
-          await onReloadRequiredRef.current?.(decision.reason);
-          // The parent will push a new initialCursor via props after reload.
+          let reloadSucceeded = false;
+          try {
+            const result = await onReloadRequiredRef.current?.(decision.reason);
+            // T2.1 contract: `true` means a fresh snapshot was applied and
+            // the parent will push a new initialCursor. `false` (or a
+            // rejected promise) means the reload was skipped/failed — keep
+            // the cursor so the next tick retries the same events.
+            reloadSucceeded = result === true;
+          } catch (reloadErr) {
+            // Reload rejected: surface the error but keep the cursor. The
+            // next tick will re-ask with the same after_sequence and retry.
+            if (!cancelled) {
+              setError(
+                reloadErr instanceof Error
+                  ? reloadErr.message
+                  : "阅读内容刷新发生未知错误。",
+              );
+            }
+          } finally {
+            reloadInFlightRef.current = false;
+          }
+
+          if (reloadSucceeded) {
+            // Only advance the cursor when the reload actually applied a new
+            // snapshot. The parent pushes a fresh initialCursor via props,
+            // but advancing here also prevents the next tick (which may fire
+            // before the new initialCursor propagates) from re-seeing the
+            // same reload-required events and stacking another reload.
+            setCursorBoth(payload.next_after_sequence);
+          }
           return;
         }
 

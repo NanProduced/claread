@@ -63,8 +63,8 @@ export default function ReaderPlatePage() {
   const initialCursor = snapshot?.last_event_sequence ?? 0;
 
   const reloadSnapshot = useCallback(
-    async (reason: string) => {
-      if (!recordId) return;
+    async (reason: string): Promise<boolean> => {
+      if (!recordId) return false;
       setIsReloading(true);
       try {
         const response = await fetch(
@@ -78,7 +78,7 @@ export default function ReaderPlatePage() {
             recordId,
             message: payload.ok === false ? payload.message : "文章解析内容重新加载失败。",
           });
-          return;
+          return false;
         }
         const { ok: _ok, ...snapshotData } = payload;
         void _ok;
@@ -88,12 +88,14 @@ export default function ReaderPlatePage() {
           recordId,
           snapshot: snapshotData,
         });
+        return true;
       } catch (err) {
         setSnapshotState({
           kind: "error",
           recordId,
           message: err instanceof Error ? err.message : "文章解析内容重新加载发生未知错误。",
         });
+        return false;
       } finally {
         setIsReloading(false);
       }
