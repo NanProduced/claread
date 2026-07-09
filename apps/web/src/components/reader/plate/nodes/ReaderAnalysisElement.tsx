@@ -48,20 +48,20 @@ function EnhancedText({ text }: { text: string }) {
         const parts = segment.split(/([a-zA-Z]+(?:[\s'\-][a-zA-Z]+)*)/g);
 
         return (
-          <span key={sIdx} className="block text-[0.93rem] leading-[1.82] text-ink-soft mb-2.5 last:mb-0">
+          <span key={sIdx} className="reader-enhanced-line block text-[0.93rem] leading-[1.82] text-ink-soft mb-2.5 last:mb-0">
             {parts.map((part, pIdx) => {
               if (/[a-zA-Z]/.test(part)) {
                 return (
                   <span
                     key={pIdx}
-                    className="font-sans font-semibold text-ink mx-[0.08em] tracking-normal"
+                    className="reader-enhanced-term font-sans font-semibold text-ink mx-[0.08em] tracking-normal"
                   >
                     {part}
                   </span>
                 );
               }
               return (
-                <span key={pIdx} className="font-sans font-normal">
+                <span key={pIdx} className="reader-enhanced-copy font-sans font-normal">
                   {part}
                 </span>
               );
@@ -71,6 +71,14 @@ function EnhancedText({ text }: { text: string }) {
       })}
     </>
   );
+}
+
+function setSentenceAnalysisPreview(target: HTMLElement, entryId: string, chunkIndex: number, active: boolean) {
+  const sentence = target.closest('[data-reader-node="sentence"]');
+  const atoms = sentence?.querySelectorAll<HTMLElement>(
+    `[data-analysis-entry-id="${entryId}"][data-analysis-index="${chunkIndex}"]`,
+  );
+  atoms?.forEach((atom) => atom.classList.toggle("reader-analysis-atom--active", active));
 }
 
 interface ReaderAnalysisElementProps {
@@ -274,20 +282,33 @@ export function ReaderAnalysisElement({
                         key={`${element.entryId}-chunk-${index}`}
                         className="reader-entry-analysis-item reader-entry-analysis-item-tint group/chunk"
                         data-chunk-index={index + 1}
+                        tabIndex={0}
+                        aria-label={`定位句子结构：${chunk.label}`}
                         style={{ "--analysis-accent": `var(--reader-analysis-tone-${(index % 6) + 1})` } as CSSProperties}
                         onMouseEnter={(event) => {
-                          const sentence = event.currentTarget.closest('[data-reader-node="sentence"]');
-                          const atoms = sentence?.querySelectorAll(
-                            `[data-analysis-entry-id="${element.entryId}"][data-analysis-index="${index + 1}"]`
-                          );
-                          atoms?.forEach((atom) => atom.classList.add("reader-analysis-atom--active"));
+                          setSentenceAnalysisPreview(event.currentTarget, element.entryId, index + 1, true);
                         }}
                         onMouseLeave={(event) => {
-                          const sentence = event.currentTarget.closest('[data-reader-node="sentence"]');
-                          const atoms = sentence?.querySelectorAll(
-                            `[data-analysis-entry-id="${element.entryId}"][data-analysis-index="${index + 1}"]`
-                          );
-                          atoms?.forEach((atom) => atom.classList.remove("reader-analysis-atom--active"));
+                          setSentenceAnalysisPreview(event.currentTarget, element.entryId, index + 1, false);
+                        }}
+                        onFocus={(event) => {
+                          setSentenceAnalysisPreview(event.currentTarget, element.entryId, index + 1, true);
+                        }}
+                        onBlur={(event) => {
+                          setSentenceAnalysisPreview(event.currentTarget, element.entryId, index + 1, false);
+                        }}
+                        onPointerDown={(event) => {
+                          if (event.pointerType !== "mouse") {
+                            setSentenceAnalysisPreview(event.currentTarget, element.entryId, index + 1, true);
+                          }
+                        }}
+                        onPointerUp={(event) => {
+                          if (event.pointerType !== "mouse") {
+                            setSentenceAnalysisPreview(event.currentTarget, element.entryId, index + 1, false);
+                          }
+                        }}
+                        onPointerCancel={(event) => {
+                          setSentenceAnalysisPreview(event.currentTarget, element.entryId, index + 1, false);
                         }}
                       >
                         <div className="reader-entry-analysis-header">

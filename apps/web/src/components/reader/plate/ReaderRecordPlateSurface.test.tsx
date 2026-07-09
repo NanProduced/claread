@@ -1850,16 +1850,19 @@ describe("ReaderRecordPlateSurface", () => {
       /\.reader-record-plate-callout-group\s*[\s\S]*?\.reader-record-plate-callout--grammar-row:hover\s*\{[\s\S]*?background-color:\s*color-mix\(in srgb, var\(--grammar-violet\) 1\.6%, transparent\)/,
     );
     expect(globalsSource).toMatch(
-      /\.reader-record-plate-callout-group:has\(\+ \.reader-record-plate-sentence-analysis\)\s*\{[\s\S]*?border-bottom-color:\s*transparent/,
+      /\.reader-record-plate-sentence-analysis-chunks\s*\{[\s\S]*?border-left:\s*1px solid color-mix\(in srgb, var\(--context-blue\) 16%, var\(--hairline\)\)/,
     );
     expect(globalsSource).toMatch(
-      /\.reader-record-plate-callout-group\s*\+\s*\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="true"\]\s*\{[\s\S]*?border-top-color:\s*transparent/,
+      /\.reader-record-plate-callout-group:has\(\+ \.reader-record-plate-sentence-analysis\)\s*\{[\s\S]*?border-bottom-color:\s*color-mix\(in srgb, var\(--hairline\) 56%, transparent\)/,
     );
     expect(globalsSource).toMatch(
-      /\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="true"\]\s*\{[\s\S]*?border-right-color:\s*transparent[\s\S]*?background-color:\s*transparent/,
+      /\.reader-record-plate-callout-group\s*\+\s*\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="true"\]\s*\{[\s\S]*?border-top-color:\s*color-mix\(in srgb, var\(--context-blue\) 12%, var\(--hairline\)\)/,
     );
     expect(globalsSource).toMatch(
-      /\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="false"\]\s*\{[\s\S]*?background-color:\s*transparent[\s\S]*?padding-inline:\s*0/,
+      /\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="true"\]\s*\{[\s\S]*?border-right-color:\s*transparent[\s\S]*?background-color:\s*color-mix\(in srgb, var\(--context-blue\) 1\.2%, transparent\)/,
+    );
+    expect(globalsSource).toMatch(
+      /\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="false"\]\s*\{[\s\S]*?background-color:\s*color-mix\(in srgb, var\(--context-blue\) 1\.4%, transparent\)[\s\S]*?padding-inline:\s*0/,
     );
   });
 

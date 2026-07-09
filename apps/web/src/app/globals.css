@@ -1846,14 +1846,14 @@ select {
   --reader-record-selection-fill-strong: rgba(37, 99, 235, 0.24);
   --reader-record-selection-outline: rgba(37, 99, 235, 0.2);
   --reader-record-selection-ink: var(--ink);
-  --reader-record-source-size-sm: 0.98rem;
-  --reader-record-source-size-md: 1.04rem;
-  --reader-record-source-size-lg: 1.14rem;
+  --reader-record-source-size-sm: 1rem;
+  --reader-record-source-size-md: 1.07rem;
+  --reader-record-source-size-lg: 1.17rem;
   --reader-record-source-size: var(--reader-record-source-size-md);
-  --reader-record-source-leading: 1.74;
+  --reader-record-source-leading: 1.82;
   --reader-record-source-tracking: 0.001em;
-  --reader-record-translation-size: 0.88rem;
-  --reader-record-translation-leading: 1.62;
+  --reader-record-translation-size: 0.9rem;
+  --reader-record-translation-leading: 1.7;
   --reader-record-note-body-size: 0.89rem;
   --reader-record-note-body-leading: 1.68;
   --reader-record-note-title-size: 0.96rem;
@@ -1866,25 +1866,25 @@ select {
   --reader-record-inline-code-size: 0.9em;
   --reader-record-note-padding-block: 0.92rem;
   --reader-record-note-padding-inline: 1.02rem;
-  --reader-record-source-paragraph-gap: 0.72rem;
-  --reader-record-source-translation-gap: 0.32rem;
-  --reader-record-source-analysis-gap: 0.76rem;
-  --reader-record-analysis-source-gap: 1.42rem;
-  --reader-record-translation-analysis-gap: 0.86rem;
+  --reader-record-source-paragraph-gap: 0.86rem;
+  --reader-record-source-translation-gap: 0.38rem;
+  --reader-record-source-analysis-gap: 0.88rem;
+  --reader-record-analysis-source-gap: 1.66rem;
+  --reader-record-translation-analysis-gap: 1.02rem;
   --reader-record-analysis-stack-gap: 0.66rem;
-  --reader-record-reading-group-gap: 1.42rem;
-  --reader-record-unit-gap: 1.76rem;
+  --reader-record-reading-group-gap: 1.64rem;
+  --reader-record-unit-gap: 2.04rem;
 }
 
 .reader-record-plate-font-sans {
-  --reader-record-source-size-sm: 0.98rem;
-  --reader-record-source-size-md: 1.04rem;
-  --reader-record-source-size-lg: 1.14rem;
-  --reader-record-source-leading: 1.74;
+  --reader-record-source-size-sm: 1rem;
+  --reader-record-source-size-md: 1.06rem;
+  --reader-record-source-size-lg: 1.16rem;
+  --reader-record-source-leading: 1.8;
   --reader-record-source-tracking: 0.001em;
-  --reader-record-source-paragraph-gap: 0.72rem;
-  --reader-record-reading-group-gap: 1.48rem;
-  --reader-record-unit-gap: 1.7rem;
+  --reader-record-source-paragraph-gap: 0.82rem;
+  --reader-record-reading-group-gap: 1.6rem;
+  --reader-record-unit-gap: 1.96rem;
 }
 
 .reader-record-plate-font-editorial {
@@ -1893,9 +1893,9 @@ select {
   --reader-record-source-size-lg: 1.19rem;
   --reader-record-source-leading: 1.82;
   --reader-record-source-tracking: 0;
-  --reader-record-source-paragraph-gap: 0.78rem;
-  --reader-record-reading-group-gap: 1.62rem;
-  --reader-record-unit-gap: 1.82rem;
+  --reader-record-source-paragraph-gap: 0.9rem;
+  --reader-record-reading-group-gap: 1.78rem;
+  --reader-record-unit-gap: 2.08rem;
 }
 
 .reader-record-plate-font-book {
@@ -1904,9 +1904,9 @@ select {
   --reader-record-source-size-lg: 1.18rem;
   --reader-record-source-leading: 1.84;
   --reader-record-source-tracking: 0;
-  --reader-record-source-paragraph-gap: 0.8rem;
-  --reader-record-reading-group-gap: 1.64rem;
-  --reader-record-unit-gap: 1.86rem;
+  --reader-record-source-paragraph-gap: 0.92rem;
+  --reader-record-reading-group-gap: 1.8rem;
+  --reader-record-unit-gap: 2.12rem;
 }
 
 .reader-record-plate-type-sm {
@@ -1922,9 +1922,9 @@ select {
 }
 
 .reader-record-plate-density-immersive {
-  --reader-record-source-paragraph-gap: 0.92rem;
-  --reader-record-reading-group-gap: 1.78rem;
-  --reader-record-unit-gap: 2rem;
+  --reader-record-source-paragraph-gap: 1rem;
+  --reader-record-reading-group-gap: 1.96rem;
+  --reader-record-unit-gap: 2.24rem;
 }
 
 .reader-record-plate-document::selection,
@@ -2227,13 +2227,13 @@ select {
 }
 
 .reader-record-plate-translation {
-  padding-block: 0.08rem 0.1rem;
-  padding-inline: 0.9rem 0.25rem;
-  color: color-mix(in srgb, var(--muted) 88%, var(--ink) 12%);
+  padding-block: 0.1rem 0.12rem;
+  padding-inline: 0.88rem 0.25rem;
+  color: color-mix(in srgb, var(--muted) 80%, var(--ink) 20%);
   font-size: var(--reader-record-translation-size);
   font-weight: 400;
   line-height: var(--reader-record-translation-leading);
-  letter-spacing: 0.002em;
+  letter-spacing: 0;
 }
 
 .reader-record-plate-callout,
@@ -2265,11 +2265,21 @@ select {
 .reader-record-plate-markdown {
   font-size: var(--reader-record-note-body-size);
   line-height: var(--reader-record-note-body-leading);
+  color: color-mix(in srgb, var(--ink-soft) 92%, var(--ink) 8%);
+  max-width: 68ch;
+  text-wrap: pretty;
 }
 
 .reader-record-plate-markdown-p {
-  margin-block: 0.3rem 0;
-  line-height: var(--reader-record-note-body-leading);
+  margin-block: 0.34rem 0;
+  line-height: 1.74;
+}
+
+.reader-record-plate-markdown strong,
+.reader-record-plate-markdown .font-semibold {
+  color: color-mix(in srgb, var(--ink) 88%, var(--grammar-violet) 12%);
+  font-weight: 610;
+  letter-spacing: 0;
 }
 
 .reader-record-plate-markdown-heading {
@@ -2318,36 +2328,45 @@ select {
 
 .reader-record-plate-inline-code {
   box-decoration-break: clone;
-  border-radius: 0.24em;
-  background-color: color-mix(in srgb, var(--grammar-violet) 12%, var(--surface));
-  color: color-mix(in srgb, var(--ink) 88%, var(--grammar-violet) 12%);
-  padding: 0.08em 0.34em;
+  border-radius: 0.22em;
+  background-color: color-mix(in srgb, var(--ink) 4.6%, transparent);
+  color: color-mix(in srgb, var(--ink) 84%, var(--grammar-violet) 16%);
+  padding: 0.045em 0.26em;
   font-family: inherit;
   font-size: var(--reader-record-inline-code-size);
   font-variant-ligatures: none;
-  font-weight: 600;
-  letter-spacing: 0.002em;
+  font-weight: 590;
+  letter-spacing: 0;
   line-height: 1;
   vertical-align: baseline;
 }
 
 .reader-record-plate-sentence-analysis-chunks {
   display: grid;
-  gap: 0.42rem;
-  margin-block: 0.58rem 0.1rem;
+  gap: 0;
+  margin-block: 0.68rem 0.12rem;
+  border-left: 1px solid color-mix(in srgb, var(--context-blue) 16%, var(--hairline));
+  padding-left: 0.84rem;
 }
 
 .reader-record-plate-sentence-analysis-chunk {
-  column-gap: 0.75rem;
-  padding: 0.42rem 0.55rem;
-  font-size: var(--reader-record-chunk-body-size);
-  line-height: 1.48;
+  grid-template-columns: minmax(10.25rem, 15rem) minmax(0, 1fr);
+  column-gap: 1rem;
+  padding: 0.46rem 0;
+  font-size: calc(var(--reader-record-chunk-body-size) * 0.97);
+  line-height: 1.66;
 }
 
 .reader-record-plate-sentence-analysis-chunk-label {
-  font-size: var(--reader-record-chunk-label-size);
-  font-weight: 650;
-  line-height: 1.35;
+  max-width: 100%;
+  color: color-mix(in srgb, var(--context-blue) 58%, var(--ink) 42%);
+  font-size: calc(var(--reader-record-chunk-label-size) * 0.97);
+  font-weight: 610;
+  line-height: 1.42;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .reader-record-plate-sentence-analysis-chunk-kind {
@@ -2356,14 +2375,15 @@ select {
 }
 
 .reader-record-plate-sentence-analysis-chunk-body {
-  font-size: var(--reader-record-chunk-body-size);
-  line-height: 1.56;
+  color: color-mix(in srgb, var(--ink-soft) 92%, var(--ink) 8%);
+  font-size: calc(var(--reader-record-chunk-body-size) * 0.97);
+  line-height: 1.7;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 900px) {
   .reader-record-plate-sentence-analysis-chunk {
     grid-template-columns: minmax(0, 1fr);
-    row-gap: 0.16rem;
+    row-gap: 0.18rem;
   }
 }
 
@@ -2607,25 +2627,25 @@ select {
 }
 
 .reader-record-plate-callout-group:has(+ .reader-record-plate-sentence-analysis) {
-  margin-block-end: 0.18rem;
-  border-bottom-color: transparent;
-  padding-bottom: 0;
+  margin-block-end: 0.54rem;
+  border-bottom-color: color-mix(in srgb, var(--hairline) 56%, transparent);
+  padding-bottom: 0.18rem;
 }
 
 .reader-record-plate-callout-group
   + .reader-record-plate-sentence-analysis {
-  margin-block-start: 0;
+  margin-block-start: 0.46rem;
 }
 
 .reader-record-plate-callout-group
   + .reader-record-plate-sentence-analysis[data-reader-record-sentence-analysis-collapsed="true"] {
-  border-top-color: transparent;
-  padding-block-start: 0.36rem;
+  border-top-color: color-mix(in srgb, var(--context-blue) 12%, var(--hairline));
+  padding-block-start: 0.54rem;
 }
 
 .reader-record-plate-callout-group
   + .reader-record-plate-sentence-analysis[data-reader-record-sentence-analysis-collapsed="false"] {
-  margin-block-start: 0.3rem;
+  margin-block-start: 0.58rem;
 }
 
 .reader-record-plate-callout-group
@@ -2639,7 +2659,7 @@ select {
 
 .reader-record-plate-callout-title {
   color: color-mix(in srgb, var(--ink) 92%, var(--grammar-violet) 8%);
-  font-weight: 650;
+  font-weight: 625;
 }
 
 .reader-record-plate-callout-title-line {
@@ -2656,11 +2676,11 @@ select {
   max-width: min(100%, 26rem);
   align-items: center;
   border-radius: 0.26rem;
-  background-color: color-mix(in srgb, var(--grammar-violet) 4.5%, transparent);
-  color: color-mix(in srgb, var(--grammar-violet) 50%, var(--ink) 50%);
-  padding: 0.055rem 0.34rem;
-  font-size: 0.72rem;
-  font-weight: 620;
+  background-color: color-mix(in srgb, var(--grammar-violet) 3.4%, transparent);
+  color: color-mix(in srgb, var(--grammar-violet) 42%, var(--ink-soft) 58%);
+  padding: 0.045rem 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 580;
   line-height: 1.34;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2801,14 +2821,14 @@ select {
 
 .reader-record-plate-sentence-analysis {
   border-color: color-mix(in srgb, var(--context-blue) 12%, var(--hairline));
-  background-color: transparent;
+  background-color: color-mix(in srgb, var(--context-blue) 1.4%, transparent);
 }
 
 .reader-record-plate-sentence-analysis[data-reader-record-sentence-analysis-collapsed="true"] {
   border-right-color: transparent;
   border-left-color: transparent;
   border-radius: 0;
-  background-color: transparent;
+  background-color: color-mix(in srgb, var(--context-blue) 1.2%, transparent);
   padding-block: 0.62rem;
   padding-inline: 0;
 }
@@ -2817,7 +2837,8 @@ select {
   border-right-color: transparent;
   border-left-color: transparent;
   border-radius: 0;
-  background-color: transparent;
+  background-color: color-mix(in srgb, var(--context-blue) 1.4%, transparent);
+  padding-block: 0.72rem 0.84rem;
   padding-inline: 0;
 }
 
@@ -2866,7 +2887,7 @@ select {
 
 .reader-record-plate-sentence-analysis [data-reader-record-sentence-analysis-chunk] {
   border-color: transparent;
-  border-top: 1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--hairline) 58%, transparent);
   border-radius: 0;
   background: transparent;
   transition:
@@ -2883,8 +2904,15 @@ select {
 .reader-record-plate-sentence-analysis
   [data-reader-record-sentence-analysis-chunk-active="true"] {
   border-radius: var(--radius-xs);
-  background-color: color-mix(in srgb, var(--context-blue) 5%, transparent);
+  background-color: color-mix(in srgb, var(--context-blue) 7%, transparent);
   box-shadow: none;
+}
+
+.reader-record-plate-sentence-analysis
+  [data-reader-record-sentence-analysis-chunk]:hover,
+.reader-record-plate-sentence-analysis
+  [data-reader-record-sentence-analysis-chunk]:focus-visible {
+  background-color: color-mix(in srgb, var(--context-blue) 4.4%, transparent);
 }
 
 .reader-mark--vocab {
@@ -3219,7 +3247,8 @@ select {
 }
 
 .reader-sentence--has-active-analysis .reader-analysis-atom--active {
-  color: var(--analysis-accent) !important;
+  --analysis-fill: color-mix(in srgb, var(--analysis-accent) 28%, transparent) !important;
+  color: color-mix(in srgb, var(--analysis-accent) 90%, var(--ink) 10%) !important;
 }
 
 .reader-sentence--has-active-analysis .reader-analysis-atom .reader-mark {
@@ -3276,8 +3305,8 @@ select {
 
 .reader-analysis-atom:hover,
 .reader-analysis-atom--active {
-  --analysis-fill: color-mix(in srgb, var(--analysis-accent) 12%, transparent);
-  color: var(--analysis-accent);
+  --analysis-fill: color-mix(in srgb, var(--analysis-accent) 28%, transparent);
+  color: color-mix(in srgb, var(--analysis-accent) 88%, var(--ink) 12%);
 }
 
 .reader-analysis-atom--selection-muted {
@@ -3322,28 +3351,30 @@ select {
 
 .reader-analysis-row-index {
   display: flex;
-  width: 1.3rem;
-  height: 1.3rem;
+  width: 1.15rem;
+  height: 1.15rem;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
-  background-color: color-mix(in srgb, var(--analysis-accent) 8%, transparent);
+  border-radius: 0;
+  background-color: transparent;
   color: var(--analysis-accent);
   font-family: var(--font-sans);
-  font-size: 0.78rem;
-  font-weight: 700;
+  font-size: 0.76rem;
+  font-weight: 640;
   line-height: 1;
-  opacity: 0.82;
-  transition: all 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  opacity: 0.74;
+  transition:
+    color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 160ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .reader-entry-analysis-item-tint:hover .reader-analysis-row-index,
 .reader-entry-analysis-item-tint.reader-entry-analysis-item--active .reader-analysis-row-index {
-  background-color: var(--analysis-accent);
-  color: var(--paper);
+  background-color: transparent;
+  color: var(--analysis-accent);
   opacity: 1;
-  transform: scale(1.05);
+  transform: none;
 }
 
 .reader-lookup-preview {
@@ -3410,21 +3441,20 @@ select {
   position: relative;
   display: flex;
   flex-direction: column;
-  width: min(100%, 41rem);
-  margin-top: 0.85rem;
-  margin-bottom: 0.9rem;
-  max-width: 41rem;
-  border-radius: 1rem;
-  padding: 0.4rem 0.55rem;
+  width: min(100%, 42rem);
+  margin-top: 1rem;
+  margin-bottom: 1.16rem;
+  max-width: 42rem;
+  border-radius: 0.5rem;
+  padding: 0;
   background: transparent;
   outline: none;
-  overflow: hidden;
+  overflow: visible;
   transition:
     background-color 200ms cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 200ms cubic-bezier(0.22, 1, 0.36, 1),
-    padding 200ms cubic-bezier(0.22, 1, 0.36, 1),
-    border-radius 200ms cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 200ms cubic-bezier(0.22, 1, 0.36, 1);
+    border-color 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 200ms cubic-bezier(0.22, 1, 0.36, 1);
   cursor: pointer;
 }
 
@@ -3634,7 +3664,7 @@ select {
   left: -0.2rem;
   top: 0.5rem;
   bottom: 0.5rem;
-  width: 2px;
+  width: 1px;
   border-radius: 999px;
   background: linear-gradient(180deg, var(--reader-entry-accent), color-mix(in srgb, var(--reader-entry-accent) 14%, white));
   opacity: 0;
@@ -3669,23 +3699,24 @@ select {
 
 .reader-entry-note--collapsed {
   border-radius: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  background: color-mix(in srgb, var(--reader-entry-accent) 6%, transparent);
-  border: 1px solid color-mix(in srgb, var(--reader-entry-accent) 22%, transparent);
+  padding: 0.56rem 0.62rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-block-color: color-mix(in srgb, var(--hairline) 62%, transparent);
   box-shadow: none;
 }
 
 .reader-entry-note--collapsed:hover {
-  background: color-mix(in srgb, var(--reader-entry-accent) 10%, transparent);
-  border-color: color-mix(in srgb, var(--reader-entry-accent) 30%, transparent);
+  background: color-mix(in srgb, var(--reader-entry-accent) 3.8%, transparent);
+  border-color: color-mix(in srgb, var(--reader-entry-accent) 18%, transparent);
   opacity: 1;
 }
 
 .reader-entry-note--expanded {
   border-radius: 0.5rem;
-  padding: 1rem 1.25rem 1.15rem;
-  background: color-mix(in srgb, var(--reader-entry-accent) 4%, transparent);
-  border: 1px solid color-mix(in srgb, var(--reader-entry-accent) 22%, transparent);
+  padding: 0.92rem 1rem 1.02rem;
+  background: color-mix(in srgb, var(--reader-entry-accent) 2.6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--reader-entry-accent) 18%, transparent);
   box-shadow: none;
 }
 
@@ -3695,7 +3726,7 @@ select {
 
 .reader-entry-note--active.reader-entry-note--expanded {
   box-shadow: none;
-  border-color: color-mix(in srgb, var(--reader-entry-accent) 40%, transparent);
+  border-color: color-mix(in srgb, var(--reader-entry-accent) 34%, transparent);
 }
 
 .reader-entry-note--active.reader-entry-note--expanded::before,
@@ -3742,7 +3773,7 @@ select {
 }
 
 .reader-entry-note-trigger {
-  min-height: 2rem;
+  min-height: 1.86rem;
   padding: 0;
 }
 
@@ -3790,13 +3821,14 @@ select {
 
 .reader-entry-note-body {
   position: relative;
+  border-top-color: color-mix(in srgb, var(--hairline) 58%, transparent);
   margin-left: 0;
   padding-left: 0;
 }
 
 .reader-entry-note-summary,
 .reader-entry-note-prose {
-  max-width: 38rem;
+  max-width: 39.5rem;
   text-wrap: pretty;
 }
 
@@ -3820,32 +3852,39 @@ select {
   display: flex;
   flex-direction: column;
   gap: 0;
+  padding-left: 0.88rem;
   border: none;
+  border-left: 1px solid color-mix(in srgb, var(--analysis-accent) 14%, var(--hairline));
   background: transparent;
 }
 
 .reader-entry-analysis-item {
   display: grid;
-  grid-template-columns: 1.35rem minmax(0, 1fr);
-  gap: 0.65rem;
+  grid-template-columns: minmax(10.25rem, 15rem) minmax(0, 1fr);
+  gap: 1rem;
   align-items: start;
   border: none;
-  transition: opacity 180ms ease;
+  outline: none;
+  transition:
+    background-color 180ms ease,
+    opacity 180ms ease;
 }
 
 .reader-entry-analysis-item + .reader-entry-analysis-item {
-  border-top: 1px dashed color-mix(in srgb, var(--hairline) 70%, transparent);
-  padding-top: 0.85rem;
-  margin-top: 0.85rem;
+  border-top: 1px solid color-mix(in srgb, var(--hairline) 50%, transparent);
+  padding-top: 0.72rem;
+  margin-top: 0.72rem;
 }
 
 .reader-entry-analysis-item-tint {
-  padding: 0;
+  padding: 0.18rem 0.2rem 0.22rem 0.5rem;
+  border-radius: 0.25rem;
 }
 
 .reader-entry-analysis-item-tint:hover,
-.reader-entry-analysis-item-tint.reader-entry-analysis-item--active {
-  background-color: transparent;
+.reader-entry-analysis-item-tint.reader-entry-analysis-item--active,
+.reader-entry-analysis-item-tint:focus-visible {
+  background-color: color-mix(in srgb, var(--analysis-accent) 3.4%, transparent);
 }
 
 .reader-entry-analysis-copy {
@@ -3857,22 +3896,47 @@ select {
 }
 
 .reader-entry-analysis-label {
-  color: color-mix(in srgb, var(--analysis-accent) 90%, var(--ink));
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  min-width: 0;
+  max-width: 100%;
+  color: color-mix(in srgb, var(--analysis-accent) 58%, var(--ink) 42%);
+  font-size: 0.75rem;
+  font-weight: 610;
+  line-height: 1.42;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .reader-entry-analysis-text {
+  min-width: 0;
   margin-top: 0;
-  color: var(--ink-soft);
-  font-size: 0.95rem;
+  color: color-mix(in srgb, var(--ink-soft) 90%, var(--ink) 10%);
+  font-size: 0.91rem;
   line-height: 1.7;
 }
 
-@media (max-width: 640px) {
+.reader-enhanced-line {
+  color: color-mix(in srgb, var(--ink-soft) 90%, var(--ink) 10%);
+  font-size: 0.91rem;
+  line-height: 1.74;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.reader-enhanced-term {
+  box-decoration-break: clone;
+  border-radius: 0.18em;
+  background-color: color-mix(in srgb, var(--ink) 3.2%, transparent);
+  color: color-mix(in srgb, var(--ink) 82%, var(--analysis-accent) 18%);
+  padding: 0.025em 0.18em;
+  font-weight: 590;
+  letter-spacing: 0;
+}
+
+@media (max-width: 900px) {
   .reader-entry-analysis-item {
-    grid-template-columns: 1.45rem minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.35rem;
   }
 }
 
@@ -4547,47 +4611,52 @@ select {
 
 /* Claread Visual Refinement - Bolder Layout Analysis Card Chunks */
 .reader-entry-note-body {
-  border-top-color: color-mix(in srgb, var(--hairline) 68%, transparent) !important;
-  padding-top: 1.25rem !important;
+  border-top-color: color-mix(in srgb, var(--hairline) 58%, transparent) !important;
+  padding-top: 0.92rem !important;
 }
 
 .reader-entry-analysis-list {
   display: flex !important;
   flex-direction: column !important;
   gap: 0 !important;
+  padding-left: 0.88rem !important;
+  border-left: 1px solid color-mix(in srgb, var(--analysis-accent) 14%, var(--hairline)) !important;
 }
 
 .reader-entry-analysis-item {
-  display: flex !important;
-  flex-direction: column !important;
-  align-items: stretch !important;
-  gap: 0.3rem !important;
+  display: grid !important;
+  grid-template-columns: minmax(10.25rem, 15rem) minmax(0, 1fr) !important;
+  align-items: start !important;
+  gap: 1rem !important;
   border: none !important;
   background-color: transparent !important;
-  border-radius: 0.5rem !important;
-  padding: 0.55rem 0.75rem !important;
+  border-radius: 0.25rem !important;
+  padding: 0.18rem 0.2rem 0.22rem 0.5rem !important;
   margin-top: 0 !important;
+  outline: none !important;
   box-shadow: none !important;
   transition: background-color 180ms ease, opacity 180ms ease !important;
 }
 
 .reader-entry-analysis-item:hover,
-.reader-entry-analysis-item.reader-entry-analysis-item--active {
-  background-color: color-mix(in srgb, var(--analysis-accent) 4.5%, transparent) !important;
+.reader-entry-analysis-item.reader-entry-analysis-item--active,
+.reader-entry-analysis-item:focus-visible {
+  background-color: color-mix(in srgb, var(--analysis-accent) 3.4%, transparent) !important;
   border-color: transparent !important;
   box-shadow: none !important;
   transform: none !important;
 }
 
 .reader-entry-analysis-item + .reader-entry-analysis-item {
-  border-top: 1px dashed color-mix(in srgb, var(--hairline) 62%, transparent) !important;
-  padding-top: 0.7rem !important;
-  margin-top: 0.2rem !important;
+  border-top: 1px solid color-mix(in srgb, var(--hairline) 50%, transparent) !important;
+  padding-top: 0.72rem !important;
+  margin-top: 0.72rem !important;
 }
 
 .reader-entry-analysis-header {
   display: flex !important;
-  align-items: center !important;
+  min-width: 0 !important;
+  align-items: flex-start !important;
   gap: 0.45rem !important;
 }
 
@@ -4595,11 +4664,11 @@ select {
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  width: 1.25rem !important;
-  height: 1.25rem !important;
+  width: 1.15rem !important;
+  height: 1.15rem !important;
   font-family: var(--font-sans) !important;
-  font-size: 0.85rem !important;
-  font-weight: 500 !important;
+  font-size: 0.76rem !important;
+  font-weight: 640 !important;
   border-radius: 0 !important;
   border: none !important;
   background-color: transparent !important;
@@ -4608,25 +4677,31 @@ select {
 }
 
 .reader-entry-analysis-label {
-  display: inline-flex !important;
-  align-items: center !important;
+  display: block !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
   padding: 0 !important;
   border-radius: 0 !important;
   background-color: transparent !important;
-  color: color-mix(in srgb, var(--analysis-accent) 80%, var(--ink)) !important;
-  font-size: 0.78rem !important;
-  font-weight: 700 !important;
-  letter-spacing: 0.05em !important;
-  width: fit-content !important;
-  line-height: 1.25 !important;
+  color: color-mix(in srgb, var(--analysis-accent) 58%, var(--ink) 42%) !important;
+  font-size: 0.75rem !important;
+  font-weight: 610 !important;
+  letter-spacing: 0 !important;
+  width: auto !important;
+  line-height: 1.42 !important;
+  overflow: visible !important;
+  overflow-wrap: anywhere !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
 }
 
 .reader-entry-analysis-text {
-  font-size: 0.98rem !important;
-  font-weight: 600 !important;
-  color: var(--ink) !important;
-  line-height: 1.56 !important;
-  padding-left: 1.7rem !important;
+  min-width: 0 !important;
+  font-size: 0.91rem !important;
+  font-weight: 400 !important;
+  color: color-mix(in srgb, var(--ink-soft) 90%, var(--ink) 10%) !important;
+  line-height: 1.7 !important;
+  padding-left: 0 !important;
 }
 
 .reader-entry-analysis-text span.block {
@@ -4634,9 +4709,79 @@ select {
 }
 
 .reader-entry-analysis-text span.font-semibold {
-  font-weight: 700 !important;
-  font-size: 1.0rem !important;
-  letter-spacing: -0.01em !important;
+  font-weight: 590 !important;
+  font-size: inherit !important;
+  letter-spacing: 0 !important;
+}
+
+.reader-enhanced-line {
+  color: color-mix(in srgb, var(--ink-soft) 90%, var(--ink) 10%) !important;
+  font-size: 0.91rem !important;
+  line-height: 1.74 !important;
+}
+
+.reader-enhanced-term {
+  box-decoration-break: clone !important;
+  border-radius: 0.18em !important;
+  background-color: color-mix(in srgb, var(--ink) 3.2%, transparent) !important;
+  color: color-mix(in srgb, var(--ink) 82%, var(--analysis-accent) 18%) !important;
+  padding: 0.025em 0.18em !important;
+  font-weight: 590 !important;
+  letter-spacing: 0 !important;
+}
+
+@media (max-width: 900px) {
+  .reader-entry-analysis-item {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 0.35rem !important;
+  }
+}
+
+.reader-shell--intensive .reader-entry-note--grammar-note:has(+ .reader-entry-note--sentence-analysis) {
+  margin-bottom: 0.94rem !important;
+}
+
+.reader-shell--intensive .reader-entry-note--grammar-note + .reader-entry-note--sentence-analysis {
+  margin-top: 0.94rem !important;
+}
+
+.reader-entry-note--grammar-note .reader-entry-note-heading-copy,
+.reader-entry-note--sentence-analysis .reader-entry-note-heading-copy {
+  font-size: 0.8rem !important;
+  font-weight: 680 !important;
+  letter-spacing: 0 !important;
+  line-height: 1.38 !important;
+}
+
+.reader-entry-note--sentence-analysis .reader-entry-note-body {
+  padding-top: 0.82rem !important;
+}
+
+.reader-entry-note--sentence-analysis .reader-entry-note-summary {
+  margin-bottom: 0.86rem !important;
+  color: color-mix(in srgb, var(--ink-soft) 90%, var(--ink) 10%) !important;
+  font-size: 0.9rem !important;
+  line-height: 1.72 !important;
+}
+
+.reader-record-plate-sentence-analysis-chunk-label {
+  color: color-mix(in srgb, var(--context-blue) 54%, var(--ink) 46%) !important;
+  font-weight: 600 !important;
+  line-height: 1.44 !important;
+  overflow: visible !important;
+  overflow-wrap: anywhere !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
+}
+
+.reader-record-plate-sentence-analysis-chunk {
+  grid-template-columns: minmax(10.25rem, 15rem) minmax(0, 1fr) !important;
+}
+
+@media (max-width: 900px) {
+  .reader-record-plate-sentence-analysis-chunk {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
 }
 
 @keyframes prompt-kit-loader-dot {

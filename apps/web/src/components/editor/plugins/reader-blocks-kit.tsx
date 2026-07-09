@@ -919,7 +919,7 @@ function ReaderSentenceAnalysisChunkComponent({
       }}
     >
       <dt className="min-w-0">
-        <span className="reader-record-plate-sentence-analysis-chunk-label block truncate text-context-blue/90">
+        <span className="reader-record-plate-sentence-analysis-chunk-label block text-context-blue/90">
           {chunk.label}
         </span>
       </dt>
