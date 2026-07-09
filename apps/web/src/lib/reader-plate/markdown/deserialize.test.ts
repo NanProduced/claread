@@ -137,4 +137,23 @@ describe("deserializeMarkdownInline", () => {
     expect(result).toHaveLength(1);
     expect((result[0] as { text: string }).text).toBe("plain text");
   });
+
+  it("preserves bold + inline code children for grammar note patterns", () => {
+    // Mirrors the Markdown output contract: **结构名** + `pattern` in a
+    // single note string. The deserialized inline must contain both a bold
+    // node and a code node so the Plate renderer keeps them as distinct
+    // children.
+    const md = "这是 **非限制性定语从句**，pattern 为 `prep + which`。";
+    const result = deserializeMarkdownInline(md);
+    const boldNode = result.find(
+      (node) => "bold" in node && (node as { bold?: boolean }).bold === true,
+    );
+    const codeNode = result.find(
+      (node) => "code" in node && (node as { code?: boolean }).code === true,
+    );
+    expect(boldNode).toBeDefined();
+    expect(codeNode).toBeDefined();
+    expect((boldNode as { text: string }).text).toBe("非限制性定语从句");
+    expect((codeNode as { text: string }).text).toBe("prep + which");
+  });
 });

@@ -619,9 +619,40 @@ class GrammarWindowPublisher:
             published_pattern_keys.setdefault(item_type, [])
             density_by_record.setdefault(item_type, 0)
 
-        # Query total_anchors
+        # Query total_anchors + base_text_length_utf16 in one round-trip.
+        # base_text_length_utf16 feeds the RECORD_DENSITY gate (§7.3 P2-6):
+        #   density = total_published_count / max(base_text_length_utf16 / 1000, 1.0)
+        # Bug fix: previously this was never set, so it defaulted to 0 and
+        # the density denominator collapsed to 1.0 — turning the per-1000-chars
+        # ratio cap into a raw absolute cap (grammar_note <= 3, sentence_analysis
+        # <= 1 across the whole record).
         total_anchors = 0
+        base_text_length_utf16 = 0
         if base_id is not None:
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    rb.content_utf16_length,
+                    char_length(rb.text) AS text_char_length
+                FROM reading_bases rb
+                WHERE rb.id = $1
+                """,
+                base_id,
+            )
+            if row is not None:
+                # content_utf16_length has CHECK (>= 1), so it should always
+                # be positive. Use NULLIF(..., 0) + COALESCE as a defensive
+                # fallback so density never collapses to raw count even if a
+                # legacy row violated the constraint.
+                content_len = row["content_utf16_length"]
+                if content_len and content_len > 0:
+                    base_text_length_utf16 = int(content_len)
+                else:
+                    # char_length returns character count (≈ UTF-16 code
+                    # units for BMP-only text). Sufficient as a density
+                    # denominator; supplementary-plane chars are rare in
+                    # reading bases.
+                    base_text_length_utf16 = int(row["text_char_length"] or 0)
             total_anchors = await conn.fetchval(
                 "SELECT count(DISTINCT anchor_segment_id) "
                 "FROM anchor_segments WHERE base_id = $1",
@@ -644,6 +675,7 @@ class GrammarWindowPublisher:
             density_by_record=density_by_record,
             total_anchors=total_anchors,
             annotated_anchors=annotated,
+            base_text_length_utf16=base_text_length_utf16,
         )
 
     def _update_ledger(

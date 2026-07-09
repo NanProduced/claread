@@ -1,13 +1,15 @@
 # Reader Agentic Orchestration 实施计划
 
-> 状态：`D5 active / adaptive M1 recovery verified`
-> 最后更新：2026-07-08
+> 状态：`D5 active / adaptive three-mode closure in progress`
+> 最后更新：2026-07-09
 
 ## 当前实施口径
 
 本文保留 D0-D6 的既有实施推进线。2026-07-07 后，Reader enhancement 的批注链路、成本策略、渐进式发布和长文处理，以 `adaptive-reader-orchestration-design.md` 为当前权威设计。
 
-下一轮开发不应把 adaptive planner、SSE / patch delivery、longform lazy enhancement 和全部 layer grouping 打包成一次大重构。实施顺序应先恢复短文质量、成本、Translation Group 产品语义和稳定发布，再扩展到 grouped / windowed execution，最后进入长文与超长文本的分层增强。
+下一轮开发不应把 adaptive planner、SSE / patch delivery、longform lazy enhancement 和全部 layer grouping 打包成一次大重构。实施顺序应先恢复短文质量、成本、Translation Group 产品语义和稳定发布，再补齐长文 grouped/windowed execution，最后进入超长文本的 outline-first / section-lazy 增强。
+
+2026-07-09 后的验收节奏调整为：短文、长文、超长文三种模式先分别完成代码级合同闭环，再做统一真实 LLM / 页面验收。中间实现阶段优先使用 deterministic tests、fake executor、recorded LLM response 和 DB contract checks；不要每修一个局部就反复真实跑长文/超长文，避免高 token 成本和中间态误判。
 
 `tmp/` 下的研究、验收和诊断材料只作为历史证据来源；临时开发代号不进入长期文档、代码注释、数据库命名或对外沟通口径。
 
@@ -24,13 +26,15 @@
 Reader enhancement 的当前主链路按层分开理解：
 
 1. Input Adapter / Article Ready：把用户输入转成 Stable Reading Base、Reading Units、Anchor Segments。该层决定稳定文本与锚点，不决定批注密度或译文分组。
-2. Strategy / Bootstrap：根据记录与 base 状态创建 reader jobs。当前 translation / vocabulary 已有短文 batch 与非短文 per-unit 两条代码路径；grammar 已有 analysis window 路径；完整 short / structured / windowed / section / selective planner 尚未落地。
+2. Strategy / Bootstrap：根据记录与 base 状态创建 reader jobs。当前 translation 短文走 whole-article batch、非短文走 T3.1 grouped/windowed batch（多条 `translate_article` window job），不再创建 per-unit `translate_unit`；vocabulary 已有短文 batch 与非短文 grouped 路径；grammar 已有 analysis window 路径；完整 short / structured / windowed / section / selective planner 尚未落地。
 3. Layer Workers：执行 LLM 或 deterministic 后处理。worker 可以选择 batch/window 计算形态，但不能改变 Enhancement Layer 的公开输出语义。
 4. Layer Publisher：校验 schema、anchor、publish fence、source hash 和 generation，写 `enhancement_layers` 与 `reader_events`。Publisher 是合同守门，不应替 worker 猜测或改写语义粒度。
 5. Snapshot / Plate Projection：从 domain facts 重建页面。前端显示异常优先回查已发布 layer output；不要把 projection 误判为 layer truth。
 6. Observability / Eval：对比 old AI Workflow、新 orchestration、真实页面行为和 usage events。没有 baseline/eval 证据，不把实现标记为完成。
 
 当前已暴露的教训：成本优化不能压过产品合同。`translate_article` 的 batch compute 降低了调用数，但短文 batch translation group 一度被实现成 whole-unit group，破坏了 group-native translation 的阅读体验。该类回归已通过 T1.1a 的 group planning / hydration 合同修复；后续扩展 grouped/windowed execution 时必须沿用同一合同。
+
+2026-07-09 长文抽查进一步确认：长文路径仍处于中间态。translation 非短文此前是 57/58 次 `translate_unit` per-unit 调用（T3.1 已改为 grouped/windowed `translate_article` batch job，待真实 LLM 验收确认降幅）；grammar window 花费较高但大多数 window `no_op`，且缺少候选数与 selector 拒绝原因 diagnostics。该结果不推翻 adaptive orchestration 方向，只说明 T3.4a/T4/T5 仍未闭环。
 
 ### 里程碑
 
@@ -46,11 +50,11 @@ Reader enhancement 的当前主链路按层分开理解：
 
 ### 推荐执行顺序
 
-1. M0 和 M1 必须先做。当前主要风险不是缺少长文能力，而是短文质量和成本已经退化。
-2. M2 应紧跟 M1。否则即使后端质量恢复，用户仍会看到闪烁、折叠和尾部先出现的问题。
-3. M3 在 M1/M2 可验收后推进。translation / vocabulary 的 grouped execution 是主要降本来源。
-4. M4 不要先做。没有稳定的短文和 grouped layer 行为，planner 只会把不稳定路径组合起来。
-5. M5 分两步：deterministic navigation outline 可较早接入前端；LLM semantic outline 等 M3/M4 稳定后再做。
+1. M0/M1 的短文合同继续保持；短文真实页面已抽查过的部分不再反复消耗真 LLM。
+2. M3 长文 grouped execution：T3.1（translation）与 T3.2b（vocabulary）均已完成实施/待真实 LLM 验收。下一步补 T3.4a grammar window diagnostics。
+3. T3.4a 先补 grammar window diagnostics，再调 grammar prompt / selector / budget。没有 diagnostics 时不要盲目加预算。
+4. T4/M5 再补完整三模式 planner 与超长文 outline-first / section-lazy 策略。超长文不应 eager 全文增强。
+5. 三种模式代码级闭环后，再统一跑真实 LLM / 页面验收，覆盖短文、长文、超长文和碎段新闻。
 6. M6 先做 debounce / state preservation，再做 SSE 和 patch merge。SSE 本身不能解决全量 reload 闪烁。
 
 ### 任务包
@@ -68,13 +72,16 @@ Reader enhancement 的当前主链路按层分开理解：
 | T2.1 | 前端 layer reload 防抖与状态保留 | 4-8h | T1.4 | layer 更新不会折叠当前打开批注，不重置 scroll/selection，不造成明显闪烁 |
 | T2.2 | 后端 release order policy | 4-8h | T1.4 | group/window 结果按 reading order 或 current viewport priority 发布，不按纯完成顺序刷尾部 |
 | T2.3 | Reader event payload audit | 3-6h | T2.1 | 明确哪些事件需要 full reload，哪些可局部合并；保留 polling fallback |
-| T3.1 | translation grouped execution | 4-8h | T1.1a | 中长文章按 group/window 批量翻译，输出仍能按 translation group 前端显示；复用 T1.1a 的 group planning / hydration 合同 |
+| T3.1 | translation grouped execution | 4-8h | T1.1a | 中长文章按 group/window 批量翻译，输出仍能按 translation group 前端显示；复用 T1.1a 的 group planning / hydration 合同（已完成实施/待验收：详见"当前进度"T3.1 章节） |
 | T3.2 | vocabulary grouped execution | 4-8h | T1.1 | 中长文章 vocabulary 不再 per-unit 调用；同 lemma/surface 的重复标注可控 |
 | T3.3 | vocabulary highlight policy | 3-6h | T3.2 | 明确只高亮首次、每处高亮、或首次强高亮加弱提示的产品规则，并有测试覆盖 |
 | T3.4 | grammar grouped/window worker cleanup | 4-8h | T1.3 | grammar window 生成候选充足，selector 只做质量/密度裁剪，不因预算/schema bug 大量 no-op |
+| T3.4a | grammar window diagnostics | 4-8h | T1.3 | 每个 grammar window 记录 raw candidate count、accepted/rejected count、reject reasons、budget、strategy hash；能解释 no-op |
+| T3.5 | completion state finalizer | 3-6h | T3.1/T3.2/T3.4a | 所有目标 jobs/window terminal 后，record/product state、plan status、progress summary 正确收尾 |
 | T4.1 | deterministic document feature extractor | 4-8h | M1/M3 | 输出 token、word、paragraph、heading、noise、block histogram、requested layers 等 profile input |
 | T4.2 | bounded LLM document profiler | 4-8h | T4.1 | LLM 只返回 genre/structure/schema_risk/selective hints；失败时 deterministic fallback |
 | T4.3 | strategy planner | 4-8h | T4.1/T4.2 | planner 选择 short batch、structured batch、grouped/windowed、section longform、selective longform |
+| T4.4 | three-mode validation harness | 4-8h | T4.3/T5.1 | 用 fake/recorded outputs 覆盖 short/long/very-long mode 的 job plan、layer counts、usage attribution、completion state |
 | T5.1 | deterministic navigation outline | 4-8h | Stable Base | 基于 heading/paragraph/unit 生成 Notion-like outline；不调用 LLM；不阻塞 translation |
 | T5.2 | outline frontend contract | 4-8h | T5.1 | outline item 可跳转 anchor/unit；当前段高亮；长文显示进度感 |
 | T5.3 | semantic outline worker | 4-8h | T4.3/T5.1 | 仅长文/超长文启用；输出 section title/summary/key idea/anchor range，不改变 Stable Base |
@@ -90,8 +97,9 @@ Reader enhancement 的当前主链路按层分开理解：
 - T1.1a 是当前 M1 阻塞项，不应与 T3/M4 混做；可以和页面验证并行，但必须先于新的 grouped/windowed translation 扩展。
 - T2.1 可与 T2.2 并行，但需要同一篇文章做联合页面验收。
 - T5.1 可在 M1 修复期间提前做，因为它只依赖 Stable Base，不依赖 LLM planner。
+- 真实长文/超长文页面验收在三模式代码级闭环后统一执行；中间阶段只做低成本合同验证。
 
-### 当前进度（2026-07-08）
+### 当前进度（2026-07-09）
 
 - T0.1/T0.2 已完成：已建立 `compare_reader_chains.py`、baseline harness 和 golden samples，支持 fake / real executor、usage event、layer count、completion reason 与 reading metadata 对比。
 - T1.1 已完成调度降本部分：短文 translation / vocabulary 进入 whole-article batch compute、per-unit publish；`reuters_bbc_970` 默认 fake baseline 从 translation/vocabulary 9 次 per-unit 调用降为各 1 次 batch 调用。
@@ -112,22 +120,37 @@ Reader enhancement 的当前主链路按层分开理解：
    - 风险 B（已锁定）：窗口切分边界与 translation group / grammar window 不对齐。v1 保持 vocabulary 窗口独立于 translation group 粒度，只按 unit 连续性切分；不影响 translation group 合同。
 4. 影响面：不改 translation group 合同；不改 grammar window worker；不改 frontend layer contract；不触碰 `apps/web/**`；不新增 migration。
 5. 已新增测试：窗口切分 planner（连续 unit 覆盖、无重叠、safety max、empty/single）；跨窗口重复 headword v1 行为锁定；bootstrap 在 non-short 文章下创建多条 batch job 并保证 idempotency；partial publish 只为缺失 unit 建 window；多窗口 target_key/fingerprint/input_json 区分；pipeline runner 处理多窗口 batch job 并发布 per-unit vocabulary layer。
+
+#### T3.1 non-short / long translation grouped execution（已完成实施/待验收）
+
+1. 短文路径不变：`_bootstrap_translation_jobs` 仍走 `_bootstrap_translation_batch_job`，创建单条 whole-article `translate_article` batch job（`target_scope='unit_range'`，`input_json.target_unit_ids` 覆盖所有缺 translation layer 的 unit），无 `window_id`。
+2. non-short 现状：`_is_short_article` 为 false 时路由到 `_bootstrap_translation_grouped_jobs`，按连续 unit window 创建多条 `translate_article` batch job；不再创建 per-unit `translate_unit` job。原 per-unit `_bootstrap_translation_jobs` 老循环已删除。
+3. 最小合理方案（已实施）：复用 `translate_article` batch job type + 现有 batch translation worker + `publish_article_translation_batch` publisher。worker 与 publisher 已 window-agnostic：worker 从 `input_json.target_unit_ids` 读取子集只翻译窗口内 units；publisher 校验 `sorted(target_unit_ids) == sorted(output_unit_ids)` 后按 `:unit_id` suffix fingerprint 发布 N 条 per-unit `enhancement_layers`。无新增 job type / migration。
+   - 实现：`plan_translation_windows` 纯函数按 `order_index` 排序，贪心累加 unit 直到达到 target chars（`TRANSLATION_WINDOW_TARGET_CHAR_COUNT=6000`）或超过 safety max（`TRANSLATION_WINDOW_SAFETY_MAX_CHAR_COUNT=10000`）。translation 阈值高于 vocabulary（3000/5000），因为 translation 需要更多上下文保证 group 语义完整。单个 unit 超过 safety max 时独占一个 window。`window_id` 是 sorted unit_ids 的 sha256 前 12 位，保证同 unit 集合 re-plan 后 window_id 不变。
+   - 每窗口 job 的 `target_key = f"{record_id}:window:{window_id}"`，`idempotency_key = f"{operation_fingerprint}:{record_id}:window:{window_id}"`，`input_signature_suffix` 包含 `window:{window_id}:batch`。多窗口 job 的 `target_key` / `input_hash` / `idempotency_key` 互不相同。`_insert_unit_range_job` 已支持 `target_key_override` / `idempotency_key_suffix`（T3.2b 引入），直接复用。
+   - Translation Group 合同保留：每窗口的 LLM 输出仍走 `build_deterministic_translation_groups`（`plan_translation_groups` + `_hydrate_translation_groups`）。LLM 不能 choose/merge/split/reorder/add/drop groups；后端校验 coverage/contiguity/no-overlap/membership/stable order 并 hydrate `group_id` / `source_text_hash` / `source_text`。窗口化不破坏 group-native 合同。
+   - 风险 A（已锁定）：跨窗口 translation group 顺序不保证按 `published_at` 与 reading order 一致。窗口并发完成时 `published_at` 顺序不可预测，但每个 unit 内 groups 仍按 reading order 稳定；前端按 unit_id 加载 layer，不依赖跨 unit `published_at`。测试 `test_t31_pipeline_runner_processes_multiple_translation_windows_and_publishes_per_unit_layers` 验证 per-unit group `group_id` 稳定格式而非跨 unit `published_at` 顺序。
+   - 风险 B（已锁定）：窗口边界与 vocabulary window / grammar window 不对齐。v1 保持各层窗口独立，只按 unit 连续性切分；不影响其他层合同。
+4. 影响面：不改 Translation Group 合同；不改 grammar window worker；不改 vocabulary worker；不改 frontend layer contract；不触碰 `apps/web/**`；不新增 migration。`translation_worker.py` / `layer_publisher.py` 未修改。
+5. 已新增/更新测试：window planner（连续 unit 覆盖、无重叠、safety max 独占、empty/single、`window_id` 稳定）；short article bootstrap 仍单条 batch；non-short bootstrap 多 window job 且无 `translate_unit`；idempotency 重复 bootstrap 不重复；partial publish 只为缺失 unit 建 window；多窗口 `target_key`/`idempotency_key`/`input_hash` DB 级区分；pipeline runner 处理多窗口 batch job 并发布 per-unit translation layer；Translation Group 合同回归（不退化为 one-unit-one-group；`$2.13 per hour` decimal boundary 不被切坏）。同步更新 `test_t11_long_article_routes_to_per_unit_path` 与 `test_superseded_stale_jobs_are_not_claimed_by_worker` 以反映 non-short 现在走 `translate_article`。
 - T2.1 已有第一轮实现并提交（progressive reload cursor、in-flight guard、scroll/selection best-effort 恢复），但必须在 T1.1a 修复后用真实页面重新验收；前端稳定性不能替代正确的 layer output。
 - 默认 worker / baseline budget 已调整为 `max_ticks=96`、`max_jobs=48`，覆盖当前 6/7 worker slots 下的中等短文样本；这是验收预算，不是最终调度模型。
 - 2026-07-08 fake baseline 验收只能证明 job 数、completion 和测试 fake output 口径；不能证明真实 LLM 下 Translation Group 粒度正确。真实页面已暴露 one-unit-one-group 回归，因此此前 `translation_groups` 数量不能作为 T1.1a 验收依据。
+- 2026-07-09 长文真实抽查记录 `5afd3f93-2105-47f8-9e0f-5886b7e97623`、`67ad6b9f-a45d-42b4-a8bd-d3e9c704358e`：两篇分别约 36.9k / 28.5k chars，所有 jobs succeeded，translation 当时为 57/58 次 `translate_unit`（T3.1 已改为 grouped/windowed `translate_article`，待真实 LLM 验收确认降幅）；total tokens 约 320k / 297k；grammar plan 仅发布 3 条 grammar_note + 1 条 sentence_analysis，且 17/19、13/15 grammar windows 为 `no_op`。该抽查结论用于确认 T3.4a 优先级，不作为三模式最终验收。
 
 ### 下一轮建议
 
-1. 进入 T1.4 / M2 联合验收：确认 short-path translation 先发布、页面 layer 更新不闪烁、不折叠当前批注、不重置 scroll/selection。
-2. T3.2a duplicate highlight policy v1 已完成（含 cleanup）/待验收；T3.2b non-short vocabulary grouped execution 已完成实施/待验收（见上节），v1 跨窗口重复 headword 行为已锁定，不声称全文 dedup 已完成。
-3. T3.1 中长文 translation grouped execution 可以在 T1.1a 合同基础上设计，但不得回退到 whole-unit、one-sentence 或 one-anchor display。
-4. T5.1 deterministic navigation outline 可以作为独立小任务提前准备，因为它只依赖 Stable Base；semantic outline worker 仍等 M3/M4 稳定后再接。
+1. 下一轮优先进入 T3.4a：grammar window diagnostics。先补可观测性（raw candidate count、accepted/rejected count、reject reasons、budget、strategy hash），再根据 diagnostics 修 prompt、selector 或 budget。T3.1 已完成实施/待真实 LLM 验收。
+2. T3.5 completion state finalizer 可作为小任务穿插，但不要混进 T3.4a 的实现范围。
+3. T5.1 deterministic navigation outline 与 T4.x planner 可在 T3.4a 后推进；semantic outline 和 lazy section enhancement 等超长文能力等 outline / planner 代码级闭环后再做。
+4. T3.1 / T3.2b / T3.4a 三模式代码级闭环后，再统一跑真实 LLM / 页面验收，覆盖短文、长文、超长文和碎段新闻，验证窗口化 translation/vocabulary 与 grammar diagnostics 在真实 LLM 下的成本与质量。
 
 ### 暂缓项
 
 - 不先做完整 adaptive planner。
 - 不先做 semantic outline。
 - 不先做 SSE patch merge。
+- 不在 short/long/very-long 三种模式代码级闭环前，频繁真实跑长文或超长文页面验收。
 - 不把短文 batch 的 whole-article computation 理解成 whole-unit translation display。
 - 不用前端按标点或句子拆译文来修复后端 group 输出错误。
 - 不先删除旧 AI Workflow。旧链路仍是质量和成本对照基线，除非人工确认不再需要 fallback。
@@ -136,7 +159,7 @@ Reader enhancement 的当前主链路按层分开理解：
 
 - `implementation-plan.md` 只记录任务拆分、依赖、状态和验收口径，不保存每轮 coding agent prompt。
 - 每轮 prompt 由人工根据当前代码事实和最近验收结果单独生成，并通过会话发给 coding agent。
-- 当前 T1.1a 已通过本轮验收。下一轮任务可从 T1.4/M2 页面稳定性、T3.2 vocabulary grouped execution、或 T5.1 deterministic navigation outline 中选择一个单独派发；不要把 planner / semantic outline worker / SSE patch / grouped translation-vocabulary 扩展混成一次大任务。
+- 当前 T1.1a 已通过本轮验收，T3.1/T3.2b 已完成代码级实施并等待统一真实 LLM / 页面验收。下一轮默认派发 T3.4a grammar window diagnostics；不要把 planner / semantic outline worker / SSE patch / grammar quality tuning 混入同一任务。
 - 评审 agent 完成 review 后，如发现实现改变了任务状态、产品合同或执行顺序，必须同步更新本计划和相关模块合同。
 
 ## 成功标准

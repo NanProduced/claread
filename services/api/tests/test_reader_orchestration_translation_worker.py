@@ -2856,3 +2856,184 @@ async def test_batch_path_with_fake_planner_translator_produces_semantic_groups(
         )
         assert span_text is not None
         assert group.source_text_hash == compute_text_range_hash(span_text)
+
+
+@pytest.mark.anyio
+async def test_t31_batch_window_output_preserves_translation_group_contract() -> None:
+    """T3.1 Translation Group contract regression: a multi-unit batch window
+    (the shape a non-short ``translate_article`` window job produces) must
+    NOT degrade to one-unit-one-group, one-anchor-one-group, or
+    one-sentence-one-group. The ``$2.13 per hour`` decimal boundary must
+    stay intact inside one group's anchor span.
+
+    This test builds a 2-unit batch context simulating a translation window:
+    - Unit w1: 4 short single-sentence paragraphs → 2 semantic groups (3+1)
+    - Unit w2: 3 contiguous sentences (one carries ``$2.13 per hour``) → 1
+      group with all 3 anchors
+
+    The fake planner/translator echoes the backend-predefined group_ids.
+    ``hydrate_translation_batch_output`` must produce per-unit
+    ``TranslationLayerOutput`` whose groups match the semantic plan.
+    """
+    strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
+    layer_policy = strategy.layers["translation"]
+
+    # Unit w1: 4 short single-sentence "paragraphs" (\\n\\n-joined).
+    # Planner merges into 2 groups (3+1), NOT 4 per-paragraph and NOT 1
+    # whole-unit (one-unit-one-group regression).
+    w1_segments = [
+        ("w1_s1", "First paragraph for window contract test.", 1),
+        ("w1_s2", "Second paragraph for window contract test.", 2),
+        ("w1_s3", "Third paragraph for window contract test.", 3),
+        ("w1_s4", "Fourth paragraph for window contract test.", 4),
+    ]
+    w1_texts = [spec[1] for spec in w1_segments]
+    w1_joiner = "\n\n"
+    w1_source = w1_joiner.join(w1_texts)
+    w1_joiner_len = utf16_code_unit_length(w1_joiner)
+    w1_anchors: list[TranslationAnchorSegmentTarget] = []
+    cursor = 0
+    for aid, text, order in w1_segments:
+        start = cursor
+        end = cursor + utf16_code_unit_length(text)
+        w1_anchors.append(
+            TranslationAnchorSegmentTarget(
+                anchor_segment_id=aid,
+                sentence_id=aid,
+                order_index=order,
+                segment_type="sentence",
+                boundary_quality="normal",
+                unit_start_utf16=start,
+                unit_end_utf16=end,
+                text_hash=compute_text_range_hash(text),
+                source_text=text,
+            )
+        )
+        cursor = end + w1_joiner_len
+
+    # Unit w2: 3 contiguous sentences in ONE paragraph (space-joined).
+    # The first carries ``$2.13 per hour``. Planner clusters into 1 group
+    # with all 3 anchors; the decimal stays inside one anchor segment.
+    w2_segments = [
+        ("w2_s10", _S10_SOURCE, 10),
+        ("w2_s11", _S11_SOURCE, 11),
+        ("w2_s12", _S12_SOURCE, 12),
+    ]
+    w2_texts = [spec[1] for spec in w2_segments]
+    w2_joiner = " "
+    w2_source = w2_joiner.join(w2_texts)
+    w2_joiner_len = utf16_code_unit_length(w2_joiner)
+    w2_anchors: list[TranslationAnchorSegmentTarget] = []
+    cursor = 0
+    for aid, text, order in w2_segments:
+        start = cursor
+        end = cursor + utf16_code_unit_length(text)
+        w2_anchors.append(
+            TranslationAnchorSegmentTarget(
+                anchor_segment_id=aid,
+                sentence_id=aid,
+                order_index=order,
+                segment_type="sentence",
+                boundary_quality="normal",
+                unit_start_utf16=start,
+                unit_end_utf16=end,
+                text_hash=compute_text_range_hash(text),
+                source_text=text,
+            )
+        )
+        cursor = end + w2_joiner_len
+
+    context = TranslationBatchJobContext(
+        job_id=UUID("11111111-1111-1111-1111-111111111111"),
+        run_id=UUID("22222222-2222-2222-2222-222222222222"),
+        reading_record_id=UUID("33333333-3333-3333-3333-333333333333"),
+        user_id=UUID("44444444-4444-4444-4444-444444444444"),
+        base_id=UUID("55555555-5555-5555-5555-555555555555"),
+        expected_generation=1,
+        operation_fingerprint=TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+        source_language="en",
+        target_language="zh-CN",
+        target_unit_ids=("w1", "w2"),
+        units=(
+            TranslationBatchUnitContext(
+                unit_id="w1",
+                order_index=1,
+                source_text=w1_source,
+                text_hash=compute_text_range_hash(w1_source),
+                anchor_segments=tuple(w1_anchors),
+            ),
+            TranslationBatchUnitContext(
+                unit_id="w2",
+                order_index=2,
+                source_text=w2_source,
+                text_hash=compute_text_range_hash(w2_source),
+                anchor_segments=tuple(w2_anchors),
+            ),
+        ),
+        reading_goal=strategy.reading_goal,
+        reading_variant=strategy.reading_variant,
+        strategy_version=strategy.strategy_version,
+        strategy_hash=strategy.strategy_hash,
+        layer_policy_hash=layer_policy.policy_hash,
+        translation_prompt_lines=layer_policy.prompt_lines,
+    )
+
+    fake = _FakePlannerTranslator()
+    result = await fake.translate_batch(context)
+    outputs = hydrate_translation_batch_output(context=context, generation=result.output)
+
+    # The window covers 2 units → 2 per-unit outputs.
+    assert len(outputs) == 2
+    assert [uid for uid, _ in outputs] == ["w1", "w2"]
+
+    w1_uid, w1_layer = outputs[0]
+    w2_uid, w2_layer = outputs[1]
+
+    # Unit w1: 4 single-sentence paragraphs → 2 semantic groups (3+1).
+    # NOT 1 (one-unit-one-group) and NOT 4 (one-anchor-one-group /
+    # one-sentence-one-group).
+    assert len(w1_layer.groups) == 2, (
+        f"w1 expected 2 semantic groups, got {len(w1_layer.groups)} "
+        f"(one-unit-one-group={len(w1_layer.groups) == 1}, "
+        f"one-anchor-one-group={len(w1_layer.groups) == len(w1_anchors)})"
+    )
+    # Full coverage, no overlap, stable order for w1.
+    w1_all_anchors = [seg.anchor_segment_id for seg in w1_anchors]
+    w1_covered = [aid for group in w1_layer.groups for aid in group.anchor_segment_ids]
+    assert w1_covered == w1_all_anchors
+    # Each group's anchors are contiguous.
+    for group in w1_layer.groups:
+        orders = [
+            next(seg.order_index for seg in w1_anchors if seg.anchor_segment_id == aid)
+            for aid in group.anchor_segment_ids
+        ]
+        assert orders == sorted(orders)
+
+    # Unit w2: 3 contiguous sentences → 1 semantic group with all 3 anchors.
+    # NOT 3 (one-anchor-one-group) and NOT 1 group with only 1 anchor.
+    assert len(w2_layer.groups) == 1, (
+        f"w2 expected 1 semantic group, got {len(w2_layer.groups)}"
+    )
+    w2_group = w2_layer.groups[0]
+    w2_all_anchors = [seg.anchor_segment_id for seg in w2_anchors]
+    assert list(w2_group.anchor_segment_ids) == w2_all_anchors, (
+        "w2 group must cover all 3 anchors (decimal-bearing s10 + s11 + s12)"
+    )
+
+    # The ``$2.13 per hour`` decimal boundary is fully inside one group's
+    # anchor span (the planner only groups whole anchor segments; it never
+    # re-segments sentence text). The decimal-bearing anchor w2_s10 is in
+    # the group, and the group's source_text_hash covers the full span
+    # from w2_s10's start to w2_s12's end.
+    assert "w2_s10" in w2_group.anchor_segment_ids
+    w2_segments_by_id = {seg.anchor_segment_id: seg for seg in w2_anchors}
+    w2_first = w2_segments_by_id["w2_s10"]
+    w2_last = w2_segments_by_id["w2_s12"]
+    w2_span = slice_by_utf16_offsets(
+        w2_source,
+        w2_first.unit_start_utf16,
+        w2_last.unit_end_utf16,
+    )
+    assert w2_span is not None
+    assert "$2.13 per hour" in w2_span
+    assert w2_group.source_text_hash == compute_text_range_hash(w2_span)

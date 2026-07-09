@@ -1657,3 +1657,140 @@ async def test_t32b_pipeline_runner_processes_multiple_vocabulary_windows_and_pu
     assert vocab_layer_count == unit_count, (
         f"expected {unit_count} vocabulary layers, got {vocab_layer_count}"
     )
+
+
+# T3.1: Non-short translation grouped execution. Text >6000 chars triggers
+# the grouped path: bootstrap creates multiple translate_article window
+# jobs; the pipeline runner processes each window via the batch translator;
+# the publisher still publishes per-unit translation layers.
+_T31_LONG_TEXT = "\n\n".join(
+    [
+        " ".join(
+            f"Word{i} placeholder sentence for grouped translation window test."
+            for i in range(40)
+        )
+        for _ in range(8)
+    ]
+)
+assert len(_T31_LONG_TEXT) > 6000
+
+
+@pytest.mark.anyio
+async def test_t31_pipeline_runner_processes_multiple_translation_windows_and_publishes_per_unit_layers(
+    pipeline_runner_env: asyncpg.Pool,
+) -> None:
+    """T3.1: pipeline runner processes multiple translation batch window jobs
+    and publishes one per-unit translation layer per unit."""
+    from app.services.reader_orchestration import job_bootstrap
+
+    user_id = await insert_user(pipeline_runner_env)
+    article = await submit_article_ready(
+        pipeline_runner_env,
+        user_id=user_id,
+        plain_text=_T31_LONG_TEXT,
+        title="T3.1 Grouped Translation",
+    )
+    assert len(_T31_LONG_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
+
+    runner = _make_runner(
+        pipeline_runner_env,
+        translator=_StaticTranslator(),
+        vocabulary_executor=_StaticVocabularyExecutor(),
+        grammar_executor=_StaticGrammarExecutor(),
+    )
+
+    summary = await runner.run(
+        record_id=article.record_id,
+        user_id=user_id,
+        lease_owner="t31-grouped-translation",
+        lease_duration=LEASE_DURATION,
+        max_ticks=48,
+        max_jobs=48,
+    )
+
+    unit_count = await _count_units(
+        pipeline_runner_env,
+        article.record_id,
+        article.base_id,
+    )
+    assert unit_count >= 2
+
+    # No failures
+    assert summary.outcome_counts.failed_terminal == 0
+    assert summary.outcome_counts.retry_later == 0
+
+    # Multiple translation batch jobs were created (windows)
+    translation_batch_job_count = await _count_jobs(
+        pipeline_runner_env,
+        article.record_id,
+        "translate_article",
+    )
+    assert translation_batch_job_count >= 2, (
+        f"expected >=2 translation window jobs for non-short article, "
+        f"got {translation_batch_job_count}"
+    )
+    # No per-unit translation jobs
+    per_unit_translation_count = await _count_jobs(
+        pipeline_runner_env,
+        article.record_id,
+        "translate_unit",
+    )
+    assert per_unit_translation_count == 0
+
+    # Per-unit translation layers published: one per unit
+    translation_layer_count = await _count_layers(
+        pipeline_runner_env,
+        article.record_id,
+        "translation",
+    )
+    assert translation_layer_count == unit_count, (
+        f"expected {unit_count} translation layers, got {translation_layer_count}"
+    )
+
+    # Ordering: each unit's translation layer groups must be in reading
+    # order (stable within a unit). With multiple windows, the
+    # ``published_at`` order across units is NOT guaranteed to match
+    # reading order (windows complete independently), but the groups
+    # within each unit must follow anchor order_index ascending.
+    async with pipeline_runner_env.acquire() as conn:
+        layer_rows = await conn.fetch(
+            """
+            SELECT
+                layer.target_key,
+                u.order_index,
+                layer.output_json
+            FROM enhancement_layers layer
+            JOIN reading_units u
+              ON u.reading_record_id = layer.reading_record_id
+              AND u.base_id = layer.base_id
+              AND u.unit_id = layer.target_key
+            WHERE layer.reading_record_id = $1
+              AND layer.base_id = $2
+              AND layer.layer_type = 'translation'
+              AND layer.status = 'published'
+            ORDER BY u.order_index ASC
+            """,
+            article.record_id,
+            article.base_id,
+        )
+    # All units have published translation layers
+    assert len(layer_rows) == unit_count
+    # Each unit's groups must be in reading order (anchor_segment_ids
+    # within each group are contiguous, and groups themselves follow
+    # the anchor order_index ascending).
+    for row in layer_rows:
+        output_json = row["output_json"]
+        groups = output_json.get("groups") or []
+        assert len(groups) >= 1, (
+            f"unit {row['target_key']} has no translation groups"
+        )
+        # Groups are ordered by their first anchor's order_index.
+        # Since groups carry anchor_segment_ids (not order_index), we
+        # verify that group_ids are in the stable backend-generated
+        # format (unit_id_g{start}_{end}) which encodes reading order.
+        for group in groups:
+            group_id = group.get("group_id", "")
+            assert "_g" in group_id, (
+                f"group_id {group_id!r} does not follow the stable "
+                f"backend-generated format"
+            )

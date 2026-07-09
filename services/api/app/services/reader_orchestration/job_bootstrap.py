@@ -80,6 +80,23 @@ SHORT_ARTICLE_MAX_CHAR_COUNT = 6000
 VOCABULARY_WINDOW_TARGET_CHAR_COUNT = 3000
 VOCABULARY_WINDOW_SAFETY_MAX_CHAR_COUNT = 5000
 
+# T3.1 non-short translation grouped execution: when the active base text
+# exceeds SHORT_ARTICLE_MAX_CHAR_COUNT, translation bootstrap splits the
+# unpublished units into consecutive windows and creates one
+# ``translate_article`` batch job per window. Windows are bounded by a
+# target char count (close the window once reached) and a safety max
+# (never exceed). A single unit larger than safety max becomes its own
+# window. The unit is the minimum boundary — units are never split.
+#
+# Translation windows are intentionally larger than vocabulary windows
+# (T3.2b): translation output is per-group translated_text and needs more
+# source context for coherent group planning/hydration. A target of 6000
+# chars (one short-article equivalent) yields ~5 LLM calls on a 30k-char
+# article instead of ~30 per-unit calls, matching the short-article
+# per-char cost profile.
+TRANSLATION_WINDOW_TARGET_CHAR_COUNT = 6000
+TRANSLATION_WINDOW_SAFETY_MAX_CHAR_COUNT = 10000
+
 # Maps each enhancement job_type to the variant policy layer name it belongs
 # to. ``generate_display_title_zh`` has no entry because the display title job
 # does not consume a per-layer prompt policy; T5 only records strategy metadata
@@ -252,11 +269,122 @@ def plan_vocabulary_windows(
     return windows
 
 
+# ---------------------------------------------------------------------------#
+# T3.1: Non-short translation batch window planner
+# ---------------------------------------------------------------------------#
+# Pure dataclasses + function. No DB access, no side effects. The bootstrap
+# method loads unit metadata (unit_id, order_index, text_length) and calls
+# ``plan_translation_windows`` to get a list of consecutive, non-overlapping
+# windows. Each window becomes one ``translate_article`` batch job.
+#
+# Design constraints (see implementation-plan.md T3.1):
+# - Unit is the minimum boundary; never split a unit across windows.
+# - Windows must be consecutive and non-overlapping, ordered by reading order.
+# - A single unit larger than safety max becomes its own window.
+# - ``window_id`` is a stable hash of the sorted unit_ids in the window, so
+#   re-planning after partial publish produces the same window_id for
+#   unchanged windows (idempotency relies on this).
+# - The translation and vocabulary planners are intentionally separate: each
+#   layer has its own default thresholds and its own idempotency namespace
+#   (job_type + operation_fingerprint differ, so window_id collisions across
+#   layers never cause idempotency false-positives).
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationWindowUnit:
+    """A single unit's metadata for translation window planning."""
+
+    unit_id: str
+    order_index: int
+    text_length: int
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationWindowPlan:
+    """A planned translation batch window: a consecutive range of units."""
+
+    units: tuple[TranslationWindowUnit, ...]
+
+    @property
+    def window_id(self) -> str:
+        """Stable 12-char hex hash of the sorted unit_ids in this window.
+
+        Two windows with the same unit set produce the same window_id
+        regardless of planning order, so idempotency checks on
+        ``target_key = f"{record_id}:window:{window_id}"`` correctly
+        detect that a window job already exists.
+        """
+        sorted_ids = ":".join(sorted(u.unit_id for u in self.units))
+        return hashlib.sha256(sorted_ids.encode("utf-8")).hexdigest()[:12]
+
+    @property
+    def target_unit_ids(self) -> tuple[str, ...]:
+        return tuple(u.unit_id for u in self.units)
+
+
+def plan_translation_windows(
+    units: list[TranslationWindowUnit] | tuple[TranslationWindowUnit, ...],
+    *,
+    target_char_count: int = TRANSLATION_WINDOW_TARGET_CHAR_COUNT,
+    safety_max_char_count: int = TRANSLATION_WINDOW_SAFETY_MAX_CHAR_COUNT,
+) -> list[TranslationWindowPlan]:
+    """Plan translation batch windows for non-short articles.
+
+    Greedy accumulator over units ordered by ``order_index``:
+
+    1. Start a new window with the first remaining unit.
+    2. Add the next unit if ``current_chars + next.text_length`` does not
+       exceed ``safety_max_char_count``.
+    3. If adding would exceed safety max, close the current window and
+       start a new one with that unit.
+    4. If the current window reaches ``target_char_count``, close it.
+
+    A single unit larger than safety max becomes its own window.
+
+    Returns an empty list if ``units`` is empty. Every input unit appears
+    in exactly one output window (coverage + no-overlap).
+    """
+    if not units:
+        return []
+    sorted_units = sorted(units, key=lambda u: u.order_index)
+    windows: list[TranslationWindowPlan] = []
+    current: list[TranslationWindowUnit] = []
+    current_chars = 0
+    for unit in sorted_units:
+        if not current:
+            current.append(unit)
+            current_chars = unit.text_length
+            continue
+        if current_chars + unit.text_length > safety_max_char_count:
+            windows.append(TranslationWindowPlan(units=tuple(current)))
+            current = [unit]
+            current_chars = unit.text_length
+            continue
+        current.append(unit)
+        current_chars += unit.text_length
+        if current_chars >= target_char_count:
+            windows.append(TranslationWindowPlan(units=tuple(current)))
+            current = []
+            current_chars = 0
+    if current:
+        windows.append(TranslationWindowPlan(units=tuple(current)))
+    return windows
+
+
 # rationale_code written when a queued/retry_later/paused job is superseded
 # because its operation_fingerprint no longer matches the current strategy
 # fingerprint. Consumed by diagnostics and the pipeline runner's superseded
 # counter.
 _STRATEGY_FINGERPRINT_SUPERSEDED_RATIONALE = "strategy_fingerprint_superseded"
+
+# rationale_code written when a queued/retry_later/paused legacy per-unit
+# ``translate_unit`` job is superseded because the record has switched to the
+# T3.1 grouped/window ``translate_article`` path. Without this supersede the
+# worker loop would still dispatch the old per-unit job alongside the new
+# window jobs, causing duplicate LLM calls or publish-fence conflicts.
+_LEGACY_TRANSLATION_PER_UNIT_SUPERSEDED_RATIONALE = (
+    "legacy_per_unit_translation_superseded"
+)
 
 
 async def _supersede_stale_fingerprint_jobs(
@@ -311,6 +439,60 @@ async def _supersede_stale_fingerprint_jobs(
         _STRATEGY_FINGERPRINT_SUPERSEDED_RATIONALE,
     )
     # asyncpg execute returns "UPDATE N" where N is the row count.
+    count_str = result.split()[-1] if result else "0"
+    try:
+        return int(count_str)
+    except ValueError:
+        return 0
+
+
+async def _supersede_legacy_translation_per_unit_jobs(
+    conn: asyncpg.Connection,
+    *,
+    record_id: UUID,
+    base_id: UUID,
+    expected_generation: int,
+) -> int:
+    """T3.1 cutover: supersede active legacy ``translate_unit`` per-unit jobs.
+
+    When a record switches from the legacy per-unit translation path to the
+    T3.1 grouped/window ``translate_article`` path, any pre-existing
+    ``queued`` / ``retry_later`` / ``paused`` ``translate_unit`` jobs are
+    marked ``superseded`` with rationale
+    ``legacy_per_unit_translation_superseded`` so the worker loop no longer
+    dispatches them alongside the new window jobs.
+
+    ``claimed`` jobs are intentionally left untouched: a claimed job is being
+    actively processed by a worker. Grouped bootstrap excludes claimed legacy
+    target units from new windows, so the claimed job can finish without
+    making a window job fail because one of its units was already published.
+    Once the claimed job finishes (success or failure) the next bootstrap
+    will either see the published layer (skip) or supersede the
+    ``retry_later`` / ``queued`` job.
+    """
+    result = await conn.execute(
+        """
+        UPDATE reader_jobs
+        SET status = 'superseded',
+            rationale_code = $6,
+            lease_owner = NULL,
+            lease_token = NULL,
+            lease_expires_at = NULL,
+            updated_at = NOW()
+        WHERE reading_record_id = $1
+          AND base_id = $2
+          AND expected_generation = $3
+          AND job_type = $4
+          AND target_type = $5
+          AND status IN ('queued', 'retry_later', 'paused')
+        """,
+        record_id,
+        base_id,
+        expected_generation,
+        TRANSLATION_JOB_TYPE,
+        TRANSLATION_TARGET_SCOPE,
+        _LEGACY_TRANSLATION_PER_UNIT_SUPERSEDED_RATIONALE,
+    )
     count_str = result.split()[-1] if result else "0"
     try:
         return int(count_str)
@@ -1044,108 +1226,13 @@ class EnhancementJobBootstrapService:
             return await self._bootstrap_translation_batch_job(
                 conn, state=state, trace_id=trace_id
             )
-        if trace_id is None:
-            trace_id = uuid4()
-        operation_fingerprint = _compose_operation_fingerprint(
-            TRANSLATION_OPERATION_FINGERPRINT, state.strategy
+        # T3.1 non-short grouped path: split unpublished units into
+        # consecutive windows and create one ``translate_article`` batch
+        # job per window. Replaces the legacy per-unit ``translate_unit``
+        # path which caused 50+ LLM calls on ~30k-char articles.
+        return await self._bootstrap_translation_grouped_jobs(
+            conn, state=state, trace_id=trace_id
         )
-        await _supersede_stale_fingerprint_jobs(
-            conn,
-            record_id=state.record_id,
-            base_id=state.base_id,
-            expected_generation=state.expected_generation,
-            job_type=TRANSLATION_JOB_TYPE,
-            target_scope=TRANSLATION_TARGET_SCOPE,
-            current_fingerprint=operation_fingerprint,
-        )
-        rows = await conn.fetch(
-            """
-            SELECT
-                u.unit_id,
-                u.order_index,
-                u.text_hash
-            FROM reading_units u
-            WHERE u.reading_record_id = $1
-              AND u.base_id = $2
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM enhancement_layers layer
-                  WHERE layer.reading_record_id = u.reading_record_id
-                    AND layer.base_id = u.base_id
-                    AND layer.generation = $3
-                    AND layer.layer_type = 'translation'
-                    AND layer.target_scope = 'unit'
-                    AND layer.target_key = u.unit_id
-                    AND layer.status = 'published'
-              )
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM reader_jobs job
-                  WHERE job.reading_record_id = u.reading_record_id
-                    AND job.base_id = u.base_id
-                    AND job.job_type = $4
-                    AND job.target_type = $5
-                    AND job.target_key = u.unit_id
-                    AND job.expected_generation = $3
-                    AND job.operation_fingerprint = $6
-                    AND job.status IN ('queued', 'claimed', 'retry_later', 'paused', 'succeeded')
-              )
-            ORDER BY u.order_index ASC
-            """,
-            state.record_id,
-            state.base_id,
-            state.expected_generation,
-            TRANSLATION_JOB_TYPE,
-            TRANSLATION_TARGET_SCOPE,
-            operation_fingerprint,
-        )
-        results: list[TranslationBootstrapResult] = []
-        for row in rows:
-            run_id, job_id = await _insert_unit_job(
-                conn,
-                state=state,
-                unit_id=str(row["unit_id"]),
-                unit_order_index=int(row["order_index"]),
-                unit_text_hash=str(row["text_hash"]),
-                run_type=TRANSLATION_RUN_TYPE,
-                job_type=TRANSLATION_JOB_TYPE,
-                target_scope=TRANSLATION_TARGET_SCOPE,
-                policy_version=TRANSLATION_POLICY_VERSION,
-                trigger_kind=TRANSLATION_TRIGGER_KIND,
-                operation_fingerprint=operation_fingerprint,
-                max_attempts=DEFAULT_TRANSLATION_MAX_ATTEMPTS,
-                envelope_json={
-                    "record_id": str(state.record_id),
-                    "base_id": str(state.base_id),
-                    "target_scope": TRANSLATION_TARGET_SCOPE,
-                    "target_unit_id": str(row["unit_id"]),
-                    "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
-                    "trace_id": str(trace_id),
-                },
-                input_signature_suffix=(
-                    f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}"
-                ),
-                input_json={
-                    "unit_id": str(row["unit_id"]),
-                    "unit_order_index": int(row["order_index"]),
-                    "unit_text_hash": str(row["text_hash"]),
-                    "base_language": state.base_language,
-                    "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
-                },
-                layer_name=_LAYER_NAME_BY_JOB_TYPE[TRANSLATION_JOB_TYPE],
-            )
-            results.append(
-                TranslationBootstrapResult(
-                    run_id=run_id,
-                    job_id=job_id,
-                    reading_record_id=state.record_id,
-                    base_id=state.base_id,
-                    unit_id=str(row["unit_id"]),
-                    expected_generation=state.expected_generation,
-                    operation_fingerprint=operation_fingerprint,
-                )
-            )
-        return results
 
     async def _bootstrap_vocabulary_jobs(
         self,
@@ -1593,6 +1680,222 @@ class EnhancementJobBootstrapService:
                 operation_fingerprint=operation_fingerprint,
             )
         ]
+
+    async def _bootstrap_translation_grouped_jobs(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        state: _LockedActiveBaseState,
+        trace_id: UUID | None = None,
+    ) -> list[TranslationBootstrapResult]:
+        """T3.1: non-short translation grouped/window execution.
+
+        Queries unpublished units (ordered by ``order_index``), plans
+        consecutive windows via :func:`plan_translation_windows`, and
+        creates one ``translate_article`` batch job per window. Each
+        window job has a distinct ``target_key`` / ``idempotency_key`` /
+        ``input_hash`` so multiple windows on the same record do not
+        collide.
+
+        The batch worker and publisher are window-agnostic: they read
+        ``input_json.target_unit_ids`` and only process/publish that
+        subset. Each unit's ``output_json.groups`` is still produced by
+        :func:`build_deterministic_translation_groups` (T1.1a), preserving
+        the Translation Group semantic contract regardless of how many
+        units a window covers. No parallel job type or migration is
+        introduced.
+
+        Cutover safety (review P1):
+
+        - Legacy ``translate_unit`` per-unit jobs in ``queued`` /
+          ``retry_later`` / ``paused`` are superseded before planning
+          windows, so the worker loop no longer dispatches them alongside
+          the new window jobs. ``claimed`` legacy jobs are left untouched
+          but their target units are excluded from newly planned windows.
+        - Units already targeted by an active ``translate_article`` window
+          job (``queued`` / ``claimed`` / ``retry_later`` / ``paused``)
+          are excluded from the unpublished-units query, preventing
+          overlapping windows when a re-bootstrap runs while a previous
+          window job is still in flight.
+        """
+        if trace_id is None:
+            trace_id = uuid4()
+        operation_fingerprint = _compose_operation_fingerprint(
+            TRANSLATION_BATCH_OPERATION_FINGERPRINT, state.strategy
+        )
+        await _supersede_stale_fingerprint_jobs(
+            conn,
+            record_id=state.record_id,
+            base_id=state.base_id,
+            expected_generation=state.expected_generation,
+            job_type=TRANSLATION_BATCH_JOB_TYPE,
+            target_scope=TRANSLATION_BATCH_TARGET_SCOPE,
+            current_fingerprint=operation_fingerprint,
+        )
+        # T3.1 cutover: supersede legacy per-unit ``translate_unit`` jobs
+        # that are still queued/retry_later/paused so the worker loop does
+        # not dispatch them alongside the new window jobs. ``claimed`` jobs
+        # are left untouched (see docstring on the helper).
+        await _supersede_legacy_translation_per_unit_jobs(
+            conn,
+            record_id=state.record_id,
+            base_id=state.base_id,
+            expected_generation=state.expected_generation,
+        )
+        # Load unpublished units with their UTF-16 char length for windowing.
+        # ``base_end_utf16 - base_start_utf16`` matches the worker's
+        # ``slice_by_utf16_offsets`` unit text length exactly.
+        #
+        # Three exclusion clauses:
+        # 1. Already-published translation layers (partial publish skip).
+        # 2. Units already targeted by an active ``translate_article`` window
+        #    job (prevents overlapping windows when a re-bootstrap runs while
+        #    a previous window job is still queued/claimed/retry_later).
+        # 3. Units currently claimed by a legacy ``translate_unit`` job
+        #    (prevents a claimed per-unit job from making a batch window fail
+        #    after it publishes one of the same units).
+        rows = await conn.fetch(
+            """
+            SELECT
+                u.unit_id,
+                u.order_index,
+                u.base_start_utf16,
+                u.base_end_utf16
+            FROM reading_units u
+            WHERE u.reading_record_id = $1
+              AND u.base_id = $2
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM enhancement_layers layer
+                  WHERE layer.reading_record_id = u.reading_record_id
+                    AND layer.base_id = u.base_id
+                    AND layer.generation = $3
+                    AND layer.layer_type = 'translation'
+                    AND layer.target_scope = 'unit'
+                    AND layer.target_key = u.unit_id
+                    AND layer.status = 'published'
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM reader_jobs job
+                  CROSS JOIN LATERAL
+                       jsonb_array_elements_text(job.input_json->'target_unit_ids') AS tgt(unit_id)
+                  WHERE job.reading_record_id = u.reading_record_id
+                    AND job.base_id = u.base_id
+                    AND job.expected_generation = $3
+                    AND job.job_type = $4
+                    AND job.target_type = $5
+                    AND job.status IN ('queued', 'claimed', 'retry_later', 'paused')
+                    AND tgt.unit_id = u.unit_id
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM reader_jobs job
+                  WHERE job.reading_record_id = u.reading_record_id
+                    AND job.base_id = u.base_id
+                    AND job.expected_generation = $3
+                    AND job.job_type = $6
+                    AND job.target_type = $7
+                    AND job.target_key = u.unit_id
+                    AND job.status = 'claimed'
+              )
+            ORDER BY u.order_index ASC
+            """,
+            state.record_id,
+            state.base_id,
+            state.expected_generation,
+            TRANSLATION_BATCH_JOB_TYPE,
+            TRANSLATION_BATCH_TARGET_SCOPE,
+            TRANSLATION_JOB_TYPE,
+            TRANSLATION_TARGET_SCOPE,
+        )
+        if not rows:
+            return []
+        window_units = [
+            TranslationWindowUnit(
+                unit_id=str(row["unit_id"]),
+                order_index=int(row["order_index"]),
+                text_length=int(row["base_end_utf16"]) - int(row["base_start_utf16"]),
+            )
+            for row in rows
+        ]
+        windows = plan_translation_windows(window_units)
+        results: list[TranslationBootstrapResult] = []
+        for window in windows:
+            target_unit_ids = list(window.target_unit_ids)
+            window_target_key = f"{state.record_id}:window:{window.window_id}"
+            # Per-window idempotency: skip if an active job already exists
+            # for this window's target_key + fingerprint.
+            existing_job = await conn.fetchrow(
+                """
+                SELECT id, run_id
+                FROM reader_jobs
+                WHERE reading_record_id = $1
+                  AND base_id = $2
+                  AND job_type = $3
+                  AND target_type = $4
+                  AND target_key = $5
+                  AND expected_generation = $6
+                  AND operation_fingerprint = $7
+                  AND status IN ('queued', 'claimed', 'retry_later', 'paused', 'succeeded')
+                LIMIT 1
+                """,
+                state.record_id,
+                state.base_id,
+                TRANSLATION_BATCH_JOB_TYPE,
+                TRANSLATION_BATCH_TARGET_SCOPE,
+                window_target_key,
+                state.expected_generation,
+                operation_fingerprint,
+            )
+            if existing_job is not None:
+                continue
+            run_id, job_id = await _insert_unit_range_job(
+                conn,
+                state=state,
+                run_type=TRANSLATION_RUN_TYPE,
+                job_type=TRANSLATION_BATCH_JOB_TYPE,
+                target_scope=TRANSLATION_BATCH_TARGET_SCOPE,
+                policy_version=TRANSLATION_BATCH_POLICY_VERSION,
+                trigger_kind=TRANSLATION_TRIGGER_KIND,
+                operation_fingerprint=operation_fingerprint,
+                max_attempts=DEFAULT_TRANSLATION_MAX_ATTEMPTS,
+                envelope_json={
+                    "record_id": str(state.record_id),
+                    "base_id": str(state.base_id),
+                    "target_scope": TRANSLATION_BATCH_TARGET_SCOPE,
+                    "target_unit_ids": target_unit_ids,
+                    "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+                    "trace_id": str(trace_id),
+                    "window_id": window.window_id,
+                },
+                input_signature_suffix=(
+                    f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}:"
+                    f"window:{window.window_id}:batch"
+                ),
+                input_json={
+                    "target_scope": TRANSLATION_BATCH_TARGET_SCOPE,
+                    "target_unit_ids": target_unit_ids,
+                    "base_language": state.base_language,
+                    "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+                    "window_id": window.window_id,
+                },
+                layer_name=_LAYER_NAME_BY_JOB_TYPE[TRANSLATION_BATCH_JOB_TYPE],
+                target_key_override=window_target_key,
+                idempotency_key_suffix=f"window:{window.window_id}",
+            )
+            results.append(
+                TranslationBootstrapResult(
+                    run_id=run_id,
+                    job_id=job_id,
+                    reading_record_id=state.record_id,
+                    base_id=state.base_id,
+                    unit_id=target_unit_ids[0],
+                    expected_generation=state.expected_generation,
+                    operation_fingerprint=operation_fingerprint,
+                )
+            )
+        return results
 
     async def _bootstrap_vocabulary_batch_job(
         self,

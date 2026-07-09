@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 执行简报
 
 > 状态：`权威简报`
-> 最后更新：2026-07-08
+> 最后更新：2026-07-09
 
 给 coding agent 分配 Reader agentic orchestration 重构任务时，使用本简报作为最小上下文。
 
@@ -28,7 +28,9 @@
 
 当前新增设计入口是 `adaptive-reader-orchestration-design.md`。短期实现应先恢复短文质量/成本和稳定发布；完整 adaptive planner、SSE/patch merge、长文/超长文 lazy enhancement 应按设计文档分阶段推进，不要混进一个任务。
 
-2026-07-08 当前状态：M0 baseline harness 与 M1 short article recovery 已完成调度降本首轮实现。短文 translation / vocabulary 已走 whole-article batch compute、per-unit publish；grammar window worker 已恢复 reading strategy 注入并修复 budget key。真实页面验证曾发现短文 `translate_article` batch path 把 group-native translation 退化为 one-unit-one-group，破坏 Translation Group 语义阅读组合同；T1.1a 已通过后端 group planning / hydration 合同修复，并用真实页面记录完成抽查。下一轮不要直接做完整 adaptive planner 或 semantic outline worker，应在 T1.4/M2 页面稳定性、T3.2 vocabulary grouped execution、T3.1 grouped translation 设计、T5.1 deterministic navigation outline 中选择单一任务推进。
+2026-07-09 当前状态：M0 baseline harness 与 M1 short article recovery 已完成调度降本首轮实现。短文 translation / vocabulary 已走 whole-article batch compute、per-unit publish；T1.1a 已通过后端 group planning / hydration 合同修复 `translate_article` 的 Translation Group 语义；T3.2b non-short vocabulary grouped execution 已完成实施/待统一验收；grammar window worker 已恢复 reading strategy 注入并修复 budget key。真实长文抽查显示 non-short translation 仍走 57/58 次 `translate_unit`，grammar window 大量 no-op 且缺候选/selector diagnostics。下一轮默认推进 T3.1 non-short translation grouped execution；不要直接做完整 adaptive planner、semantic outline worker、SSE patch merge 或 grammar prompt tuning，也不要把这些与 T3.1 混成一个任务。
+
+验收节奏：短文、长文、超长文三种模式先分别完成代码级合同闭环，再统一真实 LLM / 页面验收。中间实现阶段优先使用 deterministic tests、fake executor、recorded LLM response 和 DB contract checks；不要每修一个局部就反复真实跑长文/超长文。
 
 ## 不可违反的决策
 
@@ -103,6 +105,7 @@
 - D5-R3 真实本地链路 runbook 已补充：见 `docs/initiatives/reader-agentic-orchestration/modules/local-real-chain-runbook.md`。当前只验证 worker CLI help / 参数解析和配置连线，未实跑真实 provider / LLM。
 - 2026-07-08 M0/M1 自适应解析恢复已完成首轮调度实现：`compare_reader_chains.py` baseline harness、golden samples、short article translation/vocabulary batch path、grammar window strategy 注入、grammar/sentence budget key 对齐已落地；默认 worker/baseline budget 为 `max_ticks=96`、`max_jobs=48`。
 - T1.1a 已完成并通过本轮代码层与页面抽查验收：短文 `translate_article` batch path 使用后端 `plan_translation_groups` 规划连续 semantic Translation Groups，后端 hydrate `group_id` / `source_text_hash` / `source_text`，translator 只返回 `group_id` + `translated_text`。M2 stable progressive delivery、T3 grouped execution 和 T5 deterministic outline 可以按 `implementation-plan.md` 的顺序单项推进；完整 adaptive planner、semantic outline worker 和 SSE patch merge 仍暂缓。
+- 2026-07-09 长文抽查结论：长文路径仍处于中间态。non-short translation 仍 per-unit fan-out，是长耗时和 token 消耗主因；grammar window no-op 率高但缺 raw candidate / selector reject diagnostics。该结果用于确认 T3.1 和 T3.4a 优先级，不代表 adaptive orchestration 方向失败。
 - D4 worker 实现中不得临时升级 PydanticAI、LangGraph、LangSmith 或 provider SDK；如 D3-P4 runtime tests 暴露缺口，先形成单独 closeout/update，再改依赖。
 - LangGraph v1+ 的 persistence、streaming、interrupt/resume、subgraph 和 runtime observability 只作为 D6+ 隔离 spike 候选；具体版本能力和 breaking changes 必须在 spike 中用当时官方文档与 lockfile 实测确认，不改变 PostgreSQL run/job/event 主控。
 - Grammar Bundle Worker 可以一次生成 `grammar_note` 与 `sentence_analysis`，但发布、存储、RAG、projection、policy、eval 必须按 subtype 独立处理。`long_sentence` 不是权威 layer type，只是触发 `sentence_analysis` 的适用场景。

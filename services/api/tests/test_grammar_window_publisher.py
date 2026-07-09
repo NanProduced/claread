@@ -58,6 +58,24 @@ ARTICLE_TEXT = (
     "week."
 )
 
+# Long article (>1000 chars) for density gate tests. The RECORD_DENSITY gate
+# uses density = published_count / max(base_len / 1000, 1.0); with a short
+# article the denominator collapses to 1.0 and the cap acts as a raw count.
+# This text is ~2600 chars, enough for density_denom > 1.0 so 3 published
+# grammar_note items don't trigger cap 3.0.
+_LONG_ARTICLE_PARAGRAPH = (
+    "The researchers examined how municipal governments allocated emergency "
+    "grants during the pandemic, comparing data across twelve regions and "
+    "three fiscal quarters.\n\n"
+    "They found that cities with pre-existing relief frameworks distributed "
+    "funds more quickly, though unevenly, while those without such frameworks "
+    "struggled to identify eligible recipients.\n\n"
+    "Several economists noted that the headline numbers concealed significant "
+    "delays in processing applications, particularly from small businesses "
+    "that lacked dedicated accounting staff.\n\n"
+)
+LONG_ARTICLE_TEXT = _LONG_ARTICLE_PARAGRAPH * 8  # ~2600 chars, > 1000
+
 
 @dataclass
 class _TestEnv:
@@ -74,7 +92,10 @@ class _TestEnv:
     target_anchor_ids: list[str]
 
 
-async def _setup_test_env() -> _TestEnv:
+async def _setup_test_env(
+    *, article_text: str = ARTICLE_TEXT,
+    title: str = "Grammar Window Pub Test",
+) -> _TestEnv:
     schema_name = f"test_grammar_window_pub_{uuid4().hex}"
     admin_conn = await connect_admin()
     original_pool = db_connection.DB_POOL
@@ -89,8 +110,8 @@ async def _setup_test_env() -> _TestEnv:
     article = await submit_article_ready(
         pool,
         user_id=user_id,
-        plain_text=ARTICLE_TEXT,
-        title="Grammar Window Pub Test",
+        plain_text=article_text,
+        title=title,
         language="en",
     )
     service = ZPlusBootstrapService(pool=pool)
@@ -1280,3 +1301,309 @@ async def test_diagnostics_no_op_window_queryable_from_coverage(
     assert "record_budget_total" in diag["budgets"]
     # covered_unit_ids preserved (empty for no-op)
     assert coverage["covered_unit_ids"] == []
+
+
+# ---------------------------------------------------------------------------
+# T3.4b: RECORD_DENSITY density calculation fix tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def test_db_pool_with_long_article_window() -> AsyncIterator[
+    tuple[asyncpg.Pool, UUID, UUID, UUID, UUID, UUID, UUID]
+]:
+    """Long article (>1000 chars) with first window running + job claimed.
+
+    Returns (pool, job_id, lease_token, plan_id, window_id, base_id, record_id).
+    Used by density gate tests where density_denom must be > 1.0.
+    """
+    env = await _setup_test_env(
+        article_text=LONG_ARTICLE_TEXT, title="Long Article Density Test"
+    )
+    try:
+        async with env.pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE analysis_windows SET status = 'running' WHERE id = $1",
+                env.window_id,
+            )
+        lease_token = await _claim_job(env.pool, env.job_id)
+        yield (
+            env.pool,
+            env.job_id,
+            lease_token,
+            env.plan_id,
+            env.window_id,
+            env.base_id,
+            env.record_id,
+        )
+    finally:
+        await _cleanup_test_env(env)
+
+
+async def test_ledger_loads_base_text_length_from_reading_bases(
+    test_db_pool_with_window_no_candidates: tuple[
+        asyncpg.Pool, UUID, UUID, UUID, UUID
+    ],
+) -> None:
+    """T3.4b: _load_ledger_from_plan injects reading_bases.content_utf16_length
+    into SelectorLedger.base_text_length_utf16.
+
+    Before the fix, base_text_length_utf16 defaulted to 0, collapsing the
+    RECORD_DENSITY denominator to 1.0 and turning the per-1000-chars ratio
+    cap into a raw absolute count cap.
+    """
+    pool, job_id, _lease_token, plan_id, _window_id = (
+        test_db_pool_with_window_no_candidates
+    )
+    publisher = GrammarWindowPublisher(pool=pool)
+    async with pool.acquire() as conn:
+        plan_row = await conn.fetchrow(
+            "SELECT * FROM layer_analysis_plans WHERE id = $1",
+            plan_id,
+        )
+        base_id = await conn.fetchval(
+            "SELECT base_id FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+        ledger = await publisher._load_ledger_from_plan(
+            conn, plan_row, base_id
+        )
+        expected_len = await conn.fetchval(
+            "SELECT content_utf16_length FROM reading_bases WHERE id = $1",
+            base_id,
+        )
+    assert ledger.base_text_length_utf16 > 0, (
+        "base_text_length_utf16 must be loaded from reading_bases, not left at 0"
+    )
+    assert ledger.base_text_length_utf16 == expected_len
+
+
+async def test_density_gate_uses_real_base_length_not_raw_count(
+    test_db_pool_with_long_article_window: tuple[
+        asyncpg.Pool, UUID, UUID, UUID, UUID, UUID, UUID
+    ],
+) -> None:
+    """T3.4b: With a long base (>1000 chars) and 3 pre-published grammar_note,
+    a 4th grammar_note candidate is NOT rejected by RECORD_DENSITY.
+
+    Before the fix: density = 3 / max(0/1000, 1.0) = 3.0 >= cap 3.0 → rejected.
+    After the fix:  density = 3 / max(base_len/1000, 1.0) < 3.0 → accepted.
+    """
+    (
+        pool,
+        job_id,
+        lease_token,
+        plan_id,
+        window_id,
+        base_id,
+        _record_id,
+    ) = test_db_pool_with_long_article_window
+
+    # Pre-set density_by_record to simulate 3 grammar_note already published.
+    # This makes the next grammar_note candidate hit RECORD_DENSITY if the
+    # denominator is 1.0 (bug) but pass if the denominator is base_len/1000 (fix).
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE layer_analysis_plans
+            SET density_by_record = '{"grammar_note": 3, "sentence_analysis": 0}'::jsonb
+            WHERE id = $1
+            """,
+            plan_id,
+        )
+        # Fetch target anchors for building valid candidates
+        window_row = await conn.fetchrow(
+            "SELECT target_unit_ids, target_anchor_ids FROM analysis_windows WHERE id = $1",
+            window_id,
+        )
+        content_len = await conn.fetchval(
+            "SELECT content_utf16_length FROM reading_bases WHERE id = $1",
+            base_id,
+        )
+
+    target_unit_ids = list(window_row["target_unit_ids"])
+    target_anchor_ids = list(window_row["target_anchor_ids"])
+    assert content_len > 1000, (
+        f"test requires base > 1000 chars for density_denom > 1.0; got {content_len}"
+    )
+
+    candidates = _make_candidates(target_unit_ids, target_anchor_ids)
+    assert len(candidates) >= 1
+    candidate_contents = await _make_candidate_contents(
+        pool, base_id, candidates
+    )
+
+    publisher = GrammarWindowPublisher(pool=pool)
+    result = await publisher.publish_window_grammar_bundle(
+        job_id=job_id,
+        lease_token=lease_token,
+        plan_id=plan_id,
+        window_id=window_id,
+        candidates=candidates,
+        candidate_contents=candidate_contents,
+    )
+    assert result.accepted_count > 0, (
+        "grammar_note candidate must be accepted when density = 3 / (base_len/1000) < 3.0"
+    )
+
+    async with pool.acquire() as conn:
+        job = await conn.fetchrow(
+            "SELECT output_ref_json FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+    output_ref = job["output_ref_json"]
+    if isinstance(output_ref, str):
+        output_ref = json.loads(output_ref)
+    diag = output_ref["diagnostics"]
+    # grammar_note accepted_count > 0 means RECORD_DENSITY did not reject
+    assert diag["accepted_count_by_type"]["grammar_note"] >= 1
+    # rejected_breakdown should NOT contain RECORD_DENSITY for grammar_note
+    for entry in diag["rejected_breakdown"]:
+        assert not (
+            entry["gate"] == "RECORD_DENSITY"
+            and entry["item_type"] == "grammar_note"
+        ), (
+            f"grammar_note must not be rejected by RECORD_DENSITY when "
+            f"base_len={content_len} > 1000; got reason: {entry['reason']}"
+        )
+
+
+async def test_ledger_falls_back_to_char_length_when_content_utf16_length_missing(
+    test_db_pool_with_window_no_candidates: tuple[
+        asyncpg.Pool, UUID, UUID, UUID, UUID
+    ],
+) -> None:
+    """T3.4b: When content_utf16_length is 0, fall back to char_length(text).
+
+    The CHECK constraint guarantees content_utf16_length >= 1, but we test
+    the defensive fallback by dropping the constraint and setting it to 0.
+    """
+    pool, job_id, _lease_token, plan_id, _window_id = (
+        test_db_pool_with_window_no_candidates
+    )
+    publisher = GrammarWindowPublisher(pool=pool)
+    async with pool.acquire() as conn:
+        base_id = await conn.fetchval(
+            "SELECT base_id FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+        # Drop the CHECK constraints so we can set content_utf16_length = 0.
+        # There are two: the table-level named constraint
+        # (ck_reading_bases_content_utf16_length, checks = utf16_code_unit_length(text))
+        # and the inline column CHECK (reading_bases_content_utf16_length_check,
+        # checks >= 1).
+        await conn.execute(
+            "ALTER TABLE reading_bases "
+            "DROP CONSTRAINT IF EXISTS ck_reading_bases_content_utf16_length"
+        )
+        await conn.execute(
+            "ALTER TABLE reading_bases "
+            "DROP CONSTRAINT IF EXISTS reading_bases_content_utf16_length_check"
+        )
+        await conn.execute(
+            "UPDATE reading_bases SET content_utf16_length = 0 WHERE id = $1",
+            base_id,
+        )
+        plan_row = await conn.fetchrow(
+            "SELECT * FROM layer_analysis_plans WHERE id = $1",
+            plan_id,
+        )
+        ledger = await publisher._load_ledger_from_plan(
+            conn, plan_row, base_id
+        )
+        expected_fallback = await conn.fetchval(
+            "SELECT char_length(text) FROM reading_bases WHERE id = $1",
+            base_id,
+        )
+    assert ledger.base_text_length_utf16 > 0, (
+        "fallback to char_length(text) must produce a non-zero base length"
+    )
+    assert ledger.base_text_length_utf16 == expected_fallback
+
+
+async def test_diagnostics_rejected_reason_base_len_not_zero(
+    test_db_pool_with_window_and_candidates: tuple[
+        asyncpg.Pool,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+        list[CandidateItem],
+        list[WindowCandidateContent],
+        UUID,
+        UUID,
+    ],
+) -> None:
+    """T3.4b: When RECORD_DENSITY triggers, the rejected reason's base_len
+    reflects the real base length, not 0.
+
+    Uses the short ARTICLE_TEXT fixture (~450 chars, < 1000). With
+    density_by_record[grammar_note] pre-set to 3, the density denominator is
+    max(450/1000, 1.0) = 1.0, so density = 3/1.0 = 3.0 >= cap 3.0 → rejected.
+    But the reason must show base_len=450 (or similar), NOT base_len=0.
+    """
+    (
+        pool,
+        job_id,
+        lease_token,
+        plan_id,
+        window_id,
+        candidates,
+        candidate_contents,
+        base_id,
+        _record_id,
+    ) = test_db_pool_with_window_and_candidates
+
+    # Pre-set density_by_record to 3 so grammar_note candidates hit cap.
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE layer_analysis_plans
+            SET density_by_record = '{"grammar_note": 3, "sentence_analysis": 0}'::jsonb
+            WHERE id = $1
+            """,
+            plan_id,
+        )
+        content_len = await conn.fetchval(
+            "SELECT content_utf16_length FROM reading_bases WHERE id = $1",
+            base_id,
+        )
+    assert content_len > 0
+
+    publisher = GrammarWindowPublisher(pool=pool)
+    result = await publisher.publish_window_grammar_bundle(
+        job_id=job_id,
+        lease_token=lease_token,
+        plan_id=plan_id,
+        window_id=window_id,
+        candidates=candidates,
+        candidate_contents=candidate_contents,
+    )
+
+    async with pool.acquire() as conn:
+        job = await conn.fetchrow(
+            "SELECT output_ref_json FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+    output_ref = job["output_ref_json"]
+    if isinstance(output_ref, str):
+        output_ref = json.loads(output_ref)
+    diag = output_ref["diagnostics"]
+
+    # grammar_note candidates must be rejected by RECORD_DENSITY
+    assert diag["rejected_count_by_type"]["grammar_note"] >= 1
+    density_rejections = [
+        e
+        for e in diag["rejected_breakdown"]
+        if e["gate"] == "RECORD_DENSITY" and e["item_type"] == "grammar_note"
+    ]
+    assert len(density_rejections) >= 1
+    for entry in density_rejections:
+        reason = entry["reason"]
+        # base_len must be the real content_utf16_length, NOT 0
+        assert "base_len=0)" not in reason, (
+            f"rejected reason must not contain base_len=0; got: {reason}"
+        )
+        assert f"base_len={content_len}" in reason, (
+            f"rejected reason must contain base_len={content_len}; got: {reason}"
+        )

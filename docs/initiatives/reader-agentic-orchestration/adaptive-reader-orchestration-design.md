@@ -1,7 +1,7 @@
 # Adaptive Reader Orchestration Design
 
 > Status: formal design draft
-> Last updated: 2026-07-08
+> Last updated: 2026-07-09
 > Scope: Reader enhancement execution strategy, quality/cost control, progressive publishing, and longform handling.
 
 This document consolidates the previous analysis-window design notes and temporary research reports into one business-facing architecture document. Temporary development labels are intentionally removed; future work should use the terminology in this document.
@@ -60,12 +60,18 @@ The main strategy families are:
 | Section-oriented longform | Long document with natural sections | Section-level grouped/windowed execution | Current/early sections first |
 | Selective longform | Very long document or user reads only part | Outline/metadata first, lazy section enhancement | Current section or requested region first |
 
-Implementation checkpoint as of 2026-07-08:
+Implementation checkpoint as of 2026-07-09:
 
-- Translation and vocabulary currently have only two implemented branches:
-  short-article batch jobs and non-short per-unit jobs.
-- Grammar has a windowed implementation path, but this is not yet a complete
-  document-level short / long / very-long strategy planner.
+- Translation currently has short-article batch jobs, but non-short / long
+  articles still use per-unit `translate_unit` jobs. Long translation grouped
+  execution is a pending P0 implementation slice.
+- Vocabulary has short-article batch jobs and non-short grouped jobs. Full
+  cross-window / whole-record dedup is not claimed.
+- Grammar has a windowed implementation path, but observed long-article runs
+  can spend many calls on no-op windows. Candidate counts and selector
+  rejection reasons must be observable before quality tuning.
+- This is not yet a complete document-level short / long / very-long strategy
+  planner.
 - Section-oriented longform, selective longform, and semantic outline are
   design targets only. They must not be described to implementation agents as
   already available runtime modes.
@@ -167,14 +173,14 @@ Do not multiply the route matrix by every reading variant unless evaluation data
 
 Short article recovery is the immediate priority.
 
-Implementation status as of 2026-07-08: the first M1 slice is partially
-implemented for the current Reader orchestration path. Short articles route
-translation and vocabulary through whole-article batch jobs with per-unit layer
-publishing; grammar window execution now receives reading strategy metadata and
-aligned window budgets. However, the short-article batch translation path
-regressed the product-level Translation Group contract by collapsing groups to
-whole Reading Units. That regression must be fixed before M1 is treated as
-accepted.
+Implementation status as of 2026-07-09: the first M1 slice is implemented for
+the current Reader orchestration path. Short articles route translation and
+vocabulary through whole-article batch jobs with per-unit layer publishing;
+grammar window execution receives reading strategy metadata and aligned window
+budgets. The short-article batch translation regression that collapsed groups
+to whole Reading Units has been repaired by backend group planning / hydration
+contracts. Future grouped/windowed translation must reuse the same Translation
+Group contract.
 
 This also does not close the UX stability work: page reload behavior, panel
 state preservation, and reading-order release remain M2 responsibilities.
@@ -305,6 +311,12 @@ Implementation should evolve in two steps:
 
 Long and very long documents should not eagerly generate every annotation upfront.
 
+Implementation note: current long-article support is incomplete. Real long
+article runs on 2026-07-09 showed that translation still used dozens of
+per-unit calls and grammar windows produced too many no-op outcomes. These
+results are evidence for completing grouped translation and grammar
+diagnostics, not a reason to abandon adaptive orchestration.
+
 ### 9.1 Section-Oriented Longform
 
 For long documents with clear sections:
@@ -360,6 +372,23 @@ Quality review should check:
 - Translation readability.
 - Density and visual balance.
 
+### 10.1 Evaluation Cadence
+
+During implementation, do not repeatedly run expensive real LLM longform tests
+after every small patch. Use this cadence instead:
+
+1. Contract tests for planner output, window/group boundaries, publish fences,
+   source hashes, layer schemas, and completion states.
+2. Fake executor tests for job counts, layer counts, reading-order publishing,
+   usage attribution, and no-op/failure paths.
+3. Recorded LLM response fixtures for hydration, selector, diagnostics, and
+   projection behavior.
+4. Unified real LLM / page validation only after short, long, and very-long
+   modes have each reached code-level closure.
+
+Real LLM checks remain necessary, but they are integration gates, not the
+default feedback loop for every intermediate patch.
+
 ## 11. Roadmap
 
 ### Phase 0: Documentation And Baseline Closure
@@ -386,6 +415,9 @@ Quality review should check:
 - Add mutually exclusive strategy planner.
 - Group/window non-short translation and vocabulary.
 - Add reading-order-oriented release for windowed/grouped paths.
+- Status 2026-07-09: non-short vocabulary grouped execution is implemented
+  and awaits unified acceptance. Non-short translation grouped execution and
+  grammar window diagnostics are the next priority before planner work.
 
 ### P2: SSE And Interaction-Preserving Updates
 
@@ -399,6 +431,8 @@ Quality review should check:
 - Add section-oriented longform execution.
 - Add selective longform execution.
 - Add very-long progress UX.
+- Real very-long validation should wait until outline-first planning and lazy
+  section enhancement have contract/fake coverage.
 
 ## 12. Review Gates
 
