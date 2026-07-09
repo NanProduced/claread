@@ -62,14 +62,17 @@ The main strategy families are:
 
 Implementation checkpoint as of 2026-07-09:
 
-- Translation currently has short-article batch jobs, but non-short / long
-  articles still use per-unit `translate_unit` jobs. Long translation grouped
-  execution is a pending P0 implementation slice.
-- Vocabulary has short-article batch jobs and non-short grouped jobs. Full
-  cross-window / whole-record dedup is not claimed.
-- Grammar has a windowed implementation path, but observed long-article runs
-  can spend many calls on no-op windows. Candidate counts and selector
-  rejection reasons must be observable before quality tuning.
+- Translation has short-article batch jobs and non-short grouped/windowed
+  `translate_article` jobs. It must keep the Translation Group contract:
+  batch/window compute cannot collapse display into one sentence, one anchor,
+  or one whole unit.
+- Vocabulary has short-article batch jobs, non-short grouped jobs, duplicate
+  highlight policy, and conservative phrase_gloss guards. Full cross-window /
+  whole-record dedup is not claimed.
+- Grammar has a windowed implementation path with diagnostics for raw
+  candidates, selector decisions, budgets, and failure/no-op causes. A
+  RECORD_DENSITY denominator bug has been fixed, but quantity and quality
+  tuning remain open evaluation work.
 - This is not yet a complete document-level short / long / very-long strategy
   planner.
 - Section-oriented longform, selective longform, and semantic outline are
@@ -311,11 +314,14 @@ Implementation should evolve in two steps:
 
 Long and very long documents should not eagerly generate every annotation upfront.
 
-Implementation note: current long-article support is incomplete. Real long
-article runs on 2026-07-09 showed that translation still used dozens of
-per-unit calls and grammar windows produced too many no-op outcomes. These
-results are evidence for completing grouped translation and grammar
-diagnostics, not a reason to abandon adaptive orchestration.
+Implementation note: current long-article support is still incomplete at the
+strategy level. Grouped translation and vocabulary are implemented, and grammar
+diagnostics/density fixes are in place, but the system still eagerly runs
+translation, vocabulary, and grammar as mostly independent layer passes. For
+long and very long documents, the next design question is whether a bounded
+enhancement planner can select translation groups and high-value enhancement
+targets before specialized structured workers run. That planner must remain
+schema-bound and must not own publishing, budgets, anchors, or control flow.
 
 ### 9.1 Section-Oriented Longform
 
@@ -415,9 +421,11 @@ default feedback loop for every intermediate patch.
 - Add mutually exclusive strategy planner.
 - Group/window non-short translation and vocabulary.
 - Add reading-order-oriented release for windowed/grouped paths.
-- Status 2026-07-09: non-short vocabulary grouped execution is implemented
-  and awaits unified acceptance. Non-short translation grouped execution and
-  grammar window diagnostics are the next priority before planner work.
+- Status 2026-07-09: non-short translation and vocabulary grouped execution,
+  vocabulary phrase_gloss guards, grammar window diagnostics, and the grammar
+  RECORD_DENSITY denominator fix are implemented. The next priority is
+  completion finalization plus the strategy/planner and outline-first contracts
+  for long and very long documents.
 
 ### P2: SSE And Interaction-Preserving Updates
 

@@ -51,9 +51,9 @@ Reader enhancement 的当前主链路按层分开理解：
 ### 推荐执行顺序
 
 1. M0/M1 的短文合同继续保持；短文真实页面已抽查过的部分不再反复消耗真 LLM。
-2. M3 长文 grouped execution：T3.1（translation）与 T3.2b（vocabulary）均已完成实施/待真实 LLM 验收。下一步补 T3.4a grammar window diagnostics。
-3. T3.4a 先补 grammar window diagnostics，再调 grammar prompt / selector / budget。没有 diagnostics 时不要盲目加预算。
-4. T4/M5 再补完整三模式 planner 与超长文 outline-first / section-lazy 策略。超长文不应 eager 全文增强。
+2. M3 长文 grouped execution：T3.1（translation）与 T3.2b（vocabulary）均已完成实施；T3.3 phrase_gloss guard、T3.4a diagnostics、T3.4b density bug fix 已完成。
+3. 下一步不要继续只修局部输出数量；应先补 T3.5 completion finalizer 与 T4/M5 的三模式 planner / outline-first / section-lazy 合同。
+4. 同步开展 bounded enhancement planner + specialized structured workers 的设计评估，判断长文/超长文是否能减少三层独立窗口调用带来的成本。
 5. 三种模式代码级闭环后，再统一跑真实 LLM / 页面验收，覆盖短文、长文、超长文和碎段新闻。
 6. M6 先做 debounce / state preservation，再做 SSE 和 patch merge。SSE 本身不能解决全量 reload 闪烁。
 
@@ -136,14 +136,19 @@ Reader enhancement 的当前主链路按层分开理解：
 - T2.1 已有第一轮实现并提交（progressive reload cursor、in-flight guard、scroll/selection best-effort 恢复），但必须在 T1.1a 修复后用真实页面重新验收；前端稳定性不能替代正确的 layer output。
 - 默认 worker / baseline budget 已调整为 `max_ticks=96`、`max_jobs=48`，覆盖当前 6/7 worker slots 下的中等短文样本；这是验收预算，不是最终调度模型。
 - 2026-07-08 fake baseline 验收只能证明 job 数、completion 和测试 fake output 口径；不能证明真实 LLM 下 Translation Group 粒度正确。真实页面已暴露 one-unit-one-group 回归，因此此前 `translation_groups` 数量不能作为 T1.1a 验收依据。
-- 2026-07-09 长文真实抽查记录 `5afd3f93-2105-47f8-9e0f-5886b7e97623`、`67ad6b9f-a45d-42b4-a8bd-d3e9c704358e`：两篇分别约 36.9k / 28.5k chars，所有 jobs succeeded，translation 当时为 57/58 次 `translate_unit`（T3.1 已改为 grouped/windowed `translate_article`，待真实 LLM 验收确认降幅）；total tokens 约 320k / 297k；grammar plan 仅发布 3 条 grammar_note + 1 条 sentence_analysis，且 17/19、13/15 grammar windows 为 `no_op`。该抽查结论用于确认 T3.4a 优先级，不作为三模式最终验收。
+- T3.3 phrase_gloss guard 已完成并提交：prompt 明确 phrase_gloss 是 lexical expression，不是整句/完整从句/长谓语；后端 guard 拒绝终止标点结尾或 7 词以上的 phrase_gloss，拒绝项不消耗 published slot。页面抽查记录 `ac97d982-2032-4f82-898d-cdbab9535c3d`、`b73abf91-9519-4059-8ecc-56ee3421060b` 显示长短语误标有改善。
+- T3.4a grammar window diagnostics 已完成并提交：成功/no-op/failure/superseded 路径会把 raw candidate count、accepted/rejected count、reject reasons、budget、strategy、failure cause 写入 `reader_jobs.output_ref_json.diagnostics` 与 `analysis_windows.coverage.diagnostics`。
+- T3.4b RECORD_DENSITY bug fix 已完成并提交：`SelectorLedger.base_text_length_utf16` 从 `reading_bases.content_utf16_length` 加载，避免 density denominator 退化为 1.0，把 per-1000-chars ratio cap 误变成全篇 raw count cap。
+- 2026-07-09 长文真实抽查记录 `5afd3f93-2105-47f8-9e0f-5886b7e97623`、`67ad6b9f-a45d-42b4-a8bd-d3e9c704358e`：两篇分别约 36.9k / 28.5k chars，所有 jobs succeeded，translation 当时为 57/58 次 `translate_unit`（T3.1 后已改为 grouped/windowed `translate_article`）；total tokens 约 320k / 297k；grammar plan 仅发布 3 条 grammar_note + 1 条 sentence_analysis，且 17/19、13/15 grammar windows 为 `no_op`。该抽查结论用于确认 T3.1/T3.4a/T3.4b 优先级，不作为三模式最终验收。
+- 2026-07-09 T3.4b 后真实短/中样本成本跟踪：`318d5fa1-7891-4052-988a-29250c4f59ec` 为 11,797 tokens / 约 20s / grammar 2 + sentence 1；`0108ecca-cb75-4920-9926-4eb7e8f72e20` 为 20,543 tokens / 约 48s / grammar 4 + sentence 1；`4f6ad1cd-242b-4929-a4ca-8f3bf58f48bc` 为 63,960 tokens / 约 110s / grammar 10 + sentence 4。三篇 grammar diagnostics 均显示 raw=accepted、无 selector rejection；当前偏少主要来自 per-window generation/budget 与 prompt 保守，不再是 density denominator bug。
 
 ### 下一轮建议
 
-1. 下一轮优先进入 T3.4a：grammar window diagnostics。先补可观测性（raw candidate count、accepted/rejected count、reject reasons、budget、strategy hash），再根据 diagnostics 修 prompt、selector 或 budget。T3.1 已完成实施/待真实 LLM 验收。
-2. T3.5 completion state finalizer 可作为小任务穿插，但不要混进 T3.4a 的实现范围。
-3. T5.1 deterministic navigation outline 与 T4.x planner 可在 T3.4a 后推进；semantic outline 和 lazy section enhancement 等超长文能力等 outline / planner 代码级闭环后再做。
-4. T3.1 / T3.2b / T3.4a 三模式代码级闭环后，再统一跑真实 LLM / 页面验收，覆盖短文、长文、超长文和碎段新闻，验证窗口化 translation/vocabulary 与 grammar diagnostics 在真实 LLM 下的成本与质量。
+1. 先收口 T3.5 completion state finalizer，确保 grouped/windowed jobs、analysis windows、record progress、plan status 在全部 terminal 后有一致完成态。
+2. 开始 T4/M5 代码级合同：deterministic document feature extractor、bounded document profiler、strategy planner、deterministic navigation outline。Semantic outline 仍只面向长文/超长文，不默认对所有文章生成。
+3. 单独设计评估 bounded enhancement planner + specialized structured workers：planner 只负责选择 translation groups 与候选 enhancement targets，专业 worker 负责 schema output 与 publish；代码仍拥有流程、预算、发布和 fail-closed 约束。
+4. 继续跟踪真实测试的 token/耗时/首个可用输出时间，但避免每个局部补丁后真实跑长文或超长文；三模式合同闭环后再统一做页面验收。
+5. Grammar/sentence 数量优化进入长期质量议题：不能只按文章长度线性设 cap；需要结合 reading_goal、文章结构、候选价值、视觉密度、重复率和 eval 结果调优。
 
 ### 暂缓项
 
@@ -159,7 +164,7 @@ Reader enhancement 的当前主链路按层分开理解：
 
 - `implementation-plan.md` 只记录任务拆分、依赖、状态和验收口径，不保存每轮 coding agent prompt。
 - 每轮 prompt 由人工根据当前代码事实和最近验收结果单独生成，并通过会话发给 coding agent。
-- 当前 T1.1a 已通过本轮验收，T3.1/T3.2b 已完成代码级实施并等待统一真实 LLM / 页面验收。下一轮默认派发 T3.4a grammar window diagnostics；不要把 planner / semantic outline worker / SSE patch / grammar quality tuning 混入同一任务。
+- 当前 T1.1a、T3.1、T3.2b、T3.3、T3.4a、T3.4b 均已完成代码级实施；下一阶段默认收口 T3.5，并推进 T4/M5 的三模式 planner、outline-first 和 very-long lazy enhancement 合同。不要把 planner / semantic outline worker / SSE patch / grammar quality tuning 混成一个无边界任务。
 - 评审 agent 完成 review 后，如发现实现改变了任务状态、产品合同或执行顺序，必须同步更新本计划和相关模块合同。
 
 ## 成功标准
@@ -948,10 +953,12 @@ Focused tests 已通过：
 
 ## 当前下一步
 
-进入 D5 guardrails 与运行形态收口：
+以本文开头的 Adaptive Reader Orchestration 任务拆分为准。D5 guardrails 与 worker loop 旧章节保留为历史 closeout，不再作为下一轮任务入口。
 
-1. D5-G1 parsed decision same-transaction decision 已完成；保留 orphan diagnostic 只用于历史/人为 partial state 检测。
-2. D5-G2 vocabulary boundary policy 已完成；vocabulary 与 grammar 统一跳过 `fallback_window` 并记录 `boundary_low_fallback_window` diagnostics。
-3. projection ops consistency spike 后置：D5 页面 smoke 继续使用 snapshot reload，只有启用 incremental applier 前才处理 race / replay / path adapter consistency。
-4. D6 product hardening 再决定 `failed_terminal` 是否映射到 `action_required`、是否引入 coverage / rerun policy 和更细粒度调度 hint。
-5. 保持 LangGraph D6+ 隔离 spike 口径，不在 D5 guardrails 中升级或引入。
+当前下一步：
+
+1. T3.5 completion state finalizer。
+2. T4.1/T4.2/T4.3 三模式 planner 合同。
+3. T5.1 deterministic navigation outline；semantic outline 只在长文/超长文策略中后置启用。
+4. 研究 bounded enhancement planner + specialized structured workers 是否能在长文/超长文下降本增效。
+5. 持续记录真实测试的 token、耗时、首个可用输出时间和输出质量，不用单次中间态长文测试推翻整体架构。
