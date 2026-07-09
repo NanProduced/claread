@@ -58,6 +58,42 @@ STATUS_FAILED_TERMINAL = "failed_terminal"
 STATUS_CANCELLED = "cancelled"
 STATUS_SUPERSEDED = "superseded"
 
+# T3.5 completion finalizer: jobs are "terminal" when they will not be
+# retried or picked up by another worker tick. The finalizer uses this set
+# (alongside ``analysis_windows`` terminal statuses) to decide whether a
+# record can transition ``readiness_state -> coverage_complete``.
+TERMINAL_JOB_STATUSES: frozenset[str] = frozenset({
+    STATUS_SUCCEEDED,
+    STATUS_FAILED_TERMINAL,
+    STATUS_SKIPPED,
+    STATUS_CANCELLED,
+    STATUS_SUPERSEDED,
+})
+NON_TERMINAL_JOB_STATUSES: frozenset[str] = frozenset({
+    STATUS_QUEUED,
+    STATUS_CLAIMED,
+    STATUS_RETRY_LATER,
+    STATUS_PAUSED,
+})
+
+# Analysis-window status constants (mirror 0015 migration CHECK constraint).
+# Re-declared here so the finalizer does not need to import magic strings.
+ANALYSIS_WINDOW_STATUS_PENDING = "pending"
+ANALYSIS_WINDOW_STATUS_RUNNING = "running"
+ANALYSIS_WINDOW_STATUS_COMPLETED = "completed"
+ANALYSIS_WINDOW_STATUS_NO_OP = "no_op"
+ANALYSIS_WINDOW_STATUS_FAILED = "failed"
+
+TERMINAL_ANALYSIS_WINDOW_STATUSES: frozenset[str] = frozenset({
+    ANALYSIS_WINDOW_STATUS_COMPLETED,
+    ANALYSIS_WINDOW_STATUS_NO_OP,
+    ANALYSIS_WINDOW_STATUS_FAILED,
+})
+NON_TERMINAL_ANALYSIS_WINDOW_STATUSES: frozenset[str] = frozenset({
+    ANALYSIS_WINDOW_STATUS_PENDING,
+    ANALYSIS_WINDOW_STATUS_RUNNING,
+})
+
 # Allowed target statuses for the public transition helper. ``claimed`` is
 # intentionally excluded because claiming must go through ``claim_next_job``
 # (which generates the lease token and increments ``attempt_count``).

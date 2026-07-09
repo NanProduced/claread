@@ -66,6 +66,12 @@ Implementation checkpoint as of 2026-07-09:
   `translate_article` jobs. It must keep the Translation Group contract:
   batch/window compute cannot collapse display into one sentence, one anchor,
   or one whole unit.
+- Deterministic three-state routing (`short_batch` / `structured_batch` /
+  `grouped_windowed`) is now implemented. Medium articles no longer fall
+  directly from short-path failure into the heavier grouped/windowed path.
+  However, a true `structured article batch` runtime mode is still missing:
+  `STRUCTURED_BATCH` currently reuses the same whole-article batch execution
+  path as `SHORT_BATCH`.
 - Vocabulary has short-article batch jobs, non-short grouped jobs, duplicate
   highlight policy, and conservative phrase_gloss guards. Full cross-window /
   whole-record dedup is not claimed.
@@ -73,6 +79,9 @@ Implementation checkpoint as of 2026-07-09:
   candidates, selector decisions, budgets, and failure/no-op causes. A
   RECORD_DENSITY denominator bug has been fixed, but quantity and quality
   tuning remain open evaluation work.
+- Short article grammar still primarily reuses the windowed analysis path. A
+  lighter short/structured compact grammar path remains a design + implementation
+  gap.
 - This is not yet a complete document-level short / long / very-long strategy
   planner.
 - Section-oriented longform, selective longform, and semantic outline are
@@ -198,6 +207,9 @@ Initial short-path criteria:
 - No strong requirement for window-level progressive output.
 
 Do not compare raw UTF-16 character length directly with token thresholds.
+Raw `content_utf16_length` may remain a coarse guardrail, but it must not be
+the sole router between short batch, structured batch, and grouped/windowed
+longform modes.
 
 ### 6.2 Execution
 
@@ -224,7 +236,23 @@ Translation-specific guardrail:
   and source text; the translator then returns only `group_id` and
   `translated_text`.
 
-### 6.3 Acceptance
+### 6.3 Structured Article Batch
+
+Structured article batch path:
+
+1. Use when the article is beyond the initial short-path threshold, but still
+   fits safely in a single structured batch and does not require longform
+   progress UX.
+2. Keep translation and vocabulary whole-article batch compute when safe, with
+   schema-bound output and grounded per-unit publish.
+3. Prefer a compact grammar candidate path over blindly running three largely
+   independent longform sweeps on medium documents.
+4. Publish translation first; vocabulary and grammar can follow once validated.
+5. This is the intended landing zone for medium articles that are too large for
+   `short article batch` but too small to justify full grouped/windowed
+   longform execution.
+
+### 6.4 Acceptance
 
 Short-form recovery is not complete unless:
 
@@ -279,6 +307,54 @@ Window processing may be concurrent, but user-visible release should be reading-
 - Later windows may become background-ready.
 - Later results should not aggressively appear in the tail while early paragraphs remain empty, unless the user explicitly jumps there.
 
+### 7.5 Completion State Finalization
+
+After grouped/windowed jobs and analysis windows reach terminal status, a
+completion finalizer advances `readiness_state` to `coverage_complete` and
+publishes a `record_state_changed` event so the record exits the candidate
+scan. The finalizer is the only writer of the `coverage_complete` readiness
+state.
+
+Scope of writes (v1): the finalizer writes **only** `reading_records.readiness_state`
+and `reader_events`. It does **not** update `reading_records.product_state` or
+`layer_analysis_plans.status`. `product_state` is intentionally left at
+`readable_enhancing` on the clean / no_op / completed_with_failures paths so
+users are not locked out of articles whose translation + vocabulary succeeded;
+`failed` grammar window outcomes are surfaced via T3.4a diagnostics instead.
+Plan status continues to be owned by the existing grammar window publisher /
+pipeline runner paths.
+
+Decision source: the finalizer reads **durable state** (terminal job/window
+counts from the repository), not the in-memory pipeline summary. The pipeline
+summary's stopped reason is only a gate, not a count source.
+
+Cap behavior: `max_ticks_reached` and `max_jobs_reached` do **not** auto-block
+finalization. The pipeline runner checks caps **after** incrementing the
+processed count, so the last succeeding tick can land exactly on the budget.
+Both caps are symmetric and finalizable; only `attention_required` is treated
+as non-finalizable.
+
+Outcomes:
+
+- `completed_clean`: all enhancement jobs succeeded and no `failed` / `no_op`
+  analysis windows.
+- `completed_with_no_op`: no `failed` windows but some `no_op` windows.
+- `completed_with_failures`: some `failed` windows or `failed_terminal` jobs.
+
+Stuck window policy (v1): when all enhancement jobs are terminal but analysis
+windows remain `pending` or `running`, the finalizer force-fails those windows
+(`failure_code=finalizer_forced_window_failure`, `forced_by=completion_finalizer`)
+and finalizes with `completed_with_failures`. This avoids a permanent wedge:
+candidate scan only re-selects records with `runnable_job_count > 0`, so a
+record with all-terminal jobs but stuck windows would otherwise never be
+scanned again and `readiness_state` would stay at `article_ready` /
+`initial_enhancement_ready` forever. The v1 finalizer does not retry
+force-failed windows; retry / action-required UX is deferred to T4+.
+
+Coverage scope: the finalizer covers `ENHANCEMENT_PIPELINE_JOB_TYPES` only.
+`article_rag_index_build` and other substrate jobs do not participate in the
+completion closure.
+
 ## 8. Progressive Delivery And Frontend Stability
 
 The reader experience requires stable progressive delivery.
@@ -322,6 +398,10 @@ long and very long documents, the next design question is whether a bounded
 enhancement planner can select translation groups and high-value enhancement
 targets before specialized structured workers run. That planner must remain
 schema-bound and must not own publishing, budgets, anchors, or control flow.
+Near-term planning constraint: the first bounded-planner cut should prioritize
+high-value vocabulary/grammar targets for long and very long documents. The
+existing translation semantic group planner remains the primary translation
+contract unless later evidence justifies expanding planner scope.
 
 ### 9.1 Section-Oriented Longform
 
@@ -359,10 +439,12 @@ Every strategy must produce enough evidence for review:
 - Strategy name, complexity class, and planner rationale.
 - Reading goal and variant.
 - Per-layer call count, latency, tokens, model route/profile/provider/name.
+- Cache hit/miss or cached-input attribution when the provider exposes it.
 - First-useful-output time.
 - Full-completion time.
 - Raw candidate count, selector rejection count, accepted count where applicable.
 - No-op/empty outcome cause: raw candidate empty, selector rejected all, publish failed, background-ready hidden.
+- Position-sensitive quality checks: beginning/middle/end relevance and section-jump cases.
 
 Evaluation should compare:
 
@@ -422,10 +504,15 @@ default feedback loop for every intermediate patch.
 - Group/window non-short translation and vocabulary.
 - Add reading-order-oriented release for windowed/grouped paths.
 - Status 2026-07-09: non-short translation and vocabulary grouped execution,
-  vocabulary phrase_gloss guards, grammar window diagnostics, and the grammar
-  RECORD_DENSITY denominator fix are implemented. The next priority is
-  completion finalization plus the strategy/planner and outline-first contracts
-  for long and very long documents.
+  vocabulary phrase_gloss guards, grammar window diagnostics, the grammar
+  RECORD_DENSITY denominator fix, completion state finalization, and
+  deterministic short/medium route hardening are implemented. The current
+  router uses `estimated_word_count` as the primary signal, `content_utf16_length`
+  only as a structured-tier guardrail, and recognizes a `STRUCTURED_BATCH`
+  landing zone for medium articles. The next priority is to give that landing
+  zone a true runtime (`T4.1b`) and to add a lighter short/structured grammar
+  path (`T4.1c`) before expanding the bounded planner / outline-first
+  contracts for long and very long documents.
 
 ### P2: SSE And Interaction-Preserving Updates
 

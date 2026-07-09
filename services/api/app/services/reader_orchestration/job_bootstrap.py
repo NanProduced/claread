@@ -9,6 +9,11 @@ import asyncpg
 
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
+from app.services.reader_orchestration.document_feature_extractor import (
+    ArticleRoute,
+    classify_article_route,
+    extract_document_features,
+)
 from app.services.reader_orchestration.reading_strategy import (
     ReaderVariantStrategy,
     resolve_reader_variant_strategy,
@@ -64,10 +69,14 @@ VOCABULARY_BATCH_TARGET_SCOPE = "unit_range"
 VOCABULARY_BATCH_OPERATION_FINGERPRINT = "vocabulary_article_v1"
 VOCABULARY_BATCH_POLICY_VERSION = "reader_vocabulary_batch_bootstrap_v1"
 
-# Short-article threshold: content_chars <= 6000 covers the reuters_bbc_970
-# golden sample (5982 chars / 984 words) and aligns with design §6.1
-# ``estimated_token_count < 2000`` (≈ 1400 tokens for 984 English words).
-# Above this threshold the per-unit / windowed path is used.
+# Legacy short-article char threshold. Retained as an observability /
+# documentation constant (existing tests reference it for fixture sanity
+# asserts). T4.1a route hardening replaced it as the sole short/non-short
+# discriminator: routing now uses ``estimated_word_count`` as the primary
+# signal (see ``document_feature_extractor.SHORT_ARTICLE_MAX_WORD_COUNT``)
+# with ``content_utf16_length`` only surviving as a coarse structured-tier
+# guardrail. The reuters_bbc_970 golden sample (5982 chars / 984 words)
+# stays on the short batch path under the new word-based router.
 SHORT_ARTICLE_MAX_CHAR_COUNT = 6000
 
 # T3.2b non-short vocabulary grouped execution: when the active base text
@@ -574,27 +583,58 @@ class _LockedActiveBaseState:
     last_event_sequence: int
     strategy: ReaderVariantStrategy
     # T1.1 short-article batch path: cached active base text. Populated
-    # lazily by ``_is_short_article`` so the per-article batch router does
-    # not issue a second ``reading_bases.text`` SELECT when both the
+    # lazily by ``_load_article_route`` so the per-article route classifier
+    # does not issue a second ``reading_bases.text`` SELECT when both the
     # translation and vocabulary bootstrap checks run for the same record.
     # ``None`` means "not loaded yet"; an empty string is a valid text.
     base_text: str | None = None
+    # T4.1 deterministic document feature extractor: cached ordered
+    # ``reading_units.unit_type`` sequence for the active base. Populated
+    # lazily by ``_load_article_route`` and reused across the translation
+    # and vocabulary route checks. ``None`` means "not loaded yet"; an
+    # empty tuple is a valid (defensive) value for a base with no units.
+    unit_types: tuple[str, ...] | None = None
+    # T4.1a: cached route decision. Once computed by
+    # ``_load_article_route``, reused for the second call (vocabulary
+    # after translation) so the route is stable within one
+    # ``bootstrap_missing_jobs`` invocation. This also fixes the
+    # missing-base defensive branch: the first call caches
+    # ``GROUPED_WINDOWED``; without this cache the second call would see
+    # non-None ``base_text=""`` / ``unit_types=()`` and re-evaluate an
+    # empty profile, misclassifying it as ``SHORT_BATCH``.
+    cached_route: ArticleRoute | None = None
 
 
-async def _is_short_article(
+async def _load_article_route(
     conn: asyncpg.Connection,
     *,
     state: _LockedActiveBaseState,
-) -> bool:
-    """Return ``True`` when the active base text is below the short-article
-    threshold.
+) -> ArticleRoute:
+    """Classify the active base into its routing mode via deterministic
+    document features (T4.1 / T4.1a).
 
-    The text is loaded once from ``reading_bases.text`` and cached on the
-    state object via ``object.__setattr__`` (the dataclass is frozen so
-    direct assignment would raise). Subsequent calls — e.g. the
-    vocabulary bootstrap running right after translation bootstrap —
-    reuse the cached value and skip the second SELECT.
+    Replaces the legacy ``_is_short_article`` raw-``content_utf16_length``
+    boolean. The base text and the ordered ``reading_units.unit_type``
+    sequence are loaded once each and cached on ``state`` (via
+    ``object.__setattr__`` because the dataclass is frozen) so the
+    vocabulary route check running right after the translation route check
+    reuses the cached values and skips the repeated SELECTs.
+
+    Routing decision is delegated to the pure
+    :func:`classify_article_route` classifier, which is fully replayable
+    offline from the cached ``base_text`` + ``unit_types`` + ``strategy``.
+
+    Defensive missing-base handling mirrors the legacy ``_is_short_article``
+    behavior: if the base row was deleted between the lock and this check,
+    return :data:`ArticleRoute.GROUPED_WINDOWED` so the grouped path's own
+    base validation surfaces the error (instead of creating a batch job on
+    an empty base that would fail later in the worker). The decision is
+    cached on ``state.cached_route`` so the second call (vocabulary after
+    translation) returns the same route rather than re-evaluating an empty
+    profile and misclassifying it as ``SHORT_BATCH``.
     """
+    if state.cached_route is not None:
+        return state.cached_route
     if state.base_text is None:
         row = await conn.fetchrow(
             "SELECT text FROM reading_bases WHERE id = $1",
@@ -603,12 +643,42 @@ async def _is_short_article(
         if row is None:
             # Defensive: _load_locked_active_base_state already validated
             # the base row. A missing row here means the base was deleted
-            # between the lock and this check; treat as not-short so the
-            # per-unit path handles the missing base via its own validation.
+            # between the lock and this check; cache empty values and route
+            # to grouped so its own validation surfaces the error.
             object.__setattr__(state, "base_text", "")
-            return False
+            object.__setattr__(state, "unit_types", ())
+            object.__setattr__(
+                state, "cached_route", ArticleRoute.GROUPED_WINDOWED
+            )
+            return ArticleRoute.GROUPED_WINDOWED
         object.__setattr__(state, "base_text", str(row["text"] or ""))
-    return len(state.base_text) <= SHORT_ARTICLE_MAX_CHAR_COUNT
+    if state.unit_types is None:
+        unit_rows = await conn.fetch(
+            """
+            SELECT unit_type
+            FROM reading_units
+            WHERE reading_record_id = $1
+              AND base_id = $2
+            ORDER BY order_index ASC
+            """,
+            state.record_id,
+            state.base_id,
+        )
+        object.__setattr__(
+            state,
+            "unit_types",
+            tuple(str(r["unit_type"]) for r in unit_rows),
+        )
+    profile = extract_document_features(
+        base_text=state.base_text,
+        unit_types=state.unit_types,
+        reading_goal=state.strategy.reading_goal,
+        reading_variant=state.strategy.reading_variant,
+        requested_layers=tuple(state.strategy.layers.keys()),
+    )
+    route = classify_article_route(profile)
+    object.__setattr__(state, "cached_route", route)
+    return route
 
 
 class TranslationJobBootstrapService:
@@ -1217,12 +1287,14 @@ class EnhancementJobBootstrapService:
         state: _LockedActiveBaseState,
         trace_id: UUID | None = None,
     ) -> list[TranslationBootstrapResult]:
-        # T1.1 short-article batch path: route to a single batch job when
-        # the active base text is below SHORT_ARTICLE_MAX_CHAR_COUNT. The
-        # batch worker makes one LLM call covering all units; the batch
-        # publisher splits the output back into per-unit
-        # enhancement_layers rows.
-        if await _is_short_article(conn, state=state):
+        # T4.1a route hardening: classify via deterministic document
+        # features (estimated_word_count primary, content_utf16_length as a
+        # coarse structured-tier guardrail) instead of the legacy raw
+        # ``content_utf16_length`` boolean. SHORT_BATCH and STRUCTURED_BATCH
+        # both execute via the single whole-article batch job this round;
+        # GROUPED_WINDOWED splits into per-window batch jobs.
+        route = await _load_article_route(conn, state=state)
+        if route is not ArticleRoute.GROUPED_WINDOWED:
             return await self._bootstrap_translation_batch_job(
                 conn, state=state, trace_id=trace_id
             )
@@ -1241,9 +1313,13 @@ class EnhancementJobBootstrapService:
         state: _LockedActiveBaseState,
         trace_id: UUID | None = None,
     ) -> list[VocabularyBootstrapResult]:
-        # T1.1 short-article batch path: route to a single batch job when
-        # the active base text is below SHORT_ARTICLE_MAX_CHAR_COUNT.
-        if await _is_short_article(conn, state=state):
+        # T4.1a route hardening: classify via deterministic document
+        # features (see ``_bootstrap_translation_jobs``). SHORT_BATCH and
+        # STRUCTURED_BATCH both execute via the single whole-article
+        # vocabulary batch job this round; GROUPED_WINDOWED splits into
+        # per-window batch jobs.
+        route = await _load_article_route(conn, state=state)
+        if route is not ArticleRoute.GROUPED_WINDOWED:
             return await self._bootstrap_vocabulary_batch_job(
                 conn, state=state, trace_id=trace_id
             )

@@ -26,7 +26,7 @@
 Reader enhancement 的当前主链路按层分开理解：
 
 1. Input Adapter / Article Ready：把用户输入转成 Stable Reading Base、Reading Units、Anchor Segments。该层决定稳定文本与锚点，不决定批注密度或译文分组。
-2. Strategy / Bootstrap：根据记录与 base 状态创建 reader jobs。当前 translation 短文走 whole-article batch、非短文走 T3.1 grouped/windowed batch（多条 `translate_article` window job），不再创建 per-unit `translate_unit`；vocabulary 已有短文 batch 与非短文 grouped 路径；grammar 已有 analysis window 路径；完整 short / structured / windowed / section / selective planner 尚未落地。
+2. Strategy / Bootstrap：根据记录与 base 状态创建 reader jobs。当前 translation 短文走 whole-article batch、非短文直接走 T3.1 grouped/windowed batch（多条 `translate_article` window job），不再创建 per-unit `translate_unit`；vocabulary 已有短文 batch 与非短文 grouped 路径；中间缺少一个真正的 `structured batch` 中档模式；grammar 当前各模式仍主要复用 analysis window 路径，短文 / 中等文章的 compact path 还没落地；完整 short / structured / windowed / section / selective planner 尚未落地。
 3. Layer Workers：执行 LLM 或 deterministic 后处理。worker 可以选择 batch/window 计算形态，但不能改变 Enhancement Layer 的公开输出语义。
 4. Layer Publisher：校验 schema、anchor、publish fence、source hash 和 generation，写 `enhancement_layers` 与 `reader_events`。Publisher 是合同守门，不应替 worker 猜测或改写语义粒度。
 5. Snapshot / Plate Projection：从 domain facts 重建页面。前端显示异常优先回查已发布 layer output；不要把 projection 误判为 layer truth。
@@ -36,6 +36,8 @@ Reader enhancement 的当前主链路按层分开理解：
 
 2026-07-09 长文抽查进一步确认：长文路径仍处于中间态。translation 非短文此前是 57/58 次 `translate_unit` per-unit 调用（T3.1 已改为 grouped/windowed `translate_article` batch job，待真实 LLM 验收确认降幅）；grammar window 花费较高但大多数 window `no_op`，且缺少候选数与 selector 拒绝原因 diagnostics。该结果不推翻 adaptive orchestration 方向，只说明 T3.4a/T4/T5 仍未闭环。
 
+同日复盘还暴露了第二个结构问题：当前代码仍使用 raw `content_utf16_length <= 6000` 作为短文/非短文硬分流，导致一部分接近阈值、但按 `estimated_word_count` / `estimated_token_count` / 段落结构仍应属于短文或中档 batch 的新闻文本，被过早送入 heavy grouped/windowed 路径。三模式路线当前最缺的不是“更强的大 planner”，而是把 short batch / structured batch / grouped-windowed 的 complexity routing 做实，并补上中档 `structured batch` 与 short/medium compact grammar path。
+
 ### 里程碑
 
 | # | Milestone | 目标 | 成功标准 |
@@ -44,7 +46,7 @@ Reader enhancement 的当前主链路按层分开理解：
 | M1 | Short Article Recovery | 恢复短文解析质量、成本和首屏速度 | 短文不再 per-unit fan-out；translation 先出；grammar/sentence 接近旧 workflow 质量基线 |
 | M2 | Stable Progressive Delivery | 修复页面闪烁、折叠和无序输出 | 发布结果尽量按阅读顺序出现；前端状态不因 layer 更新丢失 |
 | M3 | Grouped Layer Execution | translation/vocabulary/grammar 支持 grouped/windowed 路径 | 中长文章降低调用次数；vocabulary 全文去重；window 结果仍 anchor-grounded |
-| M4 | Adaptive Planner | 自动选择短文 batch、中长文 grouped/windowed、长文 section 策略 | LLM 只输出 schema profile，deterministic planner 决定执行策略 |
+| M4 | Adaptive Planner | 自动选择短文 batch、structured batch、中长文 grouped/windowed、长文 section 策略 | 先落 deterministic router；LLM 只输出 schema profile，deterministic planner 决定执行策略 |
 | M5 | Outline and Longform | 长文导航大纲与超长文 lazy enhancement | 普通导航 outline 可先用 deterministic 生成；semantic outline 只在长文/超长文启用 |
 | M6 | Streaming UX Upgrade | SSE / patch delivery 逐步替代高频全量 reload | 事件可恢复；更新不闪烁；后续支持 committed patch merge |
 
@@ -52,9 +54,11 @@ Reader enhancement 的当前主链路按层分开理解：
 
 1. M0/M1 的短文合同继续保持；短文真实页面已抽查过的部分不再反复消耗真 LLM。
 2. M3 长文 grouped execution：T3.1（translation）与 T3.2b（vocabulary）均已完成实施；T3.3 phrase_gloss guard、T3.4a diagnostics、T3.4b density bug fix 已完成。
-3. 下一步不要继续只修局部输出数量；应先补 T3.5 completion finalizer 与 T4/M5 的三模式 planner / outline-first / section-lazy 合同。
-4. 同步开展 bounded enhancement planner + specialized structured workers 的设计评估，判断长文/超长文是否能减少三层独立窗口调用带来的成本。
-5. 三种模式代码级闭环后，再统一跑真实 LLM / 页面验收，覆盖短文、长文、超长文和碎段新闻。
+3. T3.5 completion state finalizer 已完成代码级实施（详见下方 T3.5 章节）；下一步推进 T4.1/T4.1a 的 complexity routing 基线，停止仅靠 raw `content_utf16_length` 做短文分流。
+4. 在 route hardening 之后，优先补 T4.1b `structured batch` 中档模式与 T4.1c short/medium compact grammar path，让中等文章不被过早送入 heavy grouped/windowed pipeline。
+5. bounded enhancement planner + specialized structured workers 的设计评估应先聚焦 long/very-long selective enhancement，优先减少 vocabulary/grammar 的空跑与重复扫描，而不是一开始扩到全部 translation。
+6. Provider prompt cache / cache-hit 归因可作为后续成本杠杆继续验证，但它是成本优化项，不是三模式路由设计的替代品。
+7. 三种模式代码级闭环后，再统一跑真实 LLM / 页面验收，覆盖短文、中档 structured batch、长文、超长文和碎段新闻。
 6. M6 先做 debounce / state preservation，再做 SSE 和 patch merge。SSE 本身不能解决全量 reload 闪烁。
 
 ### 任务包
@@ -77,11 +81,15 @@ Reader enhancement 的当前主链路按层分开理解：
 | T3.3 | vocabulary highlight policy | 3-6h | T3.2 | 明确只高亮首次、每处高亮、或首次强高亮加弱提示的产品规则，并有测试覆盖 |
 | T3.4 | grammar grouped/window worker cleanup | 4-8h | T1.3 | grammar window 生成候选充足，selector 只做质量/密度裁剪，不因预算/schema bug 大量 no-op |
 | T3.4a | grammar window diagnostics | 4-8h | T1.3 | 每个 grammar window 记录 raw candidate count、accepted/rejected count、reject reasons、budget、strategy hash；能解释 no-op |
-| T3.5 | completion state finalizer | 3-6h | T3.1/T3.2/T3.4a | 所有目标 jobs/window terminal 后，record/product state、plan status、progress summary 正确收尾 |
-| T4.1 | deterministic document feature extractor | 4-8h | M1/M3 | 输出 token、word、paragraph、heading、noise、block histogram、requested layers 等 profile input |
-| T4.2 | bounded LLM document profiler | 4-8h | T4.1 | LLM 只返回 genre/structure/schema_risk/selective hints；失败时 deterministic fallback |
-| T4.3 | strategy planner | 4-8h | T4.1/T4.2 | planner 选择 short batch、structured batch、grouped/windowed、section longform、selective longform |
-| T4.4 | three-mode validation harness | 4-8h | T4.3/T5.1 | 用 fake/recorded outputs 覆盖 short/long/very-long mode 的 job plan、layer counts、usage attribution、completion state |
+| T3.5 | completion state finalizer | 3-6h | T3.1/T3.2/T3.4a | 所有目标 jobs/window terminal 后，`readiness_state` 推进到 `coverage_complete` 并发布 `record_state_changed` 事件（不更新 `product_state` 或 `layer_analysis_plans.status`）（已完成实施/待验收：详见"当前进度"T3.5 章节） |
+| T4.1 | deterministic document feature extractor | 4-8h | M1/M3 | 输出 token、word、paragraph、heading、noise、block histogram、requested layers 等 profile input；作为 route hardening 的统一输入（已完成实施/待验收：详见"当前进度"T4.1/T4.1a 章节） |
+| T4.1a | short/medium route hardening | 4-8h | T4.1/T3.5 | 不再用 raw `content_utf16_length` 单独决定短文路径；改用 estimated_token / estimated_word、paragraph、heading/noise、reading_goal 判定 short batch / structured batch / grouped-windowed（已完成实施/待验收：详见"当前进度"T4.1/T4.1a 章节） |
+| T4.1b | structured article batch | 4-8h | T4.1a | 为中等文章补 whole-article structured batch mode；translation/vocabulary 尽量整篇 batch，保留 grounded publish 与 release order |
+| T4.1c | short/medium compact grammar path | 4-8h | T4.1a/T4.1b | 短文与 structured batch 文章的 grammar 不再默认走重型全窗口空跑；候选生成更紧凑，publish 仍受 budget/density/anchor 约束 |
+| T4.2 | bounded LLM document profiler | 4-8h | T4.1a | LLM 只返回 genre/structure/schema_risk/selective hints；失败时 deterministic fallback；不直接决定流程 |
+| T4.3 | strategy planner | 4-8h | T4.1b/T4.2 | planner 选择 short batch、structured batch、grouped/windowed、section longform、selective longform |
+| T4.3a | longform bounded enhancement planner | 4-8h | T4.3 | 先为 long/very-long 的 vocabulary/grammar 选择高价值 targets；translation 仍优先沿用独立 semantic group planner，除非后续证据支持扩权 |
+| T4.4 | three-mode validation harness | 4-8h | T4.3/T5.1 | 用 fake/recorded outputs 覆盖 short batch、structured batch、grouped/windowed、section/selective 模式的 job plan、layer counts、usage attribution、completion state，并补 beginning/middle/end 与 section-jump 的位置敏感验收 |
 | T5.1 | deterministic navigation outline | 4-8h | Stable Base | 基于 heading/paragraph/unit 生成 Notion-like outline；不调用 LLM；不阻塞 translation |
 | T5.2 | outline frontend contract | 4-8h | T5.1 | outline item 可跳转 anchor/unit；当前段高亮；长文显示进度感 |
 | T5.3 | semantic outline worker | 4-8h | T4.3/T5.1 | 仅长文/超长文启用；输出 section title/summary/key idea/anchor range，不改变 Stable Base |
@@ -133,6 +141,56 @@ Reader enhancement 的当前主链路按层分开理解：
    - 风险 B（已锁定）：窗口边界与 vocabulary window / grammar window 不对齐。v1 保持各层窗口独立，只按 unit 连续性切分；不影响其他层合同。
 4. 影响面：不改 Translation Group 合同；不改 grammar window worker；不改 vocabulary worker；不改 frontend layer contract；不触碰 `apps/web/**`；不新增 migration。`translation_worker.py` / `layer_publisher.py` 未修改。
 5. 已新增/更新测试：window planner（连续 unit 覆盖、无重叠、safety max 独占、empty/single、`window_id` 稳定）；short article bootstrap 仍单条 batch；non-short bootstrap 多 window job 且无 `translate_unit`；idempotency 重复 bootstrap 不重复；partial publish 只为缺失 unit 建 window；多窗口 `target_key`/`idempotency_key`/`input_hash` DB 级区分；pipeline runner 处理多窗口 batch job 并发布 per-unit translation layer；Translation Group 合同回归（不退化为 one-unit-one-group；`$2.13 per hour` decimal boundary 不被切坏）。同步更新 `test_t11_long_article_routes_to_per_unit_path` 与 `test_superseded_stale_jobs_are_not_claimed_by_worker` 以反映 non-short 现在走 `translate_article`。
+
+#### T3.5 completion state finalizer（已完成实施/待验收）
+
+1. 目标：在所有目标 jobs/windows 进入 terminal 状态后，把 `readiness_state` 推进到 `coverage_complete` 并发布 `record_state_changed` 事件，避免 candidate scan 语义下的永久卡死。**v1 不更新 `product_state` 或 `layer_analysis_plans.status`**：`product_state` 在 clean / no_op / completed_with_failures 路径上 intentionally 留在 `readable_enhancing`，避免把 translation + vocabulary 已成功的文章锁成 `failed`；plan status 由现有 grammar window publisher / pipeline runner 路径维护。
+2. 核心实现（`services/api/app/services/reader_orchestration/completion_finalizer.py` + `worker_loop.py` 集成）：
+   - `should_attempt_finalization(summary)`：只在 pipeline 停止原因属于可 finalizable 集合时返回 true；`NON_FINALIZABLE_STOPPED_REASONS` 当前仅包含 `attention_required`。`max_ticks_reached` / `max_jobs_reached` / `all_workers_no_job` 都是 finalizable。
+   - `CompletionFinalizer.finalize_completion_state`：在 worker_loop 决定不再更新 record product_state（`should_update_record=False`）且 `should_attempt_finalization=True` 时调用。基于 durable state（`count_enhancement_jobs_by_terminal_status` + `count_analysis_windows_by_terminal_status`）判定 outcome，不依赖 in-memory pipeline summary 的瞬时计数。
+   - 三种 outcome：`completed_clean`（全部 succeeded 且无 failed/no_op windows）、`completed_with_no_op`（无 failed 但有 no_op windows）、`completed_with_failures`（有 failed windows 或 failed_terminal jobs）。
+   - 完成后只做两件事：调用 `update_record_readiness_state_if_active` 把 `readiness_state` 推进到 `coverage_complete`，并通过 `event_runtime.publish_event_in_transaction` 发布 `record_state_changed` 事件（`field=readiness_state`）。**不写 `product_state`、不写 `layer_analysis_plans.status`、不写 progress summary**。
+3. 关键策略（v1 锁定）：
+   - **cap 不再自动阻断 finalization**：pipeline runner 在 processed-count 自增之后才检查 max_ticks / max_jobs，所以最后一个成功的 tick 可能恰好落在预算上。finalizer 以 durable state 为准；只要所有 enhancement jobs 已 terminal，`max_ticks_reached` 与 `max_jobs_reached` 都应正常 finalize 到 `coverage_complete`。两个 cap 对称。`NON_FINALIZABLE_STOPPED_REASONS` 只保留 `attention_required`。
+   - **stuck analysis windows 的 v1 策略是 force-fail + completed_with_failures**：当所有 enhancement jobs 已 terminal 但仍有 `pending` / `running` analysis windows 时，finalizer 调用 `force_fail_non_terminal_analysis_windows`，把这些 windows 标记为 `failed` 并写入 diagnostics（`failure_code=finalizer_forced_window_failure`、`forced_by=completion_finalizer`），然后以 `completed_with_failures` 收尾。
+   - **避免 candidate scan 永久卡死**：candidate scan 只会重新挑选 `runnable_job_count > 0` 的记录；如果 jobs 全部 terminal 但 windows 卡住，记录会永远不再被 scan 到，readiness_state 会永远停在 `article_ready` / `initial_enhancement_ready`。force-fail + completed_with_failures 是 v1 的闭合手段，不尝试重跑 windows。
+4. 影响面：不改 `job_bootstrap.py`；不改 route hardening；不改 structured batch；不触碰 `apps/web/**`；不新增 migration。新增 `repository.py` 的 finalizer helper（`count_enhancement_jobs_by_terminal_status` / `count_analysis_windows_by_terminal_status` / `update_record_readiness_state_if_active` / `force_fail_non_terminal_analysis_windows`）与 `worker_loop.py` 的 finalizer 调用集成。finalizer 本身只写 `reading_records.readiness_state` + `reader_events`，不写 `reading_records.product_state` 或 `layer_analysis_plans.status`。
+5. 已新增/更新测试（`tests/test_completion_finalizer.py` 12 个 + `tests/test_reader_orchestration_worker_loop.py` 新增 stuck-windows 闭环）：
+   - `completed_clean` 转换（全部 succeeded、无 windows）。
+   - `completed_with_no_op`（有 no_op windows、无 failed）。
+   - `completed_with_failures`（有 failed windows）。
+   - `max_jobs_reached` + all-terminal durable state -> `coverage_complete`（P1 回归）。
+   - `max_ticks_reached` + all-terminal durable state -> `coverage_complete`（与 max_jobs 对称，本次补齐）。
+   - 非 terminal jobs 仍存在（`retry_later`）时不 finalize。
+   - 所有 enhancement jobs terminal 但 windows stuck -> force-fail + `completed_with_failures`（finalizer 单元级 + worker_loop 集成级双覆盖）。
+   - 未 bootstrap enhancement jobs 时不 finalize。
+   - worker_loop real chain 集成：drain 完所有 enhancement job 后 finalize 到 `coverage_complete`，`record_state_changed` 事件 payload `field=readiness_state`，记录退出 candidate scan。
+6. 风险/边界（已锁定，不扩 scope）：
+   - force-fail 不尝试重跑 windows；被 force-fail 的 windows 在 v1 不提供 retry 入口。如需 retry，应作为 T4+ 的 action-required UX 单独设计。
+   - `attention_required` 仍是非 finalizable 的唯一原因；finalizer 不会在 attention_required 下覆盖 record 状态。
+   - finalizer 只处理 ENHANCEMENT_PIPELINE_JOB_TYPES 范围内的 jobs（不含 `article_rag_index_build`）；RAG substrate 不进入 completion 闭环。
+
+#### T4.1 / T4.1a deterministic document feature extractor + short/medium route hardening（已完成实施/待验收）
+
+1. 目标：把短文/中档/长文路由从 legacy raw `content_utf16_length <= 6000` 二元分流，升级为 deterministic 三态路由：`SHORT_BATCH`、`STRUCTURED_BATCH`、`GROUPED_WINDOWED`。本轮只修 **route decision**，不扩到 bounded planner，不改变 worker/publisher 的公开 layer contract。
+2. 核心实现（`services/api/app/services/reader_orchestration/document_feature_extractor.py` + `job_bootstrap.py` 集成）：
+   - 新增 `DocumentFeatureProfile` 纯函数 profile：从 `base_text`、`unit_types`、`reading_goal`、`reading_variant`、`requested_layers` 派生 `estimated_word_count`、`estimated_token_count`、`paragraph_count`、`heading_count`、`list_item_count`、`quote_count`、`unknown_block_count`、`structural_noise_ratio`、`extractor_version=document_feature_v1`。
+   - 新增 `ArticleRoute` 三态 classifier：`estimated_word_count <= 1100` -> `SHORT_BATCH`；`1100 < estimated_word_count <= 2000` 且 `content_utf16_length <= 12000` -> `STRUCTURED_BATCH`；其余 -> `GROUPED_WINDOWED`。`estimated_word_count` 是 primary router，`content_utf16_length` 只保留为 structured-tier coarse guardrail。
+   - `job_bootstrap.py` 以 `_load_article_route()` 取代 legacy `_is_short_article()`：translation/vocabulary bootstrap 都先走 route classifier，再决定“单条 whole-article batch job”还是“grouped/windowed batch jobs”。本轮 `SHORT_BATCH` 与 `STRUCTURED_BATCH` 仍共用现有 whole-article batch 执行路径；`GROUPED_WINDOWED` 继续沿用 T3.1/T3.2b 的 window job 路径。
+3. 关键修复（本轮锁定）：
+   - **BBC near-threshold regression 修复**：约 1000 词、约 6300 chars 的新闻文，在 legacy raw-char router 下会被误送入 heavy grouped/windowed；现在按词数进入 `SHORT_BATCH`。
+   - **中档文章 landing zone 修复**：约 1450 词、约 8900 chars 的文章不再直接掉进 grouped/windowed，而是进入 `STRUCTURED_BATCH`；虽然本轮执行仍复用 whole-article batch path，但 route label 已正确，为 T4.1b 留出稳定落点。
+   - **Unicode non-CJK word counting 修复**：非 ASCII / 非 CJK 脚本（Cyrillic / Arabic / Greek / Devanagari / Thai 等）不再被计成 0 词。non-CJK token 改为“包含至少一个 Unicode 字母或数字、且不属于 CJK/Hangul/Kana 范围”的 whitespace token；纯标点仍不计词。
+   - **missing-base route stability 修复**：`_LockedActiveBaseState` 新增 `cached_route`，同一 `bootstrap_missing_jobs()` 调用内 translation 与 vocabulary 共用一次路由决策。base row 缺失时首次会缓存 `GROUPED_WINDOWED`，第二次调用不再对空 profile 重新判成 `SHORT_BATCH`。
+4. 影响面：不改 `translation_worker.py` / `vocabulary_worker.py` / `grammar` worker；不改 route/schema 公共 contract；不改 `apps/web/**`；不新增 migration；不引入 LLM profiler。`SHORT_ARTICLE_MAX_CHAR_COUNT=6000` 仅作为 legacy observability 常量保留，不再作为唯一路由判定。
+5. 已新增/更新测试：
+   - `tests/test_document_feature_extractor.py`：23 个纯单测，覆盖 short/structured/grouped 三态、CJK/混合文本、UTF-16 surrogate pair、profile replayability、pure punctuation exclusion，以及 Cyrillic / Arabic / Greek 长文不再误路由到 `SHORT_BATCH`。
+   - `tests/test_reader_orchestration_job_bootstrap_strategy.py`：49 个测试，覆盖 BBC near-threshold -> `SHORT_BATCH`、中档文章 -> `STRUCTURED_BATCH`（translation/vocabulary 各 1 条 whole-article batch job、无 `:window:` target key、无 per-unit job）、长文 -> `GROUPED_WINDOWED`（多 window jobs 保留），以及 missing-base 双调用 route stability。
+   - `tests/test_reader_orchestration_pipeline_runner.py`：回归通过，证明 route hardening 未破坏既有 batch/window publish contract。
+6. 风险/边界（已锁定，不扩 scope）：
+   - `STRUCTURED_BATCH` 当前只是 **正确的 route label + whole-article batch landing zone**，不是独立 runtime mode。若要让 structured batch 使用不同 budget/prompt/release policy，应在 T4.1b 单独实现，不在本轮扩。
+   - `structural_noise_ratio`、`heading_count`、`list_item_count` 等结构信号本轮只写入 profile 供观测与后续 planner 使用，不参与当前 router 判定。
+   - `cached_route` 只在单次 `bootstrap_missing_jobs()` 调用内稳定；跨调用不缓存，这是预期行为，因为 active base 可能已重建，下一次应重新评估 route。
 - T2.1 已有第一轮实现并提交（progressive reload cursor、in-flight guard、scroll/selection best-effort 恢复），但必须在 T1.1a 修复后用真实页面重新验收；前端稳定性不能替代正确的 layer output。
 - 默认 worker / baseline budget 已调整为 `max_ticks=96`、`max_jobs=48`，覆盖当前 6/7 worker slots 下的中等短文样本；这是验收预算，不是最终调度模型。
 - 2026-07-08 fake baseline 验收只能证明 job 数、completion 和测试 fake output 口径；不能证明真实 LLM 下 Translation Group 粒度正确。真实页面已暴露 one-unit-one-group 回归，因此此前 `translation_groups` 数量不能作为 T1.1a 验收依据。
@@ -144,11 +202,13 @@ Reader enhancement 的当前主链路按层分开理解：
 
 ### 下一轮建议
 
-1. 先收口 T3.5 completion state finalizer，确保 grouped/windowed jobs、analysis windows、record progress、plan status 在全部 terminal 后有一致完成态。
-2. 开始 T4/M5 代码级合同：deterministic document feature extractor、bounded document profiler、strategy planner、deterministic navigation outline。Semantic outline 仍只面向长文/超长文，不默认对所有文章生成。
-3. 单独设计评估 bounded enhancement planner + specialized structured workers：planner 只负责选择 translation groups 与候选 enhancement targets，专业 worker 负责 schema output 与 publish；代码仍拥有流程、预算、发布和 fail-closed 约束。
-4. 继续跟踪真实测试的 token/耗时/首个可用输出时间，但避免每个局部补丁后真实跑长文或超长文；三模式合同闭环后再统一做页面验收。
-5. Grammar/sentence 数量优化进入长期质量议题：不能只按文章长度线性设 cap；需要结合 reading_goal、文章结构、候选价值、视觉密度、重复率和 eval 结果调优。
+1. T3.5、T4.1、T4.1a 都已完成代码级实施：completion state finalizer 已闭合；deterministic router 已替换 legacy raw-char 二元分流；Unicode non-CJK 与 missing-base 两个回归点也已补齐。下一步不再回头扩这三项 scope。
+2. 下一优先级收口到 **T4.1b structured article batch**：给中档 `STRUCTURED_BATCH` 文章补独立执行策略（budget / prompt / release policy），而不是继续与 `SHORT_BATCH` 共用整篇 batch path。
+3. 之后推进 **T4.1c short/medium compact grammar path**：让短文与 structured batch 文章的 grammar 不再默认走重型 analysis-window 空跑；先解中档 grammar 的成本/时延问题，再扩大到大 planner。
+4. bounded enhancement planner + specialized structured workers 的第一落点仍应是 long/very-long selective enhancement：planner 只负责选择候选 enhancement targets，专业 worker 负责 schema output 与 publish；translation semantic group planner 继续保持独立。
+5. T5.1 deterministic navigation outline 仍然是 very-long lazy enhancement 的先决条件；semantic outline 只面向长文/超长文，不默认对所有文章生成。
+6. Provider prompt cache / cache-hit 归因继续作为成本优化项跟踪，但应放在 structured runtime / compact grammar 收口之后做，不作为当前三模式架构是否成立的前提。
+7. 继续跟踪真实测试的 token、耗时、首个可用输出时间和输出质量，但避免每个局部补丁后真实跑长文或超长文；三模式合同闭环后再统一做页面验收。
 
 ### 暂缓项
 
@@ -158,13 +218,15 @@ Reader enhancement 的当前主链路按层分开理解：
 - 不在 short/long/very-long 三种模式代码级闭环前，频繁真实跑长文或超长文页面验收。
 - 不把短文 batch 的 whole-article computation 理解成 whole-unit translation display。
 - 不用前端按标点或句子拆译文来修复后端 group 输出错误。
+- 不把 bounded enhancement planner 一开始扩到全部 layer；优先先管 long/very-long 的 vocabulary/grammar selective enhancement，再根据证据判断是否扩到 translation。
+- 不把 provider prompt cache 当作三模式路由替代品；它是成本优化杠杆，不是模式设计本身。
 - 不先删除旧 AI Workflow。旧链路仍是质量和成本对照基线，除非人工确认不再需要 fallback。
 
 ### 任务派发规则
 
 - `implementation-plan.md` 只记录任务拆分、依赖、状态和验收口径，不保存每轮 coding agent prompt。
 - 每轮 prompt 由人工根据当前代码事实和最近验收结果单独生成，并通过会话发给 coding agent。
-- 当前 T1.1a、T3.1、T3.2b、T3.3、T3.4a、T3.4b 均已完成代码级实施；下一阶段默认收口 T3.5，并推进 T4/M5 的三模式 planner、outline-first 和 very-long lazy enhancement 合同。不要把 planner / semantic outline worker / SSE patch / grammar quality tuning 混成一个无边界任务。
+- 当前 T1.1a、T3.1、T3.2b、T3.3、T3.4a、T3.4b、T3.5、T4.1、T4.1a 均已完成代码级实施；下一阶段优先推进 T4.1b/T4.1c，再进入 T4.2/T4.3 与 M5 outline-first / very-long lazy enhancement 合同。不要把 planner / semantic outline worker / SSE patch / grammar quality tuning 混成一个无边界任务。
 - 评审 agent 完成 review 后，如发现实现改变了任务状态、产品合同或执行顺序，必须同步更新本计划和相关模块合同。
 
 ## 成功标准
@@ -957,8 +1019,10 @@ Focused tests 已通过：
 
 当前下一步：
 
-1. T3.5 completion state finalizer。
-2. T4.1/T4.2/T4.3 三模式 planner 合同。
-3. T5.1 deterministic navigation outline；semantic outline 只在长文/超长文策略中后置启用。
-4. 研究 bounded enhancement planner + specialized structured workers 是否能在长文/超长文下降本增效。
+1. T4.1b structured article batch。
+2. T4.1c short/medium compact grammar path。
+3. T4.2/T4.3 三模式 planner 合同。
+4. T5.1 deterministic navigation outline；semantic outline 只在长文/超长文策略中后置启用。
 5. 持续记录真实测试的 token、耗时、首个可用输出时间和输出质量，不用单次中间态长文测试推翻整体架构。
+
+T3.5、T4.1、T4.1a 已完成代码级实施，不再作为下一步入口；如需 retry force-failed windows、扩展 finalizer 到 RAG substrate，或让 structured batch 脱离 short batch 共享 runtime，应分别作为后续独立任务设计。

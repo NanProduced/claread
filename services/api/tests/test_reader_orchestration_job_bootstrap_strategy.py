@@ -39,7 +39,10 @@ from app.services.reader_orchestration.article_ready_service import (
 from app.services.reader_orchestration.job_bootstrap import (
     EnhancementJobBootstrapService,
     TranslationJobBootstrapService,
+    ArticleRoute,
+    _LockedActiveBaseState,
     _fingerprint_matches_base,
+    _load_article_route,
 )
 from app.services.reader_orchestration.reading_strategy import (
     READER_VARIANT_POLICY_VERSION,
@@ -2138,4 +2141,243 @@ async def test_t31_active_window_job_prevents_overlapping_new_window(
         all_units.extend(ids)
     assert len(set(all_units)) == len(all_units), (
         "a unit is covered by more than one active translate_article window job"
+    )
+
+
+# ---------------------------------------------------------------------------#
+# T4.1 / T4.1a: deterministic document feature routing
+# ---------------------------------------------------------------------------#
+#
+# The fixtures below are built from a realistic BBC-style English sentence
+# pool (~6.1 chars/word) so the char/word boundary is meaningful. They pin
+# the three-mode routing contract:
+#
+#   - BBC near-threshold (>6000 chars, ~1000 words) -> SHORT_BATCH
+#     (regression fix: legacy raw-char router sent it to grouped/windowed).
+#   - Medium (>6000 chars, ~1450 words) -> STRUCTURED_BATCH
+#     (single whole-article batch job, NOT grouped/windowed).
+#   - Long (existing _LONG_TEXT, ~2240 words) -> GROUPED_WINDOWED
+#     (preserved; multiple window jobs with :window: target keys).
+#
+# All three fixtures exceed the legacy 6000-char threshold, so under the
+# old raw-``content_utf16_length`` router all three would have entered the
+# heavy grouped/windowed path. The new word-based router splits them.
+_T41A_BBC_SENTENCES = (
+    "The findings were published in a peer-reviewed journal on Tuesday morning.",
+    "Researchers said the experimental battery can hold more energy per unit of volume than common lithium-ion cells.",
+    "The design uses abundant materials rather than rare metals that have constrained supply chains.",
+    "Independent experts described the work as technically sound but cautioned that commercial deployment remains years away.",
+    "Energy storage is widely seen as a central challenge in the transition away from fossil fuels.",
+    "Solar and wind generation fluctuates with the weather so utilities need reliable ways to store surplus electricity.",
+    "The team said the battery maintained its performance over thousands of charge and discharge cycles without significant degradation.",
+    "Officials in several countries have indicated that storage technology will receive a growing share of public research funding.",
+    "The next phase will involve building a larger prototype and partnering with industry manufacturers to test mass production.",
+)
+_T41A_BBC_PARAGRAPH = " ".join(_T41A_BBC_SENTENCES)
+
+
+def _t41a_bbc_article(paragraph_count: int) -> str:
+    return "\n\n".join(
+        f"Section {idx}. {_T41A_BBC_PARAGRAPH}"
+        for idx in range(1, paragraph_count + 1)
+    )
+
+
+# ~1029 words / ~6300 chars: crosses legacy 6000-char threshold but stays
+# under the 1100-word short cap.
+_T41A_BBC_NEAR_THRESHOLD_TEXT = _t41a_bbc_article(7)
+assert len(_T41A_BBC_NEAR_THRESHOLD_TEXT) > 6000
+
+# ~1450 words / ~8900 chars: beyond the short word cap, under the structured
+# word cap (2000) and the char guardrail (12000).
+_T41A_MEDIUM_TEXT = _t41a_bbc_article(10)
+assert len(_T41A_MEDIUM_TEXT) > 6000
+
+
+async def _load_translation_target_keys(
+    pool: asyncpg.Pool,
+    record_id: UUID,
+) -> list[str]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT target_key
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND job_type = 'translate_article'
+            ORDER BY created_at ASC
+            """,
+            record_id,
+        )
+    return [r["target_key"] for r in rows]
+
+
+async def test_t41a_bbc_near_threshold_routes_to_short_batch(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T4.1a regression fix: a BBC-style ~1000-word article whose raw char
+    length exceeds the legacy 6000 threshold routes to SHORT_BATCH (a single
+    whole-article batch job, no windows), NOT to the grouped/windowed path."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_T41A_BBC_NEAR_THRESHOLD_TEXT,
+    )
+    # Sanity: the fixture crosses the legacy raw-char threshold, which is
+    # exactly the condition under which the old router mis-routed it.
+    assert len(_T41A_BBC_NEAR_THRESHOLD_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
+
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    jobs = await _load_jobs(strategy_env, record_id)
+    translation_batch_jobs = [
+        j for j in jobs if j["job_type"] == "translate_article"
+    ]
+    # Short batch -> exactly 1 whole-article batch job, no window_id
+    assert len(translation_batch_jobs) == 1
+    assert "window_id" not in translation_batch_jobs[0]["input_json"]
+    target_keys = await _load_translation_target_keys(strategy_env, record_id)
+    assert all(":window:" not in tk for tk in target_keys)
+    # No per-unit jobs
+    assert not any(j["job_type"] == "translate_unit" for j in jobs)
+
+
+async def test_t41a_medium_article_routes_to_structured_batch(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T4.1a: a medium article (~1450 words / ~8900 chars) routes to
+    STRUCTURED_BATCH -- a single whole-article batch job -- NOT to the
+    grouped/windowed heavy path. This is the missing middle tier the
+    implementation plan called out."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_T41A_MEDIUM_TEXT,
+    )
+    assert len(_T41A_MEDIUM_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
+
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    jobs = await _load_jobs(strategy_env, record_id)
+    translation_batch_jobs = [
+        j for j in jobs if j["job_type"] == "translate_article"
+    ]
+    # Structured batch -> exactly 1 whole-article batch job, no window_id,
+    # no :window: target key. Execution reuses the short-batch path this
+    # round; the route label is the deliverable.
+    assert len(translation_batch_jobs) == 1, (
+        f"medium article should produce exactly 1 structured batch job, "
+        f"got {len(translation_batch_jobs)} (grouped/windowed would be >=1 "
+        f"window jobs with :window: target keys)"
+    )
+    assert "window_id" not in translation_batch_jobs[0]["input_json"]
+    target_keys = await _load_translation_target_keys(strategy_env, record_id)
+    assert all(":window:" not in tk for tk in target_keys), (
+        f"medium article must NOT use windowed target keys: {target_keys}"
+    )
+    # No per-unit jobs
+    assert not any(j["job_type"] == "translate_unit" for j in jobs)
+    # Vocabulary also routes to a single structured batch job (not windowed)
+    vocab_batch_jobs = [
+        j for j in jobs if j["job_type"] == "build_vocabulary_layer_article"
+    ]
+    assert len(vocab_batch_jobs) == 1
+    assert not any(j["job_type"] == "build_vocabulary_layer" for j in jobs)
+
+
+async def test_t41a_long_article_still_routes_to_grouped_windowed(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T4.1a: a clearly long article (existing _LONG_TEXT, ~2240 words)
+    still routes to GROUPED_WINDOWED so the T3.1 / T3.2b windowed execution
+    contract is preserved. Window jobs must carry :window: target keys."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_LONG_TEXT,
+    )
+    assert len(_LONG_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
+
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    jobs = await _load_jobs(strategy_env, record_id)
+    translation_batch_jobs = [
+        j for j in jobs if j["job_type"] == "translate_article"
+    ]
+    # Long article -> multiple window jobs with :window: target keys
+    assert len(translation_batch_jobs) >= 2
+    target_keys = await _load_translation_target_keys(strategy_env, record_id)
+    assert all(":window:" in tk for tk in target_keys), (
+        f"long article window jobs must carry :window: target keys: {target_keys}"
+    )
+    assert not any(j["job_type"] == "translate_unit" for j in jobs)
+
+
+# ---------------------------------------------------------------------------#
+# P2: missing-base defensive route stability across two _load_article_route
+# calls (translation then vocabulary share one state). Pure unit test -- no
+# database needed; uses a fake connection.
+# ---------------------------------------------------------------------------#
+
+
+class _FakeMissingBaseConn:
+    """Fake asyncpg.Connection whose ``reading_bases`` row is always missing.
+
+    Simulates the base row being deleted between the lock and the route
+    check. ``fetchrow`` returns ``None``; ``fetch`` returns an empty list
+    (never reached when the base is missing, but provided for safety).
+    """
+
+    async def fetchrow(self, *args, **kwargs):
+        return None
+
+    async def fetch(self, *args, **kwargs):
+        return []
+
+
+async def test_t41a_missing_base_route_is_stable_across_two_calls() -> None:
+    """P2 regression: ``_load_article_route`` is called twice on the same
+    state (translation, then vocabulary). When the base row is missing,
+    the first call caches ``base_text=""`` / ``unit_types=()`` and returns
+    GROUPED_WINDOWED. Without caching the route decision, the second call
+    would see non-None cached fields, re-evaluate an empty profile, and
+    misclassify it as SHORT_BATCH -- routing vocabulary to the batch path
+    on a missing base. The ``cached_route`` field stabilizes the decision."""
+    strategy = resolve_reader_variant_strategy(
+        "daily_reading", "intermediate_reading"
+    )
+    state = _LockedActiveBaseState(
+        record_id=uuid4(),
+        user_id=uuid4(),
+        base_id=uuid4(),
+        expected_generation=1,
+        base_language="en",
+        last_event_sequence=0,
+        strategy=strategy,
+    )
+    conn = _FakeMissingBaseConn()
+
+    first_route = await _load_article_route(conn, state=state)
+    assert first_route is ArticleRoute.GROUPED_WINDOWED
+    # The state now caches empty base_text/unit_types -- the trap that
+    # previously caused the second call to fall through to profiling.
+    assert state.base_text == ""
+    assert state.unit_types == ()
+
+    second_route = await _load_article_route(conn, state=state)
+    assert second_route is ArticleRoute.GROUPED_WINDOWED, (
+        "second call (vocabulary) must not re-evaluate the empty profile "
+        "and misclassify as SHORT_BATCH"
     )

@@ -12,6 +12,11 @@ import asyncpg
 
 from app.database import connection as db_connection
 
+from .completion_finalizer import (
+    CompletionFinalizationResult,
+    CompletionFinalizer,
+    should_attempt_finalization,
+)
 from .event_runtime import ReaderEventRuntime
 from .job_runtime import ReaderJobRuntime
 from .pipeline_runner import (
@@ -81,6 +86,10 @@ class ReaderEnhancementWorkerLoopRecordResult:
     candidate: WorkerLoopCandidateRecord
     outcome: WorkerLoopRecordOutcome
     pipeline_summary: ReaderPipelineRunSummary | None = None
+    # T3.5: completion finalizer outcome. Present only when the finalizer
+    # was actually invoked (i.e. ``stopped_reason == "all_workers_no_job"``
+    # and ``product_state_decision.should_update_record`` was False).
+    completion_finalization_result: CompletionFinalizationResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,12 +129,21 @@ class ReaderEnhancementWorkerLoopService:
         job_runtime: ReaderJobRuntime | None = None,
         repository: ReaderOrchestrationRepository | None = None,
         event_runtime: ReaderEventRuntime | None = None,
+        completion_finalizer: CompletionFinalizer | None = None,
     ) -> None:
         self._pool = pool
         self._pipeline_runner = pipeline_runner or ReaderEnhancementPipelineRunner(pool=pool)
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
         self._repository = repository or ReaderOrchestrationRepository(pool=pool)
         self._event_runtime = event_runtime or ReaderEventRuntime(pool=pool)
+        # T3.5: completion finalizer advances ``readiness_state`` to
+        # ``coverage_complete`` once all enhancement jobs and analysis
+        # windows reach a terminal status. Defaults to a finalizer that
+        # reuses this service's repository so production wiring requires
+        # no extra configuration; tests can inject a stub.
+        self._completion_finalizer = (
+            completion_finalizer or CompletionFinalizer(repository=self._repository)
+        )
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -291,6 +309,9 @@ class ReaderEnhancementWorkerLoopService:
                         product_state_decision = decide_product_state_for_pipeline_summary(summary)
                         product_state_updated = False
                         product_state_event_sequence: int | None = None
+                        completion_finalization_result: (
+                            CompletionFinalizationResult | None
+                        ) = None
                         if product_state_decision.should_update_record:
                             updated_at = datetime.now(UTC)
                             async with lock_conn.transaction():
@@ -319,6 +340,29 @@ class ReaderEnhancementWorkerLoopService:
                                         )
                                     )
                                     product_state_event_sequence = published_event.sequence
+                        elif should_attempt_finalization(summary):
+                            # T3.5: pipeline reached ``all_workers_no_job``
+                            # without an attention signal. Verify every
+                            # enhancement job and analysis window is
+                            # terminal before transitioning
+                            # ``readiness_state -> coverage_complete``.
+                            # The finalizer is a no-op write when the
+                            # record still has in-flight work, so the
+                            # worker loop will re-scan on the next cycle.
+                            updated_at = datetime.now(UTC)
+                            async with lock_conn.transaction():
+                                completion_finalization_result = (
+                                    await self._completion_finalizer.finalize_completion_state(
+                                        lock_conn,
+                                        record_id=candidate.record_id,
+                                        base_id=candidate.base_id,
+                                        expected_generation=candidate.expected_generation,
+                                        summary=summary,
+                                        enhancement_job_types=ENHANCEMENT_PIPELINE_JOB_TYPES,
+                                        event_runtime=self._event_runtime,
+                                        updated_at=updated_at,
+                                    )
+                                )
                     await recorder.end_span(
                         pipeline_span,
                         status=STATUS_SUCCEEDED,
@@ -326,6 +370,21 @@ class ReaderEnhancementWorkerLoopService:
                             "stopped_reason": summary.stopped_reason,
                             "total_ticks": summary.total_ticks,
                             "total_jobs": summary.total_jobs,
+                            "completion_finalized": (
+                                completion_finalization_result.finalized
+                                if completion_finalization_result is not None
+                                else False
+                            ),
+                            "completion_outcome": (
+                                completion_finalization_result.outcome
+                                if completion_finalization_result is not None
+                                else None
+                            ),
+                            "completion_skip_reason": (
+                                completion_finalization_result.skip_reason
+                                if completion_finalization_result is not None
+                                else None
+                            ),
                         },
                     )
                 except Exception as exc:
@@ -387,12 +446,33 @@ class ReaderEnhancementWorkerLoopService:
                 "next_product_state": product_state_decision.next_product_state,
                 "product_state_updated": product_state_updated,
                 "product_state_event_sequence": product_state_event_sequence,
+                "completion_finalized": (
+                    completion_finalization_result.finalized
+                    if completion_finalization_result is not None
+                    else False
+                ),
+                "completion_outcome": (
+                    completion_finalization_result.outcome
+                    if completion_finalization_result is not None
+                    else None
+                ),
+                "completion_skip_reason": (
+                    completion_finalization_result.skip_reason
+                    if completion_finalization_result is not None
+                    else None
+                ),
+                "completion_event_sequence": (
+                    completion_finalization_result.event_sequence
+                    if completion_finalization_result is not None
+                    else None
+                ),
             },
         )
         return ReaderEnhancementWorkerLoopRecordResult(
             candidate=candidate,
             outcome="processed",
             pipeline_summary=summary,
+            completion_finalization_result=completion_finalization_result,
         )
 
     async def run_once(

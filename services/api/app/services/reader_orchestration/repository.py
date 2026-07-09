@@ -478,6 +478,232 @@ class ReaderOrchestrationRepository:
         )
         return result == "UPDATE 1"
 
+    # ------------------------------------------------------------------
+    # T3.5 completion state finalizer helpers
+    #
+    # These helpers are pure-read PostgreSQL queries used by the completion
+    # finalizer to decide whether a record's enhancement work is fully
+    # terminal. They do not write, do not take locks, and do not modify the
+    # public schema. The finalizer composes them with a single
+    # ``update_record_readiness_state_if_active`` write inside the worker
+    # loop's existing per-record transaction.
+    # ------------------------------------------------------------------
+
+    async def count_enhancement_jobs_by_terminal_status(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        job_types: Sequence[str],
+    ) -> dict[str, int]:
+        """Return per-status counts for the given enhancement job types.
+
+        Only rows matching the (record_id, base_id, expected_generation)
+        fence are counted. The result dict always contains every reader
+        job status key (queued, claimed, retry_later, paused, skipped,
+        succeeded, failed_terminal, cancelled, superseded) initialized to
+        0 so callers can branch on ``.get(status, 0)`` without KeyError.
+        """
+        rows = await conn.fetch(
+            """
+            SELECT status, COUNT(*) AS count
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND base_id = $2
+              AND expected_generation = $3
+              AND job_type = ANY($4::text[])
+            GROUP BY status
+            """,
+            record_id,
+            base_id,
+            expected_generation,
+            list(job_types),
+        )
+        counts: dict[str, int] = {
+            "queued": 0,
+            "claimed": 0,
+            "retry_later": 0,
+            "paused": 0,
+            "skipped": 0,
+            "succeeded": 0,
+            "failed_terminal": 0,
+            "cancelled": 0,
+            "superseded": 0,
+        }
+        for row in rows:
+            counts[str(row["status"])] = int(row["count"])
+        return counts
+
+    async def count_analysis_windows_by_terminal_status(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+    ) -> dict[str, int]:
+        """Return per-status counts for analysis windows attached to the
+        record's active base / generation.
+
+        Mirrors ``count_enhancement_jobs_by_terminal_status`` for
+        ``analysis_windows``. The result dict always contains every
+        analysis-window status key (pending, running, completed, no_op,
+        failed) initialized to 0. Records without a plan return all-zero
+        counts; the finalizer treats "no windows" as terminal (clean
+        completion path for non-Z+ records).
+        """
+        rows = await conn.fetch(
+            """
+            SELECT aw.status, COUNT(*) AS count
+            FROM analysis_windows aw
+            JOIN layer_analysis_plans plan
+              ON plan.id = aw.plan_id
+            WHERE plan.reading_record_id = $1
+              AND plan.base_id = $2
+              AND plan.generation = $3
+            GROUP BY aw.status
+            """,
+            record_id,
+            base_id,
+            expected_generation,
+        )
+        counts: dict[str, int] = {
+            "pending": 0,
+            "running": 0,
+            "completed": 0,
+            "no_op": 0,
+            "failed": 0,
+        }
+        for row in rows:
+            counts[str(row["status"])] = int(row["count"])
+        return counts
+
+    async def update_record_readiness_state_if_active(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        record_id: UUID,
+        expected_generation: int,
+        current_readiness_states: Sequence[str],
+        next_readiness_state: str,
+        updated_at: datetime,
+    ) -> tuple[bool, str | None]:
+        """Transition ``readiness_state`` for a record that is still in one
+        of ``current_readiness_states``.
+
+        Used by the T3.5 finalizer to move ``article_ready`` /
+        ``initial_enhancement_ready`` records to ``coverage_complete``. The
+        WHERE clause guards against stale generations, deleted records, and
+        records that already advanced out of the expected readiness window
+        (e.g. a parallel worker transitioned to ``failed``).
+
+        Returns ``(True, previous_readiness_state)`` when exactly one row
+        was updated, ``(False, None)`` otherwise. The previous value is
+        read before the UPDATE so the finalizer can include it in the
+        ``record_state_changed`` event payload. The read + UPDATE run
+        inside the caller's transaction (which holds the per-record
+        advisory lock), so there is no TOCTOU window.
+        """
+        previous_readiness_state = await conn.fetchval(
+            """
+            SELECT readiness_state
+            FROM reading_records
+            WHERE id = $1
+              AND generation = $2
+              AND deleted_at IS NULL
+              AND lifecycle_status = 'active'
+              AND readiness_state = ANY($3::text[])
+            """,
+            record_id,
+            expected_generation,
+            list(current_readiness_states),
+        )
+        if previous_readiness_state is None:
+            return False, None
+
+        result = await conn.execute(
+            """
+            UPDATE reading_records
+            SET readiness_state = $3,
+                updated_at = $4
+            WHERE id = $1
+              AND generation = $2
+              AND deleted_at IS NULL
+              AND lifecycle_status = 'active'
+              AND readiness_state = ANY($5::text[])
+            """,
+            record_id,
+            expected_generation,
+            next_readiness_state,
+            updated_at,
+            list(current_readiness_states),
+        )
+        if result != "UPDATE 1":
+            return False, None
+        return True, str(previous_readiness_state)
+
+    async def force_fail_non_terminal_analysis_windows(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        failure_code: str,
+        failure_reason: str,
+        updated_at: datetime,
+    ) -> int:
+        """Force-fail any ``pending`` / ``running`` analysis windows for the
+        record's active base / generation.
+
+        Used by the T3.5 finalizer when all enhancement jobs are terminal
+        but analysis windows remain non-terminal (e.g. the Z+ grammar
+        window worker is not registered in this deployment, or a window
+        lease is stuck in ``running``). The candidate scan only re-picks
+        records with runnable jobs, so leaving such windows pending would
+        wedge the record in ``article_ready`` / ``initial_enhancement_ready``
+        forever. The finalizer instead mutates the stuck windows to
+        ``failed`` and proceeds to ``coverage_complete`` with a
+        ``completed_with_failures`` outcome.
+
+        The failure metadata is merged into ``coverage.diagnostics`` so
+        T3.4a diagnostic queries surface the forced-fail reason without a
+        schema migration. ``completed_at`` is stamped so the window is
+        observably terminal.
+
+        Returns the number of windows transitioned to ``failed``.
+        """
+        coverage_payload = {
+            "diagnostics": {
+                "failure_code": failure_code,
+                "failure_reason": failure_reason,
+                "forced_by": "completion_finalizer",
+                "forced_at": updated_at.isoformat(),
+            }
+        }
+        result = await conn.execute(
+            """
+            UPDATE analysis_windows SET
+                status = 'failed',
+                coverage = COALESCE(coverage, '{}'::jsonb) || $5::jsonb,
+                completed_at = $4
+            FROM layer_analysis_plans plan
+            WHERE analysis_windows.plan_id = plan.id
+              AND plan.reading_record_id = $1
+              AND plan.base_id = $2
+              AND plan.generation = $3
+              AND analysis_windows.status IN ('pending', 'running')
+            """,
+            record_id,
+            base_id,
+            expected_generation,
+            updated_at,
+            jsonb_param(coverage_payload),
+        )
+        return int(result.split()[-1]) if result.startswith("UPDATE") else 0
+
     async def ensure_event_sequence_row(
         self,
         conn: asyncpg.Connection,

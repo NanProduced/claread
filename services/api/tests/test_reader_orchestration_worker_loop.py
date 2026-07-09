@@ -27,6 +27,10 @@ from app.schemas.reader_orchestration import (
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
+from app.services.reader_orchestration.completion_finalizer import (
+    COMPLETION_TARGET_READINESS_STATE,
+    RECORD_COMPLETION_FINALIZED_EVENT_TYPE,
+)
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.display_title_worker import (
     DisplayTitleExecutionResult,
@@ -984,7 +988,29 @@ async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload
         record_id=article.record_id,
         user_id=user_id,
     )
-    assert reloaded_snapshot.last_event_sequence == result.pipeline_summary.last_event_sequence
+    # P1: ``max_ticks_reached`` / ``max_jobs_reached`` are now finalizable.
+    # The pipeline runner checks caps AFTER incrementing the processed count,
+    # so the last succeeding job can land exactly on the budget. When all
+    # enhancement jobs are terminal, the finalizer transitions
+    # ``readiness_state -> coverage_complete`` and publishes a
+    # ``record_completion_finalized`` event AFTER the pipeline summary's
+    # ``last_event_sequence`` was captured. The reloaded snapshot therefore
+    # reflects the finalizer's event sequence, not the pipeline's.
+    if (
+        result.completion_finalization_result is not None
+        and result.completion_finalization_result.finalized
+    ):
+        assert (
+            reloaded_snapshot.last_event_sequence
+            == result.completion_finalization_result.event_sequence
+        )
+        assert reloaded_snapshot.record.readiness_state == "coverage_complete"
+        assert result.completion_finalization_result.outcome == "completed_clean"
+    else:
+        assert (
+            reloaded_snapshot.last_event_sequence
+            == result.pipeline_summary.last_event_sequence
+        )
     assert reloaded_snapshot.record.product_state == "readable_enhancing"
     assert reloaded_snapshot.enhancement_progress.overall_status == "ready"
     assert _find_progress_layer(
@@ -1004,6 +1030,245 @@ async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload
         capability="grammar",
         status="succeeded",
     )
+
+
+# ---------------------------------------------------------------------------
+# T3.5 worker-loop closed-loop: stuck analysis windows -> force-fail ->
+# completed_with_failures.
+#
+# When all enhancement jobs are terminal but analysis windows remain
+# pending/running (e.g. the Z+ grammar window worker is not registered in
+# this deployment, or a window lease is stuck), the candidate scan would
+# never re-pick the record (it only re-picks records with runnable jobs).
+# The finalizer force-fails the stuck windows and finalizes as
+# ``completed_with_failures`` so the record is not wedged forever. This
+# test exercises the full worker_loop -> pipeline_runner -> finalizer
+# integration path, not just the finalizer in isolation.
+# ---------------------------------------------------------------------------
+
+
+async def _insert_grammar_analysis_plan(
+    pool: asyncpg.Pool,
+    *,
+    record_id: UUID,
+    base_id: UUID,
+    expected_generation: int = 1,
+) -> UUID:
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            """
+            INSERT INTO layer_analysis_plans (
+                reading_record_id, base_id, layer_type,
+                policy_version, generation, budget_total, status
+            )
+            VALUES ($1, $2, 'grammar_bundle', 't35_worker_loop_v1', $3,
+                    '{"grammar_note":{"max_items":5},"sentence_analysis":{"max_items":5}}'::jsonb,
+                    'active')
+            RETURNING id
+            """,
+            record_id,
+            base_id,
+            expected_generation,
+        )
+
+
+async def _insert_analysis_window(
+    pool: asyncpg.Pool,
+    *,
+    plan_id: UUID,
+    window_index: int,
+    status: str,
+) -> UUID:
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            """
+            INSERT INTO analysis_windows (
+                plan_id, window_index,
+                target_anchor_ids,
+                context_anchor_prev, context_anchor_next,
+                target_unit_ids, target_block_ids,
+                char_count, anchor_count,
+                window_budget, status
+            )
+            VALUES (
+                $1, $2,
+                '[]'::jsonb,
+                '[]'::jsonb, '[]'::jsonb,
+                '[]'::jsonb, '[]'::jsonb,
+                100, 2,
+                '{"grammar_note":{"max_items":5}}'::jsonb, $3
+            )
+            RETURNING id
+            """,
+            plan_id,
+            window_index,
+            status,
+        )
+
+
+async def _load_readiness_state(
+    pool: asyncpg.Pool,
+    record_id: UUID,
+) -> str:
+    async with pool.acquire() as conn:
+        value = await conn.fetchval(
+            "SELECT readiness_state FROM reading_records WHERE id = $1",
+            record_id,
+        )
+    if value is None:
+        raise AssertionError(f"readiness_state for record {record_id} not found")
+    return str(value)
+
+
+async def _load_analysis_window_statuses(
+    pool: asyncpg.Pool,
+    *,
+    record_id: UUID,
+) -> list[tuple[UUID, str, dict]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT aw.id, aw.status, aw.coverage
+            FROM analysis_windows aw
+            JOIN layer_analysis_plans plan ON plan.id = aw.plan_id
+            WHERE plan.reading_record_id = $1
+            ORDER BY aw.window_index ASC
+            """,
+            record_id,
+        )
+    return [
+        (UUID(str(row["id"])), str(row["status"]), dict(row["coverage"] or {}))
+        for row in rows
+    ]
+
+
+async def test_worker_loop_force_fails_stuck_windows_and_finalizes_with_failures(
+    worker_loop_env: asyncpg.Pool,
+) -> None:
+    """Worker-loop closed-loop: pipeline drains the last enhancement jobs to
+    success while analysis windows remain stuck ``pending`` / ``running``
+    (e.g. the Z+ grammar window worker is not registered in this
+    deployment, or a window lease is stuck) -> finalizer force-fails the
+    windows -> record transitions to ``coverage_complete`` with
+    ``completed_with_failures``.
+
+    The candidate scan only re-picks records with runnable jobs. Once the
+    pipeline drains the last enhancement job, the record has
+    ``runnable_job_count = 0`` and ``tracked_job_count > 0`` — it would
+    never be re-scanned. Leaving the windows pending would therefore wedge
+    the record in ``article_ready`` forever. The finalizer runs inside the
+    same ``process_candidate`` call (the pipeline returned
+    ``all_workers_no_job``), force-fails the stuck windows so the durable
+    state is truthful, and finalizes as ``completed_with_failures``.
+
+    This exercises the full worker_loop -> pipeline_runner -> finalizer
+    integration path, not just the finalizer in isolation.
+    """
+    user_id = await insert_user(worker_loop_env)
+    article = await submit_article_ready(
+        worker_loop_env,
+        user_id=user_id,
+        title="Worker Loop Stuck Windows",
+    )
+    # Insert a grammar analysis plan with two stuck windows: one pending
+    # (worker not registered) and one running (stuck lease). The
+    # enable_zplus_grammar=False runner never touches these windows; the
+    # per-unit ``build_grammar_bundle`` worker is separate from the
+    # analysis-window path.
+    plan_id = await _insert_grammar_analysis_plan(
+        worker_loop_env,
+        record_id=article.record_id,
+        base_id=article.base_id,
+    )
+    await _insert_analysis_window(
+        worker_loop_env,
+        plan_id=plan_id,
+        window_index=0,
+        status="pending",
+    )
+    await _insert_analysis_window(
+        worker_loop_env,
+        plan_id=plan_id,
+        window_index=1,
+        status="running",
+    )
+
+    runner = _make_runner(
+        worker_loop_env,
+        translator=_StaticTranslator(),
+        vocabulary_executor=_StaticVocabularyExecutor(),
+        grammar_executor=_StaticGrammarExecutor(),
+    )
+    service = ReaderEnhancementWorkerLoopService(
+        pool=worker_loop_env,
+        pipeline_runner=runner,
+    )
+    # The record is picked because ``tracked_job_count = 0`` (no
+    # enhancement jobs yet). The pipeline runner bootstraps + drains all
+    # enhancement jobs to success in this single call, then returns
+    # ``all_workers_no_job``.
+    candidate = await _find_candidate(service, article.record_id)
+
+    result = await service.process_candidate(
+        candidate=candidate,
+        lease_owner_prefix="worker-loop-stuck-windows",
+        max_ticks=24,
+        max_jobs=24,
+    )
+
+    assert result.outcome == "processed"
+    assert result.pipeline_summary is not None
+    assert result.pipeline_summary.stopped_reason == "all_workers_no_job"
+    assert result.completion_finalization_result is not None
+    assert result.completion_finalization_result.finalized is True
+    assert (
+        result.completion_finalization_result.outcome
+        == "completed_with_failures"
+    )
+    assert result.completion_finalization_result.force_failed_window_count == 2
+
+    # Durable state: readiness advanced to coverage_complete.
+    assert await _load_readiness_state(
+        worker_loop_env, article.record_id
+    ) == COMPLETION_TARGET_READINESS_STATE
+
+    # Durable state: both stuck windows are now ``failed`` with
+    # finalizer-attributed diagnostics in coverage.
+    window_rows = await _load_analysis_window_statuses(
+        worker_loop_env,
+        record_id=article.record_id,
+    )
+    assert len(window_rows) == 2
+    for _window_id, status, coverage in window_rows:
+        assert status == "failed"
+        diagnostics = coverage.get("diagnostics", {})
+        assert diagnostics.get("failure_code") == "finalizer_forced_window_failure"
+        assert diagnostics.get("forced_by") == "completion_finalizer"
+
+    # A ``record_state_changed`` (readiness_state) event was emitted by
+    # the finalizer, distinct from any pipeline-level events.
+    events = await _poll_events_after(
+        worker_loop_env,
+        record_id=article.record_id,
+        user_id=user_id,
+        after_sequence=article.article_ready_sequence,
+    )
+    completion_events = [
+        event
+        for event in events
+        if event.event_type == RECORD_COMPLETION_FINALIZED_EVENT_TYPE
+        and event.payload_json.get("field") == "readiness_state"
+    ]
+    assert len(completion_events) == 1
+    assert completion_events[0].payload_json["completion_outcome"] == (
+        "completed_with_failures"
+    )
+    assert completion_events[0].payload_json["force_failed_window_count"] == 2
+
+    # Record must no longer be in the scan candidate pool — it advanced
+    # past the eligible readiness states.
+    candidates_after = await service.scan_eligible_records(batch_size=20)
+    assert article.record_id not in {c.record_id for c in candidates_after}
 
 
 async def test_retry_later_records_are_not_hot_looped_until_available(
