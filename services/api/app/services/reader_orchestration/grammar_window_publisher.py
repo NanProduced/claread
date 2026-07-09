@@ -44,6 +44,8 @@ from app.services.reader_orchestration.job_runtime import (
 )
 from app.services.reader_orchestration.window_selector import (
     CandidateItem,
+    RejectedCandidate,
+    SelectionResult,
     SelectorLedger,
     select_candidates,
 )
@@ -52,6 +54,17 @@ from app.services.reader_orchestration.zplus_bootstrap import (
     ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
     ZPLUS_TARGET_TYPE,
 )
+
+# T3.4a: window diagnostics no_op_cause values (success path).
+# Failure path uses NO_OP_CAUSE_EXECUTION_FAILED (written by pipeline_runner).
+NO_OP_CAUSE_LLM_EMPTY = "llm_empty"
+NO_OP_CAUSE_SELECTOR_REJECTED_ALL = "selector_rejected_all"
+NO_OP_CAUSE_PUBLISHER_NO_ACCEPTED = "publisher_no_accepted"
+NO_OP_CAUSE_EXECUTION_FAILED = "execution_failed"
+NO_OP_CAUSE_UNKNOWN = "unknown"
+
+# Truncation limits for diagnostics samples (avoid storing full LLM output).
+_DIAGNOSTICS_REASON_MAX_LEN = 240
 
 GRAMMAR_NOTE_LAYER_TYPE = "grammar_note"
 SENTENCE_ANALYSIS_LAYER_TYPE = "sentence_analysis"
@@ -422,6 +435,19 @@ class GrammarWindowPublisher:
 
                 # 8. Update window status + coverage
                 new_window_status = "completed" if selection.accepted else "no_op"
+                # T3.4a: build window diagnostics for observability. Persisted
+                # to BOTH reader_jobs.output_ref_json (full diagnostics, primary)
+                # and analysis_windows.coverage.diagnostics (subset, queryable
+                # without joining reader_jobs). This makes no-op windows
+                # diagnosable even when they have no published layer.
+                diagnostics = self._build_window_diagnostics(
+                    candidates=candidates,
+                    selection=selection,
+                    accepted_by_unit=accepted_by_unit,
+                    window_row=window_row,
+                    plan_row=plan_row,
+                    job_row=job_row,
+                )
                 await conn.execute(
                     """
                     UPDATE analysis_windows SET
@@ -433,7 +459,10 @@ class GrammarWindowPublisher:
                     window_id,
                     new_window_status,
                     jsonb_param(
-                        {"covered_unit_ids": list(accepted_by_unit.keys())}
+                        {
+                            "covered_unit_ids": list(accepted_by_unit.keys()),
+                            "diagnostics": diagnostics,
+                        }
                     ),
                 )
 
@@ -452,6 +481,10 @@ class GrammarWindowPublisher:
                     ],
                     "accepted_count": len(selection.accepted),
                     "no_op": not selection.accepted,
+                    # T3.4a: full diagnostics (window_meta / strategy / budgets /
+                    # raw_candidate_count_by_type / accepted_count_by_type /
+                    # rejected_count_by_type / rejected_breakdown / no_op_cause).
+                    "diagnostics": diagnostics,
                 }
                 updated_job = await self._job_runtime._apply_transition(
                     conn,
@@ -670,6 +703,240 @@ class GrammarWindowPublisher:
             "published_dedup_keys_by_type": published_dedup_keys,
             "published_pattern_keys_by_type": published_pattern_keys,
             "density_by_record": density_by_record,
+        }
+
+    # ------------------------------------------------------------------
+    # T3.4a: window diagnostics builder
+    # ------------------------------------------------------------------
+
+    def _build_window_diagnostics(
+        self,
+        *,
+        candidates: list[CandidateItem],
+        selection: SelectionResult,
+        accepted_by_unit: dict[str, dict[str, list[CandidateItem]]],
+        window_row: asyncpg.Record,
+        plan_row: asyncpg.Record,
+        job_row: asyncpg.Record,
+    ) -> dict[str, Any]:
+        """Build window diagnostics summary for observability (T3.4a).
+
+        Persisted to ``reader_jobs.output_ref_json.diagnostics`` (primary)
+        and ``analysis_windows.coverage.diagnostics`` (subset, queryable
+        without joining reader_jobs). Makes no-op windows diagnosable:
+        records whether no-op is due to LLM empty output, selector rejecting
+        all candidates, or publisher having no acceptable unit-targeted item.
+
+        Does NOT store full LLM raw output — only counts, gates, reasons,
+        and small metadata (window_id / window_index / strategy hash /
+        budget snapshot). The selector already returns structured
+        ``RejectedCandidate(candidate, gate, reason)`` so no selector
+        accept/reject semantics are changed.
+
+        Schema:
+          - ``window_meta``: window_id / window_index / plan_id /
+            target_unit_ids / target_anchor_count
+          - ``strategy``: reading_goal / reading_variant / strategy_hash /
+            layer_policy_hash (read from job input_json; the worker already
+            cross-validated them against the live resolver)
+          - ``budgets``: window_budget + record budget used/total snapshot
+          - ``raw_candidate_count_by_type``: grammar_note / sentence_analysis
+          - ``accepted_count_by_type``: same shape
+          - ``rejected_count_by_type``: same shape
+          - ``rejected_breakdown``: list of {item_type, gate, reason, count}
+            aggregated by (item_type, gate, reason); reason truncated
+          - ``no_op_cause``: llm_empty / selector_rejected_all /
+            publisher_no_accepted / unknown (failure path is set by
+            pipeline_runner as execution_failed)
+        """
+        # --- window_meta ---
+        window_id_value = (
+            str(window_row["id"]) if window_row.get("id") is not None else None
+        )
+        window_index = int(window_row["window_index"])
+        target_unit_ids = self._parse_jsonb_list(window_row, "target_unit_ids")
+        target_anchor_ids = self._parse_target_anchor_ids(window_row) or []
+        target_anchor_count = len(target_anchor_ids)
+
+        # --- strategy (read from job input_json; worker validated) ---
+        strategy_meta = self._read_strategy_metadata_from_input(job_row)
+
+        # --- budgets ---
+        window_budget = self._parse_window_budget(window_row)
+        budget_used = self._parse_jsonb(plan_row["budget_used"]) or {}
+        budget_total = self._parse_jsonb(plan_row["budget_total"]) or {}
+        budgets_snapshot = {
+            "window_budget": {
+                item_type: window_budget.get(item_type, 0)
+                for item_type in _ITEM_TYPES
+            },
+            "record_budget_used": {
+                item_type: {
+                    "count": int(
+                        (budget_used.get(item_type, {}) or {}).get("count", 0)
+                    )
+                }
+                for item_type in _ITEM_TYPES
+            },
+            "record_budget_total": {
+                item_type: {
+                    "count": int(
+                        (budget_total.get(item_type, {}) or {}).get("count", 0)
+                    )
+                }
+                for item_type in _ITEM_TYPES
+            },
+        }
+
+        # --- counts by type ---
+        raw_count_by_type: dict[str, int] = {
+            "grammar_note": 0,
+            "sentence_analysis": 0,
+        }
+        for c in candidates:
+            if c.item_type in raw_count_by_type:
+                raw_count_by_type[c.item_type] += 1
+
+        # Use selection.accepted as the authoritative accepted count. This
+        # is what the selector returned post-gates; ``accepted_by_unit`` may
+        # drop items with no unit_id in spans (publisher-side drop, tracked
+        # separately by no_op_cause=publisher_no_accepted when applicable).
+        accepted_count_by_type: dict[str, int] = {
+            "grammar_note": 0,
+            "sentence_analysis": 0,
+        }
+        for c in selection.accepted:
+            if c.item_type in accepted_count_by_type:
+                accepted_count_by_type[c.item_type] += 1
+
+        rejected_count_by_type: dict[str, int] = {
+            "grammar_note": 0,
+            "sentence_analysis": 0,
+        }
+        for r in selection.rejected:
+            if r.candidate.item_type in rejected_count_by_type:
+                rejected_count_by_type[r.candidate.item_type] += 1
+
+        # --- rejected_breakdown aggregated by (item_type, gate, reason) ---
+        rejected_breakdown = self._aggregate_rejected(selection.rejected)
+
+        # --- no_op_cause ---
+        # Aligns with existing window status logic:
+        #   selection.accepted empty → window status='no_op'
+        #   selection.accepted non-empty → window status='completed'
+        #   but if accepted_by_unit is empty (all accepted dropped at publish
+        #   due to no unit_id in spans), no layers are actually published —
+        #   this is the publisher_no_accepted edge case worth surfacing.
+        raw_total = sum(raw_count_by_type.values())
+        if not selection.accepted:
+            # window marked no_op by existing publish logic
+            if raw_total == 0:
+                no_op_cause: str | None = NO_OP_CAUSE_LLM_EMPTY
+            else:
+                no_op_cause = NO_OP_CAUSE_SELECTOR_REJECTED_ALL
+        elif not accepted_by_unit:
+            # selection.accepted non-empty but all dropped at publish
+            # (no unit_id in spans). Window is marked completed but no
+            # layers published — surface as publisher_no_accepted so the
+            # cause is diagnosable instead of silent.
+            no_op_cause = NO_OP_CAUSE_PUBLISHER_NO_ACCEPTED
+        else:
+            no_op_cause = None  # successful publish, not a no-op window
+
+        return {
+            "window_meta": {
+                "window_id": window_id_value,
+                "window_index": window_index,
+                "plan_id": str(plan_row["id"]),
+                "target_unit_ids": target_unit_ids,
+                "target_anchor_count": target_anchor_count,
+            },
+            "strategy": strategy_meta,
+            "budgets": budgets_snapshot,
+            "raw_candidate_count_by_type": raw_count_by_type,
+            "accepted_count_by_type": accepted_count_by_type,
+            "rejected_count_by_type": rejected_count_by_type,
+            "rejected_breakdown": rejected_breakdown,
+            "no_op_cause": no_op_cause,
+        }
+
+    @staticmethod
+    def _aggregate_rejected(
+        rejected: list[RejectedCandidate],
+    ) -> list[dict[str, Any]]:
+        """Aggregate rejected candidates by (item_type, gate, reason).
+
+        Returns a sorted list of dicts with ``item_type`` / ``gate`` /
+        ``reason`` (truncated) / ``count``. Sorted by count desc then
+        item_type / gate for stable output.
+        """
+        buckets: dict[tuple[str, str, str], int] = {}
+        for r in rejected:
+            reason = (r.reason or "")[:_DIAGNOSTICS_REASON_MAX_LEN]
+            key = (r.candidate.item_type, r.gate.value, reason)
+            buckets[key] = buckets.get(key, 0) + 1
+        result = [
+            {
+                "item_type": key[0],
+                "gate": key[1],
+                "reason": key[2],
+                "count": count,
+            }
+            for key, count in buckets.items()
+        ]
+        result.sort(key=lambda d: (-d["count"], d["item_type"], d["gate"]))
+        return result
+
+    @staticmethod
+    def _parse_jsonb(value: Any) -> Any:
+        """Parse a JSONB column value (str → json.loads, else pass-through)."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
+    @staticmethod
+    def _parse_jsonb_list(
+        record: asyncpg.Record, column: str
+    ) -> list[str]:
+        """Parse a JSONB list column from a record (defensive)."""
+        raw = record.get(column) if hasattr(record, "get") else None
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        if raw is None:
+            return []
+        if isinstance(raw, list):
+            return [str(v) for v in raw]
+        return []
+
+    @staticmethod
+    def _read_strategy_metadata_from_input(
+        job_row: asyncpg.Record,
+    ) -> dict[str, Any]:
+        """Read strategy metadata from ``reader_jobs.input_json``.
+
+        The worker (``_resolve_window_strategy``) already cross-validated
+        these fields against the live resolver, so the publisher can trust
+        them and avoid re-running the resolver. Missing fields fall back
+        to ``None`` so diagnostics remain queryable for legacy / malformed
+        jobs.
+        """
+        input_data: Any = job_row["input_json"] if "input_json" in job_row.keys() else None
+        if isinstance(input_data, str):
+            input_data = json.loads(input_data)
+        if not isinstance(input_data, dict):
+            return {
+                "reading_goal": None,
+                "reading_variant": None,
+                "strategy_hash": None,
+                "layer_policy_hash": None,
+            }
+        return {
+            "reading_goal": input_data.get("reading_goal"),
+            "reading_variant": input_data.get("reading_variant"),
+            "strategy_hash": input_data.get("strategy_hash"),
+            "layer_policy_hash": input_data.get("layer_policy_hash"),
         }
 
     # ------------------------------------------------------------------

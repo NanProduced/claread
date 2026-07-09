@@ -796,7 +796,13 @@ class ReaderJobRuntime:
             params.append(pause_owner)
             param_idx += 1
 
-        if target_status == STATUS_SUCCEEDED and output_ref is not None:
+        # T3.4a (P1): persist output_ref_json whenever it is provided,
+        # not only on STATUS_SUCCEEDED. Failure / superseded / skipped
+        # transitions also carry diagnostics / output refs that downstream
+        # observability queries need (e.g. reader_jobs.output_ref_json
+        # .diagnostics for failed grammar windows). Callers that don't pass
+        # output_ref are unaffected (None → no SET clause).
+        if output_ref is not None:
             set_parts.append(f"output_ref_json = ${param_idx}::jsonb")
             params.append(jsonb_param(output_ref))
             param_idx += 1

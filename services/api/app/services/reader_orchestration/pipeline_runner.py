@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.database import connection as db_connection
+from app.database.json_compat import jsonb_param
 from app.services.ai_usage import (
     BILLING_MODE_INTERNAL_ONLY,
     CAPABILITY_READER_GRAMMAR_BUNDLE,
@@ -23,6 +24,7 @@ from app.services.reader_orchestration.display_title_worker import (
 )
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.grammar_window_publisher import (
+    NO_OP_CAUSE_EXECUTION_FAILED,
     GrammarWindowPublisher,
     PublishedWindowResult,
     WindowCandidateContent,
@@ -95,6 +97,10 @@ from app.services.reader_orchestration.zplus_bootstrap import (
     ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
     ZPLUS_TARGET_TYPE,
 )
+
+# T3.4a: truncate failure messages stored in diagnostics so output_ref_json
+# doesn't grow unbounded. Mirrors the publisher's _DIAGNOSTICS_REASON_MAX_LEN.
+_FAILURE_MESSAGE_MAX_LEN = 240
 
 WorkerType = Literal[
     "display_title",
@@ -923,12 +929,15 @@ class ReaderEnhancementPipelineRunner:
         lease_duration: timedelta,
         retry_delay: timedelta,
     ) -> ReaderPipelineWorkerAttempt:
-        """T1.1 short-article batch dispatch for the translation layer.
+        """T1.1/T3.1 batch dispatch for the translation layer.
 
-        Bypasses the orchestrator and calls the batch worker service directly
-        so a single LLM call covers all units of a short article. For long
-        articles the bootstrap creates no batch jobs, so this attempt returns
-        ``no_job`` and the per-unit ``_run_translation_attempt`` handles them.
+        Bypasses the orchestrator and calls the batch worker service directly.
+        For short articles a single ``translate_article`` batch job covers
+        all units. For non-short articles T3.1 creates multiple
+        ``translate_article`` window jobs (one per consecutive unit window);
+        this method processes whichever window job the worker loop picks up
+        next. No ``translate_unit`` per-unit jobs are created for either
+        path.
         """
         before_superseded = await self._count_superseded_jobs(
             record_id=record_id,
@@ -1200,6 +1209,9 @@ class ReaderEnhancementPipelineRunner:
                 rationale_code=exc.rationale_code,
                 message=str(exc),
                 window_id=window_id,
+                plan_id=plan_id,
+                # LLM call failed before candidates returned → raw_count=0
+                raw_candidates=None,
                 prompt_version=exc.prompt_version,
                 model_route=exc.model_route,
                 model_profile=exc.model_profile,
@@ -1218,6 +1230,8 @@ class ReaderEnhancementPipelineRunner:
                 rationale_code="grammar_window_contract_violation",
                 message=str(exc),
                 window_id=window_id,
+                plan_id=plan_id,
+                raw_candidates=None,
                 end_span="execution_error",
             )
         except Exception as exc:
@@ -1231,6 +1245,8 @@ class ReaderEnhancementPipelineRunner:
                 rationale_code="grammar_window_unexpected_failure",
                 message=str(exc),
                 window_id=window_id,
+                plan_id=plan_id,
+                raw_candidates=None,
                 end_span="generic_exception",
             )
 
@@ -1295,6 +1311,9 @@ class ReaderEnhancementPipelineRunner:
                 rationale_code="candidate_contents_derivation_failed",
                 message=str(exc),
                 window_id=window_id,
+                plan_id=plan_id,
+                # Worker returned candidates → publisher-side failure has them
+                raw_candidates=candidates,
                 prompt_version=result.get("prompt_version"),
                 model_route=result.get("model_route"),
                 model_profile=result.get("model_profile"),
@@ -1312,18 +1331,38 @@ class ReaderEnhancementPipelineRunner:
                 candidates=candidates,
                 candidate_contents=candidate_contents,
             )
-        except FenceViolationError:
+        except FenceViolationError as exc:
             # Requirement 1: align with legacy grammar_worker — transition
             # job → superseded, mark reader_run superseded, end worker span
             # as fence violation. Do NOT just return superseded and leave
             # the job/run in claimed/running.
+            #
+            # T3.4a (P1): build failure diagnostics so the superseded /
+            # failed window is diagnosable from output_ref_json and
+            # coverage. Without this, analysis_windows.status='failed' had
+            # an empty coverage.diagnostics, leaving the fence-violation
+            # cause invisible.
             await end_worker_span_fence_violation()
+            fence_diagnostics = await self._build_failure_diagnostics(
+                claim=claim,
+                window_id=window_id,
+                plan_id=plan_id,
+                failure_class="publish_guard",
+                failure_code="publish_fence_failed",
+                failure_message=str(exc),
+                # Worker already produced candidates; publisher-side failure
+                # has them available for raw_candidate_count_by_type.
+                raw_candidates=candidates,
+            )
             try:
                 await self._job_runtime.transition(
                     job_id=claim.job_id,
                     target_status="superseded",
                     lease_token=claim.lease_token,
                     rationale_code="publish_fence_failed",
+                    # T3.4a (P1): persist diagnostics to output_ref_json so
+                    # the superseded job's failure cause is queryable.
+                    output_ref={"diagnostics": fence_diagnostics},
                 )
             except IllegalTransitionError:
                 # Job no longer in claimed (e.g. lease expired and recovered
@@ -1338,7 +1377,9 @@ class ReaderEnhancementPipelineRunner:
                 finished_at=datetime.now(UTC),
             )
             if window_id is not None:
-                await self._mark_analysis_window_failed(window_id)
+                await self._mark_analysis_window_failed(
+                    window_id, diagnostics=fence_diagnostics
+                )
             return ReaderPipelineWorkerAttempt(
                 worker_type="grammar_bundle_window",
                 outcome="superseded",
@@ -1362,6 +1403,8 @@ class ReaderEnhancementPipelineRunner:
                 rationale_code="publisher_fail_closed",
                 message=str(exc),
                 window_id=window_id,
+                plan_id=plan_id,
+                raw_candidates=candidates,
                 prompt_version=result.get("prompt_version"),
                 model_route=result.get("model_route"),
                 model_profile=result.get("model_profile"),
@@ -1381,6 +1424,8 @@ class ReaderEnhancementPipelineRunner:
                 rationale_code="publisher_unexpected_failure",
                 message=str(exc),
                 window_id=window_id,
+                plan_id=plan_id,
+                raw_candidates=candidates,
                 prompt_version=result.get("prompt_version"),
                 model_route=result.get("model_route"),
                 model_profile=result.get("model_profile"),
@@ -1435,6 +1480,8 @@ class ReaderEnhancementPipelineRunner:
         rationale_code: str,
         message: str,
         window_id: UUID | None = None,
+        plan_id: UUID | None = None,
+        raw_candidates: list[Any] | None = None,
         prompt_version: str | None = None,
         model_route: str | None = None,
         model_profile: str | None = None,
@@ -1468,9 +1515,32 @@ class ReaderEnhancementPipelineRunner:
         ``model_provider`` / ``model_name``) and ends the worker_tick span
         via ``end_worker_span_execution_error`` or
         ``end_worker_span_generic_exception``.
+
+        T3.4a: builds failure diagnostics (window_meta / strategy / budgets /
+        raw_candidate_count_by_type / no_op_cause=execution_failed / failure
+        sub-dict) and persists to ``reader_jobs.output_ref_json.diagnostics``
+        (via transition's ``output_ref``) and
+        ``analysis_windows.coverage.diagnostics`` (via
+        ``_mark_analysis_window_failed``). This ensures failed windows are
+        diagnosable without leaving them stuck in ``running`` with no cause.
+        ``raw_candidates`` is the candidate list from the worker result when
+        the failure happened at/after publish; ``None`` when the LLM call
+        itself failed (raw_count=0).
         """
         target_status = "retry_later" if retryable else "failed_terminal"
         run_status = "failed_retryable" if retryable else "failed_terminal"
+
+        # T3.4a: build failure diagnostics so the window's no-op/failed
+        # cause is queryable from output_ref_json + analysis_windows.coverage.
+        diagnostics = await self._build_failure_diagnostics(
+            claim=claim,
+            window_id=window_id,
+            plan_id=plan_id,
+            failure_class=failure_class,
+            failure_code=failure_code,
+            failure_message=message,
+            raw_candidates=raw_candidates,
+        )
 
         transition_kwargs: dict[str, Any] = {
             "job_id": claim.job_id,
@@ -1480,6 +1550,8 @@ class ReaderEnhancementPipelineRunner:
             "failure_code": failure_code,
             "failure_message": message,
             "rationale_code": rationale_code,
+            # T3.4a: persist diagnostics to reader_jobs.output_ref_json
+            "output_ref": {"diagnostics": diagnostics},
         }
         if retryable:
             available_at = datetime.now(UTC) + retry_delay
@@ -1505,9 +1577,12 @@ class ReaderEnhancementPipelineRunner:
 
         # Requirement 3: mark analysis_window failed only on non-retryable
         # failures. Retryable failures leave the window in running so the
-        # same job retry can resume.
+        # same job retry can resume. T3.4a: also write failure diagnostics
+        # to coverage so the cause is queryable without reader_jobs join.
         if window_id is not None and not retryable:
-            await self._mark_analysis_window_failed(window_id)
+            await self._mark_analysis_window_failed(
+                window_id, diagnostics=diagnostics
+            )
 
         # Requirement 6: record failed ai_usage_event when model metadata
         # is available (LLM call was attempted).
@@ -1663,6 +1738,213 @@ class ReaderEnhancementPipelineRunner:
                 finished_at,
             )
 
+    async def _build_failure_diagnostics(
+        self,
+        *,
+        claim: ClaimResult,
+        window_id: UUID | None,
+        plan_id: UUID | None,
+        failure_class: str,
+        failure_code: str,
+        failure_message: str,
+        raw_candidates: list[Any] | None = None,
+    ) -> dict[str, Any]:
+        """T3.4a: Build failure diagnostics for a Z+ window job failure.
+
+        Loads window_meta (window_id / window_index / plan_id /
+        target_unit_ids / target_anchor_count), strategy metadata
+        (reading_goal / reading_variant / strategy_hash /
+        layer_policy_hash) and budgets snapshot (window_budget +
+        record budget used/total) from DB so the failure cause is
+        queryable from ``reader_jobs.output_ref_json.diagnostics`` and
+        ``analysis_windows.coverage.diagnostics`` without re-running
+        the worker.
+
+        ``raw_candidates`` is the worker-returned candidate list when
+        the failure happened at/after publish (e.g. publisher
+        ValueError / generic Exception). ``None`` means the LLM call
+        itself failed (raw_count=0).
+
+        ``no_op_cause`` is always ``execution_failed`` for this path;
+        the publisher writes the success/no-op causes. Accepted/rejected
+        counts are 0 because the publish transaction did not complete.
+        """
+        if window_id is None:
+            # Defensive: claim resolved no window_id (should not happen
+            # for Z+ jobs but keep diagnostics queryable regardless).
+            return {
+                "window_meta": None,
+                "strategy": None,
+                "budgets": None,
+                "raw_candidate_count_by_type": {
+                    "grammar_note": 0,
+                    "sentence_analysis": 0,
+                },
+                "accepted_count_by_type": {
+                    "grammar_note": 0,
+                    "sentence_analysis": 0,
+                },
+                "rejected_count_by_type": {
+                    "grammar_note": 0,
+                    "sentence_analysis": 0,
+                },
+                "rejected_breakdown": [],
+                "no_op_cause": NO_OP_CAUSE_EXECUTION_FAILED,
+                "failure": {
+                    "failure_class": failure_class,
+                    "failure_code": failure_code,
+                    "failure_message": failure_message[
+                        :_FAILURE_MESSAGE_MAX_LEN
+                    ],
+                },
+            }
+
+        # Load job input_json + analysis_windows row + plan row in one
+        # connection. Mirror _load_window_publish_metadata but also fetch
+        # plan + window for budget snapshot.
+        async with self.get_pool().acquire() as conn:
+            job_row = await conn.fetchrow(
+                "SELECT input_json FROM reader_jobs WHERE id = $1",
+                claim.job_id,
+            )
+            input_data: Any = (
+                job_row["input_json"] if job_row is not None else None
+            )
+            if isinstance(input_data, str):
+                input_data = json.loads(input_data)
+
+            window_row = await conn.fetchrow(
+                "SELECT id, window_index, target_unit_ids, target_anchor_ids, "
+                "window_budget FROM analysis_windows WHERE id = $1",
+                window_id,
+            )
+            plan_row: asyncpg.Record | None = None
+            resolved_plan_id = plan_id
+            if resolved_plan_id is None and isinstance(input_data, dict):
+                plan_id_str = input_data.get("plan_id")
+                if plan_id_str:
+                    resolved_plan_id = UUID(str(plan_id_str))
+            if resolved_plan_id is not None:
+                plan_row = await conn.fetchrow(
+                    "SELECT id, budget_used, budget_total "
+                    "FROM layer_analysis_plans WHERE id = $1",
+                    resolved_plan_id,
+                )
+
+        # --- window_meta ---
+        window_meta: dict[str, Any] | None = None
+        if window_row is not None:
+            target_unit_ids_raw = window_row["target_unit_ids"]
+            if isinstance(target_unit_ids_raw, str):
+                target_unit_ids_raw = json.loads(target_unit_ids_raw)
+            target_unit_ids = (
+                [str(v) for v in target_unit_ids_raw]
+                if isinstance(target_unit_ids_raw, list)
+                else []
+            )
+            target_anchor_ids_raw = window_row["target_anchor_ids"]
+            if isinstance(target_anchor_ids_raw, str):
+                target_anchor_ids_raw = json.loads(target_anchor_ids_raw)
+            target_anchor_count = (
+                len(target_anchor_ids_raw)
+                if isinstance(target_anchor_ids_raw, list)
+                else 0
+            )
+            window_meta = {
+                "window_id": str(window_row["id"]),
+                "window_index": int(window_row["window_index"]),
+                "plan_id": str(resolved_plan_id) if resolved_plan_id else None,
+                "target_unit_ids": target_unit_ids,
+                "target_anchor_count": target_anchor_count,
+            }
+
+        # --- strategy (from input_json; worker cross-validated) ---
+        strategy_meta: dict[str, Any] | None = None
+        if isinstance(input_data, dict):
+            strategy_meta = {
+                "reading_goal": input_data.get("reading_goal"),
+                "reading_variant": input_data.get("reading_variant"),
+                "strategy_hash": input_data.get("strategy_hash"),
+                "layer_policy_hash": input_data.get("layer_policy_hash"),
+            }
+
+        # --- budgets snapshot ---
+        budgets: dict[str, Any] | None = None
+        if window_row is not None and plan_row is not None:
+            window_budget_raw = window_row["window_budget"]
+            if isinstance(window_budget_raw, str):
+                window_budget_raw = json.loads(window_budget_raw)
+            window_budget: dict[str, int] = {}
+            for item_type in ("grammar_note", "sentence_analysis"):
+                window_budget[item_type] = int(
+                    (window_budget_raw or {}).get(item_type, {}).get("count", 0)
+                )
+
+            budget_used_raw = plan_row["budget_used"]
+            if isinstance(budget_used_raw, str):
+                budget_used_raw = json.loads(budget_used_raw)
+            budget_total_raw = plan_row["budget_total"]
+            if isinstance(budget_total_raw, str):
+                budget_total_raw = json.loads(budget_total_raw)
+
+            budgets = {
+                "window_budget": window_budget,
+                "record_budget_used": {
+                    item_type: {
+                        "count": int(
+                            (budget_used_raw or {}).get(item_type, {}).get(
+                                "count", 0
+                            )
+                        )
+                    }
+                    for item_type in ("grammar_note", "sentence_analysis")
+                },
+                "record_budget_total": {
+                    item_type: {
+                        "count": int(
+                            (budget_total_raw or {}).get(item_type, {}).get(
+                                "count", 0
+                            )
+                        )
+                    }
+                    for item_type in ("grammar_note", "sentence_analysis")
+                },
+            }
+
+        # --- raw_candidate_count_by_type ---
+        raw_count_by_type = {"grammar_note": 0, "sentence_analysis": 0}
+        if raw_candidates is not None:
+            for c in raw_candidates:
+                item_type = getattr(c, "item_type", None)
+                if item_type in raw_count_by_type:
+                    raw_count_by_type[item_type] += 1
+
+        return {
+            "window_meta": window_meta,
+            "strategy": strategy_meta,
+            "budgets": budgets,
+            "raw_candidate_count_by_type": raw_count_by_type,
+            # Publish did not complete — accepted/rejected counts are 0
+            # (the selector may have run, but the transaction rolled back
+            # so its decisions are not persisted). raw_candidate_count
+            # is the only signal of LLM output volume.
+            "accepted_count_by_type": {
+                "grammar_note": 0,
+                "sentence_analysis": 0,
+            },
+            "rejected_count_by_type": {
+                "grammar_note": 0,
+                "sentence_analysis": 0,
+            },
+            "rejected_breakdown": [],
+            "no_op_cause": NO_OP_CAUSE_EXECUTION_FAILED,
+            "failure": {
+                "failure_class": failure_class,
+                "failure_code": failure_code,
+                "failure_message": failure_message[:_FAILURE_MESSAGE_MAX_LEN],
+            },
+        }
+
     async def _load_window_publish_metadata(
         self,
         job_id: UUID,
@@ -1814,7 +2096,12 @@ class ReaderEnhancementPipelineRunner:
             )
         )
 
-    async def _mark_analysis_window_failed(self, window_id: UUID) -> None:
+    async def _mark_analysis_window_failed(
+        self,
+        window_id: UUID,
+        *,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> None:
         """Mark ``analysis_windows.status = 'failed'`` on job failure.
 
         Preflight (§8.2) transitions the window from ``pending`` to
@@ -1824,18 +2111,42 @@ class ReaderEnhancementPipelineRunner:
         observability queries and re-bootstrap logic see the window as
         terminal. Already-terminal windows (``completed`` / ``no_op`` /
         ``failed``) are left untouched.
+
+        T3.4a: when ``diagnostics`` is provided, merge it into the existing
+        ``coverage`` JSONB so failed windows are queryable by no_op_cause /
+        failure_class without joining reader_jobs. The merge is a
+        ``jsonb ||`` so existing ``covered_unit_ids`` is preserved.
         """
         async with self.get_pool().acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE analysis_windows
-                SET status = 'failed',
-                    completed_at = COALESCE(completed_at, NOW())
-                WHERE id = $1
-                  AND status NOT IN ('completed', 'no_op', 'failed')
-                """,
-                window_id,
-            )
+            if diagnostics is not None:
+                # Merge diagnostics into coverage (jsonb || keeps existing
+                # top-level keys like covered_unit_ids). Only update
+                # non-terminal windows to avoid clobbering completed/no_op
+                # diagnostics written by the publisher.
+                await conn.execute(
+                    """
+                    UPDATE analysis_windows
+                    SET status = 'failed',
+                        completed_at = COALESCE(completed_at, NOW()),
+                        coverage = COALESCE(coverage, '{}'::jsonb)
+                            || jsonb_build_object('diagnostics', $2::jsonb)
+                    WHERE id = $1
+                      AND status NOT IN ('completed', 'no_op', 'failed')
+                    """,
+                    window_id,
+                    jsonb_param(diagnostics),
+                )
+            else:
+                await conn.execute(
+                    """
+                    UPDATE analysis_windows
+                    SET status = 'failed',
+                        completed_at = COALESCE(completed_at, NOW())
+                    WHERE id = $1
+                      AND status NOT IN ('completed', 'no_op', 'failed')
+                    """,
+                    window_id,
+                )
 
     async def _build_worker_attempt_from_result(
         self,

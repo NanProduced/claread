@@ -407,6 +407,59 @@ async def _query_window_status(pool: asyncpg.Pool, job_id: UUID) -> str | None:
     return str(win_row["status"]) if win_row else None
 
 
+async def _resolve_window_id_from_job(
+    pool: asyncpg.Pool, job_id: UUID
+) -> UUID | None:
+    """Resolve the analysis_windows.id tied to a window job's input_json."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT input_json FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+        if row is None:
+            return None
+        input_data = row["input_json"]
+        if isinstance(input_data, str):
+            input_data = json.loads(input_data)
+        return UUID(str(input_data["window_id"]))
+
+
+async def _query_job_diagnostics(pool: asyncpg.Pool, job_id: UUID) -> dict[str, Any] | None:
+    """Look up reader_jobs.output_ref_json.diagnostics (T3.4a observability)."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT output_ref_json FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+        if row is None:
+            return None
+        output_ref = row["output_ref_json"]
+        if isinstance(output_ref, str):
+            output_ref = json.loads(output_ref)
+        if not isinstance(output_ref, dict):
+            return None
+        return output_ref.get("diagnostics")
+
+
+async def _query_window_coverage_diagnostics(
+    pool: asyncpg.Pool, window_id: UUID
+) -> dict[str, Any] | None:
+    """Look up analysis_windows.coverage.diagnostics (T3.4a observability)."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT coverage FROM analysis_windows WHERE id = $1",
+            window_id,
+        )
+        if row is None:
+            return None
+        coverage = row["coverage"]
+        if isinstance(coverage, str):
+            coverage = json.loads(coverage)
+        if not isinstance(coverage, dict):
+            return None
+        return coverage.get("diagnostics")
+
+
 async def test_pipeline_runner_window_llm_failure_transitions_job_to_retry_later(
     test_db_pool_with_window_job_only: tuple[asyncpg.Pool, UUID, UUID, UUID],
 ) -> None:
@@ -586,6 +639,35 @@ async def test_pipeline_runner_window_publisher_value_error_marks_window_failed(
         f"got {window_status!r}"
     )
 
+    # T3.4a (P2): failure diagnostics must be persisted to both
+    # reader_jobs.output_ref_json.diagnostics (queryable from job side) and
+    # analysis_windows.coverage.diagnostics (queryable without job join).
+    job_diag = await _query_job_diagnostics(pool, captured_job_id[0])
+    assert job_diag is not None, (
+        "publisher ValueError must write output_ref_json.diagnostics"
+    )
+    assert job_diag["no_op_cause"] == "execution_failed", (
+        f"expected no_op_cause='execution_failed'; got {job_diag.get('no_op_cause')!r}"
+    )
+    assert job_diag["failure"]["failure_class"] == "grammar_window_contract_violation", (
+        f"expected failure_class='grammar_window_contract_violation'; "
+        f"got {job_diag['failure'].get('failure_class')!r}"
+    )
+    assert job_diag["failure"]["failure_code"] == "publisher_fail_closed", (
+        f"expected failure_code='publisher_fail_closed'; "
+        f"got {job_diag['failure'].get('failure_code')!r}"
+    )
+    window_id = await _resolve_window_id_from_job(pool, captured_job_id[0])
+    assert window_id is not None
+    coverage_diag = await _query_window_coverage_diagnostics(pool, window_id)
+    assert coverage_diag is not None, (
+        "publisher ValueError must write coverage.diagnostics for failed window"
+    )
+    assert coverage_diag["no_op_cause"] == "execution_failed", (
+        f"coverage.diagnostics.no_op_cause must be 'execution_failed'; "
+        f"got {coverage_diag.get('no_op_cause')!r}"
+    )
+
 
 # ---------------------------------------------------------------------------
 # Requirement 1: FenceViolationError → job=superseded, run=superseded
@@ -655,6 +737,41 @@ async def test_pipeline_runner_window_fence_violation_transitions_superseded(
         f"got {window_status!r}"
     )
     assert summary.outcome_counts.superseded >= 1
+
+    # T3.4a (P1+P2): fence-violation diagnostics must be persisted to both
+    # reader_jobs.output_ref_json.diagnostics (superseded job side) and
+    # analysis_windows.coverage.diagnostics (failed window side). Without
+    # this the superseded/failed window had an empty coverage.diagnostics,
+    # leaving the publish_fence_failed cause invisible.
+    job_diag = await _query_job_diagnostics(pool, captured_job_id[0])
+    assert job_diag is not None, (
+        "FenceViolationError must write output_ref_json.diagnostics"
+    )
+    assert job_diag["no_op_cause"] == "execution_failed", (
+        f"expected no_op_cause='execution_failed'; got {job_diag.get('no_op_cause')!r}"
+    )
+    assert job_diag["failure"]["failure_class"] == "publish_guard", (
+        f"expected failure_class='publish_guard'; "
+        f"got {job_diag['failure'].get('failure_class')!r}"
+    )
+    assert job_diag["failure"]["failure_code"] == "publish_fence_failed", (
+        f"expected failure_code='publish_fence_failed'; "
+        f"got {job_diag['failure'].get('failure_code')!r}"
+    )
+    window_id = await _resolve_window_id_from_job(pool, captured_job_id[0])
+    assert window_id is not None
+    coverage_diag = await _query_window_coverage_diagnostics(pool, window_id)
+    assert coverage_diag is not None, (
+        "FenceViolationError must write coverage.diagnostics for failed window"
+    )
+    assert coverage_diag["no_op_cause"] == "execution_failed", (
+        f"coverage.diagnostics.no_op_cause must be 'execution_failed'; "
+        f"got {coverage_diag.get('no_op_cause')!r}"
+    )
+    assert coverage_diag["failure"]["failure_code"] == "publish_fence_failed", (
+        f"coverage.diagnostics.failure_code must be 'publish_fence_failed'; "
+        f"got {coverage_diag['failure'].get('failure_code')!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

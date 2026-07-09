@@ -84,6 +84,39 @@ MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH = 240
 MAX_VOCABULARY_DIAGNOSTIC_ITEMS = 8
 MAX_VOCABULARY_DIAGNOSTIC_TEXT_LENGTH = 80
 
+# T3.3 phrase_gloss deterministic guard. The LLM sometimes marks long
+# clause-like spans or full sentences (including questions) as phrase_gloss,
+# which violates the "lexical expression" product semantics. The prompt
+# carries explicit selection rules; this guard is the fail-closed backstop
+# that rejects obvious sentence-shaped / over-long candidates before
+# grounding. Reasonable proper nouns, compounds and idioms are kept.
+_PHRASE_GLOSS_MAX_WORDS = 7
+_PHRASE_GLOSS_SENTENCE_TERMINATORS = (".", "!", "?", "。", "！", "？")
+_PHRASE_GLOSS_GUARD_REASON_CODE = "phrase_gloss_too_long_or_clause_like"
+
+# Universal phrase_gloss selection rules. These are NOT variant-specific
+# (they apply to every reading_variant), so they live here as a constant
+# prompt section rather than in reader_variants.yaml. The variant-first
+# policy lines are still injected via the strategy section.
+_PHRASE_GLOSS_RULES_SECTION = (
+    "<phrase_gloss_rules>\n"
+    "phrase_gloss is a lexical expression, NOT a full sentence, a full "
+    "clause, or a long predicate span. Prefer fixed collocations, phrasal "
+    "verbs, idioms, common collocations, compounds, and proper nouns.\n"
+    "- Typical length: 2-5 words. 6-7 words only with strong justification; "
+    "8+ words are almost always wrong - skip.\n"
+    "- Do NOT mark complete questions or statements that end with terminal "
+    "punctuation (. ! ?). If the whole sentence needs explanation, that "
+    "belongs to grammar / sentence_analysis, not phrase_gloss.\n"
+    "- reject: \"Are we to have nothing tonight?\"\n"
+    "- reject: \"threw them through the bars of my window\"\n"
+    "- accept: \"stole back\"\n"
+    "- accept: \"at any rate\"\n"
+    "- accept: \"caught sight of\"\n"
+    "- accept: \"letter of credit\"\n"
+    "</phrase_gloss_rules>\n"
+)
+
 # T7 strategy metadata keys that T5 bootstrap writes into reader_jobs.input_json.
 # T7 reads them back and validates against the live resolver output. Missing
 # keys or hash mismatch fail closed; legacy bare-fingerprint jobs without
@@ -656,8 +689,11 @@ def _build_vocabulary_batch_prompt(context: VocabularyBatchJobContext) -> str:
     strategy_section = _format_vocabulary_batch_strategy_section(context)
     units_section = _format_vocabulary_batch_units_section(context)
     return (
+        # T3.3: wording generalized from "short article batch" to
+        # "reading unit batch/window" since the batch path now also covers
+        # non-short article vocabulary windows (T3.2b).
         "Generate vocabulary highlights for the following reading units of a "
-        "short article batch.\n"
+        "reading unit batch/window.\n"
         f"source_language: {context.source_language}\n"
         # T3.2a P2: surface the per-unit published cap and the LLM candidate
         # cap explicitly in the batch prompt, mirroring the per-unit prompt.
@@ -669,9 +705,17 @@ def _build_vocabulary_batch_prompt(context: VocabularyBatchJobContext) -> str:
         f"max_published_items_per_unit: {MAX_VOCABULARY_ITEMS}\n"
         f"max_candidate_items_per_unit: {MAX_VOCABULARY_CANDIDATE_ITEMS}\n"
         f"{strategy_section}"
+        # T3.3: universal phrase_gloss selection rules. Grounding parity
+        # with the per-unit prompt: both now carry segment text + the same
+        # phrase_gloss rules so the LLM can anchor selected_text against
+        # the actual segment text and avoid marking whole sentences.
+        f"{_PHRASE_GLOSS_RULES_SECTION}"
         "Return only the structured VocabularyBatchCandidateOutput.\n"
         "Each unit must appear exactly once in units[] with its unit_id and "
         "the vocabulary candidate items for that unit.\n"
+        "Each candidate's selected_text MUST appear verbatim in the listed "
+        "anchor segment text for that unit; use the segment text to ground "
+        "the exact span.\n"
         f"{units_section}"
     )
 
@@ -695,13 +739,23 @@ def _format_vocabulary_batch_units_section(
         parts.append(unit.source_text)
         parts.append("</source_text>")
         parts.append("<target_segments>")
+        # T3.3: include the anchor segment text (mirroring the per-unit
+        # prompt's anchor_segments_json `text` field) so the LLM can ground
+        # selected_text against the actual segment text. Without this the
+        # batch prompt only exposed segment metadata, which led to
+        # selected_text_not_found diagnostics because the LLM had to guess
+        # the exact surface form from unit source_text alone.
         for segment in unit.anchor_segments:
             parts.append(
                 f'<segment anchor_segment_id="{segment.anchor_segment_id}" '
                 f'sentence_id="{segment.sentence_id}" '
                 f'segment_type="{segment.segment_type}" '
-                f'boundary_quality="{segment.boundary_quality}" />'
+                f'boundary_quality="{segment.boundary_quality}">'
             )
+            parts.append("<text>")
+            parts.append(segment.text)
+            parts.append("</text>")
+            parts.append("</segment>")
         parts.append("</target_segments>")
         parts.append("</unit>")
     parts.append("</units>")
@@ -2108,7 +2162,14 @@ def _build_vocabulary_prompt(context: VocabularyJobContext) -> str:
         f"max_published_items: {MAX_VOCABULARY_ITEMS}\n"
         f"max_candidate_items: {MAX_VOCABULARY_CANDIDATE_ITEMS}\n"
         f"{strategy_section}"
+        # T3.3: universal phrase_gloss selection rules. Both per-unit and
+        # batch prompts carry the same section so phrase_gloss semantics
+        # are consistent across execution paths.
+        f"{_PHRASE_GLOSS_RULES_SECTION}"
         "Return only the structured candidate output.\n"
+        "Each candidate's selected_text MUST appear verbatim in one of the "
+        "anchor_segments text; use the segment text to ground the exact "
+        "span.\n"
         "<source_text>\n"
         f"{context.source_text}\n"
         "</source_text>\n"
@@ -2270,6 +2331,41 @@ def _validate_vocabulary_strategy_metadata(
     )
 
 
+def _phrase_gloss_guard_reason_code(
+    item: VocabularyPhraseGlossCandidateItem,
+) -> str | None:
+    """Deterministic fail-closed guard for phrase_gloss candidates.
+
+    The LLM sometimes marks long clause-like spans or whole sentences
+    (including questions) as phrase_gloss, which violates the "lexical
+    expression" product semantics. This guard rejects obvious
+    sentence-shaped / over-long candidates BEFORE grounding so they never
+    reach the published layer.
+
+    A candidate is rejected when either ``selected_text`` (the anchored
+    span the user sees) or ``phrase`` (the canonical label):
+        - ends with terminal sentence punctuation (. ! ? and their
+          full-width forms), indicating a complete sentence / question; or
+        - exceeds ``_PHRASE_GLOSS_MAX_WORDS`` words, indicating a clause-like
+          or over-long span.
+
+    Returns the guard reason_code when the candidate should be skipped, or
+    ``None`` when it passes. The guard is intentionally conservative so
+    reasonable proper nouns, compounds and idioms (e.g.
+    "between Scylla and Charybdis" = 4 words,
+    "the elephant in the room" = 5 words) are kept.
+    """
+    for field_value in (item.selected_text, item.phrase):
+        stripped = field_value.strip()
+        if stripped.endswith(_PHRASE_GLOSS_SENTENCE_TERMINATORS):
+            return _PHRASE_GLOSS_GUARD_REASON_CODE
+        # Word count by whitespace split. This is intentionally simple; the
+        # guard only rejects obviously over-long spans, not borderline ones.
+        if len(stripped.split()) > _PHRASE_GLOSS_MAX_WORDS:
+            return _PHRASE_GLOSS_GUARD_REASON_CODE
+    return None
+
+
 def _build_vocabulary_output_from_candidates(
     context: VocabularyJobContext,
     candidate_output: VocabularyCandidateOutput,
@@ -2306,6 +2402,27 @@ def _build_vocabulary_output_from_candidates(
                 )
             )
             continue
+
+        # T3.3 phrase_gloss deterministic guard. Runs BEFORE grounding so
+        # obviously sentence-shaped / over-long phrase_gloss candidates are
+        # fail-closed skipped and recorded in diagnostics. This is the
+        # backstop for the prompt-level selection rules; it does NOT replace
+        # them. Only phrase_gloss is guarded here - vocab_highlight is a
+        # single headword and context_gloss may legitimately be a single
+        # context-dependent word.
+        if isinstance(item, VocabularyPhraseGlossCandidateItem):
+            guard_reason = _phrase_gloss_guard_reason_code(item)
+            if guard_reason is not None:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=item_index,
+                        item_type=item.item_type,
+                        anchor_segment_id=item.anchor_segment_id,
+                        selected_text=item.selected_text,
+                        reason_code=guard_reason,
+                    )
+                )
+                continue
 
         occurrences = _find_unique_segment_occurrences(segment.text, item.selected_text)
         if not occurrences:

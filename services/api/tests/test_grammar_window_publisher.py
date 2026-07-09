@@ -992,3 +992,291 @@ async def test_publisher_fail_closed_when_candidate_contents_none_but_candidates
             candidates=candidates,
             candidate_contents=None,
         )
+
+
+# ---------------------------------------------------------------------------
+# T3.4a: window diagnostics (no_op_cause / counts / reasons)
+# ---------------------------------------------------------------------------
+
+
+def _make_invalid_anchor_candidates(
+    target_unit_ids: list[str],
+) -> list[CandidateItem]:
+    """Build candidates whose anchor_segment_id is NOT in target_anchor_ids.
+
+    The selector's INVALID_ANCHOR pre-filter (§7.2 step 2) rejects every
+    one, so the window becomes no-op with cause=selector_rejected_all
+    while raw_candidate_count > 0.
+    """
+    if not target_unit_ids:
+        return []
+    return [
+        CandidateItem(
+            item_type="grammar_note",
+            anchor_segment_id="nonexistent-anchor-1",
+            spans=[{"unit_id": target_unit_ids[0]}],
+            semantic_dedup_key="grammar-invalid-1",
+            pattern_key="pattern-invalid-1",
+            quality_score=0.8,
+        ),
+        CandidateItem(
+            item_type="sentence_analysis",
+            anchor_segment_id="nonexistent-anchor-2",
+            spans=[{"unit_id": target_unit_ids[0]}],
+            semantic_dedup_key="sentence-invalid-1",
+            pattern_key=None,
+            quality_score=0.7,
+        ),
+    ]
+
+
+async def test_diagnostics_llm_empty_when_no_candidates(
+    test_db_pool_with_window_no_candidates: tuple[
+        asyncpg.Pool, UUID, UUID, UUID, UUID
+    ],
+) -> None:
+    """T3.4a: LLM returns 0 candidates → no_op_cause=llm_empty.
+
+    raw_candidate_count_by_type totals to 0; window status='no_op';
+    diagnostics readable from both output_ref_json and analysis_windows.coverage.
+    """
+    pool, job_id, lease_token, plan_id, window_id = (
+        test_db_pool_with_window_no_candidates
+    )
+    publisher = GrammarWindowPublisher(pool=pool)
+    result = await publisher.publish_window_grammar_bundle(
+        job_id=job_id,
+        lease_token=lease_token,
+        plan_id=plan_id,
+        window_id=window_id,
+        candidates=[],
+    )
+    assert result.accepted_count == 0
+
+    async with pool.acquire() as conn:
+        job = await conn.fetchrow(
+            "SELECT output_ref_json FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+        window = await conn.fetchrow(
+            "SELECT status, coverage FROM analysis_windows WHERE id = $1",
+            window_id,
+        )
+
+    output_ref = job["output_ref_json"]
+    if isinstance(output_ref, str):
+        output_ref = json.loads(output_ref)
+    diag = output_ref["diagnostics"]
+
+    assert diag["no_op_cause"] == "llm_empty"
+    assert diag["raw_candidate_count_by_type"] == {
+        "grammar_note": 0,
+        "sentence_analysis": 0,
+    }
+    assert diag["accepted_count_by_type"] == {
+        "grammar_note": 0,
+        "sentence_analysis": 0,
+    }
+    assert diag["rejected_count_by_type"] == {
+        "grammar_note": 0,
+        "sentence_analysis": 0,
+    }
+    assert diag["rejected_breakdown"] == []
+    # window_meta carries identifying fields
+    assert diag["window_meta"]["window_id"] == str(window_id)
+    assert diag["window_meta"]["plan_id"] == str(plan_id)
+    assert diag["window_meta"]["target_anchor_count"] >= 1
+    # strategy metadata present (worker wrote it; publisher trusts it)
+    assert diag["strategy"]["reading_goal"] is not None
+    assert diag["strategy"]["reading_variant"] is not None
+    assert diag["strategy"]["strategy_hash"] is not None
+
+    # window status reflects no-op
+    assert window["status"] == "no_op"
+
+    # coverage also carries diagnostics (queryable without job join)
+    coverage = window["coverage"]
+    if isinstance(coverage, str):
+        coverage = json.loads(coverage)
+    assert coverage["diagnostics"]["no_op_cause"] == "llm_empty"
+
+
+async def test_diagnostics_selector_rejected_all_when_candidates_invalid(
+    test_db_pool_with_window_no_candidates: tuple[
+        asyncpg.Pool, UUID, UUID, UUID, UUID
+    ],
+) -> None:
+    """T3.4a: LLM returns candidates but selector rejects all.
+
+    raw_candidate_count > 0 but accepted_count = 0 → no_op_cause=
+    selector_rejected_all. rejected_breakdown records the gates + reasons.
+    """
+    pool, job_id, lease_token, plan_id, window_id = (
+        test_db_pool_with_window_no_candidates
+    )
+    # Need target_unit_ids to construct candidates with a valid unit_id
+    # but invalid anchor_segment_id (rejected by INVALID_ANCHOR gate).
+    async with pool.acquire() as conn:
+        window_row = await conn.fetchrow(
+            "SELECT target_unit_ids FROM analysis_windows WHERE id = $1",
+            window_id,
+        )
+    target_unit_ids = list(window_row["target_unit_ids"])
+    candidates = _make_invalid_anchor_candidates(target_unit_ids)
+
+    publisher = GrammarWindowPublisher(pool=pool)
+    result = await publisher.publish_window_grammar_bundle(
+        job_id=job_id,
+        lease_token=lease_token,
+        plan_id=plan_id,
+        window_id=window_id,
+        candidates=candidates,
+        # candidate_contents is allowed to be None when no candidates are
+        # accepted (publisher only fails-closed when accepted > 0).
+        candidate_contents=None,
+    )
+    assert result.accepted_count == 0
+
+    async with pool.acquire() as conn:
+        job = await conn.fetchrow(
+            "SELECT output_ref_json FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+
+    output_ref = job["output_ref_json"]
+    if isinstance(output_ref, str):
+        output_ref = json.loads(output_ref)
+    diag = output_ref["diagnostics"]
+
+    assert diag["no_op_cause"] == "selector_rejected_all"
+    # raw candidates were present
+    assert diag["raw_candidate_count_by_type"]["grammar_note"] == 1
+    assert diag["raw_candidate_count_by_type"]["sentence_analysis"] == 1
+    # all rejected
+    assert diag["accepted_count_by_type"] == {
+        "grammar_note": 0,
+        "sentence_analysis": 0,
+    }
+    assert diag["rejected_count_by_type"]["grammar_note"] == 1
+    assert diag["rejected_count_by_type"]["sentence_analysis"] == 1
+    # rejected_breakdown captures gates + reasons
+    assert len(diag["rejected_breakdown"]) >= 1
+    gates_seen = {entry["gate"] for entry in diag["rejected_breakdown"]}
+    assert "INVALID_ANCHOR" in gates_seen
+    # each breakdown entry has count + reason
+    for entry in diag["rejected_breakdown"]:
+        assert entry["count"] >= 1
+        assert isinstance(entry["reason"], str)
+        assert entry["item_type"] in ("grammar_note", "sentence_analysis")
+
+
+async def test_diagnostics_accepted_count_by_type_when_candidates_accepted(
+    test_db_pool_with_window_and_candidates: tuple[
+        asyncpg.Pool,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+        list[CandidateItem],
+        list[WindowCandidateContent],
+        UUID,
+        UUID,
+    ],
+) -> None:
+    """T3.4a: accepted candidates → accepted_count_by_type correct.
+
+    Window is marked completed (not no-op); no_op_cause is None;
+    accepted_count_by_type matches the layers actually published.
+    """
+    (
+        pool,
+        job_id,
+        lease_token,
+        plan_id,
+        window_id,
+        candidates,
+        candidate_contents,
+        _base_id,
+        _record_id,
+    ) = test_db_pool_with_window_and_candidates
+    publisher = GrammarWindowPublisher(pool=pool)
+    result = await publisher.publish_window_grammar_bundle(
+        job_id=job_id,
+        lease_token=lease_token,
+        plan_id=plan_id,
+        window_id=window_id,
+        candidates=candidates,
+        candidate_contents=candidate_contents,
+    )
+    assert result.accepted_count > 0
+
+    async with pool.acquire() as conn:
+        job = await conn.fetchrow(
+            "SELECT output_ref_json FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+
+    output_ref = job["output_ref_json"]
+    if isinstance(output_ref, str):
+        output_ref = json.loads(output_ref)
+    diag = output_ref["diagnostics"]
+
+    # successful publish → no_op_cause is None (not a no-op window)
+    assert diag["no_op_cause"] is None
+    # raw_candidate_count_by_type sums to the candidates we passed
+    raw_total = sum(diag["raw_candidate_count_by_type"].values())
+    assert raw_total == len(candidates)
+    # accepted_count_by_type sums to accepted_count
+    accepted_total = sum(diag["accepted_count_by_type"].values())
+    assert accepted_total == result.accepted_count
+    # at least one grammar_note accepted (the fixture builds grammar_note
+    # candidates)
+    assert diag["accepted_count_by_type"]["grammar_note"] >= 1
+    # window_meta strategy fields present
+    assert diag["strategy"]["reading_goal"] is not None
+    assert diag["strategy"]["strategy_hash"] is not None
+
+
+async def test_diagnostics_no_op_window_queryable_from_coverage(
+    test_db_pool_with_window_no_candidates: tuple[
+        asyncpg.Pool, UUID, UUID, UUID, UUID
+    ],
+) -> None:
+    """T3.4a: no-op window diagnostics readable from analysis_windows.coverage.
+
+    Even without joining reader_jobs, a query against analysis_windows
+    returns the no_op_cause / counts / strategy so operators can
+    diagnose why a window produced no layers.
+    """
+    pool, job_id, lease_token, plan_id, window_id = (
+        test_db_pool_with_window_no_candidates
+    )
+    publisher = GrammarWindowPublisher(pool=pool)
+    await publisher.publish_window_grammar_bundle(
+        job_id=job_id,
+        lease_token=lease_token,
+        plan_id=plan_id,
+        window_id=window_id,
+        candidates=[],
+    )
+
+    async with pool.acquire() as conn:
+        window = await conn.fetchrow(
+            "SELECT status, coverage FROM analysis_windows WHERE id = $1",
+            window_id,
+        )
+
+    assert window["status"] == "no_op"
+    coverage = window["coverage"]
+    if isinstance(coverage, str):
+        coverage = json.loads(coverage)
+    diag = coverage["diagnostics"]
+    assert diag["no_op_cause"] == "llm_empty"
+    assert diag["window_meta"]["window_id"] == str(window_id)
+    assert diag["window_meta"]["plan_id"] == str(plan_id)
+    # budgets snapshot present
+    assert "window_budget" in diag["budgets"]
+    assert "record_budget_used" in diag["budgets"]
+    assert "record_budget_total" in diag["budgets"]
+    # covered_unit_ids preserved (empty for no-op)
+    assert coverage["covered_unit_ids"] == []
