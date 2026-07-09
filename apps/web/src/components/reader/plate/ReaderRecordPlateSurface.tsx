@@ -17,6 +17,7 @@ import type {
 } from "react";
 
 import { AiWorkspacePanel } from "@/components/reader/AiWorkspacePanel";
+import { useAppShellLayout } from "@/components/layout/app-shell";
 import { ReaderRecordNavigationRail } from "@/components/reader/plate/ReaderRecordNavigationRail";
 import type { DictLookupTypeDto, WebDictResult } from "@/types/api/dict";
 import {
@@ -1611,7 +1612,7 @@ function ReaderRecordHeader({
     <header
       data-testid="reader-record-plate-header"
       data-reader-record-reading-header={surfaceMode}
-      className="reader-header-band reader-header-band--clean mb-8 border-b border-border/60 pb-6 pt-12"
+      className="reader-header-band reader-header-band--clean mb-9 border-b border-border/60 pb-7 pt-0"
     >
       {/* Zone 1: H1 editorial masthead / title state */}
       {titleState.kind === "succeeded" ? (
@@ -1867,7 +1868,7 @@ function ReaderRecordTopBar({
     <div
       data-testid="reader-record-top-bar"
       data-reader-record-top-bar-layer="surface"
-      className="reader-record-top-bar sticky top-0 z-20 flex h-11 w-full items-center justify-between border-b border-hairline/80 bg-[var(--reading-paper-surface)] px-4 sm:px-6"
+      className="reader-record-top-bar sticky top-0 z-20 flex h-11 w-full items-center justify-between border-b border-hairline/80 bg-[var(--reading-paper-surface)]"
     >
       <div className="min-w-0 max-w-[min(46vw,36rem)] truncate text-left">
         <ReaderRecordTopBarTitle titleState={titleState} />
@@ -2387,6 +2388,12 @@ export function ReaderRecordPlateSurface({
   readingClassName = "",
   onRequestSnapshotReload,
 }: ReaderRecordPlateSurfaceProps) {
+  const appShell = useAppShellLayout();
+  const {
+    isWorkspaceShell,
+    releaseSidebarForReadingTool,
+    sidebarMode,
+  } = appShell;
   const surfaceRef = useRef<HTMLElement | null>(null);
   const commentApiRef = useRef<CommentPluginApi | null>(null);
   const [commentApiReady, setCommentApiReady] = useState(false);
@@ -2632,7 +2639,7 @@ export function ReaderRecordPlateSurface({
   //   浏览器原生 selection 落点。
   // - 所有 mark 视觉通过 reader-record-mark-stack--* class 控制。
   // - 点击优先级由 leaf 上各 mark data 字段决定，handleLeafClickIntent
-  //   按 vocabulary > grammar_note > user_note > user_highlight 顺序派发。
+  //   按 user_note > user_highlight > vocabulary > grammar_note 顺序派发。
   const renderLeaf = useCallback(
     (props: Parameters<RenderLeaf>[0]) => {
       const leaf = props.leaf as unknown as PlateTextNode;
@@ -2918,6 +2925,17 @@ export function ReaderRecordPlateSurface({
   const [dictionaryOpen, setDictionaryOpen] = useState(false);
   const quickPeekOpen =
     !dictionaryOpen && (lookupState.kind !== "idle" || inspectState !== null);
+
+  useEffect(() => {
+    if (isWorkspaceShell && sidebarMode === "locked" && dictionaryOpen) {
+      const timeoutId = window.setTimeout(() => {
+        setDictionaryOpen(false);
+      }, 0);
+      return () => window.clearTimeout(timeoutId);
+    }
+    return undefined;
+  }, [dictionaryOpen, isWorkspaceShell, sidebarMode]);
+
   const quickPeekAnchorRef = useRef<
     | { kind: "element"; element: HTMLElement }
     | { kind: "range"; getRect: () => DOMRectReadOnly | DOMRect }
@@ -3589,6 +3607,7 @@ export function ReaderRecordPlateSurface({
   }, [activeSelection, askPageIdentity, snapshot.record_id]);
 
   const openDictionaryRail = useCallback(() => {
+    releaseSidebarForReadingTool();
     const lookupForRail = activeLookupSnapshot;
     const inspectForRail = inspectState;
     setDictionaryOpen(true);
@@ -3616,7 +3635,13 @@ export function ReaderRecordPlateSurface({
     }
     setLookupState({ kind: "idle" });
     setInspectState(null);
-  }, [activeLookupSnapshot, commitDictionaryLookup, inspectState, runDictionaryLookupRequest]);
+  }, [
+    activeLookupSnapshot,
+    commitDictionaryLookup,
+    inspectState,
+    releaseSidebarForReadingTool,
+    runDictionaryLookupRequest,
+  ]);
 
   const closeDictionaryRail = useCallback(() => {
     setDictionaryOpen(false);
@@ -3743,6 +3768,7 @@ export function ReaderRecordPlateSurface({
       if (!trimmed) {
         return;
       }
+      releaseSidebarForReadingTool();
       setDictionarySearchExpanded(false);
       setDictionaryOpen(true);
       const lookupType = lookupTypeForSelection(trimmed);
@@ -3760,7 +3786,7 @@ export function ReaderRecordPlateSurface({
         warningLabel: "dictionary search",
       });
     },
-    [runDictionaryLookupRequest],
+    [releaseSidebarForReadingTool, runDictionaryLookupRequest],
   );
 
   const handleSelectHistory = useCallback(
@@ -4480,18 +4506,6 @@ export function ReaderRecordPlateSurface({
         return;
       }
 
-      if (leaf.vocabulary_data) {
-        event.preventDefault();
-        handleActivateVocabulary(leaf.vocabulary_data, anchor);
-        return;
-      }
-
-      if (leaf.grammar_data) {
-        event.preventDefault();
-        handleActivateGrammar(leaf.grammar_data);
-        return;
-      }
-
       const noteMark = userNoteMarksFromLeaf(leaf)[0];
       if (noteMark) {
         event.preventDefault();
@@ -4502,6 +4516,18 @@ export function ReaderRecordPlateSurface({
       if (leaf.user_highlight_data) {
         event.preventDefault();
         handleActivateHighlight(leaf.user_highlight_data, anchor);
+        return;
+      }
+
+      if (leaf.vocabulary_data) {
+        event.preventDefault();
+        handleActivateVocabulary(leaf.vocabulary_data, anchor);
+        return;
+      }
+
+      if (leaf.grammar_data) {
+        event.preventDefault();
+        handleActivateGrammar(leaf.grammar_data);
       }
     },
     [
@@ -4812,7 +4838,7 @@ export function ReaderRecordPlateSurface({
           )}
         >
           <div className="reader-record-canvas__body">
-            <div className="reader-record-main">
+            <div className="reader-record-main reader-record-main--document-rhythm">
               <div className="reader-header-band-inner mx-auto w-full max-w-[var(--reader-record-main-width)]">
                 <ReaderRecordHeader
                   snapshot={snapshot}
@@ -5084,7 +5110,7 @@ export function ReaderRecordPlateSurface({
         />
         {dictionaryOpen ? (
           <div
-            className="reader-tool-surface reader-tool-surface--rail fixed top-14 bottom-3 left-[calc(var(--reader-record-app-sidebar-width)+0.75rem)] z-40 hidden w-[420px] xl:block"
+            className="reader-tool-surface reader-tool-surface--rail reader-record-dictionary-rail--docked fixed top-14 bottom-3 z-40 hidden xl:block"
             data-reader-record-dictionary-rail="docked"
           >
             <ReaderDictionaryRail

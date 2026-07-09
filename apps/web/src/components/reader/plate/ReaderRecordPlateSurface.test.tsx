@@ -1858,7 +1858,7 @@ describe("ReaderRecordPlateSurface", () => {
       /\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="true"\]\s*\{[\s\S]*?border-right-color:\s*transparent[\s\S]*?background-color:\s*transparent/,
     );
     expect(globalsSource).toMatch(
-      /\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="false"\]\s*\{[\s\S]*?background-color:\s*color-mix\(in srgb, var\(--context-blue\) 2\.4%, transparent\)/,
+      /\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="false"\]\s*\{[\s\S]*?background-color:\s*transparent[\s\S]*?padding-inline:\s*0/,
     );
   });
 
@@ -2198,7 +2198,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(cssSource).toMatch(
       /--reader-mark-grammar-line-soft:\s*rgba\(95,\s*78,\s*138,\s*0\.7\)/,
     );
-    expect(cssSource).toMatch(/text-decoration-thickness:\s*0\.1em/);
+    expect(cssSource).toMatch(/text-decoration-thickness:\s*0\.08em/);
     expect(cssSource).not.toMatch(
       /\.reader-record-mark-stack--grammar-active\s+\.reader-record-mark-hit--grammar/,
     );
@@ -2312,7 +2312,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(userHighlight?.dataset.readerRecordUserHighlightAssetId).toBe("asset_highlight_1");
   });
 
-  it("resolves overlapping mark clicks by vocabulary, grammar, user note, then user highlight priority", async () => {
+  it("resolves overlapping mark clicks by user note before system mark priority", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), {
         status: 200,
@@ -2336,32 +2336,14 @@ describe("ReaderRecordPlateSurface", () => {
     }
     fireEvent.click(vocab);
 
-    expect(await screen.findByTestId("reader-record-plate-lookup-panel")).toBeTruthy();
-    expect(screen.queryByTestId("reader-record-inline-comment-panel")).toBeNull();
-
-    const grammarOnly = Array.from(
-      container.querySelectorAll<HTMLElement>(
-        '[data-reader-record-grammar-mark-id="grammar_matrix_mark"]',
-      ),
-    ).find((element) => element.textContent?.includes("shapes"));
-    expect(grammarOnly).toBeDefined();
-    if (!grammarOnly) {
-      throw new Error("Expected grammar-only fragment");
-    }
-    fireEvent.click(grammarOnly);
-
-    const grammarCallout = container.querySelector<HTMLElement>(
-      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_matrix_item"]',
+    const overlapNotePanel = await screen.findByTestId(
+      "reader-record-inline-comment-panel",
     );
-    expect(grammarCallout).not.toBeNull();
-    await waitFor(() => {
-      expect(grammarCallout?.dataset.readerRecordGrammarActive).toBe("true");
-      expect(scrollSpy).toHaveBeenCalled();
-    });
-    await waitFor(() => {
-      expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
-    });
-    expect(screen.queryByTestId("reader-record-inline-comment-panel")).toBeNull();
+    expect(overlapNotePanel.textContent).toContain(
+      "Matrix note for the sentence opening.",
+    );
+    expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+    expect(scrollSpy).toHaveBeenCalled();
 
     const noteOnly = Array.from(
       container.querySelectorAll<HTMLElement>(
@@ -2376,6 +2358,40 @@ describe("ReaderRecordPlateSurface", () => {
 
     const notePanel = await screen.findByTestId("reader-record-inline-comment-panel");
     expect(notePanel.textContent).toContain("Matrix note for the sentence opening.");
+  });
+
+  it("resolves overlapping mark clicks by user highlight before vocabulary priority", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(
+      <ReaderRecordPlateSurface
+        snapshot={makeSnapshot([
+          makeUserAsset({
+            asset_id: "asset_highlight_vocab_overlap",
+            asset_type: "user_highlight",
+            color: "warm_yellow",
+          }),
+        ])}
+      />,
+    );
+
+    const vocab = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocab).not.toBeNull();
+    if (!vocab) {
+      throw new Error("Expected vocabulary mark");
+    }
+
+    fireEvent.click(vocab);
+
+    expect(await screen.findByRole("button", { name: "删除高亮" })).toBeTruthy();
+    expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
   });
 
   it("does not trigger mark actions while a non-collapsed native selection exists", async () => {
@@ -2507,12 +2523,12 @@ describe("ReaderRecordPlateSurface", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     const { container } = render(
-      <ReaderRecordPlateSurface snapshot={makeAnnotationMatrixSnapshot()} />,
+      <ReaderRecordPlateSurface snapshot={makeOverlappingMarkSnapshot()} />,
     );
     const grammarLeaves = () =>
       Array.from(
         container.querySelectorAll<HTMLElement>(
-          '[data-reader-record-leaf="segment_text"][data-reader-record-grammar-item-id="grammar_matrix_item"]',
+          '[data-reader-record-leaf="segment_text"][data-reader-record-grammar-item-id="grammar_item_1"]',
         ),
       );
     const overlapLeaf = grammarLeaves().find((element) =>
@@ -2798,6 +2814,10 @@ describe("ReaderRecordPlateSurface", () => {
 
     const header = screen.getByTestId("reader-record-plate-header");
     expect(header).toBeTruthy();
+    const title = header.querySelector<HTMLElement>(
+      "[data-reader-record-reading-title]",
+    );
+    expect(title?.previousElementSibling).toBeNull();
     // Hero eyebrow 已在 R1 中移除；模式标签只出现在 More Menu 与 action bar tab。
     expect(header.textContent).not.toContain("精读模式 · 2026年6月24日");
     expect(header.textContent).not.toContain("2026年6月24日");
@@ -2862,6 +2882,7 @@ describe("ReaderRecordPlateSurface", () => {
     const mainColumn = body?.querySelector(".reader-record-main");
     expect(mainColumn).not.toBeNull();
     expect(mainColumn?.className).toContain("reader-record-main");
+    expect(mainColumn?.className).toContain("reader-record-main--document-rhythm");
 
     const headerColumn = mainColumn?.querySelector(".reader-header-band-inner");
     expect(headerColumn).not.toBeNull();
@@ -2881,6 +2902,38 @@ describe("ReaderRecordPlateSurface", () => {
     const globalsSource = readFileSync(
       resolve(process.cwd(), "src/app/globals.css"),
       "utf-8",
+    );
+    expect(globalsSource).toContain("--reader-record-main-width: 70ch;");
+    expect(globalsSource).toContain("--app-shell-sidebar-width-collapsed: 84px;");
+    expect(globalsSource).toContain("--app-shell-sidebar-width-expanded: 232px;");
+    expect(globalsSource).toContain("--app-shell-sidebar-width-locked: 280px;");
+    expect(globalsSource).toContain(
+      "--reader-record-app-sidebar-width: var(--app-shell-sidebar-width);",
+    );
+    expect(globalsSource).toContain(
+      "--reader-record-dictionary-rail-width: 26rem;",
+    );
+    expect(globalsSource).toContain(
+      "--reader-record-dictionary-rail-left-offset: clamp(4.75rem, 5.5vw, 7rem);",
+    );
+    expect(globalsSource).toContain(
+      "--reader-record-headroom: clamp(4.75rem, 9vh, 6.25rem);",
+    );
+    expect(globalsSource).toContain("--app-shell-topbar-left-safe: 0px;");
+    expect(globalsSource).toContain(
+      "--app-shell-topbar-left-safe: 3.5rem;",
+    );
+    expect(globalsSource).toMatch(
+      /\.app-sidebar-peek-button\s*\{[\s\S]*?background:\s*transparent;[\s\S]*?box-shadow:\s*none;/,
+    );
+    expect(globalsSource).toMatch(
+      /\.app-workspace-sidebar\[data-app-sidebar-state="overlay"\]\s*\{[\s\S]*?background:\s*var\(--reader-paper\);/,
+    );
+    expect(globalsSource).toContain(".reader-record-top-bar {");
+    expect(globalsSource).toContain("padding-top: var(--reader-record-headroom);");
+    expect(globalsSource).toContain(".reader-record-dictionary-rail--docked {");
+    expect(globalsSource).toContain(
+      '.app-shell[data-app-sidebar-state="overlay"] .reader-record-dictionary-rail--docked {',
     );
     expect(globalsSource).toContain(".reader-record-outline-slot {");
     expect(globalsSource).toContain("position: absolute;");
@@ -3818,6 +3871,9 @@ describe("ReaderRecordPlateSurface", () => {
       if (!rail) {
         throw new Error("Expected dictionary rail");
       }
+      expect(rail.className).toContain("reader-record-dictionary-rail--docked");
+      expect(rail.className).not.toContain("left-[calc");
+      expect(rail.className).not.toContain("w-[420px]");
       expect(within(rail).getByText("policy choices")).toBeTruthy();
       expect(within(rail).getByText("政策选择")).toBeTruthy();
       expect(within(rail).getByText("解析提示")).toBeTruthy();
@@ -5972,10 +6028,10 @@ describe("ReaderRecordPlateSurface", () => {
 
     const surface = screen.getByTestId("reader-record-plate-surface");
     const headerColumn = surface.querySelector<HTMLElement>(".reader-header-band-inner");
-    const contentColumn = surface.querySelector<HTMLElement>("[class*='max-w-[var(--reader-record-main-width)]']");
     const documentSurface = container.querySelector<HTMLElement>(
       ".reader-record-plate-document",
     );
+    const contentColumn = documentSurface?.parentElement;
     const paragraph = container.querySelector<HTMLElement>(
       '[data-reader-record-node="paragraph"]',
     );

@@ -131,6 +131,31 @@ body {
   box-shadow: inset -1px 0 0 var(--hairline);
 }
 
+.app-workspace-sidebar,
+.app-workspace-sidebar .app-nav-surface-shadow {
+  background: var(--reader-paper);
+}
+
+.app-sidebar-peek-button {
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-sidebar-peek-button:hover,
+.app-sidebar-peek-button:focus-visible {
+  border-color: transparent;
+  background: var(--app-control-quiet);
+}
+
+.app-workspace-sidebar[data-app-sidebar-state="overlay"] {
+  background: var(--reader-paper);
+}
+
+.app-workspace-sidebar[data-app-sidebar-state="overlay"] .app-nav-surface-shadow {
+  box-shadow: none;
+}
+
 .app-nav-item--active {
   background: var(--app-panel-gradient);
   box-shadow: var(--app-panel-shadow-quiet);
@@ -378,29 +403,29 @@ body {
   --reader-entry-shadow: 0 8px 22px rgba(28, 24, 18, 0.045);
   --reader-selection-highlight: rgba(40, 92, 255, 0.2);
   --reader-mark-vocab-line: transparent;
-  --reader-mark-vocab-fill: rgba(246, 214, 122, 0.42);
-  --reader-mark-vocab-fill-soft: rgba(246, 214, 122, 0.32);
+  --reader-mark-vocab-fill: rgba(246, 214, 122, 0.34);
+  --reader-mark-vocab-fill-soft: rgba(246, 214, 122, 0.24);
   --reader-mark-vocab-shadow: transparent;
   --reader-mark-vocab-ink: rgb(140, 108, 18);
   --reader-mark-vocab-hover-line: transparent;
-  --reader-mark-vocab-hover-fill: rgba(238, 201, 87, 0.68);
-  --reader-mark-vocab-hover-fill-soft: rgba(238, 201, 87, 0.68);
+  --reader-mark-vocab-hover-fill: rgba(238, 201, 87, 0.6);
+  --reader-mark-vocab-hover-fill-soft: rgba(238, 201, 87, 0.54);
   --reader-mark-vocab-hover-ink: rgb(116, 88, 8);
   --reader-mark-phrase-line: transparent;
-  --reader-mark-phrase-fill: rgba(208, 191, 244, 0.42);
-  --reader-mark-phrase-fill-soft: rgba(208, 191, 244, 0.32);
+  --reader-mark-phrase-fill: rgba(208, 191, 244, 0.32);
+  --reader-mark-phrase-fill-soft: rgba(208, 191, 244, 0.22);
   --reader-mark-phrase-shadow: transparent;
   --reader-mark-phrase-ink: rgb(106, 78, 168);
   --reader-mark-phrase-hover-line: transparent;
-  --reader-mark-phrase-hover-fill: rgba(188, 165, 238, 0.68);
-  --reader-mark-phrase-hover-fill-soft: rgba(188, 165, 238, 0.68);
+  --reader-mark-phrase-hover-fill: rgba(188, 165, 238, 0.58);
+  --reader-mark-phrase-hover-fill-soft: rgba(188, 165, 238, 0.5);
   --reader-mark-phrase-hover-ink: rgb(90, 62, 154);
   --reader-mark-context-dot: transparent;
-  --reader-mark-context-fill: rgba(165, 208, 239, 0.4);
-  --reader-mark-context-fill-quiet: rgba(165, 208, 239, 0.28);
+  --reader-mark-context-fill: rgba(165, 208, 239, 0.32);
+  --reader-mark-context-fill-quiet: rgba(165, 208, 239, 0.2);
   --reader-mark-context-ink: rgb(38, 105, 153);
   --reader-mark-context-hover-dot: transparent;
-  --reader-mark-context-hover-fill: rgba(138, 191, 232, 0.66);
+  --reader-mark-context-hover-fill: rgba(138, 191, 232, 0.56);
   --reader-mark-context-hover-ink: rgb(29, 89, 134);
   --reader-mark-grammar-line-strong: rgba(95, 78, 138, 0.82);
   --reader-mark-grammar-line-soft: rgba(95, 78, 138, 0.7);
@@ -1822,8 +1847,8 @@ select {
   --reader-record-source-size: var(--reader-record-source-size-md);
   --reader-record-source-leading: 1.74;
   --reader-record-source-tracking: 0.001em;
-  --reader-record-translation-size: 0.9rem;
-  --reader-record-translation-leading: 1.68;
+  --reader-record-translation-size: 0.88rem;
+  --reader-record-translation-leading: 1.62;
   --reader-record-note-body-size: 0.89rem;
   --reader-record-note-body-leading: 1.68;
   --reader-record-note-title-size: 0.96rem;
@@ -1837,13 +1862,13 @@ select {
   --reader-record-note-padding-block: 0.92rem;
   --reader-record-note-padding-inline: 1.02rem;
   --reader-record-source-paragraph-gap: 0.72rem;
-  --reader-record-source-translation-gap: 0.36rem;
-  --reader-record-source-analysis-gap: 0.62rem;
-  --reader-record-analysis-source-gap: 1.18rem;
+  --reader-record-source-translation-gap: 0.32rem;
+  --reader-record-source-analysis-gap: 0.76rem;
+  --reader-record-analysis-source-gap: 1.42rem;
   --reader-record-translation-analysis-gap: 0.86rem;
-  --reader-record-analysis-stack-gap: 0.72rem;
-  --reader-record-reading-group-gap: 1.48rem;
-  --reader-record-unit-gap: 1.7rem;
+  --reader-record-analysis-stack-gap: 0.66rem;
+  --reader-record-reading-group-gap: 1.42rem;
+  --reader-record-unit-gap: 1.76rem;
 }
 
 .reader-record-plate-font-sans {
@@ -2046,11 +2071,21 @@ select {
  * numbers in component classes.
  */
 :root {
-  --reader-record-main-width: 78ch;
+  --app-shell-sidebar-width-collapsed: 84px;
+  --app-shell-sidebar-width-expanded: 232px;
+  --app-shell-sidebar-width-locked: 280px;
+  --app-shell-sidebar-width: 0px;
+  --reader-record-main-width: 70ch;
+  --reader-record-headroom: clamp(4.75rem, 9vh, 6.25rem);
   --reader-record-outline-mini-width: 2.5rem;
   --reader-record-outline-right-offset: 0.75rem;
   --reader-record-outline-gap: 2.5rem;
-  --reader-record-app-sidebar-width: 124px;
+  --reader-record-app-sidebar-width: var(--app-shell-sidebar-width);
+  --reader-record-dictionary-rail-gap: 0.75rem;
+  --reader-record-dictionary-rail-left-offset: clamp(4.75rem, 5.5vw, 7rem);
+  --reader-record-dictionary-rail-width: 26rem;
+  --app-sidebar-overlay-shadow: 0 24px 60px rgb(15 23 42 / 0.14);
+  --app-shell-topbar-left-safe: 0px;
   --reader-record-ask-panel-width: clamp(
     31rem,
     calc(
@@ -2059,6 +2094,40 @@ select {
     ),
     37.5rem
   );
+}
+
+.app-shell {
+  --app-shell-sidebar-width: 0px;
+  --reader-record-app-sidebar-width: var(--app-shell-sidebar-width);
+}
+
+@media (min-width: 768px) {
+  .app-shell[data-app-sidebar-state="locked"] {
+    --app-shell-sidebar-width: var(--app-shell-sidebar-width-locked);
+  }
+
+  .app-shell:not([data-app-sidebar-state="locked"]) {
+    --app-shell-topbar-left-safe: 3.5rem;
+  }
+}
+
+.reader-record-top-bar {
+  padding-left: max(1rem, var(--app-shell-topbar-left-safe));
+  padding-right: 1rem;
+}
+
+@media (min-width: 640px) {
+  .reader-record-top-bar {
+    padding-left: max(1.5rem, var(--app-shell-topbar-left-safe));
+    padding-right: 1.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar-peek-button,
+  .app-workspace-sidebar {
+    transition-duration: 1ms !important;
+  }
 }
 
 /*
@@ -2088,6 +2157,31 @@ select {
   max-width: var(--reader-record-main-width);
   margin-left: auto;
   margin-right: auto;
+}
+
+.reader-record-main--document-rhythm {
+  padding-top: var(--reader-record-headroom);
+}
+
+.reader-record-dictionary-rail--docked {
+  left: calc(
+    var(--reader-record-app-sidebar-width) + var(--reader-record-dictionary-rail-left-offset)
+  );
+  width: var(--reader-record-dictionary-rail-width);
+  max-width: calc(
+    100vw - var(--reader-record-app-sidebar-width) -
+      var(--reader-record-dictionary-rail-left-offset) - 0.75rem
+  );
+}
+
+.app-shell[data-app-sidebar-state="overlay"] .reader-record-dictionary-rail--docked {
+  left: calc(
+    var(--app-shell-sidebar-width-locked) + var(--reader-record-dictionary-rail-gap)
+  );
+  max-width: calc(
+    100vw - var(--app-shell-sidebar-width-locked) -
+      var(--reader-record-dictionary-rail-gap) - 0.75rem
+  );
 }
 
 .reader-record-outline-slot {
@@ -2270,8 +2364,12 @@ select {
 }
 
 .reader-record-mark-stack {
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
   border-radius: 0.16em;
   background-color: transparent;
+  padding-inline: 0.06em;
+  text-decoration-skip-ink: auto;
   transition:
     background-color 140ms ease,
     color 140ms ease,
@@ -2369,11 +2467,10 @@ select {
 /* --- Grammar --- */
 
 .reader-record-mark-stack--grammar {
-  font-weight: 500;
   text-decoration-color: var(--reader-mark-grammar-line-soft);
   text-decoration-line: underline;
-  text-decoration-thickness: 0.1em;
-  text-underline-offset: 0.18em;
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.2em;
 }
 
 .reader-record-mark-stack--grammar:hover,
@@ -2381,7 +2478,7 @@ select {
 .reader-record-mark-stack--grammar[data-reader-record-grammar-active="true"] {
   background-color: var(--reader-mark-grammar-active-fill);
   text-decoration-color: var(--reader-mark-grammar-line-strong);
-  text-decoration-thickness: 0.11em;
+  text-decoration-thickness: 0.09em;
 }
 
 /* --- User note --- */
@@ -2579,11 +2676,10 @@ select {
 
 .reader-record-plate-callout--grammar-row[data-reader-record-callout-collapsed="false"]
   [data-reader-record-markdown-content="plate"] {
-  margin-top: 0.58rem;
-  border: 1px solid color-mix(in srgb, var(--grammar-violet) 10%, transparent);
-  border-radius: 8px;
-  background-color: color-mix(in srgb, var(--grammar-violet) 3.5%, var(--surface));
-  padding: 0.68rem 0.78rem;
+  margin-top: 0.46rem;
+  border-top: 1px solid color-mix(in srgb, var(--grammar-violet) 12%, transparent);
+  background-color: transparent;
+  padding: 0.5rem 0 0.04rem;
 }
 
 .reader-record-plate-callout-row-controls {
@@ -2714,9 +2810,11 @@ select {
 }
 
 .reader-record-plate-sentence-analysis[data-reader-record-sentence-analysis-collapsed="false"] {
-  border-color: color-mix(in srgb, var(--context-blue) 16%, var(--hairline));
-  border-radius: 8px;
-  background-color: color-mix(in srgb, var(--context-blue) 2.4%, transparent);
+  border-right-color: transparent;
+  border-left-color: transparent;
+  border-radius: 0;
+  background-color: transparent;
+  padding-inline: 0;
 }
 
 .reader-record-plate-sentence-analysis-header {
@@ -2763,6 +2861,10 @@ select {
 }
 
 .reader-record-plate-sentence-analysis [data-reader-record-sentence-analysis-chunk] {
+  border-color: transparent;
+  border-top: 1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
+  border-radius: 0;
+  background: transparent;
   transition:
     background-color 140ms ease,
     border-color 140ms ease,
@@ -2770,8 +2872,14 @@ select {
 }
 
 .reader-record-plate-sentence-analysis
+  [data-reader-record-sentence-analysis-chunk]:first-child {
+  border-top-color: transparent;
+}
+
+.reader-record-plate-sentence-analysis
   [data-reader-record-sentence-analysis-chunk-active="true"] {
-  background-color: rgba(14, 165, 233, 0.07);
+  border-radius: var(--radius-xs);
+  background-color: color-mix(in srgb, var(--context-blue) 5%, transparent);
   box-shadow: none;
 }
 
