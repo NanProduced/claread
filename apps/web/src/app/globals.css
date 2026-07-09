@@ -152,6 +152,11 @@ body {
   background: var(--reader-paper);
 }
 
+.app-shell[data-app-sidebar-state="overlay"] {
+  --app-shell-sidebar-width: 0px;
+  --reader-record-app-sidebar-width: 0px;
+}
+
 .app-workspace-sidebar[data-app-sidebar-state="overlay"] .app-nav-surface-shadow {
   box-shadow: none;
 }
@@ -2174,23 +2179,22 @@ select {
   );
 }
 
-.app-shell[data-app-sidebar-state="overlay"] .reader-record-dictionary-rail--docked {
-  left: calc(
-    var(--app-shell-sidebar-width-locked) + var(--reader-record-dictionary-rail-gap)
-  );
+.app-shell[data-app-sidebar-state="overlay"] [data-reader-record-dictionary-rail="docked"].reader-record-dictionary-rail--docked {
+  left: var(--reader-record-dictionary-rail-left-offset);
   max-width: calc(
-    100vw - var(--app-shell-sidebar-width-locked) -
-      var(--reader-record-dictionary-rail-gap) - 0.75rem
+    100vw - var(--reader-record-dictionary-rail-left-offset) - 0.75rem
   );
 }
 
 .reader-record-outline-slot {
-  position: absolute;
-  top: 0;
-  bottom: 0;
+  position: fixed;
+  top: 50%;
   right: var(--reader-record-outline-right-offset);
+  z-index: 30;
   display: none;
   width: var(--reader-record-outline-mini-width);
+  height: min(72vh, 42rem);
+  transform: translateY(-50%);
 }
 
 /* Mini rail visible once the reading area is wide enough for a right-edge strip. */

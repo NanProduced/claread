@@ -176,6 +176,7 @@ interface NavigationPanelProps {
   activeUnitId: string | null;
   panelOpen: boolean;
   panelAnchorTopPx: number | null;
+  anchorMode?: "hover" | "center";
   className?: string;
   onItemClick: (unitId: string) => void;
   onItemKeyDown: (
@@ -189,6 +190,7 @@ interface NavigationPanelProps {
 function NavigationPanel({
   items,
   activeUnitId,
+  anchorMode = "hover",
   panelOpen,
   panelAnchorTopPx,
   className,
@@ -197,12 +199,14 @@ function NavigationPanel({
   onMouseEnter,
   onMouseLeave,
 }: NavigationPanelProps) {
+  const shouldUseHoverAnchor = anchorMode === "hover" && panelAnchorTopPx !== null;
+
   return (
     <div
       data-testid="reader-record-navigation-panel"
       data-reader-record-navigation-panel="true"
       data-reader-record-navigation-panel-anchor-y={
-        panelAnchorTopPx !== null ? String(Math.round(panelAnchorTopPx)) : undefined
+        shouldUseHoverAnchor ? String(Math.round(panelAnchorTopPx)) : undefined
       }
       className={cn(
         "reader-record-navigation-panel motion-reduce:transition-none",
@@ -213,7 +217,7 @@ function NavigationPanel({
           : "invisible translate-x-2 scale-[0.98] opacity-0 pointer-events-none",
         className,
       )}
-      style={panelAnchorTopPx !== null ? { top: `${panelAnchorTopPx}px` } : undefined}
+      style={shouldUseHoverAnchor ? { top: `${panelAnchorTopPx}px` } : undefined}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       aria-hidden={!panelOpen}
@@ -251,8 +255,8 @@ export interface ReaderRecordNavigationRailProps {
   className?: string;
   /**
    * `viewport` keeps the rail fixed to the viewport right edge (legacy).
-   * `canvas` anchors the rail inside the Reader Canvas Grid outline slot,
-   * which is the default inside ReaderRecordPlateSurface.
+   * `canvas` fills the Reader Canvas outline slot; the slot owns responsive
+   * visibility and viewport pinning inside ReaderRecordPlateSurface.
    */
   layout?: "viewport" | "canvas";
 }
@@ -521,7 +525,7 @@ export function ReaderRecordNavigationRail({
       className={cn(
         "hidden z-30 md:flex",
         isCanvas
-          ? "reader-record-navigation-rail--canvas sticky top-1/2 h-[min(72vh,42rem)] -translate-y-1/2"
+          ? "reader-record-navigation-rail--canvas relative h-full w-full"
           : "fixed right-3 top-1/2 h-[min(72vh,42rem)] -translate-y-1/2",
         // Viewport-mode legacy shift when Ask is open. Canvas mode relies on
         // the Reader Canvas CSS variables instead of this clamp.
@@ -539,6 +543,7 @@ export function ReaderRecordNavigationRail({
         activeUnitId={activeUnitId}
         panelOpen={panelOpen}
         panelAnchorTopPx={panelAnchorTopPx}
+        anchorMode={isCanvas ? "center" : "hover"}
         onItemClick={handleItemClick}
         onItemKeyDown={handleItemKeyDown}
         onMouseEnter={keepOpenPanel}

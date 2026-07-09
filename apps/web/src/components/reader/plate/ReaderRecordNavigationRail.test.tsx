@@ -504,6 +504,43 @@ describe("ReaderRecordNavigationRail", () => {
     expect(panel.style.top).toBe("340px");
   });
 
+  it("keeps the canvas detail panel centered instead of following hover coordinates", async () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+      { unit_id: "unit_2", order_index: 1, label: "Beta" },
+      { unit_id: "unit_3", order_index: 2, label: "Gamma" },
+    ]);
+    const plateDocument = makePlateDocument([
+      makeParagraph("unit_1", "Alpha paragraph."),
+      makeParagraph("unit_2", "Beta paragraph."),
+      makeParagraph("unit_3", "Gamma paragraph."),
+    ]);
+    renderTargets(["unit_1", "unit_2", "unit_3"]);
+
+    render(
+      <ReaderRecordNavigationRail
+        snapshot={snapshot}
+        plateDocument={plateDocument}
+        layout="canvas"
+      />,
+    );
+
+    const rail = screen.getByTestId("reader-record-navigation-rail");
+    const miniRail = screen.getByTestId("reader-record-mini-rail");
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    setRectTop(rail, 100, 420);
+
+    fireEvent.mouseEnter(miniRail, { clientY: 440 });
+    await waitFor(() => {
+      expect(panel.classList.contains("pointer-events-none")).toBe(false);
+    });
+
+    expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBeUndefined();
+    expect(panel.style.top).toBe("");
+    expect(panel.className).toContain("top-1/2");
+    expect(panel.className).toContain("-translate-y-1/2");
+  });
+
   it("scrolls the unit start target into view using window.scrollTo", () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
@@ -903,7 +940,10 @@ describe("ReaderRecordNavigationRail", () => {
     const rail = screen.getByTestId("reader-record-navigation-rail");
     expect(rail.dataset.layout).toBe("canvas");
     expect(rail.className).toContain("reader-record-navigation-rail--canvas");
-    expect(rail.className).toContain("sticky");
+    expect(rail.className).toContain("relative");
+    expect(rail.className).toContain("h-full");
+    expect(rail.className).toContain("w-full");
+    expect(rail.className).not.toContain("sticky");
     expect(rail.className).not.toContain("fixed");
     expect(rail.className).not.toContain("right-3");
   });

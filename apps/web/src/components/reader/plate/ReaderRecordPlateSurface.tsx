@@ -2923,15 +2923,14 @@ export function ReaderRecordPlateSurface({
     strategy: "fixed",
   });
   const [dictionaryOpen, setDictionaryOpen] = useState(false);
+  const dictionaryRailVisible =
+    dictionaryOpen && !(isWorkspaceShell && sidebarMode === "locked");
   const quickPeekOpen =
     !dictionaryOpen && (lookupState.kind !== "idle" || inspectState !== null);
 
   useEffect(() => {
     if (isWorkspaceShell && sidebarMode === "locked" && dictionaryOpen) {
-      const timeoutId = window.setTimeout(() => {
-        setDictionaryOpen(false);
-      }, 0);
-      return () => window.clearTimeout(timeoutId);
+      setDictionaryOpen(false);
     }
     return undefined;
   }, [dictionaryOpen, isWorkspaceShell, sidebarMode]);
@@ -5108,7 +5107,7 @@ export function ReaderRecordPlateSurface({
           onActionExecuted={handleAskActionExecuted}
           onSupplementDeleted={handleAskSupplementDeleted}
         />
-        {dictionaryOpen ? (
+        {dictionaryRailVisible ? (
           <div
             className="reader-tool-surface reader-tool-surface--rail reader-record-dictionary-rail--docked fixed top-14 bottom-3 z-40 hidden xl:block"
             data-reader-record-dictionary-rail="docked"
@@ -5145,7 +5144,7 @@ export function ReaderRecordPlateSurface({
             />
           </div>
         ) : null}
-        {dictionaryOpen ? (
+        {dictionaryRailVisible ? (
           <div
             className="reader-tool-surface reader-tool-surface--compact fixed inset-x-3 bottom-3 z-50 flex max-h-[72vh] flex-col xl:hidden"
             data-reader-record-dictionary-rail="sheet"

@@ -254,16 +254,11 @@ export function ReaderQuickPeek({
   const disambiguationResult = result?.kind === "disambiguation" ? result : null;
   const notFoundResult = result?.kind === "not_found" ? result : null;
   const previewMeaning = entryResult ? firstMeaning(entryResult) : "";
-  const glossaryDuplicatesPreview =
-    isVocabHighlight &&
-    Boolean(glossaryText.trim()) &&
-    Boolean(previewMeaning.trim()) &&
-    glossaryText.trim().toLowerCase() === previewMeaning.trim().toLowerCase();
   const compactCandidates = disambiguationResult?.candidates.slice(0, 2) ?? [];
   const hiddenCandidateCount = Math.max((disambiguationResult?.candidates.length ?? 0) - compactCandidates.length, 0);
   const hasVocabReadingHint =
     isVocabHighlight &&
-    ((!glossaryDuplicatesPreview && Boolean(glossaryText)) || Boolean(glossaryReason));
+    (Boolean(glossaryText) || Boolean(glossaryReason));
   const lookupEyebrow = lookup.label ?? (lookup.lookupType === "phrase" ? "短语" : "词典");
   const lookupEyebrowClassName = lookup.annotationType
     ? getInspectColorClass(lookup.annotationType)
@@ -307,19 +302,46 @@ export function ReaderQuickPeek({
         body={
           <>
             {isVocabHighlight && (entryResult || disambiguationResult || notFoundResult || hasVocabReadingHint) ? (
-              <span className="mt-3 block rounded-[8px] border border-hairline/65 bg-ink/[0.01] px-3 py-2.5">
+              <span className="mt-3 block space-y-2.5">
+                {hasVocabReadingHint ? (
+                  <span className="block">
+                    {glossaryText ? (
+                      <span className="block text-[0.92rem] leading-6 text-ink">{glossaryText}</span>
+                    ) : null}
+                    {glossaryReason ? (
+                      <span
+                        className={cn(
+                          "block text-[0.78rem] leading-5 text-muted",
+                          glossaryText ? "mt-1" : "",
+                        )}
+                      >
+                        {glossaryReason}
+                      </span>
+                    ) : null}
+                  </span>
+                ) : null}
                 {entryResult ? (
-                  <>
-                    <span className="block text-[0.68rem] font-semibold tracking-[0.08em] text-muted">
-                      词典释义
-                    </span>
-                    <span className="mt-1.5 block text-[0.86rem] leading-6 text-ink-soft">
-                      {previewMeaning || "当前词条暂无简短释义，打开词典可查看完整信息。"}
-                    </span>
-                  </>
+                  <span
+                    className={cn(
+                      "block text-[0.86rem] leading-6 text-ink-soft",
+                      hasVocabReadingHint && "border-t border-hairline/55 pt-2",
+                    )}
+                  >
+                    {hasVocabReadingHint ? (
+                      <span className="mb-1 block text-[0.68rem] font-semibold tracking-[0.08em] text-muted">
+                        词典释义
+                      </span>
+                    ) : null}
+                    {previewMeaning || "当前词条暂无简短释义，打开词典可查看完整信息。"}
+                  </span>
                 ) : null}
                 {disambiguationResult ? (
-                  <>
+                  <span
+                    className={cn(
+                      "block",
+                      hasVocabReadingHint && "border-t border-hairline/55 pt-2",
+                    )}
+                  >
                     <span className="block text-[0.68rem] font-semibold tracking-[0.08em] text-muted">
                       选择候选词条
                     </span>
@@ -351,22 +373,21 @@ export function ReaderQuickPeek({
                         另有 {hiddenCandidateCount} 个候选，打开词典查看完整列表。
                       </span>
                     ) : null}
-                  </>
+                  </span>
                 ) : null}
                 {notFoundResult ? (
-                  <span className="block text-sm leading-6 text-muted">当前词典暂未收录。</span>
-                ) : null}
-                {hasVocabReadingHint ? (
-                  <span className={`${entryResult || disambiguationResult || notFoundResult ? "mt-2 border-t border-hairline/50 pt-2" : ""} block`}>
-                    <span className="block text-[0.68rem] font-semibold tracking-[0.08em] text-vocab-amber">
-                      阅读提示
-                    </span>
-                    {glossaryText && !glossaryDuplicatesPreview ? (
-                      <span className="mt-1 block text-[0.82rem] leading-5 text-ink-soft">{glossaryText}</span>
+                  <span
+                    className={cn(
+                      "block text-sm leading-6 text-muted",
+                      hasVocabReadingHint && "border-t border-hairline/55 pt-2",
+                    )}
+                  >
+                    {hasVocabReadingHint ? (
+                      <span className="mb-1 block text-[0.68rem] font-semibold tracking-[0.08em] text-muted">
+                        词典释义
+                      </span>
                     ) : null}
-                    {glossaryReason ? (
-                      <span className="mt-1 block text-xs leading-5 text-muted">{glossaryReason}</span>
-                    ) : null}
+                    当前词典暂未收录。
                   </span>
                 ) : null}
               </span>

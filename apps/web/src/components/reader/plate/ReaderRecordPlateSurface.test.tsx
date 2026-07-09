@@ -36,6 +36,7 @@ import {
 } from "@/components/editor/plugins/reader-floating-toolbar-buttons";
 import { Toolbar } from "@/components/ui/toolbar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AppShellLayoutContext } from "@/components/layout/app-shell/app-shell-context";
 
 vi.mock("@/components/editor/plugins/floating-toolbar-kit", async () => {
   const { createPlatePlugin } = await import("platejs/react");
@@ -2894,7 +2895,8 @@ describe("ReaderRecordPlateSurface", () => {
     const contentColumn = plateDocument?.parentElement;
     expect(contentColumn?.className).toContain("max-w-[var(--reader-record-main-width)]");
 
-    // Outline slot is a sibling of the main column, absolutely positioned to the right.
+    // Outline slot stays in the canvas tree for responsive visibility, but is
+    // visually pinned to the viewport center so long documents cannot scroll it away.
     const outlineSlot = body?.querySelector(".reader-record-outline-slot");
     expect(outlineSlot).not.toBeNull();
     expect(outlineSlot?.parentElement).toBe(body);
@@ -2933,13 +2935,22 @@ describe("ReaderRecordPlateSurface", () => {
     expect(globalsSource).toContain("padding-top: var(--reader-record-headroom);");
     expect(globalsSource).toContain(".reader-record-dictionary-rail--docked {");
     expect(globalsSource).toContain(
-      '.app-shell[data-app-sidebar-state="overlay"] .reader-record-dictionary-rail--docked {',
+      '.app-shell[data-app-sidebar-state="overlay"] [data-reader-record-dictionary-rail="docked"].reader-record-dictionary-rail--docked {',
+    );
+    expect(globalsSource).toContain(
+      "left: var(--reader-record-dictionary-rail-left-offset);",
+    );
+    expect(globalsSource).not.toContain(
+      ".app-shell[data-app-sidebar-state=\"overlay\"] .reader-record-dictionary-rail--docked {\n  left: calc(\n    var(--app-shell-sidebar-width-locked)",
     );
     expect(globalsSource).toContain(".reader-record-outline-slot {");
-    expect(globalsSource).toContain("position: absolute;");
+    expect(globalsSource).toContain("position: fixed;");
+    expect(globalsSource).toContain("top: 50%;");
     expect(globalsSource).toContain(
       "right: var(--reader-record-outline-right-offset);",
     );
+    expect(globalsSource).toContain("height: min(72vh, 42rem);");
+    expect(globalsSource).toContain("transform: translateY(-50%);");
   });
 
   it("anchors the navigation rail inside the canvas outline slot", () => {
@@ -3890,6 +3901,66 @@ describe("ReaderRecordPlateSurface", () => {
     expect(lookupUrl.searchParams.get("context")).toContain("policy choices");
   });
 
+  it("keeps the dictionary rail closed when the workspace sidebar is locked", async () => {
+    const releaseSidebarForReadingTool = vi.fn();
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(makeDictionaryEntryResult("policy choices")), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(
+      <AppShellLayoutContext.Provider
+        value={{
+          variant: "workspace",
+          sidebarMode: "locked",
+          isWorkspaceShell: true,
+          lockSidebar: () => undefined,
+          closeSidebar: () => undefined,
+          showSidebarOverlay: () => undefined,
+          hideSidebarOverlay: () => undefined,
+          releaseSidebarForReadingTool,
+        }}
+      >
+        <ReaderRecordPlateSurface snapshot={makeGroupedSeg2PhraseGlossSnapshot()} />
+      </AppShellLayoutContext.Provider>,
+    );
+    const seg2Mark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_seg_2"]',
+    );
+    expect(seg2Mark).not.toBeNull();
+    if (!seg2Mark) {
+      throw new Error("Expected seg_2 vocabulary mark");
+    }
+
+    fireEvent.click(seg2Mark);
+
+    const panel = await screen.findByTestId("reader-record-plate-lookup-panel");
+    fireEvent.click(within(panel).getByLabelText("打开词典"));
+
+    expect(releaseSidebarForReadingTool).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(
+        container.querySelector('[data-reader-record-dictionary-rail="docked"]'),
+      ).toBeNull();
+      expect(
+        container.querySelector('[data-reader-record-dictionary-rail="sheet"]'),
+      ).toBeNull();
+    });
+  });
+
   it("drops AI annotation context after a dictionary disambiguation candidate is selected", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (typeof url === "string" && url.includes("/api/web/favorites")) {
@@ -4059,7 +4130,7 @@ describe("ReaderRecordPlateSurface", () => {
     const vocabMark = makeVocabularyMark({
       item_type: "vocab_highlight",
       headword: "memory",
-      brief_explanation: "the ability to remember information",
+      brief_explanation: "AI reading note for this sentence.",
       reason: "Useful for this source sentence.",
     });
     const snapshot = {
@@ -4090,9 +4161,18 @@ describe("ReaderRecordPlateSurface", () => {
     expect(lookupParams.get("word")).toBe("memory");
     expect(lookupParams.get("type")).toBe("word");
     expect(lookupParams.get("context")).toBe(SOURCE_TEXT);
-    expect(await within(panel).findByText("词典释义")).toBeTruthy();
-    expect(within(panel).getByText("阅读提示")).toBeTruthy();
+    expect(within(panel).getByText("词典释义")).toBeTruthy();
+    expect(within(panel).queryByText("阅读提示")).toBeNull();
+    expect(within(panel).getByText("AI reading note for this sentence.")).toBeTruthy();
+    expect(within(panel).getByText("the ability to remember information")).toBeTruthy();
     expect(within(panel).getByText("Useful for this source sentence.")).toBeTruthy();
+    const panelText = panel.textContent ?? "";
+    expect(panelText.indexOf("AI reading note for this sentence.")).toBeLessThan(
+      panelText.indexOf("词典释义"),
+    );
+    expect(panelText.indexOf("词典释义")).toBeLessThan(
+      panelText.indexOf("the ability to remember information"),
+    );
   });
 
   it("runs dictionary lookup only for a valid single anchor draft", async () => {
