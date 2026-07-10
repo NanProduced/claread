@@ -2967,7 +2967,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(rail?.getAttribute("data-layout")).toBe("canvas");
   });
 
-  it("opens Ask Claread and adds the ask-open modifier to the canvas without overlapping the outline slot", async () => {
+  it("opens contextual Ask Claread as a floating panel without moving the outline slot", async () => {
     installReaderAskFetchMock();
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
@@ -2993,13 +2993,22 @@ describe("ReaderRecordPlateSurface", () => {
     await openAskPanelFromToolbar(askButton);
 
     await waitFor(() => {
-      expect(canvas?.className).toContain("reader-record-canvas--ask-open");
+      expect(screen.getByRole("button", { name: "关闭 Ask Claread" })).toBeTruthy();
     });
+    expect(canvas?.className).not.toContain("reader-record-canvas--ask-open");
 
     // Ask panel is rendered as a sibling of the canvas, not nested inside it.
     const askPanel = container.querySelector(".ai-workspace-panel");
     expect(askPanel).not.toBeNull();
+    expect(askPanel?.className).toContain("ai-workspace-panel--surface-floating");
     expect(askPanel?.parentElement).toBe(canvas?.parentElement);
+
+    fireEvent.click(screen.getByRole("button", { name: "在侧边栏打开 Ask Claread" }));
+    await waitFor(() => {
+      expect(canvas?.className).toContain("reader-record-canvas--ask-open");
+    });
+    expect(askPanel?.className).toContain("ai-workspace-panel--surface-sidecar");
+    expect(screen.getByRole("button", { name: "收起 AI 工作区" })).toBeTruthy();
   });
 
   it("renders the action bar as a single horizontal control strip on desktop", () => {
@@ -4972,9 +4981,10 @@ describe("ReaderRecordPlateSurface", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: "收起 AI 工作区" }),
+        screen.getByRole("button", { name: "关闭 Ask Claread" }),
       ).toBeTruthy();
     });
+    expect(screen.getByRole("button", { name: "在侧边栏打开 Ask Claread" })).toBeTruthy();
     expect(
       fetchMock.mock.calls.some(([input]) =>
         String(input).includes(
@@ -5081,9 +5091,10 @@ describe("ReaderRecordPlateSurface", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: "收起 AI 工作区" }),
+        screen.getByRole("button", { name: "关闭 Ask Claread" }),
       ).toBeTruthy();
     });
+    expect(screen.getByRole("button", { name: "在侧边栏打开 Ask Claread" })).toBeTruthy();
     expect(
       fetchMock.mock.calls.some(([input]) =>
         String(input).includes(

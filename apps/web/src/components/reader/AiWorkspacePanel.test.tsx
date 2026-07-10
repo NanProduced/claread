@@ -480,6 +480,18 @@ describe("AiWorkspacePanel", () => {
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
 
+  it("uses the Claread AI mark for the closed launcher", () => {
+    const onToggle = vi.fn();
+    const { container } = renderPanel({ open: false, onToggle });
+
+    const launcher = screen.getByRole("button", { name: "打开 AI 工作区" });
+    expect(container.querySelector("[data-claread-ai-mark='true']")).not.toBeNull();
+    expect(container.querySelector("[data-claread-ai-mark-badge='true']")).not.toBeNull();
+
+    fireEvent.click(launcher);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
   it("removes legacy thread and task-mode controls from the Ask surface", async () => {
     render(
       <AiWorkspacePanel

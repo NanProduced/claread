@@ -11,7 +11,10 @@ import {
   Sparkles,
 } from "lucide-react";
 
-import { AiWorkspacePanel } from "@/components/reader/AiWorkspacePanel";
+import {
+  AiWorkspacePanel,
+  type AiWorkspaceSurface,
+} from "@/components/reader/AiWorkspacePanel";
 import {
   ReaderDictionaryRail,
   ReaderQuickPeek,
@@ -508,6 +511,8 @@ export function ReaderRecordWorkbenchSurface({
   const [dictionarySearchExpanded, setDictionarySearchExpanded] =
     useState(false);
   const [askOpen, setAskOpen] = useState(false);
+  const [askSurface, setAskSurface] =
+    useState<AiWorkspaceSurface>("sidecar");
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>(
     [],
   );
@@ -694,10 +699,14 @@ export function ReaderRecordWorkbenchSurface({
   }, []);
 
   const openAskPanel = useCallback(
-    (attachment?: ReaderAskAttachment | null) => {
+    (
+      attachment?: ReaderAskAttachment | null,
+      surface: AiWorkspaceSurface = "sidecar",
+    ) => {
       if (attachment) {
         setAskAttachments([attachment]);
       }
+      setAskSurface(surface);
       setAskOpen(true);
       setDictionaryPanelOpen(false);
       setLookupPreviewOpen(false);
@@ -712,14 +721,14 @@ export function ReaderRecordWorkbenchSurface({
   );
 
   const handleOpenAskPanel = useCallback(() => {
-    openAskPanel(currentAskSelectionAttachment);
+    openAskPanel(currentAskSelectionAttachment, "sidecar");
   }, [currentAskSelectionAttachment, openAskPanel]);
 
   const handleAskFromSelection = useCallback(() => {
     if (!currentAskSelectionAttachment) {
       return;
     }
-    openAskPanel(currentAskSelectionAttachment);
+    openAskPanel(currentAskSelectionAttachment, "floating");
   }, [currentAskSelectionAttachment, openAskPanel]);
 
   const handleLookupSnapshot = useCallback(
@@ -1401,6 +1410,7 @@ export function ReaderRecordWorkbenchSurface({
       <AiWorkspacePanel
         open={askOpen}
         presentation={isImmersiveMode ? "immersive" : "intensive"}
+        surface={askSurface}
         pageIdentity={askPageIdentity}
         recordId={snapshot.record_id}
         recordScope="reading_record"
@@ -1409,6 +1419,7 @@ export function ReaderRecordWorkbenchSurface({
         attachments={askAttachments}
         onRemoveAttachment={handleRemoveAskAttachment}
         onClearAttachments={() => setAskAttachments([])}
+        onOpenSidecar={() => setAskSurface("sidecar")}
         onToggle={() => setAskOpen(false)}
       />
 

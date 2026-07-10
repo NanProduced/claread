@@ -9,6 +9,7 @@ import {
   MessageSquare,
   PencilLine,
   Quote,
+  PanelRightOpen,
   RotateCcw,
   Search,
   Sparkles,
@@ -65,6 +66,7 @@ import {
 } from "@/components/ui/command";
 import { Loader } from "@/components/ui/loader";
 import { SystemMessage } from "@/components/ui/system-message";
+import { ClareadAiMark } from "@/components/brand/ClareadAiMark";
 import { IconButton } from "@/components/primitives/icon-button";
 import { AskComposer } from "@/components/reader/ask-chat/AskComposer";
 import { ArticleRagCitationList } from "@/components/reader/ask-chat/ArticleRagCitationList";
@@ -143,7 +145,7 @@ const workspaceRelatedRecordItemClassName = cn(
 const workspaceLauncherClassName = cn(
   readerCommandControl,
   "group fixed bottom-[5.25rem] right-4 z-40 h-14 w-14 rounded-full border border-hairline/85",
-  "bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] text-ink shadow-[0_14px_34px_rgba(17,17,17,0.08)] hover:border-muted hover:bg-reader-paper hover:shadow-[0_18px_38px_rgba(17,17,17,0.1)] active:bg-[linear-gradient(180deg,rgba(246,243,236,0.98),rgba(241,237,227,1))] active:shadow-[0_10px_24px_rgba(17,17,17,0.08)]",
+  "bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] text-ink shadow-[0_14px_34px_rgba(17,17,17,0.08)] hover:border-muted hover:bg-reader-paper hover:shadow-[0_18px_38px_rgba(17,17,17,0.1)] active:scale-[0.98] active:bg-[linear-gradient(180deg,rgba(246,243,236,0.98),rgba(241,237,227,1))] active:shadow-[0_10px_24px_rgba(17,17,17,0.08)]",
   "dark:bg-[linear-gradient(180deg,rgba(42,47,53,0.96),rgba(30,34,39,0.98))] dark:text-ink dark:shadow-[0_14px_34px_rgba(0,0,0,0.28)] dark:hover:border-muted dark:hover:bg-[#2a2f35] dark:active:bg-[linear-gradient(180deg,rgba(38,43,49,0.98),rgba(28,32,37,1))] dark:active:shadow-[0_10px_24px_rgba(0,0,0,0.22)]",
   "md:bottom-6 md:right-6",
 );
@@ -2782,9 +2784,12 @@ function StarterState({
   );
 }
 
+export type AiWorkspaceSurface = "sidecar" | "floating";
+
 export interface AiWorkspacePanelProps {
   open: boolean;
   presentation?: "intensive" | "immersive";
+  surface?: AiWorkspaceSurface;
   pageIdentity: ReaderAskPageIdentity;
   recordId: string;
   recordScope?: "analysis" | "reading_record";
@@ -2806,6 +2811,7 @@ export interface AiWorkspacePanelProps {
   onComposerTextareaFocus?: () => void;
   onComposerTextareaBlur?: () => void;
   onPanelPointerDownOutsideComposer?: () => void;
+  onOpenSidecar?: () => void;
   onToggle: () => void;
   onAnnotationFeedback?: (params: { entryType: string; entryId: string }) => void;
   analysisRecordId?: string;
@@ -2817,6 +2823,7 @@ export function AiWorkspacePanel({
   pageIdentity,
   pendingQuickActionRequest,
   presentation = "intensive",
+  surface = "sidecar",
   open,
   recordId,
   recordScope = "analysis",
@@ -2832,6 +2839,7 @@ export function AiWorkspacePanel({
   onComposerTextareaBlur,
   onComposerTextareaFocus,
   onPanelPointerDownOutsideComposer,
+  onOpenSidecar,
   onPendingQuickActionConsumed,
   onSupplementDeleted,
   onRemoveAttachment,
@@ -2839,6 +2847,7 @@ export function AiWorkspacePanel({
   onAnnotationFeedback,
   analysisRecordId,
 }: AiWorkspacePanelProps) {
+  const isFloatingSurface = surface === "floating";
   const isReadingRecordScope = recordScope === "reading_record";
   const supportsRelatedRecordContext = !isReadingRecordScope;
   const scopedReaderAskUrl = (pathname: string) => {
@@ -3664,26 +3673,25 @@ export function AiWorkspacePanel({
         aria-label="打开 AI 工作区"
         title="打开 Ask Claread"
       >
-        <span className="brand-aperture-shell relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border">
-          <span className="absolute inset-[3px] rounded-full border border-hairline/65" />
-          <img
-            src="/brand/claread-icon-fullcolor.png"
-            alt=""
-            aria-hidden="true"
-            className={cn(
-              "brand-aperture-mark h-[22px] w-[22px] object-contain transition-opacity",
-              readerTransitionStandard,
-              "group-hover:opacity-95",
-            )}
-          />
-        </span>
+        <ClareadAiMark
+          size="lg"
+          className={cn("transition-transform group-hover:scale-[1.035]", readerTransitionStandard)}
+        />
       </button>
     );
   }
 
   return (
     <aside
-      className={`ai-workspace-panel ai-workspace-panel--${presentation} fixed inset-x-3 bottom-3 z-50 flex max-h-[82vh] flex-col overflow-hidden rounded-xl border bg-background shadow-lg 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[var(--reader-record-ask-panel-width)] 2xl:min-w-0 2xl:max-h-none`}
+      className={cn(
+        "ai-workspace-panel",
+        `ai-workspace-panel--${presentation}`,
+        `ai-workspace-panel--surface-${surface}`,
+        "fixed z-50 flex flex-col overflow-hidden rounded-xl border bg-background shadow-lg",
+        isFloatingSurface
+          ? "inset-x-4 bottom-4 max-h-[min(76vh,44rem)] md:left-1/2 md:right-auto md:bottom-auto md:top-[18vh] md:w-[min(42rem,calc(100vw-2rem))] md:-translate-x-1/2 xl:top-[14vh] 2xl:left-1/2 2xl:right-auto 2xl:inset-y-auto 2xl:w-[min(42rem,calc(100vw-2rem))] 2xl:min-w-0 2xl:max-h-[min(76vh,44rem)]"
+          : "inset-x-3 bottom-3 max-h-[82vh] 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[var(--reader-record-ask-panel-width)] 2xl:min-w-0 2xl:max-h-none",
+      )}
       onPointerDownCapture={(event) => {
         const target = event.target instanceof HTMLElement ? event.target : null;
         if (!target) {
@@ -3701,14 +3709,23 @@ export function AiWorkspacePanel({
       <div className="border-b bg-background px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
-            <div className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border bg-background">
-              <Sparkles className="h-4 w-4 text-lens-blue" />
-            </div>
+            <ClareadAiMark size="sm" className="shadow-none" badgeClassName="shadow-none" />
             <div className="min-w-0">
               <h2 className="truncate text-[15px] font-semibold tracking-[-0.02em] text-ink">Ask Claread</h2>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            {isFloatingSurface && onOpenSidecar ? (
+              <IconButton
+                variant="quiet"
+                size="sm"
+                onClick={onOpenSidecar}
+                aria-label="在侧边栏打开 Ask Claread"
+                title="在侧边栏打开"
+              >
+                <PanelRightOpen aria-hidden="true" className="h-4 w-4" />
+              </IconButton>
+            ) : null}
             <IconButton
               variant="quiet"
               size="sm"
@@ -3720,7 +3737,12 @@ export function AiWorkspacePanel({
             >
               <RotateCcw aria-hidden="true" className="h-4 w-4" />
             </IconButton>
-            <IconButton variant="quiet" size="sm" onClick={onToggle} aria-label="收起 AI 工作区">
+            <IconButton
+              variant="quiet"
+              size="sm"
+              onClick={onToggle}
+              aria-label={isFloatingSurface ? "关闭 Ask Claread" : "收起 AI 工作区"}
+            >
               <X aria-hidden="true" className="h-4 w-4" />
             </IconButton>
           </div>

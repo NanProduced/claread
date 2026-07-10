@@ -16,7 +16,10 @@ import type {
   Ref,
 } from "react";
 
-import { AiWorkspacePanel } from "@/components/reader/AiWorkspacePanel";
+import {
+  AiWorkspacePanel,
+  type AiWorkspaceSurface,
+} from "@/components/reader/AiWorkspacePanel";
 import { useAppShellLayout } from "@/components/layout/app-shell";
 import { ReaderRecordNavigationRail } from "@/components/reader/plate/ReaderRecordNavigationRail";
 import type { DictLookupTypeDto, WebDictResult } from "@/types/api/dict";
@@ -3018,6 +3021,8 @@ export function ReaderRecordPlateSurface({
     });
   }, []);
   const [askOpen, setAskOpen] = useState(false);
+  const [askSurface, setAskSurface] =
+    useState<AiWorkspaceSurface>("sidecar");
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
   const [pendingAskRequest, setPendingAskRequest] =
     useState<PendingReaderRecordAskRequest | null>(null);
@@ -3672,6 +3677,7 @@ export function ReaderRecordPlateSurface({
   const openAskPanel = useCallback((
     attachment?: ReaderAskAttachment | null,
     pendingRequest?: PendingReaderRecordAskRequest | null,
+    surface: AiWorkspaceSurface = "sidecar",
   ) => {
     if (attachment === null) {
       setAskAttachments([]);
@@ -3679,6 +3685,7 @@ export function ReaderRecordPlateSurface({
       setAskAttachments([attachment]);
     }
     setPendingAskRequest(pendingRequest ?? null);
+    setAskSurface(surface);
     setAskOpen(true);
     setDictionaryOpen(false);
     setDictionaryAIPanelOpen(false);
@@ -3695,14 +3702,18 @@ export function ReaderRecordPlateSurface({
     if (!inspectState) {
       return;
     }
-    openAskPanel(askAttachmentFromVocabularyInspect(askPageIdentity, inspectState));
+    openAskPanel(
+      askAttachmentFromVocabularyInspect(askPageIdentity, inspectState),
+      null,
+      "floating",
+    );
   }, [askPageIdentity, inspectState, openAskPanel]);
 
   const handleAskFromSelection = useCallback(() => {
     if (!currentAskSelectionAttachment) {
       return;
     }
-    openAskPanel(currentAskSelectionAttachment);
+    openAskPanel(currentAskSelectionAttachment, null, "floating");
   }, [currentAskSelectionAttachment, openAskPanel]);
 
   const handleAskPromptFromSelection = useCallback(
@@ -3721,7 +3732,7 @@ export function ReaderRecordPlateSurface({
         attachments: [currentAskSelectionAttachment],
         submissionMode: request.submissionMode ?? "chat",
       };
-      openAskPanel(currentAskSelectionAttachment, pendingRequest);
+      openAskPanel(currentAskSelectionAttachment, pendingRequest, "floating");
     },
     [currentAskSelectionAttachment, openAskPanel],
   );
@@ -3754,11 +3765,11 @@ export function ReaderRecordPlateSurface({
           anchor,
         ),
       },
-    });
+    }, null, "floating");
   }, [askPageIdentity, noteMenu, openAskPanel, snapshot.record.generation, snapshot.record_id]);
 
   const handleRequestAI = useCallback(() => {
-    openAskPanel(currentAskSelectionAttachment);
+    openAskPanel(currentAskSelectionAttachment, null, "sidecar");
   }, [currentAskSelectionAttachment, openAskPanel]);
 
   const handleDictionarySearch = useCallback(
@@ -4812,6 +4823,8 @@ export function ReaderRecordPlateSurface({
     }
   }, [noteMenu, localUserAssets, onRequestSnapshotReload, writeState.kind]);
 
+  const askSidecarOpen = askOpen && askSurface === "sidecar";
+
   return (
     <div
       data-testid="reader-record-plate-surface"
@@ -4833,7 +4846,7 @@ export function ReaderRecordPlateSurface({
         <div
           className={cn(
             "reader-record-canvas",
-            askOpen && "reader-record-canvas--ask-open",
+            askSidecarOpen && "reader-record-canvas--ask-open",
           )}
         >
           <div className="reader-record-canvas__body">
@@ -5084,7 +5097,7 @@ export function ReaderRecordPlateSurface({
             <ReaderRecordNavigationRail
               snapshot={snapshot}
               plateDocument={plateDocument}
-              askOpen={askOpen}
+              askOpen={askSidecarOpen}
               layout="canvas"
             />
           </aside>
@@ -5093,6 +5106,7 @@ export function ReaderRecordPlateSurface({
       <AiWorkspacePanel
           open={askOpen}
           presentation={surfaceMode}
+          surface={askSurface}
           pageIdentity={askPageIdentity}
           recordId={snapshot.record_id}
           recordScope="reading_record"
@@ -5103,6 +5117,7 @@ export function ReaderRecordPlateSurface({
           onRemoveAttachment={handleRemoveAskAttachment}
           onClearAttachments={() => setAskAttachments([])}
           onPendingQuickActionConsumed={() => setPendingAskRequest(null)}
+          onOpenSidecar={() => setAskSurface("sidecar")}
           onToggle={() => setAskOpen(false)}
           onActionExecuted={handleAskActionExecuted}
           onSupplementDeleted={handleAskSupplementDeleted}
