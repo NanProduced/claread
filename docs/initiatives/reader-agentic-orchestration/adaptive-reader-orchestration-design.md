@@ -1,7 +1,7 @@
 # Adaptive Reader Orchestration Design
 
 > Status: formal design draft
-> Last updated: 2026-07-09
+> Last updated: 2026-07-09 (T4.1b structured article batch runtime mode landed)
 > Scope: Reader enhancement execution strategy, quality/cost control, progressive publishing, and longform handling.
 
 This document consolidates the previous analysis-window design notes and temporary research reports into one business-facing architecture document. Temporary development labels are intentionally removed; future work should use the terminology in this document.
@@ -60,28 +60,42 @@ The main strategy families are:
 | Section-oriented longform | Long document with natural sections | Section-level grouped/windowed execution | Current/early sections first |
 | Selective longform | Very long document or user reads only part | Outline/metadata first, lazy section enhancement | Current section or requested region first |
 
-Implementation checkpoint as of 2026-07-09:
+Implementation checkpoint as of 2026-07-10:
 
 - Translation has short-article batch jobs and non-short grouped/windowed
   `translate_article` jobs. It must keep the Translation Group contract:
   batch/window compute cannot collapse display into one sentence, one anchor,
   or one whole unit.
 - Deterministic three-state routing (`short_batch` / `structured_batch` /
-  `grouped_windowed`) is now implemented. Medium articles no longer fall
-  directly from short-path failure into the heavier grouped/windowed path.
-  However, a true `structured article batch` runtime mode is still missing:
-  `STRUCTURED_BATCH` currently reuses the same whole-article batch execution
-  path as `SHORT_BATCH`.
+  `grouped_windowed`) is now implemented, and `STRUCTURED_BATCH` is an
+  auditable runtime mode (T4.1b): it carries a distinct
+  `operation_fingerprint` base (`*_structured_v1`) and `policy_version`
+  (`*_structured_bootstrap_v1`) from `SHORT_BATCH`, records
+  `article_route` + `document_features` on every batch/window job, and a
+  route change (short -> structured on a rebuilt base) triggers
+  `_supersede_stale_fingerprint_jobs`. `SHORT_BATCH` and `GROUPED_WINDOWED`
+  keep their shared `*_v1` fingerprint base to preserve their idempotency
+  contracts; the three-way distinction is completed by `article_route` in
+  `input_json`.
+- Grammar has a compact batch path for `SHORT_BATCH` / `STRUCTURED_BATCH`
+  articles (T4.1c): a single `build_grammar_bundle` / `unit_range` batch
+  job covers all unpublished units in one LLM call; the batch publisher
+  splits the output back into per-unit `grammar_note` /
+  `sentence_analysis` layers. Route-specific fingerprints
+  (`grammar_bundle_article_v1` for short,
+  `grammar_bundle_article_structured_v1` for structured) maintain
+  idempotency and auditability. `GROUPED_WINDOWED` keeps the existing
+  Z+ analysis-window / window-publisher contract unchanged. Worker
+  prompt / budget / release policy for structured batch grammar still
+  reuses the short-batch compact batch path; giving structured batch
+  its own grammar budget/prompt is later work.
+- Grammar also has a windowed implementation path (for `GROUPED_WINDOWED`)
+  with diagnostics for raw candidates, selector decisions, budgets, and
+  failure/no-op causes. A RECORD_DENSITY denominator bug has been fixed,
+  but quantity and quality tuning remain open evaluation work.
 - Vocabulary has short-article batch jobs, non-short grouped jobs, duplicate
   highlight policy, and conservative phrase_gloss guards. Full cross-window /
   whole-record dedup is not claimed.
-- Grammar has a windowed implementation path with diagnostics for raw
-  candidates, selector decisions, budgets, and failure/no-op causes. A
-  RECORD_DENSITY denominator bug has been fixed, but quantity and quality
-  tuning remain open evaluation work.
-- Short article grammar still primarily reuses the windowed analysis path. A
-  lighter short/structured compact grammar path remains a design + implementation
-  gap.
 - This is not yet a complete document-level short / long / very-long strategy
   planner.
 - Section-oriented longform, selective longform, and semantic outline are
@@ -503,16 +517,25 @@ default feedback loop for every intermediate patch.
 - Add mutually exclusive strategy planner.
 - Group/window non-short translation and vocabulary.
 - Add reading-order-oriented release for windowed/grouped paths.
-- Status 2026-07-09: non-short translation and vocabulary grouped execution,
+- Status 2026-07-10: non-short translation and vocabulary grouped execution,
   vocabulary phrase_gloss guards, grammar window diagnostics, the grammar
   RECORD_DENSITY denominator fix, completion state finalization, and
   deterministic short/medium route hardening are implemented. The current
   router uses `estimated_word_count` as the primary signal, `content_utf16_length`
   only as a structured-tier guardrail, and recognizes a `STRUCTURED_BATCH`
-  landing zone for medium articles. The next priority is to give that landing
-  zone a true runtime (`T4.1b`) and to add a lighter short/structured grammar
-  path (`T4.1c`) before expanding the bounded planner / outline-first
-  contracts for long and very long documents.
+  landing zone for medium articles. `STRUCTURED_BATCH` is now an auditable
+  runtime mode (T4.1b landed): it carries a distinct `operation_fingerprint`
+  base and `policy_version` from `SHORT_BATCH`, records `article_route` +
+  `document_features` on every batch/window job, and a route change triggers
+  `_supersede_stale_fingerprint_jobs`. The compact grammar batch path
+  (T4.1c landed) now gives `SHORT_BATCH` / `STRUCTURED_BATCH` articles a
+  single whole-article `build_grammar_bundle` / `unit_range` batch job
+  instead of the heavy Z+ analysis-window path; the batch publisher splits
+  output back into per-unit `grammar_note` / `sentence_analysis` layers.
+  `GROUPED_WINDOWED` keeps the existing Z+ window contract unchanged. The
+  next priority is the bounded LLM document profiler (T4.2) and strategy
+  planner (T4.3) before expanding the outline-first contracts for long and
+  very long documents.
 
 ### P2: SSE And Interaction-Preserving Updates
 

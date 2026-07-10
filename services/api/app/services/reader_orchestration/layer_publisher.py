@@ -12,6 +12,7 @@ from app.contracts.annotation import compute_text_range_hash, slice_by_utf16_off
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 from app.schemas.reader_orchestration import (
+    GrammarBundleOutput,
     GrammarNoteLayerOutput,
     ReaderTextRangeAnchor,
     SentenceAnalysisLayerOutput,
@@ -21,8 +22,12 @@ from app.schemas.reader_orchestration import (
 
 from .event_runtime import ReaderEventEnvelope, ReaderEventRuntime
 from .job_bootstrap import (
+    GRAMMAR_BATCH_JOB_TYPE,
+    GRAMMAR_BATCH_OPERATION_FINGERPRINT,
+    GRAMMAR_BATCH_TARGET_SCOPE,
     GRAMMAR_JOB_TYPE,
     GRAMMAR_OPERATION_FINGERPRINT,
+    GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
     GRAMMAR_TARGET_SCOPE,
     TRANSLATION_BATCH_JOB_TYPE,
     TRANSLATION_BATCH_OPERATION_FINGERPRINT,
@@ -103,6 +108,25 @@ class PublishedGrammarBundle:
     grammar_note_layer: PublishedGrammarLayer | None
     sentence_analysis_layer: PublishedGrammarLayer | None
     events: tuple[ReaderEventEnvelope, ...]
+    no_op: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedGrammarBatch:
+    """T4.1c compact grammar batch publish result.
+
+    One batch job produces N per-unit ``enhancement_layers`` rows
+    (``grammar_note`` and/or ``sentence_analysis`` per unit).
+    ``layer_ids`` / ``layer_types`` preserve the publish order for
+    observability and AI usage recording.
+    """
+
+    reading_record_id: UUID
+    base_id: UUID
+    generation: int
+    layers: tuple[PublishedGrammarLayer, ...]
+    layer_ids: tuple[str, ...]
+    layer_types: tuple[str, ...]
     no_op: bool = False
 
 
@@ -1770,6 +1794,334 @@ class GrammarBundleLayerPublisher:
                     sentence_analysis_layer=sentence_analysis_layer,
                     events=tuple(events),
                     no_op=grammar_note_layer is None and sentence_analysis_layer is None,
+                )
+
+    async def publish_article_grammar_batch(
+        self,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        outputs: list[tuple[str, GrammarBundleOutput]],
+        quality_json: dict[str, Any] | None = None,
+    ) -> PublishedGrammarBatch:
+        """T4.1c compact grammar batch publish: wrap fence + N per-unit
+        grammar_note/sentence_analysis writes in a ``publish_fence`` span.
+
+        ``outputs`` is a list of ``(unit_id, GrammarBundleOutput)`` pairs
+        produced by the batch worker. The publisher validates each per-unit
+        output, inserts ``grammar_note`` and/or ``sentence_analysis``
+        ``enhancement_layers`` rows per unit, and transitions the single
+        batch job → ``succeeded``.
+        """
+
+        parent = current_span()
+        recorder = get_default_recorder()
+        publish_span = await recorder.start_span(
+            trace_id=parent.trace_id if parent is not None else uuid4(),
+            span_kind=SPAN_KIND_PUBLISH_FENCE,
+            parent_span_id=parent.span_id if parent is not None else None,
+            reader_job_id=job_id,
+            metadata={"layer_type": "grammar_bundle", "batch": True},
+        )
+        try:
+            result = await self._publish_article_grammar_batch_inner(
+                job_id=job_id,
+                lease_token=lease_token,
+                outputs=outputs,
+                quality_json=quality_json,
+            )
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_SUCCEEDED,
+                extra_metadata={
+                    "unit_count": len(outputs),
+                    "layer_count": len(result.layers),
+                    "generation": result.generation,
+                    "layer_ids": list(result.layer_ids),
+                },
+            )
+            return result
+        except FenceViolationError:
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_FAILED,
+                failure_class="fence_violation",
+                failure_code="fence_failed",
+            )
+            raise
+        except Exception as exc:
+            await recorder.end_span(
+                publish_span,
+                status=STATUS_FAILED,
+                failure_class="publish_exception",
+                failure_code=type(exc).__name__,
+            )
+            raise
+
+    async def _publish_article_grammar_batch_inner(
+        self,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        outputs: list[tuple[str, GrammarBundleOutput]],
+        quality_json: dict[str, Any] | None = None,
+    ) -> PublishedGrammarBatch:
+        quality_payload = dict(quality_json or {})
+        published_at = datetime.now(UTC)
+
+        async with self.get_pool().acquire() as conn:
+            async with conn.transaction():
+                job_row = await conn.fetchrow(
+                    "SELECT * FROM reader_jobs WHERE id = $1 FOR UPDATE",
+                    job_id,
+                )
+                if job_row is None:
+                    raise LookupError(f"reader job {job_id} not found")
+                if job_row["status"] != "claimed":
+                    raise ValueError(
+                        "grammar batch publish requires a claimed job"
+                    )
+                if (
+                    job_row["job_type"] != GRAMMAR_BATCH_JOB_TYPE
+                    or job_row["target_type"] != GRAMMAR_BATCH_TARGET_SCOPE
+                ):
+                    raise ValueError(
+                        "grammar batch publish requires a "
+                        "build_grammar_bundle/unit_range batch job"
+                    )
+
+                _assert_lease_valid(job_row, job_id, lease_token)
+                fence_error = await self._job_runtime._validate_fence(conn, job_row)  # type: ignore[attr-defined]
+                if fence_error is not None:
+                    raise FenceViolationError(
+                        f"publish fence failed for job {job_id}: {fence_error}"
+                    )
+
+                base_id = job_row["base_id"]
+                if base_id is None:
+                    raise FenceViolationError(
+                        f"publish fence failed for job {job_id}: missing_base"
+                    )
+                reading_record_id = job_row["reading_record_id"]
+                generation = int(job_row["expected_generation"])
+                operation_fingerprint = str(job_row["operation_fingerprint"] or "")
+
+                # The batch job's fingerprint may be either the SHORT_BATCH
+                # base or the STRUCTURED_BATCH base (T4.1c route-specific).
+                if not (
+                    _fingerprint_matches_base(
+                        operation_fingerprint,
+                        GRAMMAR_BATCH_OPERATION_FINGERPRINT,
+                    )
+                    or _fingerprint_matches_base(
+                        operation_fingerprint,
+                        GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
+                    )
+                ):
+                    raise ValueError(
+                        "grammar batch publish fingerprint "
+                        f"{operation_fingerprint!r} does not match either "
+                        f"{GRAMMAR_BATCH_OPERATION_FINGERPRINT!r} or "
+                        f"{GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT!r}"
+                    )
+
+                # Fail-closed: the batch output must cover exactly the units
+                # listed in the job input_json ``target_unit_ids``.
+                input_json = job_row["input_json"]
+                target_unit_ids: list[str] = list(
+                    input_json.get("target_unit_ids") or []
+                )
+                output_unit_ids = [unit_id for unit_id, _ in outputs]
+                if sorted(target_unit_ids) != sorted(output_unit_ids):
+                    raise ValueError(
+                        "grammar batch output unit_ids "
+                        f"{output_unit_ids!r} do not match target_unit_ids "
+                        f"{target_unit_ids!r}"
+                    )
+                seen_unit_ids: set[str] = set()
+                for unit_id, _ in outputs:
+                    if unit_id in seen_unit_ids:
+                        raise ValueError(
+                            f"grammar batch output has duplicate unit_id {unit_id!r}"
+                        )
+                    seen_unit_ids.add(unit_id)
+
+                outputs = _reorder_outputs_by_target_unit_ids(
+                    outputs, target_unit_ids
+                )
+
+                published_layers: list[PublishedGrammarLayer] = []
+                layer_ids: list[str] = []
+                layer_types: list[str] = []
+                event_ids: list[str] = []
+
+                for unit_id, unit_output in outputs:
+                    grammar_note_output = (
+                        GrammarNoteLayerOutput(items=unit_output.grammar_notes)
+                        if unit_output.grammar_notes
+                        else None
+                    )
+                    sentence_analysis_output = (
+                        SentenceAnalysisLayerOutput(
+                            items=unit_output.sentence_analyses
+                        )
+                        if unit_output.sentence_analyses
+                        else None
+                    )
+
+                    if grammar_note_output is not None:
+                        await _assert_no_published_layer(
+                            conn,
+                            reading_record_id=reading_record_id,
+                            base_id=base_id,
+                            unit_id=unit_id,
+                            generation=generation,
+                            layer_type="grammar_note",
+                        )
+                        await _validate_grammar_note_items(
+                            conn,
+                            reading_record_id=reading_record_id,
+                            base_id=base_id,
+                            unit_id=unit_id,
+                            output=grammar_note_output,
+                        )
+                    if sentence_analysis_output is not None:
+                        await _assert_no_published_layer(
+                            conn,
+                            reading_record_id=reading_record_id,
+                            base_id=base_id,
+                            unit_id=unit_id,
+                            generation=generation,
+                            layer_type="sentence_analysis",
+                        )
+                        await _validate_sentence_analysis_items(
+                            conn,
+                            reading_record_id=reading_record_id,
+                            base_id=base_id,
+                            unit_id=unit_id,
+                            output=sentence_analysis_output,
+                        )
+
+                    # Append ``:unit_id`` to the per-unit layer fingerprint
+                    # so the ``uq_enhancement_layers_source_job_fingerprint``
+                    # unique constraint ``(source_job_id, operation_fingerprint)``
+                    # is not violated when N per-unit layers are published from
+                    # one batch job.
+                    if grammar_note_output is not None:
+                        gn_layer = await _insert_published_grammar_layer(
+                            conn,
+                            event_runtime=self._event_runtime,
+                            job_row=job_row,
+                            job_id=job_id,
+                            reading_record_id=reading_record_id,
+                            base_id=base_id,
+                            unit_id=unit_id,
+                            generation=generation,
+                            layer_type="grammar_note",
+                            layer_operation_fingerprint=(
+                                f"{GRAMMAR_NOTE_LAYER_OPERATION_FINGERPRINT}:{unit_id}"
+                            ),
+                            schema_version=int(grammar_note_output.schema_version),
+                            payload=grammar_note_output.model_dump(mode="json"),
+                            quality_json=quality_payload,
+                            published_at=published_at,
+                        )
+                        published_layers.append(gn_layer)
+                        layer_ids.append(str(gn_layer.layer_id))
+                        layer_types.append("grammar_note")
+                        event_ids.append(str(gn_layer.event.event_id))
+
+                    if sentence_analysis_output is not None:
+                        sa_layer = await _insert_published_grammar_layer(
+                            conn,
+                            event_runtime=self._event_runtime,
+                            job_row=job_row,
+                            job_id=job_id,
+                            reading_record_id=reading_record_id,
+                            base_id=base_id,
+                            unit_id=unit_id,
+                            generation=generation,
+                            layer_type="sentence_analysis",
+                            layer_operation_fingerprint=(
+                                f"{SENTENCE_ANALYSIS_LAYER_OPERATION_FINGERPRINT}:{unit_id}"
+                            ),
+                            schema_version=int(sentence_analysis_output.schema_version),
+                            payload=sentence_analysis_output.model_dump(mode="json"),
+                            quality_json=quality_payload,
+                            published_at=published_at,
+                        )
+                        published_layers.append(sa_layer)
+                        layer_ids.append(str(sa_layer.layer_id))
+                        layer_types.append("sentence_analysis")
+                        event_ids.append(str(sa_layer.event.event_id))
+
+                no_op = len(published_layers) == 0
+                output_ref: dict[str, Any]
+                rationale_code: str
+                if no_op:
+                    output_ref = {
+                        "no_op": True,
+                        "grammar_note_count": 0,
+                        "sentence_analysis_count": 0,
+                        "unit_count": len(outputs),
+                    }
+                    rationale_code = "grammar_batch_no_op"
+                else:
+                    output_ref = {
+                        "layer_ids": layer_ids,
+                        "layer_types": layer_types,
+                        "event_ids": event_ids,
+                        "unit_count": len(outputs),
+                        "no_op": False,
+                    }
+                    rationale_code = "grammar_batch_published"
+
+                updated_job = await self._job_runtime._apply_transition(  # type: ignore[attr-defined]
+                    conn,
+                    job_row=job_row,
+                    target_status="succeeded",
+                    available_at=None,
+                    pause_owner=None,
+                    output_ref=output_ref,
+                    failure_class=None,
+                    failure_code=None,
+                    failure_message=None,
+                    rationale_code=rationale_code,
+                )
+                await self._job_runtime._insert_job_event(  # type: ignore[attr-defined]
+                    conn,
+                    reading_record_id=updated_job["reading_record_id"],
+                    run_id=updated_job["run_id"],
+                    job_id=updated_job["id"],
+                    event_type="job_succeeded",
+                    payload={
+                        "previous_status": job_row["status"],
+                        "target_status": "succeeded",
+                        "rationale_code": rationale_code,
+                    },
+                )
+                await conn.execute(
+                    """
+                    UPDATE reader_runs
+                    SET status = 'completed',
+                        failure_class = NULL,
+                        failure_code = NULL,
+                        finished_at = $2,
+                        updated_at = $2
+                    WHERE id = $1
+                    """,
+                    job_row["run_id"],
+                    published_at,
+                )
+
+                return PublishedGrammarBatch(
+                    reading_record_id=reading_record_id,
+                    base_id=base_id,
+                    generation=generation,
+                    layers=tuple(published_layers),
+                    layer_ids=tuple(layer_ids),
+                    layer_types=tuple(layer_types),
+                    no_op=no_op,
                 )
 
 

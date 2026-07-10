@@ -36,6 +36,7 @@ from app.services.reader_orchestration.grammar_window_worker import (
 from app.services.reader_orchestration.grammar_worker import (
     DEFAULT_GRAMMAR_RETRY_DELAY,
     GRAMMAR_WORKFLOW_VERSION,
+    GrammarBatchJobProcessResult,
     GrammarBundleWorkerService,
     GrammarJobProcessResult,
 )
@@ -43,6 +44,10 @@ from app.services.reader_orchestration.job_bootstrap import (
     DISPLAY_TITLE_JOB_TYPE,
     DISPLAY_TITLE_OPERATION_FINGERPRINT,
     DISPLAY_TITLE_TARGET_SCOPE,
+    GRAMMAR_BATCH_JOB_TYPE,
+    GRAMMAR_BATCH_OPERATION_FINGERPRINT,
+    GRAMMAR_BATCH_TARGET_SCOPE,
+    GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
     GRAMMAR_JOB_TYPE,
     GRAMMAR_OPERATION_FINGERPRINT,
     GRAMMAR_TARGET_SCOPE,
@@ -108,7 +113,7 @@ WorkerType = Literal[
     "translation_batch",  # T1.1 short-article batch
     "vocabulary",
     "vocabulary_batch",  # T1.1 short-article batch
-    "grammar_bundle",  # legacy per-unit
+    "grammar_bundle",  # T4.1c: batch first, then legacy per-unit
     "grammar_bundle_window",  # Z+ window
 ]
 PipelineAttemptOutcome = Literal[
@@ -474,7 +479,7 @@ class ReaderEnhancementPipelineRunner:
                 "vocabulary_batch",  # T1.1 short-article batch
                 "vocabulary",
                 "grammar_bundle_window",  # Z+ 优先
-                "grammar_bundle",  # legacy
+                "grammar_bundle",  # T4.1c: batch first, then legacy per-unit
             )
         else:
             worker_order = (
@@ -483,7 +488,7 @@ class ReaderEnhancementPipelineRunner:
                 "translation",
                 "vocabulary_batch",  # T1.1 short-article batch
                 "vocabulary",
-                "grammar_bundle",
+                "grammar_bundle",  # T4.1c: batch first, then legacy per-unit
             )
 
         while True:
@@ -1065,6 +1070,77 @@ class ReaderEnhancementPipelineRunner:
         lease_duration: timedelta,
         retry_delay: timedelta,
     ) -> ReaderPipelineWorkerAttempt:
+        """T4.1c: try compact grammar batch first, then legacy per-unit.
+
+        SHORT_BATCH / STRUCTURED_BATCH articles have a single
+        ``build_grammar_bundle`` / ``unit_range`` batch job covering all
+        units in one LLM call. If no batch job is available
+        (GROUPED_WINDOWED or ``force_legacy_grammar``), fall back to the
+        legacy per-unit path. Both paths report ``worker_type='grammar_bundle'``
+        so the existing ``reader_runtime_spans.worker_type`` CHECK
+        constraint is satisfied without a new migration.
+        """
+        # --- T4.1c compact grammar batch (SHORT_BATCH / STRUCTURED_BATCH) ---
+        # Count superseded jobs across both route fingerprint bases so a
+        # route flip (short -> structured) is fully observable in
+        # ``superseded_jobs`` / ``outcome_counts.superseded``.
+        before_superseded_batch = (
+            await self._count_grammar_batch_superseded_jobs(
+                record_id=record_id,
+                base_id=base_id,
+                expected_generation=expected_generation,
+            )
+        )
+        try:
+            batch_result = (
+                await self._grammar_worker_service.process_next_grammar_batch_job_for_record(
+                    record_id=record_id,
+                    base_id=base_id,
+                    expected_generation=expected_generation,
+                    lease_owner=lease_owner,
+                    lease_duration=lease_duration,
+                    retry_delay=retry_delay,
+                )
+            )
+        except FenceViolationError:
+            after_superseded_batch = (
+                await self._count_grammar_batch_superseded_jobs(
+                    record_id=record_id,
+                    base_id=base_id,
+                    expected_generation=expected_generation,
+                )
+            )
+            superseded_jobs = after_superseded_batch - before_superseded_batch
+            return ReaderPipelineWorkerAttempt(
+                worker_type="grammar_bundle",
+                outcome="superseded",
+                processed_job=True,
+                attention_code="publish_fence_failed",
+                superseded_jobs=max(1, superseded_jobs),
+            )
+
+        if batch_result is not None:
+            after_superseded_batch = (
+                await self._count_grammar_batch_superseded_jobs(
+                    record_id=record_id,
+                    base_id=base_id,
+                    expected_generation=expected_generation,
+                )
+            )
+            return await self._build_worker_attempt_from_result(
+                worker_type="grammar_bundle",
+                record_id=record_id,
+                base_id=base_id,
+                expected_generation=expected_generation,
+                job_type=GRAMMAR_BATCH_JOB_TYPE,
+                target_scope=GRAMMAR_BATCH_TARGET_SCOPE,
+                operation_fingerprint=GRAMMAR_BATCH_OPERATION_FINGERPRINT,
+                before_superseded=before_superseded_batch,
+                after_superseded=after_superseded_batch,
+                result=batch_result,
+            )
+
+        # --- Legacy per-unit grammar (force_legacy_grammar fallback) ---
         before_superseded = await self._count_superseded_jobs(
             record_id=record_id,
             base_id=base_id,
@@ -2165,20 +2241,25 @@ class ReaderEnhancementPipelineRunner:
             | VocabularyJobProcessResult
             | VocabularyBatchJobProcessResult
             | GrammarJobProcessResult
+            | GrammarBatchJobProcessResult
             | None
         ),
+        after_superseded: int | None = None,
     ) -> ReaderPipelineWorkerAttempt:
-        superseded_jobs = (
-            await self._count_superseded_jobs(
-                record_id=record_id,
-                base_id=base_id,
-                expected_generation=expected_generation,
-                job_type=job_type,
-                target_scope=target_scope,
-                operation_fingerprint=operation_fingerprint,
+        if after_superseded is not None:
+            superseded_jobs = after_superseded - before_superseded
+        else:
+            superseded_jobs = (
+                await self._count_superseded_jobs(
+                    record_id=record_id,
+                    base_id=base_id,
+                    expected_generation=expected_generation,
+                    job_type=job_type,
+                    target_scope=target_scope,
+                    operation_fingerprint=operation_fingerprint,
+                )
+                - before_superseded
             )
-            - before_superseded
-        )
         if result is None:
             return ReaderPipelineWorkerAttempt(
                 worker_type=worker_type,
@@ -2233,6 +2314,40 @@ class ReaderEnhancementPipelineRunner:
                     operation_fingerprint,
                 )
             )
+
+    async def _count_grammar_batch_superseded_jobs(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+    ) -> int:
+        """Count superseded grammar batch jobs across both route fingerprint bases.
+
+        T4.1c compact grammar batch uses two route-specific fingerprint bases:
+        ``GRAMMAR_BATCH_OPERATION_FINGERPRINT`` (SHORT_BATCH) and
+        ``GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT`` (STRUCTURED_BATCH).
+        A route flip (short -> structured on a rebuilt base) can supersede
+        jobs from either base, so the count must cover both to keep
+        ``superseded_jobs`` / ``outcome_counts.superseded`` complete.
+        """
+        short_count = await self._count_superseded_jobs(
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            job_type=GRAMMAR_BATCH_JOB_TYPE,
+            target_scope=GRAMMAR_BATCH_TARGET_SCOPE,
+            operation_fingerprint=GRAMMAR_BATCH_OPERATION_FINGERPRINT,
+        )
+        structured_count = await self._count_superseded_jobs(
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            job_type=GRAMMAR_BATCH_JOB_TYPE,
+            target_scope=GRAMMAR_BATCH_TARGET_SCOPE,
+            operation_fingerprint=GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
+        )
+        return short_count + structured_count
 
     async def _load_record_runtime_state(
         self,

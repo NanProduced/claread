@@ -164,6 +164,7 @@ async def _load_jobs(
             SELECT
                 job_id,
                 job_type,
+                target_type,
                 operation_fingerprint,
                 input_hash,
                 input_json,
@@ -172,6 +173,7 @@ async def _load_jobs(
                 SELECT
                     j.id AS job_id,
                     j.job_type,
+                    j.target_type,
                     j.operation_fingerprint,
                     j.input_hash,
                     j.input_json,
@@ -2381,3 +2383,614 @@ async def test_t41a_missing_base_route_is_stable_across_two_calls() -> None:
         "second call (vocabulary) must not re-evaluate the empty profile "
         "and misclassify as SHORT_BATCH"
     )
+
+
+# ---------------------------------------------------------------------------#
+# T4.1b: structured article batch -- route identity in job/run metadata
+# ---------------------------------------------------------------------------#
+#
+# T4.1a only proved the *route label* was correct (job count, window_id
+# presence). T4.1b makes STRUCTURED_BATCH an auditable runtime mode:
+#
+#   - ``input_json.article_route`` records the route on every batch/window job
+#   - ``envelope_json.article_route`` + ``envelope_json.document_features``
+#     record the route + the deterministic profile signals that drove it
+#   - ``reader_runs.policy_version`` records the route-specific policy version
+#   - ``operation_fingerprint`` base differs for STRUCTURED_BATCH so a route
+#     change (short -> structured on a rebuilt base) triggers
+#     ``_supersede_stale_fingerprint_jobs``.
+#
+# SHORT_BATCH and GROUPED_WINDOWED keep their existing ``*_v1`` fingerprint
+# bases (shared) so their idempotency contracts are preserved; the three-way
+# distinction is completed by ``article_route`` in ``input_json``.
+#
+# These tests extend the T4.1a fixtures (same _T41A_BBC_NEAR_THRESHOLD_TEXT,
+# _T41A_MEDIUM_TEXT, _LONG_TEXT) so the route classification is identical to
+# the T4.1a tests -- only the metadata assertions are new.
+
+
+async def _load_run_metadata(
+    pool: asyncpg.Pool,
+    run_id: UUID,
+) -> dict:
+    """Load ``envelope_json`` AND ``policy_version`` for a run.
+
+    T4.1b asserts on both: ``envelope_json.article_route`` /
+    ``envelope_json.document_features`` (route identity + profile signals)
+    and ``policy_version`` (route-specific policy version column).
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT envelope_json, policy_version FROM reader_runs WHERE id = $1",
+            run_id,
+        )
+    assert row is not None
+    return {
+        "envelope": dict(row["envelope_json"]),
+        "policy_version": row["policy_version"],
+    }
+
+
+def _expected_fingerprint(base: str, strategy: ReaderVariantStrategy) -> str:
+    return job_bootstrap._compose_operation_fingerprint(base, strategy)
+
+
+async def test_t41b_short_batch_route_identity_in_job_and_run_metadata(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T4.1b: a SHORT_BATCH article records ``article_route="short_batch"``
+    in ``input_json`` and ``envelope_json``, carries
+    ``document_features`` in ``envelope_json``, and uses the short-batch
+    ``operation_fingerprint`` base + ``policy_version``."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_T41A_BBC_NEAR_THRESHOLD_TEXT,
+    )
+
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    strategy = resolve_reader_variant_strategy(
+        "daily_reading", "intermediate_reading"
+    )
+    jobs = await _load_jobs(strategy_env, record_id)
+    translation_batch_jobs = [
+        j for j in jobs if j["job_type"] == "translate_article"
+    ]
+    assert len(translation_batch_jobs) == 1
+    job = translation_batch_jobs[0]
+
+    # Job-level: input_json.article_route
+    assert job["input_json"]["article_route"] == "short_batch"
+    # Job-level: operation_fingerprint uses the SHORT_BATCH base
+    expected_fp = _expected_fingerprint(
+        job_bootstrap.TRANSLATION_BATCH_OPERATION_FINGERPRINT, strategy
+    )
+    assert job["operation_fingerprint"] == expected_fp
+
+    # Run-level: envelope_json.article_route + document_features, and
+    # policy_version is the SHORT_BATCH policy.
+    run_meta = await _load_run_metadata(strategy_env, job["run_id"])
+    assert run_meta["envelope"]["article_route"] == "short_batch"
+    assert run_meta["envelope"]["document_features"] is not None
+    assert run_meta["envelope"]["document_features"]["extractor_version"]
+    assert (
+        run_meta["policy_version"]
+        == job_bootstrap.TRANSLATION_BATCH_POLICY_VERSION
+    )
+
+
+async def test_t41b_structured_batch_route_identity_distinct_from_short(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T4.1b: a STRUCTURED_BATCH article records
+    ``article_route="structured_batch"`` AND uses a DISTINCT
+    ``operation_fingerprint`` base + ``policy_version`` from SHORT_BATCH.
+    This is the core T4.1b deliverable: STRUCTURED_BATCH is no longer just
+    a route label -- it is an auditable runtime mode whose fingerprint
+    change triggers ``_supersede_stale_fingerprint_jobs`` on a route
+    change."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_T41A_MEDIUM_TEXT,
+    )
+
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    strategy = resolve_reader_variant_strategy(
+        "daily_reading", "intermediate_reading"
+    )
+    jobs = await _load_jobs(strategy_env, record_id)
+    translation_batch_jobs = [
+        j for j in jobs if j["job_type"] == "translate_article"
+    ]
+    assert len(translation_batch_jobs) == 1
+    job = translation_batch_jobs[0]
+
+    # Job-level: input_json.article_route is structured_batch (NOT short_batch)
+    assert job["input_json"]["article_route"] == "structured_batch"
+    # Job-level: operation_fingerprint uses the STRUCTURED_BATCH base --
+    # DISTINCT from SHORT_BATCH. This is what makes a route change auditable
+    # and triggers supersede.
+    expected_fp = _expected_fingerprint(
+        job_bootstrap.TRANSLATION_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
+        strategy,
+    )
+    assert job["operation_fingerprint"] == expected_fp
+    short_fp = _expected_fingerprint(
+        job_bootstrap.TRANSLATION_BATCH_OPERATION_FINGERPRINT, strategy
+    )
+    assert job["operation_fingerprint"] != short_fp, (
+        "STRUCTURED_BATCH must have a distinct fingerprint base from "
+        "SHORT_BATCH so a route change triggers _supersede_stale_fingerprint_jobs"
+    )
+
+    # Run-level: envelope + policy_version reflect the structured route.
+    run_meta = await _load_run_metadata(strategy_env, job["run_id"])
+    assert run_meta["envelope"]["article_route"] == "structured_batch"
+    assert run_meta["envelope"]["document_features"] is not None
+    assert (
+        run_meta["envelope"]["document_features"]["estimated_word_count"] > 1100
+    ), "medium fixture must exceed the short word cap (route decision signal)"
+    assert (
+        run_meta["policy_version"]
+        == job_bootstrap.TRANSLATION_STRUCTURED_BATCH_POLICY_VERSION
+    )
+    assert (
+        run_meta["policy_version"]
+        != job_bootstrap.TRANSLATION_BATCH_POLICY_VERSION
+    )
+
+    # Vocabulary layer also carries the structured route identity.
+    vocab_batch_jobs = [
+        j for j in jobs if j["job_type"] == "build_vocabulary_layer_article"
+    ]
+    assert len(vocab_batch_jobs) == 1
+    vjob = vocab_batch_jobs[0]
+    assert vjob["input_json"]["article_route"] == "structured_batch"
+    expected_vfp = _expected_fingerprint(
+        job_bootstrap.VOCABULARY_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
+        strategy,
+    )
+    assert vjob["operation_fingerprint"] == expected_vfp
+    vrun_meta = await _load_run_metadata(strategy_env, vjob["run_id"])
+    assert vrun_meta["envelope"]["article_route"] == "structured_batch"
+    assert (
+        vrun_meta["policy_version"]
+        == job_bootstrap.VOCABULARY_STRUCTURED_BATCH_POLICY_VERSION
+    )
+
+
+async def test_t41b_grouped_windowed_route_identity_in_job_and_run_metadata(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T4.1b: a GROUPED_WINDOWED article records
+    ``article_route="grouped_windowed"`` on every window job, carries
+    ``document_features`` in ``envelope_json``, and keeps the shared
+    ``*_v1`` fingerprint base + ``policy_version`` so the T3.1/T3.2b
+    idempotency contract is preserved."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_LONG_TEXT,
+    )
+
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    strategy = resolve_reader_variant_strategy(
+        "daily_reading", "intermediate_reading"
+    )
+    jobs = await _load_jobs(strategy_env, record_id)
+    translation_window_jobs = [
+        j for j in jobs if j["job_type"] == "translate_article"
+    ]
+    assert len(translation_window_jobs) >= 2
+
+    expected_fp = _expected_fingerprint(
+        job_bootstrap.TRANSLATION_BATCH_OPERATION_FINGERPRINT, strategy
+    )
+    for job in translation_window_jobs:
+        # Every window job carries the grouped_windowed route identity.
+        assert job["input_json"]["article_route"] == "grouped_windowed"
+        # Grouped/windowed keeps the shared *_v1 base (NOT the structured
+        # base) so its idempotency contract is preserved.
+        assert job["operation_fingerprint"] == expected_fp
+        run_meta = await _load_run_metadata(strategy_env, job["run_id"])
+        assert run_meta["envelope"]["article_route"] == "grouped_windowed"
+        assert run_meta["envelope"]["document_features"] is not None
+        assert (
+            run_meta["policy_version"]
+            == job_bootstrap.TRANSLATION_BATCH_POLICY_VERSION
+        )
+
+
+async def test_t41b_no_per_unit_fanout_regression_across_three_routes(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T4.1b no-regression guard: none of the three routes (short /
+    structured / grouped) may produce per-unit ``translate_unit`` or
+    ``build_vocabulary_layer`` jobs. T4.1b must not reintroduce the
+    legacy per-unit fan-out that T1.1 / T3.1 / T3.2b eliminated."""
+    fixtures = [
+        (_T41A_BBC_NEAR_THRESHOLD_TEXT, "short_batch"),
+        (_T41A_MEDIUM_TEXT, "structured_batch"),
+        (_LONG_TEXT, "grouped_windowed"),
+    ]
+    for plain_text, expected_route in fixtures:
+        user_id = await insert_user(strategy_env)
+        record_id = await _submit_with_strategy(
+            strategy_env,
+            user_id=user_id,
+            reading_goal="daily_reading",
+            reading_variant="intermediate_reading",
+            plain_text=plain_text,
+        )
+        service = EnhancementJobBootstrapService(pool=strategy_env)
+        await service.bootstrap_missing_jobs(
+            record_id=record_id, user_id=user_id
+        )
+
+        jobs = await _load_jobs(strategy_env, record_id)
+        # No per-unit translation fan-out
+        assert not any(j["job_type"] == "translate_unit" for j in jobs), (
+            f"{expected_route}: per-unit translate_unit jobs must not exist"
+        )
+        # No per-unit vocabulary fan-out
+        assert not any(
+            j["job_type"] == "build_vocabulary_layer" for j in jobs
+        ), (
+            f"{expected_route}: per-unit build_vocabulary_layer jobs must not exist"
+        )
+        # Every batch/window job carries the expected route identity
+        batch_jobs = [
+            j
+            for j in jobs
+            if j["job_type"]
+            in ("translate_article", "build_vocabulary_layer_article")
+        ]
+        assert batch_jobs, f"{expected_route}: expected batch jobs, got none"
+        for j in batch_jobs:
+            assert j["input_json"]["article_route"] == expected_route, (
+                f"{expected_route}: job {j['job_type']} has "
+                f"article_route={j['input_json']['article_route']!r}"
+            )
+
+
+# ---------------------------------------------------------------------------#
+# T4.1c: compact grammar batch path (SHORT_BATCH / STRUCTURED_BATCH)
+# ---------------------------------------------------------------------------#
+#
+# Requirement: SHORT_BATCH and STRUCTURED_BATCH grammar no longer defaults to
+# the heavy Z+ analysis-window path. Instead, a single
+# ``build_grammar_bundle`` / ``unit_range`` batch job covers all unpublished
+# units in one LLM call. GROUPED_WINDOWED keeps the Z+ path
+# (``build_grammar_bundle_window`` jobs + ``analysis_windows`` rows).
+# No route produces per-unit ``build_grammar_bundle`` / ``unit`` jobs.
+#
+# T4.1c reuses the existing ``build_grammar_bundle`` job_type (already in
+# the reader_jobs.job_type CHECK constraint from migration 0017) for both
+# batch (target_type='unit_range') and per-unit (target_type='unit') paths.
+# They are distinguished by target_type and operation_fingerprint base.
+
+
+async def _count_grammar_jobs_by_type(
+    pool: asyncpg.Pool,
+    record_id: UUID,
+) -> dict[str, int]:
+    """Count grammar jobs by job_type for a record.
+
+    Note: ``build_grammar_bundle`` covers both batch (target_type='unit_range')
+    and per-unit (target_type='unit') jobs. Use
+    ``_count_grammar_jobs_by_target_type`` to distinguish them.
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT job_type, COUNT(*) AS cnt
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND job_type IN (
+                  'build_grammar_bundle',
+                  'build_grammar_bundle_window'
+              )
+            GROUP BY job_type
+            """,
+            record_id,
+        )
+    return {str(row["job_type"]): int(row["cnt"]) for row in rows}
+
+
+async def _count_grammar_jobs_by_target_type(
+    pool: asyncpg.Pool,
+    record_id: UUID,
+) -> dict[str, int]:
+    """Count grammar jobs by ``job_type:target_type`` for a record.
+
+    Returns keys like ``'build_grammar_bundle:unit_range'`` (batch) and
+    ``'build_grammar_bundle:unit'`` (per-unit) so callers can distinguish
+    the compact batch path from the legacy per-unit fan-out.
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT job_type, target_type, COUNT(*) AS cnt
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND job_type IN (
+                  'build_grammar_bundle',
+                  'build_grammar_bundle_window'
+              )
+            GROUP BY job_type, target_type
+            """,
+            record_id,
+        )
+    return {
+        f"{row['job_type']}:{row['target_type']}": int(row["cnt"])
+        for row in rows
+    }
+
+
+async def _count_analysis_windows(
+    pool: asyncpg.Pool,
+    record_id: UUID,
+) -> int:
+    async with pool.acquire() as conn:
+        return int(
+            await conn.fetchval(
+                """
+                SELECT COUNT(*)
+                FROM analysis_windows aw
+                JOIN layer_analysis_plans lap ON aw.plan_id = lap.id
+                WHERE lap.reading_record_id = $1
+                """,
+                record_id,
+            )
+        )
+
+
+async def test_t41c_short_article_routes_to_compact_grammar_batch(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T4.1c: a SHORT_BATCH article creates a single
+    ``build_grammar_bundle`` / ``unit_range`` batch job and does NOT
+    create Z+ ``analysis_windows`` or per-unit ``build_grammar_bundle``
+    / ``unit`` jobs."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_T41A_BBC_NEAR_THRESHOLD_TEXT,
+    )
+
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    strategy = resolve_reader_variant_strategy(
+        "daily_reading", "intermediate_reading"
+    )
+    jobs = await _load_jobs(strategy_env, record_id)
+    grammar_by_target = await _count_grammar_jobs_by_target_type(
+        strategy_env, record_id
+    )
+    analysis_window_count = await _count_analysis_windows(
+        strategy_env, record_id
+    )
+
+    # Compact batch job created (build_grammar_bundle / unit_range)
+    assert grammar_by_target.get("build_grammar_bundle:unit_range") == 1, (
+        f"SHORT_BATCH: expected 1 build_grammar_bundle:unit_range job, "
+        f"got {grammar_by_target}"
+    )
+    # No Z+ analysis windows
+    assert analysis_window_count == 0, (
+        f"SHORT_BATCH: expected 0 analysis_windows, got {analysis_window_count}"
+    )
+    # No per-unit grammar fan-out
+    assert grammar_by_target.get("build_grammar_bundle:unit", 0) == 0, (
+        "SHORT_BATCH: per-unit build_grammar_bundle:unit jobs must not exist"
+    )
+    # No Z+ window jobs
+    assert grammar_by_target.get("build_grammar_bundle_window:unit_range", 0) == 0, (
+        "SHORT_BATCH: build_grammar_bundle_window jobs must not exist"
+    )
+
+    # The batch job carries the short_batch route identity and the
+    # SHORT_BATCH fingerprint base.
+    batch_jobs = [
+        j
+        for j in jobs
+        if j["job_type"] == "build_grammar_bundle"
+        and j["target_type"] == "unit_range"
+    ]
+    assert len(batch_jobs) == 1
+    job = batch_jobs[0]
+    assert job["input_json"]["article_route"] == "short_batch"
+    expected_fp = _expected_fingerprint(
+        job_bootstrap.GRAMMAR_BATCH_OPERATION_FINGERPRINT, strategy
+    )
+    assert job["operation_fingerprint"] == expected_fp
+    # Structured fingerprint must NOT match
+    structured_fp = _expected_fingerprint(
+        job_bootstrap.GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT, strategy
+    )
+    assert job["operation_fingerprint"] != structured_fp
+
+    # Run-level: envelope carries the route identity + policy_version.
+    run_meta = await _load_run_metadata(strategy_env, job["run_id"])
+    assert run_meta["envelope"]["article_route"] == "short_batch"
+    assert run_meta["envelope"]["document_features"] is not None
+    assert (
+        run_meta["policy_version"]
+        == job_bootstrap.GRAMMAR_BATCH_POLICY_VERSION
+    )
+
+
+async def test_t41c_structured_article_routes_to_compact_grammar_batch(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T4.1c: a STRUCTURED_BATCH article creates a single
+    ``build_grammar_bundle`` / ``unit_range`` batch job with the
+    STRUCTURED_BATCH fingerprint base and does NOT create Z+
+    ``analysis_windows`` or per-unit ``build_grammar_bundle`` / ``unit``
+    jobs."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_T41A_MEDIUM_TEXT,
+    )
+
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    strategy = resolve_reader_variant_strategy(
+        "daily_reading", "intermediate_reading"
+    )
+    jobs = await _load_jobs(strategy_env, record_id)
+    grammar_by_target = await _count_grammar_jobs_by_target_type(
+        strategy_env, record_id
+    )
+    analysis_window_count = await _count_analysis_windows(
+        strategy_env, record_id
+    )
+
+    assert grammar_by_target.get("build_grammar_bundle:unit_range") == 1, (
+        f"STRUCTURED_BATCH: expected 1 build_grammar_bundle:unit_range job, "
+        f"got {grammar_by_target}"
+    )
+    assert analysis_window_count == 0, (
+        f"STRUCTURED_BATCH: expected 0 analysis_windows, "
+        f"got {analysis_window_count}"
+    )
+    assert grammar_by_target.get("build_grammar_bundle:unit", 0) == 0
+    assert grammar_by_target.get("build_grammar_bundle_window:unit_range", 0) == 0
+
+    batch_jobs = [
+        j
+        for j in jobs
+        if j["job_type"] == "build_grammar_bundle"
+        and j["target_type"] == "unit_range"
+    ]
+    assert len(batch_jobs) == 1
+    job = batch_jobs[0]
+    assert job["input_json"]["article_route"] == "structured_batch"
+    # STRUCTURED_BATCH gets a DISTINCT fingerprint base from SHORT_BATCH.
+    expected_fp = _expected_fingerprint(
+        job_bootstrap.GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT, strategy
+    )
+    assert job["operation_fingerprint"] == expected_fp
+    short_fp = _expected_fingerprint(
+        job_bootstrap.GRAMMAR_BATCH_OPERATION_FINGERPRINT, strategy
+    )
+    assert job["operation_fingerprint"] != short_fp, (
+        "STRUCTURED_BATCH grammar must have a distinct fingerprint base "
+        "from SHORT_BATCH so a route change triggers supersede"
+    )
+
+    run_meta = await _load_run_metadata(strategy_env, job["run_id"])
+    assert run_meta["envelope"]["article_route"] == "structured_batch"
+    assert run_meta["envelope"]["document_features"] is not None
+    assert (
+        run_meta["policy_version"]
+        == job_bootstrap.GRAMMAR_STRUCTURED_BATCH_POLICY_VERSION
+    )
+    assert (
+        run_meta["policy_version"]
+        != job_bootstrap.GRAMMAR_BATCH_POLICY_VERSION
+    )
+
+
+async def test_t41c_long_article_keeps_zplus_grammar_window_path(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T4.1c: a GROUPED_WINDOWED article keeps the Z+ analysis-window path.
+    ``build_grammar_bundle_window`` jobs + ``analysis_windows`` rows are
+    created. No ``build_grammar_bundle`` / ``unit_range`` batch job or
+    per-unit ``build_grammar_bundle`` / ``unit`` job is created."""
+    user_id = await insert_user(strategy_env)
+    record_id = await _submit_with_strategy(
+        strategy_env,
+        user_id=user_id,
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        plain_text=_LONG_TEXT,
+    )
+
+    service = EnhancementJobBootstrapService(pool=strategy_env)
+    await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
+
+    grammar_by_target = await _count_grammar_jobs_by_target_type(
+        strategy_env, record_id
+    )
+    analysis_window_count = await _count_analysis_windows(
+        strategy_env, record_id
+    )
+
+    # Z+ window jobs created
+    assert grammar_by_target.get("build_grammar_bundle_window:unit_range", 0) > 0, (
+        "GROUPED_WINDOWED: expected build_grammar_bundle_window jobs"
+    )
+    # Z+ analysis windows created
+    assert analysis_window_count > 0, (
+        "GROUPED_WINDOWED: expected analysis_windows rows"
+    )
+    # No compact grammar batch job (build_grammar_bundle / unit_range)
+    assert grammar_by_target.get("build_grammar_bundle:unit_range", 0) == 0, (
+        "GROUPED_WINDOWED: build_grammar_bundle:unit_range must not exist"
+    )
+    # No per-unit grammar fan-out
+    assert grammar_by_target.get("build_grammar_bundle:unit", 0) == 0, (
+        "GROUPED_WINDOWED: per-unit build_grammar_bundle:unit must not exist"
+    )
+
+
+async def test_t41c_no_per_unit_grammar_fanout_across_three_routes(
+    strategy_env: asyncpg.Pool,
+) -> None:
+    """T4.1c no-regression guard: none of the three routes (short /
+    structured / grouped) may produce per-unit ``build_grammar_bundle``
+    / ``unit`` jobs. T4.1c must not reintroduce the legacy per-unit
+    grammar fan-out."""
+    fixtures = [
+        (_T41A_BBC_NEAR_THRESHOLD_TEXT, "short_batch"),
+        (_T41A_MEDIUM_TEXT, "structured_batch"),
+        (_LONG_TEXT, "grouped_windowed"),
+    ]
+    for plain_text, expected_route in fixtures:
+        user_id = await insert_user(strategy_env)
+        record_id = await _submit_with_strategy(
+            strategy_env,
+            user_id=user_id,
+            reading_goal="daily_reading",
+            reading_variant="intermediate_reading",
+            plain_text=plain_text,
+        )
+        service = EnhancementJobBootstrapService(pool=strategy_env)
+        await service.bootstrap_missing_jobs(
+            record_id=record_id, user_id=user_id
+        )
+
+        grammar_by_target = await _count_grammar_jobs_by_target_type(
+            strategy_env, record_id
+        )
+        assert grammar_by_target.get("build_grammar_bundle:unit", 0) == 0, (
+            f"{expected_route}: per-unit build_grammar_bundle:unit jobs "
+            f"must not exist"
+        )

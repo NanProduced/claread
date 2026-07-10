@@ -11,6 +11,7 @@ from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 from app.services.reader_orchestration.document_feature_extractor import (
     ArticleRoute,
+    DocumentFeatureProfile,
     classify_article_route,
     extract_document_features,
 )
@@ -41,6 +42,35 @@ GRAMMAR_TRIGGER_KIND = "system"
 GRAMMAR_POLICY_VERSION = "reader_grammar_bundle_bootstrap_v1"
 GRAMMAR_OPERATION_FINGERPRINT = "grammar_bundle_unit_v1"
 DEFAULT_GRAMMAR_MAX_ATTEMPTS = 3
+
+# T4.1c compact grammar batch path: SHORT_BATCH and STRUCTURED_BATCH
+# articles use a single whole-article grammar batch job instead of the
+# heavy Z+ analysis-window path. One LLM call covers all unpublished
+# units; the publisher splits the output back into per-unit grammar_note
+# / sentence_analysis layers. GROUPED_WINDOWED keeps the Z+ path.
+#
+# Route-specific fingerprints (T4.1b pattern): STRUCTURED_BATCH gets a
+# distinct fingerprint base + policy_version so a route change (short ->
+# structured on a rebuilt base) triggers _supersede_stale_fingerprint_jobs.
+# SHORT_BATCH keeps the shared ``*_v1`` base.
+#
+# Job-type reuse: ``GRAMMAR_BATCH_JOB_TYPE`` reuses the existing
+# ``build_grammar_bundle`` value (already in the reader_jobs.job_type
+# CHECK constraint from migration 0017). Batch and per-unit jobs are
+# distinguished by ``target_type`` (``unit_range`` vs ``unit``) and by
+# the ``operation_fingerprint`` base, so claim methods never collide.
+GRAMMAR_BATCH_JOB_TYPE = GRAMMAR_JOB_TYPE  # "build_grammar_bundle"
+GRAMMAR_BATCH_TARGET_SCOPE = "unit_range"
+GRAMMAR_BATCH_OPERATION_FINGERPRINT = "grammar_bundle_article_v1"
+GRAMMAR_BATCH_POLICY_VERSION = "reader_grammar_batch_bootstrap_v1"
+GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT = (
+    "grammar_bundle_article_structured_v1"
+)
+GRAMMAR_STRUCTURED_BATCH_POLICY_VERSION = (
+    "reader_grammar_batch_structured_bootstrap_v1"
+)
+DEFAULT_GRAMMAR_BATCH_MAX_ATTEMPTS = 3
+
 DISPLAY_TITLE_RUN_TYPE = "display_title_generation"
 DISPLAY_TITLE_JOB_TYPE = "generate_display_title_zh"
 DISPLAY_TITLE_TARGET_SCOPE = "record"
@@ -68,6 +98,28 @@ VOCABULARY_BATCH_JOB_TYPE = "build_vocabulary_layer_article"
 VOCABULARY_BATCH_TARGET_SCOPE = "unit_range"
 VOCABULARY_BATCH_OPERATION_FINGERPRINT = "vocabulary_article_v1"
 VOCABULARY_BATCH_POLICY_VERSION = "reader_vocabulary_batch_bootstrap_v1"
+
+# T4.1b structured article batch: STRUCTURED_BATCH gets its own
+# operation_fingerprint base and policy_version so the route is auditable
+# at the ``reader_jobs.operation_fingerprint`` / ``reader_runs.policy_version``
+# column level, and a route change (short -> structured or vice versa on a
+# rebuilt base) triggers ``_supersede_stale_fingerprint_jobs`` to supersede
+# old jobs of the other route. SHORT_BATCH and GROUPED_WINDOWED keep their
+# existing fingerprints (shared ``_v1`` base) to preserve their idempotency
+# contracts; the three-way distinction is completed by ``article_route`` in
+# ``input_json`` / ``envelope_json``.
+TRANSLATION_STRUCTURED_BATCH_OPERATION_FINGERPRINT = (
+    "translation_article_structured_v1"
+)
+TRANSLATION_STRUCTURED_BATCH_POLICY_VERSION = (
+    "reader_translation_batch_structured_bootstrap_v1"
+)
+VOCABULARY_STRUCTURED_BATCH_OPERATION_FINGERPRINT = (
+    "vocabulary_article_structured_v1"
+)
+VOCABULARY_STRUCTURED_BATCH_POLICY_VERSION = (
+    "reader_vocabulary_batch_structured_bootstrap_v1"
+)
 
 # Legacy short-article char threshold. Retained as an observability /
 # documentation constant (existing tests reference it for fixture sanity
@@ -115,7 +167,7 @@ _LAYER_NAME_BY_JOB_TYPE: dict[str, str] = {
     TRANSLATION_BATCH_JOB_TYPE: "translation",
     VOCABULARY_JOB_TYPE: "vocabulary",
     VOCABULARY_BATCH_JOB_TYPE: "vocabulary",
-    GRAMMAR_JOB_TYPE: "grammar_bundle",
+    GRAMMAR_JOB_TYPE: "grammar_bundle",  # also covers GRAMMAR_BATCH_JOB_TYPE (same value)
 }
 
 
@@ -175,6 +227,47 @@ def _fingerprint_matches_base(fingerprint: str, base: str) -> bool:
     composed fingerprint (T5 strategy-aware) is accepted.
     """
     return fingerprint == base or fingerprint.startswith(base + ":")
+
+
+def _build_document_features_metadata(
+    profile: DocumentFeatureProfile,
+) -> dict[str, Any]:
+    """Build a compact document-features block for ``envelope_json``.
+
+    T4.1b: records the deterministic profile signals that drove the route
+    decision so the route is auditable and T4.1c (compact grammar path)
+    can read them from ``reader_runs.envelope_json.document_features``
+    without re-computing. Only observability-relevant fields are included;
+    the full ``DocumentFeatureProfile`` stays in the extractor module.
+
+    Note: this block is written to ``envelope_json`` only, NOT to
+    ``reader_jobs.input_json``. ``input_json`` carries ``article_route``
+    (the route identity) but not the profile signals; workers that need
+    the profile should read it from the run envelope.
+    """
+    return {
+        "estimated_word_count": profile.estimated_word_count,
+        "estimated_token_count": profile.estimated_token_count,
+        "unit_count": profile.unit_count,
+        "paragraph_count": profile.paragraph_count,
+        "heading_count": profile.heading_count,
+        "structural_noise_ratio": profile.structural_noise_ratio,
+        "extractor_version": profile.extractor_version,
+    }
+
+
+def _route_document_features(state: _LockedActiveBaseState) -> dict[str, Any] | None:
+    """Return the cached document-features block, or ``None`` if no profile.
+
+    T4.1b: the defensive missing-base path caches no profile, so
+    ``envelope_json.document_features`` is ``None`` for that branch. The
+    normal path (SHORT_BATCH / STRUCTURED_BATCH / GROUPED_WINDOWED) always
+    has a cached profile because ``_load_article_route`` populates
+    ``state.cached_profile`` before returning.
+    """
+    if state.cached_profile is None:
+        return None
+    return _build_document_features_metadata(state.cached_profile)
 
 
 # ---------------------------------------------------------------------------#
@@ -603,6 +696,14 @@ class _LockedActiveBaseState:
     # non-None ``base_text=""`` / ``unit_types=()`` and re-evaluate an
     # empty profile, misclassifying it as ``SHORT_BATCH``.
     cached_route: ArticleRoute | None = None
+    # T4.1b: cached document feature profile. Populated alongside
+    # ``cached_route`` so the batch bootstrap methods can record
+    # ``article_route`` (in ``envelope_json`` + ``input_json``) and
+    # ``document_features`` (in ``envelope_json`` only) without
+    # re-computing the profile. ``None`` means "not computed yet"
+    # (including the defensive missing-base path, where no profile is
+    # meaningful).
+    cached_profile: DocumentFeatureProfile | None = None
 
 
 async def _load_article_route(
@@ -678,6 +779,7 @@ async def _load_article_route(
     )
     route = classify_article_route(profile)
     object.__setattr__(state, "cached_route", route)
+    object.__setattr__(state, "cached_profile", profile)
     return route
 
 
@@ -1290,20 +1392,23 @@ class EnhancementJobBootstrapService:
         # T4.1a route hardening: classify via deterministic document
         # features (estimated_word_count primary, content_utf16_length as a
         # coarse structured-tier guardrail) instead of the legacy raw
-        # ``content_utf16_length`` boolean. SHORT_BATCH and STRUCTURED_BATCH
-        # both execute via the single whole-article batch job this round;
+        # ``content_utf16_length`` boolean.
+        # T4.1b: SHORT_BATCH and STRUCTURED_BATCH both execute via the
+        # whole-article batch job, but with distinct operation_fingerprint
+        # / policy_version / input_json.article_route so the route is
+        # auditable and a route change supersedes old jobs.
         # GROUPED_WINDOWED splits into per-window batch jobs.
         route = await _load_article_route(conn, state=state)
         if route is not ArticleRoute.GROUPED_WINDOWED:
             return await self._bootstrap_translation_batch_job(
-                conn, state=state, trace_id=trace_id
+                conn, state=state, route=route, trace_id=trace_id
             )
         # T3.1 non-short grouped path: split unpublished units into
         # consecutive windows and create one ``translate_article`` batch
         # job per window. Replaces the legacy per-unit ``translate_unit``
         # path which caused 50+ LLM calls on ~30k-char articles.
         return await self._bootstrap_translation_grouped_jobs(
-            conn, state=state, trace_id=trace_id
+            conn, state=state, route=route, trace_id=trace_id
         )
 
     async def _bootstrap_vocabulary_jobs(
@@ -1314,19 +1419,20 @@ class EnhancementJobBootstrapService:
         trace_id: UUID | None = None,
     ) -> list[VocabularyBootstrapResult]:
         # T4.1a route hardening: classify via deterministic document
-        # features (see ``_bootstrap_translation_jobs``). SHORT_BATCH and
-        # STRUCTURED_BATCH both execute via the single whole-article
-        # vocabulary batch job this round; GROUPED_WINDOWED splits into
-        # per-window batch jobs.
+        # features (see ``_bootstrap_translation_jobs``).
+        # T4.1b: SHORT_BATCH and STRUCTURED_BATCH both execute via the
+        # whole-article vocabulary batch job, but with distinct
+        # operation_fingerprint / policy_version / input_json.article_route.
+        # GROUPED_WINDOWED splits into per-window batch jobs.
         route = await _load_article_route(conn, state=state)
         if route is not ArticleRoute.GROUPED_WINDOWED:
             return await self._bootstrap_vocabulary_batch_job(
-                conn, state=state, trace_id=trace_id
+                conn, state=state, route=route, trace_id=trace_id
             )
         # T3.2b non-short grouped path: split unpublished units into
         # consecutive windows and create one batch job per window.
         return await self._bootstrap_vocabulary_grouped_jobs(
-            conn, state=state, trace_id=trace_id
+            conn, state=state, route=route, trace_id=trace_id
         )
 
     async def _bootstrap_vocabulary_grouped_jobs(
@@ -1334,6 +1440,7 @@ class EnhancementJobBootstrapService:
         conn: asyncpg.Connection,
         *,
         state: _LockedActiveBaseState,
+        route: ArticleRoute,
         trace_id: UUID | None = None,
     ) -> list[VocabularyBootstrapResult]:
         """T3.2b: non-short vocabulary grouped/window execution.
@@ -1344,6 +1451,14 @@ class EnhancementJobBootstrapService:
         window. Each window job has a distinct ``target_key`` /
         ``idempotency_key`` / ``input_hash`` so multiple windows on the
         same record do not collide.
+
+        T4.1b route identity: ``route`` is recorded as ``article_route``
+        in ``envelope_json`` / ``input_json`` for audit consistency with
+        the batch path. GROUPED_WINDOWED keeps its existing
+        ``vocabulary_article_v1`` fingerprint base (shared with
+        SHORT_BATCH) so its idempotency contract is preserved; the
+        three-way distinction is completed by ``article_route`` in
+        ``input_json``.
 
         Cross-window duplicate headword policy (v1): each window may
         independently highlight the same headword once. Cross-window
@@ -1453,6 +1568,8 @@ class EnhancementJobBootstrapService:
                     "layer_type": "vocabulary",
                     "trace_id": str(trace_id),
                     "window_id": window.window_id,
+                    "article_route": route.value,
+                    "document_features": _route_document_features(state),
                 },
                 input_signature_suffix=(
                     f"{state.base_language}:vocabulary:window:{window.window_id}:1:batch"
@@ -1463,6 +1580,7 @@ class EnhancementJobBootstrapService:
                     "base_language": state.base_language,
                     "layer_type": "vocabulary",
                     "window_id": window.window_id,
+                    "article_route": route.value,
                 },
                 layer_name=_LAYER_NAME_BY_JOB_TYPE[VOCABULARY_BATCH_JOB_TYPE],
                 target_key_override=window_target_key,
@@ -1597,19 +1715,25 @@ class EnhancementJobBootstrapService:
         trace_id: UUID | None = None,
         force_legacy_grammar: bool = False,
     ) -> tuple[list[GrammarBootstrapResult], bool]:
-        """Z+ vs legacy grammar bootstrap routing.
+        """Route-aware grammar bootstrap routing (T4.1c).
 
-        默认走 Z+ 路径（design §9.1）：返回 ``([], True)``，由调用方在
-        外层事务提交后调用 ``ZPlusBootstrapService.bootstrap_grammar_window_plan``
-        创建 plan + windows + jobs。``ZPlusBootstrapService`` 内部幂等，
-        plan 已存在时直接复用，不重复创建。
+        Three-way split:
 
-        仅当 ``force_legacy_grammar=True`` 时回退到 legacy per-unit
-        ``_bootstrap_grammar_jobs``（保留旧代码作为 fallback，符合"在
-        agentic orchestration 验证完成前不删除旧 AI workflow"的约束）。
+        - ``force_legacy_grammar=True`` → legacy per-unit
+          ``_bootstrap_grammar_jobs`` (fallback, returns ``([], False)``).
+        - ``GROUPED_WINDOWED`` → Z+ analysis-window path (returns
+          ``([], True)``; caller dispatches to
+          ``ZPlusBootstrapService.bootstrap_grammar_window_plan`` after
+          the outer transaction commits). Long-article grammar contract
+          is unchanged.
+        - ``SHORT_BATCH`` / ``STRUCTURED_BATCH`` → compact grammar batch
+          path (returns ``(results, False)``). One
+          ``build_grammar_bundle`` / ``unit_range`` batch job covers all
+          unpublished units in a single LLM call; no
+          ``analysis_windows`` / ``layer_analysis_plans`` are created.
 
         Design: docs/initiatives/reader-agentic-orchestration/
-        analysis-window-zplus-design.md §9.1 worker migration.
+        adaptive-reader-orchestration-design.md §6.3 / §4.2.
         """
         if force_legacy_grammar:
             results = await self._bootstrap_grammar_jobs(
@@ -1618,24 +1742,195 @@ class EnhancementJobBootstrapService:
                 trace_id=trace_id,
             )
             return results, False
-        # 默认 Z+ 路径。ZPlusBootstrapService 在外层事务提交后被调用，
-        # 其内部幂等：plan 已存在时直接复用。
-        return [], True
+        # T4.1c: route-aware split. GROUPED_WINDOWED keeps the Z+ path;
+        # SHORT_BATCH / STRUCTURED_BATCH use the compact batch path.
+        route = await _load_article_route(conn, state=state)
+        if route is ArticleRoute.GROUPED_WINDOWED:
+            # Z+ path. ZPlusBootstrapService 在外层事务提交后被调用，
+            # 其内部幂等：plan 已存在时直接复用。
+            return [], True
+        # Compact grammar batch path for SHORT_BATCH / STRUCTURED_BATCH.
+        results = await self._bootstrap_grammar_batch_job(
+            conn,
+            state=state,
+            route=route,
+            trace_id=trace_id,
+        )
+        return results, False
+
+    async def _bootstrap_grammar_batch_job(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        state: _LockedActiveBaseState,
+        route: ArticleRoute,
+        trace_id: UUID | None = None,
+    ) -> list[GrammarBootstrapResult]:
+        """T4.1c: compact grammar batch bootstrap for short/structured articles.
+
+        Creates a single ``build_grammar_bundle`` / ``unit_range``
+        reader job whose ``input_json.target_unit_ids`` lists every unit
+        that still needs a grammar layer. The batch worker makes one LLM
+        call covering all units; the batch publisher splits the output
+        back into per-unit ``enhancement_layers`` rows.
+
+        T4.1c route identity: ``route`` selects the operation_fingerprint
+        base and policy_version. ``STRUCTURED_BATCH`` gets a distinct
+        fingerprint so a route change (short -> structured on a rebuilt
+        base) triggers ``_supersede_stale_fingerprint_jobs``. Both
+        ``SHORT_BATCH`` and ``STRUCTURED_BATCH`` record ``article_route``
+        in ``envelope_json`` and ``input_json``; ``document_features``
+        is recorded in ``envelope_json`` only (workers needing the
+        profile read it from the run envelope).
+
+        No ``analysis_windows`` / ``layer_analysis_plans`` are created —
+        this is the key cost/latency win over the Z+ path for short and
+        medium articles.
+        """
+        if trace_id is None:
+            trace_id = uuid4()
+        if route is ArticleRoute.STRUCTURED_BATCH:
+            fingerprint_base = GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT
+            policy_version = GRAMMAR_STRUCTURED_BATCH_POLICY_VERSION
+            route_suffix = "structured"
+        else:
+            fingerprint_base = GRAMMAR_BATCH_OPERATION_FINGERPRINT
+            policy_version = GRAMMAR_BATCH_POLICY_VERSION
+            route_suffix = "short"
+        operation_fingerprint = _compose_operation_fingerprint(
+            fingerprint_base, state.strategy
+        )
+        await _supersede_stale_fingerprint_jobs(
+            conn,
+            record_id=state.record_id,
+            base_id=state.base_id,
+            expected_generation=state.expected_generation,
+            job_type=GRAMMAR_BATCH_JOB_TYPE,
+            target_scope=GRAMMAR_BATCH_TARGET_SCOPE,
+            current_fingerprint=operation_fingerprint,
+        )
+        rows = await conn.fetch(
+            """
+            SELECT u.unit_id, u.order_index, u.text_hash
+            FROM reading_units u
+            WHERE u.reading_record_id = $1
+              AND u.base_id = $2
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM enhancement_layers layer
+                  WHERE layer.reading_record_id = u.reading_record_id
+                    AND layer.base_id = u.base_id
+                    AND layer.generation = $3
+                    AND layer.layer_type IN ('grammar_note', 'sentence_analysis')
+                    AND layer.target_scope = 'unit'
+                    AND layer.target_key = u.unit_id
+                    AND layer.status = 'published'
+              )
+            ORDER BY u.order_index ASC
+            """,
+            state.record_id,
+            state.base_id,
+            state.expected_generation,
+        )
+        if not rows:
+            return []
+        target_unit_ids = [str(row["unit_id"]) for row in rows]
+
+        existing_job = await conn.fetchrow(
+            """
+            SELECT id, run_id
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND base_id = $2
+              AND job_type = $3
+              AND target_type = $4
+              AND target_key = $5
+              AND expected_generation = $6
+              AND operation_fingerprint = $7
+              AND status IN ('queued', 'claimed', 'retry_later', 'paused', 'succeeded')
+            LIMIT 1
+            """,
+            state.record_id,
+            state.base_id,
+            GRAMMAR_BATCH_JOB_TYPE,
+            GRAMMAR_BATCH_TARGET_SCOPE,
+            str(state.record_id),
+            state.expected_generation,
+            operation_fingerprint,
+        )
+        if existing_job is not None:
+            # Idempotent: batch job already exists.
+            return []
+
+        run_id, job_id = await _insert_unit_range_job(
+            conn,
+            state=state,
+            run_type=GRAMMAR_RUN_TYPE,
+            job_type=GRAMMAR_BATCH_JOB_TYPE,
+            target_scope=GRAMMAR_BATCH_TARGET_SCOPE,
+            policy_version=policy_version,
+            trigger_kind=GRAMMAR_TRIGGER_KIND,
+            operation_fingerprint=operation_fingerprint,
+            max_attempts=DEFAULT_GRAMMAR_BATCH_MAX_ATTEMPTS,
+            envelope_json={
+                "record_id": str(state.record_id),
+                "base_id": str(state.base_id),
+                "target_scope": GRAMMAR_BATCH_TARGET_SCOPE,
+                "target_unit_ids": target_unit_ids,
+                "layer_types": ["grammar_note", "sentence_analysis"],
+                "trace_id": str(trace_id),
+                "article_route": route.value,
+                "document_features": _route_document_features(state),
+            },
+            input_signature_suffix=(
+                f"{state.base_language}:grammar_bundle:{route_suffix}:batch"
+            ),
+            input_json={
+                "target_scope": GRAMMAR_BATCH_TARGET_SCOPE,
+                "target_unit_ids": target_unit_ids,
+                "base_language": state.base_language,
+                "layer_types": ["grammar_note", "sentence_analysis"],
+                "article_route": route.value,
+            },
+            layer_name=_LAYER_NAME_BY_JOB_TYPE[GRAMMAR_BATCH_JOB_TYPE],
+        )
+        return [
+            GrammarBootstrapResult(
+                run_id=run_id,
+                job_id=job_id,
+                reading_record_id=state.record_id,
+                base_id=state.base_id,
+                unit_id=target_unit_ids[0],
+                expected_generation=state.expected_generation,
+                operation_fingerprint=operation_fingerprint,
+            )
+        ]
 
     async def _bootstrap_translation_batch_job(
         self,
         conn: asyncpg.Connection,
         *,
         state: _LockedActiveBaseState,
+        route: ArticleRoute,
         trace_id: UUID | None = None,
     ) -> list[TranslationBootstrapResult]:
-        """T1.1 short-article batch bootstrap: 1 translation job per article.
+        """T1.1 / T4.1b: whole-article translation batch bootstrap.
 
         Creates a single ``translate_article`` / ``unit_range`` reader job
         whose ``input_json.target_unit_ids`` lists every unit that still
         needs a translation layer. The batch worker makes one LLM call
         covering all units; the batch publisher splits the output back
         into per-unit ``enhancement_layers`` rows.
+
+        T4.1b route identity: ``route`` selects the operation_fingerprint
+        base and policy_version. ``STRUCTURED_BATCH`` gets a distinct
+        fingerprint so a route change (short -> structured on a rebuilt
+        base) triggers ``_supersede_stale_fingerprint_jobs``. Both
+        ``SHORT_BATCH`` and ``STRUCTURED_BATCH`` record ``article_route``
+        in ``envelope_json`` and ``input_json``; ``document_features``
+        is recorded in ``envelope_json`` only (workers needing the
+        profile read it from the run envelope). This is the T4.1c
+        grammar compact path hook.
 
         Idempotent: if a batch job already exists for this record / base /
         generation / fingerprint with status in
@@ -1648,8 +1943,16 @@ class EnhancementJobBootstrapService:
         """
         if trace_id is None:
             trace_id = uuid4()
+        if route is ArticleRoute.STRUCTURED_BATCH:
+            fingerprint_base = TRANSLATION_STRUCTURED_BATCH_OPERATION_FINGERPRINT
+            policy_version = TRANSLATION_STRUCTURED_BATCH_POLICY_VERSION
+            route_suffix = "structured"
+        else:
+            fingerprint_base = TRANSLATION_BATCH_OPERATION_FINGERPRINT
+            policy_version = TRANSLATION_BATCH_POLICY_VERSION
+            route_suffix = "short"
         operation_fingerprint = _compose_operation_fingerprint(
-            TRANSLATION_BATCH_OPERATION_FINGERPRINT, state.strategy
+            fingerprint_base, state.strategy
         )
         await _supersede_stale_fingerprint_jobs(
             conn,
@@ -1722,7 +2025,7 @@ class EnhancementJobBootstrapService:
             run_type=TRANSLATION_RUN_TYPE,
             job_type=TRANSLATION_BATCH_JOB_TYPE,
             target_scope=TRANSLATION_BATCH_TARGET_SCOPE,
-            policy_version=TRANSLATION_BATCH_POLICY_VERSION,
+            policy_version=policy_version,
             trigger_kind=TRANSLATION_TRIGGER_KIND,
             operation_fingerprint=operation_fingerprint,
             max_attempts=DEFAULT_TRANSLATION_MAX_ATTEMPTS,
@@ -1733,15 +2036,19 @@ class EnhancementJobBootstrapService:
                 "target_unit_ids": target_unit_ids,
                 "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
                 "trace_id": str(trace_id),
+                "article_route": route.value,
+                "document_features": _route_document_features(state),
             },
             input_signature_suffix=(
-                f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}:batch"
+                f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}:"
+                f"{route_suffix}:batch"
             ),
             input_json={
                 "target_scope": TRANSLATION_BATCH_TARGET_SCOPE,
                 "target_unit_ids": target_unit_ids,
                 "base_language": state.base_language,
                 "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+                "article_route": route.value,
             },
             layer_name=_LAYER_NAME_BY_JOB_TYPE[TRANSLATION_BATCH_JOB_TYPE],
         )
@@ -1762,6 +2069,7 @@ class EnhancementJobBootstrapService:
         conn: asyncpg.Connection,
         *,
         state: _LockedActiveBaseState,
+        route: ArticleRoute,
         trace_id: UUID | None = None,
     ) -> list[TranslationBootstrapResult]:
         """T3.1: non-short translation grouped/window execution.
@@ -1780,6 +2088,14 @@ class EnhancementJobBootstrapService:
         the Translation Group semantic contract regardless of how many
         units a window covers. No parallel job type or migration is
         introduced.
+
+        T4.1b route identity: ``route`` is recorded as ``article_route``
+        in ``envelope_json`` / ``input_json`` for audit consistency with
+        the batch path. GROUPED_WINDOWED keeps its existing
+        ``translation_article_v1`` fingerprint base (shared with
+        SHORT_BATCH) so its idempotency contract is preserved; the
+        three-way distinction is completed by ``article_route`` in
+        ``input_json``.
 
         Cutover safety (review P1):
 
@@ -1944,6 +2260,8 @@ class EnhancementJobBootstrapService:
                     "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
                     "trace_id": str(trace_id),
                     "window_id": window.window_id,
+                    "article_route": route.value,
+                    "document_features": _route_document_features(state),
                 },
                 input_signature_suffix=(
                     f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}:"
@@ -1955,6 +2273,7 @@ class EnhancementJobBootstrapService:
                     "base_language": state.base_language,
                     "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
                     "window_id": window.window_id,
+                    "article_route": route.value,
                 },
                 layer_name=_LAYER_NAME_BY_JOB_TYPE[TRANSLATION_BATCH_JOB_TYPE],
                 target_key_override=window_target_key,
@@ -1978,18 +2297,37 @@ class EnhancementJobBootstrapService:
         conn: asyncpg.Connection,
         *,
         state: _LockedActiveBaseState,
+        route: ArticleRoute,
         trace_id: UUID | None = None,
     ) -> list[VocabularyBootstrapResult]:
-        """T1.1 short-article batch bootstrap: 1 vocabulary job per article.
+        """T1.1 / T4.1b: whole-article vocabulary batch bootstrap.
 
         Mirrors :meth:`_bootstrap_translation_batch_job` for the vocabulary
         layer. Same idempotency contract; ``target_unit_ids`` lists every
         unit that still needs a vocabulary layer.
+
+        T4.1b route identity: ``route`` selects the operation_fingerprint
+        base and policy_version. ``STRUCTURED_BATCH`` gets a distinct
+        fingerprint so a route change (short -> structured on a rebuilt
+        base) triggers ``_supersede_stale_fingerprint_jobs``. Both
+        ``SHORT_BATCH`` and ``STRUCTURED_BATCH`` record ``article_route``
+        in ``envelope_json`` and ``input_json``; ``document_features``
+        is recorded in ``envelope_json`` only (workers needing the
+        profile read it from the run envelope). This is the T4.1c
+        grammar compact path hook.
         """
         if trace_id is None:
             trace_id = uuid4()
+        if route is ArticleRoute.STRUCTURED_BATCH:
+            fingerprint_base = VOCABULARY_STRUCTURED_BATCH_OPERATION_FINGERPRINT
+            policy_version = VOCABULARY_STRUCTURED_BATCH_POLICY_VERSION
+            route_suffix = "structured"
+        else:
+            fingerprint_base = VOCABULARY_BATCH_OPERATION_FINGERPRINT
+            policy_version = VOCABULARY_BATCH_POLICY_VERSION
+            route_suffix = "short"
         operation_fingerprint = _compose_operation_fingerprint(
-            VOCABULARY_BATCH_OPERATION_FINGERPRINT, state.strategy
+            fingerprint_base, state.strategy
         )
         await _supersede_stale_fingerprint_jobs(
             conn,
@@ -2060,7 +2398,7 @@ class EnhancementJobBootstrapService:
             run_type=VOCABULARY_RUN_TYPE,
             job_type=VOCABULARY_BATCH_JOB_TYPE,
             target_scope=VOCABULARY_BATCH_TARGET_SCOPE,
-            policy_version=VOCABULARY_BATCH_POLICY_VERSION,
+            policy_version=policy_version,
             trigger_kind=VOCABULARY_TRIGGER_KIND,
             operation_fingerprint=operation_fingerprint,
             max_attempts=DEFAULT_VOCABULARY_MAX_ATTEMPTS,
@@ -2071,13 +2409,18 @@ class EnhancementJobBootstrapService:
                 "target_unit_ids": target_unit_ids,
                 "layer_type": "vocabulary",
                 "trace_id": str(trace_id),
+                "article_route": route.value,
+                "document_features": _route_document_features(state),
             },
-            input_signature_suffix=f"{state.base_language}:vocabulary:1:batch",
+            input_signature_suffix=(
+                f"{state.base_language}:vocabulary:{route_suffix}:batch"
+            ),
             input_json={
                 "target_scope": VOCABULARY_BATCH_TARGET_SCOPE,
                 "target_unit_ids": target_unit_ids,
                 "base_language": state.base_language,
                 "layer_type": "vocabulary",
+                "article_route": route.value,
             },
             layer_name=_LAYER_NAME_BY_JOB_TYPE[VOCABULARY_BATCH_JOB_TYPE],
         )

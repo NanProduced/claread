@@ -28,17 +28,23 @@ from app.services.reader_orchestration.article_ready_service import (
 from app.services.reader_orchestration.grammar_worker import (
     FakeGrammarBundleExecutor,
     GrammarAnchorSegmentContext,
+    GrammarBatchExecutionResult,
+    GrammarBatchJobContext,
+    GrammarBatchJobProcessResult,
+    GrammarBatchUnitContext,
     GrammarBundleCandidateOutput,
     GrammarBundleWorkerService,
     GrammarExecutionError,
     GrammarExecutionResult,
     GrammarJobContext,
     PydanticAIGrammarBundleExecutor,
+    _build_grammar_batch_prompt,
     _build_grammar_prompt,
     _validate_grammar_strategy_metadata,
 )
 from app.services.reader_orchestration.job_bootstrap import (
     GRAMMAR_OPERATION_FINGERPRINT,
+    EnhancementJobBootstrapService,
     GrammarJobBootstrapService,
     _fingerprint_matches_base,
 )
@@ -1332,6 +1338,58 @@ def _build_context_for_variant(
     )
 
 
+def _build_batch_context_for_variant(
+    *,
+    reading_goal: str,
+    reading_variant: str,
+    article_route: str = "structured_batch",
+    document_features: dict[str, object] | None = None,
+    source_text: str = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    ),
+) -> GrammarBatchJobContext:
+    """Build a GrammarBatchJobContext for compact-prompt unit tests."""
+    strategy = resolve_reader_variant_strategy(reading_goal, reading_variant)
+    layer = strategy.layers["grammar_bundle"]
+    unit = GrammarBatchUnitContext(
+        unit_id="u1",
+        order_index=1,
+        source_text=source_text,
+        text_hash=compute_text_range_hash(source_text),
+        anchor_segments=(
+            GrammarAnchorSegmentContext(
+                anchor_segment_id="s1",
+                sentence_id="s1",
+                segment_type="sentence",
+                unit_start_utf16=0,
+                unit_end_utf16=utf16_code_unit_length(source_text),
+                text_hash=compute_text_range_hash(source_text),
+                text=source_text,
+            ),
+        ),
+    )
+    return GrammarBatchJobContext(
+        job_id=UUID("11111111-1111-1111-1111-111111111111"),
+        run_id=UUID("22222222-2222-2222-2222-222222222222"),
+        reading_record_id=UUID("33333333-3333-3333-3333-333333333333"),
+        user_id=UUID("44444444-4444-4444-4444-444444444444"),
+        base_id=UUID("55555555-5555-5555-5555-555555555555"),
+        expected_generation=1,
+        operation_fingerprint="grammar_bundle_article_structured_v1:test",
+        source_language="en",
+        units=(unit,),
+        reading_goal=strategy.reading_goal,
+        reading_variant=strategy.reading_variant,
+        strategy_version=strategy.strategy_version,
+        strategy_hash=strategy.strategy_hash,
+        layer_policy_hash=layer.policy_hash,
+        grammar_prompt_lines=layer.prompt_lines,
+        article_route=article_route,
+        document_features=document_features,
+    )
+
+
 def test_build_grammar_prompt_contains_concrete_policy_lines() -> None:
     """The prompt must include the concrete grammar_bundle policy lines from
     reader_variants.yaml, not just a goal/variant label."""
@@ -1406,6 +1464,39 @@ def test_build_grammar_prompt_strategy_section_order() -> None:
     source_idx = prompt.index("<source_text>")
 
     assert unit_id_idx < strategy_idx < return_idx < source_idx
+
+
+def test_build_grammar_batch_prompt_includes_route_and_compact_document_features() -> None:
+    """Compact grammar batch prompts must expose route identity and only the
+    small document_features subset intended for prompt-time adaptation."""
+    context = _build_batch_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        article_route="structured_batch",
+        document_features={
+            "estimated_word_count": 1450,
+            "estimated_token_count": 1980,
+            "unit_count": 5,
+            "paragraph_count": 6,
+            "heading_count": 2,
+            "structural_noise_ratio": 0.18,
+            "extractor_version": "document_feature_v1",
+            "ignored_signal": "should_not_be_in_prompt",
+        },
+    )
+
+    prompt = _build_grammar_batch_prompt(context)
+
+    assert "article_route: structured_batch" in prompt
+    assert "<document_features>" in prompt
+    assert "estimated_word_count: 1450" in prompt
+    assert "estimated_token_count: 1980" in prompt
+    assert "unit_count: 5" in prompt
+    assert "paragraph_count: 6" in prompt
+    assert "heading_count: 2" in prompt
+    assert "structural_noise_ratio: 0.18" in prompt
+    assert "extractor_version" not in prompt
+    assert "ignored_signal" not in prompt
 
 
 def test_legacy_agent_instructions_contain_markdown_contract() -> None:
@@ -1959,3 +2050,294 @@ async def test_worker_fail_closed_on_missing_strategy_metadata_moves_job_to_fail
     # not explicitly set; the worker's GrammarExecutionError branch
     # propagates exc.rationale_code to the transition call.
     assert job_row["rationale_code"] == "strategy_metadata_missing"
+
+
+# ---------------------------------------------------------------------------#
+# T4.1c: compact grammar batch path — publish contract tests
+# ---------------------------------------------------------------------------#
+#
+# These tests verify that the compact grammar batch worker (SHORT_BATCH /
+# STRUCTURED_BATCH route) publishes per-unit grammar_note / sentence_analysis
+# layers from a single batch LLM call, without per-unit fan-out.
+#
+# The fixture loads migrations 0015 + 0017 so that
+# ``EnhancementJobBootstrapService.bootstrap_missing_jobs`` can route
+# short articles to the grammar batch path.
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_MIGRATION_0015_SQL = (
+    _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
+).read_text(encoding="utf-8")
+_MIGRATION_0017_SQL = (
+    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
+).read_text(encoding="utf-8")
+
+_T41C_BATCH_ARTICLE_TEXT = (
+    "Not only did the team revise the plan, but they also clarified the timeline.\n\n"
+    "The committee approved the revised schedule after a thorough review."
+)
+
+
+class _StaticGrammarBatchExecutor:
+    """T4.1c fake batch executor: produces valid grammar_note /
+    sentence_analysis candidates for each unit in the batch context."""
+
+    def __init__(self) -> None:
+        self.calls: list[GrammarBatchJobContext] = []
+
+    async def generate_batch(
+        self,
+        context: GrammarBatchJobContext,
+    ) -> GrammarBatchExecutionResult:
+        self.calls.append(context)
+        outputs: list[tuple[str, GrammarBundleOutput]] = []
+        for unit in context.units:
+            if not unit.anchor_segments:
+                outputs.append((unit.unit_id, GrammarBundleOutput()))
+                continue
+            anchor_segment = unit.anchor_segments[0]
+            word_match = __import__("re").search(r"\b\w+\b", anchor_segment.text)
+            assert word_match is not None
+            word = word_match.group(0)
+            word_start = anchor_segment.unit_start_utf16 + utf16_code_unit_length(
+                anchor_segment.text[: word_match.start()]
+            )
+            word_anchor = ReaderTextRangeAnchor(
+                base_id=str(context.base_id),
+                unit_id=unit.unit_id,
+                anchor_segment_id=anchor_segment.anchor_segment_id,
+                sentence_id=anchor_segment.sentence_id,
+                segment_type=anchor_segment.segment_type,
+                start_offset=word_start,
+                end_offset=word_start + utf16_code_unit_length(word),
+                selected_text=word,
+                text_hash=compute_text_range_hash(word),
+            )
+            sentence_anchor = ReaderTextRangeAnchor(
+                base_id=str(context.base_id),
+                unit_id=unit.unit_id,
+                anchor_segment_id=anchor_segment.anchor_segment_id,
+                sentence_id=anchor_segment.sentence_id,
+                segment_type=anchor_segment.segment_type,
+                start_offset=anchor_segment.unit_start_utf16,
+                end_offset=anchor_segment.unit_end_utf16,
+                selected_text=anchor_segment.text,
+                text_hash=compute_text_range_hash(anchor_segment.text),
+            )
+            outputs.append(
+                (
+                    unit.unit_id,
+                    GrammarBundleOutput(
+                        grammar_notes=[
+                            GrammarNoteItem(
+                                spans=[word_anchor],
+                                grammar_point="core verb",
+                                pattern="SVO",
+                                note="Batch grammar note for T4.1c.",
+                            )
+                        ],
+                        sentence_analyses=[
+                            SentenceAnalysisItem(
+                                anchor=sentence_anchor,
+                                label="main clause",
+                                analysis="Simple clause for batch grammar test.",
+                                chunks=[
+                                    SentenceAnalysisChunk(
+                                        order=1,
+                                        label="clause",
+                                        text=anchor_segment.text,
+                                    )
+                                ],
+                            )
+                        ],
+                    ),
+                )
+            )
+        return GrammarBatchExecutionResult(
+            outputs=outputs,
+            usage_data={"aggregate": {"input_tokens": 20, "output_tokens": 30, "total_tokens": 50}},
+            prompt_version="test-grammar-batch",
+            model_profile="fake-grammar-batch-profile",
+            model_provider="fake-provider",
+            model_name="fake-grammar-batch-model",
+        )
+
+
+@pytest.fixture
+async def grammar_batch_env() -> asyncpg.Pool:
+    schema_name = f"test_reader_grammar_batch_{uuid4().hex}"
+    admin_conn = await connect_admin()
+    original_pool = db_connection.DB_POOL
+    try:
+        await admin_conn.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
+        await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
+        await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
+        await admin_conn.execute(BASELINE_SQL)
+        await admin_conn.execute(_MIGRATION_0015_SQL)
+        await admin_conn.execute(_MIGRATION_0017_SQL)
+        pool = await make_pool(schema_name)
+        db_connection.DB_POOL = pool
+        try:
+            yield pool
+        finally:
+            await pool.close()
+    finally:
+        db_connection.DB_POOL = original_pool
+        await admin_conn.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
+        await admin_conn.close()
+
+
+@pytest.mark.anyio
+async def test_t41c_batch_worker_publishes_grammar_and_sentence_layers(
+    grammar_batch_env: asyncpg.Pool,
+) -> None:
+    """T4.1c publish contract: the compact grammar batch worker publishes
+    per-unit ``grammar_note`` and ``sentence_analysis`` layers from a
+    single batch LLM call. No per-unit ``build_grammar_bundle`` / ``unit``
+    jobs are created."""
+    user_id = await insert_user(grammar_batch_env)
+    submit_service = ArticleReadyPersistenceService(pool=grammar_batch_env)
+    submit_result = await submit_service.submit_plain_text(
+        PlainTextArticleReadySubmitRequest(
+            user_id=user_id,
+            plain_text=_T41C_BATCH_ARTICLE_TEXT,
+            title="T4.1c Grammar Batch",
+            language="en",
+            reading_goal="daily_reading",
+            reading_variant="intermediate_reading",
+        )
+    )
+    record_id = submit_result.record_id
+    base_id = submit_result.base_id
+
+    # Bootstrap creates 1 grammar batch job (SHORT_BATCH route)
+    service = EnhancementJobBootstrapService(pool=grammar_batch_env)
+    await service.bootstrap_missing_jobs(
+        record_id=record_id, user_id=user_id
+    )
+
+    # Verify batch job was created (build_grammar_bundle / unit_range)
+    async with grammar_batch_env.acquire() as conn:
+        batch_job_row = await conn.fetchrow(
+            """
+            SELECT id, run_id, job_type, target_type, operation_fingerprint
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND job_type = 'build_grammar_bundle'
+              AND target_type = 'unit_range'
+            """,
+            record_id,
+        )
+    assert batch_job_row is not None, "SHORT_BATCH: expected a grammar batch job"
+    assert batch_job_row["target_type"] == "unit_range"
+
+    # Process the batch job with a fake executor
+    executor = _StaticGrammarBatchExecutor()
+    worker = GrammarBundleWorkerService(
+        pool=grammar_batch_env,
+        batch_executor=executor,
+    )
+    result = await worker.process_next_grammar_batch_job_for_record(
+        record_id=record_id,
+        base_id=base_id,
+        expected_generation=1,
+        lease_owner="grammar-batch-worker-1",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None
+    assert result.status == "succeeded"
+    assert result.published_batch is not None
+    assert len(executor.calls) == 1
+    batch_context = executor.calls[0]
+    assert len(batch_context.units) >= 2, "expected at least 2 units in batch"
+
+    # Verify per-unit grammar_note + sentence_analysis layers published
+    async with grammar_batch_env.acquire() as conn:
+        layer_rows = await conn.fetch(
+            """
+            SELECT layer_type, target_scope, target_key, status, output_json
+            FROM enhancement_layers
+            WHERE reading_record_id = $1
+              AND layer_type IN ('grammar_note', 'sentence_analysis')
+            ORDER BY layer_type ASC, target_key ASC
+            """,
+            record_id,
+        )
+        job_row = await conn.fetchrow(
+            "SELECT status FROM reader_jobs WHERE id = $1",
+            result.claim.job_id,
+        )
+        run_row = await conn.fetchrow(
+            "SELECT status FROM reader_runs WHERE id = $1",
+            result.claim.run_id,
+        )
+
+    # Each unit should have both grammar_note and sentence_analysis
+    unit_count = len(batch_context.units)
+    grammar_notes = [r for r in layer_rows if r["layer_type"] == "grammar_note"]
+    sentence_analyses = [r for r in layer_rows if r["layer_type"] == "sentence_analysis"]
+    assert len(grammar_notes) == unit_count, (
+        f"expected {unit_count} grammar_note layers, got {len(grammar_notes)}"
+    )
+    assert len(sentence_analyses) == unit_count, (
+        f"expected {unit_count} sentence_analysis layers, got {len(sentence_analyses)}"
+    )
+    assert all(r["target_scope"] == "unit" for r in layer_rows)
+    assert all(r["status"] == "published" for r in layer_rows)
+
+    # Validate output_json schemas
+    for row in grammar_notes:
+        GrammarNoteLayerOutput.model_validate(row["output_json"])
+    for row in sentence_analyses:
+        SentenceAnalysisLayerOutput.model_validate(row["output_json"])
+
+    # Job and run transitions
+    assert job_row is not None and job_row["status"] == "succeeded"
+    assert run_row is not None and run_row["status"] == "completed"
+
+
+@pytest.mark.anyio
+async def test_t41c_batch_worker_no_job_for_long_article(
+    grammar_batch_env: asyncpg.Pool,
+) -> None:
+    """T4.1c: the batch worker returns ``None`` when no grammar batch job
+    exists (GROUPED_WINDOWED route creates Z+ window jobs, not batch jobs).
+    The per-unit fallback then finds no per-unit jobs either, so the
+    pipeline runner's grammar dispatch returns ``no_job``."""
+    user_id = await insert_user(grammar_batch_env)
+    # Long text → GROUPED_WINDOWED → Z+ path, no grammar batch job
+    long_text = "\n\n".join(
+        " ".join(f"Word{i} placeholder sentence for long grammar batch test." for i in range(40))
+        for _ in range(8)
+    )
+    submit_service = ArticleReadyPersistenceService(pool=grammar_batch_env)
+    submit_result = await submit_service.submit_plain_text(
+        PlainTextArticleReadySubmitRequest(
+            user_id=user_id,
+            plain_text=long_text,
+            title="T4.1c Long Article",
+            language="en",
+            reading_goal="daily_reading",
+            reading_variant="intermediate_reading",
+        )
+    )
+
+    service = EnhancementJobBootstrapService(pool=grammar_batch_env)
+    await service.bootstrap_missing_jobs(
+        record_id=submit_result.record_id, user_id=user_id
+    )
+
+    worker = GrammarBundleWorkerService(
+        pool=grammar_batch_env,
+        batch_executor=_StaticGrammarBatchExecutor(),
+    )
+    result = await worker.process_next_grammar_batch_job_for_record(
+        record_id=submit_result.record_id,
+        base_id=submit_result.base_id,
+        expected_generation=1,
+        lease_owner="grammar-batch-worker-long",
+        lease_duration=timedelta(seconds=30),
+    )
+    # No batch job for GROUPED_WINDOWED
+    assert result is None

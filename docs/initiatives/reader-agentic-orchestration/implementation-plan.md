@@ -54,8 +54,8 @@ Reader enhancement 的当前主链路按层分开理解：
 
 1. M0/M1 的短文合同继续保持；短文真实页面已抽查过的部分不再反复消耗真 LLM。
 2. M3 长文 grouped execution：T3.1（translation）与 T3.2b（vocabulary）均已完成实施；T3.3 phrase_gloss guard、T3.4a diagnostics、T3.4b density bug fix 已完成。
-3. T3.5 completion state finalizer 已完成代码级实施（详见下方 T3.5 章节）；下一步推进 T4.1/T4.1a 的 complexity routing 基线，停止仅靠 raw `content_utf16_length` 做短文分流。
-4. 在 route hardening 之后，优先补 T4.1b `structured batch` 中档模式与 T4.1c short/medium compact grammar path，让中等文章不被过早送入 heavy grouped/windowed pipeline。
+3. T3.5 completion state finalizer 已完成代码级实施（详见下方 T3.5 章节）；T4.1/T4.1a deterministic complexity routing、T4.1b structured article batch runtime mode 与 T4.1c short/medium compact grammar path 均已完成代码级实施（详见下方 T4.1/T4.1a/T4.1b/T4.1c 章节）。
+4. 下一步优先推进 T4.2 bounded LLM document profiler 与 T4.3 strategy planner 合同；T4.1c 已让短文与 structured batch 文章的 grammar 走 compact batch path，不再默认走重型 analysis-window 空跑。
 5. bounded enhancement planner + specialized structured workers 的设计评估应先聚焦 long/very-long selective enhancement，优先减少 vocabulary/grammar 的空跑与重复扫描，而不是一开始扩到全部 translation。
 6. Provider prompt cache / cache-hit 归因可作为后续成本杠杆继续验证，但它是成本优化项，不是三模式路由设计的替代品。
 7. 三种模式代码级闭环后，再统一跑真实 LLM / 页面验收，覆盖短文、中档 structured batch、长文、超长文和碎段新闻。
@@ -84,8 +84,8 @@ Reader enhancement 的当前主链路按层分开理解：
 | T3.5 | completion state finalizer | 3-6h | T3.1/T3.2/T3.4a | 所有目标 jobs/window terminal 后，`readiness_state` 推进到 `coverage_complete` 并发布 `record_state_changed` 事件（不更新 `product_state` 或 `layer_analysis_plans.status`）（已完成实施/待验收：详见"当前进度"T3.5 章节） |
 | T4.1 | deterministic document feature extractor | 4-8h | M1/M3 | 输出 token、word、paragraph、heading、noise、block histogram、requested layers 等 profile input；作为 route hardening 的统一输入（已完成实施/待验收：详见"当前进度"T4.1/T4.1a 章节） |
 | T4.1a | short/medium route hardening | 4-8h | T4.1/T3.5 | 不再用 raw `content_utf16_length` 单独决定短文路径；改用 estimated_token / estimated_word、paragraph、heading/noise、reading_goal 判定 short batch / structured batch / grouped-windowed（已完成实施/待验收：详见"当前进度"T4.1/T4.1a 章节） |
-| T4.1b | structured article batch | 4-8h | T4.1a | 为中等文章补 whole-article structured batch mode；translation/vocabulary 尽量整篇 batch，保留 grounded publish 与 release order |
-| T4.1c | short/medium compact grammar path | 4-8h | T4.1a/T4.1b | 短文与 structured batch 文章的 grammar 不再默认走重型全窗口空跑；候选生成更紧凑，publish 仍受 budget/density/anchor 约束 |
+| T4.1b | structured article batch | 4-8h | T4.1a | 为中等文章补 whole-article structured batch mode；translation/vocabulary 尽量整篇 batch，保留 grounded publish 与 release order（已完成实施/待验收：详见"当前进度"T4.1b 章节） |
+| T4.1c | short/medium compact grammar path | 4-8h | T4.1a/T4.1b | 短文与 structured batch 文章的 grammar 不再默认走重型全窗口空跑；候选生成更紧凑，publish 仍受 budget/density/anchor 约束（已完成实施/待验收：详见"当前进度"T4.1c 章节） |
 | T4.2 | bounded LLM document profiler | 4-8h | T4.1a | LLM 只返回 genre/structure/schema_risk/selective hints；失败时 deterministic fallback；不直接决定流程 |
 | T4.3 | strategy planner | 4-8h | T4.1b/T4.2 | planner 选择 short batch、structured batch、grouped/windowed、section longform、selective longform |
 | T4.3a | longform bounded enhancement planner | 4-8h | T4.3 | 先为 long/very-long 的 vocabulary/grammar 选择高价值 targets；translation 仍优先沿用独立 semantic group planner，除非后续证据支持扩权 |
@@ -191,6 +191,48 @@ Reader enhancement 的当前主链路按层分开理解：
    - `STRUCTURED_BATCH` 当前只是 **正确的 route label + whole-article batch landing zone**，不是独立 runtime mode。若要让 structured batch 使用不同 budget/prompt/release policy，应在 T4.1b 单独实现，不在本轮扩。
    - `structural_noise_ratio`、`heading_count`、`list_item_count` 等结构信号本轮只写入 profile 供观测与后续 planner 使用，不参与当前 router 判定。
    - `cached_route` 只在单次 `bootstrap_missing_jobs()` 调用内稳定；跨调用不缓存，这是预期行为，因为 active base 可能已重建，下一次应重新评估 route。
+
+#### T4.1b structured article batch（已完成实施/待验收）
+
+1. 目标：让 `STRUCTURED_BATCH` 从 T4.1a 的"正确 route label + 共用 short-batch 执行路径"升级为**独立可审计 runtime mode**。translation / vocabulary 在 `STRUCTURED_BATCH` 下仍尽量整篇 batch compute；publish contract 不变（仍 grounded、仍按现有 layer contract 输出）；不破坏 `SHORT_BATCH` 与 `GROUPED_WINDOWED` 既有 contract；为后续 T4.1c grammar compact path 留出清晰接口（`input_json.article_route` + `envelope_json.document_features`）。
+2. 核心实现（`services/api/app/services/reader_orchestration/job_bootstrap.py`）：
+   - 新增 `TRANSLATION_STRUCTURED_BATCH_OPERATION_FINGERPRINT` / `TRANSLATION_STRUCTURED_BATCH_POLICY_VERSION` / `VOCABULARY_STRUCTURED_BATCH_OPERATION_FINGERPRINT` / `VOCABULARY_STRUCTURED_BATCH_POLICY_VERSION` 四个常量。`STRUCTURED_BATCH` 使用独立的 `*_structured_v1` fingerprint base 与 `*_structured_bootstrap_v1` policy_version；`SHORT_BATCH` 与 `GROUPED_WINDOWED` 保留现有 `*_v1` base 以保护既有 idempotency contract。
+   - `_LockedActiveBaseState` 新增 `cached_profile: DocumentFeatureProfile | None`，与 `cached_route` 一起由 `_load_article_route` 一次性缓存。新增 `_build_document_features_metadata` / `_route_document_features` helper 把 profile 信号（`estimated_word_count` / `estimated_token_count` / `unit_count` / `paragraph_count` / `heading_count` / `structural_noise_ratio` / `extractor_version`）写入 `envelope_json.document_features`，供审计与 T4.1c grammar compact path 直接读取，无需重算。
+   - 四个 batch/grouped bootstrap 方法（`_bootstrap_translation_batch_job` / `_bootstrap_translation_grouped_jobs` / `_bootstrap_vocabulary_batch_job` / `_bootstrap_vocabulary_grouped_jobs`）统一接受 `route: ArticleRoute` 参数。batch 方法（translation / vocabulary）按 route 选择 fingerprint base + policy_version + `input_signature_suffix` 中的 `route_suffix`（`"short"` vs `"structured"`）；grouped 方法只用 `GROUPED_WINDOWED`，保留共享 `*_v1` base。所有四个方法的 `envelope_json` / `input_json` 都写入 `article_route`，`envelope_json` 同时写入 `document_features`。
+   - 路由身份三态可审计：`reader_jobs.operation_fingerprint` 区分 `STRUCTURED_BATCH`（`*_structured_v1:hash`）与 `SHORT_BATCH`/`GROUPED_WINDOWED`（共享 `*_v1:hash`）；`reader_runs.policy_version` 区分 `STRUCTURED_BATCH`（`*_structured_bootstrap_v1`）与另外两态；`reader_jobs.input_json.article_route` / `reader_runs.envelope_json.article_route` 三态全区分（`short_batch` / `structured_batch` / `grouped_windowed`）。route 变化（如 base 重建后 short -> structured）会触发 `_supersede_stale_fingerprint_jobs` supersede 旧 route 的 jobs。
+3. 影响面：不改 worker prompt；不改 translation / vocabulary publish contract；不改 `apps/web/**`；不改 API route/schema 公共 contract；不新增 migration；不扩到 bounded LLM profiler / strategy planner / semantic outline；不回头扩 T3.5 scope。
+4. 已新增测试（`tests/test_reader_orchestration_job_bootstrap_strategy.py`）：4 个 T4.1b focused tests：
+   - `test_t41b_short_batch_route_identity_in_job_and_run_metadata`：SHORT_BATCH 文章在 `input_json.article_route` / `envelope_json.article_route` / `envelope_json.document_features` / `operation_fingerprint` base / `policy_version` 全部记录 `short_batch` 身份。
+   - `test_t41b_structured_batch_route_identity_distinct_from_short`：STRUCTURED_BATCH 文章使用 DISTINCT fingerprint base + policy_version（与 SHORT_BATCH 不同），translation 与 vocabulary 两层都携带 `structured_batch` 身份；medium fixture 的 `document_features.estimated_word_count > 1100` 证明路由决策信号被审计。
+   - `test_t41b_grouped_windowed_route_identity_in_job_and_run_metadata`：GROUPED_WINDOWED 文章每个 window job 都携带 `grouped_windowed` 身份，保留共享 `*_v1` base + `policy_version`（T3.1/T3.2b idempotency contract 不变）。
+   - `test_t41b_no_per_unit_fanout_regression_across_three_routes`：三态都不产生 `translate_unit` / `build_vocabulary_layer` per-unit job；每个 batch/window job 的 `input_json.article_route` 与预期 route 一致。
+5. 风险/边界（已锁定，不扩 scope）：
+   - `STRUCTURED_BATCH` 当前只让 route identity 在 job/runtime 中**可见、可测、可审计**；worker prompt / budget / release policy 仍与 `SHORT_BATCH` 共用整篇 batch path。若要给 structured batch 独立 budget/prompt/release policy，应在 T4.1c 或后续任务单独实现，不在本轮扩。
+   - `SHORT_BATCH` 与 `GROUPED_WINDOWED` 共享 `*_v1` fingerprint base 是**有意设计**：保护既有 idempotency contract，避免 T4.1b 引入无谓的 supersede 风暴；三态区分由 `input_json.article_route` 完成。
+   - `document_features` 在 missing-base 防御分支下为 `None`（无 profile 可记录），这是预期行为。
+   - 真实 LLM 下 structured batch 的成本/质量/时延仍需 T4.1c + 页面验收收口，本轮只做 runtime boundary 与测试护栏。
+
+#### T4.1c short/medium compact grammar path（已完成实施/待验收）
+
+1. 目标：让 `SHORT_BATCH` 与 `STRUCTURED_BATCH` 的 grammar 不再默认走重型 Z+ analysis-window 路径。短文/中档文使用单次 whole-article `build_grammar_bundle` / `unit_range` batch job，一次 LLM call 覆盖全部 unit；publisher 按 `unit_id` 拆分输出为 per-unit `grammar_note` / `sentence_analysis` layer。`GROUPED_WINDOWED` 长文 grammar 继续保持现有 analysis-window / window-publisher 合同，不回归。
+2. 核心实现（`services/api/app/services/reader_orchestration/`）：
+   - `job_bootstrap.py`：`_bootstrap_grammar_jobs_or_zplus` 新增 route-aware 三路分流——`force_legacy_grammar=True` → legacy per-unit；`GROUPED_WINDOWED` → Z+ analysis-window path（合同不变）；`SHORT_BATCH` / `STRUCTURED_BATCH` → compact grammar batch path。`_bootstrap_grammar_batch_job` 创建单个 `build_grammar_bundle` / `unit_range` batch job，`input_json.target_unit_ids` 列出全部待发布 unit。route-specific fingerprint：`SHORT_BATCH` 使用 `grammar_bundle_article_v1` base + `reader_grammar_batch_bootstrap_v1` policy_version；`STRUCTURED_BATCH` 使用 `grammar_bundle_article_structured_v1` base + `reader_grammar_batch_structured_bootstrap_v1` policy_version（T4.1b pattern）。
+   - **job_type 复用决策**：`GRAMMAR_BATCH_JOB_TYPE = GRAMMAR_JOB_TYPE`（均为 `"build_grammar_bundle"`）。batch 与 per-unit job 由 `target_type`（`unit_range` vs `unit`）和 `operation_fingerprint` base 区分，不新增 migration。两路径在 pipeline runner 中均报告 `worker_type="grammar_bundle"`，满足现有 `reader_runtime_spans.worker_type` CHECK constraint。
+   - `grammar_worker.py`：新增 `GrammarBatchCandidateOutput`（无固定 `max_length`，per-unit budget 在 split 后执行）、`GrammarBatchExecutor` Protocol / `PydanticAIGrammarBatchExecutor` / `FakeGrammarBatchExecutor`、`GrammarBundleWorkerService.process_next_grammar_batch_job_for_record` + `claim_grammar_batch_job_for_record` + `process_claimed_grammar_batch_job`。`GrammarBatchJobContext` 从 `input_json.article_route` + `envelope_json.document_features` 读取 T4.1b 路由信号；`_build_grammar_batch_prompt` 将 `article_route` 和紧凑 `document_features` 摘要写入 prompt，使模型可按文章 tier 调整候选密度。
+   - `layer_publisher.py`：新增 `PublishedGrammarBatch` + `publish_article_grammar_batch`，将 batch LLM 输出按 `unit_id` 拆分为 per-unit `grammar_note` / `sentence_analysis` layer。per-unit layer fingerprint suffix 使用 `f"{operation_fingerprint}:{unit_id}"` 模式避免 N 个 per-unit layer 发布时的 unique constraint 冲突。
+   - `pipeline_runner.py`：`_run_grammar_attempt` 合并 batch-first + per-unit-fallback 逻辑——先尝试 `process_next_grammar_batch_job_for_record`（SHORT_BATCH / STRUCTURED_BATCH），无 batch job 时回退到 `process_next_grammar_job_for_record`（GROUPED_WINDOWED 或 `force_legacy_grammar`）。`WorkerType` 不新增 `grammar_bundle_batch`；worker_order 不变。supersede 统计使用 `_count_grammar_batch_superseded_jobs` 覆盖 `GRAMMAR_BATCH_OPERATION_FINGERPRINT` 与 `GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT` 两个 base，确保 STRUCTURED_BATCH route flip 的 `superseded_jobs` / `outcome_counts.superseded` 完整可观测。
+3. 影响面：不改 worker prompt 文件；不改 translation / vocabulary publish contract；不改 `apps/web/**`；不改 API route/schema 公共 contract；不新增 migration；不扩到 bounded LLM profiler / strategy planner / semantic outline / SSE / RAG / prompt cache；不回头扩 T3.5 scope；不用"恢复默认 per-unit grammar fan-out"假装完成。
+4. 已新增/更新测试：
+   - `tests/test_reader_orchestration_job_bootstrap_strategy.py`：4 个 T4.1c focused tests（short→compact、structured→compact、long→Z+ window、publish contract no regression）。新增 `_count_grammar_jobs_by_target_type` helper 按 `job_type:target_type` 统计；`_count_analysis_windows` 修正为 join `layer_analysis_plans`。
+   - `tests/test_reader_orchestration_grammar_worker.py`：2 个 T4.1c batch worker tests（batch worker publishes per-unit grammar_note + sentence_analysis layers from single batch LLM call；batch worker returns None for GROUPED_WINDOWED articles）。
+   - `tests/test_reader_orchestration_pipeline_runner.py`：3 个 T4.1c pipeline dispatch tests（short article → compact grammar batch path + no analysis windows；no per-unit fan-out regression；worker loop completes cleanly with `all_workers_no_job`）。
+   - `tests/test_pipeline_runner_window_dispatch.py`：修正 mock 以适配 T4.1c batch dispatch（window-only fixture 下 batch worker 返回 None）。
+5. 测试结果（249 passed）：`test_reader_orchestration_job_bootstrap_strategy.py` 57 passed；`test_reader_orchestration_grammar_worker.py` + `test_reader_orchestration_pipeline_runner.py` 146 passed；`test_grammar_window_worker.py` + `test_pipeline_runner_window_dispatch.py` + `test_reader_orchestration_worker_loop.py` 103 passed。
+6. 风险/边界（已锁定，不扩 scope）：
+   - compact grammar batch 仍复用 short-batch compute path 的 LLM 调用基础设施；真实 LLM 下的 cost / quality / latency 改善需页面验收收口，本轮只做代码级合同与测试护栏。
+   - `STRUCTURED_BATCH` grammar 的 prompt / budget / release policy 当前与 `SHORT_BATCH` 共用 compact batch path；若要给 structured batch 独立 grammar budget/prompt，应在后续任务单独实现。
+   - batch candidate output 无固定 `max_length`，per-unit budget（`MAX_GRAMMAR_NOTE_ITEMS` / `MAX_SENTENCE_ANALYSIS_ITEMS`）在 publisher split 后执行；超限 candidate 会被 drop 并记入 diagnostics。
+   - GROUPED_WINDOWED 长文 grammar 路径（Z+ analysis-window / window-publisher）完全未改动，既有合同不回归。
 - T2.1 已有第一轮实现并提交（progressive reload cursor、in-flight guard、scroll/selection best-effort 恢复），但必须在 T1.1a 修复后用真实页面重新验收；前端稳定性不能替代正确的 layer output。
 - 默认 worker / baseline budget 已调整为 `max_ticks=96`、`max_jobs=48`，覆盖当前 6/7 worker slots 下的中等短文样本；这是验收预算，不是最终调度模型。
 - 2026-07-08 fake baseline 验收只能证明 job 数、completion 和测试 fake output 口径；不能证明真实 LLM 下 Translation Group 粒度正确。真实页面已暴露 one-unit-one-group 回归，因此此前 `translation_groups` 数量不能作为 T1.1a 验收依据。
@@ -202,13 +244,12 @@ Reader enhancement 的当前主链路按层分开理解：
 
 ### 下一轮建议
 
-1. T3.5、T4.1、T4.1a 都已完成代码级实施：completion state finalizer 已闭合；deterministic router 已替换 legacy raw-char 二元分流；Unicode non-CJK 与 missing-base 两个回归点也已补齐。下一步不再回头扩这三项 scope。
-2. 下一优先级收口到 **T4.1b structured article batch**：给中档 `STRUCTURED_BATCH` 文章补独立执行策略（budget / prompt / release policy），而不是继续与 `SHORT_BATCH` 共用整篇 batch path。
-3. 之后推进 **T4.1c short/medium compact grammar path**：让短文与 structured batch 文章的 grammar 不再默认走重型 analysis-window 空跑；先解中档 grammar 的成本/时延问题，再扩大到大 planner。
-4. bounded enhancement planner + specialized structured workers 的第一落点仍应是 long/very-long selective enhancement：planner 只负责选择候选 enhancement targets，专业 worker 负责 schema output 与 publish；translation semantic group planner 继续保持独立。
-5. T5.1 deterministic navigation outline 仍然是 very-long lazy enhancement 的先决条件；semantic outline 只面向长文/超长文，不默认对所有文章生成。
-6. Provider prompt cache / cache-hit 归因继续作为成本优化项跟踪，但应放在 structured runtime / compact grammar 收口之后做，不作为当前三模式架构是否成立的前提。
-7. 继续跟踪真实测试的 token、耗时、首个可用输出时间和输出质量，但避免每个局部补丁后真实跑长文或超长文；三模式合同闭环后再统一做页面验收。
+1. T3.5、T4.1、T4.1a、T4.1b、T4.1c 都已完成代码级实施：completion state finalizer 已闭合；deterministic router 已替换 legacy raw-char 二元分流；Unicode non-CJK 与 missing-base 两个回归点也已补齐；`STRUCTURED_BATCH` 已升级为独立可审计 runtime mode（fingerprint / policy_version / article_route / document_features 三态区分，route 变化触发 supersede）；短文与 structured batch 文章的 grammar 已走 compact batch path，不再默认走重型 analysis-window 空跑。下一步不再回头扩这五项 scope。
+2. 下一优先级收口到 **T4.2 bounded LLM document profiler** 与 **T4.3 strategy planner**：bounded profiler 只返回 genre/structure/schema_risk/selective hints；planner 选择 short batch、structured batch、grouped/windowed、section longform、selective longform。T4.1b/T4.1c 的三态可审计 runtime mode + compact grammar batch path 是 planner 的稳定输入。
+3. bounded enhancement planner + specialized structured workers 的第一落点仍应是 long/very-long selective enhancement：planner 只负责选择候选 enhancement targets，专业 worker 负责 schema output 与 publish；translation semantic group planner 继续保持独立。
+4. T5.1 deterministic navigation outline 仍然是 very-long lazy enhancement 的先决条件；semantic outline 只面向长文/超长文，不默认对所有文章生成。
+5. Provider prompt cache / cache-hit 归因继续作为成本优化项跟踪，但应放在 structured runtime / compact grammar 收口之后做，不作为当前三模式架构是否成立的前提。
+6. 继续跟踪真实测试的 token、耗时、首个可用输出时间和输出质量，但避免每个局部补丁后真实跑长文或超长文；三模式合同闭环后再统一做页面验收。
 
 ### 暂缓项
 
@@ -226,7 +267,7 @@ Reader enhancement 的当前主链路按层分开理解：
 
 - `implementation-plan.md` 只记录任务拆分、依赖、状态和验收口径，不保存每轮 coding agent prompt。
 - 每轮 prompt 由人工根据当前代码事实和最近验收结果单独生成，并通过会话发给 coding agent。
-- 当前 T1.1a、T3.1、T3.2b、T3.3、T3.4a、T3.4b、T3.5、T4.1、T4.1a 均已完成代码级实施；下一阶段优先推进 T4.1b/T4.1c，再进入 T4.2/T4.3 与 M5 outline-first / very-long lazy enhancement 合同。不要把 planner / semantic outline worker / SSE patch / grammar quality tuning 混成一个无边界任务。
+- 当前 T1.1a、T3.1、T3.2b、T3.3、T3.4a、T3.4b、T3.5、T4.1、T4.1a、T4.1b、T4.1c 均已完成代码级实施；下一阶段优先推进 T4.2 bounded LLM document profiler 与 T4.3 strategy planner，再进入 M5 outline-first / very-long lazy enhancement 合同。不要把 planner / semantic outline worker / SSE patch / grammar quality tuning 混成一个无边界任务。
 - 评审 agent 完成 review 后，如发现实现改变了任务状态、产品合同或执行顺序，必须同步更新本计划和相关模块合同。
 
 ## 成功标准
@@ -1019,10 +1060,9 @@ Focused tests 已通过：
 
 当前下一步：
 
-1. T4.1b structured article batch。
-2. T4.1c short/medium compact grammar path。
-3. T4.2/T4.3 三模式 planner 合同。
-4. T5.1 deterministic navigation outline；semantic outline 只在长文/超长文策略中后置启用。
-5. 持续记录真实测试的 token、耗时、首个可用输出时间和输出质量，不用单次中间态长文测试推翻整体架构。
+1. T4.2 bounded LLM document profiler（T4.1b/T4.1c 已为 planner 留出 `input_json.article_route` + `envelope_json.document_features` + compact grammar batch path 接口）。
+2. T4.3 strategy planner 合同。
+3. T5.1 deterministic navigation outline；semantic outline 只在长文/超长文策略中后置启用。
+4. 持续记录真实测试的 token、耗时、首个可用输出时间和输出质量，不用单次中间态长文测试推翻整体架构。
 
-T3.5、T4.1、T4.1a 已完成代码级实施，不再作为下一步入口；如需 retry force-failed windows、扩展 finalizer 到 RAG substrate，或让 structured batch 脱离 short batch 共享 runtime，应分别作为后续独立任务设计。
+T3.5、T4.1、T4.1a、T4.1b、T4.1c 已完成代码级实施，不再作为下一步入口；如需 retry force-failed windows、扩展 finalizer 到 RAG substrate，或给 structured batch 独立 grammar budget/prompt/release policy（脱离与 short batch 共享的 compact batch path），应分别作为后续独立任务设计。

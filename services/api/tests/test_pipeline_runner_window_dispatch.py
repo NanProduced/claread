@@ -286,6 +286,14 @@ async def test_pipeline_runner_worker_order_grammar_window_before_legacy(
 
     mock_legacy_grammar_service = AsyncMock()
 
+    async def _batch_side_effect(**kwargs: Any) -> None:
+        # T4.1c: no claimable grammar batch job (window-only fixture).
+        return None
+
+    mock_legacy_grammar_service.process_next_grammar_batch_job_for_record = (
+        AsyncMock(side_effect=_batch_side_effect)
+    )
+
     async def _legacy_side_effect(**kwargs: Any) -> None:
         call_order.append("legacy")
         return None  # no claimable legacy grammar_bundle job → no_job

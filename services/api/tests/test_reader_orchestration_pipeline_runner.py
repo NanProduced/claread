@@ -33,7 +33,15 @@ from app.services.reader_orchestration.display_title_worker import (
     DisplayTitleJobContext,
     DisplayTitleWorkerService,
 )
+from app.services.reader_orchestration.job_bootstrap import (
+    GRAMMAR_BATCH_JOB_TYPE,
+    GRAMMAR_BATCH_OPERATION_FINGERPRINT,
+    GRAMMAR_BATCH_TARGET_SCOPE,
+    GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
+)
 from app.services.reader_orchestration.grammar_worker import (
+    GrammarBatchExecutionResult,
+    GrammarBatchJobContext,
     GrammarBundleWorkerService,
     GrammarExecutionResult,
     GrammarJobContext,
@@ -383,6 +391,90 @@ class _StaticGrammarExecutor:
         )
 
 
+class _StaticGrammarBatchExecutor:
+    """T4.1c fake batch executor: 1 LLM call → N per-unit grammar outputs.
+
+    Mirrors :class:`_StaticGrammarExecutor` but accepts the batch context
+    and returns one :class:`GrammarBundleOutput` per unit.
+    """
+
+    async def generate_batch(
+        self,
+        context: GrammarBatchJobContext,
+    ) -> GrammarBatchExecutionResult:
+        outputs: list[tuple[str, GrammarBundleOutput]] = []
+        for unit in context.units:
+            if not unit.anchor_segments:
+                outputs.append((unit.unit_id, GrammarBundleOutput()))
+                continue
+            anchor_segment = unit.anchor_segments[0]
+            word_match = WORD_RE.search(anchor_segment.text)
+            assert word_match is not None
+            word = word_match.group(0)
+            word_start = anchor_segment.unit_start_utf16 + utf16_code_unit_length(
+                anchor_segment.text[: word_match.start()]
+            )
+            word_anchor = ReaderTextRangeAnchor(
+                base_id=str(context.base_id),
+                unit_id=unit.unit_id,
+                anchor_segment_id=anchor_segment.anchor_segment_id,
+                sentence_id=anchor_segment.sentence_id,
+                segment_type=anchor_segment.segment_type,
+                start_offset=word_start,
+                end_offset=word_start + utf16_code_unit_length(word),
+                selected_text=word,
+                text_hash=compute_text_range_hash(word),
+            )
+            sentence_anchor = ReaderTextRangeAnchor(
+                base_id=str(context.base_id),
+                unit_id=unit.unit_id,
+                anchor_segment_id=anchor_segment.anchor_segment_id,
+                sentence_id=anchor_segment.sentence_id,
+                segment_type=anchor_segment.segment_type,
+                start_offset=anchor_segment.unit_start_utf16,
+                end_offset=anchor_segment.unit_end_utf16,
+                selected_text=anchor_segment.text,
+                text_hash=compute_text_range_hash(anchor_segment.text),
+            )
+            outputs.append(
+                (
+                    unit.unit_id,
+                    GrammarBundleOutput(
+                        grammar_notes=[
+                            GrammarNoteItem(
+                                spans=[word_anchor],
+                                grammar_point="core verb",
+                                pattern="SVO",
+                                note="Batch grammar note for T4.1c pipeline test.",
+                            )
+                        ],
+                        sentence_analyses=[
+                            SentenceAnalysisItem(
+                                anchor=sentence_anchor,
+                                label="main clause",
+                                analysis="Simple clause for batch grammar pipeline verification.",
+                                chunks=[
+                                    SentenceAnalysisChunk(
+                                        order=1,
+                                        label="clause",
+                                        text=anchor_segment.text,
+                                    )
+                                ],
+                            )
+                        ],
+                    ),
+                )
+            )
+        return GrammarBatchExecutionResult(
+            outputs=outputs,
+            usage_data={"aggregate": {"input_tokens": 20, "output_tokens": 30, "total_tokens": 50}},
+            prompt_version="pipeline-test-grammar-batch",
+            model_profile="fake_grammar_batch",
+            model_provider="fake",
+            model_name="fake-grammar-batch",
+        )
+
+
 class _StaticBatchTranslator:
     """T1.1 fake batch translator: 1 LLM call → N per-unit translation groups.
 
@@ -534,6 +626,8 @@ def _make_runner(
     grammar_executor: object | None = None,
     batch_translator: object | None = None,
     batch_vocabulary_executor: object | None = None,
+    grammar_batch_executor: object | None = None,
+    enable_zplus_grammar: bool = False,
 ) -> ReaderEnhancementPipelineRunner:
     # T1.1 short-article batch path: 短文现在走 batch worker 而非 per-unit。
     # 即使测试传入 per-unit translator / vocabulary_executor，我们也必须
@@ -565,18 +659,23 @@ def _make_runner(
         else None
     )
     grammar_worker = (
-        GrammarBundleWorkerService(pool=pool, executor=grammar_executor)
-        if grammar_executor is not None
+        GrammarBundleWorkerService(
+            pool=pool,
+            executor=grammar_executor,
+            batch_executor=grammar_batch_executor,
+        )
+        if grammar_executor is not None or grammar_batch_executor is not None
         else None
     )
     display_title_worker = DisplayTitleWorkerService(
         pool=pool,
         generator=title_generator or _StaticTitleGenerator(),
     )
-    # enable_zplus_grammar=False: 这些是 legacy 4-worker 路径测试，
-    # 期望 bootstrap 创建 per-unit grammar_bundle jobs 并由 4-worker
-    # 顺序处理。Z+ window 路由由 test_pipeline_runner_window_dispatch.py
-    # 和 test_grammar_window_worker.py 单独覆盖。
+    # enable_zplus_grammar 默认 False: legacy 4-worker 路径测试期望
+    # bootstrap 创建 per-unit grammar_bundle jobs 并由 4-worker 顺序处理。
+    # Z+ window 路由由 test_pipeline_runner_window_dispatch.py 和
+    # test_grammar_window_worker.py 单独覆盖。T4.1c 测试传
+    # enable_zplus_grammar=True 激活 route-aware grammar split。
     return ReaderEnhancementPipelineRunner(
         pool=pool,
         display_title_worker_service=display_title_worker,
@@ -584,7 +683,7 @@ def _make_runner(
         translation_batch_worker_service=translation_worker,
         vocabulary_worker_service=vocabulary_worker,
         grammar_worker_service=grammar_worker,
-        enable_zplus_grammar=False,
+        enable_zplus_grammar=enable_zplus_grammar,
     )
 
 
@@ -1794,3 +1893,343 @@ async def test_t31_pipeline_runner_processes_multiple_translation_windows_and_pu
                 f"group_id {group_id!r} does not follow the stable "
                 f"backend-generated format"
             )
+
+
+# ---------------------------------------------------------------------------
+# T4.1c: compact grammar batch path (SHORT_BATCH / STRUCTURED_BATCH)
+# ---------------------------------------------------------------------------
+
+
+async def _count_grammar_jobs_by_target_type(
+    pool: asyncpg.Pool,
+    record_id: UUID,
+) -> dict[str, int]:
+    """Count grammar jobs by ``job_type:target_type`` for a record."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT job_type, target_type, COUNT(*) AS cnt
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND job_type IN (
+                  'build_grammar_bundle',
+                  'build_grammar_bundle_window'
+              )
+            GROUP BY job_type, target_type
+            """,
+            record_id,
+        )
+    return {
+        f"{row['job_type']}:{row['target_type']}": int(row["cnt"])
+        for row in rows
+    }
+
+
+async def _count_analysis_windows_for_record(
+    pool: asyncpg.Pool,
+    record_id: UUID,
+) -> int:
+    async with pool.acquire() as conn:
+        return int(
+            await conn.fetchval(
+                """
+                SELECT COUNT(*)
+                FROM analysis_windows aw
+                JOIN layer_analysis_plans lap ON aw.plan_id = lap.id
+                WHERE lap.reading_record_id = $1
+                """,
+                record_id,
+            )
+        )
+
+
+async def _insert_superseded_grammar_batch_job(
+    pool: asyncpg.Pool,
+    *,
+    record_id: UUID,
+    base_id: UUID,
+    user_id: UUID,
+    expected_generation: int,
+    operation_fingerprint: str,
+    article_route: str,
+) -> UUID:
+    """Seed a superseded compact-grammar batch job for fingerprint counting tests."""
+    async with pool.acquire() as conn:
+        run_id = await conn.fetchval(
+            """
+            INSERT INTO reader_runs (
+                reading_record_id, user_id, run_type, status,
+                record_generation, envelope_json, policy_version, trigger_kind
+            )
+            VALUES (
+                $1, $2, 'grammar_bundle', 'queued',
+                $3, $4::jsonb, 'test-grammar-batch-superseded', 'manual'
+            )
+            RETURNING id
+            """,
+            record_id,
+            user_id,
+            expected_generation,
+            json.dumps({"article_route": article_route}),
+        )
+        job_id = await conn.fetchval(
+            """
+            INSERT INTO reader_jobs (
+                reading_record_id, base_id, run_id, user_id,
+                job_type, target_type, target_key, status,
+                priority, expected_generation, operation_fingerprint,
+                idempotency_key, input_hash, input_json, max_attempts
+            )
+            VALUES (
+                $1, $2, $3, $4,
+                $5, $6, $7, 'queued',
+                0, $8, $9,
+                $10, $11, $12::jsonb, 3
+            )
+            RETURNING id
+            """,
+            record_id,
+            base_id,
+            run_id,
+            user_id,
+            GRAMMAR_BATCH_JOB_TYPE,
+            GRAMMAR_BATCH_TARGET_SCOPE,
+            f"{article_route}:grammar-batch:{uuid4().hex}",
+            expected_generation,
+            f"{operation_fingerprint}:test",
+            f"{article_route}:idempotency:{uuid4().hex}",
+            f"{article_route}:input-hash:{uuid4().hex}",
+            json.dumps(
+                {
+                    "article_route": article_route,
+                    "target_unit_ids": ["u1"],
+                }
+            ),
+        )
+        await conn.execute(
+            "UPDATE reader_jobs SET status = 'superseded' WHERE id = $1",
+            job_id,
+        )
+    assert isinstance(job_id, UUID)
+    return job_id
+
+
+@pytest.mark.anyio
+async def test_t41c_short_article_uses_compact_grammar_batch_path(
+    pipeline_runner_env: asyncpg.Pool,
+) -> None:
+    """T4.1c: SHORT_BATCH article → 1 compact grammar batch job, no
+    analysis windows, per-unit grammar_note/sentence_analysis layers
+    published from a single batch LLM call."""
+    user_id = await insert_user(pipeline_runner_env)
+    article = await submit_article_ready(
+        pipeline_runner_env,
+        user_id=user_id,
+        plain_text=_plain_text(2),
+        title="T4.1c Short Batch Grammar",
+    )
+    runner = _make_runner(
+        pipeline_runner_env,
+        translator=_StaticTranslator(),
+        vocabulary_executor=_StaticVocabularyExecutor(),
+        grammar_batch_executor=_StaticGrammarBatchExecutor(),
+        enable_zplus_grammar=True,
+    )
+
+    summary = await runner.run(
+        record_id=article.record_id,
+        user_id=user_id,
+        lease_owner="t41c-short-grammar",
+        lease_duration=LEASE_DURATION,
+        max_ticks=19,
+        max_jobs=12,
+    )
+
+    # SHORT_BATCH: 1 grammar batch job (unit_range), not 2 per-unit jobs
+    assert summary.bootstrapped_job_counts.grammar_bundle == 1
+    # Worker ticks: grammar_bundle ticks once (batch succeeds in round 1)
+    assert summary.worker_tick_counts.grammar_bundle >= 1
+    # Pipeline completes cleanly
+    assert summary.outcome_counts.failed_terminal == 0
+    assert summary.outcome_counts.superseded == 0
+
+    # No analysis_windows created (compact path, not Z+)
+    assert await _count_analysis_windows_for_record(
+        pipeline_runner_env, article.record_id
+    ) == 0
+
+    # Grammar jobs: 1 batch job (build_grammar_bundle:unit_range), 0 per-unit
+    grammar_job_counts = await _count_grammar_jobs_by_target_type(
+        pipeline_runner_env, article.record_id
+    )
+    assert grammar_job_counts.get("build_grammar_bundle:unit_range") == 1
+    assert grammar_job_counts.get("build_grammar_bundle:unit") is None
+
+    # Publish contract: per-unit grammar_note + sentence_analysis layers
+    assert await _count_layers(
+        pipeline_runner_env, article.record_id, "grammar_note"
+    ) == 2
+    assert await _count_layers(
+        pipeline_runner_env, article.record_id, "sentence_analysis"
+    ) == 2
+
+
+@pytest.mark.anyio
+async def test_t41c_compact_grammar_batch_no_per_unit_fan_out_regression(
+    pipeline_runner_env: asyncpg.Pool,
+) -> None:
+    """T4.1c: compact grammar batch path must not create per-unit
+    ``build_grammar_bundle`` / ``unit`` jobs. The batch job is the sole
+    grammar job; the publisher splits output into per-unit layers."""
+    user_id = await insert_user(pipeline_runner_env)
+    article = await submit_article_ready(
+        pipeline_runner_env,
+        user_id=user_id,
+        plain_text=_plain_text(3),
+        title="T4.1c No Fan-Out",
+    )
+    runner = _make_runner(
+        pipeline_runner_env,
+        translator=_StaticTranslator(),
+        vocabulary_executor=_StaticVocabularyExecutor(),
+        grammar_batch_executor=_StaticGrammarBatchExecutor(),
+        enable_zplus_grammar=True,
+    )
+
+    summary = await runner.run(
+        record_id=article.record_id,
+        user_id=user_id,
+        lease_owner="t41c-no-fanout",
+        lease_duration=LEASE_DURATION,
+        max_ticks=19,
+        max_jobs=12,
+    )
+
+    # 3-unit short article → 1 batch grammar job, not 3 per-unit
+    assert summary.bootstrapped_job_counts.grammar_bundle == 1
+    assert summary.outcome_counts.failed_terminal == 0
+
+    grammar_job_counts = await _count_grammar_jobs_by_target_type(
+        pipeline_runner_env, article.record_id
+    )
+    assert grammar_job_counts.get("build_grammar_bundle:unit_range") == 1
+    # No per-unit grammar jobs created
+    assert grammar_job_counts.get("build_grammar_bundle:unit") is None
+    # All 3 units get grammar_note + sentence_analysis layers
+    assert await _count_layers(
+        pipeline_runner_env, article.record_id, "grammar_note"
+    ) == 3
+    assert await _count_layers(
+        pipeline_runner_env, article.record_id, "sentence_analysis"
+    ) == 3
+
+
+@pytest.mark.anyio
+async def test_count_grammar_batch_superseded_jobs_covers_short_and_structured_bases(
+    pipeline_runner_env: asyncpg.Pool,
+) -> None:
+    """T4.1c regression guard: superseded compact-grammar counts must cover
+    both the short and structured fingerprint bases."""
+    user_id = await insert_user(pipeline_runner_env)
+    article = await submit_article_ready(
+        pipeline_runner_env,
+        user_id=user_id,
+        plain_text=_plain_text(2),
+        title="T4.1c Superseded Count",
+    )
+    async with pipeline_runner_env.acquire() as conn:
+        expected_generation = int(
+            await conn.fetchval(
+                "SELECT generation FROM reading_records WHERE id = $1",
+                article.record_id,
+            )
+        )
+
+    await _insert_superseded_grammar_batch_job(
+        pipeline_runner_env,
+        record_id=article.record_id,
+        base_id=article.base_id,
+        user_id=user_id,
+        expected_generation=expected_generation,
+        operation_fingerprint=GRAMMAR_BATCH_OPERATION_FINGERPRINT,
+        article_route="short_batch",
+    )
+    await _insert_superseded_grammar_batch_job(
+        pipeline_runner_env,
+        record_id=article.record_id,
+        base_id=article.base_id,
+        user_id=user_id,
+        expected_generation=expected_generation,
+        operation_fingerprint=GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
+        article_route="structured_batch",
+    )
+
+    runner = ReaderEnhancementPipelineRunner(
+        pool=pipeline_runner_env,
+        enable_zplus_grammar=False,
+    )
+
+    short_count = await runner._count_superseded_jobs(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=expected_generation,
+        job_type=GRAMMAR_BATCH_JOB_TYPE,
+        target_scope=GRAMMAR_BATCH_TARGET_SCOPE,
+        operation_fingerprint=GRAMMAR_BATCH_OPERATION_FINGERPRINT,
+    )
+    structured_count = await runner._count_superseded_jobs(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=expected_generation,
+        job_type=GRAMMAR_BATCH_JOB_TYPE,
+        target_scope=GRAMMAR_BATCH_TARGET_SCOPE,
+        operation_fingerprint=GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
+    )
+    total_count = await runner._count_grammar_batch_superseded_jobs(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=expected_generation,
+    )
+
+    assert short_count == 1
+    assert structured_count == 1
+    assert total_count == 2
+
+
+@pytest.mark.anyio
+async def test_t41c_compact_grammar_batch_worker_loop_completes_cleanly(
+    pipeline_runner_env: asyncpg.Pool,
+) -> None:
+    """T4.1c: worker loop / pipeline runner must not stall or loop
+    indefinitely when the grammar batch path is active. The pipeline
+    must reach ``all_workers_no_job`` and stop."""
+    user_id = await insert_user(pipeline_runner_env)
+    article = await submit_article_ready(
+        pipeline_runner_env,
+        user_id=user_id,
+        plain_text=_plain_text(2),
+        title="T4.1c Clean Loop",
+    )
+    runner = _make_runner(
+        pipeline_runner_env,
+        translator=_StaticTranslator(),
+        vocabulary_executor=_StaticVocabularyExecutor(),
+        grammar_batch_executor=_StaticGrammarBatchExecutor(),
+        enable_zplus_grammar=True,
+    )
+
+    summary = await runner.run(
+        record_id=article.record_id,
+        user_id=user_id,
+        lease_owner="t41c-clean-loop",
+        lease_duration=LEASE_DURATION,
+        max_ticks=25,
+        max_jobs=12,
+    )
+
+    # Pipeline must stop cleanly (not max_ticks_reached)
+    assert summary.stopped_reason == "all_workers_no_job"
+    assert summary.outcome_counts.failed_terminal == 0
+    assert summary.outcome_counts.retry_later == 0
+    # Grammar batch succeeded
+    assert summary.outcome_counts.succeeded >= 4  # display_title + translation_batch + vocabulary_batch + grammar_bundle
