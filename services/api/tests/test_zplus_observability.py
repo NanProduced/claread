@@ -67,6 +67,7 @@ from tests.reader_orchestration_test_support import (
 from tests.test_reader_orchestration_pipeline_runner import (
     _StaticBatchTranslator,
     _StaticBatchVocabularyExecutor,
+    _StaticGrammarBatchExecutor,
     _StaticGrammarExecutor,
     _StaticTitleGenerator,
     _StaticTranslator,
@@ -87,7 +88,7 @@ _MIGRATION_0017_SQL = (
     _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
 ).read_text(encoding="utf-8")
 
-ZPLUS_OBSERVABILITY_ARTICLE = (
+_OBS_BASE_PARAGRAPH = (
     "Not only did the team revise the plan, but they also clarified the timeline. "
     "Everyone understood the tradeoff.\n\n"
     "The committee, which had spent six months reviewing export data, "
@@ -99,6 +100,14 @@ ZPLUS_OBSERVABILITY_ARTICLE = (
     "purchases whenever wages, school fees, and transport costs rose in the same "
     "week."
 )
+
+# T4.2a-R1: the article must route to GROUPED_WINDOWED (>2000 words) so the
+# Z+ window path is exercised. Before T4.1c, all Z+ enabled articles went
+# through the window path; after T4.1c, only GROUPED_WINDOWED articles do.
+# Repeating the base paragraph 26 times yields ~2230 words, safely above the
+# 2000-word STRUCTURED_ARTICLE_MAX_WORD_COUNT threshold.
+ZPLUS_OBSERVABILITY_ARTICLE = "\n\n".join([_OBS_BASE_PARAGRAPH] * 26)
+
 
 LEASE_DURATION = timedelta(seconds=30)
 
@@ -327,6 +336,10 @@ def _make_zplus_runner(
     grammar_worker = GrammarBundleWorkerService(
         pool=pool,
         executor=_StaticGrammarExecutor(),
+        # T4.2a-R1: inject a fake batch executor so the compact grammar
+        # batch path (SHORT_BATCH / STRUCTURED_BATCH) never falls back to
+        # the real PydanticAIGrammarBatchExecutor when enable_zplus_grammar=True.
+        batch_executor=_StaticGrammarBatchExecutor(),
     )
     display_title_worker = DisplayTitleWorkerService(
         pool=pool,
@@ -390,8 +403,11 @@ async def test_zplus_success_writes_ai_usage_event_and_worker_tick_span(
         user_id=user_id,
         lease_owner="zplus-obs-success",
         lease_duration=LEASE_DURATION,
-        max_ticks=30,
-        max_jobs=20,
+        # T4.2a-R1: GROUPED_WINDOWED article (~2230 words) creates more
+        # jobs/windows than the original short fixture. Raise limits so the
+        # runner can reach coverage_complete.
+        max_ticks=100,
+        max_jobs=80,
     )
 
     assert run_summary.outcome_counts.failed_terminal == 0, (
@@ -548,8 +564,9 @@ async def test_zplus_publish_fence_span_success(
         user_id=user_id,
         lease_owner="zplus-fence-success",
         lease_duration=LEASE_DURATION,
-        max_ticks=30,
-        max_jobs=20,
+        # T4.2a-R1: GROUPED_WINDOWED article requires higher limits.
+        max_ticks=100,
+        max_jobs=80,
     )
 
     async with pool.acquire() as conn:
@@ -628,8 +645,9 @@ async def test_zplus_publish_fence_span_failure(
         user_id=user_id,
         lease_owner="zplus-fence-failure",
         lease_duration=LEASE_DURATION,
-        max_ticks=30,
-        max_jobs=20,
+        # T4.2a-R1: GROUPED_WINDOWED article requires higher limits.
+        max_ticks=100,
+        max_jobs=80,
     )
 
     async with pool.acquire() as conn:
@@ -850,8 +868,9 @@ async def test_zplus_window_worker_end_span_backfills_langsmith_run_id(
             user_id=user_id,
             lease_owner="zplus-langsmith-bridge",
             lease_duration=LEASE_DURATION,
-            max_ticks=30,
-            max_jobs=20,
+            # T4.2a-R1: GROUPED_WINDOWED article requires higher limits.
+            max_ticks=100,
+            max_jobs=80,
         )
     finally:
         _CURRENT_LANGSMITH_IDS.reset(token)

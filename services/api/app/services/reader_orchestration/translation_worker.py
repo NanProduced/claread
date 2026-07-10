@@ -18,8 +18,6 @@ from app.llm.router import build_model_for_route
 from app.llm.routes import MODEL_ROUTE_READER_LAYER_TRANSLATION
 from app.schemas.reader_orchestration import (
     TranslationBatchGenerationOutput,
-    TranslationBatchGroupOutput,
-    TranslationBatchUnitOutput,
     TranslationGroup,
     TranslationLayerGenerationOutput,
     TranslationLayerOutput,
@@ -41,7 +39,6 @@ from app.services.analysis.prompting.prompt_loader import (
 from .job_bootstrap import (
     DEFAULT_TRANSLATION_TARGET_LANGUAGE,
     TRANSLATION_BATCH_JOB_TYPE,
-    TRANSLATION_BATCH_OPERATION_FINGERPRINT,
     TRANSLATION_BATCH_TARGET_SCOPE,
     TRANSLATION_JOB_TYPE,
     TRANSLATION_OPERATION_FINGERPRINT,
@@ -1366,7 +1363,7 @@ class TranslationWorkerService:
             lease_duration=lease_duration,
             job_type=TRANSLATION_BATCH_JOB_TYPE,
             target_type=TRANSLATION_BATCH_TARGET_SCOPE,
-            operation_fingerprint=TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+            operation_fingerprint=None,
             reading_record_id=record_id,
             base_id=base_id,
             expected_generation=expected_generation,

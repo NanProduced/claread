@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 执行简报
 
 > 状态：`权威简报`
-> 最后更新：2026-07-09
+> 最后更新：2026-07-10
 
 给 coding agent 分配 Reader agentic orchestration 重构任务时，使用本简报作为最小上下文。
 
@@ -28,7 +28,9 @@
 
 当前新增设计入口是 `adaptive-reader-orchestration-design.md`。短期实现应先恢复短文质量/成本和稳定发布；完整 adaptive planner、SSE/patch merge、长文/超长文 lazy enhancement 应按设计文档分阶段推进，不要混进一个任务。
 
-2026-07-09 当前状态：M0 baseline harness、M1 short article recovery、T3.1 non-short translation grouped execution、T3.2b non-short vocabulary grouped execution、T3.3 phrase_gloss guard、T3.4a grammar diagnostics、T3.4b RECORD_DENSITY denominator fix 均已完成代码级实施。当前不要继续只围绕单篇文章局部补丁；下一阶段默认收口 T3.5 completion finalizer，并推进 T4/M5 的三模式 planner、outline-first、very-long lazy enhancement 合同。完整 adaptive planner、semantic outline worker、SSE patch merge 和 grammar quality tuning 仍要分任务推进，不能混成一个无边界任务。
+2026-07-10 当前状态：M0 baseline harness、M1 short article recovery、T3.1 non-short translation grouped execution、T3.2b non-short vocabulary grouped execution、T3.3 phrase_gloss guard、T3.4a grammar diagnostics、T3.4b RECORD_DENSITY denominator fix、T3.5 completion finalizer、T4.1/T4.1a deterministic complexity routing、T4.1b structured article batch runtime mode、T4.1c short/medium compact grammar path、T4.2a-R1 three-mode evidence parity and observability closure 均已完成代码级实施。当前不要继续只围绕单篇文章局部补丁；下一阶段优先推进 T4.2a-R2 execution budget / cutover safety（为三态 batch path 增加执行预算与切换安全护栏），再统一真实 LLM / 页面验收。完整 adaptive planner、semantic outline worker、SSE patch merge 和 grammar quality tuning 仍要分任务推进，不能混成一个无边界任务。
+
+三态尚未真实验收：当前 SHORT_BATCH / STRUCTURED_BATCH / GROUPED_WINDOWED 三态固定覆盖测试使用 fake executor，仅验证代码级合同闭环；真实 LLM 下的 cost / quality / latency 改善需后续统一页面验收收口。T4.2 bounded LLM document profiler **暂缓**，不在当前轮实现。下一步为 T4.2a-R2 execution budget / cutover safety。
 
 验收节奏：短文、长文、超长文三种模式先分别完成代码级合同闭环，再统一真实 LLM / 页面验收。中间实现阶段优先使用 deterministic tests、fake executor、recorded LLM response 和 DB contract checks；不要每修一个局部就反复真实跑长文/超长文。
 

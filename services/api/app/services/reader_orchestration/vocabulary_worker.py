@@ -41,7 +41,6 @@ from app.services.analysis.prompting.prompt_loader import (
 
 from .job_bootstrap import (
     VOCABULARY_BATCH_JOB_TYPE,
-    VOCABULARY_BATCH_OPERATION_FINGERPRINT,
     VOCABULARY_BATCH_TARGET_SCOPE,
     VOCABULARY_JOB_TYPE,
     VOCABULARY_OPERATION_FINGERPRINT,
@@ -1351,7 +1350,7 @@ class VocabularyWorkerService:
             lease_duration=lease_duration,
             job_type=VOCABULARY_BATCH_JOB_TYPE,
             target_type=VOCABULARY_BATCH_TARGET_SCOPE,
-            operation_fingerprint=VOCABULARY_BATCH_OPERATION_FINGERPRINT,
+            operation_fingerprint=None,
             reading_record_id=record_id,
             base_id=base_id,
             expected_generation=expected_generation,

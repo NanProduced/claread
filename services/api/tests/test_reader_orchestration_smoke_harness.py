@@ -284,3 +284,103 @@ async def test_fake_executors_require_explicit_opt_in(
             )
     finally:
         get_settings.cache_clear()
+
+
+@pytest.mark.anyio
+async def test_fake_mode_preserves_requested_grammar_topology_in_metadata(
+    smoke_harness_env: asyncpg.Pool,
+) -> None:
+    """Fake mode preserves the explicitly requested grammar topology."""
+    user_id = await insert_user(smoke_harness_env)
+    harness = ReaderEnhancementSmokeHarness(pool=smoke_harness_env)
+
+    result_fake_legacy = await harness.prepare_record(
+        user_id=user_id,
+        plain_text=_plain_text(2),
+        title="Fake legacy topology",
+        executor_mode="fake",
+        allow_fake_executors=True,
+        grammar_topology="legacy",
+    )
+    async with smoke_harness_env.acquire() as conn:
+        fake_meta = await conn.fetchval(
+            "SELECT metadata_json FROM original_inputs "
+            "WHERE reading_record_id = $1",
+            result_fake_legacy.record_id,
+        )
+    assert fake_meta["grammar_topology"] == "legacy", (
+        f"fake+legacy should record legacy, got {fake_meta['grammar_topology']!r}"
+    )
+
+    result_fake_prod = await harness.prepare_record(
+        user_id=user_id,
+        plain_text=_plain_text(2),
+        title="Fake production topology",
+        executor_mode="fake",
+        allow_fake_executors=True,
+        grammar_topology="production",
+    )
+    async with smoke_harness_env.acquire() as conn:
+        fake_prod_meta = await conn.fetchval(
+            "SELECT metadata_json FROM original_inputs "
+            "WHERE reading_record_id = $1",
+            result_fake_prod.record_id,
+        )
+    assert fake_prod_meta["grammar_topology"] == "production", (
+        f"fake+production should record production, "
+        f"got {fake_prod_meta['grammar_topology']!r}"
+    )
+
+@pytest.mark.anyio
+async def test_real_mode_forces_production_grammar_topology_in_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    smoke_harness_env: asyncpg.Pool,
+) -> None:
+    """Real mode normalizes metadata before any production runner can execute."""
+    harness = ReaderEnhancementSmokeHarness(pool=smoke_harness_env)
+    captured_metadata: dict[str, object] = {}
+
+    class _StopBeforeRunner(RuntimeError):
+        pass
+
+    async def capture_submit_request(request) -> None:
+        captured_metadata.update(request.source_metadata or {})
+        raise _StopBeforeRunner
+
+    monkeypatch.setattr(
+        harness._article_service,
+        "submit_plain_text",
+        capture_submit_request,
+    )
+
+    with pytest.raises(_StopBeforeRunner):
+        await harness.prepare_record(
+            user_id=uuid4(),
+            plain_text=_plain_text(1),
+            title="Real production topology metadata",
+            executor_mode="real",
+            grammar_topology="legacy",
+        )
+
+    assert captured_metadata["executor_mode"] == "real"
+    assert captured_metadata["grammar_topology"] == "production"
+
+
+def test_build_pipeline_runner_real_mode_uses_production_topology(
+    smoke_harness_env: asyncpg.Pool,
+) -> None:
+    """``_build_pipeline_runner(real)`` must use ``enable_zplus_grammar=True``.
+
+    T4.2a-R1: Verifies that the real-mode runner is constructed with the
+    production route-aware split, not the legacy per-unit-only path. This
+    is a construction-only test — it does not call the real LLM.
+    """
+    harness = ReaderEnhancementSmokeHarness(pool=smoke_harness_env)
+    runner = harness._build_pipeline_runner(
+        executor_mode="real",
+        grammar_topology="legacy",  # should be ignored in real mode
+    )
+    assert runner._enable_zplus_grammar is True, (
+        "real-mode runner must have enable_zplus_grammar=True "
+        f"(got {runner._enable_zplus_grammar!r})"
+    )

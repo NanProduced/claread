@@ -43,10 +43,7 @@ from app.services.analysis.prompting.prompt_loader import (
 
 from .job_bootstrap import (
     GRAMMAR_BATCH_JOB_TYPE,
-    GRAMMAR_BATCH_OPERATION_FINGERPRINT,
-    GRAMMAR_BATCH_POLICY_VERSION,
     GRAMMAR_BATCH_TARGET_SCOPE,
-    GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
     GRAMMAR_JOB_TYPE,
     GRAMMAR_OPERATION_FINGERPRINT,
     GRAMMAR_TARGET_SCOPE,
@@ -1758,6 +1755,7 @@ class GrammarBundleWorkerService:
                 model_provider=execution.model_provider,
                 model_name=execution.model_name,
                 planner_kind="llm_worker",
+                usage_data=execution.usage_data,
                 operation_fingerprint=context.operation_fingerprint,
                 metadata_json={
                     "base_id": str(context.base_id),

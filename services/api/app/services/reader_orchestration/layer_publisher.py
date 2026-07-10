@@ -33,11 +33,13 @@ from .job_bootstrap import (
     TRANSLATION_BATCH_OPERATION_FINGERPRINT,
     TRANSLATION_BATCH_TARGET_SCOPE,
     TRANSLATION_OPERATION_FINGERPRINT,
+    TRANSLATION_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
     VOCABULARY_BATCH_JOB_TYPE,
     VOCABULARY_BATCH_OPERATION_FINGERPRINT,
     VOCABULARY_BATCH_TARGET_SCOPE,
     VOCABULARY_JOB_TYPE,
     VOCABULARY_OPERATION_FINGERPRINT,
+    VOCABULARY_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
     VOCABULARY_TARGET_SCOPE,
     _fingerprint_matches_base,
 )
@@ -603,16 +605,23 @@ class TranslationLayerPublisher:
                 generation = int(job_row["expected_generation"])
                 operation_fingerprint = str(job_row["operation_fingerprint"] or "")
 
-                if not _fingerprint_matches_base(
-                    operation_fingerprint,
-                    TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+                if not (
+                    _fingerprint_matches_base(
+                        operation_fingerprint,
+                        TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+                    )
+                    or _fingerprint_matches_base(
+                        operation_fingerprint,
+                        TRANSLATION_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
+                    )
                 ):
                     raise TranslationPublishValidationError(
                         "translation_batch_fingerprint_mismatch",
                         (
                             f"translation batch publish fingerprint "
-                            f"{operation_fingerprint!r} does not match "
-                            f"{TRANSLATION_BATCH_OPERATION_FINGERPRINT!r}"
+                            f"{operation_fingerprint!r} does not match either "
+                            f"{TRANSLATION_BATCH_OPERATION_FINGERPRINT!r} or "
+                            f"{TRANSLATION_STRUCTURED_BATCH_OPERATION_FINGERPRINT!r}"
                         ),
                     )
 
@@ -1266,14 +1275,21 @@ class VocabularyLayerPublisher:
                 generation = int(job_row["expected_generation"])
                 operation_fingerprint = str(job_row["operation_fingerprint"] or "")
 
-                if not _fingerprint_matches_base(
-                    operation_fingerprint,
-                    VOCABULARY_BATCH_OPERATION_FINGERPRINT,
+                if not (
+                    _fingerprint_matches_base(
+                        operation_fingerprint,
+                        VOCABULARY_BATCH_OPERATION_FINGERPRINT,
+                    )
+                    or _fingerprint_matches_base(
+                        operation_fingerprint,
+                        VOCABULARY_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
+                    )
                 ):
                     raise ValueError(
                         f"vocabulary batch publish fingerprint "
-                        f"{operation_fingerprint!r} does not match "
-                        f"{VOCABULARY_BATCH_OPERATION_FINGERPRINT!r}"
+                        f"{operation_fingerprint!r} does not match either "
+                        f"{VOCABULARY_BATCH_OPERATION_FINGERPRINT!r} or "
+                        f"{VOCABULARY_STRUCTURED_BATCH_OPERATION_FINGERPRINT!r}"
                     )
 
                 input_json = job_row["input_json"]

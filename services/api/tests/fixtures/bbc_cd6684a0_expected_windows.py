@@ -1,20 +1,24 @@
 """Expected Z+ window formation for BBC article cd6684a0.
 
-Based on §5.2 algorithm with target_max=1500 / safety_max=3000 / context_anchor_count=2,
-BBC's 37 short units should produce 3-5 windows.
+T4.2a-R1: the BBC article is repeated 3x to exceed 2000 words so the grammar
+route is GROUPED_WINDOWED (not SHORT_BATCH). The expanded article has
+~2574 words / ~18489 chars / ~111 units.
 
-Budget 来自 §7.3：
-- grammar_note: min(ceil(content_chars / 1000) * 2, 18) = min(ceil(6.064) * 2, 18) = min(14, 18) = 14
-- sentence_analysis: min(max(round(content_chars / 2000), 1), 5) = min(max(3, 1), 5) = 3
+Based on §5.2 algorithm with target_max=1500 / safety_max=3000 / context_anchor_count=2,
+the expanded article should produce 9-15 windows (3x the original 3-5 range).
+
+Budget 来自 §7.3 (scaled for 3x content):
+- grammar_note: min(ceil(18.489) * 2, 18) = min(38, 18) = 18
+- sentence_analysis: min(max(round(9.244), 1), 5) = 5
 """
 
-EXPECTED_WINDOW_COUNT_MIN = 3
-EXPECTED_WINDOW_COUNT_MAX = 5
+EXPECTED_WINDOW_COUNT_MIN = 9
+EXPECTED_WINDOW_COUNT_MAX = 15
 
 # 全篇 grammar_note 上限
-EXPECTED_GRAMMAR_NOTE_TOTAL_MAX = 14  # ceil(6.064) * 2 = 14
+EXPECTED_GRAMMAR_NOTE_TOTAL_MAX = 18  # min(ceil(18.489) * 2, 18) = 18
 # 全篇 sentence_analysis 上限
-EXPECTED_SENTENCE_ANALYSIS_TOTAL_MAX = 3  # max(round(3.032), 1) = 3
+EXPECTED_SENTENCE_ANALYSIS_TOTAL_MAX = 5  # min(max(round(9.244), 1), 5) = 5
 
 # 每个 unit 最多被一个 window 覆盖
 EXPECTED_MAX_GRAMMAR_NOTE_PER_UNIT = 1
@@ -43,5 +47,6 @@ def assert_expected_grammar_note_total(actual_count: int) -> None:
 def assert_expected_sentence_analysis_total(actual_count: int) -> None:
     """验证 BBC 文章 sentence_analysis 总数不超过预算"""
     assert actual_count <= EXPECTED_SENTENCE_ANALYSIS_TOTAL_MAX, (
-        f"sentence_analysis total {actual_count} exceeds budget {EXPECTED_SENTENCE_ANALYSIS_TOTAL_MAX}"
+        f"sentence_analysis total {actual_count} exceeds budget "
+        f"{EXPECTED_SENTENCE_ANALYSIS_TOTAL_MAX}"
     )

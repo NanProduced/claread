@@ -1,7 +1,7 @@
 # Adaptive Reader Orchestration Design
 
 > Status: formal design draft
-> Last updated: 2026-07-09 (T4.1b structured article batch runtime mode landed)
+> Last updated: 2026-07-10 (T4.2a-R1 three-mode evidence parity and observability closure landed)
 > Scope: Reader enhancement execution strategy, quality/cost control, progressive publishing, and longform handling.
 
 This document consolidates the previous analysis-window design notes and temporary research reports into one business-facing architecture document. Temporary development labels are intentionally removed; future work should use the terminology in this document.
@@ -106,6 +106,27 @@ Implementation checkpoint as of 2026-07-10:
   group-native: a Translation Group is a semantic reading group inside a
   Reading Unit, not mechanically one sentence, one anchor segment, or one
   whole unit.
+- Acceptance harness and observability closure (T4.2a-R1, 2026-07-10): the
+  smoke/acceptance harness now injects `DevFakeGrammarBatchExecutor` and
+  `DevFakeGrammarWindowExecutor` so that `enable_zplus_grammar=True` never
+  accidentally reaches a real LLM in fake mode; the acceptance path covers
+  the production `WorkerLoop` + `CompletionFinalizer` topology and verifies
+  `coverage_complete` rather than only calling the pipeline runner; grammar
+  batch `ai_usage_events` now carry `execution.usage_data` so usage-event
+  tokens match `reader_runtime_spans` tokens; production
+  translation/vocabulary batch claim and publisher now accept both
+  SHORT_BATCH and STRUCTURED_BATCH fingerprints (no test-local wrappers);
+  and fixed-coverage tests pin `SHORT_BATCH` / `STRUCTURED_BATCH` /
+  `GROUPED_WINDOWED` across route / fingerprint / policy, job topology,
+  effective calls, layer counts (including GROUPED_WINDOWED
+  `sentence_analysis`), final readiness and usage attribution. The bounded
+  LLM document profiler (T4.2) is intentionally deferred this round.
+- **The three modes are not yet accepted under real LLM.** Current
+  fixed-coverage tests use fake executors and only verify code-level
+  contract closure; real-LLM cost / quality / latency improvements and
+  page acceptance remain a separate, later gate. The next step is
+  T4.2a-R2 (execution budget / cutover safety) before any real-LLM
+  acceptance run.
 
 ### 4.3 Analysis Window
 

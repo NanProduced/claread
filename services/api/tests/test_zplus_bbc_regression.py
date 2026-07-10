@@ -1,14 +1,17 @@
-"""BBC regression test for Z+ window architecture (Task C5b).
+"""Synthetic expanded long-form regression test for Z+ window architecture.
 
-Verifies that the Z+ window architecture reduces grammar_bundle LLM calls
-from 37 (per-unit) to 3-5 (per-window) while meeting all annotation density
-constraints.
+Originally a BBC 858-word regression test (Task C5b) that verified grammar
+LLM call reduction from 37 (per-unit) to 3-5 (per-window). After T4.1c,
+the original BBC article (858 words) routes to SHORT_BATCH and uses the
+grammar batch path, not the Z+ window path. To keep exercising the Z+
+window path, the fixture now repeats the BBC article 3x (~2574 words) so
+the route is GROUPED_WINDOWED.
 
-Design source:
-  docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
-  - §5.2 window formation (BBC's ~30 units → 3-5 windows)
-  - §7.3 budget caps (grammar_note ≤ 14, sentence_analysis ≤ 3 for BBC)
-  - §8.2-§8.4 worker preflight → LLM (mock) → selector → publisher
+This means:
+- The test no longer verifies the original BBC 3-5 window regression.
+- The original BBC 858-word sample as a SHORT/STRUCTURED routing regression
+  is NOT covered here; it should be added as a separate test if needed.
+- Expected window count is 9-15 (not 3-5) due to the 3x expansion.
 
 The test exercises the full pipeline:
   bootstrap → plan/windows/jobs → worker preflight → LLM (mock executor) →
@@ -71,6 +74,9 @@ from tests.reader_orchestration_test_support import (
     submit_article_ready,
 )
 from tests.test_reader_orchestration_pipeline_runner import (
+    _StaticBatchTranslator,
+    _StaticBatchVocabularyExecutor,
+    _StaticGrammarBatchExecutor,
     _StaticGrammarExecutor,
     _StaticTitleGenerator,
     _StaticTranslator,
@@ -85,6 +91,13 @@ _MIGRATION_0015_SQL = (
 ).read_text(encoding="utf-8")
 _MIGRATION_0016_SQL = (
     _REPO_ROOT / "infra" / "migrations" / "0016_reader_runtime_spans_grammar_bundle_window.sql"
+).read_text(encoding="utf-8")
+# T4.2a-R1: migration 0017 adds ``translate_article`` and
+# ``build_vocabulary_layer_article`` to the ``reader_jobs.job_type`` CHECK
+# constraint. Required because the BBC article (>6000 chars) triggers the
+# T3.1 grouped translation/vocabulary path which creates these job types.
+_MIGRATION_0017_SQL = (
+    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
 ).read_text(encoding="utf-8")
 
 LEASE_DURATION = timedelta(seconds=30)
@@ -234,6 +247,7 @@ async def bbc_regression_env() -> AsyncIterator[
     await admin.execute(BASELINE_SQL)
     await admin.execute(_MIGRATION_0015_SQL)
     await admin.execute(_MIGRATION_0016_SQL)
+    await admin.execute(_MIGRATION_0017_SQL)
     await admin.close()
 
     pool = await make_pool(schema_name)
@@ -241,10 +255,17 @@ async def bbc_regression_env() -> AsyncIterator[
     db_connection.DB_POOL = pool
     try:
         user_id = await insert_user(pool)
+        # T4.2a-R1: repeat the BBC article 3x to exceed 2000 words so the
+        # grammar route is GROUPED_WINDOWED (not SHORT_BATCH). Before T4.1c,
+        # all Z+ enabled articles used the Z+ window path; after T4.1c, only
+        # GROUPED_WINDOWED articles do. The original BBC article (858 words)
+        # would route to SHORT_BATCH and use the grammar batch path instead,
+        # defeating the test's purpose of verifying Z+ window call reduction.
+        expanded_text = "\n\n".join([BBC_ARTICLE_TEXT] * 3)
         article = await submit_article_ready(
             pool,
             user_id=user_id,
-            plain_text=BBC_ARTICLE_TEXT,
+            plain_text=expanded_text,
             title=BBC_ARTICLE_TITLE,
             language=BBC_SOURCE_LANGUAGE,
         )
@@ -282,11 +303,19 @@ def _make_runner(
     Mirrors ``_make_runner`` in ``test_reader_orchestration_pipeline_runner.py``
     but adds ``grammar_window_worker_service`` and ``grammar_window_publisher``
     so the Z+ path is exercised end-to-end.
+
+    T4.2a-R1: inject fake batch executors for translation / vocabulary /
+    grammar batch paths so the runner never falls back to real LLM executors
+    when ``enable_zplus_grammar=True`` (default). The BBC article exceeds
+    6000 chars, so the T3.1 grouped path creates ``translate_article`` and
+    ``build_vocabulary_layer_article`` batch jobs; without fake batch
+    executors the batch workers would call real LLM.
     """
     translation_worker = TranslationWorkerService(
         pool=pool,
         layer_publisher=CompatTranslationLayerPublisher(pool=pool),
         translator=_StaticTranslator(),
+        batch_translator=_StaticBatchTranslator(),
     )
     orchestrator = ReaderOrchestrator(
         pool=pool,
@@ -295,10 +324,16 @@ def _make_runner(
     vocabulary_worker = VocabularyWorkerService(
         pool=pool,
         executor=_StaticVocabularyExecutor(),
+        batch_executor=_StaticBatchVocabularyExecutor(),
     )
     grammar_worker = GrammarBundleWorkerService(
         pool=pool,
         executor=_StaticGrammarExecutor(),
+        # T4.2a-R1: safety net — GROUPED_WINDOWED articles should never
+        # invoke the grammar batch path, but inject a fake executor so
+        # any accidental batch-first fallback is caught deterministically
+        # instead of calling real LLM.
+        batch_executor=_StaticGrammarBatchExecutor(),
     )
     display_title_worker = DisplayTitleWorkerService(
         pool=pool,
@@ -313,6 +348,7 @@ def _make_runner(
         pool=pool,
         display_title_worker_service=display_title_worker,
         translation_orchestrator=orchestrator,
+        translation_batch_worker_service=translation_worker,
         vocabulary_worker_service=vocabulary_worker,
         grammar_worker_service=grammar_worker,
         grammar_window_worker_service=window_worker,
@@ -342,19 +378,27 @@ def _extract_dedup_keys(rows: list[asyncpg.Record]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# BBC regression test
+# Synthetic expanded long-form regression test
 # ---------------------------------------------------------------------------
 
 
-async def test_bbc_record_grammar_calls_reduced_from_37_to_3_5(
+async def test_synthetic_expanded_long_form_grammar_window_regression(
     bbc_regression_env: tuple[asyncpg.Pool, UUID, UUID, UUID],
 ) -> None:
-    """BBC cd6684a0: grammar_bundle LLM calls drop from 37 (per-unit) to 3-5 (per-window).
+    """Synthetic expanded long-form: Z+ window path grammar regression.
+
+    Uses BBC article text repeated 3x (~2574 words, ~111 units) to route to
+    GROUPED_WINDOWED. Verifies the Z+ window architecture produces correct
+    grammar_note / sentence_analysis layers with no cross-window duplicates.
+
+    This is NOT the original BBC 858-word 3-5 window regression. The original
+    BBC sample now routes to SHORT_BATCH (T4.1c); a separate SHORT/STRUCTURED
+    routing regression for the 858-word sample should be added if needed.
 
     Verifies:
-    1. Window count (LLM call count) is 3-5 (reduced from 37 per-unit calls)
-    2. grammar_note total ≤ 14 (§7.3 record budget)
-    3. sentence_analysis total ≤ 3 (§7.3 record budget)
+    1. Window count (LLM call count) is 9-15 (expanded article)
+    2. grammar_note total ≤ 18 (scaled budget for expanded article)
+    3. sentence_analysis total ≤ 5 (scaled budget for expanded article)
     4. Per-unit at most 1 grammar_note + 1 sentence_analysis
     5. No cross-window semantic duplicates
     """
@@ -368,8 +412,9 @@ async def test_bbc_record_grammar_calls_reduced_from_37_to_3_5(
         user_id=user_id,
         lease_owner="bbc-regression-zplus",
         lease_duration=LEASE_DURATION,
-        max_ticks=300,
-        max_jobs=200,
+        # T4.2a-R1: expanded article (3x) creates more units/windows/jobs.
+        max_ticks=600,
+        max_jobs=400,
     )
 
     # Sanity: pipeline completed without attention.

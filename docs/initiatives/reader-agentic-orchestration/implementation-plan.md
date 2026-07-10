@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 实施计划
 
-> 状态：`D5 active / adaptive three-mode closure in progress`
-> 最后更新：2026-07-09
+> 状态：`D5 active / T4.2a-R1 acceptance harness + observability closure landed`
+> 最后更新：2026-07-10
 
 ## 当前实施口径
 
@@ -55,11 +55,13 @@ Reader enhancement 的当前主链路按层分开理解：
 1. M0/M1 的短文合同继续保持；短文真实页面已抽查过的部分不再反复消耗真 LLM。
 2. M3 长文 grouped execution：T3.1（translation）与 T3.2b（vocabulary）均已完成实施；T3.3 phrase_gloss guard、T3.4a diagnostics、T3.4b density bug fix 已完成。
 3. T3.5 completion state finalizer 已完成代码级实施（详见下方 T3.5 章节）；T4.1/T4.1a deterministic complexity routing、T4.1b structured article batch runtime mode 与 T4.1c short/medium compact grammar path 均已完成代码级实施（详见下方 T4.1/T4.1a/T4.1b/T4.1c 章节）。
-4. 下一步优先推进 T4.2 bounded LLM document profiler 与 T4.3 strategy planner 合同；T4.1c 已让短文与 structured batch 文章的 grammar 走 compact batch path，不再默认走重型 analysis-window 空跑。
-5. bounded enhancement planner + specialized structured workers 的设计评估应先聚焦 long/very-long selective enhancement，优先减少 vocabulary/grammar 的空跑与重复扫描，而不是一开始扩到全部 translation。
-6. Provider prompt cache / cache-hit 归因可作为后续成本杠杆继续验证，但它是成本优化项，不是三模式路由设计的替代品。
-7. 三种模式代码级闭环后，再统一跑真实 LLM / 页面验收，覆盖短文、中档 structured batch、长文、超长文和碎段新闻。
-6. M6 先做 debounce / state preservation，再做 SSE 和 patch merge。SSE 本身不能解决全量 reload 闪烁。
+4. T4.2a-R1 three-mode evidence parity and observability closure 已完成（详见下方 T4.2a-R1 章节）：acceptance harness 忠实复现 production topology（WorkerLoop + CompletionFinalizer + coverage_complete）；grammar batch ai_usage_events 漏传 usage_data 已修复；smoke/acceptance harness 注入 DevFakeGrammarBatchExecutor + DevFakeGrammarWindowExecutor，不得因 enable_zplus_grammar=True 意外调用真实 LLM；SHORT_BATCH / STRUCTURED_BATCH / GROUPED_WINDOWED 三态固定覆盖测试已落地（route/fingerprint/policy、job topology、effective calls、layer counts、final readiness、usage attribution）。
+5. **三态尚未真实验收**：当前三态固定覆盖测试使用 fake executor，仅验证代码级合同闭环；真实 LLM 下的 cost / quality / latency 改善需后续统一页面验收收口。T4.2 bounded LLM document profiler **暂缓**，不在当前轮实现。
+6. 下一步优先推进 **T4.2a-R2 execution budget / cutover safety**：为三态 batch path 增加执行预算与切换安全护栏，验证 batch-first fallback 不会在真实 LLM 下产生超额调用或 route flip 竞态。
+7. bounded enhancement planner + specialized structured workers 的设计评估应先聚焦 long/very-long selective enhancement，优先减少 vocabulary/grammar 的空跑与重复扫描，而不是一开始扩到全部 translation。
+8. Provider prompt cache / cache-hit 归因可作为后续成本杠杆继续验证，但它是成本优化项，不是三模式路由设计的替代品。
+9. 三种模式代码级闭环后，再统一跑真实 LLM / 页面验收，覆盖短文、中档 structured batch、长文、超长文和碎段新闻。
+10. M6 先做 debounce / state preservation，再做 SSE 和 patch merge。SSE 本身不能解决全量 reload 闪烁。
 
 ### 任务包
 
@@ -86,7 +88,8 @@ Reader enhancement 的当前主链路按层分开理解：
 | T4.1a | short/medium route hardening | 4-8h | T4.1/T3.5 | 不再用 raw `content_utf16_length` 单独决定短文路径；改用 estimated_token / estimated_word、paragraph、heading/noise、reading_goal 判定 short batch / structured batch / grouped-windowed（已完成实施/待验收：详见"当前进度"T4.1/T4.1a 章节） |
 | T4.1b | structured article batch | 4-8h | T4.1a | 为中等文章补 whole-article structured batch mode；translation/vocabulary 尽量整篇 batch，保留 grounded publish 与 release order（已完成实施/待验收：详见"当前进度"T4.1b 章节） |
 | T4.1c | short/medium compact grammar path | 4-8h | T4.1a/T4.1b | 短文与 structured batch 文章的 grammar 不再默认走重型全窗口空跑；候选生成更紧凑，publish 仍受 budget/density/anchor 约束（已完成实施/待验收：详见"当前进度"T4.1c 章节） |
-| T4.2 | bounded LLM document profiler | 4-8h | T4.1a | LLM 只返回 genre/structure/schema_risk/selective hints；失败时 deterministic fallback；不直接决定流程 |
+| T4.2a-R1 | three-mode evidence parity and observability closure | 4-8h | T4.1c | acceptance harness 忠实复现 production topology（WorkerLoop + CompletionFinalizer + coverage_complete）；注入 DevFakeGrammarBatchExecutor/WindowExecutor；修复 grammar batch ai_usage_events 漏传 usage_data；三态固定覆盖测试（fake executor，仅代码级合同闭环，真实 LLM 验收暂缓）（已完成实施：详见"当前进度"T4.2a-R1 章节） |
+| T4.2 | bounded LLM document profiler | 4-8h | T4.1a | LLM 只返回 genre/structure/schema_risk/selective hints；失败时 deterministic fallback；不直接决定流程（**暂缓**） |
 | T4.3 | strategy planner | 4-8h | T4.1b/T4.2 | planner 选择 short batch、structured batch、grouped/windowed、section longform、selective longform |
 | T4.3a | longform bounded enhancement planner | 4-8h | T4.3 | 先为 long/very-long 的 vocabulary/grammar 选择高价值 targets；translation 仍优先沿用独立 semantic group planner，除非后续证据支持扩权 |
 | T4.4 | three-mode validation harness | 4-8h | T4.3/T5.1 | 用 fake/recorded outputs 覆盖 short batch、structured batch、grouped/windowed、section/selective 模式的 job plan、layer counts、usage attribution、completion state，并补 beginning/middle/end 与 section-jump 的位置敏感验收 |
@@ -233,6 +236,29 @@ Reader enhancement 的当前主链路按层分开理解：
    - `STRUCTURED_BATCH` grammar 的 prompt / budget / release policy 当前与 `SHORT_BATCH` 共用 compact batch path；若要给 structured batch 独立 grammar budget/prompt，应在后续任务单独实现。
    - batch candidate output 无固定 `max_length`，per-unit budget（`MAX_GRAMMAR_NOTE_ITEMS` / `MAX_SENTENCE_ANALYSIS_ITEMS`）在 publisher split 后执行；超限 candidate 会被 drop 并记入 diagnostics。
    - GROUPED_WINDOWED 长文 grammar 路径（Z+ analysis-window / window-publisher）完全未改动，既有合同不回归。
+
+#### T4.2a-R1 three-mode evidence parity and observability closure（已完成）
+
+1. 目标：不实现 T4.2 LLM profiler、T4.3 planner 或新 UI；先让 acceptance harness 忠实复现 production topology，并让成本与 completion 数据可信。
+2. 核心修复与注入：
+   - **grammar batch ai_usage_events 漏传 usage_data**：`grammar_worker.py` 的 `_record_batch_usage_event` 在成功路径漏传 `execution.usage_data`，导致 `ai_usage_events` token 列恒为 0。已修复，与 per-unit 路径对齐。
+   - **smoke/acceptance harness 注入 DevFakeGrammarBatchExecutor + DevFakeGrammarWindowExecutor**：`smoke_harness.py` 新增 `SmokeGrammarTopology` 类型（`"legacy"` / `"production"`）。`"production"` topology 注入 `DevFakeGrammarBatchExecutor`（覆盖 SHORT_BATCH / STRUCTURED_BATCH grammar batch path）+ `DevFakeGrammarWindowExecutor`（覆盖 GROUPED_WINDOWED Z+ window path）+ `GrammarWindowPublisher`，使 `enable_zplus_grammar=True` 时不会意外调用真实 LLM。
+   - **GROUPED_WINDOWED fake worker**：`DevFakeGrammarWindowExecutor` 产出 `GrammarWindowExecutionResult` with `CandidateItem` list，使 Z+ window path 可在 fake 模式下完整执行。
+   - **生产 translation/vocabulary claim + publisher 正式接受 short + structured fingerprint**：`translation_worker.py` / `vocabulary_worker.py` 的 batch claim 方法改为 `operation_fingerprint=None`（与 grammar batch worker 一致），`layer_publisher.py` 的 translation/vocabulary batch publisher 接受 SHORT_BATCH + STRUCTURED_BATCH 两个 fingerprint base（与 grammar batch publisher 一致）。此修复消除了此前测试中 `_RouteAware*` wrapper 与 DB fingerprint 临时改写的需要。
+3. acceptance 路径覆盖正式 WorkerLoop + CompletionFinalizer：
+   - 新增 `tests/test_reader_orchestration_three_mode_acceptance.py`（4 test functions：`test_short_batch_acceptance_through_worker_loop`、`test_structured_batch_acceptance_through_worker_loop`、`test_grouped_windowed_acceptance_through_worker_loop`、`test_short_batch_usage_event_tokens_match_runtime_span`）：覆盖 SHORT_BATCH、STRUCTURED_BATCH、GROUPED_WINDOWED 三态的 route/fingerprint/policy、job topology、effective calls、layer counts（含 GROUPED_WINDOWED sentence_analysis > 0 断言）、final readiness（`coverage_complete`）、usage attribution。
+   - 测试使用生产 `TranslationWorkerService` / `VocabularyWorkerService` / `GrammarBundleWorkerService`（无 test-local 子类）和真实 layer publisher，exercise production claim/publish fingerprint checks。仅 LLM executor 被 fake。
+   - 测试通过 `ReaderEnhancementWorkerLoopService.process_candidate` 执行（覆盖正式 WorkerLoop + CompletionFinalizer），而非只调用 pipeline runner。
+   - 新增 `test_short_batch_usage_event_tokens_match_runtime_span`：验证 grammar batch `ai_usage_events` token 与 `reader_runtime_spans` token 一致。
+   - smoke harness 新增 2 个 construction/metadata 测试（`test_real_mode_forces_production_grammar_topology_in_metadata`、`test_build_pipeline_runner_real_mode_uses_production_topology`），验证 real 模式下 `grammar_topology` 元数据强制为 `production` 且 runner 使用 `enable_zplus_grammar=True`，不调用真实 LLM。
+4. 预存失败修复：
+   - `test_zplus_observability.py`：T4.1c 引入 batch-first fallback 后，SHORT_BATCH 文章的 Z+ observability 测试会触发真实 LLM。已扩展 `ZPLUS_OBSERVABILITY_ARTICLE` 为 26x 重复段落（~2230 words）路由到 GROUPED_WINDOWED，并注入 `_StaticGrammarBatchExecutor` 作为安全网。所有测试的 `max_ticks` / `max_jobs` 从 30/20 提升到 100/80 适应更大文章。
+   - `test_zplus_bbc_regression.py`：T4.1c 引入 route-aware routing 后，BBC 文章（858 words）路由到 SHORT_BATCH 而非 Z+ window path，导致测试失败。已添加 migration 0017（`translate_article` / `build_vocabulary_layer_article` job type CHECK constraint），注入 fake batch executors（translation / vocabulary / grammar），并扩展 BBC 文章 3x（~2574 words）路由到 GROUPED_WINDOWED 以保留 Z+ window 测试目的。测试已重命名为 `test_synthetic_expanded_long_form_grammar_window_regression`，module docstring 明确声明不再覆盖原始 BBC 3-5 window 回归；原 BBC 858-word 样本作为 SHORT/STRUCTURED 路由回归应另设测试。更新 expected window count 从 3-5 到 9-15。
+5. 影响面：不实现 output-token planner、selector redesign、SSE 或页面改造；不扩到 bounded LLM profiler / strategy planner / semantic outline。
+6. 风险/边界（已锁定，不扩 scope）：
+   - **三态尚未真实验收**：当前三态固定覆盖测试使用 fake executor，仅验证代码级合同闭环。真实 LLM 下的 cost / quality / latency 改善需后续统一页面验收收口。
+   - `end_worker_span_success` 不识别 aggregate usage_data 格式（仅测试 workaround `_FlatUsageGrammarBatchExecutor`）。
+   - T4.2 bounded LLM document profiler **暂缓**，下一步为 T4.2a-R2 execution budget / cutover safety。
 - T2.1 已有第一轮实现并提交（progressive reload cursor、in-flight guard、scroll/selection best-effort 恢复），但必须在 T1.1a 修复后用真实页面重新验收；前端稳定性不能替代正确的 layer output。
 - 默认 worker / baseline budget 已调整为 `max_ticks=96`、`max_jobs=48`，覆盖当前 6/7 worker slots 下的中等短文样本；这是验收预算，不是最终调度模型。
 - 2026-07-08 fake baseline 验收只能证明 job 数、completion 和测试 fake output 口径；不能证明真实 LLM 下 Translation Group 粒度正确。真实页面已暴露 one-unit-one-group 回归，因此此前 `translation_groups` 数量不能作为 T1.1a 验收依据。
@@ -244,12 +270,13 @@ Reader enhancement 的当前主链路按层分开理解：
 
 ### 下一轮建议
 
-1. T3.5、T4.1、T4.1a、T4.1b、T4.1c 都已完成代码级实施：completion state finalizer 已闭合；deterministic router 已替换 legacy raw-char 二元分流；Unicode non-CJK 与 missing-base 两个回归点也已补齐；`STRUCTURED_BATCH` 已升级为独立可审计 runtime mode（fingerprint / policy_version / article_route / document_features 三态区分，route 变化触发 supersede）；短文与 structured batch 文章的 grammar 已走 compact batch path，不再默认走重型 analysis-window 空跑。下一步不再回头扩这五项 scope。
-2. 下一优先级收口到 **T4.2 bounded LLM document profiler** 与 **T4.3 strategy planner**：bounded profiler 只返回 genre/structure/schema_risk/selective hints；planner 选择 short batch、structured batch、grouped/windowed、section longform、selective longform。T4.1b/T4.1c 的三态可审计 runtime mode + compact grammar batch path 是 planner 的稳定输入。
-3. bounded enhancement planner + specialized structured workers 的第一落点仍应是 long/very-long selective enhancement：planner 只负责选择候选 enhancement targets，专业 worker 负责 schema output 与 publish；translation semantic group planner 继续保持独立。
-4. T5.1 deterministic navigation outline 仍然是 very-long lazy enhancement 的先决条件；semantic outline 只面向长文/超长文，不默认对所有文章生成。
-5. Provider prompt cache / cache-hit 归因继续作为成本优化项跟踪，但应放在 structured runtime / compact grammar 收口之后做，不作为当前三模式架构是否成立的前提。
-6. 继续跟踪真实测试的 token、耗时、首个可用输出时间和输出质量，但避免每个局部补丁后真实跑长文或超长文；三模式合同闭环后再统一做页面验收。
+1. T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1 都已完成代码级实施：completion state finalizer 已闭合；deterministic router 已替换 legacy raw-char 二元分流；Unicode non-CJK 与 missing-base 两个回归点也已补齐；`STRUCTURED_BATCH` 已升级为独立可审计 runtime mode（fingerprint / policy_version / article_route / document_features 三态区分，route 变化触发 supersede）；短文与 structured batch 文章的 grammar 已走 compact batch path，不再默认走重型 analysis-window 空跑；acceptance harness 已忠实复现 production topology（WorkerLoop + CompletionFinalizer + coverage_complete），grammar batch `ai_usage_events` 漏传 `usage_data` 已修复，三态固定覆盖测试已落地。下一步不再回头扩这六项 scope。
+2. **三态尚未真实验收**：当前三态固定覆盖测试使用 fake executor，仅验证代码级合同闭环；真实 LLM 下的 cost / quality / latency 改善需后续统一页面验收收口。**T4.2 bounded LLM document profiler 暂缓**，不在当前轮实现。下一优先级是 **T4.2a-R2 execution budget / cutover safety**：为三态 batch path 增加执行预算与切换安全护栏，验证 batch-first fallback 不会在真实 LLM 下产生超额调用或 route flip 竞态，再进入统一真实 LLM / 页面验收。
+3. T4.2 bounded LLM document profiler 与 T4.3 strategy planner 仍作为后续阶段：bounded profiler 只返回 genre/structure/schema_risk/selective hints；planner 选择 short batch、structured batch、grouped/windowed、section longform、selective longform。T4.1b/T4.1c 的三态可审计 runtime mode + compact grammar batch path 是 planner 的稳定输入。
+4. bounded enhancement planner + specialized structured workers 的第一落点仍应是 long/very-long selective enhancement：planner 只负责选择候选 enhancement targets，专业 worker 负责 schema output 与 publish；translation semantic group planner 继续保持独立。
+5. T5.1 deterministic navigation outline 仍然是 very-long lazy enhancement 的先决条件；semantic outline 只面向长文/超长文，不默认对所有文章生成。
+6. Provider prompt cache / cache-hit 归因继续作为成本优化项跟踪，但应放在 structured runtime / compact grammar 收口之后做，不作为当前三模式架构是否成立的前提。
+7. 继续跟踪真实测试的 token、耗时、首个可用输出时间和输出质量，但避免每个局部补丁后真实跑长文或超长文；三模式合同闭环后再统一做页面验收。
 
 ### 暂缓项
 
@@ -1060,9 +1087,10 @@ Focused tests 已通过：
 
 当前下一步：
 
-1. T4.2 bounded LLM document profiler（T4.1b/T4.1c 已为 planner 留出 `input_json.article_route` + `envelope_json.document_features` + compact grammar batch path 接口）。
-2. T4.3 strategy planner 合同。
-3. T5.1 deterministic navigation outline；semantic outline 只在长文/超长文策略中后置启用。
-4. 持续记录真实测试的 token、耗时、首个可用输出时间和输出质量，不用单次中间态长文测试推翻整体架构。
+1. **T4.2a-R2 execution budget / cutover safety**：为三态 batch path 增加执行预算与切换安全护栏，验证 batch-first fallback 不会在真实 LLM 下产生超额调用或 route flip 竞态；之后再进入统一真实 LLM / 页面验收。
+2. T4.2 bounded LLM document profiler（**暂缓**，T4.1b/T4.1c 已为 planner 留出 `input_json.article_route` + `envelope_json.document_features` + compact grammar batch path 接口）。
+3. T4.3 strategy planner 合同。
+4. T5.1 deterministic navigation outline；semantic outline 只在长文/超长文策略中后置启用。
+5. 持续记录真实测试的 token、耗时、首个可用输出时间和输出质量，不用单次中间态长文测试推翻整体架构。
 
-T3.5、T4.1、T4.1a、T4.1b、T4.1c 已完成代码级实施，不再作为下一步入口；如需 retry force-failed windows、扩展 finalizer 到 RAG substrate，或给 structured batch 独立 grammar budget/prompt/release policy（脱离与 short batch 共享的 compact batch path），应分别作为后续独立任务设计。
+T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1 已完成代码级实施，不再作为下一步入口；**三态尚未真实验收**（当前固定覆盖测试使用 fake executor，仅验证代码级合同闭环）。如需 retry force-failed windows、扩展 finalizer 到 RAG substrate，或给 structured batch 独立 grammar budget/prompt/release policy（脱离与 short batch 共享的 compact batch path），应分别作为后续独立任务设计。
