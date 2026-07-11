@@ -1,7 +1,7 @@
 # Adaptive Reader Orchestration Design
 
 > Status: formal design draft
-> Last updated: 2026-07-11 (T4.2a-R2-R3a: display-title budget isolation regression + 文档终态同步; 代码级 review 通过 / deterministic acceptance complete / real LLM validation pending)
+> Last updated: 2026-07-11 (T4.2a-V1: real-LLM Contract / Output Integrity / sample-level Semantic Quality passed; Cost/Latency baseline partial; Page UX blocked)
 > Scope: Reader enhancement execution strategy, quality/cost control, progressive publishing, and longform handling.
 
 This document consolidates the previous analysis-window design notes and temporary research reports into one business-facing architecture document. Temporary development labels are intentionally removed; future work should use the terminology in this document.
@@ -121,15 +121,18 @@ Implementation checkpoint as of 2026-07-10:
   effective calls, layer counts (including GROUPED_WINDOWED
   `sentence_analysis`), final readiness and usage attribution. The bounded
   LLM document profiler (T4.2) is intentionally deferred this round.
-- **The three modes are not yet accepted under real LLM.** Current
-  fixed-coverage tests use fake executors and only verify code-level
-  contract closure; real-LLM cost / quality / latency improvements and
-  page acceptance remain a separate, later gate. The next step is
-  T4.2a-R2 (execution budget / cutover safety) before any real-LLM
-  acceptance run.
+- **T4.2a-V1 has completed the first gated real-LLM DB/runtime
+  validation.** Four records covered `SHORT_BATCH` (two),
+  `STRUCTURED_BATCH` (one), and `GROUPED_WINDOWED` (one), totaling
+  34 effective calls, 142,990 input tokens, 55,051 output tokens, and
+  198,041 total tokens. Contract, Output Integrity, and sample-level
+  Semantic Quality gates passed. Page UX remains blocked by the local
+  authentication/service window, so V1 is not closed. Reliable provider
+  billing and user-perceived latency remain unavailable; the run establishes
+  a baseline, not a proven cost or latency reduction.
 - Execution budget and cutover safety (T4.2a-R2, 2026-07-10; **T4.2a-R2-R3a
-  代码级 review 通过 / deterministic acceptance complete / real LLM validation pending —
-  not yet cleared for real-LLM / page acceptance**): a durable
+  代码级 review 通过 / deterministic acceptance complete; normal-path
+  production topology exercised by T4.2a-V1**): a durable
   `ExecutionBudget` enforces a hard cost ceiling per route / layer /
   record, surviving across multiple `runner.run()` and WorkerLoop ticks.
   The budget is rebuilt at each `runner.run()` entry via
@@ -256,13 +259,19 @@ Implementation checkpoint as of 2026-07-10:
   scenarios have `budget_denied == 0`, distinguishable from
   budget-denied. Stale-fingerprint claim/publish rejections are
   observable via fence-violation span outcomes.
-- **The three modes are still not accepted under real LLM.** The
-  execution budget and cutover safety guardrails are verified with fake
-  executors only, and T4.2a-R2-R3a fixes have passed code-level review
-  and deterministic acceptance. Real-LLM cost / quality / latency
-  improvements and page acceptance remain a separate, later gate.
-  T4.2a-R2-R3a has passed code-level review and deterministic acceptance;
-  real LLM / page validation is the next gate.
+- **V1 evidence boundary:** the real-LLM records exercised the normal
+  success path and confirmed route/topology/readiness consistency without
+  duplicate fallback, stale publish, or superseded residue. They did not
+  trigger retry, budget exhaustion, or route cutover; deterministic R2
+  tests remain authoritative for those failure paths. Actual provider cost
+  is unavailable; the configuration-derived theoretical range is about
+  `$0.0158-$0.0354`, and no same-sample historical real-LLM baseline exists.
+  Therefore the architecture must not be described as having already
+  delivered a measured cost or latency reduction. Sample A also has an
+  unresolved intermittent grammar usage-attribution gap, while per-job
+  provider latency is unavailable because `ai_usage_events.latency_ms` is
+  NULL. The next gate is page-only validation using the existing records,
+  with no additional LLM calls.
 
 ### 4.3 Analysis Window
 
@@ -670,8 +679,9 @@ after every small patch. Use this cadence instead:
    usage attribution, and no-op/failure paths.
 3. Recorded LLM response fixtures for hydration, selector, diagnostics, and
    projection behavior.
-4. Unified real LLM / page validation only after short, long, and very-long
-   modes have each reached code-level closure.
+4. Unified gated real-LLM validation only after each target mode reaches
+   code-level closure; reuse completed records for page-only validation instead
+   of repeating model calls.
 
 Real LLM checks remain necessary, but they are integration gates, not the
 default feedback loop for every intermediate patch.
@@ -743,12 +753,13 @@ default feedback loop for every intermediate patch.
   as a distinct observable outcome **persisted to
   `reader_runtime_spans.metadata_json`**, and a **conservative sorted
   fingerprint set (Approach B)** for deterministic budget aggregation.
-  The three modes are still not accepted under real LLM; T4.2a-R2-R3a
-  has passed code-level review and deterministic acceptance before the
-  next priority (unified gated real LLM / page validation), then the
-  bounded LLM document profiler (T4.2) and strategy planner (T4.3)
-  before expanding the outline-first contracts for long and very long
-  documents.
+  T4.2a-V1 has exercised all three routes with real LLM calls and passed
+  Contract / Output Integrity / sample-level Semantic Quality gates. Its
+  Page UX gate remains blocked, and Cost/Latency remains a baseline rather
+  than a measured improvement. The immediate priority is page-only validation
+  with existing records. The bounded LLM document profiler (T4.2) stays
+  deferred until deterministic routing shows repeatable boundary errors;
+  strategy planning and outline-first contracts remain later phases.
 
 ### P2: SSE And Interaction-Preserving Updates
 

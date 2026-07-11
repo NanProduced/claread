@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 执行简报
 
 > 状态：`权威简报`
-> 最后更新：2026-07-11（T4.2a-R2-R3a: display-title budget isolation regression + 文档终态同步；代码级 review 通过 / deterministic acceptance complete / real LLM validation pending）
+> 最后更新：2026-07-11（T4.2a-V1：真实 LLM 合同/输出完整性/样本级语义质量通过；成本/时延基线部分完成；Page UX 待验收）
 
 给 coding agent 分配 Reader agentic orchestration 重构任务时，使用本简报作为最小上下文。
 
@@ -28,9 +28,9 @@
 
 当前新增设计入口是 `adaptive-reader-orchestration-design.md`。短期实现应先恢复短文质量/成本和稳定发布；完整 adaptive planner、SSE/patch merge、长文/超长文 lazy enhancement 应按设计文档分阶段推进，不要混进一个任务。
 
-2026-07-11 当前状态：M0 baseline harness、M1 short article recovery、T3.1 non-short translation grouped execution、T3.2b non-short vocabulary grouped execution、T3.3 phrase_gloss guard、T3.4a grammar diagnostics、T3.4b RECORD_DENSITY denominator fix、T3.5 completion finalizer、T4.1/T4.1a deterministic complexity routing、T4.1b structured article batch runtime mode、T4.1c short/medium compact grammar path、T4.2a-R1 three-mode evidence parity and observability closure 已完成代码级实施。**T4.2a-R2 three-mode execution budget and cutover safety 已通过代码级 review 和 deterministic acceptance：T4.2a-R2-R3 修复已实施（R2-R2 已完成 suppressed legacy job 正式终态、partial exhaustion 分层 force-fail、publish fence 状态一致性、budget-denied 持久观测、fingerprint 确定性集合；R2-R3 新增 5 项 review fix 见下文决策条目），35 个测试全部通过（含 R2-R3 强断言），8 文件合并回归 94 passed；真实 LLM 下的成本、质量和时延收益尚未验收，不得表述为已经实现实际降本增效。** 下一步推进统一真实 LLM / 页面验收，再进入 T4.2 bounded LLM document profiler 与 T4.3 strategy planner。完整 adaptive planner、semantic outline worker、SSE patch merge 和 grammar quality tuning 仍要分任务推进，不能混成一个无边界任务。
+2026-07-11 当前状态：M0 baseline harness、M1 short article recovery、T3.1 non-short translation grouped execution、T3.2b non-short vocabulary grouped execution、T3.3 phrase_gloss guard、T3.4a grammar diagnostics、T3.4b RECORD_DENSITY denominator fix、T3.5 completion finalizer、T4.1/T4.1a deterministic complexity routing、T4.1b structured article batch runtime mode、T4.1c short/medium compact grammar path、T4.2a-R1 evidence/observability closure 与 T4.2a-R2 execution budget/cutover safety 已完成代码级实施和 deterministic acceptance。**T4.2a-V1 已用 4 个真实 records 覆盖三种 route：34 calls / 198,041 total tokens；Contract、Output Integrity、当前样本范围的 Semantic Quality Gate 通过；Cost/Latency Baseline PARTIAL；Page UX BLOCKED。V1 尚未关闭，也没有历史同样本真实 LLM 对照，因此不得宣称已实现降本或时延降幅。** 下一步只做复用现有 records 的 page validation，不新增 LLM 调用。完整 adaptive planner、semantic outline worker、SSE patch merge 和 grammar quality tuning 仍要分任务推进，不能混成一个无边界任务。
 
-三态尚未真实验收：当前 SHORT_BATCH / STRUCTURED_BATCH / GROUPED_WINDOWED 三态固定覆盖测试 + 执行预算 + cutover 测试均使用 fake executor，仅验证代码级合同闭环；真实 LLM 下的 cost / quality / latency 改善需后续统一页面验收收口。T4.2 bounded LLM document profiler **暂缓**，不在当前轮实现。**T4.2a-R2 已通过代码级 review 和 deterministic fake-executor 验收（35 focused + 94 combined passed，Ruff clean，git diff --check clean）；真实 LLM 下的成本、质量和时延收益尚未验收，不得表述为已经实现实际降本增效。durable budget formalizes `max_attempts=3` 的确定性上限，本身不降低当前 retry ceiling；是否调整 retry 次数需真实 LLM cost/quality 数据，属于下一阶段 gated validation。下一步为 gated real LLM / page validation。**
+三态真实 normal-path 已完成首轮 DB/runtime 验收，但页面验收未完成。V1 证明 route、job topology、publish/readiness contract 和样本级批注质量在当前模型配置下可工作；它没有触发 retry、budget exhaustion 或 route cutover，相关 failure-path 仍以 T4.2a-R2 deterministic tests 为权威。实际 provider 成本不可从账单确认，理论区间约 `$0.0158-$0.0354`；`ai_usage_events.latency_ms` 缺失且没有前端用户感知埋点。Sample A grammar 的 0-token usage attribution 为 unresolved intermittent gap，不得描述为已有 worker 修复。T4.2 bounded LLM document profiler继续暂缓，只有 deterministic router 在真实边界样本上出现稳定误判时再评估。
 
 验收节奏：短文、长文、超长文三种模式先分别完成代码级合同闭环，再统一真实 LLM / 页面验收。中间实现阶段优先使用 deterministic tests、fake executor、recorded LLM response 和 DB contract checks；不要每修一个局部就反复真实跑长文/超长文。
 
@@ -130,6 +130,12 @@
   - 文档终态同步：T4.2a-R2 状态从 "review changes required" 更新为 "代码级 review 通过 / deterministic acceptance complete / real LLM validation pending"；测试数量更新为 35 focused + 94 combined；清理 R2-R1/R2-R2/R2-R3 旧状态漂移。
   - 测试结果：35 passed (test_execution_budget_cutover_safety.py) + 94 passed (8 文件组合回归)；Ruff clean；git diff --check clean。
   - 真实降本口径：durable budget formalizes `max_attempts=3` 确定性上限，不降低当前 retry ceiling；实际 token/latency/annotation quality 改善属于下一阶段 gated validation。
+- T4.2a-V1 gated real-LLM checkpoint：
+  - 4 个 records 覆盖 `SHORT_BATCH`（2）、`STRUCTURED_BATCH`（1）、`GROUPED_WINDOWED`（1），共 34 calls / 142,990 input / 55,051 output / 198,041 total tokens；全部 jobs 首次成功，终态 `coverage_complete / completed_clean`，无 retry、duplicate fallback、stale publish、superseded residue 或 stuck lease。
+  - Gate：Contract PASS；Output Integrity PASS；Semantic Quality PASS（仅代表本轮人工抽查样本）；Cost/Latency Baseline PARTIAL；Page UX BLOCKED。实际 provider 账单 unavailable、无同样本旧链路真实对照，不得宣称实际降本增效。
+  - Vocabulary 按 subtype 合同评估：`vocab_highlight` 使用 `headword`，`phrase_gloss` 使用 `phrase/gloss`，`context_gloss` 使用 `display/gloss/reason`；不得跨 subtype 检查不存在字段。
+  - Sample A grammar usage event 为 0 tokens 的根因 unresolved；`extract_run_usage` 在 V1 前已存在，不能表述为当前 worker 已修复。`ai_usage_events.latency_ms` 全部 NULL，per-job provider latency 不可用。
+  - 下一步 `T4.2a-V1-PV` 只复用现有 records 验证页面 anchor、选区/高亮、侧栏跳转、长文滚动、刷新一致性与 readiness，不调用新 LLM、不混入 V2 扩样本或 profiler。
 
 ## 渲染层与 Plate 不可违反规则（D1-012 ~ D1-017）
 

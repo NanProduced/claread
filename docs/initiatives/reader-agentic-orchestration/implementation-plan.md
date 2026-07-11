@@ -1,6 +1,6 @@
 # Reader Agentic Orchestration 实施计划
 
-> 状态：`D5 active / T4.2a-R2 execution budget + cutover safety — 代码级 review 通过 / deterministic acceptance complete / real LLM validation pending (R2-R3a display-title regression + 文档终态同步)`
+> 状态：`D5 active / T4.2a-V1 gated real-LLM validation — Contract / Output Integrity / sample-level Semantic Quality PASS；Cost/Latency baseline PARTIAL；Page UX BLOCKED`
 > 最后更新：2026-07-11
 
 ## 当前实施口径
@@ -26,7 +26,7 @@
 Reader enhancement 的当前主链路按层分开理解：
 
 1. Input Adapter / Article Ready：把用户输入转成 Stable Reading Base、Reading Units、Anchor Segments。该层决定稳定文本与锚点，不决定批注密度或译文分组。
-2. Strategy / Bootstrap：根据记录与 base 状态创建 reader jobs。当前 translation 短文走 whole-article batch、非短文直接走 T3.1 grouped/windowed batch（多条 `translate_article` window job），不再创建 per-unit `translate_unit`；vocabulary 已有短文 batch 与非短文 grouped 路径；中间缺少一个真正的 `structured batch` 中档模式；grammar 当前各模式仍主要复用 analysis window 路径，短文 / 中等文章的 compact path 还没落地；完整 short / structured / windowed / section / selective planner 尚未落地。
+2. Strategy / Bootstrap：根据记录与 base 状态创建 reader jobs。当前 deterministic router 已提供 `SHORT_BATCH` / `STRUCTURED_BATCH` / `GROUPED_WINDOWED` 三态：translation 与 vocabulary 分别采用 batch 或 grouped/windowed job topology；short/structured grammar 走 compact `build_grammar_bundle` batch path，grouped/windowed grammar 保留 Z+ windows。Section-oriented / selective longform planner 尚未落地，不能描述为已有 runtime mode。
 3. Layer Workers：执行 LLM 或 deterministic 后处理。worker 可以选择 batch/window 计算形态，但不能改变 Enhancement Layer 的公开输出语义。
 4. Layer Publisher：校验 schema、anchor、publish fence、source hash 和 generation，写 `enhancement_layers` 与 `reader_events`。Publisher 是合同守门，不应替 worker 猜测或改写语义粒度。
 5. Snapshot / Plate Projection：从 domain facts 重建页面。前端显示异常优先回查已发布 layer output；不要把 projection 误判为 layer truth。
@@ -56,12 +56,12 @@ Reader enhancement 的当前主链路按层分开理解：
 2. M3 长文 grouped execution：T3.1（translation）与 T3.2b（vocabulary）均已完成实施；T3.3 phrase_gloss guard、T3.4a diagnostics、T3.4b density bug fix 已完成。
 3. T3.5 completion state finalizer 已完成代码级实施（详见下方 T3.5 章节）；T4.1/T4.1a deterministic complexity routing、T4.1b structured article batch runtime mode 与 T4.1c short/medium compact grammar path 均已完成代码级实施（详见下方 T4.1/T4.1a/T4.1b/T4.1c 章节）。
 4. T4.2a-R1 three-mode evidence parity and observability closure 已完成（详见下方 T4.2a-R1 章节）：acceptance harness 忠实复现 production topology（WorkerLoop + CompletionFinalizer + coverage_complete）；grammar batch ai_usage_events 漏传 usage_data 已修复；smoke/acceptance harness 注入 DevFakeGrammarBatchExecutor + DevFakeGrammarWindowExecutor，不得因 enable_zplus_grammar=True 意外调用真实 LLM；SHORT_BATCH / STRUCTURED_BATCH / GROUPED_WINDOWED 三态固定覆盖测试已落地（route/fingerprint/policy、job topology、effective calls、layer counts、final readiness、usage attribution）。
-5. **三态尚未真实验收**：当前三态固定覆盖测试使用 fake executor，仅验证代码级合同闭环；真实 LLM 下的 cost / quality / latency 改善需后续统一页面验收收口。T4.2 bounded LLM document profiler **暂缓**，不在当前轮实现。
-6. T4.2a-R2 三态执行预算与切换安全护栏已完成代码级实施，**已通过代码级 review（T4.2a-R2-R3a 补充 Test M + 文档终态同步，详见下方 T4.2a-R2 章节）**：per-layer `ExecutionBudget` 确定性成本上限（`max_effective_calls = planned * 3`，与 `max_attempts=3` 对齐）；batch-first/fallback 不会导致同一 layer 重复执行或额外 LLM 调用；route flip 时旧 fingerprint job 被 fence（claim-time + publish-time `_validate_fence`）；预算耗尽是 finalizable stopped reason，finalizer 只对 exhausted layer force-fail 非终态 jobs 避免死锁（**R2-R3 修正：full + partial exhaustion 都从 `BUDGET_LAYER_TO_JOB_TYPES` 计算，display_title 不被误伤**）；suppressed legacy job 被正式 supersede 不形成热循环（**R2-R3 修正：legacy cleanup 包裹显式事务**）；budget-denied 写入持久 runtime span metadata；publish fence 由 worker 层完成真实 job/run transition（**R2-R3 澄清并加强 Test J 断言**）；fingerprint 采用保守排序集合（方案 B）。**T4.2a-R2 代码级验收已通过；真实 LLM 下的 cost / quality / latency 仍未验收，不得表述为已经实现实际降本增效。**
-7. T4.2a-R2 **代码级验收已通过**（deterministic fake-executor）；下一步推进 **gated 真实 LLM / 页面验收**：三态代码级合同闭环 + 执行预算 + cutover 护栏均已落地，具备进入 gated real validation 的条件。真实降本增效尚未被证明。
+5. **T4.2a-V1 已完成第一轮 gated real-LLM DB/runtime 验收**：4 个 records 覆盖三种 route，共 34 calls / 142,990 input tokens / 55,051 output tokens / 198,041 total tokens；Contract、Output Integrity 与当前样本范围的 Semantic Quality Gate 均通过。Page UX 因本地认证/并行服务占用仍 BLOCKED，因此 V1 尚未关闭。实际 provider 成本不可从账单确认；按当时配置价格只能给出约 `$0.0158-$0.0354` 的理论区间，不得作为可靠实付成本或降本结论。
+6. T4.2a-R2 三态执行预算与切换安全护栏已完成代码级实施，**已通过代码级 review（T4.2a-R2-R3a 补充 Test M + 文档终态同步，详见下方 T4.2a-R2 章节）**：per-layer `ExecutionBudget` 确定性成本上限（`max_effective_calls = planned * 3`，与 `max_attempts=3` 对齐）；batch-first/fallback 不会导致同一 layer 重复执行或额外 LLM 调用；route flip 时旧 fingerprint job 被 fence（claim-time + publish-time `_validate_fence`）；预算耗尽是 finalizable stopped reason，finalizer 只对 exhausted layer force-fail 非终态 jobs 避免死锁（**R2-R3 修正：full + partial exhaustion 都从 `BUDGET_LAYER_TO_JOB_TYPES` 计算，display_title 不被误伤**）；suppressed legacy job 被正式 supersede 不形成热循环（**R2-R3 修正：legacy cleanup 包裹显式事务**）；budget-denied 写入持久 runtime span metadata；publish fence 由 worker 层完成真实 job/run transition（**R2-R3 澄清并加强 Test J 断言**）；fingerprint 采用保守排序集合（方案 B）。V1 的首次成功样本证明 guardrails 未干扰正常生产 topology，但没有触发 retry / budget exhaustion，因此不替代 R2 deterministic failure-path 验收。
+7. 下一步只做 **T4.2a-V1-PV page validation**：复用现有 4 个真实 records，不新增真实 LLM 调用；在不干扰其他 agent 的服务窗口内验证 anchor 落点、选区/高亮、侧栏跳转、长文滚动、刷新一致性和 `coverage_complete` 页面状态。页面通过前不得关闭 V1。
 8. bounded enhancement planner + specialized structured workers 的设计评估应先聚焦 long/very-long selective enhancement，优先减少 vocabulary/grammar 的空跑与重复扫描，而不是一开始扩到全部 translation。
 9. Provider prompt cache / cache-hit 归因可作为后续成本杠杆继续验证，但它是成本优化项，不是三模式路由设计的替代品。
-10. 三种模式代码级闭环后，再统一跑真实 LLM / 页面验收，覆盖短文、中档 structured batch、长文、超长文和碎段新闻。
+10. V1 页面收口后，再用固定样本与当前 baseline 设计 V2；碎段新闻、超长文和 no-op window 属于扩展验证，不得与本轮 Page UX closure 混做。
 11. M6 先做 debounce / state preservation，再做 SSE 和 patch merge。SSE 本身不能解决全量 reload 闪烁。
 
 ### 任务包
@@ -258,7 +258,7 @@ Reader enhancement 的当前主链路按层分开理解：
    - `test_zplus_bbc_regression.py`：T4.1c 引入 route-aware routing 后，BBC 文章（858 words）路由到 SHORT_BATCH 而非 Z+ window path，导致测试失败。已添加 migration 0017（`translate_article` / `build_vocabulary_layer_article` job type CHECK constraint），注入 fake batch executors（translation / vocabulary / grammar），并扩展 BBC 文章 3x（~2574 words）路由到 GROUPED_WINDOWED 以保留 Z+ window 测试目的。测试已重命名为 `test_synthetic_expanded_long_form_grammar_window_regression`，module docstring 明确声明不再覆盖原始 BBC 3-5 window 回归；原 BBC 858-word 样本作为 SHORT/STRUCTURED 路由回归应另设测试。更新 expected window count 从 3-5 到 9-15。
 5. 影响面：不实现 output-token planner、selector redesign、SSE 或页面改造；不扩到 bounded LLM profiler / strategy planner / semantic outline。
 6. 风险/边界（已锁定，不扩 scope）：
-   - **三态尚未真实验收**：当前三态固定覆盖测试使用 fake executor，仅验证代码级合同闭环。真实 LLM 下的 cost / quality / latency 改善需后续统一页面验收收口。
+   - **R1 checkpoint 的证据边界**：三态固定覆盖测试使用 fake executor，只验证代码级合同闭环。后续 T4.2a-V1 已补充真实 LLM normal-path DB/runtime 验收；Page UX、可靠实付成本与用户感知时延仍未闭环。
    - `end_worker_span_success` 不识别 aggregate usage_data 格式（仅测试 workaround `_FlatUsageGrammarBatchExecutor`）。
    - T4.2 bounded LLM document profiler **暂缓**，下一步为 T4.2a-R2 execution budget / cutover safety。
 
@@ -312,7 +312,7 @@ Reader enhancement 的当前主链路按层分开理解：
      - E `test_route_flip_rejects_translation_batch_publish`：经过真实 `TranslationLayerPublisher.publish_article_translation_batch`，route flip 后抛 `FenceViolationError`，无新增 layer/event，job 状态一致。
      - F `test_budget_diagnostics_observability`：成功 run 后 `budget_diagnostics` 含 per-layer planned/max/consumed/remaining；exhausted 后 `exhausted_layers` 含目标 layer，`budget_denied > 0`，`stopped_reason != "all_workers_no_job"`。
 7. 风险/边界（已锁定，不扩 scope）：
-   - **三态尚未真实验收**：当前执行预算与 cutover 测试使用 fake executor，仅验证代码级合同闭环。真实 LLM 下的 cost / quality / latency 改善需后续统一页面验收收口。**T4.2a-R2 已通过代码级 review 和 deterministic fake-executor 验收；真实 LLM 下的成本、质量和时延收益尚未验收，不得表述为已经实现实际降本增效。durable budget formalizes `max_attempts=3` 的确定性上限，本身不降低当前 retry ceiling；是否将某些 route/job 从 3 次调整为 2 次需要真实 LLM cost/quality 数据，属于下一阶段 gated validation。T4.2a-R2 证明的是不会无限重试、不会重复 fallback、不会 route-cutover 错写，以及预算耗尽状态可观测。**
+   - **R2 与 V1 的证据边界**：执行预算与 cutover failure-path 仍由 deterministic fake-executor tests 验收；V1 真实 LLM records 只覆盖首次成功的 normal path，没有触发 retry、budget exhaustion 或 route cutover。durable budget formalizes `max_attempts=3` 的确定性上限，本身不降低当前 retry ceiling；是否将某些 route/job 从 3 次调整为 2 次需要固定样本 cost/quality 对照。当前仍不得表述为已经实现实际降本增效。
    - 预算权威是 durable per `(record, base, generation, layer)`，跨 `runner.run()` 持久化。fingerprint 采用保守集合方案 B：所有非 superseded fingerprint 的 `attempt_count` 均计入 consumed，不区分 active route。route/fingerprint 变化后旧 fingerprint job 通过 `_validate_fence` 被拒绝并 supersede。
    - **max_attempts=3 与 durable budget 的关系**：生产 `max_attempts=3` 是每个 job 的 retry ceiling。durable budget 使用 `SUM(max_attempts)` 作为 layer ceiling（`max_effective_calls = planned * max_multiplier`，`max_multiplier=3` 与 `max_attempts=3` 对齐）。durable budget 提供确定性上限和观测/调度作用，**本身不降低原有 retry 成本**。是否将部分 route/job 的 `max_attempts` 从 3 调到 2 应作为真实 LLM cost/quality 数据驱动的独立决策，不在本轮调整。
    - route flip fencing 依赖 `article_route` 写入 `reader_runs.envelope_json`（由 job_bootstrap 写入）。若未来有 run 不携带 `article_route`，fencing 不生效（返回 None = 通过）。这是预期行为：只有 T4.1b+ 的 batch/window run 才需要 route fencing。
@@ -320,6 +320,18 @@ Reader enhancement 的当前主链路按层分开理解：
    - `_should_suppress_grammar_per_unit_fallback` 只覆盖 grammar 层；translation / vocabulary 的 batch-first fallback 不存在 per-unit fallback 路径（T3.1/T3.2b 已删除 per-unit job），因此不需要等效 guard。
    - `attempt_count` 在 claim 时自增，含 claim 后但 LLM 调用前崩溃的 attempt；durable consumed 是 claim 次数上限，可能略高于真实 effective LLM call 数。这是保守偏差，符合 fail-closed 原则。
    - **fingerprint 方案 B 限制**：保守集合将所有非 superseded fingerprint 的 consumed 合并计算，在 cutover 中间态可能略高估 consumed（旧 fingerprint 的已消耗 attempt 仍计入）。这是保守偏差，符合 fail-closed 原则。若未来需要精确按 active route 分离预算，需新增 schema 字段标记 active route，不在本轮实施。
+
+### T4.2a-V1. Gated Real-LLM Validation
+
+状态：DB/runtime validation complete；Page UX validation blocked，V1 尚未关闭。
+
+- 4 个真实 records 覆盖 `SHORT_BATCH`（2）、`STRUCTURED_BATCH`（1）和 `GROUPED_WINDOWED`（1）：34 effective calls，142,990 input tokens，55,051 output tokens，198,041 total tokens。所有 jobs 首次 claim 成功（`attempt_count=1`），无 retry、budget denial、stale/superseded publish 或 duplicate fallback；最终均为 `coverage_complete / completed_clean`。
+- 首个 route baseline：SHORT 526 words = 4 calls / 9,966 tokens / pipeline-root 44.7s；SHORT 986 words = 4 / 29,996 / 80.7s；STRUCTURED 1,509 words = 4 / 46,506 / 103.7s；GROUPED 2,515 words = 22 / 111,573 / 204.7s（4 translation + 6 vocabulary + 11 grammar windows + 1 display title）。这些是当前配置的 baseline，不是旧链路对照。
+- Gate：Contract PASS；Output Integrity PASS；Semantic Quality PASS（仅代表本轮人工抽查样本：translation 20、vocabulary subtype-aware 17、grammar 12、sentence analysis 8）；Cost/Latency Baseline PARTIAL；Page UX BLOCKED。DB 非空或 schema 合法不能单独证明语义质量，当前 PASS 不可外推到碎段新闻、超长文或其他模型配置。
+- 实际 provider 账单不可得，可靠实付成本为 unavailable；按当时配置价格与无法完整归因的 cache 情况，只能给出约 `$0.0158-$0.0354` 理论区间。无历史同样本真实 LLM baseline，因此**不得宣称已实现 token、成本或时延降幅**。
+- Observability gap：Sample A grammar usage event 存在但无 `usage_snapshot`，recording 层收到 `usage_data=None`；同一路径 B/C/D 正常。`extract_run_usage(result)` 在 V1 前已经存在，根因仍为 unresolved intermittent usage attribution gap，不能描述为 worker 修复已落地。`ai_usage_events.latency_ms` 全部为 NULL，per-job provider latency 与真实用户感知延迟尚不可用。
+- Vocabulary 质量必须按 discriminated union 评估：`vocab_highlight` 检查 `headword` / `brief_explanation` / `reason`；`phrase_gloss` 检查 `phrase` / `phrase_type` / `gloss`；`context_gloss` 检查 `display` / `gloss` / `reason`。不得跨 subtype 强求不存在的 `headword` 或 `gloss` 字段。
+- 下一步 `T4.2a-V1-PV` 仅复用现有 records 做页面验收，不调用新 LLM：验证 anchor 落点、选区/高亮、批注到原文跳转、长文滚动、刷新一致性、无 duplicate/stale layer，以及页面 `coverage_complete` 状态。页面通过后才能关闭 V1，并将碎段新闻/超长文/no-op window 放入独立 V2。
 - T2.1 已有第一轮实现并提交（progressive reload cursor、in-flight guard、scroll/selection best-effort 恢复），但必须在 T1.1a 修复后用真实页面重新验收；前端稳定性不能替代正确的 layer output。
 - 默认 worker / baseline budget 已调整为 `max_ticks=96`、`max_jobs=48`，覆盖当前 6/7 worker slots 下的中等短文样本；这是验收预算，不是最终调度模型。
 - 2026-07-08 fake baseline 验收只能证明 job 数、completion 和测试 fake output 口径；不能证明真实 LLM 下 Translation Group 粒度正确。真实页面已暴露 one-unit-one-group 回归，因此此前 `translation_groups` 数量不能作为 T1.1a 验收依据。
@@ -332,7 +344,7 @@ Reader enhancement 的当前主链路按层分开理解：
 ### 下一轮建议
 
 1. T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1 已完成代码级实施；**T4.2a-R2 已通过代码级 review（T4.2a-R2-R3a 补充 Test M + 文档终态同步）**：completion state finalizer 已闭合；deterministic router 已替换 legacy raw-char 二元分流；Unicode non-CJK 与 missing-base 两个回归点也已补齐；`STRUCTURED_BATCH` 已升级为独立可审计 runtime mode（fingerprint / policy_version / article_route / document_features 三态区分，route 变化触发 supersede）；短文与 structured batch 文章的 grammar 已走 compact batch path，不再默认走重型 analysis-window 空跑；acceptance harness 已忠实复现 production topology（WorkerLoop + CompletionFinalizer + coverage_complete），grammar batch `ai_usage_events` 漏传 `usage_data` 已修复，三态固定覆盖测试已落地；durable per-layer 执行预算与 route cutover fencing 已实施修复（跨 run 持久预算、fail-closed fallback + legacy job 正式终态、partial/full layer exhaustion 分层 force-fail + display_title 排除、budget-denied 持久观测、publish fence worker 层真实 transition + Test J 强断言、legacy cleanup 显式事务、fingerprint 确定性集合）。下一步不再回头扩这几项 scope。
-2. **三态尚未真实验收，T4.2a-R2 代码级验收已通过**：当前三态固定覆盖测试 + 执行预算 + cutover 测试均使用 fake executor，仅验证代码级合同闭环；真实 LLM 下的 cost / quality / latency 改善需后续统一页面验收收口。**T4.2 bounded LLM document profiler 暂缓**，不在当前轮实现。T4.2a-R2 已通过代码级 review 和 deterministic fake-executor 验收，**具备进入 gated 真实 LLM / 页面验收的条件**；真实降本增效尚未被证明。下一步推进统一真实 LLM / 页面验收，覆盖短文、中档 structured batch、长文、超长文和碎段新闻。
+2. **T4.2a-V1 已完成真实 LLM normal-path DB/runtime 验收**：三态 Contract / Output Integrity / sample-level Semantic Quality Gate 已通过；Page UX 与可靠成本/用户感知时延仍未完成，真实降本增效尚未被证明。**T4.2 bounded LLM document profiler 暂缓**。下一步先复用现有 records 完成 Page Validation；碎段新闻、超长文和 no-op window 后置到独立 V2。
 3. T4.2 bounded LLM document profiler 与 T4.3 strategy planner 仍作为后续阶段：bounded profiler 只返回 genre/structure/schema_risk/selective hints；planner 选择 short batch、structured batch、grouped/windowed、section longform、selective longform。T4.1b/T4.1c 的三态可审计 runtime mode + compact grammar batch path 是 planner 的稳定输入。
 4. bounded enhancement planner + specialized structured workers 的第一落点仍应是 long/very-long selective enhancement：planner 只负责选择候选 enhancement targets，专业 worker 负责 schema output 与 publish；translation semantic group planner 继续保持独立。
 5. T5.1 deterministic navigation outline 仍然是 very-long lazy enhancement 的先决条件；semantic outline 只面向长文/超长文，不默认对所有文章生成。
@@ -1148,11 +1160,11 @@ Focused tests 已通过：
 
 当前下一步：
 
-1. **T4.2a-R2 代码级验收已通过**：T4.2a-R2-R3 生产代码已通过 review；T4.2a-R2-R3a 补充 display-title budget isolation regression (Test M) 并同步文档终态。35 个 focused 测试全部通过，8 文件组合回归 94 passed，Ruff clean，git diff --check clean。**T4.2a-R2 可标记为"代码级验收通过"；真实 LLM 下的 cost / quality / latency 仍未验收，下一步为 gated real LLM / page validation。**
-2. **统一真实 LLM / 页面验收（gated）**：三态代码级合同闭环（T4.1/T4.1a/T4.1b/T4.1c）+ acceptance harness / observability closure（T4.2a-R1）+ 执行预算与 cutover 护栏（T4.2a-R2）均已落地并通过代码级验收，具备进入 gated real validation 的条件。验收覆盖短文、中档 structured batch、长文、超长文和碎段新闻。
-3. T4.2 bounded LLM document profiler（**暂缓**，T4.1b/T4.1c 已为 planner 留出 `input_json.article_route` + `envelope_json.document_features` + compact grammar batch path 接口）。
-4. T4.3 strategy planner 合同。
-5. T5.1 deterministic navigation outline；semantic outline 只在长文/超长文策略中后置启用。
-6. 持续记录真实测试的 token、耗时、首个可用输出时间和输出质量，不用单次中间态长文测试推翻整体架构。
+1. **T4.2a-V1-PV Page Validation**：等待并行服务空闲后复用 V1 现有 4 个 records，不新增真实 LLM 调用；完成 anchor、选区/高亮、侧栏跳转、长文滚动、刷新一致性与 readiness 页面验收。Page UX Gate 通过前不得关闭 V1。
+2. **V1 observability gaps 后置为独立诊断**：Sample A grammar 0-token usage attribution 仍 unresolved；`ai_usage_events.latency_ms` 缺失。除非 Page Validation 暴露阻断问题，不在 PV 任务中修改 worker、adapter、prompt、router 或 model。
+3. **V2 扩展验证后置**：碎段新闻、>4,000 words 超长文与 no-op window 使用固定样本、预先声明调用上限；不得与 V1 页面收口混做。
+4. T4.2 bounded LLM document profiler **继续暂缓**。只有 deterministic router 在真实边界样本上出现稳定误判时才重新评估；不得因为已有真实 baseline 就直接引入自由决策 LLM。
+5. T4.3 strategy planner 与 T5.1 outline-first 合同继续后置；semantic outline 只在长文/超长文策略中启用。
+6. 持续记录 calls、token、pipeline-root latency、首个可用输出时间和人工质量，但在没有同样本对照前不得宣称降本增效。
 
-T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1 已完成代码级实施；**T4.2a-R2 已通过代码级 review（T4.2a-R2-R3a 补充 Test M + 文档终态同步）**，不再作为下一步入口；**三态尚未真实验收**（当前固定覆盖测试 + 执行预算 + cutover 测试均使用 fake executor，仅验证代码级合同闭环）。如需 retry force-failed windows、扩展 finalizer 到 RAG substrate，或给 structured batch 独立 grammar budget/prompt/release policy（脱离与 short batch 共享的 compact batch path），应分别作为后续独立任务设计。
+T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1 与 T4.2a-R2 已完成代码级实施和 deterministic acceptance。T4.2a-V1 已建立三态首个真实 LLM baseline，并通过 Contract / Output Integrity / sample-level Semantic Quality Gate；Page UX 与可靠实付成本/用户感知时延仍未闭环。如需 retry force-failed windows、扩展 finalizer 到 RAG substrate，或给 structured batch 独立 grammar budget/prompt/release policy，应分别作为后续独立任务设计。
