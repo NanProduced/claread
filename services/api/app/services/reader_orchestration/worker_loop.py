@@ -370,6 +370,18 @@ class ReaderEnhancementWorkerLoopService:
                             "stopped_reason": summary.stopped_reason,
                             "total_ticks": summary.total_ticks,
                             "total_jobs": summary.total_jobs,
+                            # T4.2a-R2-R2: persist budget diagnostics into
+                            # the pipeline root span so they are queryable
+                            # from ``reader_runtime_spans.metadata`` after
+                            # the run completes — not just in the Python
+                            # return value.
+                            "budget_denied": (
+                                summary.outcome_counts.budget_denied
+                            ),
+                            "exhausted_layers": list(
+                                summary.exhausted_layers
+                            ),
+                            "budget_diagnostics": summary.budget_diagnostics,
                             "completion_finalized": (
                                 completion_finalization_result.finalized
                                 if completion_finalization_result is not None
@@ -466,6 +478,9 @@ class ReaderEnhancementWorkerLoopService:
                     if completion_finalization_result is not None
                     else None
                 ),
+                # T4.2a-R2-R2: budget diagnostics in structured log.
+                "budget_denied": summary.outcome_counts.budget_denied,
+                "exhausted_layers": list(summary.exhausted_layers),
             },
         )
         return ReaderEnhancementWorkerLoopRecordResult(

@@ -1,7 +1,7 @@
 # Adaptive Reader Orchestration Design
 
 > Status: formal design draft
-> Last updated: 2026-07-10 (T4.2a-R1 three-mode evidence parity and observability closure landed)
+> Last updated: 2026-07-11 (T4.2a-R2-R3a: display-title budget isolation regression + 文档终态同步; 代码级 review 通过 / deterministic acceptance complete / real LLM validation pending)
 > Scope: Reader enhancement execution strategy, quality/cost control, progressive publishing, and longform handling.
 
 This document consolidates the previous analysis-window design notes and temporary research reports into one business-facing architecture document. Temporary development labels are intentionally removed; future work should use the terminology in this document.
@@ -127,6 +127,142 @@ Implementation checkpoint as of 2026-07-10:
   page acceptance remain a separate, later gate. The next step is
   T4.2a-R2 (execution budget / cutover safety) before any real-LLM
   acceptance run.
+- Execution budget and cutover safety (T4.2a-R2, 2026-07-10; **T4.2a-R2-R3a
+  代码级 review 通过 / deterministic acceptance complete / real LLM validation pending —
+  not yet cleared for real-LLM / page acceptance**): a durable
+  `ExecutionBudget` enforces a hard cost ceiling per route / layer /
+  record, surviving across multiple `runner.run()` and WorkerLoop ticks.
+  The budget is rebuilt at each `runner.run()` entry via
+  `ExecutionBudget.load_durable()` from `reader_jobs` aggregating
+  `SUM(attempt_count)` / `MAX(max_attempts)` per
+  `(reading_record_id, base_id, expected_generation, budget_layer)`.
+  `planned_calls` come from `max(bootstrap.job_counts,
+  actual_non_terminal_counts)` per layer (translation / vocabulary /
+  grammar; `display_title` is excluded). The ceiling is
+  `max_effective_calls = planned_calls * max_multiplier` with the
+  default `max_multiplier=3` aligning with the production
+  `max_attempts=3` (the original `*2` ceiling was inconsistent with
+  `max_attempts=3` and has been corrected). The durable budget provides
+  a deterministic ceiling and observability/scheduling — **it does not
+  by itself reduce the existing retry cost**; whether to lower
+  `max_attempts` from 3 to 2 for specific routes/jobs is a separate
+  data-driven decision. Only `BUDGET_CONSUMING_OUTCOMES` (`succeeded`,
+  `retry_later`, `failed_terminal`) consume budget; `superseded` /
+  `no_job` / `skipped` / `budget_denied` do not. `attempt_count` is
+  incremented atomically at claim time (before the LLM call), so a
+  claim that crashes before the LLM still counts — this is an
+  intentional conservative bias. When a layer's budget is exhausted,
+  the pipeline stops dispatching workers for that layer, records a
+  `budget_denied` outcome (not a plain `no_job`), and reports
+  `stopped_reason = budget_exhausted` (all layers exhausted) or
+  `partial_budget_exhausted` (some layers exhausted while others
+  continue). No new migration was added; the durable budget reuses
+  existing `reader_jobs.attempt_count` / `max_attempts`.
+- Fingerprint model (T4.2a-R2-R2 corrected, **Approach B: conservative
+  sorted fingerprint set**): existing `reader_jobs` schema fields cannot
+  reliably determine a single active fingerprint. `load_durable()` no
+  longer uses non-deterministic last-wins active fingerprint; instead it
+  returns a sorted `non_superseded_fingerprints` set per layer. The
+  budget conservatively aggregates `attempt_count` across all
+  non-superseded fingerprints. SQL adds `ORDER BY operation_fingerprint
+  ASC` so repeated queries are stable. `to_diagnostics()` exposes the
+  fingerprint set per layer. No new schema/migration. If a unique active
+  fingerprint is needed in the future, a minimal schema change must be
+  designed and approved first.
+- Fallback guardrail (T4.2a-R2-R1 corrected, fail-closed; T4.2a-R2-R2
+  closes legacy job lifecycle): the per-unit grammar fallback is no
+  longer gated on "batch job is terminal."
+  `_should_suppress_grammar_per_unit_fallback` implements an explicit
+  decision table: per-unit fallback is allowed only when the batch job
+  is `superseded` or no batch job exists; `succeeded`, `failed_terminal`,
+  `skipped`, and any non-terminal batch status all suppress fallback.
+  This round is fail-closed: a `failed_terminal` batch does not
+  implicitly run legacy per-unit jobs unless a future explicit fallback
+  policy authorizes new fallback jobs. **T4.2a-R2-R2 adds formal
+  terminal state for suppressed legacy jobs**: `_cleanup_suppressed_grammar_legacy_jobs()`
+  runs once per `runner.run()` after bootstrap, calling
+  `repository.supersede_conflicting_legacy_grammar_jobs()` to formally
+  supersede non-superseded `build_grammar_bundle/unit` legacy jobs under
+  the same base/generation, writing `reader_job_events`
+  (event_type=`job_superseded`) with rationale codes:
+  `batch_path_authoritative` (batch succeeded),
+  `batch_fallback_not_authorized` (batch failed_terminal),
+  `stale_legacy_topology` (batch superseded/skipped/stale). No
+  permanently-queued/retry_later legacy job remains; WorkerLoop scanner
+  no longer hot-loops on suppressed records. **T4.2a-R2-R3 wraps
+  `_cleanup_suppressed_grammar_legacy_jobs()` in an explicit
+  `async with conn.transaction():` block** so the `SELECT FOR UPDATE`
+  lock covers the entire cleanup (read + supersede + event write),
+  preventing concurrent `runner.run()` invocations from racing on the
+  same legacy jobs.
+- Route flip fencing: when the article route changes (e.g. short -> structured
+  on a rebuilt base), the bootstrap supersede path (existing) is augmented
+  by claim-time and publish-time `_validate_fence` →
+  `_check_route_consistency`. The check compares
+  `reader_jobs.input_json.article_route` against
+  `reader_runs.envelope_json.article_route` (filtered to runs that carry
+  `article_route`). A mismatch returns `stale_route_fingerprint` and
+  rejects both claim and publish. All six layer publisher methods call
+  the same `_validate_fence`, so stale-fingerprint results cannot be
+  published. **T4.2a-R2-R2 unifies publish fence state consistency**:
+  when a publisher raises `FenceViolationError`, the worker/service
+  layer (which holds the claim/lease_token) calls
+  `ReaderJobRuntime.transition(job_id, target_status="superseded",
+  rationale_code="publish_fence_failed")` and marks the run superseded.
+  Pipeline summary counts only real DB superseded transitions — **all
+  `max(1, superseded_jobs)` virtual reporting removed**, replaced with
+  `max(0, ...)`. translation/vocabulary/grammar unit/batch/window paths
+  all share this contract. **T4.2a-R2-R3 clarifies the transition
+  ownership**: the worker layer (`translation_worker` /
+  `vocabulary_worker` / `grammar_worker`) already performs the real
+  `transition(..., target_status="superseded",
+  rationale_code="publish_fence_failed")` in its own
+  `except FenceViolationError` handler before re-raising. The
+  `pipeline_runner` handler only counts the DB-actual superseded delta
+  (it does not perform a second transition).
+- Budget exhaustion and final readiness: `budget_exhausted` and
+  `partial_budget_exhausted` are both finalizable stopped reasons (only
+  `attention_required` is non-finalizable). The completion finalizer
+  reads durable state (terminal job counts from the repository), not the
+  in-memory budget. **T4.2a-R2-R2 corrects partial exhaustion layer
+  semantics**: the finalizer force-fails **only the exhausted layers'
+  job types** (via `BUDGET_LAYER_TO_JOB_TYPES` mapping), not
+  indiscriminately across `ENHANCEMENT_PIPELINE_JOB_TYPES`.
+  `display_title` is not a budget layer and is never force-failed by
+  budget exhaustion. Non-exhausted layers' queued/retry_later/paused
+  jobs are preserved; if any non-terminal jobs survive, the finalizer
+  returns `non_terminal_jobs_present` and does not prematurely finalize.
+  Only when all planned work reaches a real terminal state does the
+  record enter `coverage_complete`; `completed_with_failures` accurately
+  reflects which layers failed due to budget. **T4.2a-R2-R3 corrects
+  full `budget_exhausted` to also use `BUDGET_LAYER_TO_JOB_TYPES`** for
+  force-fail computation (not `ENHANCEMENT_PIPELINE_JOB_TYPES`, which
+  includes `generate_display_title_zh`). Both full and partial
+  exhaustion now exclude `display_title` from force-fail.
+- Usage / runtime evidence: succeeded executor calls produce
+  `ai_usage_events` with record / run / job attribution and
+  `reader_runtime_spans` with execution tokens. Budget-denied ticks are
+  recorded as a distinct `budget_denied` outcome (not plain `no_job`)
+  and surfaced via the pipeline summary (`stopped_reason`,
+  `outcome_counts["budget_denied"]`, `budget_diagnostics` per layer with
+  planned / max / consumed / remaining, `exhausted_layers`), so
+  operators can distinguish `attempted` / `executed` / `published` /
+  `budget-denied`. **T4.2a-R2-R2 persists budget denial to runtime
+  spans**: `budget_denied`, `exhausted_layers`, `budget_diagnostics`,
+  and `stopped_reason` are written to
+  `reader_runtime_spans.metadata_json` (pipeline root span) and the
+  WorkerLoop structured log, queryable from Console/runtime spans after
+  the task ends — not only in the Python return value. Normal `no_job`
+  scenarios have `budget_denied == 0`, distinguishable from
+  budget-denied. Stale-fingerprint claim/publish rejections are
+  observable via fence-violation span outcomes.
+- **The three modes are still not accepted under real LLM.** The
+  execution budget and cutover safety guardrails are verified with fake
+  executors only, and T4.2a-R2-R3a fixes have passed code-level review
+  and deterministic acceptance. Real-LLM cost / quality / latency
+  improvements and page acceptance remain a separate, later gate.
+  T4.2a-R2-R3a has passed code-level review and deterministic acceptance;
+  real LLM / page validation is the next gate.
 
 ### 4.3 Analysis Window
 
@@ -369,6 +505,34 @@ processed count, so the last succeeding tick can land exactly on the budget.
 Both caps are symmetric and finalizable; only `attention_required` is treated
 as non-finalizable.
 
+Budget exhaustion behavior (T4.2a-R2; T4.2a-R2-R3a 代码级 review 通过):
+`budget_exhausted` and `partial_budget_exhausted` are both finalizable
+stopped reasons, symmetric with the cap behavior. The budget is durable
+across `runner.run()` calls (rebuilt from `reader_jobs.attempt_count`),
+so a retried job cannot reset the ceiling. When a per-layer
+`ExecutionBudget` is exhausted, the pipeline stops dispatching workers
+for that layer and records a `budget_denied` outcome (not a plain
+`no_job`). If all layers are exhausted the stopped reason is
+`budget_exhausted`; if only some layers are exhausted while others
+continue, the stopped reason is `partial_budget_exhausted`, which is
+never disguised as `all_workers_no_job`. **T4.2a-R2-R2 corrects
+per-layer force-fail semantics**: the finalizer force-fails only the
+exhausted layers' job types (via `BUDGET_LAYER_TO_JOB_TYPES`), not
+indiscriminately across `ENHANCEMENT_PIPELINE_JOB_TYPES`;
+`display_title` is not a budget layer and is never force-failed by
+budget exhaustion. Non-exhausted layers' queued/retry_later/paused jobs
+are preserved; if any non-terminal jobs survive, the finalizer returns
+`non_terminal_jobs_present` and does not prematurely finalize. Only
+when all planned work reaches a real terminal state does the record
+enter `coverage_complete`. Budget exhaustion therefore never produces
+`completed_clean` when a layer failed due to budget; it is always
+surfaced as `completed_with_failures` with an explicit diagnostic, so
+operators can distinguish it from a clean run. **T4.2a-R2-R3 ensures
+`display_title` is never force-failed by any budget exhaustion (full
+or partial)**: both exhaustion paths now route through
+`BUDGET_LAYER_TO_JOB_TYPES`, which excludes
+`generate_display_title_zh`.
+
 Outcomes:
 
 - `completed_clean`: all enhancement jobs succeeded and no `failed` / `no_op`
@@ -553,10 +717,38 @@ default feedback loop for every intermediate patch.
   single whole-article `build_grammar_bundle` / `unit_range` batch job
   instead of the heavy Z+ analysis-window path; the batch publisher splits
   output back into per-unit `grammar_note` / `sentence_analysis` layers.
-  `GROUPED_WINDOWED` keeps the existing Z+ window contract unchanged. The
-  next priority is the bounded LLM document profiler (T4.2) and strategy
-  planner (T4.3) before expanding the outline-first contracts for long and
-  very long documents.
+  `GROUPED_WINDOWED` keeps the existing Z+ window contract unchanged.
+  Acceptance harness and observability closure (T4.2a-R1 landed) faithfully
+  reproduce the production `WorkerLoop` + `CompletionFinalizer` topology,
+  inject fake executors so `enable_zplus_grammar=True` never reaches a real
+  LLM in fake mode, and pin three-mode fixed-coverage tests across route /
+  fingerprint / policy, job topology, effective calls, layer counts, final
+  readiness and usage attribution. Execution budget and cutover safety
+  (T4.2a-R2; **T4.2a-R2-R3a 代码级 review 通过 / deterministic acceptance complete**)
+  add a durable per-layer `ExecutionBudget`
+  (`max_effective_calls = planned * 3`, aligned with `max_attempts=3`;
+  rebuilt from `reader_jobs.attempt_count` across `runner.run()` calls;
+  the durable budget provides a deterministic ceiling and
+  observability/scheduling but does not by itself reduce the existing
+  retry cost), a fail-closed fallback decision table (`superseded` or
+  no batch only) **with formal terminal state for suppressed legacy
+  jobs** (rationale codes: `batch_path_authoritative` /
+  `batch_fallback_not_authorized` / `stale_legacy_topology`), claim-time
+  + publish-time route-flip fencing via `_validate_fence` →
+  `_check_route_consistency` **with unified publish fence state
+  consistency (no `max(1,...)` virtual reporting)**, `budget_exhausted`
+  and `partial_budget_exhausted` finalizable stopped reasons with
+  **per-layer force-fail (only exhausted layers' job types;
+  `display_title` excluded)** to avoid permanent wedges, `budget_denied`
+  as a distinct observable outcome **persisted to
+  `reader_runtime_spans.metadata_json`**, and a **conservative sorted
+  fingerprint set (Approach B)** for deterministic budget aggregation.
+  The three modes are still not accepted under real LLM; T4.2a-R2-R3a
+  has passed code-level review and deterministic acceptance before the
+  next priority (unified gated real LLM / page validation), then the
+  bounded LLM document profiler (T4.2) and strategy planner (T4.3)
+  before expanding the outline-first contracts for long and very long
+  documents.
 
 ### P2: SSE And Interaction-Preserving Updates
 

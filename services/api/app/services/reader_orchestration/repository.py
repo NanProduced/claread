@@ -704,6 +704,152 @@ class ReaderOrchestrationRepository:
         )
         return int(result.split()[-1]) if result.startswith("UPDATE") else 0
 
+    async def force_fail_non_terminal_jobs(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        job_types: tuple[str, ...],
+        failure_code: str,
+        failure_reason: str,
+        updated_at: datetime,
+    ) -> int:
+        """T4.2a-R2: Force-fail non-terminal enhancement jobs.
+
+        Used by the completion finalizer when the pipeline stopped due
+        to ``budget_exhausted`` and non-terminal jobs remain. Without
+        this, the record would be wedged: the candidate scan re-picks
+        it (runnable jobs exist), but the budget guard keeps skipping
+        all workers, creating a deadlock.
+
+        Transitions ``queued`` / ``claimed`` / ``retry_later`` /
+        ``paused`` jobs to ``failed_terminal`` with the given failure
+        code / message. Returns the number of jobs transitioned.
+        """
+        if not job_types:
+            return 0
+        # Build placeholders for the IN clause: $7, $8, ...
+        placeholders = ", ".join(
+            f"${7 + i}" for i in range(len(job_types))
+        )
+        params: list[Any] = [
+            record_id,
+            base_id,
+            expected_generation,
+            failure_code,
+            failure_reason,
+            updated_at,
+        ]
+        params.extend(job_types)
+        result = await conn.execute(
+            f"""
+            UPDATE reader_jobs SET
+                status = 'failed_terminal',
+                failure_code = $4,
+                failure_message = $5,
+                updated_at = $6,
+                lease_owner = NULL,
+                lease_token = NULL,
+                lease_expires_at = NULL,
+                claimed_at = NULL
+            WHERE reading_record_id = $1
+              AND base_id = $2
+              AND expected_generation = $3
+              AND status IN ('queued', 'claimed', 'retry_later', 'paused')
+              AND job_type IN ({placeholders})
+            """,
+            *params,
+        )
+        return int(result.split()[-1]) if result.startswith("UPDATE") else 0
+
+    async def supersede_conflicting_legacy_grammar_jobs(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        rationale_code: str,
+        updated_at: datetime,
+    ) -> int:
+        """T4.2a-R2-R2: Supersede conflicting legacy per-unit grammar jobs.
+
+        When a grammar batch job is authoritative (succeeded /
+        failed_terminal / skipped / non-terminal), any legacy
+        ``build_grammar_bundle`` per-unit jobs (``target_type = 'unit'``)
+        that are still non-superseded represent stale topology from a
+        route cutover or upgrade. They must be transitioned to
+        ``superseded`` — not left queued — to avoid a permanent hot-loop
+        where the worker scanner keeps finding runnable jobs that the
+        fallback guard suppresses every tick.
+
+        Transitions ``queued`` / ``claimed`` / ``retry_later`` /
+        ``paused`` legacy per-unit grammar jobs to ``superseded`` with
+        the given ``rationale_code`` and inserts a ``job_superseded``
+        event for each. Returns the number of jobs transitioned.
+
+        ``claimed`` jobs have their lease cleared. This is safe because
+        the fallback guard has already decided these jobs must never
+        execute (batch path is authoritative).
+        """
+        rows = await conn.fetch(
+            """
+            SELECT id, run_id, reading_record_id, status
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND base_id = $2
+              AND expected_generation = $3
+              AND job_type = 'build_grammar_bundle'
+              AND target_type = 'unit'
+              AND status IN ('queued', 'claimed', 'retry_later', 'paused')
+            ORDER BY id ASC
+            FOR UPDATE
+            """,
+            record_id,
+            base_id,
+            expected_generation,
+        )
+        if not rows:
+            return 0
+        for row in rows:
+            await conn.execute(
+                """
+                UPDATE reader_jobs SET
+                    status = 'superseded',
+                    rationale_code = $2,
+                    lease_owner = NULL,
+                    lease_token = NULL,
+                    lease_expires_at = NULL,
+                    claimed_at = NULL,
+                    updated_at = $3
+                WHERE id = $1
+                """,
+                row["id"],
+                rationale_code,
+                updated_at,
+            )
+            await conn.execute(
+                """
+                INSERT INTO reader_job_events (
+                    reading_record_id, run_id, job_id,
+                    event_type, payload_json, created_at
+                )
+                VALUES ($1, $2, $3, 'job_superseded', $4::jsonb, $5)
+                """,
+                row["reading_record_id"],
+                row["run_id"],
+                row["id"],
+                jsonb_param({
+                    "rationale_code": rationale_code,
+                    "previous_status": str(row["status"]),
+                    "cleanup": "legacy_grammar_fallback_suppressed",
+                }),
+                updated_at,
+            )
+        return len(rows)
+
     async def ensure_event_sequence_row(
         self,
         conn: asyncpg.Connection,

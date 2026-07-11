@@ -100,10 +100,16 @@ COMPLETION_TARGET_READINESS_STATE = "coverage_complete"
 # ``stopped_reason`` values for which the finalizer must NOT run. Only
 # ``attention_required`` is excluded — the product_state decision path
 # owns retry_later / failed_terminal / superseded outcomes. ``max_ticks``
-# / ``max_jobs`` are NOT excluded because the pipeline runner checks
-# those caps AFTER incrementing the processed count, so the last
-# succeeding job can land exactly on the budget. The durable-state
-# guards below decide whether the work is actually finished.
+# / ``max_jobs`` / ``budget_exhausted`` are NOT excluded because:
+# - ``max_ticks`` / ``max_jobs``: the pipeline runner checks those caps
+#   AFTER incrementing the processed count, so the last succeeding job
+#   can land exactly on the budget.
+# - ``budget_exhausted`` (T4.2a-R2): when the execution budget is
+#   exhausted, remaining non-terminal jobs are force-failed by the
+#   finalizer (via the existing non-terminal guard), and the record
+#   finalizes as ``completed_with_failures``.
+# The durable-state guards below decide whether the work is actually
+# finished.
 NON_FINALIZABLE_STOPPED_REASONS: frozenset[PipelineStoppedReason] = frozenset({
     "attention_required",
 })
@@ -117,6 +123,27 @@ FINALIZER_FORCED_WINDOW_FAILURE_REASON = (
     "non-terminal analysis window when all enhancement jobs reached "
     "terminal state; the window worker could not make progress"
 )
+
+# T4.2a-R2: Failure metadata written into job diagnostics when the
+# finalizer force-fails non-terminal jobs due to budget exhaustion.
+BUDGET_EXHAUSTED_FAILURE_CODE = "budget_exhausted"
+BUDGET_EXHAUSTED_FAILURE_REASON = (
+    "execution budget exhausted; remaining non-terminal jobs "
+    "force-failed by the completion finalizer"
+)
+
+# T4.2a-R2-R2: Maps budget layer names to the job_types that belong to
+# that layer. Used by the finalizer to force-fail ONLY the exhausted
+# layers' jobs during ``partial_budget_exhausted``, preserving
+# non-exhausted layers' retry_later / queued jobs.
+BUDGET_LAYER_TO_JOB_TYPES: dict[str, tuple[str, ...]] = {
+    "translation": ("translate_unit", "translate_article"),
+    "vocabulary": (
+        "build_vocabulary_layer",
+        "build_vocabulary_layer_article",
+    ),
+    "grammar": ("build_grammar_bundle", "build_grammar_bundle_window"),
+}
 
 CompletionOutcome = Literal[
     "completed_clean",
@@ -307,12 +334,104 @@ class CompletionFinalizer:
             for status in NON_TERMINAL_JOB_STATUSES
         )
         if non_terminal_job_count > 0:
-            return CompletionFinalizationResult(
-                finalized=False,
-                skip_reason="non_terminal_jobs_present",
-                job_status_counts=job_status_counts,
-                window_status_counts=window_status_counts,
+            # T4.2a-R2-R2: When the pipeline stopped due to budget
+            # exhaustion, force-fail non-terminal jobs so the record
+            # can finalize as ``completed_with_failures`` instead of
+            # being wedged.
+            #
+            # T4.2a-R2-R3 fix: BOTH ``budget_exhausted`` (full) and
+            # ``partial_budget_exhausted`` must ONLY force-fail jobs
+            # in budget layers (translation / vocabulary / grammar).
+            # ``display_title`` is NOT a budget layer and must NEVER
+            # be force-failed by budget exhaustion — a retryable
+            # display_title job must survive even when all budget
+            # layers are exhausted.
+            if summary.stopped_reason == "budget_exhausted":
+                # All budget layers exhausted — force-fail all budget
+                # layer job types, but NOT display_title.
+                force_fail_types = tuple(
+                    job_type
+                    for layer in ("translation", "vocabulary", "grammar")
+                    for job_type in BUDGET_LAYER_TO_JOB_TYPES.get(
+                        layer, ()
+                    )
+                )
+            elif summary.stopped_reason == "partial_budget_exhausted":
+                # Only force-fail the exhausted layers' job types.
+                force_fail_types = tuple(
+                    job_type
+                    for layer in summary.exhausted_layers
+                    for job_type in BUDGET_LAYER_TO_JOB_TYPES.get(
+                        layer, ()
+                    )
+                )
+                if not force_fail_types:
+                    # No known job types for the exhausted layers —
+                    # skip force-fail and let the non-terminal guard
+                    # prevent finalization (safe: no wedge because
+                    # the worker loop will re-scan).
+                    return CompletionFinalizationResult(
+                        finalized=False,
+                        skip_reason="non_terminal_jobs_present",
+                        job_status_counts=job_status_counts,
+                        window_status_counts=window_status_counts,
+                    )
+            else:
+                return CompletionFinalizationResult(
+                    finalized=False,
+                    skip_reason="non_terminal_jobs_present",
+                    job_status_counts=job_status_counts,
+                    window_status_counts=window_status_counts,
+                )
+
+            force_failed_job_count = (
+                await self._repository.force_fail_non_terminal_jobs(
+                    conn,
+                    record_id=record_id,
+                    base_id=base_id,
+                    expected_generation=expected_generation,
+                    job_types=force_fail_types,
+                    failure_code=BUDGET_EXHAUSTED_FAILURE_CODE,
+                    failure_reason=BUDGET_EXHAUSTED_FAILURE_REASON,
+                    updated_at=updated_at,
+                )
             )
+            # Reflect the mutation in the in-memory counts.
+            job_status_counts[STATUS_FAILED_TERMINAL] = (
+                job_status_counts.get(STATUS_FAILED_TERMINAL, 0)
+                + force_failed_job_count
+            )
+            # T4.2a-R2-R2: for partial exhaustion, only zero out the
+            # non-terminal counts for the force-failed types. For full
+            # budget exhaustion, zero out all (all types were
+            # force-failed). We approximate by zeroing all non-terminal
+            # counts when force_failed_job_count == non_terminal_job_count
+            # (full exhaustion), otherwise leave the counts as-is — the
+            # classifier uses failed_terminal presence, not exact
+            # non-terminal counts.
+            if force_failed_job_count >= non_terminal_job_count:
+                for status in NON_TERMINAL_JOB_STATUSES:
+                    job_status_counts[status] = 0
+            # For partial exhaustion where some non-terminal jobs
+            # survive (non-exhausted layers), we must NOT finalize
+            # yet — the record still has in-flight work. Return
+            # non_terminal_jobs_present so the worker loop re-scans.
+            # T4.2a-R2-R3: same applies to full exhaustion when a
+            # non-budget-layer job (e.g. display_title) survives.
+            if summary.stopped_reason in (
+                "partial_budget_exhausted",
+                "budget_exhausted",
+            ):
+                remaining_non_terminal = (
+                    non_terminal_job_count - force_failed_job_count
+                )
+                if remaining_non_terminal > 0:
+                    return CompletionFinalizationResult(
+                        finalized=False,
+                        skip_reason="non_terminal_jobs_present",
+                        job_status_counts=job_status_counts,
+                        window_status_counts=window_status_counts,
+                    )
 
         non_terminal_window_count = sum(
             window_status_counts.get(status, 0)

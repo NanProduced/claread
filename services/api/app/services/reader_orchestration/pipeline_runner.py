@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -23,6 +23,11 @@ from app.services.reader_orchestration.display_title_worker import (
     DisplayTitleWorkerService,
 )
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
+from app.services.reader_orchestration.execution_budget import (
+    BUDGET_CONSUMING_OUTCOMES,
+    WORKER_TYPE_TO_BUDGET_LAYER,
+    ExecutionBudget,
+)
 from app.services.reader_orchestration.grammar_window_publisher import (
     NO_OP_CAUSE_EXECUTION_FAILED,
     GrammarWindowPublisher,
@@ -47,9 +52,9 @@ from app.services.reader_orchestration.job_bootstrap import (
     GRAMMAR_BATCH_JOB_TYPE,
     GRAMMAR_BATCH_OPERATION_FINGERPRINT,
     GRAMMAR_BATCH_TARGET_SCOPE,
-    GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
     GRAMMAR_JOB_TYPE,
     GRAMMAR_OPERATION_FINGERPRINT,
+    GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
     GRAMMAR_TARGET_SCOPE,
     TRANSLATION_BATCH_JOB_TYPE,
     TRANSLATION_BATCH_OPERATION_FINGERPRINT,
@@ -74,6 +79,9 @@ from app.services.reader_orchestration.job_runtime import (
     ReaderJobRuntime,
 )
 from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
+from app.services.reader_orchestration.repository import (
+    ReaderOrchestrationRepository,
+)
 from app.services.reader_orchestration.span_recorder import (
     SPAN_KIND_WORKER_TICK,
     STATUS_FAILED,
@@ -122,12 +130,15 @@ PipelineAttemptOutcome = Literal[
     "failed_terminal",
     "superseded",
     "no_job",
+    "budget_denied",
 ]
 PipelineStoppedReason = Literal[
     "all_workers_no_job",
     "max_ticks_reached",
     "max_jobs_reached",
     "attention_required",
+    "budget_exhausted",
+    "partial_budget_exhausted",
 ]
 
 # T1 acceptance: the fake executor baseline showed reuters_bbc_970 needs
@@ -283,6 +294,7 @@ class EnhancementOutcomeCounts:
     failed_terminal: int = 0
     superseded: int = 0
     no_job: int = 0
+    budget_denied: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,6 +326,12 @@ class ReaderPipelineRunSummary:
     stopped_outcome: PipelineAttemptOutcome | None = None
     attention_code: str | None = None
     attempts: tuple[ReaderPipelineWorkerAttempt, ...] = ()
+    # T4.2a-R2-R1: durable budget diagnostics for observability.
+    # ``exhausted_layers`` lists layers whose budget was exhausted at
+    # pipeline stop time. ``budget_diagnostics`` carries the per-layer
+    # planned / max / consumed / remaining snapshot.
+    exhausted_layers: tuple[str, ...] = ()
+    budget_diagnostics: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -440,6 +458,41 @@ class ReaderEnhancementPipelineRunner:
             user_id=user_id,
         )
 
+        # T4.2a-R2-R2: Clean up suppressed legacy per-unit grammar jobs
+        # BEFORE entering the worker loop. When the grammar batch path is
+        # authoritative (any non-superseded batch job exists), legacy
+        # ``build_grammar_bundle/unit`` jobs that are still non-superseded
+        # represent stale topology. Without this cleanup they would stay
+        # queued forever, causing the worker scanner to re-pick the record
+        # every tick while the fallback guard suppresses execution — a
+        # permanent hot-loop. This runs once per ``run()`` (not per tick).
+        await self._cleanup_suppressed_grammar_legacy_jobs(
+            record_id=record_id,
+            base_id=bootstrap.base_id,
+            expected_generation=bootstrap.expected_generation,
+        )
+
+        # T4.2a-R2-R1: Load durable budget from DB state
+        # (``reader_jobs.attempt_count`` / ``max_attempts``). This is the
+        # authoritative cross-run budget: multiple ``run()`` calls within
+        # the same WorkerLoop cycle see the same consumed count because
+        # ``attempt_count`` is persisted and incremented atomically at
+        # claim time.
+        #
+        # ``max_effective_calls = SUM(max_attempts)`` aligns with the
+        # actual retry semantics (``max_attempts=3`` → 3 calls per job),
+        # replacing the previous ``planned * 2`` which was lower than
+        # ``max_attempts`` and therefore unreachable in normal operation.
+        budget = ExecutionBudget()
+        async with self.get_pool().acquire() as conn:
+            durable_result = await ExecutionBudget.load_durable(
+                conn,
+                record_id=record_id,
+                base_id=bootstrap.base_id,
+                expected_generation=bootstrap.expected_generation,
+            )
+        budget.load_from_durable(durable_result)
+
         attempts: list[ReaderPipelineWorkerAttempt] = []
         tick_counts = {
             "display_title": 0,
@@ -456,6 +509,7 @@ class ReaderEnhancementPipelineRunner:
             "failed_terminal": 0,
             "superseded": 0,
             "no_job": 0,
+            "budget_denied": 0,
         }
         total_ticks = 0
         total_jobs = 0
@@ -495,6 +549,26 @@ class ReaderEnhancementPipelineRunner:
             round_no_job_count = 0
 
             for worker_type in worker_order:
+                # T4.2a-R2-R1: Check execution budget before dispatching
+                # the worker. If the layer's budget is exhausted, record
+                # a ``budget_denied`` outcome (NOT ``no_job``) so the
+                # event is observable in diagnostics/spans. The pipeline
+                # continues processing other layers that still have
+                # budget. Partial layer exhaustion (some layers
+                # exhausted, others not) is handled after the loop.
+                budget_layer = WORKER_TYPE_TO_BUDGET_LAYER.get(worker_type)
+                if budget_layer is not None and budget.is_exhausted(budget_layer):
+                    outcome_counts["budget_denied"] += 1
+                    total_ticks += 1
+                    tick_counts[worker_type] += 1
+                    # T4.2a-R2-R1: budget_denied counts as "no work for
+                    # this worker" — without this, a round where some
+                    # workers are budget_denied and others return no_job
+                    # would never reach ``round_no_job_count ==
+                    # len(worker_order)``, causing an infinite loop.
+                    round_no_job_count += 1
+                    continue
+
                 attempt = await self._run_worker_attempt(
                     worker_type=worker_type,
                     record_id=record_id,
@@ -524,6 +598,15 @@ class ReaderEnhancementPipelineRunner:
                 if attempt.processed_job:
                     total_jobs += 1
 
+                # T4.2a-R2: Consume budget for outcomes that involve an
+                # LLM call (succeeded / retry_later / failed_terminal).
+                # no_job / superseded do not consume budget.
+                if (
+                    budget_layer is not None
+                    and attempt.outcome in BUDGET_CONSUMING_OUTCOMES
+                ):
+                    budget.consume(budget_layer)
+
                 if attempt.outcome in {
                     "retry_later",
                     "failed_terminal",
@@ -535,6 +618,23 @@ class ReaderEnhancementPipelineRunner:
                     attention_code = attempt.attention_code
                     break
 
+                # T4.2a-R2-R1: If ALL budgeted layers with jobs are
+                # exhausted, stop with ``budget_exhausted``. If SOME
+                # layers are exhausted but others still have budget,
+                # the pipeline continues; partial exhaustion is handled
+                # after the loop (see ``partial_budget_exhausted``).
+                if budget.any_exhausted():
+                    all_budget_layers = set(WORKER_TYPE_TO_BUDGET_LAYER.values())
+                    active_layers = {
+                        bl for bl in all_budget_layers
+                        if budget.has_active_jobs_for_layer(bl)
+                    }
+                    if active_layers and all(
+                        budget.is_exhausted(bl) for bl in active_layers
+                    ):
+                        stopped_reason = "budget_exhausted"
+                        break
+
                 if total_jobs >= max_jobs:
                     stopped_reason = "max_jobs_reached"
                     break
@@ -545,6 +645,15 @@ class ReaderEnhancementPipelineRunner:
             if stopped_reason != "all_workers_no_job":
                 break
             if round_no_job_count == len(worker_order):
+                # T4.2a-R2-R1: Before exiting with ``all_workers_no_job``,
+                # check if some layers are budget-exhausted while others
+                # simply have no jobs. If any layer is exhausted, report
+                # ``partial_budget_exhausted`` instead of
+                # ``all_workers_no_job`` so the finalizer and observability
+                # can distinguish "nothing to do" from "budget ran out
+                # on some layers".
+                if budget.any_exhausted():
+                    stopped_reason = "partial_budget_exhausted"
                 break
 
         runtime_state = await self._load_record_runtime_state(
@@ -578,6 +687,7 @@ class ReaderEnhancementPipelineRunner:
                 failed_terminal=outcome_counts["failed_terminal"],
                 superseded=outcome_counts["superseded"],
                 no_job=outcome_counts["no_job"],
+                budget_denied=outcome_counts["budget_denied"],
             ),
             total_ticks=total_ticks,
             total_jobs=total_jobs,
@@ -588,6 +698,8 @@ class ReaderEnhancementPipelineRunner:
             stopped_outcome=stopped_outcome,
             attention_code=attention_code,
             attempts=tuple(attempts),
+            exhausted_layers=budget.exhausted_layers(),
+            budget_diagnostics=budget.to_diagnostics(),
         )
 
     async def _run_worker_attempt(
@@ -770,7 +882,7 @@ class ReaderEnhancementPipelineRunner:
                 outcome="superseded",
                 processed_job=True,
                 attention_code="publish_fence_failed",
-                superseded_jobs=max(1, superseded_jobs),
+                superseded_jobs=max(0, superseded_jobs),
             )
 
         return await self._build_worker_attempt_from_result(
@@ -829,7 +941,7 @@ class ReaderEnhancementPipelineRunner:
                 outcome="superseded",
                 processed_job=True,
                 attention_code="publish_fence_failed",
-                superseded_jobs=max(1, superseded_jobs),
+                superseded_jobs=max(0, superseded_jobs),
             )
 
         superseded_jobs = (
@@ -909,7 +1021,7 @@ class ReaderEnhancementPipelineRunner:
                 outcome="superseded",
                 processed_job=True,
                 attention_code="publish_fence_failed",
-                superseded_jobs=max(1, superseded_jobs),
+                superseded_jobs=max(0, superseded_jobs),
             )
 
         return await self._build_worker_attempt_from_result(
@@ -962,6 +1074,11 @@ class ReaderEnhancementPipelineRunner:
                 retry_delay=retry_delay,
             )
         except FenceViolationError:
+            # T4.2a-R2-R3: The worker service has already performed the
+            # real state transition (job → superseded, run → superseded)
+            # in its own ``except FenceViolationError`` handler before
+            # re-raising. This block only counts the DB-actual superseded
+            # delta; it does NOT need to call ``transition`` again.
             superseded_jobs = (
                 await self._count_superseded_jobs(
                     record_id=record_id,
@@ -978,7 +1095,7 @@ class ReaderEnhancementPipelineRunner:
                 outcome="superseded",
                 processed_job=True,
                 attention_code="publish_fence_failed",
-                superseded_jobs=max(1, superseded_jobs),
+                superseded_jobs=max(0, superseded_jobs),
             )
 
         return await self._build_worker_attempt_from_result(
@@ -1045,7 +1162,7 @@ class ReaderEnhancementPipelineRunner:
                 outcome="superseded",
                 processed_job=True,
                 attention_code="publish_fence_failed",
-                superseded_jobs=max(1, superseded_jobs),
+                superseded_jobs=max(0, superseded_jobs),
             )
 
         return await self._build_worker_attempt_from_result(
@@ -1116,7 +1233,7 @@ class ReaderEnhancementPipelineRunner:
                 outcome="superseded",
                 processed_job=True,
                 attention_code="publish_fence_failed",
-                superseded_jobs=max(1, superseded_jobs),
+                superseded_jobs=max(0, superseded_jobs),
             )
 
         if batch_result is not None:
@@ -1138,6 +1255,29 @@ class ReaderEnhancementPipelineRunner:
                 before_superseded=before_superseded_batch,
                 after_superseded=after_superseded_batch,
                 result=batch_result,
+            )
+
+        # T4.2a-R2: Fallback safety guard. Before falling back to the
+        # per-unit grammar path, check if there are any non-terminal
+        # batch jobs for this record/base/generation. If non-terminal
+        # T4.2a-R2-R1: Fail-closed fallback guard. Per-unit grammar
+        # fallback is suppressed whenever any non-superseded batch job
+        # exists. This includes ``succeeded`` (P1-2 fix: batch published,
+        # per-unit would duplicate), ``queued`` / ``claimed`` /
+        # ``retry_later`` (batch in progress), and ``failed_terminal``
+        # (no explicit fallback authorization policy; fail closed).
+        # Only ``superseded`` batch jobs (stale route) or no batch jobs
+        # at all allow per-unit fallback.
+        suppress_fallback = await self._should_suppress_grammar_per_unit_fallback(
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if suppress_fallback:
+            return ReaderPipelineWorkerAttempt(
+                worker_type="grammar_bundle",
+                outcome="no_job",
+                processed_job=False,
             )
 
         # --- Legacy per-unit grammar (force_legacy_grammar fallback) ---
@@ -1175,7 +1315,7 @@ class ReaderEnhancementPipelineRunner:
                 outcome="superseded",
                 processed_job=True,
                 attention_code="publish_fence_failed",
-                superseded_jobs=max(1, superseded_jobs),
+                superseded_jobs=max(0, superseded_jobs),
             )
 
         return await self._build_worker_attempt_from_result(
@@ -1430,6 +1570,12 @@ class ReaderEnhancementPipelineRunner:
                 # has them available for raw_candidate_count_by_type.
                 raw_candidates=candidates,
             )
+            # T4.2a-R2-R2: transition the job to superseded in the
+            # worker/service layer (not inside the publisher transaction).
+            # If the transition fails (lease race / already superseded),
+            # the summary must reflect the real DB state — not a
+            # synthetic count.
+            transitioned = False
             try:
                 await self._job_runtime.transition(
                     job_id=claim.job_id,
@@ -1440,6 +1586,7 @@ class ReaderEnhancementPipelineRunner:
                     # the superseded job's failure cause is queryable.
                     output_ref={"diagnostics": fence_diagnostics},
                 )
+                transitioned = True
             except IllegalTransitionError:
                 # Job no longer in claimed (e.g. lease expired and recovered
                 # by another tick). Span already ended above; fall through to
@@ -1463,10 +1610,10 @@ class ReaderEnhancementPipelineRunner:
                 job_id=claim.job_id,
                 run_id=claim.run_id,
                 attention_code="publish_fence_failed",
-                # Mirror legacy grammar worker: count this job as superseded
-                # so the pipeline summary's outcome_counts.superseded reflects
-                # the fence violation (requirement 1 alignment).
-                superseded_jobs=1,
+                # T4.2a-R2-R2: report the real transition result, not a
+                # synthetic 1. If the transition failed (lease race),
+                # superseded_jobs=0 so the summary is truthful.
+                superseded_jobs=1 if transitioned else 0,
             )
         except ValueError as exc:
             return await self._handle_window_job_failure(
@@ -2348,6 +2495,179 @@ class ReaderEnhancementPipelineRunner:
             operation_fingerprint=GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
         )
         return short_count + structured_count
+
+    async def _should_suppress_grammar_per_unit_fallback(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+    ) -> bool:
+        """T4.2a-R2-R1: Decide whether legacy per-unit grammar fallback
+        should be suppressed.
+
+        P1-2 fix: ``succeeded`` batch permanently blocks fallback. The
+        previous check only blocked ``queued`` / ``claimed`` /
+        ``retry_later``, allowing fallback when a batch had succeeded
+        but per-unit jobs still existed (dangerous state from route
+        cutover or upgrade).
+
+        Decision table (fail-closed):
+
+        - Batch ``succeeded``: suppress (batch path published; per-unit
+          would duplicate).
+        - Batch ``queued`` / ``claimed`` / ``retry_later``: suppress
+          (batch in progress).
+        - Batch ``failed_terminal``: suppress (no explicit fallback
+          authorization policy exists; fail closed).
+        - Batch ``skipped``: suppress (terminal without success).
+        - Batch ``superseded``: do NOT suppress (stale route; the new
+          route's batch jobs are the active ones).
+        - No batch jobs at all: do NOT suppress (no batch path exists;
+          per-unit is the intended path, e.g. ``force_legacy_grammar``).
+
+        Only ``superseded`` batch jobs (or no batch jobs at all) allow
+        fallback. This is the strictest fail-closed contract.
+        """
+        async with self.get_pool().acquire() as conn:
+            count = await conn.fetchval(
+                """
+                SELECT COUNT(*)
+                FROM reader_jobs
+                WHERE reading_record_id = $1
+                  AND base_id = $2
+                  AND expected_generation = $3
+                  AND job_type = $4
+                  AND target_type = $5
+                  AND status != 'superseded'
+                """,
+                record_id,
+                base_id,
+                expected_generation,
+                GRAMMAR_BATCH_JOB_TYPE,
+                GRAMMAR_BATCH_TARGET_SCOPE,
+            )
+        return count > 0
+
+    async def _cleanup_suppressed_grammar_legacy_jobs(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+    ) -> int:
+        """T4.2a-R2-R2: Supersede legacy per-unit grammar jobs when the
+        batch path is authoritative.
+
+        Runs once at the start of ``run()``, after bootstrap. If any
+        non-superseded grammar batch job exists, all legacy
+        ``build_grammar_bundle/unit`` jobs that are still non-superseded
+        are transitioned to ``superseded`` with a rationale code that
+        depends on the batch status:
+
+        - batch ``succeeded`` → ``batch_path_authoritative``
+        - batch ``failed_terminal`` / ``skipped`` →
+          ``batch_fallback_not_authorized``
+        - batch non-terminal (``queued`` / ``claimed`` / ``retry_later``)
+          → ``stale_legacy_topology``
+
+        This prevents the permanent hot-loop where the scanner keeps
+        finding runnable legacy jobs but the fallback guard suppresses
+        them every tick.
+
+        Returns the number of legacy jobs superseded.
+        """
+        async with self.get_pool().acquire() as conn:
+            # T4.2a-R2-R3: wrap the batch status check, legacy job
+            # SELECT FOR UPDATE, UPDATE, and event INSERT in a single
+            # explicit transaction so the FOR UPDATE lock covers the
+            # entire cleanup and a crash cannot leave jobs superseded
+            # without events (or vice versa).
+            async with conn.transaction():
+                # Check if any non-superseded batch job exists.
+                batch_row = await conn.fetchrow(
+                    """
+                    SELECT status
+                    FROM reader_jobs
+                    WHERE reading_record_id = $1
+                      AND base_id = $2
+                      AND expected_generation = $3
+                      AND job_type = $4
+                      AND target_type = $5
+                      AND status != 'superseded'
+                    ORDER BY id ASC
+                    LIMIT 1
+                    """,
+                    record_id,
+                    base_id,
+                    expected_generation,
+                    GRAMMAR_BATCH_JOB_TYPE,
+                    GRAMMAR_BATCH_TARGET_SCOPE,
+                )
+                if batch_row is None:
+                    return 0  # No batch path — per-unit is intended.
+
+                batch_status = str(batch_row["status"])
+                if batch_status == "succeeded":
+                    rationale_code = "batch_path_authoritative"
+                elif batch_status in ("failed_terminal", "skipped"):
+                    rationale_code = "batch_fallback_not_authorized"
+                else:
+                    # queued / claimed / retry_later — batch in progress,
+                    # legacy jobs are stale topology.
+                    rationale_code = "stale_legacy_topology"
+
+                updated_at = datetime.now(UTC)
+                repo = ReaderOrchestrationRepository(pool=self.get_pool())
+                return await repo.supersede_conflicting_legacy_grammar_jobs(
+                    conn,
+                    record_id=record_id,
+                    base_id=base_id,
+                    expected_generation=expected_generation,
+                    rationale_code=rationale_code,
+                    updated_at=updated_at,
+                )
+
+    async def _count_non_terminal_jobs_by_layer(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+    ) -> dict[str, int]:
+        """T4.2a-R2: Count non-terminal jobs per budget layer.
+
+        Used by the budget initialization to account for ALL non-terminal
+        jobs, including those created by ``ZPlusBootstrapService`` (window
+        jobs) that are not tracked in ``bootstrap.job_counts``.
+        """
+        async with self.get_pool().acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT job_type, target_type, COUNT(*) AS cnt
+                FROM reader_jobs
+                WHERE reading_record_id = $1
+                  AND base_id = $2
+                  AND expected_generation = $3
+                  AND status IN ('queued', 'claimed', 'retry_later')
+                GROUP BY job_type, target_type
+                """,
+                record_id,
+                base_id,
+                expected_generation,
+            )
+        result: dict[str, int] = {"translation": 0, "vocabulary": 0, "grammar": 0}
+        for row in rows:
+            jt = row["job_type"]
+            cnt = int(row["cnt"])
+            # Map job_type to budget layer
+            if jt in ("translate_unit", "translate_article"):
+                result["translation"] += cnt
+            elif jt in ("build_vocabulary_layer", "build_vocabulary_layer_article"):
+                result["vocabulary"] += cnt
+            elif jt in ("build_grammar_bundle", "build_grammar_bundle_window"):
+                result["grammar"] += cnt
+        return result
 
     async def _load_record_runtime_state(
         self,

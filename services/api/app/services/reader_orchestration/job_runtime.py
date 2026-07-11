@@ -35,7 +35,7 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.database import connection as db_connection
-from app.database.json_compat import jsonb_param
+from app.database.json_compat import ensure_json_object, jsonb_param
 from app.services.reader_orchestration.span_recorder import (
     SPAN_KIND_CLAIM,
     current_span,
@@ -617,6 +617,40 @@ class ReaderJobRuntime:
                     batch_size,
                 )
                 for row in rows:
+                    # T4.2a-R2: Before re-queuing or failing a stale-lease
+                    # job, check if its route is still active. If the route
+                    # has flipped, supersede the job instead of recovering
+                    # it — this prevents stale-fingerprint jobs from being
+                    # re-claimed after a route cutover.
+                    route_error = await self._check_route_consistency(
+                        conn, row
+                    )
+                    if route_error is not None:
+                        await self._apply_transition(
+                            conn,
+                            job_row=row,
+                            target_status=STATUS_SUPERSEDED,
+                            available_at=None,
+                            pause_owner=None,
+                            output_ref=None,
+                            failure_class=None,
+                            failure_code=None,
+                            failure_message=None,
+                            rationale_code=route_error,
+                        )
+                        await self._insert_job_event(
+                            conn,
+                            reading_record_id=row["reading_record_id"],
+                            run_id=row["run_id"],
+                            job_id=row["id"],
+                            event_type="job_superseded",
+                            payload={
+                                "rationale_code": route_error,
+                                "recovery": "stale_route_fingerprint",
+                            },
+                        )
+                        continue
+
                     attempt_count = int(row["attempt_count"])
                     max_attempts = int(row["max_attempts"])
                     if attempt_count >= max_attempts:
@@ -753,6 +787,61 @@ class ReaderJobRuntime:
         if record_row["active_base_id"] != base_id:
             return "active_base_mismatch"
 
+        # T4.2a-R2: Route fingerprint consistency check. For enhancement
+        # jobs that carry ``article_route`` in their ``input_json`` (batch
+        # jobs created by the T4.1b/T4.1c bootstrap), verify that the
+        # route still matches the current run envelope's ``article_route``.
+        # If the route has flipped (e.g., SHORT_BATCH → STRUCTURED_BATCH on
+        # a rebuilt base), the job is stale and must be fenced.
+        # This check runs at both claim time (here, via ``claim_next_job``)
+        # and publish time (via ``layer_publisher`` → ``_validate_fence``).
+        route_error = await self._check_route_consistency(conn, job_row)
+        if route_error is not None:
+            return route_error
+
+        return None
+
+    async def _check_route_consistency(
+        self,
+        conn: asyncpg.Connection,
+        job_row: asyncpg.Record,
+    ) -> str | None:
+        """T4.2a-R2: Verify the job's ``article_route`` matches the run.
+
+        Reads the latest ``reader_runs.envelope_json.article_route`` and
+        compares it to ``reader_jobs.input_json.article_route``. Returns
+        ``None`` if routes match or if either value is absent (defensive:
+        per-unit legacy jobs and old envelopes don't carry ``article_route``).
+        Returns ``"stale_route_fingerprint"`` if both are present and differ.
+        """
+        input_json_raw = job_row["input_json"] if "input_json" in job_row.keys() else None
+        if input_json_raw is None:
+            return None
+        job_input = ensure_json_object(input_json_raw)
+        job_route = job_input.get("article_route")
+        if not job_route:
+            return None
+
+        envelope_json = await conn.fetchval(
+            """
+            SELECT envelope_json
+            FROM reader_runs
+            WHERE reading_record_id = $1
+              AND envelope_json->>'article_route' IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            job_row["reading_record_id"],
+        )
+        if envelope_json is None:
+            return None
+        envelope = ensure_json_object(envelope_json)
+        envelope_route = envelope.get("article_route")
+        if not envelope_route:
+            return None
+
+        if str(job_route) != str(envelope_route):
+            return "stale_route_fingerprint"
         return None
 
     async def _mark_job_superseded(
