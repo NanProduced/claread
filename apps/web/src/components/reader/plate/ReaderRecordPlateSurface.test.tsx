@@ -2867,7 +2867,7 @@ describe("ReaderRecordPlateSurface", () => {
     // Surface-level sticky top bar is a sibling of the canvas section, not inside it.
     const topBar = surface.querySelector<HTMLElement>('[data-testid="reader-record-top-bar"]');
     expect(topBar).not.toBeNull();
-    expect(topBar?.parentElement).toBe(surface);
+    expect(topBar?.parentElement?.parentElement?.className).toContain("reader-workspace-shell");
     expect(topBar?.dataset.readerRecordTopBarLayer).toBe("surface");
 
     // Top bar 不再使用内容列居中约束。
@@ -2898,11 +2898,10 @@ describe("ReaderRecordPlateSurface", () => {
     const contentColumn = plateDocument?.parentElement;
     expect(contentColumn?.className).toContain("max-w-[var(--reader-record-main-width)]");
 
-    // Outline slot stays in the canvas tree for responsive visibility, but is
-    // visually pinned to the viewport center so long documents cannot scroll it away.
-    const outlineSlot = body?.querySelector(".reader-record-outline-slot");
+    // Outline is a workspace sibling, so its popup is never clipped by the reading canvas.
+    const outlineSlot = contentSection?.querySelector(".reader-record-outline-slot");
     expect(outlineSlot).not.toBeNull();
-    expect(outlineSlot?.parentElement).toBe(body);
+    expect(outlineSlot?.parentElement).toBe(contentSection);
 
     const globalsSource = readFileSync(
       resolve(process.cwd(), "src/app/globals.css"),
@@ -2967,18 +2966,14 @@ describe("ReaderRecordPlateSurface", () => {
     expect(rail?.getAttribute("data-layout")).toBe("canvas");
   });
 
-  it("opens contextual Ask Claread as a floating panel without moving the outline slot", async () => {
+  it("opens contextual Ask without letting the entry point override presentation", async () => {
     installReaderAskFetchMock();
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
 
     const canvas = container.querySelector(".reader-record-canvas");
     expect(canvas).not.toBeNull();
-    // Ask closed by default: modifier not applied yet.
     expect(canvas?.className).not.toContain("reader-record-canvas--ask-open");
-
-    // Rail lives inside the canvas outline slot.
-    const outlineSlot = canvas?.querySelector(".reader-record-outline-slot");
-    expect(outlineSlot).not.toBeNull();
+    expect(container.querySelector(".reader-record-outline-slot")).not.toBeNull();
 
     const memoryMark = container.querySelector<HTMLElement>(
       '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
@@ -2995,22 +2990,52 @@ describe("ReaderRecordPlateSurface", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "关闭 Ask Claread" })).toBeTruthy();
     });
+
+    // JSDOM has no measurable workspace width, so the requested sidecar safely
+    // falls back to floating. The contextual entry itself did not pick floating.
     expect(canvas?.className).not.toContain("reader-record-canvas--ask-open");
-
-    // Ask panel is rendered as a sibling of the canvas, not nested inside it.
     const askPanel = container.querySelector(".ai-workspace-panel");
-    expect(askPanel).not.toBeNull();
     expect(askPanel?.className).toContain("ai-workspace-panel--surface-floating");
-    expect(askPanel?.parentElement).toBe(canvas?.parentElement);
-
-    fireEvent.click(screen.getByRole("button", { name: "在侧边栏打开 Ask Claread" }));
-    await waitFor(() => {
-      expect(canvas?.className).toContain("reader-record-canvas--ask-open");
-    });
-    expect(askPanel?.className).toContain("ai-workspace-panel--surface-sidecar");
-    expect(screen.getByRole("button", { name: "收起 AI 工作区" })).toBeTruthy();
+    expect(askPanel?.className).toContain("ai-workspace-panel--layout-overlay");
+    expect(container.textContent).toContain("当前阅读区较窄，Ask Claread 以浮窗形式展示。");
   });
+  it("reflows a measured-wide workspace into a docked Ask sidecar", async () => {
+    installReaderAskFetchMock();
+    const wideRect = {
+      x: 0,
+      y: 0,
+      top: 0,
+      right: 1920,
+      bottom: 1080,
+      left: 0,
+      width: 1920,
+      height: 1080,
+      toJSON: () => ({}),
+    } as DOMRect;
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockReturnValue(wideRect);
 
+    try {
+      const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+      fireEvent.click(screen.getByRole("button", { name: "打开 Ask Claread" }));
+
+      await waitFor(() => {
+        expect(container.querySelector(".reader-workspace-shell")?.className).toContain(
+          "reader-workspace-shell--ask-docked",
+        );
+      });
+
+      const canvas = container.querySelector(".reader-record-canvas");
+      const askPanel = container.querySelector(".ai-workspace-panel");
+      expect(canvas?.className).toContain("reader-record-canvas--ask-open");
+      expect(askPanel?.className).toContain("ai-workspace-panel--surface-sidecar");
+      expect(askPanel?.className).toContain("ai-workspace-panel--layout-docked");
+      expect(container.querySelector(".reader-record-outline-slot")).not.toBeNull();
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
   it("renders the action bar as a single horizontal control strip on desktop", () => {
     const { container } = render(
       <ReaderRecordPlateSurface snapshot={makeSnapshot()} />,
@@ -3292,9 +3317,9 @@ describe("ReaderRecordPlateSurface", () => {
 
     const topBar = screen.getByTestId("reader-record-top-bar");
     expect(topBar).toBeTruthy();
-    expect(topBar.className).toContain("sticky");
-    expect(topBar.className).toContain("z-20");
-    // Top bar 必须是页面级 operation layer，不能再被内容列居中约束。
+    const workspaceChrome = topBar.closest(".reader-workspace-shell__topbar");
+    expect(workspaceChrome).not.toBeNull();
+    expect(topBar.className).toContain("relative");    // Top bar 必须是页面级 operation layer，不能再被内容列居中约束。
     expect(topBar.className).not.toContain("-mx-5");
     expect(topBar.className).not.toContain("mx-auto");
     expect(topBar.className).not.toContain("max-w-[82ch]");
@@ -4984,7 +5009,7 @@ describe("ReaderRecordPlateSurface", () => {
         screen.getByRole("button", { name: "关闭 Ask Claread" }),
       ).toBeTruthy();
     });
-    expect(screen.getByRole("button", { name: "在侧边栏打开 Ask Claread" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "选择 Ask Claread 面板形式" })).toBeTruthy();
     expect(
       fetchMock.mock.calls.some(([input]) =>
         String(input).includes(
@@ -5094,7 +5119,7 @@ describe("ReaderRecordPlateSurface", () => {
         screen.getByRole("button", { name: "关闭 Ask Claread" }),
       ).toBeTruthy();
     });
-    expect(screen.getByRole("button", { name: "在侧边栏打开 Ask Claread" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "选择 Ask Claread 面板形式" })).toBeTruthy();
     expect(
       fetchMock.mock.calls.some(([input]) =>
         String(input).includes(
@@ -6190,5 +6215,30 @@ describe("ReaderRecordPlateSurface", () => {
     expect(grammarCallout?.dataset.anchorSegmentId).toBe("seg_1");
     expect(analysisBlock?.dataset.anchorSegmentId).toBe("seg_1");
     expect(analysisBlock?.dataset.analysisId).toBe("analysis_1");
+  });
+
+  it("shell-navigation z-index token stays above Reader workspace chrome in the CSS source contract", () => {
+    const globalsSource = readFileSync(
+      resolve(process.cwd(), "src/app/globals.css"),
+      "utf8",
+    );
+
+    const shellNavMatch = globalsSource.match(
+      /--app-z-shell-navigation:\s*(\d+)\s*;/,
+    );
+    const workspaceChromeMatch = globalsSource.match(
+      /--reader-z-workspace-chrome:\s*(\d+)\s*;/,
+    );
+
+    expect(shellNavMatch).not.toBeNull();
+    expect(workspaceChromeMatch).not.toBeNull();
+
+    const shellNavValue = Number(shellNavMatch![1]);
+    const workspaceChromeValue = Number(workspaceChromeMatch![1]);
+
+    // Application-level navigation (peek button + sidebar overlay) must sit
+    // above the Reader workspace chrome so the menu trigger and expanded
+    // sidebar are never covered by the sticky Reader Header.
+    expect(shellNavValue).toBeGreaterThan(workspaceChromeValue);
   });
 });

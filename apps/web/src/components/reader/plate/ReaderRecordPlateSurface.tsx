@@ -22,6 +22,10 @@ import {
 } from "@/components/reader/AiWorkspacePanel";
 import { useAppShellLayout } from "@/components/layout/app-shell";
 import { ReaderRecordNavigationRail } from "@/components/reader/plate/ReaderRecordNavigationRail";
+import {
+  readerAskPresentationCssVars,
+  useReaderAskPresentation,
+} from "@/components/reader/plate/useReaderAskPresentation";
 import type { DictLookupTypeDto, WebDictResult } from "@/types/api/dict";
 import {
   projectReaderPlateSnapshotToReaderRecordPlateDocument,
@@ -1871,7 +1875,7 @@ function ReaderRecordTopBar({
     <div
       data-testid="reader-record-top-bar"
       data-reader-record-top-bar-layer="surface"
-      className="reader-record-top-bar sticky top-0 z-20 flex h-11 w-full items-center justify-between border-b border-hairline/80 bg-[var(--reading-paper-surface)]"
+      className="reader-record-top-bar relative flex h-11 w-full items-center justify-between border-b border-hairline/80 bg-[var(--reading-paper-surface)]"
     >
       <div className="min-w-0 max-w-[min(46vw,36rem)] truncate text-left">
         <ReaderRecordTopBarTitle titleState={titleState} />
@@ -3023,6 +3027,18 @@ export function ReaderRecordPlateSurface({
   const [askOpen, setAskOpen] = useState(false);
   const [askSurface, setAskSurface] =
     useState<AiWorkspaceSurface>("sidecar");
+  const [workspaceEl, setWorkspaceEl] = useState<HTMLElement | null>(null);
+  const { effectiveSurface, hasSidecarCapacity } = useReaderAskPresentation({
+    requestedSurface: askSurface,
+    workspaceEl,
+  });
+  const [capacityDowngradeDismissed, setCapacityDowngradeDismissed] =
+    useState(false);
+  useEffect(() => {
+    if (hasSidecarCapacity) {
+      setCapacityDowngradeDismissed(false);
+    }
+  }, [hasSidecarCapacity]);
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
   const [pendingAskRequest, setPendingAskRequest] =
     useState<PendingReaderRecordAskRequest | null>(null);
@@ -3677,7 +3693,6 @@ export function ReaderRecordPlateSurface({
   const openAskPanel = useCallback((
     attachment?: ReaderAskAttachment | null,
     pendingRequest?: PendingReaderRecordAskRequest | null,
-    surface: AiWorkspaceSurface = "sidecar",
   ) => {
     if (attachment === null) {
       setAskAttachments([]);
@@ -3685,7 +3700,6 @@ export function ReaderRecordPlateSurface({
       setAskAttachments([attachment]);
     }
     setPendingAskRequest(pendingRequest ?? null);
-    setAskSurface(surface);
     setAskOpen(true);
     setDictionaryOpen(false);
     setDictionaryAIPanelOpen(false);
@@ -3705,7 +3719,6 @@ export function ReaderRecordPlateSurface({
     openAskPanel(
       askAttachmentFromVocabularyInspect(askPageIdentity, inspectState),
       null,
-      "floating",
     );
   }, [askPageIdentity, inspectState, openAskPanel]);
 
@@ -3713,7 +3726,7 @@ export function ReaderRecordPlateSurface({
     if (!currentAskSelectionAttachment) {
       return;
     }
-    openAskPanel(currentAskSelectionAttachment, null, "floating");
+    openAskPanel(currentAskSelectionAttachment, null);
   }, [currentAskSelectionAttachment, openAskPanel]);
 
   const handleAskPromptFromSelection = useCallback(
@@ -3732,7 +3745,7 @@ export function ReaderRecordPlateSurface({
         attachments: [currentAskSelectionAttachment],
         submissionMode: request.submissionMode ?? "chat",
       };
-      openAskPanel(currentAskSelectionAttachment, pendingRequest, "floating");
+      openAskPanel(currentAskSelectionAttachment, pendingRequest);
     },
     [currentAskSelectionAttachment, openAskPanel],
   );
@@ -3765,11 +3778,11 @@ export function ReaderRecordPlateSurface({
           anchor,
         ),
       },
-    }, null, "floating");
+    }, null);
   }, [askPageIdentity, noteMenu, openAskPanel, snapshot.record.generation, snapshot.record_id]);
 
   const handleRequestAI = useCallback(() => {
-    openAskPanel(currentAskSelectionAttachment, null, "sidecar");
+    openAskPanel(currentAskSelectionAttachment, null);
   }, [currentAskSelectionAttachment, openAskPanel]);
 
   const handleDictionarySearch = useCallback(
@@ -4823,7 +4836,17 @@ export function ReaderRecordPlateSurface({
     }
   }, [noteMenu, localUserAssets, onRequestSnapshotReload, writeState.kind]);
 
-  const askSidecarOpen = askOpen && askSurface === "sidecar";
+  const askSidecarOpen = askOpen && effectiveSurface === "sidecar";
+  const askFloatingOpen = askOpen && effectiveSurface === "floating";
+  const capacityNotice =
+    askOpen && askSurface === "sidecar" && !hasSidecarCapacity
+      ? "当前阅读区较窄，Ask Claread 以浮窗形式展示。"
+      : "";
+  const showCapacityDowngradeNotice =
+    askOpen &&
+    askSurface === "sidecar" &&
+    !hasSidecarCapacity &&
+    !capacityDowngradeDismissed;
 
   return (
     <div
@@ -4832,24 +4855,42 @@ export function ReaderRecordPlateSurface({
       onDoubleClickCapture={handleSurfaceDoubleClickCapture}
       className={themeClassName}
     >
-      {/* Surface-level sticky operation bar: spans the available document viewport. */}
-      <ReaderRecordTopBar
+      <div
+        ref={setWorkspaceEl}
+        data-reader-record-workspace="plate"
+        style={readerAskPresentationCssVars()}
+        className={cn(
+          "reader-workspace-shell",
+          askSidecarOpen && "reader-workspace-shell--ask-docked",
+          askFloatingOpen && "reader-workspace-shell--ask-floating",
+        )}
+      >
+        <div role="status" aria-live="polite" className="sr-only">
+          {capacityNotice}
+        </div>
+        <div className="reader-workspace-shell__topbar">
+          {/* Surface-level sticky operation bar: spans the available document viewport. */}
+          <ReaderRecordTopBar
         snapshot={snapshot}
         surfaceMode={surfaceMode}
         onModeChange={handleModeChange}
         readerSettings={readerSettings}
         themeName={themeName}
         onSettingsChange={handleSettingsChange}
-        onThemeChange={setThemeName}
-      />
-      <section ref={surfaceRef} className={className}>
+            onThemeChange={setThemeName}
+          />
+        </div>
+        <section
+          ref={surfaceRef}
+          className={cn(!askSidecarOpen && className, askSidecarOpen && "contents")}
+        >
         <div
           className={cn(
             "reader-record-canvas",
             askSidecarOpen && "reader-record-canvas--ask-open",
           )}
         >
-          <div className="reader-record-canvas__body">
+          <div className={cn("reader-record-canvas__body", askSidecarOpen && className)}>
             <div className="reader-record-main reader-record-main--document-rhythm">
               <div className="reader-header-band-inner mx-auto w-full max-w-[var(--reader-record-main-width)]">
                 <ReaderRecordHeader
@@ -5093,34 +5134,43 @@ export function ReaderRecordPlateSurface({
           ) : null}
             </div>
           </div>
-          <aside className="reader-record-outline-slot">
-            <ReaderRecordNavigationRail
-              snapshot={snapshot}
-              plateDocument={plateDocument}
-              askOpen={askSidecarOpen}
-              layout="canvas"
-            />
-          </aside>
         </div>
       </div>
+      <aside className="reader-record-outline-slot">
+        <ReaderRecordNavigationRail
+          snapshot={snapshot}
+          plateDocument={plateDocument}
+          askOpen={askSidecarOpen}
+          layout="canvas"
+        />
+      </aside>
       <AiWorkspacePanel
           open={askOpen}
           presentation={surfaceMode}
-          surface={askSurface}
+          surface={askOpen ? effectiveSurface : askSurface}
+          layout={askSidecarOpen ? "docked" : "overlay"}
           pageIdentity={askPageIdentity}
           recordId={snapshot.record_id}
           recordScope="reading_record"
-          hideClosedLauncher
           recordTitle={snapshot.record.title}
           attachments={askAttachments}
           pendingQuickActionRequest={pendingAskRequest}
           onRemoveAttachment={handleRemoveAskAttachment}
           onClearAttachments={() => setAskAttachments([])}
           onPendingQuickActionConsumed={() => setPendingAskRequest(null)}
+          onChangeSurface={setAskSurface}
           onOpenSidecar={() => setAskSurface("sidecar")}
-          onToggle={() => setAskOpen(false)}
+          onToggle={() => setAskOpen((current) => !current)}
           onActionExecuted={handleAskActionExecuted}
           onSupplementDeleted={handleAskSupplementDeleted}
+          capacityDowngradeNotice={
+            showCapacityDowngradeNotice
+              ? "当前阅读区较窄，Ask Claread 已暂以浮窗展示；空间恢复后将回到侧边栏。"
+              : null
+          }
+          onDismissCapacityDowngradeNotice={() =>
+            setCapacityDowngradeDismissed(true)
+          }
         />
         {dictionaryRailVisible ? (
           <div
@@ -5195,7 +5245,8 @@ export function ReaderRecordPlateSurface({
             />
           </div>
         ) : null}
-      </section>
+        </section>
+      </div>
     </div>
   );
 }

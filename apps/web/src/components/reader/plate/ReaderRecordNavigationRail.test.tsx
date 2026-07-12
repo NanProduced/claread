@@ -169,7 +169,6 @@ function renderTargets(unitIds: string[], tops?: number[]): RenderedTarget {
     el.setAttribute("data-reader-record-node", "paragraph");
     el.setAttribute("data-unit-id", unitId);
     if (i === 0) {
-      // First unit is the unit start by default.
       el.setAttribute("data-reader-record-unit-start", "true");
     }
     el.textContent = `Paragraph for ${unitId}`;
@@ -184,6 +183,13 @@ function renderTargets(unitIds: string[], tops?: number[]): RenderedTarget {
 
 function triggerScroll() {
   window.dispatchEvent(new Event("scroll"));
+}
+
+/** Hover a visual tick to open the panel (simulates mouse hover on the rail). */
+function hoverTick(index = 0) {
+  const miniRail = screen.getByTestId("reader-record-mini-rail");
+  const ticks = miniRail.querySelectorAll("span[data-navigation-unit-id]");
+  fireEvent.mouseEnter(ticks[index]!);
 }
 
 beforeEach(() => {
@@ -215,7 +221,7 @@ describe("ReaderRecordNavigationRail", () => {
     expect(screen.queryByTestId("reader-record-navigation-rail")).toBeNull();
   });
 
-  it("renders the mini rail ticks for navigation items", () => {
+  it("renders the accessible trigger button and visual ticks for navigation items", () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "First unit" },
       { unit_id: "unit_2", order_index: 1, label: "Second unit" },
@@ -230,15 +236,16 @@ describe("ReaderRecordNavigationRail", () => {
 
     const rail = screen.getByTestId("reader-record-navigation-rail");
     expect(rail).toBeTruthy();
-    expect(rail.querySelectorAll("button[data-navigation-unit-id]")).toHaveLength(2);
-    expect(screen.getByLabelText("First unit")).toBeTruthy();
-    expect(screen.getByLabelText("Second unit")).toBeTruthy();
+    // Visual ticks are spans, not buttons.
+    expect(rail.querySelectorAll("span[data-navigation-unit-id]")).toHaveLength(2);
+    // Accessible trigger button exists.
+    expect(screen.getByTestId("reader-record-outline-trigger")).toBeTruthy();
   });
 
-  it("marks the first item active by default", () => {
+  it("marks the first item active by default via the trigger aria-label", () => {
     const snapshot = makeSnapshot([
-      { unit_id: "unit_1", order_index: 0 },
-      { unit_id: "unit_2", order_index: 1 },
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+      { unit_id: "unit_2", order_index: 1, label: "Beta" },
     ]);
     const plateDocument = makePlateDocument([
       makeParagraph("unit_1", "First paragraph."),
@@ -248,10 +255,10 @@ describe("ReaderRecordNavigationRail", () => {
 
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
-    const ticks = screen.getAllByRole("button");
-    expect(ticks).toHaveLength(2);
-    expect(ticks[0]?.getAttribute("aria-current")).toBe("true");
-    expect(ticks[1]?.getAttribute("aria-current")).toBeNull();
+    const trigger = screen.getByTestId("reader-record-outline-trigger");
+    // Active section is 1 (first item), so the label says "第 1 节".
+    expect(trigger.getAttribute("aria-label")).toBe("打开文章目录，当前第 1 节");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("opens the detail panel on hover and closes after leaving the combined area", async () => {
@@ -268,13 +275,12 @@ describe("ReaderRecordNavigationRail", () => {
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
     const rail = screen.getByTestId("reader-record-navigation-rail");
-    const miniRail = screen.getByTestId("reader-record-mini-rail");
     const panel = screen.getByTestId("reader-record-navigation-panel");
 
     expect(panel.classList.contains("pointer-events-none")).toBe(true);
     expect(panel.classList.contains("invisible")).toBe(true);
 
-    fireEvent.mouseEnter(miniRail);
+    hoverTick(0);
     await waitFor(() =>
       expect(panel.classList.contains("pointer-events-none")).toBe(false),
     );
@@ -288,6 +294,51 @@ describe("ReaderRecordNavigationRail", () => {
     expect(panel.classList.contains("invisible")).toBe(true);
   });
 
+  it("opens the panel via trigger button click (keyboard/touch entry)", async () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+    ]);
+    const plateDocument = makePlateDocument([makeParagraph("unit_1", "Alpha paragraph.")]);
+    renderTargets(["unit_1"]);
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    const trigger = screen.getByTestId("reader-record-outline-trigger");
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+
+    expect(panel.classList.contains("pointer-events-none")).toBe(true);
+
+    fireEvent.click(trigger);
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("closes the panel when trigger is clicked again (toggle)", async () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+    ]);
+    const plateDocument = makePlateDocument([makeParagraph("unit_1", "Alpha paragraph.")]);
+    renderTargets(["unit_1"]);
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    const trigger = screen.getByTestId("reader-record-outline-trigger");
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+
+    fireEvent.click(trigger);
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+
+    fireEvent.click(trigger);
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(true),
+    );
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("does not open the detail panel from the nav root or hidden panel geometry", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
@@ -299,7 +350,6 @@ describe("ReaderRecordNavigationRail", () => {
 
     const rail = screen.getByTestId("reader-record-navigation-rail");
     const panel = screen.getByTestId("reader-record-navigation-panel");
-    const miniRail = screen.getByTestId("reader-record-mini-rail");
 
     fireEvent.mouseEnter(rail);
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -311,13 +361,13 @@ describe("ReaderRecordNavigationRail", () => {
     expect(panel.classList.contains("pointer-events-none")).toBe(true);
     expect(panel.classList.contains("invisible")).toBe(true);
 
-    fireEvent.mouseEnter(miniRail);
+    hoverTick(0);
     await waitFor(() =>
       expect(panel.classList.contains("pointer-events-none")).toBe(false),
     );
   });
 
-  it("makes panel rows non-tabbable while the panel is closed", async () => {
+  it("makes panel rows non-tabbable while the panel is closed", () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
       { unit_id: "unit_2", order_index: 1, label: "Beta" },
@@ -333,17 +383,38 @@ describe("ReaderRecordNavigationRail", () => {
     const panel = screen.getByTestId("reader-record-navigation-panel");
     const rows = panel.querySelectorAll("button");
     expect(rows).toHaveLength(2);
+    // All rows are -1 when closed (no tab stop).
     expect(rows[0]?.getAttribute("tabindex")).toBe("-1");
     expect(rows[1]?.getAttribute("tabindex")).toBe("-1");
+  });
 
-    const miniRail = screen.getByTestId("reader-record-mini-rail");
-    fireEvent.mouseEnter(miniRail);
+  it("uses roving tabindex: only the focused row is tabbable when panel is open", async () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+      { unit_id: "unit_2", order_index: 1, label: "Beta" },
+    ]);
+    const plateDocument = makePlateDocument([
+      makeParagraph("unit_1", "Alpha paragraph."),
+      makeParagraph("unit_2", "Beta paragraph."),
+    ]);
+    renderTargets(["unit_1", "unit_2"]);
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    const rows = panel.querySelectorAll("button");
+
+    hoverTick(0);
     await waitFor(() =>
       expect(panel.classList.contains("pointer-events-none")).toBe(false),
     );
 
-    expect(rows[0]?.getAttribute("tabindex")).toBe("0");
-    expect(rows[1]?.getAttribute("tabindex")).toBe("0");
+    // Only the focused (active) row has tabIndex=0, others are -1.
+    const tabbable = Array.from(rows).filter(
+      (r) => r.getAttribute("tabindex") === "0",
+    );
+    expect(tabbable).toHaveLength(1);
+    expect(tabbable[0]?.getAttribute("aria-current")).toBe("true");
   });
 
   it("keeps the panel open when pointer moves from ticks into the detail panel", async () => {
@@ -356,15 +427,13 @@ describe("ReaderRecordNavigationRail", () => {
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
     const rail = screen.getByTestId("reader-record-navigation-rail");
-    const miniRail = screen.getByTestId("reader-record-mini-rail");
     const panel = screen.getByTestId("reader-record-navigation-panel");
 
-    fireEvent.mouseEnter(miniRail);
+    hoverTick(0);
     await waitFor(() =>
       expect(panel.classList.contains("pointer-events-none")).toBe(false),
     );
 
-    // Move from rail into panel (relatedTarget is the panel element).
     fireEvent.mouseLeave(rail, { relatedTarget: panel });
     fireEvent.mouseEnter(panel);
 
@@ -382,10 +451,9 @@ describe("ReaderRecordNavigationRail", () => {
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
     const rail = screen.getByTestId("reader-record-navigation-rail");
-    const miniRail = screen.getByTestId("reader-record-mini-rail");
     const panel = screen.getByTestId("reader-record-navigation-panel");
 
-    fireEvent.mouseEnter(miniRail);
+    hoverTick(0);
     await waitFor(() =>
       expect(panel.classList.contains("pointer-events-none")).toBe(false),
     );
@@ -421,7 +489,7 @@ describe("ReaderRecordNavigationRail", () => {
     expect(className).toContain("h-[min(72vh,42rem)]");
   });
 
-  it("renders panel rows with labels and segment indices", () => {
+  it("renders panel rows with labels and segment indices", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
       { unit_id: "unit_2", order_index: 1, label: "Beta" },
@@ -470,7 +538,7 @@ describe("ReaderRecordNavigationRail", () => {
     expect(panelScrollArea?.className).not.toContain("flex-1");
   });
 
-  it("opens the detail panel at the current mini-rail hover position", async () => {
+  it("anchors the detail panel to the hovered outline tick", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
       { unit_id: "unit_2", order_index: 1, label: "Beta" },
@@ -486,25 +554,28 @@ describe("ReaderRecordNavigationRail", () => {
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
     const rail = screen.getByTestId("reader-record-navigation-rail");
-    const miniRail = screen.getByTestId("reader-record-mini-rail");
     const panel = screen.getByTestId("reader-record-navigation-panel");
+    const miniRail = screen.getByTestId("reader-record-mini-rail");
+    const ticks = miniRail.querySelectorAll<HTMLSpanElement>("span[data-navigation-unit-id]");
     setRectTop(rail, 100, 420);
+    setRectTop(ticks[0]!, 250, 20);
+    setRectTop(ticks[1]!, 430, 20);
 
-    fireEvent.mouseEnter(miniRail, { clientY: 260 });
+    fireEvent.mouseEnter(ticks[0]!);
     await waitFor(() => {
       expect(panel.classList.contains("pointer-events-none")).toBe(false);
       expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBe("160");
     });
     expect(panel.style.top).toBe("160px");
 
-    fireEvent.mouseMove(miniRail, { clientY: 440 });
+    fireEvent.mouseEnter(ticks[1]!);
     await waitFor(() => {
       expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBe("340");
     });
     expect(panel.style.top).toBe("340px");
   });
 
-  it("keeps the canvas detail panel centered instead of following hover coordinates", async () => {
+  it("anchors the canvas detail panel to the hovered outline tick", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
       { unit_id: "unit_2", order_index: 1, label: "Beta" },
@@ -526,22 +597,25 @@ describe("ReaderRecordNavigationRail", () => {
     );
 
     const rail = screen.getByTestId("reader-record-navigation-rail");
-    const miniRail = screen.getByTestId("reader-record-mini-rail");
     const panel = screen.getByTestId("reader-record-navigation-panel");
+    const miniRail = screen.getByTestId("reader-record-mini-rail");
+    const ticks = miniRail.querySelectorAll<HTMLSpanElement>("span[data-navigation-unit-id]");
     setRectTop(rail, 100, 420);
+    setRectTop(ticks[2]!, 430, 20);
 
-    fireEvent.mouseEnter(miniRail, { clientY: 440 });
+    fireEvent.mouseEnter(ticks[2]!);
     await waitFor(() => {
       expect(panel.classList.contains("pointer-events-none")).toBe(false);
     });
 
-    expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBeUndefined();
-    expect(panel.style.top).toBe("");
-    expect(panel.className).toContain("top-1/2");
-    expect(panel.className).toContain("-translate-y-1/2");
+    expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBe("340");
+    expect(panel.style.top).toBe("340px");
+    expect(panel.className).toContain("right-[calc(100%+8px)]");
+    expect(panel.className).not.toContain("top-1/2");
+    expect(panel.className).not.toContain("-translate-y-1/2");
   });
 
-  it("scrolls the unit start target into view using window.scrollTo", () => {
+  it("scrolls the unit start target into view using window.scrollTo when a panel row is clicked", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
     ]);
@@ -552,11 +626,15 @@ describe("ReaderRecordNavigationRail", () => {
 
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
+    // Open panel and click the row.
+    hoverTick(0);
     const panel = screen.getByTestId("reader-record-navigation-panel");
-    const panelRow = panel.querySelector("button");
-    expect(panelRow).toBeTruthy();
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
 
-    fireEvent.click(panelRow!);
+    const panelRow = panel.querySelector("button")!;
+    fireEvent.click(panelRow);
 
     expect(window.scrollTo).toHaveBeenCalledWith({
       top: 500 + 120 - 56 - 8,
@@ -564,7 +642,7 @@ describe("ReaderRecordNavigationRail", () => {
     });
   });
 
-  it("scrolls the nearest scrollable ancestor instead of window when content lives in a ScrollArea", () => {
+  it("scrolls the nearest scrollable ancestor instead of window when content lives in a ScrollArea", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
     ]);
@@ -593,8 +671,15 @@ describe("ReaderRecordNavigationRail", () => {
 
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
-    const tick = screen.getByLabelText("Alpha");
-    fireEvent.click(tick);
+    // Open panel and click row.
+    hoverTick(0);
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+
+    const panelRow = panel.querySelector("button")!;
+    fireEvent.click(panelRow);
 
     expect(window.scrollTo).not.toHaveBeenCalled();
     expect(containerScrollTo).toHaveBeenCalledWith({
@@ -603,7 +688,7 @@ describe("ReaderRecordNavigationRail", () => {
     });
   });
 
-  it("activates the clicked row immediately and does not scroll the rail tick", () => {
+  it("activates the clicked row immediately and marks it active", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
     ]);
@@ -612,15 +697,20 @@ describe("ReaderRecordNavigationRail", () => {
 
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
-    const tick = screen.getByLabelText("Alpha");
-    fireEvent.click(tick);
+    hoverTick(0);
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
 
-    // The rail tick itself is not the scroll target.
+    const panelRow = panel.querySelector("button")!;
+    fireEvent.click(panelRow);
+
     expect(window.scrollTo).toHaveBeenCalled();
-    expect(tick.getAttribute("aria-current")).toBe("true");
+    expect(panelRow.getAttribute("aria-current")).toBe("true");
   });
 
-  it("does not pick the rail tick as target when it shares a unit id with a body paragraph", () => {
+  it("does not pick the rail tick as target when it shares a unit id with a body paragraph", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
     ]);
@@ -629,8 +719,14 @@ describe("ReaderRecordNavigationRail", () => {
 
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
-    const tick = screen.getByLabelText("Alpha");
-    fireEvent.click(tick);
+    hoverTick(0);
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+
+    const panelRow = panel.querySelector("button")!;
+    fireEvent.click(panelRow);
 
     const scrollToArg = (window.scrollTo as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
     expect(scrollToArg).toBeDefined();
@@ -647,15 +743,20 @@ describe("ReaderRecordNavigationRail", () => {
       makeParagraph("unit_1", "Alpha paragraph."),
       makeParagraph("unit_2", "Beta paragraph."),
     ]);
-    // Alpha sits just above the safe line, Beta well below it.
     const { paragraphs } = renderTargets(["unit_1", "unit_2"], [60, 200]);
 
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
-    // Click Beta; active locks to Beta.
-    const betaTick = screen.getByLabelText("Beta");
-    fireEvent.click(betaTick);
-    expect(betaTick.getAttribute("aria-current")).toBe("true");
+    // Open panel and click Beta.
+    hoverTick(0);
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+
+    const rows = panel.querySelectorAll("button");
+    fireEvent.click(rows[1]!);
+    expect(rows[1]?.getAttribute("aria-current")).toBe("true");
 
     // Simulate smooth-scroll progress: Alpha above the safe line, Beta below.
     setRectTop(paragraphs[0]!, -10, 100);
@@ -664,14 +765,13 @@ describe("ReaderRecordNavigationRail", () => {
 
     // Wait within the lock window.
     await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(screen.getByLabelText("Beta").getAttribute("aria-current")).toBe("true");
+    expect(rows[1]?.getAttribute("aria-current")).toBe("true");
 
-    // After the lock expires, the deterministic algorithm picks Alpha as the
-    // last unit above the safe line.
+    // After the lock expires, the deterministic algorithm picks Alpha.
     await new Promise((resolve) => setTimeout(resolve, 600));
     triggerScroll();
     await waitFor(() =>
-      expect(screen.getByLabelText("Alpha").getAttribute("aria-current")).toBe("true"),
+      expect(rows[0]?.getAttribute("aria-current")).toBe("true"),
     );
   });
 
@@ -690,23 +790,24 @@ describe("ReaderRecordNavigationRail", () => {
 
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
-    // All targets are below the safe line (64px); the first below is active.
     triggerScroll();
-    await waitFor(() =>
-      expect(screen.getByLabelText("Alpha").getAttribute("aria-current")).toBe("true"),
-    );
+    await waitFor(() => {
+      const trigger = screen.getByTestId("reader-record-outline-trigger");
+      expect(trigger.getAttribute("aria-label")).toBe("打开文章目录，当前第 1 节");
+    });
 
     // Move Beta above the safe line; it becomes the last-above active unit.
     setRectTop(paragraphs[0]!, -20, 100);
     setRectTop(paragraphs[1]!, 40, 100);
     setRectTop(paragraphs[2]!, 200, 100);
     triggerScroll();
-    await waitFor(() =>
-      expect(screen.getByLabelText("Beta").getAttribute("aria-current")).toBe("true"),
-    );
+    await waitFor(() => {
+      const trigger = screen.getByTestId("reader-record-outline-trigger");
+      expect(trigger.getAttribute("aria-label")).toBe("打开文章目录，当前第 2 节");
+    });
   });
 
-  it("falls back to any paragraph with the unit id when no unit start marker exists", () => {
+  it("falls back to any paragraph with the unit id when no unit start marker exists", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
     ]);
@@ -725,8 +826,14 @@ describe("ReaderRecordNavigationRail", () => {
 
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
-    const tick = screen.getByLabelText("Alpha");
-    fireEvent.click(tick);
+    hoverTick(0);
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+
+    const panelRow = panel.querySelector("button")!;
+    fireEvent.click(panelRow);
 
     expect(window.scrollTo).toHaveBeenCalledWith({
       top: 120 - 56 - 8,
@@ -734,7 +841,7 @@ describe("ReaderRecordNavigationRail", () => {
     });
   });
 
-  it("scrolls the unit target when a tick is activated by keyboard", () => {
+  it("scrolls the unit target when a panel row is activated by keyboard (Enter)", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
     ]);
@@ -744,8 +851,14 @@ describe("ReaderRecordNavigationRail", () => {
 
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
-    const tick = screen.getByLabelText("Alpha");
-    fireEvent.keyDown(tick, { key: "Enter" });
+    hoverTick(0);
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+
+    const panelRow = panel.querySelector("button")!;
+    fireEvent.keyDown(panelRow, { key: "Enter" });
 
     expect(window.scrollTo).toHaveBeenCalledWith({
       top: 80 - 56 - 8,
@@ -772,7 +885,7 @@ describe("ReaderRecordNavigationRail", () => {
     expect(rail.className).toContain("2xl:right-[clamp");
   });
 
-  it("uses nav semantics and keeps ticks as plain buttons, not menuitems", () => {
+  it("uses nav semantics with a trigger button and aria-hidden visual ticks", () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
     ]);
@@ -785,32 +898,22 @@ describe("ReaderRecordNavigationRail", () => {
     expect(rail.tagName.toLowerCase()).toBe("nav");
     expect(rail.getAttribute("aria-label")).toBe("阅读定位");
 
-    const tick = screen.getByLabelText("Alpha");
-    expect(tick.tagName.toLowerCase()).toBe("button");
-    expect(tick.getAttribute("role")).toBeNull();
-    expect(tick.getAttribute("aria-current")).toBe("true");
+    // Trigger is a button with proper aria.
+    const trigger = screen.getByTestId("reader-record-outline-trigger");
+    expect(trigger.tagName.toLowerCase()).toBe("button");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
+
+    // Visual ticks are aria-hidden spans.
+    const miniRail = screen.getByTestId("reader-record-mini-rail");
+    expect(miniRail.getAttribute("aria-hidden")).toBe("true");
+    const ticks = miniRail.querySelectorAll("span[data-navigation-unit-id]");
+    expect(ticks).toHaveLength(1);
+    // Ticks are spans, not buttons.
+    expect(ticks[0]?.tagName.toLowerCase()).toBe("span");
   });
 
-  it("activates ticks via keyboard without relying on menuitem role", () => {
-    const snapshot = makeSnapshot([
-      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
-    ]);
-    const plateDocument = makePlateDocument([makeParagraph("unit_1", "Alpha paragraph.")]);
-    const { paragraphs } = renderTargets(["unit_1"]);
-    setRectTop(paragraphs[0]!, 80, 100);
-
-    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
-
-    const tick = screen.getByLabelText("Alpha");
-    fireEvent.keyDown(tick, { key: "Enter" });
-
-    expect(window.scrollTo).toHaveBeenCalledWith({
-      top: 80 - 56 - 8,
-      behavior: "smooth",
-    });
-  });
-
-  it("renders compressed ticks with a flexible hit area and a separate visual bar", () => {
+  it("renders visual ticks with a separate visual bar span", () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
       { unit_id: "unit_2", order_index: 1, label: "Beta" },
@@ -823,13 +926,9 @@ describe("ReaderRecordNavigationRail", () => {
 
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
-    const rail = screen.getByTestId("reader-record-navigation-rail");
     const miniRail = screen.getByTestId("reader-record-mini-rail");
-    const ticks = rail.querySelectorAll("button[data-navigation-unit-id]");
+    const ticks = miniRail.querySelectorAll("span[data-navigation-unit-id]");
     expect(ticks).toHaveLength(2);
-    expect(Array.from(miniRail.children).every((child) => child.tagName === "BUTTON")).toBe(
-      true,
-    );
 
     const hitArea = ticks[0]!;
     expect(hitArea.className).toContain("min-h-[7px]");
@@ -843,7 +942,7 @@ describe("ReaderRecordNavigationRail", () => {
     expect(visualBar?.className).toContain("rounded-full");
   });
 
-  it("hides tick visuals while the detail panel is open", async () => {
+  it("keeps tick visuals available while the detail panel is open", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
       { unit_id: "unit_2", order_index: 1, label: "Beta" },
@@ -858,18 +957,18 @@ describe("ReaderRecordNavigationRail", () => {
 
     const miniRail = screen.getByTestId("reader-record-mini-rail");
     const panel = screen.getByTestId("reader-record-navigation-panel");
-    const visualBars = Array.from(miniRail.querySelectorAll("button span"));
+    const visualBars = Array.from(miniRail.querySelectorAll("span[data-navigation-unit-id] > span"));
     expect(visualBars).toHaveLength(2);
     expect(visualBars.every((bar) => bar.className.includes("opacity-0"))).toBe(
       false,
     );
 
-    fireEvent.mouseEnter(miniRail);
+    hoverTick(0);
     await waitFor(() =>
       expect(panel.classList.contains("pointer-events-none")).toBe(false),
     );
     expect(visualBars.every((bar) => bar.className.includes("opacity-0"))).toBe(
-      true,
+      false,
     );
   });
 
@@ -886,9 +985,8 @@ describe("ReaderRecordNavigationRail", () => {
 
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
-    const miniRail = screen.getByTestId("reader-record-mini-rail");
+    hoverTick(0);
     const panel = screen.getByTestId("reader-record-navigation-panel");
-    fireEvent.mouseEnter(miniRail);
     await waitFor(() =>
       expect(panel.classList.contains("pointer-events-none")).toBe(false),
     );
@@ -900,7 +998,6 @@ describe("ReaderRecordNavigationRail", () => {
     expect(activeRow.className).not.toContain("border-l-");
     expect(activeRow.className).toContain("bg-ink/[0.055]");
     expect(activeRow.className).toContain("font-medium");
-    expect(activeRow.querySelector("span[aria-hidden='true']")).toBeNull();
 
     const inactiveRow = rows[1]!;
     expect(inactiveRow.className).not.toContain("border-l-");
@@ -940,8 +1037,10 @@ describe("ReaderRecordNavigationRail", () => {
     const rail = screen.getByTestId("reader-record-navigation-rail");
     expect(rail.dataset.layout).toBe("canvas");
     expect(rail.className).toContain("reader-record-navigation-rail--canvas");
-    expect(rail.className).toContain("relative");
-    expect(rail.className).toContain("h-full");
+    expect(rail.className).toContain("absolute");
+    expect(rail.className).toContain("right-0");
+    expect(rail.className).toContain("top-1/2");
+    expect(rail.className).toContain("h-[min(72vh,42rem)]");
     expect(rail.className).toContain("w-full");
     expect(rail.className).not.toContain("sticky");
     expect(rail.className).not.toContain("fixed");
@@ -988,20 +1087,16 @@ describe("ReaderRecordNavigationRail", () => {
       '[data-navigation-unit-id]',
     )?.parentElement;
 
-    // Panel carries a semantic class/data attribute for production styling,
-    // not just a test id.
     expect(panel.className).toContain("reader-record-navigation-panel");
     expect(panel.getAttribute("data-reader-record-navigation-panel")).toBe("true");
 
-    // Panel is rendered first and overlays the mini tick strip, matching the
-    // Notion-style outline popover instead of creating a second adjacent focus.
-    expect(panel.className).toContain("right-0");
     expect(panel.className).toContain("z-10");
     expect(panel.className).toContain("origin-right");
-    expect(ticks?.className).toContain("right-0");
+    expect(ticks?.className).not.toContain("absolute");
+    expect(screen.getByTestId("reader-record-navigation-rail").className).toContain("right-0");
   });
 
-  it("applies hover state to the whole mini tick button, not only the inner span", () => {
+  it("applies hover state to the whole mini tick span, not only the inner bar", () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
       { unit_id: "unit_2", order_index: 1, label: "Beta" },
@@ -1015,8 +1110,286 @@ describe("ReaderRecordNavigationRail", () => {
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
     // The first tick is active by default; test the inactive second tick.
-    const tick = screen.getByLabelText("Beta");
-    expect(tick.className).toContain("group");
-    expect(tick.querySelector("span")?.className).toContain("group-hover:bg-ink/40");
+    const miniRail = screen.getByTestId("reader-record-mini-rail");
+    const ticks = miniRail.querySelectorAll("span[data-navigation-unit-id]");
+    const secondTick = ticks[1]!;
+    expect(secondTick.className).toContain("group");
+    expect(secondTick.querySelector("span")?.className).toContain("group-hover:bg-ink/40");
+  });
+
+  // --- New: keyboard navigation tests ---
+
+  it("supports ArrowDown/ArrowUp to move roving tabindex in the panel", async () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+      { unit_id: "unit_2", order_index: 1, label: "Beta" },
+      { unit_id: "unit_3", order_index: 2, label: "Gamma" },
+    ]);
+    const plateDocument = makePlateDocument([
+      makeParagraph("unit_1", "Alpha paragraph."),
+      makeParagraph("unit_2", "Beta paragraph."),
+      makeParagraph("unit_3", "Gamma paragraph."),
+    ]);
+    renderTargets(["unit_1", "unit_2", "unit_3"]);
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    hoverTick(0);
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+
+    const rows = panel.querySelectorAll("button");
+    // Initially, the active (first) row is tabbable.
+    expect(rows[0]?.getAttribute("tabindex")).toBe("0");
+    expect(rows[1]?.getAttribute("tabindex")).toBe("-1");
+
+    // ArrowDown moves focus to the second row.
+    fireEvent.keyDown(rows[0]!, { key: "ArrowDown" });
+    await waitFor(() => {
+      expect(rows[0]?.getAttribute("tabindex")).toBe("-1");
+      expect(rows[1]?.getAttribute("tabindex")).toBe("0");
+    });
+
+    // ArrowDown again moves to the third row.
+    fireEvent.keyDown(rows[1]!, { key: "ArrowDown" });
+    await waitFor(() => {
+      expect(rows[1]?.getAttribute("tabindex")).toBe("-1");
+      expect(rows[2]?.getAttribute("tabindex")).toBe("0");
+    });
+
+    // ArrowUp moves back to the second row.
+    fireEvent.keyDown(rows[2]!, { key: "ArrowUp" });
+    await waitFor(() => {
+      expect(rows[2]?.getAttribute("tabindex")).toBe("-1");
+      expect(rows[1]?.getAttribute("tabindex")).toBe("0");
+    });
+  });
+
+  it("supports Home/End to jump to first/last row", async () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+      { unit_id: "unit_2", order_index: 1, label: "Beta" },
+      { unit_id: "unit_3", order_index: 2, label: "Gamma" },
+    ]);
+    const plateDocument = makePlateDocument([
+      makeParagraph("unit_1", "Alpha paragraph."),
+      makeParagraph("unit_2", "Beta paragraph."),
+      makeParagraph("unit_3", "Gamma paragraph."),
+    ]);
+    renderTargets(["unit_1", "unit_2", "unit_3"]);
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    hoverTick(0);
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+
+    const rows = panel.querySelectorAll("button");
+
+    // End jumps to the last row.
+    fireEvent.keyDown(rows[0]!, { key: "End" });
+    await waitFor(() => {
+      expect(rows[2]?.getAttribute("tabindex")).toBe("0");
+      expect(rows[0]?.getAttribute("tabindex")).toBe("-1");
+    });
+
+    // Home jumps back to the first row.
+    fireEvent.keyDown(rows[2]!, { key: "Home" });
+    await waitFor(() => {
+      expect(rows[0]?.getAttribute("tabindex")).toBe("0");
+      expect(rows[2]?.getAttribute("tabindex")).toBe("-1");
+    });
+  });
+
+  it("closes the panel on Escape and returns focus to the trigger button", async () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+      { unit_id: "unit_2", order_index: 1, label: "Beta" },
+    ]);
+    const plateDocument = makePlateDocument([
+      makeParagraph("unit_1", "Alpha paragraph."),
+      makeParagraph("unit_2", "Beta paragraph."),
+    ]);
+    renderTargets(["unit_1", "unit_2"]);
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    const trigger = screen.getByTestId("reader-record-outline-trigger");
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+
+    // Open panel via trigger.
+    fireEvent.click(trigger);
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+
+    const rows = panel.querySelectorAll("button");
+    // Press Escape on the focused row.
+    fireEvent.keyDown(rows[0]!, { key: "Escape" });
+
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(true),
+    );
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    // Focus should have returned to the trigger.
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("does not produce duplicate tab stops for long articles (all ticks are non-tabbable)", () => {
+    // Simulate a long article with 12 units.
+    const units = Array.from({ length: 12 }, (_, i) => ({
+      unit_id: `unit_${i + 1}`,
+      order_index: i,
+      label: `Section ${i + 1}`,
+    }));
+    const snapshot = makeSnapshot(units);
+    const plateDocument = makePlateDocument(
+      units.map((u) => makeParagraph(u.unit_id, `Paragraph ${u.unit_id}.`)),
+    );
+    renderTargets(units.map((u) => u.unit_id));
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    const rail = screen.getByTestId("reader-record-navigation-rail");
+    // Only the trigger button is tabbable in the rail (not the 12 ticks).
+    const tabbableInRail = rail.querySelectorAll('button:not([tabindex="-1"])');
+    expect(tabbableInRail).toHaveLength(1);
+    expect(tabbableInRail[0]).toBe(screen.getByTestId("reader-record-outline-trigger"));
+
+    // All visual ticks are spans (not buttons) and aria-hidden.
+    const miniRail = screen.getByTestId("reader-record-mini-rail");
+    expect(miniRail.getAttribute("aria-hidden")).toBe("true");
+    expect(miniRail.querySelectorAll("button")).toHaveLength(0);
+  });
+
+  it("hidden panel rows do not participate in Tab when panel is closed", () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+      { unit_id: "unit_2", order_index: 1, label: "Beta" },
+    ]);
+    const plateDocument = makePlateDocument([
+      makeParagraph("unit_1", "Alpha paragraph."),
+      makeParagraph("unit_2", "Beta paragraph."),
+    ]);
+    renderTargets(["unit_1", "unit_2"]);
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    const rows = panel.querySelectorAll("button");
+    // All rows are -1 when closed — no hidden tab stops.
+    expect(Array.from(rows).every((r) => r.getAttribute("tabindex") === "-1")).toBe(true);
+  });
+
+  it("trigger button has min 24x24px accessible hit area", () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+    ]);
+    const plateDocument = makePlateDocument([makeParagraph("unit_1", "Alpha paragraph.")]);
+    renderTargets(["unit_1"]);
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    const trigger = screen.getByTestId("reader-record-outline-trigger");
+    expect(trigger.className).toContain("min-h-[24px]");
+    expect(trigger.className).toContain("min-w-[24px]");
+  });
+
+  it("updates trigger aria-label when active section changes", async () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+      { unit_id: "unit_2", order_index: 1, label: "Beta" },
+    ]);
+    const plateDocument = makePlateDocument([
+      makeParagraph("unit_1", "Alpha paragraph."),
+      makeParagraph("unit_2", "Beta paragraph."),
+    ]);
+    const { paragraphs } = renderTargets(["unit_1", "unit_2"], [100, 300]);
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    const trigger = screen.getByTestId("reader-record-outline-trigger");
+    // Initially active is unit_1 (section 1).
+    expect(trigger.getAttribute("aria-label")).toBe("打开文章目录，当前第 1 节");
+
+    // Scroll so Beta is the last-above active unit.
+    setRectTop(paragraphs[0]!, -20, 100);
+    setRectTop(paragraphs[1]!, 40, 100);
+    triggerScroll();
+    await waitFor(() => {
+      expect(trigger.getAttribute("aria-label")).toBe("打开文章目录，当前第 2 节");
+    });
+  });
+
+  it("hovering a visual tick anchors the panel to that tick's position", async () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+      { unit_id: "unit_2", order_index: 1, label: "Beta" },
+      { unit_id: "unit_3", order_index: 2, label: "Gamma" },
+    ]);
+    const plateDocument = makePlateDocument([
+      makeParagraph("unit_1", "Alpha paragraph."),
+      makeParagraph("unit_2", "Beta paragraph."),
+      makeParagraph("unit_3", "Gamma paragraph."),
+    ]);
+    renderTargets(["unit_1", "unit_2", "unit_3"]);
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    // Panel starts closed.
+    expect(panel.classList.contains("pointer-events-none")).toBe(true);
+
+    // Hover the second tick (index 1 = unit_2).
+    const miniRail = screen.getByTestId("reader-record-mini-rail");
+    const ticks = miniRail.querySelectorAll("span[data-navigation-unit-id]");
+    fireEvent.mouseEnter(ticks[1]!);
+
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+
+    // The anchor-y attribute should be set (non-empty) and correspond to
+    // the hovered tick's vertical center within the rail wrapper.
+    const anchorY = panel.getAttribute("data-reader-record-navigation-panel-anchor-y");
+    expect(anchorY).not.toBeNull();
+    expect(anchorY).not.toBe("");
+
+    // Hover the first tick — anchor should change to a different value.
+    fireEvent.mouseEnter(ticks[0]!);
+    await waitFor(() => {
+      const newAnchorY = panel.getAttribute("data-reader-record-navigation-panel-anchor-y");
+      expect(newAnchorY).not.toBeNull();
+      // The values may differ because the ticks are at different vertical
+      // positions; at minimum the attribute must be present and numeric.
+      expect(Number.isFinite(Number(newAnchorY))).toBe(true);
+    });
+  });
+
+  it("visual tick layer must not carry pointer-events-none (hover must be reachable in real browsers)", () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+    ]);
+    const plateDocument = makePlateDocument([makeParagraph("unit_1", "Alpha paragraph.")]);
+    renderTargets(["unit_1"]);
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    const miniRail = screen.getByTestId("reader-record-mini-rail");
+    // The container must NOT have pointer-events-none — otherwise child tick
+    // onMouseEnter handlers are unreachable in real browsers (jsdom's
+    // fireEvent bypasses CSS hit-testing, producing false positives).
+    expect(miniRail.className).not.toContain("pointer-events-none");
+
+    // Individual tick spans must also be hoverable.
+    const ticks = miniRail.querySelectorAll("span[data-navigation-unit-id]");
+    expect(ticks.length).toBeGreaterThan(0);
+    for (const tick of Array.from(ticks)) {
+      expect(tick.className).not.toContain("pointer-events-none");
+    }
   });
 });

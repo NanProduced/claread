@@ -39,10 +39,6 @@ export function buildReaderRecordNavigationItems(
   snapshot: ReaderPlateSnapshotDto,
   plateDocument: ReaderRecordPlateDocument,
 ): ReaderRecordNavigationItem[] {
-  const units = [...snapshot.navigation.units].sort(
-    (a, b) => a.order_index - b.order_index,
-  );
-
   const paragraphsByUnitId = new Map<string, ReaderRecordPlateParagraphBlock[]>();
   for (const block of plateDocument.children) {
     if (!isParagraphBlock(block)) {
@@ -53,7 +49,22 @@ export function buildReaderRecordNavigationItems(
     paragraphsByUnitId.set(block.data.unitId, list);
   }
 
-  return units.map((unit, fallbackIndex) => {
+
+  const units = [...snapshot.navigation.units].sort(
+    (a, b) => a.order_index - b.order_index,
+  );
+  // Older and partially generated snapshots can have a complete Plate document
+  // before navigation.units is populated. Keep the outline usable by deriving
+  // stable unit entries from the document in that one degraded state.
+  const navigationUnits =
+    units.length > 0
+      ? units
+      : [...paragraphsByUnitId.keys()].map((unitId, orderIndex) => ({
+          unit_id: unitId,
+          order_index: orderIndex,
+          label: null,
+        }));
+  return navigationUnits.map((unit, fallbackIndex) => {
     const explicitLabel = unit.label?.trim();
     if (explicitLabel) {
       return {

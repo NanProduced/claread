@@ -148,7 +148,7 @@ export function SidebarRail({
       <aside
         className={cn(
           "app-nav-surface app-workspace-sidebar fixed left-0 hidden border-hairline md:flex md:flex-col",
-          "z-50 w-[var(--app-shell-sidebar-width-locked)] transition-[transform,opacity] duration-150 ease-out",
+          "w-[var(--app-shell-sidebar-width-locked)] transition-[transform,opacity] duration-150 ease-out",
           sidebarLocked
             ? "inset-y-0 border-r shadow-none"
             : "bottom-2 left-2 top-12 rounded-[10px] border shadow-[var(--app-sidebar-overlay-shadow)]",
@@ -156,6 +156,7 @@ export function SidebarRail({
             ? "pointer-events-none -translate-x-[calc(var(--app-shell-sidebar-width-locked)+1rem)] opacity-0"
             : "translate-x-0 opacity-100",
         )}
+        style={{ zIndex: "var(--app-z-shell-navigation)" }}
         aria-label="Claread 产品导航"
         data-app-sidebar="rail"
         data-app-sidebar-state={sidebarMode}

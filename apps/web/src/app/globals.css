@@ -140,6 +140,12 @@ body {
   border: 1px solid transparent;
   background: transparent;
   box-shadow: none;
+  /* Application navigation always sits above the Reader workspace chrome. */
+  z-index: var(--app-z-shell-navigation);
+}
+
+.app-workspace-sidebar {
+  z-index: var(--app-z-shell-navigation);
 }
 
 .app-sidebar-peek-button:hover,
@@ -2099,6 +2105,12 @@ select {
     ),
     37.5rem
   );
+  --reader-z-docked-ask: 25;
+  --reader-z-outline-rail: 30;
+  --reader-z-floating-ask: 40;
+  --reader-z-outline-panel-expanded: 50;
+  --reader-z-workspace-chrome: 60;
+  --app-z-shell-navigation: 70;
 }
 
 .app-shell {
@@ -2197,28 +2209,136 @@ select {
   transform: translateY(-50%);
 }
 
-/* Mini rail visible once the reading area is wide enough for a right-edge strip. */
-@container reader-record-canvas (min-width: 900px) {
+/* The workspace rail is independent of the clipped reading canvas. */
+@media (min-width: 900px) {
   .reader-record-outline-slot {
     display: block;
   }
 }
 
-/* Ask Claread sidecar docks on the right only at 2xl and above. When it opens,
- * hide the outline to avoid overlap; restore only at ultra-wide viewports. */
-@media (min-width: 1536px) {
-  .reader-record-canvas--ask-open .reader-record-outline-slot {
-    display: none;
-  }
+/* Ask Claread uses a structural three-column workspace when docked:
+ * [reading stage][outline rail][Ask]. The Reader and Ask headers share the
+ * same top row, so they read as one application chrome rather than an overlay. */
+.reader-workspace-shell--ask-docked {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--reader-ask-outline-gutter, var(--reader-record-outline-gap))
+    var(--reader-ask-column-width, clamp(24rem, 29vw, 37.5rem));
+  grid-template-rows:
+    var(--reader-record-top-bar-height, 2.75rem)
+    minmax(0, 1fr);
+  min-height: 100dvh;
+  align-items: start;
 }
 
-@media (min-width: 2100px) {
-  .reader-record-canvas--ask-open .reader-record-outline-slot {
+.reader-workspace-shell__topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--reader-z-workspace-chrome, 60);
+  isolation: isolate;
+  background: var(--reading-paper-surface, hsl(var(--background)));
+}
+
+.reader-workspace-shell__topbar .reader-record-top-bar {
+  position: relative;
+  top: auto;
+  z-index: 0;
+  background: var(--reading-paper-surface, hsl(var(--background)));
+}
+.reader-workspace-shell--ask-docked .reader-workspace-shell__topbar {
+  grid-column: 1 / 3;
+  grid-row: 1;
+  min-width: 0;
+  z-index: var(--reader-z-workspace-chrome, 60);
+}
+
+.reader-workspace-shell--ask-docked .reader-record-canvas--ask-open {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+}
+
+.reader-workspace-shell--ask-docked .reader-record-outline-slot {
+  position: sticky;
+  top: var(--reader-record-top-bar-height, 2.75rem);
+  right: auto;
+  z-index: var(--reader-z-outline-rail, 30);
+  display: block;
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
+  width: var(--reader-ask-outline-gutter, var(--reader-record-outline-gap));
+  min-height: 24rem;
+  height: calc(100dvh - var(--reader-record-top-bar-height, 2.75rem));
+  transform: none;
+  overflow: visible;
+}
+
+.reader-workspace-shell--ask-docked .ai-workspace-panel--layout-docked {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  z-index: var(--reader-z-docked-ask, 25);
+  min-width: 0;
+  min-height: 24rem;
+  height: 100dvh;
+  border-left: 1px solid var(--hairline, hsl(var(--border)));
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.ai-workspace-panel--layout-docked .ai-workspace-panel__header {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-height: var(--reader-record-top-bar-height, 2.75rem);
+  height: var(--reader-record-top-bar-height, 2.75rem);
+  padding-block: 0;
+  padding-inline: 0.875rem;
+}
+
+.ai-workspace-panel--layout-docked .ai-workspace-panel__header > div {
+  width: 100%;
+}
+
+/* Floating Ask keeps the document's outline at the page edge. The rail owns
+ * the clear vertical region above the lower-right Ask window, so its expanded
+ * directory opens leftward without being displaced by or colliding with Ask.
+ * The rail's bottom edge is anchored above the floating Ask panel's max-height
+ * region so they never overlap, even on short (600–800px) viewports. */
+@media (min-width: 900px) {
+  .reader-workspace-shell--ask-floating .reader-record-outline-slot {
+    position: fixed;
+    top: clamp(7.5rem, 11vh, 12rem);
+    right: var(--reader-record-outline-right-offset);
+    bottom: calc(1rem + min(68vh, 38rem) + 0.75rem);
+    z-index: var(--reader-z-outline-rail);
     display: block;
     width: var(--reader-record-outline-mini-width);
+    min-height: 8rem;
+    height: auto;
+    transform: none;
+  }
+
+  .reader-workspace-shell--ask-floating .reader-record-navigation-rail--canvas {
+    top: 0;
+    height: 100%;
+    transform: none;
   }
 }
 
+/* On short viewports (600–800px height, common at 125%/150% zoom), further
+ * constrain the outline rail so the hover panel never crowds the reading area
+ * or collides with the floating Ask. */
+@media (min-width: 900px) and (max-height: 800px) {
+  .reader-workspace-shell--ask-floating .reader-record-outline-slot {
+    top: clamp(5.5rem, 9vh, 8rem);
+    min-height: 6rem;
+  }
+}
 .reader-record-plate-paragraph {
   font-size: var(--reader-record-source-size);
   line-height: var(--reader-record-source-leading);

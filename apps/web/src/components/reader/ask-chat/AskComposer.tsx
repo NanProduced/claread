@@ -70,7 +70,7 @@ function AskComposerSurface({
         }
         return onSubmit(value);
       }}
-      className="w-full rounded-2xl border-border/75 bg-background shadow-sm"
+      className="w-full rounded-md border-border/70 bg-background shadow-none"
     >
       {hasContextStrip ? (
         <PromptInputHeader className="w-full flex-wrap gap-1.5 border-b border-border/60 px-3 py-2">
@@ -80,7 +80,7 @@ function AskComposerSurface({
 
       <PromptInputTextarea
         placeholder={placeholder}
-        className="min-h-[4.75rem] text-[15px] leading-7 placeholder:text-muted-foreground"
+        className="min-h-[4rem] text-[15px] leading-6 placeholder:text-muted-foreground"
         disabled={sending}
         onFocus={onTextareaFocus}
         onBlur={onTextareaBlur}
@@ -95,14 +95,14 @@ function AskComposerSurface({
               onOpenChange={onActionMenuOpenChange}
             >
               <PromptInputActionMenuTrigger
-              aria-label="添加其他文章"
-              className="rounded-full"
-            />
-            <PromptInputActionMenuContent
-              side="top"
-              collisionPadding={8}
-              className="w-[18rem] p-0"
-            >
+                aria-label="添加其他文章"
+                className="rounded-full"
+              />
+              <PromptInputActionMenuContent
+                side="top"
+                collisionPadding={8}
+                className="w-[18rem] p-0"
+              >
                 {actionMenu}
               </PromptInputActionMenuContent>
             </PromptInputActionMenu>
@@ -117,7 +117,7 @@ function AskComposerSurface({
             >
               <SelectTrigger
                 aria-label="切换 Ask Claread 模型"
-                className="h-7 border-transparent bg-transparent shadow-none px-1.5 text-xs text-muted-foreground/85 font-normal hover:bg-muted/60 hover:text-foreground hover:font-medium rounded-md focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none focus-visible:outline-none [&_svg]:size-3 [&_svg]:opacity-0 hover:[&_svg]:opacity-50 transition-all [&_svg]:ml-0.5"
+                className="h-7 rounded-md border-transparent bg-transparent px-1.5 text-xs font-normal text-muted-foreground/70 shadow-none transition-colors hover:bg-muted/60 hover:text-foreground focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none focus-visible:outline-none [&_svg]:ml-0.5 [&_svg]:size-3 [&_svg]:opacity-0 hover:[&_svg]:opacity-50"
               >
                 <SelectValue placeholder={modelPlaceholder ?? "选择模型"} />
               </SelectTrigger>
@@ -142,6 +142,14 @@ function AskComposerSurface({
   );
 }
 
+function userFacingErrorMessage(errorMessage: string): string {
+  const normalizedMessage = errorMessage.trim();
+  if (!normalizedMessage || /\b(?:internal|unexpected) server error\b/i.test(normalizedMessage)) {
+    return "这次回答没有完成。请稍后重试，或换一种问法。";
+  }
+  return normalizedMessage;
+}
+
 export function AskComposer({
   onSubmit,
   sending,
@@ -159,11 +167,13 @@ export function AskComposer({
   onTextareaFocus,
   onTextareaBlur,
 }: AskComposerProps) {
+  const displayErrorMessage = errorMessage ? userFacingErrorMessage(errorMessage) : null;
+
   return (
-    <div className="bg-background px-4 pb-4 pt-2">
-      {errorMessage ? (
-        <SystemMessage className="mb-3" fill variant="error">
-          {errorMessage}
+    <div className="bg-background px-4 pb-3 pt-1.5">
+      {displayErrorMessage ? (
+        <SystemMessage className="mb-2.5 rounded-md px-3 py-2 text-xs leading-5" variant="error">
+          {displayErrorMessage}
         </SystemMessage>
       ) : null}
 

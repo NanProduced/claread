@@ -29,11 +29,24 @@ import type {
 } from "@/types/api/reader-plate";
 import type { WebDictResult } from "@/types/api/dict";
 
+import { toast as toastImpl } from "@/components/primitives/toast";
 import ReadingRecordPage from "./page";
 import {
   DEFAULT_READER_RECORD_SURFACE_MODE,
   type ReaderRecordSurfaceMode,
 } from "./reader-record-surface-mode";
+
+vi.mock("@/components/primitives/toast", () => ({
+  toast: {
+    warning: vi.fn(),
+    dismiss: vi.fn(),
+  },
+}));
+
+const toastMock = toastImpl as unknown as {
+  warning: ReturnType<typeof vi.fn>;
+  dismiss: ReturnType<typeof vi.fn>;
+};
 
 const SOURCE_TEXT = "Institutional memory shapes policy choices.";
 const TRANSLATION_TEXT = "制度记忆会塑造政策选择。";
@@ -652,6 +665,10 @@ afterEach(() => {
   Reflect.deleteProperty(globalThis, "__CLAREAD_READER_RECORD_SURFACE_MODE__");
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  toastMock.warning.mockClear();
+  toastMock.dismiss.mockClear();
+  toastMock.warning.mockReset();
+  toastMock.dismiss.mockReset();
 });
 
 describe("ReadingRecordPage static contract", () => {
@@ -1537,7 +1554,7 @@ describe("ReadingRecordPage direct load", () => {
     fireEvent.click(screen.getByRole("button", { name: /Ask Claread/ }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "收起 AI 工作区" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "收起 Ask Claread" })).toBeTruthy();
     });
 
     expect(
@@ -1561,7 +1578,7 @@ describe("ReadingRecordPage direct load", () => {
     ).toBe(false);
   });
 
-  it("keeps the current reading surface visible when polling fails and shows a lightweight warning", async () => {
+  it("keeps the current reading surface visible when polling fails and shows a top-center connection toast", async () => {
     vi.useFakeTimers();
     const snapshot = makeSnapshot();
     installReaderRecordFetchMock(snapshot, {
@@ -1585,13 +1602,92 @@ describe("ReadingRecordPage direct load", () => {
 
     await flushAsyncWork();
 
-    expect(screen.getByTestId("reader-record-polling-error")).toBeTruthy();
-    expect(screen.getByTestId("reader-record-polling-error").textContent).toContain(
-      "自动刷新暂时中断：事件轮询失败。",
+    // No inline polling-error strip in the document flow.
+    expect(screen.queryByTestId("reader-record-polling-error")).toBeNull();
+    // toast.warning called with fixed id, top-center position, persistent
+    // duration, and a retry action.
+    expect(toastMock.warning).toHaveBeenCalledWith(
+      "自动刷新已暂停",
+      expect.objectContaining({
+        id: "reader-record-polling-interrupted",
+        position: "top-center",
+        description: expect.stringContaining("事件轮询失败"),
+        duration: Infinity,
+        closeButton: true,
+        action: expect.objectContaining({
+          label: "重试",
+        }),
+      }),
     );
+    // Reading surface and content remain visible.
     expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
     expect(screen.getByText(TRANSLATION_TEXT)).toBeTruthy();
     expect(screen.getByTestId("reader-record-workbench-surface")).toBeTruthy();
+  });
+
+  it("dismisses the connection toast when polling recovers and does not stack duplicate toasts", async () => {
+    vi.useFakeTimers();
+    const snapshot = makeSnapshot();
+    let eventsFail = true;
+    installReaderRecordFetchMock(snapshot, {
+      eventsResponder: () => {
+        if (eventsFail) {
+          return new Response(JSON.stringify({ ok: false, message: "事件轮询失败。" }), {
+            status: 503,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        const afterSequence = snapshot.last_event_sequence;
+        return new Response(
+          JSON.stringify(
+            makePollResponse(snapshot.record_id, afterSequence, {
+              next_after_sequence: snapshot.last_event_sequence,
+              last_event_sequence: snapshot.last_event_sequence,
+            }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    renderReadingRecordPage("rec_product_1", "workbench");
+
+    await flushAsyncWork();
+
+    // First polling tick fails → toast.warning called once.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+    const firstWarningCount = toastMock.warning.mock.calls.length;
+    expect(firstWarningCount).toBeGreaterThanOrEqual(1);
+
+    // Second polling tick with the same error → should NOT create a second
+    // toast (dedup via fixed id + lastShownErrorRef).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+    expect(toastMock.warning.mock.calls.length).toBe(firstWarningCount);
+
+    // Recover: events succeed now.
+    eventsFail = false;
+    // Trigger a reload to clear the error (simulates user clicking retry
+    // or the next polling tick succeeding after recovery). We advance time
+    // enough for the polling to fire again, which should clear polling.error.
+    // Since the events endpoint now succeeds, polling.error becomes null.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+
+    // toast.dismiss should have been called with the fixed id to clear
+    // the toast on recovery.
+    expect(toastMock.dismiss).toHaveBeenCalledWith("reader-record-polling-interrupted");
+
+    // Reading surface still renders.
+    expect(screen.getByTestId("reader-record-workbench-surface")).toBeTruthy();
+    expect(screen.getByText(SOURCE_TEXT)).toBeTruthy();
   });
 
   it("supports token click lookup and renders a read-only quick peek result", async () => {

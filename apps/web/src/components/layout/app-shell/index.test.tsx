@@ -1,5 +1,8 @@
 /** @vitest-environment jsdom */
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -51,6 +54,7 @@ describe("AppShell", () => {
     expect(trigger.getAttribute("data-app-sidebar-trigger-placement")).toBe("topbar");
     expect(trigger.className).toContain("top-1.5");
     expect(trigger.className).not.toContain("shadow");
+    expect(trigger.style.zIndex).toBe("var(--app-z-shell-navigation)");
 
     const sidebar = container.querySelector<HTMLElement>('[data-app-sidebar="rail"]');
     expect(sidebar).not.toBeNull();
@@ -58,6 +62,7 @@ describe("AppShell", () => {
     expect(sidebar?.dataset.appSidebarVariant).toBe("workspace");
     expect(sidebar?.className).toContain("w-[var(--app-shell-sidebar-width-locked)]");
     expect(sidebar?.className).toContain("pointer-events-none");
+    expect(sidebar?.style.zIndex).toBe("var(--app-z-shell-navigation)");
     expect(screen.getByText("最近阅读")).not.toBeNull();
     expect(screen.getByText("当前解析页")).not.toBeNull();
     expect(screen.getAllByText("Claread")).toHaveLength(2);
@@ -88,6 +93,20 @@ describe("AppShell", () => {
     expect(sidebar?.dataset.appSidebarState).toBe("closed");
   });
 
+  it("keeps the shell-navigation layer in both CSS and the runtime component contract", () => {
+    const globalsSource = readFileSync(
+      resolve(process.cwd(), "src/app/globals.css"),
+      "utf8",
+    );
+
+    expect(globalsSource).toMatch(
+      /\.app-sidebar-peek-button\s*\{[\s\S]*?z-index:\s*var\(--app-z-shell-navigation\);/,
+    );
+    expect(globalsSource).toMatch(
+      /\.app-workspace-sidebar\s*\{[\s\S]*?z-index:\s*var\(--app-z-shell-navigation\);/,
+    );
+    expect(globalsSource).toContain("--app-z-shell-navigation: 70;");
+  });
   it("uses the same workspace sidebar contract on non-reader app routes", () => {
     navigationMock.pathname = "/app/library";
 

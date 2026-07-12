@@ -4,11 +4,14 @@ import { use, useCallback, useEffect, useRef, useState } from "react";
 
 import { ReaderRecordWorkbenchSurface } from "@/components/reader/ReaderRecordWorkbenchSurface";
 import { ReaderRecordPlateSurface } from "@/components/reader/plate";
+import { toast } from "@/components/primitives/toast";
 import { useReaderPlatePolling } from "@/lib/reader-plate-snapshot/polling";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 
 import { getReaderRecordSurfaceMode } from "./reader-record-surface-mode";
 import { CandidateConfirmCallout } from "./CandidateConfirmCallout";
+
+const READER_POLLING_TOAST_ID = "reader-record-polling-interrupted";
 
 type SnapshotState =
   | { kind: "loading"; recordId: string }
@@ -71,6 +74,67 @@ function reloadStatusLabel(reason: string | null): string {
     default:
       return "正在刷新阅读内容。";
   }
+}
+
+/**
+ * Manages the top-center connection alert for polling/reload interruptions.
+ *
+ * The toast is non-blocking: it overlays the workspace without occupying
+ * document flow, so it never shifts the Reader Header, sidebar, Outline rail,
+ * or Ask panel geometry.
+ *
+ * Dedup strategy:
+ * - A stable `toastId` ensures repeated polling rerenders with the same error
+ *   content update the existing toast instead of stacking.
+ * - `lastShownErrorRef` tracks the error content that is currently displayed.
+ *   When the user dismisses the toast, Sonner removes it but our state still
+ *   records what was shown; we only re-show when the error content changes or
+ *   a fresh retry failure produces a different message.
+ * - On recovery (error becomes null), route change, or unmount, the toast is
+ *   dismissed and the ref is cleared, allowing the next downgrade cycle to
+ *   show a new alert.
+ */
+function useReaderPollingConnectionToast(
+  connectionError: string | null,
+  onRetry: () => void,
+) {
+  const lastShownErrorRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (connectionError) {
+      if (lastShownErrorRef.current === connectionError) {
+        // Same error content already displayed (or user-dismissed with no
+        // content change). Do not re-pop.
+        return;
+      }
+      lastShownErrorRef.current = connectionError;
+      toast.warning("自动刷新已暂停", {
+        id: READER_POLLING_TOAST_ID,
+        position: "top-center",
+        description: connectionError,
+        duration: Infinity,
+        closeButton: true,
+        action: {
+          label: "重试",
+          onClick: () => {
+            onRetry();
+          },
+        },
+      });
+    } else if (lastShownErrorRef.current !== null) {
+      // Error cleared — dismiss the toast and reset so the next cycle can
+      // show again.
+      toast.dismiss(READER_POLLING_TOAST_ID);
+      lastShownErrorRef.current = null;
+    }
+  }, [connectionError, onRetry]);
+
+  // Dismiss on unmount / route change so the toast never outlives the page.
+  useEffect(() => {
+    return () => {
+      toast.dismiss(READER_POLLING_TOAST_ID);
+    };
+  }, []);
 }
 
 export default function ReadingRecordPage({
@@ -224,41 +288,19 @@ export default function ReadingRecordPage({
     onReloadRequired: reloadSnapshot,
   });
 
-  if (snapshotState.kind === "loaded") {
-    const inlinePollingError = reloadError ?? polling.error;
-    const showInlineStrip = isReloading || inlinePollingError !== null;
+  // Non-conditional hook: must run before the `if (snapshotState.kind === "loaded")`
+  // early return so the toast lifecycle (show/dismiss/unmount) is always
+  // consistent regardless of snapshot state transitions.
+  const connectionError =
+    snapshotState.kind === "loaded" ? reloadError ?? polling.error : null;
+  useReaderPollingConnectionToast(connectionError, () => {
+    void reloadSnapshot("user_asset_written");
+  });
 
+  if (snapshotState.kind === "loaded") {
     return (
       <>
         <CandidateConfirmCallout recordId={recordId} />
-
-        {showInlineStrip ? (
-          <div className="paper-grain border-b border-hairline/70 bg-background/90 backdrop-blur">
-            <div
-              aria-live="polite"
-              className="mx-auto flex max-w-[82ch] flex-col gap-2 px-3 py-2.5 sm:px-4 lg:px-5"
-            >
-              {isReloading ? (
-                <div
-                  className="inline-flex items-center gap-2 text-xs font-medium text-lens-blue"
-                  data-testid="reader-record-reload-status"
-                >
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-lens-blue" />
-                  {reloadStatusLabel(activeReloadReason ?? polling.lastReloadReason)}
-                </div>
-              ) : null}
-
-              {inlinePollingError ? (
-                <p
-                  className="text-xs font-medium text-amber-800"
-                  data-testid="reader-record-polling-error"
-                >
-                  自动刷新暂时中断：{inlinePollingError}
-                </p>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
 
         {surfaceMode === "plate" ? (
           <ReaderRecordPlateSurface

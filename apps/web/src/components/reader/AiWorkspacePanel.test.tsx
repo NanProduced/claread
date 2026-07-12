@@ -484,7 +484,7 @@ describe("AiWorkspacePanel", () => {
     const onToggle = vi.fn();
     const { container } = renderPanel({ open: false, onToggle });
 
-    const launcher = screen.getByRole("button", { name: "打开 AI 工作区" });
+    const launcher = screen.getByRole("button", { name: "打开 Ask Claread" });
     expect(container.querySelector("[data-claread-ai-mark='true']")).not.toBeNull();
     expect(container.querySelector("[data-claread-ai-mark-badge='true']")).not.toBeNull();
 
@@ -2810,6 +2810,145 @@ describe("AiWorkspacePanel", () => {
     expect(source).toContain("mapAskArticleRagSidecar");
     expect(source).toContain("setMessages(normalizeReaderAskMessages(detail.messages))");
     expect(source).not.toContain("setMessages(detail.messages)");
+  });
+
+  describe("AskProvenanceLine and capacity downgrade notice", () => {
+    const noteAttachment: ReaderAskAttachment = {
+      kind: "text_selection",
+      subtype: "reader_note",
+      label: "笔记片段",
+      selectedText: "An important note.",
+      metadata: {
+        pageIdentity,
+        sourceSurface: "ask_panel",
+        entryAction: "ask_about_this",
+      },
+    };
+
+    it("provenance shows article context when record title is present", async () => {
+      renderPanel({
+        recordTitle: "Test Reader",
+        attachments: [],
+        liveContextAttachment: null,
+      });
+
+      await waitFor(() => {
+        expect(global.fetch).toHaveBeenCalled();
+      });
+
+      expect(screen.getByText(/基于：当前文章/)).not.toBeNull();
+    });
+
+    it("provenance shows selection and notes when live selection and attachments exist", async () => {
+      renderPanel({
+        recordTitle: "Test Reader",
+        liveContextAttachment: sentenceAttachment,
+        attachments: [noteAttachment],
+      });
+
+      await waitFor(() => {
+        expect(global.fetch).toHaveBeenCalled();
+      });
+
+      const summary = screen.getByText(/基于：/);
+      expect(summary.textContent).toContain("当前文章 · 选中句");
+      expect(summary.textContent).toContain("1 条笔记");
+    });
+
+    it("provenance shows no-context state when nothing is present", async () => {
+      renderPanel({
+        recordTitle: "",
+        attachments: [],
+        liveContextAttachment: null,
+      });
+
+      await waitFor(() => {
+        expect(global.fetch).toHaveBeenCalled();
+      });
+
+      expect(screen.getByText("仅按你的问题回答")).not.toBeNull();
+    });
+
+    it("keeps no-context provenance as static text instead of a dead disclosure button", async () => {
+      renderPanel({
+        recordTitle: "",
+        attachments: [],
+        liveContextAttachment: null,
+      });
+
+      await waitFor(() => {
+        expect(global.fetch).toHaveBeenCalled();
+      });
+
+      const summary = screen.getByText("仅按你的问题回答");
+      expect(summary.closest("button")).toBeNull();
+    });
+
+    it("does not announce a sidecar switch until the effective surface actually changes", async () => {
+      const onChangeSurface = vi.fn();
+      renderPanel({
+        surface: "floating",
+        onChangeSurface,
+      });
+
+      await waitFor(() => {
+        expect(global.fetch).toHaveBeenCalled();
+      });
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "选择 Ask Claread 面板形式" }),
+      );
+      await userEvent.click(
+        await screen.findByRole("menuitem", { name: "侧边栏" }),
+      );
+
+      expect(onChangeSurface).toHaveBeenCalledWith("sidecar");
+      expect(screen.queryByText("Ask Claread 已切换为侧边栏。")).toBeNull();
+    });
+    it("capacity downgrade notice appears when provided and can be dismissed", async () => {
+      const onDismissCapacityDowngradeNotice = vi.fn();
+      renderPanel({
+        capacityDowngradeNotice:
+          "当前阅读区较窄，Ask Claread 已暂以浮窗展示；空间恢复后将回到侧边栏。",
+        onDismissCapacityDowngradeNotice,
+      });
+
+      await waitFor(() => {
+        expect(global.fetch).toHaveBeenCalled();
+      });
+
+      const notice = screen.getByTestId("ask-capacity-downgrade-notice");
+      expect(notice).not.toBeNull();
+      expect(notice.textContent).toContain(
+        "当前阅读区较窄，Ask Claread 已暂以浮窗展示；空间恢复后将回到侧边栏。",
+      );
+
+      await userEvent.click(screen.getByRole("button", { name: "关闭说明" }));
+      expect(onDismissCapacityDowngradeNotice).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not expose a dead dismiss control when a downgrade notice has no dismiss callback", async () => {
+      renderPanel({
+        capacityDowngradeNotice: "当前阅读区较窄，Ask Claread 以浮窗形式展示。",
+      });
+
+      await waitFor(() => {
+        expect(global.fetch).toHaveBeenCalled();
+      });
+
+      expect(screen.queryByRole("button", { name: "关闭说明" })).toBeNull();
+    });
+    it("capacity downgrade notice does not render when null", async () => {
+      renderPanel({
+        capacityDowngradeNotice: null,
+      });
+
+      await waitFor(() => {
+        expect(global.fetch).toHaveBeenCalled();
+      });
+
+      expect(screen.queryByTestId("ask-capacity-downgrade-notice")).toBeNull();
+    });
   });
 });
 

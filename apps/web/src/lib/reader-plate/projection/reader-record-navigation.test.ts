@@ -242,4 +242,27 @@ describe("buildReaderRecordNavigationItems", () => {
     const items = buildReaderRecordNavigationItems(snapshot, document);
     expect(items[0].label).toBe("Actual paragraph text.");
   });
+  it("derives outline entries from document units when navigation units are absent", () => {
+    const snapshot = makeSnapshot([]);
+    const document = makeDocument([
+      makeParagraph("unit_first", "First paragraph for the fallback outline."),
+      makeParagraph("unit_second", "Second paragraph for the fallback outline."),
+    ]);
+
+    const items = buildReaderRecordNavigationItems(snapshot, document);
+    expect(items).toEqual([
+      expect.objectContaining({
+        unitId: "unit_first",
+        orderIndex: 0,
+        fallbackIndex: 0,
+        label: "First paragraph for the fallback outline.",
+      }),
+      expect.objectContaining({
+        unitId: "unit_second",
+        orderIndex: 1,
+        fallbackIndex: 1,
+        label: "Second paragraph for the fallback outline.",
+      }),
+    ]);
+  });
 });

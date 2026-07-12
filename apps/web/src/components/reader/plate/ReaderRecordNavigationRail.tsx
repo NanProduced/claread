@@ -107,73 +107,56 @@ function getScrollContainer(): Window | HTMLElement | null {
   return window;
 }
 
-interface MiniRailTicksProps {
+// ---------------------------------------------------------------------------
+// Visual ticks — purely decorative, aria-hidden. Mouse hover anchors the panel.
+// ---------------------------------------------------------------------------
+
+interface VisualTicksProps {
   items: ReaderRecordNavigationItem[];
   activeUnitId: string | null;
-  panelOpen: boolean;
-  className?: string;
-  onItemClick: (unitId: string) => void;
-  onItemKeyDown: (
-    event: React.KeyboardEvent<HTMLButtonElement>,
-    unitId: string,
-  ) => void;
-  onMouseEnter: (event: React.MouseEvent<HTMLDivElement>) => void;
-  onMouseMove: (event: React.MouseEvent<HTMLDivElement>) => void;
-  onFocusCapture: (event: React.FocusEvent<HTMLDivElement>) => void;
+  onTickMouseEnter: (event: React.MouseEvent<HTMLSpanElement>) => void;
 }
 
-function MiniRailTicks({
+function VisualTicks({
   items,
   activeUnitId,
-  panelOpen,
-  className,
-  onItemClick,
-  onItemKeyDown,
-  onMouseEnter,
-  onMouseMove,
-  onFocusCapture,
-}: MiniRailTicksProps) {
+  onTickMouseEnter,
+}: VisualTicksProps) {
   return (
-    <div
+    <span
       data-testid="reader-record-mini-rail"
-      className={cn(
-        "reader-record-mini-rail relative flex h-full w-full flex-col items-end gap-[2px] overflow-hidden py-4",
-        className,
-      )}
-      onMouseEnter={onMouseEnter}
-      onMouseMove={onMouseMove}
-      onFocusCapture={onFocusCapture}
+      className="reader-record-mini-rail flex h-full w-full flex-col items-end justify-center gap-[2px] overflow-hidden py-4"
+      aria-hidden="true"
     >
       {items.map((item) => (
-        <button
+        <span
           key={item.unitId}
-          type="button"
-          aria-label={item.label}
-          aria-current={item.unitId === activeUnitId ? "true" : undefined}
-          tabIndex={0}
-          onClick={() => onItemClick(item.unitId)}
-          onKeyDown={(event) => onItemKeyDown(event, item.unitId)}
           className="group relative flex min-h-[7px] w-10 flex-1 max-h-4 shrink items-center justify-end rounded-sm px-1"
           data-navigation-unit-id={item.unitId}
+          onMouseEnter={onTickMouseEnter}
         >
           <span
             className={cn(
               "block h-[1.5px] rounded-full transition-all duration-150 ease-[var(--cl-ease-standard)]",
-              panelOpen && "opacity-0",
               item.unitId === activeUnitId
                 ? "w-5 bg-ink/60"
                 : "w-3.5 bg-ink/18 group-hover:bg-ink/40",
             )}
           />
-        </button>
+        </span>
       ))}
-    </div>
+    </span>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Navigation panel — the main interactive list with roving tabindex.
+// ---------------------------------------------------------------------------
 
 interface NavigationPanelProps {
   items: ReaderRecordNavigationItem[];
   activeUnitId: string | null;
+  focusedUnitId: string | null;
   panelOpen: boolean;
   panelAnchorTopPx: number | null;
   anchorMode?: "hover" | "center";
@@ -185,39 +168,94 @@ interface NavigationPanelProps {
   ) => void;
   onMouseEnter: () => void;
   onMouseLeave: (event: React.MouseEvent<HTMLElement>) => void;
+  registerRowRef: (unitId: string, el: HTMLButtonElement | null) => void;
 }
 
 function NavigationPanel({
   items,
   activeUnitId,
-  anchorMode = "hover",
+  focusedUnitId,
   panelOpen,
+  anchorMode = "hover",
   panelAnchorTopPx,
   className,
   onItemClick,
   onItemKeyDown,
   onMouseEnter,
   onMouseLeave,
+  registerRowRef,
 }: NavigationPanelProps) {
-  const shouldUseHoverAnchor = anchorMode === "hover" && panelAnchorTopPx !== null;
+  const shouldUseHoverAnchor =
+    anchorMode === "hover" && panelAnchorTopPx !== null;
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [clampedTop, setClampedTop] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!shouldUseHoverAnchor || panelAnchorTopPx === null) {
+      setClampedTop(null);
+      return;
+    }
+    const updateClamp = () => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const height = panel.offsetHeight;
+      const margin = 12; // safety margin
+
+      let targetTop = panelAnchorTopPx;
+
+      const wrapper = panel.parentElement;
+      if (!wrapper) return;
+
+      const wrapperHeight = wrapper.offsetHeight;
+      if (wrapperHeight === 0 && height === 0) {
+        setClampedTop(targetTop);
+        return;
+      }
+      if (targetTop + height > wrapperHeight - margin) {
+        targetTop = wrapperHeight - height - margin;
+      }
+
+      if (targetTop < margin) {
+        targetTop = margin;
+      }
+
+      setClampedTop(targetTop);
+    };
+
+    updateClamp();
+
+    if (typeof ResizeObserver !== "undefined" && panelRef.current) {
+      const observer = new ResizeObserver(updateClamp);
+      observer.observe(panelRef.current);
+      return () => observer.disconnect();
+    }
+  }, [shouldUseHoverAnchor, panelAnchorTopPx]);
 
   return (
     <div
+      ref={panelRef}
       data-testid="reader-record-navigation-panel"
       data-reader-record-navigation-panel="true"
       data-reader-record-navigation-panel-anchor-y={
-        shouldUseHoverAnchor ? String(Math.round(panelAnchorTopPx)) : undefined
+        shouldUseHoverAnchor ? String(Math.round(panelAnchorTopPx!)) : undefined
       }
       className={cn(
         "reader-record-navigation-panel motion-reduce:transition-none",
         "transition-[transform,opacity,visibility] duration-200 ease-[var(--cl-ease-standard)]",
-        "absolute right-0 top-1/2 z-10 max-h-[min(72vh,42rem)] -translate-y-1/2 origin-right",
+        "absolute z-10 max-h-[min(72vh,42rem)] origin-right",
+        shouldUseHoverAnchor
+          ? "right-[calc(100%+8px)]"
+          : "right-0 top-1/2 -translate-y-1/2",
         panelOpen
           ? "visible translate-x-0 opacity-100"
           : "invisible translate-x-2 scale-[0.98] opacity-0 pointer-events-none",
         className,
       )}
-      style={shouldUseHoverAnchor ? { top: `${panelAnchorTopPx}px` } : undefined}
+      style={
+        shouldUseHoverAnchor && clampedTop !== null
+          ? { top: `${clampedTop}px` }
+          : undefined
+      }
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       aria-hidden={!panelOpen}
@@ -236,9 +274,14 @@ function NavigationPanel({
                 key={item.unitId}
                 item={item}
                 active={item.unitId === activeUnitId}
-                tabIndex={panelOpen ? 0 : -1}
+                // Roving tabindex: only the focused item is tabbable (0),
+                // all others are -1. When closed, all are -1.
+                tabIndex={
+                  panelOpen && item.unitId === focusedUnitId ? 0 : -1
+                }
                 onClick={() => onItemClick(item.unitId)}
                 onKeyDown={(event) => onItemKeyDown(event, item.unitId)}
+                registerRef={(el) => registerRowRef(item.unitId, el)}
               />
             ))}
           </ol>
@@ -276,22 +319,36 @@ export function ReaderRecordNavigationRail({
   const [activeUnitId, setActiveUnitId] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelAnchorTopPx, setPanelAnchorTopPx] = useState<number | null>(null);
+  // Roving tabindex: tracks which row currently holds tabIndex=0.
+  const [focusedUnitId, setFocusedUnitId] = useState<string | null>(null);
+
   const wrapperRef = useRef<HTMLElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const rowRefsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
   const closeTimerRef = useRef<number | null>(null);
   const scrollLockTimerRef = useRef<number | null>(null);
   const lockedUnitIdRef = useRef<string | null>(null);
   const targetMapRef = useRef<Map<string, HTMLElement>>(new Map());
 
-  const refreshTargets = useCallback(() => {
-    const map = new Map<string, HTMLElement>();
+  // --- Target map caching (performance) ---------------------------------
+  // Rebuild the target map only when items change, not on every scroll frame.
+  // Missing targets are lazily populated on scroll until the map is complete.
+  const refreshTargetsLazy = useCallback((): Map<string, HTMLElement> => {
+    const map = targetMapRef.current;
+    if (map.size >= items.length && items.length > 0) return map;
     for (const item of items) {
+      if (map.has(item.unitId)) continue;
       const target = findUnitTarget(item.unitId);
       if (target) {
         map.set(item.unitId, target);
       }
     }
-    targetMapRef.current = map;
     return map;
+  }, [items]);
+
+  // Invalidate cache when items change (different unit ids or count).
+  useEffect(() => {
+    targetMapRef.current = new Map();
   }, [items]);
 
   const clearCloseTimer = useCallback(() => {
@@ -306,19 +363,10 @@ export function ReaderRecordNavigationRail({
     setPanelOpen(true);
   }, [clearCloseTimer]);
 
-  const setPanelAnchorFromClientY = useCallback((clientY: number) => {
-    if (!Number.isFinite(clientY)) {
-      return;
-    }
-    const wrapper = wrapperRef.current;
-    if (!wrapper) {
-      return;
-    }
-    const rect = wrapper.getBoundingClientRect();
-    setPanelAnchorTopPx(
-      clampPanelAnchorTop(clientY - rect.top, rect.height),
-    );
-  }, []);
+  const closePanel = useCallback(() => {
+    clearCloseTimer();
+    setPanelOpen(false);
+  }, [clearCloseTimer]);
 
   const setPanelAnchorFromElement = useCallback((element: Element) => {
     const wrapper = wrapperRef.current;
@@ -357,7 +405,7 @@ export function ReaderRecordNavigationRail({
     }, SCROLL_LOCK_MS);
   }, []);
 
-  // Deterministic active unit computation on scroll/resize.
+  // --- Scroll-based active section (cached target map) ------------------
   useEffect(() => {
     if (typeof window === "undefined" || items.length === 0) return;
 
@@ -372,7 +420,8 @@ export function ReaderRecordNavigationRail({
         pending = false;
         if (lockedUnitIdRef.current) return;
 
-        const map = refreshTargets();
+        // Use cached map — no querySelectorAll per frame.
+        const map = refreshTargetsLazy();
         const activeId = computeActiveUnitId(
           items,
           map,
@@ -395,7 +444,7 @@ export function ReaderRecordNavigationRail({
         window.cancelAnimationFrame(rafId);
       }
     };
-  }, [items, refreshTargets]);
+  }, [items, refreshTargetsLazy]);
 
   // Default the active item to the first unit until scrolling provides a signal.
   useEffect(() => {
@@ -403,6 +452,23 @@ export function ReaderRecordNavigationRail({
       setActiveUnitId(items[0].unitId);
     }
   }, [items, activeUnitId]);
+
+  // Initialize focusedUnitId to the active item when the panel opens.
+  useEffect(() => {
+    if (panelOpen && focusedUnitId === null) {
+      setFocusedUnitId(activeUnitId ?? items[0]?.unitId ?? null);
+    }
+    if (!panelOpen) {
+      setFocusedUnitId(null);
+    }
+  }, [panelOpen, activeUnitId, focusedUnitId, items]);
+
+  // Focus the row matching focusedUnitId when it changes (keyboard nav).
+  useEffect(() => {
+    if (!panelOpen || focusedUnitId === null) return;
+    const row = rowRefsRef.current.get(focusedUnitId);
+    row?.focus();
+  }, [focusedUnitId, panelOpen]);
 
   // Clean up lingering timers if the rail is unmounted.
   useEffect(() => {
@@ -416,60 +482,124 @@ export function ReaderRecordNavigationRail({
     };
   }, []);
 
+  // --- Navigation actions -----------------------------------------------
   const handleItemClick = useCallback(
     (unitId: string) => {
-      const target = findUnitTarget(unitId);
-      if (!target) return;
+      const target = targetMapRef.current.get(unitId) ?? findUnitTarget(unitId);
+      if (target) {
+        const scrollContainer = getScrollContainer() ?? window;
+        const isWindow = scrollContainer === window;
+        const scrollTop = isWindow
+          ? window.scrollY
+          : (scrollContainer as HTMLElement).scrollTop;
+        const containerTop = isWindow
+          ? 0
+          : (scrollContainer as HTMLElement).getBoundingClientRect().top;
+        const targetRect = target.getBoundingClientRect();
+        const targetOffset = targetRect.top - containerTop + scrollTop;
+        const safeOffset = Math.max(
+          0,
+          TOPBAR_SAFE_HEIGHT + ACTIVE_SAFE_OFFSET - containerTop,
+        );
+        const top = targetOffset - safeOffset;
 
-      const scrollContainer = getScrollContainer() ?? window;
-      const isWindow = scrollContainer === window;
-      const scrollTop = isWindow
-        ? window.scrollY
-        : (scrollContainer as HTMLElement).scrollTop;
-      const containerTop = isWindow
-        ? 0
-        : (scrollContainer as HTMLElement).getBoundingClientRect().top;
-      const targetRect = target.getBoundingClientRect();
-      const targetOffset = targetRect.top - containerTop + scrollTop;
-      const safeOffset = Math.max(
-        0,
-        TOPBAR_SAFE_HEIGHT + ACTIVE_SAFE_OFFSET - containerTop,
-      );
-      const top = targetOffset - safeOffset;
-
-      if (isWindow) {
-        window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
-      } else {
-        (scrollContainer as HTMLElement).scrollTo({
-          top: Math.max(0, top),
-          behavior: "smooth",
-        });
+        if (isWindow) {
+          window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+        } else {
+          (scrollContainer as HTMLElement).scrollTo({
+            top: Math.max(0, top),
+            behavior: "smooth",
+          });
+        }
       }
       setActiveUnitId(unitId);
+      setFocusedUnitId(unitId);
       lockActiveUnit(unitId);
-      openPanel();
     },
-    [lockActiveUnit, openPanel],
+    [lockActiveUnit],
+  );
+
+  // --- Keyboard navigation (roving tabindex) ----------------------------
+  const focusRow = useCallback(
+    (unitId: string) => {
+      setFocusedUnitId(unitId);
+    },
+    [],
   );
 
   const handleItemKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLButtonElement>, unitId: string) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        handleItemClick(unitId);
+      const currentIndex = items.findIndex((item) => item.unitId === unitId);
+      if (currentIndex === -1) return;
+
+      switch (event.key) {
+        case "Enter":
+        case " ": {
+          event.preventDefault();
+          handleItemClick(unitId);
+          break;
+        }
+        case "ArrowDown": {
+          event.preventDefault();
+          const nextIndex = Math.min(items.length - 1, currentIndex + 1);
+          focusRow(items[nextIndex].unitId);
+          break;
+        }
+        case "ArrowUp": {
+          event.preventDefault();
+          const prevIndex = Math.max(0, currentIndex - 1);
+          focusRow(items[prevIndex].unitId);
+          break;
+        }
+        case "Home": {
+          event.preventDefault();
+          focusRow(items[0].unitId);
+          break;
+        }
+        case "End": {
+          event.preventDefault();
+          focusRow(items[items.length - 1].unitId);
+          break;
+        }
+        case "Escape": {
+          event.preventDefault();
+          closePanel();
+          // Return focus to the outline trigger button.
+          triggerRef.current?.focus();
+          break;
+        }
       }
     },
-    [handleItemClick],
+    [items, handleItemClick, focusRow, closePanel],
   );
 
-  const handleBlur = useCallback(
-    (event: React.FocusEvent<HTMLElement>) => {
-      if (!wrapperRef.current?.contains(event.relatedTarget as Node)) {
-        setPanelOpen(false);
+  const handleTriggerKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        if (panelOpen) {
+          closePanel();
+        } else {
+          openPanel();
+        }
       }
     },
-    [],
+    [panelOpen, openPanel, closePanel],
   );
+
+  const handleTriggerClick = useCallback(() => {
+    if (panelOpen) {
+      closePanel();
+    } else {
+      openPanel();
+    }
+  }, [panelOpen, openPanel, closePanel]);
+
+  const handleBlur = useCallback((event: React.FocusEvent<HTMLElement>) => {
+    if (!wrapperRef.current?.contains(event.relatedTarget as Node)) {
+      setPanelOpen(false);
+    }
+  }, []);
 
   const handleMouseLeave = useCallback(
     (event: React.MouseEvent<HTMLElement>) => {
@@ -485,29 +615,23 @@ export function ReaderRecordNavigationRail({
     [scheduleClose],
   );
 
-  const handleMiniRailMouseEnter = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      setPanelAnchorFromClientY(event.clientY);
-      openPanel();
-    },
-    [openPanel, setPanelAnchorFromClientY],
-  );
-
-  const handleMiniRailMouseMove = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      setPanelAnchorFromClientY(event.clientY);
-    },
-    [setPanelAnchorFromClientY],
-  );
-
-  const handleMiniRailFocusCapture = useCallback(
-    (event: React.FocusEvent<HTMLDivElement>) => {
-      if (event.target instanceof Element) {
-        setPanelAnchorFromElement(event.target);
-      }
+  const handleTickMouseEnter = useCallback(
+    (event: React.MouseEvent<HTMLSpanElement>) => {
+      setPanelAnchorFromElement(event.currentTarget);
       openPanel();
     },
     [openPanel, setPanelAnchorFromElement],
+  );
+
+  const registerRowRef = useCallback(
+    (unitId: string, el: HTMLButtonElement | null) => {
+      if (el) {
+        rowRefsRef.current.set(unitId, el);
+      } else {
+        rowRefsRef.current.delete(unitId);
+      }
+    },
+    [],
   );
 
   if (items.length === 0) {
@@ -515,6 +639,15 @@ export function ReaderRecordNavigationRail({
   }
 
   const isCanvas = layout === "canvas";
+  const activeLabel =
+    items.find((item) => item.unitId === activeUnitId)?.label ??
+    items[0]?.label ??
+    "";
+  const activeIndex =
+    items.findIndex((item) => item.unitId === activeUnitId) + 1;
+  const triggerLabel = panelOpen
+    ? `关闭文章目录，当前第 ${activeIndex} 节`
+    : `打开文章目录，当前第 ${activeIndex} 节`;
 
   return (
     <nav
@@ -523,9 +656,15 @@ export function ReaderRecordNavigationRail({
       data-testid="reader-record-navigation-rail"
       data-layout={layout}
       className={cn(
-        "hidden z-30 md:flex",
+        "hidden md:flex",
+        // When the detail panel is expanded, elevate the rail above the
+        // floating Ask window so the outline remains reachable. Semantic
+        // z-index: rail (30) < floating Ask (40) < expanded panel (50).
+        panelOpen
+          ? "z-[var(--reader-z-outline-panel-expanded,50)]"
+          : "z-[var(--reader-z-outline-rail,30)]",
         isCanvas
-          ? "reader-record-navigation-rail--canvas relative h-full w-full"
+          ? "reader-record-navigation-rail--canvas absolute right-0 top-1/2 h-[min(72vh,42rem)] w-full -translate-y-1/2"
           : "fixed right-3 top-1/2 h-[min(72vh,42rem)] -translate-y-1/2",
         // Viewport-mode legacy shift when Ask is open. Canvas mode relies on
         // the Reader Canvas CSS variables instead of this clamp.
@@ -541,27 +680,39 @@ export function ReaderRecordNavigationRail({
       <NavigationPanel
         items={items}
         activeUnitId={activeUnitId}
+        focusedUnitId={focusedUnitId}
         panelOpen={panelOpen}
         panelAnchorTopPx={panelAnchorTopPx}
-        anchorMode={isCanvas ? "center" : "hover"}
+        anchorMode="hover"
         onItemClick={handleItemClick}
         onItemKeyDown={handleItemKeyDown}
         onMouseEnter={keepOpenPanel}
         onMouseLeave={handleMouseLeave}
+        registerRowRef={registerRowRef}
       />
 
-      {/* Mini rail: a column of lightweight ticks. */}
-      <MiniRailTicks
-        items={items}
-        activeUnitId={activeUnitId}
-        panelOpen={panelOpen}
-        className={cn(isCanvas && "absolute inset-y-0 right-0")}
-        onItemClick={handleItemClick}
-        onItemKeyDown={handleItemKeyDown}
-        onMouseEnter={handleMiniRailMouseEnter}
-        onMouseMove={handleMiniRailMouseMove}
-        onFocusCapture={handleMiniRailFocusCapture}
-      />
+      {/* Accessible trigger button wrapping the visual ticks.
+          The ticks are aria-hidden; the button's aria-label is the sole
+          screen-reader entry point. Mouse hover on individual ticks still
+          anchors and opens the panel. */}
+      <button
+        ref={triggerRef}
+        type="button"
+        data-testid="reader-record-outline-trigger"
+        data-reader-record-outline-trigger="true"
+        className="relative flex min-h-[24px] min-w-[24px] cursor-pointer items-center justify-end"
+        aria-label={triggerLabel}
+        aria-expanded={panelOpen}
+        aria-haspopup="menu"
+        onClick={handleTriggerClick}
+        onKeyDown={handleTriggerKeyDown}
+      >
+        <VisualTicks
+          items={items}
+          activeUnitId={activeUnitId}
+          onTickMouseEnter={handleTickMouseEnter}
+        />
+      </button>
     </nav>
   );
 }
@@ -572,18 +723,21 @@ interface NavigationPanelRowProps {
   tabIndex?: number;
   onClick: () => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
+  registerRef: (el: HTMLButtonElement | null) => void;
 }
 
 function NavigationPanelRow({
   item,
   active,
-  tabIndex = 0,
+  tabIndex = -1,
   onClick,
   onKeyDown,
+  registerRef,
 }: NavigationPanelRowProps) {
   return (
     <li>
       <button
+        ref={registerRef}
         type="button"
         aria-current={active ? "true" : undefined}
         tabIndex={tabIndex}

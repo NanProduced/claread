@@ -1,11 +1,11 @@
 "use client";
 
 import type { LucideIcon } from "lucide-react";
-import { Sparkles } from "lucide-react";
 import {
   ConversationEmptyState,
 } from "@/components/ai-elements/conversation";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
+import { ClareadAiMark } from "@/components/brand/ClareadAiMark";
 import type { ReaderAskEntryActionDto } from "@/types/api/reader-ask";
 import { cn } from "@/lib/cn";
 
@@ -35,56 +35,49 @@ export function PromptSuggestions({
   contextPreview,
 }: PromptSuggestionsProps) {
   return (
-    <ConversationEmptyState className="h-full overflow-y-auto items-stretch justify-center gap-6 px-4 py-6">
-      <div className="mx-auto flex w-full max-w-[30rem] flex-col items-center text-center">
-        <div className="space-y-4">
-          <img
-            src="/brand/ask-claread/empty-state-illustration.png"
-            alt=""
-            aria-hidden="true"
-            className="mx-auto w-full max-w-[10rem] object-contain sm:max-w-[12rem]"
+    <ConversationEmptyState className="h-full overflow-y-auto items-stretch justify-end px-4 pb-5 pt-8 sm:px-5">
+      <div className="mx-auto flex w-full max-w-[31rem] flex-col items-start text-left">
+        <div className="flex items-start gap-3">
+          <ClareadAiMark
+            size="sm"
+            className="mt-0.5 shrink-0 shadow-none"
+            badgeClassName="shadow-none"
           />
-
-          <div className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs text-muted-foreground">
-            <Sparkles className="h-3.5 w-3.5" />
-            <span>Ask Claread</span>
-          </div>
-
-          <div className="space-y-2">
-            <h3 className="text-2xl font-semibold tracking-tight text-foreground">
+          <div className="min-w-0 space-y-1.5">
+            <h3 className="text-[1.125rem] font-semibold leading-6 tracking-[-0.015em] text-ink">
               {title}
             </h3>
-            <p className="mx-auto max-w-[28rem] text-sm leading-6 text-muted-foreground">
+            <p className="max-w-[30rem] text-[13px] leading-5 text-muted">
               {description}
             </p>
           </div>
-
-          {contextPreview ? (
-            <span className="inline-flex max-w-full items-center rounded-full border px-3 py-1.5 text-xs text-muted-foreground">
-              <span className="truncate">
-                {contextLabel ? `${contextLabel} · ` : ""}
-                {contextPreview}
-              </span>
-            </span>
-          ) : null}
         </div>
 
-        <Suggestions className="w-full flex-col gap-2">
+        {contextPreview ? (
+          <span className="mt-4 inline-flex max-w-full items-center rounded-md border border-border/65 bg-muted/25 px-2.5 py-1.5 text-xs leading-4 text-muted">
+            <span className="truncate">
+              {contextLabel ? `${contextLabel} · ` : ""}
+              {contextPreview}
+            </span>
+          </span>
+        ) : null}
+
+        <Suggestions className="mt-5 w-full flex-col gap-1">
           {suggestions.map((suggestion) => (
             <Suggestion
               key={suggestion.prompt}
               suggestion={suggestion.prompt}
-              className="h-auto w-full justify-start whitespace-normal rounded-md px-3 py-2 text-left text-sm"
+              className="h-auto w-full justify-start whitespace-normal rounded-md border border-transparent bg-transparent px-2 py-2.5 text-left text-[13px] leading-5 text-ink-soft transition-colors hover:bg-muted/50 hover:text-ink focus-visible:bg-muted/50 focus-visible:text-ink"
               onClick={() => onPickPrompt(suggestion.prompt, suggestion.entryAction)}
             >
               <span className="inline-flex items-start gap-2">
                 <span
                   className={cn(
-                    "mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
+                    "mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md",
                     suggestion.badgeClassName,
                   )}
                 >
-                  <suggestion.icon className={cn("h-3.5 w-3.5", suggestion.iconClassName)} />
+                  <suggestion.icon className={cn("h-3.5 w-3.5", suggestion.iconClassName)} aria-hidden="true" />
                 </span>
                 <span>{suggestion.prompt}</span>
               </span>

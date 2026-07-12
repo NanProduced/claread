@@ -2,6 +2,8 @@
 
 import {
   BookPlus,
+  Check,
+  ChevronDown,
   Copy,
   FileText,
   GitBranch,
@@ -10,6 +12,7 @@ import {
   PencilLine,
   Quote,
   PanelRightOpen,
+  PictureInPicture2,
   RotateCcw,
   Search,
   Sparkles,
@@ -65,6 +68,12 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Loader } from "@/components/ui/loader";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { SystemMessage } from "@/components/ui/system-message";
 import { ClareadAiMark } from "@/components/brand/ClareadAiMark";
 import { IconButton } from "@/components/primitives/icon-button";
@@ -144,7 +153,7 @@ const workspaceRelatedRecordItemClassName = cn(
 );
 const workspaceLauncherClassName = cn(
   readerCommandControl,
-  "group fixed bottom-[5.25rem] right-4 z-40 h-14 w-14 rounded-full border border-hairline/85",
+  "group fixed bottom-[5.25rem] right-4 z-[var(--reader-z-floating-ask)] h-14 w-14 rounded-full border border-hairline/85",
   "bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] text-ink shadow-[0_14px_34px_rgba(17,17,17,0.08)] hover:border-muted hover:bg-reader-paper hover:shadow-[0_18px_38px_rgba(17,17,17,0.1)] active:scale-[0.98] active:bg-[linear-gradient(180deg,rgba(246,243,236,0.98),rgba(241,237,227,1))] active:shadow-[0_10px_24px_rgba(17,17,17,0.08)]",
   "dark:bg-[linear-gradient(180deg,rgba(42,47,53,0.96),rgba(30,34,39,0.98))] dark:text-ink dark:shadow-[0_14px_34px_rgba(0,0,0,0.28)] dark:hover:border-muted dark:hover:bg-[#2a2f35] dark:active:bg-[linear-gradient(180deg,rgba(38,43,49,0.98),rgba(28,32,37,1))] dark:active:shadow-[0_10px_24px_rgba(0,0,0,0.22)]",
   "md:bottom-6 md:right-6",
@@ -1160,6 +1169,63 @@ function CurrentRecordChip({ recordTitle }: { recordTitle?: string | null }) {
         <AttachmentInfo className="max-w-[12rem] text-xs sm:max-w-[15rem]" />
       </Attachment>
     </Attachments>
+  );
+}
+
+function truncateProvenanceDetail(value: string, max = 80): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= max) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+function AskProvenanceLine({
+  summary,
+  details,
+}: {
+  summary: string;
+  details: Array<{ label: string; value: string }>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hasDetails = details.length > 0;
+  const summaryClassName =
+    "inline-flex max-w-full items-center gap-1 text-[11px] leading-4 text-muted-foreground";
+
+  return (
+    <div className="px-4 pt-1.5">
+      {hasDetails ? (
+        <button
+          type="button"
+          onClick={() => {
+            setExpanded((prev) => !prev);
+          }}
+          aria-expanded={expanded}
+          className={cn(
+            summaryClassName,
+            "transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20",
+          )}
+        >
+          <span className="truncate">{summary}</span>
+          <ChevronDown
+            aria-hidden="true"
+            className={cn("h-3 w-3 shrink-0 transition-transform", expanded && "rotate-180")}
+          />
+        </button>
+      ) : (
+        <p className={summaryClassName}>{summary}</p>
+      )}
+      {expanded && hasDetails ? (
+        <ul className="mt-1 space-y-0.5 text-[11px] leading-4 text-muted-foreground">
+          {details.map((detail, index) => (
+            <li key={`${detail.label}-${index}`} className="flex gap-1">
+              <span className="shrink-0 text-ink/60">{detail.label}：</span>
+              <span className="truncate">{detail.value}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 
@@ -2787,6 +2853,8 @@ function StarterState({
 export type AiWorkspaceSurface = "sidecar" | "floating";
 
 export interface AiWorkspacePanelProps {
+  layout?: "docked" | "overlay";
+  onChangeSurface?: (surface: AiWorkspaceSurface) => void;
   open: boolean;
   presentation?: "intensive" | "immersive";
   surface?: AiWorkspaceSurface;
@@ -2815,9 +2883,13 @@ export interface AiWorkspacePanelProps {
   onToggle: () => void;
   onAnnotationFeedback?: (params: { entryType: string; entryId: string }) => void;
   analysisRecordId?: string;
+  capacityDowngradeNotice?: string | null;
+  onDismissCapacityDowngradeNotice?: () => void;
 }
 
 export function AiWorkspacePanel({
+  layout = "overlay",
+  onChangeSurface,
   attachments,
   liveContextAttachment = null,
   pageIdentity,
@@ -2839,15 +2911,19 @@ export function AiWorkspacePanel({
   onComposerTextareaBlur,
   onComposerTextareaFocus,
   onPanelPointerDownOutsideComposer,
-  onOpenSidecar,
   onPendingQuickActionConsumed,
   onSupplementDeleted,
   onRemoveAttachment,
   onToggle,
   onAnnotationFeedback,
   analysisRecordId,
+  capacityDowngradeNotice,
+  onDismissCapacityDowngradeNotice,
 }: AiWorkspacePanelProps) {
   const isFloatingSurface = surface === "floating";
+  const [liveAnnouncement, setLiveAnnouncement] = useState("");
+  const panelHeadingRef = useRef<HTMLHeadingElement>(null);
+  const explicitSurfaceSwitchRef = useRef<AiWorkspaceSurface | null>(null);
   const isReadingRecordScope = recordScope === "reading_record";
   const supportsRelatedRecordContext = !isReadingRecordScope;
   const scopedReaderAskUrl = (pathname: string) => {
@@ -2890,6 +2966,7 @@ export function AiWorkspacePanel({
   const hydrationRef = useRef(0);
   const initInProgressRef = useRef(false);
   const sseAbortRef = useRef<AbortController | null>(null);
+  const provenanceSignatureRef = useRef<string | null>(null);
 
   // Abort in-flight SSE and reset init guard when panel closes or component unmounts
   useEffect(() => {
@@ -2936,6 +3013,70 @@ export function AiWorkspacePanel({
   const composerContextAttachments = liveContextAttachment
     ? visibleContextAttachments.filter((attachment) => askAttachmentKey(attachment) !== askAttachmentKey(liveContextAttachment))
     : visibleContextAttachments;
+
+  const hasProvenancePageIdentity = Boolean(recordTitle?.trim());
+  const hasProvenanceLiveSelection = Boolean(liveContextAttachment);
+  const provenanceNoteCount = composerContextAttachments.length;
+  const provenanceParts: string[] = [];
+  if (hasProvenancePageIdentity) {
+    provenanceParts.push("当前文章");
+  }
+  if (hasProvenanceLiveSelection) {
+    provenanceParts.push("选中句");
+  }
+  if (provenanceNoteCount > 0) {
+    provenanceParts.push(`${provenanceNoteCount} 条笔记`);
+  }
+  const provenanceJoinedParts = provenanceParts.join(" · ");
+  const provenanceSummary =
+    provenanceParts.length > 0 ? `基于：${provenanceJoinedParts}` : "仅按你的问题回答";
+  const provenanceDetails: Array<{ label: string; value: string }> = [];
+  if (recordTitle?.trim()) {
+    provenanceDetails.push({ label: "当前文章", value: recordTitle.trim() });
+  }
+  if (liveContextAttachment) {
+    const selectionText = liveContextAttachment.selectedText?.trim();
+    provenanceDetails.push({
+      label: "选中句",
+      value: truncateProvenanceDetail(selectionText || askAttachmentLabel(liveContextAttachment)),
+    });
+  }
+  composerContextAttachments.forEach((attachment, index) => {
+    provenanceDetails.push({
+      label: `笔记 ${index + 1}`,
+      value: truncateProvenanceDetail(askAttachmentLabel(attachment)),
+    });
+  });
+  const provenanceSignature = [
+    pageIdentity.recordId ?? "",
+    ...provenanceDetails.map((detail) => `${detail.label}:${detail.value}`),
+  ].join("\u001f");
+  useEffect(() => {
+    if (provenanceSignatureRef.current === null) {
+      provenanceSignatureRef.current = provenanceSignature;
+      return;
+    }
+    if (provenanceSignatureRef.current !== provenanceSignature) {
+      provenanceSignatureRef.current = provenanceSignature;
+      if (provenanceJoinedParts.length > 0) {
+        setLiveAnnouncement(`Ask Claread 上下文已更新：${provenanceJoinedParts}`);
+      }
+    }
+  }, [provenanceSignature, provenanceJoinedParts]);
+
+  useEffect(() => {
+    if (explicitSurfaceSwitchRef.current !== surface) {
+      return;
+    }
+    explicitSurfaceSwitchRef.current = null;
+    setLiveAnnouncement(
+      surface === "floating"
+        ? "Ask Claread 已切换为浮窗，位于右下角。"
+        : "Ask Claread 已切换为侧边栏。",
+    );
+    panelHeadingRef.current?.focus();
+  }, [surface]);
+
   async function fetchThreadList() {
     const payload = await fetchJson<{ items: ReaderAskThreadSummaryDto[] }>(
       isReadingRecordScope
@@ -3670,7 +3811,7 @@ export function AiWorkspacePanel({
         type="button"
         className={cn(`ai-workspace-launcher ai-workspace-launcher--${presentation}`, workspaceLauncherClassName, launcherVisibilityClass)}
         onClick={onToggle}
-        aria-label="打开 AI 工作区"
+        aria-label="打开 Ask Claread"
         title="打开 Ask Claread"
       >
         <ClareadAiMark
@@ -3683,14 +3824,20 @@ export function AiWorkspacePanel({
 
   return (
     <aside
+      aria-labelledby="ask-claread-panel-heading"
       className={cn(
         "ai-workspace-panel",
+        `ai-workspace-panel--layout-${layout}`,
         `ai-workspace-panel--${presentation}`,
         `ai-workspace-panel--surface-${surface}`,
-        "fixed z-50 flex flex-col overflow-hidden rounded-xl border bg-background shadow-lg",
-        isFloatingSurface
-          ? "inset-x-4 bottom-4 max-h-[min(76vh,44rem)] md:left-1/2 md:right-auto md:bottom-auto md:top-[18vh] md:w-[min(42rem,calc(100vw-2rem))] md:-translate-x-1/2 xl:top-[14vh] 2xl:left-1/2 2xl:right-auto 2xl:inset-y-auto 2xl:w-[min(42rem,calc(100vw-2rem))] 2xl:min-w-0 2xl:max-h-[min(76vh,44rem)]"
-          : "inset-x-3 bottom-3 max-h-[82vh] 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[var(--reader-record-ask-panel-width)] 2xl:min-w-0 2xl:max-h-none",
+        layout === "overlay"
+          ? cn(
+              "fixed z-[var(--reader-z-floating-ask,40)] flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg",
+              isFloatingSurface
+                ? "inset-x-4 bottom-4 max-h-[min(68vh,38rem)] md:inset-x-auto md:right-4 md:bottom-4 md:w-[min(26rem,calc(100vw-2rem))]"
+                : "inset-x-3 bottom-3 max-h-[82vh] 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[var(--reader-record-ask-panel-width)] 2xl:min-w-0 2xl:max-h-none",
+            )
+          : "relative flex flex-col overflow-hidden bg-background h-full w-full",
       )}
       onPointerDownCapture={(event) => {
         const target = event.target instanceof HTMLElement ? event.target : null;
@@ -3706,25 +3853,57 @@ export function AiWorkspacePanel({
         onPanelPointerDownOutsideComposer?.();
       }}
     >
-      <div className="border-b bg-background px-4 py-3">
+      <div className="ai-workspace-panel__header border-b bg-background px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             <ClareadAiMark size="sm" className="shadow-none" badgeClassName="shadow-none" />
             <div className="min-w-0">
-              <h2 className="truncate text-[15px] font-semibold tracking-[-0.02em] text-ink">Ask Claread</h2>
+              <h2 ref={panelHeadingRef} id="ask-claread-panel-heading" tabIndex={-1} className="truncate text-[15px] font-semibold tracking-[-0.02em] text-ink outline-none">Ask Claread</h2>
+              <div aria-live="polite" role="status" className="sr-only">{liveAnnouncement}</div>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {isFloatingSurface && onOpenSidecar ? (
-              <IconButton
-                variant="quiet"
-                size="sm"
-                onClick={onOpenSidecar}
-                aria-label="在侧边栏打开 Ask Claread"
-                title="在侧边栏打开"
-              >
-                <PanelRightOpen aria-hidden="true" className="h-4 w-4" />
-              </IconButton>
+            {onChangeSurface ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="ai-workspace-panel__surface-trigger inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted hover:bg-muted/10 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
+                    aria-label="选择 Ask Claread 面板形式"
+                    title="选择面板形式"
+                  >
+                    {isFloatingSurface ? (
+                      <PictureInPicture2 aria-hidden="true" className="h-3.5 w-3.5" />
+                    ) : (
+                      <PanelRightOpen aria-hidden="true" className="h-3.5 w-3.5" />
+                    )}
+                    <span>{isFloatingSurface ? "浮窗" : "侧边栏"}</span>
+                    <ChevronDown aria-hidden="true" className="h-3 w-3 opacity-70" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" sideOffset={6} className="min-w-36">
+                  {([
+                    ["sidecar", "侧边栏", PanelRightOpen],
+                    ["floating", "浮窗", PictureInPicture2],
+                  ] as const).map(([nextSurface, label, Icon]) => (
+                    <DropdownMenuItem
+                      key={nextSurface}
+                      disabled={surface === nextSurface}
+                      onSelect={() => {
+                        if (surface === nextSurface) {
+                          return;
+                        }
+                        explicitSurfaceSwitchRef.current = nextSurface;
+                        onChangeSurface(nextSurface);
+                      }}
+                    >
+                      <Icon aria-hidden="true" className="h-4 w-4" />
+                      <span className="flex-1">{label}</span>
+                      {surface === nextSurface ? <Check aria-hidden="true" className="h-4 w-4 text-ink" /> : null}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : null}
             <IconButton
               variant="quiet"
@@ -3741,13 +3920,33 @@ export function AiWorkspacePanel({
               variant="quiet"
               size="sm"
               onClick={onToggle}
-              aria-label={isFloatingSurface ? "关闭 Ask Claread" : "收起 AI 工作区"}
+              aria-label={isFloatingSurface ? "关闭 Ask Claread" : "收起 Ask Claread"}
             >
               <X aria-hidden="true" className="h-4 w-4" />
             </IconButton>
           </div>
         </div>
       </div>
+
+      {capacityDowngradeNotice ? (
+        <div
+          data-testid="ask-capacity-downgrade-notice"
+          className="flex items-start gap-2 border-b border-hairline/60 bg-surface-warm/60 px-4 py-2 text-[12px] leading-4 text-muted-foreground"
+          role="status"
+        >
+          <span className="flex-1">{capacityDowngradeNotice}</span>
+          {onDismissCapacityDowngradeNotice ? (
+            <button
+              type="button"
+              onClick={onDismissCapacityDowngradeNotice}
+              aria-label="关闭说明"
+              className="shrink-0 rounded p-0.5 text-muted-foreground/70 transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
+            >
+              <X aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden pb-2 pt-3">
         {loading ? (
@@ -3799,6 +3998,8 @@ export function AiWorkspacePanel({
           </ConversationShell>
         )}
       </div>
+
+      <AskProvenanceLine summary={provenanceSummary} details={provenanceDetails} />
 
       <AskComposer
         onSubmit={handleSend}
