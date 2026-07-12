@@ -2,7 +2,8 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SidebarRail } from ".";
@@ -95,5 +96,18 @@ describe("SidebarRail z-index contract", () => {
     expect(sidebarSource).toMatch(
       /<DropdownMenuContent[\s\S]*?className="!z-\[var\(--app-z-shell-overlay\)\] w-60"[\s\S]*?style=\{\{ zIndex: "var\(--app-z-shell-overlay\)" \}\}/,
     );
+  });
+  it("opens the user menu inside the sidebar interaction boundary", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <SidebarRail pathname="/app/reader-record/record_1" sidebarMode="locked" />,
+    );
+    const sidebar = container.querySelector<HTMLElement>('[data-app-sidebar="rail"]');
+    expect(sidebar).not.toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "打开用户菜单" }));
+
+    const menu = await screen.findByRole("menu");
+    expect(sidebar?.contains(menu)).toBe(true);
   });
 });

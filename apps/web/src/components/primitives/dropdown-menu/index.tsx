@@ -22,20 +22,24 @@ function DropdownMenuPortal(props: React.ComponentProps<typeof DropdownMenuPrimi
   return <DropdownMenuPrimitive.Portal {...props} />
 }
 
+type DropdownMenuContentProps = React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content> & {
+  portalled?: boolean;
+};
+
 const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(function DropdownMenuContent({ className, sideOffset = 8, ...props }, ref) {
-  return (
-    <DropdownMenuPrimitive.Portal>
-      <DropdownMenuPrimitive.Content
-        ref={ref}
-        sideOffset={sideOffset}
-        className={cn("z-50 min-w-52", panelSurface({ padding: "sm" }), className)}
-        {...props}
-      />
-    </DropdownMenuPrimitive.Portal>
-  )
+  DropdownMenuContentProps
+>(function DropdownMenuContent({ className, sideOffset = 8, portalled = true, ...props }, ref) {
+  const content = (
+    <DropdownMenuPrimitive.Content
+      ref={ref}
+      sideOffset={sideOffset}
+      className={cn("z-50 min-w-52", panelSurface({ padding: "sm" }), className)}
+      {...props}
+    />
+  );
+
+  return portalled ? <DropdownMenuPrimitive.Portal>{content}</DropdownMenuPrimitive.Portal> : content;
 })
 
 const DropdownMenuItem = React.forwardRef<

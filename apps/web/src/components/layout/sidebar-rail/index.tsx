@@ -314,6 +314,7 @@ export function SidebarRail({
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent
+                portalled={false}
                 side="top"
                 align="start"
                 className="!z-[var(--app-z-shell-overlay)] w-60"
