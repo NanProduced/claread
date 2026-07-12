@@ -60,7 +60,7 @@ Reader enhancement 的当前主链路按层分开理解：
 6. T4.2a-R2 三态执行预算与切换安全护栏已完成代码级实施，**已通过代码级 review（T4.2a-R2-R3a 补充 Test M + 文档终态同步，详见下方 T4.2a-R2 章节）**：per-layer `ExecutionBudget` 确定性成本上限（`max_effective_calls = planned * 3`，与 `max_attempts=3` 对齐）；batch-first/fallback 不会导致同一 layer 重复执行或额外 LLM 调用；route flip 时旧 fingerprint job 被 fence（claim-time + publish-time `_validate_fence`）；预算耗尽是 finalizable stopped reason，finalizer 只对 exhausted layer force-fail 非终态 jobs 避免死锁（**R2-R3 修正：full + partial exhaustion 都从 `BUDGET_LAYER_TO_JOB_TYPES` 计算，display_title 不被误伤**）；suppressed legacy job 被正式 supersede 不形成热循环（**R2-R3 修正：legacy cleanup 包裹显式事务**）；budget-denied 写入持久 runtime span metadata；publish fence 由 worker 层完成真实 job/run transition（**R2-R3 澄清并加强 Test J 断言**）；fingerprint 采用保守排序集合（方案 B）。V1 的首次成功样本证明 guardrails 未干扰正常生产 topology，但没有触发 retry / budget exhaustion，因此不替代 R2 deterministic failure-path 验收。
 7. bounded enhancement planner + specialized structured workers 的设计评估应先聚焦 long/very-long selective enhancement，优先减少 vocabulary/grammar 的空跑与重复扫描，而不是一开始扩到全部 translation。
 8. Provider prompt cache / cache-hit 归因可作为后续成本杠杆继续验证，但它是成本优化项，不是三模式路由设计的替代品。
-9. V2 扩展验证保持独立：碎段新闻、超长文和 no-op window 不得与已关闭的 V1 混做。
+9. **T4.2a-V2-R1 已完成**（deterministic）：碎段新闻 / STRUCTURED 边界 / >4000 words 超长文 / no-op grammar window 四类固定样本，用 fake executor 验证 route、job topology、fingerprint/policy、reading-order publish、readiness 与 no-op 终态；详见下方 T4.2a-V2-R1 章节。不得与已关闭的 V1 混做真实 LLM。
 10. M6 先做 debounce / state preservation，再做 SSE 和 patch merge。SSE 本身不能解决全量 reload 闪烁。
 11. T4.2 bounded LLM document profiler **继续暂缓**；只有 deterministic router 在真实边界样本上出现稳定误判时才重新评估。
 
@@ -91,6 +91,10 @@ Reader enhancement 的当前主链路按层分开理解：
 | T4.1c | short/medium compact grammar path | 4-8h | T4.1a/T4.1b | 短文与 structured batch 文章的 grammar 不再默认走重型全窗口空跑；候选生成更紧凑，publish 仍受 budget/density/anchor 约束（已完成实施/待验收：详见"当前进度"T4.1c 章节） |
 | T4.2a-R1 | three-mode evidence parity and observability closure | 4-8h | T4.1c | acceptance harness 忠实复现 production topology（WorkerLoop + CompletionFinalizer + coverage_complete）；注入 DevFakeGrammarBatchExecutor/WindowExecutor；修复 grammar batch ai_usage_events 漏传 usage_data；三态固定覆盖测试（fake executor，仅代码级合同闭环，真实 LLM 验收暂缓）（已完成实施：详见"当前进度"T4.2a-R1 章节） |
 | T4.2a-R2 | three-mode execution budget and cutover safety | 4-8h | T4.2a-R1 | per-layer 确定性执行预算（planned / consumed / exhausted）；batch-first/fallback 不重复执行；route flip fencing（claim + publish）；预算耗尽不错误进入 coverage_complete；usage evidence 区分 attempted/executed/published/budget-denied（fake executor，仅代码级合同闭环，真实 LLM 验收暂缓）（**代码级 review 通过 — T4.2a-R2-R3a display-title regression + 文档终态同步**：详见"当前进度"T4.2a-R2 章节） |
+| T4.2a-O1 | usage / cost / latency observability contract audit | 3-6h | T4.2a-V1 | 只读追踪 usage/cache/latency 从 provider result 到 usage event/runtime span/page readiness 的数据链；解释现有缺口并定义权威指标、可计算性矩阵和最小后续实现切片；不改生产代码、不调用 LLM（**已完成**） |
+| T4.2a-O2 | usage presence diagnostics & durable execution correlation | 4-8h | T4.2a-O1 | `attempt_ordinal`/`execution_id`/`agent_run_id` 关联；usage presence diagnostics；event/span mismatch 诊断；translation/vocabulary/grammar/window/display_title 传播；deterministic tests + gated real-LLM（**O2-V1-R1 closed：隔离 SHORT_BATCH 4/4 correlation + agent_run_id + event/span token alignment；Sample A 仍 UNRESOLVED；Cost/Latency 仍 PARTIAL**） |
+| T4.2a-O3 | duration provenance & provider-request observability | 4-8h | T4.2a-O2 | 单独记录 agent-run/executor duration；只有 provider 返回可归属 timing 时才记录 provider-request duration，否则显式 unavailable；不得改写 `latency_ms` 语义或宣称 provider latency（**代码级完成 / deterministic tests；Sample A 仍 UNRESOLVED；Cost/Latency 仍 PARTIAL**） |
+| T4.2a-V2-R1 | three-mode boundary & very-long fixed-sample validation | 4-8h | T4.2a-R1/R2 | 碎段新闻 SHORT_BATCH、STRUCTURED 边界、>4000 words GROUPED_WINDOWED、no-op grammar window；deterministic fixture/fake executor；route/topology/fingerprint/publish/readiness/no-op（**代码级完成：5 focused tests passed；无生产代码改动；详见下方 T4.2a-V2-R1**） |
 | T4.2 | bounded LLM document profiler | 4-8h | T4.1a | LLM 只返回 genre/structure/schema_risk/selective hints；失败时 deterministic fallback；不直接决定流程（**暂缓**） |
 | T4.3 | strategy planner | 4-8h | T4.1b/T4.2 | planner 选择 short batch、structured batch、grouped/windowed、section longform、selective longform |
 | T4.3a | longform bounded enhancement planner | 4-8h | T4.3 | 先为 long/very-long 的 vocabulary/grammar 选择高价值 targets；translation 仍优先沿用独立 semantic group planner，除非后续证据支持扩权 |
@@ -333,7 +337,64 @@ Reader enhancement 的当前主链路按层分开理解：
 - Observability gap：Sample A grammar usage event 存在但无 `usage_snapshot`，recording 层收到 `usage_data=None`；同一路径 B/C/D 正常。`extract_run_usage(result)` 在 V1 前已经存在，根因仍为 unresolved intermittent usage attribution gap，不能描述为 worker 修复已落地。per-job provider latency 与真实用户感知延迟尚不可用。
 - Vocabulary 质量必须按 discriminated union 评估：`vocab_highlight` 检查 `headword` / `brief_explanation` / `reason`；`phrase_gloss` 检查 `phrase` / `phrase_type` / `gloss`；`context_gloss` 检查 `display` / `gloss` / `reason`。不得跨 subtype 强求不存在的 `headword` 或 `gloss` 字段。
 - **Progressive Transition UX 未验证**：现有 records 已是 `coverage_complete` final-ready，不能仅凭它们证明 loading、first layer、partial-ready、layer-ready 实时过渡或 live update 交互保持。后续 Progressive UX 应使用 deterministic fixture / event replay，不重跑 LLM、不修改本 V1 范围。
-- 碎段新闻、超长文、no-op window 保持独立 V2 任务；T4.2 bounded LLM document profiler 继续暂缓，只有 deterministic router 出现稳定边界误判时再评估。
+- 碎段新闻、超长文、no-op window 已由 **T4.2a-V2-R1** 完成 deterministic 合同验证（见下）；真实 LLM / 页面验收仍后置。T4.2 bounded LLM document profiler 继续暂缓，只有 deterministic router 出现稳定边界误判时再评估。
+
+#### T4.2a-V2-R1 three-mode boundary & very-long fixed samples（已完成 / deterministic）
+
+1. 目标：在不调用真实 LLM、不改 router 阈值/prompt/model 的前提下，用固定边界样本锁定三态 route、job topology、fingerprint/policy、publish/readiness 与 no-op grammar window 合同。
+2. 样本矩阵：
+   - **碎段新闻**（golden `fragmented_news.txt`，≈263 words）→ `SHORT_BATCH`：4 条 whole-article batch jobs；无 `:window:` / 无 per-unit fan-out；Translation Group 保持 anchor 成员与非 one-anchor-one-group；effective = planned = 1/层。
+   - **STRUCTURED 边界**（≈1540 words，UTF-16 ≤ 12000）→ `STRUCTURED_BATCH`：topology 与 short 同为 4 batch jobs，但 fingerprint/policy 为独立 `*_structured_v1` / `*_structured_bootstrap_v1`；compact grammar batch，无 Z+ window。
+   - **超长文 >4000 words** → `GROUPED_WINDOWED`：translation/vocabulary/grammar 均为 multi-window；translation/vocabulary jobs 断言 `article_route=grouped_windowed` 与 `:window:` target key；legacy Z+ grammar job 断言 `grammar_bundle_window_v1` 且 `target_key == input_json.window_id`（window UUID identity）；effective calls = planned window job 数（first-success）；translation layers 按 `reading_units.order_index` 阅读序；允许 grammar density 导致部分 window `no_op` 与 `completed_with_no_op`。
+   - **no-op grammar window**：empty executor → 全部 analysis window `status=no_op`、`no_op_cause=llm_empty`；window job `succeeded` + `attempt_count=1`（不重试）；executor call_count == planned windows；`coverage_complete` / `completed_with_no_op`；grammar layers=0，trans/vocab 仍 full publish。
+3. Calls 口径：planned = bootstrap job 数；effective = fake executor 实际调用次数；max ≈ planned×3（R2）；no-op **计 1 次 effective call**，但不产生重复 claim/retry。本任务不声明真实 token/成本。
+4. 测试：`tests/test_reader_orchestration_v2_boundary_samples.py`（5 passed）；ruff F,I 与 `git diff --check` clean。**无生产代码改动**；未发现需先红后绿的 route/合同缺陷。
+5. 过程证据：`docs/initiatives/reader-agentic-orchestration/tmp/TMP-t42a-v2-r1-boundary-samples-2026-07-13.md`。
+6. 未解决：真实 LLM 下超长文 no-op 比例/质量；Page UX；跨 window `published_at` 全局序（T3.1 风险 A 既有锁定）；Sample A / Cost-Latency PARTIAL 不变；T4.2 profiler 仍暂缓。
+
+### T4.2a-O1. Usage / Cost / Latency Observability Contract Audit
+
+状态：**closed / read-only audit complete**。只读合同审计已完成；Cost/Latency Gate 仍为 PARTIAL；Sample A grammar 0-token 根因 **UNRESOLVED**。
+
+- 目标：从 provider/agent result 开始，逐层核对 `extract_run_usage`、worker execution result、`ai_usage_events`、`reader_runtime_spans`、job/run/event 时间戳与页面 readiness，明确每个成本/时延字段的生成者、转换、持久化位置、消费者和缺失语义。
+- 必须解释的已知缺口：Sample A grammar usage event 有记录但无 `usage_snapshot` / token；其他 samples 同路径正常；`ai_usage_events.latency_ms` 不完整或为 NULL；cache hit/miss 字段分散在列与 `metadata_json.usage_snapshot`；缺少可靠 provider bill 与前端用户感知时间。
+- 权威口径：区分 estimated 与 billed cost；区分 input/cache-read/cache-write/output/reasoning tokens；区分 provider latency、worker duration、pipeline-root duration、submit→first-layer、per-layer-ready、coverage-complete 与 browser-perceived latency。禁止用 claim `attempt_count` 代替 effective provider call，也禁止用 pipeline wall-clock 伪装 provider latency。`(reader_job_id, reader_run_id)` 只能标识 job，无法区分同一 job 的多个 retry。
+- 交付：字段 lineage、现状矩阵（available / derivable / missing / unreliable）、四个 V1 records 的只读 evidence table、根因已证/未知边界、建议的最小后续实现切片及对应 deterministic tests。若无法从现有证据确定根因，必须标记 unresolved，不得推测“当前代码已修复”。
+- 不在本轮决定 provider/model/window/retry 优化，不调整成本策略，不实现 dashboard，不进入 Progressive UX、固定样本 V2、T4.2 profiler 或 T4.3 planner。
+
+### T4.2a-O2. Usage Presence Diagnostics & Durable Execution Correlation
+
+状态：**T4.2a-O2-V1-R1 closed。** 隔离 `SHORT_BATCH` record `f0a9163f-5a76-4fed-9974-1cd75b15d737` 在唯一 harness lease 下完成 4/4 jobs、`coverage_complete` 和四层 correlation：`attempt_ordinal=1`、`execution_id` / `agent_run_id` 非空且 event/span 一致、tokens 一致、无 retry/stale/superseded。`run_reader_scoped_agent` 已覆盖全部 Reader layer 真实 `agent.run`；validation isolation preflight 在进程枚举不可用时 fail closed，并记录 Git HEAD、workspace root、目标源码 SHA-256 与 dirty target-slice，运行后拒绝任何 foreign lease owner。Sample A 根因仍 **UNRESOLVED**；Cost/Latency Gate 仍为 **PARTIAL**。
+
+- 目标：为 Sample A grammar 0-token gap 建立可诊断、可跨 retry 关联的运行证据；只做 usage presence diagnostics 与 execution correlation，不实施 latency / cache pricing / estimated cost / readiness milestone / Browser RUM。
+- **Correlation 合同**：`attempt_ordinal` = claim 后 durable `reader_jobs.attempt_count`；`execution_id` = 每次 claimed-job worker execution 新 mint 的 UUID；`agent_run_id` = 每次 `agent.run()` 新 mint 的 UUID（不得冒充 provider request id）。关联键推荐 `reader_job_id + attempt_ordinal + execution_id`。
+- **Grammar window 生命周期（O2-R1a）**：`execution_id` 在 `pipeline_runner._run_grammar_window_attempt` claim 成功后由外层 `bind_execution_from_claim` 绑定，覆盖 process_window_job → publish → usage event → terminal span/transition；`process_window_job` **不再** 挂内层 correlation decorator（避免同一 attempt 双 `execution_id`）。
+- **持久化**：无 migration。correlation 写入 `ai_usage_events.metadata_json` 与 `reader_runtime_spans.metadata_json`（schema kind `usage_execution_correlation` / version `1`），集中构造于 `app/services/ai_usage/execution_diagnostics.py`。
+- **Diagnostics**：在 adapter / event DTO / normalize / event persist / span write 边界记录结构化诊断码。不写 prompt、article、raw provider response、API key。
+- **Mismatch**：同一 execution 的 event 与 span token totals 不一致时只记 diagnostic，不自动篡改任一侧、不阻止 annotation publish。
+- **覆盖**：translation / vocabulary / grammar unit+batch / display title 在 worker `process_claimed_*` 绑定；grammar window 在 pipeline_runner claim 后外层绑定。
+- **测试证据**：reviewer 现场执行 `uv run pytest tests/test_usage_execution_diagnostics.py -q` 得到 **62 passed**；`uv run pytest tests/test_grammar_window_worker.py -q` 得到 **25 passed**；完整 O2 target slice 的 Ruff `F/I` 与 scoped `git diff --check` 通过。不得沿用过期的 53/71/83/96 passed 或 anyio-backend-inflation 口径。
+- 不得写“token/cost/latency 已可靠”；不得将 Cost/Latency Gate 改为 PASS。
+
+### T4.2a-O3. Duration Provenance & Provider-Request Observability
+
+状态：**代码级完成（deterministic tests）**。未调用真实 LLM；未改 `ai_usage_events.latency_ms` 语义；Sample A 仍 **UNRESOLVED**；Cost/Latency Gate 仍 **PARTIAL**。
+
+- **字段字典（metadata_json，schema `duration_provenance` v1）**：
+
+| 字段 | 测量边界 | 时钟/来源 | 持久化 | 可否代表 provider duration |
+|------|----------|-----------|--------|---------------------------|
+| `agent_run_duration_ms` | 本地 `agent.run` 包裹 | `time.perf_counter`（local monotonic） | event/span metadata | **否** |
+| `agent_run_duration_source` | 固定 `local_monotonic` | 标签 | 同上 | 否 |
+| `agent_run_duration_boundary` | 固定 `agent.run` | 标签 | 同上 | 否 |
+| `provider_request_duration_ms` | 仅专用 adapter envelope | `result._claread_provider_response_timing` | 同上 | **仅当 status=available** |
+| `provider_request_duration_status` | `available` / `unavailable` | 派生 | 同上 | — |
+| `provider_request_duration_source` | `provider_adapter_envelope` / `none` | 派生 | 同上 | — |
+| `provider_request_duration_field` | envelope 内 duration key | 字符串 | 同上 | — |
+
+- **非声明**：worker_tick `duration_ms`（PG wall）、pipeline-root duration、claim wait **不是** provider latency；**不得**把上述任一值写入或冒充 `latency_ms`。
+- **实现落点**：`run_reader_scoped_agent` 计时 + `DurationProvenance`；`merge_correlation_metadata` 合并 duration；success/failure span 与 usage event 持久化；异常路径仍保留 agent-run duration 与 provider unavailable。
+- **Provider timing fail-closed**：只有 `kind=claread_provider_response_timing` / `version=1` 的 adapter envelope（`make_provider_response_timing_envelope`）可使 status=`available`。任意 `usage_data`、`usage.details`、`result.timing` / `response_timing` / 同名字段 **一律 unavailable**。
 - T2.1 已有第一轮实现并提交（progressive reload cursor、in-flight guard、scroll/selection best-effort 恢复），但必须在 T1.1a 修复后用真实页面重新验收；前端稳定性不能替代正确的 layer output。
 - 默认 worker / baseline budget 已调整为 `max_ticks=96`、`max_jobs=48`，覆盖当前 6/7 worker slots 下的中等短文样本；这是验收预算，不是最终调度模型。
 - 2026-07-08 fake baseline 验收只能证明 job 数、completion 和测试 fake output 口径；不能证明真实 LLM 下 Translation Group 粒度正确。真实页面已暴露 one-unit-one-group 回归，因此此前 `translation_groups` 数量不能作为 T1.1a 验收依据。
@@ -347,7 +408,7 @@ Reader enhancement 的当前主链路按层分开理解：
 
 1. T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1 已完成代码级实施；**T4.2a-R2 已通过代码级 review（T4.2a-R2-R3a 补充 Test M + 文档终态同步）**：completion state finalizer 已闭合；deterministic router 已替换 legacy raw-char 二元分流；Unicode non-CJK 与 missing-base 两个回归点也已补齐；`STRUCTURED_BATCH` 已升级为独立可审计 runtime mode（fingerprint / policy_version / article_route / document_features 三态区分，route 变化触发 supersede）；短文与 structured batch 文章的 grammar 已走 compact batch path，不再默认走重型 analysis-window 空跑；acceptance harness 已忠实复现 production topology（WorkerLoop + CompletionFinalizer + coverage_complete），grammar batch `ai_usage_events` 漏传 `usage_data` 已修复，三态固定覆盖测试已落地；durable per-layer 执行预算与 route cutover fencing 已实施修复（跨 run 持久预算、fail-closed fallback + legacy job 正式终态、partial/full layer exhaustion 分层 force-fail + display_title 排除、budget-denied 持久观测、publish fence worker 层真实 transition + Test J 强断言、legacy cleanup 显式事务、fingerprint 确定性集合）。下一步不再回头扩这几项 scope。
 2. **T4.2a-V1 已正式关闭**：Contract / Output Integrity / sample-level Semantic Quality / Page UX PASS；Cost/Latency Baseline 仍 PARTIAL，真实降本增效尚未被证明。**T4.2 bounded LLM document profiler 继续暂缓**。
-3. 下一阶段优先：measurement/observability（可靠成本与用户感知时延）、Progressive UX 的 deterministic fixture / event replay、固定样本 V2（碎段新闻 / 超长文 / no-op window）。不要把 profiler、planner、SSE 与 V2 扩样本混成一个无边界任务。
+3. 下一阶段优先：measurement/observability（可靠成本与用户感知时延）、Progressive UX 的 deterministic fixture / event replay。**T4.2a-V2-R1 固定边界样本 deterministic 已完成**，不要把 profiler、planner、SSE 与已关闭的 V2-R1 混成一个无边界任务。
 4. T4.2 bounded LLM document profiler 与 T4.3 strategy planner 仍作为后续阶段：bounded profiler 只返回 genre/structure/schema_risk/selective hints；planner 选择 short batch、structured batch、grouped/windowed、section longform、selective longform。T4.1b/T4.1c 的三态可审计 runtime mode + compact grammar batch path 是 planner 的稳定输入。只有 deterministic router 在真实边界样本上出现稳定误判时才重新评估 profiler。
 5. bounded enhancement planner + specialized structured workers 的第一落点仍应是 long/very-long selective enhancement：planner 只负责选择候选 enhancement targets，专业 worker 负责 schema output 与 publish；translation semantic group planner 继续保持独立。
 6. T5.1 deterministic navigation outline 仍然是 very-long lazy enhancement 的先决条件；semantic outline 只面向长文/超长文，不默认对所有文章生成。
@@ -1163,11 +1224,12 @@ Focused tests 已通过：
 
 当前下一步：
 
-1. **Measurement / observability**：可靠实付成本、per-job provider latency、用户感知时延与 Sample A grammar 0-token usage attribution 的独立诊断；在没有同样本对照与账单前不得宣称降本增效。
-2. **Progressive UX fixture / event replay**：用 deterministic fixture 或 event replay 验证 loading → first layer → partial/layer-ready → coverage_complete 与 live update 交互保持；**不重跑 LLM**。
-3. **固定样本 V2**：碎段新闻、>4,000 words 超长文与 no-op window 使用固定样本、预先声明调用上限；与已关闭的 V1 分开。
-4. T4.2 bounded LLM document profiler **继续暂缓**。只有 deterministic router 在真实边界样本上出现稳定误判时才重新评估；不得因为已有真实 baseline 就直接引入自由决策 LLM。
-5. T4.3 strategy planner 与 T5.1 outline-first 合同继续后置；semantic outline 只在长文/超长文策略中启用。
-6. 持续记录 calls、token、pipeline-root latency、首个可用输出时间和人工质量，但在没有同样本对照前不得宣称降本增效。
+1. **T4.2a-O1、T4.2a-O2-V1-R1、T4.2a-O3 代码级**已完成。O3 将 agent-run duration 与 provider-request timing 分层；无 provider timing 时显式 `unavailable`；禁止把 worker/pipeline/agent duration 当作 provider latency 或改写 `latency_ms`。Sample A 仍 UNRESOLVED；Cost/Latency 仍 PARTIAL。
+2. **后续 observability** 可评估 cache token normalization、versioned price snapshot / estimated cost 或 Progressive UX fixture；不得因 O3 宣称 token/cost/latency 已可靠或 Sample A 已修复。
+3. **Progressive UX fixture / event replay**：用 deterministic fixture 或 event replay 验证 loading → first layer → partial/layer-ready → coverage_complete 与 live update 交互保持；**不重跑 LLM**。
+4. **固定样本 V2**：碎段新闻、>4,000 words 超长文与 no-op window 使用固定样本、预先声明调用上限；与已关闭的 V1 分开。
+5. T4.2 bounded LLM document profiler **继续暂缓**。只有 deterministic router 在真实边界样本上出现稳定误判时才重新评估；不得因为已有真实 baseline 就直接引入自由决策 LLM。
+6. T4.3 strategy planner 与 T5.1 outline-first 合同继续后置；semantic outline 只在长文/超长文策略中启用。
+7. 持续记录 calls、token、**分层** duration（agent-run vs provider-request vs worker_tick wall）、首个可用输出时间和人工质量，但在没有同样本对照前不得宣称降本增效。
 
 T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1 与 T4.2a-R2 已完成代码级实施和 deterministic acceptance。**T4.2a-V1 已正式关闭**：Contract / Output Integrity / sample-level Semantic Quality / Page UX PASS；Cost/Latency Baseline PARTIAL。如需 retry force-failed windows、扩展 finalizer 到 RAG substrate，或给 structured batch 独立 grammar budget/prompt/release policy，应分别作为后续独立任务设计。

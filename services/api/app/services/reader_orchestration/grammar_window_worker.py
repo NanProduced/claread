@@ -35,7 +35,7 @@ from app.contracts.annotation import (
     utf16_code_unit_length,
 )
 from app.database import connection as db_connection
-from app.llm.agent_runner import extract_run_usage
+from app.llm.agent_runner import extract_run_usage, run_reader_scoped_agent
 from app.llm.call_guard import assert_real_llm_allowed
 from app.llm.router import build_model_for_route
 from app.llm.routes import MODEL_ROUTE_READER_LAYER_GRAMMAR_BUNDLE
@@ -760,8 +760,8 @@ class PydanticAIGrammarWindowExecutor:
         )
 
     async def _run_agent(self, agent: Agent, prompt: str) -> Any:
-        """执行 agent.run（可被 mock 替换用于测试）。"""
-        return await agent.run(prompt)
+        """执行 Reader-scoped agent.run（可被 mock 替换用于测试）。"""
+        return await run_reader_scoped_agent(agent, prompt)
 
     def _ground_and_convert_candidates(
         self,
@@ -1114,7 +1114,12 @@ class GrammarWindowWorkerService:
         *,
         claim: ClaimResult,
     ) -> dict[str, Any]:
-        """Run the full window-job lifecycle.
+        """Run window preflight + LLM (no publish).
+
+        Correlation scope is owned by
+        ``ReaderEnhancementPipelineRunner._run_grammar_window_attempt`` so
+        process + publish + usage event + span share one ``execution_id``.
+        Do not re-bind execution correlation here (would mint a second id).
 
         Steps:
           1. ``preflight_window_job`` — §8.2 state transition. Short-circuits

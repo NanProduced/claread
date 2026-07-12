@@ -14,7 +14,7 @@ from pydantic_ai import Agent
 from app.config.settings import Settings, get_settings
 from app.contracts.annotation import compute_text_range_hash, slice_by_utf16_offsets
 from app.database import connection as db_connection
-from app.llm.agent_runner import extract_run_usage
+from app.llm.agent_runner import extract_run_usage, run_reader_scoped_agent
 from app.llm.call_guard import assert_real_llm_allowed
 from app.llm.router import build_model_for_route
 from app.llm.routes import MODEL_ROUTE_READER_LAYER_VOCABULARY
@@ -34,6 +34,7 @@ from app.services.ai_usage import (
     AIUsageEventCreate,
     record_ai_usage_event,
 )
+from app.services.ai_usage.execution_diagnostics import with_execution_correlation
 from app.services.analysis.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
@@ -364,7 +365,7 @@ class PydanticAIVocabularyExecutor:
         )
 
     async def _run_agent(self, agent: Agent, prompt: str) -> Any:
-        return await agent.run(prompt)
+        return await run_reader_scoped_agent(agent, prompt)
 
     async def generate(
         self,
@@ -626,7 +627,9 @@ class PydanticAIVocabularyBatchExecutor:
             retries={"tools": 1, "output": 2},
         )
         try:
-            result = await agent.run(_build_vocabulary_batch_prompt(context))
+            result = await run_reader_scoped_agent(
+                agent, _build_vocabulary_batch_prompt(context)
+            )
         except Exception as exc:
             raise VocabularyExecutionError(
                 f"reader_layer_vocabulary batch agent execution failed: {exc}",
@@ -1169,6 +1172,7 @@ class VocabularyWorkerService:
             retry_delay=retry_delay,
         )
 
+    @with_execution_correlation(CAPABILITY_READER_VOCABULARY)
     async def process_claimed_vocabulary_job(
         self,
         *,
@@ -1393,6 +1397,7 @@ class VocabularyWorkerService:
             retry_delay=retry_delay,
         )
 
+    @with_execution_correlation(CAPABILITY_READER_VOCABULARY)
     async def process_claimed_vocabulary_batch_job(
         self,
         *,

@@ -14,7 +14,7 @@ from app.config.settings import Settings, get_settings
 from app.contracts.annotation import slice_by_utf16_offsets
 from app.database import connection as db_connection
 from app.database.json_compat import ensure_json_object, jsonb_param
-from app.llm.agent_runner import extract_run_usage
+from app.llm.agent_runner import extract_run_usage, run_reader_scoped_agent
 from app.llm.call_guard import assert_real_llm_allowed
 from app.llm.router import build_model_for_route
 from app.llm.routes import MODEL_ROUTE_READER_TITLE_GENERATION
@@ -27,6 +27,7 @@ from app.services.ai_usage import (
     AIUsageEventCreate,
     record_ai_usage_event,
 )
+from app.services.ai_usage.execution_diagnostics import with_execution_correlation
 from app.services.analysis.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
@@ -169,7 +170,7 @@ class PydanticAIDisplayTitleGenerator:
         )
 
     async def _run_agent(self, agent: Agent, prompt: str) -> Any:
-        return await agent.run(prompt)
+        return await run_reader_scoped_agent(agent, prompt)
 
     async def generate(
         self,
@@ -367,6 +368,7 @@ class DisplayTitleWorkerService:
             retry_delay=retry_delay,
         )
 
+    @with_execution_correlation(CAPABILITY_READER_TITLE_GENERATION)
     async def process_claimed_display_title_job(
         self,
         *,

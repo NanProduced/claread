@@ -395,7 +395,7 @@ def _make_claim() -> ClaimResult:
         target_key=str(uuid4()),
         expected_generation=1,
         operation_fingerprint=ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
-        attempt_count=0,
+        attempt_count=1,
         lease_owner="test_window_worker",
         lease_token=uuid4(),
         lease_expires_at=datetime.now(UTC),

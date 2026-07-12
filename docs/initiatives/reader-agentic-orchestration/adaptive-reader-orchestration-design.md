@@ -1,7 +1,7 @@
 # Adaptive Reader Orchestration Design
 
 > Status: formal design draft
-> Last updated: 2026-07-12 (T4.2a-V1 closed: Contract / Output Integrity / sample-level Semantic Quality / Page UX PASS; Cost/Latency Baseline PARTIAL)
+> Last updated: 2026-07-13 (T4.2a-V1 and T4.2a-O2-V1 closed; T4.2a-O3 duration provenance code-level complete; Cost/Latency Baseline PARTIAL; Sample A root cause UNRESOLVED)
 > Scope: Reader enhancement execution strategy, quality/cost control, progressive publishing, and longform handling.
 
 This document consolidates the previous analysis-window design notes and temporary research reports into one business-facing architecture document. Temporary development labels are intentionally removed; future work should use the terminology in this document.
@@ -137,6 +137,40 @@ Implementation checkpoint as of 2026-07-10:
   and layer-ready live transitions, interaction preservation during live
   updates) is not proven by final-ready records and should use
   deterministic fixture/event replay later, without re-running LLMs.
+- **T4.2a-O1** (read-only usage / cost / latency contract audit) is complete.
+  Cost/Latency remains PARTIAL; Sample A grammar 0-token root cause remains
+  **UNRESOLVED**.
+- **T4.2a-V2-R1** (deterministic three-mode boundary & very-long fixed
+  samples) is complete: golden fragmented news → `SHORT_BATCH` with
+  Translation Group / anchor integrity; structured boundary → independent
+  `*_structured_v1` fingerprint/policy + compact grammar; >4000-word
+  article → `GROUPED_WINDOWED` multi-window topology (translation/vocabulary
+  `:window:` keys plus legacy grammar `target_key == input_json.window_id`)
+  and reading-order layer publish; empty grammar-window executor → `no_op` /
+  `llm_empty`,
+  `attempt_count=1`, no duplicate LLM calls, `coverage_complete` with
+  `completed_with_no_op`. Focused tests:
+  `tests/test_reader_orchestration_v2_boundary_samples.py` (5 passed).
+  No production code changes; no real LLM; router thresholds unchanged.
+  Does not close real-LLM quality/cost or Page UX for these samples.
+- **T4.2a-O2** deterministic work (O2-R1 / O2-R1a) and its isolated
+  **T4.2a-O2-V1-R1 real-LLM validation are closed**. R1 used one
+  `SHORT_BATCH` record (`f0a9163f-5a76-4fed-9974-1cd75b15d737`) under a unique
+  harness lease: all four jobs succeeded once, reached `coverage_complete`,
+  and had non-null matching `execution_id` / `agent_run_id` plus identical
+  event/span tokens. The contract remains `attempt_ordinal` /
+  `execution_id` / `agent_run_id` via schema `usage_execution_correlation` v1
+  (`execution_diagnostics.py`); every Reader layer uses
+  `run_reader_scoped_agent` rather than direct `agent.run`. The validation
+  preflight fails closed when process enumeration is unavailable, records Git
+  HEAD/workspace/source SHA-256/target-slice dirtiness, and rejects foreign
+  lease owners. Reviewer verification: **62 passed** for
+  `tests/test_usage_execution_diagnostics.py` and **25 passed** for
+  `tests/test_grammar_window_worker.py`; F/I and the scoped diff check passed.
+  O2-R1a binds grammar-window correlation after claim for process/publish/
+  usage/span. Sample A remains UNRESOLVED and Cost/Latency remains PARTIAL:
+  this checkpoint establishes attribution correlation only, not reliable
+  provider cost or latency.
 - Execution budget and cutover safety (T4.2a-R2, 2026-07-10; **T4.2a-R2-R3a
   代码级 review 通过 / deterministic acceptance complete; normal-path
   production topology exercised by T4.2a-V1**): a durable
@@ -763,9 +797,18 @@ default feedback loop for every intermediate patch.
   T4.2a-V1 has exercised all three routes with real LLM calls and closed
   Contract / Output Integrity / sample-level Semantic Quality / Page UX
   gates. Cost/Latency remains a baseline rather than a measured improvement.
-  Immediate follow-ons are measurement/observability, Progressive UX
-  fixture/event replay (no new LLM), and fixed-sample V2 (fragmented news /
-  very-long / no-op windows). The bounded LLM document profiler (T4.2) stays
+  **T4.2a-O3** (code-level) records `agent_run_duration_ms` via local
+  monotonic timing around `agent.run`, and `provider_request_duration_*`
+  only from a dedicated provider-adapter envelope
+  (`_claread_provider_response_timing`, kind/version gated); generic
+  usage maps or `result.timing` with look-alike keys stay `unavailable`.
+  Worker/pipeline/agent durations must never be labeled provider latency
+  or written into `latency_ms`. Sample A remains UNRESOLVED; Cost/Latency
+  remains PARTIAL. **T4.2a-V2-R1** closed the deterministic fixed-sample
+  boundary matrix (fragmented short news, structured boundary, >4000-word
+  grouped/windowed, no-op grammar window) without real LLM or production
+  code changes. Progressive UX fixture/event replay (no new LLM) remains a
+  separate later task. The bounded LLM document profiler (T4.2) stays
   deferred until deterministic routing shows repeatable boundary errors;
   strategy planning and outline-first contracts remain later phases.
 

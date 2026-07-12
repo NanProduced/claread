@@ -25,11 +25,12 @@ See:
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, AsyncIterator
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -398,12 +399,79 @@ async def end_worker_span_success(
     model_provider: str | None,
     capability_code: str,
 ) -> None:
-    """End the current worker_tick span as succeeded with token/model fields."""
+    """End the current worker_tick span as succeeded with token/model fields.
+
+    T4.2a-O2: attaches ExecutionCorrelation metadata and emits
+    ``usage_span_event_mismatch`` when the last usage-event totals disagree
+    with span totals. Never mutates event or span totals to force agreement.
+    """
+
+    from app.services.ai_usage.execution_diagnostics import (
+        STAGE_SPAN_WRITE,
+        USAGE_SPAN_WRITTEN,
+        current_duration_provenance,
+        current_execution,
+        current_usage_outcome,
+        detect_event_span_token_mismatch,
+        log_event_span_mismatch,
+        log_usage_diagnostic,
+        merge_correlation_metadata,
+        span_totals_from_usage_data,
+    )
 
     span = current_span()
     if span is None:
         return
     usage = usage_data or {}
+    correlation = current_execution()
+    if correlation is not None and correlation.span_id is None:
+        correlation = correlation.with_span_id(span.span_id)
+    span_totals = span_totals_from_usage_data(usage_data)
+    outcome = current_usage_outcome()
+    if outcome is not None and detect_event_span_token_mismatch(
+        event_totals=outcome.recorded_totals,
+        span_totals=span_totals,
+    ):
+        log_event_span_mismatch(
+            correlation=correlation,
+            event_totals=outcome.recorded_totals,
+            span_totals=span_totals,
+            usage_event_id=ai_usage_event_id or outcome.event_id,
+            capability_code=capability_code,
+        )
+    # T4.2a-O3: attach duration provenance; never treat span duration_ms
+    # (worker_tick wall) as provider latency.
+    extra_metadata = merge_correlation_metadata(
+        {
+            "span_token_totals": {
+                k: (int(v) if isinstance(v, int | float) else v)
+                for k, v in span_totals.items()
+            },
+        },
+        correlation,
+        diagnostic_codes=[USAGE_SPAN_WRITTEN],
+        duration=current_duration_provenance(),
+    )
+    token_keys = {
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+    }
+    log_usage_diagnostic(
+        diagnostic_code=USAGE_SPAN_WRITTEN,
+        stage=STAGE_SPAN_WRITE,
+        correlation=correlation,
+        normalized_totals={
+            k: int(v or 0) for k, v in span_totals.items() if k in token_keys
+        },
+        provider=model_provider,
+        model=model_name,
+        capability_code=capability_code,
+        usage_event_id=ai_usage_event_id,
+        status=STATUS_SUCCEEDED,
+    )
     await get_default_recorder().end_span(
         span,
         status=STATUS_SUCCEEDED,
@@ -417,6 +485,7 @@ async def end_worker_span_success(
         model_name=model_name,
         model_provider=model_provider,
         capability_code=capability_code,
+        extra_metadata=extra_metadata,
     )
 
 
@@ -464,12 +533,39 @@ async def _end_worker_span_failure(
     failure_class: str,
     failure_code: str,
 ) -> None:
+    """End worker span as failed/superseded with full execution correlation.
+
+    T4.2a-O2-R1: failure / fence / generic-exception paths must persist the
+    same correlation fragment as success (job/run, attempt_ordinal,
+    execution_id, agent_run_id, span_id, capability/fingerprint, schema).
+    Does not change failure status/code semantics.
+    """
+    from app.services.ai_usage.execution_diagnostics import (
+        current_duration_provenance,
+        current_execution,
+        merge_correlation_metadata,
+    )
+
     span = current_span()
     if span is None:
         return
+    correlation = current_execution()
+    if correlation is not None and correlation.span_id is None:
+        correlation = correlation.with_span_id(span.span_id)
+    # Failure paths still keep agent-run duration provenance when the LLM
+    # call started (mint + perf_counter already recorded).
+    extra_metadata = merge_correlation_metadata(
+        {},
+        correlation,
+        duration=current_duration_provenance(),
+    )
     await get_default_recorder().end_span(
         span,
         status=status,
         failure_class=failure_class,
         failure_code=failure_code,
+        capability_code=(
+            correlation.capability_code if correlation is not None else None
+        ),
+        extra_metadata=extra_metadata or None,
     )

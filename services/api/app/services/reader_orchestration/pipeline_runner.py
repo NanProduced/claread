@@ -17,6 +17,7 @@ from app.services.ai_usage import (
     AIUsageEventCreate,
     record_ai_usage_event,
 )
+from app.services.ai_usage.execution_diagnostics import bind_execution_from_claim
 from app.services.reader_orchestration.display_title_worker import (
     DEFAULT_DISPLAY_TITLE_RETRY_DELAY,
     DisplayTitleJobProcessResult,
@@ -1408,6 +1409,35 @@ class ReaderEnhancementPipelineRunner:
         # so failure handlers can mark the analysis_window failed even when
         # process_window_job raises before returning candidates_ready.
         plan_id, window_id = await self._load_window_ids_from_job(claim.job_id)
+
+        # T4.2a-O2-R1a: one execution_id for the full claimed attempt —
+        # process_window_job + publish + usage event + terminal span/transition.
+        # process_window_job itself must NOT open a nested correlation scope.
+        with bind_execution_from_claim(
+            claim, capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE
+        ):
+            return await self._execute_claimed_grammar_window_attempt(
+                claim=claim,
+                plan_id=plan_id,
+                window_id=window_id,
+                retry_delay=retry_delay,
+            )
+
+    async def _execute_claimed_grammar_window_attempt(
+        self,
+        *,
+        claim: ClaimResult,
+        plan_id: UUID | None,
+        window_id: UUID | None,
+        retry_delay: timedelta,
+    ) -> ReaderPipelineWorkerAttempt:
+        """Run process → publish → usage/span under an active execution scope.
+
+        Caller must hold ``bind_execution_from_claim`` so usage events and
+        span ends share the claim's ``execution_id`` / ``attempt_ordinal``.
+        """
+        assert self._grammar_window_worker is not None
+        assert self._grammar_window_publisher is not None
 
         await self._mark_window_run_running(claim.run_id)
 

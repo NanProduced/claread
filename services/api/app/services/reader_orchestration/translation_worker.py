@@ -12,7 +12,7 @@ from pydantic_ai import Agent
 from app.config.settings import Settings, get_settings
 from app.contracts.annotation import compute_text_range_hash, slice_by_utf16_offsets
 from app.database import connection as db_connection
-from app.llm.agent_runner import extract_run_usage
+from app.llm.agent_runner import extract_run_usage, run_reader_scoped_agent
 from app.llm.call_guard import assert_real_llm_allowed
 from app.llm.router import build_model_for_route
 from app.llm.routes import MODEL_ROUTE_READER_LAYER_TRANSLATION
@@ -31,6 +31,7 @@ from app.services.ai_usage import (
     AIUsageEventCreate,
     record_ai_usage_event,
 )
+from app.services.ai_usage.execution_diagnostics import with_execution_correlation
 from app.services.analysis.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
@@ -241,7 +242,9 @@ class PydanticAITranslationExecutor:
             name="reader_layer_translation_agent",
             retries={"tools": 1, "output": 2},
         )
-        result = await agent.run(_build_translation_prompt(context))
+        result = await run_reader_scoped_agent(
+            agent, _build_translation_prompt(context)
+        )
         output = TranslationLayerGenerationOutput.model_validate(result.output)
         usage_data = extract_run_usage(result)
 
@@ -785,7 +788,9 @@ class PydanticAITranslationBatchExecutor:
             name="reader_layer_translation_batch_agent",
             retries={"tools": 1, "output": 2},
         )
-        result = await agent.run(_build_translation_batch_prompt(context))
+        result = await run_reader_scoped_agent(
+            agent, _build_translation_batch_prompt(context)
+        )
         output = TranslationBatchGenerationOutput.model_validate(result.output)
         usage_data = extract_run_usage(result)
 
@@ -1189,6 +1194,7 @@ class TranslationWorkerService:
             retry_delay=retry_delay,
         )
 
+    @with_execution_correlation(CAPABILITY_READER_TRANSLATION)
     async def process_claimed_translation_job(
         self,
         *,
@@ -1406,6 +1412,7 @@ class TranslationWorkerService:
             retry_delay=retry_delay,
         )
 
+    @with_execution_correlation(CAPABILITY_READER_TRANSLATION)
     async def process_claimed_translation_batch_job(
         self,
         *,

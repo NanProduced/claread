@@ -9,6 +9,21 @@ from uuid import UUID
 
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
+from app.services.ai_usage.execution_diagnostics import (
+    STAGE_EVENT_DTO,
+    STAGE_EVENT_PERSIST,
+    STAGE_NORMALIZE,
+    USAGE_EVENT_PERSIST_FAILED,
+    USAGE_EVENT_PERSISTED,
+    USAGE_EVENT_PERSISTED_ZERO,
+    USAGE_ZERO_AFTER_NORMALIZATION,
+    UsageRecordOutcome,
+    classify_usage_presence,
+    current_execution,
+    log_usage_diagnostic,
+    merge_correlation_metadata,
+    set_last_usage_outcome,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,16 +123,102 @@ def _extract_usage_totals(usage_data: dict[str, Any] | None) -> dict[str, int]:
 async def record_ai_usage_event(event: AIUsageEventCreate) -> UUID | None:
     """
     Persist an AI usage audit event without interrupting the main business flow.
+
+    T4.2a-O2: when a Reader ``ExecutionCorrelation`` is active, merges
+    correlation into metadata_json and emits usage-presence diagnostics.
+    Without Reader scope, behaviour matches pre-O2 (persist only, no Reader
+    diagnostics / private correlation metadata). Never logs prompt/article/
+    raw response/secrets.
     """
     pool = db_connection.DB_POOL
-    if pool is None:
-        logger.warning("Skipping ai_usage_event because database pool is not initialized")
-        return None
+    correlation = current_execution()
+    reader_scope = correlation is not None
 
+    presence_dto = classify_usage_presence(
+        event.usage_data,
+        stage=STAGE_EVENT_DTO,
+        capability_code=event.capability_code,
+        provider=event.model_provider,
+        model=event.model_name,
+    )
     usage_totals = _extract_usage_totals(event.usage_data)
-    metadata_json = dict(event.metadata_json)
+    presence_norm = classify_usage_presence(
+        event.usage_data if event.usage_data is not None else None,
+        stage=STAGE_NORMALIZE,
+        capability_code=event.capability_code,
+        provider=event.model_provider,
+        model=event.model_name,
+    )
+
+    diagnostic_codes: list[str] = []
+    if reader_scope:
+        log_usage_diagnostic(
+            diagnostic_code=presence_dto.diagnostic_code,
+            stage=STAGE_EVENT_DTO,
+            correlation=correlation,
+            usage_key_list=presence_dto.usage_key_list,
+            normalized_totals=presence_dto.normalized_totals,
+            provider=event.model_provider,
+            model=event.model_name,
+            capability_code=event.capability_code,
+            status=event.status,
+            extra={
+                "usage_is_none": presence_dto.usage_is_none,
+                "usage_is_empty_mapping": presence_dto.usage_is_empty_mapping,
+            },
+        )
+        diagnostic_codes = [presence_dto.diagnostic_code]
+        if presence_norm.diagnostic_code == USAGE_ZERO_AFTER_NORMALIZATION:
+            diagnostic_codes.append(USAGE_ZERO_AFTER_NORMALIZATION)
+            log_usage_diagnostic(
+                diagnostic_code=USAGE_ZERO_AFTER_NORMALIZATION,
+                stage=STAGE_NORMALIZE,
+                correlation=correlation,
+                usage_key_list=presence_norm.usage_key_list,
+                normalized_totals=usage_totals,
+                provider=event.model_provider,
+                model=event.model_name,
+                capability_code=event.capability_code,
+                status=event.status,
+            )
+        metadata_json = merge_correlation_metadata(
+            event.metadata_json,
+            correlation,
+            diagnostic_codes=diagnostic_codes,
+            presence=presence_dto,
+        )
+    else:
+        metadata_json = dict(event.metadata_json or {})
+
     if event.usage_data is not None:
         metadata_json.setdefault("usage_snapshot", event.usage_data)
+
+    if pool is None:
+        logger.warning("Skipping ai_usage_event because database pool is not initialized")
+        if reader_scope:
+            log_usage_diagnostic(
+                diagnostic_code=USAGE_EVENT_PERSIST_FAILED,
+                stage=STAGE_EVENT_PERSIST,
+                correlation=correlation,
+                usage_key_list=presence_dto.usage_key_list,
+                normalized_totals=usage_totals,
+                provider=event.model_provider,
+                model=event.model_name,
+                capability_code=event.capability_code,
+                status=event.status,
+                extra={"persist_failed": True},
+            )
+            set_last_usage_outcome(
+                UsageRecordOutcome(
+                    event_id=None,
+                    recorded_totals=usage_totals,
+                    diagnostic_codes=tuple(
+                        [*diagnostic_codes, USAGE_EVENT_PERSIST_FAILED]
+                    ),
+                    usage_presence=presence_dto,
+                )
+            )
+        return None
 
     try:
         async with pool.acquire() as conn:
@@ -202,7 +303,50 @@ async def record_ai_usage_event(event: AIUsageEventCreate) -> UUID | None:
                 jsonb_param(metadata_json),
                 datetime.now(UTC),
             )
-        return inserted_id if isinstance(inserted_id, UUID) else None
+        event_uuid = inserted_id if isinstance(inserted_id, UUID) else None
+        if reader_scope:
+            persist_codes = list(diagnostic_codes)
+            if (
+                usage_totals["input_tokens"] == 0
+                and usage_totals["output_tokens"] == 0
+                and usage_totals["total_tokens"] == 0
+            ):
+                persist_codes.append(USAGE_EVENT_PERSISTED_ZERO)
+                log_usage_diagnostic(
+                    diagnostic_code=USAGE_EVENT_PERSISTED_ZERO,
+                    stage=STAGE_EVENT_PERSIST,
+                    correlation=correlation,
+                    usage_key_list=presence_dto.usage_key_list,
+                    normalized_totals=usage_totals,
+                    provider=event.model_provider,
+                    model=event.model_name,
+                    capability_code=event.capability_code,
+                    usage_event_id=event_uuid,
+                    status=event.status,
+                )
+            else:
+                persist_codes.append(USAGE_EVENT_PERSISTED)
+                log_usage_diagnostic(
+                    diagnostic_code=USAGE_EVENT_PERSISTED,
+                    stage=STAGE_EVENT_PERSIST,
+                    correlation=correlation,
+                    usage_key_list=presence_dto.usage_key_list,
+                    normalized_totals=usage_totals,
+                    provider=event.model_provider,
+                    model=event.model_name,
+                    capability_code=event.capability_code,
+                    usage_event_id=event_uuid,
+                    status=event.status,
+                )
+            set_last_usage_outcome(
+                UsageRecordOutcome(
+                    event_id=event_uuid,
+                    recorded_totals=usage_totals,
+                    diagnostic_codes=tuple(persist_codes),
+                    usage_presence=presence_dto,
+                )
+            )
+        return event_uuid
     except Exception:
         logger.exception(
             "Failed to record ai_usage_event(scope=%s, capability=%s, status=%s)",
@@ -210,4 +354,27 @@ async def record_ai_usage_event(event: AIUsageEventCreate) -> UUID | None:
             event.capability_code,
             event.status,
         )
+        if reader_scope:
+            log_usage_diagnostic(
+                diagnostic_code=USAGE_EVENT_PERSIST_FAILED,
+                stage=STAGE_EVENT_PERSIST,
+                correlation=correlation,
+                usage_key_list=presence_dto.usage_key_list,
+                normalized_totals=usage_totals,
+                provider=event.model_provider,
+                model=event.model_name,
+                capability_code=event.capability_code,
+                status=event.status,
+                extra={"persist_failed": True},
+            )
+            set_last_usage_outcome(
+                UsageRecordOutcome(
+                    event_id=None,
+                    recorded_totals=usage_totals,
+                    diagnostic_codes=tuple(
+                        [*diagnostic_codes, USAGE_EVENT_PERSIST_FAILED]
+                    ),
+                    usage_presence=presence_dto,
+                )
+            )
         return None

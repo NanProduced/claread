@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 执行简报
 
 > 状态：`权威简报`
-> 最后更新：2026-07-12（T4.2a-V1 closed：Contract / Output Integrity / sample-level Semantic Quality / Page UX PASS；Cost/Latency Baseline PARTIAL）
+> 最后更新：2026-07-13（T4.2a-V1 / O2-V1-R1 closed；T4.2a-O3 duration provenance 代码级完成；Cost/Latency Baseline PARTIAL；Sample A 根因 UNRESOLVED）
 
 给 coding agent 分配 Reader agentic orchestration 重构任务时，使用本简报作为最小上下文。
 
@@ -30,7 +30,11 @@
 
 2026-07-12 当前状态：M0 baseline harness、M1 short article recovery、T3.1 non-short translation grouped execution、T3.2b non-short vocabulary grouped execution、T3.3 phrase_gloss guard、T3.4a grammar diagnostics、T3.4b RECORD_DENSITY denominator fix、T3.5 completion finalizer、T4.1/T4.1a deterministic complexity routing、T4.1b structured article batch runtime mode、T4.1c short/medium compact grammar path、T4.2a-R1 evidence/observability closure 与 T4.2a-R2 execution budget/cutover safety 已完成代码级实施和 deterministic acceptance。**T4.2a-V1 已正式关闭**：4 个真实 records 覆盖三种 route（34 calls / 198,041 total tokens）；Contract、Output Integrity、样本级 Semantic Quality 与 Page UX Gate 通过；Cost/Latency Baseline PARTIAL。Page UX 在 baseline commit `760402c2c` clean worktree Web 上完成 final-ready 验收（4/4 页面、33/33 严格 interaction 断言、GROUPED 中后段联动、刷新/滚动/readiness/console-network），页面验收阶段无新 LLM 调用。没有历史同样本真实 LLM 对照，不得宣称已实现降本或时延降幅。Progressive Transition UX 未验证，后续用 deterministic fixture/event replay，不重跑 LLM。完整 adaptive planner、semantic outline worker、SSE patch merge 和 grammar quality tuning 仍要分任务推进，不能混成一个无边界任务。
 
-V1 证明 route、job topology、publish/readiness contract、样本级批注质量与 final-ready 页面投影/交互在当前模型配置下可工作；它没有触发 retry、budget exhaustion 或 route cutover，相关 failure-path 仍以 T4.2a-R2 deterministic tests 为权威。实际 provider 成本不可从账单确认，理论区间约 `$0.0158-$0.0354`；`ai_usage_events.latency_ms` 缺失且没有前端用户感知埋点。Sample A grammar 的 0-token usage attribution 为 unresolved intermittent gap，不得描述为已有 worker 修复。T4.2 bounded LLM document profiler 继续暂缓，只有 deterministic router 在真实边界样本上出现稳定误判时再评估。V2 碎段新闻/超长文/no-op window 保持独立任务。
+V1 证明 route、job topology、publish/readiness contract、样本级批注质量与 final-ready 页面投影/交互在当前模型配置下可工作；它没有触发 retry、budget exhaustion 或 route cutover，相关 failure-path 仍以 T4.2a-R2 deterministic tests 为权威。实际 provider 成本不可从账单确认，理论区间约 `$0.0158-$0.0354`；`ai_usage_events.latency_ms` 缺失且没有前端用户感知埋点。Sample A grammar 的 0-token usage attribution 为 unresolved intermittent gap，不得描述为已有 worker 修复。T4.2 bounded LLM document profiler 继续暂缓，只有 deterministic router 在真实边界样本上出现稳定误判时再评估。
+
+**T4.2a-V2-R1 已完成（deterministic）**：碎段新闻 `SHORT_BATCH`（Translation Group/anchor 完整）、STRUCTURED 边界独立 fingerprint/policy、>4000 words `GROUPED_WINDOWED` multi-window（translation/vocabulary `:window:`；grammar `target_key == input_json.window_id`）+ reading-order publish、empty grammar window → `no_op`/`llm_empty`/`attempt_count=1`/无重复 LLM 调用/`completed_with_no_op`。5 focused tests 通过；无生产代码改动、无真实 LLM。真实 LLM 质量/成本与 Page UX 仍后置。
+
+**T4.2a-O1**、**T4.2a-O2-V1-R1** 已关闭；**T4.2a-O3** 代码级完成 duration provenance：`agent_run_duration_ms` 仅表示本地 `agent.run` 单调时钟耗时；`provider_request_duration_*` **仅**在专用 adapter envelope（`_claread_provider_response_timing`，kind/version 校验）下为 `available`，任意 usage/通用 timing 同名字段保持 `unavailable`。禁止把 worker_tick `duration_ms`、pipeline wall 或 agent-run duration 命名/写入为 provider latency 或改写 `ai_usage_events.latency_ms`。统一 `run_reader_scoped_agent` 继续承载 correlation + duration。Sample A 仍 **UNRESOLVED**；Cost/Latency 仍 **PARTIAL**。
 
 验收节奏：短文、长文、超长文三种模式先分别完成代码级合同闭环，再统一真实 LLM / 页面验收。中间实现阶段优先使用 deterministic tests、fake executor、recorded LLM response 和 DB contract checks；不要每修一个局部就反复真实跑长文/超长文。
 
@@ -136,7 +140,13 @@ V1 证明 route、job topology、publish/readiness contract、样本级批注质
   - Page UX：baseline commit `760402c2c` clean worktree Web；4/4 final-ready 页面；33/33 严格 interaction 断言；GROUPED 中后段 vocabulary/grammar/sentence 联动；刷新/滚动/readiness/console-network 通过；页面验收无新 LLM 调用。
   - Vocabulary 按 subtype 合同评估：`vocab_highlight` 使用 `headword`，`phrase_gloss` 使用 `phrase/gloss`，`context_gloss` 使用 `display/gloss/reason`；不得跨 subtype 检查不存在字段。
   - Sample A grammar usage event 为 0 tokens 的根因 unresolved；`extract_run_usage` 在 V1 前已存在，不能表述为当前 worker 已修复。`ai_usage_events.latency_ms` 全部 NULL，per-job provider latency 不可用。
-  - Progressive Transition UX 未验证；后续 deterministic fixture/event replay，不重跑 LLM。V2 扩样本与 T4.2 profiler 继续后置。
+  - Progressive Transition UX 未验证；后续 deterministic fixture/event replay，不重跑 LLM。**T4.2a-V2-R1 边界固定样本已 deterministic 完成**；T4.2 profiler 继续暂缓。
+- T4.2a-O1 observability audit 合同（**closed / read-only**）：
+  - 必须解释 Sample A grammar 0-token、`latency_ms` 缺失、cache hit/miss 字段分散、可靠账单与用户感知时间不可得；只陈述代码/DB 可证明事实，未知根因保持 unresolved。
+  - 区分 provider effective call 与 job claim attempt；区分 estimated/billed cost；区分 provider latency、worker duration、pipeline-root duration、first-layer/per-layer/coverage-ready 和 browser-perceived latency。
+  - 交付字段 lineage、可计算性矩阵、四个 V1 records 只读 evidence、最小 instrumentation slices 与 deterministic test 建议；不得在审计任务中顺手实施。
+- **T4.2a-O3 已代码级完成**（deterministic）：duration provenance metadata schema v1；无 provider timing 时 `provider_request_duration_status=unavailable`。后续可选 cache pricing / estimated cost / Progressive UX fixture；不做 V2/profiler/planner 混装，不因 O3 宣称 latency 已可靠。
+- **T4.2a-V2-R1 已代码级完成**（deterministic）：`tests/test_reader_orchestration_v2_boundary_samples.py` 5 passed；碎段新闻 SHORT_BATCH + Translation Group/anchor；STRUCTURED 独立 fingerprint/policy；>4000 words GROUPED multi-window + reading-order；no-op grammar window 终态/预算/无重复 LLM。无生产代码改动、无真实 LLM；TMP `TMP-t42a-v2-r1-boundary-samples-2026-07-13.md`。
 
 ## 渲染层与 Plate 不可违反规则（D1-012 ~ D1-017）
 
