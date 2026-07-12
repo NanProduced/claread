@@ -1,7 +1,7 @@
 # Adaptive Reader Orchestration Design
 
 > Status: formal design draft
-> Last updated: 2026-07-11 (T4.2a-V1: real-LLM Contract / Output Integrity / sample-level Semantic Quality passed; Cost/Latency baseline partial; Page UX blocked)
+> Last updated: 2026-07-12 (T4.2a-V1 closed: Contract / Output Integrity / sample-level Semantic Quality / Page UX PASS; Cost/Latency Baseline PARTIAL)
 > Scope: Reader enhancement execution strategy, quality/cost control, progressive publishing, and longform handling.
 
 This document consolidates the previous analysis-window design notes and temporary research reports into one business-facing architecture document. Temporary development labels are intentionally removed; future work should use the terminology in this document.
@@ -121,15 +121,22 @@ Implementation checkpoint as of 2026-07-10:
   effective calls, layer counts (including GROUPED_WINDOWED
   `sentence_analysis`), final readiness and usage attribution. The bounded
   LLM document profiler (T4.2) is intentionally deferred this round.
-- **T4.2a-V1 has completed the first gated real-LLM DB/runtime
-  validation.** Four records covered `SHORT_BATCH` (two),
+- **T4.2a-V1 is closed.** Four records covered `SHORT_BATCH` (two),
   `STRUCTURED_BATCH` (one), and `GROUPED_WINDOWED` (one), totaling
   34 effective calls, 142,990 input tokens, 55,051 output tokens, and
-  198,041 total tokens. Contract, Output Integrity, and sample-level
-  Semantic Quality gates passed. Page UX remains blocked by the local
-  authentication/service window, so V1 is not closed. Reliable provider
-  billing and user-perceived latency remain unavailable; the run establishes
-  a baseline, not a proven cost or latency reduction.
+  198,041 total tokens. Contract, Output Integrity, sample-level Semantic
+  Quality, and Page UX gates passed. Page UX was accepted on a clean
+  worktree Web pinned to baseline commit `760402c2c` (4/4 final-ready
+  pages; 33/33 strict click→active→explanation assertions; GROUPED mid/late
+  vocabulary/grammar/sentence interaction; refresh/scroll/readiness and
+  console/network checks), with no new LLM calls during page validation.
+  Cost/Latency remains PARTIAL: reliable provider billing, same-sample
+  legacy real-LLM baseline, and complete per-job provider latency are
+  unavailable, so the run is a baseline, not a proven cost or latency
+  reduction. Progressive Transition UX (loading / first layer / partial
+  and layer-ready live transitions, interaction preservation during live
+  updates) is not proven by final-ready records and should use
+  deterministic fixture/event replay later, without re-running LLMs.
 - Execution budget and cutover safety (T4.2a-R2, 2026-07-10; **T4.2a-R2-R3a
   代码级 review 通过 / deterministic acceptance complete; normal-path
   production topology exercised by T4.2a-V1**): a durable
@@ -753,11 +760,12 @@ default feedback loop for every intermediate patch.
   as a distinct observable outcome **persisted to
   `reader_runtime_spans.metadata_json`**, and a **conservative sorted
   fingerprint set (Approach B)** for deterministic budget aggregation.
-  T4.2a-V1 has exercised all three routes with real LLM calls and passed
-  Contract / Output Integrity / sample-level Semantic Quality gates. Its
-  Page UX gate remains blocked, and Cost/Latency remains a baseline rather
-  than a measured improvement. The immediate priority is page-only validation
-  with existing records. The bounded LLM document profiler (T4.2) stays
+  T4.2a-V1 has exercised all three routes with real LLM calls and closed
+  Contract / Output Integrity / sample-level Semantic Quality / Page UX
+  gates. Cost/Latency remains a baseline rather than a measured improvement.
+  Immediate follow-ons are measurement/observability, Progressive UX
+  fixture/event replay (no new LLM), and fixed-sample V2 (fragmented news /
+  very-long / no-op windows). The bounded LLM document profiler (T4.2) stays
   deferred until deterministic routing shows repeatable boundary errors;
   strategy planning and outline-first contracts remain later phases.
 
