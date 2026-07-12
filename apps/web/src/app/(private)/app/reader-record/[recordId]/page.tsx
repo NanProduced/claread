@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useRef, useState } from "react";
 
 import { ReaderRecordWorkbenchSurface } from "@/components/reader/ReaderRecordWorkbenchSurface";
 import { ReaderRecordPlateSurface } from "@/components/reader/plate";
-import { toast } from "@/components/primitives/toast";
+import { notify } from "@/components/primitives/notification-center";
 import { useReaderPlatePolling } from "@/lib/reader-plate-snapshot/polling";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 
@@ -108,31 +108,28 @@ function useReaderPollingConnectionToast(
         return;
       }
       lastShownErrorRef.current = connectionError;
-      toast.warning("自动刷新已暂停", {
+      notify.alert({
         id: READER_POLLING_TOAST_ID,
-        position: "top-center",
+        tone: "warning",
+        title: "自动刷新已暂停",
         description: connectionError,
-        duration: Infinity,
-        closeButton: true,
         action: {
           label: "重试",
-          onClick: () => {
-            onRetry();
-          },
+          onClick: onRetry,
         },
       });
     } else if (lastShownErrorRef.current !== null) {
-      // Error cleared — dismiss the toast and reset so the next cycle can
+      // Error cleared — resolve the alert and reset so the next cycle can
       // show again.
-      toast.dismiss(READER_POLLING_TOAST_ID);
+      notify.resolveAlert(READER_POLLING_TOAST_ID);
       lastShownErrorRef.current = null;
     }
   }, [connectionError, onRetry]);
 
-  // Dismiss on unmount / route change so the toast never outlives the page.
+  // Dismiss on unmount / route change so the alert never outlives the page.
   useEffect(() => {
     return () => {
-      toast.dismiss(READER_POLLING_TOAST_ID);
+      notify.resolveAlert(READER_POLLING_TOAST_ID);
     };
   }, []);
 }

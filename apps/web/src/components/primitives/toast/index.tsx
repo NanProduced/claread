@@ -7,7 +7,7 @@ function ClareadToaster() {
     <Toaster
       position="bottom-right"
       richColors={false}
-      closeButton
+      closeButton={false}
       toastOptions={{
         className:
           "app-toast-surface !rounded-[var(--cl-radius-surface-sm)] !border !border-hairline !text-ink !shadow-[var(--cl-shadow-2)]",
@@ -15,6 +15,11 @@ function ClareadToaster() {
         actionButtonStyle: {
           background: "var(--ink)",
           color: "var(--surface)",
+        },
+        cancelButtonStyle: {
+          background: "var(--app-control-quiet)",
+          border: "1px solid var(--hairline)",
+          color: "var(--ink)",
         },
       }}
     />

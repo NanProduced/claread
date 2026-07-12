@@ -3,7 +3,7 @@
 import { Heart } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { toast } from "@/components/primitives/toast";
+import { notify } from "@/components/primitives/notification-center";
 
 type FavoriteState = "idle" | "saving" | "error";
 
@@ -79,7 +79,7 @@ export function LibraryFavoriteButton({
         setFavorited(previous);
         setState("error");
         setMessage(result.message);
-        toast.error(result.message);
+        notify.error(result.message);
         return;
       }
 
@@ -93,7 +93,7 @@ export function LibraryFavoriteButton({
       setFavorited(previous);
       setState("error");
       setMessage(nextMessage);
-      toast.error(nextMessage);
+      notify.error(nextMessage);
     }
   }
 

@@ -36,6 +36,7 @@ import {
   loginRouteBase,
 } from "@/lib/routes";
 import { formatShortcut } from "@/lib/shortcuts";
+import { NotificationCenterTrigger } from "@/components/primitives/notification-center";
 import { useCommandPalette } from "../command-palette";
 import { cn } from "@/lib/cn";
 import type { AppShellVariant, AppSidebarMode } from "../app-shell/app-shell-context";
@@ -179,6 +180,7 @@ export function SidebarRail({
                 <div className="truncate text-[0.875rem] font-semibold leading-4 text-ink">Claread</div>
               </div>
             </div>
+            <NotificationCenterTrigger />
             <button
               type="button"
               title={toggleLabel}
@@ -364,7 +366,7 @@ export function SidebarRail({
       </aside>
 
       <nav
-        className="app-nav-surface fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-hairline px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[var(--app-mobile-nav-shadow)] md:hidden"
+        className="app-nav-surface fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-hairline px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[var(--app-mobile-nav-shadow)] md:hidden"
         aria-label="移动端导航"
       >
         <button
@@ -392,6 +394,11 @@ export function SidebarRail({
             </Link>
           );
         })}
+        <NotificationCenterTrigger
+          showLabel
+          side="top"
+          className="text-muted"
+        />
       </nav>
     </>
   );

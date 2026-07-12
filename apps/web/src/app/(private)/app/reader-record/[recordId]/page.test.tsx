@@ -1605,7 +1605,7 @@ describe("ReadingRecordPage direct load", () => {
     // No inline polling-error strip in the document flow.
     expect(screen.queryByTestId("reader-record-polling-error")).toBeNull();
     // toast.warning called with fixed id, top-center position, persistent
-    // duration, and a retry action.
+    // duration, a clear in-card dismiss action, and a retry action.
     expect(toastMock.warning).toHaveBeenCalledWith(
       "自动刷新已暂停",
       expect.objectContaining({
@@ -1613,7 +1613,10 @@ describe("ReadingRecordPage direct load", () => {
         position: "top-center",
         description: expect.stringContaining("事件轮询失败"),
         duration: Infinity,
-        closeButton: true,
+        closeButton: false,
+        cancel: expect.objectContaining({
+          label: "关闭提示",
+        }),
         action: expect.objectContaining({
           label: "重试",
         }),

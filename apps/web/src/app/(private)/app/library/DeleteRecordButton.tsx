@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/primitives/button";
-import { toast } from "@/components/primitives/toast";
+import { notify } from "@/components/primitives/notification-center";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -81,7 +81,7 @@ export function DeleteRecordButton({
       if (!result.ok) {
         setState("error");
         setMessage(result.message);
-        toast.error(result.message);
+        notify.error(result.message);
         return;
       }
 
@@ -93,7 +93,7 @@ export function DeleteRecordButton({
       const nextMessage = error instanceof Error ? error.message : "删除记录失败。";
       setState("error");
       setMessage(nextMessage);
-      toast.error(nextMessage);
+      notify.error(nextMessage);
     }
   }
 

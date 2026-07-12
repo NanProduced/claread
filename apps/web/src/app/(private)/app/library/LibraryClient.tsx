@@ -25,7 +25,7 @@ import {
 } from "next/navigation";
 import { ApertureWatermark } from "@/components/brand/BrandMarks";
 import { Button } from "@/components/primitives/button";
-import { toast } from "@/components/primitives/toast";
+import { notify } from "@/components/primitives/notification-center";
 import { appReadRoute, legacyAppReaderRoute } from "@/lib/routes";
 import type {
   ReadingRecordListItemVm,
@@ -488,13 +488,13 @@ export function LibraryClient({
     }));
 
     if (favoriteFilter === "favorited" && !favorited) {
-      toast.success("已从收藏中移除。");
+      notify.success("已从收藏中移除。");
     }
   }
 
   function handleRecordDeleted({ recordId, message: successMessage }: { recordId: string; message: string }) {
     setDeletedRecordIds((current) => (current.includes(recordId) ? current : [...current, recordId]));
-    toast.success(successMessage);
+    notify.success(successMessage);
   }
 
   return (
