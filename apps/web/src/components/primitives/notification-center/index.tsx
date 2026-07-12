@@ -209,8 +209,8 @@ export function NotificationCenterTrigger({
         side={side}
         align="end"
         sideOffset={8}
-        className="!z-[var(--app-z-shell-navigation)] !w-[min(22rem,calc(100vw-1.5rem))] !p-0"
-        style={{ zIndex: "var(--app-z-shell-navigation)" }}
+        className="!z-[var(--app-z-shell-overlay)] !w-[min(22rem,calc(100vw-1.5rem))] !p-0"
+        style={{ zIndex: "var(--app-z-shell-overlay)" }}
         data-notification-center="true"
       >
         <div className="flex items-center gap-3 border-b border-hairline px-4 py-3">

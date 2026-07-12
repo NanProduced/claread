@@ -49,6 +49,7 @@ describe("NotificationCenterTrigger", () => {
     fireEvent.click(screen.getByRole("button", { name: "打开通知中心，1 条未读" }));
 
     expect(screen.getByRole("heading", { name: "通知" })).toBeTruthy();
+    expect(screen.getByRole("dialog").style.zIndex).toBe("var(--app-z-shell-overlay)");
     expect(screen.getByText("阅读服务暂时不可用，请稍后重试。")).toBeTruthy();
     expect(screen.getByRole("button", { name: "全部已读" })).toBeTruthy();
 

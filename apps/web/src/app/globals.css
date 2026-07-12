@@ -2111,6 +2111,7 @@ select {
   --reader-z-outline-panel-expanded: 50;
   --reader-z-workspace-chrome: 60;
   --app-z-shell-navigation: 70;
+  --app-z-shell-overlay: 80;
 }
 
 .app-shell {

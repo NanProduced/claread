@@ -313,7 +313,12 @@ export function SidebarRail({
                   </span>
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent side="top" align="start" className="w-60">
+              <DropdownMenuContent
+                side="top"
+                align="start"
+                className="!z-[var(--app-z-shell-overlay)] w-60"
+                style={{ zIndex: "var(--app-z-shell-overlay)" }}
+              >
                 <div className="px-3 py-2">
                   <div className="truncate text-[0.8125rem] font-semibold leading-5 text-ink">
                     {userName}

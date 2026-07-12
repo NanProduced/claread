@@ -1,5 +1,7 @@
 /** @vitest-environment jsdom */
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -76,5 +78,22 @@ describe("SidebarRail z-index contract", () => {
       '[data-app-sidebar="rail"]',
     );
     expect(lockedSidebar?.style.zIndex).toBe("var(--app-z-shell-navigation)");
+  });
+
+  it("places the portal user menu above the shell navigation layer", () => {
+    const sidebarSource = readFileSync(
+      resolve(process.cwd(), "src/components/layout/sidebar-rail/index.tsx"),
+      "utf8",
+    );
+    const globalsSource = readFileSync(
+      resolve(process.cwd(), "src/app/globals.css"),
+      "utf8",
+    );
+
+    expect(globalsSource).toContain("--app-z-shell-navigation: 70;");
+    expect(globalsSource).toContain("--app-z-shell-overlay: 80;");
+    expect(sidebarSource).toMatch(
+      /<DropdownMenuContent[\s\S]*?className="!z-\[var\(--app-z-shell-overlay\)\] w-60"[\s\S]*?style=\{\{ zIndex: "var\(--app-z-shell-overlay\)" \}\}/,
+    );
   });
 });
