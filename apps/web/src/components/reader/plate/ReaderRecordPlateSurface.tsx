@@ -147,6 +147,10 @@ import {
   type ReaderCalloutElement,
   type PlateTextNode,
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
+import {
+  pathExistsInPlateChildren,
+  type PlateDescendantLike,
+} from "@/lib/reader-plate-snapshot/progressive-transition";
 
 export interface ReaderRecordPlateSurfaceProps {
   snapshot: ReaderPlateSnapshotDto;
@@ -2323,17 +2327,6 @@ function SelectionActionState({
 // identity across renders.
 
 /**
- * Minimal structural shape we need to walk a Plate children tree when checking
- * whether a selection path still resolves. We intentionally avoid importing
- * Plate's full Descendant type here — this is a pure structural check and
- * keeps the helper free of runtime dependencies.
- */
-interface PlateDescendantLike {
-  children?: PlateDescendantLike[];
-  [key: string]: unknown;
-}
-
-/**
  * Find the real scroll container for the Reader Record body. The app shell
  * wraps content in a Radix ScrollArea, so `window` is not always the element
  * that scrolls. We walk up from `.reader-record-plate-document` until we find
@@ -2360,33 +2353,8 @@ function findReaderRecordScrollContainer(): Window | HTMLElement | null {
   return window;
 }
 
-/**
- * Return true if a Plate selection path (an array of child indices) still
- * resolves in the given children tree. Plate paths are arrays of numbers like
- * `[0, 1, 2]` meaning "child 0 → its child 1 → its child 2". After a snapshot
- * reload the tree shape can change (new layers appended, blocks reordered),
- * so we must verify before restoring selection or `editor.tf.setSelection`
- * may throw / clamp to a wrong node.
- */
-function pathExistsInPlateChildren(
-  children: PlateDescendantLike[],
-  path: number[],
-): boolean {
-  if (!Array.isArray(path) || path.length === 0) {
-    return false;
-  }
-  let current: PlateDescendantLike | PlateDescendantLike[] = children;
-  for (const index of path) {
-    if (!Array.isArray(current)) {
-      return false;
-    }
-    if (typeof index !== "number" || index < 0 || index >= current.length) {
-      return false;
-    }
-    current = current[index];
-  }
-  return true;
-}
+// pathExistsInPlateChildren: shared pure helper from progressive-transition
+// (T4.2a-PUX-R1). Slate path `[0,1,2]` = children[0].children[1].children[2].
 
 export function ReaderRecordPlateSurface({
   snapshot,
@@ -2934,6 +2902,32 @@ export function ReaderRecordPlateSurface({
     dictionaryOpen && !(isWorkspaceShell && sidebarMode === "locked");
   const quickPeekOpen =
     !dictionaryOpen && (lookupState.kind !== "idle" || inspectState !== null);
+
+  // T4.2a-PUX-R2: generation-scoped interaction reset. On base generation
+  // change, clear selection / Quick Peek / panels that are tied to anchors
+  // of the previous generation. Scroll is intentionally preserved by the
+  // plateValue swap effect (scrollTop restore) and is not generation-scoped.
+  const generation = snapshot.record.generation;
+  const prevGenerationRef = useRef(generation);
+  useEffect(() => {
+    if (prevGenerationRef.current === generation) {
+      return;
+    }
+    prevGenerationRef.current = generation;
+    setActiveSelection(null);
+    setLookupState({ kind: "idle" });
+    setInspectState(null);
+    setActiveSentenceChunkId(null);
+    setActiveGrammarItemId(null);
+    setGrammarExpandRequest(null);
+    setHoverNoteAssetId(null);
+    setNoteMenu(null);
+    setHighlightMenu(null);
+    setNoteAnchorDraft(null);
+    setNoteDraft("");
+    setNoteDuplicateAcknowledged(false);
+    setDictionaryOpen(false);
+  }, [generation]);
 
   useEffect(() => {
     if (isWorkspaceShell && sidebarMode === "locked" && dictionaryOpen) {

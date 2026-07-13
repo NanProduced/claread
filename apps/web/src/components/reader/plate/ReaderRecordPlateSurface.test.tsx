@@ -6170,11 +6170,15 @@ describe("ReaderRecordPlateSurface", () => {
   });
 
   it("surface source code includes auto-dismiss timer for UI polish", () => {
+    // Normalize CRLF → LF so this source-text assertion is host-EOL independent
+    // (Windows checkouts often keep ReaderRecordPlateSurface.tsx as CRLF).
     const source = readFileSync(
       resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
       "utf-8",
+    ).replace(/\r\n/g, "\n");
+    expect(source).toContain(
+      'window.setTimeout(() => {\n      setWriteState({ kind: "idle" });\n    }, 4000)',
     );
-    expect(source).toContain('window.setTimeout(() => {\n      setWriteState({ kind: "idle" });\n    }, 4000)');
   });
 
   it("paragraph block carries anchor segment metadata as data attributes", () => {

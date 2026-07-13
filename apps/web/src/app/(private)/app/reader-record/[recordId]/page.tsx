@@ -6,6 +6,13 @@ import { ReaderRecordWorkbenchSurface } from "@/components/reader/ReaderRecordWo
 import { ReaderRecordPlateSurface } from "@/components/reader/plate";
 import { notify } from "@/components/primitives/notification-center";
 import { useReaderPlatePolling } from "@/lib/reader-plate-snapshot/polling";
+import {
+  applySnapshotReload,
+  createInitialProgressiveState,
+  formatProgressiveStatusLine,
+  type ProgressiveClientState,
+  type ProgressivePhase,
+} from "@/lib/reader-plate-snapshot/progressive-transition";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 
 import { getReaderRecordSurfaceMode } from "./reader-record-surface-mode";
@@ -134,6 +141,60 @@ function useReaderPollingConnectionToast(
   }, []);
 }
 
+/**
+ * Minimal progressive status strip: no full-page overlay, no layout shift
+ * of the article body. Driven by T4.2a-PUX phase projection.
+ */
+function ReaderProgressiveStatusStrip(props: {
+  phase: ProgressivePhase;
+  statusLine: string;
+  visibleLayers: readonly string[];
+  lastRejected: boolean;
+  rejectReason: string | null;
+  isReloading: boolean;
+  activeReloadReason: string | null;
+}) {
+  const {
+    phase,
+    statusLine,
+    visibleLayers,
+    lastRejected,
+    rejectReason,
+    isReloading,
+    activeReloadReason,
+  } = props;
+
+  if (!statusLine && !isReloading) {
+    return null;
+  }
+
+  return (
+    <div
+      data-testid="reader-record-progressive-status"
+      data-phase={phase}
+      data-visible-layers={visibleLayers.join(",")}
+      data-last-rejected={lastRejected ? "true" : "false"}
+      data-reject-reason={rejectReason ?? ""}
+      data-reloading={isReloading ? "true" : "false"}
+      className="pointer-events-none fixed bottom-4 left-1/2 z-40 max-w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="rounded-full border border-hairline/80 bg-surface/95 px-3.5 py-1.5 text-center text-xs text-muted shadow-surface-quiet backdrop-blur-sm">
+        {isReloading ? (
+          <span data-testid="reader-record-progressive-reloading">
+            {reloadStatusLabel(activeReloadReason)}
+          </span>
+        ) : (
+          <span data-testid="reader-record-progressive-status-line">
+            {statusLine}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ReadingRecordPage({
   params,
 }: {
@@ -150,6 +211,24 @@ export default function ReadingRecordPage({
   const [activeReloadReason, setActiveReloadReason] = useState<string | null>(null);
   const [surfaceMode] = useState(getReaderRecordSurfaceMode);
 
+  // T4.2a-PUX-R2: progressive gate state for UI. The authoritative last-accepted
+  // snapshot for monotonic checks lives in progressiveStateRef so reload does
+  // not race with React batching. Polling cursor remains sole source of truth
+  // in useReaderPlatePolling (initialCursor from accepted snapshot only).
+  const progressiveStateRef = useRef<ProgressiveClientState>(
+    createInitialProgressiveState(),
+  );
+  const [progressivePhase, setProgressivePhase] =
+    useState<ProgressivePhase>("loading");
+  const [progressiveStatusLine, setProgressiveStatusLine] = useState("");
+  const [progressiveVisibleLayers, setProgressiveVisibleLayers] = useState<
+    readonly string[]
+  >([]);
+  const [progressiveLastRejected, setProgressiveLastRejected] = useState(false);
+  const [progressiveRejectReason, setProgressiveRejectReason] = useState<
+    string | null
+  >(null);
+
   // T2.1: ref-based re-entry guard. `isReloading` (state) cannot prevent
   // same-tick re-entry because React batches and the boolean only commits
   // after the render. The polling hook + the in-flight guard in polling.ts
@@ -159,14 +238,63 @@ export default function ReadingRecordPage({
   const reloadInFlightRef = useRef(false);
 
   const snapshot = snapshotState.kind === "loaded" ? snapshotState.snapshot : null;
+  // Single cursor path: polling reads last_event_sequence from the *accepted*
+  // snapshot only. Rejected reloads never update snapshotState, so cursor holds.
   const initialCursor = snapshot?.last_event_sequence ?? 0;
+
+  const publishProgressiveUi = useCallback((state: ProgressiveClientState) => {
+    setProgressivePhase(state.phase);
+    setProgressiveStatusLine(
+      formatProgressiveStatusLine(state.phase, state.visibleLayerTypes),
+    );
+    setProgressiveVisibleLayers(state.visibleLayerTypes);
+    setProgressiveLastRejected(state.lastRejected);
+    setProgressiveRejectReason(state.rejectReason);
+  }, []);
+
+  /**
+   * T4.2a-PUX-R2: attempt to accept a snapshot through progressive monotonic
+   * validation. On success, updates snapshotState + progressive ref/UI.
+   * On reject (stale / layer regression), leaves UI snapshot untouched and
+   * returns false so polling holds its cursor.
+   */
+  const tryAcceptSnapshot = useCallback(
+    (
+      nextSnapshot: ReaderPlateSnapshotDto,
+      reloadReason: string | null,
+    ): boolean => {
+      const applied = applySnapshotReload(
+        progressiveStateRef.current,
+        nextSnapshot,
+        { reloadReason },
+      );
+
+      if (!applied.ok) {
+        // Keep progressiveStateRef at the prior accepted state for the next
+        // comparison, but surface reject diagnostics for tests / aria.
+        progressiveStateRef.current = applied.state;
+        publishProgressiveUi(applied.state);
+        return false;
+      }
+
+      progressiveStateRef.current = applied.state;
+      publishProgressiveUi(applied.state);
+      setSnapshotState({
+        kind: "loaded",
+        recordId: nextSnapshot.record_id,
+        snapshot: nextSnapshot,
+      });
+      return true;
+    },
+    [publishProgressiveUi],
+  );
 
   // T2.1 contract: returns `true` only when a fresh snapshot was actually
   // applied (so the polling hook can advance its cursor). Returns `false`
-  // when skipped (in-flight / not loaded) or when the fetch failed — in
-  // those cases the polling hook keeps the original cursor and the next
-  // tick re-asks with the same `after_sequence`, so reload-required events
-  // are not silently consumed.
+  // when skipped (in-flight / not loaded), fetch failed, or progressive
+  // monotonic validation rejected the snapshot — in those cases the polling
+  // hook keeps the original cursor and the next tick re-asks with the same
+  // `after_sequence`, so reload-required events are not silently consumed.
   const reloadSnapshot = useCallback(
     async (reason: string): Promise<boolean> => {
       if (!recordId || snapshotState.kind !== "loaded") {
@@ -198,11 +326,13 @@ export default function ReadingRecordPage({
           return false;
         }
 
-        setSnapshotState({
-          kind: "loaded",
-          recordId,
-          snapshot: result.snapshot,
-        });
+        const accepted = tryAcceptSnapshot(result.snapshot, reason);
+        if (!accepted) {
+          // Progressive gate rejected (stale sequence / layer regression).
+          // Do not setReloadError toast spam — hold cursor for retry; status
+          // strip exposes data-last-rejected for diagnostics.
+          return false;
+        }
         return true;
       } catch (err) {
         setReloadError(
@@ -215,7 +345,7 @@ export default function ReadingRecordPage({
         setActiveReloadReason(null);
       }
     },
-    [recordId, snapshotState.kind],
+    [recordId, snapshotState.kind, tryAcceptSnapshot],
   );
 
   useEffect(() => {
@@ -234,6 +364,9 @@ export default function ReadingRecordPage({
       setIsReloading(false);
       setReloadError(null);
       setSnapshotState({ kind: "loading", recordId });
+      // Reset progressive gate when the route record changes.
+      progressiveStateRef.current = createInitialProgressiveState();
+      publishProgressiveUi(progressiveStateRef.current);
 
       try {
         const result = await loadSnapshotForRecord(
@@ -253,11 +386,16 @@ export default function ReadingRecordPage({
           return;
         }
 
-        setSnapshotState({
-          kind: "loaded",
-          recordId,
-          snapshot: result.snapshot,
-        });
+        const accepted = tryAcceptSnapshot(result.snapshot, "initial_load");
+        if (!accepted) {
+          // Initial load should not be rejected by monotonic gates (empty
+          // prior state). Treat as hard error if it somehow fails.
+          setSnapshotState({
+            kind: "error",
+            recordId,
+            message: "阅读内容校验失败，请稍后重试。",
+          });
+        }
       } catch (err) {
         if (cancelled) {
           return;
@@ -276,7 +414,7 @@ export default function ReadingRecordPage({
     return () => {
       cancelled = true;
     };
-  }, [recordId]);
+  }, [recordId, publishProgressiveUi, tryAcceptSnapshot]);
 
   const polling = useReaderPlatePolling({
     recordId,
@@ -298,6 +436,16 @@ export default function ReadingRecordPage({
     return (
       <>
         <CandidateConfirmCallout recordId={recordId} />
+
+        <ReaderProgressiveStatusStrip
+          phase={progressivePhase}
+          statusLine={progressiveStatusLine}
+          visibleLayers={progressiveVisibleLayers}
+          lastRejected={progressiveLastRejected}
+          rejectReason={progressiveRejectReason}
+          isReloading={isReloading}
+          activeReloadReason={activeReloadReason}
+        />
 
         {surfaceMode === "plate" ? (
           <ReaderRecordPlateSurface

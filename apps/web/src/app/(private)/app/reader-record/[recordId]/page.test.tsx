@@ -80,6 +80,129 @@ function makeUserHighlightAsset(
   };
 }
 
+function makePublishedLayer(
+  layerType: "translation" | "vocabulary" | "grammar_note" | "sentence_analysis",
+  layerId: string,
+): ReaderPlateSnapshotDto["enhancement_layers"][number] {
+  const base = {
+    layer_id: layerId,
+    owner: "system_ai" as const,
+    base_id: "base_1",
+    target_scope: "unit" as const,
+    target_key: "unit_1",
+    status: "published" as const,
+    schema_version: 1,
+    published_at: "2026-06-22T00:00:00Z",
+  };
+  if (layerType === "translation") {
+    return {
+      ...base,
+      layer_type: "translation",
+      output: {
+        groups: [
+          {
+            group_id: "group_translation_1",
+            anchor_segment_ids: ["seg_1"],
+            source_text_hash: "unit_hash_1",
+            translated_text: TRANSLATION_TEXT,
+          },
+        ],
+      },
+    };
+  }
+  if (layerType === "vocabulary") {
+    return {
+      ...base,
+      layer_type: "vocabulary",
+      output: {
+        schema_version: 1,
+        items: [
+          {
+            item_type: "vocab_highlight",
+            anchor: {
+              anchor_type: "text_range",
+              base_id: "base_1",
+              unit_id: "unit_1",
+              anchor_segment_id: "seg_1",
+              sentence_id: "sent_1",
+              segment_type: "sentence",
+              offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+              start_offset: 14,
+              end_offset: 20,
+              selected_text: "memory",
+              text_hash: computeUtf16FNV1a("memory"),
+              hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+            },
+            headword: "memory",
+            brief_explanation: "记忆",
+          },
+        ],
+      },
+    };
+  }
+  if (layerType === "grammar_note") {
+    return {
+      ...base,
+      layer_type: "grammar_note",
+      output: {
+        schema_version: 1,
+        items: [
+          {
+            item_type: "grammar_note",
+            spans: [
+              {
+                anchor_type: "text_range",
+                base_id: "base_1",
+                unit_id: "unit_1",
+                anchor_segment_id: "seg_1",
+                sentence_id: "sent_1",
+                segment_type: "sentence",
+                offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+                start_offset: 0,
+                end_offset: 20,
+                selected_text: "Institutional memory",
+                text_hash: computeUtf16FNV1a("Institutional memory"),
+                hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+              },
+            ],
+            grammar_point: "名词短语主语",
+            note: "Institutional memory 是主语。",
+          },
+        ],
+      },
+    };
+  }
+  return {
+    ...base,
+    layer_type: "sentence_analysis",
+    output: {
+      schema_version: 1,
+      items: [
+        {
+          item_type: "sentence_analysis",
+          anchor: {
+            anchor_type: "text_range",
+            base_id: "base_1",
+            unit_id: "unit_1",
+            anchor_segment_id: "seg_1",
+            sentence_id: "sent_1",
+            segment_type: "sentence",
+            offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+            start_offset: 0,
+            end_offset: SOURCE_TEXT.length,
+            selected_text: SOURCE_TEXT,
+            text_hash: computeUtf16FNV1a(SOURCE_TEXT),
+            hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+          },
+          label: "主谓",
+          analysis: "主语 + 谓语",
+          chunks: [],
+        },
+      ],
+    },
+  };
+}
+
 function makeSnapshot(
   recordId = "rec_product_1",
   recordOverrides: Partial<ReaderPlateSnapshotDto["record"]> = {},
@@ -92,11 +215,15 @@ function makeSnapshot(
     withSentenceAnalysis?: boolean;
     userAssets?: ReaderSnapshotUserAssetDto[];
     withVocabularyMark?: boolean;
+    /** When set, replaces the default empty enhancement_layers array. */
+    enhancementLayers?: ReaderPlateSnapshotDto["enhancement_layers"];
+    snapshotId?: string;
+    omitTranslationValue?: boolean;
   },
 ): ReaderPlateSnapshotDto {
   return {
     schema_kind: "reader_plate_snapshot",
-    snapshot_id: "snap_1",
+    snapshot_id: options?.snapshotId ?? "snap_1",
     snapshot_taken_at: "2026-06-22T00:00:00Z",
     last_event_sequence: options?.lastEventSequence ?? 1,
     record_id: recordId,
@@ -262,20 +389,26 @@ function makeSnapshot(
               },
             ],
           },
-          {
-            type: "reader_translation_group",
-            owner: "system_ai",
-            layer_id: "layer_translation_1",
-            layer_version: 1,
-            base_id: "base_1",
-            unit_id: "unit_1",
-            target_scope: "unit",
-            target_key: "unit_1",
-            group_id: "group_translation_1",
-            covered_anchor_segment_ids: ["seg_1"],
-            source_text_hash: "unit_hash_1",
-            children: [{ text: options?.translationText ?? TRANSLATION_TEXT }],
-          },
+          ...(options?.omitTranslationValue
+            ? []
+            : [
+                {
+                  type: "reader_translation_group" as const,
+                  owner: "system_ai" as const,
+                  layer_id: "layer_translation_1",
+                  layer_version: 1,
+                  base_id: "base_1",
+                  unit_id: "unit_1",
+                  target_scope: "unit" as const,
+                  target_key: "unit_1",
+                  group_id: "group_translation_1",
+                  covered_anchor_segment_ids: ["seg_1"],
+                  source_text_hash: "unit_hash_1",
+                  children: [
+                    { text: options?.translationText ?? TRANSLATION_TEXT },
+                  ],
+                },
+              ]),
           ...(options?.withSentenceAnalysis
             ? [
                 {
@@ -313,7 +446,7 @@ function makeSnapshot(
         ],
       },
     ],
-    enhancement_layers: [],
+    enhancement_layers: options?.enhancementLayers ?? [],
     parsed_decisions: [],
     user_assets: options?.userAssets ?? [],
     ask_supplements: [],
@@ -1983,4 +2116,458 @@ describe("ReadingRecordPage direct load", () => {
   // so two concurrent reload calls cannot originate from the tick loop
   // alone — they require a user action overlapping with a pending fetch,
   // which needs a gated snapshot fetch that blocks the entire test.
+
+  // -------------------------------------------------------------------------
+  // T4.2a-PUX-R2: progressive gate on real page polling / snapshot reload
+  // -------------------------------------------------------------------------
+
+  it("PUX-R2: layer_published reload applies snapshot and advances progressive status", async () => {
+    vi.useFakeTimers();
+    const recordId = "rec_pux_r2_happy";
+    const initial = makeSnapshot(
+      recordId,
+      { readiness_state: "article_ready" },
+      {
+        snapshotId: "snap_pux_0",
+        lastEventSequence: 1,
+        omitTranslationValue: true,
+        enhancementLayers: [],
+        enhancementProgress: makeEnhancementProgress({
+          overall_status: "readable_enhancing",
+          layers: [
+            {
+              capability: "translation",
+              layer_type: "translation",
+              status: "processing",
+              job_status: "claimed",
+              job_type: "translate_unit",
+              job_id: "job_translation_1",
+              target_type: "unit",
+              target_scope: "unit",
+              target_key: "unit_1",
+            },
+          ],
+        }),
+      },
+    );
+    const withTranslation = makeSnapshot(
+      recordId,
+      { readiness_state: "article_ready" },
+      {
+        snapshotId: "snap_pux_1",
+        lastEventSequence: 2,
+        enhancementLayers: [makePublishedLayer("translation", "layer_translation_1")],
+        translationText: "制度记忆持续影响政策选择。",
+        enhancementProgress: makeEnhancementProgress({
+          overall_status: "readable_enhancing",
+          layers: [
+            {
+              capability: "translation",
+              layer_type: "translation",
+              status: "succeeded",
+              job_status: "succeeded",
+              job_type: "translate_unit",
+              layer_id: "layer_translation_1",
+              job_id: "job_translation_1",
+              target_type: "unit",
+              target_scope: "unit",
+              target_key: "unit_1",
+            },
+          ],
+        }),
+      },
+    );
+
+    const fetchMock = installReaderRecordFetchMock(initial, {
+      snapshots: [initial, withTranslation],
+      eventsResponder: (url) => {
+        const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
+        if (afterSequence >= 2) {
+          return new Response(
+            JSON.stringify(
+              makePollResponse(recordId, afterSequence, {
+                last_event_sequence: 2,
+                next_after_sequence: 2,
+                events: [],
+              }),
+            ),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify(
+            makePollResponse(recordId, afterSequence, {
+              last_event_sequence: 2,
+              next_after_sequence: 2,
+              events: [
+                makeReaderEvent(recordId, "layer_published", {
+                  payload: { layer_type: "translation" },
+                }),
+              ],
+            }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    renderReadingRecordPage(recordId, "default");
+    await flushAsyncWork();
+
+    // With fake timers, avoid findBy* (async wait uses real timeouts).
+    expect(screen.getByTestId("reader-record-plate-surface")).toBeTruthy();
+    const status0 = screen.getByTestId("reader-record-progressive-status");
+    expect(status0.getAttribute("data-phase")).toBe("article_ready_no_layers");
+    expect(status0.textContent).toContain("批注生成中");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+
+    const status1 = screen.getByTestId("reader-record-progressive-status");
+    expect(status1.getAttribute("data-phase")).toBe("first_layer");
+    expect(status1.getAttribute("data-last-rejected")).toBe("false");
+    expect(status1.textContent).toMatch(/译文|已到达/);
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain("制度记忆持续影响政策选择。");
+
+    // Cursor advanced: subsequent poll uses after_sequence=2
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+
+    const eventCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("/events"),
+    );
+    const lastEventUrl = new URL(
+      String(eventCalls[eventCalls.length - 1]?.[0]),
+      "http://localhost",
+    );
+    expect(lastEventUrl.searchParams.get("after_sequence")).toBe("2");
+  });
+
+  it("PUX-R2: stale snapshot is rejected, UI not overwritten, cursor held", async () => {
+    vi.useFakeTimers();
+    const recordId = "rec_pux_r2_stale";
+    const s1 = makeSnapshot(
+      recordId,
+      { readiness_state: "article_ready" },
+      {
+        snapshotId: "snap_s1",
+        lastEventSequence: 1,
+        enhancementLayers: [makePublishedLayer("translation", "layer_t1")],
+      },
+    );
+    const s2 = makeSnapshot(
+      recordId,
+      { readiness_state: "initial_enhancement_ready" },
+      {
+        snapshotId: "snap_s2",
+        lastEventSequence: 2,
+        enhancementLayers: [
+          makePublishedLayer("translation", "layer_t1"),
+          makePublishedLayer("vocabulary", "layer_v1"),
+        ],
+        withVocabularyMark: true,
+        translationText: "进阶译文内容。",
+      },
+    );
+    const stale = makeSnapshot(
+      recordId,
+      { readiness_state: "article_ready" },
+      {
+        snapshotId: "snap_stale",
+        lastEventSequence: 1, // older than accepted cursor=2
+        enhancementLayers: [],
+        omitTranslationValue: true,
+      },
+    );
+
+    // snapshots: initial load s1, first reload s2, second reload stale
+    const fetchMock = installReaderRecordFetchMock(s1, {
+      snapshots: [s1, s2, stale, stale],
+      eventsResponder: (url) => {
+        const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
+        if (afterSequence < 2) {
+          return new Response(
+            JSON.stringify(
+              makePollResponse(recordId, afterSequence, {
+                last_event_sequence: 2,
+                next_after_sequence: 2,
+                events: [
+                  makeReaderEvent(recordId, "layer_published", {
+                    payload: { layer_type: "vocabulary" },
+                  }),
+                ],
+              }),
+            ),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        // After cursor=2, keep emitting reload_required so a second reload
+        // attempts to fetch the stale snapshot.
+        return new Response(
+          JSON.stringify(
+            makePollResponse(recordId, afterSequence, {
+              last_event_sequence: 2,
+              next_after_sequence: 3,
+              reload_required: true,
+              reload_reason: "reader event sequence gap detected",
+              events: [],
+            }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    renderReadingRecordPage(recordId, "default");
+    await flushAsyncWork();
+
+    // First poll → s2 accepted
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain("进阶译文内容。");
+    const phaseAfterS2 = screen
+      .getByTestId("reader-record-progressive-status")
+      .getAttribute("data-phase");
+    expect(phaseAfterS2).toBe("partial_ready");
+
+    // Second poll → stale rejected
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+
+    const status = screen.getByTestId("reader-record-progressive-status");
+    expect(status.getAttribute("data-last-rejected")).toBe("true");
+    expect(status.getAttribute("data-reject-reason")).toContain(
+      "stale_snapshot_sequence",
+    );
+    // UI still shows s2 content
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain("进阶译文内容。");
+    expect(status.getAttribute("data-phase")).toBe("partial_ready");
+
+    // Cursor held at 2 (not advanced to 3) — next event poll still after_sequence=2
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+
+    const eventCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("/events"),
+    );
+    const afterSequences = eventCalls.map(([input]) =>
+      new URL(String(input), "http://localhost").searchParams.get(
+        "after_sequence",
+      ),
+    );
+    // After successful s2 apply cursor becomes 2; stale rejects keep it at 2.
+    expect(afterSequences.filter((s) => s === "2").length).toBeGreaterThanOrEqual(
+      1,
+    );
+    expect(afterSequences[afterSequences.length - 1]).toBe("2");
+  });
+
+  it("PUX-R2: same-generation layer regression is rejected without UI rollback", async () => {
+    vi.useFakeTimers();
+    const recordId = "rec_pux_r2_regress";
+    const s1 = makeSnapshot(
+      recordId,
+      { readiness_state: "article_ready" },
+      {
+        snapshotId: "snap_r1",
+        lastEventSequence: 1,
+        enhancementLayers: [makePublishedLayer("translation", "layer_t1")],
+      },
+    );
+    const s2 = makeSnapshot(
+      recordId,
+      { readiness_state: "article_ready" },
+      {
+        snapshotId: "snap_r2",
+        lastEventSequence: 2,
+        enhancementLayers: [
+          makePublishedLayer("translation", "layer_t1"),
+          makePublishedLayer("vocabulary", "layer_v1"),
+        ],
+        withVocabularyMark: true,
+        translationText: "回归保护译文。",
+      },
+    );
+    const regress = makeSnapshot(
+      recordId,
+      { readiness_state: "article_ready" },
+      {
+        snapshotId: "snap_regress",
+        lastEventSequence: 3,
+        // Drops previously published layer keys while advancing sequence.
+        enhancementLayers: [],
+        omitTranslationValue: true,
+      },
+    );
+
+    installReaderRecordFetchMock(s1, {
+      snapshots: [s1, s2, regress],
+      eventsResponder: (url) => {
+        const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
+        if (afterSequence < 2) {
+          return new Response(
+            JSON.stringify(
+              makePollResponse(recordId, afterSequence, {
+                last_event_sequence: 2,
+                next_after_sequence: 2,
+                events: [
+                  makeReaderEvent(recordId, "layer_published", {
+                    payload: { layer_type: "vocabulary" },
+                  }),
+                ],
+              }),
+            ),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify(
+            makePollResponse(recordId, afterSequence, {
+              last_event_sequence: 3,
+              next_after_sequence: 3,
+              events: [
+                makeReaderEvent(recordId, "layer_published", {
+                  sequence: 3,
+                  payload: { layer_type: "grammar_note" },
+                }),
+              ],
+            }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    renderReadingRecordPage(recordId, "default");
+    await flushAsyncWork();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain("回归保护译文。");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+
+    const status = screen.getByTestId("reader-record-progressive-status");
+    expect(status.getAttribute("data-last-rejected")).toBe("true");
+    expect(status.getAttribute("data-reject-reason") ?? "").toMatch(
+      /layer_regression/,
+    );
+    // UI still has translation content from s2
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain("回归保护译文。");
+  });
+
+  it("PUX-R2: reload preserves scroll position on the plate surface", async () => {
+    vi.useFakeTimers();
+    const recordId = "rec_pux_r2_scroll";
+    const s1 = makeSnapshot(recordId, {}, { lastEventSequence: 1 });
+    const s2 = makeSnapshot(
+      recordId,
+      {},
+      {
+        lastEventSequence: 2,
+        translationText: "滚动保持译文。",
+        snapshotId: "snap_scroll_2",
+      },
+    );
+
+    installReaderRecordFetchMock(s1, {
+      snapshots: [s1, s2],
+      eventsResponder: (url) => {
+        const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
+        if (afterSequence >= 2) {
+          return new Response(
+            JSON.stringify(
+              makePollResponse(recordId, afterSequence, {
+                last_event_sequence: 2,
+                next_after_sequence: 2,
+                events: [],
+              }),
+            ),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify(
+            makePollResponse(recordId, afterSequence, {
+              last_event_sequence: 2,
+              next_after_sequence: 2,
+              events: [
+                makeReaderEvent(recordId, "layer_published", {
+                  payload: { layer_type: "translation" },
+                }),
+              ],
+            }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    const { container } = renderReadingRecordPage(recordId, "default");
+    await flushAsyncWork();
+    expect(screen.getByTestId("reader-record-plate-surface")).toBeTruthy();
+
+    // Mark the plate body parent as a scroll container and set scrollTop.
+    const body = container.querySelector(".reader-record-plate-document");
+    expect(body).not.toBeNull();
+    const scroller = body?.parentElement as HTMLElement | null;
+    expect(scroller).not.toBeNull();
+    if (!scroller) throw new Error("expected scroll parent");
+
+    Object.defineProperty(scroller, "scrollTop", {
+      configurable: true,
+      writable: true,
+      value: 360,
+    });
+    // overflow style so findReaderRecordScrollContainer picks it up
+    scroller.style.overflowY = "auto";
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+    // rAF restore
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20);
+    });
+    await flushAsyncWork();
+
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain("滚动保持译文。");
+    // Best-effort: if restore ran, scrollTop stays at 360
+    expect(scroller.scrollTop).toBe(360);
+  });
 });
