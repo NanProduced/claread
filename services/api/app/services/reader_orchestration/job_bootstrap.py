@@ -15,9 +15,13 @@ from app.services.reader_orchestration.document_feature_extractor import (
     classify_article_route,
     extract_document_features,
 )
+from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.reading_strategy import (
     ReaderVariantStrategy,
     resolve_reader_variant_strategy,
+)
+from app.services.reader_orchestration.representation_event_payload import (
+    build_representation_payload,
 )
 
 TRANSLATION_RUN_TYPE = "translation_layer"
@@ -2578,7 +2582,7 @@ async def _bootstrap_display_title_job(
     if existing_job is not None:
         return []
 
-    await conn.execute(
+    updated_id = await conn.fetchval(
         """
         UPDATE reading_records
         SET title_generation_status = 'pending',
@@ -2591,13 +2595,38 @@ async def _bootstrap_display_title_job(
           AND generation = $3
           AND active_base_id = $4
           AND deleted_at IS NULL
+          AND title_generation_status IS DISTINCT FROM 'pending'
           AND title_generation_status <> 'succeeded'
+        RETURNING id
         """,
         state.record_id,
         state.user_id,
         state.expected_generation,
         state.base_id,
     )
+    if updated_id is not None:
+        # Only publish a representation event when the status actually
+        # transitioned to ``pending``. A true no-op (already pending) does
+        # NOT advance the sequence. This runs inside the caller's outer
+        # transaction so the title status change, job insert, and event
+        # publish commit atomically.
+        payload = build_representation_payload(
+            representation_section="record_metadata",
+            operation="status_changed",
+            generation=state.expected_generation,
+            base_id=str(state.base_id),
+            target_keys=[
+                "title_generation_status",
+                "title_generation_error_code",
+                "title_generation_error_message",
+            ],
+        )
+        await ReaderEventRuntime().publish_event_in_transaction(
+            conn,
+            record_id=state.record_id,
+            event_type="record_state_changed",
+            payload_json=payload,
+        )
 
     run_id, job_id = await _insert_record_job(
         conn,

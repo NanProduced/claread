@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import asyncpg
 from pydantic import BaseModel, Field, ValidationError
@@ -34,6 +34,7 @@ from app.services.analysis.prompting.prompt_loader import (
 )
 
 from ._text import sanitize_failure_message
+from .event_runtime import ReaderEventRuntime
 from .job_bootstrap import (
     DISPLAY_TITLE_JOB_TYPE,
     DISPLAY_TITLE_OPERATION_FINGERPRINT,
@@ -49,6 +50,7 @@ from .job_runtime import (
 from .job_runtime import (
     STATUS_SUCCEEDED as JOB_STATUS_SUCCEEDED,
 )
+from .representation_event_payload import build_representation_payload
 from .span_recorder import (
     end_worker_span_execution_error,
     end_worker_span_fence_violation,
@@ -604,36 +606,69 @@ class DisplayTitleWorkerService:
             )
 
     async def _mark_record_title_pending(self, claim: ClaimResult) -> None:
+        """Transition title_generation_status to ``pending``.
+
+        True no-op (status already ``pending`` or ``succeeded``) does NOT
+        publish a reader_event or advance the sequence.  Only an actual
+        status change (e.g. ``failed_retryable`` → ``pending``) publishes a
+        ``record_state_changed`` representation event in the same
+        transaction as the UPDATE.
+        """
         if claim.base_id is None:
             return
         async with self.get_pool().acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE reading_records
-                SET title_generation_status = 'pending',
-                    title_generation_error_code = NULL,
-                    title_generation_error_message = NULL,
-                    title_generation_updated_at = NOW(),
-                    updated_at = NOW()
-                WHERE id = $1
-                  AND user_id = $2
-                  AND active_base_id = $3
-                  AND generation = $4
-                  AND title_generation_status <> 'succeeded'
-                  AND deleted_at IS NULL
-                """,
-                claim.reading_record_id,
-                await self._load_job_user_id(claim.job_id),
-                claim.base_id,
-                claim.expected_generation,
+            user_id = await conn.fetchval(
+                "SELECT user_id FROM reader_jobs WHERE id = $1",
+                claim.job_id,
             )
+            if not isinstance(user_id, UUID):
+                raise LookupError(f"reader job {claim.job_id} not found")
 
-    async def _load_job_user_id(self, job_id: UUID) -> UUID:
-        async with self.get_pool().acquire() as conn:
-            user_id = await conn.fetchval("SELECT user_id FROM reader_jobs WHERE id = $1", job_id)
-        if not isinstance(user_id, UUID):
-            raise LookupError(f"reader job {job_id} not found")
-        return user_id
+            async with conn.transaction():
+                updated_id = await conn.fetchval(
+                    """
+                    UPDATE reading_records
+                    SET title_generation_status = 'pending',
+                        title_generation_error_code = NULL,
+                        title_generation_error_message = NULL,
+                        title_generation_updated_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = $1
+                      AND user_id = $2
+                      AND active_base_id = $3
+                      AND generation = $4
+                      AND deleted_at IS NULL
+                      AND title_generation_status IS DISTINCT FROM 'pending'
+                      AND title_generation_status <> 'succeeded'
+                    RETURNING id
+                    """,
+                    claim.reading_record_id,
+                    user_id,
+                    claim.base_id,
+                    claim.expected_generation,
+                )
+                if updated_id is None:
+                    return  # no-op: already pending or already succeeded
+
+                payload = build_representation_payload(
+                    representation_section="record_metadata",
+                    operation="status_changed",
+                    generation=claim.expected_generation,
+                    base_id=str(claim.base_id),
+                    target_keys=[
+                        "title_generation_status",
+                        "title_generation_error_code",
+                        "title_generation_error_message",
+                    ],
+                )
+                await ReaderEventRuntime().publish_event_in_transaction(
+                    conn,
+                    record_id=claim.reading_record_id,
+                    event_type="record_state_changed",
+                    payload_json=payload,
+                    source_run_id=claim.run_id,
+                    source_job_id=claim.job_id,
+                )
 
     async def _complete_title_job_success(
         self,
@@ -726,18 +761,16 @@ class DisplayTitleWorkerService:
                     event_type="job_succeeded",
                     payload={"target_status": JOB_STATUS_SUCCEEDED},
                 )
-                await _insert_title_reader_event(
+                await _publish_title_representation_event(
                     conn,
                     claim=claim,
-                    event_type="record_state_changed",
-                    payload={
-                        "record_id": str(context.reading_record_id),
-                        "base_id": str(context.base_id),
-                        "generation": context.expected_generation,
-                        "field": "display_title_zh",
-                        "title_generation_status": "succeeded",
-                    },
-                    created_at=now,
+                    context=context,
+                    target_keys=[
+                        "display_title_zh",
+                        "title_generation_status",
+                        "title_generation_error_code",
+                        "title_generation_error_message",
+                    ],
                 )
 
     async def _complete_title_job_failed_retryable(
@@ -853,19 +886,17 @@ class DisplayTitleWorkerService:
                         "rationale_code": rationale_code,
                     },
                 )
-                await _insert_title_reader_event(
+                await _publish_title_representation_event(
                     conn,
                     claim=claim,
-                    event_type="record_state_changed",
-                    payload={
-                        "record_id": str(record_id),
-                        "base_id": str(base_id),
-                        "generation": generation,
-                        "field": "display_title_zh",
-                        "title_generation_status": "failed_retryable",
-                        "failure_code": failure_code,
-                    },
-                    created_at=now,
+                    record_id=record_id,
+                    base_id=base_id,
+                    generation=generation,
+                    target_keys=[
+                        "title_generation_status",
+                        "title_generation_error_code",
+                        "title_generation_error_message",
+                    ],
                 )
 
     async def _mark_claimed_job_superseded(
@@ -1258,50 +1289,51 @@ async def _insert_reader_job_event(
     )
 
 
-async def _insert_title_reader_event(
+async def _publish_title_representation_event(
     conn: asyncpg.Connection,
     *,
     claim: ClaimResult,
-    event_type: str,
-    payload: dict[str, Any],
-    created_at: datetime,
+    target_keys: list[str],
+    context: DisplayTitleJobContext | None = None,
+    record_id: UUID | None = None,
+    base_id: UUID | None = None,
+    generation: int | None = None,
 ) -> None:
-    sequence = await conn.fetchval(
-        """
-        UPDATE reader_event_sequences
-        SET next_sequence = next_sequence + 1,
-            updated_at = $2
-        WHERE reading_record_id = $1
-        RETURNING next_sequence - 1
-        """,
-        claim.reading_record_id,
-        created_at,
+    """Publish a ``record_state_changed`` representation event for display-title.
+
+    Replaces the former parallel direct-insert ``_insert_title_reader_event``
+    with the centralized :class:`ReaderEventRuntime` and the representation
+    event payload builder, ensuring all display-title reader events go
+    through the same sequence-allocation + validation path.
+    """
+    if context is not None:
+        rid = context.reading_record_id
+        bid = str(context.base_id)
+        gen = context.expected_generation
+    else:
+        assert record_id is not None, "record_id required when context is None"
+        assert base_id is not None, "base_id required when context is None"
+        assert generation is not None, "generation required when context is None"
+        rid = record_id
+        bid = str(base_id)
+        gen = generation
+
+    payload = build_representation_payload(
+        representation_section="record_metadata",
+        operation="status_changed",
+        generation=gen,
+        base_id=bid,
+        target_keys=target_keys,
     )
-    if not isinstance(sequence, int):
-        raise ValueError(f"reader_event_sequences missing for record {claim.reading_record_id}")
-    await conn.execute(
-        """
-        INSERT INTO reader_events (
-            id,
-            reading_record_id,
-            sequence,
-            event_type,
-            payload_json,
-            source_run_id,
-            source_job_id,
-            created_at
-        )
-        VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
-        """,
-        uuid4(),
-        claim.reading_record_id,
-        sequence,
-        event_type,
-        jsonb_param(payload),
-        claim.run_id,
-        claim.job_id,
-        created_at,
+    await ReaderEventRuntime().publish_event_in_transaction(
+        conn,
+        record_id=rid,
+        event_type="record_state_changed",
+        payload_json=payload,
+        source_run_id=claim.run_id,
+        source_job_id=claim.job_id,
     )
+
 
 def _usage_metadata(context: DisplayTitleJobContext) -> dict[str, Any]:
     title_input = context.title_input

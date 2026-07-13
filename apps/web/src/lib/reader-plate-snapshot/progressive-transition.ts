@@ -389,15 +389,27 @@ export type EventPollApplyResult = {
  * Apply a poll response against the progressive client cursor.
  *
  * Pure wrapper around {@link decidePollingAction} that also exposes the
- * T2.1 cursor-hold-on-reload contract for fixture replay.
+ * T2.1 cursor-hold-on-reload contract for fixture replay. The snapshot fence
+ * (generation/base_id of the currently accepted snapshot) is extracted from
+ * the state so the payload-aware classifier can detect stale-base
+ * representation events (T4.2a-O4-R2-D).
  */
 export function applyEventPoll(
   state: ProgressiveClientState,
   response: ReaderEventPollResponseDto,
 ): EventPollApplyResult {
+  const snapshotFence =
+    state.snapshot !== null
+      ? {
+          generation: state.snapshot.record.generation,
+          baseId: state.snapshot.base.base_id,
+        }
+      : null;
+
   const decision = decidePollingAction({
     afterSequence: state.cursor,
     response,
+    snapshotFence,
   });
 
   if (decision.kind === "reload") {

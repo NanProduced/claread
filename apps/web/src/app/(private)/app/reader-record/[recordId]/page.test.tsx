@@ -2570,4 +2570,507 @@ describe("ReadingRecordPage direct load", () => {
     // Best-effort: if restore ran, scrollTop stays at 360
     expect(scroller.scrollTop).toBe(360);
   });
+
+  // -------------------------------------------------------------------------
+  // T4.2a-O4-R2-D: payload-aware representation event classification at the
+  // page runtime level. Verifies that G1/G2/G3 representation events trigger
+  // snapshot reload through the polling hook → reloadSnapshot → progressive
+  // gate path, and that invalid payloads / fence mismatches also force a
+  // reload (fail-safe, never cursor-only).
+  // -------------------------------------------------------------------------
+
+  function makeRepresentationPayload(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      schema_version: 1,
+      representation_section: "user_assets",
+      operation: "upsert",
+      target_keys: ["asset_1"],
+      // Default fence matches makeSnapshot's generation=1, base_id="base_1"
+      generation: 1,
+      base_id: "base_1",
+      ...overrides,
+    };
+  }
+
+  it("O4-R2-D: G1 projection_ops + user_assets representation event triggers snapshot reload", async () => {
+    vi.useFakeTimers();
+    const recordId = "rec_o4r2d_g1";
+    const initial = makeSnapshot(recordId, {}, { lastEventSequence: 1 });
+    const refreshed = makeSnapshot(
+      recordId,
+      {},
+      {
+        snapshotId: "snap_g1_refresh",
+        lastEventSequence: 2,
+        translationText: "G1表示事件刷新译文。",
+      },
+    );
+
+    const fetchMock = installReaderRecordFetchMock(initial, {
+      snapshots: [initial, refreshed],
+      eventsResponder: (url) => {
+        const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
+        if (afterSequence >= 2) {
+          return new Response(
+            JSON.stringify(
+              makePollResponse(recordId, afterSequence, {
+                last_event_sequence: 2,
+                next_after_sequence: 2,
+                events: [],
+              }),
+            ),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify(
+            makePollResponse(recordId, afterSequence, {
+              last_event_sequence: 2,
+              next_after_sequence: 2,
+              events: [
+                makeReaderEvent(recordId, "projection_ops", {
+                  payload: makeRepresentationPayload({
+                    representation_section: "user_assets",
+                    operation: "upsert",
+                    target_keys: ["asset_highlight_1"],
+                  }),
+                }),
+              ],
+            }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    renderReadingRecordPage(recordId, "default");
+    await flushAsyncWork();
+
+    // Initial state: default translation text
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain(TRANSLATION_TEXT);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+
+    // G1 representation event triggered a reload → refreshed snapshot applied
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain("G1表示事件刷新译文。");
+
+    // Verify at least 2 snapshot fetches (initial + reload)
+    const snapshotCalls = fetchMock.mock.calls.filter(
+      ([input]) =>
+        String(input) === `/api/web/reader-plate/${recordId}/snapshot`,
+    );
+    expect(snapshotCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("O4-R2-D: G2 projection_ops + ask_supplements representation event triggers snapshot reload", async () => {
+    vi.useFakeTimers();
+    const recordId = "rec_o4r2d_g2";
+    const initial = makeSnapshot(recordId, {}, { lastEventSequence: 1 });
+    const refreshed = makeSnapshot(
+      recordId,
+      {},
+      {
+        snapshotId: "snap_g2_refresh",
+        lastEventSequence: 2,
+        translationText: "G2补充事件刷新译文。",
+      },
+    );
+
+    installReaderRecordFetchMock(initial, {
+      snapshots: [initial, refreshed],
+      eventsResponder: (url) => {
+        const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
+        if (afterSequence >= 2) {
+          return new Response(
+            JSON.stringify(
+              makePollResponse(recordId, afterSequence, {
+                last_event_sequence: 2,
+                next_after_sequence: 2,
+                events: [],
+              }),
+            ),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify(
+            makePollResponse(recordId, afterSequence, {
+              last_event_sequence: 2,
+              next_after_sequence: 2,
+              events: [
+                makeReaderEvent(recordId, "projection_ops", {
+                  payload: makeRepresentationPayload({
+                    representation_section: "ask_supplements",
+                    operation: "upsert",
+                    target_keys: ["supp_1"],
+                  }),
+                }),
+              ],
+            }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    renderReadingRecordPage(recordId, "default");
+    await flushAsyncWork();
+
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain(TRANSLATION_TEXT);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain("G2补充事件刷新译文。");
+  });
+
+  it("O4-R2-D: G3 record_state_changed + record_metadata representation event triggers snapshot reload", async () => {
+    vi.useFakeTimers();
+    const recordId = "rec_o4r2d_g3";
+    const initial = makeSnapshot(recordId, {}, { lastEventSequence: 1 });
+    const refreshed = makeSnapshot(
+      recordId,
+      { display_title_zh: "G3元数据事件标题" },
+      {
+        snapshotId: "snap_g3_refresh",
+        lastEventSequence: 2,
+        translationText: "G3元数据事件刷新译文。",
+      },
+    );
+
+    installReaderRecordFetchMock(initial, {
+      snapshots: [initial, refreshed],
+      eventsResponder: (url) => {
+        const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
+        if (afterSequence >= 2) {
+          return new Response(
+            JSON.stringify(
+              makePollResponse(recordId, afterSequence, {
+                last_event_sequence: 2,
+                next_after_sequence: 2,
+                events: [],
+              }),
+            ),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify(
+            makePollResponse(recordId, afterSequence, {
+              last_event_sequence: 2,
+              next_after_sequence: 2,
+              events: [
+                makeReaderEvent(recordId, "record_state_changed", {
+                  payload: makeRepresentationPayload({
+                    representation_section: "record_metadata",
+                    operation: "status_changed",
+                    target_keys: ["display_title_zh"],
+                  }),
+                }),
+              ],
+            }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    renderReadingRecordPage(recordId, "default");
+    await flushAsyncWork();
+
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain(TRANSLATION_TEXT);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain("G3元数据事件刷新译文。");
+  });
+
+  it("O4-R2-D: invalid representation payload (unknown schema_version) still triggers reload (fail-safe)", async () => {
+    vi.useFakeTimers();
+    const recordId = "rec_o4r2d_invalid";
+    const initial = makeSnapshot(recordId, {}, { lastEventSequence: 1 });
+    const refreshed = makeSnapshot(
+      recordId,
+      {},
+      {
+        snapshotId: "snap_invalid_refresh",
+        lastEventSequence: 2,
+        translationText: "无效载荷也触发刷新。",
+      },
+    );
+
+    installReaderRecordFetchMock(initial, {
+      snapshots: [initial, refreshed],
+      eventsResponder: (url) => {
+        const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
+        if (afterSequence >= 2) {
+          return new Response(
+            JSON.stringify(
+              makePollResponse(recordId, afterSequence, {
+                last_event_sequence: 2,
+                next_after_sequence: 2,
+                events: [],
+              }),
+            ),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify(
+            makePollResponse(recordId, afterSequence, {
+              last_event_sequence: 2,
+              next_after_sequence: 2,
+              events: [
+                makeReaderEvent(recordId, "projection_ops", {
+                  payload: makeRepresentationPayload({ schema_version: 99 }),
+                }),
+              ],
+            }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    renderReadingRecordPage(recordId, "default");
+    await flushAsyncWork();
+
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain(TRANSLATION_TEXT);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+
+    // Invalid payload → reload_or_reset → reload triggered → snapshot applied
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain("无效载荷也触发刷新。");
+  });
+
+  it("O4-R2-D: fence mismatch representation event triggers reload (not cursor_only)", async () => {
+    vi.useFakeTimers();
+    const recordId = "rec_o4r2d_fence";
+    const initial = makeSnapshot(recordId, {}, { lastEventSequence: 1 });
+    const refreshed = makeSnapshot(
+      recordId,
+      {},
+      {
+        snapshotId: "snap_fence_refresh",
+        lastEventSequence: 2,
+        translationText: "围栏不匹配也触发刷新。",
+      },
+    );
+
+    installReaderRecordFetchMock(initial, {
+      snapshots: [initial, refreshed],
+      eventsResponder: (url) => {
+        const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
+        if (afterSequence >= 2) {
+          return new Response(
+            JSON.stringify(
+              makePollResponse(recordId, afterSequence, {
+                last_event_sequence: 2,
+                next_after_sequence: 2,
+                events: [],
+              }),
+            ),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify(
+            makePollResponse(recordId, afterSequence, {
+              last_event_sequence: 2,
+              next_after_sequence: 2,
+              events: [
+                makeReaderEvent(recordId, "projection_ops", {
+                  // Fence mismatch: generation=2, base_id="base_other"
+                  // while accepted snapshot has generation=1, base_id="base_1"
+                  payload: makeRepresentationPayload({
+                    generation: 2,
+                    base_id: "base_other",
+                  }),
+                }),
+              ],
+            }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    renderReadingRecordPage(recordId, "default");
+    await flushAsyncWork();
+
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain(TRANSLATION_TEXT);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+
+    // Fence mismatch → reload_or_reset → reload triggered → snapshot applied
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain("围栏不匹配也触发刷新。");
+  });
+
+  it("O4-R2-D: representation event reload rejected by progressive gate holds cursor (no silent consume)", async () => {
+    vi.useFakeTimers();
+    const recordId = "rec_o4r2d_hold";
+    const s1 = makeSnapshot(
+      recordId,
+      { readiness_state: "article_ready" },
+      {
+        snapshotId: "snap_hold_s1",
+        lastEventSequence: 1,
+        enhancementLayers: [makePublishedLayer("translation", "layer_t1")],
+      },
+    );
+    const s2 = makeSnapshot(
+      recordId,
+      { readiness_state: "initial_enhancement_ready" },
+      {
+        snapshotId: "snap_hold_s2",
+        lastEventSequence: 2,
+        enhancementLayers: [
+          makePublishedLayer("translation", "layer_t1"),
+          makePublishedLayer("vocabulary", "layer_v1"),
+        ],
+        withVocabularyMark: true,
+        translationText: "围栏保持译文。",
+      },
+    );
+    // Stale snapshot: lower sequence → rejected by progressive gate
+    const stale = makeSnapshot(
+      recordId,
+      { readiness_state: "article_ready" },
+      {
+        snapshotId: "snap_hold_stale",
+        lastEventSequence: 1,
+        enhancementLayers: [],
+        omitTranslationValue: true,
+      },
+    );
+
+    const fetchMock = installReaderRecordFetchMock(s1, {
+      snapshots: [s1, s2, stale, stale],
+      eventsResponder: (url) => {
+        const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
+        if (afterSequence < 2) {
+          return new Response(
+            JSON.stringify(
+              makePollResponse(recordId, afterSequence, {
+                last_event_sequence: 2,
+                next_after_sequence: 2,
+                events: [
+                  makeReaderEvent(recordId, "projection_ops", {
+                    payload: makeRepresentationPayload({
+                      representation_section: "user_assets",
+                      operation: "upsert",
+                      target_keys: ["asset_note_1"],
+                    }),
+                  }),
+                ],
+              }),
+            ),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        // After cursor=2, force a second reload with a stale snapshot
+        return new Response(
+          JSON.stringify(
+            makePollResponse(recordId, afterSequence, {
+              last_event_sequence: 2,
+              next_after_sequence: 3,
+              reload_required: true,
+              reload_reason: "reader event sequence gap detected",
+              events: [],
+            }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    renderReadingRecordPage(recordId, "default");
+    await flushAsyncWork();
+
+    // First poll: representation event → s2 accepted
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain("围栏保持译文。");
+
+    // Second poll: reload_required → stale snapshot rejected by progressive gate
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await flushAsyncWork();
+
+    // Progressive gate rejected the stale snapshot
+    const status = screen.getByTestId("reader-record-progressive-status");
+    expect(status.getAttribute("data-last-rejected")).toBe("true");
+
+    // UI retains s2 content (not overwritten by stale)
+    expect(
+      document.querySelector('[data-reader-record-node="blockquote"]')
+        ?.textContent,
+    ).toContain("围栏保持译文。");
+
+    // Cursor held at 2: subsequent poll still uses after_sequence=2 (not 3)
+    const eventCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("/events"),
+    );
+    const lastEventUrl = new URL(
+      String(eventCalls[eventCalls.length - 1]?.[0]),
+      "http://localhost",
+    );
+    const lastAfterSequence = Number(
+      lastEventUrl.searchParams.get("after_sequence") ?? "0",
+    );
+    expect(lastAfterSequence).toBe(2);
+  });
 });

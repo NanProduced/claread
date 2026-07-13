@@ -253,13 +253,302 @@ describe("decidePollingAction", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T2.1 goal #4: reader event payload audit.
-// Enumerate every ReaderEventType and classify it as either a full-snapshot
-// reload trigger or a lightweight event. This is the contract the polling
-// hook relies on: only the 3 reload-trigger types force a snapshot reload on
-// the client side; the other 8 are consumed via `advance`/`caught_up` and
-// rely on the server's `reload_required` flag (set on sequence gaps / counter
-// mismatches) to force a reload when the projection is actually stale.
+// T4.2a-O4-R2-D: payload-aware representation event classification.
+// These tests verify that decidePollingAction delegates to the
+// payload-aware classifier for representation events (G1/G2/G3) and that
+// invalid payloads / fence mismatches force a reload (never cursor-only).
+// ---------------------------------------------------------------------------
+
+describe("decidePollingAction — payload-aware representation events (O4-R2-D)", () => {
+  const MATCHING_FENCE = { generation: 1, baseId: "base_1" };
+  const MISMATCH_FENCE = { generation: 2, baseId: "base_other" };
+
+  function makeRepresentationPayload(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      schema_version: 1,
+      representation_section: "user_assets",
+      operation: "upsert",
+      target_keys: ["asset_1"],
+      generation: 1,
+      base_id: "base_1",
+      ...overrides,
+    };
+  }
+
+  it("reloads on G1 projection_ops + user_assets + upsert (matching fence)", () => {
+    const decision = decidePollingAction({
+      afterSequence: 1,
+      snapshotFence: MATCHING_FENCE,
+      response: makeResponse({
+        after_sequence: 1,
+        next_after_sequence: 2,
+        last_event_sequence: 2,
+        events: [
+          makeEvent({
+            sequence: 2,
+            event_type: "projection_ops",
+            payload: makeRepresentationPayload({
+              representation_section: "user_assets",
+              operation: "upsert",
+            }),
+          }),
+        ],
+      }),
+    });
+
+    expect(decision).toEqual({
+      kind: "reload",
+      reason: "representation:user_assets:upsert",
+    });
+  });
+
+  it("reloads on G2 projection_ops + ask_supplements + reactivate", () => {
+    const decision = decidePollingAction({
+      afterSequence: 1,
+      snapshotFence: MATCHING_FENCE,
+      response: makeResponse({
+        after_sequence: 1,
+        next_after_sequence: 2,
+        last_event_sequence: 2,
+        events: [
+          makeEvent({
+            sequence: 2,
+            event_type: "projection_ops",
+            payload: makeRepresentationPayload({
+              representation_section: "ask_supplements",
+              operation: "reactivate",
+              target_keys: ["supp_1"],
+            }),
+          }),
+        ],
+      }),
+    });
+
+    expect(decision).toEqual({
+      kind: "reload",
+      reason: "representation:ask_supplements:reactivate",
+    });
+  });
+
+  it("reloads on G3 record_state_changed + record_metadata + status_changed", () => {
+    const decision = decidePollingAction({
+      afterSequence: 1,
+      snapshotFence: MATCHING_FENCE,
+      response: makeResponse({
+        after_sequence: 1,
+        next_after_sequence: 2,
+        last_event_sequence: 2,
+        events: [
+          makeEvent({
+            sequence: 2,
+            event_type: "record_state_changed",
+            payload: makeRepresentationPayload({
+              representation_section: "record_metadata",
+              operation: "status_changed",
+              target_keys: ["display_title_zh"],
+            }),
+          }),
+        ],
+      }),
+    });
+
+    expect(decision).toEqual({
+      kind: "reload",
+      reason: "representation:record_metadata:status_changed",
+    });
+  });
+
+  it("reloads on representation event with unknown schema_version (fail-safe)", () => {
+    const decision = decidePollingAction({
+      afterSequence: 1,
+      snapshotFence: MATCHING_FENCE,
+      response: makeResponse({
+        after_sequence: 1,
+        next_after_sequence: 2,
+        last_event_sequence: 2,
+        events: [
+          makeEvent({
+            sequence: 2,
+            event_type: "projection_ops",
+            payload: makeRepresentationPayload({ schema_version: 99 }),
+          }),
+        ],
+      }),
+    });
+
+    expect(decision.kind).toBe("reload");
+    if (decision.kind === "reload") {
+      expect(decision.reason).toContain("representation_unknown_schema");
+    }
+  });
+
+  it("reloads on representation event with fence mismatch (stale base)", () => {
+    const decision = decidePollingAction({
+      afterSequence: 1,
+      snapshotFence: MISMATCH_FENCE,
+      response: makeResponse({
+        after_sequence: 1,
+        next_after_sequence: 2,
+        last_event_sequence: 2,
+        events: [
+          makeEvent({
+            sequence: 2,
+            event_type: "projection_ops",
+            payload: makeRepresentationPayload(),
+          }),
+        ],
+      }),
+    });
+
+    expect(decision).toEqual({
+      kind: "reload",
+      reason: "representation_fence_mismatch",
+    });
+  });
+
+  it("reloads on representation event with missing target_keys (fail-safe)", () => {
+    const payload = makeRepresentationPayload();
+    delete payload.target_keys;
+    const decision = decidePollingAction({
+      afterSequence: 1,
+      snapshotFence: MATCHING_FENCE,
+      response: makeResponse({
+        after_sequence: 1,
+        next_after_sequence: 2,
+        last_event_sequence: 2,
+        events: [
+          makeEvent({
+            sequence: 2,
+            event_type: "projection_ops",
+            payload,
+          }),
+        ],
+      }),
+    });
+
+    expect(decision).toEqual({
+      kind: "reload",
+      reason: "representation_missing_target_keys",
+    });
+  });
+
+  it("reloads on legacy projection_ops without representation_section (fail-safe, never cursor_only)", () => {
+    const decision = decidePollingAction({
+      afterSequence: 1,
+      snapshotFence: MATCHING_FENCE,
+      response: makeResponse({
+        after_sequence: 1,
+        next_after_sequence: 2,
+        last_event_sequence: 2,
+        events: [
+          makeEvent({
+            sequence: 2,
+            event_type: "projection_ops",
+            payload: { op: "legacy_op" },
+          }),
+        ],
+      }),
+    });
+
+    expect(decision.kind).toBe("reload");
+    if (decision.kind === "reload") {
+      expect(decision.reason).toBe("representation_missing_section");
+    }
+  });
+
+  it("reloads on first representation event even when followed by cursor_only events", () => {
+    const decision = decidePollingAction({
+      afterSequence: 1,
+      snapshotFence: MATCHING_FENCE,
+      response: makeResponse({
+        after_sequence: 1,
+        next_after_sequence: 3,
+        last_event_sequence: 3,
+        events: [
+          makeEvent({
+            sequence: 2,
+            event_type: "article_ready",
+          }),
+          makeEvent({
+            sequence: 3,
+            event_type: "projection_ops",
+            payload: makeRepresentationPayload({
+              representation_section: "user_assets",
+              operation: "delete",
+            }),
+          }),
+        ],
+      }),
+    });
+
+    expect(decision).toEqual({
+      kind: "reload",
+      reason: "representation:user_assets:delete",
+    });
+  });
+
+  it("reloads on unknown event type (fail-safe, never cursor_only)", () => {
+    const decision = decidePollingAction({
+      afterSequence: 1,
+      snapshotFence: null,
+      response: makeResponse({
+        after_sequence: 1,
+        next_after_sequence: 2,
+        last_event_sequence: 2,
+        events: [
+          makeEvent({
+            sequence: 2,
+            event_type: "brand_new_type" as never,
+          }),
+        ],
+      }),
+    });
+
+    expect(decision.kind).toBe("reload");
+    if (decision.kind === "reload") {
+      expect(decision.reason).toContain("unknown_event_type");
+    }
+  });
+
+  it("representation event reload does not regress reload_required precedence", () => {
+    const decision = decidePollingAction({
+      afterSequence: 1,
+      snapshotFence: MATCHING_FENCE,
+      response: makeResponse({
+        reload_required: true,
+        reload_reason: "server gap",
+        after_sequence: 1,
+        next_after_sequence: 1,
+        last_event_sequence: 5,
+        events: [
+          makeEvent({
+            sequence: 2,
+            event_type: "projection_ops",
+            payload: makeRepresentationPayload(),
+          }),
+        ],
+      }),
+    });
+
+    expect(decision).toEqual({ kind: "reload", reason: "server gap" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T2.1 goal #4 / T4.2a-O4-R2-D: reader event payload audit.
+// Enumerate every ReaderEventType and classify it into one of three tiers:
+//
+//   1. Unconditional reload (3 types): always force a snapshot reload
+//      regardless of payload. These are the RELIABLE_RELOAD_EVENT_TYPES.
+//   2. Payload-dependent (2 types): projection_ops / record_state_changed.
+//      When the payload carries a valid representation_section, the
+//      payload-aware classifier decides reload_snapshot / reload_or_reset.
+//      Without a valid representation payload (missing/non-object payload,
+//      missing section, unknown schema/operation, invalid target_keys,
+//      fence mismatch), they return reload_or_reset — NEVER cursor_only.
+//   3. Always cursor-only (6 types): never affect snapshot representation.
 //
 // This test is intentionally exhaustive so that adding a new ReaderEventType
 // forces the author to decide its classification here.
@@ -285,35 +574,66 @@ const EXPECTED_RELOAD_TRIGGERS: readonly ReaderEventType[] = [
   "projection_reset_required",
 ] as const;
 
-describe("reader event reload audit (T2.1 goal #4)", () => {
+const PAYLOAD_DEPENDENT_TYPES: readonly ReaderEventType[] = [
+  "projection_ops",
+  "record_state_changed",
+] as const;
+
+const ALWAYS_CURSOR_ONLY_TYPES: readonly ReaderEventType[] = [
+  "article_ready",
+  "layer_failed",
+  "parsed_decision_updated",
+  "action_required",
+  "run_completed",
+  "record_superseded",
+] as const;
+
+describe("reader event reload audit (T2.1 goal #4 / O4-R2-D)", () => {
   it("every ReaderEventType is classified exactly once", () => {
     const seen = new Set(ALL_READER_EVENT_TYPES);
     expect(seen.size).toBe(ALL_READER_EVENT_TYPES.length);
 
     const triggers = new Set(EXPECTED_RELOAD_TRIGGERS);
     for (const eventType of ALL_READER_EVENT_TYPES) {
-      // Each event type must be either a reload trigger or a lightweight
-      // event — no event type should be unclassified.
+      // Each event type must be either an unconditional reload trigger or
+      // a non-trigger (payload-dependent or cursor-only) — no event type
+      // should be unclassified.
       const isTrigger = RELOAD_TRIGGER_EVENT_TYPES.has(eventType);
       const expectedTrigger = triggers.has(eventType);
       expect(isTrigger).toBe(expectedTrigger);
     }
   });
 
-  it("exactly 3 reload-trigger event types force a full snapshot reload", () => {
+  it("exactly 3 unconditional reload-trigger event types force a full snapshot reload", () => {
     expect(RELOAD_TRIGGER_EVENT_TYPES.size).toBe(3);
     for (const eventType of EXPECTED_RELOAD_TRIGGERS) {
       expect(RELOAD_TRIGGER_EVENT_TYPES.has(eventType)).toBe(true);
     }
   });
 
-  it("8 lightweight event types do NOT trigger a client-side reload", () => {
-    const lightweight = ALL_READER_EVENT_TYPES.filter(
-      (eventType) => !EXPECTED_RELOAD_TRIGGERS.includes(eventType),
-    );
-    expect(lightweight).toHaveLength(8);
-    for (const eventType of lightweight) {
+  it("2 payload-dependent types are NOT in the unconditional reload set", () => {
+    expect(PAYLOAD_DEPENDENT_TYPES).toHaveLength(2);
+    for (const eventType of PAYLOAD_DEPENDENT_TYPES) {
       expect(RELOAD_TRIGGER_EVENT_TYPES.has(eventType)).toBe(false);
+    }
+  });
+
+  it("6 always-cursor-only types are NOT in the unconditional reload set", () => {
+    expect(ALWAYS_CURSOR_ONLY_TYPES).toHaveLength(6);
+    for (const eventType of ALWAYS_CURSOR_ONLY_TYPES) {
+      expect(RELOAD_TRIGGER_EVENT_TYPES.has(eventType)).toBe(false);
+    }
+  });
+
+  it("unconditional + payload-dependent + cursor-only = all 11 ReaderEventTypes", () => {
+    const all = new Set<ReaderEventType>([
+      ...EXPECTED_RELOAD_TRIGGERS,
+      ...PAYLOAD_DEPENDENT_TYPES,
+      ...ALWAYS_CURSOR_ONLY_TYPES,
+    ]);
+    expect(all.size).toBe(ALL_READER_EVENT_TYPES.length);
+    for (const eventType of ALL_READER_EVENT_TYPES) {
+      expect(all.has(eventType)).toBe(true);
     }
   });
 });

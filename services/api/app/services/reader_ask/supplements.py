@@ -13,6 +13,10 @@ from app.schemas.reader_ask import (
     ReaderAskReadingRecordAnchor,
     ReaderAskSupplementCandidate,
 )
+from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
+from app.services.reader_orchestration.representation_event_payload import (
+    build_representation_payload,
+)
 
 _SUPPLEMENT_SCHEMA_VERSION = "reader-ask-supplement-v1"
 
@@ -144,71 +148,114 @@ async def create_supplement(
         sentence_id = candidate.sentence_id
 
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO reader_ask_supplements (
-                id, user_id, analysis_record_id, reading_record_id, supplement_type,
-                target_key, sentence_id, paragraph_id,
-                title, content_md, anchor_payload_json, metadata_json, schema_version,
-                created_from_turn_run_id, created_at, updated_at,
-                base_id, generation, unit_id, anchor_segment_id,
-                start_offset, end_offset, text_hash, hash_algorithm
-            )
-            VALUES (
-                $1, $2, $3, $4, $5,
-                $6, $7, $8,
-                $9, $10, $11::jsonb, $12::jsonb, $13,
-                $14, $15, $15,
-                $16, $17, $18, $19,
-                $20, $21, $22, $23
-            )
-            ON CONFLICT (id) DO NOTHING
-            RETURNING id, analysis_record_id, reading_record_id, supplement_type,
-                      target_key, sentence_id, paragraph_id,
-                      title, content_md, anchor_payload_json, metadata_json, schema_version,
-                      created_from_turn_run_id, created_at, updated_at, deleted_at,
-                      base_id, generation, unit_id, anchor_segment_id,
-                      start_offset, end_offset, text_hash, hash_algorithm
-            """,
-            supplement_id,
-            user_id,
-            None if is_reading_record_candidate else record_id,
-            resolved_reading_record_id,
-            candidate.supplement_type,
-            target_key,
-            sentence_id,
-            candidate.paragraph_id,
-            candidate.title,
-            candidate.content,
-            candidate.anchor.model_dump(mode="json"),
-            candidate_to_projection(candidate),
-            candidate.schema_version,
-            candidate.created_from_turn_run_id,
-            now,
-            UUID(anchor.base_id) if is_reading_record_candidate else None,
-            anchor.generation if is_reading_record_candidate else None,
-            anchor.unit_id if is_reading_record_candidate else None,
-            anchor.anchor_segment_id if is_reading_record_candidate else None,
-            anchor.start_offset if is_reading_record_candidate else None,
-            anchor.end_offset if is_reading_record_candidate else None,
-            anchor.text_hash if is_reading_record_candidate else None,
-            anchor.hash_algorithm if is_reading_record_candidate else None,
-        )
-        # ON CONFLICT DO NOTHING returns None — fetch the existing row
-        if row is None:
+        async with conn.transaction():
+            if is_reading_record_candidate:
+                is_active = await ReaderEventRuntime().is_active_fence(
+                    conn,
+                    record_id=resolved_reading_record_id,
+                    base_id=UUID(anchor.base_id),
+                    generation=anchor.generation,
+                )
+                if not is_active:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Reading record changed; refresh and try again.",
+                    )
+
             row = await conn.fetchrow(
                 """
-                SELECT id, analysis_record_id, reading_record_id, supplement_type,
-                       target_key, sentence_id, paragraph_id,
-                       title, content_md, anchor_payload_json, metadata_json, schema_version,
-                       created_from_turn_run_id, created_at, updated_at, deleted_at,
-                       base_id, generation, unit_id, anchor_segment_id,
-                       start_offset, end_offset, text_hash, hash_algorithm
-                FROM reader_ask_supplements
-                WHERE id = $1
+                INSERT INTO reader_ask_supplements (
+                    id, user_id, analysis_record_id, reading_record_id, supplement_type,
+                    target_key, sentence_id, paragraph_id,
+                    title, content_md, anchor_payload_json, metadata_json, schema_version,
+                    created_from_turn_run_id, created_at, updated_at,
+                    base_id, generation, unit_id, anchor_segment_id,
+                    start_offset, end_offset, text_hash, hash_algorithm
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5,
+                    $6, $7, $8,
+                    $9, $10, $11::jsonb, $12::jsonb, $13,
+                    $14, $15, $15,
+                    $16, $17, $18, $19,
+                    $20, $21, $22, $23
+                )
+                ON CONFLICT (id) DO NOTHING
+                RETURNING id, analysis_record_id, reading_record_id, supplement_type,
+                          target_key, sentence_id, paragraph_id,
+                          title, content_md, anchor_payload_json, metadata_json, schema_version,
+                          created_from_turn_run_id, created_at, updated_at, deleted_at,
+                          base_id, generation, unit_id, anchor_segment_id,
+                          start_offset, end_offset, text_hash, hash_algorithm
                 """,
                 supplement_id,
+                user_id,
+                None if is_reading_record_candidate else record_id,
+                resolved_reading_record_id,
+                candidate.supplement_type,
+                target_key,
+                sentence_id,
+                candidate.paragraph_id,
+                candidate.title,
+                candidate.content,
+                candidate.anchor.model_dump(mode="json"),
+                candidate_to_projection(candidate),
+                candidate.schema_version,
+                candidate.created_from_turn_run_id,
+                now,
+                UUID(anchor.base_id) if is_reading_record_candidate else None,
+                anchor.generation if is_reading_record_candidate else None,
+                anchor.unit_id if is_reading_record_candidate else None,
+                anchor.anchor_segment_id if is_reading_record_candidate else None,
+                anchor.start_offset if is_reading_record_candidate else None,
+                anchor.end_offset if is_reading_record_candidate else None,
+                anchor.text_hash if is_reading_record_candidate else None,
+                anchor.hash_algorithm if is_reading_record_candidate else None,
             )
+            # ON CONFLICT DO NOTHING returns None — fetch the existing row
+            if row is None:
+                row = await conn.fetchrow(
+                    """
+                    SELECT id, analysis_record_id, reading_record_id, supplement_type,
+                           target_key, sentence_id, paragraph_id,
+                           title, content_md, anchor_payload_json, metadata_json, schema_version,
+                           created_from_turn_run_id, created_at, updated_at, deleted_at,
+                           base_id, generation, unit_id, anchor_segment_id,
+                           start_offset, end_offset, text_hash, hash_algorithm
+                    FROM reader_ask_supplements
+                    WHERE id = $1
+                    """,
+                    supplement_id,
+                )
+            else:
+                reading_record_id = row.get("reading_record_id")
+                base_id = row.get("base_id")
+                generation = row.get("generation")
+                if (
+                    reading_record_id is not None
+                    and base_id is not None
+                    and generation is not None
+                ):
+                    is_active = await ReaderEventRuntime().is_active_fence(
+                        conn,
+                        record_id=reading_record_id,
+                        base_id=base_id,
+                        generation=int(generation),
+                    )
+                    if is_active:
+                        payload = build_representation_payload(
+                            representation_section="ask_supplements",
+                            operation="upsert",
+                            generation=int(generation),
+                            base_id=str(base_id),
+                            target_keys=[str(row["id"])],
+                        )
+                        await ReaderEventRuntime().publish_event_in_transaction(
+                            conn,
+                            record_id=reading_record_id,
+                            event_type="projection_ops",
+                            payload_json=payload,
+                        )
     assert row is not None
     return dict(row)
 
@@ -271,22 +318,52 @@ async def delete_supplement(user_id: UUID, supplement_id: UUID) -> dict[str, Any
 
     now = _iso_now()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            UPDATE reader_ask_supplements
-            SET deleted_at = $3, updated_at = $3
-            WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
-            RETURNING id, analysis_record_id, reading_record_id, supplement_type,
-                      target_key, sentence_id, paragraph_id,
-                      title, content_md, anchor_payload_json, metadata_json, schema_version,
-                      created_from_turn_run_id, created_at, updated_at, deleted_at,
-                      base_id, generation, unit_id, anchor_segment_id,
-                      start_offset, end_offset, text_hash, hash_algorithm
-            """,
-            supplement_id,
-            user_id,
-            now,
-        )
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                UPDATE reader_ask_supplements
+                SET deleted_at = $3, updated_at = $3
+                WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+                RETURNING id, analysis_record_id, reading_record_id, supplement_type,
+                          target_key, sentence_id, paragraph_id,
+                          title, content_md, anchor_payload_json, metadata_json, schema_version,
+                          created_from_turn_run_id, created_at, updated_at, deleted_at,
+                          base_id, generation, unit_id, anchor_segment_id,
+                          start_offset, end_offset, text_hash, hash_algorithm
+                """,
+                supplement_id,
+                user_id,
+                now,
+            )
+            if row is not None:
+                reading_record_id = row.get("reading_record_id")
+                base_id = row.get("base_id")
+                generation = row.get("generation")
+                if (
+                    reading_record_id is not None
+                    and base_id is not None
+                    and generation is not None
+                ):
+                    is_active = await ReaderEventRuntime().is_active_fence(
+                        conn,
+                        record_id=reading_record_id,
+                        base_id=base_id,
+                        generation=int(generation),
+                    )
+                    if is_active:
+                        payload = build_representation_payload(
+                            representation_section="ask_supplements",
+                            operation="delete",
+                            generation=int(generation),
+                            base_id=str(base_id),
+                            target_keys=[str(row["id"])],
+                        )
+                        await ReaderEventRuntime().publish_event_in_transaction(
+                            conn,
+                            record_id=reading_record_id,
+                            event_type="projection_ops",
+                            payload_json=payload,
+                        )
     return dict(row) if row is not None else None
 
 

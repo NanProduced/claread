@@ -241,6 +241,13 @@ export default function ReadingRecordPage({
   // Single cursor path: polling reads last_event_sequence from the *accepted*
   // snapshot only. Rejected reloads never update snapshotState, so cursor holds.
   const initialCursor = snapshot?.last_event_sequence ?? 0;
+  // T4.2a-O4-R2-D: snapshot fence for the payload-aware classifier. Derived
+  // from the accepted snapshot so representation events from a stale base are
+  // detected as reload_or_reset instead of silently consumed as cursor-only.
+  const snapshotFence =
+    snapshot !== null
+      ? { generation: snapshot.record.generation, baseId: snapshot.base.base_id }
+      : null;
 
   const publishProgressiveUi = useCallback((state: ProgressiveClientState) => {
     setProgressivePhase(state.phase);
@@ -420,6 +427,7 @@ export default function ReadingRecordPage({
     recordId,
     initialCursor,
     enabled: snapshotState.kind === "loaded" && recordId.length > 0,
+    snapshotFence,
     onReloadRequired: reloadSnapshot,
   });
 

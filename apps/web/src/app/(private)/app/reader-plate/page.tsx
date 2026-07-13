@@ -61,6 +61,11 @@ export default function ReaderPlatePage() {
   const snapshot =
     snapshotState.kind === "loaded" ? snapshotState.snapshot : null;
   const initialCursor = snapshot?.last_event_sequence ?? 0;
+  // T4.2a-O4-R2-D: snapshot fence for the payload-aware classifier.
+  const snapshotFence =
+    snapshot !== null
+      ? { generation: snapshot.record.generation, baseId: snapshot.base.base_id }
+      : null;
 
   const reloadSnapshot = useCallback(
     async (reason: string): Promise<boolean> => {
@@ -163,6 +168,7 @@ export default function ReaderPlatePage() {
     recordId: recordId ?? "",
     initialCursor,
     enabled: recordId !== null && snapshotState.kind === "loaded",
+    snapshotFence,
     onReloadRequired: reloadSnapshot,
   });
 

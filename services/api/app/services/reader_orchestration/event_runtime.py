@@ -163,6 +163,41 @@ class ReaderEventRuntime:
             raise RuntimeError("reader_events insert did not return a row")
         return _event_from_row(row)
 
+    async def is_active_fence(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        generation: int,
+    ) -> bool:
+        """Return True if ``base_id``/``generation`` still match the record's
+        current ``active_base_id``/``generation``.
+
+        Used by representation-event publishers to skip stale-base writes:
+        an asset on a previous base does not affect the current snapshot, so
+        modifying it must NOT publish a ``projection_ops`` event or advance
+        the record's event sequence.
+
+        Returns ``False`` if the record is missing, deleted, or on a different
+        base/generation.  Returns ``True`` only when the fence matches.
+        """
+        if not conn.is_in_transaction():
+            raise RuntimeError("is_active_fence requires an active transaction")
+
+        row = await conn.fetchrow(
+            """
+            SELECT active_base_id, generation
+            FROM reading_records
+            WHERE id = $1 AND deleted_at IS NULL
+            FOR UPDATE
+            """,
+            record_id,
+        )
+        if row is None:
+            return False
+        return row["active_base_id"] == base_id and row["generation"] == generation
+
     async def poll_events(
         self,
         *,

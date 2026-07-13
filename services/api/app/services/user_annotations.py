@@ -25,8 +25,12 @@ from app.services.reader_orchestration.anchor_gate import (
     ValidatedReadingRecordAnchor,
     load_validated_reading_record_anchor,
 )
+from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.repository import (
     ReaderOrchestrationRepository,
+)
+from app.services.reader_orchestration.representation_event_payload import (
+    build_representation_payload,
 )
 from app.services.text_anchors import (
     load_render_scene,
@@ -400,6 +404,21 @@ async def _persist_reading_record_anchor_branch(
     selected_text, text_hash = _slice_reading_record_range(validated, request_range)
 
     async with conn.transaction():
+        if not await ReaderEventRuntime().is_active_fence(
+            conn,
+            record_id=validated.record_id,
+            base_id=validated.base_id,
+            generation=validated.generation,
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "stale_reading_record_anchor",
+                    "message": "Reading record changed; refresh and try again.",
+                    "field": "anchor",
+                },
+            )
+
         rows = await conn.fetch(
             f"""
             SELECT {_ANNOTATION_FIELDS}
@@ -431,7 +450,19 @@ async def _persist_reading_record_anchor_branch(
         )
 
         if merge_rows:
-            return await _merge_reading_record_highlight_rows(
+            # No-op merge detection: if the only existing annotation has the
+            # exact same range and color as the request, the merge is a
+            # semantic no-op — skip the UPDATE and the representation event.
+            if len(merge_rows) == 1 and merge_rows[0].get("color") == req.color:
+                row_range = _range_from_reading_record_row(merge_rows[0])
+                if (
+                    row_range is not None
+                    and row_range.start_offset == request_range.start_offset
+                    and row_range.end_offset == request_range.end_offset
+                ):
+                    return _row_to_response(dict(merge_rows[0]))
+
+            response = await _merge_reading_record_highlight_rows(
                 conn,
                 user_id=user_id,
                 req=req,
@@ -439,8 +470,25 @@ async def _persist_reading_record_anchor_branch(
                 merge_rows=merge_rows,
                 request_range=request_range,
             )
+            target_keys = [str(response.id)] + [
+                str(sid) for sid in (response.superseded_ids or [])
+            ]
+            payload = build_representation_payload(
+                representation_section="user_assets",
+                operation="merge",
+                generation=validated.generation,
+                base_id=str(validated.base_id),
+                target_keys=target_keys,
+            )
+            await ReaderEventRuntime().publish_event_in_transaction(
+                conn,
+                record_id=validated.record_id,
+                event_type="projection_ops",
+                payload_json=payload,
+            )
+            return response
 
-        return await _insert_reading_record_highlight_row(
+        response = await _insert_reading_record_highlight_row(
             conn,
             user_id=user_id,
             req=req,
@@ -450,6 +498,20 @@ async def _persist_reading_record_anchor_branch(
             selected_text=selected_text,
             text_hash=text_hash,
         )
+        payload = build_representation_payload(
+            representation_section="user_assets",
+            operation="upsert",
+            generation=validated.generation,
+            base_id=str(validated.base_id),
+            target_keys=[str(response.id)],
+        )
+        await ReaderEventRuntime().publish_event_in_transaction(
+            conn,
+            record_id=validated.record_id,
+            event_type="projection_ops",
+            payload_json=payload,
+        )
+        return response
 
 
 def _range_from_annotation_row(row: dict) -> _SingleSentenceRange | None:
@@ -958,34 +1020,129 @@ async def update_user_annotation(
     req: UserAnnotationUpdateRequest,
 ) -> UserAnnotationResponse:
     async with db_connect.acquire_connection() as conn:
-        row = await conn.fetchrow(
-            f"""
-            UPDATE user_annotations
-            SET color = $1
-            WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL
-            RETURNING {_ANNOTATION_FIELDS}
-            """,
-            req.color,
-            annotation_id,
-            user_id,
-        )
-        if not row:
-            raise HTTPException(status_code=404, detail="Annotation not found or unauthorized")
-        return _row_to_response(dict(row))
+        async with conn.transaction():
+            current = await conn.fetchrow(
+                f"""
+                SELECT {_ANNOTATION_FIELDS}
+                FROM user_annotations
+                WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+                FOR UPDATE
+                """,
+                annotation_id,
+                user_id,
+            )
+            if not current:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Annotation not found or unauthorized",
+                )
+
+            color_changed = current["color"] != req.color
+            row = await conn.fetchrow(
+                f"""
+                UPDATE user_annotations
+                SET color = $1
+                WHERE id = $2 AND user_id = $3
+                RETURNING {_ANNOTATION_FIELDS}
+                """,
+                req.color,
+                annotation_id,
+                user_id,
+            )
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Annotation not found or unauthorized",
+                )
+
+            reading_record_id = row.get("reading_record_id")
+            base_id = row.get("base_id")
+            generation = row.get("generation")
+            if (
+                color_changed
+                and reading_record_id is not None
+                and base_id is not None
+                and generation is not None
+            ):
+                is_active = await ReaderEventRuntime().is_active_fence(
+                    conn,
+                    record_id=reading_record_id,
+                    base_id=base_id,
+                    generation=int(generation),
+                )
+                if is_active:
+                    payload = build_representation_payload(
+                        representation_section="user_assets",
+                        operation="upsert",
+                        generation=int(generation),
+                        base_id=str(base_id),
+                        target_keys=[str(annotation_id)],
+                    )
+                    await ReaderEventRuntime().publish_event_in_transaction(
+                        conn,
+                        record_id=reading_record_id,
+                        event_type="projection_ops",
+                        payload_json=payload,
+                    )
+            return _row_to_response(dict(row))
 
 
 async def delete_user_annotation(user_id: UUID, annotation_id: UUID) -> None:
     async with db_connect.acquire_connection() as conn:
-        now = datetime.now(UTC)
-        result = await conn.execute(
-            """
-            UPDATE user_annotations
-            SET deleted_at = $3, deleted_by = $1
-            WHERE id = $2 AND user_id = $1 AND deleted_at IS NULL
-            """,
-            user_id,
-            annotation_id,
-            now,
-        )
-        if result == "UPDATE 0":
-            raise HTTPException(status_code=404, detail="Annotation not found or unauthorized")
+        async with conn.transaction():
+            current = await conn.fetchrow(
+                """
+                SELECT reading_record_id, base_id, generation
+                FROM user_annotations
+                WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+                FOR UPDATE
+                """,
+                annotation_id,
+                user_id,
+            )
+            if not current:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Annotation not found or unauthorized",
+                )
+
+            now = datetime.now(UTC)
+            await conn.execute(
+                """
+                UPDATE user_annotations
+                SET deleted_at = $3, deleted_by = $1
+                WHERE id = $2 AND user_id = $1
+                """,
+                user_id,
+                annotation_id,
+                now,
+            )
+
+            reading_record_id = current["reading_record_id"]
+            base_id = current["base_id"]
+            generation = current["generation"]
+            if (
+                reading_record_id is not None
+                and base_id is not None
+                and generation is not None
+            ):
+                is_active = await ReaderEventRuntime().is_active_fence(
+                    conn,
+                    record_id=reading_record_id,
+                    base_id=base_id,
+                    generation=int(generation),
+                )
+                if is_active:
+                    payload = build_representation_payload(
+                        representation_section="user_assets",
+                        operation="delete",
+                        generation=int(generation),
+                        base_id=str(base_id),
+                        target_keys=[str(annotation_id)],
+                    )
+                    await ReaderEventRuntime().publish_event_in_transaction(
+                        conn,
+                        record_id=reading_record_id,
+                        event_type="projection_ops",
+                        payload_json=payload,
+                    )

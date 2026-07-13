@@ -51,6 +51,8 @@ def _mock_auth(user_id: str = USER_ID):
 
 def _mock_db_pool():
     mock_conn = AsyncMock()
+    # conn.transaction() must return an async context manager, not a coroutine.
+    mock_conn.transaction = MagicMock(return_value=AsyncMock())
     mock_pool = MagicMock()
     mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
     mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -763,6 +765,12 @@ class TestRoutes:
         pool, conn = _mock_db_pool()
         mock_pool.acquire = pool.acquire
         conn.execute.return_value = "UPDATE 1"
+        # Legacy annotation (no reading_record_id) -> no event publish.
+        conn.fetchrow.return_value = {
+            "reading_record_id": None,
+            "base_id": None,
+            "generation": None,
+        }
         annotation_id = uuid4()
 
         response = client.delete(

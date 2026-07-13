@@ -2,18 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type {
-  ReaderEventPollResponseDto,
-  ReaderEventType,
-} from "@/types/api/reader-plate";
+import {
+  classifyReaderEvent,
+  RELIABLE_RELOAD_EVENT_TYPES,
+  type SnapshotFenceContext,
+} from "@/lib/reader-plate-snapshot/representation-event-classifier";
+import type { ReaderEventPollResponseDto } from "@/types/api/reader-plate";
 
 /**
  * Polling decision produced by {@link decidePollingAction}.
  *
  * - `reload`: snapshot must be reloaded (server flagged `reload_required`,
- *   a `layer_published` / `record_product_state_updated` /
- *   `projection_reset_required` event arrived, or the cursor drifted ahead of
- *   the server).
+ *   a payload-aware classifier flagged `reload_snapshot` /
+ *   `reload_or_reset` for a representation event, a reliable reload event
+ *   arrived, or the cursor drifted ahead of the server).
  * - `advance`: events were consumed without a reload trigger; the cursor
  *   should move to `next_after_sequence`. `hasMore` suggests an immediate
  *   follow-up poll.
@@ -25,12 +27,16 @@ export type PollingDecision =
   | { kind: "advance"; cursor: number; hasMore: boolean }
   | { kind: "caught_up"; cursor: number };
 
-/** Event types that force a snapshot reload in the D4 polling-first slice. */
-export const RELOAD_TRIGGER_EVENT_TYPES: ReadonlySet<ReaderEventType> = new Set([
-  "layer_published",
-  "record_product_state_updated",
-  "projection_reset_required",
-]);
+/**
+ * Event types that unconditionally force a snapshot reload, regardless of
+ * payload. Re-exported from the payload-aware classifier so existing imports
+ * keep working; the classifier is the single source of truth.
+ *
+ * @deprecated Import {@link RELIABLE_RELOAD_EVENT_TYPES} from
+ *   `representation-event-classifier` directly. This alias is kept only for
+ *   backward compatibility during the O4-R2-D rollout.
+ */
+export const RELOAD_TRIGGER_EVENT_TYPES = RELIABLE_RELOAD_EVENT_TYPES;
 
 /**
  * Pure decision function: given the cursor sent and the poll response,
@@ -39,14 +45,22 @@ export const RELOAD_TRIGGER_EVENT_TYPES: ReadonlySet<ReaderEventType> = new Set(
  * Contract reference: `docs/initiatives/reader-agentic-orchestration/modules/streaming-and-projection.md`
  * - `after_sequence == last_event_sequence` with empty events → caught up, no reload.
  * - `reload_required` → reload.
- * - `layer_published` / `record_product_state_updated` / `projection_reset_required` → reload.
+ * - Payload-aware classifier (T4.2a-O4-R2-D): for each event, call
+ *   {@link classifyReaderEvent}. The first `reload_snapshot` or
+ *   `reload_or_reset` classification forces a reload; the classifier's
+ *   reason is preserved for traceability. `cursor_only` events are advanced.
  * - `after_sequence > last_event_sequence` → cursor drift, reload.
+ *
+ * `snapshotFence` carries the generation/base_id of the currently accepted
+ * snapshot so representation events from a stale base are detected as
+ * `reload_or_reset` instead of silently consumed.
  */
 export function decidePollingAction(input: {
   afterSequence: number;
   response: ReaderEventPollResponseDto;
+  snapshotFence?: SnapshotFenceContext | null;
 }): PollingDecision {
-  const { afterSequence, response } = input;
+  const { afterSequence, response, snapshotFence = null } = input;
 
   if (response.reload_required) {
     return {
@@ -55,11 +69,15 @@ export function decidePollingAction(input: {
     };
   }
 
-  const triggerEvent = response.events.find((event) =>
-    RELOAD_TRIGGER_EVENT_TYPES.has(event.event_type),
-  );
-  if (triggerEvent) {
-    return { kind: "reload", reason: triggerEvent.event_type };
+  for (const event of response.events) {
+    const classification = classifyReaderEvent(event, snapshotFence);
+    if (classification.kind === "reload_snapshot") {
+      return { kind: "reload", reason: classification.reason };
+    }
+    if (classification.kind === "reload_or_reset") {
+      return { kind: "reload", reason: classification.reason };
+    }
+    // cursor_only: continue scanning the remaining events.
   }
 
   if (afterSequence > response.last_event_sequence) {
@@ -83,6 +101,16 @@ export interface UseReaderPlatePollingOptions {
   enabled: boolean;
   pollIntervalMs?: number;
   pollLimit?: number;
+  /**
+   * Snapshot fence for the payload-aware classifier (T4.2a-O4-R2-D).
+   *
+   * Pass the generation/base_id of the currently accepted snapshot so
+   * representation events from a stale base are detected as
+   * `reload_or_reset` instead of silently consumed as cursor-only. When
+   * omitted or `null`, the fence check is skipped — representation events
+   * still trigger a reload (fail-safe).
+   */
+  snapshotFence?: SnapshotFenceContext | null;
   /**
    * Called when the polling hook decides the snapshot must be reloaded.
    *
@@ -140,6 +168,7 @@ export function useReaderPlatePolling(
     enabled,
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
     pollLimit = DEFAULT_POLL_LIMIT,
+    snapshotFence = null,
     onReloadRequired,
     onCursorChange,
   } = options;
@@ -152,6 +181,10 @@ export function useReaderPlatePolling(
   const onReloadRequiredRef = useRef(onReloadRequired);
   const onCursorChangeRef = useRef(onCursorChange);
   const cursorRef = useRef(cursor);
+  // T4.2a-O4-R2-D: keep the snapshot fence current in a ref so the polling
+  // tick always classifies against the latest accepted snapshot without
+  // restarting the effect (which would reset the timer).
+  const snapshotFenceRef = useRef<SnapshotFenceContext | null>(snapshotFence);
 
   // T2.1: in-flight guard prevents stacking concurrent reloads. While a
   // reload is awaiting the parent's snapshot fetch, additional reload
@@ -169,6 +202,12 @@ export function useReaderPlatePolling(
   useEffect(() => {
     onCursorChangeRef.current = onCursorChange;
   }, [onCursorChange]);
+
+  // T4.2a-O4-R2-D: sync the snapshot fence ref so the polling tick reads the
+  // latest accepted snapshot's generation/base_id without re-subscribing.
+  useEffect(() => {
+    snapshotFenceRef.current = snapshotFence;
+  }, [snapshotFence]);
 
   // Reset cursor when the record or the initial cursor (from a fresh snapshot) changes.
   // Using the "adjust state during render" pattern avoids setState-in-effect.
@@ -240,6 +279,7 @@ export function useReaderPlatePolling(
         const decision = decidePollingAction({
           afterSequence: currentCursor,
           response: payload,
+          snapshotFence: snapshotFenceRef.current,
         });
 
         if (decision.kind === "reload") {
