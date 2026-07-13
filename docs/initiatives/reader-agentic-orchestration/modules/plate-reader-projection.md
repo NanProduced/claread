@@ -1,10 +1,24 @@
 # Plate Reader Projection
 
-> 状态：`D6-I0 document projection decision merged; Plate integration status rebaselined`
-> 最后更新：2026-06-27
+> 状态：`D6-I0 document projection decision merged; Plate integration status rebaselined；DOC-R2 收敛为 owner 权威文档`
+> 最后更新：2026-07-13（DOC-R2：本文成为 Owner 权限表、Anchor Bridge、Ask Document Tools、Fragment Sanitize 的权威归宿；`target-architecture.md` 与 `streaming-and-projection.md` 引用本文，不再逐字复制）
 > 范围：Web Reader Article Body 的 Plate.js 文档投影、projection operations、document tools、owner 权限和 anchor bridge。
 
 当前 Web 组件与 Plate.js / @platejs package 的真实接入状态见 [`reader-plate-component-integration.md`](./reader-plate-component-integration.md)。本文定义 projection contract；不要用 package 是否安装来判断产品能力是否已落地。
+
+## Owner 归属
+
+本文是以下事实的唯一权威归宿（其他文档引用时只写简短约束 + 链接）：
+
+- Owner 权限表（`stable` / `system_ai` / `ask_supplement` / `user` / `ephemeral`）
+- Snapshot DTO 与 D4 Base Plate Snapshot
+- D6 Document Block Projection
+- Projection Applier 行为
+- Anchor Bridge（`anchorSegmentIdToPath` 等 adapter）
+- Ask Document Tools 表
+- AI And Markdown / Fragment Sanitize
+
+`projection_ops` envelope JSON、`op_type` 概念列表、sequence contract、gap detection、polling cursor 与 snapshot reload fallback 归 [`streaming-and-projection.md`](./streaming-and-projection.md#projection-operation-envelope)；本文只保留与 Plate 投影语义直接相关的 op_type 表（Target / Owner / Use 列）。
 
 ## 目标
 
@@ -177,38 +191,7 @@ Projection metadata must carry stable `block_id`, `block_type`, optional canonic
 
 `reader_events` 支持 `event_type = projection_ops`。Projection op 使用稳定 domain target。
 
-示例：
-
-```json
-{
-  "event_type": "projection_ops",
-  "payload": {
-    "base_id": "base_...",
-    "projection_version": 12,
-    "ops": [
-      {
-        "op_id": "op_...",
-        "op_type": "upsert_translation_node",
-        "target": {
-          "unit_id": "u1",
-          "anchor_segment_id": "s3",
-          "layer_id": "layer_..."
-        },
-        "owner": "system_ai",
-        "fragment": {
-          "format": "plate_fragment",
-          "schema_version": 1,
-          "content": []
-        }
-      }
-    ],
-    "source_event_id": "evt_...",
-    "source_layer_id": "layer_..."
-  }
-}
-```
-
-Allowed `op_type` seed list:
+envelope JSON 结构、`source_event_id` / `source_layer_id` 字段语义、sequence contract、gap detection 和 polling cursor 归 [`streaming-and-projection.md`](./streaming-and-projection.md#projection-operation-envelope)；本文只保留与 Plate 投影语义直接相关的 op_type 列表（Target / Owner / Use 三列）：
 
 | op_type | Target | Owner | Use |
 |---|---|---|---|

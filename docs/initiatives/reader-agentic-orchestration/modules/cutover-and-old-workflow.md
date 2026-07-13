@@ -1,8 +1,23 @@
 # Cutover 与旧 AI Workflow 处理
 
-> 状态：`D6-U4 V1c single-range persistence 已完成；UI-D6C Plate surface polish 已完成；新旧双轨收敛待推进`
-> 最后更新：2026-06-25
+> 状态：`D6-U4 V1c single-range persistence 已完成；UI-D6C Plate surface polish 已完成；新旧双轨收敛待推进；DOC-R2 已对路由矩阵中已删除的文件/route 做现场标注`
+> 最后更新：2026-07-13（DOC-R2：现场核验 `apps/web` 代码库后，对已删除的 `ReadingRecordCommandGroup.tsx`、`active-analysis-task-indicator.tsx`、`/api/web/command-palette/records` 路由矩阵行做明确标注，未删除行；`/api/web/analysis/current|submit|tasks/[taskId]` 与 `reading-record-activity-indicator.tsx`、`analysis-task-client.ts` 经核验仍存在）
 > 范围：停服重构、旧 workflow 替换、旧表/旧 UI 清理边界，以及 Web cutover 迁移顺序。
+
+## DOC-R2 代码现场核验结论（2026-07-13）
+
+针对路由矩阵中以下文件/route 的存在性核验：
+
+| 引用 | 矩阵行 | 代码核验结果 | 处理 |
+|---|---|---|---|
+| `ReadingRecordCommandGroup.tsx` | Command palette 新阅读记录分组 | ❌ 已删除（`apps/web` 内无匹配；`entry-source-matrix.test.ts:29` 显式断言不引用此名） | 矩阵行保留作历史路径参考，标注为「已删除」 |
+| `active-analysis-task-indicator.tsx` | Active analysis task indicator | ❌ 已删除（`apps/web` 内无匹配） | 矩阵行保留作历史路径参考，标注为「已删除」 |
+| `/api/web/command-palette/records` | 推荐 W3-D4 最小实现切片 | ❌ 已删除（`apps/web/src/app/api/web/command-palette/` 目录不存在；`entry-source-matrix.test.ts:28` 显式断言不引用此 route） | 段落保留作历史背景，标注为「已删除」 |
+| `/api/web/analysis/current` `/api/web/analysis/submit` `/api/web/analysis/tasks/[taskId]` | Active analysis task indicator | ✅ 仍存在（`apps/web/src/app/api/web/analysis/`） | 不修改 |
+| `reading-record-activity-indicator.tsx` | Reading Record activity indicator | ✅ 仍存在（`apps/web/src/components/layout/reading-record-activity-indicator.tsx`） | 不修改 |
+| `analysis-task-client.ts` | Active analysis task indicator | ✅ 仍存在（`apps/web/src/lib/analysis-task-client.ts`） | 不修改 |
+
+DOC-R2 不修改代码、不重写矩阵行，仅在原行后追加「已删除」标注。后续若需要从矩阵中移除已删除条目，由 DOC-R3 或专门 cutover 任务处理。
 
 ## 基本立场
 
@@ -146,8 +161,8 @@ Web Reader 不再依赖旧 `render_scene_json`。Reader Article Body 的新路�
 | Library record links | `legacyAppReaderRoute(record.id)` | `/records` -> `RecordResponseDto[]` | 旧 `RecordResponseDto.id` | `LibraryClient.tsx`、`services/bff/records.ts`；Library 当前拿到的是旧 record list，不是新 Reading Record list |
 | Vocabulary source links | `legacyAppReaderRoute(recordId)` / `legacyAppReaderRoute(item.sourceRecordId)` | vocabulary item source refs -> 旧 source record contract | 旧 source record id / `cloud_record_id` / `client_record_id` | `app/vocabulary/VocabularyClient.tsx`；点回原文仍跳旧 ReaderWorkbench；W3-D9 已用 guard 锁定不能把 `sourceRecordId` 当新 `Reading Record.record_id`，后续必须等 BFF 提供 `sourceReadingRecordId` 或 `sourceReaderUrl` |
 | Command palette 最近记录 | `legacyAppReaderRoute(record.id)` / `legacyAppReaderRoute(lastRecordId)` | recent/search record list | 旧 record id | `CommandPaletteDialog.tsx`、`command-palette-items.ts` |
-| Command palette 新阅读记录分组 | BFF 返回的 `readerUrl` | 新 `Reading Record.record_id`，但前端只消费 `readerUrl` | `/api/web/reading-records` -> `/app/reader-record/{recordId}` | `ReadingRecordCommandGroup.tsx`；W3-D6 起独立新增，不替换旧 command palette recent/search records |
-| Active analysis task indicator | toast action -> `legacyAppReaderRoute(recordId)` | `/api/web/analysis/current` + `/api/web/analysis/tasks/{taskId}` | 旧 `cloud_record_id` | `active-analysis-task-indicator.tsx`、`analysis-task-client.ts` |
+| Command palette 新阅读记录分组 | BFF 返回的 `readerUrl` | 新 `Reading Record.record_id`，但前端只消费 `readerUrl` | `/api/web/reading-records` -> `/app/reader-record/{recordId}` | ~~`ReadingRecordCommandGroup.tsx`~~（DOC-R2 2026-07-13 核验：已删除，`apps/web` 内无匹配；`entry-source-matrix.test.ts:29` 显式断言不引用此名）；W3-D6 起独立新增，不替换旧 command palette recent/search records |
+| Active analysis task indicator | toast action -> `legacyAppReaderRoute(recordId)` | `/api/web/analysis/current` + `/api/web/analysis/tasks/{taskId}` | 旧 `cloud_record_id` | ~~`active-analysis-task-indicator.tsx`~~（DOC-R2 2026-07-13 核验：已删除，`apps/web` 内无匹配）、`analysis-task-client.ts`（仍存在） |
 | Reading Record activity indicator | BFF 返回的 `readerUrl` | 新 `Reading Record.record_id`，但前端只消费 `readerUrl` | `/api/web/reading-records` -> `/app/reader-record/{recordId}` | `reading-record-activity-indicator.tsx`；W3-D7 起独立新增，并列于旧 active indicator；W3-D8 起在 `/app/reader-record/*`、`/app/reader-plate*`、`/app/read` 隐藏且不请求列表，其他 app shell 页面展示 |
 | `services/bff/analysis.ts` `readerUrl` | `legacyAppReaderRoute(recordId)` | 旧 analysis task submit/status projection | 旧 `cloud_record_id` | 是当前 cutover 最显式的旧产品路径投射点 |
 | App shell route heuristics | `pathname.startsWith("/app/reader/") || pathname === "/app/read"` | 纯前端 route heuristic | 无 | `components/layout/app-shell/index.tsx`；未来新产品 route 进入后也要同步调整 sidebar collapse / active-task hiding 逻辑 |
@@ -231,7 +246,7 @@ W3-D1-D9 已完成 `/app/read` submit landing、Web-only 最近记录恢复、Re
 
 当前最安全的下一步是**先实现 new Reading Record list source**，而不是先改 command palette recent record。理由：
 
-1. command palette、Library、active task 当前都依赖旧 `/records` 或 `/api/web/command-palette/records` 返回的旧 record id。在没有 new Reading Record list source 之前，这些入口即使改了 route helper 也拿不到新 `Reading Record.record_id`，改线没有意义。
+1. command palette、Library、active task 当前都依赖旧 `/records` 或 ~~`/api/web/command-palette/records`~~（DOC-R2 2026-07-13 核验：route 已删除，`apps/web/src/app/api/web/command-palette/` 目录不存在；`entry-source-matrix.test.ts:28` 显式断言不引用此 route）返回的旧 record id。在没有 new Reading Record list source 之前，这些入口即使改了 route helper 也拿不到新 `Reading Record.record_id`，改线没有意义。
 2. new Reading Record list source 实现后，command palette recent / search 和 Library 才有可消费的新 id 数据面；届时再逐个入口改线，每次只改一个 surface 并同步更新 static guard。
 3. active task 和 Vocabulary source links 的 id 来源更深（active task 来自 `/api/web/analysis/*`，Vocabulary source refs 来自 vocabulary item `sourceRecordId`），应等 new Reading Record list source 稳定后再单独评估。
 

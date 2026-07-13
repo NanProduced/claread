@@ -632,10 +632,12 @@ However, SSE is not sufficient by itself. SSE must carry stable event envelopes 
 
 Implementation should evolve in two steps:
 
-1. V1: SSE or polling events with debounced/batched reload and preserved expanded/selected/scroll state.
+1. V1: polling events with debounced/batched reload and preserved expanded/selected/scroll state. **T4.2a-PUX-R1** = fixture contract; **T4.2a-PUX-R2** = runtime integration on the live `reader-record` polling path (monotonic snapshot apply + cursor hold + status strip + scroll/selection preserve); **T4.2a-PUX-R3** closes the CRLF/LF test-health issue without changing production behavior. Transport remains polling today; SSE is only a future notification candidate, not a snapshot-transfer decision.
 2. V2: true projection patch merge without whole-snapshot replacement.
 
 ## 9. Longform And Very Long Documents
+
+Current Reader Plate snapshot transfer is still a full representation. **T4.2a-LP-R1** closed the research gate: do not treat the existing snapshot_id as an HTTP ETag before a representation-coverage audit, and do not pre-approve compression, fragment routes, SSE, or content-visibility. The next approved work is **T4.2a-LP-R2 Phase 0 profiling**: measure response encoding/bytes, document topology, server/client timing, and reload frequency before choosing a transport change.
 
 Long and very long documents should not eagerly generate every annotation upfront.
 
@@ -807,10 +809,19 @@ default feedback loop for every intermediate patch.
   remains PARTIAL. **T4.2a-V2-R1** closed the deterministic fixed-sample
   boundary matrix (fragmented short news, structured boundary, >4000-word
   grouped/windowed, no-op grammar window) without real LLM or production
-  code changes. Progressive UX fixture/event replay (no new LLM) remains a
-  separate later task. The bounded LLM document profiler (T4.2) stays
-  deferred until deterministic routing shows repeatable boundary errors;
-  strategy planning and outline-first contracts remain later phases.
+  code changes. **T4.2a-PUX-R1** closed the progressive transition **fixture
+  contract** (pure replay helpers, 21 tests). **T4.2a-PUX-R2** is the
+  **runtime integration gate**: `reader-record` page `reloadSnapshot`
+  applies snapshots only after progressive monotonic validation; rejected
+  stale/layer-regression snapshots never overwrite the UI and hold the
+  polling cursor; a non-blocking status strip shows progressive phase;
+  Plate keeps scroll/selection across value swaps and clears
+  generation-scoped panels on generation change (4 page integration
+  tests). No real LLM; no backend orchestration changes. SSE / projection
+  patch merge remain later. The bounded LLM document profiler (T4.2)
+  stays deferred until deterministic routing shows repeatable boundary
+  errors; strategy planning and outline-first contracts remain later
+  phases.
 
 ### P2: SSE And Interaction-Preserving Updates
 

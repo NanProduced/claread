@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 概念定义
 
-> 状态：`D6 输入与文档型 Reader 术语修订`
-> 最后更新：2026-06-25
+> 状态：`D6 输入与文档型 Reader 术语修订；DOC-R2 补自适应解析三态路由 / Analysis Window / Ask Surface 术语`
+> 最后更新：2026-07-13（DOC-R2：补 `STRUCTURED_BATCH` / `SHORT_BATCH` / `GROUPED_WINDOWED` / Analysis Window / `requestedSurface` / `effectiveSurface` 术语）
 > 用途：统一 Reader agentic orchestration 重构中的术语、边界和文档口径。
 
 ## 使用规则
@@ -117,6 +117,19 @@
 | RAG Substrate | RAG 检索底座 | 当前 Reading Record 内的检索底座，基于 Stable Reading Document、Stable Document Blocks、Canonical Text Layer、Reading Units、Anchor Segments 和已发布增强层构建。 | RAG worker 异步构建；`article_ready` 不等待。 | 目标：`rag_substrates`、`rag_chunks`、vector metadata filter。 | 不是全局知识库；不是 Original Input 默认上下文。 |
 | RAG Citation | RAG 引用 | Ask 或解释结果返回的可校验引用，包含 substrate、stable document/base、block、source scope、hash、snippet，必要时包含 unit / Anchor Segment / offsets。 | RAG adapter 返回，Ask 接受前校验。 | 目标：citation DTO。 | 不是模型口头声称的引用；不是只回到线性文本 offset。 |
 | Source Scope | 来源范围；allowed source scope | RAG/Ask 查询允许使用的来源边界，如 current unit、viewport units、published layers。 | Authorization Envelope 控制；query 必须显式携带。 | 目标：RAG query DTO `allowed_source_scope`。 | 不是 provider filter 的全部；业务层先约束。 |
+
+## 自适应解析与 Ask Surface
+
+| 术语名称 (Term) | 中文名称 & 别名 | 业务定义 (Definition) | 生命周期 & 所有权 | 代码映射 (Code Mapping) | 易混淆对比 (Distinct From) |
+|---|---|---|---|---|---|
+| Article Route | 文章路由；article_route | Reader Enhancement Pipeline 对当前 record 选择的执行路径身份，写入 `reader_runs.envelope_json.article_route` 与 `reader_jobs.input_json.article_route`，用于 route flip fencing 与 budget 归因。 | Job Bootstrap 写入；claim/publish fence 校验；不可在 worker 运行中变更。 | 目标：`reader_runs.envelope_json.article_route`、`reader_jobs.input_json.article_route`。 | 不是 Model Profile route；不是 worker type。 |
+| SHORT_BATCH | 短文批量路由；short_batch | 三态路由之一：短文一次性批量调度，所有 units 在同一 run 内 bootstrap。 | Job Bootstrap 根据 Length Class 与 layer 选择；对应 `operation_fingerprint` base `*_v1`、`policy_version` `*_batch_bootstrap_v1`。 | 目标：`article_route = short_batch`。 | 不用于长文；不与 STRUCTURED_BATCH 共享 fingerprint base。 |
+| STRUCTURED_BATCH | 结构化批量路由；structured_batch | 三态路由之一：结构化文章（heading/section 明显）按结构分批调度，每批作为一个 batch job。 | Job Bootstrap 选择；独立 `operation_fingerprint` base `*_structured_v1`、`policy_version` `*_structured_bootstrap_v1`。 | 目标：`article_route = structured_batch`。 | 与 SHORT_BATCH / GROUPED_WINDOWED 的 fingerprint base 与 policy_version 互不共享；保持 idempotency 隔离。 |
+| GROUPED_WINDOWED | 分组窗口路由；grouped_windowed | 三态路由之一：长文按语义阅读节奏分组，每组 N 个 window job 串行/并行调度；每个 window job 上限由 `max_effective_calls = planned_calls * max_multiplier` 控制。 | Job Bootstrap 选择；与 SHORT_BATCH 共享 `*_v1` fingerprint base 与 `*_batch_bootstrap_v1` policy_version。 | 目标：`article_route = grouped_windowed`。 | N 个 window jobs 上限为 `3N`（`max_multiplier=3`）；不等于按句切分。 |
+| Analysis Window | 分析窗口；LLM 分析范围 | LLM 在一次 worker 调用中处理的文本范围，是 LLM 分析作用域，**不是前端显示单位**。Published layers 必须满足现有 unit/anchor contract，即窗口产出的 grammar_note / sentence_analysis 必须锚定到 `anchor_segment_id`，不能以窗口本身作为锚点。 | Layer Worker / Grammar Bundle Worker 持有；窗口切分由 backend deterministic 决定，不交给 LLM。 | 目标：worker prompt input range；不持久化为业务事实。 | 不等于 Reading Unit；不等于 frontend display unit；不等于 RAG chunk。 |
+| Translation Group | 译文分组 | 由后端 deterministic 决定的语义阅读节奏单位，包含 2-3 个 anchor_segment 的连续段落，用于 Translation Layer Worker 的批量译文生成。group_id 与 anchor_segment_ids 必须通过 coverage、continuity、no-overlap 校验。 | Translation Layer Worker 持有；newline `\n` 仅作 soft hint，不作硬约束。 | 目标：translation group metadata；`group_id`、`anchor_segment_ids`。 | 不等于 one-unit-one-group；不等于 one-sentence-one-group；不等于 Analysis Window。 |
+| `requestedSurface` | 请求 Surface；用户期望布局 | Ask Claread Reader Workspace 中前端请求的 Ask 布局（`sidecar` / `floating` / `peek`）。 | 前端 UI 写入；后端 / runtime 不直接消费。 | 目标：`AiWorkspacePanel` state、`useReaderAskPresentation`。 | 不等于 `effectiveSurface`；用户请求可能因 viewport / 容量降级。 |
+| `effectiveSurface` | 实际 Surface；运行时生效布局 | Ask Claread Reader Workspace 经 viewport / 容量 / 用户操作仲裁后实际生效的布局。降级路径：`sidecar -> floating -> peek`；中等屏幕（960–1319px）降级为 mini tick + hover panel；窄屏（<768px）隐藏。 | 前端 UI 持有；与 `requestedSurface` 解耦。 | 目标：`useReaderAskPresentation`、`ReaderRecordNavigationRail`。 | 不等于 `requestedSurface`；不是后端返回字段。 |
 
 ## 状态口径
 

@@ -1,8 +1,22 @@
 # Streaming 与 Projection
 
-> 状态：`D1 草案`
-> 最后更新：2026-06-22
+> 状态：`D5 主链路使用 snapshot reload；projection_ops 增量 applier 仍 D5+ 后置；T4.2a-PUX-R2 已闭合 runtime integration gate`
+> 最后更新：2026-07-13（DOC-R2：本文成为 `projection_ops` envelope、sequence contract、gap detection、polling cursor 与 snapshot reload fallback 的权威归宿；同步 T4.2a-PUX-R1/R2 状态）
 > 范围：Reader Events、snapshot、SSE、polling fallback、Plate projection operations 和刷新恢复。
+
+## Owner 归属
+
+本文是以下事实的唯一权威归宿（其他文档引用时只写简短约束 + 链接）：
+
+- `reader_events` envelope 结构与字段语义
+- `reader_event_sequences` 分配规则（事务内分配、rollback no-gap、record-scoped）
+- `projection_ops` payload envelope JSON 示例
+- `op_type` 概念列表与说明
+- Sequence contract、gap detection、polling cursor 规则
+- Snapshot 策略（实时聚合 vs `reader_snapshots` cache）
+- Plate Recovery 流程与 reload fallback 触发条件
+
+Plate 侧 op_type 语义（Target / Owner / Use 列）、Projection Applier 行为、Owner 权限表归 [`plate-reader-projection.md`](./plate-reader-projection.md)；本文不复制这些表。
 
 ## 目标
 
@@ -242,6 +256,16 @@ Snapshot reload fallback is mandatory when:
 - owner policy rejects the requested projection
 - frontend detects duplicate-but-conflicting `op_id`
 - backend emits `projection_reset_required`
+
+### T4.2a-PUX-R2 runtime integration
+
+`reader-record` 页面 `reloadSnapshot` 已接入 progressive transition 校验后才应用 snapshot（T4.2a-PUX-R2 已闭合 runtime integration gate）：
+
+- canonical replay 与 stale/layer 单调 helpers 来自 T4.2a-PUX-R1 fixture 合同。
+- stale 拒绝时 cursor hold，不覆盖 UI；layer regression 同样不覆盖 UI。
+- 底部 progressive status strip 显示「正文可读 → 译文先到 → 批注逐步丰富 → 完整解析」状态。
+- Plate generation-scoped clear + scroll restore 在 reload 时保留用户阅读位置。
+- 详细测试与运行态约束见 [`implementation-plan.md`](../implementation-plan.md) T4.2a-PUX-R1 / T4.2a-PUX-R2 章节。
 
 ## D2 Spike
 

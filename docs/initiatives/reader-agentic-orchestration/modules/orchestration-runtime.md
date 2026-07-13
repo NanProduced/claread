@@ -1,7 +1,7 @@
 # Orchestration Runtime
 
-> 状态：`D6 ongoing; display title worker added`
-> 最后更新：2026-07-03
+> 状态：`D6 ongoing；T4.2a-R2 durable ExecutionBudget / publish fence / route flip fencing 已代码级 review 通过（real-LLM validation pending）`
+> 最后更新：2026-07-13（DOC-R2：Plate Plugin 矩阵收敛为引用 `reader-plate-component-integration.md`；Observability 补 T4.2a-R2 持久化字段）
 > 范围：bounded run/job、worker lease、Authorization Envelope、并发和框架边界。
 
 ## Runtime 形态
@@ -34,22 +34,17 @@ Planner、Skip Gate、Model Profile、Prompt Cache 和 Usage Bucket 的细节见
 
 ### Plate Plugin 体系状态
 
-前端 Plate.js plugin 体系已从阶段划分进入代码事实校准。详细矩阵见 [`reader-plate-component-integration.md`](./reader-plate-component-integration.md)。
+前端 Plate.js plugin 体系已从阶段划分进入代码事实校准。**完整接入矩阵（package 状态、plugin kit、组件落点、弱接入风险）的唯一权威归宿是 [`reader-plate-component-integration.md`](./reader-plate-component-integration.md)**；本文件不再复制状态表，避免接入状态变更时多处同步漂移。
 
-| 内容 | 当前状态 |
-|------|------|
-| `ReaderRecordPlateSurface` 使用 `<Plate readOnly>` + `usePlateEditor` + `ReaderPlateKit` | ✅ 默认 Reading Record 页面已接入 |
-| callout children 从纯文本 leaf 改为 Plate `Descendant[]`，由 Plate element/leaf plugins 渲染 `{children}` | ✅ 完成；`CalloutMarkdownRenderer` 已移除 |
-| Reader block / leaf plugins | ✅ `reader-blocks-kit.tsx` 与 `reader-leaf-kit.tsx` 已注册；含 `reader_sentence_analysis` 专用 block |
-| FloatingToolbar | ✅ 已使用 `@platejs/floating` 官方 hook；旧 `SelectionActionStrip` 不在新版 surface 生产路径 |
-| CommentKit | 🔄 `CommentPlugin` / `CommentLeaf` / draft activeId 已接入；未接 DiscussionKit，持久化和面板仍是 Claread 自定义 |
-| CursorOverlay | 🔄 `@platejs/selection` overlay 已接入；Structure Lens / block selection / chunk decoration 未接 |
-| Stable Document Blocks -> source document projection | 🔄 后端 schema/service 已推进；中心正文仍主要由过渡 Canonical Text / anchor segment 投影 |
-| `@platejs/ai` / `@platejs/suggestion` | ❌ 依赖存在但源码未接入；Ask 继续走 Claread reader-ask |
+简要口径（详细以 owner 文档为准）：
 
-阶段一目标：让 callout 内容（grammar_note.note / sentence_analysis.analysis / ask_supplement.content_md）支持 Markdown 渲染，验证 Notion 文档形态技术可行性。
+- `ReaderRecordPlateSurface` + `ReaderPlateKit` + reader block/leaf plugins 已在 Reading Record 页面接入。
+- `@platejs/floating` FloatingToolbar 已接入；旧 `SelectionActionStrip` 不再在生产路径。
+- `@platejs/comment` CommentKit 部分接入（未接 DiscussionKit）；`@platejs/selection` CursorOverlay 部分接入（Structure Lens 未接）。
+- `@platejs/ai` / `@platejs/suggestion` 依赖存在但源码未接入；Ask 继续走 Claread reader-ask。
+- Stable Document Blocks -> source document projection 后端 schema/service 已推进，中心正文仍主要由过渡 Canonical Text / anchor segment 投影。
 
-详细设计见 `reader-record-plate-surface-ui.md` 的"Markdown 渲染"、"Plate Editors Demo 组件复用"section，以及当前接入矩阵。
+UI/UX 详细设计见 [`reader-record-plate-surface-ui.md`](./reader-record-plate-surface-ui.md)。
 
 ## LangGraph 评估结论
 
@@ -460,3 +455,18 @@ Directus endpoints-bundle 的 `parse-run-observability/reader-orch.js` 已实现
 - `GET /reader-orch/worker/:worker_type/summary` — 按 worker_type 跨 record 聚合
 
 Console 前端从这些 endpoint 取数据渲染 latency / token / model cost heatmap 与 span tree 可视化。`langsmith_run_id` 字段作为 Console 跳转 LangSmith trace UI 的链接源。
+
+### T4.2a-R2 Budget Diagnostics 持久化
+
+T4.2a-R2-R2 把 budget diagnostics 持久化到 `reader_runtime_spans.metadata_json`（pipeline root span），任务结束后可从 Console / runtime spans 查询：
+
+| 字段 | 含义 |
+|---|---|
+| `budget_denied` | 预算拒绝次数（executor/LLM 调用前；与 `no_job` 可区分） |
+| `exhausted_layers` | 已耗尽 layer 列表 |
+| `budget_diagnostics` | per-layer planned / max / consumed / remaining |
+| `stopped_reason` | `budget_exhausted`（全 layer）/ `partial_budget_exhausted`（部分 layer）/ 其他 finalizable 原因 |
+
+普通 `no_job` 场景 `budget_denied == 0`，与 budget-denied 场景可区分。WorkerLoop 结构化日志同步写入这些字段。
+
+详细约束与不可违反决策见 [`../agent-brief.md`](../agent-brief.md) T4.2a-R2-R2 / R2-R1 系列；任务状态见 [`../implementation-plan.md`](../implementation-plan.md) T4.2a-R2 章节；决策记录见 [`../target-architecture.md`](../target-architecture.md#决策记录) `T4.2a-R2` 行。

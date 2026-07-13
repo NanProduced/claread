@@ -1,7 +1,7 @@
 # Policy 与 Cost Control
 
-> 状态：`D5 完成，D6 进行中`
-> 最后更新：2026-06-24
+> 状态：`D5 完成；T4.2a-R2 durable ExecutionBudget 已代码级 review 通过（real-LLM validation pending）`
+> 最后更新：2026-07-13（DOC-R2：补 T4.2a-R2 durable ExecutionBudget / publish fence / route flip fencing 交叉引用；详细约束不再本地复制）
 > 范围：Planner 最小化、Skip Gate、Prompt Cache、Model Profile、Usage Bucket 和 token economy。
 
 ## 目标
@@ -261,6 +261,24 @@ D3-P0 已于 2026-06-18 完成 closeout。
 - FastAPI SSE 与 asyncpg transaction semantics：在 D3-P4 新 schema/runtime skeleton 中补专门 tests，不能仅依赖 D3-P0 closeout。
 
 D3-P0 输出已包含 lockfile 更新、focused tests、rollback plan，以及 deferred runtime checks 清单。
+
+## T4.2a-R2 Durable ExecutionBudget / Publish Fence / Route Flip Fencing
+
+T4.2a-R2 在本模块的 Policy / Cost Control 基础上引入跨 `runner.run()` 持久化的 per-layer `ExecutionBudget`、publish fence 与 route flip fencing。详细约束不再本地复制，权威归宿：
+
+- 决策记录：[`../target-architecture.md`](../target-architecture.md#决策记录) `T4.2a-R2` 行。
+- 不可违反决策与 R2-R1 / R2-R2 / R2-R3 / R2-R3a 修复明细：[`../agent-brief.md`](../agent-brief.md)「不可违反决策」T4.2a-R2 系列。
+- 任务状态、测试计数与 deterministic acceptance：[`../implementation-plan.md`](../implementation-plan.md) T4.2a-R2 章节。
+- 观测性字段（`budget_denied`、`exhausted_layers`、`budget_diagnostics`、`stopped_reason` 持久化到 `reader_runtime_spans.metadata_json`）：[`./orchestration-runtime.md`](./orchestration-runtime.md#observability)。
+
+简要口径（详细约束以权威归宿为准）：
+
+- per-layer `ExecutionBudget.load_durable()` 从 `reader_jobs` 聚合 `SUM(attempt_count)` / `MAX(max_attempts)` per `(record, base, generation, layer)`，跨 run 持久化。
+- `max_effective_calls = planned_calls * max_multiplier`，默认 `max_multiplier=3` 与生产 `max_attempts=3` 对齐。
+- `BUDGET_CONSUMING_OUTCOMES = {succeeded, retry_later, failed_terminal}`；`superseded / no_job / skipped / budget_denied` 不消耗预算。
+- 预算耗尽时 `stopped_reason = budget_exhausted`（全 layer）或 `partial_budget_exhausted`（部分 layer）。
+- Route flip fencing = bootstrap supersede + claim-time `_validate_fence` → `_check_route_consistency` + publish-time 同一 `_validate_fence`（6 个 publisher 方法）；mismatch 返回 `stale_route_fingerprint`。
+- 状态：代码级 review 通过 / deterministic acceptance complete / real LLM validation pending；不新增 migration。
 
 ## 参考资料
 

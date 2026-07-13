@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 实施计划
 
-> 状态：`D5 active / T4.2a-V1 closed — Contract / Output Integrity / sample-level Semantic Quality / Page UX PASS；Cost/Latency Baseline PARTIAL`
-> 最后更新：2026-07-12
+> 状态：`D5 active / T4.2a-V1 closed — Contract / Output Integrity / sample-level Semantic Quality / Page UX PASS；Cost/Latency Baseline PARTIAL；DOC-R2 收敛重复段；DOC-R3 归档与 TMP 清理已完成`
+> 最后更新：2026-07-13（DOC-R3：删除 5 个已闭合 TMP 引用；归档 17 文件至 [`archive/`](archive/README.md)；LP-R1/R2 与 backend-closure verdict 冲突保留不处理）
 
 ## 当前实施口径
 
@@ -56,8 +56,8 @@ Reader enhancement 的当前主链路按层分开理解：
 2. M3 长文 grouped execution：T3.1（translation）与 T3.2b（vocabulary）均已完成实施；T3.3 phrase_gloss guard、T3.4a diagnostics、T3.4b density bug fix 已完成。
 3. T3.5 completion state finalizer 已完成代码级实施（详见下方 T3.5 章节）；T4.1/T4.1a deterministic complexity routing、T4.1b structured article batch runtime mode 与 T4.1c short/medium compact grammar path 均已完成代码级实施（详见下方 T4.1/T4.1a/T4.1b/T4.1c 章节）。
 4. T4.2a-R1 three-mode evidence parity and observability closure 已完成（详见下方 T4.2a-R1 章节）：acceptance harness 忠实复现 production topology（WorkerLoop + CompletionFinalizer + coverage_complete）；grammar batch ai_usage_events 漏传 usage_data 已修复；smoke/acceptance harness 注入 DevFakeGrammarBatchExecutor + DevFakeGrammarWindowExecutor，不得因 enable_zplus_grammar=True 意外调用真实 LLM；SHORT_BATCH / STRUCTURED_BATCH / GROUPED_WINDOWED 三态固定覆盖测试已落地（route/fingerprint/policy、job topology、effective calls、layer counts、final readiness、usage attribution）。
-5. **T4.2a-V1 已正式关闭**。真实 LLM DB/runtime 验收覆盖三种 route、4 个 records，共 34 calls / 142,990 input tokens / 55,051 output tokens / 198,041 total tokens；Contract、Output Integrity、样本级 Semantic Quality 与 Page UX Gate 均通过。Page UX 在 commit `760402c2c` 的 clean worktree baseline Web 上完成 final-ready 验收：4/4 页面可访问；33/33 严格 click→active→explanation 断言通过；GROUPED 中后段 vocabulary / grammar / sentence interaction 通过；刷新、滚动、readiness 与 console/network 检查通过；页面验收阶段**无新的 LLM 调用**。Cost/Latency Baseline 仍为 PARTIAL（无可靠 provider 账单、无同样本旧链路真实 LLM 对照、per-job provider latency 不完整），**不得宣称实际 token、成本或时延降幅**。Progressive Transition UX（loading / first layer / partial-ready / layer-ready 实时过渡与 live update 交互保持）未用这些 final-ready records 证明，后续应走 deterministic fixture / event replay，不重跑 LLM。
-6. T4.2a-R2 三态执行预算与切换安全护栏已完成代码级实施，**已通过代码级 review（T4.2a-R2-R3a 补充 Test M + 文档终态同步，详见下方 T4.2a-R2 章节）**：per-layer `ExecutionBudget` 确定性成本上限（`max_effective_calls = planned * 3`，与 `max_attempts=3` 对齐）；batch-first/fallback 不会导致同一 layer 重复执行或额外 LLM 调用；route flip 时旧 fingerprint job 被 fence（claim-time + publish-time `_validate_fence`）；预算耗尽是 finalizable stopped reason，finalizer 只对 exhausted layer force-fail 非终态 jobs 避免死锁（**R2-R3 修正：full + partial exhaustion 都从 `BUDGET_LAYER_TO_JOB_TYPES` 计算，display_title 不被误伤**）；suppressed legacy job 被正式 supersede 不形成热循环（**R2-R3 修正：legacy cleanup 包裹显式事务**）；budget-denied 写入持久 runtime span metadata；publish fence 由 worker 层完成真实 job/run transition（**R2-R3 澄清并加强 Test J 断言**）；fingerprint 采用保守排序集合（方案 B）。V1 的首次成功样本证明 guardrails 未干扰正常生产 topology，但没有触发 retry / budget exhaustion，因此不替代 R2 deterministic failure-path 验收。
+5. **T4.2a-V1 已正式关闭**。真实 LLM DB/runtime 验收覆盖三种 route、4 个 records，共 34 calls / 142,990 input tokens / 55,051 output tokens / 198,041 total tokens；Contract、Output Integrity、样本级 Semantic Quality 与 Page UX Gate 均通过。Page UX 在 commit `760402c2c` 的 clean worktree baseline Web 上完成 final-ready 验收：4/4 页面可访问；33/33 严格 click→active→explanation 断言通过；GROUPED 中后段 vocabulary / grammar / sentence interaction 通过；刷新、滚动、readiness 与 console/network 检查通过；页面验收阶段**无新的 LLM 调用**。Cost/Latency Baseline 仍为 PARTIAL（无可靠 provider 账单、无同样本旧链路真实 LLM 对照、per-job provider latency 不完整），**不得宣称实际 token、成本或时延降幅**。Progressive UX 已由 **T4.2a-PUX-R1 fixture 合同、PUX-R2 runtime 集成门、PUX-R3 测试卫生**闭合（不重跑 LLM）。
+6. **T4.2a-R2 三态执行预算与切换安全护栏已完成代码级 review**（T4.2a-R2-R3a 补充 Test M + 文档终态同步）。核心护栏：durable per-layer `ExecutionBudget`（`max_effective_calls = planned * 3`）、batch-first/fallback 不重复执行、route flip claim+publish fencing、partial/full exhaustion 分层 force-fail（display_title 排除）、suppressed legacy 正式 supersede、budget-denied 持久观测、fingerprint 保守集合（方案 B）。V1 首次成功样本证明 guardrails 未干扰正常 topology，但未触发 retry/budget exhaustion，不替代 R2 deterministic failure-path 验收。**权威不可违反决策与详细预算模型归 [`agent-brief.md`](agent-brief.md) T4.2a-R2 章节；budget 合同归 [`modules/policy-and-cost-control.md`](modules/policy-and-cost-control.md#t42a-r2-durable-executionbudget--publish-fence--route-flip-fencing)；budget diagnostics 持久化归 [`modules/orchestration-runtime.md`](modules/orchestration-runtime.md#t42a-r2-budget-diagnostics-持久化)；决策记录归 [`target-architecture.md`](target-architecture.md#决策记录) `T4.2a-R2` 行**。下方 T4.2a-R2 章节保留状态摘要与测试证据。
 7. bounded enhancement planner + specialized structured workers 的设计评估应先聚焦 long/very-long selective enhancement，优先减少 vocabulary/grammar 的空跑与重复扫描，而不是一开始扩到全部 translation。
 8. Provider prompt cache / cache-hit 归因可作为后续成本杠杆继续验证，但它是成本优化项，不是三模式路由设计的替代品。
 9. **T4.2a-V2-R1 已完成**（deterministic）：碎段新闻 / STRUCTURED 边界 / >4000 words 超长文 / no-op grammar window 四类固定样本，用 fake executor 验证 route、job topology、fingerprint/policy、reading-order publish、readiness 与 no-op 终态；详见下方 T4.2a-V2-R1 章节。不得与已关闭的 V1 混做真实 LLM。
@@ -90,11 +90,14 @@ Reader enhancement 的当前主链路按层分开理解：
 | T4.1b | structured article batch | 4-8h | T4.1a | 为中等文章补 whole-article structured batch mode；translation/vocabulary 尽量整篇 batch，保留 grounded publish 与 release order（已完成实施/待验收：详见"当前进度"T4.1b 章节） |
 | T4.1c | short/medium compact grammar path | 4-8h | T4.1a/T4.1b | 短文与 structured batch 文章的 grammar 不再默认走重型全窗口空跑；候选生成更紧凑，publish 仍受 budget/density/anchor 约束（已完成实施/待验收：详见"当前进度"T4.1c 章节） |
 | T4.2a-R1 | three-mode evidence parity and observability closure | 4-8h | T4.1c | acceptance harness 忠实复现 production topology（WorkerLoop + CompletionFinalizer + coverage_complete）；注入 DevFakeGrammarBatchExecutor/WindowExecutor；修复 grammar batch ai_usage_events 漏传 usage_data；三态固定覆盖测试（fake executor，仅代码级合同闭环，真实 LLM 验收暂缓）（已完成实施：详见"当前进度"T4.2a-R1 章节） |
-| T4.2a-R2 | three-mode execution budget and cutover safety | 4-8h | T4.2a-R1 | per-layer 确定性执行预算（planned / consumed / exhausted）；batch-first/fallback 不重复执行；route flip fencing（claim + publish）；预算耗尽不错误进入 coverage_complete；usage evidence 区分 attempted/executed/published/budget-denied（fake executor，仅代码级合同闭环，真实 LLM 验收暂缓）（**代码级 review 通过 — T4.2a-R2-R3a display-title regression + 文档终态同步**：详见"当前进度"T4.2a-R2 章节） |
+| T4.2a-R2 | three-mode execution budget and cutover safety | 4-8h | T4.2a-R1 | per-layer 确定性执行预算；batch-first/fallback 不重复执行；route flip fencing（claim + publish）；预算耗尽不错误进入 coverage_complete；usage evidence 区分 attempted/executed/published/budget-denied（**代码级 review 通过 — T4.2a-R2-R3a**；权威决策归 [`agent-brief.md`](agent-brief.md)） |
 | T4.2a-O1 | usage / cost / latency observability contract audit | 3-6h | T4.2a-V1 | 只读追踪 usage/cache/latency 从 provider result 到 usage event/runtime span/page readiness 的数据链；解释现有缺口并定义权威指标、可计算性矩阵和最小后续实现切片；不改生产代码、不调用 LLM（**已完成**） |
 | T4.2a-O2 | usage presence diagnostics & durable execution correlation | 4-8h | T4.2a-O1 | `attempt_ordinal`/`execution_id`/`agent_run_id` 关联；usage presence diagnostics；event/span mismatch 诊断；translation/vocabulary/grammar/window/display_title 传播；deterministic tests + gated real-LLM（**O2-V1-R1 closed：隔离 SHORT_BATCH 4/4 correlation + agent_run_id + event/span token alignment；Sample A 仍 UNRESOLVED；Cost/Latency 仍 PARTIAL**） |
 | T4.2a-O3 | duration provenance & provider-request observability | 4-8h | T4.2a-O2 | 单独记录 agent-run/executor duration；只有 provider 返回可归属 timing 时才记录 provider-request duration，否则显式 unavailable；不得改写 `latency_ms` 语义或宣称 provider latency（**代码级完成 / deterministic tests；Sample A 仍 UNRESOLVED；Cost/Latency 仍 PARTIAL**） |
 | T4.2a-V2-R1 | three-mode boundary & very-long fixed-sample validation | 4-8h | T4.2a-R1/R2 | 碎段新闻 SHORT_BATCH、STRUCTURED 边界、>4000 words GROUPED_WINDOWED、no-op grammar window；deterministic fixture/fake executor；route/topology/fingerprint/publish/readiness/no-op（**代码级完成：5 focused tests passed；无生产代码改动；详见下方 T4.2a-V2-R1**） |
+| T4.2a-PUX-R1 | progressive transition UX fixture / event replay | 4-8h | T4.2a-V1 / T2.1 | **fixture contract closed**：pure phase/replay/stale/interaction helpers（**21 tests**）；**不**单独构成 runtime 验收 |
+| T4.2a-PUX-R2 | progressive transition runtime integration | 4-8h | T4.2a-PUX-R1 | **runtime integration gate**：page `reloadSnapshot` 接入 progressive 单调校验；单 cursor；stale/layer regression 不覆盖 UI；status strip；scroll 保留；4 page integration tests（**已完成；详见下方 T4.2a-PUX-R2**） |
+| T4.2a-PUX-R3 | Reader Plate test-health closure | 1-2h | T4.2a-PUX-R2 | **closed**：测试源码读取先归一化 CRLF/LF，保留 auto-dismiss 语义断言；全套 Web Vitest 67 files / 958 tests 通过；不改生产行为 |
 | T4.2 | bounded LLM document profiler | 4-8h | T4.1a | LLM 只返回 genre/structure/schema_risk/selective hints；失败时 deterministic fallback；不直接决定流程（**暂缓**） |
 | T4.3 | strategy planner | 4-8h | T4.1b/T4.2 | planner 选择 short batch、structured batch、grouped/windowed、section longform、selective longform |
 | T4.3a | longform bounded enhancement planner | 4-8h | T4.3 | 先为 long/very-long 的 vocabulary/grammar 选择高价值 targets；translation 仍优先沿用独立 semantic group planner，除非后续证据支持扩权 |
@@ -270,60 +273,22 @@ Reader enhancement 的当前主链路按层分开理解：
 
 1. 目标：在三态路由已经通过代码级验收的基础上，建立确定性的成本上限和 route cutover 安全机制。不引入自由运行 orchestration agent，不实现 T4.2 LLM document profiler。保证 batch-first/fallback 不会导致同一 layer 重复执行或额外 LLM 调用；route/fingerprint 切换时旧任务不能继续 claim/execute/publish；每个 route、layer、record 建立可验证的 effective-call 执行预算；预算耗尽或旧路由失效时不得错误进入 coverage_complete/final-ready。
 2. T4.2a-R2-R3 review 修复背景：T4.2a-R2-R2 修复后 reviewer 仍发现 5 个 findings 未闭合（P1-1 publish fence 核心状态机未真实 transition job/run、P1-2 Test J 为空断言无法证明 fence 闭环、P1-3 full budget exhaustion 仍会误伤 display-title、P2-1 legacy cleanup 不是原子状态转换、P2-2 Test G/I 终态断言弱于报告结论）。本轮 T4.2a-R2-R3 已实施修复并已通过代码级 review；T4.2a-R2-R3a 补充 Test M（display-title budget isolation regression）并同步文档终态，**代码级验收已通过，真实 LLM / 页面验收为下一阶段 gated validation**。前轮 R2-R2 的 5 个 findings（suppressed legacy job 正式终态、partial exhaustion 分层 force-fail、publish fence 状态一致性、budget-denied 持久观测、fingerprint 确定性集合）已在 R2-R2 闭合。
-3. 设计结论与预算模型（T4.2a-R2-R3 修复后）：
-   - **预算权威来源**：durable `ExecutionBudget`，跨多次 `runner.run()` / WorkerLoop tick 持久化，不再 per-pipeline-run 清零。通过 `ExecutionBudget.load_durable()` 从 `reader_jobs` 聚合 `SUM(attempt_count)` / `MAX(max_attempts)` per `(reading_record_id, base_id, expected_generation, budget_layer)` 重建。`display_title` 不纳入预算。未新增 migration，复用现有 `attempt_count` / `max_attempts` 字段。
-   - **fingerprint 模型（T4.2a-R2-R2 修正，方案 B：保守 fingerprint set）**：现有数据字段无法可靠确定唯一 active fingerprint（`reader_jobs` 无显式 active route 标记列）。`load_durable()` 不再使用非确定性 last-wins active fingerprint，改为返回排序后的 `non_superseded_fingerprints` 集合 per layer。预算采用保守聚合（所有非 superseded fingerprint 的 `attempt_count` 均计入 consumed）。`to_diagnostics()` 返回 `non_superseded_fingerprints` 列表。SQL 添加 `ORDER BY operation_fingerprint ASC` 保证多次查询结果稳定。不新增 schema/migration。若未来需要唯一 active fingerprint，需先设计最小 schema 变更并获批准。
-   - **planned_calls 来源**：从完整 route plan 得到，取 `max(bootstrap.job_counts, actual_non_terminal_counts)` per layer，而非只数当前剩余非终态 job。
-   - **consumed/reserved/effective 权威来源**：`consumed = SUM(reader_jobs.attempt_count)` per layer for active fingerprint jobs。`attempt_count` 在 claim 时原子自增（`job_runtime.claim_next_job`），先于 LLM 调用，因此 claim 但尚未进入 LLM 也计入预算（这是预期：claim 即占位）。provider 调用失败（retryable → `retry_later`，non-retryable → `failed_terminal`）消耗预算；`no_job` / `superseded` / `budget_denied` 不消耗。
-   - **per route/layer 计划与上限**：`max_effective_calls = planned_calls * max_multiplier`，默认 `max_multiplier=3`，与生产 `max_attempts=3` 对齐（T4.2a-R2 首轮声明的 `*2` 上限与 `max_attempts=3` 不一致，已修正）。GROUPED_WINDOWED 的 N 个 window jobs 上限为 `3N`。
-   - **route/fingerprint 隔离**：`load_durable()` 聚合所有非 superseded fingerprint 的 `attempt_count`（保守集合方案 B）。route 变化后旧 fingerprint job 通过 claim-time / publish-time `_validate_fence` 被拒绝并 supersede，不继续执行；fence 通过 `reader_jobs.input_json.article_route` 与 `reader_runs.envelope_json.article_route` 比对实现。
-   - **重启/retry_later/下一轮 WorkerLoop 恢复**：每次 `runner.run()` 重新 `load_durable()`，retry_later job 的 `attempt_count` 保留，因此跨 run 累计；预算不会因新 run 清零。
-   - **attempt_count 与真实 effective LLM call 的偏差**：`attempt_count` 在 claim 时自增，含 claim 后但 LLM 调用前崩溃的 attempt；因此 durable consumed 是 claim 次数上限，可能略高于真实 effective LLM call 数。这是保守偏差（预算更早耗尽），符合 fail-closed 原则。
-   - **budget layer 映射**：translation / vocabulary / grammar（`WORKER_TYPE_TO_BUDGET_LAYER` / `_JOB_TYPE_TO_BUDGET_LAYER`）。grammar 层同时包含 `build_grammar_bundle`（batch）与 `build_grammar_bundle_window`（Z+ window）job type。
-   - **状态定义**：`planned`（初始化时设定）、`consumed`（`BUDGET_CONSUMING_OUTCOMES = {succeeded, retry_later, failed_terminal}` 时自增）、`exhausted`（`consumed >= max_effective_calls`）。`superseded` / `no_job` / `skipped` / `budget_denied` 不消耗预算。
-   - **fallback 决策表（fail-closed，T4.2a-R2-R1 修正 + T4.2a-R2-R2 终态闭合）**：`_should_suppress_grammar_per_unit_fallback` 不再以"终态"作为 fallback 充分条件。只有 `superseded` batch job 或不存在 batch job 时允许 per-unit fallback；`succeeded` / `failed_terminal` / `skipped` / 任何非终态 batch job 均抑制 fallback。本轮 fail-closed：batch `failed_terminal` 不隐式运行遗留 per-unit job，除非未来引入显式 fallback policy + 授权的新 fallback job。
-   - **suppressed legacy job 正式终态（T4.2a-R2-R2 新增）**：`_cleanup_suppressed_grammar_legacy_jobs()` 在每次 `runner.run()` 入口（bootstrap 后）执行一次，对同 base/generation 下非 superseded 的 `build_grammar_bundle/unit` legacy job 调用 `repository.supersede_conflicting_legacy_grammar_jobs()` 正式 supersede，写入 `reader_job_events`（event_type=`job_superseded`）和 `rationale_code`。决策表：batch `succeeded` → rationale=`batch_path_authoritative`；batch `failed_terminal` → rationale=`batch_fallback_not_authorized`；batch `superseded`/`skipped`/无 batch path 但存在 stale legacy → rationale=`stale_legacy_topology`。不再留下永远不会执行的 queued/retry_later legacy job，避免 WorkerLoop scanner 热循环。
-   - **route flip fencing**：bootstrap supersede（已有机制）+ claim-time check（`_validate_fence` → `_check_route_consistency`，对比 `reader_jobs.input_json.article_route` 与 `reader_runs.envelope_json.article_route`）+ publish-time check（所有 6 个 publisher 方法调用同一 `_validate_fence`）。mismatch 返回 `stale_route_fingerprint`，拒绝 claim/publish。
-   - **publish fence 状态一致性（T4.2a-R2-R2 修正 + T4.2a-R2-R3 澄清）**：publisher 检测到 stale route/fingerprint 时 raise `FenceViolationError`，**worker 层（translation_worker / vocabulary_worker / grammar_worker）各自的 `except FenceViolationError` handler 在 re-raise 前已调用 `ReaderJobRuntime.transition(job_id, target_status="superseded", rationale_code="publish_fence_failed")` 和 `_mark_run_status(run_id, status="superseded")`**，完成真实的 job/run 状态转换。pipeline_runner 的 `except FenceViolationError` handler 只统计 DB 实际 superseded delta，不再调用 transition。pipeline summary **不再使用 `max(1, superseded_jobs)` 虚报**（已全部改为 `max(0, superseded_jobs)`）。translation/vocabulary/grammar 的 unit/batch/window 路径均统一此契约。
-   - **partial layer exhaustion 语义（T4.2a-R2-R1 新增 + T4.2a-R2-R2 分层修正 + T4.2a-R2-R3 full exhaustion 修正）**：不要求三层同时 exhausted。某 layer 预算耗尽但其他 layer 仍可执行时，runner 继续处理有预算的 layer，最终返回 `stopped_reason = partial_budget_exhausted`（不是普通 `all_workers_no_job`）。`partial_budget_exhausted` 和 `budget_exhausted` 均为 finalizable stopped reasons。**T4.2a-R2-R3 修正**：full `budget_exhausted` 和 `partial_budget_exhausted` **都只从 `BUDGET_LAYER_TO_JOB_TYPES` 计算 force-fail 范围**（translation / vocabulary / grammar），**不再使用 `ENHANCEMENT_PIPELINE_JOB_TYPES`**（后者包含 `generate_display_title_zh`）。`display_title` 不属于 budget layer，不被任何 budget exhaustion 误伤。当 display_title 等非预算 layer job 仍为非终态时，finalizer 返回 `non_terminal_jobs_present` 不提前 finalize。只有所有计划工作达到真实 terminal 状态后才进入 `coverage_complete`；`completed_with_failures` 准确表示哪些 layer 因预算失败。
-   - **budget-denied 可观测性（T4.2a-R2-R1 新增 + T4.2a-R2-R2 持久化）**：预算拒绝发生在 executor/LLM 调用前（worker tick 内 `budget.is_exhausted(layer)` check）。denied 记为独立 `budget_denied` outcome（不是普通 `no_job`），计入 `outcome_counts["budget_denied"]` 和 `round_no_job_count`（使所有 worker 都 denied 时能进入停止判断）。`ExecutionBudget.to_diagnostics()` 接入 pipeline summary 的 `budget_diagnostics`，暴露 per-layer planned/max/consumed/remaining。`exhausted_layers()` 暴露已耗尽 layer。**T4.2a-R2-R2 新增持久化**：`budget_denied`、`exhausted_layers`、`budget_diagnostics`、`stopped_reason` 写入 `reader_runtime_spans.metadata_json`（pipeline root span）和 WorkerLoop 结构化日志，任务结束后可从 Console/runtime spans 查询，不只存在于 Python 返回值。普通 `no_job` 场景的 `budget_denied == 0`，与 budget-denied 可区分。
-   - **final readiness**：finalizer 读取 durable state（terminal job counts），不依赖 in-memory budget。预算耗尽时非终态 jobs 被 force-fail，使 durable state 达到 all-terminal，finalizer 可正常推进到 `coverage_complete`（outcome 为 `completed_with_failures`）。
-4. 核心实现（`services/api/app/services/reader_orchestration/`，T4.2a-R2-R3 修复后）：
-   - `execution_budget.py`：`ExecutionBudget` dataclass + `from_planned_calls(max_multiplier=3)` / `consume` / `is_exhausted` / `remaining` / `planned_calls` / `consumed_calls` / `max_effective_calls` / `to_diagnostics` / `exhausted_layers`。`load_durable()` async classmethod 从 `reader_jobs` 聚合 `SUM(attempt_count)` / `MAX(max_attempts)` per layer，SQL 添加 `ORDER BY operation_fingerprint ASC`，返回 `DurableBudgetLoadResult` 含 `non_superseded_fingerprints: dict[str, tuple[str, ...]]`（排序后的 fingerprint 集合，方案 B）。`to_diagnostics()` 返回 per-layer `non_superseded_fingerprints` 列表。`BUDGET_CONSUMING_OUTCOMES` / `WORKER_TYPE_TO_BUDGET_LAYER` / `_JOB_TYPE_TO_BUDGET_LAYER` 常量。
-   - `pipeline_runner.py`：每次 `run()` 入口调用 `ExecutionBudget.load_durable()` + `load_from_durable()` 重建跨 run 预算（不再 `consumed=0` 重新创建）。worker tick 前检查 `budget.is_exhausted(layer)`，耗尽则跳过该 worker 并记 `budget_denied` outcome（不是 `no_job`），同时 `round_no_job_count += 1` 使全 denied 能进入停止判断。`_should_suppress_grammar_per_unit_fallback` 取代旧 `_has_non_terminal_grammar_batch_jobs`，实现 fail-closed 决策表。**T4.2a-R2-R2 新增 `_cleanup_suppressed_grammar_legacy_jobs()`** 在 bootstrap 后执行一次，正式 supersede 冲突 legacy grammar job。**T4.2a-R2-R3 修正：`_cleanup_suppressed_grammar_legacy_jobs()` 主体包裹在 `async with conn.transaction():` 显式事务中**，使 `SELECT FOR UPDATE` 锁覆盖整个 cleanup（batch 决策 + legacy UPDATE + event INSERT），crash 不会造成 job 已 superseded 但 event 未写。**T4.2a-R2-R3 新增 fence handler 澄清注释**：translation batch `except FenceViolationError` handler 注释说明 worker 已完成真实 transition，pipeline 只统计 delta。**T4.2a-R2-R2 移除所有 `max(1, superseded_jobs)` 虚报**，改为 `max(0, superseded_jobs)`。`PipelineStoppedReason` 新增 `budget_exhausted` 和 `partial_budget_exhausted`。pipeline summary 新增 `budget_diagnostics` 和 `exhausted_layers`。
-   - `job_runtime.py`：`_validate_fence` → `_check_route_consistency` 对比 job `input_json.article_route` 与 run `envelope_json.article_route`（过滤 `article_route IS NOT NULL` 的 run），mismatch 返回 `stale_route_fingerprint`。claim 与 publish 均经过 `_validate_fence`。worker 层捕获 `FenceViolationError` 后调用 `transition(job_id, target_status="superseded", rationale_code="publish_fence_failed")`。
-   - `completion_finalizer.py`：`budget_exhausted` 和 `partial_budget_exhausted` 均为 finalizable stopped reasons。**T4.2a-R2-R2 修正**：finalizer 检测到 partial exhaustion 时，**只对 `summary.exhausted_layers` 对应的 job types 调用 `force_fail_non_terminal_jobs`**（通过 `BUDGET_LAYER_TO_JOB_TYPES` 映射），不再无差别 force-fail `ENHANCEMENT_PIPELINE_JOB_TYPES`。**T4.2a-R2-R3 修正**：full `budget_exhausted` 也从 `BUDGET_LAYER_TO_JOB_TYPES` 计算 force-fail 范围（translation / vocabulary / grammar），不再使用 `ENHANCEMENT_PIPELINE_JOB_TYPES`（后者包含 `generate_display_title_zh`）。full exhaustion 时若 display_title 等非预算 layer job 仍为非终态，finalizer 返回 `non_terminal_jobs_present` 不提前 finalize。`display_title` 不在 budget layer 映射中，不被任何 budget exhaustion 误伤。
-   - `repository.py`：`force_fail_non_terminal_jobs` 方法按 `base_id` + `expected_generation` + `job_types` 批量 force-fail 非终态 jobs（修正 `updated_at` 列名，原 `run_completed_at` 列不存在）。**T4.2a-R2-R2 新增 `supersede_conflicting_legacy_grammar_jobs()`** 方法，对同 base/generation 下非 superseded 的 `build_grammar_bundle/unit` job 正式 supersede，写入 `reader_job_events`（event_type=`job_superseded`，含 `rationale_code` / `previous_status` / `cleanup` payload）。**T4.2a-R2-R3：调用方 `_cleanup_suppressed_grammar_legacy_jobs()` 包裹显式事务**，使 `SELECT FOR UPDATE` 锁覆盖后续 UPDATE + INSERT 全过程。
-   - `worker_loop.py`：**T4.2a-R2-R2 新增持久观测**：`process_candidate()` 在 pipeline root span `extra_metadata` 中写入 `budget_denied`、`exhausted_layers`、`budget_diagnostics`、`stopped_reason`，结构化日志同步写入。普通 `no_job` 场景 `budget_denied == 0`，与 budget-denied 可区分。
-5. 影响面：不改 `apps/web/**`；不改 API route/schema 公共 contract；不新增 migration；不扩到 bounded LLM profiler / strategy planner / semantic outline / SSE / RAG / prompt cache；不实现自主 orchestration agent。
-6. 已新增测试（`tests/test_execution_budget_cutover_safety.py`，35 test functions = 12 unit + 23 async integration；实际 `pytest -q` 结果 **35 passed**，仅 asyncio backend，不推算 trio 倍增。8 文件组合回归 **94 passed**）：
-   - **Unit (12，`TestExecutionBudgetUnit`)**：`from_planned_calls` 默认 max_multiplier=3、显式 multiplier、consume 递减、exhausted 返回 False、is_exhausted、any_exhausted、zero planned（不 exhausted）、unknown layer（不 exhausted）、exhausted_layers、BUDGET_CONSUMING_OUTCOMES 集合、to_diagnostics、has_active_jobs_for_layer。
-   - **Integration (16 async, T4.2a-R2-R1)**：SHORT_BATCH / STRUCTURED_BATCH budget consistency；batch success suppresses per-unit fallback（R2-R2 修正断言：legacy job 现为 superseded + rationale）；non-terminal batch suppresses fallback；route flip supersedes at claim；**route flip rejects publish through real publisher（R2-R2 扩展：经过 worker/pipeline catch，summary.superseded == DB 实际数量）**；budget exhausted stopped reason is finalizable；usage evidence 区分 succeeded calls；recover stale leases；**fallback guard decision table fail-closed（R2-R2 修正断言：legacy job 现为 superseded + rationale）**。**partial layer budget exhaustion（R2-R2 扩展：经过 WorkerLoop + Finalizer）**。**budget diagnostics observability（R2-R2 扩展：查询 reader_runtime_spans.metadata_json）**。
-   - **T4.2a-R2-R2 新增 6 个集成测试 (G-L)**：
-     - G `test_g_succeeded_batch_cleanup_workerloop_completion`：batch succeeded + legacy per-unit grammar job → 经生产 WorkerLoop/CompletionFinalizer 路径，legacy job 被真实 superseded（rationale=`batch_path_authoritative`），per-unit executor call_count == 0，scanner 不持续重选该 record，**T4.2a-R2-R3 加强：断言 `finalized is True`、DB readiness == `coverage_complete`、scanner 不再重选**。
-     - H `test_h_failed_batch_fail_closed_cleanup`：batch failed_terminal + legacy per-unit job → 经生产 WorkerLoop 路径，legacy executor 不调用，legacy job 达到 superseded（rationale=`batch_fallback_not_authorized`），不形成 runnable hot-loop，record/product state 正确表达 failure，不伪装 completed_clean。
-     - I `test_i_partial_exhaustion_preserves_other_layers`：translation budget exhausted 且有未完成 translation job；vocabulary 为 retry_later 尚未到 available_at 但仍有预算；grammar 已完成或仍可完成 → 经 WorkerLoop + CompletionFinalizer，translation exhausted jobs 按正式策略失败，vocabulary 保持 retry_later 不被 force-fail，本轮不提前 coverage_complete；调整 vocabulary available_at 后再次运行，vocabulary 正常完成，最终才进入正确 final readiness。**T4.2a-R2-R3 加强：断言 translation == `failed_terminal`、vocabulary == `succeeded`、DB readiness == `coverage_complete`**；同时清理 Run 1 已发布的 vocabulary layers + events 避免 publisher 拒绝重发。
-     - J `test_j_pipeline_level_publish_fence`：构造生产 worker/pipeline 场景：job 被 claim → executor 执行期间发生 route/fingerprint flip → 真实 publisher 抛 fence failure → worker/service 完成正式状态 transition → pipeline 返回 summary。**T4.2a-R2-R3 强断言**：查询具体 job_id / run_id，断言 job.status == `superseded` + rationale == `publish_fence_failed`、reader_run.status == `superseded`、summary.superseded >= 1、summary.superseded == DB 实际数量、`layers_after == layers_before`（==，非 >=）、`events_after == events_before`（==，非 >=）、不等待 lease recovery。
-     - K `test_k_persistent_budget_observability`：通过 WorkerLoop process_candidate 运行 budget-denied 场景，查询 reader_runtime_spans.metadata_json。断言 pipeline root span metadata 包含 budget_denied > 0、exhausted_layers、budget_diagnostics、stopped_reason。并断言普通 no_job 场景不会被标为 budget_denied。
-     - L `test_l_multi_fingerprint_determinism`：构造同 layer 存在两个非 superseded fingerprint 的 cutover 中间态。方案 B 断言：返回稳定排序的 fingerprint set 并保守聚合。多次查询结果必须稳定，不得 last-wins、不得依赖 DB 返回顺序。
-   - **T4.2a-R2-R3a 新增 1 个集成测试 (M)**：
-     - M `test_m_full_budget_exhaustion_preserves_display_title`：全预算层 exhaustion（translation + vocabulary + grammar 均耗尽）时 display_title 不被误伤。第一次 WorkerLoop：display_title 保持 retry_later、attempt_count 不增加、无 budget_exhausted failure_code；finalizer 返回 `finalized=False, skip_reason=non_terminal_jobs_present`；readiness ≠ coverage_complete。第二次 WorkerLoop（display_title available_at=NOW()）：display_title succeeded、attempt_count +1；translation/vocabulary/grammar 保持 failed_terminal；finalizer `finalized=True, outcome=completed_with_failures`；readiness == coverage_complete；completion event `completion_outcome=completed_with_failures`。使用 deterministic fake executor + call counter，不调用真实 LLM。
-   - **T4.2a-R2-R1 新增 6 个集成测试 (A-F)**：
-     - A `test_cross_run_hard_budget_durable`：跨 4 次 `runner.run()` 的 retryable failure，executor call_count 不超过上限，第 4 次不调用 executor，summary 报告 budget exhaustion，`budget_denied > 0`。
-     - B `test_batch_succeeded_with_legacy_job_suppresses_fallback`：batch succeeded + 人为共存 legacy per-unit grammar job → per-unit executor call_count == 0，legacy job 不被 claim。
-     - C `test_batch_failed_terminal_suppresses_fallback`：batch failed_terminal + legacy per-unit job → fail-closed，per-unit call_count == 0。
-     - D `test_partial_layer_budget_exhaustion`：translation layer exhausted、其他 layer 可执行 → 其他 layer 继续，translation 不再调用 executor，`stopped_reason == "partial_budget_exhausted"`，`exhausted_layers` 含 translation。
-     - E `test_route_flip_rejects_translation_batch_publish`：经过真实 `TranslationLayerPublisher.publish_article_translation_batch`，route flip 后抛 `FenceViolationError`，无新增 layer/event，job 状态一致。
-     - F `test_budget_diagnostics_observability`：成功 run 后 `budget_diagnostics` 含 per-layer planned/max/consumed/remaining；exhausted 后 `exhausted_layers` 含目标 layer，`budget_denied > 0`，`stopped_reason != "all_workers_no_job"`。
-7. 风险/边界（已锁定，不扩 scope）：
+3. **权威归宿（DOC-R2 收敛）**：详细预算模型、fingerprint 方案 B、fallback 决策表、publish fence 状态一致性、partial/full exhaustion 语义、budget-denied 可观测性等设计结论归 [`agent-brief.md`](agent-brief.md) T4.2a-R2 不可违反决策；budget 合同与 Layer Applicability 归 [`modules/policy-and-cost-control.md`](modules/policy-and-cost-control.md#t42a-r2-durable-executionbudget--publish-fence--route-flip-fencing)；budget diagnostics 持久化（`reader_runtime_spans.metadata_json`）归 [`modules/orchestration-runtime.md`](modules/orchestration-runtime.md#t42a-r2-budget-diagnostics-持久化)；决策记录归 [`target-architecture.md`](target-architecture.md#决策记录) `T4.2a-R2` 行。本节不再重复上述长段，只保留状态、测试证据与风险边界。
+4. 影响面：不改 `apps/web/**`；不改 API route/schema 公共 contract；不新增 migration；不扩到 bounded LLM profiler / strategy planner / semantic outline / SSE / RAG / prompt cache；不实现自主 orchestration agent。核心实现文件：`execution_budget.py` / `pipeline_runner.py` / `job_runtime.py` / `completion_finalizer.py` / `repository.py` / `worker_loop.py`（详见 [`modules/orchestration-runtime.md`](modules/orchestration-runtime.md) 与 [`modules/policy-and-cost-control.md`](modules/policy-and-cost-control.md)）。
+5. 已新增测试（`tests/test_execution_budget_cutover_safety.py`，**35 passed** = 12 unit + 23 async integration；仅 asyncio backend，不推算 trio 倍增。8 文件组合回归 **94 passed**）：
+   - **Unit (12)**：`from_planned_calls` 默认 max_multiplier=3、显式 multiplier、consume 递减、is_exhausted、any_exhausted、zero planned、unknown layer、exhausted_layers、BUDGET_CONSUMING_OUTCOMES、to_diagnostics、has_active_jobs_for_layer。
+   - **Integration (23，分 4 轮)**：
+     - **R2-R1 (A-F, 6)**：跨 run hard budget durable；batch succeeded/failed suppresses per-unit fallback；partial layer exhaustion；route flip rejects translation batch publish；budget diagnostics observability。
+     - **R2-R1 (16 async)**：三态 budget consistency；fallback guard decision table fail-closed；route flip supersedes at claim + rejects publish through real publisher；budget exhausted finalizable；usage evidence 区分 succeeded calls；recover stale leases；partial budget exhaustion 经 WorkerLoop + Finalizer；budget diagnostics observability 查询 `reader_runtime_spans.metadata_json`。
+     - **R2-R2 (G-L, 6)**：G batch succeeded cleanup + WorkerLoop completion；H failed batch fail-closed cleanup；I partial exhaustion preserves other layers；J pipeline-level publish fence（强断言 job/run 状态 + layers/events `==` 而非 `>=`）；K persistent budget observability；L multi-fingerprint determinism（方案 B 稳定排序）。
+     - **R2-R3a (M, 1)**：M full budget exhaustion preserves display_title（全预算层 exhaustion 时 display_title 不被误伤；finalizer `non_terminal_jobs_present` → 二次 WorkerLoop display_title succeeded → `completed_with_failures`）。
+6. 风险/边界（已锁定，不扩 scope）：
    - **R2 与 V1 的证据边界**：执行预算与 cutover failure-path 仍由 deterministic fake-executor tests 验收；V1 真实 LLM records 只覆盖首次成功的 normal path，没有触发 retry、budget exhaustion 或 route cutover。durable budget formalizes `max_attempts=3` 的确定性上限，本身不降低当前 retry ceiling；是否将某些 route/job 从 3 次调整为 2 次需要固定样本 cost/quality 对照。当前仍不得表述为已经实现实际降本增效。
-   - 预算权威是 durable per `(record, base, generation, layer)`，跨 `runner.run()` 持久化。fingerprint 采用保守集合方案 B：所有非 superseded fingerprint 的 `attempt_count` 均计入 consumed，不区分 active route。route/fingerprint 变化后旧 fingerprint job 通过 `_validate_fence` 被拒绝并 supersede。
-   - **max_attempts=3 与 durable budget 的关系**：生产 `max_attempts=3` 是每个 job 的 retry ceiling。durable budget 使用 `SUM(max_attempts)` 作为 layer ceiling（`max_effective_calls = planned * max_multiplier`，`max_multiplier=3` 与 `max_attempts=3` 对齐）。durable budget 提供确定性上限和观测/调度作用，**本身不降低原有 retry 成本**。是否将部分 route/job 的 `max_attempts` 从 3 调到 2 应作为真实 LLM cost/quality 数据驱动的独立决策，不在本轮调整。
+   - **max_attempts=3 与 durable budget 的关系**：durable budget 使用 `SUM(max_attempts)` 作为 layer ceiling（`max_multiplier=3` 与 `max_attempts=3` 对齐），提供确定性上限和观测/调度作用，**本身不降低原有 retry 成本**。是否调整 `max_attempts` 应作为真实 LLM cost/quality 数据驱动的独立决策。
+   - **fingerprint 方案 B 限制**：保守集合将所有非 superseded fingerprint 的 consumed 合并计算，在 cutover 中间态可能略高估 consumed。这是保守偏差，符合 fail-closed 原则。若未来需要精确按 active route 分离预算，需新增 schema 字段标记 active route，不在本轮实施。
    - route flip fencing 依赖 `article_route` 写入 `reader_runs.envelope_json`（由 job_bootstrap 写入）。若未来有 run 不携带 `article_route`，fencing 不生效（返回 None = 通过）。这是预期行为：只有 T4.1b+ 的 batch/window run 才需要 route fencing。
    - 预算耗尽后的 force-fail 不尝试重跑 jobs；被 force-fail 的 jobs 在 v1 不提供 retry 入口。如需 retry，应作为 T4+ 的 action-required UX 单独设计。
-   - `_should_suppress_grammar_per_unit_fallback` 只覆盖 grammar 层；translation / vocabulary 的 batch-first fallback 不存在 per-unit fallback 路径（T3.1/T3.2b 已删除 per-unit job），因此不需要等效 guard。
    - `attempt_count` 在 claim 时自增，含 claim 后但 LLM 调用前崩溃的 attempt；durable consumed 是 claim 次数上限，可能略高于真实 effective LLM call 数。这是保守偏差，符合 fail-closed 原则。
-   - **fingerprint 方案 B 限制**：保守集合将所有非 superseded fingerprint 的 consumed 合并计算，在 cutover 中间态可能略高估 consumed（旧 fingerprint 的已消耗 attempt 仍计入）。这是保守偏差，符合 fail-closed 原则。若未来需要精确按 active route 分离预算，需新增 schema 字段标记 active route，不在本轮实施。
 
 ### T4.2a-V1. Gated Real-LLM Validation
 
@@ -336,8 +301,25 @@ Reader enhancement 的当前主链路按层分开理解：
 - 实际 provider 账单不可得，可靠实付成本为 unavailable；按当时配置价格与无法完整归因的 cache 情况，只能给出约 `$0.0158-$0.0354` 理论区间。无历史同样本真实 LLM baseline，`ai_usage_events.latency_ms` 不完整，因此**不得宣称已实现 token、成本或时延降幅**。
 - Observability gap：Sample A grammar usage event 存在但无 `usage_snapshot`，recording 层收到 `usage_data=None`；同一路径 B/C/D 正常。`extract_run_usage(result)` 在 V1 前已经存在，根因仍为 unresolved intermittent usage attribution gap，不能描述为 worker 修复已落地。per-job provider latency 与真实用户感知延迟尚不可用。
 - Vocabulary 质量必须按 discriminated union 评估：`vocab_highlight` 检查 `headword` / `brief_explanation` / `reason`；`phrase_gloss` 检查 `phrase` / `phrase_type` / `gloss`；`context_gloss` 检查 `display` / `gloss` / `reason`。不得跨 subtype 强求不存在的 `headword` 或 `gloss` 字段。
-- **Progressive Transition UX 未验证**：现有 records 已是 `coverage_complete` final-ready，不能仅凭它们证明 loading、first layer、partial-ready、layer-ready 实时过渡或 live update 交互保持。后续 Progressive UX 应使用 deterministic fixture / event replay，不重跑 LLM、不修改本 V1 范围。
+- **Progressive Transition UX**：final-ready V1 records 本身不能证明实时过渡；**T4.2a-PUX-R1** = fixture 合同；**T4.2a-PUX-R2** = 页面 runtime 集成门（均已闭合，见下方），不重跑 LLM、不改 V1 范围。
 - 碎段新闻、超长文、no-op window 已由 **T4.2a-V2-R1** 完成 deterministic 合同验证（见下）；真实 LLM / 页面验收仍后置。T4.2 bounded LLM document profiler 继续暂缓，只有 deterministic router 出现稳定边界误判时再评估。
+
+#### T4.2a-PUX-R1 progressive transition UX fixture / event replay（fixture contract closed）
+
+1. **口径**：仅 pure fixture / event-replay **合同**；**不是**页面 runtime 验收。
+2. 相位与安全 helpers：`progressive-transition.ts`（21 tests）。
+3. Runtime 必须由 **T4.2a-PUX-R2** 接入真实 polling / snapshot reload。
+
+#### T4.2a-PUX-R2 progressive transition runtime integration（runtime gate closed）
+
+1. 目标：把 PUX-R1 合同接到 `reader-record/[recordId]/page.tsx` 真实 `useReaderPlatePolling` + `reloadSnapshot` 路径；用户可见「正文可读 → 译文先到 → 批注逐步丰富 → 完整解析」；刷新不打断 scroll/selection/Quick Peek。
+2. **单 cursor**：polling 仍唯一；只在 progressive `applySnapshotReload` **成功**后更新 `snapshotState`（从而推进 `initialCursor`）；stale / layer regression 拒绝时 return `false` → cursor hold。
+3. **UI**：底部固定轻量 status pill（`reader-record-progressive-status`），无全屏覆盖、不挤正文。
+4. **Plate**：generation 变化清 generation-scoped interaction，保留 scroll；plateValue swap 继续 restore scroll/selection path。
+5. **Runtime tests**（page.test.tsx）：layer_published 成功路径；stale 拒绝 + cursor hold；layer regression 拒绝；scroll 保留。共 4 PUX-R2 tests。
+6. 验证：67 tests（21 progressive + 18 polling + 28 page）；`pnpm --filter=@claread/web typecheck` clean。
+7. 过程 TMP 已在 DOC-R3 中删除（结论已压缩进本节及 [`adaptive-reader-orchestration-design.md`](adaptive-reader-orchestration-design.md) §8）。
+8. 未做：SSE、patch merge、Playwright progressive E2E、真实 LLM。
 
 #### T4.2a-V2-R1 three-mode boundary & very-long fixed samples（已完成 / deterministic）
 
@@ -349,7 +331,7 @@ Reader enhancement 的当前主链路按层分开理解：
    - **no-op grammar window**：empty executor → 全部 analysis window `status=no_op`、`no_op_cause=llm_empty`；window job `succeeded` + `attempt_count=1`（不重试）；executor call_count == planned windows；`coverage_complete` / `completed_with_no_op`；grammar layers=0，trans/vocab 仍 full publish。
 3. Calls 口径：planned = bootstrap job 数；effective = fake executor 实际调用次数；max ≈ planned×3（R2）；no-op **计 1 次 effective call**，但不产生重复 claim/retry。本任务不声明真实 token/成本。
 4. 测试：`tests/test_reader_orchestration_v2_boundary_samples.py`（5 passed）；ruff F,I 与 `git diff --check` clean。**无生产代码改动**；未发现需先红后绿的 route/合同缺陷。
-5. 过程证据：`docs/initiatives/reader-agentic-orchestration/tmp/TMP-t42a-v2-r1-boundary-samples-2026-07-13.md`。
+5. 过程 TMP 已在 DOC-R3 中删除（结论已压缩进本节及 [`adaptive-reader-orchestration-design.md`](adaptive-reader-orchestration-design.md) §4.2）。
 6. 未解决：真实 LLM 下超长文 no-op 比例/质量；Page UX；跨 window `published_at` 全局序（T3.1 风险 A 既有锁定）；Sample A / Cost-Latency PARTIAL 不变；T4.2 profiler 仍暂缓。
 
 ### T4.2a-O1. Usage / Cost / Latency Observability Contract Audit
@@ -395,20 +377,13 @@ Reader enhancement 的当前主链路按层分开理解：
 - **非声明**：worker_tick `duration_ms`（PG wall）、pipeline-root duration、claim wait **不是** provider latency；**不得**把上述任一值写入或冒充 `latency_ms`。
 - **实现落点**：`run_reader_scoped_agent` 计时 + `DurationProvenance`；`merge_correlation_metadata` 合并 duration；success/failure span 与 usage event 持久化；异常路径仍保留 agent-run duration 与 provider unavailable。
 - **Provider timing fail-closed**：只有 `kind=claread_provider_response_timing` / `version=1` 的 adapter envelope（`make_provider_response_timing_envelope`）可使 status=`available`。任意 `usage_data`、`usage.details`、`result.timing` / `response_timing` / 同名字段 **一律 unavailable**。
-- T2.1 已有第一轮实现并提交（progressive reload cursor、in-flight guard、scroll/selection best-effort 恢复），但必须在 T1.1a 修复后用真实页面重新验收；前端稳定性不能替代正确的 layer output。
-- 默认 worker / baseline budget 已调整为 `max_ticks=96`、`max_jobs=48`，覆盖当前 6/7 worker slots 下的中等短文样本；这是验收预算，不是最终调度模型。
-- 2026-07-08 fake baseline 验收只能证明 job 数、completion 和测试 fake output 口径；不能证明真实 LLM 下 Translation Group 粒度正确。真实页面已暴露 one-unit-one-group 回归，因此此前 `translation_groups` 数量不能作为 T1.1a 验收依据。
-- T3.3 phrase_gloss guard 已完成并提交：prompt 明确 phrase_gloss 是 lexical expression，不是整句/完整从句/长谓语；后端 guard 拒绝终止标点结尾或 7 词以上的 phrase_gloss，拒绝项不消耗 published slot。页面抽查记录 `ac97d982-2032-4f82-898d-cdbab9535c3d`、`b73abf91-9519-4059-8ecc-56ee3421060b` 显示长短语误标有改善。
-- T3.4a grammar window diagnostics 已完成并提交：成功/no-op/failure/superseded 路径会把 raw candidate count、accepted/rejected count、reject reasons、budget、strategy、failure cause 写入 `reader_jobs.output_ref_json.diagnostics` 与 `analysis_windows.coverage.diagnostics`。
-- T3.4b RECORD_DENSITY bug fix 已完成并提交：`SelectorLedger.base_text_length_utf16` 从 `reading_bases.content_utf16_length` 加载，避免 density denominator 退化为 1.0，把 per-1000-chars ratio cap 误变成全篇 raw count cap。
-- 2026-07-09 长文真实抽查记录 `5afd3f93-2105-47f8-9e0f-5886b7e97623`、`67ad6b9f-a45d-42b4-a8bd-d3e9c704358e`：两篇分别约 36.9k / 28.5k chars，所有 jobs succeeded，translation 当时为 57/58 次 `translate_unit`（T3.1 后已改为 grouped/windowed `translate_article`）；total tokens 约 320k / 297k；grammar plan 仅发布 3 条 grammar_note + 1 条 sentence_analysis，且 17/19、13/15 grammar windows 为 `no_op`。该抽查结论用于确认 T3.1/T3.4a/T3.4b 优先级，不作为三模式最终验收。
-- 2026-07-09 T3.4b 后真实短/中样本成本跟踪：`318d5fa1-7891-4052-988a-29250c4f59ec` 为 11,797 tokens / 约 20s / grammar 2 + sentence 1；`0108ecca-cb75-4920-9926-4eb7e8f72e20` 为 20,543 tokens / 约 48s / grammar 4 + sentence 1；`4f6ad1cd-242b-4929-a4ca-8f3bf58f48bc` 为 63,960 tokens / 约 110s / grammar 10 + sentence 4。三篇 grammar diagnostics 均显示 raw=accepted、无 selector rejection；当前偏少主要来自 per-window generation/budget 与 prompt 保守，不再是 density denominator bug。
+- **历史任务证据归属（DOC-R2 收敛）**：T2.1 progressive reload cursor、T3.3 phrase_gloss guard、T3.4a grammar window diagnostics、T3.4b RECORD_DENSITY bug fix、2026-07-08/09 fake baseline 与长文真实抽查记录（`5afd3f93` / `67ad6b9f` / `318d5fa1` / `0108ecca` / `4f6ad1cd` 等）的证据与结论归各任务对应章节与 TMP closeout；本节只保留 O3 duration provenance 字段字典与 fail-closed 合同。
 
 ### 下一轮建议
 
-1. T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1 已完成代码级实施；**T4.2a-R2 已通过代码级 review（T4.2a-R2-R3a 补充 Test M + 文档终态同步）**：completion state finalizer 已闭合；deterministic router 已替换 legacy raw-char 二元分流；Unicode non-CJK 与 missing-base 两个回归点也已补齐；`STRUCTURED_BATCH` 已升级为独立可审计 runtime mode（fingerprint / policy_version / article_route / document_features 三态区分，route 变化触发 supersede）；短文与 structured batch 文章的 grammar 已走 compact batch path，不再默认走重型 analysis-window 空跑；acceptance harness 已忠实复现 production topology（WorkerLoop + CompletionFinalizer + coverage_complete），grammar batch `ai_usage_events` 漏传 `usage_data` 已修复，三态固定覆盖测试已落地；durable per-layer 执行预算与 route cutover fencing 已实施修复（跨 run 持久预算、fail-closed fallback + legacy job 正式终态、partial/full layer exhaustion 分层 force-fail + display_title 排除、budget-denied 持久观测、publish fence worker 层真实 transition + Test J 强断言、legacy cleanup 显式事务、fingerprint 确定性集合）。下一步不再回头扩这几项 scope。
+1. T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1 已完成代码级实施；**T4.2a-R2 已通过代码级 review（T4.2a-R2-R3a 补充 Test M + 文档终态同步）**。核心闭合项：completion finalizer、deterministic 三态 router（替换 legacy raw-char 分流）、`STRUCTURED_BATCH` 独立 runtime mode、compact grammar batch path、acceptance harness 复现 production topology、durable per-layer 执行预算与 route cutover fencing。详细设计结论与权威归宿见上方 T4.2a-R2 章节第 3 项。下一步不再回头扩这几项 scope。
 2. **T4.2a-V1 已正式关闭**：Contract / Output Integrity / sample-level Semantic Quality / Page UX PASS；Cost/Latency Baseline 仍 PARTIAL，真实降本增效尚未被证明。**T4.2 bounded LLM document profiler 继续暂缓**。
-3. 下一阶段优先：measurement/observability（可靠成本与用户感知时延）、Progressive UX 的 deterministic fixture / event replay。**T4.2a-V2-R1 固定边界样本 deterministic 已完成**，不要把 profiler、planner、SSE 与已关闭的 V2-R1 混成一个无边界任务。
+3. 原 T4.2a 实现阶段约 **85%**：实现与合同层已闭合；Sample A 仍 UNRESOLVED、Cost/Latency 仍 PARTIAL、PUX rejected-snapshot retry/backoff 仍待设计。下一阶段唯一预批准动作是 **T4.2a-LP-R2 Phase 0 snapshot payload profiling**（测量而非传输改造）：按文长、generation、surfaceMode、reload reason 记录 payload 与用户感知耗时。旧的 bounded-LLM document profiler 继续暂缓；不得把 ETag、压缩、SSE、fragment、planner 或 T6 patch merge 混入 LP-R2。
 4. T4.2 bounded LLM document profiler 与 T4.3 strategy planner 仍作为后续阶段：bounded profiler 只返回 genre/structure/schema_risk/selective hints；planner 选择 short batch、structured batch、grouped/windowed、section longform、selective longform。T4.1b/T4.1c 的三态可审计 runtime mode + compact grammar batch path 是 planner 的稳定输入。只有 deterministic router 在真实边界样本上出现稳定误判时才重新评估 profiler。
 5. bounded enhancement planner + specialized structured workers 的第一落点仍应是 long/very-long selective enhancement：planner 只负责选择候选 enhancement targets，专业 worker 负责 schema output 与 publish；translation semantic group planner 继续保持独立。
 6. T5.1 deterministic navigation outline 仍然是 very-long lazy enhancement 的先决条件；semantic outline 只面向长文/超长文，不默认对所有文章生成。
@@ -427,11 +402,21 @@ Reader enhancement 的当前主链路按层分开理解：
 - 不把 provider prompt cache 当作三模式路由替代品；它是成本优化杠杆，不是模式设计本身。
 - 不先删除旧 AI Workflow。旧链路仍是质量和成本对照基线，除非人工确认不再需要 fallback。
 
+### 待裁定项（DOC-R2 显式标记）
+
+以下冲突由 DOC-R1 inventory 发现，DOC-R2 不自行裁定，仅在此显式标记待用户裁决：
+
+| # | 冲突 | 涉及 TMP 文件 | 影响 | 裁定所需输入 |
+|---|------|--------------|------|-------------|
+| 1 | **同日后端闭环 review verdict 冲突** | `docs/tmp/reader-orchestration/reader-orchestration-backend-closure-review-2026-07-01.md`（verdict ⛔ 不建议进入前端 UI/UX 全量对接，6 P0 findings）vs `docs/tmp/reader-orchestration/` 中的 closed-loop-review（verdict ✅ 可以进入前端 UI/UX 对接，仅 P1 findings） | 若以 backend-closure-review 为准，前端已开始对接（commit `07964a96`）可能需回退；若以 closed-loop-review 为准，6 P0 findings 可忽略 | 用户确认以哪份 review 为准；6 P0 findings 是否已对照代码修复 |
+
+> **DOC-R2 边界**：不自行裁定上述冲突；不在正式文档中将任一 verdict 写为唯一结论。在用户裁定前，`cutover-and-old-workflow.md` 的 DOC-R2 代码现场核验结论只陈述当前代码事实（旧依赖审计、delete/rewrite/keep matrix），不采用任一 TMP review 的 verdict 作为正式结论。
+
 ### 任务派发规则
 
 - `implementation-plan.md` 只记录任务拆分、依赖、状态和验收口径，不保存每轮 coding agent prompt。
 - 每轮 prompt 由人工根据当前代码事实和最近验收结果单独生成，并通过会话发给 coding agent。
-- 当前 T1.1a、T3.1、T3.2b、T3.3、T3.4a、T3.4b、T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1、T4.2a-R2 已完成代码级实施与 deterministic acceptance；**T4.2a-V1 已正式关闭**（Contract / Output Integrity / sample-level Semantic Quality / Page UX PASS；Cost/Latency PARTIAL）。下一步优先 measurement/observability、Progressive UX fixture replay 与固定样本 V2，再评估 T4.2 bounded profiler 与 T4.3 strategy planner，然后进入 M5 outline-first / very-long lazy enhancement 合同。不要把 planner / semantic outline worker / SSE patch / grammar quality tuning 混成一个无边界任务。
+- 当前 T1.1a、T3.1、T3.2b、T3.3、T3.4a、T3.4b、T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1、T4.2a-R2 已完成代码级实施与 deterministic acceptance；**T4.2a-V1 已正式关闭**（详见上方 T4.2a-V1 章节）。下一步优先 measurement/observability、Progressive UX fixture replay 与固定样本 V2，再评估 T4.2 bounded profiler 与 T4.3 strategy planner，然后进入 M5 outline-first / very-long lazy enhancement 合同。不要把 planner / semantic outline worker / SSE patch / grammar quality tuning 混成一个无边界任务。
 - 评审 agent 完成 review 后，如发现实现改变了任务状态、产品合同或执行顺序，必须同步更新本计划和相关模块合同。
 
 ## 成功标准
@@ -537,34 +522,9 @@ Reader enhancement 的当前主链路按层分开理解：
 
 ## D2. 技术 Spikes
 
-状态：active。入口见 `spikes/README.md`；D2-S1 Reading Unit Builder 已完成并以 `accepted_with_changes` 写回模块合同。D2-P0 Plate dependency 已通过并对齐 Web 依赖到 Plate 53.x 稳定主线；D2-P1 到 D2-P4 与 fragment sanitize 的调研结论已由 TMP disposition 汇总，正式合同以本目录模块文档为准。
+状态：D2-P0~P4 / D2-S1 已 accepted / accepted_with_changes；D2-S2~S10 标记为 ready 但结论已落地到正式文档（见 [`spikes/README.md`](spikes/README.md#doc-r2-状态核验结论2026-07-13) 映射表）。D2-P0 Plate dependency 已通过并对齐 Web 依赖到 Plate 53.x 稳定主线；D2-P1 到 D2-P4 与 fragment sanitize 的调研结论已由 TMP disposition 汇总，正式合同以本目录模块文档为准。
 
-必做 spike：
-
-| Spike | 输出 |
-|---|---|
-| Reading Unit Builder | Stable Base -> Reading Units 的 deterministic builder、UTF-16/hash 校验、focused tests |
-| 依赖基线 | D3-P0 已完成：PydanticAI 1.107.0、DashScope 1.25.23、asyncpg 0.31.0；LangGraph/FastAPI/LangSmith/OpenAI 保持当前锁定版本；现有 focused tests 通过 |
-| 当前成本基线 | 代表性 learning 样本的 token、latency、retry 数据 |
-| DB job lease 原型 | claim、heartbeat、stale recovery、幂等 resume、cancel/supersede |
-| Policy Planner / Skip Gate | deterministic policy table、Decision schema、rationale_code、pre-claim gate |
-| Translation Worker structured output | PydanticAI typed output、usage limits、retry policy、provider transport |
-| SSE + polling 原型 | event log、Last-Event-ID/cursor 恢复、snapshot fallback |
-| Model Profile / Cost Baseline | 当前官方 model id、route lookup、fallback chain、translation benchmark |
-| Prompt Cache / Usage Bucket | cache hit/miss audit、usage_by_layer、usage_by_cache_status |
-| RAG substrate 原型 | Stable Base / Units -> chunk -> embedding -> Zilliz search -> cited units |
-| 阿里云 RAG 可替换性 spike | 验证百炼知识库或阿里云向量检索是否可通过 adapter 替换 Zilliz |
-| OSS 上传 spike | Web 直传/后端签名、对象 metadata、checksum、权限、过期清理 |
-| OCR / 文档解析 spike | 百炼 OCR/VL/文档解析输出能否稳定形成 Extraction Result 和 Candidate Base |
-| Anchor validation 原型 | span-bound layer 发布前必须通过稳定 anchor validation |
-| Parsed Decision eval | human/LLM judge rubric 能识别“合理跳过”和“偷懒跳过” |
-| Length Class 与 envelope 预算 | 文本长度分类、默认 unit range、token/cost/continuation 策略 |
-| D2-P0 Plate dependency / API / license | Plate core、Markdown、comment/suggestion/AI 插件的 license、版本、API 可用性；不可默认依赖未验证商业能力 |
-| D2-P1 Base Plate Snapshot | Stable Base / Units / Anchor Segments -> Base Plate Snapshot，不经过旧 `render_scene_json` |
-| D2-P2 Projection Operations / Replay | domain-targeted `projection_ops`、snapshot reload、event replay、gap recovery；不持久化 raw Slate path ops |
-| D2-P3 Selection / Anchor / Owner | Plate selection -> domain anchor，UTF-16/hash 校验，owner 权限拦截和后端 policy 对齐 |
-| D2-P4 Ask Document Tools | `read_range`、`propose_highlight`、`propose_note`、`write_ai_supplement`、`revise_ai_annotation` 的用户确认和事件投影 |
-| 旧依赖矩阵 | 标记旧 analysis/reader scene/Ask/user asset 依赖的 delete / rewrite / keep 策略 |
+**必做 spike 清单与状态归 [`spikes/README.md`](spikes/README.md)**（DOC-R2 收敛：不再在此复制 spike 表格；spike 输出只记录短结论，被接受的长期结论写回 [`target-architecture.md`](target-architecture.md#决策记录) 或对应 [`modules/`](modules/) 文档）。
 
 完成标准：
 
@@ -583,27 +543,7 @@ Closeout 结论：
 - FastAPI、LangSmith、OpenAI SDK 未升级；focused tests 未暴露必须升级的缺口。
 - asyncpg job lease、record-scoped event counter、rollback no-gap、SSE `Last-Event-ID` 等运行时语义延后到 D3-P4 在新 schema 上测试。
 
-在 D3 后端骨架正式实现前，先完成后端依赖升级与能力验证。该任务不实现 Reader runtime 业务功能，只解决依赖版本、provider capability 和 lockfile 风险。
-
-任务包：
-
-- 盘点 `services/api` 当前 Python dependencies、lockfile 和 LLM/provider 相关封装。
-- 升级 PydanticAI 到当前最新稳定 1.x；不使用 2.0 beta。验证 typed output、ToolOutput / native output fallback、usage limits、validator retry 和 provider usage extraction。
-- 升级 DashScope SDK 到当前最新 patch，验证 native streaming、`reasoning_content`、tool call、usage extraction 和错误分类。
-- 升级 asyncpg 到 0.31.x，验证 job lease、record-scoped transactional counter、transaction rollback no-gap 和 pool timeout 行为。
-- 明确 LangGraph posture：D4/D5 不主动升级、不引入主路径；若未来保留 D6+ 入口，必须在隔离 spike 中基于当时官方文档和 lockfile 实测记录 LangGraph v1+ 能力边界、breaking risk 和不进入 durable control plane 的理由。
-- 对齐 LangSmith / tracing SDK，确认 trace id 与 `ai_usage_events` / reader run/job/layer 的关联字段；只有 focused tests 需要时升级。
-- 验证 provider SDK / OpenAI-compatible adapters 的 structured output、tool calls、cache usage、provider request id 和 error classification。
-- 验证 FastAPI SSE response/helper、Last-Event-ID、heartbeat、disconnect handling。
-- 验证 asyncpg / SQLAlchemy transaction helper、pool timeout、serializable/read committed 策略。
-
-完成标准：
-
-- 依赖版本和 lockfile 更新完成，或明确记录阻塞和降级方案。D3-P0 已完成，后续不得在 D4 worker 实现中临时升级核心 LLM/runtime 包。
-- focused tests 覆盖 PydanticAI structured output、usage extraction、provider cache normalization、route/profile resolution。
-- LangGraph 明确不进入 D4 主路径，代码中不得临时引入第三个 orchestration 控制面。
-- `app/llm/routes.py` 增加 Reader worker route 的设计确认，至少覆盖 `reader_layer_translation`，并为 D5 预留 `reader_layer_vocabulary` / `reader_layer_grammar_bundle`。
-- D3 runtime skeleton 可以基于已验证依赖实现，不需要中途升级核心 LLM/runtime 包。
+**原任务定义（任务包 + 完成标准）归 TMP closeout；本节只保留 Closeout 结论作为历史证据。**
 
 ## D3. 后端骨架
 
@@ -1226,10 +1166,11 @@ Focused tests 已通过：
 
 1. **T4.2a-O1、T4.2a-O2-V1-R1、T4.2a-O3 代码级**已完成。O3 将 agent-run duration 与 provider-request timing 分层；无 provider timing 时显式 `unavailable`；禁止把 worker/pipeline/agent duration 当作 provider latency 或改写 `latency_ms`。Sample A 仍 UNRESOLVED；Cost/Latency 仍 PARTIAL。
 2. **后续 observability** 可评估 cache token normalization、versioned price snapshot / estimated cost 或 Progressive UX fixture；不得因 O3 宣称 token/cost/latency 已可靠或 Sample A 已修复。
-3. **Progressive UX fixture / event replay**：用 deterministic fixture 或 event replay 验证 loading → first layer → partial/layer-ready → coverage_complete 与 live update 交互保持；**不重跑 LLM**。
+3. **Progressive UX**：**T4.2a-PUX-R1 fixture 合同 + T4.2a-PUX-R2 runtime 集成均已完成**；**不重跑 LLM**。
 4. **固定样本 V2**：碎段新闻、>4,000 words 超长文与 no-op window 使用固定样本、预先声明调用上限；与已关闭的 V1 分开。
-5. T4.2 bounded LLM document profiler **继续暂缓**。只有 deterministic router 在真实边界样本上出现稳定误判时才重新评估；不得因为已有真实 baseline 就直接引入自由决策 LLM。
-6. T4.3 strategy planner 与 T5.1 outline-first 合同继续后置；semantic outline 只在长文/超长文策略中启用。
-7. 持续记录 calls、token、**分层** duration（agent-run vs provider-request vs worker_tick wall）、首个可用输出时间和人工质量，但在没有同样本对照前不得宣称降本增效。
+5. **长内容交付与渐进阅读 UX（候选路线，未批准实施）**：LP-R1/R2/R3.1 已完成研究与 service-level 基线；LP-R4 representation coverage audit 进行中。只有在其证据闭合后，才可进入独立设计。顺序固定为先完成 **PUX-R4 interaction-stable incremental projection**（稳定 generation 内保留 grammar accordion、Quick Peek、panel、selection 与语义 scroll anchor，并只更新受影响的 target/layer），再评估 semantic fragment transport，最后才评估用 SSE 替换可见页的 event polling。SSE 只作为带 sequence / generation / layer target 的通知通道，不能承载整份 snapshot，也不能替代局部 Plate projection；不得因此预先实现 ETag、304、压缩、SSE、fragment route、JSON Patch 或 WebSocket。
+6. T4.2 bounded LLM document profiler **继续暂缓**。只有 deterministic router 在真实边界样本上出现稳定误判时才重新评估；不得因为已有真实 baseline 就直接引入自由决策 LLM。
+7. T4.3 strategy planner 与 T5.1 outline-first 合同继续后置；semantic outline 只在长文/超长文策略中启用。
+8. 持续记录 calls、token、**分层** duration（agent-run vs provider-request vs worker_tick wall）、首个可用输出时间和人工质量，但在没有同样本对照前不得宣称降本增效。
 
-T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1 与 T4.2a-R2 已完成代码级实施和 deterministic acceptance。**T4.2a-V1 已正式关闭**：Contract / Output Integrity / sample-level Semantic Quality / Page UX PASS；Cost/Latency Baseline PARTIAL。如需 retry force-failed windows、扩展 finalizer 到 RAG substrate，或给 structured batch 独立 grammar budget/prompt/release policy，应分别作为后续独立任务设计。
+T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1 与 T4.2a-R2 已完成代码级实施和 deterministic acceptance。**T4.2a-V1 已正式关闭**（详见上方 T4.2a-V1 章节）。如需 retry force-failed windows、扩展 finalizer 到 RAG substrate，或给 structured batch 独立 grammar budget/prompt/release policy，应分别作为后续独立任务设计。

@@ -1,8 +1,26 @@
 # D2 Spikes
 
-> 状态：`active`
-> 最后更新：2026-06-18
+> 状态：`D2-P0~P4 / D2-S1 已 accepted / accepted_with_changes；D2-S2~S10 标记为 \`ready\` 但结论已落地到正式文档（见下方映射表）`
+> 最后更新：2026-07-13（DOC-R2：现场核验 D2-S2~S10 状态标注与 `target-architecture.md` 决策记录，结论均已落地；spike 条目保留作历史索引）
 > 用途：Reader agentic orchestration D2 技术验证入口。Spike 输出只记录短结论；被接受的长期结论写回 `target-architecture.md` 或对应 `modules/*.md`。
+
+## DOC-R2 状态核验结论（2026-07-13）
+
+D2-S2~S10 在本文件中标记为 `状态：\`ready\``，但对照 [`../target-architecture.md`](../target-architecture.md#决策记录) 决策记录，这些 spike 的关键结论已经通过后续 D3~D5 实施落地到正式文档。本文件不删除 spike 条目，仅追加映射表，避免后续读者误以为这些方向尚未验证。
+
+| Spike | 原状态 | 结论落地决策记录 | 落地说明 |
+|---|---|---|---|
+| D2-S2 DB Job Lease / Publish Guard | `ready` | D2-004 / D3-007 / T4.2a-R2 | SKIP LOCKED claim、lease token、heartbeat、stale recovery、publish fence、route flip fencing 全部已实施；T4.2a-R2 进一步强化 publish fence 状态一致性 |
+| D2-S3 Policy Planner / Skip Gate | `ready` | D2-009 / D1-009 | deterministic Policy Planner + Skip Gate 已实施；rationale_code、policy_version 已在 [`../modules/policy-and-cost-control.md`](../modules/policy-and-cost-control.md) 落地 |
+| D2-S4 Translation Worker Structured Output | `ready` | D4-002 / D2-010 | PydanticAI typed output、retry、usage attribution 已在 translation worker 实施 |
+| D2-S5 SSE / Polling Projection | `ready` | D2-006 / D2-007 / D2-008 | record-scoped sequence、gap detection、snapshot reload fallback 已在 [`../modules/streaming-and-projection.md`](../modules/streaming-and-projection.md) 落地；D4 默认实时聚合，不实现 `reader_snapshots` cache |
+| D2-S6 Model Profile / Cost Baseline | `ready` | D2-011 / D1-010 | deterministic model route -> profile -> fallback chain 已在 [`../modules/policy-and-cost-control.md`](../modules/policy-and-cost-control.md) Model Profile 合同落地 |
+| D2-S7 Prompt Cache / Usage Bucket | `ready` | D2-011 / D1-011 / D5-001 | Usage Bucket 字段、cache_class、operation_fingerprint 已在 [`../modules/policy-and-cost-control.md`](../modules/policy-and-cost-control.md) Usage Bucket 合同落地 |
+| D2-S8 RAG Substrate | `ready` | D1-008 / D0-009 / [`../modules/rag-substrate.md`](../modules/rag-substrate.md) / [`../modules/local-article-rag-runbook.md`](../modules/local-article-rag-runbook.md) | RAG substrate contract、citation DTO、provider adapter 已落地；Article RAG 本地运维 runbook 已存在 |
+| D2-S9 Length Class / Envelope Defaults | `ready` | T4.2a-R2 / [`../modules/policy-and-cost-control.md`](../modules/policy-and-cost-control.md) Layer Applicability Table | per-layer ExecutionBudget + Authorization Envelope 已在 T4.2a-R2 实施；Length Class 数值边界仍是 [`../target-architecture.md`](../target-architecture.md) 待决问题 |
+| D2-S10 Cutover / Old Dependency Audit | `ready` | D2-012 / [`../modules/cutover-and-old-workflow.md`](../modules/cutover-and-old-workflow.md) | delete / rewrite / keep matrix、schema reset checklist 已在 cutover-and-old-workflow.md 完整落地 |
+
+后续若仍需独立 spike 验证某方向的新风险（如 D6+ LangGraph v1+ 复杂 flow、新 provider cache 行为），应在新 spike id 下重新启动；本文件 D2-S2~S10 条目作为历史索引保留，不再作为「待执行」入口。
 
 ## 规则
 
@@ -85,7 +103,7 @@
 | 问题 | paragraph + sentence fallback 是否能生成稳定、可 anchor 的 Reading Units？ |
 | 输入文档 | `modules/reading-base-and-units.md` |
 | 验证 | UTF-16 offsets、`fnv1a32-utf16` hash、unit order、空行/长段落/Unicode 文本 |
-| 输出 | `spikes/D2-S1-reading-unit-builder-result.md`；`modules/reading-base-and-units.md` 与 `modules/enhancement-layers-and-parsed.md` 已修正 |
+| 输出 | `archive/spikes/D2-S1-reading-unit-builder-result.md`（DOC-R3 归档）；`modules/reading-base-and-units.md` 与 `modules/enhancement-layers-and-parsed.md` 已修正 |
 | 通过标准 | D4 纯文本样本可生成 Stable Base + Units，并通过 anchor validation。 |
 | 结论 | 方向通过；必须新增 Anchor Segment；segment 通常是 sentence，必要时可为 clause/fallback window。D5-V2 实现已将 span anchor offset 口径修订为 `anchor_segment_id` + unit-local offsets，并用 Anchor Segment range 约束。 |
 

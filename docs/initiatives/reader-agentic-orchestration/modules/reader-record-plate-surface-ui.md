@@ -1,10 +1,21 @@
 # Reader Record Plate Surface UI
 
-> 状态：目标方案 + 当前实现基线；2026-07-03 已按 Annotation Visual Matrix 与浏览器验收结果重新校准
-> 最后更新：2026-07-03
+> 状态：目标方案 + 当前实现基线；2026-07-03 已按 Annotation Visual Matrix 与浏览器验收结果重新校准；DOC-R2 补 T4.2a-PUX-R1/R2 progressive transition 引用
+> 最后更新：2026-07-13（DOC-R2：补 T4.2a-PUX-R1/R2 progressive transition runtime 引用；详细合同归 [`./streaming-and-projection.md`](./streaming-and-projection.md#t42a-pux-r2-runtime-integration)）
 > 范围：`/app/reader-record/{recordId}` 在 Agentic Orchestration 架构下的 Reader Record 解析页 UI/UX、Plate.js 文档表面、选择交互、词典/Ask 联动、用户高亮/笔记和第一版实现边界。
 
 当前代码接入矩阵见 [`reader-plate-component-integration.md`](./reader-plate-component-integration.md)。本文件描述目标 UI/UX 和产品边界；若本文与代码事实冲突，以接入矩阵和当前代码为准，再反向更新本文。
+
+## Progressive Transition UX 引用
+
+`/app/reader-record/{recordId}` 的 `reloadSnapshot` 已接入 T4.2a-PUX-R2 progressive transition 校验：
+
+- canonical replay 与 stale/layer 单调 helpers 来自 T4.2a-PUX-R1 fixture 合同（21 tests）。
+- stale 拒绝时 cursor hold，不覆盖 UI；layer regression 同样不覆盖 UI。
+- 底部 progressive status strip 显示「正文可读 → 译文先到 → 批注逐步丰富 → 完整解析」状态。
+- Plate generation-scoped clear + scroll restore 在 reload 时保留用户阅读位置。
+
+详细 envelope 合同、gap detection 与 polling cursor 归 [`./streaming-and-projection.md`](./streaming-and-projection.md#t42a-pux-r2-runtime-integration)；任务状态与测试计数归 [`../implementation-plan.md`](../implementation-plan.md) T4.2a-PUX-R1 / T4.2a-PUX-R2 章节；决策记录归 [`../target-architecture.md`](../target-architecture.md#决策记录) `T4.2a-PUX-R1` / `T4.2a-PUX-R2` 行。
 
 ## 目标
 

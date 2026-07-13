@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 目标架构
 
-> 状态：`D6 进行中`
-> 最后更新：2026-06-25
+> 状态：`D6 进行中（T4.2a-R2 durable budget 已代码级 review 通过；real-LLM validation pending）`
+> 最后更新：2026-07-13（DOC-R2：收敛 Plate Document 节重复段落到 `modules/plate-reader-projection.md` 与 `modules/streaming-and-projection.md`，补登 T4.2a-R2 / PUX-R1 / PUX-R2 决策）
 > 范围：用户提交内容的 `learning` Reader 解析。
 
 ## 目标
@@ -256,7 +256,7 @@ PDF V1 采用 deterministic text-layer parser 优先；页级质量阈值不达�
 
 ## Reader Projection 与 Plate Document
 
-Reader Article Body 的渲染与交互走 Plate.js（`platejs/react`），D1-012 决策。本节定义 Plate 与后端 domain truth 之间的投影边界。详细合同见 `modules/plate-reader-projection.md`。
+Reader Article Body 的渲染与交互走 Plate.js（`platejs/react`），D1-012 决策。本节只保留架构层关键定位和覆盖范围总览；详细合同（owner 权限表、projection_ops envelope、Snapshot DTO、Anchor Bridge、Ask Document Tools、Fragment Sanitize）拆到模块文档，避免逐字重复。
 
 ### 关键定位
 
@@ -277,98 +277,23 @@ Plate 只覆盖 Reader 内部 Article Body：
 | 用户高亮、评论、笔记 | Plate user-owned projection nodes / marks |
 | Ask sidecar panel、Library、settings、quota、debug、navigation shell | 普通 React UI |
 
-### Owner 与权限
+### 详细合同归属
 
-| Owner | 内容 | 用户权限 | 系统/AI 权限 |
-|---|---|---|---|
-| `stable` | Stable Reading Document、Stable Document Blocks、Canonical Text、Reading Unit、Anchor Segment source text | 不可编辑、不可删除；可选取、查询、评论、高亮 | 不可改写；如需修正，创建新 record 或 supersede |
-| `system_ai` | 系统 worker 生成的 translation、vocabulary、grammar_note、sentence_analysis | 不可直接编辑；可隐藏、折叠、反馈；是否允许 dismiss 由产品策略决定 | 可通过 Layer Publisher 版本化替换 |
-| `ask_supplement` | Ask 经用户确认后追加的 AI 补充 | 可删除或撤销显示；保留审计 | 可由 Ask tool 追加或修订 |
-| `user` | 用户高亮、评论、笔记、保存的 Ask note/highlight | 可编辑、可删除 | AI 不可覆盖，只能提出建议 |
-| `ephemeral` | 选区焦点、Ask citation、临时 suggestion | 当前 session 可关闭 | 不持久化为业务事实 |
+| 主题 | Owner 文档 | 说明 |
+|---|---|---|
+| Owner 权限表（`stable` / `system_ai` / `ask_supplement` / `user` / `ephemeral`） | [`modules/plate-reader-projection.md`](./modules/plate-reader-projection.md#owner-policy) | 含双层执行、用户/系统动作边界 |
+| Snapshot DTO、D4 Base Plate Snapshot、D6 Document Block Projection | [`modules/plate-reader-projection.md`](./modules/plate-reader-projection.md#d4-base-plate-snapshot) | 含 `ReaderPlateSnapshot` wrapper、Base Node Seed、Stable Document Blocks 投影规则 |
+| Anchor Segment ↔ Plate path 桥接（`anchorSegmentIdToPath` 等） | [`modules/plate-reader-projection.md`](./modules/plate-reader-projection.md#anchor-bridge) | 含 adapter 列表与 hash 校验 |
+| Ask Document Tools 表（`read_range` / `propose_highlight` 等） | [`modules/plate-reader-projection.md`](./modules/plate-reader-projection.md#ask-document-tools) | 含写入边界与用户确认规则 |
+| Fragment Sanitize / AI Markdown allowlist / link protocol | [`modules/plate-reader-projection.md`](./modules/plate-reader-projection.md#ai-and-markdown) | 含 D5 AI/Ask fragment allowlist 与 source-document 保留边界 |
+| `projection_ops` envelope JSON、`op_type` 列表、sequence contract | [`modules/streaming-and-projection.md`](./modules/streaming-and-projection.md#projection-operation-envelope) | 含 gap detection、polling cursor、snapshot reload fallback |
+| Plate Plugin / `@platejs/*` package 真实接入矩阵 | [`modules/reader-plate-component-integration.md`](./modules/reader-plate-component-integration.md) | 含三档分类与弱接入风险 |
 
-Owner 校验双层执行：后端 domain service / Layer Publisher 是权威；前端 Plate plugin 只做 UX 镜像和提前拦截。
+### Snapshot 与 D4 Path（总览）
 
-### Projection Event 合同
-
-`reader_events` 支持 `event_type = 'projection_ops'`。payload 使用稳定 domain target，不持久化 raw Slate path：
-
-```json
-{
-  "base_id": "uuid",
-  "projection_version": 7,
-  "ops": [
-    {
-      "op_id": "op_...",
-      "op_type": "upsert_translation_node",
-      "target": {
-        "unit_id": "u1",
-        "anchor_segment_id": "s3",
-        "layer_id": "layer_..."
-      },
-      "owner": "system_ai",
-      "fragment": {
-        "format": "plate_fragment",
-        "schema_version": 1,
-        "content": []
-      }
-    }
-  ],
-  "source_event_id": "uuid-of-layer_published",
-  "source_layer_id": "uuid-of-enhancement_layer"
-}
-```
-
-前端 `ProjectionOperationApplier` 通过 `anchor_segment_id` / `unit_id` / `layer_id` 解析当前 Plate path，再生成并执行 Slate/Plate transforms。raw Slate operations 只允许存在于前端内部或短期调试日志，不进入 durable API contract。
+D4 正式路径从新 domain facts 直接生成 Base Plate Snapshot，不经过旧 `render_scene_json`；D4 可以先用 full snapshot reload 承接 translation layer，D5 再引入 projection operations 端到端增量应用。详细 path 与 wrapper DTO 见 [`modules/plate-reader-projection.md`](./modules/plate-reader-projection.md#d4-base-plate-snapshot)。
 
 `projection_ops.payload.projection_version` 只允许作为 D5+ projection cache / applier 的内部一致性 metadata。D4 snapshot 不暴露 snapshot-level `projection_version`，恢复 cursor 只使用 `last_event_sequence`。
-
-### Snapshot 与 D4 Path
-
-D4 正式路径从新 domain facts 直接生成 Base Plate Snapshot：
-
-```text
-Stable Reading Document / Stable Document Blocks / Canonical Text Layer
--> Reading Units + Anchor Segments
--> Base Plate Snapshot
--> Plate Reader Surface
-```
-
-旧 `renderSceneToPlateDocument` 只能作为迁移参考或 spike adapter，不是 D4 新 contract。D4 可以先用 full snapshot reload 承接 translation layer；D5 再引入 projection operations 的端到端增量应用。
-
-### Anchor Segment ↔ Node Path Adapter
-
-Web projection 需要稳定锚点到 Plate path 的桥接：
-
-- `sentenceIdToPath(editor, sentenceId): Path | null`（兼容旧调用；内部必须映射到 Anchor Segment）
-- `anchorSegmentIdToPath(editor, anchorSegmentId): Path | null`
-- `pathToAnchorSegment(editor, path): { unit_id, anchor_segment_id, start_offset, end_offset } | null`
-
-缓存可以用 WeakMap；patch apply 后失效重建。所有 domain 回写必须输出 domain anchor，不直接提交 Plate path。
-
-### Ask Document Tools
-
-D5+ Ask Sidecar 使用 document tools，但写入用户资产必须经过用户确认：
-
-| 工具 | 入参 | Domain 写入 | Projection |
-|---|---|---|---|
-| `read_range` | `{anchor, scope}` | 无（只读） | 无 |
-| `propose_highlight` | `{anchor, color, scope}` | 用户确认后写 User Editorial Asset | `projection_ops` |
-| `propose_note` | `{anchor, body_markdown, scope}` | 用户确认后写 User Editorial Asset | `projection_ops` |
-| `write_ai_supplement` | `{anchor, body_markdown, parent_layer_type}` | 用户确认或授权后写 Ask Supplement | domain event + `projection_ops` |
-| `revise_ai_annotation` | `{target, revision_mode, body_markdown}` | 默认提出 System Annotation revision proposal；已发布 Ask Supplement 修订需确认 | domain event + `projection_ops` |
-
-AI 不能直接修改 Stable Reading Document / Stable Document Blocks / Canonical Text Layer 或 User Editorial Asset。Markdown / Plate fragment 必须经过 sanitize、schema allowlist、anchor validation 和 Authorization Envelope。
-
-### Fragment Sanitize
-
-Plate fragment 只能来自 typed layer result、document tool result 或已 sanitize 的 Markdown fragment。默认策略：
-
-- 后端先用 typed schema 约束 LLM 输出，不接受 arbitrary Plate JSON。
-- Markdown -> Plate 前使用 strict allowlist，D5 默认只允许 paragraph、heading、list、code block、inline code、blockquote、strong、em、text 和受控 link。
-- Link protocol 只允许 `http:`、`https:`、`mailto:`，并拒绝 localhost、private IP 和 internal host。
-- D5 AI/Ask 生成 fragment 默认禁止 image、table、inline HTML、math、frontmatter、definition 和 footnote；这不代表丢弃输入文档中的 table/image/footnote。源文档结构由 Stable Document Blocks 保留并投影到 Plate。
-- 每类 fragment 必须有 length cap 和 source grounding；grammar_note / sentence_analysis / Ask Supplement 必须能回源到 Anchor Segment。
 
 ## 决策记录
 
@@ -444,6 +369,9 @@ Plate fragment 只能来自 typed layer result、document tool result 或已 san
 | D5-012 | 2026-06-22 | D5-V5/R6 长文本主链路已通过 deterministic fixture 和真实 DashScope `workflow-qwen37-max` provider 验证：Web BFF submit -> worker once -> snapshot reload -> `/app/reader-plate` 浏览器渲染均可产出 translation、vocabulary、grammar_note、sentence_analysis；继续坚持 snapshot reload，不启用 `projection_ops`，不读取旧 `render_scene_json`。后续风险收敛到 PydanticAI deprecation cleanup 与 Boundary / Unit Builder v2。 |
 | D6-001 | 2026-06-25 | Reader 输入产品口径升级为文档型 Reader：V1 支持粘贴文本、公开网页 URL、PDF 页码范围和多图 OCR；Candidate Base 升级为 Candidate Reading Document；Stable Reading Base 语义拆为 Stable Reading Document、Stable Document Blocks 和 Canonical Text Layer；table、image、footnote 不丢弃，保留为文档块并进入 RAG/Ask source scope。 |
 | D6-002 | 2026-06-25 | PDF/OCR 输入采用 provider adapter 与页/块级质量门禁：PDF text layer parser 优先，质量不达标时可由 LLM reviewer 决策是否 OCR；OCR 模型通过 `reader_input_ocr` route/profile 配置，领域合同不绑定具体模型名。 |
+| T4.2a-R2 | 2026-07-13 | 三态路由（SHORT_BATCH / STRUCTURED_BATCH / GROUPED_WINDOWED）durable ExecutionBudget + publish fence + route flip fencing：per-layer `ExecutionBudget` 跨 `runner.run()` 持久化，每次入口通过 `load_durable()` 从 `reader_jobs` 聚合 `SUM(attempt_count)` / `MAX(max_attempts)` per `(record, base, generation, layer)` 重建；`max_effective_calls = planned_calls * max_multiplier`，默认 `max_multiplier=3` 与生产 `max_attempts=3` 对齐；`BUDGET_CONSUMING_OUTCOMES = {succeeded, retry_later, failed_terminal}` 消耗预算；预算耗尽 `stopped_reason = budget_exhausted` 或 `partial_budget_exhausted`；route flip fencing 由 bootstrap supersede + claim-time `_validate_fence` → `_check_route_consistency` + publish-time 同一 `_validate_fence`（6 个 publisher 方法）组成，mismatch 返回 `stale_route_fingerprint`；publish fence 失败后 worker 层 `transition(job_id, target_status="superseded", rationale_code="publish_fence_failed")` + run 标记 superseded；不新增 migration，状态为「代码级 review 通过 / deterministic acceptance complete / real LLM validation pending」。详细约束见 [`agent-brief.md`](./agent-brief.md) 不可违反决策与 [`implementation-plan.md`](./implementation-plan.md) T4.2a-R2 章节。 |
+| T4.2a-PUX-R1 | 2026-07-13 | Progressive Transition UX fixture 合同 closed（deterministic pure）：`progressive-transition.ts` + 21 tests 定义 canonical replay 与 stale/layer 单调 helpers；`progressive_transition` 不单独构成 runtime 验收，需由 T4.2a-PUX-R2 接入真实 polling / snapshot reload 才生效。详细见 [`implementation-plan.md`](./implementation-plan.md) T4.2a-PUX-R1。 |
+| T4.2a-PUX-R2 | 2026-07-13 | Progressive Transition runtime integration gate closed：`reader-record` page `reloadSnapshot` 经 progressive 校验才应用 snapshot；stale/layer regression 不覆盖 UI 且 cursor hold；底部 progressive status strip；Plate generation-scoped clear + scroll restore；4 page integration tests。无 LLM、无后端 orchestration。详细见 [`implementation-plan.md`](./implementation-plan.md) T4.2a-PUX-R2。 |
 
 ## 待决问题
 
