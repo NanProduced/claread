@@ -132,6 +132,8 @@ import {
 import {
   READER_CALLOUT_GROUP_TYPE,
   ReaderCalloutActionContext,
+  ReaderGrammarExpansionControlRef,
+  ReaderGrammarExpansionProvider,
   ReaderGrammarInteractionContext,
   ReaderSentenceAnalysisInteractionContext,
 } from "@/components/editor/plugins/reader-blocks-kit";
@@ -209,6 +211,32 @@ type ReaderRecordLookupPositionReference = {
   getRect: () => DOMRectReadOnly | DOMRect;
   contextElement?: HTMLElement;
 };
+
+type ReaderQuickPeekAnchor =
+  | { kind: "element"; element: HTMLElement }
+  | {
+      kind: "range";
+      getRect: () => DOMRectReadOnly | DOMRect;
+      contextElement?: HTMLElement;
+    }
+  | null;
+
+function pathIsWithinTarget(path: unknown, targetPath: readonly number[]): boolean {
+  return (
+    Array.isArray(path) &&
+    targetPath.length <= path.length &&
+    targetPath.every((segment, index) => path[index] === segment)
+  );
+}
+
+function quickPeekAnchorBlockIdFromElement(
+  element: HTMLElement | undefined,
+): string | null {
+  const anchorSegmentId = element
+    ?.closest<HTMLElement>("[data-anchor-segment-id]")
+    ?.dataset.anchorSegmentId;
+  return anchorSegmentId ? `paragraph:${anchorSegmentId}` : null;
+}
 
 const READER_RECORD_DRAFT_COMMENT_SELECTOR =
   '[data-reader-record-comment-draft="true"]';
@@ -484,6 +512,19 @@ function singleRangeDraft(
   return selection?.surfaceKind === "source" && selection.supportedSingleRange
     ? (selection.drafts[0] ?? null)
     : null;
+}
+
+// T4.2a-PUX-R4-R2.1C: extract grammar itemId from a stable blockId of
+// the form `callout:grammar:{itemId}`. Returns null for non-grammar or
+// malformed blockIds. Used by the targeted remove path to forget the
+// expansion state for the removed callout's itemId.
+const READER_CALLOUT_GRAMMAR_BLOCK_ID_PREFIX = "callout:grammar:";
+function extractGrammarItemIdFromBlockId(blockId: string): string | null {
+  if (!blockId.startsWith(READER_CALLOUT_GRAMMAR_BLOCK_ID_PREFIX)) {
+    return null;
+  }
+  const itemId = blockId.slice(READER_CALLOUT_GRAMMAR_BLOCK_ID_PREFIX.length);
+  return itemId.length > 0 ? itemId : null;
 }
 
 function hasNonSourceDocumentSelection(
@@ -2415,6 +2456,18 @@ export function ReaderRecordPlateSurface({
   });
   const [inspectState, setInspectState] =
     useState<ReaderStructuredInspectIntent | null>(null);
+  const [quickPeekAnchorBlockId, setQuickPeekAnchorBlockId] =
+    useState<string | null>(null);
+  const quickPeekInteractionRef = useRef({
+    blockId: null as string | null,
+    isOpen: false,
+  });
+  useEffect(() => {
+    quickPeekInteractionRef.current = {
+      blockId: quickPeekAnchorBlockId,
+      isOpen: lookupState.kind !== "idle" || inspectState !== null,
+    };
+  }, [inspectState, lookupState.kind, quickPeekAnchorBlockId]);
   const [activeSentenceChunkId, setActiveSentenceChunkId] = useState<string | null>(null);
   const [activeGrammarItemId, setActiveGrammarItemId] = useState<string | null>(null);
   const [grammarExpandRequest, setGrammarExpandRequest] =
@@ -2625,7 +2678,8 @@ export function ReaderRecordPlateSurface({
     // Capture pre-swap state. `editor.selection` is the Plate selection
     // (a Range-like object or null). The scroll container is found by
     // walking up from the plate document element.
-    const savedSelection = editor.selection ?? null;
+    let savedSelection = editor.selection ?? null;
+    let suppressSelectionRestore = false;
     const scrollContainer = findReaderRecordScrollContainer();
     const savedScrollTop =
       scrollContainer === null
@@ -2670,6 +2724,39 @@ export function ReaderRecordPlateSurface({
       });
 
       if (mergeResult.kind === "targeted_apply") {
+        // A targeted replacement invalidates a selection only when its anchor
+        // or focus lives below the replaced block. Never restore that range:
+        // offsets may remain structurally valid while pointing at new text.
+        const selectionTargetsReplacement = mergeResult.operations.some((op) =>
+          pathIsWithinTarget(savedSelection?.anchor?.path, op.path) ||
+          pathIsWithinTarget(savedSelection?.focus?.path, op.path),
+        );
+        const quickPeekInteraction = quickPeekInteractionRef.current;
+        const quickPeekTargetsReplacement =
+          quickPeekInteraction.isOpen &&
+          mergeResult.operations.some((op) =>
+            quickPeekInteraction.blockId !== null
+              ? op.blockId === quickPeekInteraction.blockId
+              : op.blockId.startsWith("paragraph:"),
+          );
+
+        if (selectionTargetsReplacement || quickPeekTargetsReplacement) {
+          suppressSelectionRestore = true;
+          savedSelection = null;
+          editor.tf.deselect();
+          activeSelectionRef.current = null;
+          setActiveSelection(null);
+        }
+
+        // A Quick Peek whose anchor block is being replaced would otherwise
+        // keep a detached DOM/range reference. Close it deterministically;
+        // sibling updates retain their stable anchor and remain uninterrupted.
+        if (quickPeekTargetsReplacement) {
+          setLookupState({ kind: "idle" });
+          setInspectState(null);
+          setQuickPeekAnchorBlockId(null);
+        }
+
         // Apply each operation via batch replaceNodes / removeNodes.
         // NEVER call editor.tf.setValue on this path — that would wipe
         // non-target DOM identity and defeat the purpose of R2.
@@ -2677,6 +2764,15 @@ export function ReaderRecordPlateSurface({
           if (op.type === "replace" && op.nodes && op.nodes.length > 0) {
             editor.tf.replaceNodes(op.nodes as never[], { at: op.path });
           } else if (op.type === "remove") {
+            // T4.2a-PUX-R4-R2.1C: when a grammar callout is removed via
+            // targeted op, forget its itemId expansion state so the same
+            // itemId reappearing in the same generation defaults to
+            // collapsed instead of inheriting stale expanded state.
+            const grammarItemId =
+              extractGrammarItemIdFromBlockId(op.blockId);
+            if (grammarItemId) {
+              grammarExpansionControlRef.current?.forgetItem(grammarItemId);
+            }
             editor.tf.removeNodes({ at: op.path });
           }
         }
@@ -2686,13 +2782,18 @@ export function ReaderRecordPlateSurface({
     }
 
     if (!appliedViaTargeted) {
+      // T4.2a-PUX-R4-R2.1C: request cleanup of itemId-keyed grammar
+      // expansion state before the full DOM rebuild. The Provider clears
+      // via React setState; the final collapsed state of remounted
+      // callouts is verified in unit and E2E tests.
+      grammarExpansionControlRef.current?.clear();
       editor.tf.setValue(plateValue as never[]);
     }
 
     // Restore selection only if the anchor/focus path still resolves in the
     // new children. We avoid `editor.tf.setSelection` when the path is gone
     // because Plate will throw or clamp unpredictably.
-    if (savedSelection) {
+    if (!suppressSelectionRestore && savedSelection) {
       const anchorPath = savedSelection.anchor?.path;
       const focusPath = savedSelection.focus?.path;
       if (Array.isArray(anchorPath) && Array.isArray(focusPath)) {
@@ -3063,6 +3164,9 @@ export function ReaderRecordPlateSurface({
     setNoteDraft("");
     setNoteDuplicateAcknowledged(false);
     setDictionaryOpen(false);
+    // T4.2a-PUX-R4-R2.1C: drop itemId-keyed grammar expansion state —
+    // the new generation's itemIds are not comparable to the old ones.
+    grammarExpansionControlRef.current?.clear();
   }, [generation]);
 
   useEffect(() => {
@@ -3072,11 +3176,7 @@ export function ReaderRecordPlateSurface({
     return undefined;
   }, [dictionaryOpen, isWorkspaceShell, sidebarMode]);
 
-  const quickPeekAnchorRef = useRef<
-    | { kind: "element"; element: HTMLElement }
-    | { kind: "range"; getRect: () => DOMRectReadOnly | DOMRect }
-    | null
-  >(null);
+  const quickPeekAnchorRef = useRef<ReaderQuickPeekAnchor>(null);
   const quickPeekFloating = useReaderFloatingLayer({
     open: quickPeekOpen,
     placement: "bottom-start",
@@ -3363,7 +3463,11 @@ export function ReaderRecordPlateSurface({
       quickPeekAnchorRef.current = {
         kind: "range",
         getRect: positionReference.getRect,
+        contextElement: positionReference.contextElement,
       };
+      setQuickPeekAnchorBlockId(
+        quickPeekAnchorBlockIdFromElement(positionReference.contextElement),
+      );
       quickPeekFloating.refs.setPositionReference?.({
         getBoundingClientRect: positionReference.getRect,
         contextElement: positionReference.contextElement,
@@ -3456,6 +3560,7 @@ export function ReaderRecordPlateSurface({
         textHash: mark.anchor.textHash,
       };
       quickPeekAnchorRef.current = { kind: "element", element: anchor };
+      setQuickPeekAnchorBlockId(quickPeekAnchorBlockIdFromElement(anchor));
       quickPeekFloating.refs.setPositionReference?.({
         getBoundingClientRect: () => anchor.getBoundingClientRect(),
         contextElement: anchor,
@@ -4725,6 +4830,14 @@ export function ReaderRecordPlateSurface({
     ],
   );
 
+  // T4.2a-PUX-R4-R2.1C: ref holding the control handle from
+  // ReaderGrammarExpansionProvider. `clear()` is called before
+  // editor.tf.setValue (full reload) and on generation change to drop
+  // stale itemId-keyed expansion state. `forgetItem(itemId)` is called
+  // on targeted remove ops for grammar callout blockIds so the same
+  // itemId reappearing in the same generation defaults to collapsed.
+  const grammarExpansionControlRef = useRef<ReaderGrammarExpansionControlRef["current"]>(null);
+
   const calloutActions = useMemo(
     () => ({}),
     [],
@@ -5183,60 +5296,62 @@ export function ReaderRecordPlateSurface({
             </ReaderFloatingSurface>
           ) : null}
           <ReaderGrammarInteractionContext.Provider value={grammarInteraction}>
-            <ReaderCalloutActionContext.Provider value={calloutActions}>
-              <ReaderSentenceAnalysisInteractionContext.Provider
-                value={sentenceAnalysisInteraction}
-              >
-                <ReaderToolbarActionsProvider value={toolbarActions}>
-                  <Plate editor={editor} readOnly>
-                    <CommentPluginBridge
-                      apiRef={commentApiRef}
-                      onReadyChange={setCommentApiReady}
-                    />
-                    <SelectionAnchorBridge
-                      snapshot={snapshot}
-                      onChange={handleSelectionChange}
-                    />
-                    <EditorContainer
-                      className={`reader-record-plate-document reader-record-plate-document--notion px-0 py-0 outline-none cursor-default overflow-visible bg-transparent ${readingClassName} ${typography.bodyClassName} ${typography.paragraphDensityClassName}`.trim()}
-                      data-reader-record-mode={surfaceMode}
-                      onCopyCapture={handleDocumentCopyCapture}
-                    >
-                      <Editor
-                        readOnly
-                        disableDefaultStyles
-                        renderLeaf={renderLeaf as never}
+            <ReaderGrammarExpansionProvider controlRef={grammarExpansionControlRef}>
+              <ReaderCalloutActionContext.Provider value={calloutActions}>
+                <ReaderSentenceAnalysisInteractionContext.Provider
+                  value={sentenceAnalysisInteraction}
+                >
+                  <ReaderToolbarActionsProvider value={toolbarActions}>
+                    <Plate editor={editor} readOnly>
+                      <CommentPluginBridge
+                        apiRef={commentApiRef}
+                        onReadyChange={setCommentApiReady}
                       />
-                    </EditorContainer>
-                    <InlineCommentPanel
-                      draftText={noteDraft}
-                      draftQuoteText={noteAnchorDraft?.selected_text ?? null}
-                      onDraftTextChange={setNoteDraft}
-                      onSaveDraft={handleSaveNote}
-                      onCancelDraft={handleCancelNote}
-                      duplicateNote={duplicateNoteForDraft}
-                      duplicateAcknowledged={noteDuplicateAcknowledged}
-                      onViewDuplicateNote={handleViewDuplicateNote}
-                      onContinueDuplicateNote={handleContinueDuplicateNote}
-                      activeNote={noteMenu?.mark ?? null}
-                      noteEditMode={noteMenu?.mode ?? "view"}
-                      noteEditDraft={noteMenu?.draft ?? ""}
-                      onNoteEditDraftChange={handleNoteEditDraftChange}
-                      onStartEditNote={handleStartEditNote}
-                      onCancelEditNote={handleCancelEditNote}
-                      onSaveNoteEdit={handleSaveNoteEdit}
-                      onDeleteNote={handleDeleteNote}
-                      onAskFromNote={handleAskFromNote}
-                      isSaving={commentIsSaving}
-                      statusMessage={commentStatusMessage}
-                      onClose={handleCloseCommentPanel}
-                      floatingRef={commentFloating.refs.setFloating}
-                      floatingStyles={commentFloating.floatingStyles as CSSProperties}
-                    />
-                  </Plate>
-                </ReaderToolbarActionsProvider>
-              </ReaderSentenceAnalysisInteractionContext.Provider>
-            </ReaderCalloutActionContext.Provider>
+                      <SelectionAnchorBridge
+                        snapshot={snapshot}
+                        onChange={handleSelectionChange}
+                      />
+                      <EditorContainer
+                        className={`reader-record-plate-document reader-record-plate-document--notion px-0 py-0 outline-none cursor-default overflow-visible bg-transparent ${readingClassName} ${typography.bodyClassName} ${typography.paragraphDensityClassName}`.trim()}
+                        data-reader-record-mode={surfaceMode}
+                        onCopyCapture={handleDocumentCopyCapture}
+                      >
+                        <Editor
+                          readOnly
+                          disableDefaultStyles
+                          renderLeaf={renderLeaf as never}
+                        />
+                      </EditorContainer>
+                      <InlineCommentPanel
+                        draftText={noteDraft}
+                        draftQuoteText={noteAnchorDraft?.selected_text ?? null}
+                        onDraftTextChange={setNoteDraft}
+                        onSaveDraft={handleSaveNote}
+                        onCancelDraft={handleCancelNote}
+                        duplicateNote={duplicateNoteForDraft}
+                        duplicateAcknowledged={noteDuplicateAcknowledged}
+                        onViewDuplicateNote={handleViewDuplicateNote}
+                        onContinueDuplicateNote={handleContinueDuplicateNote}
+                        activeNote={noteMenu?.mark ?? null}
+                        noteEditMode={noteMenu?.mode ?? "view"}
+                        noteEditDraft={noteMenu?.draft ?? ""}
+                        onNoteEditDraftChange={handleNoteEditDraftChange}
+                        onStartEditNote={handleStartEditNote}
+                        onCancelEditNote={handleCancelEditNote}
+                        onSaveNoteEdit={handleSaveNoteEdit}
+                        onDeleteNote={handleDeleteNote}
+                        onAskFromNote={handleAskFromNote}
+                        isSaving={commentIsSaving}
+                        statusMessage={commentStatusMessage}
+                        onClose={handleCloseCommentPanel}
+                        floatingRef={commentFloating.refs.setFloating}
+                        floatingStyles={commentFloating.floatingStyles as CSSProperties}
+                      />
+                    </Plate>
+                  </ReaderToolbarActionsProvider>
+                </ReaderSentenceAnalysisInteractionContext.Provider>
+              </ReaderCalloutActionContext.Provider>
+            </ReaderGrammarExpansionProvider>
           </ReaderGrammarInteractionContext.Provider>
           <ReaderRecordArticleFeedback
             selectedChoice={articleFeedbackChoice}

@@ -83,6 +83,129 @@ function useReaderGrammarInteraction() {
   return useContext(ReaderGrammarInteractionContext);
 }
 
+// ---------------------------------------------------------------------------
+// T4.2a-PUX-R4-R2.1C: Grammar expansion state keyed by stable itemId.
+//
+// Standalone grammar callouts (not inside a ReaderCalloutGroupComponent)
+// previously stored expanded/collapsed state in a local useState inside
+// ReaderCalloutComponent. When `editor.tf.replaceNodes` targets the callout
+// element, React remounts the component and the local state is lost.
+//
+// This context lifts the expansion state OUT of the component instance and
+// into a provider that survives targeted replacements. The state is keyed
+// by stable `grammarItemId` (from `data.itemId`), not by Slate path, array
+// index, or DOM instance.
+//
+// The provider accepts an optional `controlRef` — a mutable ref object
+// whose `.current` is set to a control handle with:
+//   - `clear()`: drop ALL expansion state (used before full reload and on
+//     generation change).
+//   - `forgetItem(itemId)`: drop expansion state for a single itemId
+//     (used when a targeted remove op deletes a grammar callout, so the
+//     same itemId reappearing in the same generation defaults to collapsed
+//     instead of inheriting stale expanded state).
+// ---------------------------------------------------------------------------
+
+export interface ReaderGrammarExpansionValue {
+  expandedItemIds: ReadonlySet<string>;
+  expandItem: (itemId: string) => void;
+  collapseItem: (itemId: string) => void;
+  toggleItem: (itemId: string) => void;
+}
+
+export const ReaderGrammarExpansionContext =
+  createContext<ReaderGrammarExpansionValue>({
+    expandedItemIds: new Set(),
+    expandItem: () => {},
+    collapseItem: () => {},
+    toggleItem: () => {},
+  });
+
+export interface ReaderGrammarExpansionControl {
+  clear: () => void;
+  forgetItem: (itemId: string) => void;
+}
+
+export type ReaderGrammarExpansionControlRef = {
+  current: ReaderGrammarExpansionControl | null;
+};
+
+export function ReaderGrammarExpansionProvider({
+  children,
+  controlRef,
+}: {
+  children: React.ReactNode;
+  controlRef?: ReaderGrammarExpansionControlRef;
+}) {
+  const [expandedItemIds, setExpandedItemIds] = React.useState<
+    ReadonlySet<string>
+  >(() => new Set());
+
+  const expandItem = React.useCallback((itemId: string) => {
+    setExpandedItemIds((current) => {
+      if (current.has(itemId)) return current;
+      const next = new Set(current);
+      next.add(itemId);
+      return next;
+    });
+  }, []);
+
+  const collapseItem = React.useCallback((itemId: string) => {
+    setExpandedItemIds((current) => {
+      if (!current.has(itemId)) return current;
+      const next = new Set(current);
+      next.delete(itemId);
+      return next;
+    });
+  }, []);
+
+  const toggleItem = React.useCallback((itemId: string) => {
+    setExpandedItemIds((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearExpanded = React.useCallback(() => {
+    setExpandedItemIds((current) =>
+      current.size === 0 ? current : new Set(),
+    );
+  }, []);
+
+  const forgetItem = React.useCallback((itemId: string) => {
+    setExpandedItemIds((current) => {
+      if (!current.has(itemId)) return current;
+      const next = new Set(current);
+      next.delete(itemId);
+      return next;
+    });
+  }, []);
+
+  React.useEffect(() => {
+    if (!controlRef) return;
+    controlRef.current = { clear: clearExpanded, forgetItem };
+    return () => {
+      controlRef.current = null;
+    };
+  }, [clearExpanded, forgetItem, controlRef]);
+
+  const value = React.useMemo(
+    () => ({ expandedItemIds, expandItem, collapseItem, toggleItem }),
+    [collapseItem, expandItem, expandedItemIds, toggleItem],
+  );
+
+  return (
+    <ReaderGrammarExpansionContext.Provider value={value}>
+      {children}
+    </ReaderGrammarExpansionContext.Provider>
+  );
+}
+
 export interface ReaderCalloutActionTarget {
   kind: "grammar" | "sentence_analysis";
   blockId: string;
@@ -478,11 +601,18 @@ function ReaderCalloutComponent({
     pulseGrammarItemId,
   } = useReaderGrammarInteraction();
   const groupContext = useContext(ReaderGrammarCalloutGroupContext);
+  const expansionContext = useContext(ReaderGrammarExpansionContext);
 
   const isGrammar = variant === "grammar";
   const isSupplement = variant === "supplement";
-  const isGroupedGrammar = isGrammar && groupContext !== null;
   const grammarItemId = isGrammar ? data?.itemId : undefined;
+  const isGroupedGrammar = isGrammar && groupContext !== null;
+  // P2 fix: only treat as standalone-grammar (itemId-keyed context path)
+  // when grammarItemId is actually present. When a grammar callout lacks
+  // itemId (legacy/edge data), fall back to localExpanded behavior so the
+  // callout can still be expanded/collapsed by the user.
+  const isStandaloneGrammar =
+    isGrammar && groupContext === null && grammarItemId !== undefined;
   const grammarActive =
     isGrammar && grammarItemId ? activeGrammarItemId === grammarItemId : false;
   const label = calloutTypeLabel(variant);
@@ -516,14 +646,20 @@ function ReaderCalloutComponent({
   const fullText = textFromNode(node.children).replace(/\s+/g, " ").trim();
   const expanded = isGroupedGrammar
     ? grammarItemId !== undefined && groupContext.expandedItemIds.has(grammarItemId)
-    : localExpanded;
+    : isStandaloneGrammar
+      ? grammarItemId !== undefined && expansionContext.expandedItemIds.has(grammarItemId)
+      : localExpanded;
   const toggleExpanded = React.useCallback(() => {
     if (isGroupedGrammar && grammarItemId) {
       groupContext.toggleItem(grammarItemId);
       return;
     }
+    if (isStandaloneGrammar && grammarItemId) {
+      expansionContext.toggleItem(grammarItemId);
+      return;
+    }
     setLocalExpanded((current) => !current);
-  }, [grammarItemId, groupContext, isGroupedGrammar]);
+  }, [expansionContext, grammarItemId, groupContext, isGroupedGrammar, isStandaloneGrammar]);
   const actionTarget: ReaderCalloutActionTarget | null = isGrammar
     ? {
         kind: "grammar",
@@ -557,15 +693,21 @@ function ReaderCalloutComponent({
 
     if (isGroupedGrammar) {
       groupContext.expandItem(grammarItemId);
+    } else if (isStandaloneGrammar) {
+      // T4.2a-PUX-R4-R2.1C: lift expand state into itemId-keyed context so
+      // it survives targeted replaceNodes on the same callout element.
+      expansionContext.expandItem(grammarItemId);
     } else {
       setLocalExpanded(true);
     }
   }, [
     expandGrammarItemRequest?.itemId,
     expandGrammarItemRequest?.requestId,
+    expansionContext,
     grammarItemId,
     groupContext,
     isGroupedGrammar,
+    isStandaloneGrammar,
     isGrammar,
   ]);
 

@@ -6640,7 +6640,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2 incremental projection", 
     expect(paragraphAfter).not.toBeNull();
     expect(paragraphAfter!.textContent).toContain(SOURCE_TEXT);
   });
-  it("G1 targeted_apply keeps an open Quick Peek mounted", async () => {
+  it("closes an open Quick Peek before replacing its target paragraph", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (typeof url === "string" && url.includes("/api/web/favorites")) {
         return Promise.resolve(
@@ -6698,12 +6698,10 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2 incremental projection", 
       );
     });
 
-    const quickPeekAfter = await screen.findByTestId(
-      "reader-record-plate-lookup-panel",
-    );
-    expect(quickPeekBefore.isSameNode(quickPeekAfter)).toBe(true);
-    expect(within(quickPeekAfter).getByText("memory")).toBeTruthy();
-    expect(
-      within(quickPeekAfter).getByText("the ability to remember information"),
-    ).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("reader-record-plate-lookup-panel"),
+      ).toBeNull();
+    });
+    expect(quickPeekBefore.isConnected).toBe(false);
   });});

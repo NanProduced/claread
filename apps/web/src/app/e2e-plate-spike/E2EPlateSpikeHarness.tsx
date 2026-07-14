@@ -28,6 +28,10 @@ import {
   usePlateEditor,
 } from "platejs/react";
 import { ReaderRecordPlateKit } from "@/components/editor/plugins/reader-plate-kit";
+import {
+  ReaderGrammarExpansionProvider,
+  type ReaderGrammarExpansionControlRef,
+} from "@/components/editor/plugins/reader-blocks-kit";
 import { ReaderContentSummaryElement } from "@/components/reader/plate/nodes/ReaderContentSummaryElement";
 import {
   READER_CALLOUT_TYPE,
@@ -286,13 +290,20 @@ declare global {
     __spikeHelpers?: {
       makeReplacementCallout: () => ReaderCalloutElement;
       makeReplacementParagraph: () => ReaderParagraphElement;
+      // T4.2a-PUX-R4-R2.1C: fresh Plate value for full-reload simulation.
+      makeFreshPlateValue: () => Descendant[];
     };
     __spikeReady?: boolean;
+    // T4.2a-PUX-R4-R2.1C: expose the grammar expansion clear function so
+    // E2E can verify full-reload clearing behavior.
+    __spikeGrammarExpansionClear?: (() => void) | null;
   }
 }
 
 // ---------------------------------------------------------------------------
 // Mounted Plate harness — single editor with REAL ReaderRecordPlateKit
+// Wrapped with ReaderGrammarExpansionProvider so standalone grammar callouts
+// use itemId-keyed expansion state (matching ReaderRecordPlateSurface).
 // ---------------------------------------------------------------------------
 
 function SpikeHarness() {
@@ -304,6 +315,8 @@ function SpikeHarness() {
     [],
   );
 
+  const grammarExpansionControlRef = useRef<ReaderGrammarExpansionControlRef["current"]>(null);
+
   const readyRef = useRef(false);
   useEffect(() => {
     if (!readyRef.current && editor) {
@@ -312,21 +325,27 @@ function SpikeHarness() {
       window.__spikeHelpers = {
         makeReplacementCallout,
         makeReplacementParagraph,
+        makeFreshPlateValue: makeProjectedPlateValue,
+      };
+      window.__spikeGrammarExpansionClear = () => {
+        grammarExpansionControlRef.current?.clear();
       };
       window.__spikeReady = true;
     }
   }, [editor]);
 
   return (
-    <Plate editor={editor} readOnly>
-      <EditorContainer className="h-auto overflow-visible bg-transparent px-0 py-0">
-        <Editor
-          readOnly
-          disableDefaultStyles
-          className="space-y-2 px-0 py-0 outline-none"
-        />
-      </EditorContainer>
-    </Plate>
+    <ReaderGrammarExpansionProvider controlRef={grammarExpansionControlRef}>
+      <Plate editor={editor} readOnly>
+        <EditorContainer className="h-auto overflow-visible bg-transparent px-0 py-0">
+          <Editor
+            readOnly
+            disableDefaultStyles
+            className="space-y-2 px-0 py-0 outline-none"
+          />
+        </EditorContainer>
+      </Plate>
+    </ReaderGrammarExpansionProvider>
   );
 }
 
