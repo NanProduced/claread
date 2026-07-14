@@ -1,13 +1,16 @@
 /**
- * Tests for T4.2a-PUX-R4-R2: incremental-projection-merger pure function.
+ * Tests for T4.2a-PUX-R4-R2 / R2.1E: incremental-projection-merger pure function.
  *
  * Covers:
  * - G1 user_assets: upsert → targeted_apply (replace paragraph block)
  * - G2 ask_supplements: upsert → targeted_apply (replace callout block)
  * - G2 ask_supplements: delete → targeted_apply (remove callout block)
  * - G3 record_metadata: status_changed → targeted_apply (empty operations)
+ * - R2.1E layer_published: same-topology revision → targeted_apply (changed-block-only replace)
+ * - R2.1E layer_published: new / deleted / reordered / missing block_id / fence mismatch → fallback
+ * - R2.1E layer_published: mixed batch (layer_published + projection_ops) → fallback
  * - Fail-closed: missing payload, unknown section/operation, fence mismatch,
- *   target not found, generation changed, base changed, layer_published event,
+ *   target not found, generation changed, base changed,
  *   non-representation event, no trigger events, delete target missing.
  */
 
@@ -196,6 +199,111 @@ function makeCalloutNode(id: string, text: string): Descendant {
     children: [{ text }],
     data: {},
   } as unknown as Descendant;
+}
+
+// R2.1E: layer_published fixture builders.
+
+const LAYER_UNIT_ID = "unit_1";
+
+function makeLayerParagraphNode(
+  anchorSegmentId: string,
+  text: string,
+  unitId: string = LAYER_UNIT_ID,
+): Descendant {
+  return {
+    type: "paragraph",
+    id: `paragraph:${anchorSegmentId}`,
+    children: [{ text }],
+    data: { anchorSegmentId, unitId },
+  } as unknown as Descendant;
+}
+
+function makeLayerBlockquoteNode(
+  layerId: string,
+  groupId: string,
+  text: string,
+  unitId: string = LAYER_UNIT_ID,
+): Descendant {
+  return {
+    type: "blockquote",
+    id: `blockquote:${layerId}:${groupId}`,
+    children: [{ text }],
+    data: { unitId, layerId, groupId },
+  } as unknown as Descendant;
+}
+
+function makeLayerGrammarCalloutNode(
+  itemId: string,
+  text: string,
+  unitId: string = LAYER_UNIT_ID,
+  layerId: string = "layer_grammar_1",
+): Descendant {
+  return {
+    type: "callout",
+    id: `callout:grammar:${itemId}`,
+    variant: "grammar",
+    icon: "📖",
+    children: [{ text }],
+    data: { unitId, layerId, itemId, anchorSegmentId: "seg_1" },
+  } as unknown as Descendant;
+}
+
+function makeLayerSentenceAnalysisNode(
+  analysisId: string,
+  text: string,
+  unitId: string = LAYER_UNIT_ID,
+  layerId: string = "layer_sentence_analysis_1",
+): Descendant {
+  return {
+    type: "sentence_analysis",
+    id: `sentence_analysis:${analysisId}`,
+    icon: "🔬",
+    children: [{ text }],
+    data: { unitId, layerId, analysisId, anchorSegmentId: "seg_1" },
+  } as unknown as Descendant;
+}
+
+/**
+ * Build a `layer_published` representation event with the v1 payload schema
+ * (record_id, base_id, layer_id, layer_type, target_scope, target_key,
+ * generation). Used to exercise the R2.1E changed-block-only path.
+ */
+function makeLayerPublishedEvent(
+  layerType: "translation" | "vocabulary" | "grammar_note" | "sentence_analysis",
+  targetKey: string = LAYER_UNIT_ID,
+  options: {
+    layerId?: string;
+    generation?: number;
+    baseId?: string;
+    recordId?: string;
+    sequence?: number;
+    targetScope?: string;
+  } = {},
+): ReaderEventResponseDto {
+  const {
+    layerId = `layer_${layerType}_1`,
+    generation = GENERATION,
+    baseId = BASE_ID,
+    recordId = "rec_1",
+    sequence = 2,
+    targetScope = "unit",
+  } = options;
+  return {
+    id: `evt_${sequence}`,
+    reading_record_id: recordId,
+    sequence,
+    event_type: "layer_published",
+    payload: {
+      record_id: recordId,
+      base_id: baseId,
+      layer_id: layerId,
+      layer_type: layerType,
+      target_scope: targetScope,
+      target_key: targetKey,
+      generation,
+    },
+    created_at: "2026-07-14T00:00:00Z",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -671,7 +779,7 @@ describe("mergeIncrementalProjection", () => {
       ]);
     });
 
-    it("G1 + layer_published: fallback (whole batch fails)", () => {
+    it("G1 + layer_published: fallback (mixed batch fails)", () => {
       const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
       const nextSnapshot = makeSnapshot({ lastEventSequence: 3 });
 
@@ -682,14 +790,9 @@ describe("mergeIncrementalProjection", () => {
         ["asset_1"],
         { sequence: 2 },
       );
-      const layerEvent: ReaderEventResponseDto = {
-        id: "evt_3",
-        reading_record_id: "rec_1",
+      const layerEvent = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
         sequence: 3,
-        event_type: "layer_published",
-        payload: {},
-        created_at: "2026-07-14T00:00:00Z",
-      };
+      });
 
       const result = mergeIncrementalProjection({
         prevSnapshot,
@@ -702,7 +805,915 @@ describe("mergeIncrementalProjection", () => {
 
       expect(result.kind).toBe("fallback_full_reload");
       if (result.kind !== "fallback_full_reload") return;
-      expect(result.reason).toBe("layer_published_not_supported");
+      expect(result.reason).toBe("non_layer_published_in_batch");
+    });
+  });
+
+  // --- R2.1E: layer_published changed-block-only apply ---
+
+  describe("R2.1E layer_published changed-block-only", () => {
+    it("translation revision with same block topology: targeted_apply replaces changed blockquote", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "old translation"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "new translation"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("targeted_apply");
+      if (result.kind !== "targeted_apply") return;
+      expect(result.operations).toHaveLength(1);
+      expect(result.operations[0].type).toBe("replace");
+      expect(result.operations[0].path).toEqual([1]);
+      expect(result.operations[0].blockId).toBe(
+        "blockquote:layer_translation_1:group_1",
+      );
+      expect(result.operations[0].nodes).toEqual([nextChildren[1]]);
+      expect(result.affectedTargetKeys).toEqual([LAYER_UNIT_ID]);
+      expect(result.preservedInteraction.preserveSelection).toBe(true);
+      expect(result.preservedInteraction.preserveScroll).toBe(true);
+      expect(result.preservedInteraction.preserveGrammarAccordion).toBe(true);
+    });
+
+    it("vocabulary revision with same block topology: targeted_apply replaces changed paragraph", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerGrammarCalloutNode("item_1", "grammar note"),
+      ];
+      // vocabulary revision changes the projected paragraph (mark data) but
+      // the block_id sequence remains identical.
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerGrammarCalloutNode("item_1", "grammar note"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      // No semantic change between prev and next children → empty operations.
+      // This is still targeted_apply (no setValue).
+      expect(result.kind).toBe("targeted_apply");
+      if (result.kind !== "targeted_apply") return;
+      expect(result.operations).toHaveLength(0);
+      expect(result.affectedTargetKeys).toEqual([LAYER_UNIT_ID]);
+    });
+
+    it("grammar_note revision with same topology: targeted_apply replaces changed callout", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("grammar_note", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerGrammarCalloutNode("item_1", "old note"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerGrammarCalloutNode("item_1", "new note"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("targeted_apply");
+      if (result.kind !== "targeted_apply") return;
+      expect(result.operations).toHaveLength(1);
+      expect(result.operations[0].type).toBe("replace");
+      expect(result.operations[0].blockId).toBe("callout:grammar:item_1");
+      expect(result.operations[0].nodes).toEqual([nextChildren[1]]);
+      // preserveGrammarAccordion must be true so Surface keeps expansion.
+      expect(result.preservedInteraction.preserveGrammarAccordion).toBe(true);
+    });
+
+    it("sentence_analysis revision with same topology: targeted_apply replaces changed block", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent(
+        "sentence_analysis",
+        LAYER_UNIT_ID,
+        { sequence: 2 },
+      );
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerSentenceAnalysisNode("analysis_1", "old analysis"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerSentenceAnalysisNode("analysis_1", "new analysis"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("targeted_apply");
+      if (result.kind !== "targeted_apply") return;
+      expect(result.operations).toHaveLength(1);
+      expect(result.operations[0].type).toBe("replace");
+      expect(result.operations[0].blockId).toBe(
+        "sentence_analysis:analysis_1",
+      );
+    });
+
+    it("multi-block revision: only changed blocks are replaced, unchanged skipped", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      // Three blocks, two changed.
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source one"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "old translation 1"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_2", "old translation 2"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source one"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "new translation 1"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_2", "old translation 2"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("targeted_apply");
+      if (result.kind !== "targeted_apply") return;
+      expect(result.operations).toHaveLength(1);
+      expect(result.operations[0].blockId).toBe(
+        "blockquote:layer_translation_1:group_1",
+      );
+      expect(result.operations[0].path).toEqual([1]);
+    });
+
+    it("new translation blockquote in nextChildren: fallback", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "new translation"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("unit_block_set_changed");
+    });
+
+    it("new grammar callout in nextChildren: fallback", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("grammar_note", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerGrammarCalloutNode("item_new", "new grammar note"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("unit_block_set_changed");
+    });
+
+    it("new sentence_analysis block in nextChildren: fallback", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent(
+        "sentence_analysis",
+        LAYER_UNIT_ID,
+        { sequence: 2 },
+      );
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerSentenceAnalysisNode("analysis_new", "new analysis"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("unit_block_set_changed");
+    });
+
+    it("deleted block in nextChildren: fallback", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "translation"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("unit_block_set_changed");
+    });
+
+    it("reordered blocks with same set: fallback", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source one"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "translation 1"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_2", "translation 2"),
+      ];
+      // Same set but different order.
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source one"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_2", "translation 2"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "translation 1"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("unit_block_order_changed");
+    });
+
+    it("missing block id on a node: fallback", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        {
+          type: "blockquote",
+          // no id
+          children: [{ text: "translation" }],
+          data: { unitId: LAYER_UNIT_ID },
+        } as unknown as Descendant,
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        {
+          type: "blockquote",
+          // no id
+          children: [{ text: "translation" }],
+          data: { unitId: LAYER_UNIT_ID },
+        } as unknown as Descendant,
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("unit_block_identity_missing");
+    });
+
+    it("fence mismatch (generation): fallback", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+        sequence: 2,
+        generation: 999,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("fence_mismatch_in_batch");
+    });
+
+    it("fence mismatch (base_id): fallback", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+        sequence: 2,
+        baseId: "base_mismatch",
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("fence_mismatch_in_batch");
+    });
+
+    it("invalid payload (missing target_key): fallback", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+      // Strip target_key to simulate malformed payload.
+      const malformedEvent: ReaderEventResponseDto = {
+        ...event,
+        payload: {
+          ...(event.payload as Record<string, unknown>),
+          target_key: "",
+        },
+      };
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [malformedEvent],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("invalid_layer_published_payload");
+    });
+
+    it("unsupported target_scope (anchor_segment): fallback", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("translation", "seg_1", {
+        sequence: 2,
+        targetScope: "anchor_segment",
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("unsupported_target_scope");
+    });
+
+    it("unknown layer_type: fallback", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+      const malformedEvent: ReaderEventResponseDto = {
+        ...event,
+        payload: {
+          ...(event.payload as Record<string, unknown>),
+          layer_type: "summary",
+        },
+      };
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [malformedEvent],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("invalid_layer_published_payload");
+    });
+
+    it("target unit not found in prevChildren: fallback", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("translation", "unit_missing", {
+        sequence: 2,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text", "unit_other"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text", "unit_other"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("unit_not_found");
+    });
+
+    it("record_id mismatch between event and snapshot: fallback", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+        sequence: 2,
+        recordId: "rec_other",
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("record_mismatch");
+    });
+
+    it("duplicate (unit_id, layer_type) events deduplicate to one operation set", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 3 });
+      const event1 = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+      const event2 = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+        sequence: 3,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "old"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "new"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event1, event2],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("targeted_apply");
+      if (result.kind !== "targeted_apply") return;
+      // Deduplicated: only one replace operation.
+      expect(result.operations).toHaveLength(1);
+      expect(result.operations[0].blockId).toBe(
+        "blockquote:layer_translation_1:group_1",
+      );
+    });
+
+    it("multi-unit batch: each unit evaluated independently, both targeted_apply", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 3 });
+      const event1 = makeLayerPublishedEvent("translation", "unit_1", {
+        sequence: 2,
+      });
+      const event2 = makeLayerPublishedEvent("translation", "unit_2", {
+        sequence: 3,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source one", "unit_1"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "old 1", "unit_1"),
+        makeLayerParagraphNode("seg_2", "source two", "unit_2"),
+        makeLayerBlockquoteNode("layer_translation_2", "group_2", "old 2", "unit_2"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source one", "unit_1"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "new 1", "unit_1"),
+        makeLayerParagraphNode("seg_2", "source two", "unit_2"),
+        makeLayerBlockquoteNode("layer_translation_2", "group_2", "new 2", "unit_2"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event1, event2],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("targeted_apply");
+      if (result.kind !== "targeted_apply") return;
+      expect(result.operations).toHaveLength(2);
+      const blockIds = result.operations.map((op) => op.blockId).sort();
+      expect(blockIds).toEqual([
+        "blockquote:layer_translation_1:group_1",
+        "blockquote:layer_translation_2:group_2",
+      ]);
+    });
+
+    it("multi-unit batch: one unit structural change falls back whole batch", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 3 });
+      const event1 = makeLayerPublishedEvent("translation", "unit_1", {
+        sequence: 2,
+      });
+      const event2 = makeLayerPublishedEvent("translation", "unit_2", {
+        sequence: 3,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source one", "unit_1"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "old 1", "unit_1"),
+        makeLayerParagraphNode("seg_2", "source two", "unit_2"),
+      ];
+      // unit_2 has a NEW blockquote in nextChildren — structural change.
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source one", "unit_1"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "new 1", "unit_1"),
+        makeLayerParagraphNode("seg_2", "source two", "unit_2"),
+        makeLayerBlockquoteNode("layer_translation_2", "group_2", "new 2", "unit_2"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event1, event2],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("unit_block_set_changed");
+    });
+
+    it("snapshotFence null: payload fence check skipped, still validates topology", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "old"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerBlockquoteNode("layer_translation_1", "group_1", "new"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence: null,
+      });
+
+      expect(result.kind).toBe("targeted_apply");
+      if (result.kind !== "targeted_apply") return;
+      expect(result.operations).toHaveLength(1);
+    });
+
+    // P1-A: unrepresented change detection — any change outside the
+    // event's target unit MUST cause fallback, otherwise the cursor
+    // advances past the unrepresented change and the UI is stuck.
+    describe("P1-A unrepresented change in non-target block", () => {
+      it("non-target unit blockquote content change: fallback", () => {
+        const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+        const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+        const event = makeLayerPublishedEvent("translation", "unit_1", {
+          sequence: 2,
+        });
+
+        const prevChildren = [
+          makeLayerParagraphNode("seg_1", "source one", "unit_1"),
+          makeLayerBlockquoteNode("layer_translation_1", "group_1", "old 1", "unit_1"),
+          makeLayerParagraphNode("seg_2", "source two", "unit_2"),
+          makeLayerBlockquoteNode("layer_translation_2", "group_2", "old 2", "unit_2"),
+        ];
+        // unit_2 blockquote content changed but event only targets unit_1.
+        const nextChildren = [
+          makeLayerParagraphNode("seg_1", "source one", "unit_1"),
+          makeLayerBlockquoteNode("layer_translation_1", "group_1", "new 1", "unit_1"),
+          makeLayerParagraphNode("seg_2", "source two", "unit_2"),
+          makeLayerBlockquoteNode("layer_translation_2", "group_2", "sneaky change", "unit_2"),
+        ];
+
+        const result = mergeIncrementalProjection({
+          prevSnapshot,
+          nextSnapshot,
+          triggerEvents: [event],
+          prevChildren,
+          nextChildren,
+          snapshotFence,
+        });
+
+        expect(result.kind).toBe("fallback_full_reload");
+      });
+
+      it("non-target unit paragraph content change: fallback", () => {
+        const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+        const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+        const event = makeLayerPublishedEvent("translation", "unit_1", {
+          sequence: 2,
+        });
+
+        const prevChildren = [
+          makeLayerParagraphNode("seg_1", "source one", "unit_1"),
+          makeLayerBlockquoteNode("layer_translation_1", "group_1", "old 1", "unit_1"),
+          makeLayerParagraphNode("seg_2", "source two", "unit_2"),
+          makeLayerBlockquoteNode("layer_translation_2", "group_2", "old 2", "unit_2"),
+        ];
+        // unit_2 paragraph content changed but event only targets unit_1.
+        const nextChildren = [
+          makeLayerParagraphNode("seg_1", "source one", "unit_1"),
+          makeLayerBlockquoteNode("layer_translation_1", "group_1", "new 1", "unit_1"),
+          makeLayerParagraphNode("seg_2", "source two CHANGED", "unit_2"),
+          makeLayerBlockquoteNode("layer_translation_2", "group_2", "old 2", "unit_2"),
+        ];
+
+        const result = mergeIncrementalProjection({
+          prevSnapshot,
+          nextSnapshot,
+          triggerEvents: [event],
+          prevChildren,
+          nextChildren,
+          snapshotFence,
+        });
+
+        expect(result.kind).toBe("fallback_full_reload");
+      });
+
+      it("non-target unit new block added: fallback", () => {
+        const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+        const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+        const event = makeLayerPublishedEvent("translation", "unit_1", {
+          sequence: 2,
+        });
+
+        const prevChildren = [
+          makeLayerParagraphNode("seg_1", "source one", "unit_1"),
+          makeLayerBlockquoteNode("layer_translation_1", "group_1", "old 1", "unit_1"),
+          makeLayerParagraphNode("seg_2", "source two", "unit_2"),
+        ];
+        // unit_2 has a NEW blockquote in nextChildren — unrepresented
+        // structural change in non-target unit.
+        const nextChildren = [
+          makeLayerParagraphNode("seg_1", "source one", "unit_1"),
+          makeLayerBlockquoteNode("layer_translation_1", "group_1", "new 1", "unit_1"),
+          makeLayerParagraphNode("seg_2", "source two", "unit_2"),
+          makeLayerBlockquoteNode("layer_translation_2", "group_2", "new 2", "unit_2"),
+        ];
+
+        const result = mergeIncrementalProjection({
+          prevSnapshot,
+          nextSnapshot,
+          triggerEvents: [event],
+          prevChildren,
+          nextChildren,
+          snapshotFence,
+        });
+
+        expect(result.kind).toBe("fallback_full_reload");
+      });
+
+      it("projection length mismatch (extra block at end): fallback", () => {
+        const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+        const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+        const event = makeLayerPublishedEvent("translation", LAYER_UNIT_ID, {
+          sequence: 2,
+        });
+
+        const prevChildren = [
+          makeLayerParagraphNode("seg_1", "source text"),
+          makeLayerBlockquoteNode("layer_translation_1", "group_1", "old"),
+        ];
+        // nextChildren has an extra block — length mismatch means
+        // unrepresented structural change.
+        const nextChildren = [
+          makeLayerParagraphNode("seg_1", "source text"),
+          makeLayerBlockquoteNode("layer_translation_1", "group_1", "new"),
+          makeLayerGrammarCalloutNode("grammar_item_1", "extra callout"),
+        ];
+
+        const result = mergeIncrementalProjection({
+          prevSnapshot,
+          nextSnapshot,
+          triggerEvents: [event],
+          prevChildren,
+          nextChildren,
+          snapshotFence,
+        });
+
+        expect(result.kind).toBe("fallback_full_reload");
+      });
+
+      it("non-target unit block_id changed: fallback", () => {
+        const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+        const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+        const event = makeLayerPublishedEvent("translation", "unit_1", {
+          sequence: 2,
+        });
+
+        const prevChildren = [
+          makeLayerParagraphNode("seg_1", "source one", "unit_1"),
+          makeLayerBlockquoteNode("layer_translation_1", "group_1", "old 1", "unit_1"),
+          makeLayerParagraphNode("seg_2", "source two", "unit_2"),
+          makeLayerBlockquoteNode("layer_translation_2", "group_2", "old 2", "unit_2"),
+        ];
+        // unit_2 blockquote has a DIFFERENT layer_id (new layer published
+        // but no event for unit_2) — block_id changed.
+        const nextChildren = [
+          makeLayerParagraphNode("seg_1", "source one", "unit_1"),
+          makeLayerBlockquoteNode("layer_translation_1", "group_1", "new 1", "unit_1"),
+          makeLayerParagraphNode("seg_2", "source two", "unit_2"),
+          makeLayerBlockquoteNode("layer_translation_3", "group_2", "old 2", "unit_2"),
+        ];
+
+        const result = mergeIncrementalProjection({
+          prevSnapshot,
+          nextSnapshot,
+          triggerEvents: [event],
+          prevChildren,
+          nextChildren,
+          snapshotFence,
+        });
+
+        expect(result.kind).toBe("fallback_full_reload");
+      });
     });
   });
 

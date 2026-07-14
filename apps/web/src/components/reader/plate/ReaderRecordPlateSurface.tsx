@@ -840,6 +840,13 @@ function groupConsecutiveGrammarCallouts(nodes: unknown[]): unknown[] {
       type: READER_CALLOUT_GROUP_TYPE,
       id: `callout-group:${first.data.unitId}:${first.data.anchorSegmentId}:${grouped.length}`,
       children: pending,
+      // P1-A: carry unitId/anchorSegmentId in data so the incremental
+      // projection merger can attribute callout-group nodes to their unit
+      // and treat them as target blocks during layer_published revisions.
+      data: {
+        unitId: first.data.unitId,
+        anchorSegmentId: first.data.anchorSegmentId,
+      },
     });
     pending = [];
   }

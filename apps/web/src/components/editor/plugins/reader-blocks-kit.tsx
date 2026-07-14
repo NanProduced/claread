@@ -515,31 +515,15 @@ function ReaderCalloutGroupComponent({
   attributes,
 }: PlateElementProps) {
   const node = element as unknown as ReaderGrammarCalloutGroupElement;
-  const [expandedItemIds, setExpandedItemIds] = React.useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
   const calloutCount = node.children.length;
-  const expandItem = React.useCallback((itemId: string) => {
-    setExpandedItemIds((current) => {
-      if (current.has(itemId)) {
-        return current;
-      }
-      const next = new Set(current);
-      next.add(itemId);
-      return next;
-    });
-  }, []);
-  const toggleItem = React.useCallback((itemId: string) => {
-    setExpandedItemIds((current) => {
-      const next = new Set(current);
-      if (next.has(itemId)) {
-        next.delete(itemId);
-      } else {
-        next.add(itemId);
-      }
-      return next;
-    });
-  }, []);
+  // R2.1E: delegate expansion state to the Surface-level
+  // ReaderGrammarExpansionContext (above <Plate>) so that expansion survives
+  // editor.tf.replaceNodes remounts of the callout-group block. Previously
+  // local useState was used, which reset to empty on every remount.
+  const expansionContext = useContext(ReaderGrammarExpansionContext);
+  const expandItem = expansionContext.expandItem;
+  const toggleItem = expansionContext.toggleItem;
+  const expandedItemIds = expansionContext.expandedItemIds;
   const contextValue = React.useMemo(
     () => ({ expandedItemIds, expandItem, toggleItem }),
     [expandItem, expandedItemIds, toggleItem],

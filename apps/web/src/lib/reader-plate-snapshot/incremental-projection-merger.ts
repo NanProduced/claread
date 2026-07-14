@@ -1,22 +1,29 @@
 /**
- * T4.2a-PUX-R4-R2: Interaction-stable incremental projection merger.
+ * T4.2a-PUX-R4-R2 / R2.1E: Interaction-stable incremental projection merger.
  *
  * Pure function that attempts a targeted Plate tree update for O4-legitimate
- * representation events (G1/G2/G3), avoiding `editor.tf.setValue()` full DOM
- * rebuild. When the merge is not safe, it returns `fallback_full_reload` so
- * the caller can fall back to the existing full-reload path.
+ * representation events (G1/G2/G3) and same-topology `layer_published`
+ * revisions (R2.1E), avoiding `editor.tf.setValue()` full DOM rebuild. When
+ * the merge is not safe, it returns `fallback_full_reload` so the caller can
+ * fall back to the existing full-reload path.
  *
  * Design reference:
  * C:\tmp\TMP-t4.2a-pux-r4-r1-interaction-stable-projection-design-2026-07-13.md
+ * C:\tmp\TMP-t4.2a-pux-r4-r2-1a-layer-incremental-audit-2026-07-14.md
  *
  * Key principles:
- * - Only supports `projection_ops` / `record_state_changed` representation
- *   payloads that pass the O4-R2-D classifier.
- * - `layer_published`, unknown events, missing/invalid payload, generation/base
- *   fence mismatch, target not locatable, unsupported operation, path failure,
- *   projection structure change → all fallback. No speculative diff.
+ * - Supports `projection_ops` / `record_state_changed` representation payloads
+ *   that pass the O4-R2-D classifier (G1/G2/G3).
+ * - R2.1E: supports `layer_published` events ONLY for same-topology revisions
+ *   (changed-block-only replace). First-time publish, block insert/remove/
+ *   reorder, identity missing, fence mismatch, mixed batch → all fallback.
+ * - Unknown events, missing/invalid payload, generation/base fence mismatch,
+ *   target not locatable, unsupported operation, path failure, projection
+ *   structure change → all fallback. No speculative diff.
  * - Batch semantics: all events in the trigger batch must be representation
- *   events with matching fence. If any event fails, the whole batch fallbacks.
+ *   events with matching fence, OR all must be `layer_published` events with
+ *   matching fence. Mixed batches fallback. If any event fails, the whole
+ *   batch fallbacks.
  * - This is "targeted application on full snapshot transport", NOT fragment
  *   transport or SSE.
  */
@@ -182,6 +189,39 @@ interface RepresentationPayload {
 }
 
 /**
+ * R2.1E: `layer_published` payload schema (v1).
+ *
+ * Backend writers (6发射点 in layer_publisher.py + grammar_window_publisher.py)
+ * share these 7 base fields. grammar_window path adds source/plan_id/window_id
+ * which are ignored by the merger (not needed for topology check).
+ *
+ * See: C:\tmp\TMP-t4.2a-pux-r4-r2-1a-layer-incremental-audit-2026-07-14.md §1.3
+ */
+type LayerPublishedLayerType =
+  | "translation"
+  | "vocabulary"
+  | "grammar_note"
+  | "sentence_analysis";
+
+const ALLOWED_LAYER_PUBLISHED_LAYER_TYPES: ReadonlySet<LayerPublishedLayerType> =
+  new Set<LayerPublishedLayerType>([
+    "translation",
+    "vocabulary",
+    "grammar_note",
+    "sentence_analysis",
+  ]);
+
+interface LayerPublishedPayload {
+  record_id: string;
+  base_id: string;
+  layer_id: string;
+  layer_type: LayerPublishedLayerType;
+  target_scope: string;
+  target_key: string;
+  generation: number;
+}
+
+/**
  * Parse a representation payload from an event.
  * Returns null if the payload is missing or not a valid object with the
  * expected fields.
@@ -254,6 +294,106 @@ function validateRepresentationPayload(
   if (payload.base_id.length === 0) {
     return "invalid_base_id";
   }
+  if (
+    snapshotFence !== null &&
+    snapshotFence.generation !== null &&
+    snapshotFence.baseId !== null
+  ) {
+    if (
+      payload.generation !== snapshotFence.generation ||
+      payload.base_id !== snapshotFence.baseId
+    ) {
+      return "fence_mismatch_in_batch";
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// R2.1E: layer_published payload parsing and validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a `layer_published` payload from an event.
+ * Returns null if the payload is missing, not an object, or missing required
+ * fields. Extra fields (source, plan_id, window_id from grammar_window path)
+ * are tolerated and ignored.
+ *
+ * Note: target_scope is parsed as-is (not constrained to "unit"); the
+ * `unsupported_target_scope` check is done by `validateLayerPublishedPayload`
+ * so the caller gets a specific fallback reason.
+ */
+function parseLayerPublishedPayload(
+  event: ReaderEventResponseDto,
+): LayerPublishedPayload | null {
+  const payload = event.payload;
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const p = payload as Record<string, unknown>;
+  if (
+    typeof p.record_id !== "string" ||
+    typeof p.base_id !== "string" ||
+    typeof p.layer_id !== "string" ||
+    typeof p.layer_type !== "string" ||
+    typeof p.target_scope !== "string" ||
+    typeof p.target_key !== "string" ||
+    typeof p.generation !== "number"
+  ) {
+    return null;
+  }
+  if (!ALLOWED_LAYER_PUBLISHED_LAYER_TYPES.has(p.layer_type as LayerPublishedLayerType)) {
+    return null;
+  }
+  if (p.target_key.length === 0) {
+    return null;
+  }
+  if (!Number.isFinite(p.generation) || p.generation < 1) {
+    return null;
+  }
+  if (p.base_id.length === 0) {
+    return null;
+  }
+  if (p.record_id.length === 0) {
+    return null;
+  }
+  return {
+    record_id: p.record_id,
+    base_id: p.base_id,
+    layer_id: p.layer_id,
+    layer_type: p.layer_type as LayerPublishedLayerType,
+    target_scope: p.target_scope,
+    target_key: p.target_key,
+    generation: p.generation,
+  };
+}
+
+/**
+ * Validate a `layer_published` payload against the R2.1E contract.
+ * Returns an error reason string if invalid, or null if valid.
+ *
+ * Checks:
+ * - target_scope must be "unit"
+ * - record_id must match prevSnapshot.record_id and nextSnapshot.record_id
+ * - generation and base_id must match snapshotFence (when fence is present)
+ */
+function validateLayerPublishedPayload(
+  payload: LayerPublishedPayload,
+  prevSnapshot: ReaderPlateSnapshotDto,
+  nextSnapshot: ReaderPlateSnapshotDto,
+  snapshotFence: SnapshotFenceContext | null,
+): string | null {
+  if (payload.target_scope !== "unit") {
+    return "unsupported_target_scope";
+  }
+  // Record identity check (audit §4.5: record identity is part of the fence).
+  if (
+    payload.record_id !== prevSnapshot.record_id ||
+    payload.record_id !== nextSnapshot.record_id
+  ) {
+    return "record_mismatch";
+  }
+  // Fence check.
   if (
     snapshotFence !== null &&
     snapshotFence.generation !== null &&
@@ -381,6 +521,327 @@ function orderOperationsForApplication(
     .sort((left, right) => comparePathsDescending(left.path, right.path));
   return [...replacements, ...removals];
 }
+
+// ---------------------------------------------------------------------------
+// R2.1E: layer_published changed-block-only apply
+// ---------------------------------------------------------------------------
+
+interface PlateBlockLike {
+  id?: unknown;
+  type?: unknown;
+  variant?: unknown;
+  icon?: unknown;
+  children?: unknown;
+  data?: unknown;
+}
+
+/**
+ * Deterministic semantic equality check for two Plate blocks of the same
+ * stable ID. Returns true only when the projected render-relevant fields are
+ * identical: type, variant, icon, children (deep), data (deep).
+ *
+ * This is NOT a general-purpose tree diff. It only runs on same-ID blocks
+ * within a single unit, after the topology check has confirmed both slices
+ * have identical block_id sequences.
+ *
+ * We use JSON.stringify with sorted keys for determinism. This is safe because
+ * the input is already a projected Plate block (no circular references, no
+ * functions). The audit (§5.3) explicitly requires comparing children, marks,
+ * variant, icon, data, and order — all of which are captured by stringify.
+ */
+function blocksAreSemanticallyEqual(
+  prev: PlateBlockLike,
+  next: PlateBlockLike,
+): boolean {
+  // Fast path: type / variant / icon short-circuit.
+  if (prev.type !== next.type) return false;
+  if (prev.variant !== next.variant) return false;
+  if (prev.icon !== next.icon) return false;
+  // Deep compare children + data via sorted-key JSON.
+  // Sorted keys ensure deterministic comparison regardless of property order.
+  return (
+    stableJsonStringify(prev.children) === stableJsonStringify(next.children) &&
+    stableJsonStringify(prev.data) === stableJsonStringify(next.data)
+  );
+}
+
+/**
+ * JSON.stringify with sorted object keys for deterministic comparison.
+ * Falls back to JSON.stringify for non-object values. Handles arrays by
+ * preserving order (array order is semantically significant in Plate children).
+ */
+function stableJsonStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJsonStringify).join(",")}]`;
+  }
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  const pairs = keys.map((k) => `${JSON.stringify(k)}:${stableJsonStringify(obj[k])}`);
+  return `{${pairs.join(",")}}`;
+}
+
+/**
+ * Extract the `data.unitId` from a top-level Plate block. Returns null if the
+ * block has no `data` object or no `unitId` string field.
+ *
+ * All projected Reader blocks (paragraph, blockquote, callout, sentence_analysis)
+ * carry `data.unitId` — see reader-record-plate-document.ts L1038, L1083, L1123,
+ * L1155, L1236.
+ */
+function extractUnitIdFromBlock(node: Descendant): string | null {
+  const block = node as unknown as PlateBlockLike;
+  if (!block.data || typeof block.data !== "object") {
+    return null;
+  }
+  const data = block.data as { unitId?: unknown };
+  if (typeof data.unitId !== "string" || data.unitId.length === 0) {
+    return null;
+  }
+  return data.unitId;
+}
+
+/**
+ * Extract the stable `id` from a top-level Plate block. Returns null if the
+ * block has no string `id`. This is the contract every projected Reader block
+ * must satisfy; missing id triggers fallback.
+ */
+function extractBlockId(node: Descendant): string | null {
+  const block = node as unknown as PlateBlockLike;
+  if (typeof block.id !== "string" || block.id.length === 0) {
+    return null;
+  }
+  return block.id;
+}
+
+/**
+ * Build a per-unit slice of top-level blocks from children.
+ * Returns a map from unitId → array of { path, blockId (may be null), node }.
+ *
+ * Blocks with `data.unitId` but no stable `id` are INCLUDED with blockId=null
+ * so the topology check can detect `unit_block_identity_missing`. Blocks
+ * without `data.unitId` are skipped (they're not part of any unit, e.g.,
+ * standalone content_summary).
+ */
+function buildUnitBlockSlices(
+  children: Descendant[],
+): Map<string, Array<{ path: number; blockId: string | null; node: Descendant }>> {
+  const slices = new Map<string, Array<{ path: number; blockId: string | null; node: Descendant }>>();
+  for (let i = 0; i < children.length; i++) {
+    const node = children[i] as Descendant;
+    const unitId = extractUnitIdFromBlock(node);
+    // Skip blocks without unitId — they're not part of any unit.
+    if (!unitId) continue;
+    const blockId = extractBlockId(node);
+    // Include blocks with null blockId so the topology check can detect
+    // identity_missing fallback.
+    const slice = slices.get(unitId) ?? [];
+    slice.push({ path: i, blockId, node });
+    slices.set(unitId, slice);
+  }
+  return slices;
+}
+
+/**
+ * R2.1E: attempt a changed-block-only apply for `layer_published` events.
+ *
+ * Contract (audit §5.3 + P1-A unrepresented-change guard):
+ * 1. P1-A: Verify the ENTIRE projection has no unrepresented changes outside
+ *    the event's target units. If any non-target block differs (content,
+ *    block_id, unitId, or projection length mismatch), fallback immediately.
+ *    This prevents the cursor from advancing past an unrepresented change
+ *    (e.g. unit B published between poll and snapshot fetch while the event
+ *    only carries unit A).
+ * 2. For each deduplicated (unit_id, layer_type), take all top-level blocks
+ *    with `data.unitId === unit_id` from prevChildren and nextChildren.
+ * 3. Both slices must be non-empty, and the stable `block_id` sequence must
+ *    be identical element-by-element. Otherwise fallback.
+ * 4. For each same-ID block pair, run deterministic semantic comparison. Only
+ *    changed blocks produce a replaceNodes operation.
+ * 5. All replacements preserve sibling path; apply in ascending path order.
+ * 6. Any insert/remove/reorder/identity-missing/comparison-unsafe → fallback.
+ *
+ * Returns `targeted_apply` on success, or `fallback_full_reload` with a
+ * specific reason on any failure.
+ */
+function mergeLayerPublishedChangedBlocks(
+  prevChildren: Descendant[],
+  nextChildren: Descendant[],
+  targetUnitIds: string[],
+): IncrementalProjectionResult {
+  const targetUnitSet = new Set(targetUnitIds);
+
+  // -------------------------------------------------------------------------
+  // P1-A: Full projection unrepresented-change guard.
+  //
+  // If poll returns a unit A event, but unit B was published between poll and
+  // snapshot fetch, the next snapshot already contains B's changes. Without
+  // this guard, the merger would only replace A's blocks, accept the new
+  // snapshot/cursor, and B's event would be skipped by the cursor — leaving
+  // the UI permanently stuck on stale B.
+  //
+  // Guard: every block OUTSIDE the target units must be semantically
+  // identical between prev and next. Any difference → fallback_full_reload.
+  // -------------------------------------------------------------------------
+
+  // P1-A.1: Projection length must match.
+  if (prevChildren.length !== nextChildren.length) {
+    // Distinguish: if a target unit's block count changed, preserve the
+    // existing `unit_block_set_changed` reason for audit clarity. Otherwise
+    // the length mismatch is an unrepresented structural change.
+    const prevSlicesForLenCheck = buildUnitBlockSlices(prevChildren);
+    const nextSlicesForLenCheck = buildUnitBlockSlices(nextChildren);
+    for (const unitId of targetUnitIds) {
+      const prevLen = prevSlicesForLenCheck.get(unitId)?.length ?? 0;
+      const nextLen = nextSlicesForLenCheck.get(unitId)?.length ?? 0;
+      if (prevLen !== nextLen) {
+        return { kind: "fallback_full_reload", reason: "unit_block_set_changed" };
+      }
+    }
+    return {
+      kind: "fallback_full_reload",
+      reason: "unrepresented_projection_change",
+    };
+  }
+
+  // P1-A.2: Position-by-position verification of non-target blocks.
+  for (let i = 0; i < prevChildren.length; i++) {
+    const prevUnitId = extractUnitIdFromBlock(prevChildren[i]!);
+    const nextUnitId = extractUnitIdFromBlock(nextChildren[i]!);
+    const prevBlockId = extractBlockId(prevChildren[i]!);
+    const nextBlockId = extractBlockId(nextChildren[i]!);
+
+    // unitId must not change at any position.
+    if (prevUnitId !== nextUnitId) {
+      return {
+        kind: "fallback_full_reload",
+        reason: "unrepresented_projection_change",
+      };
+    }
+
+    // blockId must not change at any position.
+    if (prevBlockId !== nextBlockId) {
+      const isTarget =
+        prevUnitId !== null && targetUnitSet.has(prevUnitId);
+      if (!isTarget) {
+        // Non-target block_id changed → unrepresented change.
+        return {
+          kind: "fallback_full_reload",
+          reason: "unrepresented_projection_change",
+        };
+      }
+      // Target unit block_id change → handled by per-unit topology check
+      // below (distinguishes set_changed vs order_changed).
+    }
+
+    // Non-target block content must be semantically identical.
+    const isTargetBlock =
+      prevUnitId !== null && targetUnitSet.has(prevUnitId);
+    if (!isTargetBlock) {
+      const prevNode = prevChildren[i]! as unknown as PlateBlockLike;
+      const nextNode = nextChildren[i]! as unknown as PlateBlockLike;
+      if (!blocksAreSemanticallyEqual(prevNode, nextNode)) {
+        return {
+          kind: "fallback_full_reload",
+          reason: "unrepresented_change_in_non_target_block",
+        };
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Per-unit topology check (existing logic, unchanged).
+  // -------------------------------------------------------------------------
+  const prevSlices = buildUnitBlockSlices(prevChildren);
+  const nextSlices = buildUnitBlockSlices(nextChildren);
+
+  const operations: TargetedApplyOperation[] = [];
+  const plannedPaths = new Set<string>();
+
+  for (const unitId of targetUnitIds) {
+    const prevSlice = prevSlices.get(unitId);
+    const nextSlice = nextSlices.get(unitId);
+
+    // unit_not_found: no blocks in prev or next for this unit_id.
+    if (!prevSlice || prevSlice.length === 0 || !nextSlice || nextSlice.length === 0) {
+      return { kind: "fallback_full_reload", reason: "unit_not_found" };
+    }
+
+    // unit_block_set_changed: different number of blocks → set changed.
+    if (prevSlice.length !== nextSlice.length) {
+      return { kind: "fallback_full_reload", reason: "unit_block_set_changed" };
+    }
+
+    // First pass: check identity presence at every position.
+    for (let i = 0; i < prevSlice.length; i++) {
+      const prevBlock = prevSlice[i]!;
+      const nextBlock = nextSlice[i]!;
+      if (prevBlock.blockId === null || nextBlock.blockId === null) {
+        return { kind: "fallback_full_reload", reason: "unit_block_identity_missing" };
+      }
+    }
+
+    // Second pass: check block_id sequence equality.
+    for (let i = 0; i < prevSlice.length; i++) {
+      const prevBlock = prevSlice[i]!;
+      const nextBlock = nextSlice[i]!;
+      if (prevBlock.blockId !== nextBlock.blockId) {
+        // Different block_id at the same position → could be reorder or set
+        // change. Distinguish by checking set equality.
+        const prevSet = new Set(prevSlice.map((b) => b.blockId));
+        const nextSet = new Set(nextSlice.map((b) => b.blockId));
+        if (prevSet.size !== nextSet.size) {
+          return { kind: "fallback_full_reload", reason: "unit_block_set_changed" };
+        }
+        for (const id of prevSet) {
+          if (!nextSet.has(id)) {
+            return { kind: "fallback_full_reload", reason: "unit_block_set_changed" };
+          }
+        }
+        // Same set, different order → reorder.
+        return { kind: "fallback_full_reload", reason: "unit_block_order_changed" };
+      }
+    }
+
+    // Same block_id sequence — compare each block semantically.
+    for (let i = 0; i < prevSlice.length; i++) {
+      const prevBlock = prevSlice[i]!;
+      const nextBlock = nextSlice[i]!;
+      const prevNode = prevBlock.node as unknown as PlateBlockLike;
+      const nextNode = nextBlock.node as unknown as PlateBlockLike;
+      const pathKey = `${prevBlock.path}`;
+      if (plannedPaths.has(pathKey)) continue;
+
+      const changed = !blocksAreSemanticallyEqual(prevNode, nextNode);
+      if (changed) {
+        operations.push({
+          path: [prevBlock.path],
+          blockId: prevBlock.blockId!,
+          type: "replace",
+          nodes: [nextBlock.node],
+        });
+        plannedPaths.add(pathKey);
+      }
+      // Unchanged block → no operation. Non-target DOM identity preserved.
+    }
+  }
+
+  return {
+    kind: "targeted_apply",
+    operations: orderOperationsForApplication(operations),
+    preservedInteraction: {
+      preserveSelection: true,
+      preserveScroll: true,
+      preserveGrammarAccordion: true,
+      preserveQuickPeek: true,
+      preservePanels: true,
+    },
+    affectedTargetKeys: [...targetUnitIds],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Main applier
 // ---------------------------------------------------------------------------
@@ -423,32 +884,109 @@ export function mergeIncrementalProjection(
     return { kind: "fallback_full_reload", reason: "no_trigger_events" };
   }
 
+  // R2.1E: Detect whether the batch is all `layer_published` events.
+  // If yes → use changed-block-only apply path.
+  // If mixed (some layer_published + some representation events) → fallback.
+  // If no layer_published events → use existing G1/G2/G3 representation path.
+  const layerPublishedEvents = triggerEvents.filter(
+    (event) => event.event_type === "layer_published",
+  );
+  const representationEvents = triggerEvents.filter(
+    (event) =>
+      event.event_type === "projection_ops" ||
+      event.event_type === "record_state_changed",
+  );
+  const otherReliableReloadEvents = triggerEvents.filter(
+    (event) =>
+      event.event_type === "record_product_state_updated" ||
+      event.event_type === "projection_reset_required",
+  );
+  const unsupportedEvents = triggerEvents.filter(
+    (event) =>
+      event.event_type !== "layer_published" &&
+      event.event_type !== "projection_ops" &&
+      event.event_type !== "record_state_changed" &&
+      event.event_type !== "record_product_state_updated" &&
+      event.event_type !== "projection_reset_required",
+  );
+
+  // Mixed batch: layer_published + representation events → fail-closed.
+  if (layerPublishedEvents.length > 0 && representationEvents.length > 0) {
+    return {
+      kind: "fallback_full_reload",
+      reason: "non_layer_published_in_batch",
+    };
+  }
+
+  // Other reliable reload events (record_product_state_updated,
+  // projection_reset_required) are not supported by either path.
+  if (otherReliableReloadEvents.length > 0) {
+    return {
+      kind: "fallback_full_reload",
+      reason: "layer_published_not_supported",
+    };
+  }
+
+  // Unsupported event types (e.g., article_ready) → fail-closed.
+  if (unsupportedEvents.length > 0) {
+    return {
+      kind: "fallback_full_reload",
+      reason: "non_representation_event_in_batch",
+    };
+  }
+
+  // R2.1E: layer_published-only batch → changed-block-only apply path.
+  if (layerPublishedEvents.length > 0) {
+    // Parse and validate each layer_published payload.
+    const parsedLayerEvents: Array<{
+      event: ReaderEventResponseDto;
+      payload: LayerPublishedPayload;
+    }> = [];
+    for (const event of layerPublishedEvents) {
+      const payload = parseLayerPublishedPayload(event);
+      if (!payload) {
+        return {
+          kind: "fallback_full_reload",
+          reason: "invalid_layer_published_payload",
+        };
+      }
+      const validationError = validateLayerPublishedPayload(
+        payload,
+        prevSnapshot,
+        nextSnapshot,
+        snapshotFence,
+      );
+      if (validationError) {
+        return { kind: "fallback_full_reload", reason: validationError };
+      }
+      parsedLayerEvents.push({ event, payload });
+    }
+
+    // Deduplicate (unit_id, layer_type) pairs. Same unit may have multiple
+    // layer_published events (e.g., translation + grammar_note); each unit
+    // is processed once. Multiple events for the same (unit_id, layer_type)
+    // also deduplicate to one operation set.
+    const seenUnitIds = new Set<string>();
+    const targetUnitIds: string[] = [];
+    for (const { payload } of parsedLayerEvents) {
+      const unitId = payload.target_key;
+      if (!seenUnitIds.has(unitId)) {
+        seenUnitIds.add(unitId);
+        targetUnitIds.push(unitId);
+      }
+    }
+
+    return mergeLayerPublishedChangedBlocks(
+      prevChildren,
+      nextChildren,
+      targetUnitIds,
+    );
+  }
+
+  // Representation events only → G1/G2/G3 path.
   const parsedEvents: ParsedEvent[] = [];
 
-  for (const event of triggerEvents) {
-    // Reject reliable reload event types (layer_published etc.)
-    if (
-      event.event_type === "layer_published" ||
-      event.event_type === "record_product_state_updated" ||
-      event.event_type === "projection_reset_required"
-    ) {
-      return {
-        kind: "fallback_full_reload",
-        reason: "layer_published_not_supported",
-      };
-    }
-
-    // Only representation-capable event types are supported.
-    if (
-      event.event_type !== "projection_ops" &&
-      event.event_type !== "record_state_changed"
-    ) {
-      return {
-        kind: "fallback_full_reload",
-        reason: "non_representation_event_in_batch",
-      };
-    }
-
+  for (const event of representationEvents) {
     // Parse and validate representation payload.
     const payload = parseRepresentationPayload(event);
     if (!payload) {

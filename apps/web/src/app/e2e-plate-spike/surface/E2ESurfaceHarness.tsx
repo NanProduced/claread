@@ -17,7 +17,7 @@ import type { ReloadContext } from "@/lib/reader-plate-snapshot/polling";
 import { ReaderRecordPlateSurface } from "@/components/reader/plate/ReaderRecordPlateSurface";
 
 // ---------------------------------------------------------------------------
-// T4.2a-PUX-R4-R2.1D — Real Surface E2E harness (test-only, env-gated).
+// T4.2a-PUX-R4-R2.1D / R2.1E — Real Surface E2E harness (test-only, env-gated).
 //
 // Mounts a REAL ReaderRecordPlateSurface and drives it through its public
 // props: `snapshot`, `pendingReloadContext`, `onReloadContextConsumed`.
@@ -34,6 +34,9 @@ import { ReaderRecordPlateSurface } from "@/components/reader/plate/ReaderRecord
 //   - getSnapshot(): returns current snapshot
 //   - makeUpdatedSnapshot(options): builds next snapshot with user_asset on specified segment
 //   - makeGenerationSnapshot(generation): builds next snapshot with new generation
+//   - R2.1E: makeLayerRevisionSnapshot(options): builds same-topology revised snapshot
+//   - R2.1E: makeStructuralChangeSnapshot(): builds snapshot with extra sentence_analysis block
+//   - R2.1E: makeValidLayerPublishedEvent(layerType, sequence): builds valid 7-field payload
 //
 // Fixture layout (two segments for sibling-paragraph test):
 //   seg_1: "Institutional memory shapes policy choices." (vocab mark + grammar mark)
@@ -70,6 +73,21 @@ declare global {
         generation?: number;
       }) => ReaderPlateSnapshotDto;
       makeGenerationSnapshot: (generation: number) => ReaderPlateSnapshotDto;
+      // R2.1E: layer_published revision and structural change builders.
+      makeLayerRevisionSnapshot: (options?: {
+        translationText?: string;
+        grammarNote?: string;
+        analysisText?: string;
+      }) => ReaderPlateSnapshotDto;
+      makeStructuralChangeSnapshot: () => ReaderPlateSnapshotDto;
+      makeValidLayerPublishedEvent: (
+        layerType?:
+          | "translation"
+          | "vocabulary"
+          | "grammar_note"
+          | "sentence_analysis",
+        sequence?: number,
+      ) => ReaderEventResponseDto;
     };
     __spikeSurfaceReady?: boolean;
   }
@@ -449,6 +467,162 @@ function makeLayerPublishedEvent(
   } as never;
 }
 
+/**
+ * R2.1E: Build a VALID `layer_published` event with the full 7-field payload.
+ * Unlike `makeLayerPublishedEvent` (which has an invalid partial payload used
+ * to trigger fallback), this produces a payload that passes the merger's
+ * `parseLayerPublishedPayload` + `validateLayerPublishedPayload` checks.
+ */
+function makeValidLayerPublishedEvent(
+  layerType:
+    | "translation"
+    | "vocabulary"
+    | "grammar_note"
+    | "sentence_analysis" = "translation",
+  sequence = 9,
+): ReaderEventResponseDto {
+  return {
+    id: `evt_${sequence}`,
+    reading_record_id: "record_1",
+    sequence,
+    event_type: "layer_published",
+    payload: {
+      record_id: "record_1",
+      base_id: "base_1",
+      layer_id: `layer_${layerType}_1`,
+      layer_type: layerType,
+      target_scope: "unit",
+      target_key: "unit_1",
+      generation: 1,
+    },
+    created_at: "2026-06-24T02:00:00Z",
+  } as never;
+}
+
+/**
+ * R2.1E: Build a same-topology layer revision snapshot.
+ *
+ * Maps over the base snapshot's unit children and overrides one layer's
+ * content text while preserving the block topology (same block IDs, same
+ * order, same count). This is the "non-structural revision" case where the
+ * R2.1E merger should return `targeted_apply` with changed-block-only
+ * replace operations.
+ *
+ * - translationText: overrides `reader_translation_group.children[0].text`
+ * - grammarNote: overrides `reader_grammar_note_marks[].note` in source block
+ * - analysisText: overrides `reader_sentence_analysis.analysis` + `.children[0].text`
+ */
+function makeLayerRevisionSnapshot(
+  base: ReaderPlateSnapshotDto,
+  options: {
+    translationText?: string;
+    grammarNote?: string;
+    analysisText?: string;
+  } = {},
+): ReaderPlateSnapshotDto {
+  const unit = base.value[0] as ReaderUnitNodeDto;
+  const revisedUnit: ReaderUnitNodeDto = {
+    ...unit,
+    children: unit.children.map((child) => {
+      if (
+        child.type === "reader_translation_group" &&
+        options.translationText !== undefined
+      ) {
+        return {
+          ...child,
+          children: [{ text: options.translationText }],
+        };
+      }
+      if (
+        child.type === "reader_sentence_analysis" &&
+        options.analysisText !== undefined
+      ) {
+        return {
+          ...child,
+          analysis: options.analysisText,
+          children: [{ text: options.analysisText }],
+        };
+      }
+      if (
+        child.type === "reader_source_block" &&
+        options.grammarNote !== undefined
+      ) {
+        return {
+          ...child,
+          children: child.children.map((seg) => {
+            if (!("type" in seg)) return seg;
+            if (seg.type !== "reader_anchor_segment") return seg;
+            return {
+              ...seg,
+              children: seg.children.map((leaf) => ({
+                ...leaf,
+                reader_grammar_note_marks: (leaf.reader_grammar_note_marks ?? []).map(
+                  (mark) => ({
+                    ...mark,
+                    note: options.grammarNote!,
+                  }),
+                ),
+              })),
+            };
+          }),
+        };
+      }
+      return child;
+    }),
+  };
+  return {
+    ...base,
+    snapshot_id: "snapshot_layer_revision",
+    last_event_sequence: 9,
+    value: [revisedUnit],
+  };
+}
+
+/**
+ * R2.1E: Build a structural-change snapshot that adds a SECOND
+ * `reader_sentence_analysis` node to the unit's children.
+ *
+ * This changes the block topology (new block ID, increased count) so the
+ * R2.1E merger must return `fallback_full_reload` with reason
+ * `unit_block_set_changed`.
+ */
+function makeStructuralChangeSnapshot(
+  base: ReaderPlateSnapshotDto,
+): ReaderPlateSnapshotDto {
+  const unit = base.value[0] as ReaderUnitNodeDto;
+  const revisedUnit: ReaderUnitNodeDto = {
+    ...unit,
+    children: [
+      ...unit.children,
+      {
+        type: "reader_sentence_analysis",
+        owner: "system_ai",
+        analysis_id: "analysis_2",
+        layer_id: "layer_sentence_analysis_2",
+        layer_version: 1,
+        base_id: "base_1",
+        unit_id: "unit_1",
+        target_scope: "unit",
+        target_key: "unit_1",
+        anchor_segment_id: "seg_1",
+        selected_text: SOURCE_TEXT_1,
+        label: "second analysis",
+        analysis: "Second analysis text (structural change).",
+        chunks: [
+          { order: 1, label: "whole", text: SOURCE_TEXT_1 },
+        ],
+        children: [{ text: "Second analysis text (structural change)." }],
+      },
+    ],
+  };
+  return {
+    ...base,
+    snapshot_id: "snapshot_structural_change",
+    last_event_sequence: 9,
+    value: [revisedUnit],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Harness component
 // ---------------------------------------------------------------------------
@@ -531,6 +705,16 @@ export default function E2ESurfaceHarness() {
           lastEventSequence: 10,
         });
       },
+      // R2.1E: layer_published revision + structural change builders.
+      makeLayerRevisionSnapshot: (options = {}) => {
+        return makeLayerRevisionSnapshot(snapshotRef.current, options);
+      },
+      makeStructuralChangeSnapshot: () => {
+        return makeStructuralChangeSnapshot(snapshotRef.current);
+      },
+      makeValidLayerPublishedEvent: (layerType = "translation", sequence = 9) => {
+        return makeValidLayerPublishedEvent(layerType, sequence);
+      },
     };
     window.__spikeSurfaceReady = true;
   }, []);
@@ -553,4 +737,7 @@ export {
   makeSnapshot,
   makeRepresentationEvent,
   makeLayerPublishedEvent,
+  makeValidLayerPublishedEvent,
+  makeLayerRevisionSnapshot,
+  makeStructuralChangeSnapshot,
 };

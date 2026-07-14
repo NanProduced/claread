@@ -6830,4 +6830,581 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2 incremental projection", 
       ).toBeNull();
     });
     expect(quickPeekBefore.isConnected).toBe(false);
-  });});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T4.2a-PUX-R4-R2.1E: layer_published changed-block-only integration tests.
+//
+// Verifies the Surface correctly applies the R2.1E changed-block-only path
+// for valid `layer_published` events (same topology revision) and falls back
+// to setValue for structural changes.
+// ---------------------------------------------------------------------------
+
+describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.1E layer_published changed-block-only", () => {
+  function makeValidLayerPublishedEvent(
+    layerType: "translation" | "vocabulary" | "grammar_note" | "sentence_analysis" = "translation",
+    sequence = 9,
+  ): ReaderEventResponseDto {
+    return {
+      id: `evt_${sequence}`,
+      reading_record_id: "record_1",
+      sequence,
+      event_type: "layer_published",
+      payload: {
+        record_id: "record_1",
+        base_id: "base_1",
+        layer_id: `layer_${layerType}_1`,
+        layer_type: layerType,
+        target_scope: "unit",
+        target_key: "unit_1",
+        generation: 1,
+      },
+      created_at: "2026-06-24T02:00:00Z",
+    };
+  }
+
+  function makeReloadContextLayer(
+    events: ReaderEventResponseDto[],
+  ): ReloadContext {
+    return {
+      cursor: 8,
+      events,
+      triggerClassification: {
+        kind: "reload_snapshot",
+        reason: "layer_published",
+      },
+      acceptedSnapshotFence: { generation: 1, baseId: "base_1" },
+      reason: "layer_published",
+    };
+  }
+
+  function makeLayerRevisionSnapshot(
+    prev: ReaderPlateSnapshotDto,
+    overrides: {
+      translationText?: string;
+      grammarNote?: string;
+      analysis?: string;
+      analysisChunks?: Array<{ order: number; label: string; text: string }>;
+    } = {},
+  ): ReaderPlateSnapshotDto {
+    const unit = prev.value[0] as ReaderUnitNodeDto;
+    const nextUnit: ReaderUnitNodeDto = {
+      ...unit,
+      children: unit.children.map((child) => {
+        if (child.type === "reader_translation_group") {
+          return {
+            ...child,
+            children: [
+              {
+                text:
+                  overrides.translationText ??
+                  ((child as { children: Array<{ text: string }> }).children[0]?.text ?? ""),
+              },
+            ],
+          };
+        }
+        if (child.type === "reader_sentence_analysis") {
+          return {
+            ...child,
+            analysis: overrides.analysis ?? (child as { analysis: string }).analysis,
+            chunks: overrides.analysisChunks ?? (child as { chunks: Array<{ order: number; label: string; text: string }> }).chunks,
+            children: [{ text: overrides.analysis ?? (child as { analysis: string }).analysis }],
+          };
+        }
+        if (child.type === "reader_source_block") {
+          return {
+            ...child,
+            children: child.children.map((seg) => {
+              if (!("type" in seg) || seg.type !== "reader_anchor_segment") {
+                return seg;
+              }
+              return {
+                ...seg,
+                children: seg.children.map((leaf) => ({
+                  ...leaf,
+                  reader_grammar_note_marks: (leaf.reader_grammar_note_marks ?? []).map(
+                    (mark) => ({
+                      ...mark,
+                      note: overrides.grammarNote ?? mark.note,
+                    }),
+                  ),
+                })),
+              };
+            }),
+          };
+        }
+        return child;
+      }),
+    };
+    return {
+      ...prev,
+      snapshot_id: "snapshot_layer_revision",
+      last_event_sequence: 9,
+      value: [nextUnit],
+    };
+  }
+
+  it("grammar_note revision with same topology: targeted_apply preserves grammar callout expanded", async () => {
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeLayerRevisionSnapshot(prevSnapshot, {
+      grammarNote: "shapes is the predicate verb. (revised note)",
+    });
+    const event = makeValidLayerPublishedEvent("grammar_note");
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Expand the grammar callout before reload.
+    const grammarCallout = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_1"]',
+    );
+    const toggle = grammarCallout?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
+    expect(grammarCallout).not.toBeNull();
+    expect(toggle).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.click(toggle!);
+    });
+
+    await waitFor(() => {
+      expect(grammarCallout!.dataset.readerRecordCalloutCollapsed).toBe("false");
+    });
+
+    // Apply the layer_published revision via targeted_apply.
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContextLayer([event])}
+          onReloadContextConsumed={() => {}}
+        />,
+        );
+    });
+
+    // Grammar callout (same itemId) should still be expanded after targeted_apply.
+    const grammarCalloutAfter = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_1"]',
+    );
+    expect(grammarCalloutAfter).not.toBeNull();
+    expect(grammarCalloutAfter!.dataset.readerRecordCalloutCollapsed).toBe("false");
+  });
+
+  it("grammar_note revision with same topology: non-target blockquote DOM identity preserved", async () => {
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeLayerRevisionSnapshot(prevSnapshot, {
+      grammarNote: "shapes is the predicate verb. (revised note v2)",
+    });
+    const event = makeValidLayerPublishedEvent("grammar_note");
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Capture non-target DOM reference (translation blockquote).
+    const blockquoteBefore = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteBefore).not.toBeNull();
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContextLayer([event])}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    // Non-target DOM identity preserved (targeted_apply used replaceNodes).
+    const blockquoteAfter = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteAfter).not.toBeNull();
+    expect(blockquoteBefore!.isSameNode(blockquoteAfter)).toBe(true);
+  });
+
+  it("translation revision with same topology: targeted_apply replaces blockquote, paragraph DOM identity preserved", async () => {
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeLayerRevisionSnapshot(prevSnapshot, {
+      translationText: "制度记忆塑造政策选择。(修订版)",
+    });
+    const event = makeValidLayerPublishedEvent("translation");
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Capture paragraph DOM reference (non-target — translation revision
+    // changes the blockquote, not the paragraph).
+    const paragraphBefore = container.querySelector(
+      '[data-reader-record-node="paragraph"]',
+    );
+    expect(paragraphBefore).not.toBeNull();
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContextLayer([event])}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    // Non-target paragraph DOM identity preserved.
+    const paragraphAfter = container.querySelector(
+      '[data-reader-record-node="paragraph"]',
+    );
+    expect(paragraphAfter).not.toBeNull();
+    expect(paragraphBefore!.isSameNode(paragraphAfter)).toBe(true);
+
+    // Target blockquote content was updated.
+    const blockquoteAfter = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteAfter).not.toBeNull();
+    expect(blockquoteAfter!.textContent).toContain("修订版");
+  });
+
+  it("translation revision with same topology: opens Quick Peek then targeted_apply on translation does not close Quick Peek (sibling paragraph anchor)", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(makeDictionaryEntryResult("memory")), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeLayerRevisionSnapshot(prevSnapshot, {
+      translationText: "制度记忆塑造政策选择。(修订版)",
+    });
+    const event = makeValidLayerPublishedEvent("translation");
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Open Quick Peek anchored on the paragraph (vocab mark "memory").
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) throw new Error("Expected memory vocabulary mark");
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+    const lookupButton = await waitForSelectionAction(container, "lookup");
+    fireEvent.click(lookupButton);
+
+    const quickPeekBefore = await screen.findByTestId(
+      "reader-record-plate-lookup-panel",
+    );
+    expect(within(quickPeekBefore).getByText("memory")).toBeTruthy();
+
+    // Apply translation revision (target is blockquote, NOT the paragraph
+    // that anchors Quick Peek).
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContextLayer([event])}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    // Quick Peek anchored on paragraph: targeted_apply on blockquote does NOT
+    // close Quick Peek (paragraph block_id !== "paragraph:..." being replaced).
+    // Per R2.1E contract: only target paragraph replacement closes Quick Peek.
+    // Translation revision targets blockquote → Quick Peek should stay open.
+    await waitFor(() => {
+      const panel = screen.queryByTestId("reader-record-plate-lookup-panel");
+      // Quick Peek should still be visible (paragraph anchor not replaced).
+      expect(panel).not.toBeNull();
+    });
+  });
+
+  it("vocabulary revision with same topology: targeted_apply on paragraph closes Quick Peek (target paragraph replacement)", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(makeDictionaryEntryResult("memory")), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const prevSnapshot = makeSnapshot();
+    // vocabulary revision changes the projected paragraph (mark data), but
+    // block_id sequence stays identical. Make a slight change to vocabulary
+    // gloss so the projected paragraph content differs.
+    const nextUnit = makeUnit({
+      vocabularyMarks: [
+        makeVocabularyMark({ gloss: "记忆 (修订)" }),
+      ],
+    });
+    const nextSnapshot: ReaderPlateSnapshotDto = {
+      ...prevSnapshot,
+      snapshot_id: "snapshot_vocab_revision",
+      last_event_sequence: 9,
+      value: [nextUnit],
+    };
+    const event = makeValidLayerPublishedEvent("vocabulary");
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Open Quick Peek anchored on the paragraph (vocab mark "memory").
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) throw new Error("Expected memory vocabulary mark");
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+    const lookupButton = await waitForSelectionAction(container, "lookup");
+    fireEvent.click(lookupButton);
+
+    const quickPeekBefore = await screen.findByTestId(
+      "reader-record-plate-lookup-panel",
+    );
+    expect(within(quickPeekBefore).getByText("memory")).toBeTruthy();
+
+    // Apply vocabulary revision (target IS the paragraph that anchors QP).
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContextLayer([event])}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    // Quick Peek anchored on target paragraph → must be closed deterministically.
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("reader-record-plate-lookup-panel"),
+      ).toBeNull();
+    });
+    expect(quickPeekBefore.isConnected).toBe(false);
+  });
+
+  it("structural change (new sentence_analysis block): fallback_full_reload via setValue", async () => {
+    const prevSnapshot = makeSnapshot();
+    // Add a new sentence_analysis block to nextSnapshot — structural change.
+    const nextUnit = makeUnit({
+      analysisChunks: [
+        { order: 1, label: "subject", text: "Institutional memory" },
+        { order: 2, label: "predicate", text: "shapes" },
+      ],
+    });
+    // Add a SECOND sentence_analysis node to make it a true structural change.
+    const nextUnitWithExtra: ReaderUnitNodeDto = {
+      ...nextUnit,
+      children: [
+        ...nextUnit.children,
+        {
+          type: "reader_sentence_analysis",
+          owner: "system_ai",
+          analysis_id: "analysis_2",
+          layer_id: "layer_sentence_analysis_2",
+          layer_version: 1,
+          base_id: "base_1",
+          unit_id: "unit_1",
+          target_scope: "unit",
+          target_key: "unit_1",
+          anchor_segment_id: "seg_1",
+          selected_text: SOURCE_TEXT,
+          label: "second analysis",
+          analysis: "Second analysis text.",
+          chunks: [{ order: 1, label: "whole", text: SOURCE_TEXT }],
+          children: [{ text: "Second analysis text." }],
+        },
+      ],
+    };
+    const nextSnapshot: ReaderPlateSnapshotDto = {
+      ...prevSnapshot,
+      snapshot_id: "snapshot_structural_change",
+      last_event_sequence: 9,
+      value: [nextUnitWithExtra],
+    };
+    const event = makeValidLayerPublishedEvent("sentence_analysis");
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Capture non-target DOM reference (translation blockquote).
+    const blockquoteBefore = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteBefore).not.toBeNull();
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContextLayer([event])}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    // Structural change → fallback_full_reload → setValue rebuilds all DOM.
+    // Non-target DOM identity NOT preserved.
+    const blockquoteAfter = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteAfter).not.toBeNull();
+    expect(blockquoteBefore!.isSameNode(blockquoteAfter)).toBe(false);
+  });
+
+  it("invalid layer_published payload: fallback_full_reload via setValue", async () => {
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeLayerRevisionSnapshot(prevSnapshot, {
+      translationText: "制度记忆塑造政策选择。(修订版)",
+    });
+    // Invalid payload: missing required fields.
+    const event: ReaderEventResponseDto = {
+      id: "evt_9",
+      reading_record_id: "record_1",
+      sequence: 9,
+      event_type: "layer_published",
+      payload: { layer_type: "translation" },
+      created_at: "2026-06-24T02:00:00Z",
+    };
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    const blockquoteBefore = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteBefore).not.toBeNull();
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContextLayer([event])}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    // Invalid payload → fallback_full_reload → setValue rebuilds all DOM.
+    const blockquoteAfter = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteAfter).not.toBeNull();
+    expect(blockquoteBefore!.isSameNode(blockquoteAfter)).toBe(false);
+  });
+
+  it("mixed batch (layer_published + projection_ops): fallback_full_reload via setValue", async () => {
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeLayerRevisionSnapshot(prevSnapshot, {
+      translationText: "制度记忆塑造政策选择。(修订版)",
+    });
+    const layerEvent = makeValidLayerPublishedEvent("translation");
+    const g1Event: ReaderEventResponseDto = {
+      id: "evt_10",
+      reading_record_id: "record_1",
+      sequence: 10,
+      event_type: "projection_ops",
+      payload: {
+        schema_version: 1,
+        representation_section: "user_assets",
+        operation: "upsert",
+        target_keys: ["asset_1"],
+        generation: 1,
+        base_id: "base_1",
+      },
+      created_at: "2026-06-24T02:00:00Z",
+    };
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    const blockquoteBefore = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteBefore).not.toBeNull();
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContextLayer([layerEvent, g1Event])}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    // Mixed batch → fallback_full_reload → setValue rebuilds all DOM.
+    const blockquoteAfter = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteAfter).not.toBeNull();
+    expect(blockquoteBefore!.isSameNode(blockquoteAfter)).toBe(false);
+  });
+});
