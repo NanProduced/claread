@@ -138,6 +138,11 @@ import type {
   ReaderAskFollowUpSuggestionDto,
   ReaderAskUiMessageDto,
 } from "@/types/api/reader-ask";
+import {
+  isReaderAskAgenticEvidenceList,
+  isReaderAskAgenticFinalStatus,
+  READER_ASK_AGENTIC_EXECUTION_VERSION,
+} from "@/types/api/reader-ask";
 import { projectAgenticEvidenceForDisplay } from "./ask/agentic-evidence";
 import {
   consumeReaderAskSse,
@@ -1633,6 +1638,12 @@ function hasRenderableArticleRagCitations(
  * always the UI-safe projection, regardless of whether the message
  * arrived via SSE `message.completed`, thread-detail fetch, or reset.
  *
+ * Reading Record Agentic history (execution_version =
+ * reader_record_ask_agentic_v1) is handled here as well: validated
+ * `agentic_evidence` is copied into UI state, legacy `article_rag` is
+ * forced null, and terminal reloads keep the backend status without
+ * inventing answers or firing stream-only onError side effects.
+ *
  * The SSE merge path already calls the mapper inline; this helper covers
  * the cold-load / reset paths that bypass streaming. The mapper is
  * idempotent — it only reads `status` / `should_attach` / `context_ids`
@@ -1644,14 +1655,49 @@ function normalizeReaderAskMessages(
 ): ReaderAskUiMessageDto[] {
   return messages.map((message) => {
     const uiState = message as Partial<ReaderAskMessageUiStateDto>;
+    const isAgenticHistory =
+      message.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION;
+
+    if (!isAgenticHistory) {
+      // Legacy RR / Analysis Ask: preserve article_rag normalization only.
+      // Missing agentic fields (response_model_exclude_none) must not be
+      // treated as agentic.
+      return {
+        ...message,
+        article_rag: mapAskArticleRagSidecar(
+          (uiState.article_rag ?? null) as Parameters<typeof mapAskArticleRagSidecar>[0],
+        ),
+        // Clear any accidental agentic UI state from a prior session.
+        agentic_evidence: null,
+      } as ReaderAskUiMessageDto;
+    }
+
+    // Agentic history: fail closed on evidence — never keep raw invalid payload.
+    const agenticEvidence = isReaderAskAgenticEvidenceList(message.agentic_evidence)
+      ? message.agentic_evidence
+      : null;
+    const finalStatus = isReaderAskAgenticFinalStatus(message.final_status)
+      ? message.final_status
+      : null;
+
     return {
       ...message,
-      article_rag: mapAskArticleRagSidecar(
-        (uiState.article_rag ?? null) as Parameters<typeof mapAskArticleRagSidecar>[0],
-      ),
+      // Backend already projected content_md / status for completed & terminal.
+      // Never invent answers for terminals; keep content_md as returned.
+      execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+      final_status: finalStatus,
+      // Strict guard only; invalid list → null (not raw).
+      agentic_evidence: agenticEvidence,
+      // Agentic path must not carry legacy article_rag sidecar.
+      article_rag: null,
+      // Never surface agentic items through the legacy evidence channel.
+      evidence: [],
     } as ReaderAskUiMessageDto;
   });
 }
+
+/** Exported for unit tests of cold-load normalization. */
+export { normalizeReaderAskMessages };
 
 function buildAssistantBlocks(message: ReaderAskUiMessageDto): AskPanelBlock[] {
   const blocks: AskPanelBlock[] = [];

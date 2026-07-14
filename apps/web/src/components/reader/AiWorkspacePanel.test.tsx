@@ -12,6 +12,7 @@ import { consumeReaderAskSse } from "./ask/sse";
 import {
   AiWorkspacePanel,
   createSseMessageHandler,
+  normalizeReaderAskMessages,
   type AiWorkspacePanelProps,
 } from "./AiWorkspacePanel";
 
@@ -4066,5 +4067,280 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("agentic-evidence-disclosure")).toBeNull();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeReaderAskMessages – Agentic history cold reload
+// ---------------------------------------------------------------------------
+
+describe("normalizeReaderAskMessages – agentic history cold reload", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  const searchHitEvidence = [
+    {
+      handle_id: "evh_aabbccddeeff00112233445566778899",
+      kind: "search_hit" as const,
+      source_tool: "search_current_article",
+      snippet: "climate change impacts",
+      unit_id: "u1",
+      anchor_segment_id: "s1",
+      rag_citation: {
+        rag_substrate_id: "substrate-secret",
+        index_run_id: "index-run-secret",
+        index_version: "v1",
+        plan_content_sha256: "plan-sha-secret",
+        source_scope: "main_reading_text" as const,
+        block_type: "paragraph",
+        chunk_id: "chunk-1",
+        content_sha256: "content-sha-secret",
+        canonical_text_start_utf16: 10,
+        canonical_text_end_utf16: 42,
+        snippet: "climate change impacts",
+        score: 0.91,
+        stable_document_id: "doc-stable-secret",
+        base_id: "base-secret",
+        record_generation: 1,
+        block_ids: ["b1"],
+        unit_ids: ["u1"],
+        anchor_segment_ids: ["s1"],
+      },
+    },
+  ];
+
+  it("maps agentic completed history into agentic_evidence and clears article_rag", () => {
+    const [normalized] = normalizeReaderAskMessages([
+      createAssistantMessage({
+        id: "msg-history-1",
+        content_md: "Climate change is discussed in paragraph 2.",
+        status: "completed",
+        execution_version: "reader_record_ask_agentic_v1",
+        final_status: "ok",
+        agentic_evidence: searchHitEvidence,
+        evidence: [],
+        article_rag: {
+          status: "available",
+          should_attach: true,
+          context_ids: ["ctx"],
+          citations: [],
+        },
+      }),
+    ]);
+
+    expect(normalized.content_md).toBe("Climate change is discussed in paragraph 2.");
+    expect(normalized.status).toBe("completed");
+    expect(normalized.execution_version).toBe("reader_record_ask_agentic_v1");
+    expect(normalized.final_status).toBe("ok");
+    expect(normalized.agentic_evidence).toEqual(searchHitEvidence);
+    expect(normalized.article_rag).toBeNull();
+    expect(normalized.evidence).toEqual([]);
+  });
+
+  it("keeps terminal history without inventing answers or evidence", () => {
+    for (const status of ["failed", "interrupted"] as const) {
+      const finalStatus = status === "failed" ? "failed" : "context_stale";
+      const [normalized] = normalizeReaderAskMessages([
+        createAssistantMessage({
+          id: `msg-terminal-${status}`,
+          content_md: "",
+          status,
+          execution_version: "reader_record_ask_agentic_v1",
+          final_status: finalStatus,
+          agentic_evidence: null,
+          evidence: [],
+        }),
+      ]);
+
+      expect(normalized.status).toBe(status);
+      expect(normalized.content_md).toBe("");
+      expect(normalized.final_status).toBe(finalStatus);
+      expect(normalized.agentic_evidence).toBeNull();
+      expect(normalized.article_rag).toBeNull();
+      expect(normalized.evidence).toEqual([]);
+    }
+  });
+
+  it("preserves legacy article_rag normalization when execution_version is absent", () => {
+    const rawSidecar = {
+      status: "available",
+      failure_code: "internal_error",
+      retryable: true,
+      fallback_allowed: false,
+      should_attach: true,
+      context_ids: ["ctx_1"],
+      source_pack_hash: "pack_hash_secret",
+      query_sha256: "query_hash_secret",
+      citations: [
+        {
+          context_id: "ctx_1",
+          chunk_id: "chunk_1",
+          citation: {
+            reading_record_id: "record-1",
+            stable_document_id: "sd-1",
+            base_id: "base-1",
+            record_generation: 3,
+            block_ids: ["block-1"],
+            unit_ids: ["unit-1"],
+            anchor_segment_ids: ["seg-1"],
+            canonical_text_start_utf16: 0,
+            canonical_text_end_utf16: 100,
+          },
+        },
+      ],
+    };
+
+    const [normalized] = normalizeReaderAskMessages([
+      createAssistantMessage({
+        // No execution_version → legacy path (exclude_none).
+        article_rag: rawSidecar as unknown as ReaderAskArticleRagSidecarSafeDto,
+        evidence: [
+          {
+            kind: "citation",
+            label: "legacy cite",
+            detail: "from legacy path",
+            scope: "current_record",
+            metadata_json: {},
+          },
+        ],
+      }),
+    ]);
+
+    expect(normalized.execution_version ?? null).toBeNull();
+    expect(normalized.agentic_evidence).toBeNull();
+    expect(normalized.article_rag?.status).toBe("available");
+    expect(normalized.article_rag?.should_attach).toBe(true);
+    expect(normalized.article_rag?.citations).toHaveLength(1);
+    // Debug-only fields must not survive into UI-safe sidecar.
+    expect(normalized.article_rag).not.toHaveProperty("failure_code");
+    expect(normalized.article_rag).not.toHaveProperty("source_pack_hash");
+    expect(normalized.evidence).toHaveLength(1);
+    expect(normalized.evidence[0].kind).toBe("citation");
+  });
+
+  it("fails closed on invalid agentic evidence and forged execution_version", () => {
+    const [invalidEvidence] = normalizeReaderAskMessages([
+      createAssistantMessage({
+        content_md: "answer",
+        execution_version: "reader_record_ask_agentic_v1",
+        final_status: "ok",
+        agentic_evidence: [{ not: "valid" }] as unknown as ReaderAskUiMessageDto["agentic_evidence"],
+      }),
+    ]);
+    expect(invalidEvidence.agentic_evidence).toBeNull();
+    expect(invalidEvidence.article_rag).toBeNull();
+    expect(invalidEvidence.evidence).toEqual([]);
+
+    const [forgedVersion] = normalizeReaderAskMessages([
+      createAssistantMessage({
+        content_md: "answer",
+        execution_version: "not-a-real-version" as unknown as "reader_record_ask_agentic_v1",
+        final_status: "ok",
+        agentic_evidence: searchHitEvidence,
+        article_rag: {
+          status: "available",
+          should_attach: true,
+          context_ids: [],
+          citations: [],
+        },
+      }),
+    ]);
+    // Forged version is not exact v1 → legacy path; agentic_evidence cleared.
+    expect(forgedVersion.agentic_evidence).toBeNull();
+    // Legacy article_rag mapping still runs.
+    expect(forgedVersion.article_rag).not.toBeNull();
+  });
+
+  it("renders agentic evidence disclosure from reloaded history without leaking internals", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+
+    mockThreadMessages([
+      createAssistantMessage({
+        id: "msg-history-1",
+        content_md: "Climate change is discussed in paragraph 2.",
+        status: "completed",
+        execution_version: "reader_record_ask_agentic_v1",
+        final_status: "ok",
+        agentic_evidence: searchHitEvidence,
+        evidence: [],
+        article_rag: null,
+      }),
+    ]);
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("Climate change is discussed in paragraph 2.")).not.toBeNull();
+    });
+
+    expect(screen.getByTestId("agentic-evidence-disclosure")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "依据" }));
+    expect(screen.getAllByText("文章检索").length).toBeGreaterThan(0);
+    expect(screen.getByText("climate change impacts")).not.toBeNull();
+    expect(screen.getByText("来自当前文章检索")).not.toBeNull();
+
+    const text = container.textContent ?? "";
+    for (const forbidden of [
+      "substrate-secret",
+      "index-run-secret",
+      "plan-sha-secret",
+      "content-sha-secret",
+      "doc-stable-secret",
+      "base-secret",
+      "0.91",
+      "rag_substrate_id",
+      "envelope_fingerprint",
+    ]) {
+      expect(text).not.toContain(forbidden);
+    }
+  });
+
+  it("reloads terminal history without error banners or evidence disclosure", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+
+    mockThreadMessages([
+      createAssistantMessage({
+        id: "msg-stale-1",
+        content_md: "",
+        status: "interrupted",
+        execution_version: "reader_record_ask_agentic_v1",
+        final_status: "context_stale",
+        agentic_evidence: null,
+        evidence: [],
+      }),
+    ]);
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    expect(screen.queryByTestId("agentic-evidence-disclosure")).toBeNull();
+    // No pseudo answer body from empty content_md.
+    expect(screen.queryByText("Climate change is discussed in paragraph 2.")).toBeNull();
+    // Terminal reload must not surface stream onError copy.
+    expect(screen.queryByText(/Ask Claread 暂时不可用/)).toBeNull();
+    expect(screen.queryByText(/阅读上下文已更新/)).toBeNull();
   });
 });

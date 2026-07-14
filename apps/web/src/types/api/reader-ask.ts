@@ -463,6 +463,20 @@ export interface ReaderAskMessageDto {
   reasoning_status?: "idle" | "streaming" | "completed" | null;
   follow_up_suggestions?: ReaderAskFollowUpSuggestionDto[] | null;
   usage_event_id?: string | null;
+  /**
+   * Reading Record Agentic history only. Present on RR thread-detail when
+   * the current turn_run.execution_version is reader_record_ask_agentic_v1.
+   * Absent (exclude_none) for legacy RR / Analysis Ask messages — do not
+   * treat missing fields as agentic.
+   */
+  execution_version?: ReaderAskAgenticExecutionVersionDto | null;
+  /** Agentic finalizer status from history projection; absent on legacy. */
+  final_status?: ReaderAskAgenticFinalStatusDto | null;
+  /**
+   * Wire agentic evidence from RR history DTO. Cold-load maps this into UI
+   * state only after strict guard validation. Not present on legacy messages.
+   */
+  agentic_evidence?: ReaderAskAgenticEvidenceItemDto[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -845,7 +859,7 @@ function isReaderAskAgenticRagCitation(
   );
 }
 
-function isReaderAskAgenticEvidenceItem(
+export function isReaderAskAgenticEvidenceItem(
   value: unknown,
 ): value is ReaderAskAgenticEvidenceItemDto {
   if (!value || typeof value !== "object") {
@@ -866,6 +880,25 @@ function isReaderAskAgenticEvidenceItem(
   return isReaderAskAgenticRagCitation(item.rag_citation);
 }
 
+/** Strict list guard for RR history / completed agentic evidence arrays. */
+export function isReaderAskAgenticEvidenceList(
+  value: unknown,
+): value is ReaderAskAgenticEvidenceItemDto[] {
+  return Array.isArray(value) && value.every(isReaderAskAgenticEvidenceItem);
+}
+
+export function isReaderAskAgenticFinalStatus(
+  value: unknown,
+): value is ReaderAskAgenticFinalStatusDto {
+  return (
+    value === "ok" ||
+    value === "context_stale" ||
+    value === "invalid_citations" ||
+    value === "failed" ||
+    value === "cancelled"
+  );
+}
+
 export function isReaderAskAgenticCompletedPayload(
   data: unknown,
 ): data is ReaderAskAgenticCompletedPayloadDto {
@@ -881,8 +914,7 @@ export function isReaderAskAgenticCompletedPayload(
     typeof payload.thread_id === "string" &&
     typeof payload.turn_run_id === "string" &&
     typeof payload.envelope_fingerprint === "string" &&
-    Array.isArray(payload.evidence) &&
-    payload.evidence.every(isReaderAskAgenticEvidenceItem)
+    isReaderAskAgenticEvidenceList(payload.evidence)
   );
 }
 
