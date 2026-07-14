@@ -2,7 +2,6 @@
 
 import {
   BookMarked,
-  Clock3,
   ExternalLink,
   FileText,
   Library,
@@ -39,7 +38,9 @@ import { formatShortcut } from "@/lib/shortcuts";
 import { NotificationCenterTrigger } from "@/components/primitives/notification-center";
 import { useCommandPalette } from "../command-palette";
 import { cn } from "@/lib/cn";
+import { readingRecordStatusKey, readingRecordStatusLabel, shouldShowStatusLine } from "@/lib/reader-record-status";
 import type { AppShellVariant, AppSidebarMode } from "../app-shell/app-shell-context";
+import type { ReadingRecordListItemVm } from "@/services/bff/reading-records";
 
 const newReadItem = { href: appReadRoute, label: "新解读", icon: Plus } as const;
 
@@ -70,6 +71,7 @@ export interface SidebarRailProps {
   userName?: string;
   userContact?: string;
   userPlanLabel?: string;
+  recentRecords?: ReadingRecordListItemVm[];
 }
 
 export function SidebarRail({
@@ -83,6 +85,7 @@ export function SidebarRail({
   userName: userNameProp,
   userContact: userContactProp,
   userPlanLabel: userPlanLabelProp,
+  recentRecords = [],
 }: SidebarRailProps) {
   const router = useRouter();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -101,6 +104,10 @@ export function SidebarRail({
   const userContact = userContactProp?.trim();
   const userPlanLabel = userPlanLabelProp?.trim() || fallbackUserPlan;
   const userInitial = userName.trim().slice(0, 1).toUpperCase() || "C";
+  const recentList = recentRecords.slice(0, 10);
+  const currentRecordId = readerRecordActive
+    ? (pathname.split("/").pop() ?? null)
+    : null;
 
   async function handleLogout() {
     if (logoutPending) {
@@ -233,37 +240,77 @@ export function SidebarRail({
           <nav className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="阅读导航">
             <div className="px-2 text-[0.6875rem] font-medium leading-5 text-subtle">最近阅读</div>
             <div className="mt-1 min-h-0 flex-1 overflow-y-auto pr-0.5 [scrollbar-color:color-mix(in_srgb,var(--muted)_34%,transparent)_transparent] [scrollbar-width:thin]">
-              {readerRecordActive ? (
-                <Link
-                  href={pathname as Route}
-                  className={cn(navItemClassName(true), "items-start py-1.5")}
-                  aria-current="page"
-                >
-                  <FileText
-                    aria-hidden="true"
-                    className="mt-0.5 h-4 w-4 shrink-0 text-ink"
-                    strokeWidth={2.25}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">当前解析页</span>
-                    <span className="block truncate text-[0.6875rem] font-normal text-subtle">
-                      正在阅读
-                    </span>
-                  </span>
-                </Link>
+              {recentList.length === 0 ? (
+                <div className="flex flex-col gap-2 px-1 py-3 text-[0.78rem] leading-5 text-subtle">
+                  <span>打开一篇文章后会显示在这里。</span>
+                  <Link
+                    href={appLibraryRoute}
+                    className="focus-ring inline-flex items-center gap-1 self-start rounded-[6px] px-2 py-1 text-[0.78rem] font-semibold text-muted hover:bg-[var(--app-control-quiet)] hover:text-ink"
+                  >
+                    阅读记录
+                  </Link>
+                </div>
               ) : (
-                <Link
-                  href={appLibraryRoute}
-                  className="focus-ring flex min-h-10 items-start gap-2 rounded-[7px] px-2 py-1.5 text-[0.8125rem] font-medium text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink"
-                >
-                  <Clock3 aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span className="min-w-0">
-                    <span className="block truncate">打开阅读记录</span>
-                    <span className="block text-[0.6875rem] font-normal text-subtle">
-                      继续上次读过的文章
-                    </span>
-                  </span>
-                </Link>
+                <ul className="flex flex-col gap-0.5">
+                  {recentList.map((record) => {
+                    const isCurrent = record.readingRecordId === currentRecordId;
+                    const statusKey = readingRecordStatusKey(record.productState, record.readinessState);
+                    const status = shouldShowStatusLine(statusKey) ? readingRecordStatusLabel(statusKey) : null;
+                    const needsConfirmation = record.productState === 'needs_confirmation';
+                    return (
+                      <li key={record.readingRecordId}>
+                        {needsConfirmation ? (
+                          <div
+                            className={cn(navItemClassName(isCurrent), "items-start py-1.5 cursor-default")}
+                            aria-disabled="true"
+                          >
+                            <FileText
+                              aria-hidden="true"
+                              className={cn("mt-0.5 h-4 w-4 shrink-0", isCurrent ? "text-ink" : "text-muted")}
+                              strokeWidth={isCurrent ? 2.25 : 2}
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate font-semibold">{record.title}</span>
+                              {status ? (
+                                <span className="block truncate text-[0.6875rem] font-normal text-subtle">
+                                  {status}
+                                </span>
+                              ) : null}
+                            </span>
+                          </div>
+                        ) : (
+                          <Link
+                            href={record.readerUrl as Route}
+                            className={cn(navItemClassName(isCurrent), "items-start py-1.5")}
+                            aria-current={isCurrent ? "page" : undefined}
+                          >
+                            <FileText
+                              aria-hidden="true"
+                              className={cn("mt-0.5 h-4 w-4 shrink-0", isCurrent ? "text-ink" : "text-muted group-hover:text-ink")}
+                              strokeWidth={isCurrent ? 2.25 : 2}
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate font-semibold">{record.title}</span>
+                              {status ? (
+                                <span className="block truncate text-[0.6875rem] font-normal text-subtle">
+                                  {status}
+                                </span>
+                              ) : null}
+                            </span>
+                          </Link>
+                        )}
+                      </li>
+                    );
+                  })}
+                  <li>
+                    <Link
+                      href={appLibraryRoute}
+                      className="focus-ring flex min-h-8 items-center gap-2 rounded-[6px] px-2 text-[0.78rem] font-medium text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink"
+                    >
+                      更多
+                    </Link>
+                  </li>
+                </ul>
               )}
             </div>
 

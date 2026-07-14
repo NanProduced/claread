@@ -6,6 +6,7 @@ import { useCallback, useMemo, useState } from "react";
 import { SidebarRail } from "../sidebar-rail";
 import { CommandPaletteProvider } from "../command-palette";
 import { ReadingRecordActivityIndicator } from "../reading-record-activity-indicator";
+import { useRecentReading } from "../recent-reading-context";
 import {
   AppShellLayoutContext,
   type AppShellVariant,
@@ -30,6 +31,7 @@ export function AppShell({
   userPlanLabel,
 }: AppShellProps) {
   const pathname = usePathname();
+  const { items: recentRecords } = useRecentReading();
   const variant = variantProp ?? "workspace";
   const isWorkspaceShell = variant === "workspace";
   const [sidebarMode, setSidebarMode] = useState<AppSidebarMode>("closed");
@@ -99,6 +101,7 @@ export function AppShell({
         <SidebarRail
           pathname={pathname}
           variant={variant}
+          recentRecords={recentRecords}
           sidebarMode={sidebarMode}
           onSidebarOverlayOpen={showSidebarOverlay}
           onSidebarOverlayClose={hideSidebarOverlay}

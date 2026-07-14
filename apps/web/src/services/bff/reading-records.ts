@@ -30,6 +30,7 @@ export interface ReadingRecordListItemVm {
   productState: ReadingRecordProductState;
   readinessState: ReadingRecordReadinessState;
   lastEventSequence: number;
+  lastOpenedAt: string | null;
 }
 
 export type ReadingRecordListResult =
@@ -115,6 +116,7 @@ export async function getReadingRecordListFromWeb(
       productState: item.product_state,
       readinessState: item.readiness_state,
       lastEventSequence: item.last_event_sequence,
+      lastOpenedAt: item.last_opened_at,
     })),
     total: data.total,
     limit: data.limit,

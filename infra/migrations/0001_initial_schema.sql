@@ -734,6 +734,7 @@ CREATE TABLE reading_records (
   active_base_id UUID,
   superseded_by_record_id UUID REFERENCES reading_records(id) ON DELETE SET NULL,
   deleted_at TIMESTAMPTZ,
+  last_opened_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -745,6 +746,9 @@ CREATE INDEX idx_reading_records_user_updated_at
   ON reading_records(user_id, updated_at DESC);
 CREATE INDEX idx_reading_records_user_product_state_updated_at
   ON reading_records(user_id, product_state, updated_at DESC);
+CREATE INDEX idx_reading_records_user_last_opened_at
+  ON reading_records(user_id, last_opened_at DESC NULLS LAST, created_at DESC, id DESC)
+  WHERE deleted_at IS NULL;
 
 CREATE TABLE original_inputs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

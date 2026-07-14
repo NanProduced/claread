@@ -37,6 +37,7 @@ function makeListResponse(): ReadingRecordListResponseDto {
         product_state: "readable_enhancing",
         readiness_state: "article_ready",
         last_event_sequence: 3,
+        last_opened_at: "2026-06-22T10:00:00Z",
       },
       {
         record_id: "reading_record_2",
@@ -47,6 +48,7 @@ function makeListResponse(): ReadingRecordListResponseDto {
         product_state: "processing",
         readiness_state: "submitted",
         last_event_sequence: 1,
+        last_opened_at: null,
       },
     ],
     total: 2,
@@ -148,6 +150,8 @@ describe("reading-records BFF list", () => {
       expect(second.readerUrl).toBe(appReadingRecordRoute("reading_record_2"));
       expect(second.title).toBe("未命名解读");
       expect(second.productState).toBe("processing");
+      expect(second.lastOpenedAt).toBeNull();
+      expect(first.lastOpenedAt).toBe("2026-06-22T10:00:00Z");
     }
 
     expect(vi.mocked(listUpstreamReadingRecords).mock.calls[0]).toEqual([
@@ -186,5 +190,33 @@ describe("reading-records BFF list", () => {
     expect(source).not.toContain("legacyAppReaderRoute");
     expect(source).not.toContain("/app/reader/");
     expect(source).not.toContain("analysis-tasks");
+  });
+
+  it("does not impersonate lastOpenedAt from updatedAt/createdAt/lastEventSequence", async () => {
+    vi.mocked(listUpstreamReadingRecords).mockResolvedValue({
+      ok: true,
+      data: {
+        items: [
+          {
+            record_id: "reading_record_x",
+            title: "X",
+            created_at: "2026-06-20T00:00:00Z",
+            source_type: "text",
+            source_metadata: {},
+            product_state: "processing",
+            readiness_state: "submitted",
+            last_event_sequence: 5,
+            last_opened_at: null,
+          },
+        ],
+        total: 1,
+        limit: 20,
+      },
+    });
+    const result = await getReadingRecordListFromWeb();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.items[0].lastOpenedAt).toBeNull();
+    }
   });
 });

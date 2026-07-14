@@ -25,6 +25,30 @@ vi.mock("../reading-record-activity-indicator", () => ({
   ReadingRecordActivityIndicator: () => null,
 }));
 
+vi.mock("../recent-reading-context", () => ({
+  useRecentReading: () => ({
+    items: [
+      {
+        readingRecordId: "record_1",
+        title: "文章标题一",
+        productState: "needs_confirmation",
+        readerUrl: "/app/reader-record/record_1",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+      {
+        readingRecordId: "record_2",
+        title: "文章标题二",
+        productState: "completed",
+        readerUrl: "/app/reader-record/record_2",
+        createdAt: "2024-01-02T00:00:00.000Z",
+        updatedAt: "2024-01-02T00:00:00.000Z",
+      },
+    ],
+    refetch: vi.fn(),
+  }),
+}));
+
 afterEach(() => {
   cleanup();
   navigationMock.push.mockReset();
@@ -64,7 +88,11 @@ describe("AppShell", () => {
     expect(sidebar?.className).toContain("pointer-events-none");
     expect(sidebar?.style.zIndex).toBe("var(--app-z-shell-navigation)");
     expect(screen.getByText("最近阅读")).not.toBeNull();
-    expect(screen.getByText("当前解析页")).not.toBeNull();
+    expect(screen.getByText("文章标题一")).not.toBeNull();
+    expect(screen.getByText("文章标题二")).not.toBeNull();
+    // Status label for the first item (needs_confirmation)
+    expect(screen.getByText("需要确认")).not.toBeNull();
+    expect(screen.queryByText("打开一篇文章后会显示在这里。")).toBeNull();
     expect(screen.getAllByText("Claread")).toHaveLength(2);
     expect(screen.getAllByText("新解读")).toHaveLength(2);
     expect(screen.getByText("阅读资产")).not.toBeNull();
@@ -128,7 +156,8 @@ describe("AppShell", () => {
       "w-[var(--app-shell-sidebar-width-locked)]",
     );
     expect(screen.getByText("阅读资产")).not.toBeNull();
-    expect(screen.getByText("打开阅读记录")).not.toBeNull();
+    expect(screen.getByText("文章标题一")).not.toBeNull();
+    expect(screen.getByText("文章标题二")).not.toBeNull();
 
     fireEvent.pointerEnter(screen.getByRole("button", { name: "打开导航" }));
 

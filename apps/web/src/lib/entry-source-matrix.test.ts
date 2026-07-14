@@ -90,13 +90,13 @@ describe("entry source matrix - Track D convergence", () => {
     expect(submitModeSource).not.toContain("/api/web/reading-record/submit");
   });
 
-  it("the merged activity indicator uses Reading Records first and keeps explicit legacy fallback wiring", () => {
+  it("the merged activity indicator stays legacy-only (new chain has no fixed overlay)", () => {
     const source = readSource(
       "src/components/layout/reading-record-activity-indicator.tsx",
     );
 
-    expect(source).toContain("/api/web/reading-records");
-    expect(source).toContain("productState");
+    expect(source).not.toContain("/api/web/reading-records");
+    expect(source).not.toContain("productState");
     expect(source).toContain("fetchCurrentAnalysisTask");
     expect(source).toContain("fetchAnalysisTaskStatus");
     expect(source).toContain("legacyAppReaderRoute");

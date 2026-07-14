@@ -1,7 +1,10 @@
 import "server-only";
 
 import { fastApiFetch, type UpstreamResult } from "@/services/api/upstream";
-import type { ReadingRecordListResponseDto } from "@/types/api/reading-records";
+import type {
+  ReaderRecordOpenedResponseDto,
+  ReadingRecordListResponseDto,
+} from "@/types/api/reading-records";
 
 /**
  * Upstream client for the Reading Record list endpoint.
@@ -43,5 +46,15 @@ export function listUpstreamReadingRecords(
   return fastApiFetch<ReadingRecordListResponseDto>(
     `/reader/records${query ? `?${query}` : ""}`,
     { sessionToken },
+  );
+}
+
+export function markReaderRecordOpened(
+  sessionToken: string,
+  recordId: string,
+): Promise<UpstreamResult<ReaderRecordOpenedResponseDto>> {
+  return fastApiFetch<ReaderRecordOpenedResponseDto>(
+    `/reader/records/${encodeURIComponent(recordId)}/opened`,
+    { sessionToken, method: "POST" },
   );
 }

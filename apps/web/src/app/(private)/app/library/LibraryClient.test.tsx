@@ -58,6 +58,7 @@ function makeReadingRecord(
     productState: "readable_enhancing",
     readinessState: "article_ready",
     lastEventSequence: 2,
+    lastOpenedAt: null,
     ...overrides,
   };
 }

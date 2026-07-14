@@ -71,6 +71,7 @@ class ReaderRecordSummary:
     created_at: datetime
     source_metadata: dict[str, Any]
     last_event_sequence: int
+    last_opened_at: datetime | None = None
 
 
 _PROGRESS_CAPABILITIES = ("translation", "vocabulary", "grammar")
@@ -1607,6 +1608,37 @@ class ReaderOrchestrationRepository:
                 supplements.append(supplement)
         return tuple(supplements)
 
+    async def mark_record_opened(
+        self,
+        *,
+        record_id: UUID,
+        user_id: UUID,
+        opened_at: datetime,
+    ) -> datetime | None:
+        """Stamp ``reading_records.last_opened_at`` for an active, owned
+        Reading Record. Must not touch ``updated_at`` and must not write
+        ``reader_events``. Returns the new timestamp on success, or
+        ``None`` when the record does not exist, is deleted, or belongs to
+        another user.
+        """
+        pool = self.get_pool()
+        async with pool.acquire() as conn:
+            new_value = await conn.fetchval(
+                """
+                UPDATE reading_records
+                SET last_opened_at = $3
+                WHERE id = $1
+                  AND user_id = $2
+                  AND deleted_at IS NULL
+                  AND lifecycle_status = 'active'
+                RETURNING last_opened_at
+                """,
+                record_id,
+                user_id,
+                opened_at,
+            )
+        return new_value
+
     async def list_user_records(
         self,
         *,
@@ -1628,6 +1660,7 @@ class ReaderOrchestrationRepository:
                     r.product_state,
                     r.readiness_state,
                     r.created_at,
+                    r.last_opened_at,
                     COALESCE(
                         (SELECT metadata_json FROM original_inputs
                          WHERE reading_record_id = r.id
@@ -1645,7 +1678,9 @@ class ReaderOrchestrationRepository:
                   AND r.deleted_at IS NULL
                   AND ($3::text IS NULL OR COALESCE(r.title, '') ILIKE '%' || $3 || '%')
                   AND ($4::text[] IS NULL OR r.product_state::text = ANY($4::text[]))
-                ORDER BY r.created_at DESC
+                ORDER BY r.last_opened_at DESC NULLS LAST,
+                         r.created_at DESC,
+                         r.id DESC
                 LIMIT $2
                 """,
                 user_id,
@@ -1676,6 +1711,7 @@ class ReaderOrchestrationRepository:
                 created_at=row["created_at"],
                 source_metadata=ensure_json_object(row["source_metadata"]),
                 last_event_sequence=int(row["last_event_sequence"]),
+                last_opened_at=row["last_opened_at"],
             )
             for row in rows
         )

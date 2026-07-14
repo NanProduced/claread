@@ -33,10 +33,16 @@ export interface ReadingRecordListItemDto {
   product_state: ReadingRecordProductState;
   readiness_state: ReadingRecordReadinessState;
   last_event_sequence: number;
+  last_opened_at: string | null;
 }
 
 export interface ReadingRecordListResponseDto {
   items: ReadingRecordListItemDto[];
   total: number;
   limit: number;
+}
+
+export interface ReaderRecordOpenedResponseDto {
+  record_id: string;
+  last_opened_at: string;
 }

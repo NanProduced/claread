@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, get_args
 from uuid import UUID
 
@@ -37,6 +37,7 @@ from app.schemas.reader_orchestration import (
     ReaderStableDocumentResponse,
     ReaderRecordListItem,
     ReaderRecordListResponse,
+    ReaderRecordOpenedResponse,
     ReadingRecordProductState,
     ReaderArtifactPipelineArtifactSummary,
     ReaderArtifactPipelineCandidateDocument,
@@ -1046,11 +1047,37 @@ async def list_reader_records(
                 product_state=summary.product_state,
                 readiness_state=summary.readiness_state,
                 last_event_sequence=summary.last_event_sequence,
+                last_opened_at=summary.last_opened_at,
             )
             for summary in summaries
         ],
         total=total,
         limit=limit,
+    )
+
+
+@router.post(
+    "/records/{record_id}/opened",
+    response_model=ReaderRecordOpenedResponse,
+    summary="Stamp reading_records.last_opened_at when the user opens the new Reading Record page",
+)
+async def mark_reader_record_opened(
+    record_id: UUID,
+    current_user: AuthUserDep,
+) -> ReaderRecordOpenedResponse:
+    repository = ReaderOrchestrationRepository()
+    new_value = await repository.mark_record_opened(
+        record_id=record_id,
+        user_id=UUID(current_user.user_id),
+        opened_at=datetime.now(tz=timezone.utc),
+    )
+    if new_value is None:
+        raise HTTPException(
+            status_code=404, detail="Reader record not found"
+        )
+    return ReaderRecordOpenedResponse(
+        record_id=str(record_id),
+        last_opened_at=new_value,
     )
 
 

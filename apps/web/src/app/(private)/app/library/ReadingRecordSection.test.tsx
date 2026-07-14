@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { ReadingRecordListItemVm } from "@/services/bff/reading-records";
@@ -21,6 +21,7 @@ function makeReadingRecord(
     productState: "readable_enhancing",
     readinessState: "article_ready",
     lastEventSequence: 3,
+    lastOpenedAt: null,
     ...overrides,
   };
 }
@@ -117,7 +118,7 @@ describe("ReadingRecordSection", () => {
     expect(screen.queryByText("去登录")).toBeNull();
   });
 
-  it("renders items with title, date, status and readerUrl", () => {
+  it("renders items with title, date and a single user-language status", () => {
     render(
       <ReadingRecordSection
         readingRecords={[
@@ -144,13 +145,15 @@ describe("ReadingRecordSection", () => {
     expect(firstLink?.getAttribute("href")).toBe("/app/reader-record/reading_record_1");
     expect(secondLink?.getAttribute("href")).toBe("/app/reader-record/reading_record_2");
 
-    expect(screen.getByText("可读·增强中")).toBeTruthy();
-    expect(screen.getByText("文章就绪")).toBeTruthy();
-    expect(screen.getByText("处理中")).toBeTruthy();
-    expect(screen.getByText("已提交")).toBeTruthy();
+    expect(screen.getByText("可以开始阅读")).toBeTruthy();
+    expect(screen.getByText("解析中")).toBeTruthy();
+
+    expect(screen.queryByText("文章就绪")).toBeNull();
+    expect(screen.queryByText("已提交")).toBeNull();
+    expect(screen.queryByText("可读·增强中")).toBeNull();
   });
 
-  it("renders 去处理 CTA for action_required records", () => {
+  it("renders 去处理 CTA for action_required records (priority region only after P2 dedup)", () => {
     render(
       <ReadingRecordSection
         readingRecords={[
@@ -162,28 +165,61 @@ describe("ReadingRecordSection", () => {
       />,
     );
 
-    expect(screen.getByText("去处理")).toBeTruthy();
+    // P2 dedup: 1 priority item 出现在顶部 region，主列表里没有重复行
+    expect(screen.getAllByText("去处理").length).toBe(1);
 
     const link = screen.getByText("First Reading").closest("a");
     expect(link?.getAttribute("href")).toBe("/app/reader-record/reading_record_1");
   });
 
-  it("renders 去处理 CTA for needs_confirmation records", () => {
+  it("renders needs_confirmation rows as non-clickable with visible inline copy (no CTA pill)", () => {
     render(
       <ReadingRecordSection
         readingRecords={[
           makeReadingRecord({
             productState: "needs_confirmation",
           }),
+          makeReadingRecord({
+            readingRecordId: "reading_record_2",
+            readerUrl: "/app/reader-record/reading_record_2",
+            title: "Second Reading",
+            productState: "action_required",
+          }),
         ]}
         status="ready"
       />,
     );
 
-    expect(screen.getByText("去处理")).toBeTruthy();
+    // needs_confirmation 行在顶部 region 渲染 1 次；P2 dedup 后主列表中不再重复
+    const ncRow = screen.getByText("First Reading").closest("li");
+    expect(ncRow?.getAttribute("aria-disabled")).toBe("true");
+    expect(ncRow?.getAttribute("title")).toBe("请在原输入流程继续确认");
+    // needs_confirmation 行无 <a> 元素
+    expect(ncRow?.querySelector("a")).toBeNull();
+    // needs_confirmation 行无 "去处理" CTA 胶囊
+    expect(within(ncRow as HTMLElement).queryByText("去处理")).toBeNull();
+    // needs_confirmation 行包含可见行内文案（不依赖 hover）
+    expect(
+      within(ncRow as HTMLElement).getByTestId("library-needs-confirmation-note")
+        .textContent,
+    ).toContain("这篇内容需要在提交时确认后才能开始阅读");
+
+    // 顶部 region = [nc, action_required]；主列表为空
+    const region = screen.getByTestId("library-needs-attention");
+    expect(region.querySelectorAll("li").length).toBe(2);
+    // 顶部 region 内 nc 行无 "去处理" CTA
+    const ncInRegion = within(region).getByText("First Reading").closest("li");
+    expect(within(ncInRegion as HTMLElement).queryByText("去处理")).toBeNull();
+
+    // action_required 行仍可点击 + 仍有 "去处理" CTA
+    const arRow = within(region).getByText("Second Reading").closest("li");
+    expect(arRow?.querySelector("a")?.getAttribute("href")).toBe(
+      "/app/reader-record/reading_record_2",
+    );
+    expect(within(arRow as HTMLElement).getByText("去处理")).toBeTruthy();
   });
 
-  it("renders 查看详情 CTA for failed records", () => {
+  it("renders 查看详情 CTA for failed records (priority region only after P2 dedup)", () => {
     render(
       <ReadingRecordSection
         readingRecords={[
@@ -195,13 +231,13 @@ describe("ReadingRecordSection", () => {
       />,
     );
 
-    expect(screen.getByText("查看详情")).toBeTruthy();
+    expect(screen.getAllByText("查看详情").length).toBe(1);
 
     const link = screen.getByText("First Reading").closest("a");
     expect(link?.getAttribute("href")).toBe("/app/reader-record/reading_record_1");
   });
 
-  it("renders 状态未知 for unknown productState", () => {
+  it("renders 可以开始阅读 (ready_to_read fallback) for unknown productState", () => {
     render(
       <ReadingRecordSection
         readingRecords={[
@@ -213,22 +249,64 @@ describe("ReadingRecordSection", () => {
       />,
     );
 
-    expect(screen.getByText("状态未知")).toBeTruthy();
+    // Unknown productState falls into the default branch of readingRecordStatusKey,
+    // which returns "ready_to_read" → "可以开始阅读".
+    expect(screen.getByText("可以开始阅读")).toBeTruthy();
+    expect(screen.queryByText("状态未知")).toBeNull();
   });
 
-  it("renders 状态未知 for unknown readinessState", () => {
+  it("does not surface readiness_state labels", () => {
     render(
       <ReadingRecordSection
         readingRecords={[
           makeReadingRecord({
-            readinessState: "unknown_future_state" as never,
+            productState: "action_required",
+            readinessState: "coverage_complete",
           }),
         ]}
         status="ready"
       />,
     );
 
-    expect(screen.getByText("状态未知")).toBeTruthy();
+    expect(screen.queryByText("覆盖完成")).toBeNull();
+    expect(screen.queryByText("文章就绪")).toBeNull();
+    expect(screen.queryByText("候选 Base 就绪")).toBeNull();
+  });
+
+  it("shows 需要处理 region only when priority items exist and caps to 3", () => {
+    render(
+      <ReadingRecordSection
+        readingRecords={[
+          makeReadingRecord({ readingRecordId: "a", productState: "action_required" }),
+          makeReadingRecord({
+            readingRecordId: "b",
+            readerUrl: "/app/reader-record/b",
+            title: "B",
+            productState: "needs_confirmation",
+          }),
+          makeReadingRecord({
+            readingRecordId: "c",
+            readerUrl: "/app/reader-record/c",
+            title: "C",
+            productState: "failed",
+          }),
+          makeReadingRecord({
+            readingRecordId: "d",
+            readerUrl: "/app/reader-record/d",
+            title: "D",
+            productState: "readable_enhancing",
+          }),
+        ]}
+        status="ready"
+      />,
+    );
+
+    const region = screen.getByTestId("library-needs-attention");
+    expect(region).toBeTruthy();
+    expect(screen.getByText("需要处理")).toBeTruthy();
+
+    const regionItems = region.querySelectorAll("li");
+    expect(regionItems.length).toBe(3);
   });
 
   it("keeps the section source free of legacy reader route, legacy path and analysis-tasks wiring", () => {
@@ -240,5 +318,19 @@ describe("ReadingRecordSection", () => {
     expect(source).not.toContain("legacyAppReaderRoute");
     expect(source).not.toContain("/app/reader/");
     expect(source).not.toContain("analysis-tasks");
+
+    for (const forbidden of [
+      "处理中",
+      "可读·增强中",
+      "处理失败",
+      "需处理",
+      "文章就绪",
+      "已提交",
+      "候选 Base 就绪",
+      "初始增强就绪",
+      "覆盖完成",
+    ]) {
+      expect(source).not.toContain(forbidden);
+    }
   });
 });

@@ -1,5 +1,7 @@
 import { AppShell } from "@/components/layout";
+import { RecentReadingProvider } from "@/components/layout/recent-reading-context";
 import { CloudPreferencesSync } from "@/components/providers/CloudPreferencesSync";
+import { getReadingRecordListFromWeb } from "@/services/bff/reading-records";
 import { getProjectedWebSession } from "@/services/bff/session";
 
 export default async function AppShellLayout({
@@ -7,13 +9,19 @@ export default async function AppShellLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const session = await getProjectedWebSession();
+  const [session, recentResult] = await Promise.all([
+    getProjectedWebSession(),
+    getReadingRecordListFromWeb({ limit: 10 }),
+  ]);
+  const recentRecords = recentResult.ok ? recentResult.items : [];
   const userContact = session.phone;
 
   return (
-    <AppShell userName="Claread" userContact={userContact} userPlanLabel="Free">
-      <CloudPreferencesSync />
-      {children}
-    </AppShell>
+    <RecentReadingProvider initialItems={recentRecords}>
+      <AppShell userName="Claread" userContact={userContact} userPlanLabel="Free">
+        <CloudPreferencesSync />
+        {children}
+      </AppShell>
+    </RecentReadingProvider>
   );
 }

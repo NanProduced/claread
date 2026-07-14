@@ -17,6 +17,22 @@ import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 
 import { getReaderRecordSurfaceMode } from "./reader-record-surface-mode";
 import { CandidateConfirmCallout } from "./CandidateConfirmCallout";
+import { ReaderOpenedBeacon } from "./ReaderOpenedBeacon";
+
+function deriveSnapshotStateKind(
+  kind: SnapshotState["kind"],
+): "idle" | "loading" | "loaded" | "error" {
+  switch (kind) {
+    case "loaded":
+      return "loaded";
+    case "loading":
+      return "loading";
+    case "error":
+      return "error";
+    default:
+      return "idle";
+  }
+}
 
 const READER_POLLING_TOAST_ID = "reader-record-polling-interrupted";
 
@@ -481,6 +497,10 @@ export default function ReadingRecordPage({
   if (snapshotState.kind === "loaded") {
     return (
       <>
+        <ReaderOpenedBeacon
+          recordId={recordId}
+          snapshotStateKind={deriveSnapshotStateKind(snapshotState.kind)}
+        />
         <CandidateConfirmCallout recordId={recordId} />
 
         <ReaderProgressiveStatusStrip
@@ -511,6 +531,10 @@ export default function ReadingRecordPage({
 
   return (
     <main className="paper-grain min-h-screen text-ink">
+      <ReaderOpenedBeacon
+        recordId={recordId}
+        snapshotStateKind={deriveSnapshotStateKind(snapshotState.kind)}
+      />
       <div className="mx-auto max-w-[72ch] px-5 py-10 sm:px-8 lg:py-14">
         <header className="mb-8">
           <p className="text-xs font-semibold tracking-[0.12em] text-lens-blue">

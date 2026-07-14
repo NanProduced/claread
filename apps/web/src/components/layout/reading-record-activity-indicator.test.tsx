@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -24,42 +24,6 @@ vi.mock("@/lib/analysis-task-client", () => ({
     ["succeeded", "failed", "cancelled", "expired"].includes(status),
 }));
 
-function makeReadingRecord(overrides: Record<string, unknown>) {
-  return {
-    readingRecordId: "reading_record_default",
-    readerUrl: "/app/reader-record/reading_record_default",
-    title: "Default Reading Record",
-    createdAt: "2026-06-23T08:00:00.000Z",
-    sourceType: "text",
-    sourceMetadata: {},
-    productState: "readable_enhancing",
-    readinessState: "article_ready",
-    lastEventSequence: 1,
-    ...overrides,
-  };
-}
-
-function stubReadingRecords(items: Array<Record<string, unknown>>) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-    expect(String(input)).toBe(
-      "/api/web/reading-records?limit=8&productState=processing%2Creadable_enhancing%2Caction_required%2Cfailed",
-    );
-
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        items,
-        total: items.length,
-        limit: 8,
-      }),
-      { status: 200, headers: { "content-type": "application/json" } },
-    );
-  });
-
-  vi.stubGlobal("fetch", fetchMock);
-  return fetchMock;
-}
-
 function renderIndicator(pathname = "/app/library") {
   return render(<ReadingRecordActivityIndicator pathname={pathname} />);
 }
@@ -82,7 +46,6 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  vi.unstubAllGlobals();
 });
 
 describe("ReadingRecordActivityIndicator", () => {
@@ -91,92 +54,24 @@ describe("ReadingRecordActivityIndicator", () => {
     ["/app/reader-plate"],
     ["/app/reader-plate?record_id=reading_record_default"],
     ["/app/read"],
-  ])("hides on %s without fetching activity data", (pathname) => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
+  ])("hides on %s without polling the legacy task", async (pathname) => {
     renderIndicator(pathname);
 
-    expect(fetchMock).not.toHaveBeenCalled();
     expect(fetchCurrentAnalysisTask).not.toHaveBeenCalled();
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("fetches active Reading Records with productState filtering and renders the card", async () => {
-    const fetchMock = stubReadingRecords([
-      makeReadingRecord({
-        title: "Visible from Library",
-        productState: "readable_enhancing",
-      }),
-    ]);
-
+  it("renders nothing when neither activity nor legacy task exists", async () => {
     renderIndicator("/app/library");
 
-    expect(await screen.findByText("可读·增强中")).toBeTruthy();
-    expect(screen.getByText("Visible from Library")).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("prioritizes action_required Reading Records and opens the returned readerUrl", async () => {
-    stubReadingRecords([
-      makeReadingRecord({
-        readingRecordId: "reading_record_recent",
-        readerUrl: "/app/reader-record/reading_record_recent",
-        title: "Recent complete record",
-        productState: "readable_enhancing",
-      }),
-      makeReadingRecord({
-        readingRecordId: "reading_record_attention",
-        readerUrl: "/app/reader-record/reading_record_attention",
-        title: "Needs a decision",
-        productState: "action_required",
-      }),
-    ]);
-
-    renderIndicator();
-
-    expect(await screen.findByText("需要处理")).toBeTruthy();
-    expect(screen.getByText("Needs a decision")).toBeTruthy();
-    expect(screen.queryByText("Recent complete record")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "打开阅读记录" }));
-
-    expect(navigationMock.push).toHaveBeenCalledWith(
-      "/app/reader-record/reading_record_attention",
-    );
-  });
-
-  it("merges a legacy active task into the same Reading Record card", async () => {
-    stubReadingRecords([
-      makeReadingRecord({
-        title: "Merged Activity Record",
-        productState: "processing",
-      }),
-    ]);
-    vi.mocked(fetchCurrentAnalysisTask).mockResolvedValue({
-      ok: true,
-      hasActive: true,
-      task: {
-        taskId: "task_legacy",
-        recordId: "legacy_record_1",
-        status: "running",
-        readerUrl: "/app/reader/legacy_record_1",
-      },
+    await waitFor(() => {
+      expect(fetchCurrentAnalysisTask).toHaveBeenCalled();
     });
 
-    renderIndicator();
-
-    expect(await screen.findByText("处理中")).toBeTruthy();
-    expect(screen.getByText("Merged Activity Record")).toBeTruthy();
-    expect(screen.getByText("旧任务")).toBeTruthy();
-    expect(
-      screen.getByText("另有旧任务仍在透读，可通过旧入口继续查看。"),
-    ).toBeTruthy();
-    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("falls back to a legacy-only card when no Reading Record activity exists", async () => {
-    stubReadingRecords([]);
+  it("falls back to a legacy-only card when only legacy task exists", async () => {
     vi.mocked(fetchCurrentAnalysisTask).mockResolvedValue({
       ok: true,
       hasActive: true,

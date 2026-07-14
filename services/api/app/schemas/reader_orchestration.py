@@ -1073,6 +1073,7 @@ class ReaderRecordListItem(BaseModel):
     product_state: ReadingRecordProductState
     readiness_state: ReadingRecordReadinessState
     last_event_sequence: int = Field(ge=0)
+    last_opened_at: datetime | None = None
 
 
 class ReaderRecordListResponse(BaseModel):
@@ -1081,6 +1082,13 @@ class ReaderRecordListResponse(BaseModel):
     items: list[ReaderRecordListItem] = Field(default_factory=list)
     total: int = Field(ge=0)
     limit: int = Field(ge=1)
+
+
+class ReaderRecordOpenedResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: str = Field(min_length=1)
+    last_opened_at: datetime
 
 
 class ReaderEventPollResponse(BaseModel):
