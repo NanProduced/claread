@@ -134,27 +134,65 @@ class ServerEvidenceHandle(BaseModel):
         return self
 
 
+class ArticleRagCitationEvidence(BaseModel):
+    """Server-owned Article RAG citation fields (not free-form dict).
+
+    ``rag_substrate_id`` is the immutable ``reader_article_rag_index_runs.id``
+    string.  Never invent this value.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    rag_substrate_id: str = Field(min_length=1)
+    index_run_id: str = Field(min_length=1)
+    index_version: str = Field(min_length=1)
+    plan_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_scope: Literal["main_reading_text", "heading"]
+    block_type: str = Field(min_length=1)
+    chunk_id: str = Field(min_length=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    canonical_text_start_utf16: int = Field(ge=0)
+    canonical_text_end_utf16: int = Field(gt=0)
+    snippet: str = Field(min_length=1, max_length=2000)
+    score: float | None = None
+    reading_record_id: str = Field(min_length=1)
+    stable_document_id: str = Field(min_length=1)
+    base_id: str = Field(min_length=1)
+    record_generation: int = Field(ge=1)
+    block_ids: tuple[str, ...] = ()
+    unit_ids: tuple[str, ...] = ()
+    anchor_segment_ids: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _range_and_substrate(self) -> ArticleRagCitationEvidence:
+        if self.canonical_text_end_utf16 <= self.canonical_text_start_utf16:
+            raise ValueError("canonical_text_end_utf16 must be > start")
+        if self.rag_substrate_id != self.index_run_id:
+            raise ValueError(
+                "rag_substrate_id must equal index_run_id (index-run identity)"
+            )
+        return self
+
+
 class ServerEvidenceObservation(BaseModel):
     """Full server-side observation registered by a tool executor.
 
-    Future finalizers resolve model-cited :class:`EvidenceHandleRef`
-    values against a registry of these observations.  Unknown, unused,
-    or generation-mismatched handles must be rejected at finalize time.
+    Finalizers resolve model-cited :class:`EvidenceHandleRef` values
+    against a registry of these observations.  Unknown, unused, or
+    generation-mismatched handles must be rejected at finalize time.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     handle: ServerEvidenceHandle
     # Optional human-readable snippet / locator summary for citation UX.
-    # Deliberately free of ``rag_substrate_id`` authority decisions.
     snippet: str | None = Field(default=None, max_length=2000)
     locator_summary: dict[str, Any] | None = None
     # Optional unit / segment pointers (record-local; not cross-record).
     unit_id: str | None = Field(default=None, min_length=1)
     anchor_segment_id: str | None = Field(default=None, min_length=1)
-    # Explicit non-goals this round:
-    # - do not invent rag_substrate_id
-    # - do not mirror legacy article_rag sidecar keys
+    # Typed RAG citation — never stuff rag_substrate_id into free dicts.
+    rag_citation: ArticleRagCitationEvidence | None = None
 
     @model_validator(mode="after")
     def _reject_substrate_authority_fields(
@@ -165,6 +203,7 @@ class ServerEvidenceObservation(BaseModel):
                 "rag_substrate_id",
                 "user_id",
                 "tenant_id",
+                "index_run_id",
             }
             offenders = forbidden.intersection(self.locator_summary.keys())
             if offenders:
@@ -172,6 +211,10 @@ class ServerEvidenceObservation(BaseModel):
                     "locator_summary must not carry authority fields: "
                     + ", ".join(sorted(offenders))
                 )
+        if self.handle.kind == "search_hit" and self.rag_citation is None:
+            raise ValueError("search_hit observations require rag_citation")
+        if self.rag_citation is not None and self.handle.kind != "search_hit":
+            raise ValueError("rag_citation is only valid for search_hit kind")
         return self
 
 
@@ -223,6 +266,7 @@ def build_server_evidence_observation(
     unit_id: str | None = None,
     anchor_segment_id: str | None = None,
     handle_id: str | None = None,
+    rag_citation: ArticleRagCitationEvidence | None = None,
 ) -> ServerEvidenceObservation:
     """Convenience constructor for a full server observation entry."""
     handle = mint_server_evidence_handle(
@@ -237,6 +281,7 @@ def build_server_evidence_observation(
         locator_summary=locator_summary,
         unit_id=unit_id,
         anchor_segment_id=anchor_segment_id,
+        rag_citation=rag_citation,
     )
 
 

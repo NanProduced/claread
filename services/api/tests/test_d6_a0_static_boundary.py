@@ -255,14 +255,9 @@ def test_reader_record_ask_modules_do_not_import_legacy_runtime_or_scene() -> No
     facts, but they must not import the legacy `reader_ask` runtime or the old
     render-scene service as hidden fact sources.
     """
-    target_files = [
-        APP_DIR / "services/reader_record_ask/service.py",
-        APP_DIR / "services/reader_record_ask/context_envelope.py",
-        APP_DIR / "services/reader_record_ask/tool_contracts.py",
-        APP_DIR / "services/reader_record_ask/evidence.py",
-        APP_DIR / "services/reader_record_ask/__init__.py",
-        APP_DIR / "api/routes/reader_record_ask.py",
-    ]
+    package_dir = APP_DIR / "services/reader_record_ask"
+    target_files = sorted(package_dir.glob("*.py"))
+    target_files.append(APP_DIR / "api/routes/reader_record_ask.py")
     forbidden_modules = (
         "app.services.reader_ask",
         "app.services.reader_scene",
@@ -288,5 +283,80 @@ def test_reader_record_ask_modules_do_not_import_legacy_runtime_or_scene() -> No
     assert offenders == [], (
         "reader_record_ask must stay off legacy reader_ask/runtime scene "
         "fact sources; offenders: "
+        + ", ".join(offenders)
+    )
+
+
+def test_reader_record_ask_independent_runtime_avoids_legacy_agent_seams() -> None:
+    """Round-2 guard for the independent agent loop modules only.
+
+    ``service.py`` remains a temporary facade over ask_runtime and is
+    intentionally excluded — it must not make this guard fail.  When a
+    future cutover rewires the production path, service.py can join this
+    allowlist of independent modules.
+    """
+    package_dir = APP_DIR / "services/reader_record_ask"
+    # Independent runtime modules (exclude production facade service.py).
+    independent_names = {
+        "agent.py",
+        "runtime.py",
+        "runtime_deps.py",
+        "runtime_events.py",
+        "read_range_executor.py",
+        "search_current_article_executor.py",
+        "article_rag_port.py",
+        "article_rag_adapter.py",
+        "finalizer.py",
+        "document_access.py",
+        "evidence_registry.py",
+        "initial_anchor_evidence.py",
+        "fence.py",
+        "context_envelope.py",
+        "tool_contracts.py",
+        "evidence.py",
+    }
+    forbidden_modules = (
+        "app.agents.reader_ask_agent",
+        "app.services.reader_ask",
+        "app.services.ask_runtime",
+        "app.services.reader_scene",
+        # Old Article RAG auto-injection bridge (must not be reused).
+        "app.services.reader_orchestration.article_rag_ask_prompt_bridge",
+        "app.services.reader_orchestration.article_rag_ask_prompt_attachment",
+        "app.services.reader_orchestration.article_rag_ask_integration_adapter",
+        "app.services.reader_orchestration.article_rag_ask_runtime_adapter",
+        "app.services.reader_orchestration.article_rag_ask_prompt_assembly",
+        "app.services.reader_orchestration.article_rag_ask_prompt_section",
+        "app.services.reader_orchestration.article_rag_ask_context_provider",
+    )
+    forbidden_substrings = (
+        "reader_ask_planner",
+        "planner_runtime",
+        "cross_record",
+        "resolve_known_reference",
+        "deictic_",
+        "hint_contract",
+        "ReaderAskRuntimeState",
+        "build_reader_ask_agent",
+        "ArticleRagPromptIntegration",
+        "article_rag_ask_prompt_bridge",
+    )
+
+    offenders: list[str] = []
+    for path in sorted(package_dir.glob("*.py")):
+        if path.name not in independent_names:
+            continue
+        source = _read_text(path)
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        for module in forbidden_modules:
+            if _has_module_import(source, module):
+                offenders.append(f"{rel} -> {module}")
+        for needle in forbidden_substrings:
+            if needle in source:
+                offenders.append(f"{rel} -> {needle}")
+
+    assert offenders == [], (
+        "independent Reading Record Ask runtime must not depend on legacy "
+        "agent/planner/hint/ask_runtime seams; offenders: "
         + ", ".join(offenders)
     )

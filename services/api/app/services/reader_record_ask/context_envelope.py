@@ -224,13 +224,24 @@ class ReadingRecordAskContextEnvelope(BaseModel):
     def to_agent_projection(self) -> ReadingRecordAskAgentContextProjection:
         """Project a model-safe view that omits all server-owned scope fields."""
         selection_preview: str | None = None
+        initial_selection_locator: AgentInitialSelectionLocator | None = None
         if self.initial_anchor is not None:
             text = self.initial_anchor.selected_text
             selection_preview = text if len(text) <= 240 else text[:240]
+            # Restricted locator only — not an auth boundary. The executor
+            # still clamps every read against the server envelope scope.
+            initial_selection_locator = AgentInitialSelectionLocator(
+                unit_id=self.initial_anchor.unit_id,
+                anchor_segment_id=self.initial_anchor.anchor_segment_id,
+                offset_unit=self.initial_anchor.offset_unit,
+                start_offset=self.initial_anchor.start_offset,
+                end_offset=self.initial_anchor.end_offset,
+            )
         return ReadingRecordAskAgentContextProjection(
             envelope_version=self.envelope_version,
             has_initial_selection=self.initial_anchor is not None,
             selection_preview=selection_preview,
+            initial_selection_locator=initial_selection_locator,
             has_visible_range=self.visible_range is not None,
             can_read_range=self.capabilities.can_read_range,
             can_search_current_article=self.capabilities.can_search_current_article,
@@ -242,6 +253,23 @@ class ReadingRecordAskContextEnvelope(BaseModel):
 # ---------------------------------------------------------------------------
 # Agent / tool projection (model-visible, no auth fields)
 # ---------------------------------------------------------------------------
+
+
+class AgentInitialSelectionLocator(BaseModel):
+    """Model-visible locator for the turn's initial selection.
+
+    Contains only unit/segment/offset business fields so the model can
+    call ``read_range`` against the selection without receiving
+    record/base/generation or other authorization fields.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    unit_id: str = Field(min_length=1)
+    anchor_segment_id: str = Field(min_length=1)
+    offset_unit: Literal["utf16"] = "utf16"
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(gt=0)
 
 
 class ReadingRecordAskAgentContextProjection(BaseModel):
@@ -257,6 +285,8 @@ class ReadingRecordAskAgentContextProjection(BaseModel):
     envelope_version: Literal["reading_record_ask_context_envelope_v1"]
     has_initial_selection: bool
     selection_preview: str | None = None
+    # Limited unit/segment locator for the initial selection (not auth).
+    initial_selection_locator: AgentInitialSelectionLocator | None = None
     has_visible_range: bool
     can_read_range: bool
     can_search_current_article: bool

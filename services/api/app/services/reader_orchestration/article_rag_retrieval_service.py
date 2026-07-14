@@ -59,19 +59,19 @@ from uuid import UUID
 import asyncpg
 
 from .article_rag_index_plan import (
-    ArticleRagIndexPlan,
     ArticleRagIndexChunk,
+    ArticleRagIndexPlan,
     ArticleRagIndexPlanService,
     compute_plan_content_sha256,
 )
 from .article_rag_index_worker import (
-    ArticleRagIndexWorkerError,
     ArticleRagEmbeddingProvider,
+    ArticleRagIndexWorkerError,
 )
 from .article_rag_vector_search import (
-    ArticleRagVectorSearchResult,
     ArticleRagVectorSearcher,
     ArticleRagVectorSearcherError,
+    ArticleRagVectorSearchResult,
     UnconfiguredArticleRagVectorSearcher,
 )
 
@@ -192,10 +192,9 @@ class ArticleRagRetrievalHit:
     """One retrieval hit joined against the current plan.
 
     ``chunk_id`` / ``text`` / ``citation`` / ``metadata_json`` /
-    ``score`` come from the join of the vector hit on
-    ``plan.chunks`` (Postgres is the truth).  ``source`` is a constant
-    string for diagnostics — it is NOT a fact field, and never
-    surfaces to end users.
+    ``content_sha256`` / ``score`` come from the join of the vector
+    hit on ``plan.chunks`` (Postgres is the truth).  Vector payload
+    text / citation is never trusted.
     """
 
     chunk_id: str
@@ -203,6 +202,9 @@ class ArticleRagRetrievalHit:
     citation: dict[str, Any]
     metadata_json: dict[str, Any]
     score: float
+    # Plan-backed content hash from the joined index chunk — never
+    # recomputed from returned text by consumers.
+    content_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,9 +216,16 @@ class ArticleRagRetrievalResult:
     ``stable_document_id`` / ``base_id`` / ``record_generation`` /
     ``index_version`` / ``plan_content_sha256`` are the **current**
     plan's authoritative values; they are echoed here for ops
-    diagnostics.  ``provider_metadata`` carries searcher-side
-    diagnostics; it MUST NOT be surfaced to end users as a fact
-    source.
+    diagnostics.
+
+    ``index_run_id`` is the immutable ``reader_article_rag_index_runs.id``
+    of the **exact** indexed run used for this retrieval (loaded in the
+    same fail-closed path that validated plan hash / collection).
+    Downstream Ask evidence must use this identity as ``rag_substrate_id``
+    rather than re-querying "latest indexed run" (which races reindex).
+
+    ``provider_metadata`` carries searcher-side diagnostics; it MUST NOT
+    be surfaced to end users as a fact source.
     """
 
     reading_record_id: UUID
@@ -225,6 +234,7 @@ class ArticleRagRetrievalResult:
     record_generation: int
     index_version: str
     plan_content_sha256: str
+    index_run_id: UUID
     hits: tuple[ArticleRagRetrievalHit, ...]
     provider_metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -575,6 +585,9 @@ class ArticleRagRetrievalService:
             record_generation=plan.record_generation,
             index_version=index_version,
             plan_content_sha256=current_plan_hash,
+            # Same ``indexed`` snapshot used for plan-hash / collection /
+            # embedding-model checks — not a second "latest run" lookup.
+            index_run_id=indexed.index_run_id,
             hits=hits,
             provider_metadata=dict(
                 getattr(search_result, "provider_metadata", {}) or {}
@@ -755,6 +768,7 @@ class ArticleRagRetrievalService:
                     citation=citation_dict,
                     metadata_json=sanitised_metadata,
                     score=float(vector_hit.score),
+                    content_sha256=str(chunk.content_sha256),
                 )
             )
             if len(hits) >= limit:
