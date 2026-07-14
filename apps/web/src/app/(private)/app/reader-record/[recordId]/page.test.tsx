@@ -1088,28 +1088,28 @@ describe("ReadingRecordPage direct load", () => {
       overallStatus: "processing" as const,
       productState: "processing" as const,
       layerStatus: "processing" as const,
-      label: "解析生成中",
+      label: "解析中",
     },
     {
       recordId: "rec_plate_readable_enhancing_1",
       overallStatus: "readable_enhancing" as const,
       productState: "readable_enhancing" as const,
       layerStatus: "queued" as const,
-      label: "解析生成中",
+      label: "可以开始阅读",
     },
     {
       recordId: "rec_plate_failed_1",
       overallStatus: "failed" as const,
       productState: "failed" as const,
       layerStatus: "failed" as const,
-      label: "部分解析失败",
+      label: "解析遇到问题",
     },
     {
       recordId: "rec_plate_action_required_1",
       overallStatus: "action_required" as const,
       productState: "action_required" as const,
       layerStatus: "action_required" as const,
-      label: "需要确认",
+      label: "等待继续",
     },
   ])(
     "renders lightweight Plate progress for $overallStatus without replacing the body",
@@ -1169,6 +1169,42 @@ describe("ReadingRecordPage direct load", () => {
       expect(translation?.textContent).toContain(TRANSLATION_TEXT);
     },
   );
+
+  it("renders header badge with 需要确认 for needs_confirmation product state", async () => {
+    const snapshot = makeSnapshot(
+      "rec_plate_needs_confirmation_1",
+      {
+        product_state: "needs_confirmation",
+        readiness_state: "candidate_base_ready",
+      },
+      {
+        enhancementProgress: makeEnhancementProgress({
+          overall_status: "processing",
+          layers: [
+            {
+              capability: "translation",
+              layer_type: "translation",
+              status: "queued",
+              job_status: "queued",
+              job_type: "translate_unit",
+              job_id: "job_needs_confirmation_1",
+              target_type: "unit",
+              target_scope: "unit",
+              target_key: "unit_1",
+            },
+          ],
+        }),
+        translationScope: "unit",
+      },
+    );
+    installReaderRecordFetchMock(snapshot);
+
+    renderReadingRecordPage("rec_plate_needs_confirmation_1");
+
+    await screen.findByTestId("reader-record-plate-surface");
+    const progress = screen.getByTestId("reader-record-plate-header");
+    expect(progress.textContent).toContain("需要确认");
+  });
 
   it("shows queued and processing enhancement progress without changing the workbench shell", async () => {
     const snapshot = makeSnapshot(
@@ -1309,7 +1345,7 @@ describe("ReadingRecordPage direct load", () => {
     );
     const refreshedSnapshot = makeSnapshot(
       "rec_product_1",
-      {},
+      { readiness_state: "coverage_complete" },
       {
         enhancementProgress: makeEnhancementProgress({
           overall_status: "ready",
@@ -1366,7 +1402,7 @@ describe("ReadingRecordPage direct load", () => {
         ?.textContent,
     ).toContain(TRANSLATION_TEXT);
     expect(screen.getByTestId("reader-record-plate-header").textContent).toContain(
-      "解析生成中",
+      "可以开始阅读",
     );
 
     await act(async () => {

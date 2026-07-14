@@ -2834,15 +2834,141 @@ describe("ReaderRecordPlateSurface", () => {
 
     const header = screen.getByTestId("reader-record-plate-header");
     expect(header).toBeTruthy();
-    expect(header.textContent).toContain("解析生成中");
+    expect(header.textContent).toContain("可以开始阅读");
 
     const progressStatus = container.querySelector<HTMLElement>(
       "[data-reader-record-progress-status]",
     );
     expect(progressStatus?.dataset.readerRecordProgressStatus).toBe(
-      "readable_enhancing",
+      "ready_to_read",
     );
   });
+
+  it.each([
+    {
+      label: "processing → 解析中",
+      productState: "processing" as const,
+      readinessState: "article_ready" as const,
+      expected: "解析中",
+      expectedKey: "processing",
+    },
+    {
+      label: "needs_confirmation → 需要确认",
+      productState: "needs_confirmation" as const,
+      readinessState: "candidate_base_ready" as const,
+      expected: "需要确认",
+      expectedKey: "needs_confirmation",
+    },
+    {
+      label: "readable_enhancing + article_ready → 可以开始阅读",
+      productState: "readable_enhancing" as const,
+      readinessState: "article_ready" as const,
+      expected: "可以开始阅读",
+      expectedKey: "ready_to_read",
+    },
+    {
+      label: "readable_enhancing + coverage_complete → 解析完成",
+      productState: "readable_enhancing" as const,
+      readinessState: "coverage_complete" as const,
+      expected: "解析完成",
+      expectedKey: "completed",
+    },
+    {
+      label: "action_required → 等待继续",
+      productState: "action_required" as const,
+      readinessState: "article_ready" as const,
+      expected: "等待继续",
+      expectedKey: "awaiting_continue",
+    },
+    {
+      label: "failed → 解析遇到问题",
+      productState: "failed" as const,
+      readinessState: "article_ready" as const,
+      expected: "解析遇到问题",
+      expectedKey: "failed",
+    },
+  ])(
+    "renders header badge with approved label for $label",
+    ({ productState, readinessState, expected, expectedKey }) => {
+      const snapshot = makeSnapshot();
+      snapshot.record.product_state = productState;
+      snapshot.record.readiness_state = readinessState;
+      const { container } = render(
+        <ReaderRecordPlateSurface snapshot={snapshot} />,
+      );
+
+      const header = screen.getByTestId("reader-record-plate-header");
+      expect(header.textContent).toContain(expected);
+
+      const progressStatus = container.querySelector<HTMLElement>(
+        "[data-reader-record-progress-status]",
+      );
+      expect(progressStatus?.dataset.readerRecordProgressStatus).toBe(
+        expectedKey,
+      );
+    },
+  );
+
+  it("does not show legacy status labels in the header", () => {
+    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const header = screen.getByTestId("reader-record-plate-header");
+    expect(header.textContent).not.toContain("解析生成中");
+    expect(header.textContent).not.toContain("部分解析失败");
+    expect(header.textContent).not.toContain("正文可读");
+  });
+
+  it("renders article status section in the more menu with label and description", async () => {
+    const user = userEvent.setup();
+    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+
+    await user.click(screen.getByTestId("reader-record-more-menu-trigger"));
+
+    const menu = screen.getByTestId("reader-record-more-menu-content");
+    const statusSection = menu.querySelector<HTMLElement>(
+      '[data-reader-record-more-article-status="true"]',
+    );
+    expect(statusSection).not.toBeNull();
+    expect(menu.textContent).toContain("文章状态");
+    expect(menu.textContent).toContain("可以开始阅读");
+    expect(menu.textContent).toContain("正文已就绪");
+  });
+
+  it.each([
+    {
+      stateLabel: "awaiting_continue",
+      productState: "action_required" as const,
+      readinessState: "article_ready" as const,
+      expectedMenuLabel: "等待继续",
+      expectedDescription: "这篇内容还需要完成下一步处理。",
+    },
+    {
+      stateLabel: "failed",
+      productState: "failed" as const,
+      readinessState: "article_ready" as const,
+      expectedMenuLabel: "解析遇到问题",
+      expectedDescription: "这篇内容在准备时遇到了问题。",
+    },
+  ])(
+    "renders article status section in the more menu for $stateLabel state",
+    async ({ productState, readinessState, expectedMenuLabel, expectedDescription }) => {
+      const user = userEvent.setup();
+      const snapshot = makeSnapshot();
+      snapshot.record.product_state = productState;
+      snapshot.record.readiness_state = readinessState;
+      render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+
+      await user.click(screen.getByTestId("reader-record-more-menu-trigger"));
+
+      const menu = screen.getByTestId("reader-record-more-menu-content");
+      const statusSection = menu.querySelector<HTMLElement>(
+        '[data-reader-record-more-article-status="true"]',
+      );
+      expect(statusSection).not.toBeNull();
+      expect(menu.textContent).toContain("文章状态");
+      expect(menu.textContent).toContain(expectedMenuLabel);
+      expect(menu.textContent).toContain(expectedDescription);
+    },
+  );
 
   it("does not show estimated reading minutes in the header", () => {
     render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
@@ -3072,7 +3198,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(progressStatus).not.toBeNull();
     expect(progressStatus?.className).toContain("rounded-[0.5rem]");
     expect(progressStatus?.className).toContain("bg-surface-warm");
-    expect(progressStatus?.textContent).toContain("解析生成中");
+    expect(progressStatus?.textContent).toContain("可以开始阅读");
 
     const blueDot = container.querySelector(
       ".rounded-full.bg-lens-blue",

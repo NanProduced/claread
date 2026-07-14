@@ -31,7 +31,6 @@ import {
   projectReaderPlateSnapshotToReaderRecordPlateDocument,
   type ReaderRecordPlateBlock,
   type ReaderRecordPlateParagraphBlock,
-  type ReaderRecordPlateProgress,
   type ReaderRecordPlateTextAnchor,
   type ReaderRecordPlateGrammarMark,
   type ReaderRecordPlateUserHighlightMark,
@@ -50,6 +49,11 @@ import {
 } from "@/lib/reader-plate";
 import type { ReaderAnchorPayload } from "@/lib/reader-plate/bridges/assets";
 import type { ReaderRecordAnchorDraft } from "@/lib/reader-plate/projection/reader-record-anchor-draft";
+import {
+  readingRecordStatusKey,
+  readingRecordStatusLabel,
+  type ReadingRecordStatusKey,
+} from "@/lib/reader-record-status";
 import {
   READER_TEXT_RANGE_HASH_ALGORITHM,
   READER_TEXT_RANGE_OFFSET_UNIT,
@@ -426,21 +430,15 @@ const HIGHLIGHT_COLOR_OPTIONS: Array<{
   { value: "soft_rose", label: "粉色", swatchClassName: "bg-rose-200/80 ring-rose-300/50" },
 ];
 
-function overallProgressLabel(status: ReaderRecordPlateProgress["overallStatus"]) {
-  switch (status) {
-    case "ready":
-      return "解析完成";
-    case "failed":
-      return "部分解析失败";
-    case "action_required":
-      return "需要确认";
-    case "processing":
-    case "readable_enhancing":
-      return "解析生成中";
-    default:
-      return "正文可读";
-  }
-}
+const ARTICLE_STATUS_DESCRIPTION_BY_KEY: Record<ReadingRecordStatusKey, string> = {
+  processing: "正在为你准备阅读内容，完成后即可开始阅读。",
+  needs_confirmation: "请在原输入流程继续确认阅读内容。",
+  ready_to_read: "正文已就绪，理解信息会在阅读时逐步补充。",
+  reading_enhancing: "正在为你准备阅读内容，完成后即可开始阅读。",
+  awaiting_continue: "这篇内容还需要完成下一步处理。",
+  failed: "这篇内容在准备时遇到了问题。",
+  completed: "译文、词汇与语法已准备完成。",
+};
 
 function lookupTypeForSelection(text: string): DictLookupTypeDto {
   return /\s/.test(text.trim()) ? "phrase" : "word";
@@ -1630,12 +1628,10 @@ function resolveReaderRecordTitleState(
 
 function ReaderRecordHeader({
   snapshot,
-  progress,
   surfaceMode,
   onModeChange,
 }: {
   snapshot: ReaderPlateSnapshotDto;
-  progress: ReaderRecordPlateProgress;
   surfaceMode: "intensive" | "immersive";
   onModeChange: (mode: "intensive" | "immersive") => void;
 }) {
@@ -1659,7 +1655,11 @@ function ReaderRecordHeader({
       ? sourceMetadata.source_domain
       : null;
 
-  const statusLabel = overallProgressLabel(progress.overallStatus);
+  const statusKey = readingRecordStatusKey(
+    record.product_state,
+    record.readiness_state,
+  );
+  const statusLabel = readingRecordStatusLabel(statusKey);
 
   // source-only word count：仅基于 snapshot.value 的稳定原文 segment_text 叶子计算，
   // 不包含 translation / grammar note / sentence_analysis / Ask supplement。
@@ -1745,7 +1745,7 @@ function ReaderRecordHeader({
         {/* Left metadata / status block */}
         <div className="flex items-center gap-3.5 px-3 py-3 sm:py-0">
           <span
-            data-reader-record-progress-status={progress.overallStatus}
+            data-reader-record-progress-status={statusKey}
             className="px-3 py-1 text-[0.75rem] font-semibold text-ink-soft bg-surface-warm border border-hairline/80 rounded-[0.5rem] flex items-center gap-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(0,0,0,0.03)] select-none"
           >
             <Sparkles className="h-3.5 w-3.5 text-vocab-amber fill-vocab-amber/10" />
@@ -2054,6 +2054,12 @@ function ReaderRecordMoreMenu({
 
   const sourceWordCount = computeSourceOnlyWordCount(snapshot);
   const formattedDate = formatReaderRecordDate(record.created_at);
+  const articleStatusKey = readingRecordStatusKey(
+    record.product_state,
+    record.readiness_state,
+  );
+  const articleStatusLabel = readingRecordStatusLabel(articleStatusKey);
+  const articleStatusDescription = ARTICLE_STATUS_DESCRIPTION_BY_KEY[articleStatusKey];
 
   async function handleCopyLink() {
     const success = await copyReaderRecordLink(snapshot.record_id);
@@ -2103,6 +2109,25 @@ function ReaderRecordMoreMenu({
         </div>
 
         <div className="p-2">
+          {/* Article status section */}
+          <div
+            data-reader-record-more-article-status="true"
+            className="space-y-1 px-1 pb-1 pt-0.5"
+          >
+            <span className="block text-xs font-semibold text-muted">文章状态</span>
+            <span
+              className="block text-sm font-semibold text-ink"
+              data-reader-record-more-article-status-label={articleStatusKey}
+            >
+              {articleStatusLabel}
+            </span>
+            <span className="block text-[0.75rem] leading-relaxed text-muted">
+              {articleStatusDescription}
+            </span>
+          </div>
+
+          <div className="my-2 h-px bg-hairline/60" />
+
           {/* Mode section */}
           <div className="space-y-0.5">
             <button
@@ -5138,7 +5163,6 @@ export function ReaderRecordPlateSurface({
               <div className="reader-header-band-inner mx-auto w-full max-w-[var(--reader-record-main-width)]">
                 <ReaderRecordHeader
                   snapshot={snapshot}
-                  progress={plateDocument.progress}
                   surfaceMode={surfaceMode}
                   onModeChange={handleModeChange}
                 />
