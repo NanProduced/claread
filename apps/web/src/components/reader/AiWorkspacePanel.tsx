@@ -107,6 +107,9 @@ import type {
   ReaderAskAttachmentDto,
   ReaderAskAssetDisambiguationCandidateDto,
   ReaderAskAssetDisambiguationDto,
+  ReaderAskAgenticCompletedPayloadDto,
+  ReaderAskAgenticTerminalPayloadDto,
+  ReaderAskAgenticTerminalStatusDto,
   ReaderAskCompletedPayloadDto,
   ReaderAskContextPlanDto,
   ReaderAskContextRecordItemDto,
@@ -135,7 +138,14 @@ import type {
   ReaderAskFollowUpSuggestionDto,
   ReaderAskUiMessageDto,
 } from "@/types/api/reader-ask";
-import { consumeReaderAskSse } from "./ask/sse";
+import { projectAgenticEvidenceForDisplay } from "./ask/agentic-evidence";
+import {
+  consumeReaderAskSse,
+  isReaderAskAgenticCompletedPayload,
+  isReaderAskAgenticProgressPayload,
+  isReaderAskAgenticRunStartedPayload,
+  isReaderAskAgenticTerminalPayload,
+} from "./ask/sse";
 
 type ErrorEnvelope = {
   message?: string;
@@ -216,6 +226,7 @@ type AskPanelBlockKind =
   | "persisted_supplements"
   | "context_summary"
   | "evidence"
+  | "agentic_evidence"
   | "trace_summary"
   | "article_rag_citations"
   | "citations"
@@ -694,6 +705,33 @@ function createStreamingCommit(updateMessage: MessageUpdater) {
   };
 }
 
+function formatAgenticTerminalError(
+  payload: ReaderAskAgenticTerminalPayloadDto,
+): string {
+  const reason =
+    typeof payload.terminal_reason === "string" && payload.terminal_reason.trim()
+      ? payload.terminal_reason.trim()
+      : null;
+  switch (payload.final_status) {
+    case "context_stale":
+      return "阅读上下文已更新，请重试提问。";
+    case "invalid_citations":
+      return "回答引用校验失败，请重试提问。";
+    case "cancelled":
+      return "本次回答已取消。";
+    case "failed":
+    default:
+      return IS_DEV && reason ? reason : "Ask Claread 暂时不可用。";
+  }
+}
+
+function agenticTerminalMessageStatus(
+  finalStatus: ReaderAskAgenticTerminalStatusDto,
+): "failed" | "interrupted" {
+  // Hard failures keep failed; soft/cancel terminals reuse interrupted.
+  return finalStatus === "failed" ? "failed" : "interrupted";
+}
+
 export function createSseMessageHandler(
   initialMessageId: string,
   updateMessage: MessageUpdater,
@@ -701,9 +739,129 @@ export function createSseMessageHandler(
   onError: (message: string) => void,
 ) {
   let currentMessageId = initialMessageId;
+  // Agentic terminal may arrive as both agentic.terminal and message.interrupted
+  // with the same payload; only apply UI terminal side-effects once per stream.
+  let agenticTerminalHandled = false;
   const commitStreamingMessageUpdate = createStreamingCommit(updateMessage);
 
+  function applyAgenticCompleted(payload: ReaderAskAgenticCompletedPayloadDto) {
+    // Capture the streaming temp id BEFORE reassignment so we can still find it.
+    const previousMessageId = currentMessageId;
+    if (payload.message_id) {
+      currentMessageId = payload.message_id;
+      onMessageIdAssigned?.(payload.message_id);
+    }
+    commitStreamingMessageUpdate((messages) =>
+      messages.map((message) => {
+        if (
+          message.id !== previousMessageId &&
+          message.id !== currentMessageId &&
+          message.id !== payload.message_id
+        ) {
+          return message;
+        }
+        // Preserve any streamed reasoning; agentic completed does not carry it.
+        const nextReasoningMd = message.reasoning_md || null;
+        const nextReasoningStatus =
+          message.reasoning_status === "completed" ||
+          message.reasoning_status === "streaming" ||
+          nextReasoningMd
+            ? "completed"
+            : message.reasoning_status ?? null;
+        return {
+          ...message,
+          id: payload.message_id,
+          thread_id: payload.thread_id || message.thread_id,
+          status: "completed",
+          // Agentic wire field is answer_text; map into the UI content slot only.
+          content_md: payload.answer_text,
+          // Keep legacy evidence fields untouched — never map agentic evidence
+          // into ReaderAskEvidenceItemDto or article_rag sidecar.
+          citations: message.citations ?? [],
+          action_proposals: message.action_proposals ?? [],
+          tool_trace: message.tool_trace ?? [],
+          evidence: message.evidence ?? [],
+          response_cards: message.response_cards ?? [],
+          supplement_candidates: message.supplement_candidates ?? [],
+          persisted_supplements: message.persisted_supplements ?? [],
+          reasoning_md: nextReasoningMd,
+          reasoning_status: nextReasoningStatus,
+          replan_status: "idle",
+          compacting: false,
+          regenerate_preview: false,
+          // Agentic path must not carry a legacy article_rag sidecar.
+          article_rag: null,
+          // Store raw agentic evidence for UI-safe projection at render time.
+          agentic_evidence: payload.evidence ?? [],
+        };
+      }),
+    true);
+  }
+
+  function applyAgenticTerminal(payload: ReaderAskAgenticTerminalPayloadDto) {
+    if (agenticTerminalHandled) {
+      return;
+    }
+    agenticTerminalHandled = true;
+    // Capture the streaming temp id BEFORE reassignment so we can still find it.
+    const previousMessageId = currentMessageId;
+    if (payload.message_id) {
+      currentMessageId = payload.message_id;
+      onMessageIdAssigned?.(payload.message_id);
+    }
+    onError(formatAgenticTerminalError(payload));
+    const nextStatus = agenticTerminalMessageStatus(payload.final_status);
+    commitStreamingMessageUpdate((messages) =>
+      messages.map((message) => {
+        if (
+          message.id !== previousMessageId &&
+          message.id !== currentMessageId &&
+          message.id !== payload.message_id
+        ) {
+          return message;
+        }
+        return {
+          ...message,
+          id: payload.message_id || message.id,
+          thread_id: payload.thread_id || message.thread_id,
+          status: nextStatus,
+          // Never write answer_text / content_md from non-ok terminals.
+          content_md: message.content_md,
+          reasoning_status:
+            message.reasoning_status === "streaming" || message.reasoning_md
+              ? "completed"
+              : message.reasoning_status,
+          replan_status: "idle",
+          compacting: false,
+          regenerate_preview: false,
+        };
+      }),
+    true);
+  }
+
   return function handleSseEvent(event: ReaderAskStreamEnvelopeDto) {
+    // Agentic-only progress events are non-terminal and safe to ignore for the
+    // message state machine. Do not complete or fail the assistant bubble.
+    if (event.event === "agentic.run_started") {
+      if (isReaderAskAgenticRunStartedPayload(event.data) && event.data.message_id) {
+        currentMessageId = event.data.message_id;
+        onMessageIdAssigned?.(event.data.message_id);
+      }
+      return;
+    }
+
+    if (event.event === "agentic.progress") {
+      void isReaderAskAgenticProgressPayload(event.data);
+      return;
+    }
+
+    if (event.event === "agentic.terminal") {
+      if (isReaderAskAgenticTerminalPayload(event.data)) {
+        applyAgenticTerminal(event.data);
+      }
+      return;
+    }
+
     if (event.event === "message.started") {
       const messageId = String((event.data as { message_id?: unknown }).message_id ?? currentMessageId);
       currentMessageId = messageId;
@@ -805,6 +963,12 @@ export function createSseMessageHandler(
     }
 
     if (event.event === "message.completed") {
+      // Prefer agentic completed DTO when the wire payload is agentic v1.
+      if (isReaderAskAgenticCompletedPayload(event.data)) {
+        applyAgenticCompleted(event.data);
+        return;
+      }
+
       const payload = event.data as unknown as ReaderAskCompletedPayloadDto;
       // Update currentMessageId to the server-assigned id
       if (payload.id) {
@@ -871,6 +1035,9 @@ export function createSseMessageHandler(
               // debug-only fields, coerces unknown statuses, and only
               // retains citations when status === "available".
               article_rag: mapAskArticleRagSidecar(payload.article_rag ?? null),
+              // Clear any prior agentic evidence so legacy completions cannot
+              // keep stale agentic basis from an earlier attempt.
+              agentic_evidence: null,
             };
           }
           const isPriorUser =
@@ -893,6 +1060,12 @@ export function createSseMessageHandler(
     }
 
     if (event.event === "message.interrupted") {
+      // Agentic non-ok terminal reuses message.interrupted with a typed payload.
+      if (isReaderAskAgenticTerminalPayload(event.data)) {
+        applyAgenticTerminal(event.data);
+        return;
+      }
+
       const payload = event.data as { content_md?: unknown };
       commitStreamingMessageUpdate((messages) =>
         messages.map((message) =>
@@ -1518,6 +1691,11 @@ function buildAssistantBlocks(message: ReaderAskUiMessageDto): AskPanelBlock[] {
   if (hasRenderableArticleRagCitations(message.article_rag)) {
     blocks.push({ kind: "article_rag_citations" });
   }
+  // Agentic evidence is distinct from legacy article_rag / evidence DTO.
+  // Only render when the completed agentic payload stored non-empty items.
+  if ((message.agentic_evidence ?? []).length > 0) {
+    blocks.push({ kind: "agentic_evidence" });
+  }
   if (message.citations.length > 0) {
     blocks.push({ kind: "citations" });
   }
@@ -1921,6 +2099,95 @@ function EvidenceDisclosure({
                   <p className="text-[11px] text-subtle">
                     {[item.record_title || item.source_article_title].filter(Boolean).join(" · ")}
                   </p>
+                ) : null}
+              </div>
+            </Attachment>
+          ))}
+        </Attachments>
+      </PlanContent>
+    </Plan>
+  );
+}
+
+/**
+ * Read-only disclosure for agentic Reading Record Ask evidence.
+ *
+ * Projects raw agentic DTOs through `projectAgenticEvidenceForDisplay` so
+ * internal fields (substrate / index / hash / score / raw offsets / ids) never
+ * reach the DOM. Distinct from legacy {@link EvidenceDisclosure}.
+ */
+function AgenticEvidenceDisclosure({
+  evidence,
+}: {
+  evidence: NonNullable<ReaderAskUiMessageDto["agentic_evidence"]>;
+}) {
+  if (!evidence || evidence.length === 0) {
+    return null;
+  }
+
+  const items = projectAgenticEvidenceForDisplay(evidence);
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <Plan
+      className="rounded-[20px] border border-border/70 bg-[color:var(--reader-entry-surface)] py-4 shadow-none backdrop-blur-sm"
+      data-testid="agentic-evidence-disclosure"
+    >
+      <PlanHeader className="gap-3 px-4 pb-3">
+        <div className="space-y-1">
+          <PlanTitle className="text-[0.95rem] text-ink">依据</PlanTitle>
+          <PlanDescription className="text-[12px] leading-5">
+            {`${items.length} 条回答依据`}
+          </PlanDescription>
+        </div>
+        <PlanTrigger aria-label="依据" />
+      </PlanHeader>
+      <PlanContent className="px-4">
+        <Attachments variant="list" className="w-full gap-2.5">
+          {items.map((item) => (
+            <Attachment
+              key={item.handleId}
+              data={sourceDocumentPart(`agentic-evidence:${item.handleId}`, item.title)}
+              className="items-start rounded-[16px] border border-border/65 bg-background/68 px-3 py-3 shadow-none hover:bg-background/76"
+            >
+              <AttachmentPreview
+                className="size-10 rounded-[12px] bg-muted/70"
+                fallbackIcon={<Quote className="h-4 w-4 text-muted-foreground" />}
+              />
+              <div className="min-w-0 flex-1 space-y-1">
+                <AttachmentInfo className="text-[13px] font-medium text-ink-soft" />
+                <Attachments variant="inline" className="max-w-full gap-1.5">
+                  <Attachment
+                    data={sourceDocumentPart(
+                      `agentic-evidence-kind:${item.handleId}`,
+                      item.title,
+                    )}
+                    className="border-border/60 bg-background/84 text-[11px]"
+                  >
+                    <AttachmentPreview
+                      fallbackIcon={<Sparkles className="h-3 w-3 text-muted-foreground" />}
+                    />
+                    <AttachmentInfo className="text-xs" />
+                  </Attachment>
+                  {item.kind === "search_hit" && item.ragNavigation ? (
+                    <Attachment
+                      data={sourceDocumentPart(
+                        `agentic-evidence-nav:${item.handleId}`,
+                        "来自当前文章检索",
+                      )}
+                      className="border-border/60 bg-background/84 text-[11px]"
+                    >
+                      <AttachmentPreview
+                        fallbackIcon={<Search className="h-3 w-3 text-muted-foreground" />}
+                      />
+                      <AttachmentInfo className="text-xs" />
+                    </Attachment>
+                  ) : null}
+                </Attachments>
+                {item.snippet ? (
+                  <p className="text-[12px] leading-6 text-muted">{item.snippet}</p>
                 ) : null}
               </div>
             </Attachment>
@@ -2665,6 +2932,13 @@ function MessageBubble({
                   <ArticleRagCitationList
                     key={`${message.id}-${block.kind}-${index}`}
                     sidecar={message.article_rag}
+                  />
+                ) : null;
+              case "agentic_evidence":
+                return (message.agentic_evidence ?? []).length > 0 ? (
+                  <AgenticEvidenceDisclosure
+                    key={`${message.id}-${block.kind}-${index}`}
+                    evidence={message.agentic_evidence ?? []}
                   />
                 ) : null;
               case "context_summary":
@@ -3627,6 +3901,8 @@ export function AiWorkspacePanel({
       // No article_rag sidecar until message.completed arrives — streaming
       // must not show partial citations.
       article_rag: null,
+      // Clear agentic evidence so a new turn never inherits prior basis.
+      agentic_evidence: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -3747,6 +4023,8 @@ export function AiWorkspacePanel({
               // Clear any prior article_rag sidecar so streaming doesn't
               // render stale citations from the previous attempt.
               article_rag: null,
+              // Clear agentic evidence so retry does not keep prior basis.
+              agentic_evidence: null,
             }
           : message,
       ),

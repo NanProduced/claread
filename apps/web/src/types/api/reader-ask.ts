@@ -479,6 +479,14 @@ export interface ReaderAskMessageUiStateDto {
    * was not present on the completed payload (silent fallback).
    */
   article_rag?: ReaderAskArticleRagSidecarSafeDto | null;
+  /**
+   * Frontend-only storage for agentic Reading Record Ask evidence from
+   * {@link ReaderAskAgenticCompletedPayloadDto}. Distinct from legacy
+   * {@link ReaderAskEvidenceItemDto} and from `article_rag`. Project to
+   * display items via `projectAgenticEvidenceForDisplay` before render.
+   * `null` / empty means no agentic evidence for this message.
+   */
+  agentic_evidence?: ReaderAskAgenticEvidenceItemDto[] | null;
 }
 
 export type ReaderAskUiMessageDto = ReaderAskMessageDto & ReaderAskMessageUiStateDto;
@@ -611,11 +619,321 @@ export type ReaderAskStreamEventName =
   | "replan.started"
   | "message.interrupted"
   | "message.completed"
+  // Agentic Reading Record Ask — emitted only when
+  // `reader_record_ask_agentic_enabled` is on. Legacy clients may ignore these.
+  | "agentic.run_started"
+  | "agentic.progress"
+  | "agentic.terminal"
   | "error";
 
+/**
+ * Generic envelope kept for existing call sites that only need event+data.
+ * Prefer {@link ReaderAskTypedStreamEnvelopeDto} when narrowing agentic payloads.
+ */
 export interface ReaderAskStreamEnvelopeDto<TData = Record<string, unknown>> {
   event: ReaderAskStreamEventName;
   data: TData;
+}
+
+// ---------------------------------------------------------------------------
+// Agentic Reading Record Ask SSE contract
+//
+// Mirrors `services/api/app/schemas/reader_record_ask_stream.py`.
+// `execution_version` is the wire discriminator vs legacy Ask payloads.
+// Agentic `message.completed` carries answer_text/evidence (NOT content_md /
+// article_rag). Non-ok terminals use message.interrupted + agentic.terminal
+// and must never be treated as successful completions.
+// ---------------------------------------------------------------------------
+
+export const READER_ASK_AGENTIC_EXECUTION_VERSION =
+  "reader_record_ask_agentic_v1" as const;
+
+export type ReaderAskAgenticExecutionVersionDto =
+  typeof READER_ASK_AGENTIC_EXECUTION_VERSION;
+
+export type ReaderAskAgenticFinalStatusDto =
+  | "ok"
+  | "context_stale"
+  | "invalid_citations"
+  | "failed"
+  | "cancelled";
+
+export type ReaderAskAgenticEvidenceKindDto =
+  | "initial_anchor"
+  | "read_range"
+  | "search_hit"
+  | "observation";
+
+export type ReaderAskAgenticRagSourceScopeDto = "main_reading_text" | "heading";
+
+/** Public RAG citation fields safe for SSE / thread reload. */
+export interface ReaderAskAgenticRagCitationDto {
+  rag_substrate_id: string;
+  index_run_id: string;
+  index_version: string;
+  plan_content_sha256: string;
+  source_scope: ReaderAskAgenticRagSourceScopeDto;
+  block_type: string;
+  chunk_id: string;
+  content_sha256: string;
+  canonical_text_start_utf16: number;
+  canonical_text_end_utf16: number;
+  snippet: string;
+  score?: number | null;
+  stable_document_id: string;
+  base_id: string;
+  record_generation: number;
+  block_ids: string[];
+  unit_ids: string[];
+  anchor_segment_ids: string[];
+}
+
+export interface ReaderAskAgenticEvidenceItemDto {
+  handle_id: string;
+  kind: ReaderAskAgenticEvidenceKindDto;
+  source_tool: string;
+  snippet?: string | null;
+  unit_id?: string | null;
+  anchor_segment_id?: string | null;
+  rag_citation?: ReaderAskAgenticRagCitationDto | null;
+}
+
+/**
+ * Agentic `message.completed` payload. Only emitted for final_status=ok.
+ * Distinct from legacy {@link ReaderAskCompletedPayloadDto} (content_md/citations).
+ */
+export interface ReaderAskAgenticCompletedPayloadDto {
+  execution_version: ReaderAskAgenticExecutionVersionDto;
+  final_status: "ok";
+  answer_text: string;
+  message_id: string;
+  thread_id: string;
+  turn_run_id: string;
+  envelope_fingerprint: string;
+  evidence: ReaderAskAgenticEvidenceItemDto[];
+}
+
+/** Non-ok terminal statuses only — `ok` belongs exclusively to message.completed. */
+export type ReaderAskAgenticTerminalStatusDto = Exclude<
+  ReaderAskAgenticFinalStatusDto,
+  "ok"
+>;
+
+/**
+ * Typed non-ok terminal (stale / invalid citations / cancelled / failed).
+ * Emitted as both `agentic.terminal` and `message.interrupted`.
+ * Never carries a displayable answer for stale/invalid paths.
+ */
+export interface ReaderAskAgenticTerminalPayloadDto {
+  execution_version: ReaderAskAgenticExecutionVersionDto;
+  final_status: ReaderAskAgenticTerminalStatusDto;
+  message_id?: string | null;
+  thread_id?: string | null;
+  turn_run_id?: string | null;
+  envelope_fingerprint?: string | null;
+  terminal_reason?: string | null;
+  rejected_handles: string[];
+}
+
+export interface ReaderAskAgenticRunStartedPayloadDto {
+  execution_version: ReaderAskAgenticExecutionVersionDto;
+  message_id: string;
+  thread_id: string;
+  turn_run_id: string;
+  envelope_fingerprint: string;
+  has_initial_selection: boolean;
+}
+
+/** Safe progress signal (no raw document text / tool args). */
+export interface ReaderAskAgenticProgressPayloadDto {
+  execution_version: ReaderAskAgenticExecutionVersionDto;
+  phase: string;
+  summary: string;
+}
+
+/** Legacy interrupt payload (partial streamed answer). */
+export interface ReaderAskInterruptedPayloadDto {
+  content_md?: string;
+  reasoning_md?: string | null;
+  reasoning_status?: "idle" | "streaming" | "completed" | null;
+}
+
+/**
+ * Discriminated stream envelope union.
+ * Agentic-only events carry strict DTOs; shared event names keep loose data so
+ * legacy partial payloads remain assignable at the transport boundary.
+ */
+export type ReaderAskTypedStreamEnvelopeDto =
+  | {
+      event: "agentic.run_started";
+      data: ReaderAskAgenticRunStartedPayloadDto;
+    }
+  | {
+      event: "agentic.progress";
+      data: ReaderAskAgenticProgressPayloadDto;
+    }
+  | {
+      event: "agentic.terminal";
+      data: ReaderAskAgenticTerminalPayloadDto;
+    }
+  | {
+      event: "message.completed";
+      data:
+        | ReaderAskCompletedPayloadDto
+        | ReaderAskAgenticCompletedPayloadDto
+        | Record<string, unknown>;
+    }
+  | {
+      event: "message.interrupted";
+      data:
+        | ReaderAskInterruptedPayloadDto
+        | ReaderAskAgenticTerminalPayloadDto
+        | Record<string, unknown>;
+    }
+  | {
+      event: Exclude<
+        ReaderAskStreamEventName,
+        | "agentic.run_started"
+        | "agentic.progress"
+        | "agentic.terminal"
+        | "message.completed"
+        | "message.interrupted"
+      >;
+      data: Record<string, unknown>;
+    };
+
+const READER_ASK_AGENTIC_EVIDENCE_KINDS = new Set<string>([
+  "initial_anchor",
+  "read_range",
+  "search_hit",
+  "observation",
+]);
+
+const READER_ASK_AGENTIC_TERMINAL_STATUSES = new Set<string>([
+  "context_stale",
+  "invalid_citations",
+  "failed",
+  "cancelled",
+]);
+
+function isReaderAskAgenticRagCitation(
+  value: unknown,
+): value is ReaderAskAgenticRagCitationDto {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const citation = value as Record<string, unknown>;
+  return (
+    typeof citation.rag_substrate_id === "string" &&
+    typeof citation.index_run_id === "string" &&
+    typeof citation.index_version === "string" &&
+    typeof citation.plan_content_sha256 === "string" &&
+    (citation.source_scope === "main_reading_text" ||
+      citation.source_scope === "heading") &&
+    typeof citation.block_type === "string" &&
+    typeof citation.chunk_id === "string" &&
+    typeof citation.content_sha256 === "string" &&
+    typeof citation.canonical_text_start_utf16 === "number" &&
+    typeof citation.canonical_text_end_utf16 === "number" &&
+    typeof citation.snippet === "string" &&
+    typeof citation.stable_document_id === "string" &&
+    typeof citation.base_id === "string" &&
+    typeof citation.record_generation === "number" &&
+    Array.isArray(citation.block_ids) &&
+    Array.isArray(citation.unit_ids) &&
+    Array.isArray(citation.anchor_segment_ids)
+  );
+}
+
+function isReaderAskAgenticEvidenceItem(
+  value: unknown,
+): value is ReaderAskAgenticEvidenceItemDto {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const item = value as Record<string, unknown>;
+  if (
+    typeof item.handle_id !== "string" ||
+    typeof item.kind !== "string" ||
+    !READER_ASK_AGENTIC_EVIDENCE_KINDS.has(item.kind) ||
+    typeof item.source_tool !== "string"
+  ) {
+    return false;
+  }
+  if (item.rag_citation == null) {
+    return true;
+  }
+  return isReaderAskAgenticRagCitation(item.rag_citation);
+}
+
+export function isReaderAskAgenticCompletedPayload(
+  data: unknown,
+): data is ReaderAskAgenticCompletedPayloadDto {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  const payload = data as Record<string, unknown>;
+  return (
+    payload.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION &&
+    payload.final_status === "ok" &&
+    typeof payload.answer_text === "string" &&
+    typeof payload.message_id === "string" &&
+    typeof payload.thread_id === "string" &&
+    typeof payload.turn_run_id === "string" &&
+    typeof payload.envelope_fingerprint === "string" &&
+    Array.isArray(payload.evidence) &&
+    payload.evidence.every(isReaderAskAgenticEvidenceItem)
+  );
+}
+
+export function isReaderAskAgenticTerminalPayload(
+  data: unknown,
+): data is ReaderAskAgenticTerminalPayloadDto {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  const payload = data as Record<string, unknown>;
+  const status = payload.final_status;
+  // agentic.terminal is non-ok only; final_status "ok" belongs exclusively to
+  // message.completed and must never narrow as a terminal payload.
+  return (
+    payload.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION &&
+    typeof status === "string" &&
+    READER_ASK_AGENTIC_TERMINAL_STATUSES.has(status) &&
+    Array.isArray(payload.rejected_handles) &&
+    payload.rejected_handles.every((handle) => typeof handle === "string")
+  );
+}
+
+export function isReaderAskAgenticRunStartedPayload(
+  data: unknown,
+): data is ReaderAskAgenticRunStartedPayloadDto {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  const payload = data as Record<string, unknown>;
+  return (
+    payload.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION &&
+    typeof payload.message_id === "string" &&
+    typeof payload.thread_id === "string" &&
+    typeof payload.turn_run_id === "string" &&
+    typeof payload.envelope_fingerprint === "string" &&
+    typeof payload.has_initial_selection === "boolean"
+  );
+}
+
+export function isReaderAskAgenticProgressPayload(
+  data: unknown,
+): data is ReaderAskAgenticProgressPayloadDto {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  const payload = data as Record<string, unknown>;
+  return (
+    payload.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION &&
+    typeof payload.phase === "string" &&
+    typeof payload.summary === "string"
+  );
 }
 
 // ---------------------------------------------------------------------------

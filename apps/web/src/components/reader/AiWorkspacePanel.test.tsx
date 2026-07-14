@@ -137,15 +137,19 @@ const completedPayload = {
   external_asset_disambiguation: null,
 };
 
-vi.mock("./ask/sse", () => ({
-  consumeReaderAskSse: vi.fn(async (_response: Response, onEvent: (event: { event: string; data: Record<string, unknown> }) => void) => {
-    onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
-    onEvent({
-      event: "message.completed",
-      data: completedPayload,
-    });
-  }),
-}));
+vi.mock("./ask/sse", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./ask/sse")>();
+  return {
+    ...actual,
+    consumeReaderAskSse: vi.fn(async (_response: Response, onEvent: (event: { event: string; data: Record<string, unknown> }) => void) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({
+        event: "message.completed",
+        data: completedPayload,
+      });
+    }),
+  };
+});
 
 const pageIdentity: ReaderAskPageIdentity = {
   recordId: "record-1",
@@ -3565,5 +3569,502 @@ describe("createSseMessageHandler – context compression UX", () => {
     expect(getMessages()[0].status).toBe("failed");
     expect(getMessages()[0].compacting).toBe(false);
     expect(getMessages()[0].replan_status).toBe("idle");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createSseMessageHandler – agentic Reading Record Ask path
+// ---------------------------------------------------------------------------
+
+describe("createSseMessageHandler – agentic stream", () => {
+  let rafCallbacks: FrameRequestCallback[] = [];
+  let rafIdCounter = 1;
+
+  beforeEach(() => {
+    rafCallbacks = [];
+    rafIdCounter = 1;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      const id = rafIdCounter++;
+      rafCallbacks.push(cb);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function flushRaf() {
+    const callbacks = [...rafCallbacks];
+    rafCallbacks = [];
+    for (const cb of callbacks) {
+      cb(0);
+    }
+  }
+
+  type Msg = ReaderAskUiMessageDto;
+
+  function makeStreamingAssistant(overrides: Partial<Msg> = {}): Msg {
+    return {
+      id: "temp-assistant-1",
+      thread_id: "thread-1",
+      role: "assistant",
+      status: "streaming",
+      content_md: "",
+      reasoning_md: null,
+      reasoning_status: null,
+      context_anchors: [],
+      citations: [],
+      action_proposals: [],
+      tool_trace: [],
+      evidence: [],
+      trace_summary: null,
+      disambiguation: null,
+      external_asset_disambiguation: null,
+      response_cards: [],
+      supplement_candidates: [],
+      persisted_supplements: [],
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function setupHandler(messages: Msg[], initialId = "temp-assistant-1") {
+    let updatedMessages: Msg[] = messages;
+    const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
+      updatedMessages = updater(updatedMessages);
+    };
+    const onError = vi.fn();
+    const onMessageIdAssigned = vi.fn();
+    const handler = createSseMessageHandler(
+      initialId,
+      updateMessage,
+      onMessageIdAssigned,
+      onError,
+    );
+    return {
+      getMessages: () => updatedMessages,
+      handler,
+      onError,
+      onMessageIdAssigned,
+    };
+  }
+
+  const agenticCompleted = {
+    execution_version: "reader_record_ask_agentic_v1" as const,
+    final_status: "ok" as const,
+    answer_text: "Climate change is discussed in paragraph 2.",
+    message_id: "msg-agentic-1",
+    thread_id: "thread-1",
+    turn_run_id: "turn-run-1",
+    envelope_fingerprint: "env-fp-1",
+    evidence: [
+      {
+        handle_id: "evh_aabbccddeeff00112233445566778899",
+        kind: "search_hit" as const,
+        source_tool: "search_current_article",
+        snippet: "climate change impacts",
+        unit_id: "u1",
+        anchor_segment_id: "s1",
+        rag_citation: {
+          rag_substrate_id: "substrate-1",
+          index_run_id: "index-run-1",
+          index_version: "v1",
+          plan_content_sha256: "plan-sha-abc",
+          source_scope: "main_reading_text" as const,
+          block_type: "paragraph",
+          chunk_id: "chunk-1",
+          content_sha256: "content-sha-def",
+          canonical_text_start_utf16: 10,
+          canonical_text_end_utf16: 42,
+          snippet: "climate change impacts",
+          score: 0.91,
+          stable_document_id: "doc-stable-1",
+          base_id: "base-1",
+          record_generation: 1,
+          block_ids: ["b1"],
+          unit_ids: ["u1"],
+          anchor_segment_ids: ["s1"],
+        },
+      },
+    ],
+  };
+
+  it("completes temporary assistant from agentic answer_text without reading content_md", () => {
+    const { handler, getMessages, onMessageIdAssigned, onError } = setupHandler([
+      makeStreamingAssistant({ compacting: true, replan_status: "replanning", regenerate_preview: true }),
+    ]);
+
+    handler({ event: "message.completed", data: agenticCompleted });
+    flushRaf();
+
+    const message = getMessages()[0];
+    expect(message.id).toBe("msg-agentic-1");
+    expect(message.thread_id).toBe("thread-1");
+    expect(message.status).toBe("completed");
+    expect(message.content_md).toBe("Climate change is discussed in paragraph 2.");
+    expect(message.compacting).toBe(false);
+    expect(message.replan_status).toBe("idle");
+    expect(message.regenerate_preview).toBe(false);
+    // Must not invent legacy article_rag sidecar from agentic evidence.
+    expect(message.article_rag ?? null).toBeNull();
+    // Agentic evidence is stored on the UI state, not mapped into legacy evidence DTO.
+    expect(message.evidence).toEqual([]);
+    expect(message.agentic_evidence).toEqual(agenticCompleted.evidence);
+    expect(onMessageIdAssigned).toHaveBeenCalledWith("msg-agentic-1");
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("does not complete answer on agentic failed terminal", () => {
+    const { handler, getMessages, onError } = setupHandler([
+      makeStreamingAssistant({ content_md: "", compacting: true }),
+    ]);
+
+    const terminal = {
+      execution_version: "reader_record_ask_agentic_v1",
+      final_status: "failed",
+      message_id: "msg-agentic-1",
+      thread_id: "thread-1",
+      turn_run_id: "turn-run-1",
+      envelope_fingerprint: "env-fp-1",
+      terminal_reason: "agentic_model_unconfigured: no validated model",
+      rejected_handles: [],
+    };
+
+    handler({ event: "agentic.terminal", data: terminal });
+    // Duplicate message.interrupted with same payload must not re-fire side effects.
+    handler({ event: "message.interrupted", data: terminal });
+    flushRaf();
+
+    const message = getMessages()[0];
+    expect(message.status).toBe("failed");
+    expect(message.content_md).toBe("");
+    expect(message.compacting).toBe(false);
+    expect(message.replan_status).toBe("idle");
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBeTruthy();
+  });
+
+  it("does not complete answer on agentic context_stale terminal", () => {
+    const { handler, getMessages, onError } = setupHandler([
+      makeStreamingAssistant({ content_md: "should stay", regenerate_preview: true }),
+    ]);
+
+    const terminal = {
+      execution_version: "reader_record_ask_agentic_v1",
+      final_status: "context_stale",
+      message_id: "msg-agentic-1",
+      thread_id: "thread-1",
+      turn_run_id: "turn-run-1",
+      envelope_fingerprint: "env-fp-1",
+      terminal_reason: "generation mismatch",
+      rejected_handles: [],
+    };
+
+    handler({ event: "message.interrupted", data: terminal });
+    flushRaf();
+
+    const message = getMessages()[0];
+    expect(message.status).toBe("interrupted");
+    expect(message.content_md).toBe("should stay");
+    expect(message.regenerate_preview).toBe(false);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenLastCalledWith("阅读上下文已更新，请重试提问。");
+  });
+
+  it("keeps message non-terminal on agentic.run_started and agentic.progress", () => {
+    const { handler, getMessages, onError, onMessageIdAssigned } = setupHandler([
+      makeStreamingAssistant({ content_md: "", status: "streaming" }),
+    ]);
+
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: "reader_record_ask_agentic_v1",
+        message_id: "msg-agentic-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-run-1",
+        envelope_fingerprint: "env-fp-1",
+        has_initial_selection: true,
+      },
+    });
+    handler({
+      event: "agentic.progress",
+      data: {
+        execution_version: "reader_record_ask_agentic_v1",
+        phase: "agent_running",
+        summary: "Running Reading Record Ask agent",
+      },
+    });
+    flushRaf();
+
+    const message = getMessages()[0];
+    // Temporary id may be reassigned via run_started, but status stays streaming
+    // and no completed/error side effects fire.
+    expect(message.status).toBe("streaming");
+    expect(message.content_md).toBe("");
+    expect(onError).not.toHaveBeenCalled();
+    expect(onMessageIdAssigned).toHaveBeenCalledWith("msg-agentic-1");
+  });
+
+  it("still completes legacy message.completed with content_md", () => {
+    const { handler, getMessages, onError } = setupHandler([
+      makeStreamingAssistant({ id: "msg-1" }),
+    ], "msg-1");
+
+    handler({
+      event: "message.completed",
+      data: {
+        id: "msg-1",
+        thread_id: "thread-1",
+        content_md: "legacy final answer",
+        submission_mode: "chat",
+        resolved_intent: "explain",
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+      },
+    });
+    flushRaf();
+
+    expect(getMessages()[0].status).toBe("completed");
+    expect(getMessages()[0].content_md).toBe("legacy final answer");
+    expect(getMessages()[0].agentic_evidence ?? null).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("still applies legacy message.interrupted content_md without agentic terminal", () => {
+    const { handler, getMessages, onError } = setupHandler([
+      makeStreamingAssistant({ id: "msg-1", content_md: "partial" }),
+    ], "msg-1");
+
+    handler({
+      event: "message.interrupted",
+      data: { content_md: "interrupted partial answer" },
+    });
+    flushRaf();
+
+    expect(getMessages()[0].status).toBe("interrupted");
+    expect(getMessages()[0].content_md).toBe("interrupted partial answer");
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("clears prior agentic_evidence on legacy message.completed", () => {
+    const { handler, getMessages } = setupHandler([
+      makeStreamingAssistant({
+        id: "msg-1",
+        agentic_evidence: agenticCompleted.evidence,
+      }),
+    ], "msg-1");
+
+    handler({
+      event: "message.completed",
+      data: {
+        id: "msg-1",
+        thread_id: "thread-1",
+        content_md: "legacy after agentic",
+        submission_mode: "chat",
+        resolved_intent: "explain",
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+      },
+    });
+    flushRaf();
+
+    expect(getMessages()[0].status).toBe("completed");
+    expect(getMessages()[0].content_md).toBe("legacy after agentic");
+    expect(getMessages()[0].agentic_evidence ?? null).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AiWorkspacePanel – agentic evidence disclosure UI
+// ---------------------------------------------------------------------------
+
+describe("AiWorkspacePanel – agentic evidence disclosure", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.stubGlobal("fetch", mockFetch());
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
+  const agenticSearchHitEvidence = [
+    {
+      handle_id: "evh_aabbccddeeff00112233445566778899",
+      kind: "search_hit" as const,
+      source_tool: "search_current_article",
+      snippet: "climate change impacts",
+      unit_id: "u1",
+      anchor_segment_id: "s1",
+      rag_citation: {
+        rag_substrate_id: "substrate-secret",
+        index_run_id: "index-run-secret",
+        index_version: "v1",
+        plan_content_sha256: "plan-sha-secret",
+        source_scope: "main_reading_text" as const,
+        block_type: "paragraph",
+        chunk_id: "chunk-1",
+        content_sha256: "content-sha-secret",
+        canonical_text_start_utf16: 10,
+        canonical_text_end_utf16: 42,
+        snippet: "climate change impacts",
+        score: 0.91,
+        stable_document_id: "doc-stable-secret",
+        base_id: "base-secret",
+        record_generation: 1,
+        block_ids: ["b1"],
+        unit_ids: ["u1"],
+        anchor_segment_ids: ["s1"],
+      },
+    },
+  ];
+
+  const agenticCompletedPayload = {
+    execution_version: "reader_record_ask_agentic_v1",
+    final_status: "ok",
+    answer_text: "Climate change is discussed in paragraph 2.",
+    message_id: "msg-agentic-1",
+    thread_id: "thread-1",
+    turn_run_id: "turn-run-1",
+    envelope_fingerprint: "env-fp-1",
+    evidence: agenticSearchHitEvidence,
+  };
+
+  it("stores and renders agentic search_hit evidence without leaking internal fields", async () => {
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-agentic-1" } });
+      onEvent({ event: "message.completed", data: agenticCompletedPayload });
+    });
+
+    const { container } = renderPanel();
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "What about climate?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Climate change is discussed in paragraph 2.")).not.toBeNull();
+    });
+
+    expect(screen.getByTestId("agentic-evidence-disclosure")).not.toBeNull();
+    // Expand the disclosure so projected item labels become visible.
+    fireEvent.click(screen.getByRole("button", { name: "依据" }));
+
+    // Title is rendered both as the item heading and as the kind chip.
+    expect(screen.getAllByText("文章检索").length).toBeGreaterThan(0);
+    expect(screen.getByText("climate change impacts")).not.toBeNull();
+    expect(screen.getByText("来自当前文章检索")).not.toBeNull();
+
+    const text = container.textContent ?? "";
+    expect(text).not.toContain("substrate-secret");
+    expect(text).not.toContain("index-run-secret");
+    expect(text).not.toContain("plan-sha-secret");
+    expect(text).not.toContain("content-sha-secret");
+    expect(text).not.toContain("doc-stable-secret");
+    expect(text).not.toContain("base-secret");
+    expect(text).not.toContain("0.91");
+    expect(text).not.toContain("rag_substrate_id");
+    expect(text).not.toContain("index_run_id");
+    // Raw UTF-16 offsets must not be shown as user-facing text.
+    expect(text).not.toContain("canonical_text_start_utf16");
+    expect(text).not.toContain("canonicalTextStartUtf16");
+  });
+
+  it("does not render agentic evidence disclosure for legacy completed payloads", async () => {
+    // Default mock already emits legacy completedPayload without agentic evidence.
+    renderPanel();
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释一下" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("解释完成。")).not.toBeNull();
+    });
+
+    expect(screen.queryByTestId("agentic-evidence-disclosure")).toBeNull();
+    expect(screen.queryByText("来自当前文章检索")).toBeNull();
+  });
+
+  it("does not render agentic evidence disclosure when evidence is empty", async () => {
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-agentic-empty" } });
+      onEvent({
+        event: "message.completed",
+        data: {
+          ...agenticCompletedPayload,
+          message_id: "msg-agentic-empty",
+          answer_text: "No citations this turn.",
+          evidence: [],
+        },
+      });
+    });
+
+    renderPanel();
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "empty evidence?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("No citations this turn.")).not.toBeNull();
+    });
+
+    expect(screen.queryByTestId("agentic-evidence-disclosure")).toBeNull();
+  });
+
+  it("clears agentic evidence on regenerate placeholder before the next stream", async () => {
+    // First stream stores agentic evidence; retry should clear it immediately.
+    vi.mocked(consumeReaderAskSse)
+      .mockImplementationOnce(async (_response, onEvent) => {
+        onEvent({ event: "message.started", data: { message_id: "msg-agentic-1" } });
+        onEvent({ event: "message.completed", data: agenticCompletedPayload });
+      })
+      .mockImplementationOnce(async () => {
+        // Leave the stream hanging so we can assert the retry placeholder state.
+      });
+
+    renderPanel();
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "What about climate?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("agentic-evidence-disclosure")).not.toBeNull();
+    });
+
+    const regenerateButton = await screen.findByRole("button", { name: "重新生成" });
+    fireEvent.click(regenerateButton);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("agentic-evidence-disclosure")).toBeNull();
+    });
   });
 });

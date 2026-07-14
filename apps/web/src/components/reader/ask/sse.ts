@@ -1,4 +1,22 @@
-import type { ReaderAskStreamEnvelopeDto, ReaderAskStreamEventName } from "@/types/api/reader-ask";
+import type {
+  ReaderAskStreamEnvelopeDto,
+  ReaderAskStreamEventName,
+} from "@/types/api/reader-ask";
+import {
+  isReaderAskAgenticCompletedPayload,
+  isReaderAskAgenticProgressPayload,
+  isReaderAskAgenticRunStartedPayload,
+  isReaderAskAgenticTerminalPayload,
+  READER_ASK_AGENTIC_EXECUTION_VERSION,
+} from "@/types/api/reader-ask";
+
+export {
+  isReaderAskAgenticCompletedPayload,
+  isReaderAskAgenticProgressPayload,
+  isReaderAskAgenticRunStartedPayload,
+  isReaderAskAgenticTerminalPayload,
+  READER_ASK_AGENTIC_EXECUTION_VERSION,
+};
 
 function parseSseChunk(chunk: string): ReaderAskStreamEnvelopeDto[] {
   return chunk
@@ -18,6 +36,9 @@ function parseSseChunk(chunk: string): ReaderAskStreamEnvelopeDto[] {
       }
 
       try {
+        // Preserve typed agentic payloads as-is (no remapping to legacy shapes
+        // such as content_md / article_rag). Unknown event names still pass
+        // through for forward-compat; consumers must not treat them as success.
         return [
           {
             event: event as ReaderAskStreamEventName,
