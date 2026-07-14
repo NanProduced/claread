@@ -257,6 +257,10 @@ def test_reader_record_ask_modules_do_not_import_legacy_runtime_or_scene() -> No
     """
     target_files = [
         APP_DIR / "services/reader_record_ask/service.py",
+        APP_DIR / "services/reader_record_ask/context_envelope.py",
+        APP_DIR / "services/reader_record_ask/tool_contracts.py",
+        APP_DIR / "services/reader_record_ask/evidence.py",
+        APP_DIR / "services/reader_record_ask/__init__.py",
         APP_DIR / "api/routes/reader_record_ask.py",
     ]
     forbidden_modules = (
