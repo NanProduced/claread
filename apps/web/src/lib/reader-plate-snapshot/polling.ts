@@ -5,9 +5,36 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   classifyReaderEvent,
   RELIABLE_RELOAD_EVENT_TYPES,
+  type ReaderEventClassification,
   type SnapshotFenceContext,
 } from "@/lib/reader-plate-snapshot/representation-event-classifier";
-import type { ReaderEventPollResponseDto } from "@/types/api/reader-plate";
+import type {
+  ReaderEventPollResponseDto,
+  ReaderEventResponseDto,
+} from "@/types/api/reader-plate";
+
+/**
+ * T4.2a-PUX-R4-R2: Complete reload context passed from polling → page → surface.
+ *
+ * Contains ALL events from the poll response (not just the trigger event) so
+ * the incremental projection merger can build a batch merge plan. See R1.1
+ * design §3.2 and §3.7 for batch semantics.
+ */
+export interface ReloadContext {
+  /** The poll cursor (after_sequence) at the time of the reload decision. */
+  cursor: number;
+  /** All events from the poll response that triggered this reload. */
+  events: ReaderEventResponseDto[];
+  /**
+   * The classification of the first event that triggered the reload
+   * (reload_snapshot or reload_or_reset). Used for audit and UI display.
+   */
+  triggerClassification: ReaderEventClassification;
+  /** The accepted snapshot fence at the time of the reload decision. */
+  acceptedSnapshotFence: SnapshotFenceContext | null;
+  /** Reload reason string (for backward-compatible UI display). */
+  reason: string;
+}
 
 /**
  * Polling decision produced by {@link decidePollingAction}.
@@ -15,7 +42,8 @@ import type { ReaderEventPollResponseDto } from "@/types/api/reader-plate";
  * - `reload`: snapshot must be reloaded (server flagged `reload_required`,
  *   a payload-aware classifier flagged `reload_snapshot` /
  *   `reload_or_reset` for a representation event, a reliable reload event
- *   arrived, or the cursor drifted ahead of the server).
+ *   arrived, or the cursor drifted ahead of the server). The `reloadContext`
+ *   carries all events and fence info for the incremental projection merger.
  * - `advance`: events were consumed without a reload trigger; the cursor
  *   should move to `next_after_sequence`. `hasMore` suggests an immediate
  *   follow-up poll.
@@ -23,7 +51,7 @@ import type { ReaderEventPollResponseDto } from "@/types/api/reader-plate";
  *   high-water mark. This is NOT an error — the caller should just wait.
  */
 export type PollingDecision =
-  | { kind: "reload"; reason: string }
+  | { kind: "reload"; reason: string; reloadContext: ReloadContext }
   | { kind: "advance"; cursor: number; hasMore: boolean }
   | { kind: "caught_up"; cursor: number };
 
@@ -62,26 +90,69 @@ export function decidePollingAction(input: {
 }): PollingDecision {
   const { afterSequence, response, snapshotFence = null } = input;
 
+  /**
+   * T4.2a-PUX-R4-R2: Build a ReloadContext with ALL events from the poll
+   * response. The incremental projection merger needs the full batch to
+   * build a correct merge plan (see R1.1 design §3.7 batch semantics).
+   */
+  const buildReloadContext = (
+    reason: string,
+    triggerClassification: ReaderEventClassification,
+  ): ReloadContext => ({
+    cursor: afterSequence,
+    events: response.events,
+    triggerClassification,
+    acceptedSnapshotFence: snapshotFence,
+    reason,
+  });
+
   if (response.reload_required) {
+    const reason = response.reload_reason ?? "reload_required";
     return {
       kind: "reload",
-      reason: response.reload_reason ?? "reload_required",
+      reason,
+      reloadContext: buildReloadContext(reason, {
+        kind: "reload_snapshot",
+        reason,
+      }),
     };
   }
 
   for (const event of response.events) {
     const classification = classifyReaderEvent(event, snapshotFence);
     if (classification.kind === "reload_snapshot") {
-      return { kind: "reload", reason: classification.reason };
+      return {
+        kind: "reload",
+        reason: classification.reason,
+        reloadContext: buildReloadContext(
+          classification.reason,
+          classification,
+        ),
+      };
     }
     if (classification.kind === "reload_or_reset") {
-      return { kind: "reload", reason: classification.reason };
+      return {
+        kind: "reload",
+        reason: classification.reason,
+        reloadContext: buildReloadContext(
+          classification.reason,
+          classification,
+        ),
+      };
     }
     // cursor_only: continue scanning the remaining events.
   }
 
   if (afterSequence > response.last_event_sequence) {
-    return { kind: "reload", reason: "cursor_ahead_of_server" };
+    const reason = "cursor_ahead_of_server";
+    return {
+      kind: "reload",
+      reason,
+      reloadContext: buildReloadContext(reason, {
+        kind: "reload_snapshot",
+        reason,
+      }),
+    };
   }
 
   if (response.events.length === 0) {
@@ -114,6 +185,10 @@ export interface UseReaderPlatePollingOptions {
   /**
    * Called when the polling hook decides the snapshot must be reloaded.
    *
+   * T4.2a-PUX-R4-R2: receives a full {@link ReloadContext} (not just a reason
+   * string) so the page can pass trigger events and fence info to the Surface
+   * for incremental projection merge.
+   *
    * T2.1 contract: the callback MUST resolve to `true` only when a fresh
    * snapshot was actually applied (parent pushed a new `initialCursor` via
    * props). Resolve to `false` when the reload was skipped (e.g. an
@@ -125,7 +200,7 @@ export interface UseReaderPlatePollingOptions {
    * Rejecting the promise is treated identically to returning `false`:
    * cursor stays put and the error is surfaced via `error`.
    */
-  onReloadRequired: (reason: string) => Promise<boolean>;
+  onReloadRequired: (context: ReloadContext) => Promise<boolean>;
   onCursorChange?: (cursor: number) => void;
 }
 
@@ -298,7 +373,9 @@ export function useReaderPlatePolling(
           setLastReloadReason(decision.reason);
           let reloadSucceeded = false;
           try {
-            const result = await onReloadRequiredRef.current?.(decision.reason);
+            const result = await onReloadRequiredRef.current?.(
+              decision.reloadContext,
+            );
             // T2.1 contract: `true` means a fresh snapshot was applied and
             // the parent will push a new initialCursor. `false` (or a
             // rejected promise) means the reload was skipped/failed — keep

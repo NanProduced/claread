@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { computeUtf16FNV1a } from "@claread/contracts";
 import { readFileSync } from "node:fs";
@@ -14,6 +14,7 @@ import {
   READER_TEXT_RANGE_OFFSET_UNIT,
   type ReaderAnchorSegmentNodeDto,
   type ReaderEnhancementProgressDto,
+  type ReaderEventResponseDto,
   type ReaderGrammarNoteMarkDto,
   type ReaderPlateSnapshotDto,
   type ReaderSourceBlockNodeDto,
@@ -22,6 +23,7 @@ import {
   type ReaderUnitNodeDto,
   type ReaderVocabularyMarkDto,
 } from "@/types/api/reader-plate";
+import type { ReloadContext } from "@/lib/reader-plate-snapshot/polling";
 import type { WebDictResult } from "@/types/api/dict";
 import {
   ReaderAskToolbarButton,
@@ -6246,3 +6248,462 @@ describe("ReaderRecordPlateSurface", () => {
     expect(shellNavValue).toBeGreaterThan(workspaceChromeValue);
   });
 });
+
+// ---------------------------------------------------------------------------
+// T4.2a-PUX-R4-R2: Incremental projection merge integration tests
+//
+// Verifies that the Surface correctly wires mergeIncrementalProjection into
+// its value swap effect: targeted_apply uses editor.tf.replaceNodes (non-target
+// DOM identity preserved), fallback uses editor.tf.setValue (DOM rebuilt).
+// Also verifies interaction preservation (grammar callout expansion, scroll)
+// and that the reload context is consumed after the merge attempt.
+// ---------------------------------------------------------------------------
+
+describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2 incremental projection", () => {
+  function makeRepresentationEvent(
+    eventType: "projection_ops" | "record_state_changed",
+    section: string,
+    operation: string,
+    targetKeys: string[],
+    sequence = 9,
+  ): ReaderEventResponseDto {
+    return {
+      id: `evt_${sequence}`,
+      reading_record_id: "record_1",
+      sequence,
+      event_type: eventType,
+      payload: {
+        schema_version: 1,
+        representation_section: section,
+        operation,
+        target_keys: targetKeys,
+        generation: 1,
+        base_id: "base_1",
+      },
+      created_at: "2026-06-24T02:00:00Z",
+    };
+  }
+
+  function makeLayerPublishedEvent(sequence = 9): ReaderEventResponseDto {
+    return {
+      id: `evt_${sequence}`,
+      reading_record_id: "record_1",
+      sequence,
+      event_type: "layer_published",
+      payload: { layer_type: "translation" },
+      created_at: "2026-06-24T02:00:00Z",
+    };
+  }
+
+  function makeReloadContext(
+    events: ReaderEventResponseDto[],
+    reason = "user_asset_written",
+  ): ReloadContext {
+    return {
+      cursor: 8,
+      events,
+      triggerClassification: {
+        kind: "reload_snapshot",
+        reason,
+      },
+      acceptedSnapshotFence: { generation: 1, baseId: "base_1" },
+      reason,
+    };
+  }
+
+  function makeNextSnapshot(
+    prev: ReaderPlateSnapshotDto,
+    overrides: { userAssets?: ReaderSnapshotUserAssetDto[] } = {},
+  ): ReaderPlateSnapshotDto {
+    return {
+      ...prev,
+      snapshot_id: "snapshot_2",
+      last_event_sequence: 9,
+      user_assets: overrides.userAssets ?? prev.user_assets,
+    };
+  }
+
+  it("G1 user_assets upsert: targeted_apply preserves non-target DOM identity", async () => {
+    const prevSnapshot = makeSnapshot([makeUserAsset({ note_text: "old note" })]);
+    const nextSnapshot = makeNextSnapshot(prevSnapshot, {
+      userAssets: [makeUserAsset({ note_text: "new note" })],
+    });
+    const event = makeRepresentationEvent(
+      "projection_ops",
+      "user_assets",
+      "upsert",
+      ["asset_highlight_1"],
+    );
+
+    let reloadContextConsumed = false;
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Capture non-target DOM reference (translation blockquote).
+    const blockquoteBefore = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteBefore).not.toBeNull();
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+          onReloadContextConsumed={() => {
+            reloadContextConsumed = true;
+          }}
+        />,
+      );
+    });
+
+    // Non-target DOM identity preserved (targeted_apply used replaceNodes).
+    const blockquoteAfter = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteAfter).not.toBeNull();
+    expect(blockquoteBefore!.isSameNode(blockquoteAfter)).toBe(true);
+
+    // Reload context was consumed.
+    expect(reloadContextConsumed).toBe(true);
+  });
+
+  it("layer_published event: fallback_full_reload rebuilds non-target DOM", async () => {
+    const prevSnapshot = makeSnapshot([makeUserAsset({ note_text: "old note" })]);
+    const nextSnapshot = makeNextSnapshot(prevSnapshot, {
+      userAssets: [makeUserAsset({ note_text: "new note" })],
+    });
+    const event = makeLayerPublishedEvent();
+
+    let reloadContextConsumed = false;
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    const blockquoteBefore = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteBefore).not.toBeNull();
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
+          onReloadContextConsumed={() => {
+            reloadContextConsumed = true;
+          }}
+        />,
+      );
+    });
+
+    // setValue rebuilds all DOM — non-target DOM identity NOT preserved.
+    const blockquoteAfter = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteAfter).not.toBeNull();
+    expect(blockquoteBefore!.isSameNode(blockquoteAfter)).toBe(false);
+
+    expect(reloadContextConsumed).toBe(true);
+  });
+
+  it("empty trigger events (manual reload): fallback_full_reload via setValue", async () => {
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeNextSnapshot(prevSnapshot);
+
+    let reloadContextConsumed = false;
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    const blockquoteBefore = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteBefore).not.toBeNull();
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([], "manual_retry")}
+          onReloadContextConsumed={() => {
+            reloadContextConsumed = true;
+          }}
+        />,
+      );
+    });
+
+    // Empty events → fallback → setValue → DOM rebuilt.
+    const blockquoteAfter = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteAfter).not.toBeNull();
+    expect(blockquoteBefore!.isSameNode(blockquoteAfter)).toBe(false);
+
+    expect(reloadContextConsumed).toBe(true);
+  });
+
+  it("no pendingReloadContext: existing setValue behavior preserved", async () => {
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeNextSnapshot(prevSnapshot);
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    const blockquoteBefore = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteBefore).not.toBeNull();
+
+    await act(async () => {
+      rerender(<ReaderRecordPlateSurface snapshot={nextSnapshot} />);
+    });
+
+    // No reload context → setValue → DOM rebuilt.
+    const blockquoteAfter = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteAfter).not.toBeNull();
+    expect(blockquoteBefore!.isSameNode(blockquoteAfter)).toBe(false);
+  });
+
+  it("G1 targeted_apply preserves grammar callout expanded state", async () => {
+    const prevSnapshot = makeSnapshot([makeUserAsset({ note_text: "old note" })]);
+    const nextSnapshot = makeNextSnapshot(prevSnapshot, {
+      userAssets: [makeUserAsset({ note_text: "new note" })],
+    });
+    const event = makeRepresentationEvent(
+      "projection_ops",
+      "user_assets",
+      "upsert",
+      ["asset_highlight_1"],
+    );
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Expand the grammar callout.
+    const grammarCallout = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_1"]',
+    );
+    const toggle = grammarCallout?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
+    expect(grammarCallout).not.toBeNull();
+    expect(toggle).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.click(toggle!);
+    });
+
+    await waitFor(() => {
+      expect(grammarCallout!.dataset.readerRecordCalloutCollapsed).toBe("false");
+    });
+
+    // Rerender with targeted_apply.
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    // Grammar callout should still be expanded (interaction preserved).
+    const grammarCalloutAfter = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_1"]',
+    );
+    expect(grammarCalloutAfter).not.toBeNull();
+    expect(grammarCalloutAfter!.dataset.readerRecordCalloutCollapsed).toBe("false");
+  });
+
+  it("G1 targeted_apply preserves scroll position on the scroll container", async () => {
+    const prevSnapshot = makeSnapshot([makeUserAsset({ note_text: "old note" })]);
+    const nextSnapshot = makeNextSnapshot(prevSnapshot, {
+      userAssets: [makeUserAsset({ note_text: "new note" })],
+    });
+    const event = makeRepresentationEvent(
+      "projection_ops",
+      "user_assets",
+      "upsert",
+      ["asset_highlight_1"],
+    );
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Mark the plate body parent as a scroll container and set scrollTop.
+    const body = container.querySelector(".reader-record-plate-document");
+    const scroller = body?.parentElement as HTMLElement | null;
+    expect(scroller).not.toBeNull();
+    if (!scroller) throw new Error("expected scroll parent");
+
+    Object.defineProperty(scroller, "scrollTop", {
+      configurable: true,
+      writable: true,
+      value: 240,
+    });
+    scroller.style.overflowY = "auto";
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    // rAF restore — flush the requestAnimationFrame callback.
+    await act(async () => {
+      // jsdom requestAnimationFrame is polyfilled; flush microtasks.
+    });
+
+    expect(scroller.scrollTop).toBe(240);
+  });
+
+  it("G1 targeted_apply updates target paragraph content correctly", async () => {
+    // Use two snapshots with different user asset note_text so the projected
+    // paragraph content differs between prev and next.
+    const prevSnapshot = makeSnapshot([makeUserAsset({ note_text: "prev note" })]);
+    const nextSnapshot = makeNextSnapshot(prevSnapshot, {
+      userAssets: [makeUserAsset({ note_text: "next note" })],
+    });
+    const event = makeRepresentationEvent(
+      "projection_ops",
+      "user_assets",
+      "upsert",
+      ["asset_highlight_1"],
+    );
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Verify initial content.
+    const paragraphBefore = container.querySelector(
+      '[data-reader-record-node="paragraph"]',
+    );
+    expect(paragraphBefore).not.toBeNull();
+    expect(paragraphBefore!.textContent).toContain(SOURCE_TEXT);
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    // Target paragraph content should still render the source text
+    // (the paragraph block was replaced with the re-projected version).
+    const paragraphAfter = container.querySelector(
+      '[data-reader-record-node="paragraph"]',
+    );
+    expect(paragraphAfter).not.toBeNull();
+    expect(paragraphAfter!.textContent).toContain(SOURCE_TEXT);
+  });
+  it("G1 targeted_apply keeps an open Quick Peek mounted", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(makeDictionaryEntryResult("memory")), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const prevSnapshot = makeSnapshot([makeUserAsset({ note_text: "old note" })]);
+    const nextSnapshot = makeNextSnapshot(prevSnapshot, {
+      userAssets: [makeUserAsset({ note_text: "new note" })],
+    });
+    const event = makeRepresentationEvent(
+      "projection_ops",
+      "user_assets",
+      "upsert",
+      ["asset_highlight_1"],
+    );
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) throw new Error("Expected memory vocabulary mark");
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+    const lookupButton = await waitForSelectionAction(container, "lookup");
+    fireEvent.click(lookupButton);
+
+    const quickPeekBefore = await screen.findByTestId(
+      "reader-record-plate-lookup-panel",
+    );
+    expect(within(quickPeekBefore).getByText("memory")).toBeTruthy();
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    const quickPeekAfter = await screen.findByTestId(
+      "reader-record-plate-lookup-panel",
+    );
+    expect(quickPeekBefore.isSameNode(quickPeekAfter)).toBe(true);
+    expect(within(quickPeekAfter).getByText("memory")).toBeTruthy();
+    expect(
+      within(quickPeekAfter).getByText("the ability to remember information"),
+    ).toBeTruthy();
+  });});

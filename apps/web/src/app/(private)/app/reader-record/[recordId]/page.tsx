@@ -5,7 +5,7 @@ import { use, useCallback, useEffect, useRef, useState } from "react";
 import { ReaderRecordWorkbenchSurface } from "@/components/reader/ReaderRecordWorkbenchSurface";
 import { ReaderRecordPlateSurface } from "@/components/reader/plate";
 import { notify } from "@/components/primitives/notification-center";
-import { useReaderPlatePolling } from "@/lib/reader-plate-snapshot/polling";
+import { useReaderPlatePolling, type ReloadContext } from "@/lib/reader-plate-snapshot/polling";
 import {
   applySnapshotReload,
   createInitialProgressiveState,
@@ -210,6 +210,14 @@ export default function ReadingRecordPage({
   const [reloadError, setReloadError] = useState<string | null>(null);
   const [activeReloadReason, setActiveReloadReason] = useState<string | null>(null);
   const [surfaceMode] = useState(getReaderRecordSurfaceMode);
+  // T4.2a-PUX-R4-R2: latest ReloadContext delivered to the Surface for
+  // incremental projection merge. The Surface consumes this in its value
+  // swap effect: when triggerEvents are present the merger may produce a
+  // targeted_apply (replaceNodes batch) instead of a full setValue.
+  // Cleared by the Surface after consumption; null on initial mount and
+  // after fallback so the next render's setValue path runs untouched.
+  const [pendingReloadContext, setPendingReloadContext] =
+    useState<ReloadContext | null>(null);
 
   // T4.2a-PUX-R2: progressive gate state for UI. The authoritative last-accepted
   // snapshot for monotonic checks lives in progressiveStateRef so reload does
@@ -302,8 +310,14 @@ export default function ReadingRecordPage({
   // monotonic validation rejected the snapshot — in those cases the polling
   // hook keeps the original cursor and the next tick re-asks with the same
   // `after_sequence`, so reload-required events are not silently consumed.
+  //
+  // T4.2a-PUX-R4-R2: receives a full ReloadContext (not just a reason
+  // string) so the Surface can pass trigger events + fence to the
+  // incremental projection merger. Manual reloads (toast retry, Surface
+  // onRequestSnapshotReload) build a synthetic ReloadContext with empty
+  // events — the merger returns fallback_full_reload → existing setValue.
   const reloadSnapshot = useCallback(
-    async (reason: string): Promise<boolean> => {
+    async (context: ReloadContext): Promise<boolean> => {
       if (!recordId || snapshotState.kind !== "loaded") {
         return false;
       }
@@ -320,7 +334,12 @@ export default function ReadingRecordPage({
       reloadInFlightRef.current = true;
       setIsReloading(true);
       setReloadError(null);
-      setActiveReloadReason(reason);
+      setActiveReloadReason(context.reason);
+      // Surface reads pendingReloadContext in its value swap effect when
+      // the new snapshot prop arrives. The merger sees context.events
+      // (possibly empty for manual reloads) and decides targeted_apply vs
+      // fallback_full_reload.
+      setPendingReloadContext(context);
 
       try {
         const result = await loadSnapshotForRecord(
@@ -333,7 +352,7 @@ export default function ReadingRecordPage({
           return false;
         }
 
-        const accepted = tryAcceptSnapshot(result.snapshot, reason);
+        const accepted = tryAcceptSnapshot(result.snapshot, context.reason);
         if (!accepted) {
           // Progressive gate rejected (stale sequence / layer regression).
           // Do not setReloadError toast spam — hold cursor for retry; status
@@ -354,6 +373,25 @@ export default function ReadingRecordPage({
     },
     [recordId, snapshotState.kind, tryAcceptSnapshot],
   );
+
+  /**
+   * T4.2a-PUX-R4-R2: build a synthetic ReloadContext for manual reloads
+   * (toast retry button, Surface onRequestSnapshotReload). Empty events
+   * forces the incremental projection merger to fallback_full_reload with
+   * reason `no_trigger_events` — preserves existing setValue behavior.
+   */
+  const buildManualReloadContext = useCallback((): ReloadContext => {
+    return {
+      cursor: initialCursor,
+      events: [],
+      triggerClassification: {
+        kind: "reload_snapshot",
+        reason: "user_asset_written",
+      },
+      acceptedSnapshotFence: snapshotFence,
+      reason: "user_asset_written",
+    };
+  }, [initialCursor, snapshotFence]);
 
   useEffect(() => {
     let cancelled = false;
@@ -437,7 +475,7 @@ export default function ReadingRecordPage({
   const connectionError =
     snapshotState.kind === "loaded" ? reloadError ?? polling.error : null;
   useReaderPollingConnectionToast(connectionError, () => {
-    void reloadSnapshot("user_asset_written");
+    void reloadSnapshot(buildManualReloadContext());
   });
 
   if (snapshotState.kind === "loaded") {
@@ -458,8 +496,10 @@ export default function ReadingRecordPage({
         {surfaceMode === "plate" ? (
           <ReaderRecordPlateSurface
             snapshot={snapshotState.snapshot}
+            pendingReloadContext={pendingReloadContext}
+            onReloadContextConsumed={() => setPendingReloadContext(null)}
             onRequestSnapshotReload={() => {
-              void reloadSnapshot("user_asset_written");
+              void reloadSnapshot(buildManualReloadContext());
             }}
           />
         ) : (

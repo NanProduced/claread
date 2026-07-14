@@ -5,7 +5,7 @@ import {
   TEXT_RANGE_OFFSET_UNIT,
   buildTextRangeTargetKey,
 } from "@claread/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   ClipboardEvent as ReactClipboardEvent,
   CSSProperties,
@@ -151,6 +151,9 @@ import {
   pathExistsInPlateChildren,
   type PlateDescendantLike,
 } from "@/lib/reader-plate-snapshot/progressive-transition";
+import { mergeIncrementalProjection } from "@/lib/reader-plate-snapshot/incremental-projection-merger";
+import type { ReloadContext } from "@/lib/reader-plate-snapshot/polling";
+import type { Descendant } from "platejs";
 
 export interface ReaderRecordPlateSurfaceProps {
   snapshot: ReaderPlateSnapshotDto;
@@ -158,6 +161,26 @@ export interface ReaderRecordPlateSurfaceProps {
   columnClassName?: string;
   readingClassName?: string;
   onRequestSnapshotReload?: () => void | Promise<void>;
+  /**
+   * T4.2a-PUX-R4-R2: Reload context delivered by the page when a polling-
+   * triggered reload arrives. The Surface feeds this to the incremental
+   * projection merger in its value swap effect: when triggerEvents are
+   * present the merger may produce a targeted_apply (replaceNodes batch)
+   * instead of a full setValue, preserving non-target interactions
+   * (scroll, selection, grammar accordion, Quick Peek, panels).
+   *
+   * Null on initial mount and after the Surface consumes the context.
+   * Manual reloads (toast retry, onRequestSnapshotReload) deliver a
+   * synthetic context with empty events → merger returns fallback →
+   * existing setValue behavior preserved.
+   */
+  pendingReloadContext?: ReloadContext | null;
+  /**
+   * Called by the Surface after it consumes `pendingReloadContext` in the
+   * value swap effect. The page clears the prop so the next render's
+   * setValue path runs untouched (no stale context re-applies).
+   */
+  onReloadContextConsumed?: () => void;
 }
 
 type ReaderRecordLookupState =
@@ -2362,6 +2385,8 @@ export function ReaderRecordPlateSurface({
   columnClassName,
   readingClassName = "",
   onRequestSnapshotReload,
+  pendingReloadContext,
+  onReloadContextConsumed,
 }: ReaderRecordPlateSurfaceProps) {
   const appShell = useAppShellLayout();
   const {
@@ -2460,7 +2485,19 @@ export function ReaderRecordPlateSurface({
     ReaderPlateSnapshotDto["user_assets"]
   >(snapshot.user_assets);
 
-  useEffect(() => {
+  // T4.2a-PUX-R4-R2: Sync localUserAssets to the new snapshot.user_assets
+  // on snapshot reload. This runs as a layout effect so the re-render (and
+  // resulting plateValue recomputation) happens as early as possible.
+  //
+  // The value swap useEffect below ALSO guards against stale localUserAssets
+  // by checking `localUserAssets !== snapshot.user_assets` and skipping when
+  // stale. This dual-guard is necessary because setLocalUserAssets inside a
+  // layout effect does not always cause a fully synchronous re-render before
+  // passive effects in all environments (e.g., jsdom + async act()). The
+  // stale guard ensures the merge always uses a plateValue computed with the
+  // correct user_assets, and the re-render from this layout effect ensures
+  // the effect re-runs with the synced value.
+  useLayoutEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- snapshot reload resets optimistic user-asset projections.
     setLocalUserAssets(snapshot.user_assets);
   }, [snapshot.user_assets]);
@@ -2535,6 +2572,31 @@ export function ReaderRecordPlateSurface({
     },
     [],
   );
+
+  // T4.2a-PUX-R4-R2: Incremental projection merge state.
+  //
+  // `prevSnapshotRef` tracks the snapshot from the last successful value
+  // swap. Initialized to the initial snapshot so the first reload can
+  // attempt a targeted apply. Updated inside the value swap effect after
+  // each successful apply (targeted or fallback).
+  //
+  // `pendingReloadContextRef` mirrors the `pendingReloadContext` prop via a
+  // sync effect so the value swap effect (which has [plateValue, editor,
+  // snapshot] deps) always reads the latest context without re-running on
+  // every context change.
+  //
+  // `onReloadContextConsumedRef` mirrors the callback to keep it out of
+  // the value swap effect deps (avoiding re-runs from inline callbacks).
+  const prevSnapshotRef = useRef<ReaderPlateSnapshotDto | null>(snapshot);
+  const pendingReloadContextRef = useRef<ReloadContext | null>(null);
+  const onReloadContextConsumedRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    pendingReloadContextRef.current = pendingReloadContext ?? null;
+  }, [pendingReloadContext]);
+  useEffect(() => {
+    onReloadContextConsumedRef.current = onReloadContextConsumed ?? null;
+  }, [onReloadContextConsumed]);
+
   // plateValue 变化时同步 editor 内容，避免重新创建 editor 实例。
   // T2.1: `editor.tf.setValue` replaces the entire editor children, which
   // wipes scroll position, DOM selection, and any in-progress draft marks.
@@ -2545,6 +2607,16 @@ export function ReaderRecordPlateSurface({
   // Selection is only restored when its anchor path still exists in the new
   // tree; otherwise we leave it cleared (the user's scroll is the critical
   // UX, and a stale selection path would crash Plate).
+  //
+  // T4.2a-PUX-R4-R2: Before falling back to setValue, attempt an incremental
+  // projection merge. If `pendingReloadContext` carries O4-legitimate
+  // representation events (G1/G2/G3) and the prev/next snapshots satisfy
+  // the fence, the merger returns a `targeted_apply` with per-block
+  // operations. We apply them via `editor.tf.replaceNodes` /
+  // `editor.tf.removeNodes` (batch) — NEVER `editor.tf.setValue` on the
+  // targeted path. This preserves non-target DOM identity (scroll,
+  // grammar accordion, Quick Peek, panels, hover, note draft). On any
+  // fallback reason, we fall through to the existing setValue path.
   useEffect(() => {
     if (editor.children === plateValue) {
       return;
@@ -2562,7 +2634,60 @@ export function ReaderRecordPlateSurface({
           ? window.scrollY
           : (scrollContainer as HTMLElement).scrollTop;
 
-    editor.tf.setValue(plateValue as never[]);
+    // T4.2a-PUX-R4-R2: Try incremental projection merge first.
+    // Only attempt when we have a reload context with trigger events AND
+    // a valid prev snapshot that differs from the current one.
+    const reloadContext = pendingReloadContextRef.current;
+    const prevSnapshot = prevSnapshotRef.current;
+    let appliedViaTargeted = false;
+
+    // T4.2a-PUX-R4-R2: When a reload context is present but localUserAssets
+    // hasn't been synced to snapshot.user_assets yet, skip this run. The
+    // useLayoutEffect that syncs localUserAssets may not cause a synchronous
+    // re-render before this useEffect in all environments (e.g., jsdom + act()).
+    // Skipping ensures the merge uses a plateValue computed with the correct
+    // user_assets. The re-render will produce the correct plateValue and this
+    // effect will run again.
+    if (
+      reloadContext !== null &&
+      localUserAssets !== snapshot.user_assets
+    ) {
+      return;
+    }
+
+    if (
+      reloadContext !== null &&
+      prevSnapshot !== null &&
+      prevSnapshot !== snapshot
+    ) {
+      const mergeResult = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot: snapshot,
+        triggerEvents: reloadContext.events,
+        prevChildren: editor.children as unknown as Descendant[],
+        nextChildren: plateValue as unknown as Descendant[],
+        snapshotFence: reloadContext.acceptedSnapshotFence,
+      });
+
+      if (mergeResult.kind === "targeted_apply") {
+        // Apply each operation via batch replaceNodes / removeNodes.
+        // NEVER call editor.tf.setValue on this path — that would wipe
+        // non-target DOM identity and defeat the purpose of R2.
+        for (const op of mergeResult.operations) {
+          if (op.type === "replace" && op.nodes && op.nodes.length > 0) {
+            editor.tf.replaceNodes(op.nodes as never[], { at: op.path });
+          } else if (op.type === "remove") {
+            editor.tf.removeNodes({ at: op.path });
+          }
+        }
+        appliedViaTargeted = true;
+      }
+      // fallback_full_reload: fall through to setValue path below.
+    }
+
+    if (!appliedViaTargeted) {
+      editor.tf.setValue(plateValue as never[]);
+    }
 
     // Restore selection only if the anchor/focus path still resolves in the
     // new children. We avoid `editor.tf.setSelection` when the path is gone
@@ -2600,11 +2725,22 @@ export function ReaderRecordPlateSurface({
           (scrollContainer as HTMLElement).scrollTop = targetTop;
         }
       });
+      // Update prevSnapshotRef AFTER successful apply but BEFORE cleanup.
+      prevSnapshotRef.current = snapshot;
+      if (reloadContext !== null) {
+        onReloadContextConsumedRef.current?.();
+      }
       return () => {
         window.cancelAnimationFrame(rafId);
       };
     }
-  }, [plateValue, editor]);
+
+    // Update prevSnapshotRef for the next reload's merge attempt.
+    prevSnapshotRef.current = snapshot;
+    if (reloadContext !== null) {
+      onReloadContextConsumedRef.current?.();
+    }
+  }, [plateValue, editor, snapshot]);
 
   // renderLeaf：为每个 paragraph text leaf 输出选区锚点 data 属性，
   // 同时承载 vocabulary / grammar / user_highlight / user_note 的视觉和交互。

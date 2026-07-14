@@ -80,7 +80,7 @@ describe("decidePollingAction", () => {
       }),
     });
 
-    expect(decision).toEqual({
+    expect(decision).toMatchObject({
       kind: "reload",
       reason: "reader event sequence gap detected",
     });
@@ -95,7 +95,7 @@ describe("decidePollingAction", () => {
       }),
     });
 
-    expect(decision).toEqual({ kind: "reload", reason: "reload_required" });
+    expect(decision).toMatchObject({ kind: "reload", reason: "reload_required" });
   });
 
   it("returns reload when a layer_published event arrives", () => {
@@ -115,7 +115,7 @@ describe("decidePollingAction", () => {
       }),
     });
 
-    expect(decision).toEqual({ kind: "reload", reason: "layer_published" });
+    expect(decision).toMatchObject({ kind: "reload", reason: "layer_published" });
   });
 
   it("returns reload when a projection_reset_required event arrives", () => {
@@ -134,7 +134,7 @@ describe("decidePollingAction", () => {
       }),
     });
 
-    expect(decision).toEqual({
+    expect(decision).toMatchObject({
       kind: "reload",
       reason: "projection_reset_required",
     });
@@ -157,7 +157,7 @@ describe("decidePollingAction", () => {
       }),
     });
 
-    expect(decision).toEqual({
+    expect(decision).toMatchObject({
       kind: "reload",
       reason: "record_product_state_updated",
     });
@@ -220,7 +220,7 @@ describe("decidePollingAction", () => {
       }),
     });
 
-    expect(decision).toEqual({ kind: "reload", reason: "cursor_ahead_of_server" });
+    expect(decision).toMatchObject({ kind: "reload", reason: "cursor_ahead_of_server" });
   });
 
   it("reload_required takes precedence over layer_published events", () => {
@@ -241,7 +241,7 @@ describe("decidePollingAction", () => {
       }),
     });
 
-    expect(decision).toEqual({ kind: "reload", reason: "counter mismatch" });
+    expect(decision).toMatchObject({ kind: "reload", reason: "counter mismatch" });
   });
 
   it("RELOAD_TRIGGER_EVENT_TYPES contains reload-worthy reader events", () => {
@@ -298,7 +298,7 @@ describe("decidePollingAction — payload-aware representation events (O4-R2-D)"
       }),
     });
 
-    expect(decision).toEqual({
+    expect(decision).toMatchObject({
       kind: "reload",
       reason: "representation:user_assets:upsert",
     });
@@ -326,7 +326,7 @@ describe("decidePollingAction — payload-aware representation events (O4-R2-D)"
       }),
     });
 
-    expect(decision).toEqual({
+    expect(decision).toMatchObject({
       kind: "reload",
       reason: "representation:ask_supplements:reactivate",
     });
@@ -354,7 +354,7 @@ describe("decidePollingAction — payload-aware representation events (O4-R2-D)"
       }),
     });
 
-    expect(decision).toEqual({
+    expect(decision).toMatchObject({
       kind: "reload",
       reason: "representation:record_metadata:status_changed",
     });
@@ -402,7 +402,7 @@ describe("decidePollingAction — payload-aware representation events (O4-R2-D)"
       }),
     });
 
-    expect(decision).toEqual({
+    expect(decision).toMatchObject({
       kind: "reload",
       reason: "representation_fence_mismatch",
     });
@@ -428,7 +428,7 @@ describe("decidePollingAction — payload-aware representation events (O4-R2-D)"
       }),
     });
 
-    expect(decision).toEqual({
+    expect(decision).toMatchObject({
       kind: "reload",
       reason: "representation_missing_target_keys",
     });
@@ -483,7 +483,7 @@ describe("decidePollingAction — payload-aware representation events (O4-R2-D)"
       }),
     });
 
-    expect(decision).toEqual({
+    expect(decision).toMatchObject({
       kind: "reload",
       reason: "representation:user_assets:delete",
     });
@@ -532,7 +532,7 @@ describe("decidePollingAction — payload-aware representation events (O4-R2-D)"
       }),
     });
 
-    expect(decision).toEqual({ kind: "reload", reason: "server gap" });
+    expect(decision).toMatchObject({ kind: "reload", reason: "server gap" });
   });
 });
 
@@ -738,7 +738,9 @@ describe("useReaderPlatePolling reload cursor semantics (T2.1)", () => {
     });
 
     expect(onReloadRequired).toHaveBeenCalledTimes(1);
-    expect(onReloadRequired).toHaveBeenCalledWith("layer_published");
+    expect(onReloadRequired).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "layer_published" }),
+    );
     // Cursor advanced to next_after_sequence (2) because reload returned true.
     expect(result.current.cursor).toBe(2);
 

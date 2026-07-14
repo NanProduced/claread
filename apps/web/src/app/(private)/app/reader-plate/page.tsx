@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { ReaderPlateSnapshotSurface } from "@/components/reader/plate/ReaderPlateSnapshotSurface";
 import { appReaderPlateRoute } from "@/lib/routes";
-import { useReaderPlatePolling } from "@/lib/reader-plate-snapshot/polling";
+import { useReaderPlatePolling, type ReloadContext } from "@/lib/reader-plate-snapshot/polling";
 import type {
   ReaderPlateSnapshotDto,
   ReaderPlateValueDto,
@@ -68,7 +68,7 @@ export default function ReaderPlatePage() {
       : null;
 
   const reloadSnapshot = useCallback(
-    async (reason: string): Promise<boolean> => {
+    async (context: ReloadContext): Promise<boolean> => {
       if (!recordId) return false;
       setIsReloading(true);
       try {
@@ -87,7 +87,7 @@ export default function ReaderPlatePage() {
         }
         const { ok: _ok, ...snapshotData } = payload;
         void _ok;
-        void reason;
+        void context.reason;
         setSnapshotState({
           kind: "loaded",
           recordId,
@@ -343,7 +343,18 @@ export default function ReaderPlatePage() {
             <button
               type="button"
               className="mt-4 inline-flex h-9 items-center justify-center rounded-[8px] border border-red-300 bg-white px-4 font-sans text-xs font-medium text-red-700 hover:bg-red-50"
-              onClick={() => void reloadSnapshot("manual_retry")}
+              onClick={() =>
+                void reloadSnapshot({
+                  cursor: initialCursor,
+                  events: [],
+                  triggerClassification: {
+                    kind: "reload_snapshot",
+                    reason: "manual_retry",
+                  },
+                  acceptedSnapshotFence: snapshotFence,
+                  reason: "manual_retry",
+                })
+              }
             >
               重新加载
             </button>
