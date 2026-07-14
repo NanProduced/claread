@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     reader_worker_max_jobs: int = 48
     reader_worker_lease_duration_seconds: int = 120
     reader_worker_lease_owner_prefix: str = "reader-enhancement-worker"
+    # Reading Record Ask agentic lane (default OFF — dual-path coexistence).
+    # When true, validated Reading Record Ask message streams use the
+    # independent reader_record_ask agent runtime instead of ask_runtime.
+    # Failures do not fall back to the legacy agent.
+    reader_record_ask_agentic_enabled: bool = False
     # Round 16: ``reader_ask_planner_model_profile`` has been removed.
     # The live agent-loop-first path no longer resolves a planner LLM.
     reader_ask_replan_model_profile: str = ""

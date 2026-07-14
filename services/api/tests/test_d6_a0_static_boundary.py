@@ -53,8 +53,7 @@ def test_user_editorial_assets_is_schema_only_no_runtime_service_import() -> Non
 
     assert offenders == [], (
         "user_editorial_assets may only be imported by the dedicated "
-        "reader_orchestration anchor gate; offenders: "
-        + ", ".join(offenders)
+        "reader_orchestration anchor gate; offenders: " + ", ".join(offenders)
     )
 
 
@@ -77,8 +76,7 @@ def test_user_editorial_assets_is_schema_only_no_agent_import() -> None:
 
     assert offenders == [], (
         "user_editorial_assets must remain schema-only; "
-        "the following agent files must not import it yet: "
-        + ", ".join(offenders)
+        "the following agent files must not import it yet: " + ", ".join(offenders)
     )
 
 
@@ -110,8 +108,7 @@ def test_user_editorial_asset_anchor_set_is_schema_only_no_runtime_import() -> N
                 offenders.append(f"{rel} -> {symbol}")
 
     assert offenders == [], (
-        "multi-anchor DTOs are schema-only in D6-U2; runtime offenders: "
-        + ", ".join(offenders)
+        "multi-anchor DTOs are schema-only in D6-U2; runtime offenders: " + ", ".join(offenders)
     )
 
 
@@ -136,14 +133,11 @@ def test_reader_orchestration_does_not_import_reader_ask_as_fact_source() -> Non
         source = _read_text(path)
         for forbidden in forbidden_roots:
             if _has_module_import(source, forbidden):
-                offenders.append(
-                    f"{path.relative_to(REPO_ROOT)} -> {forbidden}"
-                )
+                offenders.append(f"{path.relative_to(REPO_ROOT)} -> {forbidden}")
 
     assert offenders == [], (
         "reader_orchestration must not import reader_ask as a fact source; "
-        "the following cross-package imports are forbidden until D6-A4: "
-        + ", ".join(offenders)
+        "the following cross-package imports are forbidden until D6-A4: " + ", ".join(offenders)
     )
 
 
@@ -187,8 +181,7 @@ def test_reader_record_api_does_not_read_render_scene_json() -> None:
 
     assert offenders == [], (
         "new Reader Record path must not read legacy render_scene_json "
-        "or ReaderSceneResponse as a fact source; offenders: "
-        + ", ".join(offenders)
+        "or ReaderSceneResponse as a fact source; offenders: " + ", ".join(offenders)
     )
 
 
@@ -227,24 +220,23 @@ def test_legacy_services_only_import_allowlisted_reader_orchestration_modules() 
         source = _read_text(absolute)
         for raw_line in source.splitlines():
             stripped = raw_line.strip()
-            if not (stripped.startswith("from app.services.reader_orchestration")
-                    or stripped.startswith("import app.services.reader_orchestration")):
+            if not (
+                stripped.startswith("from app.services.reader_orchestration")
+                or stripped.startswith("import app.services.reader_orchestration")
+            ):
                 continue
             # Normalise to a module path; strip the leading `from ` and any
             # trailing `import (...)` newline artefacts.
             if stripped.startswith("from "):
-                module = stripped[len("from "):].split(" import ")[0].strip()
+                module = stripped[len("from ") :].split(" import ")[0].strip()
             else:
-                module = stripped[len("import "):].split(" import ")[0].strip().rstrip(",")
+                module = stripped[len("import ") :].split(" import ")[0].strip().rstrip(",")
             if module not in allowlist:
                 offenders.append(f"{relative.as_posix()} -> {module}")
 
     assert offenders == [], (
         "user_annotations.py / reader_notes.py may only import the "
-        "narrow allowlist "
-        + ", ".join(sorted(allowlist))
-        + "; offenders: "
-        + ", ".join(offenders)
+        "narrow allowlist " + ", ".join(sorted(allowlist)) + "; offenders: " + ", ".join(offenders)
     )
 
 
@@ -282,8 +274,7 @@ def test_reader_record_ask_modules_do_not_import_legacy_runtime_or_scene() -> No
 
     assert offenders == [], (
         "reader_record_ask must stay off legacy reader_ask/runtime scene "
-        "fact sources; offenders: "
-        + ", ".join(offenders)
+        "fact sources; offenders: " + ", ".join(offenders)
     )
 
 
@@ -314,6 +305,11 @@ def test_reader_record_ask_independent_runtime_avoids_legacy_agent_seams() -> No
         "context_envelope.py",
         "tool_contracts.py",
         "evidence.py",
+        "production_stream.py",
+        "production_wiring.py",
+        "repository.py",
+        "sse.py",
+        "envelope_builder.py",
     }
     forbidden_modules = (
         "app.agents.reader_ask_agent",
@@ -357,6 +353,5 @@ def test_reader_record_ask_independent_runtime_avoids_legacy_agent_seams() -> No
 
     assert offenders == [], (
         "independent Reading Record Ask runtime must not depend on legacy "
-        "agent/planner/hint/ask_runtime seams; offenders: "
-        + ", ".join(offenders)
+        "agent/planner/hint/ask_runtime seams; offenders: " + ", ".join(offenders)
     )

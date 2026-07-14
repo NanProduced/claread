@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
+from app.config.settings import get_settings
 from app.contracts.anchor_validation import (
     ANCHOR_RECORD_ID_MISMATCH,
     READING_RECORD_NOT_FOUND,
@@ -71,6 +72,7 @@ async def _load_snapshot_facts_raw(
             user_id=user_id,
         )
 
+
 async def _load_snapshot_facts(
     *,
     user_id: UUID,
@@ -108,6 +110,7 @@ async def _load_validated_anchor_raw(
             user_id=user_id,
             anchor=anchor,
         )
+
 
 async def _validate_reading_record_anchor(
     *,
@@ -147,7 +150,7 @@ async def _ensure_default_thread(
     thread = await thread_service.ensure_default_reading_record_thread(
         user_id,
         reading_record_id,
-        title=getattr(facts, "record").title or "Ask Claread",
+        title=facts.record.title or "Ask Claread",
     )
     return {"id": str(thread["id"]), "title": str(thread.get("title") or "Ask Claread")}
 
@@ -172,7 +175,7 @@ async def create_default_reading_record_ask_thread(
     thread = await thread_service.ensure_default_reading_record_thread(
         user_id,
         parsed_record_id,
-        title=getattr(facts, "record").title or "Ask Claread",
+        title=facts.record.title or "Ask Claread",
     )
     return ReaderAskThreadSummary.model_validate(thread_service._thread_summary_payload(thread))
 
@@ -203,8 +206,48 @@ async def reset_reading_record_ask_thread(
         user_id,
         thread_id,
         reading_record_id=parsed_record_id,
-        title=getattr(facts, "record").title or "Ask Claread",
+        title=facts.record.title or "Ask Claread",
     )
+
+
+async def _stream_legacy_or_agentic(
+    *,
+    user_id: UUID,
+    reading_record_id: UUID,
+    thread_id: UUID,
+    request: ReaderRecordAskMessageRequest,
+) -> AsyncIterator[str]:
+    """Dispatch to agentic path when flag is on; never fall back on agentic failure."""
+    if not get_settings().reader_record_ask_agentic_enabled:
+        async for chunk in stream_service.stream_thread_message(
+            user_id=user_id,
+            reading_record_id=reading_record_id,
+            thread_id=thread_id,
+            request=request,
+        ):
+            yield chunk
+        return
+
+    # Agentic path: re-load facts for envelope (validation already done).
+    facts = await _load_snapshot_facts(
+        user_id=user_id,
+        reading_record_id=reading_record_id,
+    )
+    from app.services.reader_record_ask.production_stream import (
+        stream_agentic_thread_message,
+    )
+
+    async for chunk in stream_agentic_thread_message(
+        user_id=user_id,
+        reading_record_id=reading_record_id,
+        thread_id=thread_id,
+        content=request.content,
+        facts=facts,
+        request_anchor=request.anchor,
+        validated_anchor=None,
+        stable_document_id=None,
+    ):
+        yield chunk
 
 
 async def send_reading_record_ask_message(
@@ -220,7 +263,7 @@ async def send_reading_record_ask_message(
         request=request,
     )
     thread = await _ensure_default_thread(user_id=user_id, reading_record_id=parsed_record_id)
-    async for chunk in stream_service.stream_thread_message(
+    async for chunk in _stream_legacy_or_agentic(
         user_id=user_id,
         reading_record_id=parsed_record_id,
         thread_id=_parse_uuid(thread["id"], field="thread id is invalid"),
@@ -242,7 +285,7 @@ async def stream_reading_record_ask_thread_message(
         reading_record_id=parsed_record_id,
         request=request,
     )
-    async for chunk in stream_service.stream_thread_message(
+    async for chunk in _stream_legacy_or_agentic(
         user_id=user_id,
         reading_record_id=parsed_record_id,
         thread_id=thread_id,
