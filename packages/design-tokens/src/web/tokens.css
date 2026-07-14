@@ -1,25 +1,38 @@
-:root {
+/* ====================================================================
+ * Web design tokens.
+ *
+ * Single source of truth: `:root` declares the canonical neutral-cool
+ * Light palette. The `.light` block is a structural mirror of `:root`
+ * so that explicit `<html class="light">` runs against identical
+ * values (no second token set to drift). `.dark` re-declares only
+ * the variables whose values change under Dark. The Paper theme is
+ * permanently offline; this contract carries "system | light | dark"
+ * preferences and "light | dark" resolution only.
+ * ==================================================================== */
+
+:root,
+.light {
   --font-ui-en: Inter;
   --font-reading-en: Newsreader;
   --font-ui-zh: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --font-reading-zh: "Source Han Serif SC", "Songti SC", "STSong", "Noto Serif SC", serif;
   --font-reading-book: Georgia, "Times New Roman", "Songti SC", "STSong", serif;
 
-  --cl-color-app-canvas: #f3efe6;
-  --cl-color-app-surface: #fbf7ee;
-  --cl-color-app-surface-raised: #f8f4ea;
-  --cl-color-app-ink: #171511;
-  --cl-color-app-muted: #6e685e;
-  --cl-color-app-subtle: #928978;
-  --cl-color-app-hairline: #d9d1c3;
+  --cl-color-app-canvas: #f7f5f0;
+  --cl-color-app-surface: #ffffff;
+  --cl-color-app-surface-raised: #fbfaf6;
+  --cl-color-app-ink: #151515;
+  --cl-color-app-muted: #666a73;
+  --cl-color-app-subtle: #858a92;
+  --cl-color-app-hairline: #e3ded3;
   --cl-color-app-accent: #1f5eff;
-  --cl-color-app-accent-soft: #e8efff;
+  --cl-color-app-accent-soft: #eaf1ff;
 
-  --cl-color-reader-paper: #f8f4ea;
-  --cl-color-reader-paper-elevated: #fbf7ee;
-  --cl-color-reader-paper-ink: #171511;
-  --cl-color-reader-paper-muted: #6e685e;
-  --cl-color-reader-paper-line: #d9d1c3;
+  --cl-color-reader-paper: #faf9f6;
+  --cl-color-reader-paper-elevated: #fbfaf6;
+  --cl-color-reader-paper-ink: #151515;
+  --cl-color-reader-paper-muted: #666a73;
+  --cl-color-reader-paper-line: #e3ded3;
 
   --cl-color-vocab-amber: #e4b000;
   --cl-color-phrase-lavender: #b9a8e6;
@@ -108,6 +121,33 @@
   --structure-green: var(--cl-color-structure-green);
   --error-red: var(--cl-color-error-red);
 
+  --surface-canvas: var(--web-canvas);
+  --surface-stage: var(--surface-warm);
+  --surface-overlay: var(--reader-paper-elevated);
+
+  --text-primary: var(--ink);
+  --text-secondary: var(--muted);
+
+  --action-primary: var(--cl-color-primary);
+  --action-primary-foreground: var(--cl-color-primary-foreground);
+  --action-secondary: var(--cl-color-secondary);
+  --action-secondary-foreground: var(--cl-color-secondary-foreground);
+
+  --interactive-hover: var(--app-control-hover-gradient);
+  --interactive-active: var(--app-segmented-active-surface);
+  --interactive-quiet-hover: var(--app-control-quiet);
+
+  --border-subtle: var(--hairline);
+  --border-strong: var(--app-control-border-hover);
+  --focus-ring: var(--cl-color-ring);
+
+  --feedback-success: var(--structure-green);
+  --feedback-success-soft: color-mix(in srgb, var(--structure-green) 14%, #ffffff);
+  --feedback-warning: var(--vocab-amber);
+  --feedback-warning-soft: color-mix(in srgb, var(--vocab-amber) 16%, #ffffff);
+  --feedback-error: var(--cl-color-destructive);
+  --feedback-error-foreground: var(--cl-color-destructive-foreground);
+
   --background: var(--cl-color-background);
   --foreground: var(--cl-color-foreground);
   --card: var(--cl-color-card);
@@ -128,20 +168,20 @@
   --destructive-foreground: var(--cl-color-destructive-foreground);
   --radius: var(--cl-radius-surface-sm);
 
-  --app-panel-gradient: linear-gradient(180deg, rgba(254, 251, 245, 0.96), rgba(249, 244, 234, 0.98));
-  --app-panel-muted-gradient: linear-gradient(180deg, rgba(255, 250, 242, 0.72), rgba(249, 244, 234, 0.92));
-  --app-nav-gradient: linear-gradient(180deg, rgba(251, 247, 238, 0.9), rgba(243, 239, 230, 0.96));
-  --app-control-gradient: linear-gradient(180deg, rgba(255, 251, 244, 0.96), rgba(247, 241, 230, 0.98));
-  --app-control-hover-gradient: linear-gradient(180deg, rgba(255, 252, 246, 0.98), rgba(245, 238, 225, 1));
-  --app-control-quiet: rgba(248, 243, 234, 0.82);
-  --app-segmented-surface: linear-gradient(180deg, rgba(242, 236, 225, 0.76), rgba(249, 244, 235, 0.9));
-  --app-segmented-active-surface: linear-gradient(180deg, rgba(255, 252, 246, 0.98), rgba(248, 243, 234, 1));
+  --app-panel-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(251, 250, 246, 0.98));
+  --app-panel-muted-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(250, 249, 246, 0.92));
+  --app-nav-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(247, 245, 240, 0.96));
+  --app-control-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(249, 247, 241, 0.98));
+  --app-control-hover-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 244, 236, 1));
+  --app-control-quiet: rgba(250, 249, 246, 0.82);
+  --app-segmented-surface: linear-gradient(180deg, rgba(244, 241, 233, 0.72), rgba(251, 249, 244, 0.9));
+  --app-segmented-active-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 248, 243, 1));
   --app-segmented-hover-surface: rgba(255, 255, 255, 0.58);
   --app-panel-shadow-quiet: 0 1px 2px rgba(17, 17, 17, 0.03), 0 8px 24px rgba(17, 17, 17, 0.04);
   --app-control-shadow: 0 8px 20px rgba(17, 17, 17, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.72);
   --app-control-shadow-strong: 0 8px 18px rgba(17, 17, 17, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.82);
   --app-control-border-hover: rgba(113, 116, 124, 0.34);
-  --app-overlay: rgba(28, 24, 18, 0.22);
+  --app-overlay: rgba(28, 28, 28, 0.22);
   --app-tooltip-surface: rgba(24, 23, 20, 0.96);
   --app-tooltip-foreground: rgba(250, 249, 246, 0.94);
   --app-scroll-thumb: rgba(98, 101, 109, 0.26);
@@ -162,49 +202,6 @@
   --app-danger-border: rgba(190, 18, 60, 0.18);
   --app-danger-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 247, 249, 0.98));
   --app-danger-gradient-hover: linear-gradient(180deg, rgba(255, 249, 251, 1), rgba(255, 241, 245, 1));
-  --reader-shell-gradient:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0)),
-    linear-gradient(180deg, rgba(251, 247, 239, 0.98), rgba(247, 241, 231, 0.96));
-  --reader-shell-shadow: 0 1px 2px rgba(17, 17, 17, 0.025), 0 26px 64px rgba(28, 24, 18, 0.08);
-  --reader-header-surface: rgba(250, 246, 238, 0.86);
-  --reader-header-shadow: 0 18px 42px rgba(28, 24, 18, 0.06);
-  --reader-stage-rule: rgba(216, 206, 188, 0.92);
-  --reader-stage-glow: rgba(39, 77, 166, 0.045);
-  --reader-tool-surface-top: rgba(255, 255, 255, 0.92);
-  --reader-tool-surface-bottom: rgba(248, 244, 236, 0.96);
-  --reader-tool-shadow: 0 16px 42px rgba(28, 24, 18, 0.07);
-  --reader-tool-shadow-recessed: 0 12px 28px rgba(28, 24, 18, 0.045);
-  --reader-tool-border: rgba(217, 209, 195, 0.82);
-  --reader-immersive-cue-surface: rgba(251, 247, 239, 0.74);
-  --reader-immersive-cue-hover: rgba(228, 219, 202, 0.64);
-  --reader-immersive-focus: rgba(219, 210, 193, 0.32);
-}
-
-.light {
-  --cl-color-app-canvas: #f7f5f0;
-  --cl-color-app-surface: #ffffff;
-  --cl-color-app-surface-raised: #fbfaf6;
-  --cl-color-app-ink: #151515;
-  --cl-color-app-muted: #666a73;
-  --cl-color-app-subtle: #858a92;
-  --cl-color-app-hairline: #e3ded3;
-  --cl-color-app-accent: #1f5eff;
-  --cl-color-app-accent-soft: #eaf1ff;
-
-  --cl-color-reader-paper: #faf9f6;
-  --cl-color-reader-paper-elevated: #fbfaf6;
-  --cl-color-reader-paper-ink: #151515;
-  --cl-color-reader-paper-muted: #666a73;
-  --cl-color-reader-paper-line: #e3ded3;
-
-  --app-panel-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(251, 250, 246, 0.98));
-  --app-panel-muted-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(250, 249, 246, 0.92));
-  --app-nav-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(247, 245, 240, 0.96));
-  --app-control-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(249, 247, 241, 0.98));
-  --app-control-hover-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 244, 236, 1));
-  --app-control-quiet: rgba(250, 249, 246, 0.82);
-  --app-segmented-surface: linear-gradient(180deg, rgba(244, 241, 233, 0.72), rgba(251, 249, 244, 0.9));
-  --app-segmented-active-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 248, 243, 1));
   --reader-shell-gradient:
     linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0)),
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 248, 243, 0.98));
@@ -299,4 +296,10 @@
   --reader-immersive-cue-surface: rgba(38, 42, 47, 0.76);
   --reader-immersive-cue-hover: rgba(58, 64, 72, 0.72);
   --reader-immersive-focus: rgba(87, 94, 105, 0.42);
+
+  --interactive-hover: var(--app-control-hover-gradient);
+  --interactive-active: var(--app-segmented-active-surface);
+  --interactive-quiet-hover: var(--app-control-quiet);
+  --feedback-success-soft: color-mix(in srgb, var(--structure-green) 22%, var(--web-canvas));
+  --feedback-warning-soft: color-mix(in srgb, var(--vocab-amber) 22%, var(--web-canvas));
 }

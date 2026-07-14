@@ -1,10 +1,9 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ReadingRecordListItemVm } from "@/services/bff/reading-records";
-import type { RecordListItemVm } from "@/types/view/RecordListItemVm";
 import { LibraryClient } from "./LibraryClient";
 
 const navigationMock = vi.hoisted(() => ({
@@ -12,19 +11,14 @@ const navigationMock = vi.hoisted(() => ({
   replace: vi.fn(),
 }));
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => navigationMock,
-  usePathname: () => "/app/library",
-  useSearchParams: () => new URLSearchParams(),
-}));
-
-vi.mock("./DeleteRecordButton", () => ({
-  DeleteRecordButton: () => <button type="button">删除</button>,
-}));
-
-vi.mock("./LibraryFavoriteButton", () => ({
-  LibraryFavoriteButton: () => <button type="button">收藏</button>,
-}));
+vi.mock("next/navigation", () => {
+  const stableSearchParams = new URLSearchParams();
+  return {
+    useRouter: () => navigationMock,
+    usePathname: () => "/app/library",
+    useSearchParams: () => stableSearchParams,
+  };
+});
 
 function createMemoryStorage(): Storage {
   const store = new Map<string, string>();
@@ -68,29 +62,6 @@ function makeReadingRecord(
   };
 }
 
-function makeLegacyRecord(
-  overrides: Partial<RecordListItemVm> = {},
-): RecordListItemVm {
-  return {
-    id: "legacy_record_1",
-    title: "Legacy Reading Record",
-    sourceText: "Legacy source text",
-    sourceTextExcerpt: "Legacy excerpt",
-    sourceType: "article",
-    readingGoal: "daily_reading",
-    readingVariant: "intermediate_reading",
-    analysisStatus: "ready",
-    lastOpenedAt: "2026-06-23T00:00:00Z",
-    createdAt: "2026-06-22T00:00:00Z",
-    updatedAt: "2026-06-23T00:00:00Z",
-    wordCount: 220,
-    noteCount: 3,
-    vocabularyCount: 4,
-    isFavorited: false,
-    ...overrides,
-  };
-}
-
 beforeEach(() => {
   vi.resetAllMocks();
   Object.defineProperty(window, "sessionStorage", {
@@ -102,6 +73,14 @@ beforeEach(() => {
     return 1;
   });
   vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  vi.stubGlobal(
+    "ResizeObserver",
+    class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   Object.defineProperty(window.HTMLElement.prototype, "scrollTo", {
     configurable: true,
     value: vi.fn(),
@@ -114,36 +93,137 @@ afterEach(() => {
 });
 
 describe("LibraryClient", () => {
-  it("renders the new Reading Record group above the legacy transition group", () => {
+  it("renders only the Reading Record group without legacy reader links", () => {
     render(
       <LibraryClient
-        records={[makeLegacyRecord()]}
-        status="ready"
         readingRecords={[makeReadingRecord()]}
         readingRecordsStatus="ready"
       />,
     );
 
     expect(screen.getByRole("heading", { name: "阅读记录" })).toBeTruthy();
-    expect(screen.getByText("旧记录")).toBeTruthy();
 
     const newRecordLink = document.querySelector(
       'a[href="/app/reader-record/reading_record_1"]',
     );
-    const legacyRecordLink = document.querySelector(
-      'a[href="/app/reader/legacy_record_1"]',
+    expect(newRecordLink?.getAttribute("href")).toBe(
+      "/app/reader-record/reading_record_1",
     );
-    expect(newRecordLink?.getAttribute("href")).toBe("/app/reader-record/reading_record_1");
-    expect(legacyRecordLink?.getAttribute("href")).toBe("/app/reader/legacy_record_1");
 
+    const legacyLinks = document.querySelectorAll('a[href^="/app/reader/"]');
+    expect(legacyLinks).toHaveLength(0);
+
+    expect(screen.getByText("共 1 篇记录")).toBeTruthy();
+  });
+
+  it("renders multiple reading records with correct links", () => {
+    render(
+      <LibraryClient
+        readingRecords={[
+          makeReadingRecord(),
+          makeReadingRecord({
+            readingRecordId: "reading_record_2",
+            readerUrl: "/app/reader-record/reading_record_2",
+            title: "Second Reading",
+          }),
+        ]}
+        readingRecordsStatus="ready"
+      />,
+    );
+
+    expect(screen.getByText("New Reading Record")).toBeTruthy();
+    expect(screen.getByText("Second Reading")).toBeTruthy();
     expect(screen.getByText("共 2 篇记录")).toBeTruthy();
   });
 
-  it("keeps the legacy transition group visible when Reading Records fail to load", () => {
+  it("searches by title only", () => {
     render(
       <LibraryClient
-        records={[]}
-        status="ready"
+        readingRecords={[
+          makeReadingRecord({ title: "Climate Notes" }),
+          makeReadingRecord({
+            readingRecordId: "reading_record_2",
+            readerUrl: "/app/reader-record/reading_record_2",
+            title: "Exam Strategy",
+            sourceMetadata: { hidden: "climate keyword buried in metadata" },
+          }),
+        ]}
+        readingRecordsStatus="ready"
+      />,
+    );
+
+    const input = screen.getByLabelText("搜索阅读记录标题");
+    fireEvent.change(input, { target: { value: "climate" } });
+
+    expect(screen.getByText("Climate Notes")).toBeTruthy();
+    expect(screen.queryByText("Exam Strategy")).toBeNull();
+    expect(screen.getByText("找到 1 篇记录")).toBeTruthy();
+  });
+
+  it("shows empty state CTA when there are no records", () => {
+    render(
+      <LibraryClient
+        readingRecords={[]}
+        readingRecordsStatus="ready"
+      />,
+    );
+
+    expect(
+      screen.getByText("还没有阅读记录。提交一篇新解读后会在这里显示。"),
+    ).toBeTruthy();
+
+    const ctaLink = screen.getByText("提交一篇新解读").closest("a");
+    expect(ctaLink?.getAttribute("href")).toBe("/app/read");
+  });
+
+  it("shows login CTA when BFF returns auth_required", () => {
+    render(
+      <LibraryClient
+        readingRecords={[]}
+        readingRecordsStatus="auth_required"
+        readingRecordsMessage="请先登录后查看阅读记录。"
+      />,
+    );
+
+    expect(screen.getByText("请先登录后查看阅读记录。")).toBeTruthy();
+
+    const loginLink = screen.getByText("去登录").closest("a");
+    expect(loginLink?.getAttribute("href")).toBe("/login");
+  });
+
+  it("shows login CTA when BFF returns upstream_auth_failed", () => {
+    render(
+      <LibraryClient
+        readingRecords={[]}
+        readingRecordsStatus="upstream_auth_failed"
+        readingRecordsMessage="登录态已失效，请重新登录后再试。"
+      />,
+    );
+
+    expect(screen.getByText("登录态已失效，请重新登录后再试。")).toBeTruthy();
+
+    const loginLink = screen.getByText("去登录").closest("a");
+    expect(loginLink?.getAttribute("href")).toBe("/login");
+  });
+
+  it("shows debug state without login CTA when BFF returns limited_debug", () => {
+    render(
+      <LibraryClient
+        readingRecords={[]}
+        readingRecordsStatus="limited_debug"
+        readingRecordsMessage="当前登录态无法访问阅读记录，请使用完整登录会话。"
+      />,
+    );
+
+    expect(
+      screen.getByText("当前登录态无法访问阅读记录，请使用完整登录会话。"),
+    ).toBeTruthy();
+    expect(screen.queryByText("去登录")).toBeNull();
+  });
+
+  it("shows generic error state without raw code for upstream_unavailable", () => {
+    render(
+      <LibraryClient
         readingRecords={[]}
         readingRecordsStatus="upstream_unavailable"
         readingRecordsMessage="透读服务暂时不可用，请稍后重试。"
@@ -151,7 +231,25 @@ describe("LibraryClient", () => {
     );
 
     expect(screen.getByText("透读服务暂时不可用，请稍后重试。")).toBeTruthy();
-    expect(screen.getByText("旧记录")).toBeTruthy();
-    expect(screen.getByText("当前还没有可继续打开的旧记录。")).toBeTruthy();
+    expect(screen.queryByText("upstream_unavailable")).toBeNull();
+    expect(screen.queryByText("去登录")).toBeNull();
+  });
+
+  it("does not render legacy section, archive copy, or favorite/delete controls", () => {
+    render(
+      <LibraryClient
+        readingRecords={[makeReadingRecord()]}
+        readingRecordsStatus="ready"
+      />,
+    );
+
+    expect(screen.queryByText("Legacy Records")).toBeNull();
+    expect(screen.queryByText("旧记录")).toBeNull();
+    expect(screen.queryByText("过渡入口")).toBeNull();
+    expect(screen.queryByText("Reading Archive.")).toBeNull();
+    expect(screen.queryByText("收藏")).toBeNull();
+    expect(screen.queryByText("删除")).toBeNull();
+    expect(screen.queryByText("按阅读目标浏览")).toBeNull();
+    expect(screen.queryByText("最近重读")).toBeNull();
   });
 });

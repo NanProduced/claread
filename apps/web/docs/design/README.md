@@ -1,13 +1,13 @@
 # Claread Web Design
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-15
+> **状态**: `CURRENT` | **最后更新**: 2026-07-13
 
 本目录记录 Claread Web 第一版 UI/UX 的设计方向。这里的图片是页面形态和视觉语言参考，不是 mock 数据页、demo fixture 或可直接照抄的像素稿。Web 开发仍必须接入真实 Next.js BFF / FastAPI 链路。
 
 当前文档层级应按下面顺序理解：
 
-1. `component-library-v0.md` 是 Web 组件库主规范，也是功能页 token、theme、目录和通用组件的唯一真相源。
-2. `component-system.md` 是 Reader 专项补充规范，只处理 Reader 组件、交互和视觉特例。
+1. `../DESIGN.md` 是 Web 设计系统、token、组件契约与页面模式的唯一治理入口。
+2. `component-system.md` 是 Reader 专项补充规范，只处理 Reader 画布、锚点、组件与交互特例。
 
 当前组件库实施状态：
 
@@ -22,9 +22,7 @@ Claread Web 当前稳定方向已经沉淀到：
 - `../PRODUCT.md`
 - `../DESIGN.md`
 - `../reader-ia.md`
-- `component-library-v0.md`
 - `component-system.md`
-- `directions/read-home-input-editorial-reference-v1.md`：`/app/read` 首页/输入页主方向定稿参考与信息架构拆解
 
 ## 品牌资产入口
 
@@ -58,7 +56,7 @@ PNG 方向图和截图只作为本地评审参考，不作为长期事实来源�
 
 | 文件 | 用途 |
 | --- | --- |
-| `component-system.md` | Reader UI/UX 组件使用规范、token 规则、组件分层和验证要求 |
-| `component-library-v0.md` | Claread Web 功能页组件库统一规范，负责全站 token、theme、目录结构、通用组件和第三方准入流程 |
+| `../DESIGN.md` | 全站设计系统、token、组件契约、页面模式与迁移边界 |
+| `component-system.md` | Reader UI/UX 组件使用规范、画布/锚点特例和验证要求 |
 
-组件预览图可以在本地生成或保留，但最终结论必须压缩回 `component-library-v0.md`、`component-system.md`、`reader-ia.md`、`PRODUCT.md` 和 `DESIGN.md`。
+组件预览图可以在本地生成或保留，但最终结论必须压缩回 `../DESIGN.md`、`component-system.md`、`reader-ia.md` 与 `../PRODUCT.md`。方向图不构成当前规范。

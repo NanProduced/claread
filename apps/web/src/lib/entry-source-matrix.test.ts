@@ -33,7 +33,7 @@ describe("entry source matrix - Track D convergence", () => {
     expect(itemsSource).not.toContain("legacyAppReaderRoute");
   });
 
-  it("Library keeps Reading Records and legacy records in separate groups", () => {
+  it("Library is new Reading Record only", () => {
     const sectionSource = readSource(
       "src/app/(private)/app/library/ReadingRecordSection.tsx",
     );
@@ -45,8 +45,9 @@ describe("entry source matrix - Track D convergence", () => {
     expect(sectionSource).not.toContain("/app/reader/");
 
     expect(clientSource).toContain("ReadingRecordSection");
-    expect(clientSource).toContain("Legacy Records");
-    expect(clientSource).toContain("legacyAppReaderRoute");
+    expect(clientSource).not.toContain("Legacy Records");
+    expect(clientSource).not.toContain("legacyAppReaderRoute");
+    expect(clientSource).not.toContain("/app/reader/");
   });
 
   it("Vocabulary source links prefer Reading Record ids with legacy fallback", () => {

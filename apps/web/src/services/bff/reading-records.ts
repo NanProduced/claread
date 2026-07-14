@@ -14,6 +14,7 @@ export type ReadingRecordsBffError = {
   code:
     | "auth_required"
     | "upstream_auth_failed"
+    | "limited_debug"
     | "upstream_unavailable"
     | "upstream_error";
   message: string;
@@ -50,6 +51,10 @@ function authRequired(message: string): ReadingRecordsBffError {
   return { ok: false, status: 401, code: "auth_required", message };
 }
 
+function limitedDebug(message: string): ReadingRecordsBffError {
+  return { ok: false, status: 401, code: "limited_debug", message };
+}
+
 function upstreamError(status: number, message: string): ReadingRecordsBffError {
   if (status === 0 || status >= 500) {
     return {
@@ -75,12 +80,12 @@ export async function getReadingRecordListFromWeb(
 ): Promise<ReadingRecordListResult> {
   const session = await getWebSession();
 
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
-    return authRequired(
-      session.kind === "mock_phone"
-        ? "当前登录态无法访问阅读记录，请使用完整登录会话。"
-        : "请先登录后查看阅读记录。",
-    );
+  if (session.kind === "anonymous") {
+    return authRequired("请先登录后查看阅读记录。");
+  }
+
+  if (session.kind === "mock_phone") {
+    return limitedDebug("当前登录态无法访问阅读记录，请使用完整登录会话。");
   }
 
   const upstreamResult = await listUpstreamReadingRecords(
@@ -103,7 +108,7 @@ export async function getReadingRecordListFromWeb(
     items: data.items.map((item) => ({
       readingRecordId: item.record_id,
       readerUrl: appReadingRecordRoute(item.record_id),
-      title: item.title ?? "Untitled Reading",
+      title: item.title ?? "未命名解读",
       createdAt: item.created_at,
       sourceType: item.source_type,
       sourceMetadata: item.source_metadata,

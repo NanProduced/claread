@@ -74,6 +74,39 @@ function sourceHrefForItem(item: VocabularyItemVm): string | null {
   return null;
 }
 
+/**
+ * 决定从 Vocabulary 条目（或单条 source ref）跳回 Reader 的最终 URL。
+ *
+ * 决策规则：
+ * - 优先用 readingRecordId → 新链 /app/reader-record/{id}
+ * - 否则用 recordId → 旧链 /app/reader/{id}
+ * - 两者都为空 → null（不跳转）
+ * - sentenceId 非空时附加为 ?sentenceId= query
+ *
+ * 抽出为纯函数以便测试。handleGoToSource 通过 window.location.href
+ * 跳转，jsdom 下无法直接观察最终 URL，因此 URL 决策必须可独立测试。
+ */
+export function resolveReaderSourceHref(target: {
+  readingRecordId?: string | null;
+  recordId?: string | null;
+  sentenceId?: string;
+}): string | null {
+  const baseUrl = target.readingRecordId
+    ? appReadingRecordRoute(target.readingRecordId)
+    : target.recordId
+      ? legacyAppReaderRoute(target.recordId)
+      : null;
+
+  if (!baseUrl) {
+    return null;
+  }
+
+  if (target.sentenceId) {
+    return `${baseUrl}?sentenceId=${target.sentenceId}`;
+  }
+  return baseUrl;
+}
+
 /* ---------- Bookmark Rail ---------- */
 
 function VocabularyBookmarkRail({
@@ -413,25 +446,15 @@ export function VocabularyClient({
     }
   }, [deleteTarget, selectedId, items]);
 
-  // Vocabulary sourceRecordId is still projected from legacy source refs
-  // (cloud_record_id/client_record_id), not a Reading Record id.
   const handleGoToSource = useCallback((target: {
     readingRecordId?: string | null;
     recordId?: string | null;
     sentenceId?: string;
   }) => {
-    const baseUrl = target.readingRecordId
-      ? appReadingRecordRoute(target.readingRecordId)
-      : target.recordId
-        ? legacyAppReaderRoute(target.recordId)
-        : null;
-
-    if (!baseUrl) {
+    const url = resolveReaderSourceHref(target);
+    if (!url) {
       return;
     }
-
-    let url = baseUrl;
-    if (target.sentenceId) url += `?sentenceId=${target.sentenceId}`;
     window.location.href = url;
   }, []);
 

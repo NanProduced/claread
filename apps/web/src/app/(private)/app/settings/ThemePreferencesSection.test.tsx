@@ -4,26 +4,40 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ThemePreferencesSection } from "./ThemePreferencesSection";
 
-const setThemeName = vi.fn();
+const setThemePreference = vi.fn();
 
 vi.mock("@/components/providers/appearance-provider", () => ({
   useAppearance: () => ({
-    themeName: "paper",
-    setThemeName,
+    themePreference: "system",
+    resolvedTheme: "light",
+    themeName: "system",
+    setThemePreference,
+    setThemeName: setThemePreference,
   }),
 }));
 
 describe("ThemePreferencesSection", () => {
-  it("renders only the unified three-theme selector", () => {
+  it("renders the system/light/dark preference selector", () => {
     render(<ThemePreferencesSection />);
 
-    expect(screen.getByText("纸质")).toBeTruthy();
+    expect(screen.getByText("跟随系统")).toBeTruthy();
     expect(screen.getByText("浅色")).toBeTruthy();
     expect(screen.getByText("深色")).toBeTruthy();
-    expect(screen.queryByText("跟随系统")).toBeNull();
-    expect(screen.queryByText("Reader 默认纸面")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /深色 dark/i }));
-    expect(setThemeName).toHaveBeenCalledWith("dark");
+    expect(setThemePreference).toHaveBeenCalledWith("dark");
+
+    fireEvent.click(screen.getByRole("button", { name: /跟随系统 follow system/i }));
+    expect(setThemePreference).toHaveBeenCalledWith("system");
+  });
+
+  it("renders only two visual theme-preview cards (light and dark)", () => {
+    render(<ThemePreferencesSection />);
+    expect(screen.getAllByText("Light").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Dark").length).toBeGreaterThan(0);
+
+    // Paper must not appear as a preference label or preview chip.
+    expect(screen.queryByText("Paper")).toBeNull();
+    expect(screen.queryByText("纸质")).toBeNull();
   });
 });

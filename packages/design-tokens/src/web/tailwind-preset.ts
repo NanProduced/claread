@@ -1,5 +1,6 @@
 export const clareadTailwindPreset = {
   colors: {
+    // Foundation (migrating toward semantic; kept as compatibility aliases)
     "web-canvas": "var(--web-canvas)",
     "reader-paper": "var(--reader-paper)",
     surface: "var(--surface)",
@@ -18,6 +19,32 @@ export const clareadTailwindPreset = {
     "grammar-violet": "var(--grammar-violet)",
     "structure-green": "var(--structure-green)",
     "error-red": "var(--error-red)",
+
+    // Web semantic tokens (canonical for new primitives + composed)
+    "surface-canvas": "var(--surface-canvas)",
+    "surface-stage": "var(--surface-stage)",
+    "surface-overlay": "var(--surface-overlay)",
+    "text-primary": "var(--text-primary)",
+    "text-secondary": "var(--text-secondary)",
+    "action-primary": "var(--action-primary)",
+    "action-primary-foreground": "var(--action-primary-foreground)",
+    "action-secondary": "var(--action-secondary)",
+    "action-secondary-foreground": "var(--action-secondary-foreground)",
+    // Note: --interactive-hover / --interactive-active /
+    // --interactive-quiet-hover resolve to gradient or surface recipes that
+    // do NOT work as Tailwind `bg-*` utilities. They remain as semantic
+    // CSS variables for explicit `background-image` / `background`
+    // declarations only and are intentionally NOT aliased through
+    // `--color-*` in @theme.
+    "border-subtle": "var(--border-subtle)",
+    "border-strong": "var(--border-strong)",
+    "focus-ring": "var(--focus-ring)",
+    "feedback-success": "var(--feedback-success)",
+    "feedback-success-soft": "var(--feedback-success-soft)",
+    "feedback-warning": "var(--feedback-warning)",
+    "feedback-warning-soft": "var(--feedback-warning-soft)",
+    "feedback-error": "var(--feedback-error)",
+    "feedback-error-foreground": "var(--feedback-error-foreground)",
   },
   radius: {
     "control-xs": "var(--cl-radius-control-xs)",

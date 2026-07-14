@@ -72,7 +72,7 @@ describe("reading-records BFF list", () => {
     expect(listUpstreamReadingRecords).not.toHaveBeenCalled();
   });
 
-  it("rejects mock_phone sessions with auth_required", async () => {
+  it("rejects mock_phone sessions with limited_debug", async () => {
     vi.mocked(getWebSession).mockResolvedValue({
       kind: "mock_phone",
       source: "mock",
@@ -81,7 +81,7 @@ describe("reading-records BFF list", () => {
 
     const result = await getReadingRecordListFromWeb();
 
-    expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
+    expect(result).toMatchObject({ ok: false, status: 401, code: "limited_debug" });
     expect(listUpstreamReadingRecords).not.toHaveBeenCalled();
   });
 
@@ -146,7 +146,7 @@ describe("reading-records BFF list", () => {
       const second = result.items[1];
       expect(second.readingRecordId).toBe("reading_record_2");
       expect(second.readerUrl).toBe(appReadingRecordRoute("reading_record_2"));
-      expect(second.title).toBe("Untitled Reading");
+      expect(second.title).toBe("未命名解读");
       expect(second.productState).toBe("processing");
     }
 

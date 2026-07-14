@@ -1,4 +1,7 @@
-import { normalizeThemeName, THEME_STORAGE_KEY } from "@/lib/appearance";
+import {
+  normalizeThemePreference,
+  THEME_STORAGE_KEY,
+} from "@/lib/appearance";
 import {
   createDefaultReaderSettings,
   persistReaderSettings,
@@ -95,7 +98,7 @@ export function buildWebPreferencesFromLocal(): WebPreferences {
   if (typeof window !== "undefined") {
     try {
       const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
-      theme = normalizeThemeName(storedTheme);
+      theme = normalizeThemePreference(storedTheme);
     } catch {}
 
     try {

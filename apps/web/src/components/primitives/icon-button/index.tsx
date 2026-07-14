@@ -15,11 +15,15 @@ const iconButtonVariants = cva(
     variants: {
       variant: {
         outline:
-          "app-control-surface rounded-[0.82rem] border-hairline text-ink-soft hover:-translate-y-[0.5px] hover:border-[var(--app-control-border-hover)] hover:text-ink",
+          "app-control-surface rounded-[0.82rem] border-border-subtle text-text-secondary hover:-translate-y-[0.5px] hover:border-border-strong hover:text-text-primary",
         quiet:
-          "rounded-[0.82rem] border-transparent bg-transparent text-muted hover:bg-[var(--app-control-quiet)] hover:text-ink",
+          "rounded-[0.82rem] border-transparent bg-transparent text-text-secondary hover:bg-[var(--app-control-quiet)] hover:text-text-primary",
         danger:
-          "rounded-[0.82rem] border-[var(--app-danger-border)] [background-image:var(--app-danger-gradient)] text-error-red hover:[background-image:var(--app-danger-gradient-hover)]",
+          // Danger gradient recipe is the visual identity of destructive
+          // intent. feedback-error provides the base hue but cannot express
+          // the gradient by itself, so we keep --app-danger-gradient as
+          // background-image.
+          "rounded-[0.82rem] border-[var(--app-danger-border)] [background-image:var(--app-danger-gradient)] text-feedback-error hover:[background-image:var(--app-danger-gradient-hover)]",
       },
       size: {
         sm: "h-8 w-8",

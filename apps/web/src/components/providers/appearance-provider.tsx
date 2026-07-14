@@ -26,33 +26,67 @@ import {
   LEGACY_APPEARANCE_STORAGE_KEY,
   THEME_STORAGE_KEY,
   migrateLegacyAppearanceTheme,
-  normalizeThemeName,
-  themeColorForTheme,
+  normalizeThemePreference,
+  type ResolvedTheme,
   type ThemeName,
+  type ThemePreference,
+  themeColorForTheme,
 } from "@/lib/appearance";
 import {
   buildWebPreferencesFromLocal,
   syncWebPreferencesToCloud,
 } from "@/lib/web-preferences-sync";
-import { persistWebPreferences } from "@/lib/web-preferences";
+import {
+  normalizeWebPreferences,
+  persistWebPreferences,
+  WEB_PREFERENCES_STORAGE_KEY,
+} from "@/lib/web-preferences";
 
+/**
+ * The app-shell contract: `themePreference` is the user's choice
+ * ("system" | "light" | "dark"); `resolvedTheme` is the visual contract
+ * applied to CSS / Tailwind / dataset attributes ("light" | "dark").
+ * Setting `themePreference` persists into the cloud preferences payload
+ * alongside the rest of WebPreferences. Reader-internal `ThemeName`
+ * (paper|light|dark) callers continue to use the legacy `themeName`
+ * field; that API is stable because the Reader sub-system is out of
+ * scope for this refactor.
+ */
 interface AppearanceContextValue {
+  themePreference: ThemePreference;
+  resolvedTheme: ResolvedTheme;
+  /**
+   * Reader compatibility projection. Although its legacy type still admits
+   * `paper`, this provider only emits the resolved `light` or `dark` value.
+   */
   themeName: ThemeName;
+  setThemePreference: (value: ThemePreference) => void;
+  /**
+   * Reader-internal compatibility setter. A legacy `paper` input selects the
+   * system preference; it never re-enables a Paper visual theme.
+   */
   setThemeName: (value: ThemeName) => void;
 }
 
 const AppearanceContext = createContext<AppearanceContextValue | null>(null);
 
+function readSystemOsTheme(): ResolvedTheme {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return "light";
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 function ThemeColorSync() {
-  const { resolvedTheme, theme } = useTheme();
+  const { resolvedTheme } = useTheme();
 
   useEffect(() => {
     if (typeof document === "undefined") {
       return;
     }
 
-    const nextTheme = normalizeThemeName(resolvedTheme ?? theme);
-    const content = themeColorForTheme(nextTheme);
+    const nextResolved = normalizeResolvedTheme(resolvedTheme);
+    const content = themeColorForTheme(nextResolved);
     let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
 
     if (!meta) {
@@ -62,56 +96,89 @@ function ThemeColorSync() {
     }
 
     meta.content = content;
-    document.documentElement.dataset.appTheme = nextTheme;
-  }, [resolvedTheme, theme]);
+    /**
+     * dataset.appTheme carries ONLY resolved light/dark — never "system"
+     * or any preference-mode value. Visual consumers must read this
+     * attribute or the `resolvedTheme` from context, not the preference.
+     */
+    document.documentElement.dataset.appTheme = nextResolved;
+  }, [resolvedTheme]);
 
   return null;
 }
 
+export function normalizeResolvedTheme(value: unknown): ResolvedTheme {
+  return value === "dark" ? "dark" : "light";
+}
+
 function AppearanceContextBridge({ children }: { children: React.ReactNode }) {
-  const { theme, setTheme } = useTheme();
+  const { theme, resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true); // eslint-disable-line react-hooks/set-state-in-effect
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
+  const resolvedCurrent = useMemo<ResolvedTheme>(() => {
+    if (!mounted) {
+      return "light";
+    }
+    return normalizeResolvedTheme(resolvedTheme ?? theme);
+  }, [mounted, resolvedTheme, theme]);
+
+  const preferenceCurrent = useMemo<ThemePreference>(() => {
+    if (!mounted) {
+      return "system";
+    }
+    return normalizeThemePreference(theme);
+  }, [mounted, theme]);
+
+  /**
+   * Reader still consumes the legacy `ThemeName` type, but the app-shell
+   * never emits its retired `paper` member. `system` resolves to the same
+   * light/dark value used by every other visual consumer.
+   */
+  const themeNameCurrent = resolvedCurrent as ThemeName;
+
+  const applyThemeName = (next: ThemeName) => {
+    const mapped: ThemePreference =
+      next === "dark"
+        ? "dark"
+        : next === "light"
+          ? "light"
+          : "system";
+    setTheme(mapped);
 
     try {
-      const nextStoredTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
-      if (nextStoredTheme) return;
-
-      const legacyStoredTheme = window.localStorage.getItem(LEGACY_APPEARANCE_STORAGE_KEY);
-      if (!legacyStoredTheme) return;
-
-      const migratedTheme = migrateLegacyAppearanceTheme(
-        legacyStoredTheme,
-        typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "light",
-      );
-
-      setTheme(migratedTheme);
+      const local = buildWebPreferencesFromLocal();
+      local.theme = mapped;
+      local.updated_at = new Date().toISOString();
+      persistWebPreferences(local);
+      syncWebPreferencesToCloud(local);
     } catch {}
-  }, [setTheme]);
+  };
+
+  const applyPreference = (next: ThemePreference) => {
+    setTheme(next);
+
+    try {
+      const local = buildWebPreferencesFromLocal();
+      local.theme = next;
+      local.updated_at = new Date().toISOString();
+      persistWebPreferences(local);
+      syncWebPreferencesToCloud(local);
+    } catch {}
+  };
 
   const value = useMemo<AppearanceContextValue>(
     () => ({
-      themeName: mounted ? normalizeThemeName(theme) : "paper",
-      setThemeName: (next) => {
-        setTheme(next);
-        try {
-          const local = buildWebPreferencesFromLocal();
-          local.theme = next;
-          local.updated_at = new Date().toISOString();
-          persistWebPreferences(local);
-          syncWebPreferencesToCloud(local);
-        } catch {}
-      },
+      themePreference: preferenceCurrent,
+      resolvedTheme: resolvedCurrent,
+      themeName: themeNameCurrent,
+      setThemePreference: applyPreference,
+      setThemeName: applyThemeName,
     }),
-    [mounted, setTheme, theme],
+    [preferenceCurrent, resolvedCurrent, themeNameCurrent],
   );
 
   return (
@@ -126,8 +193,8 @@ export function AppearanceProvider({ children }: { children: React.ReactNode }) 
   return (
     <ThemeProvider
       attribute="class"
-      defaultTheme="paper"
-      enableSystem={false}
+      defaultTheme="system"
+      enableSystem
       disableTransitionOnChange
       storageKey={THEME_STORAGE_KEY}
     >

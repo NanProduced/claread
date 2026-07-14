@@ -1,8 +1,11 @@
 import { cva } from "class-variance-authority"
 import { cn } from "@/lib/cn"
 
+// Canonical focus ring for primitives. Pulls from the semantic focus-ring
+// token so Paper/Light/Dark can override the keyboard-focus hue in one place.
+// Kept aligned with the existing lens-blue/20 + background offset recipe.
 export const primitiveFocusRing =
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring/30 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-canvas"
 
 export const primitiveSurface =
   "app-panel-surface border border-hairline text-ink"

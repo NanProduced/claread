@@ -1,6 +1,6 @@
-import type { ThemeName } from "@/lib/appearance";
+import type { ThemePreference } from "@/lib/appearance";
 
-export type WebThemeName = "paper" | "light" | "dark";
+export type WebThemeName = ThemePreference;
 export type WebReaderMode = "intensive" | "immersive";
 export type WebFontFamily = "editorial" | "book" | "sans";
 export type WebFontScale = "sm" | "md" | "lg";
@@ -17,14 +17,15 @@ export interface WebPreferences {
   updated_at: string;
 }
 
-const VALID_THEMES: readonly WebThemeName[] = ["paper", "light", "dark"];
+const VALID_THEMES: readonly WebThemeName[] = ["system", "light", "dark"];
 const VALID_READER_MODES: readonly WebReaderMode[] = ["intensive", "immersive"];
 const VALID_FONT_FAMILIES: readonly WebFontFamily[] = ["editorial", "book", "sans"];
 const VALID_FONT_SCALES: readonly WebFontScale[] = ["sm", "md", "lg"];
 
+/** Default preference is "system" — Light/Dark is resolved at render time. */
 export function createDefaultWebPreferences(): WebPreferences {
   return {
-    theme: "paper",
+    theme: "system",
     reader_mode: "intensive",
     font_family: "editorial",
     font_scale: "md",
