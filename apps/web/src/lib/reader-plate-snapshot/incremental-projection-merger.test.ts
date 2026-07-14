@@ -218,6 +218,61 @@ function makeLayerParagraphNode(
   } as unknown as Descendant;
 }
 
+/**
+ * R2.2-P1: Build a paragraph node carrying vocabulary marks on its text leaf.
+ *
+ * vocabulary first-publish / revision changes the projected paragraph by
+ * mutating `reader_vocabulary_marks` data on the source leaf — the paragraph
+ * block_id (`paragraph:{anchorSegmentId}`) and the block ordering stay
+ * identical, but the leaf's marks array changes. This mirrors the real
+ * projection path in `reader-record-plate-document.ts` where
+ * `splitTextLeafByMarks` produces children with `marks` arrays.
+ */
+function makeLayerParagraphNodeWithVocabularyMarks(
+  anchorSegmentId: string,
+  text: string,
+  marks: Array<{
+    id: string;
+    kind: "vocab_highlight" | "phrase_gloss" | "context_gloss";
+    gloss: string;
+  }>,
+  unitId: string = LAYER_UNIT_ID,
+): Descendant {
+  return {
+    type: "paragraph",
+    id: `paragraph:${anchorSegmentId}`,
+    children: [
+      {
+        text,
+        marks: marks.map((m) => ({
+          id: m.id,
+          kind: m.kind,
+          vocabulary:
+            m.kind === "vocab_highlight"
+              ? {
+                  itemType: "vocab_highlight",
+                  headword: m.gloss,
+                  briefExplanation: m.gloss,
+                }
+              : m.kind === "phrase_gloss"
+                ? {
+                    itemType: "phrase_gloss",
+                    phrase: m.gloss,
+                    phraseType: "collocation",
+                    gloss: m.gloss,
+                  }
+                : {
+                    itemType: "context_gloss",
+                    display: m.gloss,
+                    gloss: m.gloss,
+                  },
+        })),
+      },
+    ],
+    data: { anchorSegmentId, unitId },
+  } as unknown as Descendant;
+}
+
 function makeLayerBlockquoteNode(
   layerId: string,
   groupId: string,
@@ -853,6 +908,10 @@ describe("mergeIncrementalProjection", () => {
     });
 
     it("vocabulary revision with same block topology: targeted_apply replaces changed paragraph", () => {
+      // R2.2-P1: This test now verifies REAL vocabulary mark data changes
+      // (previously prev/next were identical, producing 0 ops). The paragraph
+      // block_id stays the same, but the leaf's marks array differs — the
+      // merger must detect this as a semantic change and emit a replace op.
       const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
       const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
       const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
@@ -860,13 +919,17 @@ describe("mergeIncrementalProjection", () => {
       });
 
       const prevChildren = [
-        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerParagraphNodeWithVocabularyMarks("seg_1", "source text", [
+          { id: "vocab_1", kind: "phrase_gloss", gloss: "记忆" },
+        ]),
         makeLayerGrammarCalloutNode("item_1", "grammar note"),
       ];
       // vocabulary revision changes the projected paragraph (mark data) but
       // the block_id sequence remains identical.
       const nextChildren = [
-        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerParagraphNodeWithVocabularyMarks("seg_1", "source text", [
+          { id: "vocab_1", kind: "phrase_gloss", gloss: "记忆 (修订)" },
+        ]),
         makeLayerGrammarCalloutNode("item_1", "grammar note"),
       ];
 
@@ -879,12 +942,362 @@ describe("mergeIncrementalProjection", () => {
         snapshotFence,
       });
 
-      // No semantic change between prev and next children → empty operations.
-      // This is still targeted_apply (no setValue).
       expect(result.kind).toBe("targeted_apply");
       if (result.kind !== "targeted_apply") return;
-      expect(result.operations).toHaveLength(0);
+      expect(result.operations).toHaveLength(1);
+      expect(result.operations[0].type).toBe("replace");
+      expect(result.operations[0].path).toEqual([0]);
+      expect(result.operations[0].blockId).toBe("paragraph:seg_1");
+      expect(result.operations[0].nodes).toEqual([nextChildren[0]]);
       expect(result.affectedTargetKeys).toEqual([LAYER_UNIT_ID]);
+      expect(result.preservedInteraction.preserveSelection).toBe(true);
+      expect(result.preservedInteraction.preserveScroll).toBe(true);
+      expect(result.preservedInteraction.preserveGrammarAccordion).toBe(true);
+    });
+
+    it("R2.2-P1: vocabulary first-publish with vocab_highlight mark change: targeted_apply replaces paragraph", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      // prev: paragraph with no vocabulary marks (vocabulary layer not yet
+      // published). next: same paragraph with a new vocab_highlight mark.
+      // This is the vocabulary first-publish scenario.
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNodeWithVocabularyMarks("seg_1", "source text", [
+          { id: "vocab_1", kind: "vocab_highlight", gloss: "memory" },
+        ]),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("targeted_apply");
+      if (result.kind !== "targeted_apply") return;
+      expect(result.operations).toHaveLength(1);
+      expect(result.operations[0].type).toBe("replace");
+      expect(result.operations[0].path).toEqual([0]);
+      expect(result.operations[0].blockId).toBe("paragraph:seg_1");
+      expect(result.operations[0].nodes).toEqual([nextChildren[0]]);
+      expect(result.affectedTargetKeys).toEqual([LAYER_UNIT_ID]);
+    });
+
+    it("R2.2-P1: vocabulary first-publish with context_gloss mark change: targeted_apply replaces paragraph", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNodeWithVocabularyMarks("seg_1", "source text", [
+          { id: "vocab_ctx_1", kind: "context_gloss", gloss: "制度记忆" },
+        ]),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("targeted_apply");
+      if (result.kind !== "targeted_apply") return;
+      expect(result.operations).toHaveLength(1);
+      expect(result.operations[0].blockId).toBe("paragraph:seg_1");
+    });
+
+    it("R2.2-P1: vocabulary first-publish with multiple mark kinds: targeted_apply replaces paragraph", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNodeWithVocabularyMarks("seg_1", "source text", [
+          { id: "vocab_1", kind: "vocab_highlight", gloss: "memory" },
+          { id: "vocab_2", kind: "phrase_gloss", gloss: "shapes" },
+          { id: "vocab_3", kind: "context_gloss", gloss: "policy choices" },
+        ]),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("targeted_apply");
+      if (result.kind !== "targeted_apply") return;
+      expect(result.operations).toHaveLength(1);
+      expect(result.operations[0].blockId).toBe("paragraph:seg_1");
+    });
+
+    it("R2.2-P1: vocabulary first-publish with multi-paragraph unit: only changed paragraph replaced", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      // Two paragraphs in the unit; only the first gets vocabulary marks.
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "first paragraph"),
+        makeLayerParagraphNode("seg_2", "second paragraph"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNodeWithVocabularyMarks("seg_1", "first paragraph", [
+          { id: "vocab_1", kind: "phrase_gloss", gloss: "记忆" },
+        ]),
+        makeLayerParagraphNode("seg_2", "second paragraph"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("targeted_apply");
+      if (result.kind !== "targeted_apply") return;
+      expect(result.operations).toHaveLength(1);
+      expect(result.operations[0].blockId).toBe("paragraph:seg_1");
+      expect(result.operations[0].path).toEqual([0]);
+    });
+
+    it("R2.2-P1: vocabulary first-publish with non-target unit block change: fallback_full_reload", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      // Target unit paragraph gets vocabulary marks, BUT a non-target unit
+      // block also changes — P1-A guard must reject this.
+      // The blockquote uses a DIFFERENT unitId so it is treated as a
+      // non-target block; any semantic change to it must trigger fallback.
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+        makeLayerBlockquoteNode(
+          "layer_translation_other",
+          "group_other",
+          "other unit translation",
+          "unit_other",
+        ),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNodeWithVocabularyMarks("seg_1", "source text", [
+          { id: "vocab_1", kind: "phrase_gloss", gloss: "记忆" },
+        ]),
+        makeLayerBlockquoteNode(
+          "layer_translation_other",
+          "group_other",
+          "other unit translation (CHANGED)",
+          "unit_other",
+        ),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+    });
+
+    it("R2.2-P1: vocabulary first-publish with block count mismatch: fallback_full_reload", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+
+      // prev has 1 block, next has 2 blocks — structural change.
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNodeWithVocabularyMarks("seg_1", "source text", [
+          { id: "vocab_1", kind: "phrase_gloss", gloss: "记忆" },
+        ]),
+        makeLayerGrammarCalloutNode("item_1", "new grammar callout"),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+    });
+
+    it("R2.2-P1: vocabulary first-publish with fence mismatch (generation): fallback_full_reload", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
+        sequence: 2,
+        generation: 99, // mismatch with snapshotFence.generation
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNodeWithVocabularyMarks("seg_1", "source text", [
+          { id: "vocab_1", kind: "phrase_gloss", gloss: "记忆" },
+        ]),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("fence_mismatch_in_batch");
+    });
+
+    it("R2.2-P1: vocabulary first-publish with mixed batch (layer_published + projection_ops): fallback_full_reload", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const vocabEvent = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+      const representationEvent = makeRepresentationEvent(
+        "projection_ops",
+        "user_assets",
+        "upsert",
+        ["asset_1"],
+        { sequence: 3 },
+      );
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNodeWithVocabularyMarks("seg_1", "source text", [
+          { id: "vocab_1", kind: "phrase_gloss", gloss: "记忆" },
+        ]),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [vocabEvent, representationEvent],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("non_layer_published_in_batch");
+    });
+
+    it("R2.2-P1: vocabulary first-publish with target unit not found: fallback_full_reload", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      // target_key points to a unit that doesn't exist in children.
+      const event = makeLayerPublishedEvent("vocabulary", "unit_nonexistent", {
+        sequence: 2,
+      });
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNodeWithVocabularyMarks("seg_1", "source text", [
+          { id: "vocab_1", kind: "phrase_gloss", gloss: "记忆" },
+        ]),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      // When target unit doesn't exist in children, ALL blocks are treated
+      // as non-target. The paragraph children change (vocabulary marks added)
+      // is detected by P1-A.2 as an unrepresented change in a non-target
+      // block. This is still fail-closed (fallback_full_reload); the exact
+      // reason depends on which P1-A guard fires first.
+      expect(result.kind).toBe("fallback_full_reload");
+    });
+
+    it("R2.2-P1: vocabulary first-publish with invalid payload (missing target_key): fallback_full_reload", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
+        sequence: 2,
+      });
+      // Corrupt the payload to remove target_key.
+      (event.payload as { target_key?: string }).target_key = "";
+
+      const prevChildren = [
+        makeLayerParagraphNode("seg_1", "source text"),
+      ];
+      const nextChildren = [
+        makeLayerParagraphNodeWithVocabularyMarks("seg_1", "source text", [
+          { id: "vocab_1", kind: "phrase_gloss", gloss: "记忆" },
+        ]),
+      ];
+
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren,
+        nextChildren,
+        snapshotFence,
+      });
+
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("invalid_layer_published_payload");
     });
 
     it("grammar_note revision with same topology: targeted_apply replaces changed callout", () => {

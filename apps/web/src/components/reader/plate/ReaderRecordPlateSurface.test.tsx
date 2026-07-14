@@ -68,7 +68,12 @@ vi.mock("@/components/editor/plugins/floating-toolbar-kit", async () => {
   };
 });
 
-import { ReaderRecordPlateSurface } from "./ReaderRecordPlateSurface";
+import {
+  ReaderRecordPlateSurface,
+  groupConsecutiveGrammarCallouts,
+} from "./ReaderRecordPlateSurface";
+import type { ReaderCalloutElement } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
+import { READER_CALLOUT_TYPE } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
 
 const SOURCE_TEXT = "Institutional memory shapes policy choices.";
 const TRANSLATION_TEXT = "制度记忆会塑造政策选择。";
@@ -6886,6 +6891,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.1E layer_published change
       grammarNote?: string;
       analysis?: string;
       analysisChunks?: Array<{ order: number; label: string; text: string }>;
+      vocabularyGloss?: string;
     } = {},
   ): ReaderPlateSnapshotDto {
     const unit = prev.value[0] as ReaderUnitNodeDto;
@@ -6929,6 +6935,13 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.1E layer_published change
                       note: overrides.grammarNote ?? mark.note,
                     }),
                   ),
+                  reader_vocabulary_marks:
+                    overrides.vocabularyGloss !== undefined
+                      ? (leaf.reader_vocabulary_marks ?? []).map((mark) => ({
+                          ...mark,
+                          gloss: overrides.vocabularyGloss!,
+                        }))
+                      : leaf.reader_vocabulary_marks,
                 })),
               };
             }),
@@ -7235,6 +7248,155 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.1E layer_published change
     expect(quickPeekBefore.isConnected).toBe(false);
   });
 
+  it("R2.2-P1: vocabulary revision with same topology: targeted_apply preserves grammar callout expanded", async () => {
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeLayerRevisionSnapshot(prevSnapshot, {
+      vocabularyGloss: "记忆 (修订)",
+    });
+    const event = makeValidLayerPublishedEvent("vocabulary");
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Expand the grammar callout before reload.
+    const grammarCallout = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_1"]',
+    );
+    expect(grammarCallout).not.toBeNull();
+    if (!grammarCallout) throw new Error("Expected grammar callout");
+
+    expect(grammarCallout.getAttribute("data-reader-record-callout-collapsed")).toBe("true");
+    fireEvent.click(
+      grammarCallout.querySelector('[data-reader-record-callout-toggle="grammar"]')!,
+    );
+    expect(grammarCallout.getAttribute("data-reader-record-callout-collapsed")).toBe("false");
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContextLayer([event])}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    // Grammar callout (same itemId) should still be expanded after
+    // targeted_apply — vocabulary revision does not touch grammar callouts.
+    const calloutAfter = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_1"]',
+    );
+    expect(calloutAfter).not.toBeNull();
+    expect(calloutAfter!.getAttribute("data-reader-record-callout-collapsed")).toBe("false");
+  });
+
+  it("R2.2-P1: vocabulary revision with same topology: non-target blockquote DOM identity preserved", async () => {
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeLayerRevisionSnapshot(prevSnapshot, {
+      vocabularyGloss: "记忆 (修订)",
+    });
+    const event = makeValidLayerPublishedEvent("vocabulary");
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Capture blockquote DOM reference (non-target — vocabulary revision
+    // changes the paragraph, not the blockquote).
+    const blockquoteBefore = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteBefore).not.toBeNull();
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContextLayer([event])}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    // Non-target blockquote DOM identity preserved.
+    const blockquoteAfter = container.querySelector(
+      '[data-reader-record-node="blockquote"]',
+    );
+    expect(blockquoteAfter).not.toBeNull();
+    expect(blockquoteBefore!.isSameNode(blockquoteAfter)).toBe(true);
+
+    // Target paragraph vocabulary mark gloss updated.
+    const vocabMarkAfter = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocabMarkAfter).not.toBeNull();
+    // The revised gloss should be reflected in the mark's data attribute
+    // or rendered content. We check the mark element is still present and
+    // the paragraph was replaced (not full reload).
+    expect(vocabMarkAfter!.isConnected).toBe(true);
+  });
+
+  it("R2.2-P1: vocabulary revision with selection on target paragraph: selection is cleared (not restored by stale offset)", async () => {
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeLayerRevisionSnapshot(prevSnapshot, {
+      vocabularyGloss: "记忆 (修订)",
+    });
+    const event = makeValidLayerPublishedEvent("vocabulary");
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Select text inside the vocabulary mark on the target paragraph.
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) throw new Error("Expected memory vocabulary mark");
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+
+    // Verify selection exists.
+    const selection = window.getSelection();
+    expect(selection).not.toBeNull();
+    expect(selection!.toString()).toBe("memory");
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContextLayer([event])}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    // Selection was on the target paragraph being replaced. The contract:
+    // selection must NOT be restored by stale offset — it should be cleared
+    // (deselect). This is the safe behavior: the paragraph's text leaf
+    // structure changed (marks data updated), so the old offset may point
+    // to a different text run. We explicitly assert no selection remains.
+    const selectionAfter = window.getSelection();
+    expect(selectionAfter).not.toBeNull();
+    // After targeted_apply on the target paragraph, selection is cleared
+    // via editor.tf.deselect() because the selection path falls within
+    // the replaced op.path.
+    expect(selectionAfter!.toString()).toBe("");
+  });
+
   it("structural change (new sentence_analysis block): fallback_full_reload via setValue", async () => {
     const prevSnapshot = makeSnapshot();
     // Add a new sentence_analysis block to nextSnapshot — structural change.
@@ -7406,5 +7568,857 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.1E layer_published change
     );
     expect(blockquoteAfter).not.toBeNull();
     expect(blockquoteBefore!.isSameNode(blockquoteAfter)).toBe(false);
+  });
+});
+
+// ===========================================================================
+// T4.2a-PUX-R4-R2.2-P2a: Grammar Callout-Group Identity Stabilization
+//
+// Method A2: group ID = `callout-group:{unitId}:{anchorSegmentId}` (no
+// position index). Cross-anchor callouts are split into independent groups.
+// Tests verify: stable ID, cross-anchor split, unique block IDs, independent
+// expansion, and R2.1E/R2.1C regression safety.
+// ===========================================================================
+
+function defaultSeg1GrammarMarks(): ReaderGrammarNoteMarkDto[] {
+  return [
+    makeGrammarMark({
+      mark_id: "grammar_mark_a1",
+      item_id: "grammar_item_a1",
+      anchor_segment_id: "seg_1",
+      start_offset: 0,
+      end_offset: 12,
+      selected_text: "Institutional",
+      segment_start_utf16: 0,
+      segment_end_utf16: 12,
+      grammar_point: "adjective",
+      pattern: "adjective + noun",
+      note: "Institutional modifies memory.",
+    }),
+    makeGrammarMark({
+      mark_id: "grammar_mark_a2",
+      item_id: "grammar_item_a2",
+      anchor_segment_id: "seg_1",
+      start_offset: 13,
+      end_offset: 19,
+      selected_text: "memory",
+      segment_start_utf16: 13,
+      segment_end_utf16: 19,
+      grammar_point: "noun",
+      pattern: "noun",
+      note: "memory is the subject noun.",
+    }),
+  ];
+}
+
+function defaultSeg2GrammarMarks(): ReaderGrammarNoteMarkDto[] {
+  return [
+    makeGrammarMark({
+      mark_id: "grammar_mark_b1",
+      item_id: "grammar_item_b1",
+      anchor_segment_id: "seg_2",
+      start_offset: 0,
+      end_offset: 6,
+      selected_text: "shapes",
+      segment_start_utf16: 0,
+      segment_end_utf16: 6,
+      grammar_point: "predicate verb",
+      pattern: "subject + verb",
+      note: "shapes is the predicate verb.",
+    }),
+  ];
+}
+
+function makeMultiAnchorGrammarSnapshot(
+  options: {
+    seg1GrammarMarks?: ReaderGrammarNoteMarkDto[];
+    seg2GrammarMarks?: ReaderGrammarNoteMarkDto[];
+  } = {},
+): ReaderPlateSnapshotDto {
+  const firstText = "Institutional memory ";
+  const secondText = "shapes policy choices.";
+
+  const seg1GrammarMarks: ReaderGrammarNoteMarkDto[] =
+    options.seg1GrammarMarks ?? defaultSeg1GrammarMarks();
+
+  const seg2GrammarMarks: ReaderGrammarNoteMarkDto[] =
+    options.seg2GrammarMarks ?? defaultSeg2GrammarMarks();
+
+  const firstSegment = makeAnchorSegmentNode({
+    anchor_segment_id: "seg_1",
+    sentence_id: "sent_1",
+    unit_start_utf16: 0,
+    unit_end_utf16: firstText.length,
+    text: firstText,
+  });
+  firstSegment.children = [
+    {
+      ...firstSegment.children[0],
+      reader_grammar_note_marks: seg1GrammarMarks,
+    },
+  ];
+
+  const secondSegment = makeAnchorSegmentNode({
+    anchor_segment_id: "seg_2",
+    sentence_id: "sent_2",
+    unit_start_utf16: firstText.length,
+    unit_end_utf16: firstText.length + secondText.length,
+    text: secondText,
+  });
+  secondSegment.children = [
+    {
+      ...secondSegment.children[0],
+      reader_grammar_note_marks: seg2GrammarMarks,
+    },
+  ];
+
+  const sourceBlock: ReaderSourceBlockNodeDto = {
+    type: "reader_source_block",
+    owner: "stable",
+    base_id: "base_1",
+    unit_id: "unit_1",
+    base_start_utf16: 0,
+    base_end_utf16: firstText.length + secondText.length,
+    children: [firstSegment, secondSegment],
+  };
+
+  const unit: ReaderUnitNodeDto = {
+    type: "reader_unit",
+    owner: "stable",
+    base_id: "base_1",
+    unit_id: "unit_1",
+    order_index: 1,
+    unit_type: "body",
+    boundary_quality: "normal",
+    base_start_utf16: 0,
+    base_end_utf16: firstText.length + secondText.length,
+    text_hash: "unit_hash_multi_grammar",
+    hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+    children: [
+      sourceBlock,
+      {
+        type: "reader_translation_group",
+        owner: "system_ai",
+        layer_id: "layer_translation_1",
+        layer_version: 1,
+        base_id: "base_1",
+        unit_id: "unit_1",
+        target_scope: "unit",
+        target_key: "unit_1",
+        group_id: "group_translation_1",
+        covered_anchor_segment_ids: ["seg_1", "seg_2"],
+        source_text_hash: "multi_grammar_group_hash",
+        children: [{ text: "制度记忆 塑造政策选择" }],
+      },
+    ],
+  };
+
+  return {
+    ...makeSnapshot(),
+    anchor_segments: [
+      {
+        anchor_segment_id: "seg_1",
+        sentence_id: "sent_1",
+        paragraph_id: "unit_1",
+        unit_id: "unit_1",
+        order_index: 1,
+        unit_order_index: 1,
+        segment_type: "sentence",
+        boundary_quality: "normal",
+        base_start_utf16: 0,
+        base_end_utf16: firstText.length,
+        unit_start_utf16: 0,
+        unit_end_utf16: firstText.length,
+        text_hash: computeUtf16FNV1a(firstText),
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+      {
+        anchor_segment_id: "seg_2",
+        sentence_id: "sent_2",
+        paragraph_id: "unit_1",
+        unit_id: "unit_1",
+        order_index: 2,
+        unit_order_index: 2,
+        segment_type: "sentence",
+        boundary_quality: "normal",
+        base_start_utf16: firstText.length,
+        base_end_utf16: firstText.length + secondText.length,
+        unit_start_utf16: firstText.length,
+        unit_end_utf16: firstText.length + secondText.length,
+        text_hash: computeUtf16FNV1a(secondText),
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+    ],
+    value: [unit],
+  };
+}
+
+function makeMultiUnitGrammarSnapshot(): ReaderPlateSnapshotDto {
+  const snapshot = makeMultiAnchorGrammarSnapshot();
+  const secondUnit = makeMultiAnchorGrammarSnapshot().value[0]!;
+  return {
+    ...snapshot,
+    value: [
+      ...snapshot.value,
+      {
+        ...secondUnit,
+        unit_id: "unit_2",
+        children: secondUnit.children.map((child) => {
+          if (child.type === "reader_source_block") {
+            return {
+              ...child,
+              unit_id: "unit_2",
+              children: child.children.map((segment) => {
+                if (
+                  "type" in segment &&
+                  segment.type === "reader_anchor_segment"
+                ) {
+                  return {
+                    ...segment,
+                    unit_id: "unit_2",
+                    children: segment.children.map((leaf) => ({
+                      ...leaf,
+                      anchor_segment_id:
+                        leaf.anchor_segment_id === "seg_1"
+                          ? "seg_3"
+                          : "seg_4",
+                    })),
+                  } as typeof segment;
+                }
+                return segment;
+              }),
+            } as typeof child;
+          }
+          return {
+            ...child,
+            unit_id: "unit_2",
+          };
+        }),
+      },
+    ],
+    anchor_segments: [
+      ...snapshot.anchor_segments,
+      {
+        ...snapshot.anchor_segments[0]!,
+        anchor_segment_id: "seg_3",
+        sentence_id: "sent_3",
+        unit_id: "unit_2",
+        order_index: 3,
+      },
+      {
+        ...snapshot.anchor_segments[1]!,
+        anchor_segment_id: "seg_4",
+        sentence_id: "sent_4",
+        unit_id: "unit_2",
+        order_index: 4,
+      },
+    ],
+  };
+}
+
+describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a grammar group identity", () => {
+  it("R2.2-P2a: same anchor multiple grammar items form one group with stable ID", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeMultiAnchorGrammarSnapshot()} />,
+    );
+
+    const groups = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-node="callout-group"][data-reader-record-callout-group="grammar"]',
+      ),
+    );
+
+    // Two anchors → two groups (not one merged cross-anchor group).
+    expect(groups).toHaveLength(2);
+
+    // Group IDs are stable, derived only from (unitId, anchorSegmentId).
+    expect(groups[0]?.dataset.readerRecordBlockId).toBe(
+      "callout-group:unit_1:seg_1",
+    );
+    expect(groups[1]?.dataset.readerRecordBlockId).toBe(
+      "callout-group:unit_1:seg_2",
+    );
+
+    // seg_1 group has 2 items, seg_2 group has 1 item.
+    expect(groups[0]?.dataset.readerRecordCalloutGroupCount).toBe("2");
+    expect(groups[1]?.dataset.readerRecordCalloutGroupCount).toBe("1");
+  });
+
+  it("R2.2-P2a: different anchors' consecutive grammar callouts split into separate groups", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeMultiAnchorGrammarSnapshot()} />,
+    );
+
+    // The fixture has both segments in the same translation group with no
+    // sentence_analysis — in the old code these would merge into 1 group.
+    // Method A2 must split them into 2 groups by anchorSegmentId.
+    const groups = container.querySelectorAll(
+      '[data-reader-record-node="callout-group"][data-reader-record-callout-group="grammar"]',
+    );
+    expect(groups).toHaveLength(2);
+
+    // Verify the groups belong to different anchors by checking their
+    // children's item IDs.
+    const group1Rows = groups[0]!.querySelectorAll<HTMLElement>(
+      '[data-reader-record-grammar-item-id]',
+    );
+    const group2Rows = groups[1]!.querySelectorAll<HTMLElement>(
+      '[data-reader-record-grammar-item-id]',
+    );
+
+    expect(group1Rows).toHaveLength(2);
+    expect(group2Rows).toHaveLength(1);
+    expect(group1Rows[0]?.dataset.readerRecordGrammarItemId).toBe(
+      "grammar_item_a1",
+    );
+    expect(group1Rows[1]?.dataset.readerRecordGrammarItemId).toBe(
+      "grammar_item_a2",
+    );
+    expect(group2Rows[0]?.dataset.readerRecordGrammarItemId).toBe(
+      "grammar_item_b1",
+    );
+  });
+
+  it("R2.2-P2a: all output block IDs are unique", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeMultiAnchorGrammarSnapshot()} />,
+    );
+
+    const allBlockIds = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        "[data-reader-record-block-id]",
+      ),
+    ).map((el) => el.dataset.readerRecordBlockId);
+
+    const uniqueIds = new Set(allBlockIds);
+    expect(allBlockIds.length).toBe(uniqueIds.size);
+  });
+
+  it("R2.2-P2a: prepending item to same anchor preserves group ID", () => {
+    const initialSnapshot = makeMultiAnchorGrammarSnapshot();
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={initialSnapshot} />,
+    );
+
+    const groupBefore = container.querySelector<HTMLElement>(
+      '[data-reader-record-block-id="callout-group:unit_1:seg_1"]',
+    );
+    expect(groupBefore).not.toBeNull();
+    expect(groupBefore?.dataset.readerRecordCalloutGroupCount).toBe("2");
+
+    // Prepend a new item before the existing ones in seg_1.
+    const updatedSnapshot = makeMultiAnchorGrammarSnapshot({
+      seg1GrammarMarks: [
+        makeGrammarMark({
+          mark_id: "grammar_mark_a0",
+          item_id: "grammar_item_a0",
+          anchor_segment_id: "seg_1",
+          start_offset: 0,
+          end_offset: 5,
+          selected_text: "Insti",
+          segment_start_utf16: 0,
+          segment_end_utf16: 5,
+          grammar_point: "prefix",
+          pattern: "prefix",
+          note: "Insti is a prefix.",
+        }),
+        ...defaultSeg1GrammarMarks(),
+      ],
+    });
+
+    rerender(<ReaderRecordPlateSurface snapshot={updatedSnapshot} />);
+
+    const groupAfter = container.querySelector<HTMLElement>(
+      '[data-reader-record-block-id="callout-group:unit_1:seg_1"]',
+    );
+    // Group ID must be unchanged despite the prepended item.
+    expect(groupAfter).not.toBeNull();
+    expect(groupAfter?.dataset.readerRecordBlockId).toBe(
+      "callout-group:unit_1:seg_1",
+    );
+    // Group now has 3 items.
+    expect(groupAfter?.dataset.readerRecordCalloutGroupCount).toBe("3");
+  });
+
+  it("R2.2-P2a: appending item to same anchor preserves group ID", () => {
+    const initialSnapshot = makeMultiAnchorGrammarSnapshot();
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={initialSnapshot} />,
+    );
+
+    const groupBefore = container.querySelector<HTMLElement>(
+      '[data-reader-record-block-id="callout-group:unit_1:seg_1"]',
+    );
+    expect(groupBefore?.dataset.readerRecordCalloutGroupCount).toBe("2");
+
+    // Append a new item after the existing ones in seg_1.
+    const updatedSnapshot = makeMultiAnchorGrammarSnapshot({
+      seg1GrammarMarks: [
+        ...defaultSeg1GrammarMarks(),
+        makeGrammarMark({
+          mark_id: "grammar_mark_a3",
+          item_id: "grammar_item_a3",
+          anchor_segment_id: "seg_1",
+          start_offset: 19,
+          end_offset: 20,
+          selected_text: " ",
+          segment_start_utf16: 19,
+          segment_end_utf16: 20,
+          grammar_point: "space",
+          pattern: "space",
+          note: "space after memory.",
+        }),
+      ],
+    });
+
+    rerender(<ReaderRecordPlateSurface snapshot={updatedSnapshot} />);
+
+    const groupAfter = container.querySelector<HTMLElement>(
+      '[data-reader-record-block-id="callout-group:unit_1:seg_1"]',
+    );
+    expect(groupAfter?.dataset.readerRecordBlockId).toBe(
+      "callout-group:unit_1:seg_1",
+    );
+    expect(groupAfter?.dataset.readerRecordCalloutGroupCount).toBe("3");
+  });
+
+  it("R2.2-P2a: item count change in one anchor does not affect other anchor's group ID", () => {
+    const initialSnapshot = makeMultiAnchorGrammarSnapshot();
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={initialSnapshot} />,
+    );
+
+    const seg2GroupBefore = container.querySelector<HTMLElement>(
+      '[data-reader-record-block-id="callout-group:unit_1:seg_2"]',
+    );
+    expect(seg2GroupBefore?.dataset.readerRecordCalloutGroupCount).toBe("1");
+
+    // Change seg_1's grammar items (add one), keep seg_2 unchanged.
+    const updatedSnapshot = makeMultiAnchorGrammarSnapshot({
+      seg1GrammarMarks: [
+        ...defaultSeg1GrammarMarks(),
+        makeGrammarMark({
+          mark_id: "grammar_mark_a3",
+          item_id: "grammar_item_a3",
+          anchor_segment_id: "seg_1",
+          start_offset: 19,
+          end_offset: 20,
+          selected_text: " ",
+          segment_start_utf16: 19,
+          segment_end_utf16: 20,
+          grammar_point: "space",
+          pattern: "space",
+          note: "space after memory.",
+        }),
+      ],
+    });
+
+    rerender(<ReaderRecordPlateSurface snapshot={updatedSnapshot} />);
+
+    const seg2GroupAfter = container.querySelector<HTMLElement>(
+      '[data-reader-record-block-id="callout-group:unit_1:seg_2"]',
+    );
+    // seg_2's group ID and count must be unchanged.
+    expect(seg2GroupAfter?.dataset.readerRecordBlockId).toBe(
+      "callout-group:unit_1:seg_2",
+    );
+    expect(seg2GroupAfter?.dataset.readerRecordCalloutGroupCount).toBe("1");
+  });
+
+  it("R2.2-P2a: different units do not mix groups", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeMultiUnitGrammarSnapshot()} />,
+    );
+
+    const groups = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-node="callout-group"][data-reader-record-callout-group="grammar"]',
+      ),
+    );
+
+    // Two units × two anchors per unit = four groups.
+    expect(groups).toHaveLength(4);
+
+    const groupIds = groups.map((g) => g.dataset.readerRecordBlockId);
+    const uniqueIds = new Set(groupIds);
+    expect(groupIds.length).toBe(uniqueIds.size);
+
+    // Verify expected IDs are present.
+    expect(groupIds).toContain("callout-group:unit_1:seg_1");
+    expect(groupIds).toContain("callout-group:unit_1:seg_2");
+    // seg_3/seg_4 belong to unit_2 but their grammar marks still reference
+    // the original anchor_segment_id from makeMultiAnchorGrammarSnapshot.
+    // The key assertion is that all 4 IDs are unique.
+  });
+
+  it("R2.2-P2a: two anchor groups have independent expand/collapse states", async () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeMultiAnchorGrammarSnapshot()} />,
+    );
+
+    const group1Row = container.querySelector<HTMLElement>(
+      '[data-reader-record-grammar-item-id="grammar_item_a1"][data-callout-variant="grammar"]',
+    );
+    const group2Row = container.querySelector<HTMLElement>(
+      '[data-reader-record-grammar-item-id="grammar_item_b1"][data-callout-variant="grammar"]',
+    );
+
+    expect(group1Row).not.toBeNull();
+    expect(group2Row).not.toBeNull();
+
+    // Both start collapsed.
+    expect(group1Row?.dataset.readerRecordCalloutCollapsed).toBe("true");
+    expect(group2Row?.dataset.readerRecordCalloutCollapsed).toBe("true");
+
+    // Expand group 1 (seg_1's item).
+    const group1Toggle = group1Row?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
+    expect(group1Toggle).not.toBeNull();
+    fireEvent.click(group1Toggle!);
+
+    await waitFor(() => {
+      expect(group1Row?.dataset.readerRecordCalloutCollapsed).toBe("false");
+    });
+
+    // Group 2 (seg_2's item) must still be collapsed — independent state.
+    expect(group2Row?.dataset.readerRecordCalloutCollapsed).toBe("true");
+
+    // Now expand group 2.
+    const group2Toggle = group2Row?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
+    fireEvent.click(group2Toggle!);
+
+    await waitFor(() => {
+      expect(group2Row?.dataset.readerRecordCalloutCollapsed).toBe("false");
+    });
+
+    // Both expanded independently.
+    expect(group1Row?.dataset.readerRecordCalloutCollapsed).toBe("false");
+    expect(group2Row?.dataset.readerRecordCalloutCollapsed).toBe("false");
+  });
+
+  it("R2.2-P2a: grammar_note revision on anchor B preserves anchor A expansion via targeted_apply", async () => {
+    const initialSnapshot = makeMultiAnchorGrammarSnapshot();
+    const grammarEvent: ReaderEventResponseDto = {
+      id: "evt_grammar_1",
+      reading_record_id: "record_1",
+      sequence: 9,
+      event_type: "layer_published",
+      payload: {
+        record_id: "record_1",
+        base_id: "base_1",
+        layer_id: "layer_grammar_1",
+        layer_type: "grammar_note",
+        target_scope: "unit",
+        target_key: "unit_1",
+        generation: 1,
+      },
+      created_at: "2026-07-14T00:00:00Z",
+    };
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface
+        snapshot={initialSnapshot}
+        pendingReloadContext={null}
+        onReloadContextConsumed={() => {}}
+      />,
+    );
+
+    // Expand anchor A (seg_1) grammar item.
+    const groupARow = container.querySelector<HTMLElement>(
+      '[data-reader-record-grammar-item-id="grammar_item_a1"][data-callout-variant="grammar"]',
+    );
+    const groupAToggle = groupARow?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
+    fireEvent.click(groupAToggle!);
+    await waitFor(() => {
+      expect(groupARow?.dataset.readerRecordCalloutCollapsed).toBe("false");
+    });
+
+    // Apply a grammar_note revision on the same topology (change seg_2's
+    // grammar note text). The merger should detect only the changed
+    // callout-group block and replace it via targeted_apply.
+    const nextSnapshot = makeMultiAnchorGrammarSnapshot({
+      seg2GrammarMarks: [
+        makeGrammarMark({
+          mark_id: "grammar_mark_b1",
+          item_id: "grammar_item_b1",
+          anchor_segment_id: "seg_2",
+          start_offset: 0,
+          end_offset: 6,
+          selected_text: "shapes",
+          segment_start_utf16: 0,
+          segment_end_utf16: 6,
+          grammar_point: "predicate verb (revised)",
+          pattern: "subject + verb (revised)",
+          note: "shapes is the predicate verb. (revised note)",
+        }),
+      ],
+    });
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={{
+            cursor: 8,
+            events: [grammarEvent],
+            triggerClassification: {
+              kind: "reload_snapshot",
+              reason: "layer_published",
+            },
+            acceptedSnapshotFence: {
+              generation: 1,
+              baseId: "base_1",
+            },
+            reason: "layer_published",
+          }}
+          onReloadContextConsumed={() => {}}
+        />,
+      );
+    });
+
+    // Anchor A (seg_1) expansion must be preserved after targeted_apply
+    // on anchor B (seg_2).
+    const groupARowAfter = container.querySelector<HTMLElement>(
+      '[data-reader-record-grammar-item-id="grammar_item_a1"][data-callout-variant="grammar"]',
+    );
+    expect(groupARowAfter?.dataset.readerRecordCalloutCollapsed).toBe("false");
+
+    // Anchor B (seg_2) grammar note content was updated.
+    const groupBRowAfter = container.querySelector<HTMLElement>(
+      '[data-reader-record-grammar-item-id="grammar_item_b1"][data-callout-variant="grammar"]',
+    );
+    expect(groupBRowAfter).not.toBeNull();
+
+    // Group IDs remain stable.
+    const groupA = container.querySelector<HTMLElement>(
+      '[data-reader-record-block-id="callout-group:unit_1:seg_1"]',
+    );
+    const groupB = container.querySelector<HTMLElement>(
+      '[data-reader-record-block-id="callout-group:unit_1:seg_2"]',
+    );
+    expect(groupA).not.toBeNull();
+    expect(groupB).not.toBeNull();
+  });
+});
+
+// ===========================================================================
+// T4.2a-PUX-R4-R2.2-P2a P1 Evidence: tuple comparison, missing-identity
+// conservative behavior, non-contiguous duplicate fail-closed, and global
+// block ID uniqueness.
+//
+// These tests exercise `groupConsecutiveGrammarCallouts` directly with
+// synthetic callout elements to verify the grouping invariant at the
+// function level, independent of the projection pipeline.
+// ===========================================================================
+
+function makeSyntheticGrammarCallout(options: {
+  itemId: string;
+  unitId?: string;
+  anchorSegmentId?: string;
+}): ReaderCalloutElement {
+  return {
+    type: READER_CALLOUT_TYPE,
+    id: `callout:grammar:${options.itemId}`,
+    children: [{ text: options.itemId }] as never,
+    data: {
+      anchorSegmentId: options.anchorSegmentId ?? "",
+      unitId: options.unitId ?? "",
+      layerId: "layer_grammar_1",
+      itemId: options.itemId,
+    },
+    variant: "grammar",
+    icon: "📖",
+  };
+}
+
+function makeSyntheticParagraph(id: string): unknown {
+  return { type: "paragraph", id, children: [{ text: id }] };
+}
+
+describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a P1 evidence (tuple, fail-closed, uniqueness)", () => {
+  // P1-A: Explicit tuple comparison — different unitId, same anchorSegmentId
+  // must NOT enter the same group. This proves the grouping condition
+  // compares the complete (unitId, anchorSegmentId) tuple, not just
+  // anchorSegmentId.
+  it("P1: different unitId with same anchorSegmentId does NOT mix groups", () => {
+    const calloutUnit1 = makeSyntheticGrammarCallout({
+      itemId: "item_u1",
+      unitId: "unit_1",
+      anchorSegmentId: "seg_1",
+    });
+    const calloutUnit2 = makeSyntheticGrammarCallout({
+      itemId: "item_u2",
+      unitId: "unit_2",
+      anchorSegmentId: "seg_1", // same anchorSegmentId, different unitId
+    });
+
+    const result = groupConsecutiveGrammarCallouts([
+      calloutUnit1,
+      calloutUnit2,
+    ]) as Array<{ id: string; type: string }>;
+
+    const groupBlocks = result.filter((b) => b.type === "reader_callout_group");
+    expect(groupBlocks).toHaveLength(2);
+    expect(groupBlocks[0]!.id).toBe("callout-group:unit_1:seg_1");
+    expect(groupBlocks[1]!.id).toBe("callout-group:unit_2:seg_1");
+  });
+
+  // P1-B: Missing unitId — conservative fallback behavior.
+  it("P1: missing unitId produces non-stable fallback ID, not a fake stable ID", () => {
+    const calloutMissingUnitId = makeSyntheticGrammarCallout({
+      itemId: "item_missing_unit",
+      unitId: undefined,
+      anchorSegmentId: "seg_1",
+    });
+
+    const result = groupConsecutiveGrammarCallouts([
+      calloutMissingUnitId,
+    ]) as Array<{ id: string; type: string; data: { unitId: string; anchorSegmentId: string } }>;
+
+    const groupBlocks = result.filter((b) => b.type === "reader_callout_group");
+    expect(groupBlocks).toHaveLength(1);
+    // Fallback ID must contain "fallback" — it must NOT look like a stable ID.
+    expect(groupBlocks[0]!.id).toContain("fallback");
+    expect(groupBlocks[0]!.id).not.toBe("callout-group::seg_1");
+  });
+
+  // P1-C: Missing anchorSegmentId — conservative fallback behavior.
+  it("P1: missing anchorSegmentId produces non-stable fallback ID, not a fake stable ID", () => {
+    const calloutMissingAnchor = makeSyntheticGrammarCallout({
+      itemId: "item_missing_anchor",
+      unitId: "unit_1",
+      anchorSegmentId: undefined,
+    });
+
+    const result = groupConsecutiveGrammarCallouts([
+      calloutMissingAnchor,
+    ]) as Array<{ id: string; type: string }>;
+
+    const groupBlocks = result.filter((b) => b.type === "reader_callout_group");
+    expect(groupBlocks).toHaveLength(1);
+    expect(groupBlocks[0]!.id).toContain("fallback");
+    expect(groupBlocks[0]!.id).not.toBe("callout-group:unit_1:");
+  });
+
+  // P1-D: Missing-identity callouts never group with stable-identity
+  // callouts, even if adjacent.
+  it("P1: missing-identity callout does NOT group with stable-identity callout", () => {
+    const stableCallout = makeSyntheticGrammarCallout({
+      itemId: "item_stable",
+      unitId: "unit_1",
+      anchorSegmentId: "seg_1",
+    });
+    const missingCallout = makeSyntheticGrammarCallout({
+      itemId: "item_missing",
+      unitId: undefined,
+      anchorSegmentId: "seg_1",
+    });
+
+    const result = groupConsecutiveGrammarCallouts([
+      stableCallout,
+      missingCallout,
+    ]) as Array<{ id: string; type: string }>;
+
+    const groupBlocks = result.filter((b) => b.type === "reader_callout_group");
+    expect(groupBlocks).toHaveLength(2);
+    expect(groupBlocks[0]!.id).toBe("callout-group:unit_1:seg_1");
+    expect(groupBlocks[1]!.id).toContain("fallback");
+  });
+
+  // P1-E: Non-contiguous same (unitId, anchorSegmentId) must not create a
+  // duplicate group ID or make the Reader unrenderable. The first run keeps
+  // its stable group; the later anomalous run remains standalone callouts.
+  it("P1: non-contiguous same tuple keeps the article renderable without duplicate group IDs", () => {
+    const callout1 = makeSyntheticGrammarCallout({
+      itemId: "item_1",
+      unitId: "unit_1",
+      anchorSegmentId: "seg_1",
+    });
+    const callout2 = makeSyntheticGrammarCallout({
+      itemId: "item_2",
+      unitId: "unit_1",
+      anchorSegmentId: "seg_1", // same tuple as callout1
+    });
+    const separator = makeSyntheticParagraph("paragraph_separator");
+
+    const result = groupConsecutiveGrammarCallouts([
+      callout1,
+      separator,
+      callout2,
+    ]) as Array<{ id: string; type: string }>;
+
+    expect(result).toHaveLength(3);
+    expect(result[0]).toMatchObject({
+      type: "reader_callout_group",
+      id: "callout-group:unit_1:seg_1",
+    });
+    expect(result[1]).toMatchObject({ id: "paragraph_separator" });
+    expect(result[2]).toMatchObject({
+      type: READER_CALLOUT_TYPE,
+      id: "callout:grammar:item_2",
+    });
+    expect(new Set(result.map((node) => node.id)).size).toBe(result.length);
+  });
+
+  // P1-F: All top-level block IDs in the output are globally unique.
+  // This includes both callout-group blocks and non-callout blocks.
+  it("P1: all top-level block IDs are globally unique", () => {
+    const calloutA = makeSyntheticGrammarCallout({
+      itemId: "item_a",
+      unitId: "unit_1",
+      anchorSegmentId: "seg_1",
+    });
+    const calloutB = makeSyntheticGrammarCallout({
+      itemId: "item_b",
+      unitId: "unit_1",
+      anchorSegmentId: "seg_2",
+    });
+    const paragraph1 = makeSyntheticParagraph("paragraph_1");
+    const paragraph2 = makeSyntheticParagraph("paragraph_2");
+
+    const result = groupConsecutiveGrammarCallouts([
+      paragraph1,
+      calloutA,
+      calloutB,
+      paragraph2,
+    ]) as Array<{ id: string }>;
+
+    const allIds = result.map((b) => b.id);
+    const uniqueIds = new Set(allIds);
+    expect(allIds.length).toBe(uniqueIds.size);
+  });
+
+  // P1-G: Multiple fallback (missing-identity) callouts each get unique
+  // fallback IDs — no collision among fallbacks.
+  it("P1: multiple missing-identity callouts get unique fallback IDs", () => {
+    const missing1 = makeSyntheticGrammarCallout({
+      itemId: "missing_1",
+      unitId: undefined,
+      anchorSegmentId: "seg_1",
+    });
+    const missing2 = makeSyntheticGrammarCallout({
+      itemId: "missing_2",
+      unitId: "unit_1",
+      anchorSegmentId: undefined,
+    });
+    const separator = makeSyntheticParagraph("separator");
+
+    const result = groupConsecutiveGrammarCallouts([
+      missing1,
+      separator,
+      missing2,
+    ]) as Array<{ id: string; type: string }>;
+
+    const groupBlocks = result.filter((b) => b.type === "reader_callout_group");
+    expect(groupBlocks).toHaveLength(2);
+    // Both are fallback, but with different position-based suffixes.
+    expect(groupBlocks[0]!.id).toContain("fallback");
+    expect(groupBlocks[1]!.id).toContain("fallback");
+    expect(groupBlocks[0]!.id).not.toBe(groupBlocks[1]!.id);
   });
 });

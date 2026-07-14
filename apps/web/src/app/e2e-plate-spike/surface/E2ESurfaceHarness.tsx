@@ -65,6 +65,7 @@ declare global {
       ) => void;
       reloadFallback: (nextSnapshot: ReaderPlateSnapshotDto) => void;
       changeGeneration: (generation: number) => void;
+      loadSnapshot: (nextSnapshot: ReaderPlateSnapshotDto) => void;
       getSnapshot: () => ReaderPlateSnapshotDto | null;
       makeUpdatedSnapshot: (options?: {
         userAssetNote?: string;
@@ -78,6 +79,7 @@ declare global {
         translationText?: string;
         grammarNote?: string;
         analysisText?: string;
+        vocabularyGloss?: string;
       }) => ReaderPlateSnapshotDto;
       makeStructuralChangeSnapshot: () => ReaderPlateSnapshotDto;
       makeValidLayerPublishedEvent: (
@@ -88,6 +90,11 @@ declare global {
           | "sentence_analysis",
         sequence?: number,
       ) => ReaderEventResponseDto;
+      // R2.2-P2a: multi-anchor grammar fixture builders.
+      makeMultiAnchorGrammarSnapshot: () => ReaderPlateSnapshotDto;
+      makeSeg2GrammarRevisionSnapshot: (options?: {
+        grammarNote?: string;
+      }) => ReaderPlateSnapshotDto;
     };
     __spikeSurfaceReady?: boolean;
   }
@@ -518,6 +525,7 @@ function makeLayerRevisionSnapshot(
     translationText?: string;
     grammarNote?: string;
     analysisText?: string;
+    vocabularyGloss?: string;
   } = {},
 ): ReaderPlateSnapshotDto {
   const unit = base.value[0] as ReaderUnitNodeDto;
@@ -545,7 +553,7 @@ function makeLayerRevisionSnapshot(
       }
       if (
         child.type === "reader_source_block" &&
-        options.grammarNote !== undefined
+        (options.grammarNote !== undefined || options.vocabularyGloss !== undefined)
       ) {
         return {
           ...child,
@@ -556,12 +564,20 @@ function makeLayerRevisionSnapshot(
               ...seg,
               children: seg.children.map((leaf) => ({
                 ...leaf,
-                reader_grammar_note_marks: (leaf.reader_grammar_note_marks ?? []).map(
-                  (mark) => ({
-                    ...mark,
-                    note: options.grammarNote!,
-                  }),
-                ),
+                reader_grammar_note_marks:
+                  options.grammarNote !== undefined
+                    ? (leaf.reader_grammar_note_marks ?? []).map((mark) => ({
+                        ...mark,
+                        note: options.grammarNote!,
+                      }))
+                    : leaf.reader_grammar_note_marks,
+                reader_vocabulary_marks:
+                  options.vocabularyGloss !== undefined
+                    ? (leaf.reader_vocabulary_marks ?? []).map((mark) => ({
+                        ...mark,
+                        gloss: options.vocabularyGloss!,
+                      }))
+                    : leaf.reader_vocabulary_marks,
               })),
             };
           }),
@@ -627,6 +643,112 @@ function makeStructuralChangeSnapshot(
 // Harness component
 // ---------------------------------------------------------------------------
 
+/**
+ * R2.2-P2a: Build a snapshot with grammar_note marks on BOTH seg_1 and seg_2.
+ *
+ * The base harness fixture only has grammar marks on seg_1. This builder
+ * adds a grammar mark to seg_2 so the projection produces two independent
+ * callout-group blocks (one per anchor). This is used to verify Method A2
+ * cross-anchor group splitting and independent expansion state.
+ *
+ * seg_1 grammar item: grammar_item_1 (existing)
+ * seg_2 grammar item: grammar_item_2 (new, on "second" at offset 10–16)
+ */
+function makeMultiAnchorGrammarSnapshot(
+  base: ReaderPlateSnapshotDto,
+): ReaderPlateSnapshotDto {
+  const unit = base.value[0] as ReaderUnitNodeDto;
+  const seg2GrammarMark = makeGrammarMark({
+    mark_id: "grammar_mark_2",
+    item_id: "grammar_item_2",
+    anchor_segment_id: "seg_2",
+    start_offset: 10,
+    end_offset: 16,
+    selected_text: "second",
+    segment_start_utf16: 10,
+    segment_end_utf16: 16,
+    grammar_point: "ordinal adjective",
+    pattern: "ordinal + noun",
+    note: "second modifies test sentence.",
+  });
+
+  const revisedUnit: ReaderUnitNodeDto = {
+    ...unit,
+    children: unit.children.map((child) => {
+      if (child.type !== "reader_source_block") return child;
+      return {
+        ...child,
+        children: child.children.map((seg) => {
+          if (!("type" in seg) || seg.type !== "reader_anchor_segment") return seg;
+          if (seg.anchor_segment_id !== "seg_2") return seg;
+          return {
+            ...seg,
+            children: seg.children.map((leaf) => ({
+              ...leaf,
+              reader_grammar_note_marks: [seg2GrammarMark],
+            })),
+          };
+        }),
+      };
+    }),
+  };
+
+  return {
+    ...base,
+    snapshot_id: "snapshot_multi_anchor_grammar",
+    last_event_sequence: 9,
+    value: [revisedUnit],
+  };
+}
+
+/**
+ * R2.2-P2a: Build a same-topology revision that changes ONLY seg_2's
+ * grammar note text, leaving seg_1's grammar marks untouched.
+ *
+ * This is used to verify that a targeted_apply on seg_2's callout-group
+ * preserves seg_1's callout-group expansion state.
+ */
+function makeSeg2GrammarRevisionSnapshot(
+  base: ReaderPlateSnapshotDto,
+  options: { grammarNote?: string } = {},
+): ReaderPlateSnapshotDto {
+  const unit = base.value[0] as ReaderUnitNodeDto;
+  const revisedUnit: ReaderUnitNodeDto = {
+    ...unit,
+    children: unit.children.map((child) => {
+      if (child.type !== "reader_source_block") return child;
+      return {
+        ...child,
+        children: child.children.map((seg) => {
+          if (!("type" in seg) || seg.type !== "reader_anchor_segment") return seg;
+          if (seg.anchor_segment_id !== "seg_2") return seg;
+          return {
+            ...seg,
+            children: seg.children.map((leaf) => ({
+              ...leaf,
+              reader_grammar_note_marks: (leaf.reader_grammar_note_marks ?? []).map(
+                (mark) => ({
+                  ...mark,
+                  note: options.grammarNote ?? mark.note,
+                }),
+              ),
+            })),
+          };
+        }),
+      };
+    }),
+  };
+
+  return {
+    ...base,
+    snapshot_id: "snapshot_seg2_grammar_revision",
+    last_event_sequence: 10,
+    value: [revisedUnit],
+  };
+}
+
+// ---------------------------------------------------------------------------
+
 export default function E2ESurfaceHarness() {
   // Initial snapshot has NO user_assets — so vocabulary mark click is not
   // intercepted by a user_highlight_data handler.
@@ -684,6 +806,12 @@ export default function E2ESurfaceHarness() {
           },
         }));
       },
+      loadSnapshot: (nextSnapshot: ReaderPlateSnapshotDto) => {
+        // Set snapshot without a reload context — triggers the normal
+        // snapshot change effect (full reload via setValue). Used by
+        // P2a E2E tests to load a custom initial fixture.
+        setSnapshot(nextSnapshot);
+      },
       getSnapshot: () => snapshotRef.current,
       makeUpdatedSnapshot: (options = {}) => {
         const prev = snapshotRef.current;
@@ -714,6 +842,13 @@ export default function E2ESurfaceHarness() {
       },
       makeValidLayerPublishedEvent: (layerType = "translation", sequence = 9) => {
         return makeValidLayerPublishedEvent(layerType, sequence);
+      },
+      // R2.2-P2a: multi-anchor grammar fixture builders.
+      makeMultiAnchorGrammarSnapshot: () => {
+        return makeMultiAnchorGrammarSnapshot(snapshotRef.current);
+      },
+      makeSeg2GrammarRevisionSnapshot: (options = {}) => {
+        return makeSeg2GrammarRevisionSnapshot(snapshotRef.current, options);
       },
     };
     window.__spikeSurfaceReady = true;

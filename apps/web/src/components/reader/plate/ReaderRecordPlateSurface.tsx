@@ -827,8 +827,43 @@ function isGrammarCalloutElement(value: unknown): value is ReaderCalloutElement 
   return candidate.type === READER_CALLOUT_TYPE && candidate.variant === "grammar";
 }
 
-function groupConsecutiveGrammarCallouts(nodes: unknown[]): unknown[] {
+/**
+ * Explicit tuple comparison: two grammar callouts enter the same group
+ * ONLY if both `unitId` AND `anchorSegmentId` are non-empty AND equal.
+ *
+ * This is the complete tuple comparison required by Method A2 — it does
+ * NOT rely on structural facts like "cross-unit is usually separated by
+ * a paragraph". A callout with a different `unitId` but the same
+ * `anchorSegmentId` must NOT enter the same group.
+ *
+ * Missing-identity callouts (empty/undefined unitId or anchorSegmentId)
+ * never match anything — not even another missing-identity callout — so
+ * each gets its own fallback group.
+ */
+function sameGroupTarget(
+  left: ReaderCalloutElement,
+  right: ReaderCalloutElement,
+): boolean {
+  return (
+    Boolean(left.data.unitId) &&
+    Boolean(left.data.anchorSegmentId) &&
+    Boolean(right.data.unitId) &&
+    Boolean(right.data.anchorSegmentId) &&
+    left.data.unitId === right.data.unitId &&
+    left.data.anchorSegmentId === right.data.anchorSegmentId
+  );
+}
+
+/**
+ * T4.2a-PUX-R4-R2.2-P2a (Method A2): group consecutive grammar callouts
+ * by stable identity `callout-group:{unitId}:{anchorSegmentId}`.
+ *
+ * Exported for direct unit testing of the grouping invariant and
+ * fail-closed behavior.
+ */
+export function groupConsecutiveGrammarCallouts(nodes: unknown[]): unknown[] {
   const grouped: unknown[] = [];
+  const seenStableGroupKeys = new Set<string>();
   let pending: ReaderCalloutElement[] = [];
 
   function flushPending() {
@@ -836,16 +871,49 @@ function groupConsecutiveGrammarCallouts(nodes: unknown[]): unknown[] {
       return;
     }
     const first = pending[0];
+    const unitId = first.data.unitId;
+    const anchorSegmentId = first.data.anchorSegmentId;
+    const hasStableIdentity = Boolean(unitId && anchorSegmentId);
+
+    // Group ID is stable and derived ONLY from (unitId, anchorSegmentId).
+    // It does NOT depend on item identity, group length, array position,
+    // or layer_id. This ensures that inserting / removing / reordering
+    // grammar items within the same anchor never changes the group's
+    // React identity, preserving expansion state and avoiding remounts —
+    // a prerequisite for the grammar_note first-publish insert path (2c).
+    //
+    // Missing unitId / anchorSegmentId: use an explicit non-stable
+    // fallback ID to maintain renderability without faking a stable
+    // identity. The `fallback` prefix makes the non-stable nature
+    // explicit for diagnostics.
+    const groupId = hasStableIdentity
+      ? `callout-group:${unitId}:${anchorSegmentId}`
+      : `callout-group:fallback:${grouped.length}`;
+
+    // A second non-contiguous run for a stable tuple violates the Method A2
+    // projection invariant. Do not emit a duplicate group key or throw while
+    // rendering the Reader: retain the grammar callouts as standalone blocks.
+    // Their own callout IDs stay unique, the article remains readable, and we
+    // deliberately make no expansion-state guarantee for this malformed shape.
+    if (hasStableIdentity && seenStableGroupKeys.has(groupId)) {
+      grouped.push(...pending);
+      pending = [];
+      return;
+    }
+    if (hasStableIdentity) {
+      seenStableGroupKeys.add(groupId);
+    }
+
     grouped.push({
       type: READER_CALLOUT_GROUP_TYPE,
-      id: `callout-group:${first.data.unitId}:${first.data.anchorSegmentId}:${grouped.length}`,
+      id: groupId,
       children: pending,
       // P1-A: carry unitId/anchorSegmentId in data so the incremental
       // projection merger can attribute callout-group nodes to their unit
       // and treat them as target blocks during layer_published revisions.
       data: {
-        unitId: first.data.unitId,
-        anchorSegmentId: first.data.anchorSegmentId,
+        unitId,
+        anchorSegmentId,
       },
     });
     pending = [];
@@ -853,6 +921,18 @@ function groupConsecutiveGrammarCallouts(nodes: unknown[]): unknown[] {
 
   nodes.forEach((node) => {
     if (isGrammarCalloutElement(node)) {
+      // Method A2: only group callouts that share the SAME complete
+      // (unitId, anchorSegmentId) tuple. A grammar callout for a
+      // different anchor — even if immediately adjacent — starts a new
+      // group. This eliminates the cross-segment merge that previously
+      // caused group identity to depend on which segments happened to be
+      // adjacent.
+      if (pending.length > 0) {
+        const last = pending[pending.length - 1]!;
+        if (!sameGroupTarget(last, node)) {
+          flushPending();
+        }
+      }
       pending.push(node);
       return;
     }

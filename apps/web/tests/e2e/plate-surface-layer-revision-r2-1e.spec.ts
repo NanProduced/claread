@@ -197,6 +197,66 @@ test.describe("2. R2.1E grammar_note revision preserves expansion", () => {
 });
 
 // ===========================================================================
+// 2b. R2.2-P1 vocabulary revision (same topology): targeted_apply replaces
+//     paragraph (mark data change), preserves non-target blockquote DOM.
+// ===========================================================================
+
+test.describe("2b. R2.2-P1 vocabulary revision targeted_apply", () => {
+  test("same-topology vocabulary revision replaces paragraph, preserves blockquote DOM", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockApiRoutes(page);
+    await waitForHarnessReady(page);
+
+    await page.waitForSelector(".reader-record-plate-document", {
+      timeout: 15_000,
+    });
+
+    // Capture the blockquote DOM element before reload (non-target block).
+    await page.evaluate(() => {
+      const el = document.querySelector(
+        '[data-reader-record-node="blockquote"]',
+      );
+      if (el) el.setAttribute("data-r22p1-marker", "blockquote-before");
+    });
+
+    // Build a same-topology vocabulary revision snapshot + valid event.
+    await page.evaluate(() => {
+      const s = window.__spikeSurface!;
+      const nextSnapshot = s.makeLayerRevisionSnapshot({
+        vocabularyGloss: "记忆 (修订)",
+      });
+      const event = s.makeValidLayerPublishedEvent("vocabulary", 9);
+      s.reloadWith(nextSnapshot, [event], {
+        generation: 1,
+        baseId: "base_1",
+      });
+    });
+
+    await page.waitForTimeout(1000);
+
+    // Non-target blockquote DOM identity preserved (targeted_apply used
+    // replaceNodes on the paragraph only, NOT setValue).
+    const blockquoteAfter = page.locator(
+      '[data-reader-record-node="blockquote"][data-r22p1-marker="blockquote-before"]',
+    );
+    await expect(blockquoteAfter).toBeVisible();
+
+    // Target paragraph vocabulary mark is still present (paragraph was
+    // replaced, not removed).
+    const vocabMarkAfter = page.locator(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    await expect(vocabMarkAfter).toBeVisible();
+
+    await page.screenshot({
+      path: "test-results/r2-2-p1-vocabulary-revision-targeted-apply.png",
+    });
+  });
+});
+
+// ===========================================================================
 // 3. Structural change (new sentence_analysis block): fallback_full_reload
 //    via setValue — non-target DOM identity NOT preserved.
 // ===========================================================================
