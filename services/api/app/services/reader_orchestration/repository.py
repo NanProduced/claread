@@ -1718,6 +1718,189 @@ class ReaderOrchestrationRepository:
         return summaries, int(total)
 
 
+# ----------------------------------------------------------------------
+# Candidate write-side uniqueness helper
+# ----------------------------------------------------------------------
+
+
+class CandidateWriteLockError(ValueError):
+    """Raised when the candidate write lock cannot be acquired.
+
+    ``reason_code`` is a stable identifier:
+    - ``transaction_required``: the connection is not inside an active
+      transaction. The caller must open one before calling
+      :func:`lock_record_for_candidate_write`.
+    - ``record_not_found``: the reading_record does not exist, does not
+      belong to the given user, or is soft-deleted.
+    - ``generation_mismatch``: the reading_record's current generation
+      does not match ``expected_generation``.
+    """
+
+    def __init__(self, message: str, *, reason_code: str) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateWriteLockResult:
+    """Result of locking a reading_records row for candidate writes.
+
+    Attributes:
+        record_id: The locked reading_record id.
+        generation: The validated generation of the locked row.
+    """
+
+    record_id: UUID
+    generation: int
+
+
+async def lock_record_for_candidate_write(
+    conn: asyncpg.Connection,
+    *,
+    record_id: UUID,
+    user_id: UUID,
+    expected_generation: int,
+) -> CandidateWriteLockResult:
+    """Lock the parent reading_records row for a candidate write.
+
+    Performs (within the caller's transaction):
+        1. Fail-closed check: ``conn.is_in_transaction()`` must be True.
+        2. ``SELECT id, generation FROM reading_records WHERE id = $1
+           AND user_id = $2 AND deleted_at IS NULL FOR UPDATE``.
+        3. Validate ``generation == expected_generation``.
+
+    This function does NOT touch ``candidate_reading_documents``. The
+    caller is responsible for calling
+    :func:`supersede_ready_candidates_for_locked_record` immediately
+    before INSERT-ing a new ``status='ready'`` candidate, and only on
+    the candidate-writing branch (never on stable/rejected branches).
+
+    The ``FOR UPDATE`` lock serializes concurrent callers: at most one
+    transaction holds the lock at a time, so supersede-then-INSERT is
+    atomic per (record_id, generation).
+
+    Args:
+        conn: An asyncpg connection that MUST already be inside a
+            transaction (``async with conn.transaction():``).
+        record_id: The reading_record id to lock.
+        user_id: The owner of the reading_record.
+        expected_generation: The expected generation value.
+
+    Returns:
+        A :class:`CandidateWriteLockResult` with the locked row's id and
+        validated generation.
+
+    Raises:
+        CandidateWriteLockError: If ``conn`` is not in a transaction
+            (``transaction_required``), the record is not found / not
+            owned / deleted (``record_not_found``), or the generation
+            does not match (``generation_mismatch``).
+    """
+    if not conn.is_in_transaction():
+        raise CandidateWriteLockError(
+            "lock_record_for_candidate_write must be called within an "
+            "active transaction. Refusing to acquire a FOR UPDATE lock "
+            "outside a transaction.",
+            reason_code="transaction_required",
+        )
+
+    row = await conn.fetchrow(
+        """
+        SELECT id, generation
+        FROM reading_records
+        WHERE id = $1
+          AND user_id = $2
+          AND deleted_at IS NULL
+        FOR UPDATE
+        """,
+        record_id,
+        user_id,
+    )
+    if row is None:
+        raise CandidateWriteLockError(
+            f"reading_record {record_id} not found for user {user_id} "
+            f"(not owned, soft-deleted, or does not exist)",
+            reason_code="record_not_found",
+        )
+    actual_generation = int(row["generation"])
+    if actual_generation != expected_generation:
+        raise CandidateWriteLockError(
+            f"reading_record {record_id} generation is "
+            f"{actual_generation}, expected {expected_generation}",
+            reason_code="generation_mismatch",
+        )
+
+    return CandidateWriteLockResult(
+        record_id=record_id,
+        generation=actual_generation,
+    )
+
+
+async def supersede_ready_candidates_for_locked_record(
+    conn: asyncpg.Connection,
+    *,
+    record_id: UUID,
+    user_id: UUID,
+    generation: int,
+    now: datetime,
+) -> None:
+    """Supersede existing ``status='ready'`` candidates for a locked record.
+
+    Performs (within the caller's transaction):
+        ``UPDATE candidate_reading_documents SET status = 'superseded'
+        WHERE reading_record_id = $1 AND user_id = $2 AND
+        record_generation = $3 AND status = 'ready'``.
+
+    The caller MUST already hold the ``FOR UPDATE`` lock on the parent
+    ``reading_records`` row (via
+    :func:`lock_record_for_candidate_write`) in the same transaction /
+    same connection. This function does NOT acquire any lock itself — it
+    relies entirely on the caller's held lock for serialization.
+
+    Call this ONLY on the candidate-writing branch, immediately before
+    INSERT-ing a new ``status='ready'`` candidate. Never call it on
+    stable_document_ready or rejected branches.
+
+    Args:
+        conn: An asyncpg connection in the same transaction that holds
+            the lock.
+        record_id: The locked reading_record id.
+        user_id: The owner of the reading_record.
+        generation: The validated generation (from
+            :class:`CandidateWriteLockResult.generation`).
+        now: Timestamp for the supersede UPDATE.
+
+    Raises:
+        CandidateWriteLockError: If ``conn`` is not in a transaction
+            (``transaction_required``). This is a defense-in-depth check;
+            the caller should have already been in a transaction when it
+            acquired the lock.
+    """
+    if not conn.is_in_transaction():
+        raise CandidateWriteLockError(
+            "supersede_ready_candidates_for_locked_record must be called "
+            "within an active transaction. The caller must hold the FOR "
+            "UPDATE lock on the parent reading_records row.",
+            reason_code="transaction_required",
+        )
+
+    await conn.execute(
+        """
+        UPDATE candidate_reading_documents
+        SET status = 'superseded',
+            updated_at = $4
+        WHERE reading_record_id = $1
+          AND user_id = $2
+          AND record_generation = $3
+          AND status = 'ready'
+        """,
+        record_id,
+        user_id,
+        generation,
+        now,
+    )
+
+
 def _build_validated_user_asset(
     row: asyncpg.Record,
     *,

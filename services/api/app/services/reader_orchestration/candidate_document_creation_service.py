@@ -26,7 +26,12 @@ from app.services.reader_orchestration.input_suitability_gate import (
     evaluate_input_suitability,
 )
 from app.services.reader_orchestration.inline_markdown import strip_inline_markdown
-from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
+from app.services.reader_orchestration.repository import (
+    CandidateWriteLockError,
+    ReaderOrchestrationRepository,
+    lock_record_for_candidate_write,
+    supersede_ready_candidates_for_locked_record,
+)
 from app.services.reader_orchestration.stable_ready_input_application_service import (
     _ORIGINAL_INPUT_TYPE_BY_INPUT_SOURCE,
     _READING_RECORD_SOURCE_TYPE_BY_INPUT_SOURCE,
@@ -200,6 +205,46 @@ class CandidateDocumentCreationService:
                             source_metadata=source_metadata_value,
                             created_at=created_at,
                         )
+                        # Lock the parent reading_records row (FOR UPDATE)
+                        # and validate generation=1. The lock is held for
+                        # the rest of the transaction, serializing
+                        # concurrent candidate writes for the same record.
+                        # Although the creation path always inserts a fresh
+                        # record (uuid4), this call guarantees the
+                        # write-side uniqueness invariant is enforced
+                        # through the shared helper, consistent with the
+                        # materialization path.
+                        try:
+                            await lock_record_for_candidate_write(
+                                conn,
+                                record_id=record_id,
+                                user_id=user_id,
+                                expected_generation=1,
+                            )
+                        except CandidateWriteLockError as exc:
+                            raise CandidateDocumentCreationError(
+                                "Candidate write lock failed during "
+                                f"creation: {exc}"
+                            ) from exc
+                        # Supersede any existing ready candidates for this
+                        # (record_id, generation) immediately before
+                        # inserting the new ready candidate. The lock
+                        # acquired above guarantees no concurrent writer
+                        # can insert another ready candidate between
+                        # supersede and INSERT.
+                        try:
+                            await supersede_ready_candidates_for_locked_record(
+                                conn,
+                                record_id=record_id,
+                                user_id=user_id,
+                                generation=1,
+                                now=created_at,
+                            )
+                        except CandidateWriteLockError as exc:
+                            raise CandidateDocumentCreationError(
+                                "Candidate supersede failed during "
+                                f"creation: {exc}"
+                            ) from exc
                         await _insert_candidate_document(
                             conn,
                             candidate_document_id=candidate_document_id,
@@ -214,6 +259,8 @@ class CandidateDocumentCreationService:
                             suitability=suitability,
                             created_at=created_at,
                         )
+                    except CandidateDocumentCreationError:
+                        raise
                     except Exception as exc:
                         raise CandidateDocumentCreationError(
                             "Failed to persist the candidate-required input "

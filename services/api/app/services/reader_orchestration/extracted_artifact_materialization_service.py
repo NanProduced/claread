@@ -64,7 +64,12 @@ from app.services.reader_orchestration.input_document_normalizer import (
 from app.services.reader_orchestration.input_suitability_gate import (
     evaluate_input_suitability,
 )
-from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
+from app.services.reader_orchestration.repository import (
+    CandidateWriteLockError,
+    ReaderOrchestrationRepository,
+    lock_record_for_candidate_write,
+    supersede_ready_candidates_for_locked_record,
+)
 
 MATERIALIZATION_SOURCE = "extracted_artifact_materialization"
 
@@ -248,46 +253,69 @@ class ExtractedArtifactMaterializationService:
 
         now = datetime.now(UTC)
 
-        # 1. Lock and validate reading_records
+        # 1. Lock reading_records via the shared candidate-write helper.
+        #    This acquires SELECT ... FOR UPDATE on the parent
+        #    reading_records row (filtered by id + user_id + deleted_at IS
+        #    NULL) and validates expected_generation. The lock serializes
+        #    all concurrent materialization / candidate-creation attempts
+        #    for the same record, preserving the original record-validation
+        #    serializability.
+        #
+        #    This function does NOT supersede candidates — that happens
+        #    ONLY in the candidate_document_required branch
+        #    (_materialize_candidate), immediately before the new
+        #    candidate INSERT. stable_document_ready and rejected branches
+        #    never touch candidate_reading_documents.
+        try:
+            await lock_record_for_candidate_write(
+                conn,
+                record_id=reading_record_id,
+                user_id=user_id,
+                expected_generation=expected_generation,
+            )
+        except CandidateWriteLockError as exc:
+            if exc.reason_code == "generation_mismatch":
+                raise ExtractedArtifactMaterializationError(
+                    str(exc),
+                    reason_code="stale_generation",
+                ) from exc
+            if exc.reason_code == "transaction_required":
+                raise ExtractedArtifactMaterializationError(
+                    str(exc),
+                    reason_code="caller_transaction_required",
+                ) from exc
+            raise ExtractedArtifactMaterializationError(
+                str(exc),
+                reason_code="record_not_found",
+            ) from exc
+
+        # 2. Fetch additional fields for materialization-specific
+        #    validations. The row is already locked by the helper (same
+        #    transaction, same connection), so a plain SELECT without
+        #    FOR UPDATE is safe and correct.
         record_row = await conn.fetchrow(
             """
-            SELECT id, user_id, generation, active_base_id,
-                   lifecycle_status, deleted_at, product_state,
+            SELECT active_base_id, lifecycle_status, product_state,
                    readiness_state
             FROM reading_records
             WHERE id = $1
-            FOR UPDATE
+              AND user_id = $2
+              AND deleted_at IS NULL
             """,
             reading_record_id,
+            user_id,
         )
         if record_row is None:
             raise ExtractedArtifactMaterializationError(
-                f"reading_record {reading_record_id} not found",
+                f"reading_record {reading_record_id} disappeared after "
+                f"lock; this should never happen",
                 reason_code="record_not_found",
-            )
-        if record_row["user_id"] != user_id:
-            raise ExtractedArtifactMaterializationError(
-                f"reading_record {reading_record_id} does not belong "
-                f"to user {user_id}",
-                reason_code="record_not_owned",
-            )
-        if record_row["deleted_at"] is not None:
-            raise ExtractedArtifactMaterializationError(
-                f"reading_record {reading_record_id} is deleted",
-                reason_code="record_deleted",
             )
         if record_row["lifecycle_status"] != "active":
             raise ExtractedArtifactMaterializationError(
                 f"reading_record {reading_record_id} lifecycle_status "
                 f"is {record_row['lifecycle_status']!r}, expected 'active'",
                 reason_code="record_not_active",
-            )
-        if int(record_row["generation"]) != expected_generation:
-            raise ExtractedArtifactMaterializationError(
-                f"reading_record {reading_record_id} generation "
-                f"is {record_row['generation']}, expected "
-                f"{expected_generation}",
-                reason_code="stale_generation",
             )
         if record_row["active_base_id"] is not None:
             raise ExtractedArtifactMaterializationError(
@@ -309,7 +337,7 @@ class ExtractedArtifactMaterializationService:
                 reason_code="materialization_already_run",
             )
 
-        # 2. Lock and validate the SPECIFIC original_input
+        # 3. Lock and validate the SPECIFIC original_input
         input_row = await conn.fetchrow(
             """
             SELECT id, reading_record_id, user_id, source_text,
@@ -338,7 +366,7 @@ class ExtractedArtifactMaterializationService:
                 reason_code="source_text_empty",
             )
 
-        # 3. Lock and validate the SPECIFIC source_artifact
+        # 4. Lock and validate the SPECIFIC source_artifact
         artifact_row = await conn.fetchrow(
             """
             SELECT id, reading_record_id, original_input_id, user_id,
@@ -385,7 +413,7 @@ class ExtractedArtifactMaterializationService:
                 reason_code="storage_provider_wrong",
             )
 
-        # 4. Derive source_type and build suitability request
+        # 5. Derive source_type and build suitability request
         source_type = _derive_source_type(
             artifact_row["content_type"],
             artifact_row["source_filename"],
@@ -401,7 +429,7 @@ class ExtractedArtifactMaterializationService:
         )
         suitability = evaluate_input_suitability(suitability_request)
 
-        # 5. Branch on outcome
+        # 6. Branch on outcome
         if suitability.outcome == "stable_document_ready":
             return await self._materialize_stable(
                 conn=conn,
@@ -599,6 +627,29 @@ class ExtractedArtifactMaterializationService:
             original_input_id=input_id,
         )
         quality = _candidate_quality_json(suitability=suitability)
+
+        # Supersede any existing ready candidates for this (record_id,
+        # generation) immediately before inserting the new ready
+        # candidate. The lock was acquired at the start of
+        # materialize_extracted_artifact_in_transaction and is still held
+        # (same transaction, same connection), so no concurrent writer can
+        # insert another ready candidate between supersede and INSERT.
+        # This is the ONLY branch that calls supersede — stable and
+        # rejected branches never touch candidate_reading_documents.
+        try:
+            await supersede_ready_candidates_for_locked_record(
+                conn,
+                record_id=record_id,
+                user_id=user_id,
+                generation=generation,
+                now=now,
+            )
+        except CandidateWriteLockError as exc:
+            raise ExtractedArtifactMaterializationError(
+                f"Failed to supersede existing ready candidates during "
+                f"materialization: {exc}",
+                reason_code="caller_transaction_required",
+            ) from exc
 
         await conn.execute(
             """

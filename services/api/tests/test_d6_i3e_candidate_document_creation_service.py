@@ -71,6 +71,7 @@ class _FakeConn:
         log: list[str] | None = None,
         fail_on_query_substring: str | None = None,
         fail_exception: Exception | None = None,
+        fetchrow_result: dict[str, Any] | None = None,
     ) -> None:
         self.calls: list[_RecordedCall] = []
         self._in_transaction = False
@@ -78,6 +79,7 @@ class _FakeConn:
         self._last_transaction: _FakeTransaction | None = None
         self._fail_on_query_substring = fail_on_query_substring
         self._fail_exception = fail_exception or RuntimeError("db write failed")
+        self._fetchrow_result = fetchrow_result
 
     def transaction(
         self,
@@ -104,12 +106,36 @@ class _FakeConn:
                 self._log.append("insert_original_input")
             elif "INSERT INTO candidate_reading_documents" in query:
                 self._log.append("insert_candidate_document")
+            elif (
+                "UPDATE candidate_reading_documents" in query
+                and "superseded" in query
+            ):
+                self._log.append("supersede_ready_candidates")
         if (
             self._fail_on_query_substring is not None
             and self._fail_on_query_substring in query
         ):
             raise self._fail_exception
         return "INSERT 0 1"
+
+    async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
+        self.calls.append(
+            _RecordedCall(
+                "fetchrow",
+                query,
+                args,
+                in_transaction=self._in_transaction,
+            )
+        )
+        if self._log is not None:
+            if "reading_records" in query and "FOR UPDATE" in query:
+                self._log.append("lock_record_for_update")
+        if (
+            self._fail_on_query_substring is not None
+            and self._fail_on_query_substring in query
+        ):
+            raise self._fail_exception
+        return self._fetchrow_result
 
     def is_in_transaction(self) -> bool:
         return self._in_transaction
@@ -152,6 +178,11 @@ def _build_service(
     return CandidateDocumentCreationService(pool=FakePool(conn))
 
 
+def _default_fetchrow_result() -> dict[str, Any]:
+    """Default fake row for the candidate-write lock helper's SELECT."""
+    return {"id": str(uuid4()), "generation": 1}
+
+
 def _create(
     service: CandidateDocumentCreationService,
     *,
@@ -186,7 +217,7 @@ def _find_execute_call(conn: _FakeConn, fragment: str) -> _RecordedCall:
 
 def test_markdown_table_candidate_creates_record_original_input_and_candidate_document() -> None:
     log: list[str] = []
-    conn = _FakeConn(log=log)
+    conn = _FakeConn(log=log, fetchrow_result=_default_fetchrow_result())
     service = _build_service(conn)
     text = (
         "# Weekly Review\n\n"
@@ -217,6 +248,8 @@ def test_markdown_table_candidate_creates_record_original_input_and_candidate_do
         "transaction_started",
         "insert_reading_record",
         "insert_original_input",
+        "lock_record_for_update",
+        "supersede_ready_candidates",
         "insert_candidate_document",
         "transaction_committed",
     ]
@@ -282,7 +315,7 @@ def test_markdown_table_candidate_creates_record_original_input_and_candidate_do
 
 
 def test_pdf_text_defaults_to_candidate_and_creates_candidate_document() -> None:
-    conn = _FakeConn()
+    conn = _FakeConn(fetchrow_result=_default_fetchrow_result())
     service = _build_service(conn)
     result = _create(
         service,
@@ -302,7 +335,7 @@ def test_pdf_text_defaults_to_candidate_and_creates_candidate_document() -> None
 
 
 def test_ocr_low_confidence_candidate_quality_includes_flag() -> None:
-    conn = _FakeConn()
+    conn = _FakeConn(fetchrow_result=_default_fetchrow_result())
     service = _build_service(conn)
     result = _create(
         service,
@@ -319,7 +352,7 @@ def test_ocr_low_confidence_candidate_quality_includes_flag() -> None:
 
 
 def test_markdown_candidate_preserves_list_payload_and_code_block_contract() -> None:
-    conn = _FakeConn()
+    conn = _FakeConn(fetchrow_result=_default_fetchrow_result())
     service = _build_service(conn)
     text = (
         "# Candidate Contract\n\n"
@@ -415,6 +448,7 @@ def test_db_write_error_rolls_back_and_wraps_cause() -> None:
     conn = _FakeConn(
         fail_on_query_substring="INSERT INTO candidate_reading_documents",
         fail_exception=RuntimeError("candidate insert failed"),
+        fetchrow_result=_default_fetchrow_result(),
     )
     service = _build_service(conn)
 
