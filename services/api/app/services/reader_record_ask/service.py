@@ -18,7 +18,6 @@ from app.schemas.reader_ask import (
     ReaderAskActionConfirmResponse,
     ReaderAskDeleteSupplementResponse,
     ReaderAskMessageRetryRequest,
-    ReaderAskThreadDetail,
     ReaderAskThreadListResponse,
     ReaderAskThreadSummary,
     ReaderRecordAskActionConfirmRequest,
@@ -185,7 +184,7 @@ async def get_reading_record_ask_thread(
     user_id: UUID,
     reading_record_id: str,
     thread_id: UUID,
-) -> ReaderAskThreadDetail:
+):
     parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
     return await thread_service.get_reading_record_thread_detail(
         user_id,
@@ -199,7 +198,7 @@ async def reset_reading_record_ask_thread(
     user_id: UUID,
     reading_record_id: str,
     thread_id: UUID,
-) -> ReaderAskThreadDetail:
+):
     parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
     facts = await _load_snapshot_facts(user_id=user_id, reading_record_id=parsed_record_id)
     return await thread_service.reset_reading_record_thread(

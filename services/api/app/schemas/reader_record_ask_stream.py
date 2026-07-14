@@ -164,3 +164,98 @@ def evidence_item_from_observation(obs: Any) -> ReaderRecordAskEvidenceItem:
         anchor_segment_id=obs.anchor_segment_id,
         rag_citation=rag_public,
     )
+
+
+# ---------------------------------------------------------------------------
+# History / thread-detail DTOs (cold-load only)
+#
+# Distinct from Analysis Ask ReaderAskMessage so that wire contract stays
+# isolated. Reuses the same strict field types as ReaderAskMessage and only
+# adds agentic history fields with a strict evidence schema.
+# ---------------------------------------------------------------------------
+
+from app.schemas.reader_ask import (  # noqa: E402  — local import keeps stream module usable
+    ReaderAskActionProposal,
+    ReaderAskArticleRagCitation,
+    ReaderAskArticleRagSidecar,
+    ReaderAskAssetDisambiguation,
+    ReaderAskCitation,
+    ReaderAskContextPlan,
+    ReaderAskDisambiguation,
+    ReaderAskEvidenceItem,
+    ReaderAskFollowUpSuggestion,
+    ReaderAskMessageRole,
+    ReaderAskMessageStatus,
+    ReaderAskPersistedSupplement,
+    ReaderAskResolvedContextInput,
+    ReaderAskResolvedContextSummary,
+    ReaderAskResolvedIntent,
+    ReaderAskResponseCard,
+    ReaderAskRunInfo,
+    ReaderAskSelectedModel,
+    ReaderAskSubmissionMode,
+    ReaderAskSupplementCandidate,
+    ReaderAskToolTraceEntry,
+    ReaderAskTraceSummary,
+    ReaderAskAnchorRef,
+)
+
+
+class ReaderRecordAskHistoryMessage(BaseModel):
+    """Reading Record Ask thread-detail message (legacy + agentic)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    thread_id: str
+    role: ReaderAskMessageRole
+    status: ReaderAskMessageStatus
+    content_md: str
+    submission_mode: ReaderAskSubmissionMode = "chat"
+    resolved_intent: ReaderAskResolvedIntent | None = None
+    context_anchors: list[ReaderAskAnchorRef] = Field(default_factory=list)
+    citations: list[ReaderAskCitation] = Field(default_factory=list)
+    action_proposals: list[ReaderAskActionProposal] = Field(default_factory=list)
+    tool_trace: list[ReaderAskToolTraceEntry] = Field(default_factory=list)
+    # Legacy evidence only. Agentic / quarantined rows always emit [].
+    evidence: list[ReaderAskEvidenceItem] = Field(default_factory=list)
+    trace_summary: ReaderAskTraceSummary | None = None
+    disambiguation: ReaderAskDisambiguation | None = None
+    external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
+    response_cards: list[ReaderAskResponseCard] = Field(default_factory=list)
+    resolved_context: ReaderAskResolvedContextSummary | None = None
+    context_plan: ReaderAskContextPlan | None = None
+    resolved_context_input: ReaderAskResolvedContextInput | None = None
+    run_info: ReaderAskRunInfo | None = None
+    supplement_candidates: list[ReaderAskSupplementCandidate] = Field(default_factory=list)
+    persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
+    reasoning_md: str | None = None
+    reasoning_status: Literal["idle", "streaming", "completed"] | None = None
+    usage_event_id: str | None = None
+    follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
+    article_rag: ReaderAskArticleRagSidecar | None = None
+    article_rag_citations: list[ReaderAskArticleRagCitation] = Field(default_factory=list)
+    # Agentic-only history fields. Omitted for legacy RR messages via
+    # response_model_exclude_none on the RR thread-detail route.
+    execution_version: Literal["reader_record_ask_agentic_v1"] | None = None
+    final_status: FinalStatus | None = None
+    agentic_evidence: list[ReaderRecordAskEvidenceItem] | None = None
+    created_at: str
+    updated_at: str
+
+
+class ReaderRecordAskThreadDetail(BaseModel):
+    """Reading Record Ask thread detail (history reload)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    record_id: str
+    title: str | None = None
+    is_default: bool
+    selected_model: ReaderAskSelectedModel | None = None
+    archived_at: str | None = None
+    created_at: str
+    updated_at: str
+    last_message_at: str | None = None
+    messages: list[ReaderRecordAskHistoryMessage] = Field(default_factory=list)

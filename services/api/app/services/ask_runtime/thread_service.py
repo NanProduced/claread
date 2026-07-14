@@ -13,6 +13,7 @@ from app.schemas.reader_ask import (
     ReaderAskThreadListResponse,
     ReaderAskThreadSummary,
 )
+from app.schemas.reader_record_ask_stream import ReaderRecordAskThreadDetail
 from app.services.reader_ask import model_options as model_options_svc
 from app.services.reader_ask import repository as repo
 
@@ -180,16 +181,24 @@ async def get_reading_record_thread_detail(
     thread_id: UUID,
     *,
     reading_record_id: UUID,
-) -> ReaderAskThreadDetail:
+) -> ReaderRecordAskThreadDetail:
     thread = await repo.get_thread(user_id, thread_id)
     if thread is None:
         raise HTTPException(status_code=404, detail="Reader ask thread not found")
     if thread.get("record_scope") != "reading_record":
-        raise HTTPException(status_code=404, detail="Reader ask thread not found for this Reading Record")
+        raise HTTPException(
+            status_code=404, detail="Reader ask thread not found for this Reading Record"
+        )
     if thread.get("reading_record_id") != str(reading_record_id):
-        raise HTTPException(status_code=404, detail="Reader ask thread not found for this Reading Record")
+        raise HTTPException(
+            status_code=404, detail="Reader ask thread not found for this Reading Record"
+        )
     messages = await repo.list_messages(thread_id, limit=100)
-    return ReaderAskThreadDetail.model_validate({**_thread_summary_payload(thread), "messages": messages})
+    # RR-only history DTO: allows agentic_evidence with strict schema without
+    # expanding the Analysis Ask ReaderAskMessage wire contract.
+    return ReaderRecordAskThreadDetail.model_validate(
+        {**_thread_summary_payload(thread), "messages": messages}
+    )
 
 
 async def reset_reading_record_thread(
@@ -198,14 +207,18 @@ async def reset_reading_record_thread(
     *,
     reading_record_id: UUID,
     title: str,
-) -> ReaderAskThreadDetail:
+) -> ReaderRecordAskThreadDetail:
     thread = await repo.get_thread(user_id, thread_id)
     if thread is None:
         raise HTTPException(status_code=404, detail="Reader ask thread not found")
     if thread.get("record_scope") != "reading_record":
-        raise HTTPException(status_code=404, detail="Reader ask thread not found for this Reading Record")
+        raise HTTPException(
+            status_code=404, detail="Reader ask thread not found for this Reading Record"
+        )
     if thread.get("reading_record_id") != str(reading_record_id):
-        raise HTTPException(status_code=404, detail="Reader ask thread not found for this Reading Record")
+        raise HTTPException(
+            status_code=404, detail="Reader ask thread not found for this Reading Record"
+        )
 
     archived = await repo.archive_thread(user_id, thread_id)
     if archived is None:
@@ -220,5 +233,9 @@ async def reset_reading_record_thread(
         title=thread.get("title") or title,
         selected_model_key=next_thread_option.key,
     )
-    messages = await repo.list_messages(_parse_uuid(next_thread["id"], "thread id is invalid"), limit=100)
-    return ReaderAskThreadDetail.model_validate({**_thread_summary_payload(next_thread), "messages": messages})
+    messages = await repo.list_messages(
+        _parse_uuid(next_thread["id"], "thread id is invalid"), limit=100
+    )
+    return ReaderRecordAskThreadDetail.model_validate(
+        {**_thread_summary_payload(next_thread), "messages": messages}
+    )

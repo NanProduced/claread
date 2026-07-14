@@ -11,12 +11,12 @@ from app.schemas.reader_ask import (
     ReaderAskActionConfirmResponse,
     ReaderAskDeleteSupplementResponse,
     ReaderAskMessageRetryRequest,
-    ReaderAskThreadDetail,
     ReaderAskThreadListResponse,
     ReaderAskThreadSummary,
     ReaderRecordAskActionConfirmRequest,
     ReaderRecordAskMessageRequest,
 )
+from app.schemas.reader_record_ask_stream import ReaderRecordAskThreadDetail
 from app.services.auth.dependencies import AuthUserDep
 from app.services.reader_record_ask import service as rr_ask_svc
 
@@ -86,14 +86,15 @@ async def create_default_reading_record_ask_thread(
 
 @router.get(
     "/reader/records/{reading_record_id}/ask/threads/{thread_id}",
-    response_model=ReaderAskThreadDetail,
+    response_model=ReaderRecordAskThreadDetail,
+    response_model_exclude_none=True,
     summary="Get Reading Record Ask thread detail",
 )
 async def get_reading_record_ask_thread(
     reading_record_id: str,
     thread_id: UUID,
     current_user: AuthUserDep,
-) -> ReaderAskThreadDetail:
+) -> ReaderRecordAskThreadDetail:
     return await rr_ask_svc.get_reading_record_ask_thread(
         user_id=UUID(current_user.user_id),
         reading_record_id=reading_record_id,
@@ -103,14 +104,15 @@ async def get_reading_record_ask_thread(
 
 @router.post(
     "/reader/records/{reading_record_id}/ask/threads/{thread_id}/reset",
-    response_model=ReaderAskThreadDetail,
+    response_model=ReaderRecordAskThreadDetail,
+    response_model_exclude_none=True,
     summary="Reset the Reading Record Ask thread",
 )
 async def reset_reading_record_ask_thread(
     reading_record_id: str,
     thread_id: UUID,
     current_user: AuthUserDep,
-) -> ReaderAskThreadDetail:
+) -> ReaderRecordAskThreadDetail:
     return await rr_ask_svc.reset_reading_record_ask_thread(
         user_id=UUID(current_user.user_id),
         reading_record_id=reading_record_id,

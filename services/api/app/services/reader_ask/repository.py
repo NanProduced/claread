@@ -7,11 +7,19 @@ from uuid import UUID
 from fastapi import HTTPException
 
 from app.database import connection as db_connection
+from app.services.reader_record_ask.history_projection import (
+    claims_agentic_payload,
+    is_agentic_execution_version,
+    project_agentic_history_message,
+    quarantine_untrusted_agentic_claim,
+)
 
 
 def _iso(value: datetime | None) -> str | None:
     if value is None:
         return None
+    if isinstance(value, str):
+        return value
     return value.astimezone(UTC).isoformat()
 
 
@@ -46,6 +54,63 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
     hydrated_output = row.get("user_visible_output_json")
     if not isinstance(hydrated_output, dict):
         hydrated_output = None
+
+    # ------------------------------------------------------------------
+    # Three-way branch for Reading Record Ask history:
+    # 1) DB execution_version == v1      → strict agentic projector
+    # 2) DB version missing/non-v1 but
+    #    JSON claims v1                 → quarantine (no legacy parse)
+    # 3) otherwise                      → normal legacy hydration
+    # ------------------------------------------------------------------
+    execution_version = row.get("current_turn_run_execution_version")
+    usage_event_id = (
+        str(row["current_turn_run_usage_event_id"])
+        if row.get("current_turn_run_usage_event_id")
+        else str(row["usage_event_id"])
+        if row.get("usage_event_id")
+        else None
+    )
+    current_turn_run_id = (
+        str(row["message_current_turn_run_id"]) if row.get("message_current_turn_run_id") else None
+    )
+    current_turn_run = (
+        _turn_run_row_to_dict(row) if row.get("message_current_turn_run_id") else None
+    )
+
+    if is_agentic_execution_version(execution_version):
+        return project_agentic_history_message(
+            message_id=str(row["id"]),
+            thread_id=str(row["thread_id"]),
+            role=row["role"],
+            row_status=row["status"],
+            row_content_md=row["content_md"] or "",
+            created_at=_iso(row["created_at"]),
+            updated_at=_iso(row["updated_at"]),
+            context_anchors=row["context_anchors_json"] or [],
+            usage_event_id=usage_event_id,
+            current_turn_run_id=current_turn_run_id,
+            current_turn_run=current_turn_run,
+            user_visible_output_json=hydrated_output,
+            resolved_evidence_json=row.get("current_turn_run_resolved_evidence_json"),
+            final_status=row.get("current_turn_run_final_status"),
+            turn_run_status=row.get("current_turn_run_status"),
+        )
+
+    if claims_agentic_payload(hydrated_output) or claims_agentic_payload(metadata):
+        # Untrusted agentic claim without a matching DB column: isolate so
+        # agentic rag_citation internals cannot leak via legacy evidence.
+        return quarantine_untrusted_agentic_claim(
+            message_id=str(row["id"]),
+            thread_id=str(row["thread_id"]),
+            role=row["role"],
+            created_at=_iso(row["created_at"]),
+            updated_at=_iso(row["updated_at"]),
+            context_anchors=row["context_anchors_json"] or [],
+            usage_event_id=usage_event_id,
+            current_turn_run_id=current_turn_run_id,
+            current_turn_run=current_turn_run,
+        )
+
     visible = hydrated_output or {}
     use_legacy_fallback = hydrated_output is None and row.get("message_current_turn_run_id") is None
     status = row["status"]
@@ -97,13 +162,6 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
         "article_rag",
         metadata.get("article_rag") if use_legacy_fallback else None,
     )
-    usage_event_id = (
-        str(row["current_turn_run_usage_event_id"])
-        if row.get("current_turn_run_usage_event_id")
-        else str(row["usage_event_id"])
-        if row.get("usage_event_id")
-        else None
-    )
     return {
         "id": str(row["id"]),
         "thread_id": str(row["thread_id"]),
@@ -134,8 +192,8 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
         "article_rag_citations": article_rag_citations,
         "article_rag": article_rag,
         "usage_event_id": usage_event_id,
-        "current_turn_run_id": str(row["message_current_turn_run_id"]) if row.get("message_current_turn_run_id") else None,
-        "current_turn_run": _turn_run_row_to_dict(row) if row.get("message_current_turn_run_id") else None,
+        "current_turn_run_id": current_turn_run_id,
+        "current_turn_run": current_turn_run,
         "current_user_visible_output": hydrated_output,
         "current_eval_trace": row.get("current_eval_trace_json") or None,
         "created_at": _iso(row["created_at"]),
@@ -189,6 +247,14 @@ def _turn_run_row_to_dict(row: Any) -> dict[str, Any]:
         "failed_at": _iso(row[f"{prefix}failed_at"]),
         "created_at": _iso(row[f"{prefix}created_at"]),
         "updated_at": _iso(row[f"{prefix}updated_at"]),
+        # Agentic lane fields (NULL for legacy turns). fingerprint is kept on
+        # the server-side turn_run dict for diagnostics only — history
+        # projector does not promote it onto the message wire contract.
+        "execution_version": row.get(f"{prefix}execution_version"),
+        "final_status": row.get(f"{prefix}final_status"),
+        "terminal_reason": row.get(f"{prefix}terminal_reason"),
+        "resolved_evidence_json": row.get(f"{prefix}resolved_evidence_json"),
+        "envelope_fingerprint": row.get(f"{prefix}envelope_fingerprint"),
     }
 
 
@@ -260,6 +326,11 @@ SELECT m.id, m.thread_id, m.role, m.status, m.content_md,
        tr.failed_at AS current_turn_run_failed_at,
        tr.created_at AS current_turn_run_created_at,
        tr.updated_at AS current_turn_run_updated_at,
+       tr.execution_version AS current_turn_run_execution_version,
+       tr.final_status AS current_turn_run_final_status,
+       tr.terminal_reason AS current_turn_run_terminal_reason,
+       tr.resolved_evidence_json AS current_turn_run_resolved_evidence_json,
+       tr.envelope_fingerprint AS current_turn_run_envelope_fingerprint,
        et.turn_run_id AS eval_trace_turn_run_id,
        et.trace_schema_version,
        et.planning_snapshot_json,
