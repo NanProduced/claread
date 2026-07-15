@@ -84,15 +84,13 @@ function startServer(
   label: string,
 ): ChildProcess {
   console.log(`[${label}] Starting: ${command} ${args.join(" ")}`);
-  // Cast to ChildProcess: with `shell: true` + stdio array, TS narrows
-  // spawn's return to an intersection that collapses to `never` because
-  // `stdin` has conflicting types across overload variants. Runtime is fine.
-  const child = spawn(command, args, {
+  const executable = process.platform === "win32" ? `${command}.cmd` : command;
+  const child = spawn(executable, args, {
     cwd: process.cwd(),
     env,
-    shell: true,
+    shell: false,
     stdio: ["ignore", "pipe", "pipe"],
-  }) as ChildProcess;
+  });
 
   child.stdout?.on("data", (data: Buffer) => {
     const line = data.toString().trim();
