@@ -85,7 +85,9 @@
 | `modules/policy-and-cost-control.md` | Policy Planner、Skip Gate、Model Profile、Prompt Cache、Usage Bucket、ExecutionBudget | 修改路由策略、成本控制、model profile 或 usage 归因 |
 | `modules/enhancement-layers-and-parsed.md` | Enhancement Layer schema、anchor、Parsed Decision、Translation Group 合同 | 修改 translation/vocabulary/grammar/sentence_analysis layer 发布合同 |
 | `modules/streaming-and-projection.md` | Reader Events、snapshot、SSE、polling fallback、projection_ops envelope | 修改事件序列、snapshot 重建、SSE 或 polling |
+| `modules/representation-event-contract.md` | 会改变 snapshot 表示的 User Asset / Ask Supplement / record metadata 写入与事务事件合同 | 修改 user asset、Ask supplement、display-title 状态、representation event payload 或 freshness |
 | `modules/plate-reader-projection.md` | Plate.js Article Body、projection operations、document tools、owner 权限表、anchor bridge | 修改 Plate projection 合同、owner 权限或 projection_ops envelope |
+| `modules/ask-claread-reader-workspace.md` | Ask Claread Reader sidecar/floating workspace、outline coexistence、surface state | 修改 Reader Plate Ask workspace、响应式布局或无障碍交互 |
 | `modules/rag-substrate.md` | record-scoped RAG、block-scoped citation DTO、provider adapter | 修改 Article RAG substrate、citation 或 vector provider |
 | `modules/cutover-and-old-workflow.md` | 停服重构、旧 workflow 移除、旧依赖审计、Web 路由矩阵 | 评估旧代码删除、cutover 阶段或依赖审计 |
 | `modules/ask-claread-reader-workspace.md` | Ask Claread Reader Workspace v2 设计规范：sidecar/floating 布局、`requestedSurface`/`effectiveSurface`、组件边界、Phase 1/2 切分 | 修改 Ask 布局、surface 切换、outline 与 Ask 共存或 Phase 2 resize |

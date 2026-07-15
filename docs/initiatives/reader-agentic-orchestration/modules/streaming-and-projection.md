@@ -1,7 +1,7 @@
 # Streaming 与 Projection
 
-> 状态：`D5 主链路使用 snapshot reload；projection_ops 增量 applier 仍 D5+ 后置；T4.2a-PUX-R2 已闭合 runtime integration gate`
-> 最后更新：2026-07-13（DOC-R2：本文成为 `projection_ops` envelope、sequence contract、gap detection、polling cursor 与 snapshot reload fallback 的权威归宿；同步 T4.2a-PUX-R1/R2 状态）
+> 状态：`D5 主链路使用 snapshot reload；projection_ops 增量 applier 仍 D5+ 后置；T4.2a-PUX-R2 已闭合 runtime integration gate；O4-R1 representation event contract 已接受、writer 实现待 O4-R2`
+> 最后更新：2026-07-13（O4-R1：representation-changing write 的事务、payload 与 consumer 分类细则移至 `representation-event-contract.md`；本文继续拥有通用 envelope、sequence、gap detection、polling cursor 与 snapshot reload fallback）
 > 范围：Reader Events、snapshot、SSE、polling fallback、Plate projection operations 和刷新恢复。
 
 ## Owner 归属
@@ -15,6 +15,8 @@
 - Sequence contract、gap detection、polling cursor 规则
 - Snapshot 策略（实时聚合 vs `reader_snapshots` cache）
 - Plate Recovery 流程与 reload fallback 触发条件
+
+会改变 snapshot representation 的业务写入、payload 脱敏与 G1/G2/G3 覆盖映射归 [`representation-event-contract.md`](./representation-event-contract.md)；本文不复制该合同。
 
 Plate 侧 op_type 语义（Target / Owner / Use 列）、Projection Applier 行为、Owner 权限表归 [`plate-reader-projection.md`](./plate-reader-projection.md)；本文不复制这些表。
 
@@ -88,29 +90,16 @@ CREATE TABLE reader_event_sequences (
 
 实现可以使用预创建 row + `UPDATE ... RETURNING`，或等价的 `INSERT ... ON CONFLICT DO UPDATE ... RETURNING`，但必须用 focused test 覆盖 first sequence、rollback no-gap 和 concurrent publish。
 
-## Reader Event Types
+## 当前 Runtime Event Types
 
-- `input_received`
-- `extraction_progressed`
-- `candidate_base_ready`
-- `article_ready`
-- `substrate_progressed`
-- `substrate_ready`
-- `layer_started`
-- `layer_published`
-- `layer_failed`
-- `parsed_decision_updated`
-- `projection_ops`
-- `projection_reset_required`
-- `user_editorial_asset_changed`
-- `ask_supplement_published`
-- `ask_supplement_deleted`
-- `run_paused`
-- `action_required`
-- `run_completed`
-- `record_superseded`
+当前 enum / DB CHECK 是唯一 runtime 事实源；本模块不把历史设计名称当作可写类型。O4-R1 核验时的现有类型为：
 
-`layer_started` 只用于用户可见的局部 pending，不用于 worker heartbeat。
+- `article_ready`、`layer_published`、`parsed_decision_updated`
+- `record_state_changed`、`record_product_state_updated`
+- `layer_failed`、`action_required`、`run_completed`、`record_superseded`
+- `projection_ops`、`projection_reset_required`
+
+O4-R2 不新增 `user_editorial_asset_changed`、`ask_supplement_published` 或 `ask_supplement_deleted`。G1/G2 复用 `projection_ops`，G3 复用 `record_state_changed`；精确 payload 与当前/未来 consumer fallback 规则以 [`representation-event-contract.md`](./representation-event-contract.md) 为准。
 
 `projection_ops` 只用于 Web Plate projection。非 Web 客户端可以忽略它，并继续通过 snapshot / polling 获得最新可读状态。
 

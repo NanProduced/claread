@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 目标架构
 
 > 状态：`D6 进行中（T4.2a-R2 durable budget 已代码级 review 通过；real-LLM validation pending）`
-> 最后更新：2026-07-13（DOC-R2：收敛 Plate Document 节重复段落到 `modules/plate-reader-projection.md` 与 `modules/streaming-and-projection.md`，补登 T4.2a-R2 / PUX-R1 / PUX-R2 决策）
+> 最后更新：2026-07-13（O4-R1：接受 snapshot representation event contract；细则归 `modules/representation-event-contract.md`）
 > 范围：用户提交内容的 `learning` Reader 解析。
 
 ## 目标
@@ -23,6 +23,7 @@
 | `modules/policy-and-cost-control.md` | Policy Planner、Skip Gate、Prompt Cache、Model Profile、Usage Bucket |
 | `modules/enhancement-layers-and-parsed.md` | Enhancement Layer、System Annotation Layer、User Editing Boundary、anchor、Parsed Decision |
 | `modules/streaming-and-projection.md` | Reader Events、snapshot、SSE、polling fallback |
+| `modules/representation-event-contract.md` | snapshot representation-changing writes、transactional event log、payload/fallback 合同 |
 | `modules/plate-reader-projection.md` | Plate.js Article Body、projection operations、document tools、owner 权限、anchor bridge |
 | `modules/rag-substrate.md` | record-scoped RAG、citation DTO、provider adapter |
 | `modules/cutover-and-old-workflow.md` | 停服重构、旧 workflow 移除、旧依赖审计 |
@@ -326,6 +327,7 @@ D4 正式路径从新 domain facts 直接生成 Base Plate Snapshot，不经过�
 | D1-013 | 2026-06-18 | Plate document 不是 truth，是 domain truth 的 projection。D6 后 domain truth 包含 Stable Reading Document / Stable Document Blocks / Canonical Text Layer / Reading Units / Anchor Segments / Enhancement Layers / User Editorial Assets / Ask Supplements；刷新恢复从 domain truth 重建 Plate snapshot，不从 Plate value 反推 domain。 |
 | D1-014 | 2026-06-18 | `reader_events.event_type` 新增 `projection_ops` 子类型，与 domain events 并存。Projection ops 使用稳定 domain target（unit、Anchor Segment、layer、asset），不持久化 raw Slate path ops；前端再把 ops 转成 Plate transforms。非 Web 客户端继续 polling snapshot。 |
 | D1-015 | 2026-06-18 | Ask Sidecar 在 D5+ 改 document tools 模式：`read_range`、`propose_highlight`、`propose_note`、`write_ai_supplement`、`revise_ai_annotation`。写 User Editorial Assets 必须用户确认；每个工具经 Authorization Envelope、anchor validation 和 owner policy 校验后落 domain fact，再 emit projection ops。 |
+| T4.2a-O4-R1 | 2026-07-13 | 接受 snapshot representation event contract：G1 user assets、G2 Ask supplements 复用 `projection_ops`，G3 用户可见 record metadata 复用 `record_state_changed`；业务事实、sequence 与 event 同一 PostgreSQL 事务提交，不新增 outbox/CDC/relay。payload 只存稳定领域事实，不存 rollout `reload_policy`；consumer 以 payload-aware classifier 决定局部 apply 或 snapshot fallback。当前尚无 reducer 的 G3 可见变化必须 reload，不得只推进 cursor。详见 `modules/representation-event-contract.md`。 |
 | D1-016 | 2026-06-18 | D4 正式路径从过渡 Stable Base / Reading Units / Anchor Segments 直接生成 Base Plate Snapshot，不经过旧 `render_scene_json`；D6 文档型 Reader 在其上新增 Stable Reading Document / Blocks / Canonical Text Layer。`renderSceneToPlateDocument` 只能作为迁移参考或 spike adapter，不作为新 contract 扩展。 |
 | D1-017 | 2026-06-18 | Plate owner 权限层覆盖 `stable`、`system_ai`、`ask_supplement`、`user`、`ephemeral`。用户不能删除 system AI truth，只能隐藏/反馈/按策略 dismiss；Ask Supplement 和 User Editorial Assets 有独立生命周期。owner 校验双层：后端权威拒绝 + 前端 Plate UX 镜像。 |
 | D1-018 | 2026-06-18 | D2-P0 接受 Plate.js 作为 Article Body 底座；Web 依赖必须对齐到同一稳定 major 主线。当前验证通过的组合是 `platejs@53.2.1`、`@platejs/floating@53.0.0`、`@platejs/ai@53.2.2`、`@platejs/markdown@53.2.2`、`@platejs/suggestion@53.0.3`、`@platejs/selection@53.1.6`。不得再混用 `platejs@50` 与 `@platejs/*@53`。 |
