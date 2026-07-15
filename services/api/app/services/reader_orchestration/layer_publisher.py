@@ -21,6 +21,10 @@ from app.schemas.reader_orchestration import (
 )
 
 from .event_runtime import ReaderEventEnvelope, ReaderEventRuntime
+from .grammar_layer_payload import build_grammar_layer_published_payload
+from .grammar_layer_payload_validator import (
+    validate_grammar_layer_published_payload,
+)
 from .job_bootstrap import (
     GRAMMAR_BATCH_JOB_TYPE,
     GRAMMAR_BATCH_OPERATION_FINGERPRINT,
@@ -2489,11 +2493,30 @@ async def _insert_published_grammar_layer(
     if layer_row is None:
         raise RuntimeError("enhancement_layers insert did not return a row")
 
-    event = await event_runtime.publish_event_in_transaction(
-        conn,
-        record_id=reading_record_id,
-        event_type="layer_published",
-        payload_json={
+    # T4.2a-PUX-R4-R2.2-P2b-R1: grammar_note 首发使用扩展 payload
+    # （schema_version / operation / insertions[]），由 builder 从 typed
+    # GrammarNoteLayerOutput 自动派生，validator 在同事务内、event 写入前校验。
+    # sentence_analysis 保持既有 7 字段 payload，不接入 builder/validator。
+    if layer_type == "grammar_note":
+        # 查询 source anchor 顺序（order_index ASC），作为 descriptor 排序依据。
+        segment_rows = await conn.fetch(
+            """
+            SELECT anchor_segment_id
+            FROM anchor_segments
+            WHERE reading_record_id = $1
+              AND base_id = $2
+              AND unit_id = $3
+            ORDER BY order_index ASC
+            """,
+            reading_record_id,
+            base_id,
+            unit_id,
+        )
+        anchor_order = tuple(
+            str(row["anchor_segment_id"]) for row in segment_rows
+        )
+
+        base_payload = {
             "record_id": str(reading_record_id),
             "base_id": str(base_id),
             "layer_id": str(layer_row["id"]),
@@ -2501,7 +2524,34 @@ async def _insert_published_grammar_layer(
             "target_scope": "unit",
             "target_key": unit_id,
             "generation": generation,
-        },
+        }
+        event_payload = build_grammar_layer_published_payload(
+            base_payload=base_payload,
+            layer_id=str(layer_row["id"]),
+            layer_type=layer_type,
+            target_key=unit_id,
+            typed_output=payload,
+            anchor_order=anchor_order,
+        )
+        # 校验失败抛 ValueError，事务回滚：layer INSERT / event INSERT /
+        # sequence 增量全部回滚，sequence 不推进。
+        validate_grammar_layer_published_payload(event_payload)
+    else:
+        event_payload = {
+            "record_id": str(reading_record_id),
+            "base_id": str(base_id),
+            "layer_id": str(layer_row["id"]),
+            "layer_type": layer_type,
+            "target_scope": "unit",
+            "target_key": unit_id,
+            "generation": generation,
+        }
+
+    event = await event_runtime.publish_event_in_transaction(
+        conn,
+        record_id=reading_record_id,
+        event_type="layer_published",
+        payload_json=event_payload,
         source_run_id=job_row["run_id"],
         source_job_id=job_id,
         source_layer_id=layer_row["id"],

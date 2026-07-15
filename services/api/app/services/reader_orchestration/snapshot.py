@@ -34,6 +34,10 @@ from .base_builder import (
     ReadingBaseBuildResult,
     result_length_utf16,
 )
+from .grammar_layer_payload import (
+    build_grammar_item_id,
+    get_grammar_item_terminal_span_index,
+)
 
 
 def build_reader_plate_snapshot(
@@ -882,14 +886,7 @@ def _build_grammar_note_marks_by_anchor(
     for layer in layers:
         output = GrammarNoteLayerOutput.model_validate(layer.output)
         for item_index, item in enumerate(output.items):
-            terminal_span_index = max(
-                range(len(item.spans)),
-                key=lambda span_index: (
-                    item.spans[span_index].start_offset,
-                    item.spans[span_index].end_offset,
-                    span_index,
-                ),
-            )
+            terminal_span_index = get_grammar_item_terminal_span_index(item.spans)
             for span_index, anchor in enumerate(item.spans):
                 segment = segments_by_id.get(anchor.anchor_segment_id)
                 if segment is None:
@@ -960,7 +957,7 @@ def _project_grammar_note_mark(
     segment: BuiltAnchorSegment,
 ) -> dict[str, object]:
     anchor = item.spans[span_index]  # type: ignore[attr-defined]
-    item_id = f"{layer.layer_id}:grammar_note:{item_index}"
+    item_id = build_grammar_item_id(layer.layer_id, item_index)
     return {
         "mark_id": f"{item_id}:span:{span_index}",
         "item_id": item_id,
