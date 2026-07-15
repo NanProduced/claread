@@ -56,11 +56,11 @@ function makeRecord(
     title: "Untitled 1",
     createdAt: "2026-06-22T00:00:00Z",
     sourceType: "text",
-    sourceMetadata: {},
     productState: "readable_enhancing",
     readinessState: "article_ready",
     lastEventSequence: 1,
     lastOpenedAt: "2026-06-22T10:00:00Z",
+    sourceLabel: "粘贴文本",
     ...overrides,
   };
 }
@@ -225,5 +225,31 @@ describe("SidebarRail 最近阅读", () => {
     const okRow = screen.getByText("ReadToGo");
     const okLi = okRow.closest("li");
     expect(okLi?.querySelector("a")).toBeTruthy();
+  });
+
+  it("does not show source label or date in the sidebar (compact display)", () => {
+    render(
+      <SidebarRail
+        pathname="/app/library"
+        recentRecords={[
+          makeRecord({
+            readingRecordId: "rr_compact",
+            title: "Compact Title",
+            sourceLabel: "上传文件 · report.pdf",
+            lastOpenedAt: "2026-07-10T12:00:00Z",
+            createdAt: "2026-06-22T00:00:00Z",
+          }),
+        ]}
+      />,
+    );
+
+    // Title (display_title) is shown
+    expect(screen.getByText("Compact Title")).toBeTruthy();
+
+    // Source label must NOT appear in the sidebar
+    expect(screen.queryByText("上传文件 · report.pdf")).toBeNull();
+    // Date / time labels must NOT appear in the sidebar
+    expect(screen.queryByText(/上次阅读/)).toBeNull();
+    expect(screen.queryByText(/导入于/)).toBeNull();
   });
 });

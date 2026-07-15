@@ -13,11 +13,11 @@ function makeItem(id: string): ReadingRecordListItemVm {
     title: `R-${id}`,
     createdAt: '2026-07-14T00:00:00Z',
     sourceType: 'text',
-    sourceMetadata: {},
     productState: 'readable_enhancing',
     readinessState: 'article_ready',
     lastEventSequence: 1,
     lastOpenedAt: null,
+    sourceLabel: '粘贴文本',
   };
 }
 

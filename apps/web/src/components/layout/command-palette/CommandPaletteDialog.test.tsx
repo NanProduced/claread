@@ -22,10 +22,10 @@ function makeReadingRecord(overrides: Record<string, unknown> = {}) {
     title: "New Reading Record",
     createdAt: "2026-06-23T08:00:00.000Z",
     sourceType: "text",
-    sourceMetadata: {},
     productState: "readable_enhancing",
     readinessState: "article_ready",
     lastEventSequence: 1,
+    sourceLabel: "粘贴文本",
     ...overrides,
   };
 }

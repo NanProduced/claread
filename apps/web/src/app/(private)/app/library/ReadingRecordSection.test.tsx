@@ -17,11 +17,11 @@ function makeReadingRecord(
     title: "First Reading",
     createdAt: "2026-06-22T00:00:00Z",
     sourceType: "text",
-    sourceMetadata: {},
     productState: "readable_enhancing",
     readinessState: "article_ready",
     lastEventSequence: 3,
     lastOpenedAt: null,
+    sourceLabel: "粘贴文本",
     ...overrides,
   };
 }
@@ -332,5 +332,40 @@ describe("ReadingRecordSection", () => {
     ]) {
       expect(source).not.toContain(forbidden);
     }
+  });
+
+  it("renders source label and correct time semantics (lastOpenedAt vs createdAt)", () => {
+    render(
+      <ReadingRecordSection
+        readingRecords={[
+          makeReadingRecord({
+            readingRecordId: "rr_opened",
+            readerUrl: "/app/reader-record/rr_opened",
+            title: "Opened Record",
+            sourceLabel: "上传文件 · report.pdf",
+            lastOpenedAt: "2026-07-10T12:00:00Z",
+          }),
+          makeReadingRecord({
+            readingRecordId: "rr_new",
+            readerUrl: "/app/reader-record/rr_new",
+            title: "New Record",
+            sourceLabel: "粘贴文本",
+            lastOpenedAt: null,
+          }),
+        ]}
+        status="ready"
+      />,
+    );
+
+    // Source labels are rendered
+    expect(screen.getByText("上传文件 · report.pdf")).toBeTruthy();
+    expect(screen.getByText("粘贴文本")).toBeTruthy();
+
+    // Time semantics: lastOpenedAt → "上次阅读", null → "导入于"
+    // The date part is formatted by toLocaleDateString("zh-CN")
+    const openedDate = new Date("2026-07-10T12:00:00Z").toLocaleDateString("zh-CN");
+    const newDate = new Date("2026-06-22T00:00:00Z").toLocaleDateString("zh-CN");
+    expect(screen.getByText(`上次阅读 ${openedDate}`)).toBeTruthy();
+    expect(screen.getByText(`导入于 ${newDate}`)).toBeTruthy();
   });
 });

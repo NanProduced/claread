@@ -54,11 +54,11 @@ function makeReadingRecord(
     title: "New Reading Record",
     createdAt: "2026-06-22T00:00:00Z",
     sourceType: "text",
-    sourceMetadata: {},
     productState: "readable_enhancing",
     readinessState: "article_ready",
     lastEventSequence: 2,
     lastOpenedAt: null,
+    sourceLabel: "粘贴文本",
     ...overrides,
   };
 }
@@ -137,7 +137,7 @@ describe("LibraryClient", () => {
     expect(screen.getByText("共 2 篇记录")).toBeTruthy();
   });
 
-  it("searches by title only", () => {
+  it("searches by title only (display_title), not by sourceLabel", () => {
     render(
       <LibraryClient
         readingRecords={[
@@ -146,7 +146,7 @@ describe("LibraryClient", () => {
             readingRecordId: "reading_record_2",
             readerUrl: "/app/reader-record/reading_record_2",
             title: "Exam Strategy",
-            sourceMetadata: { hidden: "climate keyword buried in metadata" },
+            sourceLabel: "climate keyword buried in source label",
           }),
         ]}
         readingRecordsStatus="ready"

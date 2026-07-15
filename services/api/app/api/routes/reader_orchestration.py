@@ -1130,6 +1130,8 @@ async def list_reader_records(
                 readiness_state=summary.readiness_state,
                 last_event_sequence=summary.last_event_sequence,
                 last_opened_at=summary.last_opened_at,
+                display_title=summary.display_title,
+                source_label=summary.source_label,
             )
             for summary in summaries
         ],

@@ -1238,6 +1238,13 @@ class ReaderRecordListItem(BaseModel):
     readiness_state: ReadingRecordReadinessState
     last_event_sequence: int = Field(ge=0)
     last_opened_at: datetime | None = None
+    # S2.5: Backend-decided stable identity fields. ``display_title`` is
+    # the title the UI should render (priority chain decided in the
+    # backend); ``source_label`` is a controlled friendly source string.
+    # The UI should prefer ``display_title`` over ``title`` and
+    # ``source_label`` over interpreting ``source_metadata``.
+    display_title: str = Field(min_length=1)
+    source_label: str = Field(min_length=1)
 
 
 class ReaderRecordListResponse(BaseModel):

@@ -72,6 +72,16 @@ class ReaderRecordSummary:
     source_metadata: dict[str, Any]
     last_event_sequence: int
     last_opened_at: datetime | None = None
+    # S2.5 Reading Record Identity Projection fields.
+    # ``display_title`` is the backend-decided stable title following the
+    # priority chain: succeeded generated_title_zh → record.title →
+    # current-generation ready candidate title → original input filename →
+    # source-type friendly label → final fallback "未命名解读".
+    display_title: str = "未命名解读"
+    # ``source_label`` is a backend-controlled user-friendly string derived
+    # from original_inputs.input_type + filename (e.g. "粘贴文本",
+    # "上传文件 · report.pdf"). Raw metadata_json is never exposed.
+    source_label: str = "未命名解读"
 
 
 _PROGRESS_CAPABILITIES = ("translation", "vocabulary", "grammar")
@@ -1647,60 +1657,234 @@ class ReaderOrchestrationRepository:
         query: str | None = None,
         product_states: tuple[str, ...] | None = None,
     ) -> tuple[tuple[ReaderRecordSummary, ...], int]:
+        """List the current user's reading records as a safe read model.
+
+        S2.5 (P1-1 fix): ``display_title`` is computed in SQL via a CTE
+        so that the search ``query`` can be filtered at the database
+        level and ``LIMIT`` is applied server-side. ``total`` uses a
+        separate ``COUNT`` query.
+
+        S2.5 (P1-1 row-determinism fix): The earliest ``original_inputs``
+        row is fetched once per record via a single ``LEFT JOIN LATERAL``
+        (``LIMIT 1``). All ``display_title`` / filename / source-label
+        inputs derive from this one deterministic row. There are no
+        repeated scalar subqueries against ``original_inputs``.
+
+        S2.5 (P1-2 bounded-read fix): When ``query`` is ``None``, the
+        items SQL contains ``ORDER BY + LIMIT`` and NO ``COUNT(*)
+        OVER()`` window function; ``total`` is always a separate simple
+        ``COUNT(*)`` on ``reading_records``. When ``query`` is non-empty,
+        ``total`` uses a separate CTE count (no window function on the
+        items query).
+
+        S2.5 (P2 fix): The ready candidate title is only included in the
+        priority chain when exactly one ready candidate exists for the
+        current generation (``ready_count = 1``). When 0 or 2+ ready
+        candidates exist, the title is NULL and the chain falls through
+        to filename / source-type / fallback.
+
+        ``source_label`` is still computed in Python by
+        :func:`build_reading_record_list_projection` because it is not
+        needed for filtering or sorting.
+        """
         normalized_query = query.strip() if query and query.strip() else None
         normalized_product_states = product_states or None
         pool = self.get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT
-                    r.id,
-                    r.title,
-                    r.source_type,
-                    r.product_state,
-                    r.readiness_state,
-                    r.created_at,
-                    r.last_opened_at,
-                    COALESCE(
-                        (SELECT metadata_json FROM original_inputs
-                         WHERE reading_record_id = r.id
-                         ORDER BY created_at ASC, id ASC
-                         LIMIT 1),
-                        '{}'::jsonb
-                    ) AS source_metadata,
-                    COALESCE(
-                        (SELECT (next_sequence - 1)::bigint FROM reader_event_sequences
-                         WHERE reading_record_id = r.id),
-                        0
-                    ) AS last_event_sequence
-                FROM reading_records r
-                WHERE r.user_id = $1
-                  AND r.deleted_at IS NULL
-                  AND ($3::text IS NULL OR COALESCE(r.title, '') ILIKE '%' || $3 || '%')
-                  AND ($4::text[] IS NULL OR r.product_state::text = ANY($4::text[]))
-                ORDER BY r.last_opened_at DESC NULLS LAST,
-                         r.created_at DESC,
-                         r.id DESC
-                LIMIT $2
-                """,
-                user_id,
-                limit,
-                normalized_query,
-                normalized_product_states,
+            from .reading_record_list_projection import (
+                build_reading_record_list_projection,
             )
-            total = await conn.fetchval(
-                """
-                SELECT COUNT(*)
-                FROM reading_records
-                WHERE user_id = $1
-                  AND deleted_at IS NULL
-                  AND ($2::text IS NULL OR COALESCE(title, '') ILIKE '%' || $2 || '%')
-                  AND ($3::text[] IS NULL OR product_state::text = ANY($3::text[]))
-                """,
-                user_id,
-                normalized_query,
-                normalized_product_states,
+
+            # CTE that computes display_title in SQL using the same
+            # 6-layer priority chain as the Python projection function.
+            #
+            # P1-1: original_inputs is joined ONCE per record via
+            # LEFT JOIN LATERAL (LIMIT 1). No scalar subqueries, no
+            # unconditional LEFT JOIN that would fan out rows.
+            #
+            # P1-2: ready candidate CTEs are scoped to the current
+            # user's records via an EXISTS subquery, so the sidebar
+            # request does not aggregate the entire candidate table.
+            cte_sql = """
+                ready_candidate_counts AS (
+                    SELECT crd.reading_record_id, crd.record_generation,
+                           COUNT(*) AS ready_count
+                    FROM candidate_reading_documents crd
+                    WHERE crd.status = 'ready'
+                      AND crd.user_id = $1
+                      AND EXISTS (
+                          SELECT 1 FROM reading_records rr
+                          WHERE rr.id = crd.reading_record_id
+                            AND rr.user_id = $1
+                            AND rr.deleted_at IS NULL
+                      )
+                    GROUP BY crd.reading_record_id, crd.record_generation
+                ),
+                ready_candidate_titles AS (
+                    SELECT DISTINCT ON (reading_record_id, record_generation)
+                        reading_record_id, record_generation, title
+                    FROM candidate_reading_documents
+                    WHERE status = 'ready'
+                      AND user_id = $1
+                      AND EXISTS (
+                          SELECT 1 FROM reading_records rr
+                          WHERE rr.id = reading_record_id
+                            AND rr.user_id = $1
+                            AND rr.deleted_at IS NULL
+                      )
+                    ORDER BY reading_record_id, record_generation,
+                             created_at ASC, id ASC
+                ),
+                base_rows AS (
+                    SELECT
+                        r.id,
+                        r.title,
+                        r.source_type,
+                        r.product_state,
+                        r.readiness_state,
+                        r.created_at,
+                        r.last_opened_at,
+                        r.generation,
+                        r.generated_title_zh,
+                        r.title_generation_status,
+                        COALESCE(oi.metadata_json, '{}'::jsonb)
+                            AS source_metadata,
+                        oi.input_type AS original_input_type,
+                        oi.metadata_json->>'filename'
+                            AS original_input_filename,
+                        rcc.ready_count,
+                        CASE WHEN rcc.ready_count = 1
+                             THEN rct.title END AS ready_candidate_title,
+                        COALESCE(
+                            CASE WHEN r.title_generation_status = 'succeeded'
+                                 AND r.generated_title_zh IS NOT NULL
+                                 AND btrim(r.generated_title_zh) <> ''
+                                THEN r.generated_title_zh END,
+                            CASE WHEN r.title IS NOT NULL
+                                      AND btrim(r.title) <> ''
+                                THEN r.title END,
+                            CASE WHEN rcc.ready_count = 1
+                                      AND rct.title IS NOT NULL
+                                      AND btrim(rct.title) <> ''
+                                THEN rct.title END,
+                            CASE WHEN oi.metadata_json->>'filename' IS NOT NULL
+                                      AND btrim(oi.metadata_json->>'filename') <> ''
+                                THEN oi.metadata_json->>'filename' END,
+                            CASE
+                                WHEN oi.input_type = 'plain_text' THEN '粘贴文本'
+                                WHEN oi.input_type = 'markdown' THEN 'Markdown 文档'
+                                WHEN oi.input_type = 'file_ref' THEN '上传文件'
+                                WHEN oi.input_type = 'url' THEN '网页链接'
+                                WHEN oi.input_type = 'image_ref' THEN '图片 OCR'
+                                WHEN r.source_type = 'text' THEN '粘贴文本'
+                                WHEN r.source_type = 'markdown' THEN 'Markdown 文档'
+                                WHEN r.source_type = 'file' THEN '上传文件'
+                                WHEN r.source_type = 'pdf' THEN 'PDF 文档'
+                                WHEN r.source_type = 'url' THEN '网页链接'
+                                WHEN r.source_type = 'ocr' THEN '图片 OCR'
+                                WHEN r.source_type = 'image' THEN '图片 OCR'
+                                ELSE NULL
+                            END,
+                            '未命名解读'
+                        ) AS display_title,
+                        COALESCE(
+                            (SELECT (next_sequence - 1)::bigint
+                             FROM reader_event_sequences
+                             WHERE reading_record_id = r.id),
+                            0
+                        ) AS last_event_sequence
+                    FROM reading_records r
+                    LEFT JOIN LATERAL (
+                        SELECT input_type, metadata_json
+                        FROM original_inputs
+                        WHERE reading_record_id = r.id
+                        ORDER BY created_at ASC, id ASC
+                        LIMIT 1
+                    ) oi ON TRUE
+                    LEFT JOIN ready_candidate_counts rcc
+                        ON rcc.reading_record_id = r.id
+                       AND rcc.record_generation = r.generation
+                    LEFT JOIN ready_candidate_titles rct
+                        ON rct.reading_record_id = r.id
+                       AND rct.record_generation = r.generation
+                    WHERE r.user_id = $1
+                      AND r.deleted_at IS NULL
+                      AND ($2::text[] IS NULL
+                           OR r.product_state::text = ANY($2::text[]))
+                )
+            """
+
+            # Query filter: matches computed display_title (and raw
+            # record.title for backward compatibility).
+            query_filter = (
+                "($3::text IS NULL"
+                " OR LOWER(display_title) LIKE '%' || LOWER($3) || '%'"
+                " OR LOWER(COALESCE(title, '')) LIKE '%' || LOWER($3) || '%')"
             )
+
+            if normalized_query is None:
+                # P1-2: query=None — items SQL has ORDER BY + LIMIT and
+                # NO COUNT(*) OVER() window function. total is always a
+                # separate simple COUNT(*) on reading_records.
+                # Note: $3 (query) is not referenced in this branch, so
+                # limit is bound to $3 here.
+                rows = await conn.fetch(
+                    f"""
+                    WITH {cte_sql}
+                    SELECT *
+                    FROM base_rows
+                    ORDER BY last_opened_at DESC NULLS LAST,
+                             created_at DESC,
+                             id DESC
+                    LIMIT $3
+                    """,
+                    user_id,
+                    normalized_product_states,
+                    limit,
+                )
+                total = await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                    FROM reading_records
+                    WHERE user_id = $1
+                      AND deleted_at IS NULL
+                      AND ($2::text[] IS NULL
+                           OR product_state::text = ANY($2::text[]))
+                    """,
+                    user_id,
+                    normalized_product_states,
+                )
+            else:
+                # P1-2: query non-empty — items SQL has filter + ORDER BY
+                # + LIMIT, NO COUNT(*) OVER(). total uses a separate CTE
+                # count query so display_title filtering is applied.
+                rows = await conn.fetch(
+                    f"""
+                    WITH {cte_sql}
+                    SELECT *
+                    FROM base_rows
+                    WHERE {query_filter}
+                    ORDER BY last_opened_at DESC NULLS LAST,
+                             created_at DESC,
+                             id DESC
+                    LIMIT $4
+                    """,
+                    user_id,
+                    normalized_product_states,
+                    normalized_query,
+                    limit,
+                )
+                total = await conn.fetchval(
+                    f"""
+                    WITH {cte_sql}
+                    SELECT COUNT(*) FROM base_rows
+                    WHERE {query_filter}
+                    """,
+                    user_id,
+                    normalized_product_states,
+                    normalized_query,
+                )
+
         summaries = tuple(
             ReaderRecordSummary(
                 record_id=row["id"],
@@ -1712,6 +1896,16 @@ class ReaderOrchestrationRepository:
                 source_metadata=ensure_json_object(row["source_metadata"]),
                 last_event_sequence=int(row["last_event_sequence"]),
                 last_opened_at=row["last_opened_at"],
+                display_title=row["display_title"],
+                source_label=build_reading_record_list_projection(
+                    record_title=row["title"],
+                    generated_title_zh=row["generated_title_zh"],
+                    title_generation_status=row["title_generation_status"],
+                    ready_candidate_title=row["ready_candidate_title"],
+                    original_input_type=row["original_input_type"],
+                    original_input_filename=row["original_input_filename"],
+                    source_type=str(row["source_type"]),
+                ).source_label,
             )
             for row in rows
         )

@@ -33,22 +33,24 @@ function makeListResponse(): ReadingRecordListResponseDto {
         title: "First Reading",
         created_at: "2026-06-22T00:00:00Z",
         source_type: "text",
-        source_metadata: { source_kind: "web" },
         product_state: "readable_enhancing",
         readiness_state: "article_ready",
         last_event_sequence: 3,
         last_opened_at: "2026-06-22T10:00:00Z",
+        display_title: "First Reading",
+        source_label: "粘贴文本",
       },
       {
         record_id: "reading_record_2",
         title: null,
         created_at: "2026-06-21T00:00:00Z",
         source_type: "text",
-        source_metadata: {},
         product_state: "processing",
         readiness_state: "submitted",
         last_event_sequence: 1,
         last_opened_at: null,
+        display_title: "未命名解读",
+        source_label: "粘贴文本",
       },
     ],
     total: 2,
@@ -140,7 +142,9 @@ describe("reading-records BFF list", () => {
       const first = result.items[0];
       expect(first.readingRecordId).toBe("reading_record_1");
       expect(first.readerUrl).toBe(appReadingRecordRoute("reading_record_1"));
+      // S2.5: title is mapped from display_title, not the raw title field
       expect(first.title).toBe("First Reading");
+      expect(first.sourceLabel).toBe("粘贴文本");
       expect(first.productState).toBe("readable_enhancing");
       expect(first.readinessState).toBe("article_ready");
       expect(first.lastEventSequence).toBe(3);
@@ -148,7 +152,10 @@ describe("reading-records BFF list", () => {
       const second = result.items[1];
       expect(second.readingRecordId).toBe("reading_record_2");
       expect(second.readerUrl).toBe(appReadingRecordRoute("reading_record_2"));
+      // S2.5: title is mapped from display_title ("未命名解读"), not raw
+      // title (null) — the BFF must NOT apply its own "未命名解读" fallback
       expect(second.title).toBe("未命名解读");
+      expect(second.sourceLabel).toBe("粘贴文本");
       expect(second.productState).toBe("processing");
       expect(second.lastOpenedAt).toBeNull();
       expect(first.lastOpenedAt).toBe("2026-06-22T10:00:00Z");
@@ -181,6 +188,64 @@ describe("reading-records BFF list", () => {
     }
   });
 
+  it("does not leak raw source_metadata to the browser VM (P1-2)", async () => {
+    // The upstream API may still return source_metadata for backward
+    // compat, but the BFF VM must NOT include it. Simulate an upstream
+    // response with secret metadata and verify the VM is clean.
+    const upstreamWithSecret = {
+      items: [
+        {
+          record_id: "rr_secret",
+          title: "Secret Record",
+          created_at: "2026-07-01T00:00:00Z",
+          source_type: "text",
+          product_state: "readable_enhancing" as const,
+          readiness_state: "article_ready" as const,
+          last_event_sequence: 1,
+          last_opened_at: null,
+          display_title: "Secret Record",
+          source_label: "粘贴文本",
+          // Extra field not in DTO — simulates upstream still returning it
+          source_metadata: {
+            secret_api_key: "sk-1234567890abcdef",
+            internal_url: "https://internal.example.com/secret",
+            nested: { deep: "hidden_value" },
+          },
+        },
+      ],
+      total: 1,
+      limit: 20,
+    };
+    vi.mocked(listUpstreamReadingRecords).mockResolvedValue({
+      ok: true,
+      data: upstreamWithSecret as unknown as ReadingRecordListResponseDto,
+    });
+
+    const result = await getReadingRecordListFromWeb();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.items).toHaveLength(1);
+      const vm = result.items[0];
+
+      // VM must not have sourceMetadata field
+      expect("sourceMetadata" in vm).toBe(false);
+      expect("source_metadata" in vm).toBe(false);
+
+      // No VM value should contain the secret keys or values
+      const vmValues = Object.values(vm as unknown as Record<string, unknown>);
+      for (const value of vmValues) {
+        const str = typeof value === "string" ? value : JSON.stringify(value);
+        expect(str).not.toContain("secret_api_key");
+        expect(str).not.toContain("sk-1234567890abcdef");
+        expect(str).not.toContain("internal_url");
+        expect(str).not.toContain("internal.example.com");
+        expect(str).not.toContain("nested");
+        expect(str).not.toContain("hidden_value");
+      }
+    }
+  });
+
   it("keeps the new reading-records BFF free of legacy reader routing", () => {
     const source = readFileSync(
       resolve(process.cwd(), "src/services/bff/reading-records.ts"),
@@ -202,11 +267,12 @@ describe("reading-records BFF list", () => {
             title: "X",
             created_at: "2026-06-20T00:00:00Z",
             source_type: "text",
-            source_metadata: {},
             product_state: "processing",
             readiness_state: "submitted",
             last_event_sequence: 5,
             last_opened_at: null,
+            display_title: "X",
+            source_label: "粘贴文本",
           },
         ],
         total: 1,

@@ -23,14 +23,23 @@ export type ReadingRecordsBffError = {
 export interface ReadingRecordListItemVm {
   readingRecordId: string;
   readerUrl: string;
+  /**
+   * S2.5: Mapped from the backend-decided `display_title` (not the raw
+   * `title` field) so the UI always shows the stable identity string.
+   */
   title: string;
   createdAt: string;
   sourceType: string;
-  sourceMetadata: Record<string, unknown>;
   productState: ReadingRecordProductState;
   readinessState: ReadingRecordReadinessState;
   lastEventSequence: number;
   lastOpenedAt: string | null;
+  /**
+   * S2.5: Backend-controlled friendly source label (e.g. "粘贴文本",
+   * "上传文件 · report.pdf"). Shown as the second line in Library rows.
+   * Raw source_metadata is NOT exposed to the browser (P1-2 fix).
+   */
+  sourceLabel: string;
 }
 
 export type ReadingRecordListResult =
@@ -109,14 +118,16 @@ export async function getReadingRecordListFromWeb(
     items: data.items.map((item) => ({
       readingRecordId: item.record_id,
       readerUrl: appReadingRecordRoute(item.record_id),
-      title: item.title ?? "未命名解读",
+      // S2.5: Use the backend-decided display_title instead of the raw
+      // title field. The backend guarantees display_title is non-empty.
+      title: item.display_title,
       createdAt: item.created_at,
       sourceType: item.source_type,
-      sourceMetadata: item.source_metadata,
       productState: item.product_state,
       readinessState: item.readiness_state,
       lastEventSequence: item.last_event_sequence,
       lastOpenedAt: item.last_opened_at,
+      sourceLabel: item.source_label,
     })),
     total: data.total,
     limit: data.limit,

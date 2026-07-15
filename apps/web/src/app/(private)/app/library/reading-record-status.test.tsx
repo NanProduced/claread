@@ -24,11 +24,11 @@ function record(
     title: "t",
     createdAt: "2026-06-22T00:00:00Z",
     sourceType: "text",
-    sourceMetadata: {},
     productState,
     readinessState: "article_ready",
     lastEventSequence: 1,
     lastOpenedAt: null,
+    sourceLabel: "粘贴文本",
     ...overrides,
   };
 }

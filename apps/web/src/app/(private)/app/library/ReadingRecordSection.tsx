@@ -18,6 +18,13 @@ function formatDate(value: string): string {
   return new Date(value).toLocaleDateString("zh-CN");
 }
 
+function timeLabelFor(item: ReadingRecordListItemVm): string {
+  if (item.lastOpenedAt) {
+    return `上次阅读 ${formatDate(item.lastOpenedAt)}`;
+  }
+  return `导入于 ${formatDate(item.createdAt)}`;
+}
+
 const NEEDS_ATTENTION_PRODUCT_STATES = [
   "needs_confirmation",
   "action_required",
@@ -176,9 +183,10 @@ export function ReadingRecordSection({
         <div className="min-w-0 flex-1">
           <p className={titleClass}>{item.title}</p>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.7rem] text-muted">
+            <span>{item.sourceLabel}</span>
             <span className="flex items-center gap-1">
               <Calendar className="h-3 w-3 opacity-60" />
-              {formatDate(item.createdAt)}
+              {timeLabelFor(item)}
             </span>
             <span>{statusLabelFor(item)}</span>
           </div>
