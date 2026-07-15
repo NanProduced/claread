@@ -2,7 +2,34 @@ import "server-only";
 
 export type UpstreamResult<T> =
   | { ok: true; data: T }
-  | { ok: false; status: number; message: string; payload?: unknown };
+  | {
+      ok: false;
+      status: number;
+      message: string;
+      /**
+       * Raw parsed body of the upstream response (string for non-JSON bodies,
+       * parsed value for JSON bodies). Kept for legacy BFF adapters that
+       * inspect the upstream error envelope as `unknown`.
+       */
+      payload?: unknown;
+      /**
+       * Parsed JSON object of the upstream error response, when the body
+       * is JSON-parseable AND a plain object. Used by BFF adapters that
+       * need the upstream's typed error shape (e.g. S4 candidate recovery
+       * conflict resolution). Always `undefined` for the success case,
+       * for non-2xx responses whose body is not a plain JSON object, and
+       * for non-JSON upstream bodies.
+       */
+      body?: unknown;
+    };
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
 
 export interface FastApiFetchOptions extends RequestInit {
   sessionToken?: string;
@@ -71,6 +98,7 @@ export async function fastApiFetch<T>(
         status: response.status,
         message: getErrorMessage(payload, response.statusText),
         payload,
+        body: isPlainObject(payload) ? payload : undefined,
       };
     }
 

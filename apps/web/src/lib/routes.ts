@@ -71,6 +71,10 @@ export function appReadingRecordRoute(recordId: string): Route {
   return `${appReadingRecordRouteBase}/${encodeURIComponent(recordId)}` as Route;
 }
 
+export function appReadResumeCandidateRoute(recordId: string): Route {
+  return `${appReadRoute}?resume_candidate=${encodeURIComponent(recordId)}` as Route;
+}
+
 function pathWithoutSearch(pathname: string): string {
   return pathname.split(/[?#]/, 1)[0] || pathname;
 }

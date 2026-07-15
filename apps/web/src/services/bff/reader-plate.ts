@@ -8,6 +8,7 @@ import {
   ensureUpstreamReaderArticleRagIndex,
   getUpstreamReaderArticleRagIndexStatus,
   getUpstreamReaderArtifactPipelineStatus,
+  getUpstreamReaderCandidateDocument,
   getUpstreamReaderPlateSnapshot,
   getUpstreamReaderStableDocument,
   initUpstreamReaderSourceArtifactUpload,
@@ -37,6 +38,13 @@ import type {
   ReaderArtifactPipelineStatusResponseDto,
   ReaderCandidateDocumentConfirmRequestDto,
   ReaderCandidateDocumentConfirmResponseDto,
+  ReaderCandidateDocumentConflictBody,
+  ReaderCandidateDocumentNotFoundBody,
+  ReaderCandidateDocumentOutlineItem,
+  ReaderCandidateDocumentPreview,
+  ReaderCandidateDocumentPreviewMode,
+  ReaderCandidateDocumentReadResponse,
+  ReaderCandidateDocumentRiskItem,
   ReaderEventPollResponseDto,
   ReaderInputAdapterSourceTypeDto,
   ReaderPlainTextSubmitResponseDto,
@@ -64,8 +72,12 @@ export type ReaderPlateBffError = {
     | "upstream_error"
     | "empty_text"
     | "invalid_input"
-    | "candidate_conflict";
+    | "candidate_conflict"
+    | "candidate_not_found"
+    | "candidate_conflict_open_reader"
+    | "candidate_conflict_return_to_library";
   message: string;
+  recordId?: string;
 };
 
 export type ReaderPlateSubmitResult =
@@ -120,6 +132,10 @@ export type ReaderStableDocumentResult =
   | ({ ok: true } & ReaderStableDocumentResponseDto)
   | ReaderPlateBffError;
 
+export type ReaderCandidateDocumentReadResult =
+  | ({ ok: true } & ReaderCandidateDocumentReadResponse)
+  | ReaderPlateBffError;
+
 export type ReaderArticleRagIndexStatusResult =
   | ({ ok: true } & ReaderArticleRagIndexStatusSafeDto)
   | ReaderPlateBffError;
@@ -138,6 +154,29 @@ function invalidInput(message: string): ReaderPlateBffError {
 
 function candidateConflict(message: string): ReaderPlateBffError {
   return { ok: false, status: 409, code: "candidate_conflict", message };
+}
+
+function candidateNotFound(message: string): ReaderPlateBffError {
+  return { ok: false, status: 404, code: "candidate_not_found", message };
+}
+
+function candidateConflictOpenReader(message: string, recordId: string): ReaderPlateBffError {
+  return {
+    ok: false,
+    status: 409,
+    code: "candidate_conflict_open_reader",
+    message,
+    recordId,
+  };
+}
+
+function candidateConflictReturnToLibrary(message: string): ReaderPlateBffError {
+  return {
+    ok: false,
+    status: 409,
+    code: "candidate_conflict_return_to_library",
+    message,
+  };
 }
 
 function upstreamError(status: number, message: string): ReaderPlateBffError {
@@ -714,6 +753,174 @@ export async function getReaderStableDocumentFromWeb(
   }
 
   return { ok: true, ...upstreamResult.data };
+}
+
+// ---------------------------------------------------------------------------
+// Candidate document read (S4: input-page recovery)
+//
+// Runtime sanitizer: TypeScript types are erased at runtime, so the BFF
+// explicitly projects the 11 declared top-level fields and the preview
+// subtree from the upstream payload. Any extra keys (e.g. `source_text`,
+// `blocks_json`, `canonical_text_preview`, `original_input_id`) that the
+// upstream might leak in the future are dropped before the response reaches
+// the browser.
+// ---------------------------------------------------------------------------
+
+const READ_CANDIDATE_DOCUMENT_ALLOWED_TOP_KEYS = [
+  "record_id",
+  "candidate_document_id",
+  "record_generation",
+  "status",
+  "title",
+  "preview",
+  "source_type",
+  "filename",
+  "source_label",
+  "created_at",
+  "updated_at",
+] as const;
+
+const READ_PREVIEW_ALLOWED_KEYS = [
+  "preview_mode",
+  "preview_text",
+  "is_truncated",
+  "total_char_count",
+  "document_outline",
+  "risk_items",
+] as const;
+
+const READ_OUTLINE_ITEM_ALLOWED_KEYS = [
+  "order_index",
+  "block_type_label",
+  "heading_text",
+  "char_count",
+] as const;
+
+const READ_RISK_ITEM_ALLOWED_KEYS = [
+  "risk_kind",
+  "user_message",
+  "severity",
+] as const;
+
+const READ_PREVIEW_MODE_VALUES: ReadonlySet<ReaderCandidateDocumentPreviewMode> =
+  new Set(["full_text", "truncated_preview", "outline_only"]);
+
+const safeEmptyPreview: ReaderCandidateDocumentPreview = {
+  preview_mode: "outline_only",
+  preview_text: "",
+  is_truncated: false,
+  total_char_count: 0,
+  document_outline: [],
+  risk_items: [],
+};
+
+function pickAllowed<T>(
+  value: unknown,
+  allowedKeys: readonly string[],
+): T | null {
+  if (!value || typeof value !== "object") return null;
+  const source = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of allowedKeys) {
+    out[key] = source[key];
+  }
+  return out as T;
+}
+
+function sanitizePreview(value: unknown): ReaderCandidateDocumentPreview {
+  const obj = pickAllowed<Record<string, unknown>>(
+    value,
+    READ_PREVIEW_ALLOWED_KEYS,
+  );
+  if (!obj) return { ...safeEmptyPreview };
+
+  const previewMode: ReaderCandidateDocumentPreviewMode =
+    typeof obj.preview_mode === "string" &&
+    READ_PREVIEW_MODE_VALUES.has(obj.preview_mode as ReaderCandidateDocumentPreviewMode)
+      ? (obj.preview_mode as ReaderCandidateDocumentPreviewMode)
+      : "outline_only";
+
+  return {
+    preview_mode: previewMode,
+    preview_text: typeof obj.preview_text === "string" ? obj.preview_text : "",
+    is_truncated: Boolean(obj.is_truncated),
+    total_char_count:
+      typeof obj.total_char_count === "number" ? obj.total_char_count : 0,
+    document_outline: Array.isArray(obj.document_outline)
+      ? (obj.document_outline as unknown[])
+          .map((item) =>
+            pickAllowed<ReaderCandidateDocumentOutlineItem>(
+              item,
+              READ_OUTLINE_ITEM_ALLOWED_KEYS,
+            ),
+          )
+          .filter((item): item is ReaderCandidateDocumentOutlineItem => item !== null)
+      : [],
+    risk_items: Array.isArray(obj.risk_items)
+      ? (obj.risk_items as unknown[])
+          .map((item) =>
+            pickAllowed<ReaderCandidateDocumentRiskItem>(
+              item,
+              READ_RISK_ITEM_ALLOWED_KEYS,
+            ),
+          )
+          .filter((item): item is ReaderCandidateDocumentRiskItem => item !== null)
+      : [],
+  };
+}
+
+export async function getReaderCandidateDocumentFromWeb(
+  recordId: string,
+): Promise<ReaderCandidateDocumentReadResult> {
+  if (!recordId) {
+    return invalidInput("缺少 record_id。");
+  }
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const upstreamResult = await getUpstreamReaderCandidateDocument(
+    recordId,
+    sessionResult.sessionToken,
+  );
+
+  if (upstreamResult.ok) {
+    const raw = upstreamResult.data as unknown as Record<string, unknown>;
+    const top = pickAllowed<ReaderCandidateDocumentReadResponse>(
+      raw,
+      READ_CANDIDATE_DOCUMENT_ALLOWED_TOP_KEYS,
+    );
+    if (!top) {
+      return upstreamError(502, "upstream returned no data");
+    }
+    return {
+      ok: true,
+      ...top,
+      preview: sanitizePreview(raw?.preview),
+    };
+  }
+
+  const body = upstreamResult.body;
+
+  if (upstreamResult.status === 404) {
+    const notFound = body as ReaderCandidateDocumentNotFoundBody | undefined;
+    return candidateNotFound(
+      notFound?.message?.trim() || "未找到可继续确认的内容。",
+    );
+  }
+
+  if (upstreamResult.status === 409) {
+    const conflict = body as ReaderCandidateDocumentConflictBody | undefined;
+    if (conflict?.code === "record_state_advanced" && conflict.resolution === "open_reader") {
+      return candidateConflictOpenReader(conflict.message, recordId);
+    }
+    // multiple_ready_candidates OR return_to_library → user lands on library
+    return candidateConflictReturnToLibrary("这篇内容当前无法继续确认。");
+  }
+
+  return upstreamError(upstreamResult.status, upstreamResult.message);
 }
 
 // ---------------------------------------------------------------------------

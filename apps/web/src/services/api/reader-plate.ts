@@ -8,6 +8,7 @@ import type {
   ReaderArtifactPipelineStatusResponseDto,
   ReaderCandidateDocumentConfirmRequestDto,
   ReaderCandidateDocumentConfirmResponseDto,
+  ReaderCandidateDocumentReadResponse,
   ReaderEventPollResponseDto,
   ReaderPlainTextSubmitRequestDto,
   ReaderPlainTextSubmitResponseDto,
@@ -200,6 +201,20 @@ export function getUpstreamReaderStableDocument(
 ): Promise<UpstreamResult<ReaderStableDocumentResponseDto>> {
   return fastApiFetch<ReaderStableDocumentResponseDto>(
     `/reader/records/${encodeURIComponent(recordId)}/stable-document`,
+    { sessionToken },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Candidate document read (S4: input-page recovery)
+// ---------------------------------------------------------------------------
+
+export function getUpstreamReaderCandidateDocument(
+  recordId: string,
+  sessionToken: string,
+): Promise<UpstreamResult<ReaderCandidateDocumentReadResponse>> {
+  return fastApiFetch<ReaderCandidateDocumentReadResponse>(
+    `/reader/records/${encodeURIComponent(recordId)}/candidate-document`,
     { sessionToken },
   );
 }

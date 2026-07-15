@@ -20,10 +20,11 @@ import {
   type ReaderRecordReadingVariant,
   normalizeReaderRecordReadingDefaults,
 } from "@/lib/reading-defaults";
-import { appReadingRecordRoute } from "@/lib/routes";
+import { appLibraryRoute, appReadingRecordRoute } from "@/lib/routes";
 import type { ReaderUnifiedInputSubmitResponseDto } from "@/types/api/reader-plate";
 import type {
   ReaderArtifactPipelineStatusResult,
+  ReaderCandidateDocumentReadResult,
   ReaderPlateBffError,
   ReaderSourceArtifactSubmitInputResult,
   ReaderSourceArtifactUploadCompleteResult,
@@ -56,7 +57,18 @@ type SubmitState =
       kind: "rejected";
       reasons: string[];
       preview: string;
-    };
+    }
+  | { kind: "resume-not-found"; recordId: string; message: string }
+  | { kind: "resume-return-to-library"; message: string }
+  | { kind: "resume-failed"; recordId: string; message: string };
+
+type ReaderCandidateResumeErrorCode =
+  | "candidate_not_found"
+  | "candidate_conflict_open_reader"
+  | "candidate_conflict_return_to_library"
+  | "upstream_unavailable";
+
+type ReaderCandidateResumePayload = ReaderCandidateDocumentReadResult;
 
 type UnifiedSubmitPayload =
   | ({ ok: true } & ReaderUnifiedInputSubmitResponseDto)
@@ -859,6 +871,14 @@ export function AnalyzeSubmitForm({
   const isReadyToSubmit = Boolean(attachedSource || text.trim().length > 0);
 
   useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const resumeRecordId = searchParams.get("resume_candidate")?.trim() ?? "";
+
+    if (resumeRecordId) {
+      void runResumeFlow(resumeRecordId);
+      return;
+    }
+
     const timer = window.setTimeout(() => {
       const pending = readPendingCandidate();
       if (pending) {
@@ -1284,6 +1304,76 @@ export function AnalyzeSubmitForm({
     }
   }
 
+  async function runResumeFlow(recordId: string) {
+    try {
+      const response = await fetch(
+        `/api/web/reader-plate/records/${encodeURIComponent(recordId)}/candidate-document`,
+        { method: "GET" },
+      );
+      const payload = (await response.json()) as ReaderCandidateResumePayload;
+
+      if (payload.ok) {
+        const candidate: PendingCandidate = {
+          readingRecordId: payload.record_id,
+          candidateDocumentId: payload.candidate_document_id,
+          originalInputId: null,
+          inputSnapshot: null,
+          filename: payload.filename ?? null,
+          canonicalTextPreview:
+            payload.preview.preview_text?.trim() ||
+            payload.title?.trim() ||
+            null,
+          documentOutline: payload.preview.document_outline ?? [],
+          riskItems: payload.preview.risk_items ?? [],
+          previewMode: payload.preview.preview_mode,
+          totalCharCount: payload.preview.total_char_count,
+          origin: "resume",
+          savedAt: new Date().toISOString(),
+        };
+        // Do NOT save to localStorage; the BFF is the source of truth.
+        // Do NOT call setText() — resume mode must not pre-fill the textarea.
+        setState({ kind: "candidate", candidate });
+        setCandidateDialogOpen(true);
+        return;
+      }
+
+      handleResumeError(recordId, payload);
+    } catch {
+      setState({
+        kind: "resume-failed",
+        recordId,
+        message: "加载失败，请稍后重试。",
+      });
+    }
+  }
+
+  function handleResumeError(
+    recordId: string,
+    payload: { status: number; code?: string; message?: string },
+  ) {
+    const message = payload.message?.trim() || "加载失败，请稍后重试。";
+    switch (payload.code) {
+      case "candidate_conflict_open_reader":
+        router.push(appReadingRecordRoute(recordId));
+        return;
+      case "candidate_conflict_return_to_library":
+        setState({
+          kind: "resume-return-to-library",
+          message: "这篇内容当前无法继续确认。",
+        });
+        return;
+      case "candidate_not_found":
+        setState({
+          kind: "resume-not-found",
+          recordId,
+          message: "未找到可继续确认的内容。",
+        });
+        return;
+      default:
+        setState({ kind: "resume-failed", recordId, message });
+    }
+  }
+
   async function handleSubmit() {
     if (isWaiting) {
       return;
@@ -1609,7 +1699,7 @@ export function AnalyzeSubmitForm({
         </div>
       </div>
 
-      {state.kind !== "idle" && !isWaiting && state.kind !== "candidate" && state.kind !== "rejected" ? (
+      {state.kind !== "idle" && !isWaiting && state.kind !== "candidate" && state.kind !== "rejected" && state.kind !== "resume-not-found" && state.kind !== "resume-return-to-library" && state.kind !== "resume-failed" ? (
         <div
           className={`mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 text-[0.82rem] font-medium lg:mx-12 ${
             state.kind === "error" ? "text-red-700" : "text-lens-blue"
@@ -1692,6 +1782,7 @@ export function AnalyzeSubmitForm({
             candidate={state.candidate}
             open={isCandidateDialogOpen}
             onOpenChange={setCandidateDialogOpen}
+            mode={state.candidate.origin === "resume" ? "resume" : "submit"}
             onConfirmed={(candidate) => {
               router.push(appReadingRecordRoute(candidate.readingRecordId));
             }}
@@ -1737,6 +1828,66 @@ export function AnalyzeSubmitForm({
               onClick={() => setState({ kind: "idle" })}
             >
               重新编辑
+            </Button>
+          </div>
+        </section>
+      ) : null}
+
+      {state.kind === "resume-not-found" ? (
+        <section
+          role="status"
+          aria-live="polite"
+          className="mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-red-700 lg:mx-12"
+        >
+          <p className="font-semibold">{state.message}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => router.push(appLibraryRoute)}
+            >
+              前往阅读记录
+            </Button>
+          </div>
+        </section>
+      ) : null}
+
+      {state.kind === "resume-return-to-library" ? (
+        <section
+          role="status"
+          aria-live="polite"
+          className="mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-red-700 lg:mx-12"
+        >
+          <p className="font-semibold">{state.message}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => router.push(appLibraryRoute)}
+            >
+              前往阅读记录
+            </Button>
+          </div>
+        </section>
+      ) : null}
+
+      {state.kind === "resume-failed" ? (
+        <section
+          role="status"
+          aria-live="polite"
+          className="mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-red-700 lg:mx-12"
+        >
+          <p className="font-semibold">{state.message}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => void runResumeFlow(state.recordId)}
+            >
+              重试加载
             </Button>
           </div>
         </section>

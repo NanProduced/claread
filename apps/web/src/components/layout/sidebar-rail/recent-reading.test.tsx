@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SidebarRail } from "./index";
 import type { ReadingRecordListItemVm } from "@/services/bff/reading-records";
-import { appLibraryRoute, appReadingRecordRoute } from "@/lib/routes";
+import {
+  appLibraryRoute,
+  appReadingRecordRoute,
+} from "@/lib/routes";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -76,6 +79,11 @@ describe("SidebarRail 最近阅读", () => {
     );
     render(<SidebarRail pathname="/app/library" recentRecords={items} />);
     expect(screen.getAllByRole("link", { name: /^R\d+$/ })).toHaveLength(10);
+    expect(
+      screen
+        .getAllByRole("link")
+        .some((link) => link.getAttribute("href")?.startsWith("/app/reader/")),
+    ).toBe(false);
   });
 
   it("shows a short status only for priority product states", () => {
@@ -85,11 +93,13 @@ describe("SidebarRail 最近阅读", () => {
         recentRecords={[
           makeRecord({
             readingRecordId: "rr_p",
+            readerUrl: appReadingRecordRoute("rr_p"),
             title: "Parsing",
             productState: "processing",
           }),
           makeRecord({
             readingRecordId: "rr_a",
+            readerUrl: appReadingRecordRoute("rr_a"),
             title: "Wait",
             productState: "action_required",
           }),
@@ -100,6 +110,7 @@ describe("SidebarRail 最近阅读", () => {
           }),
           makeRecord({
             readingRecordId: "rr_f",
+            readerUrl: appReadingRecordRoute("rr_f"),
             title: "Failed",
             productState: "failed",
           }),
@@ -117,6 +128,16 @@ describe("SidebarRail 最近阅读", () => {
     expect(screen.getByText("解析遇到问题")).toBeTruthy();
     // readable_enhancing must not show a status line.
     expect(screen.getByText("Ok").nextElementSibling?.textContent ?? "").toBe("");
+
+    for (const [title, recordId] of [
+      ["Parsing", "rr_p"],
+      ["Wait", "rr_a"],
+      ["Failed", "rr_f"],
+    ] as const) {
+      expect(screen.getByText(title).closest("a")?.getAttribute("href")).toBe(
+        appReadingRecordRoute(recordId),
+      );
+    }
   });
 
   it("does not show status line for readable_enhancing + coverage_complete (completed)", () => {
@@ -196,7 +217,7 @@ describe("SidebarRail 最近阅读", () => {
     expect(screen.queryByText("当前解析页")).toBeNull();
   });
 
-  it("needs_confirmation record is not clickable and shows status", () => {
+  it("needs_confirmation record links to resume confirmation and stays compact", () => {
     render(
       <SidebarRail
         pathname="/app/library"
@@ -209,6 +230,7 @@ describe("SidebarRail 最近阅读", () => {
           }),
           makeRecord({
             readingRecordId: "rr_ok",
+            readerUrl: appReadingRecordRoute("rr_ok"),
             title: "ReadToGo",
             productState: "readable_enhancing",
             readinessState: "article_ready",
@@ -216,15 +238,25 @@ describe("SidebarRail 最近阅读", () => {
         ]}
       />,
     );
-    // needs_confirmation row: no <a href>, no arrow, shows "需要确认"
+    // needs_confirmation row: resume link, no CTA pill or arrow, shows "需要确认"
     const confirmRow = screen.getByText("NeedsConfirm");
     const confirmLi = confirmRow.closest("li");
-    expect(confirmLi?.querySelector("a")).toBeNull();
+    expect(confirmLi?.querySelector("a")?.getAttribute("href")).toBe(
+      "/app/read?resume_candidate=rr_confirm",
+    );
     expect(screen.getByText("需要确认")).toBeTruthy();
-    // readable_enhancing row: has <a href>
+    expect(screen.queryByText("继续确认")).toBeNull();
+    expect(confirmLi?.querySelector("svg.lucide-arrow-right")).toBeNull();
+    expect(screen.queryByText("粘贴文本")).toBeNull();
+    expect(screen.queryByText(/上次阅读/)).toBeNull();
+    expect(screen.queryByText(/导入于/)).toBeNull();
+
+    // Other states still use the new Reader route.
     const okRow = screen.getByText("ReadToGo");
     const okLi = okRow.closest("li");
-    expect(okLi?.querySelector("a")).toBeTruthy();
+    expect(okLi?.querySelector("a")?.getAttribute("href")).toBe(
+      appReadingRecordRoute("rr_ok"),
+    );
   });
 
   it("does not show source label or date in the sidebar (compact display)", () => {

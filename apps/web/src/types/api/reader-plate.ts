@@ -1081,6 +1081,97 @@ export interface ReaderCandidateDocumentConfirmResponseDto {
 }
 
 // ---------------------------------------------------------------------------
+// S4: Candidate Recovery read DTO (mirror of upstream ReaderCandidateDocument*)
+// ---------------------------------------------------------------------------
+
+export type ReaderCandidateDocumentPreviewMode =
+  | "full_text"
+  | "truncated_preview"
+  | "outline_only";
+
+export type ReaderCandidateDocumentBlockTypeLabel =
+  | "heading"
+  | "paragraph"
+  | "list"
+  | "quote"
+  | "code"
+  | "other";
+
+export type ReaderCandidateDocumentRiskKind =
+  | "low_confidence_ocr"
+  | "short_content"
+  | "language_mixed"
+  | "encoding_warning"
+  | "structure_fragmented"
+  | "other";
+
+export type ReaderCandidateDocumentRiskSeverity = "info" | "warning";
+
+export type ReaderCandidateDocumentSourceType =
+  | "plain_text"
+  | "markdown"
+  | "file_ref"
+  | "url"
+  | "image_ref";
+
+export interface ReaderCandidateDocumentOutlineItem {
+  order_index: number;
+  block_type_label: ReaderCandidateDocumentBlockTypeLabel;
+  heading_text: string | null;
+  char_count: number;
+}
+
+export interface ReaderCandidateDocumentRiskItem {
+  risk_kind: ReaderCandidateDocumentRiskKind;
+  user_message: string;
+  severity: ReaderCandidateDocumentRiskSeverity;
+}
+
+export interface ReaderCandidateDocumentPreview {
+  preview_mode: ReaderCandidateDocumentPreviewMode;
+  preview_text: string;
+  is_truncated: boolean;
+  total_char_count: number;
+  document_outline: ReaderCandidateDocumentOutlineItem[];
+  risk_items: ReaderCandidateDocumentRiskItem[];
+}
+
+export interface ReaderCandidateDocumentReadResponse {
+  record_id: string;
+  candidate_document_id: string;
+  record_generation: number;
+  status: "ready";
+  title: string | null;
+  preview: ReaderCandidateDocumentPreview;
+  source_type: ReaderCandidateDocumentSourceType;
+  filename: string | null;
+  source_label: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ReaderCandidateDocumentConflictCode =
+  | "record_state_advanced"
+  | "multiple_ready_candidates";
+
+export type ReaderCandidateDocumentConflictResolution =
+  | "open_reader"
+  | "return_to_library";
+
+export interface ReaderCandidateDocumentConflictBody {
+  ok: false;
+  code: ReaderCandidateDocumentConflictCode;
+  resolution: ReaderCandidateDocumentConflictResolution;
+  message: string;
+}
+
+export interface ReaderCandidateDocumentNotFoundBody {
+  ok: false;
+  code: "not_found";
+  message: string;
+}
+
+// ---------------------------------------------------------------------------
 // Stable Document projection — GET /reader/records/{record_id}/stable-document
 //
 // Mirrors `ReaderStableDocument*` in

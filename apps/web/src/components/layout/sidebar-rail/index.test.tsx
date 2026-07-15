@@ -53,6 +53,65 @@ afterEach(() => {
 });
 
 describe("SidebarRail z-index contract", () => {
+  it("links needs_confirmation recent reading to the candidate resume route", () => {
+    render(
+      <SidebarRail
+        pathname="/app/library"
+        sidebarMode="locked"
+        recentRecords={[
+          {
+            readingRecordId: "record/a?b",
+            readerUrl: "/app/reader-record/record%2Fa%3Fb",
+            title: "待确认文章",
+            createdAt: "2026-07-14T00:00:00Z",
+            sourceType: "text",
+            productState: "needs_confirmation",
+            readinessState: "candidate_base_ready",
+            lastEventSequence: 1,
+            lastOpenedAt: null,
+            sourceLabel: "粘贴文本",
+          },
+        ]}
+      />,
+    );
+
+    const link = screen.getByText("待确认文章").closest("a");
+    expect(link?.getAttribute("href")).toBe(
+      "/app/read?resume_candidate=record%2Fa%3Fb",
+    );
+    expect(screen.getByText("需要确认")).toBeTruthy();
+    expect(screen.queryByText("继续确认")).toBeNull();
+    expect(screen.queryByText("粘贴文本")).toBeNull();
+    expect(screen.queryByText(/2026/)).toBeNull();
+    expect(screen.getByText("更多").closest("a")?.getAttribute("href")).toBe(
+      "/app/library",
+    );
+  });
+
+  it("keeps recent reading capped at ten items", () => {
+    render(
+      <SidebarRail
+        pathname="/app/library"
+        sidebarMode="locked"
+        recentRecords={Array.from({ length: 11 }, (_, index) => ({
+          readingRecordId: `record_${index}`,
+          readerUrl: `/app/reader-record/record_${index}`,
+          title: `文章 ${index}`,
+          createdAt: "2026-07-14T00:00:00Z",
+          sourceType: "text" as const,
+          productState: "readable_enhancing" as const,
+          readinessState: "article_ready" as const,
+          lastEventSequence: index,
+          lastOpenedAt: null,
+          sourceLabel: "粘贴文本",
+        }))}
+      />,
+    );
+
+    expect(screen.getByText("文章 9")).toBeTruthy();
+    expect(screen.queryByText("文章 10")).toBeNull();
+  });
+
   it("uses the semantic shell-navigation z-index for the overlay surface in all sidebar states", () => {
     const { container, rerender } = render(
       <SidebarRail pathname="/app/reader-record/record_1" sidebarMode="closed" />,

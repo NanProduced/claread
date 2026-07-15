@@ -3,6 +3,7 @@
 import { AlertTriangle, ArrowRight, Calendar, LogIn, Plus } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/primitives/button";
+import { appReadResumeCandidateRoute } from "@/lib/routes";
 import {
   readingRecordStatusKey,
   readingRecordStatusLabel,
@@ -37,12 +38,10 @@ function statusLabelFor(item: ReadingRecordListItemVm): string {
   );
 }
 
-function rowIsClickable(item: ReadingRecordListItemVm): boolean {
-  return item.productState !== "needs_confirmation";
-}
-
 function recordCtaLabel(item: ReadingRecordListItemVm): string | null {
   switch (item.productState) {
+    case "needs_confirmation":
+      return "继续确认";
     case "action_required":
       return "去处理";
     case "failed":
@@ -50,6 +49,12 @@ function recordCtaLabel(item: ReadingRecordListItemVm): string | null {
     default:
       return null;
   }
+}
+
+function recordHrefFor(item: ReadingRecordListItemVm): string {
+  return item.productState === "needs_confirmation"
+    ? appReadResumeCandidateRoute(item.readingRecordId)
+    : item.readerUrl;
 }
 
 export function ReadingRecordSection({
@@ -152,21 +157,11 @@ export function ReadingRecordSection({
   const { priorityTop, fullListItems } = splitForRender(readingRecords);
 
   const renderRow = (item: ReadingRecordListItemVm) => {
-    const clickable = rowIsClickable(item);
-    const ctaLabel = clickable ? recordCtaLabel(item) : null;
+    const ctaLabel = recordCtaLabel(item);
+    const titleClass =
+      "truncate font-headline text-[1.08rem] font-semibold text-ink transition-colors group-hover:text-lens-blue";
 
-    const titleClass = clickable
-      ? "truncate font-headline text-[1.08rem] font-semibold text-ink transition-colors group-hover:text-lens-blue"
-      : "truncate font-headline text-[1.08rem] font-semibold text-ink";
-
-    const trailing = !clickable ? (
-      <span
-        data-testid="library-needs-confirmation-note"
-        className="max-w-[60%] text-right text-[0.72rem] leading-snug text-muted"
-      >
-        这篇内容需要在提交时确认后才能开始阅读。
-      </span>
-    ) : ctaLabel ? (
+    const trailing = ctaLabel ? (
       <span className="inline-flex items-center gap-1.5 rounded-pill bg-lens-blue/10 px-3 py-1.5 text-[0.72rem] font-semibold tracking-[0.06em] text-lens-blue transition-all duration-200 group-hover:bg-lens-blue/15 group-hover:translate-x-[2px]">
         {ctaLabel}
         <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -190,27 +185,20 @@ export function ReadingRecordSection({
             </span>
             <span>{statusLabelFor(item)}</span>
           </div>
+          {item.productState === "needs_confirmation" ? (
+            <p className="mt-1 text-[0.72rem] leading-snug text-muted">
+              请确认已准备好的内容后开始阅读
+            </p>
+          ) : null}
         </div>
         {trailing}
       </div>
     );
 
-    if (!rowIsClickable(item)) {
-      return (
-        <li
-          key={item.readingRecordId}
-          aria-disabled="true"
-          title="请在原输入流程继续确认"
-        >
-          {inner}
-        </li>
-      );
-    }
-
     return (
       <li key={item.readingRecordId}>
         <Link
-          href={item.readerUrl}
+          href={recordHrefFor(item)}
           className="transition-colors hover:bg-black/[0.02]"
         >
           {inner}

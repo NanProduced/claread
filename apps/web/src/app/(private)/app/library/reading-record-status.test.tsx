@@ -132,7 +132,7 @@ describe("ReadingRecordSection priority region", () => {
   });
 });
 
-describe("needs_confirmation 不可点击", () => {
+describe("needs_confirmation 恢复入口", () => {
   it("renders aria-disabled=true and no anchor element in the priority region", () => {
     render(
       <ReadingRecordSection
@@ -150,25 +150,15 @@ describe("needs_confirmation 不可点击", () => {
       />,
     );
 
-    // 顶部 region: [a1, nc] — nc 必须不可点击
+    // 顶部 region: [a1, nc] — nc 进入新 Agentic 恢复确认流。
     const region = screen.getByTestId("library-needs-attention");
     const ncItem = within(region).getByText("NC").closest("li");
-    expect(ncItem?.getAttribute("aria-disabled")).toBe("true");
-    expect(ncItem?.getAttribute("title")).toBe("请在原输入流程继续确认");
-    expect(ncItem?.querySelector("a")).toBeNull();
-    // nc 渲染可见行内文案（不依赖 hover）
-    expect(
-      within(region).getByTestId("library-needs-confirmation-note").textContent,
-    ).toContain("这篇内容需要在提交时确认后才能开始阅读");
-    // nc 不渲染 "去处理" CTA 胶囊
-    expect(within(ncItem as HTMLElement).queryByText("去处理")).toBeNull();
-    // nc 不渲染右箭头图标（aria-hidden 的 lucide svg）
-    expect(
-      within(ncItem as HTMLElement)
-        .queryAllByRole("img", { hidden: true })
-        .filter((el) => el.tagName.toLowerCase() === "svg" && el.classList.contains("lucide-arrow-right"))
-        .length,
-    ).toBe(0);
+    expect(ncItem?.querySelector("a")?.getAttribute("href")).toBe(
+      "/app/read?resume_candidate=nc",
+    );
+    expect(within(ncItem as HTMLElement).getByText("需要确认")).toBeTruthy();
+    expect(within(ncItem as HTMLElement).getByText("请确认已准备好的内容后开始阅读")).toBeTruthy();
+    expect(within(ncItem as HTMLElement).getByText("继续确认")).toBeTruthy();
 
     // a1 仍可点击
     const a1Item = within(region).getByText("A1").closest("li");
@@ -209,21 +199,17 @@ describe("needs_confirmation 不可点击", () => {
     const regionItems = region.querySelectorAll("li");
     expect(regionItems.length).toBe(3);
 
-    // 主列表 = [nc]（非可点击）
+    // 主列表 = [nc]，仍进入新 Agentic 恢复确认流。
     const uls = document.querySelectorAll("section ul");
     const mainList = uls[uls.length - 1] as HTMLElement;
     const mainItems = mainList.querySelectorAll("li");
     expect(mainItems.length).toBe(1);
     const ncItem = mainItems[0];
-    expect(ncItem.getAttribute("aria-disabled")).toBe("true");
-    expect(ncItem.getAttribute("title")).toBe("请在原输入流程继续确认");
-    expect(ncItem.querySelector("a")).toBeNull();
-    // 主列表里的 nc 仍渲染可见行内文案
-    expect(
-      within(ncItem).getByTestId("library-needs-confirmation-note").textContent,
-    ).toContain("这篇内容需要在提交时确认后才能开始阅读");
-    // 主列表里的 nc 没有 "去处理" CTA 胶囊
-    expect(within(ncItem).queryByText("去处理")).toBeNull();
+    expect(ncItem.querySelector("a")?.getAttribute("href")).toBe(
+      "/app/read?resume_candidate=nc",
+    );
+    expect(within(ncItem).getByText("请确认已准备好的内容后开始阅读")).toBeTruthy();
+    expect(within(ncItem).getByText("继续确认")).toBeTruthy();
   });
 });
 

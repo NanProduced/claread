@@ -172,7 +172,7 @@ describe("ReadingRecordSection", () => {
     expect(link?.getAttribute("href")).toBe("/app/reader-record/reading_record_1");
   });
 
-  it("renders needs_confirmation rows as non-clickable with visible inline copy (no CTA pill)", () => {
+  it("renders needs_confirmation rows as resume links with approved copy", () => {
     render(
       <ReadingRecordSection
         readingRecords={[
@@ -192,24 +192,23 @@ describe("ReadingRecordSection", () => {
 
     // needs_confirmation 行在顶部 region 渲染 1 次；P2 dedup 后主列表中不再重复
     const ncRow = screen.getByText("First Reading").closest("li");
-    expect(ncRow?.getAttribute("aria-disabled")).toBe("true");
-    expect(ncRow?.getAttribute("title")).toBe("请在原输入流程继续确认");
-    // needs_confirmation 行无 <a> 元素
-    expect(ncRow?.querySelector("a")).toBeNull();
-    // needs_confirmation 行无 "去处理" CTA 胶囊
-    expect(within(ncRow as HTMLElement).queryByText("去处理")).toBeNull();
-    // needs_confirmation 行包含可见行内文案（不依赖 hover）
+    expect(ncRow?.querySelector("a")?.getAttribute("href")).toBe(
+      "/app/read?resume_candidate=reading_record_1",
+    );
+    expect(within(ncRow as HTMLElement).getByText("需要确认")).toBeTruthy();
     expect(
-      within(ncRow as HTMLElement).getByTestId("library-needs-confirmation-note")
-        .textContent,
-    ).toContain("这篇内容需要在提交时确认后才能开始阅读");
+      within(ncRow as HTMLElement).getByText("请确认已准备好的内容后开始阅读"),
+    ).toBeTruthy();
+    expect(within(ncRow as HTMLElement).getByText("继续确认")).toBeTruthy();
 
     // 顶部 region = [nc, action_required]；主列表为空
     const region = screen.getByTestId("library-needs-attention");
     expect(region.querySelectorAll("li").length).toBe(2);
-    // 顶部 region 内 nc 行无 "去处理" CTA
+    // 顶部 region 内 nc 行保持恢复链接，且不影响其他 priority 行
     const ncInRegion = within(region).getByText("First Reading").closest("li");
-    expect(within(ncInRegion as HTMLElement).queryByText("去处理")).toBeNull();
+    expect(ncInRegion?.querySelector("a")?.getAttribute("href")).toBe(
+      "/app/read?resume_candidate=reading_record_1",
+    );
 
     // action_required 行仍可点击 + 仍有 "去处理" CTA
     const arRow = within(region).getByText("Second Reading").closest("li");

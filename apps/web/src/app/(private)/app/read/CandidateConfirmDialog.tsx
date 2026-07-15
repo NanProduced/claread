@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/primitives/dialog";
 import { clearPendingCandidate, type PendingCandidate } from "./pending-candidate";
+import type { ReaderCandidateDocumentOutlineItem, ReaderCandidateDocumentRiskItem } from "@/types/api/reader-plate";
 
 interface CandidateConfirmDialogProps {
   candidate: PendingCandidate | null;
@@ -20,6 +21,7 @@ interface CandidateConfirmDialogProps {
   onConfirmed: (candidate: PendingCandidate) => void;
   onRestart: (candidate: PendingCandidate) => void;
   onRefresh?: () => void;
+  mode?: "submit" | "resume";
 }
 
 type ConfirmState =
@@ -57,6 +59,37 @@ function getSourceLabel(candidate: PendingCandidate | null): string {
   return "来源：粘贴文本";
 }
 
+const RISK_KIND_LABEL: Record<string, string> = {
+  low_confidence_ocr: "OCR 置信度偏低",
+  short_content: "正文过短",
+  language_mixed: "中英文混杂",
+  encoding_warning: "编码告警",
+  structure_fragmented: "结构碎片化",
+  other: "提示",
+};
+
+function describeRiskKind(kind: ReaderCandidateDocumentRiskItem["risk_kind"]): string {
+  return RISK_KIND_LABEL[kind] ?? "提示";
+}
+
+function hasOutlineOrRisk(candidate: PendingCandidate | null): boolean {
+  if (!candidate) return false;
+  if (candidate.previewMode === "outline_only") return true;
+  if (candidate.documentOutline && candidate.documentOutline.length > 0) return true;
+  if (candidate.riskItems && candidate.riskItems.length > 0) return true;
+  return false;
+}
+
+function getPreviewPresentation(candidate: PendingCandidate | null): { title: string; notice: string | null } {
+  const count = candidate?.totalCharCount;
+  const countSuffix = typeof count === "number" && count > 0
+    ? `（约 ${count.toLocaleString("zh-CN")} 字）`
+    : "";
+  if (candidate?.previewMode === "truncated_preview") return { title: "内容节选", notice: `内容较长，以下为节选${countSuffix}。` };
+  if (candidate?.previewMode === "outline_only") return { title: "内容结构", notice: `内容较长，以下为结构概览${countSuffix}。` };
+  return { title: "正文预览", notice: null };
+}
+
 export function CandidateConfirmDialog({
   candidate,
   open,
@@ -64,9 +97,13 @@ export function CandidateConfirmDialog({
   onConfirmed,
   onRestart,
   onRefresh,
+  mode,
 }: CandidateConfirmDialogProps) {
+  const effectiveMode = mode ?? "submit";
+  const isResume = effectiveMode === "resume";
   const [confirmState, setConfirmState] = useState<ConfirmState>({ kind: "idle" });
   const previewText = useMemo(() => getPreviewText(candidate), [candidate]);
+  const previewPresentation = useMemo(() => getPreviewPresentation(candidate), [candidate]);
 
   useEffect(() => {
     if (!open) {
@@ -106,7 +143,13 @@ export function CandidateConfirmDialog({
         return;
       }
 
-      clearPendingCandidate();
+      // localStorage owns the submit-origin candidate. In resume mode the
+      // BFF is the source of truth and localStorage may carry a different
+      // (submit-origin) candidate that must NOT be destroyed by a resume
+      // confirm. Only clear when the user is acting on a submit candidate.
+      if (!isResume) {
+        clearPendingCandidate();
+      }
       onConfirmed(candidate);
     } catch (error: unknown) {
       setConfirmState({
@@ -117,7 +160,7 @@ export function CandidateConfirmDialog({
   }
 
   function handleRestart() {
-    if (!candidate) {
+    if (!candidate || isResume) {
       return;
     }
     clearPendingCandidate();
@@ -131,8 +174,10 @@ export function CandidateConfirmDialog({
       : "确认提取出的英文文章";
   const description =
     confirmState.kind === "conflict"
-      ? "这份候选正文的状态已经变化。你可以重试确认，或重新提交来源内容。"
-      : "请检查正文是否完整。确认后，Claread 会进入透读。";
+      ? "这份候选正文的状态已经变化。你可以重试确认。"
+      : isResume
+        ? "待确认的内容已就绪，确认后即可开始阅读。"
+        : "请检查正文是否完整。确认后，Claread 会进入透读。";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -164,11 +209,13 @@ export function CandidateConfirmDialog({
           <div className="flex h-full min-h-[22rem] flex-col rounded-[10px] border border-hairline/70 bg-reader-paper/54">
             <div className="flex items-center justify-between gap-4 border-b border-hairline/60 px-4 py-3 font-sans">
               <p className="text-[0.78rem] font-semibold tracking-[0.08em] text-muted">
-                EXTRACTED ARTICLE
+                {previewPresentation.title}
               </p>
-              <p className="text-[0.72rem] font-medium text-subtle">
-                纯文本预览
-              </p>
+              {previewPresentation.notice ? (
+                <p className="text-right text-[0.72rem] font-medium text-subtle">
+                  {previewPresentation.notice}
+                </p>
+              ) : null}
             </div>
             <div
               data-testid="candidate-confirm-preview"
@@ -182,6 +229,66 @@ export function CandidateConfirmDialog({
                 </span>
               )}
             </div>
+            {hasOutlineOrRisk(candidate) ? (
+              <div
+                data-testid="candidate-confirm-outline-risk"
+                className="border-t border-hairline/60 px-5 py-3 font-sans"
+              >
+                {candidate?.documentOutline && candidate.documentOutline.length > 0 ? (
+                  <div className="mb-2">
+                    <p className="mb-1 text-[0.72rem] font-semibold tracking-[0.08em] text-muted">
+                      内容结构
+                    </p>
+                    <ul
+                      data-testid="candidate-confirm-outline-list"
+                      className="list-disc space-y-0.5 pl-4 text-[0.78rem] leading-snug text-muted"
+                    >
+                      {candidate.documentOutline.map((item, index) => (
+                        <li
+                          key={`${item.order_index}-${index}`}
+                          className="marker:text-muted/60"
+                        >
+                          <span className="font-medium text-ink/82">
+                            {item.block_type_label}
+                          </span>
+                          {item.heading_text ? (
+                            <span className="text-muted">
+                              {" · "}
+                              {item.heading_text}
+                            </span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {candidate?.riskItems && candidate.riskItems.length > 0 ? (
+                  <div>
+                    <p className="mb-1 text-[0.72rem] font-semibold tracking-[0.08em] text-amber-700">
+                      阅读提示
+                    </p>
+                    <ul
+                      data-testid="candidate-confirm-risk-list"
+                      className="list-disc space-y-0.5 pl-4 text-[0.78rem] leading-snug text-amber-800"
+                    >
+                      {candidate.riskItems.map((item, index) => (
+                        <li key={`${item.risk_kind}-${index}`}>
+                          <span className="font-medium">
+                            {describeRiskKind(item.risk_kind)}
+                          </span>
+                          {item.user_message ? (
+                            <span className="text-amber-900/80">
+                              {" · "}
+                              {item.user_message}
+                            </span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           {confirmState.kind === "error" ? (
@@ -197,11 +304,18 @@ export function CandidateConfirmDialog({
         <DialogFooter className="border-t border-hairline/70 px-6 py-4 sm:px-8">
           {confirmState.kind === "conflict" ? (
             <>
-              {onRefresh ? (
-                <Button type="button" variant="secondary" size="sm" onClick={onRefresh}>
-                  刷新页面
-                </Button>
-              ) : null}
+              {!isResume && (
+                <>
+                  {onRefresh ? (
+                    <Button type="button" variant="secondary" size="sm" onClick={onRefresh}>
+                      刷新页面
+                    </Button>
+                  ) : null}
+                  <Button type="button" variant="secondary" size="sm" onClick={handleRestart}>
+                    重新提交
+                  </Button>
+                </>
+              )}
               <Button
                 type="button"
                 variant="secondary"
@@ -214,18 +328,17 @@ export function CandidateConfirmDialog({
                 重试确认
                 <RefreshCw aria-hidden className="ml-1 h-3.5 w-3.5" />
               </Button>
-              <Button type="button" variant="secondary" size="sm" onClick={handleRestart}>
-                重新提交
-              </Button>
             </>
           ) : confirmState.kind === "error" ? (
             <>
               <Button type="button" variant="secondary" size="sm" onClick={() => setConfirmState({ kind: "idle" })}>
                 返回确认
               </Button>
-              <Button type="button" variant="secondary" size="sm" onClick={handleRestart}>
-                重新提交
-              </Button>
+              {!isResume && (
+                <Button type="button" variant="secondary" size="sm" onClick={handleRestart}>
+                  重新提交
+                </Button>
+              )}
             </>
           ) : (
             <>
@@ -239,9 +352,11 @@ export function CandidateConfirmDialog({
               >
                 稍后处理
               </Button>
-              <Button type="button" variant="secondary" size="sm" onClick={handleRestart} disabled={isConfirming}>
-                重新提交
-              </Button>
+              {!isResume && (
+                <Button type="button" variant="secondary" size="sm" onClick={handleRestart} disabled={isConfirming}>
+                  重新提交
+                </Button>
+              )}
               <Button
                 type="button"
                 variant="primary-ink"

@@ -19,6 +19,7 @@ vi.mock("@/services/api/reader-plate", () => ({
   submitUpstreamReaderSourceArtifactInput: vi.fn(),
   getUpstreamReaderArtifactPipelineStatus: vi.fn(),
   confirmUpstreamReaderCandidateDocument: vi.fn(),
+  getUpstreamReaderCandidateDocument: vi.fn(),
   getUpstreamReaderStableDocument: vi.fn(),
   getUpstreamReaderArticleRagIndexStatus: vi.fn(),
   ensureUpstreamReaderArticleRagIndex: vi.fn(),
@@ -31,6 +32,7 @@ import {
   ensureUpstreamReaderArticleRagIndex,
   getUpstreamReaderArticleRagIndexStatus,
   getUpstreamReaderArtifactPipelineStatus,
+  getUpstreamReaderCandidateDocument,
   getUpstreamReaderPlateSnapshot,
   getUpstreamReaderStableDocument,
   initUpstreamReaderSourceArtifactUpload,
@@ -45,6 +47,7 @@ import {
   ensureReaderArticleRagIndexFromWeb,
   getReaderArticleRagIndexStatusFromWeb,
   getReaderArtifactPipelineStatusFromWeb,
+  getReaderCandidateDocumentFromWeb,
   getReaderPlateSnapshotFromWeb,
   getReaderStableDocumentFromWeb,
   initReaderSourceArtifactUploadFromWeb,
@@ -60,6 +63,7 @@ import type {
   ReaderArticleRagIndexStatusResponseDto,
   ReaderArtifactPipelineStatusResponseDto,
   ReaderCandidateDocumentConfirmResponseDto,
+  ReaderCandidateDocumentReadResponse,
   ReaderPlateSnapshotDto,
   ReaderSourceArtifactSubmitInputResponseDto,
   ReaderSourceArtifactUploadCompleteResponseDto,
@@ -1146,6 +1150,378 @@ describe("reader-plate BFF article rag index ensure", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Candidate document read (S4: input-page recovery)
+// ---------------------------------------------------------------------------
+
+describe("reader-plate BFF candidate document read (S4)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("rejects missing recordId with invalid_input before hitting session or upstream", async () => {
+    const result = await getReaderCandidateDocumentFromWeb("");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 400,
+      code: "invalid_input",
+    });
+    expect(getWebSession).not.toHaveBeenCalled();
+    expect(getUpstreamReaderCandidateDocument).not.toHaveBeenCalled();
+  });
+
+  it("rejects anonymous sessions with auth_required", async () => {
+    vi.mocked(getWebSession).mockResolvedValue({
+      kind: "anonymous",
+      source: "none",
+    });
+
+    const result = await getReaderCandidateDocumentFromWeb("rec_1");
+
+    expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
+    expect(getUpstreamReaderCandidateDocument).not.toHaveBeenCalled();
+  });
+
+  it("rejects mock_phone sessions with auth_required", async () => {
+    vi.mocked(getWebSession).mockResolvedValue({
+      kind: "mock_phone",
+      source: "mock",
+      phone: "13800138000",
+    });
+
+    const result = await getReaderCandidateDocumentFromWeb("rec_1");
+
+    expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
+  });
+
+  it("200 full_text returns typed DTO with no internal leaks", async () => {
+    vi.mocked(getUpstreamReaderCandidateDocument).mockResolvedValue({
+      ok: true,
+      data: makeCandidateDocumentReadResponse({
+        preview_mode: "full_text",
+        preview_text: "Hello world.",
+        is_truncated: false,
+      }),
+    });
+
+    const result = await getReaderCandidateDocumentFromWeb("rec_1");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.preview.preview_mode).toBe("full_text");
+      expect(result.preview.preview_text).toBe("Hello world.");
+      expect(result.preview.is_truncated).toBe(false);
+    }
+    expect(vi.mocked(getUpstreamReaderCandidateDocument).mock.calls[0]).toEqual([
+      "rec_1",
+      "session-token",
+    ]);
+  });
+
+  it("200 truncated_preview returns typed DTO with is_truncated=true", async () => {
+    vi.mocked(getUpstreamReaderCandidateDocument).mockResolvedValue({
+      ok: true,
+      data: makeCandidateDocumentReadResponse({
+        preview_mode: "truncated_preview",
+        preview_text: "Hello ...",
+        is_truncated: true,
+        total_char_count: 1200,
+      }),
+    });
+
+    const result = await getReaderCandidateDocumentFromWeb("rec_1");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.preview.preview_mode).toBe("truncated_preview");
+      expect(result.preview.preview_text).toBe("Hello ...");
+      expect(result.preview.is_truncated).toBe(true);
+      expect(result.preview.total_char_count).toBe(1200);
+    }
+  });
+
+  it("200 outline_only returns typed DTO with preview_text='' and is_truncated=true", async () => {
+    vi.mocked(getUpstreamReaderCandidateDocument).mockResolvedValue({
+      ok: true,
+      data: makeCandidateDocumentReadResponse({
+        preview_mode: "outline_only",
+        preview_text: "",
+        is_truncated: true,
+      }),
+    });
+
+    const result = await getReaderCandidateDocumentFromWeb("rec_1");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.preview.preview_mode).toBe("outline_only");
+      expect(result.preview.preview_text).toBe("");
+      expect(result.preview.is_truncated).toBe(true);
+    }
+  });
+
+  it("200 response never leaks any BFF-forbidden field names", async () => {
+    // The BFF uses a runtime sanitizer to project the 11 declared top-level
+    // fields and the preview subtree from the upstream payload. This test
+    // feeds a fixture that includes runtime extras (top-level forbidden keys
+    // and `secret_extra` inside outline/risk items) and asserts the BFF
+    // strips them so they never reach the browser.
+    const upstreamFixture = {
+      record_id: "rec_1",
+      candidate_document_id: "cand_1",
+      record_generation: 1,
+      status: "ready" as const,
+      title: "Test",
+      preview: {
+        preview_mode: "full_text" as const,
+        preview_text: "hello",
+        is_truncated: false,
+        total_char_count: 5,
+        document_outline: [
+          {
+            order_index: 0,
+            block_type_label: "heading" as const,
+            heading_text: "H",
+            char_count: 1,
+            secret_extra: "leak",
+          },
+        ],
+        risk_items: [
+          {
+            risk_kind: "low_confidence_ocr" as const,
+            user_message: "msg",
+            severity: "warning" as const,
+            secret_extra: "leak",
+          },
+        ],
+      },
+      source_type: "plain_text" as const,
+      filename: null,
+      source_label: "粘贴文本",
+      created_at: "2026-07-15T00:00:00Z",
+      updated_at: "2026-07-15T00:00:00Z",
+      // EXTRAS that must NOT reach the browser:
+      source_text: "SECRET_SOURCE_TEXT",
+      blocks_json: [{ secret: "leak" }],
+      quality_json: { secret: "leak" },
+      source_refs_json: { secret: "leak" },
+      canonical_text_preview: "secret",
+      original_input_id: "secret",
+    };
+
+    vi.mocked(getUpstreamReaderCandidateDocument).mockResolvedValue({
+      ok: true,
+      // Cast through `unknown` so TS accepts the runtime extras. The
+      // purpose of the test is to prove the BFF strips them at runtime.
+      data: upstreamFixture as unknown as ReaderCandidateDocumentReadResponse,
+    });
+
+    const result = await getReaderCandidateDocumentFromWeb("rec_1");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok result");
+
+    // Top-level keys: the typed DTO plus the BFF envelope `ok` flag.
+    const expectedDtoKeys = [
+      "record_id",
+      "candidate_document_id",
+      "record_generation",
+      "status",
+      "title",
+      "preview",
+      "source_type",
+      "filename",
+      "source_label",
+      "created_at",
+      "updated_at",
+    ].sort();
+    const actualTopLevelKeys = Object.keys(result).sort();
+    expect(actualTopLevelKeys).toEqual([...expectedDtoKeys, "ok"].sort());
+
+    // No top-level extras must reach the browser.
+    for (const forbidden of [
+      "source_text",
+      "blocks_json",
+      "quality_json",
+      "source_refs_json",
+      "canonical_text_preview",
+      "original_input_id",
+    ]) {
+      expect(forbidden in result).toBe(false);
+    }
+
+    // Outline / risk items must not carry `secret_extra`.
+    const outline = result.preview.document_outline as unknown as Array<Record<string, unknown>>;
+    expect(outline[0]).not.toHaveProperty("secret_extra");
+    const risks = result.preview.risk_items as unknown as Array<Record<string, unknown>>;
+    expect(risks[0]).not.toHaveProperty("secret_extra");
+
+    // The serialised JSON must NOT contain any of the runtime extras.
+    const serialized = JSON.stringify(result);
+    for (const needle of [
+      "SECRET_SOURCE_TEXT",
+      "secret_extra",
+      "leak",
+      "source_text",
+      "blocks_json",
+      "quality_json",
+      "source_refs_json",
+      "canonical_text_preview",
+      "original_input_id",
+    ]) {
+      expect(serialized).not.toContain(needle);
+    }
+  });
+
+  it("404 upstream → candidate_not_found with upstream message passthrough", async () => {
+    vi.mocked(getUpstreamReaderCandidateDocument).mockResolvedValue({
+      ok: false,
+      status: 404,
+      message: "upstream 404 message",
+      body: {
+        ok: false,
+        code: "not_found",
+        message: "无对应的候选文档。",
+      },
+    });
+
+    const result = await getReaderCandidateDocumentFromWeb("rec_1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 404,
+      code: "candidate_not_found",
+      message: "无对应的候选文档。",
+    });
+  });
+
+  it("404 upstream with empty body → candidate_not_found with fallback message", async () => {
+    vi.mocked(getUpstreamReaderCandidateDocument).mockResolvedValue({
+      ok: false,
+      status: 404,
+      message: "",
+      body: {
+        ok: false,
+        code: "not_found",
+        message: "   ",
+      },
+    });
+
+    const result = await getReaderCandidateDocumentFromWeb("rec_1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 404,
+      code: "candidate_not_found",
+      message: "未找到可继续确认的内容。",
+    });
+  });
+
+  it("409 record_state_advanced + open_reader → candidate_conflict_open_reader with recordId", async () => {
+    vi.mocked(getUpstreamReaderCandidateDocument).mockResolvedValue({
+      ok: false,
+      status: 409,
+      message: "record already advanced",
+      body: {
+        ok: false,
+        code: "record_state_advanced",
+        resolution: "open_reader",
+        message: "请直接打开阅读器。",
+      },
+    });
+
+    const result = await getReaderCandidateDocumentFromWeb("rec_1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 409,
+      code: "candidate_conflict_open_reader",
+      message: "请直接打开阅读器。",
+      recordId: "rec_1",
+    });
+  });
+
+  it("409 record_state_advanced + return_to_library → candidate_conflict_return_to_library with fixed message", async () => {
+    vi.mocked(getUpstreamReaderCandidateDocument).mockResolvedValue({
+      ok: false,
+      status: 409,
+      message: "record already advanced",
+      body: {
+        ok: false,
+        code: "record_state_advanced",
+        resolution: "return_to_library",
+        message: "any upstream message",
+      },
+    });
+
+    const result = await getReaderCandidateDocumentFromWeb("rec_1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 409,
+      code: "candidate_conflict_return_to_library",
+      message: "这篇内容当前无法继续确认。",
+    });
+  });
+
+  it("409 multiple_ready_candidates → candidate_conflict_return_to_library", async () => {
+    vi.mocked(getUpstreamReaderCandidateDocument).mockResolvedValue({
+      ok: false,
+      status: 409,
+      message: "multiple ready candidates",
+      body: {
+        ok: false,
+        code: "multiple_ready_candidates",
+        resolution: "return_to_library",
+        message: "any upstream message",
+      },
+    });
+
+    const result = await getReaderCandidateDocumentFromWeb("rec_1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 409,
+      code: "candidate_conflict_return_to_library",
+      message: "这篇内容当前无法继续确认。",
+    });
+  });
+
+  it("5xx upstream → upstream_unavailable", async () => {
+    vi.mocked(getUpstreamReaderCandidateDocument).mockResolvedValue({
+      ok: false,
+      status: 502,
+      message: "bad gateway",
+    });
+
+    const result = await getReaderCandidateDocumentFromWeb("rec_1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 503,
+      code: "upstream_unavailable",
+    });
+  });
+
+  it("network error → upstream_unavailable", async () => {
+    vi.mocked(getUpstreamReaderCandidateDocument).mockResolvedValueOnce({
+      ok: false,
+      status: 0,
+      message: "fetch failed",
+    });
+
+    const result = await getReaderCandidateDocumentFromWeb("rec_1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 503,
+      code: "upstream_unavailable",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
@@ -1412,5 +1788,43 @@ function makeRagEnsureRaw(): ReaderArticleRagIndexEnsureResponseDto {
     job_id: "job_1",
     index_version: "v1",
     chunker_version: "chunker_v1",
+  };
+}
+
+function makeCandidateDocumentReadResponse(
+  overrides: Partial<ReaderCandidateDocumentReadResponse> & {
+    preview_mode?: ReaderCandidateDocumentReadResponse["preview"]["preview_mode"];
+    preview_text?: string;
+    is_truncated?: boolean;
+    total_char_count?: number;
+  } = {},
+): ReaderCandidateDocumentReadResponse {
+  const {
+    preview_mode,
+    preview_text,
+    is_truncated,
+    total_char_count,
+    ...rest
+  } = overrides;
+  return {
+    record_id: "rec_1",
+    candidate_document_id: "cand_1",
+    record_generation: 1,
+    status: "ready",
+    title: null,
+    preview: {
+      preview_mode: preview_mode ?? "full_text",
+      preview_text: preview_text ?? "Hello world.",
+      is_truncated: is_truncated ?? false,
+      total_char_count: total_char_count ?? 12,
+      document_outline: [],
+      risk_items: [],
+    },
+    source_type: "plain_text",
+    filename: null,
+    source_label: "粘贴文本",
+    created_at: "2026-07-15T00:00:00Z",
+    updated_at: "2026-07-15T00:00:00Z",
+    ...rest,
   };
 }

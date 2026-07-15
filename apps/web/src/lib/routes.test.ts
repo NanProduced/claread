@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  appReadResumeCandidateRoute,
   appReadingRecordRoute,
   appReaderPlateRoute,
   appReaderRoute,
@@ -10,6 +11,15 @@ import {
 } from "./routes";
 
 describe("reader route helpers", () => {
+  it("builds the candidate resume URL with an encoded record id", () => {
+    expect(appReadResumeCandidateRoute("record 1")).toBe(
+      "/app/read?resume_candidate=record%201",
+    );
+    expect(appReadResumeCandidateRoute("record/a?b")).toBe(
+      "/app/read?resume_candidate=record%2Fa%3Fb",
+    );
+  });
+
   it("keeps the legacy reader workbench URL unchanged", () => {
     expect(legacyAppReaderRoute("record 1")).toBe("/app/reader/record%201");
     expect(appReaderRoute("record 1")).toBe(legacyAppReaderRoute("record 1"));

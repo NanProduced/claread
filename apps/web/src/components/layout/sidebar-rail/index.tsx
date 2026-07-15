@@ -29,6 +29,7 @@ import {
 import {
   appLibraryRoute,
   appReadRoute,
+  appReadResumeCandidateRoute,
   appSettingsRoute,
   appVocabularyRoute,
   homeRoute,
@@ -259,46 +260,29 @@ export function SidebarRail({
                     const needsConfirmation = record.productState === 'needs_confirmation';
                     return (
                       <li key={record.readingRecordId}>
-                        {needsConfirmation ? (
-                          <div
-                            className={cn(navItemClassName(isCurrent), "items-start py-1.5 cursor-default")}
-                            aria-disabled="true"
-                          >
-                            <FileText
-                              aria-hidden="true"
-                              className={cn("mt-0.5 h-4 w-4 shrink-0", isCurrent ? "text-ink" : "text-muted")}
-                              strokeWidth={isCurrent ? 2.25 : 2}
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate font-semibold">{record.title}</span>
-                              {status ? (
-                                <span className="block truncate text-[0.6875rem] font-normal text-subtle">
-                                  {status}
-                                </span>
-                              ) : null}
-                            </span>
-                          </div>
-                        ) : (
-                          <Link
-                            href={record.readerUrl as Route}
-                            className={cn(navItemClassName(isCurrent), "items-start py-1.5")}
-                            aria-current={isCurrent ? "page" : undefined}
-                          >
-                            <FileText
-                              aria-hidden="true"
-                              className={cn("mt-0.5 h-4 w-4 shrink-0", isCurrent ? "text-ink" : "text-muted group-hover:text-ink")}
-                              strokeWidth={isCurrent ? 2.25 : 2}
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate font-semibold">{record.title}</span>
-                              {status ? (
-                                <span className="block truncate text-[0.6875rem] font-normal text-subtle">
-                                  {status}
-                                </span>
-                              ) : null}
-                            </span>
-                          </Link>
-                        )}
+                        <Link
+                          href={
+                            needsConfirmation
+                              ? appReadResumeCandidateRoute(record.readingRecordId)
+                              : (record.readerUrl as Route)
+                          }
+                          className={cn(navItemClassName(isCurrent), "items-start py-1.5")}
+                          aria-current={isCurrent ? "page" : undefined}
+                        >
+                          <FileText
+                            aria-hidden="true"
+                            className={cn("mt-0.5 h-4 w-4 shrink-0", isCurrent ? "text-ink" : "text-muted group-hover:text-ink")}
+                            strokeWidth={isCurrent ? 2.25 : 2}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-semibold">{record.title}</span>
+                            {status ? (
+                              <span className="block truncate text-[0.6875rem] font-normal text-subtle">
+                                {status}
+                              </span>
+                            ) : null}
+                          </span>
+                        </Link>
                       </li>
                     );
                   })}
