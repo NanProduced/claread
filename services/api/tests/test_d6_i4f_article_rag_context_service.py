@@ -64,6 +64,7 @@ _USER_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
 _STABLE_DOC_ID = uuid.UUID("33333333-3333-3333-3333-333333333333")
 _BASE_ID = uuid.UUID("44444444-4444-4444-4444-444444444444")
 _PLAN_HASH = "abc123def456" + "f" * 52  # 64 hex chars
+_INDEX_RUN_ID = uuid.UUID("55555555-5555-5555-5555-555555555555")
 
 
 @dataclass
@@ -119,6 +120,7 @@ def _make_retrieval_result(
         record_generation=1,
         index_version=DEFAULT_INDEX_VERSION,
         plan_content_sha256=_PLAN_HASH,
+        index_run_id=_INDEX_RUN_ID,
         hits=tuple(hits or ()),
         provider_metadata={"provider": "fake-in-memory"},
     )
@@ -131,6 +133,7 @@ def _make_hit(
     score: float = 0.9,
     citation: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
+    content_sha256: str | None = None,
 ) -> ArticleRagRetrievalHit:
     return ArticleRagRetrievalHit(
         chunk_id=chunk_id,
@@ -149,6 +152,7 @@ def _make_hit(
         },
         metadata_json=metadata or {"block_type": "paragraph"},
         score=score,
+        content_sha256=content_sha256 or ("a" * 64),
     )
 
 
@@ -866,6 +870,7 @@ def _make_retrieval_result_with_provider_metadata(
         record_generation=base.record_generation,
         index_version=base.index_version,
         plan_content_sha256=base.plan_content_sha256,
+        index_run_id=base.index_run_id,
         hits=base.hits,
         provider_metadata=provider_metadata,
     )

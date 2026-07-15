@@ -129,11 +129,18 @@ async def send_reading_record_ask_message(
     body: ReaderRecordAskMessageRequest,
     current_user: AuthUserDep,
 ) -> StreamingResponse:
+    user_id = UUID(current_user.user_id)
+    prepared = await rr_ask_svc.prepare_reading_record_ask_message(
+        user_id=user_id,
+        reading_record_id=reading_record_id,
+        request=body,
+    )
     return _streaming_response(
         rr_ask_svc.send_reading_record_ask_message(
-            user_id=UUID(current_user.user_id),
+            user_id=user_id,
             reading_record_id=reading_record_id,
             request=body,
+            prepared=prepared,
         )
     )
 
@@ -148,12 +155,20 @@ async def stream_reading_record_ask_thread_message(
     body: ReaderRecordAskMessageRequest,
     current_user: AuthUserDep,
 ) -> StreamingResponse:
+    user_id = UUID(current_user.user_id)
+    prepared = await rr_ask_svc.prepare_reading_record_ask_message(
+        user_id=user_id,
+        reading_record_id=reading_record_id,
+        request=body,
+        thread_id=thread_id,
+    )
     return _streaming_response(
         rr_ask_svc.stream_reading_record_ask_thread_message(
-            user_id=UUID(current_user.user_id),
+            user_id=user_id,
             reading_record_id=reading_record_id,
             thread_id=thread_id,
             request=body,
+            prepared=prepared,
         )
     )
 

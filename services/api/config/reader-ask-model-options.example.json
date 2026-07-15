@@ -6,7 +6,7 @@
     "Round 18: reader_ask_planner route 和 planner_model_name DTO 字段均已移除；配置只暴露主回答与 repair/replan route。",
     "reader-ask-model-options controls the Ask panel model selector, not the full profiles surface. Options can mix native and compat providers."
   ],
-  "default_option": "glm-standard",
+  "default_option": "deepseek-v4-flash",
   "billing_defaults": {
     "_field_notes": {
       "multiplier_input": "计费时输入 token 的权重。",
@@ -35,7 +35,7 @@
   },
   "options": {
     "_comment": "option key 会持久化到 reader_ask_threads.selected_model_key，建议稳定命名，不要轻易改 key。",
-    "glm-standard": {
+    "deepseek-v4-flash": {
       "_field_notes": {
         "label": "前端直接展示给用户的模型名。",
         "description": "运营补充说明；前端可显示为档位解释。",
@@ -44,15 +44,15 @@
         "runtime_budget": "可选。只覆盖当前 option 的运行预算；未写字段回退到 runtime_defaults。",
         "enabled": "false 表示该选项不对用户开放；后端会跳过它。enabled=true 的 option 必须在 reader_ask / replan 两个 route 上都能 resolve 且能 build。"
       },
-      "label": "GLM-5.1",
-      "description": "默认档位：主回答与 replan 使用 GLM-5.1。",
+      "label": "DeepSeek V4 Flash",
+      "description": "默认档位：快速、低成本。主回答与 replan 使用 DeepSeek V4 Flash。",
       "selection": {
         "_field_notes": {
           "preset": "可选，先引用一个 preset，再在当前 selection 里继续覆盖。",
           "default_profile": "当前 selection 未给某个 Ask route 单独指定时，回退到这个 profile。",
           "routes": "Ask 专用 route 覆盖。这里不要写 workflow / daily route。"
         },
-        "default_profile": "ask-main-glm51",
+        "default_profile": "ask-main-deepseek-v4-flash",
         "routes": {
           "reader_ask": {
             "_field_notes": {
@@ -60,23 +60,18 @@
               "fallback_profiles": "主 profile 失败后的备选 profile。",
               "model_settings": "仅当前 route 再叠加的模型参数。"
             },
-            "profile": "ask-main-glm51",
-            "fallback_profiles": [
-              "ask-main-deepseek-v4-pro"
-            ],
+            "profile": "ask-main-deepseek-v4-flash",
             "model_settings": {
-              "timeout": 180.0,
+              "timeout": 120.0,
               "extra_body": {
-                "enable_thinking": true,
-                "preserve_thinking": true
+                "thinking": {
+                  "type": "disabled"
+                }
               }
             }
           },
           "reader_ask_replan": {
-            "profile": "ask-replan-glm51",
-            "fallback_profiles": [
-              "ask-replan-deepseek-v4-pro"
-            ]
+            "profile": "ask-replan-deepseek-v4-flash"
           }
         }
       },
@@ -117,7 +112,7 @@
     },
     "deepseek-pro": {
       "label": "DeepSeek V4 Pro",
-      "description": "高性价比档位：主回答与 replan 使用 DeepSeek V4 Pro。",
+      "description": "高质量备选档位：主回答与 replan 使用 DeepSeek V4 Pro。",
       "selection": {
         "preset": "ask_deepseek_balanced"
       },

@@ -1,11 +1,75 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 import pytest
 
+from app.services.reader_ask import repository as reader_ask_repository
 from app.services.reader_ask.repository import _message_row_to_dict, _thread_row_to_dict
 
+
+class _QueryCaptureConnection:
+    def __init__(self) -> None:
+        self.query: str | None = None
+
+    async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
+        self.query = query
+        return {
+            "id": UUID("00000000-0000-0000-0000-000000000003"),
+            "analysis_record_id": None,
+            "reading_record_id": UUID("00000000-0000-0000-0000-000000000002"),
+            "title": "Ask Claread",
+            "is_default": True,
+            "selected_model_key": None,
+            "archived_at": None,
+            "created_at": None,
+            "updated_at": None,
+            "last_message_at": None,
+        }
+
+
+class _QueryCaptureAcquire:
+    def __init__(self, connection: _QueryCaptureConnection) -> None:
+        self._connection = connection
+
+    async def __aenter__(self) -> _QueryCaptureConnection:
+        return self._connection
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+
+class _QueryCapturePool:
+    def __init__(self, connection: _QueryCaptureConnection) -> None:
+        self._connection = connection
+
+    def acquire(self) -> _QueryCaptureAcquire:
+        return _QueryCaptureAcquire(self._connection)
+
+
+@pytest.mark.asyncio
+async def test_reading_record_default_thread_conflict_target_matches_partial_unique_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _QueryCaptureConnection()
+    monkeypatch.setattr(
+        reader_ask_repository.db_connection, "DB_POOL", _QueryCapturePool(connection)
+    )
+
+    await reader_ask_repository.get_or_create_default_thread_for_reading_record(
+        UUID("00000000-0000-0000-0000-000000000001"),
+        UUID("00000000-0000-0000-0000-000000000002"),
+        title="Ask Claread",
+    )
+
+    assert connection.query is not None
+    normalized_query = " ".join(connection.query.split())
+    expected_conflict_predicate = (
+        "WHERE is_default = TRUE AND archived_at IS NULL "
+        "AND reading_record_id IS NOT NULL"
+    )
+    assert expected_conflict_predicate in normalized_query
 
 def test_thread_row_hydrates_selected_model_key() -> None:
     row = {

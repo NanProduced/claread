@@ -189,14 +189,13 @@
       "provider": "dashscope",
       "model_name": "qwen3.7-max"
     },
-    "glm51": {
-      "provider": "dashscope_compat",
-      "model_name": "glm-5.1"
-    },
-    "glm51-native": {
-      "_field_notes": "Native DashScope transport variant of glm51. Same remote model, different adapter/protocol.",
-      "provider": "dashscope",
-      "model_name": "glm-5.1"
+    "deepseek-v4-flash": {
+      "provider": "deepseek",
+      "model_name": "deepseek-v4-flash",
+      "model_settings": {
+        "temperature": 0.2,
+        "timeout": 120.0
+      }
     },
     "deepseek-v4-pro": {
       "provider": "deepseek",
@@ -269,6 +268,16 @@
         }
       }
     },
+    "workflow-deepseek-v4-flash": {
+      "model": "deepseek-v4-flash",
+      "model_settings": {
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      }
+    },
     "workflow-deepseek-v4-pro": {
       "model": "deepseek-v4-pro",
       "model_settings": {
@@ -287,26 +296,6 @@
           "thinking": {
             "type": "disabled"
           }
-        }
-      }
-    },
-    "ask-main-glm51": {
-      "model": "glm51",
-      "model_settings": {
-        "timeout": 180.0,
-        "extra_body": {
-          "enable_thinking": true,
-          "preserve_thinking": true
-        }
-      }
-    },
-    "ask-replan-glm51": {
-      "model": "glm51",
-      "model_settings": {
-        "timeout": 180.0,
-        "extra_body": {
-          "enable_thinking": true,
-          "preserve_thinking": true
         }
       }
     },
@@ -359,23 +348,23 @@
         }
       }
     },
-    "ask-main-glm51-native": {
-      "model": "glm51-native",
+    "ask-main-deepseek-v4-flash": {
+      "model": "deepseek-v4-flash",
       "model_settings": {
-        "timeout": 180.0,
         "extra_body": {
-          "enable_thinking": true,
-          "preserve_thinking": true
+          "thinking": {
+            "type": "disabled"
+          }
         }
       }
     },
-    "ask-replan-glm51-native": {
-      "model": "glm51-native",
+    "ask-replan-deepseek-v4-flash": {
+      "model": "deepseek-v4-flash",
       "model_settings": {
-        "timeout": 180.0,
         "extra_body": {
-          "enable_thinking": true,
-          "preserve_thinking": true
+          "thinking": {
+            "type": "disabled"
+          }
         }
       }
     },

@@ -105,8 +105,14 @@ class TestReaderRecordAskRoute:
         "app.api.routes.reader_record_ask.rr_ask_svc.send_reading_record_ask_message",
         return_value=_stream_chunks("event: message.completed\ndata: {}\n\n"),
     )
+    @patch(
+        "app.api.routes.reader_record_ask.rr_ask_svc.prepare_reading_record_ask_message",
+        new_callable=AsyncMock,
+        return_value=(UUID(RECORD_ID), UUID(THREAD_ID), object()),
+    )
     def test_message_alias_route_streams_service_chunks(
         self,
+        mock_prepare,
         mock_send,
         mock_auth,
     ) -> None:
@@ -121,7 +127,41 @@ class TestReaderRecordAskRoute:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
         assert "event: message.completed" in response.text
+        mock_prepare.assert_awaited_once()
         mock_send.assert_called_once()
+        assert mock_send.call_args.kwargs["prepared"] == mock_prepare.return_value
+
+    @_mock_auth()
+    @patch(
+        "app.api.routes.reader_record_ask.rr_ask_svc.prepare_reading_record_ask_message",
+        new_callable=AsyncMock,
+        side_effect=HTTPException(
+            status_code=422,
+            detail="Unknown Ask Claread model option: glm-standard",
+        ),
+    )
+    @patch(
+        "app.api.routes.reader_record_ask.rr_ask_svc.send_reading_record_ask_message",
+        return_value=_stream_chunks("event: message.completed\ndata: {}\n\n"),
+    )
+    def test_explicit_deleted_glm_key_returns_typed_422(
+        self,
+        mock_send,
+        mock_prepare,
+        mock_auth,
+    ) -> None:
+        client = create_client()
+
+        response = client.post(
+            f"/reader/records/{RECORD_ID}/ask/messages",
+            headers=AUTH_HEADERS,
+            json={"content": "hello", "model": "glm-standard"},
+        )
+
+        assert response.status_code == 422
+        assert "Unknown Ask Claread model option" in str(response.json()["detail"])
+        mock_prepare.assert_awaited_once()
+        mock_send.assert_not_called()
 
     @_mock_auth()
     @patch(
@@ -166,6 +206,9 @@ class TestReaderRecordAskService:
 
         with (
             patch(
+                "app.services.reader_record_ask.service.get_settings",
+            ) as mock_settings,
+            patch(
                 "app.services.reader_record_ask.service._load_snapshot_facts_raw",
                 new_callable=AsyncMock,
             ) as mock_load_snapshot_facts,
@@ -179,6 +222,7 @@ class TestReaderRecordAskService:
                 return_value=_stream_chunks("event: message.completed\ndata: {}\n\n"),
             ) as mock_stream,
         ):
+            mock_settings.return_value.reader_record_ask_agentic_enabled = False
             mock_load_snapshot_facts.return_value = MagicMock(
                 record=MagicMock(title="Test"),
             )
@@ -276,6 +320,425 @@ class TestReaderRecordAskService:
 
         assert excinfo.value.status_code == 400
         assert excinfo.value.detail["code"] == READING_RECORD_NOT_FOUND
+
+    @pytest.mark.asyncio
+    async def test_agentic_path_injects_resolved_flash_model(self) -> None:
+        """Thread selected_model_key drives agentic model, not global route default."""
+        from app.services.reader_record_ask.service import send_reading_record_ask_message
+
+        request = MagicMock()
+        request.anchor = None
+        request.content = "summarize"
+        request.entry_action = "ask_about_this"
+        request.model = None
+
+        flash_option = MagicMock()
+        flash_option.key = "deepseek-v4-flash"
+        flash_option.selection = MagicMock()
+        flash_model = object()
+
+        captured: dict[str, object] = {}
+
+        async def _fake_agentic(**kwargs):
+            captured.update(kwargs)
+            yield "event: message.completed\ndata: {}\n\n"
+
+        with (
+            patch(
+                "app.services.reader_record_ask.service.get_settings",
+            ) as mock_settings,
+            patch(
+                "app.services.reader_record_ask.service._load_snapshot_facts_raw",
+                new_callable=AsyncMock,
+                return_value=MagicMock(record=MagicMock(title="Test")),
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.ensure_default_reading_record_thread",
+                new_callable=AsyncMock,
+                return_value={
+                    "id": THREAD_ID,
+                    "title": "Test",
+                    "selected_model_key": "deepseek-v4-flash",
+                },
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.resolve_and_persist_thread_model_option",
+                new_callable=AsyncMock,
+                return_value=flash_option,
+            ) as mock_resolve,
+            patch(
+                "app.services.reader_record_ask.service.build_model_for_route",
+                return_value=(flash_model, MagicMock(model_name="deepseek-v4-flash")),
+            ) as mock_build,
+            patch(
+                "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
+                side_effect=_fake_agentic,
+            ),
+            patch(
+                "app.services.reader_record_ask.service.stream_service.stream_thread_message",
+            ) as mock_legacy,
+        ):
+            mock_settings.return_value.reader_record_ask_agentic_enabled = True
+            chunks = [
+                chunk
+                async for chunk in send_reading_record_ask_message(
+                    user_id=UUID(USER_ID),
+                    reading_record_id=RECORD_ID,
+                    request=request,
+                )
+            ]
+
+        assert chunks == ["event: message.completed\ndata: {}\n\n"]
+        mock_legacy.assert_not_called()
+        mock_resolve.assert_awaited_once()
+        assert mock_resolve.await_args.kwargs["requested_key"] is None
+        mock_build.assert_called_once()
+        assert mock_build.call_args.args[2] is flash_option.selection
+        assert captured["model"] is flash_model
+
+    @pytest.mark.asyncio
+    async def test_agentic_path_history_glm_standard_falls_back_to_flash(self) -> None:
+        from app.services.reader_record_ask.service import send_reading_record_ask_message
+
+        request = MagicMock()
+        request.anchor = None
+        request.content = "hello"
+        request.entry_action = "ask_about_this"
+        request.model = None
+
+        flash_option = MagicMock()
+        flash_option.key = "deepseek-v4-flash"
+        flash_option.used_fallback = True
+        flash_option.requested_key = "glm-standard"
+        flash_option.selection = MagicMock()
+        flash_model = object()
+
+        captured: dict[str, object] = {}
+
+        async def _fake_agentic(**kwargs):
+            captured.update(kwargs)
+            yield "event: agentic.terminal\ndata: {}\n\n"
+
+        with (
+            patch(
+                "app.services.reader_record_ask.service.get_settings",
+            ) as mock_settings,
+            patch(
+                "app.services.reader_record_ask.service._load_snapshot_facts_raw",
+                new_callable=AsyncMock,
+                return_value=MagicMock(record=MagicMock(title="Test")),
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.ensure_default_reading_record_thread",
+                new_callable=AsyncMock,
+                return_value={
+                    "id": THREAD_ID,
+                    "title": "Test",
+                    "selected_model_key": "glm-standard",
+                },
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.resolve_and_persist_thread_model_option",
+                new_callable=AsyncMock,
+                return_value=flash_option,
+            ) as mock_resolve,
+            patch(
+                "app.services.reader_record_ask.service.build_model_for_route",
+                return_value=(flash_model, MagicMock(model_name="deepseek-v4-flash")),
+            ),
+            patch(
+                "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
+                side_effect=_fake_agentic,
+            ),
+        ):
+            mock_settings.return_value.reader_record_ask_agentic_enabled = True
+            chunks = [
+                chunk
+                async for chunk in send_reading_record_ask_message(
+                    user_id=UUID(USER_ID),
+                    reading_record_id=RECORD_ID,
+                    request=request,
+                )
+            ]
+
+        assert chunks
+        mock_resolve.assert_awaited_once()
+        assert mock_resolve.await_args.kwargs["requested_key"] is None
+        assert captured["model"] is flash_model
+
+    @pytest.mark.asyncio
+    async def test_agentic_path_explicit_pro_builds_pro_model(self) -> None:
+        from app.services.reader_record_ask.service import send_reading_record_ask_message
+
+        request = MagicMock()
+        request.anchor = None
+        request.content = "deep analysis"
+        request.entry_action = "ask_about_this"
+        request.model = "deepseek-pro"
+
+        pro_option = MagicMock()
+        pro_option.key = "deepseek-pro"
+        pro_option.selection = MagicMock()
+        pro_model = object()
+        captured: dict[str, object] = {}
+
+        async def _fake_agentic(**kwargs):
+            captured.update(kwargs)
+            yield "event: message.completed\ndata: {}\n\n"
+
+        with (
+            patch(
+                "app.services.reader_record_ask.service.get_settings",
+            ) as mock_settings,
+            patch(
+                "app.services.reader_record_ask.service._load_snapshot_facts_raw",
+                new_callable=AsyncMock,
+                return_value=MagicMock(record=MagicMock(title="Test")),
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.ensure_default_reading_record_thread",
+                new_callable=AsyncMock,
+                return_value={"id": THREAD_ID, "title": "Test"},
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.resolve_and_persist_thread_model_option",
+                new_callable=AsyncMock,
+                return_value=pro_option,
+            ) as mock_resolve,
+            patch(
+                "app.services.reader_record_ask.service.build_model_for_route",
+                return_value=(pro_model, MagicMock(model_name="deepseek-v4-pro")),
+            ) as mock_build,
+            patch(
+                "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
+                side_effect=_fake_agentic,
+            ),
+        ):
+            mock_settings.return_value.reader_record_ask_agentic_enabled = True
+            chunks = [
+                chunk
+                async for chunk in send_reading_record_ask_message(
+                    user_id=UUID(USER_ID),
+                    reading_record_id=RECORD_ID,
+                    request=request,
+                )
+            ]
+
+        assert chunks
+        assert mock_resolve.await_args.kwargs["requested_key"] == "deepseek-pro"
+        assert mock_build.call_args.args[2] is pro_option.selection
+        assert captured["model"] is pro_model
+
+    @pytest.mark.asyncio
+    async def test_agentic_explicit_deleted_glm_raises_before_stream(self) -> None:
+        from app.services.reader_record_ask.service import prepare_reading_record_ask_message
+
+        request = MagicMock()
+        request.anchor = None
+        request.content = "hello"
+        request.entry_action = "ask_about_this"
+        request.model = "glm-standard"
+
+        with (
+            patch(
+                "app.services.reader_record_ask.service.get_settings",
+            ) as mock_settings,
+            patch(
+                "app.services.reader_record_ask.service._load_snapshot_facts_raw",
+                new_callable=AsyncMock,
+                return_value=MagicMock(record=MagicMock(title="Test")),
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.ensure_default_reading_record_thread",
+                new_callable=AsyncMock,
+                return_value={"id": THREAD_ID, "title": "Test"},
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.resolve_and_persist_thread_model_option",
+                new_callable=AsyncMock,
+                side_effect=HTTPException(
+                    status_code=422,
+                    detail="Unknown Ask Claread model option: glm-standard",
+                ),
+            ),
+            patch(
+                "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
+            ) as mock_agentic,
+        ):
+            mock_settings.return_value.reader_record_ask_agentic_enabled = True
+            with pytest.raises(HTTPException) as excinfo:
+                await prepare_reading_record_ask_message(
+                    user_id=UUID(USER_ID),
+                    reading_record_id=RECORD_ID,
+                    request=request,
+                )
+
+        assert excinfo.value.status_code == 422
+        mock_agentic.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_model_build_provider_error_returns_typed_503_before_stream(self) -> None:
+        from app.llm.provider_factory import ModelProviderError
+        from app.services.reader_record_ask.service import prepare_reading_record_ask_message
+
+        request = MagicMock()
+        request.anchor = None
+        request.content = "hello"
+        request.entry_action = "ask_about_this"
+        request.model = None
+
+        flash_option = MagicMock()
+        flash_option.key = "deepseek-v4-flash"
+        flash_option.selection = MagicMock()
+
+        with (
+            patch(
+                "app.services.reader_record_ask.service.get_settings",
+            ) as mock_settings,
+            patch(
+                "app.services.reader_record_ask.service._load_snapshot_facts_raw",
+                new_callable=AsyncMock,
+                return_value=MagicMock(record=MagicMock(title="Test")),
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.ensure_default_reading_record_thread",
+                new_callable=AsyncMock,
+                return_value={"id": THREAD_ID, "title": "Test"},
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.resolve_and_persist_thread_model_option",
+                new_callable=AsyncMock,
+                return_value=flash_option,
+            ),
+            patch(
+                "app.services.reader_record_ask.service.build_model_for_route",
+                side_effect=ModelProviderError("secret provider details must not leak"),
+            ),
+            patch(
+                "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
+            ) as mock_agentic,
+        ):
+            mock_settings.return_value.reader_record_ask_agentic_enabled = True
+            with pytest.raises(HTTPException) as excinfo:
+                await prepare_reading_record_ask_message(
+                    user_id=UUID(USER_ID),
+                    reading_record_id=RECORD_ID,
+                    request=request,
+                )
+
+        assert excinfo.value.status_code == 503
+        assert excinfo.value.detail["code"] == "model_unconfigured"
+        assert excinfo.value.detail["model_key"] == "deepseek-v4-flash"
+        assert "secret" not in str(excinfo.value.detail)
+        mock_agentic.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_model_build_selection_error_returns_typed_503_before_stream(self) -> None:
+        from app.llm.router import ModelSelectionError
+        from app.services.reader_record_ask.service import prepare_reading_record_ask_message
+
+        request = MagicMock()
+        request.anchor = None
+        request.content = "hello"
+        request.entry_action = "ask_about_this"
+        request.model = "deepseek-pro"
+
+        pro_option = MagicMock()
+        pro_option.key = "deepseek-pro"
+        pro_option.selection = MagicMock()
+
+        with (
+            patch(
+                "app.services.reader_record_ask.service.get_settings",
+            ) as mock_settings,
+            patch(
+                "app.services.reader_record_ask.service._load_snapshot_facts_raw",
+                new_callable=AsyncMock,
+                return_value=MagicMock(record=MagicMock(title="Test")),
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.ensure_default_reading_record_thread",
+                new_callable=AsyncMock,
+                return_value={"id": THREAD_ID, "title": "Test"},
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.resolve_and_persist_thread_model_option",
+                new_callable=AsyncMock,
+                return_value=pro_option,
+            ),
+            patch(
+                "app.services.reader_record_ask.service.build_model_for_route",
+                side_effect=ModelSelectionError("Unknown model profile: secret-profile"),
+            ),
+            patch(
+                "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
+            ) as mock_agentic,
+        ):
+            mock_settings.return_value.reader_record_ask_agentic_enabled = True
+            with pytest.raises(HTTPException) as excinfo:
+                await prepare_reading_record_ask_message(
+                    user_id=UUID(USER_ID),
+                    reading_record_id=RECORD_ID,
+                    request=request,
+                )
+
+        assert excinfo.value.status_code == 503
+        assert excinfo.value.detail["code"] == "model_unconfigured"
+        assert "secret-profile" not in str(excinfo.value.detail)
+        mock_agentic.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_model_build_none_returns_typed_503_before_stream(self) -> None:
+        from app.services.reader_record_ask.service import prepare_reading_record_ask_message
+
+        request = MagicMock()
+        request.anchor = None
+        request.content = "hello"
+        request.entry_action = "ask_about_this"
+        request.model = None
+
+        flash_option = MagicMock()
+        flash_option.key = "deepseek-v4-flash"
+        flash_option.selection = MagicMock()
+
+        with (
+            patch(
+                "app.services.reader_record_ask.service.get_settings",
+            ) as mock_settings,
+            patch(
+                "app.services.reader_record_ask.service._load_snapshot_facts_raw",
+                new_callable=AsyncMock,
+                return_value=MagicMock(record=MagicMock(title="Test")),
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.ensure_default_reading_record_thread",
+                new_callable=AsyncMock,
+                return_value={"id": THREAD_ID, "title": "Test"},
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.resolve_and_persist_thread_model_option",
+                new_callable=AsyncMock,
+                return_value=flash_option,
+            ),
+            patch(
+                "app.services.reader_record_ask.service.build_model_for_route",
+                return_value=(None, MagicMock(profile_name="ask-main-deepseek-v4-flash")),
+            ),
+            patch(
+                "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
+            ) as mock_agentic,
+        ):
+            mock_settings.return_value.reader_record_ask_agentic_enabled = True
+            with pytest.raises(HTTPException) as excinfo:
+                await prepare_reading_record_ask_message(
+                    user_id=UUID(USER_ID),
+                    reading_record_id=RECORD_ID,
+                    request=request,
+                )
+
+        assert excinfo.value.status_code == 503
+        assert excinfo.value.detail["code"] == "model_unconfigured"
+        mock_agentic.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_confirm_action_uses_thread_scoped_runtime(self) -> None:

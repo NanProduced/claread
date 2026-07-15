@@ -32,7 +32,7 @@ Claread 后端当前使用三层模型配置：
 | 概念 | 作用 |
 |------|------|
 | provider | 供应商连接配置，如 `base_url`、`api_key_env`、OpenAI 兼容性 profile |
-| model | provider 下的远端模型名，如 `qwen3.7-max`、`glm-5.1` |
+| model | provider 下的远端模型名，如 `qwen3.7-max`、`deepseek-v4-flash` |
 | profile | 场景级配置，指向某个 model，并叠加 `model_settings` |
 | preset | 一组 route 到 profile 的映射，主要给内部调试、eval 或 workflow 请求级切换使用 |
 | model option | Ask Claread 暴露给用户/运营的模型选项白名单，不直接暴露全部 profile |
@@ -103,7 +103,7 @@ Claread 后端当前使用三层模型配置：
 
 ```json
 {
-  "default_option": "glm-standard",
+  "default_option": "deepseek-v4-flash",
   "billing_defaults": {
     "reserved_points": 10,
     "tokens_per_point": 1000,
@@ -115,13 +115,13 @@ Claread 后端当前使用三层模型配置：
     "prompt_buffer_tokens": 800
   },
   "options": {
-    "glm-standard": {
-      "label": "GLM-5.1",
-      "description": "默认档位：主回答与 replan 使用 GLM-5.1。",
+    "deepseek-v4-flash": {
+      "label": "DeepSeek V4 Flash",
+      "description": "默认档位：快速、低成本。主回答与 replan 使用 DeepSeek V4 Flash。",
       "selection": {
         "routes": {
-          "reader_ask": { "profile": "ask-main-glm51" },
-          "reader_ask_replan": { "profile": "ask-replan-glm51" }
+          "reader_ask": { "profile": "ask-main-deepseek-v4-flash" },
+          "reader_ask_replan": { "profile": "ask-replan-deepseek-v4-flash" }
         }
       },
       "runtime_budget": {
@@ -129,10 +129,28 @@ Claread 后端当前使用三层模型配置：
         "max_output_tokens": 3200
       },
       "price_multiplier": 1.0
+    },
+    "deepseek-pro": {
+      "label": "DeepSeek V4 Pro",
+      "description": "高质量备选档位：仅在用户显式选择时使用。",
+      "selection": {
+        "routes": {
+          "reader_ask": { "profile": "ask-main-deepseek-v4-pro" },
+          "reader_ask_replan": { "profile": "ask-replan-deepseek-v4-pro" }
+        }
+      },
+      "price_multiplier": 1.3
     }
   }
 }
 ```
+
+说明：
+
+- 默认档位是 DeepSeek V4 Flash；Flash profile 默认关闭模型内部 thinking，以控制延迟和成本。
+- 用户可见运行步骤由安全的 Agent activity/progress 协议提供，不展示原始 chain-of-thought。
+- DeepSeek V4 Pro 是显式高质量备选，不作为 Flash 的静默 fallback。
+- Article RAG 是否开启与主回答模型选择正交；RAG-off 不得依赖切换模型。
 
 这里的 `description` 既是前端提示文案，也承担“注释”作用。因为配置文件使用严格 JSON，不支持额外注释字段。
 
@@ -145,8 +163,8 @@ Claread 后端当前使用三层模型配置：
 ```bash
 DEFAULT_MODEL_PROFILE=workflow-qwen36-plus
 ANNOTATION_MODEL_PROFILE=workflow-qwen36-plus
-ASK_CLAREAD_PROFILE=ask-main-glm51
-READER_ASK_REPLAN_MODEL_PROFILE=ask-replan-glm51
+ASK_CLAREAD_PROFILE=ask-main-deepseek-v4-flash
+READER_ASK_REPLAN_MODEL_PROFILE=ask-replan-deepseek-v4-flash
 MODEL_PROFILES_JSON=config/model-profiles.json
 MODEL_PRESETS_JSON=config/model-presets.json
 READER_ASK_MODEL_OPTIONS_JSON=config/reader-ask-model-options.json

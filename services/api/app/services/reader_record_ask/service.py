@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from uuid import UUID
 
 from fastapi import HTTPException
+from pydantic_ai.models import Model
 
 from app.config.settings import get_settings
 from app.contracts.anchor_validation import (
@@ -13,6 +15,9 @@ from app.contracts.anchor_validation import (
     AnchorValidationError,
 )
 from app.database import connection as db_connect
+from app.llm.provider_factory import ModelProviderError
+from app.llm.router import ModelSelectionError, build_model_for_route
+from app.llm.routes import MODEL_ROUTE_READER_ASK
 from app.schemas.reader_ask import (
     ReaderAskActionConfirmRequest,
     ReaderAskActionConfirmResponse,
@@ -26,6 +31,8 @@ from app.schemas.reader_ask import (
 from app.services.ask_runtime import action_service, stream_service, thread_service
 from app.services.reader_orchestration.anchor_gate import load_validated_reading_record_anchor
 from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_uuid(value: str, *, field: str) -> UUID:
@@ -209,12 +216,118 @@ async def reset_reading_record_ask_thread(
     )
 
 
+async def _build_agentic_model_for_option(option) -> Model | str:
+    """Build the reader_ask main model from a resolved catalog option.
+
+    Uses the option's ModelSelection so thread/request choice wins over the
+    global ASK_CLAREAD_PROFILE route default. Known config/provider failures
+    become a typed 503 before any SSE stream starts. Never returns None into
+    production_stream auto-wire (that would re-resolve the global route).
+    """
+    try:
+        model, model_config = build_model_for_route(
+            get_settings(),
+            MODEL_ROUTE_READER_ASK,
+            option.selection,
+        )
+    except (ModelProviderError, ModelSelectionError) as exc:
+        logger.warning(
+            "agentic_model_build_failed code=model_unconfigured model_key=%s "
+            "error_type=%s",
+            option.key,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "model_unconfigured",
+                "message": "Ask Claread model is not configured for the selected option.",
+                "model_key": option.key,
+            },
+        ) from None
+    except Exception as exc:  # noqa: BLE001 — fail closed; no internal leakage
+        logger.warning(
+            "agentic_model_build_failed code=model_unconfigured model_key=%s "
+            "error_type=%s",
+            option.key,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "model_unconfigured",
+                "message": "Ask Claread model is not configured for the selected option.",
+                "model_key": option.key,
+            },
+        ) from None
+
+    if model is None:
+        logger.warning(
+            "agentic_model_build_failed code=model_unconfigured model_key=%s "
+            "error_type=NoneResult profile=%s",
+            option.key,
+            getattr(model_config, "profile_name", None),
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "model_unconfigured",
+                "message": "Ask Claread model is not configured for the selected option.",
+                "model_key": option.key,
+            },
+        )
+    return model
+
+
+async def prepare_reading_record_ask_message(
+    *,
+    user_id: UUID,
+    reading_record_id: str,
+    request: ReaderRecordAskMessageRequest,
+    thread_id: UUID | None = None,
+) -> tuple[UUID, UUID, Model | str | None]:
+    """Validate anchor/thread and resolve model before StreamingResponse starts.
+
+    Returns ``(reading_record_id, thread_id, model)``. Raising here yields a
+    real HTTP 4xx/503 (e.g. unknown model key, unconfigured provider) instead
+    of an SSE error frame. For the legacy path, model may be None —
+    stream_service resolves its own.
+    """
+    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
+    await _validate_reading_record_anchor(
+        user_id=user_id,
+        reading_record_id=parsed_record_id,
+        request=request,
+    )
+    if thread_id is None:
+        thread = await _ensure_default_thread(
+            user_id=user_id,
+            reading_record_id=parsed_record_id,
+        )
+        resolved_thread_id = _parse_uuid(thread["id"], field="thread id is invalid")
+    else:
+        resolved_thread_id = thread_id
+
+    if not get_settings().reader_record_ask_agentic_enabled:
+        return parsed_record_id, resolved_thread_id, None
+
+    option = await thread_service.resolve_and_persist_thread_model_option(
+        user_id=user_id,
+        thread_id=resolved_thread_id,
+        requested_key=request.model,
+        reading_record_id=parsed_record_id,
+    )
+    model = await _build_agentic_model_for_option(option)
+    return parsed_record_id, resolved_thread_id, model
+
+
 async def _stream_legacy_or_agentic(
     *,
     user_id: UUID,
     reading_record_id: UUID,
     thread_id: UUID,
     request: ReaderRecordAskMessageRequest,
+    model: Model | str | None = None,
 ) -> AsyncIterator[str]:
     """Dispatch to agentic path when flag is on; never fall back on agentic failure."""
     if not get_settings().reader_record_ask_agentic_enabled:
@@ -245,6 +358,7 @@ async def _stream_legacy_or_agentic(
         request_anchor=request.anchor,
         validated_anchor=None,
         stable_document_id=None,
+        model=model,
     ):
         yield chunk
 
@@ -254,19 +368,21 @@ async def send_reading_record_ask_message(
     user_id: UUID,
     reading_record_id: str,
     request: ReaderRecordAskMessageRequest,
+    prepared: tuple[UUID, UUID, Model | str | None] | None = None,
 ) -> AsyncIterator[str]:
-    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
-    await _validate_reading_record_anchor(
-        user_id=user_id,
-        reading_record_id=parsed_record_id,
-        request=request,
-    )
-    thread = await _ensure_default_thread(user_id=user_id, reading_record_id=parsed_record_id)
+    if prepared is None:
+        prepared = await prepare_reading_record_ask_message(
+            user_id=user_id,
+            reading_record_id=reading_record_id,
+            request=request,
+        )
+    parsed_record_id, resolved_thread_id, model = prepared
     async for chunk in _stream_legacy_or_agentic(
         user_id=user_id,
         reading_record_id=parsed_record_id,
-        thread_id=_parse_uuid(thread["id"], field="thread id is invalid"),
+        thread_id=resolved_thread_id,
         request=request,
+        model=model,
     ):
         yield chunk
 
@@ -277,18 +393,22 @@ async def stream_reading_record_ask_thread_message(
     reading_record_id: str,
     thread_id: UUID,
     request: ReaderRecordAskMessageRequest,
+    prepared: tuple[UUID, UUID, Model | str | None] | None = None,
 ) -> AsyncIterator[str]:
-    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
-    await _validate_reading_record_anchor(
-        user_id=user_id,
-        reading_record_id=parsed_record_id,
-        request=request,
-    )
+    if prepared is None:
+        prepared = await prepare_reading_record_ask_message(
+            user_id=user_id,
+            reading_record_id=reading_record_id,
+            request=request,
+            thread_id=thread_id,
+        )
+    parsed_record_id, resolved_thread_id, model = prepared
     async for chunk in _stream_legacy_or_agentic(
         user_id=user_id,
         reading_record_id=parsed_record_id,
-        thread_id=thread_id,
+        thread_id=resolved_thread_id,
         request=request,
+        model=model,
     ):
         yield chunk
 

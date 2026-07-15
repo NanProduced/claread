@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
@@ -31,11 +32,14 @@ from app.services.reader_record_ask.evidence import build_server_evidence_observ
 from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
 from app.services.reader_record_ask.finalizer import FinalizedAskResult
 from app.services.reader_record_ask.production_stream import (
+    TERMINAL_REASON_AGENT_OUTPUT_INVALID,
+    TERMINAL_REASON_AGENT_RUN_FAILED,
     build_completed_dto,
     stream_agentic_thread_message,
 )
 from app.services.reader_record_ask.runtime import ReadingRecordAskRunResult
 from app.services.reader_record_ask.sse import (
+    EVENT_AGENTIC_TERMINAL,
     EVENT_MESSAGE_COMPLETED,
     EVENT_MESSAGE_INTERRUPTED,
     encode_sse,
@@ -216,10 +220,12 @@ def _parse_sse(chunks: list[str]) -> list[tuple[str, dict]]:
 # ---------------------------------------------------------------------------
 
 
-def test_feature_flag_defaults_off() -> None:
-    _clear_settings_cache()
-    assert settings_mod.get_settings().reader_record_ask_agentic_enabled is False
-    _clear_settings_cache()
+def test_feature_flag_code_default_is_false() -> None:
+    """Settings field default is False; local .env may enable it in development."""
+    from app.config.settings import Settings
+
+    field = Settings.model_fields["reader_record_ask_agentic_enabled"]
+    assert field.default is False
 
 
 @pytest.mark.asyncio
@@ -285,62 +291,76 @@ async def test_flag_on_does_not_call_legacy_stream() -> None:
                     return_value={"id": str(_THREAD)},
                 ):
                     with patch(
-                        "app.services.reader_record_ask.service._load_snapshot_facts",
+                        "app.services.reader_record_ask.service.thread_service.resolve_and_persist_thread_model_option",
                         new_callable=AsyncMock,
-                        return_value=_fake_facts(),
+                        return_value=MagicMock(
+                            key="deepseek-v4-flash",
+                            selection=MagicMock(),
+                        ),
                     ):
-                        repo = _FakeRepo()
-
-                        async def _run(**kwargs):
-                            env = kwargs["envelope"]
-                            EvidenceRegistry(env.envelope_fingerprint)
-                            # Register nothing extra; empty citations ok
-                            return ReadingRecordAskRunResult(
-                                final_text="agentic answer",
-                                finalized=FinalizedAskResult(
-                                    status="ok",
-                                    answer_text="agentic answer",
-                                    resolved_evidence=(),
-                                    envelope_fingerprint=env.envelope_fingerprint,
-                                ),
-                            )
-
                         with patch(
-                            "app.services.reader_record_ask.production_stream.run_reading_record_ask",
-                            side_effect=_run,
+                            "app.services.reader_record_ask.service.build_model_for_route",
+                            return_value=(_function_model("agentic answer"), MagicMock()),
                         ):
                             with patch(
-                                "app.services.reader_record_ask.production_stream.ReaderRecordAskRepository",
-                                return_value=repo,
+                                "app.services.reader_record_ask.service._load_snapshot_facts",
+                                new_callable=AsyncMock,
+                                return_value=_fake_facts(),
                             ):
+                                repo = _FakeRepo()
+
+                                async def _run(**kwargs):
+                                    env = kwargs["envelope"]
+                                    EvidenceRegistry(env.envelope_fingerprint)
+                                    # Register nothing extra; empty citations ok
+                                    return ReadingRecordAskRunResult(
+                                        final_text="agentic answer",
+                                        finalized=FinalizedAskResult(
+                                            status="ok",
+                                            answer_text="agentic answer",
+                                            resolved_evidence=(),
+                                            envelope_fingerprint=env.envelope_fingerprint,
+                                        ),
+                                    )
+
                                 with patch(
-                                    "app.services.reader_record_ask.production_stream.resolve_agentic_model",
-                                    return_value=_function_model("agentic answer"),
+                                    "app.services.reader_record_ask.production_stream.run_reading_record_ask",
+                                    side_effect=_run,
                                 ):
                                     with patch(
-                                        "app.services.reader_record_ask.production_stream.load_active_stable_document_id",
-                                        new_callable=AsyncMock,
-                                        return_value=_DOC,
+                                        "app.services.reader_record_ask.production_stream.ReaderRecordAskRepository",
+                                        return_value=repo,
                                     ):
-                                        from app.schemas.reader_ask import (
-                                            ReaderRecordAskMessageRequest,
-                                        )
-                                        from app.services.reader_record_ask import (
-                                            service as svc,
-                                        )
-
-                                        chunks = []
-                                        async for c in svc.stream_reading_record_ask_thread_message(
-                                            user_id=_USER,
-                                            reading_record_id=str(_RECORD),
-                                            thread_id=_THREAD,
-                                            request=ReaderRecordAskMessageRequest(content="hi"),
+                                        with patch(
+                                            "app.services.reader_record_ask.production_stream.resolve_agentic_model",
+                                            return_value=_function_model("agentic answer"),
                                         ):
-                                            chunks.append(c)
-                        assert mock_legacy.call_count == 0
-                        events = _parse_sse(chunks)
-                        names = [e[0] for e in events]
-                        assert EVENT_MESSAGE_COMPLETED in names
+                                            with patch(
+                                                "app.services.reader_record_ask.production_stream.load_active_stable_document_id",
+                                                new_callable=AsyncMock,
+                                                return_value=_DOC,
+                                            ):
+                                                from app.schemas.reader_ask import (
+                                                    ReaderRecordAskMessageRequest,
+                                                )
+                                                from app.services.reader_record_ask import (
+                                                    service as svc,
+                                                )
+
+                                                chunks = []
+                                                async for c in svc.stream_reading_record_ask_thread_message(
+                                                    user_id=_USER,
+                                                    reading_record_id=str(_RECORD),
+                                                    thread_id=_THREAD,
+                                                    request=ReaderRecordAskMessageRequest(
+                                                        content="hi"
+                                                    ),
+                                                ):
+                                                    chunks.append(c)
+                                assert mock_legacy.call_count == 0
+                                events = _parse_sse(chunks)
+                                names = [e[0] for e in events]
+                                assert EVENT_MESSAGE_COMPLETED in names
     _clear_settings_cache()
 
 
@@ -753,6 +773,160 @@ async def test_invalid_citations_no_completed() -> None:
     names = [n for n, _ in _parse_sse(chunks)]
     assert EVENT_MESSAGE_COMPLETED not in names
     assert repo.terminal_writes[0]["final_status"] == "invalid_citations"
+
+
+@pytest.mark.asyncio
+async def test_unexpected_model_behavior_maps_to_stable_terminal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Structured-output exhaustion must not leak pydantic-ai / schema text."""
+    repo = _FakeRepo()
+    leak = (
+        "Exceeded maximum output retries (1) for output validation; "
+        'body: {"answer_text": {"min_length": 1}}'
+    )
+
+    async def _run(**kwargs):
+        del kwargs
+        raise UnexpectedModelBehavior(leak)
+
+    with caplog.at_level("WARNING", logger="app.services.reader_record_ask.production_stream"):
+        chunks = [
+            c
+            async for c in stream_agentic_thread_message(
+                user_id=_USER,
+                reading_record_id=_RECORD,
+                thread_id=_THREAD,
+                content="q",
+                facts=_fake_facts(),
+                request_anchor=None,
+                repository=repo,  # type: ignore[arg-type]
+                document_access=InMemoryDocumentAccess(
+                    snapshot=build_document_scope(
+                        reading_record_id=_RECORD,
+                        base_id=_BASE,
+                        record_generation=1,
+                        base_content_sha256=_SHA,
+                        units=[
+                            ReadingUnitView(
+                                unit_id="u1",
+                                order_index=0,
+                                text="x",
+                                text_hash="11111111",
+                                base_start_utf16=0,
+                                base_end_utf16=1,
+                            )
+                        ],
+                    )
+                ),
+                model=_function_model(),
+                run_fn=_run,
+                auto_wire_dependencies=False,
+            )
+        ]
+    events = _parse_sse(chunks)
+    names = [n for n, _ in events]
+    assert EVENT_MESSAGE_COMPLETED not in names
+    assert EVENT_AGENTIC_TERMINAL in names
+    assert EVENT_MESSAGE_INTERRUPTED in names
+    assert len(repo.terminal_writes) == 1
+    tw = repo.terminal_writes[0]
+    assert tw["final_status"] == "failed"
+    assert tw["run_status"] == "failed"
+    assert tw["terminal_reason"] == TERMINAL_REASON_AGENT_OUTPUT_INVALID
+
+    # No framework / schema leakage on any emitted payload.
+    blob = json.dumps([d for _, d in events], ensure_ascii=False)
+    assert "Exceeded maximum" not in blob
+    assert "output retries" not in blob
+    assert "min_length" not in blob
+    assert "answer_text" not in blob
+    assert leak not in blob
+    for _name, data in events:
+        if _name in {EVENT_AGENTIC_TERMINAL, EVENT_MESSAGE_INTERRUPTED}:
+            assert data.get("terminal_reason") == TERMINAL_REASON_AGENT_OUTPUT_INVALID
+            assert data.get("final_status") == "failed"
+            assert "answer_text" not in data
+
+    # Safe diagnostic log includes model route, never framework exception text.
+    log_blob = "\n".join(r.getMessage() for r in caplog.records)
+    assert "model_route=" in log_blob
+    assert "UnexpectedModelBehavior" in log_blob
+    assert "Exceeded maximum" not in log_blob
+    assert "min_length" not in log_blob
+    assert leak not in log_blob
+
+
+@pytest.mark.asyncio
+async def test_generic_exception_does_not_complete_or_leak_as_answer(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Non-structured failures stay interrupted; no message.completed."""
+    repo = _FakeRepo()
+    sensitive = "provider boom with secrets XYZ"
+
+    async def _run(**kwargs):
+        del kwargs
+        raise RuntimeError(sensitive)
+
+    with caplog.at_level("WARNING", logger="app.services.reader_record_ask.production_stream"):
+        chunks = [
+            c
+            async for c in stream_agentic_thread_message(
+                user_id=_USER,
+                reading_record_id=_RECORD,
+                thread_id=_THREAD,
+                content="q",
+                facts=_fake_facts(),
+                request_anchor=None,
+                repository=repo,  # type: ignore[arg-type]
+                document_access=InMemoryDocumentAccess(
+                    snapshot=build_document_scope(
+                        reading_record_id=_RECORD,
+                        base_id=_BASE,
+                        record_generation=1,
+                        base_content_sha256=_SHA,
+                        units=[
+                            ReadingUnitView(
+                                unit_id="u1",
+                                order_index=0,
+                                text="x",
+                                text_hash="11111111",
+                                base_start_utf16=0,
+                                base_end_utf16=1,
+                            )
+                        ],
+                    )
+                ),
+                model=_function_model(),
+                run_fn=_run,
+                auto_wire_dependencies=False,
+            )
+        ]
+    events = _parse_sse(chunks)
+    names = [n for n, _ in events]
+    assert EVENT_MESSAGE_COMPLETED not in names
+    assert EVENT_MESSAGE_INTERRUPTED in names
+    assert EVENT_AGENTIC_TERMINAL in names
+    assert repo.terminal_writes[0]["final_status"] == "failed"
+    assert repo.terminal_writes[0]["terminal_reason"] == TERMINAL_REASON_AGENT_RUN_FAILED
+    blob = json.dumps([d for _, d in events], ensure_ascii=False)
+    assert sensitive not in blob
+    assert "provider boom" not in blob
+    assert "XYZ" not in blob
+    for _name, data in events:
+        if _name in {EVENT_AGENTIC_TERMINAL, EVENT_MESSAGE_INTERRUPTED}:
+            assert data.get("terminal_reason") == TERMINAL_REASON_AGENT_RUN_FAILED
+            assert "answer_text" not in data
+
+    log_blob = "\n".join(r.getMessage() for r in caplog.records)
+    assert "model_route=" in log_blob
+    assert "RuntimeError" in log_blob
+    assert sensitive not in log_blob
+    assert "provider boom" not in log_blob
+    assert "XYZ" not in log_blob
+    # Must not use logger.exception (no traceback leakage into message text).
+    assert "Traceback" not in log_blob
 
 
 def test_build_completed_dto_includes_typed_evidence_kinds() -> None:

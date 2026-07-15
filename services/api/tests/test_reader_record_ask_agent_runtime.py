@@ -10,9 +10,15 @@ from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from app.services.reader_record_ask.agent import (
+    DEFAULT_OUTPUT_RETRIES,
+    DEFAULT_TOOL_RETRIES,
+    create_reading_record_ask_agent,
+)
 from app.services.reader_record_ask.context_envelope import (
     ENVELOPE_VERSION,
     EnvelopeInitialAnchor,
@@ -32,6 +38,7 @@ from app.services.reader_record_ask.fence import (
     SequenceGenerationFence,
     StaticGenerationFence,
 )
+from app.services.reader_record_ask.finalizer import AgentAnswerDraft
 from app.services.reader_record_ask.read_range_executor import (
     MAX_UNIT_ORDER_SPAN_WIDTH,
     SERVER_READ_RANGE_MAX_CHARS,
@@ -850,6 +857,149 @@ async def test_run_rejects_registry_bound_to_other_envelope() -> None:
             model=_text_model("x"),
             evidence_registry=EvidenceRegistry(other.envelope_fingerprint),
         )
+
+
+# ---------------------------------------------------------------------------
+# Structured-output reliability (retry policy + finalizer still enforced)
+# ---------------------------------------------------------------------------
+
+
+def test_agent_explicit_retry_policy() -> None:
+    """New RR agent must pin tool/output retries (not pydantic-ai defaults)."""
+    agent = create_reading_record_ask_agent(_text_model("x"))
+    assert agent._max_tool_retries == DEFAULT_TOOL_RETRIES == 1
+    assert agent._max_output_retries == DEFAULT_OUTPUT_RETRIES == 2
+
+
+@pytest.mark.asyncio
+async def test_structured_output_recovers_within_output_retry_budget() -> None:
+    """First final_result invalid, second valid → run completes; finalizer runs."""
+    calls = {"n": 0}
+
+    async def model_fn(messages, info: AgentInfo):
+        del messages, info
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # Illegal: empty answer_text violates AgentAnswerDraft.min_length=1
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="final_result",
+                        args=json.dumps(
+                            {
+                                "answer_text": "",
+                                "cited_evidence_handles": [],
+                            }
+                        ),
+                        tool_call_id="bad-1",
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                _final_result_part(
+                    content="Recovered structured answer.",
+                    handles=[],
+                    tool_call_id="ok-2",
+                )
+            ]
+        )
+
+    result = await run_reading_record_ask(
+        user_message="Summarize.",
+        envelope=_envelope(),
+        document_access=_access(),
+        model=FunctionModel(model_fn),
+        article_rag=None,
+    )
+    assert calls["n"] == 2
+    assert result.final_text == "Recovered structured answer."
+    assert result.finalized is not None
+    assert result.finalized.status == "ok"
+    assert isinstance(result.agent_draft, AgentAnswerDraft)
+    assert result.agent_draft.answer_text == "Recovered structured answer."
+
+
+@pytest.mark.asyncio
+async def test_structured_output_exhausted_raises_unexpected_model_behavior() -> None:
+    """Persistently invalid final_result fails within finite budget (no loop)."""
+    calls = {"n": 0}
+
+    async def model_fn(messages, info: AgentInfo):
+        del messages, info
+        calls["n"] += 1
+        # Persistently invalid: empty answer_text violates min_length=1.
+        # (TypeError from handle coercion can surface outside the output
+        # retry path; keep the failure inside AgentAnswerDraft validation.)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="final_result",
+                    args=json.dumps(
+                        {
+                            "answer_text": "",
+                            "cited_evidence_handles": [],
+                        }
+                    ),
+                    tool_call_id=f"bad-{calls['n']}",
+                )
+            ]
+        )
+
+    with pytest.raises(UnexpectedModelBehavior) as ei:
+        await run_reading_record_ask(
+            user_message="Summarize.",
+            envelope=_envelope(),
+            document_access=_access(),
+            model=FunctionModel(model_fn),
+            article_rag=None,
+        )
+    # output_retries=2 → initial attempt + 2 repairs = 3 model calls max
+    assert calls["n"] == DEFAULT_OUTPUT_RETRIES + 1
+    assert calls["n"] <= 4  # hard ceiling against infinite retry
+    msg = str(ei.value)
+    assert "output validation" in msg.lower() or "retries" in msg.lower()
+
+
+@pytest.mark.asyncio
+async def test_structured_output_success_still_runs_evidence_finalizer() -> None:
+    """Valid structured draft with a foreign handle is rejected by finalizer."""
+    foreign = "evh_" + ("ab" * 16)
+    result = await run_reading_record_ask(
+        user_message="Cite something invented.",
+        envelope=_envelope(),
+        document_access=_access(),
+        model=_text_model("Looks fine but bad citation.", handles=[foreign]),
+        article_rag=None,
+    )
+    assert result.final_text is None
+    assert result.finalized is not None
+    assert result.finalized.status == "invalid_citations"
+    assert foreign in result.finalized.rejected_handles
+    # Draft was accepted by pydantic-ai; finalizer is the citation gate.
+    assert result.agent_draft is not None
+    assert result.agent_draft.answer_text.startswith("Looks fine")
+
+
+@pytest.mark.asyncio
+async def test_rag_off_basic_answer_still_completes_via_initial_anchor() -> None:
+    """article_rag=None must not block a basic answer that cites initial anchor."""
+    result = await run_reading_record_ask(
+        user_message="What is selected?",
+        envelope=_envelope(),
+        document_access=_access(),
+        model=_text_model(
+            "Selection is about Alpha.",
+            use_initial_anchor_from_prompt=True,
+        ),
+        article_rag=None,
+    )
+    assert result.final_text == "Selection is about Alpha."
+    assert result.finalized is not None
+    assert result.finalized.status == "ok"
+    assert result.search_current_article_calls == 0
+    kinds = {obs.handle.kind for obs in result.finalized.resolved_evidence}
+    assert "initial_anchor" in kinds
 
 
 @pytest.mark.asyncio

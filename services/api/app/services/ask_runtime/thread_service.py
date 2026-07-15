@@ -201,6 +201,54 @@ async def get_reading_record_thread_detail(
     )
 
 
+async def resolve_and_persist_thread_model_option(
+    *,
+    user_id: UUID,
+    thread_id: UUID,
+    requested_key: str | None,
+    reading_record_id: UUID | None = None,
+) -> model_options_svc.ResolvedReaderAskModelOption:
+    """Resolve Ask model option for a thread and persist fallback/explicit selection.
+
+    Composition-layer helper shared by legacy stream and agentic Ask wiring.
+    - request.model present → strict=True (unknown/deleted keys → 422)
+    - only thread.selected_model_key → strict=False (historical keys soft-fallback)
+    When fallback or explicit selection changes the key, persist it on the thread.
+    """
+    thread = await repo.get_thread(user_id, thread_id)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Reader ask thread not found")
+    if reading_record_id is not None:
+        if thread.get("record_scope") != "reading_record":
+            raise HTTPException(
+                status_code=404,
+                detail="Reader ask thread not found for this Reading Record",
+            )
+        if thread.get("reading_record_id") != str(reading_record_id):
+            raise HTTPException(
+                status_code=404,
+                detail="Reader ask thread not found for this Reading Record",
+            )
+
+    requested = requested_key or None
+    current_key = cast(str | None, thread.get("selected_model_key"))
+    selected_key = requested or current_key
+    option = _resolve_reader_ask_model_option_or_422(
+        selected_key=selected_key,
+        strict=requested is not None,
+    )
+    should_persist = (
+        requested is not None or option.used_fallback or current_key is None
+    ) and current_key != option.key
+    if should_persist:
+        await repo.update_thread_selected_model(
+            user_id,
+            thread_id,
+            selected_model_key=option.key,
+        )
+    return option
+
+
 async def reset_reading_record_thread(
     user_id: UUID,
     thread_id: UUID,

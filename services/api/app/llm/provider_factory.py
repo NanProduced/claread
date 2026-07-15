@@ -184,6 +184,7 @@ def _build_dashscope_native_model(
             function_tools=agent_info.function_tools,
             output_tools=agent_info.output_tools,
             allow_text_output=agent_info.allow_text_output,
+            instructions=agent_info.instructions,
         )
 
     async def _stream(messages, agent_info):
@@ -196,6 +197,7 @@ def _build_dashscope_native_model(
             function_tools=agent_info.function_tools,
             output_tools=agent_info.output_tools,
             allow_text_output=agent_info.allow_text_output,
+            instructions=agent_info.instructions,
         ):
             yield part
 

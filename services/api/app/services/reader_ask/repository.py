@@ -575,7 +575,9 @@ async def get_or_create_default_thread_for_reading_record(
             )
             VALUES ($1, NULL, $2, $3, $4, TRUE, $5, $5)
             ON CONFLICT (user_id, reading_record_id)
-            WHERE is_default = TRUE AND archived_at IS NULL
+            WHERE is_default = TRUE
+              AND archived_at IS NULL
+              AND reading_record_id IS NOT NULL
             DO UPDATE SET
                 title = COALESCE(reader_ask_threads.title, EXCLUDED.title),
                 selected_model_key = COALESCE(EXCLUDED.selected_model_key, reader_ask_threads.selected_model_key),

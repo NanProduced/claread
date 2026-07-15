@@ -6,9 +6,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic_ai import Agent
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.tools import ToolDefinition
 
+from app.config.settings import Settings
 from app.llm.provider_factory import (
     PROVIDER_BUILDERS,
     _build_dashscope_native_model,
@@ -23,9 +25,8 @@ from app.llm.types import (
     ModelProviderConfig,
     ModelSelection,
     ResolvedModelConfig,
-    RunModelSettings,
 )
-from app.config.settings import Settings
+from app.services.reader_record_ask.finalizer import AgentAnswerDraft
 
 
 def _native_settings(api_key: str = "k") -> Settings:
@@ -149,6 +150,51 @@ def test_dashscope_native_builder_returns_none_when_missing_credentials() -> Non
     assert _build_dashscope_native_model(config) is None
 
 
+@pytest.mark.asyncio
+async def test_dashscope_native_agent_forwards_instructions_and_prompted_output_schema() -> None:
+    config = ResolvedModelConfig(
+        route=MODEL_ROUTE_READER_ASK,
+        profile_name="ask-main-glm51-native",
+        provider="dashscope_native",
+        adapter="dashscope_native",
+        model_name="glm-5.1",
+        api_key="k",
+    )
+    model = _build_dashscope_native_model(config)
+    assert model is not None
+
+    response = SimpleNamespace(
+        status_code=200,
+        output=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message={
+                        "role": "assistant",
+                        "content": '{"answer_text":"ok","cited_evidence_handles":[]}',
+                    }
+                )
+            ]
+        ),
+        usage={"input_tokens": 1, "output_tokens": 1},
+    )
+
+    with patch("app.llm.dashscope_stream.AioGeneration") as mock_generation:
+        mock_generation.call = AsyncMock(return_value=response)
+        result = await Agent(
+            model,
+            output_type=AgentAnswerDraft,
+            instructions="You are Ask Claread.",
+        ).run("Summarize the article.")
+
+    assert result.output.answer_text == "ok"
+    sent_messages = mock_generation.call.await_args.kwargs["messages"]
+    assert sent_messages[0]["role"] == "system"
+    system_content = sent_messages[0]["content"]
+    assert "You are Ask Claread." in system_content
+    assert "Always respond with a JSON object" in system_content
+    assert '"answer_text"' in system_content
+
+
 def test_dashscope_native_profile_marks_prompted_structured_output() -> None:
     profile = _dashscope_native_profile()
     assert profile.supports_json_object_output is False
@@ -258,6 +304,7 @@ async def test_dashscope_native_builder_forwards_agent_runtime_settings_and_tool
         function_tools=[tool],
         output_tools=[],
         allow_text_output=True,
+        instructions="Use the current article only.",
     )
 
     with patch("app.llm.provider_factory.request_dashscope_chat", new=AsyncMock()) as mock_request:
@@ -269,6 +316,7 @@ async def test_dashscope_native_builder_forwards_agent_runtime_settings_and_tool
     assert kwargs["function_tools"] == [tool]
     assert kwargs["allow_text_output"] is True
 
+    assert kwargs["instructions"] == "Use the current article only."
     captured_stream_kwargs: dict[str, object] = {}
 
     async def _fake_stream_dashscope_chat(**kwargs):
@@ -281,6 +329,10 @@ async def test_dashscope_native_builder_forwards_agent_runtime_settings_and_tool
 
     assert emitted == []
     stream_kwargs = captured_stream_kwargs
-    assert stream_kwargs["model_settings"] == {"max_tokens": 256, "extra_body": {"enable_thinking": True}}
+    assert stream_kwargs["model_settings"] == {
+        "max_tokens": 256,
+        "extra_body": {"enable_thinking": True},
+    }
     assert stream_kwargs["function_tools"] == [tool]
     assert stream_kwargs["allow_text_output"] is True
+    assert stream_kwargs["instructions"] == "Use the current article only."

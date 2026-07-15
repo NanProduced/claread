@@ -71,19 +71,30 @@
       }
     }
   },
+  "ask_deepseek_v4_flash": {
+    "preset": "workflow_base",
+    "routes": {
+      "reader_ask": {
+        "profile": "ask-main-deepseek-v4-flash"
+      },
+      "reader_ask_replan": {
+        "profile": "ask-replan-deepseek-v4-flash"
+      }
+    }
+  },
   "ask_deepseek_balanced": {
     "preset": "workflow_base",
     "routes": {
       "reader_ask": {
         "profile": "ask-main-deepseek-v4-pro",
         "fallback_profiles": [
-          "ask-main-glm51"
+          "ask-main-deepseek-v4-flash"
         ]
       },
       "reader_ask_replan": {
         "profile": "ask-replan-deepseek-v4-pro",
         "fallback_profiles": [
-          "ask-replan-glm51"
+          "ask-replan-deepseek-v4-flash"
         ]
       }
     }
@@ -94,7 +105,7 @@
       "reader_ask": {
         "profile": "ask-main-qwen37-max",
         "fallback_profiles": [
-          "ask-main-glm51",
+          "ask-main-deepseek-v4-flash",
           "ask-main-deepseek-v4-pro"
         ],
         "model_settings": {
@@ -108,7 +119,7 @@
       "reader_ask_replan": {
         "profile": "ask-replan-qwen37-max",
         "fallback_profiles": [
-          "ask-replan-glm51",
+          "ask-replan-deepseek-v4-flash",
           "ask-replan-deepseek-v4-pro"
         ]
       }
@@ -121,14 +132,14 @@
       "reader_ask": {
         "profile": "ask-main-qwen37-max-native",
         "fallback_profiles": [
-          "ask-main-glm51-native",
+          "ask-main-deepseek-v4-flash",
           "ask-main-deepseek-v4-pro"
         ]
       },
       "reader_ask_replan": {
         "profile": "ask-replan-qwen37-max-native",
         "fallback_profiles": [
-          "ask-replan-glm51-native",
+          "ask-replan-deepseek-v4-flash",
           "ask-replan-deepseek-v4-pro"
         ]
       }

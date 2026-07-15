@@ -7,10 +7,12 @@ planner, ask_runtime stream, or old RAG prompt bridges.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 from uuid import UUID
 
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models import Model
 
 from app.config.settings import get_settings
@@ -54,6 +56,25 @@ from app.services.reader_record_ask.sse import (
 )
 
 RunFn = Callable[..., Any]
+
+logger = logging.getLogger(__name__)
+
+# Stable external terminal reasons. Must not leak pydantic-ai / provider
+# internals (exception text, schema bodies, raw responses, thinking).
+TERMINAL_REASON_AGENT_OUTPUT_INVALID = "agent_output_invalid"
+TERMINAL_REASON_AGENT_RUN_FAILED = "agent_run_failed"
+
+
+def _safe_model_route(model: Model | str | None) -> str:
+    """Return a short, non-sensitive model route/name for diagnostics."""
+    if model is None:
+        return "none"
+    if isinstance(model, str):
+        return model[:64]
+    name = getattr(model, "model_name", None)
+    if isinstance(name, str) and name.strip():
+        return name.strip()[:64]
+    return type(model).__name__[:64]
 
 
 def _safe_envelope_snapshot(envelope: ReadingRecordAskContextEnvelope) -> dict[str, Any]:
@@ -314,7 +335,19 @@ async def stream_agentic_thread_message(
             terminal.model_dump(mode="json"),
         )
         raise
-    except Exception as exc:
+    except UnexpectedModelBehavior as exc:
+        # Structured-output / tool-output validation exhausted. Do not
+        # surface pydantic-ai messages ("Exceeded maximum retries…") or
+        # schema / provider bodies to the Web client or logs.
+        logger.warning(
+            "reader_record_ask structured output invalid: type=%s turn_run_id=%s "
+            "message_id=%s model_route=%s envelope_fp=%s",
+            type(exc).__name__,
+            turn["id"],
+            assistant_msg["id"],
+            _safe_model_route(active_model),
+            envelope.envelope_fingerprint[:12],
+        )
         terminal = build_terminal_dto(
             finalized=None,
             message_id=assistant_msg["id"],
@@ -322,7 +355,43 @@ async def stream_agentic_thread_message(
             turn_run_id=turn["id"],
             envelope_fingerprint=envelope.envelope_fingerprint,
             final_status="failed",
-            terminal_reason=str(exc) or "agent_run_failed",
+            terminal_reason=TERMINAL_REASON_AGENT_OUTPUT_INVALID,
+        )
+        await repo.terminal_agentic_turn_run(
+            turn_run_id=turn_run_id,
+            message_id=message_id,
+            run_status="failed",
+            final_status="failed",
+            terminal_reason=terminal.terminal_reason,
+            terminal_dto=terminal.model_dump(mode="json"),
+        )
+        yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json"))
+        yield encode_sse(
+            EVENT_MESSAGE_INTERRUPTED,
+            terminal.model_dump(mode="json"),
+        )
+        return
+    except Exception as exc:
+        # Generic failures stay typed-failed/interrupted. Never log str(exc),
+        # traceback, request/response, or schema bodies — provider payloads
+        # may contain sensitive context.
+        logger.warning(
+            "reader_record_ask agent run failed: type=%s turn_run_id=%s "
+            "message_id=%s model_route=%s envelope_fp=%s",
+            type(exc).__name__,
+            turn["id"],
+            assistant_msg["id"],
+            _safe_model_route(active_model),
+            envelope.envelope_fingerprint[:12],
+        )
+        terminal = build_terminal_dto(
+            finalized=None,
+            message_id=assistant_msg["id"],
+            thread_id=str(thread_id),
+            turn_run_id=turn["id"],
+            envelope_fingerprint=envelope.envelope_fingerprint,
+            final_status="failed",
+            terminal_reason=TERMINAL_REASON_AGENT_RUN_FAILED,
         )
         await repo.terminal_agentic_turn_run(
             turn_run_id=turn_run_id,

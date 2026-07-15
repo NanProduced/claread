@@ -49,9 +49,13 @@ _THINKING_VENDOR_PART_ID = 0
 _TOOL_VENDOR_PART_ID_OFFSET = 1
 
 
-def _convert_messages(messages: list[ModelMessage]) -> list[Message]:
+def _convert_messages(
+    messages: list[ModelMessage], *, instructions: str | None = None
+) -> list[Message]:
     """Translate pydantic-ai messages into DashScope ``Message`` objects."""
     out: list[Message] = []
+    if instructions and instructions.strip():
+        out.append(Message(role="system", content=instructions.strip()))
     for msg in messages:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
@@ -289,12 +293,13 @@ async def request_dashscope_chat(
     api_key: str,
     model_settings: RunModelSettings | dict[str, Any] | None,
     provider_options: dict[str, object],
+    instructions: str | None = None,
     function_tools: Sequence[ToolDefinition] = (),
     output_tools: Sequence[ToolDefinition] = (),
     allow_text_output: bool = True,
 ) -> ModelResponse:
     """Return a non-streamed ``ModelResponse`` for ``FunctionModel.function``."""
-    ds_messages = _convert_messages(messages)
+    ds_messages = _convert_messages(messages, instructions=instructions)
     kwargs = _request_kwargs(
         model_settings=model_settings,
         provider_options=provider_options,
@@ -344,9 +349,10 @@ async def stream_dashscope_chat(
     function_tools: Sequence[ToolDefinition] = (),
     output_tools: Sequence[ToolDefinition] = (),
     allow_text_output: bool = True,
+    instructions: str | None = None,
 ) -> AsyncIterator[str | dict[int, DeltaThinkingPart] | dict[int, DeltaToolCall]]:
     """Yield FunctionModel-compatible parts from a DashScope native stream."""
-    ds_messages = _convert_messages(messages)
+    ds_messages = _convert_messages(messages, instructions=instructions)
     kwargs = _request_kwargs(
         model_settings=model_settings,
         provider_options=provider_options,
