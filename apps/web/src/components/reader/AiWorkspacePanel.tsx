@@ -145,6 +145,14 @@ import {
 } from "@/types/api/reader-ask";
 import { projectAgenticEvidenceForDisplay } from "./ask/agentic-evidence";
 import {
+  agenticActivityAriaLabel,
+  createIdleAgenticActivityState,
+  isAgenticActivityVisible,
+  reduceAgenticActivityEvent,
+  type AgenticActivityEvent,
+  type AgenticActivityState,
+} from "./ask/agentic-activity";
+import {
   consumeReaderAskSse,
   isReaderAskAgenticCompletedPayload,
   isReaderAskAgenticProgressPayload,
@@ -742,6 +750,7 @@ export function createSseMessageHandler(
   updateMessage: MessageUpdater,
   onMessageIdAssigned: ((assignedId: string) => void) | undefined,
   onError: (message: string) => void,
+  onAgenticActivity?: (event: AgenticActivityEvent) => void,
 ) {
   let currentMessageId = initialMessageId;
   // Agentic terminal may arrive as both agentic.terminal and message.interrupted
@@ -756,6 +765,7 @@ export function createSseMessageHandler(
       currentMessageId = payload.message_id;
       onMessageIdAssigned?.(payload.message_id);
     }
+    onAgenticActivity?.({ type: "completed" });
     commitStreamingMessageUpdate((messages) =>
       messages.map((message) => {
         if (
@@ -814,6 +824,10 @@ export function createSseMessageHandler(
       currentMessageId = payload.message_id;
       onMessageIdAssigned?.(payload.message_id);
     }
+    onAgenticActivity?.({
+      type: "terminal",
+      finalStatus: payload.final_status,
+    });
     onError(formatAgenticTerminalError(payload));
     const nextStatus = agenticTerminalMessageStatus(payload.final_status);
     commitStreamingMessageUpdate((messages) =>
@@ -845,18 +859,40 @@ export function createSseMessageHandler(
   }
 
   return function handleSseEvent(event: ReaderAskStreamEnvelopeDto) {
-    // Agentic-only progress events are non-terminal and safe to ignore for the
-    // message state machine. Do not complete or fail the assistant bubble.
+    // Agentic-only progress events are non-terminal. They update the activity
+    // indicator only — never complete or fail the assistant bubble.
     if (event.event === "agentic.run_started") {
-      if (isReaderAskAgenticRunStartedPayload(event.data) && event.data.message_id) {
-        currentMessageId = event.data.message_id;
-        onMessageIdAssigned?.(event.data.message_id);
+      if (isReaderAskAgenticRunStartedPayload(event.data)) {
+        if (event.data.message_id) {
+          currentMessageId = event.data.message_id;
+          onMessageIdAssigned?.(event.data.message_id);
+        }
+        onAgenticActivity?.({
+          type: "run_started",
+          messageId: event.data.message_id ?? currentMessageId,
+          turnRunId: event.data.turn_run_id ?? null,
+        });
       }
       return;
     }
 
     if (event.event === "agentic.progress") {
-      void isReaderAskAgenticProgressPayload(event.data);
+      if (isReaderAskAgenticProgressPayload(event.data)) {
+        onAgenticActivity?.({
+          type: "progress",
+          payload: event.data as {
+            execution_version?: string | null;
+            sequence?: number | null;
+            phase?: string | null;
+            activity?: string | null;
+            summary?: string | null;
+            elapsed_ms?: number | null;
+            tool_name?: string | null;
+            status?: string | null;
+            duration_ms?: number | null;
+          },
+        });
+      }
       return;
     }
 
@@ -973,6 +1009,8 @@ export function createSseMessageHandler(
         applyAgenticCompleted(event.data);
         return;
       }
+      // Legacy completed: never enter the agentic activity state machine.
+      onAgenticActivity?.({ type: "reset" });
 
       const payload = event.data as unknown as ReaderAskCompletedPayloadDto;
       // Update currentMessageId to the server-assigned id
@@ -2703,12 +2741,42 @@ function AssistantStreamingIndicator({
   reasoningStatus,
   compacting,
   replanStatus,
+  agenticActivity,
 }: {
   hasAnswerContent: boolean;
   reasoningStatus: ReaderAskMessageDto["reasoning_status"];
   compacting?: boolean;
   replanStatus?: ReaderAskMessageUiStateDto["replan_status"];
+  agenticActivity?: AgenticActivityState | null;
 }) {
+  if (agenticActivity && isAgenticActivityVisible(agenticActivity)) {
+    const title = agenticActivity.currentSummary ?? "Ask Claread 正在工作";
+    return (
+      <div
+        data-testid="ask-agentic-activity"
+        data-activity-status={agenticActivity.status}
+        data-activity-phase={agenticActivity.currentPhase ?? ""}
+        data-activity-sequence={String(agenticActivity.lastSequence)}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        aria-label={agenticActivityAriaLabel(agenticActivity)}
+        className="mb-1 inline-flex max-w-full items-center gap-2 rounded-md border border-hairline/70 bg-surface-warm/40 px-2.5 py-1.5 text-[12px] leading-4 text-muted-foreground"
+      >
+        <span
+          aria-hidden="true"
+          data-testid="ask-agentic-activity-pulse"
+          className={cn(
+            "inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-lens-blue/80",
+            "motion-safe:animate-pulse",
+            "motion-reduce:animate-none",
+          )}
+        />
+        <span className="truncate font-medium text-ink-soft">{title}</span>
+      </div>
+    );
+  }
+
   const title = compacting
     ? "正在压缩上下文"
     : replanStatus === "replanning"
@@ -2725,7 +2793,7 @@ function AssistantStreamingIndicator({
       : hasAnswerContent
         ? "正文已经开始输出，剩余内容仍在继续生成。"
         : reasoningStatus === "streaming"
-          ? "模型正在流式产出思路，随后继续输出正文。"
+          ? "模型正在整理思路，随后继续输出正文。"
           : "正在读取当前文章与附件上下文，准备本轮解释。";
 
   if (
@@ -2738,11 +2806,26 @@ function AssistantStreamingIndicator({
   }
 
   return (
-    <TaskProcessCard
-      title={title}
-      detail={detail}
-      className="mb-0.5"
-    />
+    <div
+      role="status"
+      aria-live="polite"
+      className="mb-1 inline-flex max-w-full items-center gap-2 rounded-md border border-hairline/70 bg-surface-warm/40 px-2.5 py-1.5 text-[12px] leading-4 text-muted-foreground"
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-lens-blue/80",
+          "motion-safe:animate-pulse",
+          "motion-reduce:animate-none",
+        )}
+      />
+      <span className="min-w-0">
+        <span className="block truncate font-medium text-ink-soft">{title}</span>
+        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+          {detail}
+        </span>
+      </span>
+    </div>
   );
 }
 
@@ -2815,6 +2898,7 @@ function MessageBubble({
   onAnnotationFeedback,
   analysisRecordId,
   onPickFollowUpSuggestion,
+  agenticActivity,
 }: {
   item: AskPanelConversationItem;
   currentRecordId: string;
@@ -2835,6 +2919,7 @@ function MessageBubble({
   onAnnotationFeedback?: (params: { entryType: string; entryId: string }) => void;
   analysisRecordId?: string;
   onPickFollowUpSuggestion?: (prompt: string) => void;
+  agenticActivity?: AgenticActivityState | null;
 }) {
   const { message, blocks } = item;
   const isAssistant = message.role === "assistant";
@@ -2844,7 +2929,12 @@ function MessageBubble({
   const hasAnswerContent = Boolean(message.content_md?.trim());
 
   return (
-    <div className={cn("flex flex-col gap-3", isAssistant ? "items-start" : "items-end")}>
+    <div
+      data-testid={isAssistant ? "ask-assistant-message" : "ask-user-message"}
+      data-message-id={message.id}
+      data-message-role={message.role}
+      className={cn("flex flex-col gap-3", isAssistant ? "items-start" : "items-end")}
+    >
       {isAssistant ? (
         <div className="min-w-0 w-full space-y-4">
           {blocks.map((block, index) => {
@@ -2868,6 +2958,7 @@ function MessageBubble({
                             reasoningStatus={message.reasoning_status}
                             compacting={message.compacting ?? false}
                             replanStatus={message.replan_status}
+                            agenticActivity={agenticActivity}
                           />
                         ) : null}
                         {message.status === "streaming" && message.tool_trace.length > 0 ? (
@@ -3265,6 +3356,9 @@ export function AiWorkspacePanel({
   const [threads, setThreads] = useState<ReaderAskThreadSummaryDto[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ReaderAskUiMessageDto[]>([]);
+  const [agenticActivity, setAgenticActivity] = useState<AgenticActivityState>(
+    () => createIdleAgenticActivityState(),
+  );
   const [modelOptions, setModelOptions] = useState<ReaderAskModelOptionSummaryDto[]>([]);
   const [defaultModelKey, setDefaultModelKey] = useState<string | null>(null);
   const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null);
@@ -3287,6 +3381,13 @@ export function AiWorkspacePanel({
   const initInProgressRef = useRef(false);
   const sseAbortRef = useRef<AbortController | null>(null);
   const provenanceSignatureRef = useRef<string | null>(null);
+  // Active streaming assistant id — used to attach activity UI only to the
+  // current turn and avoid stale indicators on older messages.
+  const streamingAssistantIdRef = useRef<string | null>(null);
+
+  const dispatchAgenticActivity = (event: AgenticActivityEvent) => {
+    setAgenticActivity((current) => reduceAgenticActivityEvent(current, event));
+  };
 
   // Abort in-flight SSE and reset init guard when panel closes or component unmounts
   useEffect(() => {
@@ -3304,6 +3405,14 @@ export function AiWorkspacePanel({
     message,
     blocks: message.role === "assistant" ? buildAssistantBlocks(message) : [],
   }));
+  const latestUserMessageId = (() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === "user") {
+        return messages[index]?.id ?? null;
+      }
+    }
+    return null;
+  })();
   const activeThread = activeThreadId ? threads.find((thread) => thread.id === activeThreadId) ?? null : null;
   const effectiveSelectedModelKey = (() => {
     if (isKnownModelOptionKey(modelOptions, selectedModelKey)) {
@@ -3957,6 +4066,9 @@ export function AiWorkspacePanel({
     setErrorMessage(null);
     setSupplementNotice(null);
     setSupplementNoticeMessageId(null);
+    // New user turn: clear previous activity so old summaries never linger.
+    dispatchAgenticActivity({ type: "reset" });
+    streamingAssistantIdRef.current = tempAssistantId;
     const controller = new AbortController();
     sseAbortRef.current = controller;
     setMessages((current) => [...current, userMessage, assistantMessage]);
@@ -3998,11 +4110,14 @@ export function AiWorkspacePanel({
         createSseMessageHandler(
           tempAssistantId,
           (updater) => setMessages(updater),
-          (assignedId) =>
+          (assignedId) => {
+            streamingAssistantIdRef.current = assignedId;
             setMessages((current) =>
               current.map((message) => (message.id === tempAssistantId ? { ...message, id: assignedId } : message)),
-            ),
+            );
+          },
           (errorMsg) => setErrorMessage(errorMsg),
+          dispatchAgenticActivity,
         ),
         controller.signal,
       );
@@ -4012,10 +4127,21 @@ export function AiWorkspacePanel({
       setMessages((current) =>
         current.map((message) => (message.id === tempAssistantId ? { ...message, status: "failed" } : message)),
       );
+      dispatchAgenticActivity({ type: "terminal", finalStatus: "failed" });
     } finally {
       if (sseAbortRef.current === controller) {
         sseAbortRef.current = null;
       }
+      // Hide activity indicator once the stream ends (completed/terminal already
+      // froze the state; reset to idle so a completed answer is not stuck loading).
+      setAgenticActivity((current) =>
+        current.status === "running" || current.status === "degraded"
+          ? createIdleAgenticActivityState()
+          : current.status === "completed" || current.status === "failed" || current.status === "cancelled"
+            ? createIdleAgenticActivityState()
+            : current,
+      );
+      streamingAssistantIdRef.current = null;
       setSending(false);
     }
   }
@@ -4037,6 +4163,8 @@ export function AiWorkspacePanel({
     setErrorMessage(null);
     setSupplementNotice(null);
     setSupplementNoticeMessageId(null);
+    dispatchAgenticActivity({ type: "reset" });
+    streamingAssistantIdRef.current = messageId;
     const controller = new AbortController();
     sseAbortRef.current = controller;
     setMessages((current) =>
@@ -4097,8 +4225,11 @@ export function AiWorkspacePanel({
         createSseMessageHandler(
           messageId,
           (updater) => setMessages(updater),
-          undefined,
+          (assignedId) => {
+            streamingAssistantIdRef.current = assignedId;
+          },
           (errorMsg) => setErrorMessage(errorMsg),
+          dispatchAgenticActivity,
         ),
         controller.signal,
       );
@@ -4118,10 +4249,13 @@ export function AiWorkspacePanel({
             : message,
         ),
       );
+      dispatchAgenticActivity({ type: "terminal", finalStatus: "failed" });
     } finally {
       if (sseAbortRef.current === controller) {
         sseAbortRef.current = null;
       }
+      setAgenticActivity(() => createIdleAgenticActivityState());
+      streamingAssistantIdRef.current = null;
       setSending(false);
     }
   }
@@ -4282,6 +4416,7 @@ export function AiWorkspacePanel({
           <ConversationShell
             className="min-h-0 flex-1"
             hasMessages={messages.length > 0}
+            latestUserMessageId={latestUserMessageId}
             contentClassName={cn(messages.length === 0 ? "" : "gap-6 px-5 pb-8 pt-4")}
             emptyState={
               <StarterState
@@ -4317,6 +4452,15 @@ export function AiWorkspacePanel({
                 onPickFollowUpSuggestion={(prompt) => {
                   void sendMessage({ content: prompt });
                 }}
+                agenticActivity={
+                  item.role === "assistant" &&
+                  item.status === "streaming" &&
+                  streamingAssistantIdRef.current != null &&
+                  (item.id === streamingAssistantIdRef.current ||
+                    agenticActivity.messageId === item.id)
+                    ? agenticActivity
+                    : null
+                }
               />
             ))}
           </ConversationShell>

@@ -3637,18 +3637,26 @@ describe("createSseMessageHandler – agentic stream", () => {
       updatedMessages = updater(updatedMessages);
     };
     const onError = vi.fn();
-    const onMessageIdAssigned = vi.fn();
+    // Apply assigned ids the same way AiWorkspacePanel does in sendMessage.
+    const onMessageIdAssigned = vi.fn((assignedId: string) => {
+      updatedMessages = updatedMessages.map((message) =>
+        message.id === initialId ? { ...message, id: assignedId } : message,
+      );
+    });
+    const onAgenticActivity = vi.fn();
     const handler = createSseMessageHandler(
       initialId,
       updateMessage,
       onMessageIdAssigned,
       onError,
+      onAgenticActivity,
     );
     return {
       getMessages: () => updatedMessages,
       handler,
       onError,
       onMessageIdAssigned,
+      onAgenticActivity,
     };
   }
 
@@ -3886,6 +3894,208 @@ describe("createSseMessageHandler – agentic stream", () => {
     expect(getMessages()[0].content_md).toBe("legacy after agentic");
     expect(getMessages()[0].agentic_evidence ?? null).toBeNull();
   });
+
+
+  it("projects agentic progress into activity callbacks with monotonic sequence rules", () => {
+    const { handler, onAgenticActivity, getMessages, onMessageIdAssigned } = setupHandler([
+      makeStreamingAssistant({ id: "temp-assistant-1" }),
+    ]);
+
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: "reader_record_ask_agentic_v1",
+        message_id: "msg-agentic-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-1",
+        envelope_fingerprint: "fp",
+        has_initial_selection: false,
+      },
+    });
+    handler({
+      event: "agentic.progress",
+      data: {
+        execution_version: "reader_record_ask_agentic_v1",
+        sequence: 1,
+        phase: "reading_context",
+        activity: "started",
+        summary: "正在读取文章上下文",
+        elapsed_ms: 12,
+        tool_name: "read_range",
+        status: "running",
+      },
+    });
+    // duplicate sequence ignored by reducer; callback still fires with payload
+    handler({
+      event: "agentic.progress",
+      data: {
+        execution_version: "reader_record_ask_agentic_v1",
+        sequence: 1,
+        phase: "composing_answer",
+        activity: "started",
+        summary: "正在组织回答",
+        elapsed_ms: 20,
+      },
+    });
+    handler({
+      event: "agentic.progress",
+      data: {
+        execution_version: "reader_record_ask_agentic_v1",
+        sequence: 2,
+        phase: "composing_answer",
+        activity: "started",
+        summary: "正在组织回答",
+        elapsed_ms: 30,
+      },
+    });
+    handler({
+      event: "message.completed",
+      data: agenticCompleted,
+    });
+    flushRaf();
+
+    const kinds = onAgenticActivity.mock.calls.map((call) => call[0].type);
+    expect(kinds[0]).toBe("run_started");
+    expect(kinds).toContain("progress");
+    expect(kinds).toContain("completed");
+    // Handler remaps content via message matching; temp assistant remains unless
+    // the host applies onMessageIdAssigned (panel does). Content must still land.
+    const assistant = getMessages().find((m) => m.role === "assistant");
+    expect(assistant?.content_md).toBe("Climate change is discussed in paragraph 2.");
+    expect(assistant?.status).toBe("completed");
+    expect(onMessageIdAssigned).toHaveBeenCalledWith("msg-agentic-1");
+    // Late progress after completed still invokes callback; reducer freezes state.
+    handler({
+      event: "agentic.progress",
+      data: {
+        execution_version: "reader_record_ask_agentic_v1",
+        sequence: 9,
+        phase: "validating_evidence",
+        activity: "started",
+        summary: "正在核对回答依据",
+        elapsed_ms: 99,
+      },
+    });
+    expect(onAgenticActivity.mock.calls.at(-1)?.[0].type).toBe("progress");
+  });
+
+  it("does not start agentic activity for legacy completed payloads", () => {
+    const { handler, onAgenticActivity } = setupHandler([
+      makeStreamingAssistant({ id: "temp-assistant-1" }),
+    ]);
+    handler({
+      event: "message.completed",
+      data: {
+        id: "msg-legacy-1",
+        thread_id: "thread-1",
+        content_md: "legacy answer",
+        submission_mode: "chat",
+        resolved_intent: "explain",
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+      },
+    });
+    flushRaf();
+    expect(onAgenticActivity).toHaveBeenCalledWith({ type: "reset" });
+    expect(
+      onAgenticActivity.mock.calls.some((call) => call[0].type === "run_started"),
+    ).toBe(false);
+  });
+
+  it("preserves the user message id across agentic progress/completed/terminal", () => {
+    const user: Msg = {
+      id: "user-1",
+      thread_id: "thread-1",
+      role: "user",
+      status: "completed",
+      content_md: "请概括这篇文章",
+      context_anchors: [],
+      citations: [],
+      action_proposals: [],
+      tool_trace: [],
+      evidence: [],
+      trace_summary: null,
+      disambiguation: null,
+      external_asset_disambiguation: null,
+      response_cards: [],
+      supplement_candidates: [],
+      persisted_supplements: [],
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+    };
+    const { handler, getMessages, onMessageIdAssigned } = setupHandler(
+      [user, makeStreamingAssistant({ id: "temp-assistant-1" })],
+      "temp-assistant-1",
+    );
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: "reader_record_ask_agentic_v1",
+        message_id: "msg-agentic-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-1",
+        envelope_fingerprint: "fp",
+        has_initial_selection: false,
+      },
+    });
+    handler({
+      event: "agentic.progress",
+      data: {
+        execution_version: "reader_record_ask_agentic_v1",
+        sequence: 1,
+        phase: "agent_running",
+        activity: "started",
+        summary: "正在分析当前文章",
+        elapsed_ms: 1,
+      },
+    });
+    handler({
+      event: "message.completed",
+      data: agenticCompleted,
+    });
+    flushRaf();
+    const afterCompleted = getMessages();
+    expect(afterCompleted.find((m) => m.role === "user")?.id).toBe("user-1");
+    expect(afterCompleted.find((m) => m.role === "user")?.content_md).toBe("请概括这篇文章");
+    // Host is responsible for applying assigned ids; handler still preserves user row.
+    expect(onMessageIdAssigned).toHaveBeenCalledWith("msg-agentic-1");
+    expect(afterCompleted.filter((m) => m.role === "user")).toHaveLength(1);
+    expect(afterCompleted.filter((m) => m.role === "assistant")).toHaveLength(1);
+  });
+
+  it("maps agentic terminal to activity terminal without inventing an answer", () => {
+    const { handler, getMessages, onAgenticActivity, onError } = setupHandler([
+      makeStreamingAssistant({ id: "temp-assistant-1", content_md: "" }),
+    ]);
+    handler({
+      event: "agentic.terminal",
+      data: {
+        execution_version: "reader_record_ask_agentic_v1",
+        final_status: "failed",
+        message_id: "msg-failed-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-1",
+        envelope_fingerprint: "fp",
+        terminal_reason: "agent_run_failed",
+        rejected_handles: [],
+      },
+    });
+    flushRaf();
+    expect(onAgenticActivity).toHaveBeenCalledWith({
+      type: "terminal",
+      finalStatus: "failed",
+    });
+    expect(onError).toHaveBeenCalled();
+    const assistant = getMessages().find((m) => m.role === "assistant");
+    expect(assistant?.status).toBe("failed");
+    expect(assistant?.content_md).toBe("");
+  });
+
 });
 
 // ---------------------------------------------------------------------------
