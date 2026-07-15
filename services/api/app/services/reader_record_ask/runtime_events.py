@@ -1,13 +1,19 @@
 """Typed internal events for the Reading Record Ask agent run.
 
-These are not SSE contracts.  A later slice may map them to the stream.
+These are not SSE contracts. Production stream projects a privacy-safe
+subset onto ``agentic.progress`` via an optional :class:`RuntimeEventSink`.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# Optional live observation hook. Production stream may supply a queue-backed
+# sink so progress can be projected before the agent run finishes.
+RuntimeEventSink = Callable[["RuntimeEvent"], None]
 
 
 class RunStartedEvent(BaseModel):
@@ -35,6 +41,7 @@ class ToolResultEvent(BaseModel):
     summary: str
     evidence_handle_ids: list[str] = Field(default_factory=list)
     payloads: dict[str, Any] | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
 
 
 class FinalAnswerEvent(BaseModel):
@@ -44,18 +51,28 @@ class FinalAnswerEvent(BaseModel):
     text: str
 
 
+class ComposingAnswerEvent(BaseModel):
+    """Internal signal: agent output received, finalizer about to run."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["composing_answer"] = "composing_answer"
+
+
 class RunFinishedEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     type: Literal["run_finished"] = "run_finished"
     read_range_calls: int
     evidence_count: int
+    search_current_article_calls: int = 0
 
 
 RuntimeEvent = (
     RunStartedEvent
     | ToolCallEvent
     | ToolResultEvent
+    | ComposingAnswerEvent
     | FinalAnswerEvent
     | RunFinishedEvent
 )

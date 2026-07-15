@@ -39,10 +39,12 @@ from app.services.reader_record_ask.read_range_executor import (
 )
 from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
 from app.services.reader_record_ask.runtime_events import (
+    ComposingAnswerEvent,
     FinalAnswerEvent,
     RunFinishedEvent,
     RunStartedEvent,
     RuntimeEvent,
+    RuntimeEventSink,
 )
 from app.services.reader_record_ask.search_current_article_executor import (
     DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS,
@@ -75,11 +77,16 @@ async def run_reading_record_ask(
     article_rag: ArticleRagSearchPort | None = None,
     max_read_range_calls: int = DEFAULT_MAX_READ_RANGE_CALLS,
     max_search_current_article_calls: int = DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS,
+    event_sink: RuntimeEventSink | None = None,
 ) -> ReadingRecordAskRunResult:
     """Run the independent Reading Record Ask agent once, then finalize.
 
     The model decides whether to call ``read_range`` / ``search_current_article``;
     there is no keyword routing or article/RAG prefetch.
+
+    ``event_sink`` is an optional live observation hook used by production
+    stream for concurrent progress projection. Events are always retained on
+    ``deps.events`` for tests and final diagnostics.
     """
     if evidence_registry is not None:
         if evidence_registry.envelope_fingerprint != envelope.envelope_fingerprint:
@@ -107,10 +114,11 @@ async def run_reading_record_ask(
         article_rag=article_rag,
         max_read_range_calls=max_read_range_calls,
         max_search_current_article_calls=max_search_current_article_calls,
+        event_sink=event_sink,
     )
 
     projection = envelope.to_agent_projection()
-    deps.events.append(
+    deps.emit_event(
         RunStartedEvent(
             envelope_fingerprint=envelope.envelope_fingerprint,
             has_initial_selection=projection.has_initial_selection,
@@ -133,6 +141,9 @@ async def run_reading_record_ask(
     if not isinstance(draft, AgentAnswerDraft):
         draft = AgentAnswerDraft(answer_text=str(draft), cited_evidence_handles=[])
 
+    # Pre-finalizer composing signal so clients see activity before validation.
+    deps.emit_event(ComposingAnswerEvent())
+
     finalized = await finalize_agent_answer(
         envelope=envelope,
         registry=registry,
@@ -141,13 +152,14 @@ async def run_reading_record_ask(
     )
 
     final_text = finalized.answer_text if finalized.status == "ok" else None
-    deps.events.append(
+    deps.emit_event(
         FinalAnswerEvent(text=final_text or f"[{finalized.status}] {finalized.reason or ''}")
     )
-    deps.events.append(
+    deps.emit_event(
         RunFinishedEvent(
             read_range_calls=deps.read_range_calls,
             evidence_count=len(registry),
+            search_current_article_calls=deps.search_current_article_calls,
         )
     )
     return ReadingRecordAskRunResult(

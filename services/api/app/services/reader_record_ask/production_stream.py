@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 from uuid import UUID
@@ -18,6 +19,10 @@ from pydantic_ai.models import Model
 from app.config.settings import get_settings
 from app.schemas.reader_record_ask_stream import (
     EXECUTION_VERSION_AGENTIC_V1,
+    ProgressActivity,
+    ProgressPhase,
+    ProgressStatus,
+    ProgressToolName,
     ReaderRecordAskCompletedDTO,
     ReaderRecordAskProgressDTO,
     ReaderRecordAskRunStartedDTO,
@@ -44,6 +49,15 @@ from app.services.reader_record_ask.runtime import (
     ReadingRecordAskRunResult,
     run_reading_record_ask,
 )
+from app.services.reader_record_ask.runtime_events import (
+    ComposingAnswerEvent,
+    FinalAnswerEvent,
+    RunFinishedEvent,
+    RunStartedEvent,
+    RuntimeEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+)
 from app.services.reader_record_ask.sse import (
     EVENT_AGENTIC_PROGRESS,
     EVENT_AGENTIC_RUN_STARTED,
@@ -54,6 +68,10 @@ from app.services.reader_record_ask.sse import (
     EVENT_THREAD_READY,
     encode_sse,
 )
+from app.services.reader_record_ask.tool_contracts import (
+    TOOL_READ_RANGE,
+    TOOL_SEARCH_CURRENT_ARTICLE,
+)
 
 RunFn = Callable[..., Any]
 
@@ -63,6 +81,29 @@ logger = logging.getLogger(__name__)
 # internals (exception text, schema bodies, raw responses, thinking).
 TERMINAL_REASON_AGENT_OUTPUT_INVALID = "agent_output_invalid"
 TERMINAL_REASON_AGENT_RUN_FAILED = "agent_run_failed"
+
+# Sentinel placed on the progress queue when the agent task finishes
+# (success or failure). Not a RuntimeEvent.
+_AGENT_DONE = object()
+
+_PUBLIC_TOOL_NAMES: frozenset[str] = frozenset(
+    {TOOL_READ_RANGE, TOOL_SEARCH_CURRENT_ARTICLE}
+)
+
+_TOOL_RESULT_ACTIVITY: dict[str, ProgressActivity] = {
+    "ok": "completed",
+    "ready": "completed",
+    "loaded": "completed",
+    "unavailable": "unavailable",
+    "not_ready": "unavailable",
+    "disabled": "unavailable",
+    "budget_exhausted": "failed",
+    "invalid": "failed",
+    "failed": "failed",
+    "error": "failed",
+    "stale": "failed",
+    "context_stale": "failed",
+}
 
 
 def _safe_model_route(model: Model | str | None) -> str:
@@ -132,6 +173,218 @@ def build_terminal_dto(
     )
 
 
+class _ProgressProjector:
+    """Map internal RuntimeEvent → privacy-safe ProgressDTO with monotonic clock."""
+
+    def __init__(self, *, started_at: float) -> None:
+        self._started_at = started_at
+        self._sequence = 0
+        self.progress_event_count = 0
+        self.time_to_first_activity_ms: int | None = None
+        self.read_range_calls = 0
+        self.search_current_article_calls = 0
+        self._agent_started_emitted = False
+
+    def _elapsed_ms(self) -> int:
+        return max(0, int((time.perf_counter() - self._started_at) * 1000))
+
+    def _next(
+        self,
+        *,
+        phase: ProgressPhase,
+        activity: ProgressActivity,
+        summary: str,
+        tool_name: ProgressToolName | None = None,
+        status: ProgressStatus | None = None,
+        duration_ms: int | None = None,
+    ) -> ReaderRecordAskProgressDTO:
+        self._sequence += 1
+        elapsed = self._elapsed_ms()
+        if self.time_to_first_activity_ms is None:
+            self.time_to_first_activity_ms = elapsed
+        self.progress_event_count += 1
+        return ReaderRecordAskProgressDTO(
+            sequence=self._sequence,
+            phase=phase,
+            activity=activity,
+            summary=summary,
+            elapsed_ms=elapsed,
+            tool_name=tool_name,
+            status=status,
+            duration_ms=duration_ms,
+        )
+
+    def ensure_agent_started(self) -> ReaderRecordAskProgressDTO | None:
+        if self._agent_started_emitted:
+            return None
+        self._agent_started_emitted = True
+        return self._next(
+            phase="agent_running",
+            activity="started",
+            summary="正在分析当前文章",
+            status="running",
+        )
+
+    def project(self, event: RuntimeEvent) -> list[ReaderRecordAskProgressDTO]:
+        """Whitelist-project an internal event. Never dumps event payloads."""
+        out: list[ReaderRecordAskProgressDTO] = []
+
+        if isinstance(event, RunStartedEvent):
+            started = self.ensure_agent_started()
+            if started is not None:
+                out.append(started)
+            return out
+
+        if isinstance(event, ToolCallEvent):
+            started = self.ensure_agent_started()
+            if started is not None:
+                out.append(started)
+            tool = event.tool_name
+            if tool not in _PUBLIC_TOOL_NAMES:
+                # Unknown tools collapse to generic activity — no dynamic strings.
+                out.append(
+                    self._next(
+                        phase="agent_running",
+                        activity="started",
+                        summary="正在分析当前文章",
+                        status="running",
+                    )
+                )
+                return out
+            if tool == TOOL_READ_RANGE:
+                self.read_range_calls += 1
+                out.append(
+                    self._next(
+                        phase="reading_context",
+                        activity="started",
+                        summary="正在读取文章上下文",
+                        tool_name="read_range",
+                        status="running",
+                    )
+                )
+            else:
+                self.search_current_article_calls += 1
+                out.append(
+                    self._next(
+                        phase="searching_article",
+                        activity="started",
+                        summary="正在检索当前文章",
+                        tool_name="search_current_article",
+                        status="running",
+                    )
+                )
+            return out
+
+        if isinstance(event, ToolResultEvent):
+            tool = event.tool_name
+            activity = _TOOL_RESULT_ACTIVITY.get(
+                str(event.status or "").lower(), "completed"
+            )
+            duration = event.duration_ms if event.duration_ms is not None else None
+            if tool == TOOL_READ_RANGE:
+                summary = {
+                    "completed": "已读取相关上下文",
+                    "unavailable": "文章上下文暂不可用",
+                    "failed": "读取文章上下文失败",
+                }.get(activity, "已读取相关上下文")
+                status: ProgressStatus = {
+                    "completed": "ok",
+                    "unavailable": "unavailable",
+                    "failed": "failed",
+                }.get(activity, "ok")  # type: ignore[assignment]
+                out.append(
+                    self._next(
+                        phase="reading_context",
+                        activity=activity,
+                        summary=summary,
+                        tool_name="read_range",
+                        status=status,
+                        duration_ms=duration,
+                    )
+                )
+            elif tool == TOOL_SEARCH_CURRENT_ARTICLE:
+                summary = {
+                    "completed": "已检索当前文章",
+                    "unavailable": "当前文章检索暂不可用",
+                    "failed": "当前文章检索失败",
+                }.get(activity, "已检索当前文章")
+                status = {
+                    "completed": "ok",
+                    "unavailable": "unavailable",
+                    "failed": "failed",
+                }.get(activity, "ok")  # type: ignore[assignment]
+                out.append(
+                    self._next(
+                        phase="searching_article",
+                        activity=activity,
+                        summary=summary,
+                        tool_name="search_current_article",
+                        status=status,
+                        duration_ms=duration,
+                    )
+                )
+            else:
+                out.append(
+                    self._next(
+                        phase="agent_running",
+                        activity="completed",
+                        summary="正在分析当前文章",
+                        status="ok",
+                        duration_ms=duration,
+                    )
+                )
+            return out
+
+        if isinstance(event, ComposingAnswerEvent):
+            started = self.ensure_agent_started()
+            if started is not None:
+                out.append(started)
+            out.append(
+                self._next(
+                    phase="composing_answer",
+                    activity="started",
+                    summary="正在组织回答",
+                    status="running",
+                )
+            )
+            return out
+
+        if isinstance(event, FinalAnswerEvent):
+            out.append(
+                self._next(
+                    phase="validating_evidence",
+                    activity="started",
+                    summary="正在核对回答依据",
+                    status="running",
+                )
+            )
+            return out
+
+        if isinstance(event, RunFinishedEvent):
+            # No extra public progress after validation — completed/terminal follows.
+            return out
+
+        return out
+
+
+def _make_queue_sink(
+    loop: asyncio.AbstractEventLoop,
+    queue: asyncio.Queue[Any],
+) -> Callable[[RuntimeEvent], None]:
+    """Thread/task-safe sink that never blocks the agent on a full queue."""
+
+    def _sink(event: RuntimeEvent) -> None:
+        try:
+            loop.call_soon_threadsafe(queue.put_nowait, event)
+        except RuntimeError:
+            # Loop closed / different thread after cancellation — drop silently.
+            return
+        except asyncio.QueueFull:
+            return
+
+    return _sink
+
+
 async def stream_agentic_thread_message(
     *,
     user_id: UUID,
@@ -159,6 +412,9 @@ async def stream_agentic_thread_message(
     Explicit ``model`` / ``article_rag`` / ``stable_document_id`` overrides
     always win (tests).  Missing model → typed terminal failed, never
     ``message.completed``.
+
+    Live ``agentic.progress`` events are projected from runtime events via a
+    concurrent queue while the agent task is still running.
     """
     repo = repository or ReaderRecordAskRepository()
     run_agent = run_fn or run_reading_record_ask
@@ -294,120 +550,204 @@ async def stream_agentic_thread_message(
         yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
         return
 
-    yield encode_sse(
-        EVENT_AGENTIC_PROGRESS,
-        ReaderRecordAskProgressDTO(
-            phase="agent_running",
-            summary="Running Reading Record Ask agent",
-        ).model_dump(mode="json"),
-    )
+    started_at = time.perf_counter()
+    projector = _ProgressProjector(started_at=started_at)
+    # Unbounded: tool fan-out is small; avoid blocking the agent on progress.
+    event_queue: asyncio.Queue[Any] = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+    sink = _make_queue_sink(loop, event_queue)
 
-    try:
-        run_result: ReadingRecordAskRunResult = await run_agent(
+    agent_task = asyncio.create_task(
+        run_agent(
             user_message=content,
             envelope=envelope,
             document_access=access,
             model=active_model,
             article_rag=wired_rag,
+            event_sink=sink,
         )
+    )
+
+    def _on_agent_done(task: asyncio.Task[Any]) -> None:
+        try:
+            event_queue.put_nowait(_AGENT_DONE)
+        except Exception:  # noqa: BLE001
+            return
+
+    agent_task.add_done_callback(_on_agent_done)
+
+    run_result: ReadingRecordAskRunResult | None = None
+    terminal_emitted = False
+
+    try:
+        while True:
+            item = await event_queue.get()
+            if item is _AGENT_DONE:
+                break
+            if not isinstance(item, (RunStartedEvent, ToolCallEvent, ToolResultEvent,
+                                     ComposingAnswerEvent, FinalAnswerEvent, RunFinishedEvent)):
+                # Only project known runtime events; never dump raw objects.
+                continue
+            for progress in projector.project(item):
+                yield encode_sse(
+                    EVENT_AGENTIC_PROGRESS,
+                    progress.model_dump(mode="json"),
+                )
+
+        # Drain any late events that arrived with/after DONE.
+        while not event_queue.empty():
+            try:
+                item = event_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if item is _AGENT_DONE:
+                continue
+            if isinstance(
+                item,
+                (
+                    RunStartedEvent,
+                    ToolCallEvent,
+                    ToolResultEvent,
+                    ComposingAnswerEvent,
+                    FinalAnswerEvent,
+                    RunFinishedEvent,
+                ),
+            ):
+                for progress in projector.project(item):
+                    yield encode_sse(
+                        EVENT_AGENTIC_PROGRESS,
+                        progress.model_dump(mode="json"),
+                    )
+
+        try:
+            run_result = agent_task.result()
+        except asyncio.CancelledError:
+            raise
+        except UnexpectedModelBehavior as exc:
+            logger.warning(
+                "reader_record_ask structured output invalid: type=%s turn_run_id=%s "
+                "message_id=%s model_route=%s envelope_fp=%s total_ms=%s "
+                "progress_events=%s ttfa_ms=%s read_range_calls=%s search_calls=%s",
+                type(exc).__name__,
+                turn["id"],
+                assistant_msg["id"],
+                _safe_model_route(active_model),
+                envelope.envelope_fingerprint[:12],
+                max(0, int((time.perf_counter() - started_at) * 1000)),
+                projector.progress_event_count,
+                projector.time_to_first_activity_ms,
+                projector.read_range_calls,
+                projector.search_current_article_calls,
+            )
+            terminal = build_terminal_dto(
+                finalized=None,
+                message_id=assistant_msg["id"],
+                thread_id=str(thread_id),
+                turn_run_id=turn["id"],
+                envelope_fingerprint=envelope.envelope_fingerprint,
+                final_status="failed",
+                terminal_reason=TERMINAL_REASON_AGENT_OUTPUT_INVALID,
+            )
+            await repo.terminal_agentic_turn_run(
+                turn_run_id=turn_run_id,
+                message_id=message_id,
+                run_status="failed",
+                final_status="failed",
+                terminal_reason=terminal.terminal_reason,
+                terminal_dto=terminal.model_dump(mode="json"),
+            )
+            yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json"))
+            yield encode_sse(
+                EVENT_MESSAGE_INTERRUPTED,
+                terminal.model_dump(mode="json"),
+            )
+            terminal_emitted = True
+            return
+        except Exception as exc:
+            logger.warning(
+                "reader_record_ask agent run failed: type=%s turn_run_id=%s "
+                "message_id=%s model_route=%s envelope_fp=%s total_ms=%s "
+                "progress_events=%s ttfa_ms=%s read_range_calls=%s search_calls=%s",
+                type(exc).__name__,
+                turn["id"],
+                assistant_msg["id"],
+                _safe_model_route(active_model),
+                envelope.envelope_fingerprint[:12],
+                max(0, int((time.perf_counter() - started_at) * 1000)),
+                projector.progress_event_count,
+                projector.time_to_first_activity_ms,
+                projector.read_range_calls,
+                projector.search_current_article_calls,
+            )
+            terminal = build_terminal_dto(
+                finalized=None,
+                message_id=assistant_msg["id"],
+                thread_id=str(thread_id),
+                turn_run_id=turn["id"],
+                envelope_fingerprint=envelope.envelope_fingerprint,
+                final_status="failed",
+                terminal_reason=TERMINAL_REASON_AGENT_RUN_FAILED,
+            )
+            await repo.terminal_agentic_turn_run(
+                turn_run_id=turn_run_id,
+                message_id=message_id,
+                run_status="failed",
+                final_status="failed",
+                terminal_reason=terminal.terminal_reason,
+                terminal_dto=terminal.model_dump(mode="json"),
+            )
+            yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json"))
+            yield encode_sse(
+                EVENT_MESSAGE_INTERRUPTED,
+                terminal.model_dump(mode="json"),
+            )
+            terminal_emitted = True
+            return
+
     except asyncio.CancelledError:
-        terminal = build_terminal_dto(
-            finalized=None,
-            message_id=assistant_msg["id"],
-            thread_id=str(thread_id),
-            turn_run_id=turn["id"],
-            envelope_fingerprint=envelope.envelope_fingerprint,
-            final_status="cancelled",
-            terminal_reason="client disconnect or cancellation",
-        )
-        persisted = await repo.terminal_agentic_turn_run(
-            turn_run_id=turn_run_id,
-            message_id=message_id,
-            run_status="cancelled",
-            final_status="cancelled",
-            terminal_reason=terminal.terminal_reason,
-            terminal_dto=terminal.model_dump(mode="json"),
-        )
-        assert persisted.get("resolved_evidence_json") in (None, [], "[]")
-        yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json"))
-        yield encode_sse(
-            EVENT_MESSAGE_INTERRUPTED,
-            terminal.model_dump(mode="json"),
-        )
+        if not agent_task.done():
+            agent_task.cancel()
+            try:
+                await agent_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        if not terminal_emitted:
+            terminal = build_terminal_dto(
+                finalized=None,
+                message_id=assistant_msg["id"],
+                thread_id=str(thread_id),
+                turn_run_id=turn["id"],
+                envelope_fingerprint=envelope.envelope_fingerprint,
+                final_status="cancelled",
+                terminal_reason="client disconnect or cancellation",
+            )
+            persisted = await repo.terminal_agentic_turn_run(
+                turn_run_id=turn_run_id,
+                message_id=message_id,
+                run_status="cancelled",
+                final_status="cancelled",
+                terminal_reason=terminal.terminal_reason,
+                terminal_dto=terminal.model_dump(mode="json"),
+            )
+            assert persisted.get("resolved_evidence_json") in (None, [], "[]")
+            yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json"))
+            yield encode_sse(
+                EVENT_MESSAGE_INTERRUPTED,
+                terminal.model_dump(mode="json"),
+            )
         raise
-    except UnexpectedModelBehavior as exc:
-        # Structured-output / tool-output validation exhausted. Do not
-        # surface pydantic-ai messages ("Exceeded maximum retries…") or
-        # schema / provider bodies to the Web client or logs.
-        logger.warning(
-            "reader_record_ask structured output invalid: type=%s turn_run_id=%s "
-            "message_id=%s model_route=%s envelope_fp=%s",
-            type(exc).__name__,
-            turn["id"],
-            assistant_msg["id"],
-            _safe_model_route(active_model),
-            envelope.envelope_fingerprint[:12],
-        )
-        terminal = build_terminal_dto(
-            finalized=None,
-            message_id=assistant_msg["id"],
-            thread_id=str(thread_id),
-            turn_run_id=turn["id"],
-            envelope_fingerprint=envelope.envelope_fingerprint,
-            final_status="failed",
-            terminal_reason=TERMINAL_REASON_AGENT_OUTPUT_INVALID,
-        )
-        await repo.terminal_agentic_turn_run(
-            turn_run_id=turn_run_id,
-            message_id=message_id,
-            run_status="failed",
-            final_status="failed",
-            terminal_reason=terminal.terminal_reason,
-            terminal_dto=terminal.model_dump(mode="json"),
-        )
-        yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json"))
-        yield encode_sse(
-            EVENT_MESSAGE_INTERRUPTED,
-            terminal.model_dump(mode="json"),
-        )
-        return
-    except Exception as exc:
-        # Generic failures stay typed-failed/interrupted. Never log str(exc),
-        # traceback, request/response, or schema bodies — provider payloads
-        # may contain sensitive context.
-        logger.warning(
-            "reader_record_ask agent run failed: type=%s turn_run_id=%s "
-            "message_id=%s model_route=%s envelope_fp=%s",
-            type(exc).__name__,
-            turn["id"],
-            assistant_msg["id"],
-            _safe_model_route(active_model),
-            envelope.envelope_fingerprint[:12],
-        )
-        terminal = build_terminal_dto(
-            finalized=None,
-            message_id=assistant_msg["id"],
-            thread_id=str(thread_id),
-            turn_run_id=turn["id"],
-            envelope_fingerprint=envelope.envelope_fingerprint,
-            final_status="failed",
-            terminal_reason=TERMINAL_REASON_AGENT_RUN_FAILED,
-        )
-        await repo.terminal_agentic_turn_run(
-            turn_run_id=turn_run_id,
-            message_id=message_id,
-            run_status="failed",
-            final_status="failed",
-            terminal_reason=terminal.terminal_reason,
-            terminal_dto=terminal.model_dump(mode="json"),
-        )
-        yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json"))
-        yield encode_sse(
-            EVENT_MESSAGE_INTERRUPTED,
-            terminal.model_dump(mode="json"),
-        )
+    finally:
+        if not agent_task.done():
+            agent_task.cancel()
+            try:
+                await agent_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+
+    if terminal_emitted or run_result is None:
         return
 
+    total_ms = max(0, int((time.perf_counter() - started_at) * 1000))
     finalized = run_result.finalized
     if finalized is None or finalized.status != "ok" or run_result.final_text is None:
         status = finalized.status if finalized is not None else "failed"
@@ -432,6 +772,20 @@ async def stream_agentic_thread_message(
             terminal_reason=terminal.terminal_reason,
             terminal_dto=terminal_json,
         )
+        logger.info(
+            "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
+            "model_route=%s final_status=%s total_ms=%s ttfa_ms=%s "
+            "progress_events=%s read_range_calls=%s search_calls=%s",
+            turn["id"],
+            assistant_msg["id"],
+            _safe_model_route(active_model),
+            terminal.final_status,
+            total_ms,
+            projector.time_to_first_activity_ms,
+            projector.progress_event_count,
+            run_result.read_range_calls,
+            run_result.search_current_article_calls,
+        )
         yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
         yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
         return
@@ -455,4 +809,17 @@ async def stream_agentic_thread_message(
     )
     stored = persisted.get("user_visible_output_json")
     emit_payload = stored if isinstance(stored, dict) else completed_json
+    logger.info(
+        "reader_record_ask turn completed: turn_run_id=%s message_id=%s "
+        "model_route=%s final_status=ok total_ms=%s ttfa_ms=%s "
+        "progress_events=%s read_range_calls=%s search_calls=%s",
+        turn["id"],
+        assistant_msg["id"],
+        _safe_model_route(active_model),
+        total_ms,
+        projector.time_to_first_activity_ms,
+        projector.progress_event_count,
+        run_result.read_range_calls,
+        run_result.search_current_article_calls,
+    )
     yield encode_sse(EVENT_MESSAGE_COMPLETED, emit_payload)

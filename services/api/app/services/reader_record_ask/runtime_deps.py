@@ -14,7 +14,10 @@ from app.services.reader_record_ask.fence import FenceFn
 from app.services.reader_record_ask.read_range_executor import (
     DEFAULT_MAX_READ_RANGE_CALLS,
 )
-from app.services.reader_record_ask.runtime_events import RuntimeEvent
+from app.services.reader_record_ask.runtime_events import (
+    RuntimeEvent,
+    RuntimeEventSink,
+)
 from app.services.reader_record_ask.search_current_article_executor import (
     DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS,
 )
@@ -37,3 +40,19 @@ class ReaderRecordAskDeps:
     search_current_article_calls: int = 0
     max_search_current_article_calls: int = DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS
     events: list[RuntimeEvent] = field(default_factory=list)
+    event_sink: RuntimeEventSink | None = None
+
+    def emit_event(self, event: RuntimeEvent) -> None:
+        """Append an internal event and optionally notify a live sink.
+
+        The sink must never raise into tool execution. Production stream uses
+        it for concurrent progress projection; tests can leave it unset.
+        """
+        self.events.append(event)
+        sink = self.event_sink
+        if sink is None:
+            return
+        try:
+            sink(event)
+        except Exception:  # noqa: BLE001 — observation must not break the agent
+            return

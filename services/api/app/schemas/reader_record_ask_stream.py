@@ -28,6 +28,33 @@ EvidenceKindPublic = Literal[
     "observation",
 ]
 
+ProgressPhase = Literal[
+    "agent_running",
+    "reading_context",
+    "searching_article",
+    "composing_answer",
+    "validating_evidence",
+]
+
+ProgressActivity = Literal[
+    "started",
+    "completed",
+    "unavailable",
+    "failed",
+]
+
+ProgressToolName = Literal[
+    "read_range",
+    "search_current_article",
+]
+
+ProgressStatus = Literal[
+    "running",
+    "ok",
+    "unavailable",
+    "failed",
+]
+
 
 class ReaderRecordAskRagCitationPublic(BaseModel):
     """Public RAG citation fields safe for SSE / thread reload."""
@@ -120,13 +147,23 @@ class ReaderRecordAskRunStartedDTO(BaseModel):
 
 
 class ReaderRecordAskProgressDTO(BaseModel):
-    """Safe progress signal (no raw document text / tool args)."""
+    """Safe live activity signal for ``agentic.progress``.
+
+    Privacy-safe projection only: no tool args, document text, evidence
+    handles, fingerprints, provider payloads, or chain-of-thought.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     execution_version: Literal["reader_record_ask_agentic_v1"] = EXECUTION_VERSION_AGENTIC_V1
-    phase: str
-    summary: str
+    sequence: int = Field(ge=1)
+    phase: ProgressPhase
+    activity: ProgressActivity
+    summary: str = Field(min_length=1, max_length=120)
+    elapsed_ms: int = Field(ge=0)
+    tool_name: ProgressToolName | None = None
+    status: ProgressStatus | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
 
 
 def evidence_item_from_observation(obs: Any) -> ReaderRecordAskEvidenceItem:
@@ -174,8 +211,9 @@ def evidence_item_from_observation(obs: Any) -> ReaderRecordAskEvidenceItem:
 # adds agentic history fields with a strict evidence schema.
 # ---------------------------------------------------------------------------
 
-from app.schemas.reader_ask import (  # noqa: E402  — local import keeps stream module usable
+from app.schemas.reader_ask import (  # noqa: E402
     ReaderAskActionProposal,
+    ReaderAskAnchorRef,
     ReaderAskArticleRagCitation,
     ReaderAskArticleRagSidecar,
     ReaderAskAssetDisambiguation,
@@ -197,7 +235,6 @@ from app.schemas.reader_ask import (  # noqa: E402  — local import keeps strea
     ReaderAskSupplementCandidate,
     ReaderAskToolTraceEntry,
     ReaderAskTraceSummary,
-    ReaderAskAnchorRef,
 )
 
 
