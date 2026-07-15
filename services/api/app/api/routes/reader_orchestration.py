@@ -7,11 +7,15 @@ from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, HTTPException, Query
+from starlette.responses import JSONResponse
 
 from app.schemas.reader_input_adapter import InputSuitabilityRequest
 from app.schemas.reader_orchestration import (
     ReaderCandidateDocumentConfirmRequest,
     ReaderCandidateDocumentConfirmResponse,
+    ReaderCandidateDocumentConflictResponseDto,
+    ReaderCandidateDocumentNotFoundResponseDto,
+    ReaderCandidateDocumentReadResponseDto,
     ReaderEventPollResponse,
     ReaderEventResponse,
     ReaderPlainTextSubmitRequest,
@@ -90,6 +94,11 @@ from app.services.reader_orchestration.candidate_document_creation_service impor
 from app.services.reader_orchestration.candidate_document_confirm_application_service import (
     CandidateDocumentConfirmApplicationError,
     CandidateDocumentConfirmApplicationService,
+)
+from app.services.reader_orchestration.candidate_document_read_service import (
+    CandidateDocumentReadConflict,
+    CandidateDocumentReadError,
+    CandidateDocumentReadService,
 )
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.input_document_normalizer import (
@@ -831,6 +840,79 @@ async def confirm_candidate_document(
         article_ready_sequence=result.article_ready_sequence,
         snapshot=result.snapshot,
     )
+
+
+@router.get(
+    "/records/{record_id}/candidate-document",
+    response_model=ReaderCandidateDocumentReadResponseDto,
+    responses={
+        401: {"description": "Unauthenticated (existing auth mechanism)."},
+        404: {
+            "model": ReaderCandidateDocumentNotFoundResponseDto,
+            "description": "Record not found / not owner / soft-deleted / "
+            "no ready candidate (all collapsed, no leak).",
+        },
+        409: {
+            "model": ReaderCandidateDocumentConflictResponseDto,
+            "description": "Record state advanced or multiple ready "
+            "candidates.",
+        },
+    },
+    summary="Load the current ready candidate document for confirmation "
+            "(S2: Candidate Recovery read model)",
+)
+async def get_reader_candidate_document(
+    record_id: UUID,
+    current_user: AuthUserDep,
+) -> ReaderCandidateDocumentReadResponseDto | JSONResponse:
+    """Load the current ``(record_id, generation)`` ready candidate as a
+    safe typed projection.
+
+    Returns 200 only when ``product_state='needs_confirmation'`` AND
+    exactly one ``status='ready'`` candidate exists. All other cases
+    return 404 (collapsed) or 409 (with ``code`` + ``resolution``).
+
+    Error responses use the root-level contract shape
+    (``{"ok": false, "code": ..., "message": ...}``) and are emitted
+    via :class:`JSONResponse` so FastAPI does NOT wrap them into
+    ``{"detail": ...}``.
+
+    The response never leaks ``blocks_json`` / ``quality_json`` /
+    ``source_refs_json`` / ``source_text`` / ``original_input_id``.
+    """
+    service = CandidateDocumentReadService()
+    try:
+        result = await service.load_candidate_document(
+            record_id=record_id,
+            user_id=UUID(current_user.user_id),
+        )
+    except CandidateDocumentReadError:
+        # 404: all four causes collapsed (not found / not owner /
+        # soft-deleted / no ready candidate). Generic message, no leak.
+        # Use JSONResponse so the body is the root-level contract shape,
+        # not the FastAPI-default {"detail": ...} envelope.
+        return JSONResponse(
+            status_code=404,
+            content={
+                "ok": False,
+                "code": "not_found",
+                "message": "未找到待确认内容，可能已在其他设备处理。",
+            },
+        )
+    except CandidateDocumentReadConflict as exc:
+        # 409: record_state_advanced or multiple_ready_candidates.
+        # Root-level contract: ok / code / resolution / message.
+        return JSONResponse(
+            status_code=409,
+            content=ReaderCandidateDocumentConflictResponseDto(
+                ok=False,
+                code=exc.code,
+                resolution=exc.resolution,
+                message=exc.message,
+            ).model_dump(mode="json"),
+        )
+
+    return result.response
 
 
 @router.get(

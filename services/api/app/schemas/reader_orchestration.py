@@ -973,6 +973,170 @@ class ReaderCandidateDocumentConfirmResponse(BaseModel):
     snapshot: ReaderPlateSnapshot
 
 
+# ---------------------------------------------------------------------------
+# S2: Candidate Recovery read model — typed preview projection DTOs
+# ---------------------------------------------------------------------------
+
+ReaderCandidateDocumentPreviewMode = Literal[
+    "full_text",
+    "truncated_preview",
+    "outline_only",
+]
+
+ReaderCandidateDocumentBlockTypeLabel = Literal[
+    "heading",
+    "paragraph",
+    "list",
+    "quote",
+    "code",
+    "other",
+]
+
+ReaderCandidateDocumentRiskKind = Literal[
+    "low_confidence_ocr",
+    "short_content",
+    "language_mixed",
+    "encoding_warning",
+    "structure_fragmented",
+    "other",
+]
+
+ReaderCandidateDocumentRiskSeverity = Literal["info", "warning"]
+
+ReaderCandidateDocumentSourceType = Literal[
+    "plain_text",
+    "markdown",
+    "file_ref",
+    "url",
+    "image_ref",
+]
+
+
+class ReaderCandidateDocumentOutlineItemDto(BaseModel):
+    """Structured outline entry projected from blocks_json.
+
+    Does NOT expose block_id / parent_block_id / payload /
+    interpretation_policy / canonical_text_*_utf16 / source_refs /
+    quality — those are internal block fields.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    order_index: int = Field(ge=0)
+    block_type_label: ReaderCandidateDocumentBlockTypeLabel
+    heading_text: str | None = None
+    char_count: int = Field(ge=0)
+
+
+class ReaderCandidateDocumentRiskItemDto(BaseModel):
+    """Risk item projected from quality_json.
+
+    The ``user_message`` is backend-generated Chinese copy; it MUST NOT
+    contain quality_json internal key names. ``risk_kind`` is a controlled
+    enum; the frontend does not parse quality_json raw keys.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    risk_kind: ReaderCandidateDocumentRiskKind
+    user_message: str = Field(min_length=1)
+    severity: ReaderCandidateDocumentRiskSeverity
+
+
+class ReaderCandidateDocumentPreviewDto(BaseModel):
+    """Safe typed projection replacing the single canonical_text_preview.
+
+    Lets the frontend render different confirmation UX per preview_mode:
+    - full_text: short content, complete text shown
+    - truncated_preview: long content, truncated text + outline
+    - outline_only: very long content, outline only (no preview text)
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    preview_mode: ReaderCandidateDocumentPreviewMode
+    preview_text: str
+    is_truncated: bool
+    total_char_count: int = Field(ge=0)
+    document_outline: list[ReaderCandidateDocumentOutlineItemDto] = Field(
+        default_factory=list
+    )
+    risk_items: list[ReaderCandidateDocumentRiskItemDto] = Field(
+        default_factory=list
+    )
+
+
+class ReaderCandidateDocumentReadResponseDto(BaseModel):
+    """200 response for GET /reader/records/{record_id}/candidate-document.
+
+    Only returned when product_state='needs_confirmation' AND exactly one
+    status='ready' candidate exists for the current (record_id, generation).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: str = Field(min_length=1)
+    candidate_document_id: str = Field(min_length=1)
+    record_generation: int = Field(ge=1)
+    status: Literal["ready"]
+    title: str | None = None
+    preview: ReaderCandidateDocumentPreviewDto
+    source_type: ReaderCandidateDocumentSourceType
+    filename: str | None = None
+    source_label: str = Field(min_length=1)
+    created_at: datetime
+    updated_at: datetime
+
+
+ReaderCandidateDocumentConflictCode = Literal[
+    "record_state_advanced",
+    "multiple_ready_candidates",
+]
+
+ReaderCandidateDocumentConflictResolution = Literal[
+    "open_reader",
+    "return_to_library",
+]
+
+
+class ReaderCandidateDocumentConflictResponseDto(BaseModel):
+    """409 response body for candidate-document read endpoint.
+
+    - code=record_state_advanced + resolution=open_reader: record has
+      advanced to a readable state (article_ready or coverage_complete
+      with active_base_id); frontend should redirect to Reader.
+    - code=record_state_advanced + resolution=return_to_library: record
+      has advanced to a non-readable state (failed/action_required/etc);
+      frontend should return to Library.
+    - code=multiple_ready_candidates + resolution=return_to_library:
+      write-side uniqueness invariant violated; frontend returns to
+      Library. Never silently selects one by updated_at.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: Literal[False] = False
+    code: ReaderCandidateDocumentConflictCode
+    resolution: ReaderCandidateDocumentConflictResolution
+    message: str = Field(min_length=1)
+
+
+class ReaderCandidateDocumentNotFoundResponseDto(BaseModel):
+    """404 response body for candidate-document read endpoint.
+
+    All four 404 causes (record not found / not owner / soft-deleted /
+    no ready candidate) are collapsed into this single shape. The
+    ``message`` is a fixed Chinese fallback that does NOT leak which
+    cause triggered the 404.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: Literal[False] = False
+    code: Literal["not_found"] = "not_found"
+    message: str = Field(min_length=1)
+
+
 class ReaderStableDocumentBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

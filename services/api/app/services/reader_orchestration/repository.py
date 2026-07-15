@@ -1901,6 +1901,195 @@ async def supersede_ready_candidates_for_locked_record(
     )
 
 
+# ----------------------------------------------------------------------
+# S2: Candidate Recovery read model — read-side query helpers
+# ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateReadRow:
+    """A single ``status='ready'`` candidate row loaded for read-side
+    projection.
+
+    This is a raw data carrier; the read service is responsible for
+    typed projection (preview / outline / risk_items) and for never
+    leaking ``blocks_json`` / ``quality_json`` / ``source_refs_json`` /
+    ``canonical_text_preview`` to the API boundary verbatim.
+    """
+
+    candidate_document_id: UUID
+    reading_record_id: UUID
+    user_id: UUID
+    record_generation: int
+    title: str | None
+    blocks_json: Any  # parsed list[dict[str, Any]] from JSONB
+    canonical_text_preview: str
+    source_refs_json: Any  # parsed dict[str, Any] from JSONB
+    quality_json: Any  # parsed dict[str, Any] from JSONB
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateReadRecordRow:
+    """The parent ``reading_records`` row loaded for ownership + state
+    pre-checks by the candidate read service.
+
+    ``active_base_id`` is included so the read service can decide the
+    409 resolution (open_reader vs return_to_library) without a second
+    query.
+    """
+
+    record_id: UUID
+    user_id: UUID
+    generation: int
+    product_state: str
+    readiness_state: str
+    active_base_id: UUID | None
+    deleted_at: datetime | None
+
+
+async def load_record_for_candidate_read(
+    conn: asyncpg.Connection,
+    *,
+    record_id: UUID,
+    user_id: UUID,
+) -> CandidateReadRecordRow | None:
+    """Load a reading_records row for candidate-read ownership + state checks.
+
+    Filters by ``id`` only (NOT ``user_id``) so the caller can
+    distinguish "not found" from "not owner" — both are collapsed to
+    404 at the service layer, but the service needs to know the row
+    exists to avoid leaking existence via timing.
+
+    Returns ``None`` if the row does not exist at all. Returns a row
+    with ``user_id != user_id`` if the record exists but belongs to
+    another user (the service layer treats this as 404). Returns a row
+    with ``deleted_at IS NOT NULL`` if soft-deleted (also 404).
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT id, user_id, generation, product_state, readiness_state,
+               active_base_id, deleted_at
+        FROM reading_records
+        WHERE id = $1
+        """,
+        record_id,
+    )
+    if row is None:
+        return None
+    active_base_id_raw = row["active_base_id"]
+    return CandidateReadRecordRow(
+        record_id=UUID(str(row["id"])),
+        user_id=UUID(str(row["user_id"])),
+        generation=int(row["generation"]),
+        product_state=str(row["product_state"]),
+        readiness_state=str(row["readiness_state"]),
+        active_base_id=(
+            UUID(str(active_base_id_raw)) if active_base_id_raw is not None else None
+        ),
+        deleted_at=row["deleted_at"],
+    )
+
+
+async def get_ready_candidates_for_record(
+    conn: asyncpg.Connection,
+    *,
+    record_id: UUID,
+    user_id: UUID,
+    generation: int,
+) -> list[CandidateReadRow]:
+    """Load all ``status='ready'`` candidates for a (record_id, generation).
+
+    Returns a **list** (never ``LIMIT 1``). The caller is responsible
+    for enforcing the uniqueness invariant:
+    - 0 rows → 404
+    - 1 row  → 200 with typed projection
+    - 2+ rows → 409 + multiple_ready_candidates (never silently select)
+
+    The query filters by ``reading_record_id``, ``user_id``,
+    ``record_generation``, and ``status='ready'``. Results are ordered
+    by ``created_at ASC, id ASC`` for deterministic test assertions;
+    the service layer MUST NOT use this ordering to silently pick one.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT
+            id,
+            reading_record_id,
+            user_id,
+            record_generation,
+            title,
+            blocks_json,
+            canonical_text_preview,
+            source_refs_json,
+            quality_json,
+            status,
+            created_at,
+            updated_at
+        FROM candidate_reading_documents
+        WHERE reading_record_id = $1
+          AND user_id = $2
+          AND record_generation = $3
+          AND status = 'ready'
+        ORDER BY created_at ASC, id ASC
+        """,
+        record_id,
+        user_id,
+        generation,
+    )
+    return [
+        CandidateReadRow(
+            candidate_document_id=UUID(str(row["id"])),
+            reading_record_id=UUID(str(row["reading_record_id"])),
+            user_id=UUID(str(row["user_id"])),
+            record_generation=int(row["record_generation"]),
+            title=row["title"],
+            blocks_json=row["blocks_json"],
+            canonical_text_preview=str(row["canonical_text_preview"]),
+            source_refs_json=row["source_refs_json"],
+            quality_json=row["quality_json"],
+            status=str(row["status"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+        for row in rows
+    ]
+
+
+async def load_original_input_metadata_for_candidate_read(
+    conn: asyncpg.Connection,
+    *,
+    original_input_id: UUID,
+    reading_record_id: UUID,
+    user_id: UUID,
+) -> tuple[str, dict[str, Any]] | None:
+    """Load ``original_inputs.input_type`` + ``metadata_json`` for
+    source_label projection.
+
+    Returns ``None`` if the original_input row is not found. The caller
+    treats this as a non-fatal degradation (use candidate source_refs
+    fallback). Does NOT select ``source_text`` — the read model never
+    returns the original text to the frontend.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT input_type, metadata_json
+        FROM original_inputs
+        WHERE id = $1
+          AND reading_record_id = $2
+          AND user_id = $3
+        """,
+        original_input_id,
+        reading_record_id,
+        user_id,
+    )
+    if row is None:
+        return None
+    return str(row["input_type"]), row["metadata_json"]
+
+
 def _build_validated_user_asset(
     row: asyncpg.Record,
     *,
