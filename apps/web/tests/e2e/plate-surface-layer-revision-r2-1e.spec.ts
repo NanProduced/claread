@@ -118,9 +118,12 @@ test.describe("1. R2.1E translation revision targeted_apply", () => {
     await expect(paragraphAfter).toBeVisible();
 
     // Target blockquote content was updated to the revised translation.
-    const blockquoteAfter = page.locator(
-      '[data-reader-record-node="blockquote"]',
-    );
+    // Note: fixture has 2 blockquotes (one per translation group); both
+    // get the same revised text via makeLayerRevisionSnapshot. Use first()
+    // to avoid strict mode violation.
+    const blockquoteAfter = page
+      .locator('[data-reader-record-node="blockquote"]')
+      .first();
     await expect(blockquoteAfter).toContainText("修订版");
 
     await page.screenshot({
@@ -304,10 +307,11 @@ test.describe("3. R2.1E structural change fallback_full_reload", () => {
     );
     await expect(oldBlockquote).toHaveCount(0);
 
-    // A new blockquote exists (rebuilt by setValue).
-    const newBlockquote = page.locator(
-      '[data-reader-record-node="blockquote"]',
-    );
+    // A new blockquote exists (rebuilt by setValue). Fixture has 2
+    // blockquotes; use first() to avoid strict mode violation.
+    const newBlockquote = page
+      .locator('[data-reader-record-node="blockquote"]')
+      .first();
     await expect(newBlockquote).toBeVisible();
 
     // The new sentence_analysis block is visible.

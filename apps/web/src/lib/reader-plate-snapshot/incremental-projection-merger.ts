@@ -68,7 +68,7 @@ export interface TargetedApplyOperation {
   /** Stable block ID for audit traceability. */
   blockId: string;
   /** Operation type: replace the subtree at `path` or remove it. */
-  type: "replace" | "remove";
+  type: "replace" | "remove" | "insert";
   /** Replacement node(s) from nextChildren (only for "replace"). */
   nodes?: Descendant[];
 }
@@ -219,6 +219,8 @@ interface LayerPublishedPayload {
   target_scope: string;
   target_key: string;
   generation: number;
+  operation?: string;
+  insertions?: unknown;
 }
 
 /**
@@ -365,6 +367,8 @@ function parseLayerPublishedPayload(
     target_scope: p.target_scope,
     target_key: p.target_key,
     generation: p.generation,
+    operation: typeof p.operation === "string" ? p.operation : undefined,
+    insertions: p.insertions,
   };
 }
 
@@ -516,10 +520,13 @@ function orderOperationsForApplication(
   operations: TargetedApplyOperation[],
 ): TargetedApplyOperation[] {
   const replacements = operations.filter((operation) => operation.type === "replace");
+  const inserts = operations
+    .filter((operation) => operation.type === "insert")
+    .sort((left, right) => comparePathsDescending(left.path, right.path));
   const removals = operations
     .filter((operation) => operation.type === "remove")
     .sort((left, right) => comparePathsDescending(left.path, right.path));
-  return [...replacements, ...removals];
+  return [...replacements, ...inserts, ...removals];
 }
 
 // ---------------------------------------------------------------------------
@@ -560,11 +567,23 @@ function blocksAreSemanticallyEqual(
   // Deep compare children + data via sorted-key JSON.
   // Sorted keys ensure deterministic comparison regardless of property order.
   return (
-    stableJsonStringify(prev.children) === stableJsonStringify(next.children) &&
+    stableJsonStringify(stripEditorGeneratedChildIds(prev.children)) ===
+      stableJsonStringify(stripEditorGeneratedChildIds(next.children)) &&
     stableJsonStringify(prev.data) === stableJsonStringify(next.data)
   );
 }
 
+/** Plate assigns opaque ids to nested editor nodes during normalization. Root
+ * block ids remain checked by topology; nested ids are editor-local. */
+function stripEditorGeneratedChildIds(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripEditorGeneratedChildIds);
+  if (value === null || typeof value !== "object") return value;
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (key !== "id") result[key] = stripEditorGeneratedChildIds(child);
+  }
+  return result;
+}
 /**
  * JSON.stringify with sorted object keys for deterministic comparison.
  * Falls back to JSON.stringify for non-object values. Handles arrays by
@@ -644,6 +663,113 @@ function buildUnitBlockSlices(
   return slices;
 }
 
+interface GrammarInsertionDescriptor { unit_id: string; anchor_segment_id: string; kind: string; layer_id: string; item_ids: string[]; }
+
+function extractGrammarItemIdsFromGroupChildren(children: unknown): string[] | null {
+  if (!Array.isArray(children) || children.length === 0) return null;
+  const ids: string[] = [];
+  for (const child of children) {
+    if (!child || typeof child !== "object") return null;
+    const data = (child as { data?: unknown }).data;
+    const itemId = data && typeof data === "object" ? (data as { itemId?: unknown }).itemId : undefined;
+    if (typeof itemId !== "string" || itemId.length === 0) return null;
+    ids.push(itemId);
+  }
+  return ids;
+}
+
+function normalizeParagraphWithoutDeclaredGrammarMarks(node: Descendant, expected: Set<string>): { node: Descendant; observed: Set<string> } | null {
+  const block = node as unknown as PlateBlockLike;
+  if (!Array.isArray(block.children)) return null;
+  const observed = new Set<string>();
+  const children: unknown[] = [];
+  for (const child of block.children) {
+    if (!child || typeof child !== "object") return null;
+    const leaf = child as Record<string, unknown>;
+    const data = leaf.grammar_data;
+    if (leaf.grammar === true || data !== undefined) {
+      const itemId = data && typeof data === "object" ? (data as { itemId?: unknown }).itemId : undefined;
+      if (typeof itemId !== "string" || !expected.has(itemId)) return null;
+      observed.add(itemId);
+      const clean = { ...leaf }; delete clean.grammar; delete clean.grammar_data; children.push(clean);
+    } else children.push(leaf);
+  }
+  const merged: unknown[] = [];
+  for (const child of children) {
+    const previous = merged[merged.length - 1];
+    if (previous && child && typeof previous === "object" && typeof child === "object" && typeof (previous as { text?: unknown }).text === "string" && typeof (child as { text?: unknown }).text === "string") {
+      const previousProps = { ...(previous as Record<string, unknown>) }; delete previousProps.text;
+      const childProps = { ...(child as Record<string, unknown>) }; delete childProps.text;
+      if (stableJsonStringify(previousProps) === stableJsonStringify(childProps)) {
+        merged[merged.length - 1] = { ...(previous as Record<string, unknown>), text: (previous as { text: string }).text + (child as { text: string }).text };
+        continue;
+      }
+    }
+    merged.push(child);
+  }
+  return { node: { ...(block as Record<string, unknown>), children: merged } as unknown as Descendant, observed };
+}
+
+function parseGrammarInsertionDescriptors(payload: LayerPublishedPayload): GrammarInsertionDescriptor[] | null {
+  if (payload.layer_type !== "grammar_note" || payload.operation !== "insert_after_anchor" || !Array.isArray(payload.insertions)) return null;
+  const result: GrammarInsertionDescriptor[] = [];
+  for (const raw of payload.insertions) {
+    if (!raw || typeof raw !== "object") return null;
+    const value = raw as Record<string, unknown>;
+    if (typeof value.unit_id !== "string" || typeof value.anchor_segment_id !== "string" || value.kind !== "grammar_note" || typeof value.layer_id !== "string" || !Array.isArray(value.item_ids) || value.item_ids.length === 0 || value.item_ids.some((id) => typeof id !== "string" || id.length === 0)) return null;
+    result.push({ unit_id: value.unit_id, anchor_segment_id: value.anchor_segment_id, kind: "grammar_note", layer_id: value.layer_id, item_ids: value.item_ids as string[] });
+  }
+  return result.length > 0 ? result : null;
+}
+
+function mergeGrammarFirstPublish(payload: LayerPublishedPayload, prevChildren: Descendant[], nextChildren: Descendant[]): IncrementalProjectionResult {
+  const descriptors = parseGrammarInsertionDescriptors(payload);
+  if (!descriptors) return { kind: "fallback_full_reload", reason: "grammar_first_publish_unsupported_layer_type" };
+  const targetUnit = payload.target_key;
+  const seen = new Set<string>(); const byParagraph = new Map<string, GrammarInsertionDescriptor>();
+  const groupIds = new Set<string>(); const inserts: TargetedApplyOperation[] = [];
+  for (const descriptor of descriptors) {
+    if (descriptor.unit_id !== targetUnit) return { kind: "fallback_full_reload", reason: "grammar_first_publish_cross_unit" };
+    if (descriptor.layer_id !== payload.layer_id) return { kind: "fallback_full_reload", reason: "grammar_first_publish_layer_id_mismatch" };
+    if (seen.has(descriptor.anchor_segment_id)) return { kind: "fallback_full_reload", reason: "grammar_first_publish_duplicate_anchor_descriptor" };
+    seen.add(descriptor.anchor_segment_id);
+    const paragraphId = `paragraph:${descriptor.anchor_segment_id}`;
+    const prevParagraph = findTopLevelBlockIndex(prevChildren, paragraphId); const nextParagraph = findTopLevelBlockIndex(nextChildren, paragraphId);
+    if (prevParagraph < 0 || nextParagraph < 0) return { kind: "fallback_full_reload", reason: "grammar_first_publish_anchor_not_found" };
+    const groupId = `callout-group:${descriptor.unit_id}:${descriptor.anchor_segment_id}`; const nextGroup = findTopLevelBlockIndex(nextChildren, groupId);
+    if (nextGroup < 0) return { kind: "fallback_full_reload", reason: "grammar_first_publish_group_not_in_next" };
+    if (findTopLevelBlockIndex(prevChildren, groupId) >= 0) return { kind: "fallback_full_reload", reason: "grammar_first_publish_group_already_in_prev" };
+    if (nextGroup !== nextParagraph + 1) return { kind: "fallback_full_reload", reason: "grammar_first_publish_canonical_order_mismatch" };
+    const group = nextChildren[nextGroup] as unknown as PlateBlockLike; const groupData = group.data as { unitId?: unknown; anchorSegmentId?: unknown } | undefined;
+    if (!groupData || groupData.unitId !== descriptor.unit_id || groupData.anchorSegmentId !== descriptor.anchor_segment_id) return { kind: "fallback_full_reload", reason: "grammar_first_publish_group_identity_mismatch" };
+    const itemIds = extractGrammarItemIdsFromGroupChildren(group.children); if (!itemIds) return { kind: "fallback_full_reload", reason: "grammar_first_publish_item_identity_missing" };
+    const expected = new Set(descriptor.item_ids); const actual = new Set(itemIds);
+    if (expected.size !== descriptor.item_ids.length || expected.size !== actual.size || descriptor.item_ids.some((id) => !actual.has(id))) return { kind: "fallback_full_reload", reason: "grammar_first_publish_item_ids_mismatch" };
+    groupIds.add(groupId); byParagraph.set(paragraphId, descriptor); inserts.push({ path: [prevParagraph + 1], blockId: groupId, type: "insert", nodes: [nextChildren[nextGroup]!] });
+  }
+  const filtered = nextChildren.filter((node) => { const id = extractBlockId(node); return id === null || !groupIds.has(id); });
+  if (filtered.length !== prevChildren.length) {
+    return { kind: "fallback_full_reload", reason: "unrepresented_projection_change" };
+  }
+  const replaces: TargetedApplyOperation[] = [];
+  for (let i = 0; i < prevChildren.length; i += 1) {
+    const prev = prevChildren[i]!; const next = filtered[i]!; const prevId = extractBlockId(prev); const nextId = extractBlockId(next);
+    if (!prevId || prevId !== nextId) {
+      return { kind: "fallback_full_reload", reason: "unrepresented_projection_change" };
+    }
+    const descriptor = byParagraph.get(prevId);
+    if (!descriptor) {
+      if (!blocksAreSemanticallyEqual(prev as unknown as PlateBlockLike, next as unknown as PlateBlockLike)) {
+        return { kind: "fallback_full_reload", reason: "unrepresented_projection_change" };
+      }
+      continue;
+    }
+    const normalized = normalizeParagraphWithoutDeclaredGrammarMarks(next, new Set(descriptor.item_ids));
+    if (!normalized || !blocksAreSemanticallyEqual(prev as unknown as PlateBlockLike, normalized.node as unknown as PlateBlockLike)) return { kind: "fallback_full_reload", reason: "grammar_first_publish_paragraph_mutation_mismatch" };
+    if (normalized.observed.size > 0) replaces.push({ path: [i], blockId: prevId, type: "replace", nodes: [next] });
+  }
+  return { kind: "targeted_apply", operations: orderOperationsForApplication([...replaces, ...inserts]), preservedInteraction: { preserveSelection: true, preserveScroll: true, preserveGrammarAccordion: true, preserveQuickPeek: true, preservePanels: true }, affectedTargetKeys: [targetUnit] };
+}
 /**
  * R2.1E: attempt a changed-block-only apply for `layer_published` events.
  *
@@ -960,6 +1086,20 @@ export function mergeIncrementalProjection(
         return { kind: "fallback_full_reload", reason: validationError };
       }
       parsedLayerEvents.push({ event, payload });
+    }
+
+    const extendedLayerEvents = parsedLayerEvents.filter(
+      ({ payload }) => payload.operation !== undefined || payload.insertions !== undefined,
+    );
+    if (extendedLayerEvents.length > 0) {
+      if (parsedLayerEvents.length !== 1) {
+        return { kind: "fallback_full_reload", reason: "non_layer_published_in_batch" };
+      }
+      const grammarPayload = extendedLayerEvents[0]!.payload;
+      if (grammarPayload.layer_type !== "grammar_note") {
+        return { kind: "fallback_full_reload", reason: "grammar_first_publish_unsupported_layer_type" };
+      }
+      return mergeGrammarFirstPublish(grammarPayload, prevChildren, nextChildren);
     }
 
     // Deduplicate (unit_id, layer_type) pairs. Same unit may have multiple

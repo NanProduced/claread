@@ -95,6 +95,30 @@ declare global {
       makeSeg2GrammarRevisionSnapshot: (options?: {
         grammarNote?: string;
       }) => ReaderPlateSnapshotDto;
+      // R2.2-P2c-R1: grammar first-publish fixture builders.
+      makeGrammarFirstPublishSnapshot: (options?: {
+        anchorSegmentId?: "seg_1" | "seg_2";
+        grammarNote?: string;
+        layerId?: string;
+        itemIds?: string[];
+      }) => ReaderPlateSnapshotDto;
+      makeGrammarFirstPublishEvent: (options?: {
+        layerId?: string;
+        anchorSegmentId?: "seg_1" | "seg_2";
+        itemIds?: string[];
+        unitId?: string;
+        generation?: number;
+      }) => ReaderEventResponseDto;
+      makeMultiDescriptorGrammarFirstPublishSnapshot: (options?: {
+        layerId?: string;
+        grammarNoteSeg1?: string;
+        grammarNoteSeg2?: string;
+      }) => ReaderPlateSnapshotDto;
+      makeMultiDescriptorGrammarFirstPublishEvent: (options?: {
+        layerId?: string;
+        unitId?: string;
+        generation?: number;
+      }) => ReaderEventResponseDto;
     };
     __spikeSurfaceReady?: boolean;
   }
@@ -250,9 +274,23 @@ function makeUnit(): ReaderUnitNodeDto {
         target_scope: "unit",
         target_key: "unit_1",
         group_id: "group_translation_1",
-        covered_anchor_segment_ids: ["seg_1", "seg_2"],
-        source_text_hash: "unit_hash_1",
-        children: [{ text: `${TRANSLATION_TEXT_1} ${TRANSLATION_TEXT_2}` }],
+        covered_anchor_segment_ids: ["seg_1"],
+        source_text_hash: "seg_hash_1",
+        children: [{ text: TRANSLATION_TEXT_1 }],
+      },
+      {
+        type: "reader_translation_group",
+        owner: "system_ai",
+        layer_id: "layer_translation_1",
+        layer_version: 1,
+        base_id: "base_1",
+        unit_id: "unit_1",
+        target_scope: "unit",
+        target_key: "unit_1",
+        group_id: "group_translation_2",
+        covered_anchor_segment_ids: ["seg_2"],
+        source_text_hash: "seg_hash_2",
+        children: [{ text: TRANSLATION_TEXT_2 }],
       },
       {
         type: "reader_sentence_analysis",
@@ -748,6 +786,350 @@ function makeSeg2GrammarRevisionSnapshot(
 }
 
 // ---------------------------------------------------------------------------
+// T4.2a-PUX-R4-R2.2-P2c-R1: Grammar first-publish fixture builders.
+//
+// 这些 builder 构造 grammar_note 首发场景的 next snapshot 和 layer_published
+// 事件。首发场景的关键约束：
+//   1. prev 中目标 anchor 没有任何 grammar callout-group。
+//   2. next 中目标 anchor 出现 grammar callout-group。
+//   3. callout-group 必须紧随对应 paragraph 之后（C7: insert path =
+//      prev paragraph index + 1），因此需要抑制 translation group 的
+//      blockquote 投影（将 covered_anchor_segment_ids 置空，使投影走
+//      fallback paragraph 路径，每个 anchor segment 独成一个 paragraph）。
+//   4. 事件的 insertions[].layer_id / anchor_segment_id / item_ids 必须与
+//      snapshot 投影产生的 callout-group 内容严格一致（C5 校验）。
+//
+// item_id 格式（后端 P2b 合同）：f"{layer_id}:grammar_note:{item_index}"
+// 投影侧 buildGrammarCalloutBlocks 直接使用 mark.item_id 作为 callout
+// block ID 后缀，因此 snapshot 中的 item_id 必须与事件 descriptor 的
+// item_ids 完全一致。
+//
+// 测试（Task 6）负责构造 prev snapshot：取 next snapshot 并剥离目标
+// anchor 的 grammar marks 后通过 loadSnapshot 加载。
+// ---------------------------------------------------------------------------
+
+/** 默认首发 grammar layer ID（区别于初始 fixture 的 layer_grammar_1）。 */
+const GRAMMAR_FIRST_PUBLISH_LAYER_ID = "layer_grammar_first_publish";
+
+/**
+ * 根据 anchor segment 选择合适的 grammar mark 偏移量。
+ * seg_1 锚定 "shapes"（offset 21–27），seg_2 锚定 "second"（offset 10–16）。
+ */
+function grammarMarkOffsetsForSegment(
+  anchorSegmentId: "seg_1" | "seg_2",
+): Pick<
+  ReaderGrammarNoteMarkDto,
+  | "start_offset"
+  | "end_offset"
+  | "selected_text"
+  | "segment_start_utf16"
+  | "segment_end_utf16"
+  | "grammar_point"
+  | "pattern"
+> {
+  if (anchorSegmentId === "seg_1") {
+    return {
+      start_offset: 21,
+      end_offset: 27,
+      selected_text: "shapes",
+      segment_start_utf16: 21,
+      segment_end_utf16: 27,
+      grammar_point: "predicate verb",
+      pattern: "subject + verb",
+    };
+  }
+  return {
+    start_offset: 10,
+    end_offset: 16,
+    selected_text: "second",
+    segment_start_utf16: 10,
+    segment_end_utf16: 16,
+    grammar_point: "ordinal adjective",
+    pattern: "ordinal + noun",
+  };
+}
+
+/**
+ * P2c-R1: 构造 grammar 首发 next snapshot。
+ *
+ * 在 base snapshot 基础上：
+ *   - 抑制 translation group 的 blockquote 投影（covered_anchor_segment_ids
+ *     置空），使每个 anchor segment 走 fallback paragraph 路径，保证
+ *     callout-group 紧随 paragraph（C7 path = paragraph_index + 1）。
+ *   - 剥离所有 segment 的既有 grammar marks（clean slate）。
+ *   - 在目标 anchor segment 上放置新的 grammar marks（使用指定 layer_id
+ *     和 item_ids），投影后产生 callout-group:{unitId}:{anchorSegmentId}。
+ *
+ * 测试需构造 prev：取此函数返回值，剥离目标 anchor 的 grammar marks，
+ * 通过 loadSnapshot 加载后再调用 reloadWith。
+ */
+function makeGrammarFirstPublishSnapshot(
+  base: ReaderPlateSnapshotDto,
+  options: {
+    anchorSegmentId?: "seg_1" | "seg_2";
+    grammarNote?: string;
+    layerId?: string;
+    itemIds?: string[];
+  } = {},
+): ReaderPlateSnapshotDto {
+  const {
+    anchorSegmentId = "seg_1",
+    grammarNote = "Grammar first-publish note.",
+    layerId = GRAMMAR_FIRST_PUBLISH_LAYER_ID,
+    itemIds = [`${layerId}:grammar_note:0`],
+  } = options;
+
+  const offsets = grammarMarkOffsetsForSegment(anchorSegmentId);
+
+  // 为目标 anchor 构造 grammar marks，每个 item_id 对应一条 mark。
+  const grammarMarks: ReaderGrammarNoteMarkDto[] = itemIds.map(
+    (itemId, index) =>
+      makeGrammarMark({
+        mark_id: `grammar_mark_first_publish_${anchorSegmentId}_${index}`,
+        item_id: itemId,
+        layer_id: layerId,
+        anchor_segment_id: anchorSegmentId,
+        note: grammarNote,
+        ...offsets,
+      }),
+  );
+
+  const unit = base.value[0] as ReaderUnitNodeDto;
+  const revisedUnit: ReaderUnitNodeDto = {
+    ...unit,
+    children: unit.children.map((child) => {
+      // 抑制 translation group span，避免 blockquote 出现在 paragraph 和
+      // callout-group 之间（C7 要求 callout-group 位于 paragraph_index + 1）。
+      if (child.type === "reader_translation_group") {
+        return { ...child, covered_anchor_segment_ids: [] };
+      }
+      if (child.type !== "reader_source_block") return child;
+      return {
+        ...child,
+        children: child.children.map((seg) => {
+          if (!("type" in seg) || seg.type !== "reader_anchor_segment") return seg;
+          const isTarget = seg.anchor_segment_id === anchorSegmentId;
+          return {
+            ...seg,
+            children: seg.children.map((leaf) => ({
+              ...leaf,
+              // 首发场景：目标 anchor 放置新 grammar marks，其余 anchor 剥离 grammar。
+              reader_grammar_note_marks: isTarget ? grammarMarks : [],
+            })),
+          };
+        }),
+      };
+    }),
+  };
+
+  return {
+    ...base,
+    snapshot_id: "snapshot_grammar_first_publish",
+    last_event_sequence: 9,
+    value: [revisedUnit],
+  };
+}
+
+/**
+ * P2c-R1: 构造 grammar 首发 layer_published 事件（P2b 扩展 payload）。
+ *
+ * payload 包含全部 10 个字段：7 个 base 字段 + 3 个 P2b 扩展字段
+ * （schema_version, operation, insertions）。insertions 中的 layer_id /
+ * anchor_segment_id / item_ids 必须与 makeGrammarFirstPublishSnapshot
+ * 产出的 snapshot 投影内容严格一致，否则 merger C5 校验失败。
+ */
+function makeGrammarFirstPublishEvent(
+  options: {
+    layerId?: string;
+    anchorSegmentId?: "seg_1" | "seg_2";
+    itemIds?: string[];
+    unitId?: string;
+    generation?: number;
+  } = {},
+): ReaderEventResponseDto {
+  const {
+    layerId = GRAMMAR_FIRST_PUBLISH_LAYER_ID,
+    anchorSegmentId = "seg_1",
+    itemIds = [`${layerId}:grammar_note:0`],
+    unitId = "unit_1",
+    generation = 1,
+  } = options;
+
+  return {
+    id: "evt_grammar_first_publish",
+    reading_record_id: "record_1",
+    sequence: 9,
+    event_type: "layer_published",
+    payload: {
+      record_id: "record_1",
+      base_id: "base_1",
+      layer_id: layerId,
+      layer_type: "grammar_note",
+      target_scope: "unit",
+      target_key: unitId,
+      generation,
+      // P2b 扩展字段
+      schema_version: 1,
+      operation: "insert_after_anchor",
+      insertions: [
+        {
+          unit_id: unitId,
+          anchor_segment_id: anchorSegmentId,
+          kind: "grammar_note",
+          layer_id: layerId,
+          item_ids: itemIds,
+        },
+      ],
+    },
+    created_at: "2026-06-24T02:00:00Z",
+  } as never;
+}
+
+/**
+ * P2c-R1: 构造多 descriptor grammar 首发 next snapshot。
+ *
+ * 在 seg_1 和 seg_2 上各放置一条 grammar mark（同一 layer_id，不同
+ * item_id），投影后产生两个独立 callout-group。用于测试多 descriptor
+ * path 降序插入场景。
+ *
+ * 投影顺序（translation 抑制后）：
+ *   0: paragraph:seg_1
+ *   1: callout-group:unit_1:seg_1  ← insert path = 0 + 1 = 1
+ *   2: sentence_analysis:analysis_1
+ *   3: paragraph:seg_2
+ *   4: callout-group:unit_1:seg_2  ← insert path = 3 + 1 = 4
+ *
+ * merger 按 path 降序应用：先插 [4]（seg_2），再插 [1]（seg_1）。
+ */
+function makeMultiDescriptorGrammarFirstPublishSnapshot(
+  base: ReaderPlateSnapshotDto,
+  options: {
+    layerId?: string;
+    grammarNoteSeg1?: string;
+    grammarNoteSeg2?: string;
+  } = {},
+): ReaderPlateSnapshotDto {
+  const {
+    layerId = GRAMMAR_FIRST_PUBLISH_LAYER_ID,
+    grammarNoteSeg1 = "Grammar first-publish note for seg_1.",
+    grammarNoteSeg2 = "Grammar first-publish note for seg_2.",
+  } = options;
+
+  const seg1Offsets = grammarMarkOffsetsForSegment("seg_1");
+  const seg2Offsets = grammarMarkOffsetsForSegment("seg_2");
+
+  const seg1GrammarMark = makeGrammarMark({
+    mark_id: "grammar_mark_first_publish_seg_1_0",
+    item_id: `${layerId}:grammar_note:0`,
+    layer_id: layerId,
+    anchor_segment_id: "seg_1",
+    note: grammarNoteSeg1,
+    ...seg1Offsets,
+  });
+
+  const seg2GrammarMark = makeGrammarMark({
+    mark_id: "grammar_mark_first_publish_seg_2_1",
+    item_id: `${layerId}:grammar_note:1`,
+    layer_id: layerId,
+    anchor_segment_id: "seg_2",
+    note: grammarNoteSeg2,
+    ...seg2Offsets,
+  });
+
+  const unit = base.value[0] as ReaderUnitNodeDto;
+  const revisedUnit: ReaderUnitNodeDto = {
+    ...unit,
+    children: unit.children.map((child) => {
+      if (child.type === "reader_translation_group") {
+        return { ...child, covered_anchor_segment_ids: [] };
+      }
+      if (child.type !== "reader_source_block") return child;
+      return {
+        ...child,
+        children: child.children.map((seg) => {
+          if (!("type" in seg) || seg.type !== "reader_anchor_segment") return seg;
+          const grammarMarks =
+            seg.anchor_segment_id === "seg_1"
+              ? [seg1GrammarMark]
+              : seg.anchor_segment_id === "seg_2"
+                ? [seg2GrammarMark]
+                : [];
+          return {
+            ...seg,
+            children: seg.children.map((leaf) => ({
+              ...leaf,
+              reader_grammar_note_marks: grammarMarks,
+            })),
+          };
+        }),
+      };
+    }),
+  };
+
+  return {
+    ...base,
+    snapshot_id: "snapshot_multi_descriptor_grammar_first_publish",
+    last_event_sequence: 9,
+    value: [revisedUnit],
+  };
+}
+
+/**
+ * P2c-R1: 构造多 descriptor grammar 首发 layer_published 事件。
+ *
+ * 包含 2 个 insertion descriptor（seg_1 + seg_2），同一 unit_id、同一
+ * layer_id。item_ids 与 snapshot 投影产生的 callout-group 内容一致。
+ */
+function makeMultiDescriptorGrammarFirstPublishEvent(
+  options: {
+    layerId?: string;
+    unitId?: string;
+    generation?: number;
+  } = {},
+): ReaderEventResponseDto {
+  const {
+    layerId = GRAMMAR_FIRST_PUBLISH_LAYER_ID,
+    unitId = "unit_1",
+    generation = 1,
+  } = options;
+
+  return {
+    id: "evt_multi_descriptor_grammar_first_publish",
+    reading_record_id: "record_1",
+    sequence: 9,
+    event_type: "layer_published",
+    payload: {
+      record_id: "record_1",
+      base_id: "base_1",
+      layer_id: layerId,
+      layer_type: "grammar_note",
+      target_scope: "unit",
+      target_key: unitId,
+      generation,
+      schema_version: 1,
+      operation: "insert_after_anchor",
+      insertions: [
+        {
+          unit_id: unitId,
+          anchor_segment_id: "seg_1",
+          kind: "grammar_note",
+          layer_id: layerId,
+          item_ids: [`${layerId}:grammar_note:0`],
+        },
+        {
+          unit_id: unitId,
+          anchor_segment_id: "seg_2",
+          kind: "grammar_note",
+          layer_id: layerId,
+          item_ids: [`${layerId}:grammar_note:1`],
+        },
+      ],
+    },
+    created_at: "2026-06-24T02:00:00Z",
+  } as never;
+}
+
+// ---------------------------------------------------------------------------
 
 export default function E2ESurfaceHarness() {
   // Initial snapshot has NO user_assets — so vocabulary mark click is not
@@ -850,6 +1232,22 @@ export default function E2ESurfaceHarness() {
       makeSeg2GrammarRevisionSnapshot: (options = {}) => {
         return makeSeg2GrammarRevisionSnapshot(snapshotRef.current, options);
       },
+      // R2.2-P2c-R1: grammar first-publish fixture builders.
+      makeGrammarFirstPublishSnapshot: (options = {}) => {
+        return makeGrammarFirstPublishSnapshot(snapshotRef.current, options);
+      },
+      makeGrammarFirstPublishEvent: (options = {}) => {
+        return makeGrammarFirstPublishEvent(options);
+      },
+      makeMultiDescriptorGrammarFirstPublishSnapshot: (options = {}) => {
+        return makeMultiDescriptorGrammarFirstPublishSnapshot(
+          snapshotRef.current,
+          options,
+        );
+      },
+      makeMultiDescriptorGrammarFirstPublishEvent: (options = {}) => {
+        return makeMultiDescriptorGrammarFirstPublishEvent(options);
+      },
     };
     window.__spikeSurfaceReady = true;
   }, []);
@@ -875,4 +1273,8 @@ export {
   makeValidLayerPublishedEvent,
   makeLayerRevisionSnapshot,
   makeStructuralChangeSnapshot,
+  makeGrammarFirstPublishSnapshot,
+  makeGrammarFirstPublishEvent,
+  makeMultiDescriptorGrammarFirstPublishSnapshot,
+  makeMultiDescriptorGrammarFirstPublishEvent,
 };

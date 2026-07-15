@@ -8,6 +8,9 @@ dist/
 build/
 coverage/
 .next/
+.next-gate-test/
+.next-e2e-spike-test/
+.next-e2e-gate-test/
 *.tsbuildinfo
 apps/miniprogram/dist/
 

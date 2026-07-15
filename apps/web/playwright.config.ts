@@ -1,30 +1,51 @@
 import { defineConfig, devices } from "@playwright/test";
 
+/**
+ * T4.2a-PUX-R4-R2.1D-Gate-R1 — E2E Spike 环境隔离修复。
+ *
+ * 架构：
+ * - globalSetup starts TWO dev servers with isolated env:
+ *   - spike-enabled (port 3100): CLAREAD_ENABLE_E2E_SPIKE=1 → 200
+ *   - spike-disabled (port 3101): no flag → 404
+ * - chromium-spike-enabled project: runs on port 3100, excludes gate-disabled
+ * - chromium-spike-disabled project: runs on port 3101, only gate-disabled
+ *
+ * Why not Playwright's webServer option:
+ * - per-project webServer (Playwright 1.60.0): never started, tests
+ *   proceeded immediately with ERR_CONNECTION_REFUSED.
+ * - top-level webServer (single): reuseExistingServer:true silently
+ *   skipped server startup; reuseExistingServer:false conflicted with
+ *   globalSetup because globalSetup runs first and its spawned process
+ *   was detected as occupying the port.
+ * - webServer array: started first server but silently skipped second.
+ *
+ * globalSetup gives full control: kill leftovers, start both servers
+ * with explicit env vars, wait for readiness, clean shutdown.
+ */
 export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 60_000,
+  globalSetup: "./tests/e2e/gate-disabled-server-setup.ts",
   use: {
-    baseURL: "http://127.0.0.1:3000",
+    baseURL: "http://127.0.0.1:3100",
     trace: "on-first-retry",
-  },
-  webServer: {
-    command: "pnpm --filter=@claread/web dev",
-    env: {
-      ...process.env,
-      CLAREAD_PHONE_AUTH_PROVIDER: "mock",
-      // T4.2a-PUX-R4-R2-S2-P1 — enable the /e2e-plate-spike harness route
-      // for Playwright runs. Without this, the route returns 404 and the
-      // spike E2E tests cannot reach the mounted Plate editor.
-      CLAREAD_ENABLE_E2E_SPIKE: "1",
-    },
-    url: "http://127.0.0.1:3000",
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
   },
   projects: [
     {
-      name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      name: "chromium-spike-enabled",
+      use: {
+        ...devices["Desktop Chrome"],
+        baseURL: "http://127.0.0.1:3100",
+      },
+      testIgnore: /gate-disabled/,
+    },
+    {
+      name: "chromium-spike-disabled",
+      use: {
+        ...devices["Desktop Chrome"],
+        baseURL: "http://127.0.0.1:3101",
+      },
+      testMatch: /gate-disabled/,
     },
   ],
 });

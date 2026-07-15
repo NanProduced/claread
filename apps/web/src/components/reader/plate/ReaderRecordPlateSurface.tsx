@@ -2753,6 +2753,9 @@ export function ReaderRecordPlateSurface({
   // `onReloadContextConsumedRef` mirrors the callback to keep it out of
   // the value swap effect deps (avoiding re-runs from inline callbacks).
   const prevSnapshotRef = useRef<ReaderPlateSnapshotDto | null>(snapshot);
+  // Prevent the Plate re-render caused by targeted transforms from immediately
+  // falling through to a second full setValue for the same accepted snapshot.
+  const lastTargetedApplySnapshotIdRef = useRef<string | null>(null);
   const pendingReloadContextRef = useRef<ReloadContext | null>(null);
   const onReloadContextConsumedRef = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -2805,7 +2808,27 @@ export function ReaderRecordPlateSurface({
     // a valid prev snapshot that differs from the current one.
     const reloadContext = pendingReloadContextRef.current;
     const prevSnapshot = prevSnapshotRef.current;
+
+    // A targeted transform can cause this effect to run again before the
+    // parent clears the reload context. Do not replace the just-applied tree.
+    // This guard is sufficient: it covers both "reloadContext still pending"
+    // and "reloadContext already consumed" re-run cases after targeted_apply.
+    // We MUST NOT also early-return when (reloadContext === null &&
+    // prevSnapshot === snapshot) — that would skip the setValue path needed
+    // for legitimate plateValue changes such as immersive/intensive mode
+    // toggle or localUserAssets re-projection (snapshot unchanged but the
+    // projected DOM must still be rebuilt).
+    if (lastTargetedApplySnapshotIdRef.current === snapshot.snapshot_id) {
+      return;
+    }
+
     let appliedViaTargeted = false;
+    // T4.2a-PUX-R4-R2.2-P2c: 标记 merger 是否真的被调用（reloadContext 非 null
+    // 且 prevSnapshot !== snapshot）。effect 在 targeted_apply 成功后可能因
+    // plateValue 变化而再次运行；此时 reloadContext 可能尚未被 consume，
+    // 但 prevSnapshot === snapshot（已更新），merger 不会被调用。用此 flag
+    // 区分"真正的 fallback reload"和"effect 重新运行但无 merge 需要"。
+    let mergerAttempted = false;
 
     // T4.2a-PUX-R4-R2: When a reload context is present but localUserAssets
     // hasn't been synced to snapshot.user_assets yet, skip this run. The
@@ -2826,6 +2849,7 @@ export function ReaderRecordPlateSurface({
       prevSnapshot !== null &&
       prevSnapshot !== snapshot
     ) {
+      mergerAttempted = true;
       const mergeResult = mergeIncrementalProjection({
         prevSnapshot,
         nextSnapshot: snapshot,
@@ -2886,14 +2910,35 @@ export function ReaderRecordPlateSurface({
               grammarExpansionControlRef.current?.forgetItem(grammarItemId);
             }
             editor.tf.removeNodes({ at: op.path });
+          } else if (op.type === "insert" && op.nodes && op.nodes.length > 0) {
+            // T4.2a-PUX-R4-R2.2-P2c: grammar callout-group 首次发布定向插入。
+            // merger 已按 path 降序排列 operations,按数组顺序应用即可
+            // 避免前序插入导致后续 path 偏移。
+            editor.tf.insertNodes(op.nodes as never[], { at: op.path });
           }
         }
+        lastTargetedApplySnapshotIdRef.current = snapshot.snapshot_id;
         appliedViaTargeted = true;
       }
       // fallback_full_reload: fall through to setValue path below.
     }
 
     if (!appliedViaTargeted) {
+      // T4.2a-PUX-R4-R2.2-P2c: 仅在 merger 真正被调用且返回 fallback 时
+      // 确定性关闭 Quick Peek。effect 在 targeted_apply 成功后可能因
+      // plateValue 变化而再次运行;此时 mergerAttempted 为 false,不应关闭。
+      // setValue 会让所有 DOM 元素脱离;一个仍开着 Quick Peek 的 panel,
+      // 其 anchor ref 指向 detached HTMLElement 会让浮层 rect 落到页面左上角
+      // (0,0)。跨 reload 的 Quick Peek 重新锚定是后续单独任务。
+      if (
+        mergerAttempted &&
+        quickPeekInteractionRef.current.isOpen
+      ) {
+        setLookupState({ kind: "idle" });
+        setInspectState(null);
+        setQuickPeekAnchorBlockId(null);
+        quickPeekAnchorRef.current = null;
+      }
       // T4.2a-PUX-R4-R2.1C: request cleanup of itemId-keyed grammar
       // expansion state before the full DOM rebuild. The Provider clears
       // via React setState; the final collapsed state of remounted
