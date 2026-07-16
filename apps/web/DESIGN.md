@@ -64,6 +64,12 @@ spacing:
 
 浅色主题是中性的工作面；深色主题保持相同信息层级与语义映射。Reader 内部遗留的表面 token 名称不构成额外主题，也不得扩展为第三种外观选择。shadcn 的 muted 是弱表面，文字必须使用 muted-foreground；input 使用独立的可辨识边界 token，不能复用装饰性 border。shadcn sidebar 语义 token（sidebar / sidebar-foreground / sidebar-primary / sidebar-primary-foreground / sidebar-accent / sidebar-accent-foreground / sidebar-border / sidebar-ring）映射回已有基础色，不引入独立色彩真相。
 
+### Theme Preferences Preview tokens
+
+`--theme-preview-light-*` 与 `--theme-preview-dark-*`（定义在 `packages/design-tokens/src/web/tokens.css`）是主题偏好预览的固定示例值，仅服务于 Settings 中 `.theme-preview-surface` 的 Light/Dark 预览卡片。它们是**固定快照**，不跟随当前系统主题切换，目的是让用户在浅色模式下也能预览深色外观、反之亦然。
+
+这些 token 不得用于业务页面、组件表面、卡片或任何通用 surface 语义；通用表面必须使用 `--surface-canvas` / `--surface` / `--surface-raised` 等随主题切换的语义 token。预览卡片本身也不得硬编码 HEX 或渐变，所有视觉值必须通过命名 token 引用。
+
 ## Typography
 
 ui 字体服务导航、按钮、输入、状态、菜单和信息密集型界面；reading 字体只服务文章标题、英文原文、译文及阅读性的少量标题。产品控件不使用 display 式排版，不用全大写或宽字距来伪造层级。

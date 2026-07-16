@@ -175,7 +175,7 @@ export function FeedbackForm() {
         }
       `}</style>
 
-      <section className="settings-feedback-panel relative isolate overflow-hidden rounded-[24px] border border-hairline/80 bg-[linear-gradient(180deg,color-mix(in_srgb,var(--surface)_86%,transparent),color-mix(in_srgb,var(--surface-warm)_76%,transparent))] p-5 shadow-[0_18px_50px_rgba(28,24,18,0.08),inset_0_1px_0_rgba(255,255,255,0.48)] sm:p-6">
+      <section className="settings-feedback-panel relative isolate overflow-hidden rounded-[24px] border border-hairline/80 bg-surface p-5 shadow-[var(--app-panel-shadow-quiet)] sm:p-6">
         <div className="pointer-events-none absolute inset-x-5 top-20 h-px bg-hairline/55" />
         <div className="grid gap-6 lg:grid-cols-[1fr_13.5rem] lg:items-start">
           <div className="min-w-0">
@@ -192,19 +192,19 @@ export function FeedbackForm() {
               src="/images/feedback/comment.png"
               alt=""
               data-orbit="comment"
-              className="settings-feedback-ambient absolute right-8 top-2 h-[7.2rem] w-[7.2rem] object-contain drop-shadow-[0_18px_26px_rgba(80,52,24,0.16)]"
+              className="settings-feedback-ambient absolute right-8 top-2 h-[7.2rem] w-[7.2rem] object-contain"
             />
             <img
               src="/images/feedback/love.png"
               alt=""
               data-orbit="love"
-              className="settings-feedback-ambient absolute bottom-2 left-2 h-[4.6rem] w-[4.6rem] object-contain drop-shadow-[0_12px_22px_rgba(170,42,58,0.15)]"
+              className="settings-feedback-ambient absolute bottom-2 left-2 h-[4.6rem] w-[4.6rem] object-contain"
             />
             <img
               src="/images/feedback/search.png"
               alt=""
               data-orbit="search"
-              className="settings-feedback-ambient absolute bottom-7 right-1 h-[4.4rem] w-[4.4rem] object-contain drop-shadow-[0_12px_22px_rgba(80,52,24,0.12)]"
+              className="settings-feedback-ambient absolute bottom-7 right-1 h-[4.4rem] w-[4.4rem] object-contain"
             />
           </div>
         </div>
@@ -217,7 +217,7 @@ export function FeedbackForm() {
               onClick={() => setSentiment(opt.value)}
               aria-pressed={sentiment === opt.value}
               className={cn(
-                "group relative min-h-[8.5rem] overflow-hidden rounded-[18px] border bg-surface/58 px-3 py-4 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.38)] transition-all duration-300 ease-[cubic-bezier(0.25,1,0.5,1)] hover:-translate-y-0.5 hover:border-muted hover:bg-surface",
+                "group relative min-h-[8.5rem] overflow-hidden rounded-[18px] border bg-surface/58 px-3 py-4 text-left transition-all duration-300 ease-[cubic-bezier(0.25,1,0.5,1)] hover:-translate-y-0.5 hover:border-muted hover:bg-surface",
                 sentiment === opt.value
                   ? opt.activeClassName
                   : "border-hairline/85 text-ink-soft",
@@ -229,7 +229,7 @@ export function FeedbackForm() {
                   src={opt.src}
                   alt=""
                   className={cn(
-                    "h-14 w-14 object-contain drop-shadow-[0_12px_18px_rgba(80,52,24,0.14)] transition-transform duration-300 ease-[cubic-bezier(0.25,1,0.5,1)] group-hover:-translate-y-1 group-hover:scale-110",
+                    "h-14 w-14 object-contain transition-transform duration-300 ease-[cubic-bezier(0.25,1,0.5,1)] group-hover:-translate-y-1 group-hover:scale-110",
                     sentiment === opt.value ? "-translate-y-1 scale-110" : "grayscale-[20%] opacity-90",
                   )}
                 />
@@ -248,9 +248,9 @@ export function FeedbackForm() {
           {FEEDBACK_TYPE_OPTIONS.map((option) => (
             <button
               className={cn(
-                "group min-h-[4.4rem] rounded-[15px] border px-3.5 py-3 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.34)] transition-all duration-200",
+                "group min-h-[4.4rem] rounded-[15px] border px-3.5 py-3 text-left transition-all duration-200",
                 feedbackType === option.value
-                  ? "border-ink/70 bg-ink text-background shadow-[0_10px_20px_rgba(30,25,18,0.14)]"
+                  ? "border-ink/70 bg-ink text-background shadow-[var(--app-secondary-shadow)]"
                   : "border-hairline/80 bg-secondary/56 text-ink hover:border-muted hover:bg-[var(--app-control-quiet)]",
               )}
               key={option.value}
@@ -282,7 +282,7 @@ export function FeedbackForm() {
           ))}
         </div>
 
-        <div className="mt-6 rounded-[18px] border border-hairline/85 bg-reader-paper/72 p-3.5 shadow-[inset_0_2px_6px_rgba(30,25,18,0.025)]">
+        <div className="mt-6 rounded-[18px] border border-hairline/85 bg-surface-raised/72 p-3.5">
           <div className="mb-2 flex items-center justify-between gap-3">
             <label className="text-[12px] font-semibold text-muted-foreground" htmlFor={contentId}>
               反馈内容
@@ -315,7 +315,7 @@ export function FeedbackForm() {
             {state.message || " "}
           </span>
           <button
-            className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-[14px] bg-ink px-5 text-sm font-semibold text-background shadow-[0_10px_20px_rgba(30,25,18,0.14)] transition-all hover:bg-ink-soft hover:shadow-[0_12px_24px_rgba(30,25,18,0.18)] active:scale-[0.98] disabled:pointer-events-none disabled:bg-muted/55 disabled:shadow-none"
+            className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-[14px] bg-ink px-5 text-sm font-semibold text-background shadow-[var(--app-secondary-shadow)] transition-all hover:bg-ink-soft hover:shadow-[var(--app-secondary-shadow-hover)] active:scale-[0.98] disabled:pointer-events-none disabled:bg-muted/55 disabled:shadow-none"
             disabled={!canSubmit}
             type="submit"
           >

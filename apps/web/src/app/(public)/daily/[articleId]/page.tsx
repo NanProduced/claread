@@ -41,19 +41,6 @@ function formatShortDate(value: string): string {
 
 import { DailyArticleBody } from "./DailyArticleBody";
 
-/* ---------- Cover Theme → Editorial Plate Fallback ---------- */
-
-const coverThemeGradients: Record<string, string> = {
-  warm: "linear-gradient(135deg, #E8D5B7 0%, #C9A96E 40%, #8B7355 100%)",
-  cool: "linear-gradient(135deg, #C5D5E4 0%, #8BA7C4 40%, #5A7A9B 100%)",
-  neutral: "linear-gradient(135deg, #D4D0C8 0%, #A8A196 40%, #7A756D 100%)",
-  dark: "linear-gradient(135deg, #3A3530 0%, #252220 40%, #1A1816 100%)",
-};
-
-function coverGradient(theme: string): string {
-  return coverThemeGradients[theme] ?? coverThemeGradients.neutral;
-}
-
 /* ---------- Publication Header ---------- */
 
 function PublicationHeader() {
@@ -80,20 +67,21 @@ function PublicationHeader() {
 
 function OptionalCoverPlate({ article }: { article: DailyReaderArticle }) {
   const hasCover = Boolean(article.coverImageUrl);
-  const fallback = coverGradient(article.coverTheme);
 
   return (
     <figure className="mt-8 xl:col-start-3 xl:row-start-2 xl:ml-6 xl:mt-0 xl:w-64 2xl:ml-12 2xl:w-80">
       <div
         aria-hidden="true"
-        className="relative aspect-[4/3] overflow-hidden border border-hairline bg-surface-warm shadow-[0_1px_0_rgba(23,21,17,0.04)]"
-        style={{
-          backgroundImage: hasCover
-            ? `linear-gradient(180deg, rgba(23,21,17,0.02), rgba(23,21,17,0.18)), url("${article.coverImageUrl}")`
-            : fallback,
-          backgroundPosition: "center",
-          backgroundSize: "cover",
-        }}
+        className="relative aspect-[4/3] overflow-hidden border border-hairline bg-surface"
+        style={
+          hasCover
+            ? {
+                backgroundImage: `url("${article.coverImageUrl}")`,
+                backgroundPosition: "center",
+                backgroundSize: "cover",
+              }
+            : undefined
+        }
       >
         <div className="absolute inset-x-0 bottom-0 flex items-center justify-between border-t border-white/20 bg-ink/70 px-3 py-2 font-sans text-[0.62rem] font-semibold tracking-[0.12em] text-white/82">
           <span>DAILY READER</span>
@@ -101,7 +89,7 @@ function OptionalCoverPlate({ article }: { article: DailyReaderArticle }) {
         </div>
       </div>
       <figcaption className="mt-2 font-sans text-[0.68rem] leading-5 text-muted-foreground">
-        {hasCover ? "Source image, cropped as an editorial plate." : "Generated editorial cover tone."}
+        {hasCover ? "Source image, cropped as an editorial plate." : "No cover image available."}
       </figcaption>
     </figure>
   );
@@ -109,7 +97,7 @@ function OptionalCoverPlate({ article }: { article: DailyReaderArticle }) {
 
 function ArticleOpener({ article }: { article: DailyReaderArticle }) {
   return (
-    <section className="border-y border-hairline bg-[#F3EFE6]">
+    <section className="border-y border-hairline bg-surface">
       <div className="mx-auto grid max-w-[680px] px-5 py-10 sm:px-8 lg:py-14 xl:max-w-none xl:grid-cols-[minmax(0,1fr)_minmax(0,680px)_minmax(0,1fr)] xl:px-5">
         <div className="mb-8 flex flex-wrap items-center justify-between gap-3 border-b border-ink/18 pb-3 font-sans text-[0.72rem] font-semibold tracking-[0.12em] text-muted-foreground xl:col-start-2">
           <span>Claread Daily Reader</span>
@@ -136,7 +124,7 @@ function ArticleOpener({ article }: { article: DailyReaderArticle }) {
               {article.tags.slice(0, 4).map((tag) => (
                 <span
                   key={tag}
-                  className="inline-block border border-hairline bg-surface-warm/54 px-3 py-1 text-xs font-medium text-muted-foreground"
+                  className="inline-block border border-hairline bg-surface/54 px-3 py-1 text-xs font-medium text-muted-foreground"
                 >
                   {tag}
                 </span>
@@ -172,7 +160,7 @@ function ArticleByline({ article }: { article: DailyReaderArticle }) {
       <div className="flex items-center gap-1">
         <Link
           href={loginSaveRoute(article.id)}
-          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-surface-warm hover:text-ink"
+          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-surface hover:text-ink"
           aria-label="收藏"
         >
           <BookMarked aria-hidden="true" className="h-[18px] w-[18px]" />
@@ -181,14 +169,14 @@ function ArticleByline({ article }: { article: DailyReaderArticle }) {
           href={article.sourceUrl}
           target="_blank"
           rel="noreferrer"
-          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-surface-warm hover:text-ink"
+          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-surface hover:text-ink"
           aria-label="查看原文"
         >
           <ExternalLink aria-hidden="true" className="h-[18px] w-[18px]" />
         </a>
         <button
           type="button"
-          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-surface-warm hover:text-ink"
+          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-surface hover:text-ink"
           aria-label="分享"
         >
           <Share2 aria-hidden="true" className="h-[18px] w-[18px]" />
@@ -291,7 +279,7 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
                   <p className={`${analysisLabelClass} mt-4`}>为什么值得借</p>
                   <p className="mt-3 text-[0.95rem] leading-[1.8] text-ink-soft">{move.explanation}</p>
                   {move.reusablePattern ? (
-                    <div className="mt-4 border border-hairline bg-surface-warm/55 px-4 py-3">
+                    <div className="mt-4 border border-hairline bg-surface/55 px-4 py-3">
                       <p className="font-sans text-[0.72rem] font-semibold tracking-[0.08em] text-muted-foreground">
                         可借句式
                       </p>
@@ -323,7 +311,7 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
                   <p className={`${analysisLabelClass} mt-4`}>译文</p>
                   <p className="mt-3 text-[0.95rem] leading-[1.8] text-ink-soft">{note.translation}</p>
                   {note.breakdown ? (
-                    <div className="mt-4 rounded-md bg-surface-warm/60 px-5 py-4">
+                    <div className="mt-4 rounded-md bg-surface/60 px-5 py-4">
                       <p className={analysisLabelClass}>结构拆解</p>
                       <p className="mt-2 text-[0.9rem] leading-[1.7] text-muted-foreground">{note.breakdown}</p>
                     </div>
@@ -402,7 +390,7 @@ export default async function DailyArticlePage({
   const article = result.data;
 
   return (
-    <main className="min-h-screen bg-[#FAF9F6] pb-24 text-ink">
+    <main className="min-h-screen bg-surface-canvas pb-24 text-ink">
       <PublicationHeader />
 
       <article>
@@ -438,15 +426,14 @@ export default async function DailyArticlePage({
           <div className="mt-12 flex flex-wrap items-center gap-3">
             <Link
               href={loginSaveRoute(article.id)}
-              className="focus-ring inline-flex min-h-11 items-center gap-2 rounded-pill bg-ink px-5 text-sm font-semibold transition-opacity hover:opacity-90"
-              style={{ color: "#FAF9F6" }}
+              className="focus-ring inline-flex min-h-11 items-center gap-2 rounded-pill bg-ink px-5 text-sm font-semibold text-surface transition-opacity hover:opacity-90"
             >
               <BookMarked aria-hidden="true" className="h-4 w-4" />
               加入我的阅读记录
             </Link>
             <Link
               href={loginSaveRoute(article.id)}
-              className="focus-ring inline-flex min-h-11 items-center gap-2 rounded-pill border border-hairline bg-surface-warm px-5 text-sm font-semibold text-ink transition-colors hover:border-muted"
+              className="focus-ring inline-flex min-h-11 items-center gap-2 rounded-pill border border-hairline bg-surface px-5 text-sm font-semibold text-ink transition-colors hover:border-muted"
             >
               <Star aria-hidden="true" className="h-4 w-4 text-lens-blue" />
               收藏

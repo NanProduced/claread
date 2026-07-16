@@ -146,7 +146,7 @@ function VocabularyBookmarkRail({
           </div>
 
           {/* Bookmark card */}
-          <div className="overflow-hidden rounded-t-[1.45rem] border border-hairline border-b-0 bg-[linear-gradient(180deg,color-mix(in_srgb,var(--surface)_82%,white)_0%,color-mix(in_srgb,var(--reader-paper)_88%,white)_100%)] px-7 pb-8 pt-10 shadow-[0_16px_40px_rgba(28,24,18,0.08)]">
+          <div className="overflow-hidden rounded-t-[1.45rem] border border-hairline border-b-0 bg-surface px-7 pb-8 pt-10 shadow-[var(--cl-shadow-2)]">
             {/* Header */}
             <div className="mb-6">
               <p className="text-[0.58rem] font-bold tracking-[0.18em] text-subtle">Claread Vocabulary</p>
@@ -245,7 +245,7 @@ function VocabularyBookmarkRail({
 
           {/* Bookmark bottom tab with aperture cutout */}
           <div
-            className="relative -mt-px h-[4.5rem] overflow-hidden border-x border-b border-hairline bg-[linear-gradient(180deg,color-mix(in_srgb,var(--surface)_84%,white)_0%,color-mix(in_srgb,var(--reader-paper)_92%,white)_100%)] shadow-[0_18px_32px_rgba(28,24,18,0.06)]"
+            className="relative -mt-px h-[4.5rem] overflow-hidden border-x border-b border-hairline bg-surface shadow-[var(--app-panel-shadow-quiet)]"
             style={{ clipPath: "polygon(0 0, 100% 0, 100% 100%, 66% 100%, 50% 70%, 34% 100%, 0 100%)" }}
           >
             <ApertureWatermark
@@ -503,7 +503,7 @@ export function VocabularyClient({
           </div>
           <div className="pb-1">
             {canReview ? (
-              <Button asChild variant="primary-ink" className="group relative px-6 py-3 font-sans text-[0.82rem] font-semibold tracking-[0.08em] transition-all duration-300 border-transparent min-w-[130px] overflow-hidden hover:scale-[1.02] active:scale-[0.98] shadow-[0_4px_12px_rgba(28,24,18,0.15)]">
+              <Button asChild variant="primary-ink" className="group relative px-6 py-3 font-sans text-[0.82rem] font-semibold tracking-[0.08em] transition-all duration-300 border-transparent min-w-[130px] overflow-hidden hover:scale-[1.02] active:scale-[0.98] shadow-[var(--app-secondary-shadow)]">
                 <Link href={appReviewRoute}>
                   <div className="flex items-center justify-center relative z-10">
                     <Play aria-hidden="true" className="mr-2 h-3.5 w-3.5 fill-current" />
@@ -558,8 +558,8 @@ export function VocabularyClient({
                     onClick={() => handleSelectItem(item)}
                     className={`group relative cursor-pointer border-b border-hairline/40 py-7 pl-3 pr-2 transition-colors first:pt-2 ${
                       isSelected
-                        ? "bg-[rgba(251,249,244,0.7)]"
-                        : "hover:bg-[rgba(251,249,244,0.35)]"
+                        ? "bg-surface/70"
+                        : "hover:bg-surface/35"
                     }`}
                   >
                     <div className="min-w-0">
@@ -692,7 +692,7 @@ export function VocabularyClient({
       {/* ── Right Column: Bookmark Rail or Detail Panel (Desktop) ── */}
       <div className="hidden min-w-0 lg:block h-full relative">
         {selectedItem ? (
-          <div className="absolute inset-0 flex flex-col border-l border-hairline/80 shadow-[-8px_0_32px_rgba(28,24,18,0.02)] overflow-hidden animate-in fade-in slide-in-from-right-8 duration-300 bg-surface">
+          <div className="absolute inset-0 flex flex-col border-l border-hairline/80 overflow-hidden animate-in fade-in slide-in-from-right-8 duration-300 bg-surface shadow-[var(--app-panel-shadow-quiet)]">
             <VocabularyDetailPanel
               key={selectedItem.id}
               item={selectedItem}

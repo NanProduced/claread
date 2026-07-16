@@ -61,11 +61,11 @@ function LeadArticle({ article }: { article: DailyReaderListItem }) {
             className="object-cover transition-transform duration-700 ease-out group-hover:scale-[1.02]"
           />
         ) : (
-          <div className="absolute inset-0 bg-gradient-to-br from-[#C9A96E] via-[#A8946E] to-[#7A756D]" />
+          <div className="absolute inset-0 bg-surface" />
         )}
 
-        {/* Gradient overlay for text readability */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+        {/* Flat ink overlay for text readability — no gradient */}
+        <div className="absolute inset-0 bg-ink/40" />
 
         {/* Content on top of image */}
         <div className="absolute inset-x-0 bottom-0 p-6 sm:p-8 lg:p-10">
@@ -99,7 +99,7 @@ function LeadArticle({ article }: { article: DailyReaderListItem }) {
 
 function EmptyLeadState() {
   return (
-    <div className="flex min-h-[28rem] flex-col justify-center rounded-xl border border-hairline bg-surface-warm/40 px-8 py-12">
+    <div className="flex min-h-[28rem] flex-col justify-center rounded-xl border border-hairline bg-surface/40 px-8 py-12">
       <p className="text-xs font-semibold tracking-[0.18em] text-lens-blue">
         今日精读
       </p>
@@ -127,7 +127,7 @@ function ArticleListItem({ article }: { article: DailyReaderListItem }) {
     <Link
       key={article.id}
       href={dailyArticleRoute(article.id)}
-      className="focus-ring group block py-5 transition-colors hover:bg-surface-warm/70"
+      className="focus-ring group block py-5 transition-colors hover:bg-surface/70"
     >
       <div className="grid grid-cols-[4.7rem_minmax(0,1fr)_1.25rem] gap-3">
         <p className="text-xs font-semibold leading-5 text-lens-blue">
@@ -167,8 +167,7 @@ export default async function DailyReaderPage() {
     : [];
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[oklch(97%_0.012_84)] text-ink">
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_80%_12%,rgba(37,99,235,0.08),transparent_24rem),radial-gradient(circle_at_8%_85%,rgba(17,17,17,0.055),transparent_22rem)]" />
+    <main className="min-h-screen overflow-hidden bg-surface-canvas text-ink">
       <div className="relative min-h-screen px-5 py-6 sm:px-8 lg:px-12">
         <PublicSiteHeader currentHref={dailyRoute} priority />
 
@@ -206,7 +205,7 @@ export default async function DailyReaderPage() {
                   )}
                   <div className="mb-4 flex items-center justify-between gap-3">
                     <h2 className="text-sm font-semibold text-ink">往期精选</h2>
-                    <ClareadStamp label="READ DEEPLY" className="bg-surface-warm/80" />
+                    <ClareadStamp label="READ DEEPLY" className="bg-surface/80" />
                   </div>
                   <div className="divide-y divide-hairline border-y border-hairline">
                     {archiveItems.length > 0 ? archiveItems.map((article) => (

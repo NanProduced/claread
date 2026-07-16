@@ -127,6 +127,29 @@
   --surface-stage: var(--surface-warm);
   --surface-overlay: var(--reader-paper-elevated);
 
+  /* Theme Preferences preview tokens.
+   * Fixed Light/Dark sample values used ONLY by .theme-preview-surface
+   * in Settings. These do NOT change with the active theme — they let
+   * a user preview Light while in Dark mode and vice versa. Values
+   * mirror the canonical neutral palettes above (no paper, no warm
+   * tint, no gradients). Defined here so globals.css and TSX never
+   * hardcode HEX for the preview. */
+  --theme-preview-light-surface: #f8f8f8;
+  --theme-preview-light-surface-raised: rgba(255, 255, 255, 0.9);
+  --theme-preview-light-line: rgba(107, 107, 107, 0.14);
+  --theme-preview-light-line-strong: rgba(21, 21, 21, 0.82);
+  --theme-preview-light-chip-surface: rgba(255, 255, 255, 0.92);
+  --theme-preview-light-chip-ink: rgba(107, 107, 107, 0.9);
+  --theme-preview-light-chip-border: rgba(224, 224, 224, 0.76);
+
+  --theme-preview-dark-surface: #161616;
+  --theme-preview-dark-surface-raised: rgba(42, 42, 42, 0.72);
+  --theme-preview-dark-line: rgba(154, 154, 154, 0.18);
+  --theme-preview-dark-line-strong: rgba(232, 232, 232, 0.88);
+  --theme-preview-dark-chip-surface: rgba(42, 42, 42, 0.92);
+  --theme-preview-dark-chip-ink: rgba(232, 232, 232, 0.92);
+  --theme-preview-dark-chip-border: rgba(61, 61, 61, 0.82);
+
   --text-primary: var(--ink);
   --text-secondary: var(--muted-foreground);
 

@@ -889,37 +889,27 @@ select {
 }
 
 .theme-preview-surface {
-  --theme-preview-surface: #f8f4ea;
-  --theme-preview-surface-raised: rgba(255, 255, 255, 0.68);
-  --theme-preview-line: rgba(68, 64, 58, 0.18);
-  --theme-preview-line-strong: rgba(24, 22, 18, 0.78);
-  --theme-preview-chip-surface: rgba(255, 255, 255, 0.72);
-  --theme-preview-chip-ink: rgba(88, 82, 74, 0.82);
-  --theme-preview-chip-border: rgba(217, 209, 195, 0.7);
-
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0)),
-    var(--theme-preview-surface);
+  background: var(--theme-preview-surface);
 }
 
 .theme-preview-surface--light {
-  --theme-preview-surface: #faf9f6;
-  --theme-preview-surface-raised: rgba(255, 255, 255, 0.9);
-  --theme-preview-line: rgba(82, 88, 96, 0.14);
-  --theme-preview-line-strong: rgba(24, 25, 27, 0.82);
-  --theme-preview-chip-surface: rgba(245, 247, 250, 0.92);
-  --theme-preview-chip-ink: rgba(92, 98, 108, 0.9);
-  --theme-preview-chip-border: rgba(227, 222, 211, 0.76);
+  --theme-preview-surface: var(--theme-preview-light-surface);
+  --theme-preview-surface-raised: var(--theme-preview-light-surface-raised);
+  --theme-preview-line: var(--theme-preview-light-line);
+  --theme-preview-line-strong: var(--theme-preview-light-line-strong);
+  --theme-preview-chip-surface: var(--theme-preview-light-chip-surface);
+  --theme-preview-chip-ink: var(--theme-preview-light-chip-ink);
+  --theme-preview-chip-border: var(--theme-preview-light-chip-border);
 }
 
 .theme-preview-surface--dark {
-  --theme-preview-surface: #1b1f23;
-  --theme-preview-surface-raised: rgba(49, 56, 64, 0.72);
-  --theme-preview-line: rgba(157, 167, 180, 0.18);
-  --theme-preview-line-strong: rgba(243, 239, 231, 0.88);
-  --theme-preview-chip-surface: rgba(47, 53, 60, 0.92);
-  --theme-preview-chip-ink: rgba(209, 216, 226, 0.92);
-  --theme-preview-chip-border: rgba(86, 92, 102, 0.82);
+  --theme-preview-surface: var(--theme-preview-dark-surface);
+  --theme-preview-surface-raised: var(--theme-preview-dark-surface-raised);
+  --theme-preview-line: var(--theme-preview-dark-line);
+  --theme-preview-line-strong: var(--theme-preview-dark-line-strong);
+  --theme-preview-chip-surface: var(--theme-preview-dark-chip-surface);
+  --theme-preview-chip-ink: var(--theme-preview-dark-chip-ink);
+  --theme-preview-chip-border: var(--theme-preview-dark-chip-border);
 }
 
 .theme-preview-surface__eyebrow {

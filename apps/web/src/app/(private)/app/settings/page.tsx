@@ -49,7 +49,7 @@ export default async function SettingsPage() {
   const quotaPercentage = quotaLimit > 0 ? Math.min(100, Math.max(0, (quotaUsed / quotaLimit) * 100)) : 0;
 
   return (
-    <ScrollArea className="h-dvh bg-reader-paper text-ink">
+    <ScrollArea className="h-dvh bg-surface-canvas text-ink">
       <main className="flex flex-col px-6 py-16 sm:px-12 lg:px-24 xl:px-32 mx-auto w-full max-w-[1200px]">
         <div className="mx-auto w-full max-w-[880px] pb-32">
         {/* Title */}

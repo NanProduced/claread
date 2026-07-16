@@ -83,7 +83,7 @@ export function NicknameEditor({ initialNickname, displayFallback }: NicknameEdi
           disabled={editState === "saving"}
           placeholder="输入昵称"
           aria-label="编辑昵称"
-          className="h-9 flex-1 rounded border border-lens-blue bg-reader-paper px-3 text-sm text-ink outline-none focus:ring-1 focus:ring-lens-blue disabled:opacity-50"
+          className="h-9 flex-1 rounded border border-lens-blue bg-surface-raised px-3 text-sm text-ink outline-none focus:ring-1 focus:ring-lens-blue disabled:opacity-50"
           autoFocus
           onKeyDown={(e) => {
             if (e.key === "Enter") saveNickname();

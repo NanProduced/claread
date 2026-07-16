@@ -61,7 +61,7 @@ function CreditStatement({ quota }: { quota: QuotaVm | null }) {
 
         <div className="grid gap-px overflow-hidden rounded-note border border-hairline bg-hairline sm:grid-cols-3">
           {stats.map((item) => (
-            <div key={item.label} className="bg-reader-paper px-4 py-3">
+            <div key={item.label} className="bg-surface px-4 py-3">
               <p className="text-xs font-semibold text-muted-foreground">{item.label}</p>
               <p className="mt-1.5 font-headline text-2xl font-semibold leading-none text-ink">{item.value}</p>
             </div>
@@ -88,7 +88,7 @@ export default async function LedgerPage() {
   const settings = await getProfileSettings();
 
   return (
-    <main className="flex h-dvh flex-col overflow-y-auto bg-reader-paper px-4 py-8 text-ink sm:px-8 lg:px-16 xl:px-24">
+    <main className="flex h-dvh flex-col overflow-y-auto bg-surface-canvas px-4 py-8 text-ink sm:px-8 lg:px-16 xl:px-24">
       <div className="mx-auto flex w-full max-w-[920px] flex-col pb-24 pt-4 lg:pt-12">
         <div className="mb-8 border-b border-hairline pb-8">
           <nav aria-label="Breadcrumb" className="mb-4 flex items-center gap-2 text-[0.68rem] font-bold tracking-[0.15em] text-muted-foreground">

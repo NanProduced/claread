@@ -237,7 +237,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
             <img
               src="/images/feedback/search.png"
               alt=""
-              className="h-full w-full object-contain drop-shadow-[0_14px_24px_rgba(80,52,24,0.14)]"
+              className="h-full w-full object-contain"
             />
           </div>
           <div>
@@ -258,14 +258,14 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
         return (
           <article
             key={item.id}
-            className="group grid grid-cols-[2.5rem_minmax(0,1fr)] items-start gap-3 rounded-[18px] border border-hairline/75 bg-surface/62 px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.34)] transition-all duration-200 hover:border-muted hover:bg-surface/86 hover:shadow-[0_10px_24px_rgba(28,24,18,0.06)] sm:grid-cols-[2.5rem_minmax(0,1fr)_auto]"
+            className="group grid grid-cols-[2.5rem_minmax(0,1fr)] items-start gap-3 rounded-[18px] border border-hairline/75 bg-surface/62 px-4 py-4 transition-all duration-200 hover:border-muted hover:bg-surface/86 hover:shadow-[var(--app-panel-shadow-quiet)] sm:grid-cols-[2.5rem_minmax(0,1fr)_auto]"
             style={{ animationDelay: `${Math.min(index, 5) * 45}ms` }}
           >
             <div className="relative mt-0.5 size-10 shrink-0">
               <img
                 src={iconForSentiment(item.sentiment)}
                 alt=""
-                className="h-full w-full object-contain drop-shadow-[0_8px_14px_rgba(80,52,24,0.12)]"
+                className="h-full w-full object-contain"
               />
             </div>
             <div className="min-w-0 flex-1">
@@ -289,7 +289,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
                 </blockquote>
               ) : null}
               {item.resolutionNote ? (
-                <div className="mt-2 rounded-[12px] border border-hairline/70 bg-reader-paper/65 px-3 py-2">
+                <div className="mt-2 rounded-[12px] border border-hairline/70 bg-surface-raised/65 px-3 py-2">
                   <p className="text-[12px] leading-5 text-muted-foreground">
                     处理说明：{item.resolutionNote}
                   </p>

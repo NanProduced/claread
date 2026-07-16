@@ -264,7 +264,7 @@ function getLoadedSummary(items: LedgerEntryVm[]) {
 
 function SkeletonRow() {
   return (
-    <div className="flex animate-pulse items-start gap-3 rounded-note border border-hairline bg-reader-paper px-4 py-4">
+    <div className="flex animate-pulse items-start gap-3 rounded-note border border-hairline bg-surface px-4 py-4">
       <div className="size-9 shrink-0 rounded-full bg-hairline" />
       <div className="min-w-0 flex-1 space-y-2">
         <div className="h-4 w-2/5 rounded bg-hairline" />
@@ -293,7 +293,7 @@ function FilterButton({
       className={cn(
         "focus-ring inline-flex h-6 min-w-10 items-center justify-center rounded-full px-2 !text-[13px] font-semibold leading-none transition-[background-color,color,box-shadow] duration-fast ease-out-expo",
         active
-          ? "bg-ink text-reader-paper shadow-[0_1px_3px_rgba(17,17,17,0.12)]"
+          ? "bg-ink text-surface shadow-[var(--app-panel-shadow-quiet)]"
           : "text-muted-foreground hover:bg-surface/70 hover:text-ink",
       )}
     >
@@ -316,7 +316,7 @@ function FilterGroup<T extends string>({
   return (
     <div className="grid w-fit max-w-full grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-2">
       <span className="text-[0.68rem] font-semibold text-muted-foreground">{label}</span>
-      <div className="inline-flex w-fit max-w-full items-center gap-0.5 overflow-hidden rounded-full border border-hairline bg-reader-paper/74 p-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.52)]">
+      <div className="inline-flex w-fit max-w-full items-center gap-0.5 overflow-hidden rounded-full border border-hairline bg-surface-raised/74 p-0.5">
         {items.map((item) => (
           <FilterButton
             key={item.value}
@@ -348,7 +348,7 @@ function MonthMenu({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="focus-ring inline-flex h-8 items-center gap-2 rounded-full border border-hairline bg-reader-paper/80 px-2.5 text-xs font-semibold text-ink transition-colors hover:border-ink/30 hover:bg-surface"
+          className="focus-ring inline-flex h-8 items-center gap-2 rounded-full border border-hairline bg-surface-raised/80 px-2.5 text-xs font-semibold text-ink transition-colors hover:border-ink/30 hover:bg-surface"
         >
           <CalendarDays className="size-3.5 text-muted-foreground" aria-hidden="true" />
           <span>{label}</span>
@@ -536,7 +536,7 @@ export function CreditLedgerPanel() {
 
   if (state.phase === "error") {
     return (
-      <div className="mt-3 rounded-note border border-hairline bg-reader-paper px-4 py-6 text-center">
+      <div className="mt-3 rounded-note border border-hairline bg-surface px-4 py-6 text-center">
         <p className="text-sm text-muted-foreground">{state.message}</p>
         <button
           type="button"
@@ -551,7 +551,7 @@ export function CreditLedgerPanel() {
 
   if (state.phase === "loaded" && state.items.length === 0) {
     return (
-      <div className="mt-3 rounded-note border border-hairline bg-reader-paper px-4 py-8 text-center">
+      <div className="mt-3 rounded-note border border-hairline bg-surface px-4 py-8 text-center">
         <Ticket className="mx-auto size-8 text-muted-foreground" strokeWidth={1.2} aria-hidden="true" />
         <p className="mt-3 text-sm font-semibold text-ink">暂无积分记录</p>
         <p className="mx-auto mt-1 max-w-sm text-sm leading-6 text-muted-foreground">
@@ -602,7 +602,7 @@ export function CreditLedgerPanel() {
       </section>
 
       {filteredItems.length === 0 ? (
-        <div className="rounded-note border border-hairline bg-reader-paper px-4 py-8 text-center">
+        <div className="rounded-note border border-hairline bg-surface px-4 py-8 text-center">
           <p className="text-sm font-semibold text-ink">没有符合筛选条件的记录</p>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">调整类型、来源或月份后再查看。</p>
         </div>
@@ -613,7 +613,7 @@ export function CreditLedgerPanel() {
               <h2 id={`ledger-group-${group.dateLabel}`} className="mb-2 text-sm font-semibold tracking-wide text-muted-foreground">
                 {group.dateLabel}
               </h2>
-              <div className="overflow-hidden rounded-note border border-hairline bg-reader-paper">
+              <div className="overflow-hidden rounded-note border border-hairline bg-surface">
                 {group.entries.map((entry, index) => {
                   const isPositive = entry.points > 0;
                   const absPoints = Math.abs(entry.points);
@@ -715,7 +715,7 @@ export function CreditLedgerPanel() {
             type="button"
             disabled={loadingMore}
             onClick={handleLoadMore}
-            className="focus-ring w-full rounded-note border border-hairline bg-reader-paper py-3 text-sm font-semibold text-muted-foreground transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+            className="focus-ring w-full rounded-note border border-hairline bg-surface py-3 text-sm font-semibold text-muted-foreground transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loadingMore ? "正在加载更多记录…" : "加载更多记录"}
           </button>
