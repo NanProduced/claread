@@ -119,6 +119,8 @@ export const ARTICLE_RAG_ENSURE_STATUS_FALLBACK: ReaderArticleRagIndexEnsureStat
 export const ASK_ARTICLE_RAG_STATUS_FALLBACK: ReaderAskArticleRagStatusDto =
   "not_indexed_or_unavailable";
 
+export const ARTIFACT_WORKER_STALL_THRESHOLD_MS = 60_000;
+
 // ---------------------------------------------------------------------------
 // Coercion primitives
 // ---------------------------------------------------------------------------
@@ -268,6 +270,35 @@ export function mapArtifactPipelineStatus(
     outcome: normalizePipelineOutcome(raw.outcome),
     next_action: normalizePipelineNextAction(raw.next_action),
   };
+}
+
+/**
+ * Detect a queued artifact job that no worker has ever claimed. Running and
+ * retrying jobs are deliberately excluded so a slow extraction is not
+ * presented as a missing-worker failure.
+ */
+export function isArtifactPipelineWorkerStalled(
+  status: ReaderArtifactPipelineStatusSafeDto,
+  nowMs = Date.now(),
+): boolean {
+  const job = status.outcome === "extraction_queued"
+    ? status.extraction_job
+    : status.outcome === "materialization_queued"
+      ? status.materialization_job
+      : null;
+
+  if (
+    status.next_action !== "wait_for_worker"
+    || !job
+    || job.status !== "queued"
+    || job.attempt_count !== 0
+  ) {
+    return false;
+  }
+
+  const updatedAtMs = Date.parse(job.updated_at);
+  return Number.isFinite(updatedAtMs)
+    && nowMs - updatedAtMs >= ARTIFACT_WORKER_STALL_THRESHOLD_MS;
 }
 
 /**

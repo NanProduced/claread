@@ -121,6 +121,22 @@ function makePipelineStableResponse(readingRecordId = "rec_artifact_stable") {
   };
 }
 
+function makePipelineStalledResponse(readingRecordId = "rec_artifact_stalled") {
+  return {
+    ...makePipelineStableResponse(readingRecordId),
+    extraction_job: {
+      job_id: "job_extraction_stalled",
+      status: "queued",
+      attempt_count: 0,
+      max_attempts: 3,
+      available_at: "2026-07-15T00:00:00Z",
+      updated_at: "2026-07-15T00:00:00Z",
+    },
+    outcome: "extraction_queued" as const,
+    next_action: "wait_for_worker" as const,
+  };
+}
+
 function installStableArtifactFetchMock(readingRecordId = "rec_artifact_stable") {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -719,6 +735,45 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     expect(calls.some((url) => url.endsWith("/complete-upload"))).toBe(true);
     expect(calls.some((url) => url.endsWith("/submit-input"))).toBe(true);
     expect(calls.some((url) => url.endsWith("/pipeline-status"))).toBe(true);
+  });
+
+  it("stops indefinite waiting when an artifact job has never been claimed", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/init-upload")) {
+        return jsonResponse(makeInitResponse());
+      }
+      if (url.startsWith("https://oss.example.com/")) {
+        return new Response(null, { status: 200 });
+      }
+      if (url.endsWith("/complete-upload")) {
+        return jsonResponse(makeCompleteResponse());
+      }
+      if (url.endsWith("/submit-input")) {
+        return jsonResponse(makeArtifactSubmitResponse("rec_artifact_stalled"));
+      }
+      if (url.endsWith("/pipeline-status")) {
+        return jsonResponse(makePipelineStalledResponse());
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AnalyzeSubmitForm
+        readingGoal="daily_reading"
+        readingVariant="intermediate_reading"
+      />,
+    );
+    fireEvent.change(screen.getByTestId("source-file-input"), {
+      target: { files: [makeFile("stalled.md", "text/markdown")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/文件解析服务暂未启动或队列阻塞/)).toBeTruthy();
+    });
+    expect(navigationMock.push).not.toHaveBeenCalled();
   });
 
   it("removes legacy analysis-task polling from AnalyzeSubmitForm", () => {

@@ -8,8 +8,9 @@ import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type Rea
 import { Button } from "@/components/primitives/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
 import { cn } from "@/lib/cn";
-import type {
-  ReaderArtifactPipelineStatusSafeDto,
+import {
+  isArtifactPipelineWorkerStalled,
+  type ReaderArtifactPipelineStatusSafeDto,
 } from "@/lib/reader-orchestration/status-mapper";
 import {
   READER_RECORD_READING_GOAL_OPTIONS,
@@ -1098,6 +1099,15 @@ export function AnalyzeSubmitForm({
       }
 
       const status = result;
+      if (isArtifactPipelineWorkerStalled(status)) {
+        stopPolling();
+        setState({
+          kind: "error",
+          message: "文件解析服务暂未启动或队列阻塞，请确认本地 Worker 已启动后重试。",
+        });
+        return;
+      }
+
       setState({
         kind: "artifact-polling",
         filename: currentFilename,
