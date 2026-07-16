@@ -140,10 +140,21 @@ import type {
 } from "@/types/api/reader-ask";
 import {
   isReaderAskAgenticEvidenceList,
+  isReaderAskAgenticEvidenceScope,
   isReaderAskAgenticFinalStatus,
   READER_ASK_AGENTIC_EXECUTION_VERSION,
+  type ReaderAskAgenticEvidenceItemDto,
+  type ReaderAskAgenticEvidenceScopeDto,
 } from "@/types/api/reader-ask";
-import { projectAgenticEvidenceForDisplay } from "./ask/agentic-evidence";
+import type {
+  AgenticSourceDescriptor,
+  NavigateAgenticSource,
+  SourceNavigationResult,
+} from "@/lib/reader-orchestration/agentic-source-navigation/agentic-source-navigation";
+import {
+  projectAgenticEvidenceForDisplay,
+  type AgenticEvidenceDisplayItem,
+} from "./ask/agentic-evidence";
 import {
   agenticActivityAriaLabel,
   createIdleAgenticActivityState,
@@ -807,6 +818,9 @@ export function createSseMessageHandler(
           article_rag: null,
           // Store raw agentic evidence for UI-safe projection at render time.
           agentic_evidence: payload.evidence ?? [],
+          // Message-level scope for source navigation fence (R3B0-B).
+          // Missing/null stays null; completed guard already rejects malformed.
+          agentic_evidence_scope: payload.evidence_scope ?? null,
         };
       }),
     true);
@@ -852,6 +866,9 @@ export function createSseMessageHandler(
           replan_status: "idle",
           compacting: false,
           regenerate_preview: false,
+          // Terminals never carry navigable sources.
+          agentic_evidence: null,
+          agentic_evidence_scope: null,
         };
       }),
     true);
@@ -1088,6 +1105,7 @@ export function createSseMessageHandler(
               // Clear any prior agentic evidence so legacy completions cannot
               // keep stale agentic basis from an earlier attempt.
               agentic_evidence: null,
+              agentic_evidence_scope: null,
             };
           }
           const isPriorUser =
@@ -1714,6 +1732,7 @@ function normalizeReaderAskMessages(
         ),
         // Clear any accidental agentic UI state from a prior session.
         agentic_evidence: null,
+        agentic_evidence_scope: null,
       } as ReaderAskUiMessageDto;
     }
 
@@ -1725,6 +1744,19 @@ function normalizeReaderAskMessages(
       ? message.final_status
       : null;
 
+    // Scope: missing/null → null; complete object → keep; malformed → null (no raw dict).
+    // Non-ok terminals never keep navigable scope (matches hot applyAgenticTerminal).
+    const rawScope = message.agentic_evidence_scope;
+    let agenticEvidenceScope: ReaderAskAgenticEvidenceScopeDto | null =
+      rawScope == null
+        ? null
+        : isReaderAskAgenticEvidenceScope(rawScope)
+          ? rawScope
+          : null;
+    if (finalStatus != null && finalStatus !== "ok") {
+      agenticEvidenceScope = null;
+    }
+
     return {
       ...message,
       // Backend already projected content_md / status for completed & terminal.
@@ -1733,6 +1765,7 @@ function normalizeReaderAskMessages(
       final_status: finalStatus,
       // Strict guard only; invalid list → null (not raw).
       agentic_evidence: agenticEvidence,
+      agentic_evidence_scope: agenticEvidenceScope,
       // Agentic path must not carry legacy article_rag sidecar.
       article_rag: null,
       // Never surface agentic items through the legacy evidence channel.
@@ -2200,18 +2233,96 @@ function EvidenceDisclosure({
   );
 }
 
+/** Safe Chinese feedback for source navigation — never surfaces enums/ids. */
+export function formatSourceNavigationFeedback(
+  result: SourceNavigationResult,
+): string {
+  switch (result.status) {
+    case "navigated":
+      return "已定位到文章中的相关位置";
+    case "identity_mismatch":
+    case "stale_generation":
+      return "当前文章版本已更新，无法定位这条历史依据";
+    case "target_not_found":
+      return "未能在当前文章中找到这条依据";
+    case "unavailable":
+      if (result.reason === "page_identity_incomplete") {
+        return "文章定位信息尚未准备好，请稍后重试";
+      }
+      if (result.reason === "legacy_scope_missing") {
+        return "这条历史依据暂不支持定位";
+      }
+      return "这条依据暂不支持定位";
+    default:
+      return "这条依据暂不支持定位";
+  }
+}
+
+function canAttemptAgenticSourceNavigate(
+  raw: ReaderAskAgenticEvidenceItemDto,
+  display: AgenticEvidenceDisplayItem,
+  scope: ReaderAskAgenticEvidenceScopeDto | null,
+): boolean {
+  if (scope == null) return false;
+  if (raw.kind === "observation") return false;
+  if (raw.kind === "search_hit") {
+    return display.ragNavigation != null;
+  }
+  if (raw.kind === "initial_anchor" || raw.kind === "read_range") {
+    return Boolean(raw.unit_id || raw.anchor_segment_id);
+  }
+  return false;
+}
+
+function buildAgenticSourceDescriptor(
+  raw: ReaderAskAgenticEvidenceItemDto,
+  display: AgenticEvidenceDisplayItem,
+  scope: ReaderAskAgenticEvidenceScopeDto | null,
+): AgenticSourceDescriptor {
+  return {
+    handleId: raw.handle_id,
+    kind: raw.kind,
+    evidenceScope: scope,
+    unitId: raw.unit_id ?? null,
+    anchorSegmentId: raw.anchor_segment_id ?? null,
+    ragNavigation: display.ragNavigation,
+  };
+}
+
+function navigateLabelForKind(kind: ReaderAskAgenticEvidenceItemDto["kind"]): string {
+  switch (kind) {
+    case "initial_anchor":
+      return "定位到文章中的初始选区";
+    case "read_range":
+      return "定位到文章中的阅读范围";
+    case "search_hit":
+      return "定位到文章中的检索依据";
+    default:
+      return "定位到文章中的依据";
+  }
+}
+
 /**
- * Read-only disclosure for agentic Reading Record Ask evidence.
+ * Disclosure for agentic Reading Record Ask evidence + optional source navigation.
  *
  * Projects raw agentic DTOs through `projectAgenticEvidenceForDisplay` so
- * internal fields (substrate / index / hash / score / raw offsets / ids) never
- * reach the DOM. Distinct from legacy {@link EvidenceDisclosure}.
+ * internal fields never reach the DOM. Distinct from legacy EvidenceDisclosure.
+ * Navigation uses Ask-facing NavigateAgenticSource only (no identity/DOM props).
  */
 function AgenticEvidenceDisclosure({
   evidence,
+  evidenceScope = null,
+  onNavigateAgenticSource,
+  onAnnounce,
 }: {
   evidence: NonNullable<ReaderAskUiMessageDto["agentic_evidence"]>;
+  evidenceScope?: ReaderAskAgenticEvidenceScopeDto | null;
+  onNavigateAgenticSource?: NavigateAgenticSource;
+  onAnnounce?: (message: string) => void;
 }) {
+  const [pendingHandleId, setPendingHandleId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
   if (!evidence || evidence.length === 0) {
     return null;
   }
@@ -2219,6 +2330,35 @@ function AgenticEvidenceDisclosure({
   const items = projectAgenticEvidenceForDisplay(evidence);
   if (items.length === 0) {
     return null;
+  }
+
+  const rawByHandle = new Map(evidence.map((item) => [item.handle_id, item]));
+
+  async function handleNavigate(
+    raw: ReaderAskAgenticEvidenceItemDto,
+    display: AgenticEvidenceDisplayItem,
+  ) {
+    if (!onNavigateAgenticSource || pendingHandleId) {
+      return;
+    }
+    setPendingHandleId(raw.handle_id);
+    setFeedback(null);
+    try {
+      const result = await onNavigateAgenticSource(
+        buildAgenticSourceDescriptor(raw, display, evidenceScope ?? null),
+      );
+      const message = formatSourceNavigationFeedback(result);
+      setFeedback(message);
+      onAnnounce?.(message);
+    } catch {
+      // Fail-closed: runtime/DOM/inject errors must not surface as answer failure.
+      // Do not call onError; do not leak exception text.
+      const message = "暂时无法定位，请稍后重试";
+      setFeedback(message);
+      onAnnounce?.(message);
+    } finally {
+      setPendingHandleId(null);
+    }
   }
 
   return (
@@ -2237,53 +2377,91 @@ function AgenticEvidenceDisclosure({
       </PlanHeader>
       <PlanContent className="px-4">
         <Attachments variant="list" className="w-full gap-2.5">
-          {items.map((item) => (
-            <Attachment
-              key={item.handleId}
-              data={sourceDocumentPart(`agentic-evidence:${item.handleId}`, item.title)}
-              className="items-start rounded-[16px] border border-border/65 bg-background/68 px-3 py-3 shadow-none hover:bg-background/76"
-            >
-              <AttachmentPreview
-                className="size-10 rounded-[12px] bg-muted/70"
-                fallbackIcon={<Quote className="h-4 w-4 text-muted-foreground" />}
-              />
-              <div className="min-w-0 flex-1 space-y-1">
-                <AttachmentInfo className="text-[13px] font-medium text-ink-soft" />
-                <Attachments variant="inline" className="max-w-full gap-1.5">
-                  <Attachment
-                    data={sourceDocumentPart(
-                      `agentic-evidence-kind:${item.handleId}`,
-                      item.title,
-                    )}
-                    className="border-border/60 bg-background/84 text-[11px]"
-                  >
-                    <AttachmentPreview
-                      fallbackIcon={<Sparkles className="h-3 w-3 text-muted-foreground" />}
-                    />
-                    <AttachmentInfo className="text-xs" />
-                  </Attachment>
-                  {item.kind === "search_hit" && item.ragNavigation ? (
+          {items.map((item) => {
+            const raw = rawByHandle.get(item.handleId);
+            if (!raw) return null;
+            const canNavigate =
+              Boolean(onNavigateAgenticSource) &&
+              canAttemptAgenticSourceNavigate(raw, item, evidenceScope ?? null);
+            const isPending = pendingHandleId === item.handleId;
+
+            return (
+              <Attachment
+                key={item.handleId}
+                data={sourceDocumentPart(`agentic-evidence:${item.handleId}`, item.title)}
+                className="items-start rounded-[16px] border border-border/65 bg-background/68 px-3 py-3 shadow-none hover:bg-background/76"
+              >
+                <AttachmentPreview
+                  className="size-10 rounded-[12px] bg-muted/70"
+                  fallbackIcon={<Quote className="h-4 w-4 text-muted-foreground" />}
+                />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <AttachmentInfo className="text-[13px] font-medium text-ink-soft" />
+                  <Attachments variant="inline" className="max-w-full gap-1.5">
                     <Attachment
                       data={sourceDocumentPart(
-                        `agentic-evidence-nav:${item.handleId}`,
-                        "来自当前文章检索",
+                        `agentic-evidence-kind:${item.handleId}`,
+                        item.title,
                       )}
                       className="border-border/60 bg-background/84 text-[11px]"
                     >
                       <AttachmentPreview
-                        fallbackIcon={<Search className="h-3 w-3 text-muted-foreground" />}
+                        fallbackIcon={<Sparkles className="h-3 w-3 text-muted-foreground" />}
                       />
                       <AttachmentInfo className="text-xs" />
                     </Attachment>
+                    {item.kind === "search_hit" && item.ragNavigation ? (
+                      <Attachment
+                        data={sourceDocumentPart(
+                          `agentic-evidence-nav:${item.handleId}`,
+                          "来自当前文章检索",
+                        )}
+                        className="border-border/60 bg-background/84 text-[11px]"
+                      >
+                        <AttachmentPreview
+                          fallbackIcon={<Search className="h-3 w-3 text-muted-foreground" />}
+                        />
+                        <AttachmentInfo className="text-xs" />
+                      </Attachment>
+                    ) : null}
+                  </Attachments>
+                  {item.snippet ? (
+                    <p className="text-[12px] leading-6 text-muted-foreground">{item.snippet}</p>
                   ) : null}
-                </Attachments>
-                {item.snippet ? (
-                  <p className="text-[12px] leading-6 text-muted-foreground">{item.snippet}</p>
-                ) : null}
-              </div>
-            </Attachment>
-          ))}
+                  {canNavigate ? (
+                    <button
+                      type="button"
+                      className={cn(
+                        "mt-1 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium",
+                        "text-ink-soft underline-offset-2 hover:underline",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        isPending ? "opacity-60 pointer-events-none" : "",
+                      )}
+                      data-testid={`agentic-source-navigate-${item.handleId}`}
+                      aria-label={navigateLabelForKind(raw.kind)}
+                      disabled={isPending || pendingHandleId !== null}
+                      onClick={() => {
+                        void handleNavigate(raw, item);
+                      }}
+                    >
+                      {isPending ? "定位中…" : "跳到文章位置"}
+                    </button>
+                  ) : null}
+                </div>
+              </Attachment>
+            );
+          })}
         </Attachments>
+        {feedback ? (
+          <p
+            className="mt-3 px-0.5 text-[12px] leading-5 text-muted-foreground"
+            role="status"
+            aria-live="polite"
+            data-testid="agentic-source-nav-feedback"
+          >
+            {feedback}
+          </p>
+        ) : null}
       </PlanContent>
     </Plan>
   );
@@ -2906,6 +3084,8 @@ function MessageBubble({
   analysisRecordId,
   onPickFollowUpSuggestion,
   agenticActivity,
+  onNavigateAgenticSource,
+  onAnnounce,
 }: {
   item: AskPanelConversationItem;
   currentRecordId: string;
@@ -2927,6 +3107,8 @@ function MessageBubble({
   analysisRecordId?: string;
   onPickFollowUpSuggestion?: (prompt: string) => void;
   agenticActivity?: AgenticActivityState | null;
+  onNavigateAgenticSource?: NavigateAgenticSource;
+  onAnnounce?: (message: string) => void;
 }) {
   const { message, blocks } = item;
   const isAssistant = message.role === "assistant";
@@ -3083,6 +3265,9 @@ function MessageBubble({
                   <AgenticEvidenceDisclosure
                     key={`${message.id}-${block.kind}-${index}`}
                     evidence={message.agentic_evidence ?? []}
+                    evidenceScope={message.agentic_evidence_scope ?? null}
+                    onNavigateAgenticSource={onNavigateAgenticSource}
+                    onAnnounce={onAnnounce}
                   />
                 ) : null;
               case "context_summary":
@@ -3303,6 +3488,12 @@ export interface AiWorkspacePanelProps {
   analysisRecordId?: string;
   capacityDowngradeNotice?: string | null;
   onDismissCapacityDowngradeNotice?: () => void;
+  /**
+   * Reader-owned NavigateAgenticSource callback (R3C-A). Optional — Analysis
+   * Ask and callers without wiring keep Sources display-only.
+   * Must not pass CurrentPageIdentity / Document / Element here.
+   */
+  onNavigateAgenticSource?: NavigateAgenticSource;
 }
 
 export function AiWorkspacePanel({
@@ -3337,6 +3528,7 @@ export function AiWorkspacePanel({
   analysisRecordId,
   capacityDowngradeNotice,
   onDismissCapacityDowngradeNotice,
+  onNavigateAgenticSource,
 }: AiWorkspacePanelProps) {
   const isFloatingSurface = surface === "floating";
   const [liveAnnouncement, setLiveAnnouncement] = useState("");
@@ -4065,6 +4257,7 @@ export function AiWorkspacePanel({
       article_rag: null,
       // Clear agentic evidence so a new turn never inherits prior basis.
       agentic_evidence: null,
+      agentic_evidence_scope: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -4206,6 +4399,7 @@ export function AiWorkspacePanel({
               article_rag: null,
               // Clear agentic evidence so retry does not keep prior basis.
               agentic_evidence: null,
+              agentic_evidence_scope: null,
             }
           : message,
       ),
@@ -4468,6 +4662,8 @@ export function AiWorkspacePanel({
                     ? agenticActivity
                     : null
                 }
+                onNavigateAgenticSource={onNavigateAgenticSource}
+                onAnnounce={setLiveAnnouncement}
               />
             ))}
           </ConversationShell>

@@ -12,6 +12,7 @@ import { consumeReaderAskSse } from "./ask/sse";
 import {
   AiWorkspacePanel,
   createSseMessageHandler,
+  formatSourceNavigationFeedback,
   normalizeReaderAskMessages,
   type AiWorkspacePanelProps,
 } from "./AiWorkspacePanel";
@@ -3660,6 +3661,13 @@ describe("createSseMessageHandler – agentic stream", () => {
     };
   }
 
+  const agenticEvidenceScope = {
+    reading_record_id: "record-1",
+    base_id: "base-1",
+    record_generation: 1,
+    stable_document_id: "doc-stable-1",
+  };
+
   const agenticCompleted = {
     execution_version: "reader_record_ask_agentic_v1" as const,
     final_status: "ok" as const,
@@ -3668,6 +3676,7 @@ describe("createSseMessageHandler – agentic stream", () => {
     thread_id: "thread-1",
     turn_run_id: "turn-run-1",
     envelope_fingerprint: "env-fp-1",
+    evidence_scope: agenticEvidenceScope,
     evidence: [
       {
         handle_id: "evh_aabbccddeeff00112233445566778899",
@@ -3721,8 +3730,32 @@ describe("createSseMessageHandler – agentic stream", () => {
     // Agentic evidence is stored on the UI state, not mapped into legacy evidence DTO.
     expect(message.evidence).toEqual([]);
     expect(message.agentic_evidence).toEqual(agenticCompleted.evidence);
+    // R3B0-B: hot completed stores message-level evidence_scope.
+    expect(message.agentic_evidence_scope).toEqual(agenticEvidenceScope);
     expect(onMessageIdAssigned).toHaveBeenCalledWith("msg-agentic-1");
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("hot completed with missing/null evidence_scope stores null scope", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    const withoutScope = {
+      ...agenticCompleted,
+      evidence_scope: undefined,
+    };
+    delete (withoutScope as { evidence_scope?: unknown }).evidence_scope;
+    handler({ event: "message.completed", data: withoutScope });
+    flushRaf();
+    expect(getMessages()[0].agentic_evidence_scope ?? null).toBeNull();
+
+    const { handler: handler2, getMessages: get2 } = setupHandler([
+      makeStreamingAssistant(),
+    ]);
+    handler2({
+      event: "message.completed",
+      data: { ...agenticCompleted, evidence_scope: null },
+    });
+    flushRaf();
+    expect(get2()[0].agentic_evidence_scope ?? null).toBeNull();
   });
 
   it("does not complete answer on agentic failed terminal", () => {
@@ -3751,6 +3784,8 @@ describe("createSseMessageHandler – agentic stream", () => {
     expect(message.content_md).toBe("");
     expect(message.compacting).toBe(false);
     expect(message.replan_status).toBe("idle");
+    expect(message.agentic_evidence ?? null).toBeNull();
+    expect(message.agentic_evidence_scope ?? null).toBeNull();
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0][0]).toBeTruthy();
   });
@@ -4311,6 +4346,46 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
   });
 });
 
+describe("formatSourceNavigationFeedback", () => {
+  it("maps results to safe Chinese without ids/enums", () => {
+    expect(
+      formatSourceNavigationFeedback({
+        status: "navigated",
+        mode: "unit",
+        targetId: "u-secret",
+      }),
+    ).toBe("已定位到文章中的相关位置");
+    expect(
+      formatSourceNavigationFeedback({ status: "stale_generation" }),
+    ).toContain("版本已更新");
+    expect(
+      formatSourceNavigationFeedback({
+        status: "target_not_found",
+        attemptedModes: ["unit"],
+      }),
+    ).toContain("未能在当前文章中找到");
+    expect(
+      formatSourceNavigationFeedback({
+        status: "unavailable",
+        reason: "page_identity_incomplete",
+      }),
+    ).toContain("尚未准备好");
+    expect(
+      formatSourceNavigationFeedback({
+        status: "unavailable",
+        reason: "legacy_scope_missing",
+      }),
+    ).toContain("历史依据");
+    const text = formatSourceNavigationFeedback({
+      status: "unavailable",
+      reason: "partial_citation",
+    });
+    expect(text).not.toContain("partial");
+    expect(text).not.toContain("u-secret");
+    expect(text).not.toContain("fingerprint");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // normalizeReaderAskMessages – Agentic history cold reload
 // ---------------------------------------------------------------------------
@@ -4352,6 +4427,13 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
     },
   ];
 
+  const historyScope = {
+    reading_record_id: "record-1",
+    base_id: "base-1",
+    record_generation: 1,
+    stable_document_id: "doc-stable-1",
+  };
+
   it("maps agentic completed history into agentic_evidence and clears article_rag", () => {
     const [normalized] = normalizeReaderAskMessages([
       createAssistantMessage({
@@ -4361,6 +4443,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
         execution_version: "reader_record_ask_agentic_v1",
         final_status: "ok",
         agentic_evidence: searchHitEvidence,
+        agentic_evidence_scope: historyScope,
         evidence: [],
         article_rag: {
           status: "available",
@@ -4376,8 +4459,43 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
     expect(normalized.execution_version).toBe("reader_record_ask_agentic_v1");
     expect(normalized.final_status).toBe("ok");
     expect(normalized.agentic_evidence).toEqual(searchHitEvidence);
+    expect(normalized.agentic_evidence_scope).toEqual(historyScope);
     expect(normalized.article_rag).toBeNull();
     expect(normalized.evidence).toEqual([]);
+  });
+
+  it("cold history missing/null scope → null; malformed scope dropped", () => {
+    const [missing] = normalizeReaderAskMessages([
+      createAssistantMessage({
+        execution_version: "reader_record_ask_agentic_v1",
+        final_status: "ok",
+        agentic_evidence: searchHitEvidence,
+      }),
+    ]);
+    expect(missing.agentic_evidence_scope ?? null).toBeNull();
+
+    const [explicitNull] = normalizeReaderAskMessages([
+      createAssistantMessage({
+        execution_version: "reader_record_ask_agentic_v1",
+        final_status: "ok",
+        agentic_evidence: searchHitEvidence,
+        agentic_evidence_scope: null,
+      }),
+    ]);
+    expect(explicitNull.agentic_evidence_scope).toBeNull();
+
+    const [malformed] = normalizeReaderAskMessages([
+      createAssistantMessage({
+        execution_version: "reader_record_ask_agentic_v1",
+        final_status: "ok",
+        agentic_evidence: searchHitEvidence,
+        agentic_evidence_scope: {
+          reading_record_id: "only",
+        } as unknown as ReaderAskUiMessageDto["agentic_evidence_scope"],
+      }),
+    ]);
+    expect(malformed.agentic_evidence_scope).toBeNull();
+    expect(JSON.stringify(malformed)).not.toContain("only");
   });
 
   it("keeps terminal history without inventing answers or evidence", () => {
@@ -4391,6 +4509,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
           execution_version: "reader_record_ask_agentic_v1",
           final_status: finalStatus,
           agentic_evidence: null,
+          agentic_evidence_scope: historyScope,
           evidence: [],
         }),
       ]);
@@ -4399,6 +4518,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
       expect(normalized.content_md).toBe("");
       expect(normalized.final_status).toBe(finalStatus);
       expect(normalized.agentic_evidence).toBeNull();
+      expect(normalized.agentic_evidence_scope).toBeNull();
       expect(normalized.article_rag).toBeNull();
       expect(normalized.evidence).toEqual([]);
     }
@@ -4451,6 +4571,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
 
     expect(normalized.execution_version ?? null).toBeNull();
     expect(normalized.agentic_evidence).toBeNull();
+    expect(normalized.agentic_evidence_scope ?? null).toBeNull();
     expect(normalized.article_rag?.status).toBe("available");
     expect(normalized.article_rag?.should_attach).toBe(true);
     expect(normalized.article_rag?.citations).toHaveLength(1);
@@ -4583,5 +4704,367 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
     // Terminal reload must not surface stream onError copy.
     expect(screen.queryByText(/Ask Claread 暂时不可用/)).toBeNull();
     expect(screen.queryByText(/阅读上下文已更新/)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R3C-A Source UI integration (real click / pending / feedback)
+// ---------------------------------------------------------------------------
+
+describe("AiWorkspacePanel agentic source navigation UI", () => {
+  const scope = {
+    reading_record_id: "record-1",
+    base_id: "base-1",
+    record_generation: 1,
+    stable_document_id: "doc-stable-1",
+  };
+
+  const completeSearchHit = {
+    handle_id: "evh_aabbccddeeff00112233445566778899",
+    kind: "search_hit" as const,
+    source_tool: "search_current_article",
+    snippet: "climate change impacts",
+    unit_id: "u1",
+    anchor_segment_id: "s1",
+    rag_citation: {
+      rag_substrate_id: "substrate-secret",
+      index_run_id: "index-run-secret",
+      index_version: "v1",
+      plan_content_sha256: "plan-sha-secret",
+      source_scope: "main_reading_text" as const,
+      block_type: "paragraph",
+      chunk_id: "chunk-1",
+      content_sha256: "content-sha-secret",
+      canonical_text_start_utf16: 10,
+      canonical_text_end_utf16: 42,
+      snippet: "climate change impacts",
+      score: 0.91,
+      stable_document_id: "doc-stable-1",
+      base_id: "base-1",
+      record_generation: 1,
+      block_ids: ["b1"],
+      unit_ids: ["u1"],
+      anchor_segment_ids: ["s1"],
+    },
+  };
+
+  const initialAnchor = {
+    handle_id: "evh_11223344556677889900aabbccddeeff",
+    kind: "initial_anchor" as const,
+    source_tool: "initial_anchor",
+    snippet: "selected sentence",
+    unit_id: "u1",
+    anchor_segment_id: "s1",
+  };
+
+  function setupPanel(
+    messages: ReaderAskUiMessageDto[],
+    onNavigate?: AiWorkspacePanelProps["onNavigateAgenticSource"],
+  ) {
+    vi.stubGlobal("fetch", mockFetch());
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    mockThreadMessages(messages);
+    return renderPanel({
+      onNavigateAgenticSource: onNavigate,
+    });
+  }
+
+  async function openEvidenceDisclosure() {
+    await waitFor(() => {
+      expect(screen.getByTestId("agentic-evidence-disclosure")).not.toBeNull();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "依据" }));
+  }
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows navigate button when scope is complete; static when scope missing", async () => {
+    const onNavigate = vi.fn(async () => ({
+      status: "navigated" as const,
+      mode: "unit" as const,
+      targetId: "u1",
+    }));
+    setupPanel(
+      [
+        createAssistantMessage({
+          content_md: "Answer with sources.",
+          execution_version: "reader_record_ask_agentic_v1",
+          final_status: "ok",
+          agentic_evidence: [completeSearchHit],
+          agentic_evidence_scope: scope,
+        }),
+      ],
+      onNavigate,
+    );
+    await openEvidenceDisclosure();
+    expect(
+      screen.getByRole("button", { name: "定位到文章中的检索依据" }),
+    ).not.toBeNull();
+
+    cleanup();
+    setupPanel(
+      [
+        createAssistantMessage({
+          content_md: "Legacy scope missing.",
+          execution_version: "reader_record_ask_agentic_v1",
+          final_status: "ok",
+          agentic_evidence: [completeSearchHit],
+          agentic_evidence_scope: null,
+        }),
+      ],
+      onNavigate,
+    );
+    await openEvidenceDisclosure();
+    expect(
+      screen.queryByRole("button", { name: "定位到文章中的检索依据" }),
+    ).toBeNull();
+    expect(screen.queryByText("跳到文章位置")).toBeNull();
+  });
+
+  it("observation and partial search_hit stay static even with scope", async () => {
+    const onNavigate = vi.fn(async () => ({
+      status: "navigated" as const,
+      mode: "unit" as const,
+      targetId: "u1",
+    }));
+    setupPanel(
+      [
+        createAssistantMessage({
+          content_md: "Answer.",
+          execution_version: "reader_record_ask_agentic_v1",
+          final_status: "ok",
+          agentic_evidence: [
+            {
+              handle_id: "evh_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              kind: "observation",
+              source_tool: "initial_anchor",
+              snippet: "obs",
+            },
+            {
+              handle_id: "evh_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              kind: "search_hit",
+              source_tool: "search_current_article",
+              snippet: "partial hit",
+              // no rag_citation → partial
+            },
+          ],
+          agentic_evidence_scope: scope,
+        }),
+      ],
+      onNavigate,
+    );
+    await openEvidenceDisclosure();
+    expect(screen.queryByText("跳到文章位置")).toBeNull();
+    expect(screen.getAllByText("观察结果").length).toBeGreaterThan(0);
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it("click builds correct descriptor and shows navigated feedback", async () => {
+    const onNavigate = vi.fn(async (source) => {
+      expect(source).toMatchObject({
+        handleId: completeSearchHit.handle_id,
+        kind: "search_hit",
+        evidenceScope: scope,
+        ragNavigation: {
+          stableDocumentId: "doc-stable-1",
+          baseId: "base-1",
+          recordGeneration: 1,
+          unitIds: ["u1"],
+          anchorSegmentIds: ["s1"],
+        },
+      });
+      expect(source).not.toHaveProperty("snippet");
+      expect(JSON.stringify(source)).not.toContain("substrate-secret");
+      expect(JSON.stringify(source)).not.toContain("fingerprint");
+      return {
+        status: "navigated" as const,
+        mode: "anchor_segment" as const,
+        targetId: "s1",
+      };
+    });
+
+    const { container } = setupPanel(
+      [
+        createAssistantMessage({
+          content_md: "Answer stays.",
+          execution_version: "reader_record_ask_agentic_v1",
+          final_status: "ok",
+          agentic_evidence: [completeSearchHit],
+          agentic_evidence_scope: scope,
+        }),
+      ],
+      onNavigate,
+    );
+
+    await openEvidenceDisclosure();
+    fireEvent.click(screen.getByRole("button", { name: "定位到文章中的检索依据" }));
+
+    await waitFor(() => {
+      expect(onNavigate).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("agentic-source-nav-feedback").textContent).toBe(
+        "已定位到文章中的相关位置",
+      );
+    });
+
+    // Answer unchanged; no answer-level error chrome.
+    expect(screen.getByText("Answer stays.")).not.toBeNull();
+    expect(screen.queryByText(/Ask Claread 暂时不可用/)).toBeNull();
+    const text = container.textContent ?? "";
+    expect(text).not.toContain("s1");
+    expect(text).not.toContain(completeSearchHit.handle_id);
+    expect(text).not.toContain("substrate-secret");
+  });
+
+  it("shows safe feedback for stale and not-found; never surfaces enums", async () => {
+    const onNavigate = vi
+      .fn()
+      .mockResolvedValueOnce({ status: "stale_generation" })
+      .mockResolvedValueOnce({
+        status: "target_not_found",
+        attemptedModes: ["unit"],
+      });
+
+    setupPanel(
+      [
+        createAssistantMessage({
+          content_md: "Answer.",
+          execution_version: "reader_record_ask_agentic_v1",
+          final_status: "ok",
+          agentic_evidence: [initialAnchor],
+          agentic_evidence_scope: scope,
+        }),
+      ],
+      onNavigate,
+    );
+    await openEvidenceDisclosure();
+    const btn = screen.getByRole("button", { name: "定位到文章中的初始选区" });
+    fireEvent.click(btn);
+    await waitFor(() => {
+      expect(screen.getByTestId("agentic-source-nav-feedback").textContent).toContain(
+        "版本已更新",
+      );
+    });
+    expect(screen.getByTestId("agentic-source-nav-feedback").textContent).not.toContain(
+      "stale_generation",
+    );
+
+    fireEvent.click(btn);
+    await waitFor(() => {
+      expect(screen.getByTestId("agentic-source-nav-feedback").textContent).toContain(
+        "未能在当前文章中找到",
+      );
+    });
+  });
+
+  it("pending prevents double-click; reject maps to safe retry message without onError", async () => {
+    let release!: (value: { status: "navigated"; mode: "unit"; targetId: string }) => void;
+    const deferred = new Promise<{
+      status: "navigated";
+      mode: "unit";
+      targetId: string;
+    }>((resolve) => {
+      release = resolve;
+    });
+    const onNavigate = vi.fn(() => deferred);
+    const onToggle = vi.fn();
+
+    setupPanel(
+      [
+        createAssistantMessage({
+          content_md: "Answer body.",
+          execution_version: "reader_record_ask_agentic_v1",
+          final_status: "ok",
+          agentic_evidence: [initialAnchor],
+          agentic_evidence_scope: scope,
+        }),
+      ],
+      onNavigate,
+    );
+
+    await openEvidenceDisclosure();
+    const btn = screen.getByRole("button", { name: "定位到文章中的初始选区" });
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+
+    release({ status: "navigated", mode: "unit", targetId: "u1" });
+    await waitFor(() => {
+      expect(screen.getByTestId("agentic-source-nav-feedback").textContent).toBe(
+        "已定位到文章中的相关位置",
+      );
+    });
+    expect(onToggle).not.toHaveBeenCalled();
+    expect(screen.getByText("Answer body.")).not.toBeNull();
+  });
+
+  it("callback reject shows safe fallback and does not call answer-level errors", async () => {
+    const onNavigate = vi.fn(async () => {
+      throw new Error("SECRET_DOM_ADAPTER_CRASH");
+    });
+    setupPanel(
+      [
+        createAssistantMessage({
+          content_md: "Answer body.",
+          execution_version: "reader_record_ask_agentic_v1",
+          final_status: "ok",
+          agentic_evidence: [completeSearchHit],
+          agentic_evidence_scope: scope,
+        }),
+      ],
+      onNavigate,
+    );
+    await openEvidenceDisclosure();
+    fireEvent.click(screen.getByRole("button", { name: "定位到文章中的检索依据" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("agentic-source-nav-feedback").textContent).toBe(
+        "暂时无法定位，请稍后重试",
+      );
+    });
+    expect(screen.queryByText(/SECRET_DOM/)).toBeNull();
+    expect(screen.queryByText(/Ask Claread 暂时不可用/)).toBeNull();
+    expect(screen.getByText("Answer body.")).not.toBeNull();
+  });
+
+  it("keyboard activation works and feedback has aria-live polite", async () => {
+    const onNavigate = vi.fn(async () => ({
+      status: "unavailable" as const,
+      reason: "page_identity_incomplete" as const,
+    }));
+    setupPanel(
+      [
+        createAssistantMessage({
+          content_md: "Answer.",
+          execution_version: "reader_record_ask_agentic_v1",
+          final_status: "ok",
+          agentic_evidence: [initialAnchor],
+          agentic_evidence_scope: scope,
+        }),
+      ],
+      onNavigate,
+    );
+    await openEvidenceDisclosure();
+    const btn = screen.getByRole("button", { name: "定位到文章中的初始选区" });
+    btn.focus();
+    fireEvent.keyDown(btn, { key: "Enter", code: "Enter" });
+    // Click still needed for button default; also fire click as keyboard activation path
+    fireEvent.click(btn);
+    await waitFor(() => {
+      const feedback = screen.getByTestId("agentic-source-nav-feedback");
+      expect(feedback.getAttribute("aria-live")).toBe("polite");
+      expect(feedback.textContent).toContain("尚未准备好");
+    });
+    expect(onNavigate).toHaveBeenCalled();
   });
 });
