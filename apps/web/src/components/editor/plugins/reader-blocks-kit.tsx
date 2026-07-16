@@ -104,6 +104,10 @@ function useReaderGrammarInteraction() {
 //     (used when a targeted remove op deletes a grammar callout, so the
 //     same itemId reappearing in the same generation defaults to collapsed
 //     instead of inheriting stale expanded state).
+//   - `getExpandedItemIds()`: return the current `expandedItemIds` snapshot
+//     (used by ReaderRecordPlateSurface to capture expansion state before
+//     `editor.tf.setValue` so it can selectively forget only items that no
+//     longer exist in the new DOM on same-source-identity full reload).
 // ---------------------------------------------------------------------------
 
 export interface ReaderGrammarExpansionValue {
@@ -124,6 +128,7 @@ export const ReaderGrammarExpansionContext =
 export interface ReaderGrammarExpansionControl {
   clear: () => void;
   forgetItem: (itemId: string) => void;
+  getExpandedItemIds: () => ReadonlySet<string>;
 }
 
 export type ReaderGrammarExpansionControlRef = {
@@ -188,11 +193,15 @@ export function ReaderGrammarExpansionProvider({
 
   React.useEffect(() => {
     if (!controlRef) return;
-    controlRef.current = { clear: clearExpanded, forgetItem };
+    controlRef.current = {
+      clear: clearExpanded,
+      forgetItem,
+      getExpandedItemIds: () => expandedItemIds,
+    };
     return () => {
       controlRef.current = null;
     };
-  }, [clearExpanded, forgetItem, controlRef]);
+  }, [clearExpanded, forgetItem, controlRef, expandedItemIds]);
 
   const value = React.useMemo(
     () => ({ expandedItemIds, expandItem, collapseItem, toggleItem }),

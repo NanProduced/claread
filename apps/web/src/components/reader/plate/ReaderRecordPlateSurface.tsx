@@ -2615,6 +2615,27 @@ function findReaderRecordScrollContainer(): Window | HTMLElement | null {
   return window;
 }
 
+// T4.2a-PUX-R4-R3-R2: Capture semantic scroll anchor for compensation.
+// Finds the topmost visible block (first [data-reader-record-block-id]
+// whose bottom is below the viewport top) and records its viewport offset.
+function captureScrollAnchor(
+  scrollContainer: Window | HTMLElement | null,
+): { blockId: string; viewportOffset: number } | null {
+  if (scrollContainer === null) return null;
+  const blocks = document.querySelectorAll("[data-reader-record-block-id]");
+  for (const block of blocks) {
+    const rect = (block as HTMLElement).getBoundingClientRect();
+    if (rect.bottom > 0) {
+      const viewportOffset = rect.top;
+      const blockId = block.getAttribute("data-reader-record-block-id");
+      if (blockId) {
+        return { blockId, viewportOffset };
+      }
+    }
+  }
+  return null;
+}
+
 // pathExistsInPlateChildren: shared pure helper from progressive-transition
 // (T4.2a-PUX-R1). Slate path `[0,1,2]` = children[0].children[1].children[2].
 
@@ -2843,6 +2864,35 @@ export function ReaderRecordPlateSurface({
   const lastTargetedApplySnapshotIdRef = useRef<string | null>(null);
   const pendingReloadContextRef = useRef<ReloadContext | null>(null);
   const onReloadContextConsumedRef = useRef<(() => void) | null>(null);
+  // T4.2a-PUX-R4-R3-R2: Pending restore data persisted across effect runs.
+  // editor.tf.setValue schedules a DEFERRED React commit (via MessageChannel).
+  // The deferred commit triggers a new effect run that would normally capture
+  // a stale anchor from the already-shifted DOM. By persisting the original
+  // capture in a ref, the rAF polling loop (which is NOT canceled by the
+  // effect cleanup) can use the original anchor to detect the DOM change and
+  // run the restore with the correct pre-shift viewport offset.
+  //
+  // T4.2a-PUX-R4-R3-R2-P1: Restore state machine fence repair.
+  // - `restoreTokenRef` is a monotonic owner token. Each new restore captures
+  //   the current token; rAF/timeout callbacks abort if the token mismatches.
+  //   New restore, different accepted snapshot, source switch, and unmount
+  //   all increment the token, invalidating old callbacks.
+  // - `sourceIdentity` in the pending record is checked in runRestore to
+  //   forbid cross-source scroll-anchor / savedScrollTop restoration.
+  // - The early-return guard only skips for the SAME accepted snapshot
+  //   (deferred React re-run). A DIFFERENT accepted snapshot invalidates the
+  //   old restore and proceeds normally.
+  const restoreTokenRef = useRef(0);
+  const pendingRestoreRef = useRef<{
+    scrollContainer: Window | HTMLElement | null;
+    savedScrollTop: number | null;
+    capturedScrollAnchor: { blockId: string; viewportOffset: number } | null;
+    quickPeekSnapshot: QuickPeekInteractionSnapshot | null;
+    capturedExpandedItemIds: ReadonlySet<string> | null;
+    snapshot: ReaderPlateSnapshotDto;
+    sourceIdentity: { generation: number; baseId: string };
+    restoreToken: number;
+  } | null>(null);
   useEffect(() => {
     pendingReloadContextRef.current = pendingReloadContext ?? null;
   }, [pendingReloadContext]);
@@ -2871,6 +2921,36 @@ export function ReaderRecordPlateSurface({
   // grammar accordion, Quick Peek, panels, hover, note draft). On any
   // fallback reason, we fall through to the existing setValue path.
   useEffect(() => {
+    // T4.2a-PUX-R4-R3-R2: If there's a pending restore from a previous
+    // effect run, this run was triggered by the deferred React commit from
+    // that run's editor.tf.setValue. The pending rAF polling loop (not
+    // canceled by cleanup) will detect the DOM change and run the restore
+    // using the original pre-shift anchor. Skip this run entirely to avoid
+    // capturing a stale anchor from the already-shifted DOM.
+    //
+    // T4.2a-PUX-R4-R3-R2-P1: The skip only applies when this is the SAME
+    // accepted snapshot (same snapshot_id) — the deferred React re-run from
+    // the same setValue. A DIFFERENT accepted snapshot must invalidate the
+    // old restore (token increment + clear pending) and proceed normally
+    // through setValue / targeted merge. This prevents the old restore from
+    // swallowing a new accepted snapshot.
+    if (pendingRestoreRef.current !== null) {
+      const isSameAcceptedSnapshot =
+        pendingRestoreRef.current.snapshot.snapshot_id === snapshot.snapshot_id;
+      if (isSameAcceptedSnapshot) {
+        prevSnapshotRef.current = snapshot;
+        const ctx = pendingReloadContextRef.current;
+        if (ctx !== null) {
+          pendingReloadContextRef.current = null;
+          onReloadContextConsumedRef.current?.();
+        }
+        return;
+      }
+      // Different accepted snapshot: invalidate old restore and fall through.
+      pendingRestoreRef.current = null;
+      restoreTokenRef.current += 1;
+    }
+
     if (editor.children === plateValue) {
       return;
     }
@@ -2887,6 +2967,9 @@ export function ReaderRecordPlateSurface({
         : scrollContainer === window
           ? window.scrollY
           : (scrollContainer as HTMLElement).scrollTop;
+    // T4.2a-PUX-R4-R3-R2: Capture semantic scroll anchor (topmost visible
+    // block + viewport offset) for anchor-compensated restore after flushSync.
+    const capturedScrollAnchor = captureScrollAnchor(scrollContainer);
 
     // T4.2a-PUX-R4-R2: Try incremental projection merge first.
     // Only attempt when we have a reload context with trigger events AND
@@ -2918,6 +3001,13 @@ export function ReaderRecordPlateSurface({
     // editor.tf.setValue on all full-reload paths. Used in the rAF callback
     // to re-anchor the floating panel via stable business identity.
     let capturedQuickPeekSnapshot: QuickPeekInteractionSnapshot | null = null;
+    // T4.2a-PUX-R4-R3-R2: Captured expanded grammar itemIds before
+    // editor.tf.setValue. Used in the rAF callback to only forget items
+    // that no longer exist in the new DOM (selective forget on
+    // same-source-identity full reload). The semantic scroll anchor is
+    // captured earlier in the effect (near savedScrollTop) since it must
+    // be captured before any DOM mutation.
+    let capturedExpandedItemIds: ReadonlySet<string> | null = null;
 
     // T4.2a-PUX-R4-R2: When a reload context is present but localUserAssets
     // hasn't been synced to snapshot.user_assets yet, skip this run. The
@@ -2987,6 +3077,19 @@ export function ReaderRecordPlateSurface({
         // non-target DOM identity and defeat the purpose of R2.
         for (const op of mergeResult.operations) {
           if (op.type === "replace" && op.nodes && op.nodes.length > 0) {
+            // T4.2a-PUX-R4-R3-R2-P1 (Contract D): when a grammar callout is
+            // replaced via targeted op, forget its itemId expansion state —
+            // the replaced block may carry different content or a different
+            // itemId, and we must NOT let stale expanded state bleed into
+            // the new block. Sibling expansions in the same batch are
+            // untouched (only the affected itemId is forgotten).
+            const replacedGrammarItemId =
+              extractGrammarItemIdFromBlockId(op.blockId);
+            if (replacedGrammarItemId) {
+              grammarExpansionControlRef.current?.forgetItem(
+                replacedGrammarItemId,
+              );
+            }
             editor.tf.replaceNodes(op.nodes as never[], { at: op.path });
           } else if (op.type === "remove") {
             // T4.2a-PUX-R4-R2.1C: when a grammar callout is removed via
@@ -3064,11 +3167,14 @@ export function ReaderRecordPlateSurface({
           quickPeekAnchorRef.current = null;
         }
       }
-      // T4.2a-PUX-R4-R2.1C: request cleanup of itemId-keyed grammar
-      // expansion state before the full DOM rebuild. The Provider clears
-      // via React setState; the final collapsed state of remounted
-      // callouts is verified in unit and E2E tests.
-      grammarExpansionControlRef.current?.clear();
+      // T4.2a-PUX-R4-R3-R2: Capture expanded itemIds BEFORE setValue so we
+      // can selectively forget only items that no longer exist in the new DOM.
+      // Same-source-identity full reload preserves expansion for surviving
+      // items. Source-identity switch (generation/base_id change) is handled
+      // by the generation-scoped effect which calls clear() — that path is
+      // unaffected.
+      capturedExpandedItemIds =
+        grammarExpansionControlRef.current?.getExpandedItemIds() ?? null;
       editor.tf.setValue(plateValue as never[]);
     }
 
@@ -3097,58 +3203,76 @@ export function ReaderRecordPlateSurface({
       }
     }
 
-    // T4.2a-PUX-R4-R3-R1: Restore scroll and re-anchor Quick Peek on the
-    // next frame so React has committed the new DOM. The rAF callback
-    // resolves the new anchor element via stable business identity
-    // (anchorSegmentId + markId) and calls setPositionReference, or
-    // deterministically closes Quick Peek if the anchor is gone.
-    //
-    // T4.2a-PUX-R4-R3-R1-P1: The rAF callback checks a monotonic request
-    // token before touching any ref. Stale restores (token mismatch) or
-    // mark switches (markId mismatch) abort without side effects, ensuring
-    // the current Quick Peek state is never overwritten by an old request.
+    // T4.2a-PUX-R4-R3-R1: Restore scroll and re-anchor Quick Peek.
+    // T4.2a-PUX-R4-R3-R2: editor.tf.setValue schedules a DEFERRED React
+    // commit (via MessageChannel). The deferred commit triggers a new
+    // effect run. To avoid the race where the new run captures a stale
+    // anchor from the already-shifted DOM, we:
+    //   1. Store the pre-shift capture in pendingRestoreRef (persists across
+    //      effect runs; the new run checks this ref and returns early).
+    //   2. Start a rAF polling loop that is NOT canceled by the effect
+    //      cleanup. The loop polls the captured block's position each frame;
+    //      when it moves (DOM committed), the restore runs with the original
+    //      pre-shift viewport offset.
+    //   3. A 2s timeout fallback covers no-op reloads where the DOM doesn't
+    //      change.
     const needsQuickPeekReanchor = capturedQuickPeekSnapshot !== null;
     const needsScrollRestore = savedScrollTop !== null && savedScrollTop > 0;
+    const needsGrammarSelectiveForget =
+      capturedExpandedItemIds !== null &&
+      capturedExpandedItemIds.size > 0;
 
-    if (needsQuickPeekReanchor || needsScrollRestore) {
-      const targetTop = savedScrollTop ?? 0;
-      const quickPeekSnapshot = capturedQuickPeekSnapshot;
-      const rafId = window.requestAnimationFrame(() => {
+    if (
+      needsQuickPeekReanchor ||
+      needsScrollRestore ||
+      needsGrammarSelectiveForget
+    ) {
+      // T4.2a-PUX-R4-R3-R2-P1: Capture monotonic restore token. Old rAF/
+      // timeout callbacks capture this token and abort if it mismatches the
+      // current `restoreTokenRef.current` — this prevents old callbacks from
+      // consuming a newer pending restore record.
+      const myRestoreToken = (restoreTokenRef.current += 1);
+
+      // Store restore data in the ref so it persists across effect re-runs.
+      pendingRestoreRef.current = {
+        scrollContainer,
+        savedScrollTop,
+        capturedScrollAnchor,
+        quickPeekSnapshot: capturedQuickPeekSnapshot,
+        capturedExpandedItemIds,
+        snapshot,
+        sourceIdentity: { generation, baseId },
+        restoreToken: myRestoreToken,
+      };
+
+      const runRestore = () => {
+        const pending = pendingRestoreRef.current;
+        if (!pending) return;
+        // T4.2a-PUX-R4-R3-R2-P1: Token check — abort if a newer restore
+        // or source switch has invalidated this callback.
+        if (restoreTokenRef.current !== pending.restoreToken) return;
+        pendingRestoreRef.current = null;
+
+        const qpSnapshot = pending.quickPeekSnapshot;
         // Quick Peek re-anchor: resolve new DOM element via stable identity.
-        if (quickPeekSnapshot) {
-          // P1 guard 1: token mismatch → stale request, abort without
-          // touching refs. The latest request (or new mark handler) owns
-          // the ref state.
-          if (
-            quickPeekSnapshot.token !== quickPeekRestoreTokenRef.current
-          ) {
-            // Scroll restore still runs below — it's independent of Quick Peek.
+        if (qpSnapshot) {
+          if (qpSnapshot.token !== quickPeekRestoreTokenRef.current) {
+            // Stale request — scroll restore still runs below.
           } else if (!quickPeekInteractionRef.current.isOpen) {
-            // Quick Peek was closed by generation-scoped effect or other
-            // logic during the commit window. Clear stale ref.
             quickPeekAnchorRef.current = null;
           } else if (
-            snapshot.record.generation !== quickPeekSnapshot.generation ||
-            snapshot.base.base_id !== quickPeekSnapshot.baseId
+            pending.snapshot.record.generation !== qpSnapshot.generation ||
+            pending.snapshot.base.base_id !== qpSnapshot.baseId
           ) {
-            // Fence mismatch: generation/base changed during commit.
-            // The generation-scoped effect will close Quick Peek; clear
-            // stale ref to prevent detached (0,0) panel.
             quickPeekAnchorRef.current = null;
-          } else if (
-            quickPeekAnchorMarkIdRef.current !== quickPeekSnapshot.markId
-          ) {
-            // P1 guard 2: user switched to a different vocabulary mark
-            // during the commit window. Abort without touching refs —
-            // the new mark's handler owns the anchor ref.
+          } else if (quickPeekAnchorMarkIdRef.current !== qpSnapshot.markId) {
+            // Mark switched — new mark's handler owns the ref.
           } else {
-            // Resolve new DOM element via stable identity
             const newElement = resolveQuickPeekAnchorElement(
-              quickPeekSnapshot.anchorSegmentId,
-              quickPeekSnapshot.markId,
+              qpSnapshot.anchorSegmentId,
+              qpSnapshot.markId,
             );
             if (newElement) {
-              // Re-anchor to the resolved element
               quickPeekAnchorRef.current = {
                 kind: "element",
                 element: newElement,
@@ -3160,7 +3284,6 @@ export function ReaderRecordPlateSurface({
               });
               quickPeekFloating.update?.();
             } else {
-              // Anchor not found in new DOM — fail-safe close
               setLookupState({ kind: "idle" });
               setInspectState(null);
               setQuickPeekAnchorBlockId(null);
@@ -3168,23 +3291,116 @@ export function ReaderRecordPlateSurface({
             }
           }
         }
-        // Scroll restore
-        if (needsScrollRestore && scrollContainer !== null) {
-          if (scrollContainer === window) {
-            window.scrollTo(0, targetTop);
-          } else {
-            (scrollContainer as HTMLElement).scrollTop = targetTop;
+        // T4.2a-PUX-R4-R3-R2: Selective grammar expansion forget.
+        if (
+          pending.capturedExpandedItemIds !== null &&
+          pending.capturedExpandedItemIds.size > 0
+        ) {
+          for (const itemId of pending.capturedExpandedItemIds) {
+            const el = document.querySelector(
+              `[data-reader-record-grammar-item-id="${itemId}"]`,
+            );
+            if (!el) {
+              grammarExpansionControlRef.current?.forgetItem(itemId);
+            }
           }
         }
-      });
-      // Update prevSnapshotRef AFTER successful apply but BEFORE cleanup.
-      prevSnapshotRef.current = snapshot;
-      if (reloadContext !== null) {
-        onReloadContextConsumedRef.current?.();
-      }
-      return () => {
-        window.cancelAnimationFrame(rafId);
+        // T4.2a-PUX-R4-R3-R2: Semantic scroll-anchor compensation.
+        // T4.2a-PUX-R4-R3-R2-P1: Only run when source identity (generation +
+        // base_id) is unchanged. Cross-source scroll restore is forbidden —
+        // the old anchor may not exist in the new source, and even a same-
+        // name blockId must not be used to force-position into the new source.
+        if (
+          pending.savedScrollTop !== null &&
+          pending.savedScrollTop > 0 &&
+          pending.scrollContainer !== null &&
+          pending.sourceIdentity.generation === generation &&
+          pending.sourceIdentity.baseId === baseId
+        ) {
+          let restored = false;
+          if (pending.capturedScrollAnchor) {
+            const newEl = document.querySelector(
+              `[data-reader-record-block-id="${pending.capturedScrollAnchor.blockId}"]`,
+            ) as HTMLElement | null;
+            if (newEl) {
+              const newRect = newEl.getBoundingClientRect();
+              const currentScrollTop =
+                pending.scrollContainer === window
+                  ? window.scrollY
+                  : (pending.scrollContainer as HTMLElement).scrollTop;
+              const targetScrollTop =
+                currentScrollTop +
+                newRect.top -
+                pending.capturedScrollAnchor.viewportOffset;
+              if (pending.scrollContainer === window) {
+                window.scrollTo(0, targetScrollTop);
+              } else {
+                (pending.scrollContainer as HTMLElement).scrollTop =
+                  targetScrollTop;
+              }
+              restored = true;
+            }
+          }
+          if (!restored) {
+            const targetTop = pending.savedScrollTop ?? 0;
+            if (pending.scrollContainer === window) {
+              window.scrollTo(0, targetTop);
+            } else {
+              (pending.scrollContainer as HTMLElement).scrollTop = targetTop;
+            }
+          }
+        }
       };
+
+      // rAF polling loop: detect when the captured block's position changes
+      // (indicating the deferred React commit has happened). The loop is
+      // intentionally NOT canceled by the effect cleanup so it survives
+      // the re-run triggered by the deferred commit.
+      //
+      // T4.2a-PUX-R4-R3-R2-P1: Each frame checks the restore token. If a
+      // newer restore or source switch has incremented the token, the old
+      // loop aborts without consuming the new pending record.
+      const capturedBlockId = capturedScrollAnchor?.blockId ?? null;
+      const originalViewportOffset =
+        capturedScrollAnchor?.viewportOffset ?? null;
+      const pollFrame = () => {
+        if (restoreTokenRef.current !== myRestoreToken) return; // Invalidated.
+        if (pendingRestoreRef.current === null) return; // Already restored.
+        if (capturedBlockId !== null && originalViewportOffset !== null) {
+          const el = document.querySelector(
+            `[data-reader-record-block-id="${capturedBlockId}"]`,
+          ) as HTMLElement | null;
+          if (el) {
+            const rect = el.getBoundingClientRect();
+            if (Math.abs(rect.top - originalViewportOffset) > 1) {
+              runRestore();
+              return;
+            }
+          } else {
+            runRestore();
+            return;
+          }
+        } else {
+          runRestore();
+          return;
+        }
+        window.requestAnimationFrame(pollFrame);
+      };
+      window.requestAnimationFrame(pollFrame);
+
+      // Fallback: if DOM doesn't change within 100ms (no-op reload or jsdom
+      // where getBoundingClientRect returns zeros), restore anyway.
+      // 100ms is enough for React's deferred commit (MessageChannel macrotask)
+      // in real browsers, and short enough for Vitest's waitFor timeout.
+      //
+      // T4.2a-PUX-R4-R3-R2-P1: Token check prevents old timeout from
+      // consuming a newer pending restore record.
+      window.setTimeout(() => {
+        if (restoreTokenRef.current !== myRestoreToken) return; // Invalidated.
+        if (pendingRestoreRef.current !== null) {
+          runRestore();
+        }
+      }, 100);
     }
 
     // Update prevSnapshotRef for the next reload's merge attempt.
@@ -3515,6 +3731,15 @@ export function ReaderRecordPlateSurface({
     // generation's DOM.
     quickPeekRestoreTokenRef.current += 1;
     quickPeekAnchorRef.current = null;
+    // T4.2a-PUX-R4-R3-R2-P1 (Contract C): Invalidate any pending plate
+    // restore (scroll-anchor / savedScrollTop / selective grammar forget)
+    // bound to the previous source identity. The new generation's blocks
+    // are not positionally comparable to the old ones, and the captured
+    // sourceIdentity in pendingRestoreRef would mismatch anyway — but we
+    // also increment the token so any in-flight rAF/timeout aborts without
+    // touching the new DOM.
+    restoreTokenRef.current += 1;
+    pendingRestoreRef.current = null;
     setActiveSentenceChunkId(null);
     setActiveGrammarItemId(null);
     setGrammarExpandRequest(null);
@@ -3529,6 +3754,18 @@ export function ReaderRecordPlateSurface({
     // the new generation's itemIds are not comparable to the old ones.
     grammarExpansionControlRef.current?.clear();
   }, [baseId, generation]);
+
+  // T4.2a-PUX-R4-R3-R2-P1 (Contract C): On unmount, invalidate any pending
+  // plate restore so the in-flight rAF/timeout cannot fire against a torn-
+  // down editor or read stale refs. The token check alone is sufficient to
+  // make the callbacks no-op, but we also null out pendingRestoreRef so a
+  // late callback cannot observe stale capture data.
+  useEffect(() => {
+    return () => {
+      restoreTokenRef.current += 1;
+      pendingRestoreRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (isWorkspaceShell && sidebarMode === "locked" && dictionaryOpen) {

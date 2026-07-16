@@ -210,41 +210,69 @@ test.describe("2. G1 sibling paragraph update preserves Quick Peek", () => {
 });
 
 // ===========================================================================
-// 3. Full reload fallback: grammar expansion state cleared
+// 3. Same-generation full reload: selective grammar expansion forget (R3-R2)
 // ===========================================================================
 
-test.describe("3. Full reload fallback clears grammar expansion", () => {
-  test("expanded grammar callout collapses after layer_published full reload", async ({
+test.describe("3. Same-generation full reload preserves surviving grammar expansion", () => {
+  test("surviving grammar callout keeps expansion, removed callout is forgotten", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await mockApiRoutes(page);
     await waitForHarnessReady(page);
 
+    // Load a snapshot with grammar marks on BOTH seg_1 and seg_2 so the
+    // same-generation full reload can distinguish "item survives" from
+    // "item removed" in a single pass.
+    await page.evaluate(() => {
+      const s = window.__spikeSurface!;
+      const multiAnchorSnapshot = s.makeMultiAnchorGrammarSnapshot();
+      s.loadSnapshot(multiAnchorSnapshot);
+    });
+
     await page.waitForSelector(".reader-record-plate-document", {
       timeout: 15_000,
     });
+    await page.waitForTimeout(500);
 
-    // Expand the grammar callout.
-    const callout = page.locator(
+    // Expand both grammar callouts.
+    const calloutA = page.locator(
       '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_1"]',
     );
-    await expect(callout).toHaveAttribute(
+    const calloutB = page.locator(
+      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_2"]',
+    );
+    await expect(calloutA).toHaveAttribute(
+      "data-reader-record-callout-collapsed",
+      "true",
+    );
+    await expect(calloutB).toHaveAttribute(
       "data-reader-record-callout-collapsed",
       "true",
     );
 
-    await callout
+    await calloutA
       .locator('[data-reader-record-callout-toggle="grammar"]')
       .click({ force: true });
-    await expect(callout).toHaveAttribute(
+    await calloutB
+      .locator('[data-reader-record-callout-toggle="grammar"]')
+      .click({ force: true });
+    await expect(calloutA).toHaveAttribute(
+      "data-reader-record-callout-collapsed",
+      "false",
+    );
+    await expect(calloutB).toHaveAttribute(
       "data-reader-record-callout-collapsed",
       "false",
     );
 
-    // Drive a full reload via layer_published event.
-    // The merger returns fallback_full_reload for layer_published events,
-    // which triggers editor.tf.setValue + grammarExpansionControlRef.clear().
+    // Drive a same-generation full reload via layer_published fallback.
+    // makeUpdatedSnapshot returns the DEFAULT fixture (grammar_item_1 on
+    // seg_1 only) — grammar_item_2 is absent from the new DOM.
+    // R3-R2 contract: reloadFallback keeps generation=1 / base_id=base_1,
+    // so the Surface captures expanded itemIds before setValue and only
+    // forgets items missing from the new DOM. Surviving grammar_item_1
+    // keeps its expansion; grammar_item_2 is forgotten (callout gone).
     await page.evaluate(() => {
       const s = window.__spikeSurface!;
       const nextSnapshot = s.makeUpdatedSnapshot({ userAssetNote: "new note" });
@@ -253,17 +281,23 @@ test.describe("3. Full reload fallback clears grammar expansion", () => {
 
     await page.waitForTimeout(1000);
 
-    // After full reload, grammar expansion should be cleared.
-    const calloutAfter = page.locator(
+    // grammar_item_1 survives in the new DOM → expansion PRESERVED.
+    const calloutAAfter = page.locator(
       '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_1"]',
     );
-    await expect(calloutAfter).toHaveAttribute(
+    await expect(calloutAAfter).toHaveAttribute(
       "data-reader-record-callout-collapsed",
-      "true",
+      "false",
     );
 
+    // grammar_item_2 no longer exists in the new DOM → callout element gone.
+    const calloutBAfter = page.locator(
+      '[data-callout-variant="grammar"][data-reader-record-grammar-item-id="grammar_item_2"]',
+    );
+    await expect(calloutBAfter).toHaveCount(0);
+
     await page.screenshot({
-      path: "test-results/r2-1d-surface-full-reload-expansion-cleared.png",
+      path: "test-results/r2-1d-surface-full-reload-expansion-preserved.png",
     });
   });
 });

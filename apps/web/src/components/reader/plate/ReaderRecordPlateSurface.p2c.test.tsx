@@ -83,6 +83,40 @@ vi.mock("@/components/editor/plugins/floating-toolbar-kit", async () => {
   };
 });
 
+// T4.2a-PUX-R4-R3-R2: Mock grammar expansion provider to spy on
+// clear / forgetItem / getExpandedItemIds. The mock Provider wires
+// the spy control to the Surface's grammarExpansionControlRef so
+// tests can assert selective forget vs clear behavior without using
+// internal ref spies.
+const { mockGrammarControl } = vi.hoisted(() => ({
+  mockGrammarControl: {
+    clear: vi.fn(),
+    forgetItem: vi.fn(),
+    getExpandedItemIds: vi.fn(() => new Set<string>()),
+  },
+}));
+
+vi.mock("@/components/editor/plugins/reader-blocks-kit", async () => {
+  const actual = await vi.importActual("@/components/editor/plugins/reader-blocks-kit");
+  const { useEffect } = await import("react");
+  return {
+    ...actual,
+    ReaderGrammarExpansionProvider: ({ children, controlRef }: any) => {
+      useEffect(() => {
+        if (controlRef) {
+          controlRef.current = mockGrammarControl;
+        }
+        return () => {
+          if (controlRef) {
+            controlRef.current = null;
+          }
+        };
+      }, []);
+      return children;
+    },
+  };
+});
+
 import { ReaderRecordPlateSurface } from "./ReaderRecordPlateSurface";
 import { mergeIncrementalProjection } from "@/lib/reader-plate-snapshot/incremental-projection-merger";
 
@@ -2059,5 +2093,662 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1.1 contract coverage
     expect(rectReopened.height).toBeGreaterThan(0);
     expect(rectReopened.left).toBeGreaterThan(0);
     expect(rectReopened.top).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T4.2a-PUX-R4-R3-R2: Selective grammar expansion forget & scroll-anchor
+// ---------------------------------------------------------------------------
+
+describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R2 selective forget & scroll-anchor", () => {
+  afterEach(() => {
+    mockGrammarControl.clear.mockReset();
+    mockGrammarControl.forgetItem.mockReset();
+    mockGrammarControl.getExpandedItemIds.mockReset();
+    mockGrammarControl.getExpandedItemIds.mockReturnValue(new Set<string>());
+    try {
+      Object.defineProperty(window, "scrollY", {
+        value: 0,
+        writable: true,
+        configurable: true,
+      });
+    } catch {
+      // ignore
+    }
+  });
+
+  it("4.1: same-generation full reload 保留仍存在的 itemId expansion，forget 不存在的", async () => {
+    mockGrammarControl.getExpandedItemIds.mockReturnValue(
+      new Set(["itemA", "itemB"]),
+    );
+
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeNextSnapshot(prevSnapshot);
+    const event = makeGrammarFirstPublishEvent();
+
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_selective_forget",
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    const realQuerySelector = document.querySelector.bind(document);
+    vi.spyOn(document, "querySelector").mockImplementation((selector: string) => {
+      if (selector === '[data-reader-record-grammar-item-id="itemA"]') {
+        return document.createElement("div");
+      }
+      if (selector === '[data-reader-record-grammar-item-id="itemB"]') {
+        return null;
+      }
+      return realQuerySelector(selector);
+    });
+
+    mockGrammarControl.clear.mockClear();
+    mockGrammarControl.forgetItem.mockClear();
+    mockGrammarControl.getExpandedItemIds.mockClear();
+    mockGrammarControl.getExpandedItemIds.mockReturnValue(
+      new Set(["itemA", "itemB"]),
+    );
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    await waitFor(() => {
+      expect(mockGrammarControl.forgetItem).toHaveBeenCalled();
+    });
+
+    expect(mockGrammarControl.forgetItem).toHaveBeenCalledWith("itemB");
+    expect(mockGrammarControl.forgetItem).not.toHaveBeenCalledWith("itemA");
+    expect(mockGrammarControl.clear).not.toHaveBeenCalled();
+  });
+
+  it("4.2: targeted remove 只 forget 被移除 itemId，sibling expansion 保持", async () => {
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeNextSnapshot(prevSnapshot);
+    const event = makeGrammarFirstPublishEvent();
+
+    mockedMerge.mockReturnValue({
+      kind: "targeted_apply",
+      operations: [
+        {
+          path: [0, 2],
+          blockId: "callout:grammar:itemA",
+          type: "remove",
+        },
+      ],
+      preservedInteraction: {
+        preserveSelection: true,
+        preserveScroll: true,
+        preserveGrammarAccordion: true,
+        preserveQuickPeek: true,
+        preservePanels: true,
+      },
+      affectedTargetKeys: ["unit_1"],
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    mockGrammarControl.clear.mockClear();
+    mockGrammarControl.forgetItem.mockClear();
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    expect(mockGrammarControl.forgetItem).toHaveBeenCalledWith("itemA");
+    expect(mockGrammarControl.forgetItem).not.toHaveBeenCalledWith("itemB");
+    expect(mockGrammarControl.clear).not.toHaveBeenCalled();
+  });
+
+  it("4.3: source identity 切换调用 clear()，不调用 selective forget", async () => {
+    mockGrammarControl.getExpandedItemIds.mockReturnValue(new Set<string>());
+
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot: ReaderPlateSnapshotDto = {
+      ...makeNextSnapshot(prevSnapshot),
+      record: { ...prevSnapshot.record, generation: 2 },
+      base: { ...prevSnapshot.base, base_id: "base_2" },
+    };
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    mockGrammarControl.clear.mockClear();
+    mockGrammarControl.forgetItem.mockClear();
+    mockGrammarControl.getExpandedItemIds.mockClear();
+    mockGrammarControl.getExpandedItemIds.mockReturnValue(new Set<string>());
+
+    await act(async () => {
+      rerender(<ReaderRecordPlateSurface snapshot={nextSnapshot} />);
+    });
+
+    // generation-scoped effect calls clear()
+    expect(mockGrammarControl.clear).toHaveBeenCalled();
+    // selective forget path not triggered (empty expanded set → rAF skip)
+    expect(mockGrammarControl.forgetItem).not.toHaveBeenCalled();
+  });
+
+  it("4.4: scroll-anchor capture 返回正确的 {blockId, viewportOffset}", async () => {
+    Object.defineProperty(window, "scrollY", {
+      value: 100,
+      writable: true,
+      configurable: true,
+    });
+
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeNextSnapshot(prevSnapshot);
+    const event = makeGrammarFirstPublishEvent();
+
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_scroll_anchor_capture",
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Mock querySelectorAll for captureScrollAnchor:
+    // first block above viewport (bottom <= 0), second block visible (bottom > 0)
+    // Use direct method assignment to shadow the beforeEach prototype mock.
+    const mockRect = (el: HTMLElement, rect: Partial<DOMRect>) => {
+      el.getBoundingClientRect = () =>
+        ({
+          top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0,
+          toJSON: () => ({}),
+          ...rect,
+        }) as DOMRect;
+    };
+
+    const blockAbove = document.createElement("div");
+    blockAbove.setAttribute("data-reader-record-block-id", "block_above");
+    mockRect(blockAbove, { top: -200, bottom: -100 });
+
+    const blockVisible = document.createElement("div");
+    blockVisible.setAttribute("data-reader-record-block-id", "block_visible");
+    mockRect(blockVisible, { top: 10, bottom: 50 });
+
+    const realQuerySelectorAll = document.querySelectorAll.bind(document);
+    vi.spyOn(document, "querySelectorAll").mockImplementation((selector: string) => {
+      if (selector === "[data-reader-record-block-id]") {
+        return [blockAbove, blockVisible] as unknown as NodeListOf<Element>;
+      }
+      return realQuerySelectorAll(selector);
+    });
+
+    // Mock querySelector for rAF resolve: block_visible found at new position
+    const blockVisibleNew = document.createElement("div");
+    mockRect(blockVisibleNew, { top: 250, bottom: 300 });
+
+    const realQuerySelector = document.querySelector.bind(document);
+    vi.spyOn(document, "querySelector").mockImplementation((selector: string) => {
+      if (selector === '[data-reader-record-block-id="block_visible"]') {
+        return blockVisibleNew;
+      }
+      return realQuerySelector(selector);
+    });
+
+    const scrollToSpy = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    await waitFor(() => {
+      expect(scrollToSpy).toHaveBeenCalled();
+    });
+
+    // targetScrollTop = currentScrollTop + newRect.top - viewportOffset
+    // = 100 + 250 - 10 = 340
+    expect(scrollToSpy).toHaveBeenCalledWith(0, 340);
+  });
+
+  it("4.5: scroll-anchor resolve 失败回退到裸 scrollTop restore", async () => {
+    Object.defineProperty(window, "scrollY", {
+      value: 150,
+      writable: true,
+      configurable: true,
+    });
+
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeNextSnapshot(prevSnapshot);
+    const event = makeGrammarFirstPublishEvent();
+
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_scroll_anchor_fail",
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Mock querySelectorAll for capture: return a visible block
+    const blockGone = document.createElement("div");
+    blockGone.setAttribute("data-reader-record-block-id", "block_gone");
+    vi.spyOn(blockGone, "getBoundingClientRect").mockReturnValue({
+      top: 20, bottom: 60, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    const realQuerySelectorAll = document.querySelectorAll.bind(document);
+    vi.spyOn(document, "querySelectorAll").mockImplementation((selector: string) => {
+      if (selector === "[data-reader-record-block-id]") {
+        return [blockGone] as unknown as NodeListOf<Element>;
+      }
+      return realQuerySelectorAll(selector);
+    });
+
+    // Mock querySelector for resolve: block not found (null)
+    const realQuerySelector = document.querySelector.bind(document);
+    vi.spyOn(document, "querySelector").mockImplementation((selector: string) => {
+      if (selector === '[data-reader-record-block-id="block_gone"]') {
+        return null;
+      }
+      return realQuerySelector(selector);
+    });
+
+    const scrollToSpy = vi.spyOn(window, "scrollTo");
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    await waitFor(() => {
+      expect(scrollToSpy).toHaveBeenCalled();
+    });
+
+    // Fail-safe: bare scrollTop restore = savedScrollTop = 150
+    expect(scrollToSpy).toHaveBeenCalledWith(0, 150);
+  });
+
+  it("4.6: rejected snapshot 不触发 value-swap effect", async () => {
+    const prevSnapshot = makeSnapshot();
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    mockGrammarControl.clear.mockClear();
+    mockGrammarControl.forgetItem.mockClear();
+    mockGrammarControl.getExpandedItemIds.mockClear();
+
+    // Rerender with the SAME snapshot object — simulates rejected snapshot
+    // not being passed to Surface (deps unchanged → value-swap effect skips)
+    await act(async () => {
+      rerender(<ReaderRecordPlateSurface snapshot={prevSnapshot} />);
+    });
+
+    expect(mockGrammarControl.clear).not.toHaveBeenCalled();
+    expect(mockGrammarControl.forgetItem).not.toHaveBeenCalled();
+    expect(mockGrammarControl.getExpandedItemIds).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // T4.2a-PUX-R4-R3-R2-P1: Restore State Machine Fence Repair
+  // -------------------------------------------------------------------------
+
+  it("4.7 (P1-A): pending restore 后到达不同 accepted snapshot → 旧 restore 失效;新 snapshot 正常进入 value swap;reload context 不被错误消费", async () => {
+    const prevSnapshot = makeSnapshot();
+    const firstNext = makeNextSnapshot(prevSnapshot); // snapshot_2
+    const secondNext: ReaderPlateSnapshotDto = {
+      ...makeNextSnapshot(firstNext),
+      snapshot_id: "snapshot_3",
+      last_event_sequence: 10,
+    };
+    const event = makeGrammarFirstPublishEvent(9);
+    const event2 = makeGrammarFirstPublishEvent(10);
+
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_p1_a_different_accepted_snapshot",
+    });
+
+    const onReloadContextConsumed = vi.fn();
+
+    // 设置非空 expanded set 确保 pendingRestoreRef 被设置
+    // (needsGrammarSelectiveForget = true → 进入 pendingRestore 路径)
+    mockGrammarControl.getExpandedItemIds.mockReturnValue(new Set(["itemA"]));
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // 使用 fake timers 阻止第一次 reload 的 rAF/timeout 提前触发,
+    // 确保 pendingRestoreRef 在第二次 rerender 时仍非 null。
+    vi.useFakeTimers();
+
+    // 第一次 reload (snapshot_2) — 触发 setValue + pendingRestoreRef
+    // 不 advance timers → pendingRestoreRef 保持非 null
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={firstNext}
+          pendingReloadContext={makeReloadContext([event])}
+          onReloadContextConsumed={onReloadContextConsumed}
+        />,
+      );
+    });
+
+    // 清除 merger 调用记录,只观察第二次
+    mockedMerge.mockClear();
+    onReloadContextConsumed.mockClear();
+
+    // 第二次 reload (snapshot_3) — 不同 snapshot_id
+    // BUG 行为: early-return 吞掉 snapshot_3, mockedMerge 不被调用
+    // FIX 行为: invalidate 旧 restore, 正常进入 value swap
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={secondNext}
+          pendingReloadContext={makeReloadContext([event2])}
+          onReloadContextConsumed={onReloadContextConsumed}
+        />,
+      );
+    });
+
+    vi.useRealTimers();
+
+    // 关键断言: snapshot_3 被正常处理 → mockedMerge 被调用且 nextSnapshot 为 snapshot_3
+    // effect 在 act 中同步执行,不需要 waitFor
+    expect(mockedMerge).toHaveBeenCalled();
+    const lastCall = mockedMerge.mock.calls[mockedMerge.mock.calls.length - 1];
+    expect(lastCall[0].nextSnapshot.snapshot_id).toBe("snapshot_3");
+
+    // reload context 被消费(在 snapshot_3 处理之后,不是 early-return 中)
+    expect(onReloadContextConsumed).toHaveBeenCalled();
+  });
+
+  it("4.8 (P1-B): base_id switch 不执行 semantic scroll-anchor / savedScrollTop 跨 source 恢复", async () => {
+    Object.defineProperty(window, "scrollY", {
+      value: 200,
+      writable: true,
+      configurable: true,
+    });
+
+    const prevSnapshot = makeSnapshot();
+    // 不同 base_id 的 snapshot
+    const baseSwitchedSnapshot: ReaderPlateSnapshotDto = {
+      ...makeNextSnapshot(prevSnapshot),
+      base: { ...prevSnapshot.base, base_id: "base_2" },
+    };
+    const event = makeGrammarFirstPublishEvent(9);
+
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_p1_b_base_id_switch",
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // Mock captureScrollAnchor — 会捕获到一个 visible block
+    const blockVisible = document.createElement("div");
+    blockVisible.setAttribute("data-reader-record-block-id", "block_visible");
+    blockVisible.getBoundingClientRect = () =>
+      ({
+        top: 50, bottom: 100, left: 0, right: 0, width: 200, height: 50, x: 0, y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    const realQuerySelectorAll = document.querySelectorAll.bind(document);
+    vi.spyOn(document, "querySelectorAll").mockImplementation((selector: string) => {
+      if (selector === "[data-reader-record-block-id]") {
+        return [blockVisible] as unknown as NodeListOf<Element>;
+      }
+      return realQuerySelectorAll(selector);
+    });
+
+    const realQuerySelector = document.querySelector.bind(document);
+    vi.spyOn(document, "querySelector").mockImplementation((selector: string) => {
+      // scroll-anchor resolve: block 仍存在(在新 source 中同名 blockId)
+      if (selector === '[data-reader-record-block-id="block_visible"]') {
+        return blockVisible;
+      }
+      return realQuerySelector(selector);
+    });
+
+    const scrollToSpy = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+
+    // base_id 切换: 不应执行跨 source scroll-anchor 补偿
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={baseSwitchedSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // 等待 rAF/timeout 完成
+    await new Promise((r) => setTimeout(r, 200));
+
+    // BUG 行为: scroll-anchor 补偿执行,scrollTo 被调用(跨 source 恢复)
+    // FIX 行为: base_id 切换 → 不执行 scroll-anchor 补偿 → scrollTo 不被调用
+    //           (generation-scoped effect 使旧 restore 失效)
+    expect(scrollToSpy).not.toHaveBeenCalled();
+  });
+
+  it("4.9 (P1-C): old rAF/timeout 在新 restore 建立后失效,不能消费新 pending record", async () => {
+    // 使用不同的 getExpandedItemIds 返回值区分两次 restore
+    // 第一次 restore: {itemA, itemB} — itemB 不存在 → forgetItem(itemB)
+    // 第二次 restore: {itemC} — itemC 不存在 → forgetItem(itemC)
+    // BUG 行为: old rAF fire 时 pendingRestoreRef 已被新 restore 覆盖,
+    //          old rAF 调用 runRestore() 消费新 pending → forgetItem(itemC)
+    //          (错误: old restore 不应消费新 pending record)
+    // FIX 行为: old rAF token mismatch → abort → 只有新 rAF 执行 → forgetItem(itemC)
+    //          old rAF 不会执行 forgetItem(itemB) (因为旧 pending 已 invalidate)
+
+    const prevSnapshot = makeSnapshot();
+    const firstNext = makeNextSnapshot(prevSnapshot); // snapshot_2
+    const secondNext: ReaderPlateSnapshotDto = {
+      ...makeNextSnapshot(firstNext),
+      snapshot_id: "snapshot_3",
+      last_event_sequence: 10,
+    };
+    const event = makeGrammarFirstPublishEvent(9);
+    const event2 = makeGrammarFirstPublishEvent(10);
+
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_p1_c_token_invalidation",
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // 使用 fake timers 阻止第一次 reload 的 rAF/timeout 提前触发
+    vi.useFakeTimers();
+
+    // 第一次 reload — getExpandedItemIds 返回 {itemA, itemB}
+    mockGrammarControl.getExpandedItemIds.mockReturnValue(
+      new Set(["itemA", "itemB"]),
+    );
+
+    // querySelector: itemA 存在, itemB/itemC 不存在
+    const realQuerySelector = document.querySelector.bind(document);
+    vi.spyOn(document, "querySelector").mockImplementation((selector: string) => {
+      if (selector === '[data-reader-record-grammar-item-id="itemA"]') {
+        return document.createElement("div");
+      }
+      if (selector === '[data-reader-record-grammar-item-id="itemB"]') {
+        return null;
+      }
+      if (selector === '[data-reader-record-grammar-item-id="itemC"]') {
+        return null;
+      }
+      if (selector.startsWith("[data-reader-record-block-id=")) {
+        return null; // scroll-anchor resolve 失败 → 裸 scrollTop fallback
+      }
+      return realQuerySelector(selector);
+    });
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={firstNext}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // 清除 forgetItem 记录
+    mockGrammarControl.forgetItem.mockClear();
+
+    // 第二次 reload (不同 snapshot_id) — invalidate 旧 restore
+    // getExpandedItemIds 返回 {itemC}
+    mockGrammarControl.getExpandedItemIds.mockReturnValue(
+      new Set(["itemC"]),
+    );
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={secondNext}
+          pendingReloadContext={makeReloadContext([event2])}
+        />,
+      );
+    });
+
+    // 恢复 real timers 并等待所有 rAF/timeout 完成
+    // T4.2a-PUX-R4-R3-R2-P1: 必须先 advance fake timers 让第二个 reload 的
+    // rAF/timeout 触发 (runRestore → forgetItem("itemC")),再切回 real timers。
+    // 直接 vi.useRealTimers() 会丢弃 fake queue 中的 pending callback。
+    await act(async () => {
+      vi.advanceTimersByTime(150);
+    });
+    vi.useRealTimers();
+    await new Promise((r) => setTimeout(r, 50));
+
+    // 关键断言: 只有 itemC 被 forget (来自第二次 restore)
+    // BUG 行为: old rAF 消费新 pending → 可能 forgetItem(itemB) 或重复执行
+    // FIX 行为: old rAF token mismatch → abort → 只有 itemC 被 forget
+    expect(mockGrammarControl.forgetItem).toHaveBeenCalledWith("itemC");
+    expect(mockGrammarControl.forgetItem).not.toHaveBeenCalledWith("itemB");
+  });
+
+  it("4.10 (P1-D): targeted grammar replace 仅受影响 item collapse,其余 expanded item 保留", async () => {
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeNextSnapshot(prevSnapshot);
+    const event = makeGrammarFirstPublishEvent();
+
+    // targeted_apply with REPLACE op on grammar callout itemA
+    // 同批其他 grammar item (itemB) 必须保留 expansion
+    mockedMerge.mockReturnValue({
+      kind: "targeted_apply",
+      operations: [
+        {
+          path: [0, 2],
+          blockId: "callout:grammar:itemA",
+          type: "replace",
+          nodes: [
+            {
+              type: "reader_callout",
+              variant: "grammar",
+              children: [{ text: "replaced grammar note" }],
+            },
+          ],
+        },
+      ],
+      preservedInteraction: {
+        preserveSelection: true,
+        preserveScroll: true,
+        preserveGrammarAccordion: true,
+        preserveQuickPeek: true,
+        preservePanels: true,
+      },
+      affectedTargetKeys: ["unit_1"],
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    mockGrammarControl.clear.mockClear();
+    mockGrammarControl.forgetItem.mockClear();
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // BUG 行为: replace op 不调用 forgetItem → 受影响 item 继承 stale expanded state
+    // FIX 行为: replace op 也调用 forgetItem(itemA) → 同 remove 一致
+    expect(mockGrammarControl.forgetItem).toHaveBeenCalledWith("itemA");
+    // 不调用 clear (保留其他 item expansion)
+    expect(mockGrammarControl.clear).not.toHaveBeenCalled();
   });
 });
