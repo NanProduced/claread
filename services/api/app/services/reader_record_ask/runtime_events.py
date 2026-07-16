@@ -52,11 +52,19 @@ class FinalAnswerEvent(BaseModel):
 
 
 class ComposingAnswerEvent(BaseModel):
-    """Internal signal: agent output received, finalizer about to run."""
+    """Internal signal: agent output received, about to compose/finalize."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     type: Literal["composing_answer"] = "composing_answer"
+
+
+class ValidatingEvidenceEvent(BaseModel):
+    """Internal signal: finalizer is about to validate citations/evidence."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["validating_evidence"] = "validating_evidence"
 
 
 class RunFinishedEvent(BaseModel):
@@ -73,6 +81,7 @@ RuntimeEvent = (
     | ToolCallEvent
     | ToolResultEvent
     | ComposingAnswerEvent
+    | ValidatingEvidenceEvent
     | FinalAnswerEvent
     | RunFinishedEvent
 )

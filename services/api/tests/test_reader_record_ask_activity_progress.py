@@ -36,6 +36,7 @@ from app.services.reader_record_ask.runtime_events import (
     RunStartedEvent,
     ToolCallEvent,
     ToolResultEvent,
+    ValidatingEvidenceEvent,
 )
 from app.services.reader_record_ask.sse import (
     EVENT_AGENTIC_PROGRESS,
@@ -225,6 +226,7 @@ def test_progress_projector_sequence_and_mapping() -> None:
             duration_ms=12,
         ),
         ComposingAnswerEvent(),
+        ValidatingEvidenceEvent(),
         FinalAnswerEvent(text="answer with REASONING_CONTENT_SECRET"),
         RunFinishedEvent(
             read_range_calls=1,
@@ -244,6 +246,13 @@ def test_progress_projector_sequence_and_mapping() -> None:
     assert ("reading_context", "completed") in list(zip(phases, activities))
     assert ("composing_answer", "started") in list(zip(phases, activities))
     assert ("validating_evidence", "started") in list(zip(phases, activities))
+    # FinalAnswerEvent must not invent another validating started.
+    validating = [
+        (p.phase, p.activity)
+        for p in projected
+        if p.phase == "validating_evidence"
+    ]
+    assert validating == [("validating_evidence", "started")]
     sequences = [p.sequence for p in projected]
     assert sequences == list(range(1, len(sequences) + 1))
     assert all(p.elapsed_ms >= 0 for p in projected)
@@ -255,6 +264,59 @@ def test_progress_projector_sequence_and_mapping() -> None:
     blob = json.dumps([p.model_dump(mode="json") for p in projected])
     for secret in _SENSITIVE:
         assert secret not in blob
+
+
+def test_progress_projector_unknown_status_fail_closed() -> None:
+    import time
+
+    projector = _ProgressProjector(started_at=time.perf_counter())
+    projected = []
+    for event in (
+        ToolCallEvent(tool_name="read_range", args={}),
+        ToolResultEvent(
+            tool_name="read_range",
+            status="totally_unknown_status",
+            summary="DOCUMENT_BODY_SECRET",
+            evidence_handle_ids=["HANDLE_ID_SECRET"],
+            duration_ms=2,
+        ),
+        ToolCallEvent(tool_name="search_current_article", args={"query": "x"}),
+        ToolResultEvent(
+            tool_name="search_current_article",
+            status="weird_future_code",
+            summary="PROVIDER_PAYLOAD_SECRET",
+            duration_ms=1,
+        ),
+        ToolResultEvent(
+            tool_name="secret_internal_tool",
+            status="ok",
+            summary="should not leak success",
+            duration_ms=1,
+        ),
+    ):
+        projected.extend(projector.project(event))
+
+    # Known tools with unknown status → failed, never completed/ok.
+    tool_results = [
+        p
+        for p in projected
+        if p.activity in {"completed", "failed", "unavailable"}
+        and p.tool_name is not None
+    ]
+    assert tool_results
+    assert all(p.activity == "failed" for p in tool_results)
+    assert all(p.status == "failed" for p in tool_results)
+    assert not any(p.activity == "completed" for p in projected if p.tool_name)
+    assert not any(p.status == "ok" for p in projected if p.tool_name)
+
+    # Unknown tool result also fail-closed, without tool_name.
+    unknown = [p for p in projected if p.tool_name is None and p.activity == "failed"]
+    assert unknown
+    assert all(p.status == "failed" for p in unknown)
+    blob = json.dumps([p.model_dump(mode="json") for p in projected])
+    assert "totally_unknown_status" not in blob
+    assert "DOCUMENT_BODY_SECRET" not in blob
+    assert "secret_internal_tool" not in blob
 
 
 def test_progress_projector_search_unavailable() -> None:
@@ -291,14 +353,128 @@ def test_progress_projector_unknown_tool_is_generic() -> None:
     import time
 
     projector = _ProgressProjector(started_at=time.perf_counter())
+    # First ensure agent_running exists, then unknown tool should not spam it.
     projected = projector.project(
-        ToolCallEvent(tool_name="secret_internal_tool", args={"x": 1})
+        RunStartedEvent(envelope_fingerprint="fp", has_initial_selection=False)
     )
+    projected.extend(
+        projector.project(ToolCallEvent(tool_name="secret_internal_tool", args={"x": 1}))
+    )
+    projected.extend(
+        projector.project(ToolCallEvent(tool_name="secret_internal_tool", args={"x": 2}))
+    )
+    assert [p.phase for p in projected] == ["agent_running"]
     assert all(p.tool_name is None for p in projected)
-    assert all(p.phase == "agent_running" for p in projected)
     assert "secret_internal_tool" not in json.dumps(
         [p.model_dump(mode="json") for p in projected]
     )
+
+
+@pytest.mark.asyncio
+async def test_validating_progress_arrives_before_finalizer_returns() -> None:
+    """validating_evidence/started must be visible while finalize is blocked."""
+    from app.services.reader_record_ask import runtime as runtime_mod
+
+    validating_seen = asyncio.Event()
+    finalize_released = asyncio.Event()
+    finalize_entered = asyncio.Event()
+    original_finalize = runtime_mod.finalize_agent_answer
+
+    async def blocked_finalize(**kwargs):
+        finalize_entered.set()
+        # Wait until the stream consumer observed validating progress.
+        await validating_seen.wait()
+        finalize_released.set()
+        return await original_finalize(**kwargs)
+
+    repo = _FakeRepo()
+    chunks: list[str] = []
+    saw_validating = False
+
+    # MonkeyPatch is a pytest fixture, not a context manager — use unittest.
+    from unittest.mock import patch
+
+    with patch.object(runtime_mod, "finalize_agent_answer", side_effect=blocked_finalize):
+        async for c in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            document_access=_access(),
+            model=_function_model("answer after validation"),
+            auto_wire_dependencies=False,
+        ):
+            chunks.append(c)
+            for name, payload in _parse_sse([c]):
+                if (
+                    name == EVENT_AGENTIC_PROGRESS
+                    and payload.get("phase") == "validating_evidence"
+                    and payload.get("activity") == "started"
+                ):
+                    saw_validating = True
+                    # Finalizer must still be blocked at this point.
+                    assert finalize_entered.is_set()
+                    assert not finalize_released.is_set()
+                    validating_seen.set()
+
+    assert saw_validating
+    assert finalize_released.is_set()
+    events = _parse_sse(chunks)
+    progress = [p for n, p in events if n == EVENT_AGENTIC_PROGRESS]
+    phases = [(p["phase"], p["activity"]) for p in progress]
+    # Fixed order: composing started → validating started → ... completed
+    compose_idx = phases.index(("composing_answer", "started"))
+    validate_idx = phases.index(("validating_evidence", "started"))
+    assert compose_idx < validate_idx
+    assert EVENT_MESSAGE_COMPLETED in [n for n, _ in events]
+    # No validating completed success progress is required; none should claim ok.
+    assert not any(
+        p["phase"] == "validating_evidence" and p.get("status") == "ok" for p in progress
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_event_order_composing_validating_final() -> None:
+    """FinalAnswerEvent is emitted only after finalizer returns."""
+    from unittest.mock import patch
+
+    from app.services.reader_record_ask import runtime as runtime_mod
+
+    order: list[str] = []
+    original_finalize = runtime_mod.finalize_agent_answer
+
+    async def tracking_finalize(**kwargs):
+        order.append("finalize_enter")
+        result = await original_finalize(**kwargs)
+        order.append("finalize_exit")
+        return result
+
+    def tracking_sink(event):
+        order.append(event.type)
+
+    with patch.object(runtime_mod, "finalize_agent_answer", side_effect=tracking_finalize):
+        result = await run_reading_record_ask(
+            user_message="hello",
+            envelope=_envelope(),
+            document_access=_access(),
+            model=_function_model("ok"),
+            article_rag=None,
+            event_sink=tracking_sink,
+        )
+
+    assert result.final_text == "ok"
+    assert "composing_answer" in order
+    assert "validating_evidence" in order
+    assert "finalize_enter" in order
+    assert "finalize_exit" in order
+    assert "final_answer" in order
+    assert order.index("composing_answer") < order.index("validating_evidence")
+    assert order.index("validating_evidence") < order.index("finalize_enter")
+    assert order.index("finalize_exit") < order.index("final_answer")
+    assert order.index("final_answer") < order.index("run_finished")
 
 
 # ---------------------------------------------------------------------------

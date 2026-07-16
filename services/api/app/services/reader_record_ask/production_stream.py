@@ -57,6 +57,7 @@ from app.services.reader_record_ask.runtime_events import (
     RuntimeEvent,
     ToolCallEvent,
     ToolResultEvent,
+    ValidatingEvidenceEvent,
 )
 from app.services.reader_record_ask.sse import (
     EVENT_AGENTIC_PROGRESS,
@@ -241,15 +242,8 @@ class _ProgressProjector:
                 out.append(started)
             tool = event.tool_name
             if tool not in _PUBLIC_TOOL_NAMES:
-                # Unknown tools collapse to generic activity — no dynamic strings.
-                out.append(
-                    self._next(
-                        phase="agent_running",
-                        activity="started",
-                        summary="正在分析当前文章",
-                        status="running",
-                    )
-                )
+                # Unknown tools: stay on generic agent activity, no dynamic names
+                # and no repeated agent_running/started spam.
                 return out
             if tool == TOOL_READ_RANGE:
                 self.read_range_calls += 1
@@ -277,21 +271,21 @@ class _ProgressProjector:
 
         if isinstance(event, ToolResultEvent):
             tool = event.tool_name
-            activity = _TOOL_RESULT_ACTIVITY.get(
-                str(event.status or "").lower(), "completed"
-            )
+            # Fail-closed: unknown/future statuses never project as completed/ok.
+            raw_status = str(event.status or "").lower()
+            activity = _TOOL_RESULT_ACTIVITY.get(raw_status, "failed")
             duration = event.duration_ms if event.duration_ms is not None else None
             if tool == TOOL_READ_RANGE:
                 summary = {
                     "completed": "已读取相关上下文",
                     "unavailable": "文章上下文暂不可用",
                     "failed": "读取文章上下文失败",
-                }.get(activity, "已读取相关上下文")
+                }.get(activity, "读取文章上下文失败")
                 status: ProgressStatus = {
                     "completed": "ok",
                     "unavailable": "unavailable",
                     "failed": "failed",
-                }.get(activity, "ok")  # type: ignore[assignment]
+                }.get(activity, "failed")  # type: ignore[assignment]
                 out.append(
                     self._next(
                         phase="reading_context",
@@ -307,12 +301,12 @@ class _ProgressProjector:
                     "completed": "已检索当前文章",
                     "unavailable": "当前文章检索暂不可用",
                     "failed": "当前文章检索失败",
-                }.get(activity, "已检索当前文章")
+                }.get(activity, "当前文章检索失败")
                 status = {
                     "completed": "ok",
                     "unavailable": "unavailable",
                     "failed": "failed",
-                }.get(activity, "ok")  # type: ignore[assignment]
+                }.get(activity, "failed")  # type: ignore[assignment]
                 out.append(
                     self._next(
                         phase="searching_article",
@@ -324,12 +318,13 @@ class _ProgressProjector:
                     )
                 )
             else:
+                # Unknown tool result: fail-closed generic failure, no tool_name.
                 out.append(
                     self._next(
                         phase="agent_running",
-                        activity="completed",
-                        summary="正在分析当前文章",
-                        status="ok",
+                        activity="failed",
+                        summary="分析步骤失败",
+                        status="failed",
                         duration_ms=duration,
                     )
                 )
@@ -349,7 +344,7 @@ class _ProgressProjector:
             )
             return out
 
-        if isinstance(event, FinalAnswerEvent):
+        if isinstance(event, ValidatingEvidenceEvent):
             out.append(
                 self._next(
                     phase="validating_evidence",
@@ -358,6 +353,10 @@ class _ProgressProjector:
                     status="running",
                 )
             )
+            return out
+
+        if isinstance(event, FinalAnswerEvent):
+            # Final answer is post-finalizer. Do not claim validation is starting.
             return out
 
         if isinstance(event, RunFinishedEvent):
@@ -584,8 +583,18 @@ async def stream_agentic_thread_message(
             item = await event_queue.get()
             if item is _AGENT_DONE:
                 break
-            if not isinstance(item, (RunStartedEvent, ToolCallEvent, ToolResultEvent,
-                                     ComposingAnswerEvent, FinalAnswerEvent, RunFinishedEvent)):
+            if not isinstance(
+                item,
+                (
+                    RunStartedEvent,
+                    ToolCallEvent,
+                    ToolResultEvent,
+                    ComposingAnswerEvent,
+                    ValidatingEvidenceEvent,
+                    FinalAnswerEvent,
+                    RunFinishedEvent,
+                ),
+            ):
                 # Only project known runtime events; never dump raw objects.
                 continue
             for progress in projector.project(item):
@@ -609,6 +618,7 @@ async def stream_agentic_thread_message(
                     ToolCallEvent,
                     ToolResultEvent,
                     ComposingAnswerEvent,
+                    ValidatingEvidenceEvent,
                     FinalAnswerEvent,
                     RunFinishedEvent,
                 ),

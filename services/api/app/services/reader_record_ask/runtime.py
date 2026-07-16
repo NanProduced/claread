@@ -45,6 +45,7 @@ from app.services.reader_record_ask.runtime_events import (
     RunStartedEvent,
     RuntimeEvent,
     RuntimeEventSink,
+    ValidatingEvidenceEvent,
 )
 from app.services.reader_record_ask.search_current_article_executor import (
     DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS,
@@ -141,8 +142,10 @@ async def run_reading_record_ask(
     if not isinstance(draft, AgentAnswerDraft):
         draft = AgentAnswerDraft(answer_text=str(draft), cited_evidence_handles=[])
 
-    # Pre-finalizer composing signal so clients see activity before validation.
+    # Pre-finalizer activity: composing, then validating. FinalAnswerEvent only
+    # after finalize returns so UI "正在核对回答依据" matches real work.
     deps.emit_event(ComposingAnswerEvent())
+    deps.emit_event(ValidatingEvidenceEvent())
 
     finalized = await finalize_agent_answer(
         envelope=envelope,
