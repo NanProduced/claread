@@ -313,7 +313,7 @@ function GoalCard({
       onClick={onSelect}
       className={`group relative flex w-full flex-col items-center justify-center gap-2.5 rounded-[14px] border p-3 pt-4 text-center transition-all duration-300 ease-out focus-ring ${
         active
-          ? "border-transparent bg-white shadow-[0_6px_20px_rgba(17,17,17,0.06)] ring-1 ring-ink/5"
+          ? "border-transparent bg-surface-raised shadow-[var(--app-panel-shadow-quiet)] ring-1 ring-ink/5"
           : "border-transparent bg-transparent hover:bg-ink/[0.03]"
       }`}
     >
@@ -351,7 +351,7 @@ function VariantPill({
       onClick={onSelect}
       className={`relative flex min-h-[2.25rem] w-full items-center justify-center gap-1.5 rounded-[8px] border px-1 transition-all duration-300 ease-out focus-ring ${
         active
-          ? "border-lens-blue/30 bg-[rgba(37,99,235,0.06)] text-ink ring-1 ring-lens-blue/20"
+          ? "border-lens-blue/30 bg-lens-blue/6 text-ink ring-1 ring-lens-blue/20"
           : "border-hairline/60 bg-transparent text-muted-foreground hover:border-hairline hover:bg-ink/[0.03] hover:text-ink"
       }`}
     >
@@ -477,14 +477,7 @@ function AnalysisLoadingArtwork() {
           width: 52%;
           height: 6px;
           border-radius: 999px;
-          background: linear-gradient(
-            90deg,
-            rgba(31, 94, 255, 0) 0%,
-            rgba(31, 94, 255, 0.08) 24%,
-            rgba(140, 174, 255, 0.8) 50%,
-            rgba(31, 94, 255, 0.08) 76%,
-            rgba(31, 94, 255, 0) 100%
-          );
+          background: color-mix(in srgb, var(--lens-blue) 50%, transparent);
           opacity: 0;
           filter: blur(0.4px);
           animation: loading-stage-scan 3.1s ease-in-out infinite;
@@ -505,7 +498,7 @@ function AnalysisLoadingArtwork() {
           top: 50%;
           transform: translate(-50%, -50%);
           border-radius: 999px;
-          background: color-mix(in srgb, var(--reader-paper) 72%, var(--lens-blue) 28%);
+          background: color-mix(in srgb, var(--surface) 72%, var(--lens-blue) 28%);
         }
 
         .loading-stage__glint::before {
@@ -548,14 +541,7 @@ function AnalysisLoadingArtwork() {
           content: "";
           position: absolute;
           inset: 0;
-          background: linear-gradient(
-            90deg,
-            rgba(255, 255, 255, 0) 0%,
-            rgba(255, 251, 239, 0.15) 32%,
-            rgba(255, 255, 255, 0.82) 50%,
-            rgba(255, 251, 239, 0.15) 68%,
-            rgba(255, 255, 255, 0) 100%
-          );
+          background: color-mix(in srgb, var(--surface-raised) 80%, transparent);
           transform: translateX(-115%);
           animation: loading-stage-shimmer-pass 3.1s ease-in-out infinite;
         }
@@ -768,7 +754,7 @@ function SourceFilePreview({
             className="max-w-[46rem] border-y border-hairline/70 py-5"
           >
             <div className="flex min-w-0 items-center gap-3">
-              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-ink/10 bg-reader-paper/70 text-ink">
+              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-ink/10 bg-surface/70 text-ink">
                 {isImage ? (
                   <ImageIcon aria-hidden className="h-4.5 w-4.5" />
                 ) : (
@@ -804,7 +790,7 @@ function SourceFilePreview({
           </div>
         </div>
 
-        <div className="relative min-h-[12rem] overflow-hidden rounded-[10px] border border-hairline/70 bg-[rgba(255,255,255,0.32)]">
+        <div className="relative min-h-[12rem] overflow-hidden rounded-[10px] border border-hairline/70 bg-surface-raised/32">
           {isImage && imagePreviewUrl ? (
             // eslint-disable-next-line @next/next/no-img-element -- object URLs from local files are not suitable for next/image.
             <img
@@ -816,7 +802,7 @@ function SourceFilePreview({
           ) : (
             <div className="flex h-full min-h-[12rem] flex-col justify-between p-5">
               <div className="flex items-center justify-between gap-4 font-sans">
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] border border-hairline/70 bg-reader-paper/76 text-ink">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] border border-hairline/70 bg-surface/76 text-ink">
                   <FileCheck2 aria-hidden className="h-5 w-5" />
                 </span>
                 <span className="rounded-full border border-hairline/70 bg-surface/58 px-2.5 py-1 text-[0.68rem] font-bold tracking-[0.12em] text-muted-foreground">
@@ -1509,8 +1495,8 @@ export function AnalyzeSubmitForm({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           className={cn(
-            "group/manuscript relative flex min-h-[22rem] flex-1 w-full shrink-0 flex-col overflow-hidden rounded-[10px] bg-[linear-gradient(180deg,rgba(251,247,238,0.62),rgba(251,247,238,0.18)_48%,rgba(251,247,238,0)_100%)] ring-1 ring-hairline/35 transition-[box-shadow,background-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus-within:shadow-[0_18px_44px_rgba(23,21,17,0.055)] lg:min-h-[31rem] lg:shrink 2xl:min-h-[34rem]",
-            isDragActive && "bg-[linear-gradient(180deg,rgba(235,241,255,0.52),rgba(251,247,238,0.22)_52%,rgba(251,247,238,0)_100%)] ring-lens-blue/34 shadow-[0_22px_54px_rgba(31,94,255,0.08)]",
+            "group/manuscript relative flex min-h-[22rem] flex-1 w-full shrink-0 flex-col overflow-hidden rounded-[10px] bg-surface/40 ring-1 ring-hairline/35 transition-[box-shadow,background-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus-within:shadow-[var(--app-panel-shadow-quiet)] lg:min-h-[31rem] lg:shrink 2xl:min-h-[34rem]",
+            isDragActive && "bg-lens-blue-soft/40 ring-lens-blue/34 shadow-[var(--app-panel-shadow-quiet)]",
           )}
         >
           <div
@@ -1541,9 +1527,9 @@ export function AnalyzeSubmitForm({
           ) : null}
 
           {isDragActive && !isWaiting ? (
-            <div className="pointer-events-none absolute inset-3 z-30 flex items-center justify-center rounded-[12px] border border-dashed border-lens-blue/42 bg-[rgba(246,249,255,0.78)] backdrop-blur-[2px]">
+            <div className="pointer-events-none absolute inset-3 z-30 flex items-center justify-center rounded-[12px] border border-dashed border-lens-blue/42 bg-lens-blue-soft/60 backdrop-blur-[2px]">
               <div className="flex flex-col items-center gap-3 text-center font-sans">
-                <span className="inline-flex h-11 w-11 items-center justify-center rounded-[12px] border border-lens-blue/24 bg-white/72 text-lens-blue shadow-sm">
+                <span className="inline-flex h-11 w-11 items-center justify-center rounded-[12px] border border-lens-blue/24 bg-surface-raised/72 text-lens-blue shadow-sm">
                   <FileUp aria-hidden className="h-5 w-5" />
                 </span>
                 <div>
@@ -1611,14 +1597,14 @@ export function AnalyzeSubmitForm({
                       className="focus-ring group/source inline-flex min-h-9 items-center gap-2 px-0 text-[0.78rem] font-medium leading-none text-ink transition-colors duration-200 hover:text-lens-blue"
                       onClick={openFilePicker}
                     >
-                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] border border-ink/12 bg-reader-paper/54 text-ink transition-colors duration-200 group-hover/source:border-lens-blue/34 group-hover/source:text-lens-blue">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] border border-ink/12 bg-surface/54 text-ink transition-colors duration-200 group-hover/source:border-lens-blue/34 group-hover/source:text-lens-blue">
                         <FileUp aria-hidden className="h-3.5 w-3.5" />
                       </span>
                       <span>上传文件</span>
                     </button>
                   ) : (
                     <div className="inline-flex min-h-9 items-center gap-2 text-[0.78rem] font-semibold text-ink">
-                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] border border-ink/12 bg-reader-paper/54 text-ink">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] border border-ink/12 bg-surface/54 text-ink">
                         <FileCheck2 aria-hidden className="h-3.5 w-3.5" />
                       </span>
                       <span>文件来源已就绪</span>
@@ -1631,7 +1617,7 @@ export function AnalyzeSubmitForm({
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-transparent px-3 font-sans text-[0.8rem] font-medium leading-none text-muted-foreground transition-colors duration-200 hover:bg-reader-paper/46 hover:text-ink data-[state=open]:bg-reader-paper/60 data-[state=open]:text-ink"
+                        className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-transparent px-3 font-sans text-[0.8rem] font-medium leading-none text-muted-foreground transition-colors duration-200 hover:bg-surface/46 hover:text-ink data-[state=open]:bg-surface/60 data-[state=open]:text-ink"
                       >
                         <span>
                           模式：{selectedGoalLabel}
@@ -1644,7 +1630,7 @@ export function AnalyzeSubmitForm({
                       align="end"
                       side="top"
                       sideOffset={14}
-                      className="w-[min(420px,calc(100vw-2rem))] rounded-[20px] border border-hairline/78 bg-[color-mix(in_srgb,var(--surface)_96%,var(--reader-paper)_4%)] p-4 shadow-[0_24px_48px_rgba(23,21,17,0.14)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[side=top]:slide-in-from-bottom-2"
+                      className="w-[min(420px,calc(100vw-2rem))] rounded-[20px] border border-hairline/78 bg-surface p-4 shadow-[var(--app-panel-shadow-quiet)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[side=top]:slide-in-from-bottom-2"
                     >
                       <div className="flex items-center justify-between gap-4 px-1.5 pb-2 font-sans">
                         <p className="text-[0.85rem] font-semibold tracking-tight text-ink">透读模式</p>
@@ -1825,7 +1811,7 @@ export function AnalyzeSubmitForm({
             </p>
           )}
           {state.preview ? (
-            <p className="mt-2 whitespace-pre-wrap rounded-[8px] border border-hairline/60 bg-reader-paper/40 p-2 text-[0.74rem] text-muted-foreground">
+            <p className="mt-2 whitespace-pre-wrap rounded-[8px] border border-hairline/60 bg-surface/40 p-2 text-[0.74rem] text-muted-foreground">
               <span className="font-semibold text-ink/80">我们收到的内容：</span>
               {state.preview.slice(0, 240)}
             </p>

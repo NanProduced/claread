@@ -1920,7 +1920,7 @@ function ReaderRecordHeader({
         <div className="flex items-center gap-3.5 px-3 py-3 sm:py-0">
           <span
             data-reader-record-progress-status={statusKey}
-            className="px-3 py-1 text-[0.75rem] font-semibold text-ink-soft bg-surface-warm border border-hairline/80 rounded-[0.5rem] flex items-center gap-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(0,0,0,0.03)] select-none"
+            className="px-3 py-1 text-[0.75rem] font-semibold text-ink-soft bg-surface-raised border border-hairline/80 rounded-[0.5rem] flex items-center gap-1.5 select-none"
           >
             <Sparkles className="h-3.5 w-3.5 text-vocab-amber fill-vocab-amber/10" />
             <span>{statusLabel}</span>
@@ -2117,7 +2117,7 @@ function ReaderRecordTopBar({
     <div
       data-testid="reader-record-top-bar"
       data-reader-record-top-bar-layer="surface"
-      className="reader-record-top-bar relative flex h-11 w-full items-center justify-between border-b border-hairline/80 bg-[var(--reading-paper-surface)]"
+      className="reader-record-top-bar relative flex h-11 w-full items-center justify-between border-b border-hairline/80 bg-surface"
     >
       <div className="min-w-0 max-w-[min(46vw,36rem)] truncate text-left">
         <ReaderRecordTopBarTitle titleState={titleState} />
@@ -2269,8 +2269,8 @@ function ReaderRecordMoreMenu({
         align="end"
         sideOffset={8}
         className={cn(
-          "w-[340px] overflow-hidden rounded-xl border border-hairline/80 p-0 shadow-[0_8px_30px_rgba(23,21,17,0.08)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
-          "bg-[var(--reading-paper-surface)] text-ink",
+          "w-[340px] overflow-hidden rounded-xl border border-hairline/80 p-0 shadow-[var(--app-panel-shadow-quiet)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+          "bg-surface-raised text-ink",
         )}
         data-testid="reader-record-more-menu-content"
         data-reader-record-more-menu-panel="true"
@@ -2367,7 +2367,7 @@ function ReaderRecordMoreMenu({
                     "flex flex-col items-center gap-1.5 rounded-lg border px-2 py-2.5 text-center transition-colors",
                     "border-hairline/60 hover:border-hairline hover:bg-ink/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
                     readerSettings.fontFamily === option.value
-                      ? "border-surface-warm bg-surface-warm/60"
+                      ? "border-surface-raised bg-surface-raised/60"
                       : "bg-transparent",
                   )}
                 >
@@ -2405,7 +2405,7 @@ function ReaderRecordMoreMenu({
                     "rounded-lg border px-2 py-1.5 text-xs font-semibold transition-colors",
                     "border-hairline/60 hover:border-hairline hover:bg-ink/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
                     themePreference === option.value
-                      ? "border-surface-warm bg-surface-warm/60 text-ink"
+                      ? "border-surface-raised bg-surface-raised/60 text-ink"
                       : "bg-transparent text-muted-foreground",
                   )}
                 >
@@ -2431,7 +2431,7 @@ function ReaderRecordMoreMenu({
                     "flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors",
                     "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
                     readerSettings.fontScale === option.value
-                      ? "bg-surface-warm/70 text-ink shadow-sm"
+                      ? "bg-surface-raised/70 text-ink shadow-sm"
                       : "text-muted-foreground hover:bg-ink/[0.03]",
                   )}
                 >
@@ -5775,7 +5775,7 @@ export function ReaderRecordPlateSurface({
               data-reader-record-floating-toolbar="highlight-menu"
             >
               <TooltipProvider delayDuration={200}>
-                <div className="flex h-10 items-center gap-1 rounded-[7px] border border-border/75 bg-background/95 p-1 shadow-[0_10px_26px_rgba(15,23,42,0.12),0_1px_2px_rgba(15,23,42,0.08)] backdrop-blur-md">
+                <div className="flex h-10 items-center gap-1 rounded-[7px] border border-border/75 bg-background/95 p-1 shadow-[var(--app-panel-shadow-quiet)] backdrop-blur-md">
                   <span className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground">
                     <Palette className="h-3.5 w-3.5" aria-hidden="true" />
                     改色

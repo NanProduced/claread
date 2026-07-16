@@ -177,8 +177,7 @@ const workspaceRelatedRecordItemClassName = cn(
 const workspaceLauncherClassName = cn(
   readerCommandControl,
   "group fixed bottom-[5.25rem] right-4 z-[var(--reader-z-floating-ask)] h-14 w-14 rounded-full border border-hairline/85",
-  "bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] text-ink shadow-[0_14px_34px_rgba(17,17,17,0.08)] hover:border-muted hover:bg-reader-paper hover:shadow-[0_18px_38px_rgba(17,17,17,0.1)] active:scale-[0.98] active:bg-[linear-gradient(180deg,rgba(246,243,236,0.98),rgba(241,237,227,1))] active:shadow-[0_10px_24px_rgba(17,17,17,0.08)]",
-  "dark:bg-[linear-gradient(180deg,rgba(42,47,53,0.96),rgba(30,34,39,0.98))] dark:text-ink dark:shadow-[0_14px_34px_rgba(0,0,0,0.28)] dark:hover:border-muted dark:hover:bg-[#2a2f35] dark:active:bg-[linear-gradient(180deg,rgba(38,43,49,0.98),rgba(28,32,37,1))] dark:active:shadow-[0_10px_24px_rgba(0,0,0,0.22)]",
+  "bg-surface-raised text-ink shadow-[var(--app-panel-shadow-quiet)] hover:border-muted hover:bg-surface active:scale-[0.98]",
   "md:bottom-6 md:right-6",
 );
 type StarterMode = "record" | "sentence" | "selection";
@@ -2769,7 +2768,7 @@ function AssistantStreamingIndicator({
         aria-live="polite"
         aria-atomic="true"
         aria-label={agenticActivityAriaLabel(agenticActivity)}
-        className="mb-1 inline-flex max-w-full items-center gap-2 rounded-md border border-hairline/70 bg-surface-warm/40 px-2.5 py-1.5 text-[12px] leading-4 text-muted-foreground"
+        className="mb-1 inline-flex max-w-full items-center gap-2 rounded-md border border-hairline/70 bg-surface/40 px-2.5 py-1.5 text-[12px] leading-4 text-muted-foreground"
       >
         <span
           aria-hidden="true"
@@ -2817,7 +2816,7 @@ function AssistantStreamingIndicator({
     <div
       role="status"
       aria-live="polite"
-      className="mb-1 inline-flex max-w-full items-center gap-2 rounded-md border border-hairline/70 bg-surface-warm/40 px-2.5 py-1.5 text-[12px] leading-4 text-muted-foreground"
+      className="mb-1 inline-flex max-w-full items-center gap-2 rounded-md border border-hairline/70 bg-surface/40 px-2.5 py-1.5 text-[12px] leading-4 text-muted-foreground"
     >
       <span
         aria-hidden="true"
@@ -3232,28 +3231,28 @@ function StarterState({
       entryAction: "ask_about_this" as const,
       icon: MessageSquare,
       iconClassName: "text-grammar-violet",
-      badgeClassName: "bg-[rgba(116,102,148,0.12)]",
+      badgeClassName: "bg-grammar-violet/12",
     },
     {
       prompt: starterContent.prompts[1],
       entryAction: starterMode === "sentence" ? ("why_here" as const) : ("ask_about_this" as const),
       icon: Search,
       iconClassName: "text-context-blue",
-      badgeClassName: "bg-[rgba(76,145,194,0.12)]",
+      badgeClassName: "bg-context-blue/12",
     },
     {
       prompt: starterContent.prompts[2],
       entryAction: "ask_about_this" as const,
       icon: GitBranch,
       iconClassName: "text-structure-green",
-      badgeClassName: "bg-[rgba(60,140,104,0.12)]",
+      badgeClassName: "bg-structure-green/12",
     },
     {
       prompt: starterContent.prompts[3],
       entryAction: "ask_about_this" as const,
       icon: PencilLine,
       iconClassName: "text-vocab-amber",
-      badgeClassName: "bg-[rgba(228,176,0,0.14)]",
+      badgeClassName: "bg-vocab-amber/14",
     },
   ];
 
@@ -4397,7 +4396,7 @@ export function AiWorkspacePanel({
       {capacityDowngradeNotice ? (
         <div
           data-testid="ask-capacity-downgrade-notice"
-          className="flex items-start gap-2 border-b border-hairline/60 bg-surface-warm/60 px-4 py-2 text-[12px] leading-4 text-muted-foreground"
+          className="flex items-start gap-2 border-b border-hairline/60 bg-surface/60 px-4 py-2 text-[12px] leading-4 text-muted-foreground"
           role="status"
         >
           <span className="flex-1">{capacityDowngradeNotice}</span>

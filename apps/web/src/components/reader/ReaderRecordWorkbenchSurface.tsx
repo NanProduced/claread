@@ -214,7 +214,7 @@ function enhancementStatusTone(
     case "queued":
       return "border-lens-blue/25 bg-lens-blue-soft text-ink-soft";
     default:
-      return "border-hairline bg-surface-warm text-muted-foreground";
+      return "border-hairline bg-surface-raised text-muted-foreground";
   }
 }
 
@@ -1113,7 +1113,7 @@ export function ReaderRecordWorkbenchSurface({
 
             <div className="flex min-h-[56px] w-full flex-col items-stretch justify-between border-y border-hairline bg-transparent py-0 sm:flex-row">
               <div className="flex flex-wrap items-center gap-3.5 py-3 sm:py-0">
-                <span className="flex select-none items-center gap-1.5 rounded-[0.5rem] border border-hairline/80 bg-surface-warm px-3 py-1 text-[0.75rem] font-semibold text-ink-soft shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(0,0,0,0.03)]">
+                <span className="flex select-none items-center gap-1.5 rounded-[0.5rem] border border-hairline/80 bg-surface-raised px-3 py-1 text-[0.75rem] font-semibold text-ink-soft">
                   <Sparkles className="h-3.5 w-3.5 fill-vocab-amber/10 text-vocab-amber" />
                   <span>{sourceTypeLabel(snapshot.record.source_type)}</span>
                 </span>

@@ -3826,7 +3826,7 @@ export function ReaderWorkbench({
                 <div className="w-full border-t border-b border-hairline py-0 flex flex-col sm:flex-row items-stretch justify-between min-h-[56px] bg-transparent">
                   {/* Left Metadata Status Block */}
                   <div className="flex items-center gap-3.5 py-3 sm:py-0">
-                    <span className="px-3 py-1 text-[0.75rem] font-semibold text-ink-soft bg-surface-warm border border-hairline/80 rounded-[0.5rem] flex items-center gap-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(0,0,0,0.03)] select-none">
+                    <span className="px-3 py-1 text-[0.75rem] font-semibold text-ink-soft bg-surface-raised border border-hairline/80 rounded-[0.5rem] flex items-center gap-1.5 select-none">
                       <Sparkles className="h-3.5 w-3.5 text-vocab-amber fill-vocab-amber/10" />
                       <span>{dataSourceLabel[dataSource]}</span>
                     </span>
@@ -4462,7 +4462,7 @@ export function ReaderWorkbench({
               ...(settingsFloatingStyle ?? {}),
             }}
           >
-              <div className="mx-auto rounded-[1.5rem] border border-hairline bg-background/72 shadow-[0_-20px_40px_rgba(17,17,17,0.12)] md:mx-0 md:rounded-none md:border-0 md:bg-transparent md:shadow-none">
+              <div className="mx-auto rounded-[1.5rem] border border-hairline bg-background/72 shadow-[var(--app-panel-shadow-quiet)] md:mx-0 md:rounded-none md:border-0 md:bg-transparent md:shadow-none">
                 <ReaderSettingsPanel
                   themePreference={themePreference}
                   value={readerSettings}

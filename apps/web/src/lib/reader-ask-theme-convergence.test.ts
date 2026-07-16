@@ -1,8 +1,7 @@
 /**
- * Static contract tests for Task 3B: Reader / Ask neutral theme convergence.
- * Asserts that Reader and Ask components (excluding files owned by
- * concurrent agents) no longer reference paper semantics, warm gradients,
- * raw HEX/RGBA, or dark: color patches.
+ * Static contract tests for Task 3B/3C: Reader / Ask neutral theme convergence.
+ * Asserts that Reader and Ask components no longer reference paper semantics,
+ * warm gradients, raw HEX/RGBA, or dark: color patches.
  *
  * These are source-text assertions — they read files from disk and pattern
  * match, so they catch regressions without rendering anything.
@@ -18,10 +17,7 @@ function readAppFile(rel: string): string {
   return readFileSync(resolve(ROOT, rel), "utf8");
 }
 
-// Files cleaned in Task 3B. Files owned by concurrent agents
-// (AnalyzeSubmitForm, ReaderWorkbench, AiWorkspacePanel,
-// ReaderRecordWorkbenchSurface, ReaderRecordPlateSurface) are excluded
-// until their owners commit.
+// Files cleaned in Task 3B (non-conflict) and Task 3C (formerly conflict).
 const CONVERGED_FILES: ReadonlyArray<{ rel: string; label: string }> = [
   // Reader settings
   { rel: "src/components/reader/settings/ReaderSettingsPanel.tsx", label: "ReaderSettingsPanel" },
@@ -48,6 +44,12 @@ const CONVERGED_FILES: ReadonlyArray<{ rel: string; label: string }> = [
   { rel: "src/app/(private)/app/reader/[recordId]/FavoriteButton.tsx", label: "FavoriteButton (page)" },
   { rel: "src/app/(private)/app/read/page.tsx", label: "read page" },
   { rel: "src/app/(private)/app/read/CandidateConfirmDialog.tsx", label: "CandidateConfirmDialog" },
+  // Task 3C — formerly conflict files, now converged
+  { rel: "src/app/(private)/app/read/AnalyzeSubmitForm.tsx", label: "AnalyzeSubmitForm" },
+  { rel: "src/components/reader/AiWorkspacePanel.tsx", label: "AiWorkspacePanel" },
+  { rel: "src/components/reader/plate/ReaderRecordPlateSurface.tsx", label: "ReaderRecordPlateSurface" },
+  { rel: "src/app/(private)/app/reader/[recordId]/ReaderWorkbench.tsx", label: "ReaderWorkbench" },
+  { rel: "src/components/reader/ReaderRecordWorkbenchSurface.tsx", label: "ReaderRecordWorkbenchSurface" },
 ];
 
 // Patterns that must NOT appear in the converged TSX files.
@@ -74,6 +76,17 @@ const FORBIDDEN_PATTERNS: ReadonlyArray<{ re: RegExp; label: string }> = [
   { re: /dark:bg-muted/, label: "dark: muted background patch" },
   { re: /dark:hover:bg-zinc/, label: "dark: hover zinc patch" },
   { re: /dark:hover:bg-muted/, label: "dark: hover muted patch" },
+  // Task 3C — broader patterns for formerly conflict files
+  { re: /linear-gradient\(/, label: "linear-gradient() in any context" },
+  { re: /radial-gradient\(/, label: "radial-gradient() in any context" },
+  { re: /rgba\(/, label: "raw rgba() color value" },
+  { re: /var\(--reader-paper\)/, label: "legacy reader-paper CSS var reference" },
+  { re: /border-surface-warm/, label: "warm surface border class" },
+  { re: /dark:bg-\[linear-gradient/, label: "dark: linear-gradient background patch" },
+  { re: /dark:active:bg-\[linear-gradient/, label: "dark: active linear-gradient patch" },
+  { re: /dark:shadow-\[/, label: "dark: raw shadow patch" },
+  { re: /dark:active:shadow-\[/, label: "dark: active raw shadow patch" },
+  { re: /dark:hover:border-muted/, label: "dark: hover border muted patch" },
 ];
 
 describe("reader / ask theme convergence — cleaned files", () => {
@@ -193,5 +206,52 @@ describe("reader theme localStorage contract", () => {
         `${file}: LEGACY_READER_THEME_STORAGE_KEY reference found`,
       ).toBe(false);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3C review fix — ReaderRecordPlateSurface top bar / More menu
+// semantic surface tier contract.
+// ---------------------------------------------------------------------------
+
+const PLATE_SURFACE_SOURCE = readAppFile(
+  "src/components/reader/plate/ReaderRecordPlateSurface.tsx",
+);
+
+describe("ReaderRecordPlateSurface — top bar and More menu use semantic surface tiers", () => {
+  it("ReaderRecordTopBar uses bg-surface (not bg-surface-canvas)", () => {
+    // The top bar element carries testid `reader-record-top-bar`. Its
+    // className must include `bg-surface` as a complete class (not as a
+    // prefix of `bg-surface-canvas` or `bg-surface-raised`).
+    const topBarStart = PLATE_SURFACE_SOURCE.indexOf(
+      'data-testid="reader-record-top-bar"',
+    );
+    expect(topBarStart).toBeGreaterThanOrEqual(0);
+    const topBarEnd = PLATE_SURFACE_SOURCE.indexOf(">", topBarStart);
+    const topBarSection = PLATE_SURFACE_SOURCE.slice(topBarStart, topBarEnd);
+    expect(topBarSection).toMatch(/bg-surface(?![-\w])/);
+    expect(topBarSection).not.toMatch(/bg-surface-canvas/);
+  });
+
+  it("ReaderRecordMoreMenu DropdownMenuContent uses bg-surface-raised (not bg-surface-canvas)", () => {
+    // The More menu panel carries testid `reader-record-more-menu-content`.
+    // Its className must include `bg-surface-raised` as a complete class
+    // and must not include the canvas-tier `bg-surface-canvas` class.
+    const moreMenuStart = PLATE_SURFACE_SOURCE.indexOf(
+      'data-testid="reader-record-more-menu-content"',
+    );
+    expect(moreMenuStart).toBeGreaterThanOrEqual(0);
+    // The className appears before the testid in this component; scan a
+    // generous window around the testid to capture the full opening tag.
+    const moreMenuSection = PLATE_SURFACE_SOURCE.slice(
+      moreMenuStart - 600,
+      moreMenuStart + 200,
+    );
+    expect(moreMenuSection).toMatch(/bg-surface-raised(?![-\w])/);
+    expect(moreMenuSection).not.toMatch(/bg-surface-canvas/);
+  });
+
+  it("ReaderRecordPlateSurface no longer uses bg-surface-canvas anywhere", () => {
+    expect(PLATE_SURFACE_SOURCE).not.toMatch(/bg-surface-canvas/);
   });
 });
