@@ -878,7 +878,9 @@ Quick Peek 的稳定身份是 `anchor_segment_id + markId + generation + baseId`
 
 - 重新锚定使用 `[data-anchor-segment-id] [data-reader-record-vocabulary-mark-id]` 组合选择器精确定位原 mark，**不得**回退挂到同段 sibling mark。
 - 从 `setValue` 到 rAF 回调之间，Quick Peek 浮层使用 frozen rect 维持位置，避免出现 detached `(0,0)` panel。
-- rAF 回调内执行三重 guard：restore token 失配 / markId 切换 / `{generation, base_id}` fence 失配 → abort 并关闭 Quick Peek，不动 ref 产生遗留状态。
+- rAF guard 的终态必须区分：restore token 失配或 markId 切换时，旧 rAF **只 abort，不触碰**当前 Quick Peek/ref；最新 interaction 拥有状态。
+- `{generation, base_id}` fence 失配时，source-identity reset 负责关闭 Quick Peek；旧 rAF 只清理其 stale anchor，避免 detached panel。
+- 精确 resolver 找不到原 mark 时，才由该 restore 请求确定性关闭 Quick Peek。
 
 #### Source-identity close
 
