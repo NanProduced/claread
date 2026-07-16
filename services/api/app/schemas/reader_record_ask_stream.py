@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 
 EXECUTION_VERSION_AGENTIC_V1 = "reader_record_ask_agentic_v1"
 
@@ -96,12 +96,57 @@ class ReaderRecordAskEvidenceItem(BaseModel):
     rag_citation: ReaderRecordAskRagCitationPublic | None = None
 
 
+class ReaderRecordAskEvidenceScope(BaseModel):
+    """Message-level article identity for agentic evidence navigation fence.
+
+    Projected only from the turn Context Envelope (not from evidence items,
+    rag_citation fields, DOM, snippet, or envelope_fingerprint).
+
+    Strict typing
+    -------------
+    Uses ``StrictStr`` / ``StrictInt`` so wire values like
+    ``record_generation="1"``, ``1.0``, or ``True`` are rejected rather than
+    coerced. This keeps backend validation aligned with the Web runtime guard
+    (cold history vs hot SSE must not diverge on coercion).
+
+    Compatibility
+    -------------
+    - ``ReaderRecordAskCompletedDTO.evidence_scope`` is optional/nullable so
+      historical v1 JSON without this field still validates.
+    - **New production ok paths must always write a non-null scope.**
+    - Product (source navigation, future R3B/R3C): missing scope on a
+      reloaded message means **display Sources is allowed**, but **all**
+      navigation must fail closed as ``unavailable.legacy_scope_missing``
+      — including complete search_hit. Do not fall back to current page
+      identity or rag_citation-only temporary branches.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    reading_record_id: StrictStr = Field(min_length=1)
+    base_id: StrictStr = Field(min_length=1)
+    record_generation: StrictInt = Field(ge=1)
+    # None = no active stable document (RAG off / not attached). Empty string
+    # is rejected so clients never treat "" as a real id.
+    stable_document_id: StrictStr | None = None
+
+    @field_validator("stable_document_id")
+    @classmethod
+    def _reject_empty_stable_document_id(cls, value: str | None) -> str | None:
+        if value is not None and len(value) < 1:
+            raise ValueError("stable_document_id must be non-empty when present")
+        return value
+
+
 class ReaderRecordAskCompletedDTO(BaseModel):
     """Canonical completed payload for SSE and DB.
 
     Only finalizer ``ok`` paths produce this as a successful completed
     event. Stale/invalid paths use :class:`ReaderRecordAskTerminalDTO`
     instead and must not put a displayable answer on completed.
+
+    ``evidence_scope`` is null only for legacy persisted rows; production
+    builders must emit a complete non-null scope object.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -113,6 +158,8 @@ class ReaderRecordAskCompletedDTO(BaseModel):
     thread_id: str
     turn_run_id: str
     envelope_fingerprint: str
+    # Nullable for historical v1 JSON only — not a valid new production state.
+    evidence_scope: ReaderRecordAskEvidenceScope | None = None
     evidence: list[ReaderRecordAskEvidenceItem] = Field(default_factory=list)
 
 
@@ -277,6 +324,9 @@ class ReaderRecordAskHistoryMessage(BaseModel):
     execution_version: Literal["reader_record_ask_agentic_v1"] | None = None
     final_status: FinalStatus | None = None
     agentic_evidence: list[ReaderRecordAskEvidenceItem] | None = None
+    # Message-level scope from completed DTO; null for old v1 / terminals.
+    # Navigation consumers must treat null as legacy_scope_missing.
+    agentic_evidence_scope: ReaderRecordAskEvidenceScope | None = None
     created_at: str
     updated_at: str
 

@@ -16,6 +16,9 @@ from app.config import settings as settings_mod
 from app.schemas.reader_record_ask_stream import (
     EXECUTION_VERSION_AGENTIC_V1,
     ReaderRecordAskCompletedDTO,
+    ReaderRecordAskEvidenceItem,
+    ReaderRecordAskEvidenceScope,
+    ReaderRecordAskRagCitationPublic,
     evidence_item_from_observation,
 )
 from app.services.reader_record_ask.context_envelope import (
@@ -34,7 +37,11 @@ from app.services.reader_record_ask.finalizer import FinalizedAskResult
 from app.services.reader_record_ask.production_stream import (
     TERMINAL_REASON_AGENT_OUTPUT_INVALID,
     TERMINAL_REASON_AGENT_RUN_FAILED,
+    TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
+    EvidenceScopeInvariantError,
+    assert_evidence_scope_matches_items,
     build_completed_dto,
+    evidence_scope_from_envelope,
     stream_agentic_thread_message,
 )
 from app.services.reader_record_ask.runtime import ReadingRecordAskRunResult
@@ -968,6 +975,506 @@ def test_build_completed_dto_includes_typed_evidence_kinds() -> None:
     kinds = {e.kind for e in dto.evidence}
     assert kinds == {"initial_anchor", "read_range"}
     assert dto.execution_version == EXECUTION_VERSION_AGENTIC_V1
+    # R3B0: new production always emits non-null message-level scope from envelope.
+    assert dto.evidence_scope is not None
+    assert dto.evidence_scope.reading_record_id == str(_RECORD)
+    assert dto.evidence_scope.base_id == str(_BASE)
+    assert dto.evidence_scope.record_generation == 1
+    assert dto.evidence_scope.stable_document_id == str(_DOC)
+
+
+def _ok_run(observations: tuple, answer: str = "ans") -> ReadingRecordAskRunResult:
+    return ReadingRecordAskRunResult(
+        final_text=answer,
+        finalized=FinalizedAskResult(
+            status="ok",
+            answer_text=answer,
+            resolved_evidence=observations,
+            envelope_fingerprint=observations[0].handle.envelope_fingerprint
+            if observations
+            else "a" * 64,
+        ),
+    )
+
+
+def test_evidence_scope_from_envelope_projects_uuid_strings() -> None:
+    env = _envelope(stable_document_id=None)
+    scope = evidence_scope_from_envelope(env)
+    assert scope.reading_record_id == str(_RECORD)
+    assert scope.base_id == str(_BASE)
+    assert scope.record_generation == 1
+    assert scope.stable_document_id is None
+    dumped = scope.model_dump(mode="json")
+    assert dumped == {
+        "reading_record_id": str(_RECORD),
+        "base_id": str(_BASE),
+        "record_generation": 1,
+        "stable_document_id": None,
+    }
+
+
+def test_build_completed_dto_outputs_full_non_null_scope() -> None:
+    env = _envelope()
+    reg = EvidenceRegistry(env.envelope_fingerprint)
+    anchor = build_server_evidence_observation(
+        kind="initial_anchor",
+        envelope_fingerprint=env.envelope_fingerprint,
+        source_tool="initial_anchor",
+        snippet="hello",
+    )
+    reg.register(anchor)
+    dto = build_completed_dto(
+        run_result=_ok_run(reg.list_observations()),
+        message_id=str(uuid4()),
+        thread_id=str(_THREAD),
+        turn_run_id=str(uuid4()),
+        envelope=env,
+    )
+    assert dto.evidence_scope is not None
+    assert dto.evidence_scope.stable_document_id == str(_DOC)
+    wire = dto.model_dump(mode="json")
+    assert wire["evidence_scope"]["reading_record_id"] == str(_RECORD)
+    assert wire["evidence_scope"]["base_id"] == str(_BASE)
+    assert wire["evidence_scope"]["record_generation"] == 1
+
+
+def test_build_completed_dto_rag_off_stable_null_still_has_scope() -> None:
+    """RAG disabled / no stable doc: scope still required; stable id may be null."""
+    env = _envelope(stable_document_id=None)
+    reg = EvidenceRegistry(env.envelope_fingerprint)
+    anchor = build_server_evidence_observation(
+        kind="initial_anchor",
+        envelope_fingerprint=env.envelope_fingerprint,
+        source_tool="initial_anchor",
+        snippet="sel",
+        unit_id="u1",
+        anchor_segment_id="s1",
+    )
+    reg.register(anchor)
+    dto = build_completed_dto(
+        run_result=_ok_run(reg.list_observations()),
+        message_id=str(uuid4()),
+        thread_id=str(_THREAD),
+        turn_run_id=str(uuid4()),
+        envelope=env,
+    )
+    assert dto.evidence_scope is not None
+    assert dto.evidence_scope.stable_document_id is None
+    assert dto.evidence_scope.reading_record_id == str(_RECORD)
+    assert {e.kind for e in dto.evidence} == {"initial_anchor"}
+
+
+def test_completed_dto_accepts_legacy_missing_and_explicit_null_scope() -> None:
+    base = {
+        "execution_version": EXECUTION_VERSION_AGENTIC_V1,
+        "final_status": "ok",
+        "answer_text": "legacy answer",
+        "message_id": "m1",
+        "thread_id": "t1",
+        "turn_run_id": "tr1",
+        "envelope_fingerprint": "f" * 64,
+        "evidence": [],
+    }
+    missing = ReaderRecordAskCompletedDTO.model_validate(base)
+    assert missing.evidence_scope is None
+
+    explicit_null = ReaderRecordAskCompletedDTO.model_validate(
+        {**base, "evidence_scope": None}
+    )
+    assert explicit_null.evidence_scope is None
+
+
+def test_completed_dto_rejects_malformed_scope_and_bad_generation() -> None:
+    base = {
+        "execution_version": EXECUTION_VERSION_AGENTIC_V1,
+        "final_status": "ok",
+        "answer_text": "a",
+        "message_id": "m1",
+        "thread_id": "t1",
+        "turn_run_id": "tr1",
+        "envelope_fingerprint": "f" * 64,
+        "evidence": [],
+    }
+    with pytest.raises(Exception):
+        ReaderRecordAskCompletedDTO.model_validate(
+            {**base, "evidence_scope": {"reading_record_id": "r"}}
+        )
+    with pytest.raises(Exception):
+        ReaderRecordAskCompletedDTO.model_validate(
+            {
+                **base,
+                "evidence_scope": {
+                    "reading_record_id": "r",
+                    "base_id": "b",
+                    "record_generation": 0,
+                    "stable_document_id": None,
+                },
+            }
+        )
+    with pytest.raises(Exception):
+        ReaderRecordAskCompletedDTO.model_validate(
+            {
+                **base,
+                "evidence_scope": {
+                    "reading_record_id": "r",
+                    "base_id": "b",
+                    "record_generation": -1,
+                    "stable_document_id": None,
+                },
+            }
+        )
+    with pytest.raises(Exception):
+        ReaderRecordAskCompletedDTO.model_validate(
+            {
+                **base,
+                "evidence_scope": {
+                    "reading_record_id": "r",
+                    "base_id": "b",
+                    "record_generation": 1,
+                    "stable_document_id": None,
+                    "extra": "nope",
+                },
+            }
+        )
+
+
+def test_evidence_scope_strict_rejects_coerced_generation_and_empty_stable() -> None:
+    """Align with Web guard: no str/float/bool generation; no empty stable id."""
+    from pydantic import ValidationError
+
+    good = {
+        "reading_record_id": "r",
+        "base_id": "b",
+        "record_generation": 1,
+        "stable_document_id": None,
+    }
+    assert ReaderRecordAskEvidenceScope.model_validate(good).record_generation == 1
+
+    for bad_generation in ("1", 1.0, True, False):
+        with pytest.raises(ValidationError):
+            ReaderRecordAskEvidenceScope.model_validate(
+                {**good, "record_generation": bad_generation}
+            )
+
+    with pytest.raises(ValidationError):
+        ReaderRecordAskEvidenceScope.model_validate(
+            {**good, "stable_document_id": ""}
+        )
+
+    # Nested on completed DTO must also reject (no half-coerce into ok payload).
+    completed_base = {
+        "execution_version": EXECUTION_VERSION_AGENTIC_V1,
+        "final_status": "ok",
+        "answer_text": "a",
+        "message_id": "m1",
+        "thread_id": "t1",
+        "turn_run_id": "tr1",
+        "envelope_fingerprint": "f" * 64,
+        "evidence": [],
+    }
+    with pytest.raises(ValidationError):
+        ReaderRecordAskCompletedDTO.model_validate(
+            {
+                **completed_base,
+                "evidence_scope": {**good, "record_generation": "1"},
+            }
+        )
+    with pytest.raises(ValidationError):
+        ReaderRecordAskCompletedDTO.model_validate(
+            {
+                **completed_base,
+                "evidence_scope": {**good, "record_generation": 1.0},
+            }
+        )
+    with pytest.raises(ValidationError):
+        ReaderRecordAskCompletedDTO.model_validate(
+            {
+                **completed_base,
+                "evidence_scope": {**good, "stable_document_id": ""},
+            }
+        )
+
+
+def _rag_public(**overrides: object) -> ReaderRecordAskRagCitationPublic:
+    payload = dict(
+        rag_substrate_id="substrate-1",
+        index_run_id="substrate-1",
+        index_version="v1",
+        plan_content_sha256="c" * 64,
+        source_scope="main_reading_text",
+        block_type="paragraph",
+        chunk_id="ch1",
+        content_sha256="d" * 64,
+        canonical_text_start_utf16=0,
+        canonical_text_end_utf16=5,
+        snippet="snip",
+        stable_document_id=str(_DOC),
+        base_id=str(_BASE),
+        record_generation=1,
+        block_ids=["b1"],
+        unit_ids=["u1"],
+        anchor_segment_ids=["s1"],
+    )
+    payload.update(overrides)
+    return ReaderRecordAskRagCitationPublic(**payload)  # type: ignore[arg-type]
+
+
+def test_search_hit_scope_match_allows_completed_dto() -> None:
+    env = _envelope()
+    from app.services.reader_record_ask.evidence import ArticleRagCitationEvidence
+
+    substrate = str(uuid4())
+    cit = ArticleRagCitationEvidence(
+        rag_substrate_id=substrate,
+        index_run_id=substrate,
+        index_version="article_rag_index_v1",
+        plan_content_sha256="c" * 64,
+        source_scope="main_reading_text",
+        block_type="paragraph",
+        chunk_id="ch1",
+        content_sha256="d" * 64,
+        canonical_text_start_utf16=0,
+        canonical_text_end_utf16=5,
+        snippet="snip",
+        reading_record_id=str(_RECORD),
+        stable_document_id=str(_DOC),
+        base_id=str(_BASE),
+        record_generation=1,
+    )
+    obs = build_server_evidence_observation(
+        kind="search_hit",
+        envelope_fingerprint=env.envelope_fingerprint,
+        source_tool="search_current_article",
+        snippet="snip",
+        rag_citation=cit,
+    )
+    dto = build_completed_dto(
+        run_result=_ok_run((obs,)),
+        message_id=str(uuid4()),
+        thread_id=str(_THREAD),
+        turn_run_id=str(uuid4()),
+        envelope=env,
+    )
+    assert dto.evidence_scope is not None
+    assert dto.evidence_scope.stable_document_id == str(_DOC)
+    assert dto.evidence[0].rag_citation is not None
+    assert dto.evidence[0].rag_citation.stable_document_id == str(_DOC)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["stable_document_id", "base_id", "record_generation"],
+)
+def test_search_hit_scope_mismatch_fail_closed(field: str) -> None:
+    scope = ReaderRecordAskEvidenceScope(
+        reading_record_id=str(_RECORD),
+        base_id=str(_BASE),
+        record_generation=1,
+        stable_document_id=str(_DOC),
+    )
+    overrides: dict[str, object] = {}
+    if field == "stable_document_id":
+        overrides["stable_document_id"] = str(uuid4())
+    elif field == "base_id":
+        overrides["base_id"] = str(uuid4())
+    else:
+        overrides["record_generation"] = 99
+    item = ReaderRecordAskEvidenceItem(
+        handle_id="evh_" + ("ab" * 16),
+        kind="search_hit",
+        source_tool="search_current_article",
+        snippet="x",
+        rag_citation=_rag_public(**overrides),
+    )
+    with pytest.raises(EvidenceScopeInvariantError):
+        assert_evidence_scope_matches_items(scope, [item])
+
+
+def test_search_hit_with_null_scope_stable_fail_closed() -> None:
+    scope = ReaderRecordAskEvidenceScope(
+        reading_record_id=str(_RECORD),
+        base_id=str(_BASE),
+        record_generation=1,
+        stable_document_id=None,
+    )
+    item = ReaderRecordAskEvidenceItem(
+        handle_id="evh_" + ("cd" * 16),
+        kind="search_hit",
+        source_tool="search_current_article",
+        snippet="x",
+        rag_citation=_rag_public(),
+    )
+    with pytest.raises(EvidenceScopeInvariantError):
+        assert_evidence_scope_matches_items(scope, [item])
+
+
+def test_build_completed_dto_search_hit_mismatch_raises_not_ok() -> None:
+    """Production must not emit final_status=ok when search_hit identity diverges."""
+    env = _envelope()
+    from app.services.reader_record_ask.evidence import ArticleRagCitationEvidence
+
+    substrate = str(uuid4())
+    wrong_stable = str(uuid4())
+    cit = ArticleRagCitationEvidence(
+        rag_substrate_id=substrate,
+        index_run_id=substrate,
+        index_version="article_rag_index_v1",
+        plan_content_sha256="c" * 64,
+        source_scope="main_reading_text",
+        block_type="paragraph",
+        chunk_id="ch1",
+        content_sha256="d" * 64,
+        canonical_text_start_utf16=0,
+        canonical_text_end_utf16=5,
+        snippet="snip",
+        reading_record_id=str(_RECORD),
+        stable_document_id=wrong_stable,  # wrong stable
+        base_id=str(_BASE),
+        record_generation=1,
+    )
+    obs = build_server_evidence_observation(
+        kind="search_hit",
+        envelope_fingerprint=env.envelope_fingerprint,
+        source_tool="search_current_article",
+        snippet="snip",
+        rag_citation=cit,
+    )
+    with pytest.raises(EvidenceScopeInvariantError):
+        build_completed_dto(
+            run_result=_ok_run((obs,)),
+            message_id=str(uuid4()),
+            thread_id=str(_THREAD),
+            turn_run_id=str(uuid4()),
+            envelope=env,
+        )
+
+
+@pytest.mark.asyncio
+async def test_scope_invariant_violation_stream_terminals_without_completed() -> None:
+    """Core production promise: invariant failure never emits ok completed.
+
+    Through ``stream_agentic_thread_message``:
+    - no message.completed
+    - agentic.terminal + message.interrupted
+    - DB terminal final_status=failed
+    - terminal_reason=evidence_scope_invariant_violation
+    - no completed write / no answer or evidence persistence
+    - conflict identity not leaked on the wire
+    """
+    from app.services.reader_record_ask.evidence import ArticleRagCitationEvidence
+
+    repo = _FakeRepo()
+    wrong_stable = str(uuid4())
+    secret_answer = "MUST_NOT_PERSIST_SCOPE_INVARIANT_ANSWER"
+    secret_snippet = "MUST_NOT_LEAK_CONFLICTING_SNIPPET"
+
+    async def _run(**kwargs):
+        env = kwargs["envelope"]
+        substrate = str(uuid4())
+        cit = ArticleRagCitationEvidence(
+            rag_substrate_id=substrate,
+            index_run_id=substrate,
+            index_version="article_rag_index_v1",
+            plan_content_sha256="c" * 64,
+            source_scope="main_reading_text",
+            block_type="paragraph",
+            chunk_id="ch1",
+            content_sha256="d" * 64,
+            canonical_text_start_utf16=0,
+            canonical_text_end_utf16=5,
+            snippet=secret_snippet,
+            reading_record_id=str(_RECORD),
+            stable_document_id=wrong_stable,
+            base_id=str(_BASE),
+            record_generation=1,
+        )
+        obs = build_server_evidence_observation(
+            kind="search_hit",
+            envelope_fingerprint=env.envelope_fingerprint,
+            source_tool="search_current_article",
+            snippet=secret_snippet,
+            rag_citation=cit,
+        )
+        return ReadingRecordAskRunResult(
+            final_text=secret_answer,
+            finalized=FinalizedAskResult(
+                status="ok",
+                answer_text=secret_answer,
+                resolved_evidence=(obs,),
+                envelope_fingerprint=env.envelope_fingerprint,
+            ),
+        )
+
+    chunks: list[str] = []
+    async for c in stream_agentic_thread_message(
+        user_id=_USER,
+        reading_record_id=_RECORD,
+        thread_id=_THREAD,
+        content="q",
+        facts=_fake_facts(),
+        request_anchor=None,
+        repository=repo,  # type: ignore[arg-type]
+        document_access=InMemoryDocumentAccess(
+            snapshot=build_document_scope(
+                reading_record_id=_RECORD,
+                base_id=_BASE,
+                record_generation=1,
+                stable_document_id=_DOC,
+                base_content_sha256=_SHA,
+                units=[
+                    ReadingUnitView(
+                        unit_id="u1",
+                        order_index=0,
+                        text="hello",
+                        text_hash="11111111",
+                        base_start_utf16=0,
+                        base_end_utf16=5,
+                    )
+                ],
+            )
+        ),
+        model=_function_model(),
+        run_fn=_run,
+        auto_wire_dependencies=False,
+        stable_document_id=_DOC,
+    ):
+        chunks.append(c)
+
+    events = _parse_sse(chunks)
+    names = [n for n, _ in events]
+    assert EVENT_MESSAGE_COMPLETED not in names
+    assert EVENT_AGENTIC_TERMINAL in names
+    assert EVENT_MESSAGE_INTERRUPTED in names
+
+    assert repo.completed_writes == []
+    assert len(repo.terminal_writes) == 1
+    tw = repo.terminal_writes[0]
+    assert tw["final_status"] == "failed"
+    assert tw["run_status"] == "failed"
+    assert tw["terminal_reason"] == TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT
+    assert tw.get("terminal_dto", {}).get("final_status") == "failed"
+    assert (
+        tw.get("terminal_dto", {}).get("terminal_reason")
+        == TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT
+    )
+    # Terminal path must not persist displayable answer/evidence payloads.
+    assert "answer_text" not in (tw.get("terminal_dto") or {})
+    assert "evidence" not in (tw.get("terminal_dto") or {})
+    assert tw.get("resolved_evidence_json") in (None, [], "[]") or not tw.get(
+        "resolved_evidence_json"
+    )
+
+    wire_blob = json.dumps([d for _, d in events], ensure_ascii=False)
+    assert secret_answer not in wire_blob
+    assert secret_snippet not in wire_blob
+    assert wrong_stable not in wire_blob
+    for _name, data in events:
+        if _name in {EVENT_AGENTIC_TERMINAL, EVENT_MESSAGE_INTERRUPTED}:
+            assert data.get("terminal_reason") == TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT
+            assert data.get("final_status") == "failed"
+            assert "answer_text" not in data
+            assert "evidence" not in data
+            assert "evidence_scope" not in data
 
 
 def test_evidence_item_from_observation_maps_rag() -> None:

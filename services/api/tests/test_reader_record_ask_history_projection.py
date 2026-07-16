@@ -52,7 +52,27 @@ _SEARCH_HIT = {
     "rag_citation": _COMPLETE_RAG,
 }
 
+_EVIDENCE_SCOPE = {
+    "reading_record_id": "22222222-2222-2222-2222-222222222222",
+    "base_id": "33333333-3333-3333-3333-333333333333",
+    "record_generation": 1,
+    "stable_document_id": "doc-stable-1",
+}
+
 _COMPLETED_DTO = {
+    "execution_version": EXECUTION_VERSION_AGENTIC_V1,
+    "final_status": "ok",
+    "answer_text": "Climate change is discussed in paragraph 2.",
+    "message_id": "msg-1",
+    "thread_id": "thread-1",
+    "turn_run_id": "turn-run-1",
+    "envelope_fingerprint": "env-fp-secret",
+    "evidence_scope": _EVIDENCE_SCOPE,
+    "evidence": [_SEARCH_HIT],
+}
+
+# Pre-R3B0 historical wire: no evidence_scope field (nullable compatibility).
+_COMPLETED_DTO_LEGACY_NO_SCOPE = {
     "execution_version": EXECUTION_VERSION_AGENTIC_V1,
     "final_status": "ok",
     "answer_text": "Climate change is discussed in paragraph 2.",
@@ -96,13 +116,59 @@ def test_completed_projects_answer_and_agentic_evidence() -> None:
     assert projected["agentic_evidence"] is not None
     assert len(projected["agentic_evidence"]) == 1
     assert projected["agentic_evidence"][0]["kind"] == "search_hit"
+    assert projected["agentic_evidence_scope"] == _EVIDENCE_SCOPE
     assert projected["evidence"] == []
     assert projected["article_rag"] is None
     assert projected["article_rag_citations"] == []
     assert "envelope_fingerprint" not in projected
     assert projected["current_user_visible_output"] is None
 
-    # Strict RR history DTO accepts agentic_evidence.
+    # Strict RR history DTO accepts agentic_evidence + agentic_evidence_scope.
+    ReaderRecordAskHistoryMessage.model_validate(projected)
+
+
+def test_completed_legacy_missing_scope_hydrates_answer_evidence_with_null_scope() -> None:
+    """Old v1 JSON without evidence_scope: answer/Sources hydrate; scope stays None.
+
+    Product freeze (R3A/R3B0): navigation must treat null as
+    unavailable.legacy_scope_missing for every evidence kind — no page-identity
+    or rag_citation-only temporary navigation branch.
+    """
+    projected = project_agentic_history_message(
+        **_base_kwargs(user_visible_output_json=_COMPLETED_DTO_LEGACY_NO_SCOPE)
+    )
+    assert projected["status"] == "completed"
+    assert projected["content_md"] == "Climate change is discussed in paragraph 2."
+    assert projected["agentic_evidence"] is not None
+    assert projected["agentic_evidence"][0]["kind"] == "search_hit"
+    assert projected["agentic_evidence_scope"] is None
+    ReaderRecordAskHistoryMessage.model_validate(projected)
+
+
+def test_completed_explicit_null_scope_projects_null() -> None:
+    completed = {**_COMPLETED_DTO_LEGACY_NO_SCOPE, "evidence_scope": None}
+    projected = project_agentic_history_message(
+        **_base_kwargs(user_visible_output_json=completed)
+    )
+    assert projected["status"] == "completed"
+    assert projected["agentic_evidence"] is not None
+    assert projected["agentic_evidence_scope"] is None
+
+
+def test_malformed_evidence_scope_degrades_without_raw_dict() -> None:
+    projected = project_agentic_history_message(
+        **_base_kwargs(
+            user_visible_output_json={
+                **_COMPLETED_DTO_LEGACY_NO_SCOPE,
+                "evidence_scope": {"reading_record_id": "only-one-field"},
+            }
+        )
+    )
+    assert projected["status"] == "failed"
+    assert projected["content_md"] == ""
+    assert projected["agentic_evidence"] is None
+    assert projected["agentic_evidence_scope"] is None
+    assert projected["evidence"] == []
     ReaderRecordAskHistoryMessage.model_validate(projected)
 
 
@@ -144,6 +210,7 @@ def test_terminal_projects_without_fake_answer(
     assert projected["content_md"] == ""
     assert projected["final_status"] == final_status
     assert projected["agentic_evidence"] is None
+    assert projected["agentic_evidence_scope"] is None
     assert projected["evidence"] == []
     assert projected["article_rag"] is None
     assert "terminal_reason" not in projected
@@ -668,3 +735,4 @@ async def test_get_thread_detail_analysis_still_uses_legacy_schema() -> None:
     # Ensure Analysis wire model has no agentic fields.
     assert "execution_version" not in ReaderAskMessage.model_fields
     assert "agentic_evidence" not in ReaderAskMessage.model_fields
+    assert "agentic_evidence_scope" not in ReaderAskMessage.model_fields

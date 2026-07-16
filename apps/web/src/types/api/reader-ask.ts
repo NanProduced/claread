@@ -477,6 +477,14 @@ export interface ReaderAskMessageDto {
    * state only after strict guard validation. Not present on legacy messages.
    */
   agentic_evidence?: ReaderAskAgenticEvidenceItemDto[] | null;
+  /**
+   * Message-level article identity for agentic evidence (R3B0).
+   * Cold-load only after strict guard. Null/missing on old v1 rows means
+   * Sources may still display, but all navigation must fail closed as
+   * `unavailable.legacy_scope_missing` — no page-identity or rag_citation-only
+   * fallback. UI wiring is R3B0-B / R3C (not this transport slice).
+   */
+  agentic_evidence_scope?: ReaderAskAgenticEvidenceScopeDto | null;
   created_at: string;
   updated_at: string;
 }
@@ -501,6 +509,12 @@ export interface ReaderAskMessageUiStateDto {
    * `null` / empty means no agentic evidence for this message.
    */
   agentic_evidence?: ReaderAskAgenticEvidenceItemDto[] | null;
+  /**
+   * Hot/cold agentic evidence_scope for navigation fence. Transport field
+   * only until R3B0-B wires AiWorkspacePanel state. Null/missing ⇒
+   * legacy_scope_missing for all source navigation (including search_hit).
+   */
+  agentic_evidence_scope?: ReaderAskAgenticEvidenceScopeDto | null;
 }
 
 export type ReaderAskUiMessageDto = ReaderAskMessageDto & ReaderAskMessageUiStateDto;
@@ -713,6 +727,23 @@ export interface ReaderAskAgenticEvidenceItemDto {
 }
 
 /**
+ * Message-level article identity for agentic evidence (mirrors backend
+ * `ReaderRecordAskEvidenceScope`). Projected from Context Envelope only.
+ *
+ * Optional/null on completed payloads for historical v1 compatibility only.
+ * New production always emits a complete object. Missing/null scope ⇒
+ * navigation must return `unavailable.legacy_scope_missing` for every
+ * evidence kind (including complete search_hit); do not use page identity
+ * or envelope_fingerprint for navigation.
+ */
+export interface ReaderAskAgenticEvidenceScopeDto {
+  reading_record_id: string;
+  base_id: string;
+  record_generation: number;
+  stable_document_id: string | null;
+}
+
+/**
  * Agentic `message.completed` payload. Only emitted for final_status=ok.
  * Distinct from legacy {@link ReaderAskCompletedPayloadDto} (content_md/citations).
  */
@@ -724,6 +755,11 @@ export interface ReaderAskAgenticCompletedPayloadDto {
   thread_id: string;
   turn_run_id: string;
   envelope_fingerprint: string;
+  /**
+   * Optional for old v1 transport/history only. New production always sets a
+   * non-null complete scope. Malformed objects fail the completed guard.
+   */
+  evidence_scope?: ReaderAskAgenticEvidenceScopeDto | null;
   evidence: ReaderAskAgenticEvidenceItemDto[];
 }
 
@@ -887,6 +923,65 @@ export function isReaderAskAgenticEvidenceList(
   return Array.isArray(value) && value.every(isReaderAskAgenticEvidenceItem);
 }
 
+/**
+ * Strict runtime guard for message-level evidence_scope.
+ *
+ * - `null` / `undefined` are not accepted here (completed guard treats
+ *   missing/null as old-v1-compatible before calling this).
+ * - Exactly four allowlisted fields; extra keys rejected.
+ * - `record_generation` must be a finite integer >= 1.
+ * - `stable_document_id` may be null (RAG off / no active document).
+ */
+export function isReaderAskAgenticEvidenceScope(
+  value: unknown,
+): value is ReaderAskAgenticEvidenceScopeDto {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const scope = value as Record<string, unknown>;
+  const keys = Object.keys(scope);
+  if (keys.length !== 4) {
+    return false;
+  }
+  for (const key of keys) {
+    if (
+      key !== "reading_record_id" &&
+      key !== "base_id" &&
+      key !== "record_generation" &&
+      key !== "stable_document_id"
+    ) {
+      return false;
+    }
+  }
+  if (typeof scope.reading_record_id !== "string" || scope.reading_record_id.length < 1) {
+    return false;
+  }
+  if (typeof scope.base_id !== "string" || scope.base_id.length < 1) {
+    return false;
+  }
+  if (
+    typeof scope.record_generation !== "number" ||
+    !Number.isInteger(scope.record_generation) ||
+    !Number.isFinite(scope.record_generation) ||
+    scope.record_generation < 1
+  ) {
+    return false;
+  }
+  if (
+    scope.stable_document_id !== null &&
+    typeof scope.stable_document_id !== "string"
+  ) {
+    return false;
+  }
+  if (
+    typeof scope.stable_document_id === "string" &&
+    scope.stable_document_id.length < 1
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export function isReaderAskAgenticFinalStatus(
   value: unknown,
 ): value is ReaderAskAgenticFinalStatusDto {
@@ -906,16 +1001,24 @@ export function isReaderAskAgenticCompletedPayload(
     return false;
   }
   const payload = data as Record<string, unknown>;
-  return (
-    payload.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION &&
-    payload.final_status === "ok" &&
-    typeof payload.answer_text === "string" &&
-    typeof payload.message_id === "string" &&
-    typeof payload.thread_id === "string" &&
-    typeof payload.turn_run_id === "string" &&
-    typeof payload.envelope_fingerprint === "string" &&
-    isReaderAskAgenticEvidenceList(payload.evidence)
-  );
+  if (
+    payload.execution_version !== READER_ASK_AGENTIC_EXECUTION_VERSION ||
+    payload.final_status !== "ok" ||
+    typeof payload.answer_text !== "string" ||
+    typeof payload.message_id !== "string" ||
+    typeof payload.thread_id !== "string" ||
+    typeof payload.turn_run_id !== "string" ||
+    typeof payload.envelope_fingerprint !== "string" ||
+    !isReaderAskAgenticEvidenceList(payload.evidence)
+  ) {
+    return false;
+  }
+  // evidence_scope: missing or null → old v1 compatible; object → strict guard.
+  // Malformed object rejects the entire completed payload (no half-parse).
+  if (!("evidence_scope" in payload) || payload.evidence_scope == null) {
+    return true;
+  }
+  return isReaderAskAgenticEvidenceScope(payload.evidence_scope);
 }
 
 export function isReaderAskAgenticTerminalPayload(

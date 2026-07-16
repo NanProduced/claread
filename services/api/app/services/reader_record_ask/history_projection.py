@@ -85,6 +85,7 @@ def quarantine_untrusted_agentic_claim(
         "execution_version": None,
         "final_status": "failed",
         "agentic_evidence": None,
+        "agentic_evidence_scope": None,
     }
 
 
@@ -162,6 +163,7 @@ def _safe_degraded_message(
         "execution_version": AGENTIC_EXECUTION_VERSION,
         "final_status": "failed",
         "agentic_evidence": None,
+        "agentic_evidence_scope": None,
     }
 
 
@@ -250,6 +252,14 @@ def project_agentic_history_message(
 
         answer = completed.answer_text
         content_md = answer if answer else (row_content_md or "")
+        # Scope only from validated completed DTO — never invent from page or fingerprint.
+        # None on old v1 rows: answer/evidence still hydrate; navigation must treat as
+        # unavailable.legacy_scope_missing (no rag_citation-only or page-identity fallback).
+        scope_wire = (
+            completed.evidence_scope.model_dump(mode="json")
+            if completed.evidence_scope is not None
+            else None
+        )
         return {
             "id": message_id,
             "thread_id": thread_id,
@@ -270,6 +280,7 @@ def project_agentic_history_message(
             "execution_version": AGENTIC_EXECUTION_VERSION,
             "final_status": "ok",
             "agentic_evidence": _completed_evidence(completed, resolved_evidence_json),
+            "agentic_evidence_scope": scope_wire,
         }
 
     if db_final in _TERMINAL_UI_STATUS:
@@ -304,6 +315,7 @@ def project_agentic_history_message(
             "execution_version": AGENTIC_EXECUTION_VERSION,
             "final_status": db_final,
             "agentic_evidence": None,
+            "agentic_evidence_scope": None,
         }
 
     # final_status column missing on an agentic row: incomplete / streaming /
@@ -329,6 +341,7 @@ def project_agentic_history_message(
             "execution_version": AGENTIC_EXECUTION_VERSION,
             "final_status": None,
             "agentic_evidence": None,
+            "agentic_evidence_scope": None,
         }
 
     return _safe_degraded_message(**base_kwargs)

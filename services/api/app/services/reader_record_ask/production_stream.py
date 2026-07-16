@@ -24,6 +24,8 @@ from app.schemas.reader_record_ask_stream import (
     ProgressStatus,
     ProgressToolName,
     ReaderRecordAskCompletedDTO,
+    ReaderRecordAskEvidenceItem,
+    ReaderRecordAskEvidenceScope,
     ReaderRecordAskProgressDTO,
     ReaderRecordAskRunStartedDTO,
     ReaderRecordAskTerminalDTO,
@@ -119,9 +121,87 @@ def _safe_model_route(model: Model | str | None) -> str:
     return type(model).__name__[:64]
 
 
+# Stable terminal reason when search_hit evidence conflicts with envelope scope.
+# Do not embed raw ids, hashes, or provider detail in this string.
+TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT = "evidence_scope_invariant_violation"
+
+
+class EvidenceScopeInvariantError(ValueError):
+    """Raised when production cannot emit a fail-closed ok completed DTO.
+
+    Callers must not catch-and-repair by dropping evidence; they must
+    terminal the turn without a displayable answer.
+    """
+
+
 def _safe_envelope_snapshot(envelope: ReadingRecordAskContextEnvelope) -> dict[str, Any]:
     """Persistable snapshot — includes server identity for fence/replay."""
     return envelope.model_dump(mode="json")
+
+
+def evidence_scope_from_envelope(
+    envelope: ReadingRecordAskContextEnvelope,
+) -> ReaderRecordAskEvidenceScope:
+    """Project message-level evidence scope solely from the turn envelope.
+
+    Never derive identity from evidence items, rag_citation, DOM, snippet,
+    or envelope_fingerprint. UUID fields serialize as strings for wire/JSON.
+    """
+    stable = envelope.stable_document_id
+    return ReaderRecordAskEvidenceScope(
+        reading_record_id=str(envelope.reading_record_id),
+        base_id=str(envelope.base_id),
+        record_generation=envelope.record_generation,
+        stable_document_id=str(stable) if stable is not None else None,
+    )
+
+
+def assert_evidence_scope_matches_items(
+    scope: ReaderRecordAskEvidenceScope,
+    evidence: list[ReaderRecordAskEvidenceItem],
+) -> None:
+    """Central production invariant: search_hit identity must match scope.
+
+    Rules
+    -----
+    - No search_hit: scope may have ``stable_document_id=None`` (RAG off / no doc).
+    - Any search_hit: scope.stable_document_id must be non-null; every hit must
+      carry a complete rag_citation whose stable_document_id, base_id, and
+      record_generation equal the message-level scope exactly.
+    - Mismatch or missing citation → :class:`EvidenceScopeInvariantError`.
+      Callers must not emit ``final_status=ok`` or silently drop hits.
+
+    Historical rows with ``evidence_scope=None`` are a separate cold-load
+    concern: navigation must return ``unavailable.legacy_scope_missing`` and
+    must not use current page identity or rag_citation-only shortcuts.
+    """
+    search_hits = [item for item in evidence if item.kind == "search_hit"]
+    if not search_hits:
+        return
+
+    if scope.stable_document_id is None or not scope.stable_document_id:
+        raise EvidenceScopeInvariantError(
+            "search_hit evidence requires non-null evidence_scope.stable_document_id"
+        )
+
+    for item in search_hits:
+        citation = item.rag_citation
+        if citation is None:
+            raise EvidenceScopeInvariantError(
+                "search_hit evidence item is missing rag_citation"
+            )
+        if citation.stable_document_id != scope.stable_document_id:
+            raise EvidenceScopeInvariantError(
+                "search_hit rag_citation.stable_document_id mismatches evidence_scope"
+            )
+        if citation.base_id != scope.base_id:
+            raise EvidenceScopeInvariantError(
+                "search_hit rag_citation.base_id mismatches evidence_scope"
+            )
+        if citation.record_generation != scope.record_generation:
+            raise EvidenceScopeInvariantError(
+                "search_hit rag_citation.record_generation mismatches evidence_scope"
+            )
 
 
 def build_completed_dto(
@@ -132,18 +212,28 @@ def build_completed_dto(
     turn_run_id: str,
     envelope: ReadingRecordAskContextEnvelope,
 ) -> ReaderRecordAskCompletedDTO:
+    """Build the single completed truth object for SSE + persistence.
+
+    Always attaches a non-null ``evidence_scope`` projected from ``envelope``.
+    Raises :class:`EvidenceScopeInvariantError` when search_hit identity does
+    not match scope — callers must terminal fail-closed (no ok completed).
+    """
     assert run_result.finalized is not None
     assert run_result.finalized.status == "ok"
     assert run_result.final_text is not None
     evidence = [
         evidence_item_from_observation(obs) for obs in run_result.finalized.resolved_evidence
     ]
+    # Production invariant: new ok turns never omit scope (nullable is history-only).
+    scope = evidence_scope_from_envelope(envelope)
+    assert_evidence_scope_matches_items(scope, evidence)
     return ReaderRecordAskCompletedDTO(
         answer_text=run_result.final_text,
         message_id=message_id,
         thread_id=thread_id,
         turn_run_id=turn_run_id,
         envelope_fingerprint=envelope.envelope_fingerprint,
+        evidence_scope=scope,
         evidence=evidence,
     )
 
@@ -800,13 +890,54 @@ async def stream_agentic_thread_message(
         yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
         return
 
-    completed = build_completed_dto(
-        run_result=run_result,
-        message_id=assistant_msg["id"],
-        thread_id=str(thread_id),
-        turn_run_id=turn["id"],
-        envelope=envelope,
-    )
+    try:
+        completed = build_completed_dto(
+            run_result=run_result,
+            message_id=assistant_msg["id"],
+            thread_id=str(thread_id),
+            turn_run_id=turn["id"],
+            envelope=envelope,
+        )
+    except EvidenceScopeInvariantError:
+        # Fail-closed: never emit ok completed with conflicting / incomplete scope.
+        # Do not drop conflicting search_hit evidence and retry success.
+        terminal = build_terminal_dto(
+            finalized=None,
+            message_id=assistant_msg["id"],
+            thread_id=str(thread_id),
+            turn_run_id=turn["id"],
+            envelope_fingerprint=envelope.envelope_fingerprint,
+            final_status="failed",
+            terminal_reason=TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
+        )
+        terminal_json = terminal.model_dump(mode="json")
+        await repo.terminal_agentic_turn_run(
+            turn_run_id=turn_run_id,
+            message_id=message_id,
+            run_status="failed",
+            final_status="failed",
+            terminal_reason=terminal.terminal_reason,
+            terminal_dto=terminal_json,
+        )
+        logger.info(
+            "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
+            "model_route=%s final_status=failed total_ms=%s ttfa_ms=%s "
+            "progress_events=%s read_range_calls=%s search_calls=%s "
+            "reason=%s",
+            turn["id"],
+            assistant_msg["id"],
+            _safe_model_route(active_model),
+            total_ms,
+            projector.time_to_first_activity_ms,
+            projector.progress_event_count,
+            run_result.read_range_calls,
+            run_result.search_current_article_calls,
+            TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
+        )
+        yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
+        yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
+        return
+
     completed_json = completed.model_dump(mode="json")
     evidence_json = [item.model_dump(mode="json") for item in completed.evidence]
     persisted = await repo.complete_agentic_turn_run(

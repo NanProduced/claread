@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ReaderAskStreamEnvelopeDto } from "@/types/api/reader-ask";
 import {
   isReaderAskAgenticCompletedPayload,
+  isReaderAskAgenticEvidenceScope,
   isReaderAskAgenticProgressPayload,
   isReaderAskAgenticRunStartedPayload,
   isReaderAskAgenticTerminalPayload,
@@ -71,7 +72,27 @@ const AGENTIC_SEARCH_HIT_EVIDENCE = {
   },
 } as const;
 
+const AGENTIC_EVIDENCE_SCOPE = {
+  reading_record_id: "22222222-2222-2222-2222-222222222222",
+  base_id: "base-1",
+  record_generation: 1,
+  stable_document_id: "doc-stable-1",
+} as const;
+
 const AGENTIC_COMPLETED_PAYLOAD = {
+  execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+  final_status: "ok",
+  answer_text: "Climate change is discussed in paragraph 2.",
+  message_id: "msg-agentic-1",
+  thread_id: "thread-1",
+  turn_run_id: "turn-run-1",
+  envelope_fingerprint: "env-fp-1",
+  evidence_scope: AGENTIC_EVIDENCE_SCOPE,
+  evidence: [AGENTIC_SEARCH_HIT_EVIDENCE],
+} as const;
+
+/** Pre-R3B0 wire shape: no evidence_scope field (legacy v1 compatible). */
+const AGENTIC_COMPLETED_PAYLOAD_LEGACY_NO_SCOPE = {
   execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
   final_status: "ok",
   answer_text: "Climate change is discussed in paragraph 2.",
@@ -484,6 +505,140 @@ describe("agentic payload type guards", () => {
             source_tool: "initial_anchor",
             snippet: "hello",
             unit_id: "u1",
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts complete evidence_scope on agentic completed", () => {
+    expect(isReaderAskAgenticEvidenceScope(AGENTIC_EVIDENCE_SCOPE)).toBe(true);
+    expect(isReaderAskAgenticCompletedPayload(AGENTIC_COMPLETED_PAYLOAD)).toBe(
+      true,
+    );
+    expect(AGENTIC_COMPLETED_PAYLOAD.evidence_scope).toEqual(
+      AGENTIC_EVIDENCE_SCOPE,
+    );
+  });
+
+  it("accepts legacy completed without evidence_scope or with null scope", () => {
+    // Missing field = old v1 compatible; navigation later uses legacy_scope_missing.
+    expect(
+      isReaderAskAgenticCompletedPayload(AGENTIC_COMPLETED_PAYLOAD_LEGACY_NO_SCOPE),
+    ).toBe(true);
+    expect(
+      isReaderAskAgenticCompletedPayload({
+        ...AGENTIC_COMPLETED_PAYLOAD_LEGACY_NO_SCOPE,
+        evidence_scope: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects malformed evidence_scope on agentic completed (no half-parse)", () => {
+    const base = {
+      execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+      final_status: "ok" as const,
+      answer_text: "answer",
+      message_id: "msg-1",
+      thread_id: "thread-1",
+      turn_run_id: "turn-1",
+      envelope_fingerprint: "env-1",
+      evidence: [] as const,
+    };
+
+    expect(
+      isReaderAskAgenticCompletedPayload({
+        ...base,
+        evidence_scope: {},
+      }),
+    ).toBe(false);
+
+    expect(
+      isReaderAskAgenticCompletedPayload({
+        ...base,
+        evidence_scope: {
+          reading_record_id: "r1",
+          // missing base_id / generation / stable
+        },
+      }),
+    ).toBe(false);
+
+    expect(
+      isReaderAskAgenticCompletedPayload({
+        ...base,
+        evidence_scope: {
+          reading_record_id: "r1",
+          base_id: "b1",
+          record_generation: "1",
+          stable_document_id: null,
+        },
+      }),
+    ).toBe(false);
+
+    expect(
+      isReaderAskAgenticCompletedPayload({
+        ...base,
+        evidence_scope: {
+          reading_record_id: "r1",
+          base_id: "b1",
+          record_generation: 0,
+          stable_document_id: null,
+        },
+      }),
+    ).toBe(false);
+
+    expect(
+      isReaderAskAgenticCompletedPayload({
+        ...base,
+        evidence_scope: {
+          reading_record_id: "r1",
+          base_id: "b1",
+          record_generation: 1.5,
+          stable_document_id: null,
+        },
+      }),
+    ).toBe(false);
+
+    expect(
+      isReaderAskAgenticCompletedPayload({
+        ...base,
+        evidence_scope: {
+          reading_record_id: "r1",
+          base_id: "b1",
+          record_generation: 1,
+          stable_document_id: null,
+          extra: "nope",
+        },
+      }),
+    ).toBe(false);
+
+    expect(isReaderAskAgenticEvidenceScope({ reading_record_id: "r" })).toBe(
+      false,
+    );
+  });
+
+  it("accepts evidence_scope with null stable_document_id (RAG off)", () => {
+    expect(
+      isReaderAskAgenticCompletedPayload({
+        execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+        final_status: "ok",
+        answer_text: "anchor only",
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-1",
+        envelope_fingerprint: "env-1",
+        evidence_scope: {
+          reading_record_id: "r1",
+          base_id: "b1",
+          record_generation: 2,
+          stable_document_id: null,
+        },
+        evidence: [
+          {
+            handle_id: "evh_anchor",
+            kind: "initial_anchor",
+            source_tool: "initial_anchor",
+            snippet: "hello",
           },
         ],
       }),
