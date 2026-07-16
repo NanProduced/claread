@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationShell } from "./ConversationShell";
@@ -41,6 +41,16 @@ vi.mock("use-stick-to-bottom", () => ({
     scrollToBottom: scrollHarness.scrollToBottom,
     scrollRef: { current: scrollHarness.scrollElement },
     contentRef: { current: scrollHarness.contentElement },
+    state: {
+      get scrollTop() {
+        return scrollHarness.scrollElement?.scrollTop ?? 0;
+      },
+      set scrollTop(value: number) {
+        if (scrollHarness.scrollElement) {
+          scrollHarness.scrollElement.scrollTop = value;
+        }
+      },
+    },
   }),
 }));
 
@@ -140,7 +150,7 @@ describe("ConversationShell", () => {
     expect(screen.getByText("content").closest("[class*=outer-shell]")).not.toBeNull();
   });
 
-  it("switches from question anchor to persistent natural-bottom follow until the next user turn", () => {
+  it("switches from question anchor to persistent natural-bottom follow until the next user turn", async () => {
     const { rerender } = render(
       <ConversationShell hasMessages latestUserMessageId="user-1">
         <div>answer</div>
@@ -152,7 +162,7 @@ describe("ConversationShell", () => {
     expect(screen.getByTestId("ask-jump-to-latest")).toBeTruthy();
 
     fireEvent.click(screen.getByTestId("ask-jump-to-latest"));
-    expect(scrollHarness.scrollToBottom).toHaveBeenCalledTimes(1);
+    expect(scrollHarness.scrollToBottom).toHaveBeenCalled();
     expect(scrollHarness.targetScrollTop?.(900, elements)).toBe(900);
     expect(scrollHarness.targetScrollTop?.(1200, elements)).toBe(1200);
 
@@ -161,6 +171,30 @@ describe("ConversationShell", () => {
         <div>next answer</div>
       </ConversationShell>,
     );
+    // New user turn re-enters question-anchor via effect.
+    await Promise.resolve();
     expect(scrollHarness.targetScrollTop?.(900, elements)).toBe(384);
+  });
+
+  it("stops natural-bottom follow when the user scrolls away from the bottom", async () => {
+    render(
+      <ConversationShell hasMessages latestUserMessageId="user-1">
+        <div>answer</div>
+      </ConversationShell>,
+    );
+
+    fireEvent.click(screen.getByTestId("ask-jump-to-latest"));
+    expect(scrollHarness.targetScrollTop?.(1200, targetElements())).toBe(1200);
+
+    await act(async () => {
+      if (scrollHarness.scrollElement) {
+        scrollHarness.scrollElement.scrollTop = 180;
+        scrollHarness.scrollElement.dispatchEvent(new Event("scroll"));
+      }
+    });
+
+    const detachedElements = targetElements();
+    detachedElements.scrollElement.scrollTop = 180;
+    expect(scrollHarness.targetScrollTop?.(1400, detachedElements)).toBe(180);
   });
 });

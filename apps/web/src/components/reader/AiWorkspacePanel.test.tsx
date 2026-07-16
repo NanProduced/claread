@@ -3847,6 +3847,37 @@ describe("createSseMessageHandler – agentic stream", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it("maps legacy message.completed onto the optimistic temp assistant id", () => {
+    const { handler, getMessages, onMessageIdAssigned, onError } = setupHandler([
+      makeStreamingAssistant({ id: "local-assistant-temp" }),
+    ], "local-assistant-temp");
+
+    handler({
+      event: "message.completed",
+      data: {
+        id: "msg-legacy-server",
+        thread_id: "thread-1",
+        content_md: "legacy final answer from temp bubble",
+        submission_mode: "chat",
+        resolved_intent: "explain",
+        citations: [],
+        action_proposals: [],
+        tool_trace: [],
+        evidence: [],
+        response_cards: [],
+        supplement_candidates: [],
+        persisted_supplements: [],
+      },
+    });
+    flushRaf();
+
+    expect(onMessageIdAssigned).toHaveBeenCalledWith("msg-legacy-server");
+    expect(getMessages()[0].id).toBe("msg-legacy-server");
+    expect(getMessages()[0].status).toBe("completed");
+    expect(getMessages()[0].content_md).toBe("legacy final answer from temp bubble");
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   it("still applies legacy message.interrupted content_md without agentic terminal", () => {
     const { handler, getMessages, onError } = setupHandler([
       makeStreamingAssistant({ id: "msg-1", content_md: "partial" }),

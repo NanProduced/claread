@@ -1013,13 +1013,19 @@ export function createSseMessageHandler(
       onAgenticActivity?.({ type: "reset" });
 
       const payload = event.data as unknown as ReaderAskCompletedPayloadDto;
-      // Update currentMessageId to the server-assigned id
+      // Capture the streaming temp id BEFORE reassignment so the optimistic
+      // assistant bubble can still be found after the server id lands.
+      const previousMessageId = currentMessageId;
       if (payload.id) {
         currentMessageId = payload.id;
+        onMessageIdAssigned?.(payload.id);
       }
       commitStreamingMessageUpdate((messages) => {
         const assistantIndex = messages.findIndex(
-          (candidate) => candidate.id === currentMessageId,
+          (candidate) =>
+            candidate.id === previousMessageId ||
+            candidate.id === currentMessageId ||
+            candidate.id === payload.id,
         );
         const priorUserIndex =
           assistantIndex > 0
@@ -1029,7 +1035,9 @@ export function createSseMessageHandler(
           priorUserIndex >= 0 && assistantIndex > 0 ? assistantIndex - 1 - priorUserIndex : -1;
         return messages.map((message, index) => {
           const isStreamingAssistant =
-            message.id === currentMessageId;
+            message.id === previousMessageId ||
+            message.id === currentMessageId ||
+            message.id === payload.id;
           if (isStreamingAssistant) {
             // Preserve streamed reasoning content: payload.reasoning_md may be an
             // empty string from the server while the frontend has accumulated deltas.

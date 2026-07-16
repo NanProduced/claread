@@ -40,7 +40,9 @@
     ".next-e2e-spike-test/types/**/*.ts",
     ".next-e2e-spike-test/dev/types/**/*.ts",
     ".next-e2e-gate-test/types/**/*.ts",
-    ".next-e2e-gate-test/dev/types/**/*.ts"
+    ".next-e2e-gate-test/dev/types/**/*.ts",
+    ".next-e2e-ask-activity-r2-test/types/**/*.ts",
+    ".next-e2e-ask-activity-r2-test/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

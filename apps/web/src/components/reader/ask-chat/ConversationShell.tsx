@@ -1,6 +1,13 @@
 "use client";
 
-import React, { useCallback, useRef, useSyncExternalStore } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Button } from "@/components/ui/button";
 import {
   Conversation,
@@ -24,6 +31,8 @@ type ConversationShellProps = {
   contentClassName?: string;
 };
 
+type FollowMode = "question-anchor" | "natural-bottom" | "detached";
+
 /**
  * Each new user turn starts in question-anchor mode so the prompt remains
  * visible while the answer grows. An explicit jump switches that turn to the
@@ -37,7 +46,35 @@ export function ConversationShell({
   className,
   contentClassName,
 }: ConversationShellProps) {
-  const naturalBottomUserIdRef = useRef<string | null>(null);
+  const [followMode, setFollowMode] = useState<FollowMode>("question-anchor");
+  const followModeRef = useRef<FollowMode>("question-anchor");
+  const lastUserIdRef = useRef<string | null>(null);
+  const enterNaturalBottom = useCallback(() => {
+    followModeRef.current = "natural-bottom";
+    setFollowMode("natural-bottom");
+  }, []);
+  const detachFromFollow = useCallback(() => {
+    followModeRef.current = "detached";
+    setFollowMode("detached");
+  }, []);
+  const isFollowingNaturalBottom = useCallback(
+    () => followModeRef.current === "natural-bottom",
+    [],
+  );
+
+  useEffect(() => {
+    if (latestUserMessageId == null) {
+      lastUserIdRef.current = null;
+      return;
+    }
+    if (lastUserIdRef.current === latestUserMessageId) {
+      return;
+    }
+    lastUserIdRef.current = latestUserMessageId;
+    // A brand-new user turn always re-enters question-anchor mode.
+    followModeRef.current = "question-anchor";
+    setFollowMode("question-anchor");
+  }, [latestUserMessageId]);
 
   const targetScrollTop = useCallback(
     (
@@ -47,11 +84,12 @@ export function ConversationShell({
         contentElement: HTMLElement;
       },
     ) => {
-      const followsNaturalBottom =
-        latestUserMessageId == null ||
-        naturalBottomUserIdRef.current === latestUserMessageId;
-      if (followsNaturalBottom) {
+      const currentFollowMode = followModeRef.current;
+      if (currentFollowMode === "natural-bottom" || latestUserMessageId == null) {
         return computeNaturalBottomScrollTop(defaultTarget);
+      }
+      if (currentFollowMode === "detached") {
+        return elements.scrollElement.scrollTop;
       }
       return computeUserQuestionAnchoredScrollTop(defaultTarget, elements);
     },
@@ -89,13 +127,171 @@ export function ConversationShell({
           >["children"]
         }
       </ConversationContent>
-      <AskConversationJumpToLatestButton
-        onJumpToNaturalBottom={() => {
-          naturalBottomUserIdRef.current = latestUserMessageId;
-        }}
+      <FollowModeController
+        followMode={followMode}
+        latestUserMessageId={latestUserMessageId}
+        isFollowingNaturalBottom={isFollowingNaturalBottom}
+        onDetach={detachFromFollow}
       />
+      <AskConversationJumpToLatestButton onJumpToNaturalBottom={enterNaturalBottom} />
     </Conversation>
   );
+}
+
+function readNaturalBottom(scrollElement: HTMLElement): number {
+  return Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+}
+
+/**
+ * Programmatic scroll via the library's scrollTop setter.
+ * Direct DOM assignment is treated as a user escape; this path sets
+ * ignoreScrollToTop so follow mode stays locked.
+ */
+function pinLibraryScrollTop(
+  state: { scrollTop: number },
+  value: number,
+): void {
+  // use-stick-to-bottom exposes scrollTop as a writable facade (not React state).
+  state.scrollTop = value;
+}
+
+/**
+ * use-stick-to-bottom only animates downward toward its calculated target, and
+ * that target is only reactive after React commits. For mode transitions we
+ * write scrollTop imperatively so the viewport moves on the same frame the
+ * mode changes — including upward re-anchors for a new user turn.
+ */
+function FollowModeController({
+  followMode,
+  latestUserMessageId,
+  isFollowingNaturalBottom,
+  onDetach,
+}: {
+  followMode: FollowMode;
+  latestUserMessageId: string | null;
+  isFollowingNaturalBottom: () => boolean;
+  onDetach: () => void;
+}) {
+  const { scrollRef, contentRef, scrollToBottom, state } =
+    useStickToBottomContext();
+  const previousModeRef = useRef<FollowMode>(followMode);
+  const previousUserIdRef = useRef<string | null>(latestUserMessageId);
+
+  useEffect(() => {
+    const scrollElement = scrollRef.current;
+    if (!scrollElement) return;
+    const handleScroll = () => {
+      if (!isFollowingNaturalBottom()) return;
+      if (
+        !isAtNaturalConversationBottom({
+          scrollTop: scrollElement.scrollTop,
+          scrollHeight: scrollElement.scrollHeight,
+          clientHeight: scrollElement.clientHeight,
+        })
+      ) {
+        onDetach();
+      }
+    };
+    scrollElement.addEventListener("scroll", handleScroll, { passive: true });
+    return () => scrollElement.removeEventListener("scroll", handleScroll);
+  }, [isFollowingNaturalBottom, onDetach, scrollRef]);
+
+  const pinNaturalBottom = useCallback(() => {
+    const scrollElement = scrollRef.current;
+    if (!scrollElement) {
+      return;
+    }
+    pinLibraryScrollTop(state, readNaturalBottom(scrollElement));
+    try {
+      const result = scrollToBottom({ animation: "instant" });
+      if (result && typeof (result as Promise<boolean>).catch === "function") {
+        void (result as Promise<boolean>).catch(() => undefined);
+      }
+    } catch {
+      // Conversation remains usable if a browser scroll call fails.
+    }
+  }, [scrollRef, scrollToBottom, state]);
+
+  const pinQuestionAnchor = useCallback(() => {
+    const scrollElement = scrollRef.current;
+    const contentElement = contentRef.current;
+    if (!scrollElement || !contentElement) {
+      return;
+    }
+    const defaultTarget = Math.max(
+      0,
+      scrollElement.scrollHeight - 1 - scrollElement.clientHeight,
+    );
+    const target = computeUserQuestionAnchoredScrollTop(defaultTarget, {
+      scrollElement,
+      contentElement,
+    });
+    pinLibraryScrollTop(state, target);
+    try {
+      const result = scrollToBottom({ animation: "instant" });
+      if (result && typeof (result as Promise<boolean>).catch === "function") {
+        void (result as Promise<boolean>).catch(() => undefined);
+      }
+    } catch {
+      // Conversation remains usable if a browser scroll call fails.
+    }
+  }, [contentRef, scrollRef, scrollToBottom, state]);
+
+  useLayoutEffect(() => {
+    const previousMode = previousModeRef.current;
+    const previousUserId = previousUserIdRef.current;
+    previousModeRef.current = followMode;
+    previousUserIdRef.current = latestUserMessageId;
+
+    const enteredQuestionAnchor =
+      previousMode !== "question-anchor" && followMode === "question-anchor";
+    const newUserTurn =
+      previousUserId != null &&
+      latestUserMessageId != null &&
+      previousUserId !== latestUserMessageId;
+    const enteredNaturalBottom =
+      previousMode !== "natural-bottom" && followMode === "natural-bottom";
+
+    if (followMode === "question-anchor" && (enteredQuestionAnchor || newUserTurn)) {
+      // Wait one frame so the new user bubble is measurable in the content tree.
+      requestAnimationFrame(() => {
+        pinQuestionAnchor();
+      });
+      return;
+    }
+
+    if (enteredNaturalBottom) {
+      requestAnimationFrame(() => {
+        pinNaturalBottom();
+      });
+    }
+  }, [
+    followMode,
+    latestUserMessageId,
+    pinNaturalBottom,
+    pinQuestionAnchor,
+  ]);
+
+  // Keep natural-bottom pin attached across large answer growth.
+  useEffect(() => {
+    if (followMode !== "natural-bottom") {
+      return;
+    }
+    const contentElement = contentRef.current;
+    if (!contentElement || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const observer = new ResizeObserver(() => {
+      if (!isFollowingNaturalBottom()) {
+        return;
+      }
+      pinNaturalBottom();
+    });
+    observer.observe(contentElement);
+    return () => observer.disconnect();
+  }, [contentRef, followMode, isFollowingNaturalBottom, pinNaturalBottom]);
+
+  return null;
 }
 
 function useIsAtNaturalConversationBottom(): boolean {
@@ -145,20 +341,27 @@ function AskConversationJumpToLatestButton({
 }: {
   onJumpToNaturalBottom: () => void;
 }) {
-  const { scrollToBottom } = useStickToBottomContext();
+  const { scrollRef, scrollToBottom, state } = useStickToBottomContext();
   const isAtNaturalBottom = useIsAtNaturalConversationBottom();
 
   const handleClick = useCallback(() => {
+    // Pin the real natural bottom immediately. Do not wait for React to commit
+    // the follow-mode state change — otherwise scrollToBottom still uses the
+    // previous question-anchor targetScrollTop and undershoots.
+    const scrollElement = scrollRef.current;
+    if (scrollElement) {
+      pinLibraryScrollTop(state, readNaturalBottom(scrollElement));
+    }
     onJumpToNaturalBottom();
     try {
-      const result = scrollToBottom();
+      const result = scrollToBottom({ animation: "instant" });
       if (result && typeof (result as Promise<boolean>).catch === "function") {
         void (result as Promise<boolean>).catch(() => undefined);
       }
     } catch {
       // The conversation remains usable even if a browser scroll call fails.
     }
-  }, [onJumpToNaturalBottom, scrollToBottom]);
+  }, [onJumpToNaturalBottom, scrollRef, scrollToBottom, state]);
 
   if (isAtNaturalBottom) {
     return null;

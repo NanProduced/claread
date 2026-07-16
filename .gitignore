@@ -11,6 +11,7 @@ coverage/
 .next-gate-test/
 .next-e2e-spike-test/
 .next-e2e-gate-test/
+.next-e2e-ask-activity-r2-test/
 *.tsbuildinfo
 apps/miniprogram/dist/
 
