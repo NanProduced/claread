@@ -137,4 +137,45 @@ describe("web design tokens contract", () => {
     expect(rootSubBlock).not.toContain("rgba(255, 250, 242");
     expect(rootSubBlock).not.toContain("rgba(249, 244, 234");
   });
+  it("keeps Reader prose and analysis-label contrast safe in both themes", () => {
+    const source = readTokens();
+    const themes = [
+      { name: "Light", block: extractRootSubBlock(source) },
+      { name: "Dark", block: extractDarkBlock(source) },
+    ];
+    const analysisLabels = [
+      "cl-color-vocab-amber",
+      "cl-color-phrase-lavender",
+      "cl-color-context-blue",
+      "cl-color-grammar-violet",
+      "cl-color-structure-green",
+    ];
+
+    for (const theme of themes) {
+      const stage = tokenHex(theme.block, "cl-color-reader-stage");
+      const readingInk = tokenHex(theme.block, "cl-color-reader-reading-ink");
+      const readingInkStrong = tokenHex(theme.block, "cl-color-reader-reading-ink-strong");
+      const readingMuted = tokenHex(theme.block, "cl-color-reader-reading-muted");
+
+      expect(
+        contrastRatio(readingInk, stage),
+        `${theme.name} Reader prose must meet enhanced contrast on its stage`,
+      ).toBeGreaterThanOrEqual(7);
+      expect(
+        contrastRatio(readingInkStrong, stage),
+        `${theme.name} Reader prose emphasis must meet enhanced contrast on its stage`,
+      ).toBeGreaterThanOrEqual(7);
+      expect(
+        contrastRatio(readingMuted, stage),
+        `${theme.name} Reader translation and auxiliary copy must meet WCAG text contrast`,
+      ).toBeGreaterThanOrEqual(4.5);
+
+      for (const label of analysisLabels) {
+        expect(
+          contrastRatio(tokenHex(theme.block, label), stage),
+          `${theme.name} ${label} must be safe when used as a small analysis label`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
 });

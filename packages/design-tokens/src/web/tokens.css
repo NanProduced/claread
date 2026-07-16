@@ -35,12 +35,32 @@
   --cl-color-reader-paper-muted: #6b6b6b;
   --cl-color-reader-paper-line: #e0e0e0;
 
-  --cl-color-vocab-amber: #e4b000;
-  --cl-color-phrase-lavender: #b9a8e6;
-  --cl-color-context-blue: #4c91c2;
-  --cl-color-grammar-violet: #746694;
-  --cl-color-structure-green: #3c8c68;
+  /* Reading uses its own neutral contrast ladder. UI ink remains available
+   * for controls and headings; sustained prose stays comfortably below it. */
+  --cl-color-reader-stage: #f8f8f8;
+  --cl-color-reader-reading-ink: #2f2f2f;
+  --cl-color-reader-reading-ink-strong: #151515;
+  --cl-color-reader-reading-muted: #626262;
+
+  /* Article-analysis label inks. These are text-safe on the active theme's
+   * main surface; inline marks use the reading ink with the fills below. */
+  --cl-color-vocab-amber: #8a6500;
+  --cl-color-phrase-lavender: #7157a6;
+  --cl-color-context-blue: #2c6e94;
+  --cl-color-grammar-violet: #5b4e7f;
+  --cl-color-structure-green: #237651;
   --cl-color-error-red: #be123c;
+
+  --cl-color-reader-annotation-vocab-fill: #f6edcf;
+  --cl-color-reader-annotation-vocab-fill-strong: #f1dfaa;
+  --cl-color-reader-annotation-phrase-fill: #eee9f7;
+  --cl-color-reader-annotation-phrase-fill-strong: #e3daf4;
+  --cl-color-reader-annotation-context-fill: #e0eff8;
+  --cl-color-reader-annotation-context-fill-strong: #cde4f4;
+  --cl-color-reader-annotation-grammar-fill: #eeebf4;
+  --cl-color-reader-annotation-grammar-fill-strong: #e1dced;
+  --cl-color-reader-annotation-structure-fill: #e4f1e9;
+  --cl-color-reader-annotation-structure-fill-strong: #d4e8dc;
 
   --cl-color-background: var(--cl-color-app-canvas);
   --cl-color-foreground: var(--cl-color-app-ink);
@@ -104,11 +124,25 @@
   --reader-paper-ink: var(--cl-color-reader-paper-ink);
   --reader-paper-muted: var(--cl-color-reader-paper-muted);
   --reader-paper-line: var(--cl-color-reader-paper-line);
+  --reader-stage: var(--cl-color-reader-stage);
+  --reader-reading-ink: var(--cl-color-reader-reading-ink);
+  --reader-reading-ink-strong: var(--cl-color-reader-reading-ink-strong);
+  --reader-reading-muted: var(--cl-color-reader-reading-muted);
+  --reader-annotation-vocab-fill: var(--cl-color-reader-annotation-vocab-fill);
+  --reader-annotation-vocab-fill-strong: var(--cl-color-reader-annotation-vocab-fill-strong);
+  --reader-annotation-phrase-fill: var(--cl-color-reader-annotation-phrase-fill);
+  --reader-annotation-phrase-fill-strong: var(--cl-color-reader-annotation-phrase-fill-strong);
+  --reader-annotation-context-fill: var(--cl-color-reader-annotation-context-fill);
+  --reader-annotation-context-fill-strong: var(--cl-color-reader-annotation-context-fill-strong);
+  --reader-annotation-grammar-fill: var(--cl-color-reader-annotation-grammar-fill);
+  --reader-annotation-grammar-fill-strong: var(--cl-color-reader-annotation-grammar-fill-strong);
+  --reader-annotation-structure-fill: var(--cl-color-reader-annotation-structure-fill);
+  --reader-annotation-structure-fill-strong: var(--cl-color-reader-annotation-structure-fill-strong);
 
   --web-canvas: var(--app-canvas);
   --surface: var(--app-surface);
   --surface-raised: var(--app-surface-raised);
-  --surface-warm: var(--reader-paper-elevated);
+  --surface-warm: var(--reader-stage);
   --ink: var(--app-ink);
   --ink-soft: color-mix(in srgb, var(--app-ink) 92%, white);
 
@@ -124,8 +158,8 @@
   --error-red: var(--cl-color-error-red);
 
   --surface-canvas: var(--web-canvas);
-  --surface-stage: var(--surface-warm);
-  --surface-overlay: var(--reader-paper-elevated);
+  --surface-stage: var(--reader-stage);
+  --surface-overlay: var(--app-surface-raised);
 
   /* Theme Preferences preview tokens.
    * Fixed Light/Dark sample values used ONLY by .theme-preview-surface
@@ -267,11 +301,36 @@
   --cl-color-app-accent: #8cb2ff;
   --cl-color-app-accent-soft: rgba(140, 178, 255, 0.18);
 
-  --cl-color-reader-paper: #1c1c1c;
+  --cl-color-reader-paper: #191919;
   --cl-color-reader-paper-elevated: #262626;
   --cl-color-reader-paper-ink: #e8e8e8;
   --cl-color-reader-paper-muted: #9a9a9a;
   --cl-color-reader-paper-line: #3d3d3d;
+
+  --cl-color-reader-stage: #191919;
+  --cl-color-reader-reading-ink: #d0d0d0;
+  --cl-color-reader-reading-ink-strong: #dedede;
+  --cl-color-reader-reading-muted: #b3b3b3;
+
+  --cl-color-vocab-amber: #d6b65e;
+  --cl-color-phrase-lavender: #b9a9d7;
+  --cl-color-context-blue: #8dc4e4;
+  --cl-color-grammar-violet: #b8a8d8;
+  --cl-color-structure-green: #8ccaa7;
+
+  /* Persistent Reader annotations must remain scannable against #191919.
+   * These fills are intentionally one tonal step above the calm reader
+   * surface; stronger variants are reserved for hover and active states. */
+  --cl-color-reader-annotation-vocab-fill: #4a3d22;
+  --cl-color-reader-annotation-vocab-fill-strong: #5a4a29;
+  --cl-color-reader-annotation-phrase-fill: #403852;
+  --cl-color-reader-annotation-phrase-fill-strong: #514566;
+  --cl-color-reader-annotation-context-fill: #254454;
+  --cl-color-reader-annotation-context-fill-strong: #2f5568;
+  --cl-color-reader-annotation-grammar-fill: #332d40;
+  --cl-color-reader-annotation-grammar-fill-strong: #433750;
+  --cl-color-reader-annotation-structure-fill: #264332;
+  --cl-color-reader-annotation-structure-fill-strong: #315440;
 
   --cl-color-popover: #2a2a2a;
   --cl-color-popover-foreground: #e8e8e8;

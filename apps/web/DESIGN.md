@@ -64,6 +64,11 @@ spacing:
 
 浅色主题是中性的工作面；深色主题保持相同信息层级与语义映射。Reader 内部遗留的表面 token 名称不构成额外主题，也不得扩展为第三种外观选择。shadcn 的 muted 是弱表面，文字必须使用 muted-foreground；input 使用独立的可辨识边界 token，不能复用装饰性 border。shadcn sidebar 语义 token（sidebar / sidebar-foreground / sidebar-primary / sidebar-primary-foreground / sidebar-accent / sidebar-accent-foreground / sidebar-border / sidebar-ring）映射回已有基础色，不引入独立色彩真相。
 
+### Reader reading and annotation roles
+
+Reader 连续正文使用独立于 UI 的中性墨阶：`reader-stage` 是阅读平面，`reader-reading-ink`、`reader-reading-ink-strong` 与 `reader-reading-muted` 分别服务正文、强调正文与译文/辅助解释。深色模式不得以最亮 UI 墨色渲染所有连续正文；`app-ink` 仍用于标题、控件与当前态。
+
+文章解析颜色仅属于 Reader 语义。每一类都提供 `reader-annotation-*-fill` 与更强的 hover/active fill；行内文字保持阅读墨色，类别色只用于填充、线条、图标和经过真实背景对比验证的标签。词汇、短语、语境、语法与结构不得承担 primary action、focus 或全局 selected 的意义；这些一律使用 `action-primary`。类别还必须借助图标、线条形态、位置或标签表达，不能只依赖颜色。
 ### Theme Preferences Preview tokens
 
 `--theme-preview-light-*` 与 `--theme-preview-dark-*`（定义在 `packages/design-tokens/src/web/tokens.css`）是主题偏好预览的固定示例值，仅服务于 Settings 中 `.theme-preview-surface` 的 Light/Dark 预览卡片。它们是**固定快照**，不跟随当前系统主题切换，目的是让用户在浅色模式下也能预览深色外观、反之亦然。

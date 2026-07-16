@@ -6,6 +6,20 @@
 @theme {
   --color-web-canvas: var(--web-canvas);
   --color-reader-paper: var(--reader-paper);
+  --color-reader-stage: var(--reader-stage);
+  --color-reader-reading-ink: var(--reader-reading-ink);
+  --color-reader-reading-ink-strong: var(--reader-reading-ink-strong);
+  --color-reader-reading-muted: var(--reader-reading-muted);
+  --color-reader-annotation-vocab-fill: var(--reader-annotation-vocab-fill);
+  --color-reader-annotation-vocab-fill-strong: var(--reader-annotation-vocab-fill-strong);
+  --color-reader-annotation-phrase-fill: var(--reader-annotation-phrase-fill);
+  --color-reader-annotation-phrase-fill-strong: var(--reader-annotation-phrase-fill-strong);
+  --color-reader-annotation-context-fill: var(--reader-annotation-context-fill);
+  --color-reader-annotation-context-fill-strong: var(--reader-annotation-context-fill-strong);
+  --color-reader-annotation-grammar-fill: var(--reader-annotation-grammar-fill);
+  --color-reader-annotation-grammar-fill-strong: var(--reader-annotation-grammar-fill-strong);
+  --color-reader-annotation-structure-fill: var(--reader-annotation-structure-fill);
+  --color-reader-annotation-structure-fill-strong: var(--reader-annotation-structure-fill-strong);
   --color-surface: var(--surface);
   --color-surface-warm: var(--surface-warm);
   --color-surface-raised: var(--surface-raised);
@@ -449,42 +463,42 @@ body {
    */
   --reading-paper-surface: var(--reader-paper);
   --reader-floating-surface: rgba(255, 255, 255, 0.985);
-  --reader-floating-surface-strong: rgba(251, 250, 246, 0.965);
-  --reader-floating-border: color-mix(in srgb, var(--hairline) 86%, rgba(15, 23, 42, 0.08));
+  --reader-floating-surface-strong: rgba(255, 255, 255, 0.965);
+  --reader-floating-border: color-mix(in srgb, var(--hairline) 90%, transparent);
   --reader-floating-shadow: 0 14px 38px rgba(17, 17, 17, 0.11);
   --reader-entry-surface: rgba(255, 255, 255, 0.8);
   --reader-entry-surface-strong: rgba(255, 255, 255, 0.92);
-  --reader-entry-shadow: 0 8px 22px rgba(28, 24, 18, 0.045);
+  --reader-entry-shadow: 0 8px 22px rgba(17, 17, 17, 0.045);
   --reader-selection-highlight: rgba(40, 92, 255, 0.2);
-  --reader-mark-vocab-line: transparent;
-  --reader-mark-vocab-fill: rgba(246, 214, 122, 0.34);
-  --reader-mark-vocab-fill-soft: rgba(246, 214, 122, 0.24);
+  --reader-mark-vocab-line: var(--vocab-amber);
+  --reader-mark-vocab-fill: var(--reader-annotation-vocab-fill);
+  --reader-mark-vocab-fill-soft: var(--reader-annotation-vocab-fill);
   --reader-mark-vocab-shadow: transparent;
-  --reader-mark-vocab-ink: rgb(140, 108, 18);
-  --reader-mark-vocab-hover-line: transparent;
-  --reader-mark-vocab-hover-fill: rgba(238, 201, 87, 0.6);
-  --reader-mark-vocab-hover-fill-soft: rgba(238, 201, 87, 0.54);
-  --reader-mark-vocab-hover-ink: rgb(116, 88, 8);
-  --reader-mark-phrase-line: transparent;
-  --reader-mark-phrase-fill: rgba(208, 191, 244, 0.32);
-  --reader-mark-phrase-fill-soft: rgba(208, 191, 244, 0.22);
+  --reader-mark-vocab-ink: var(--reader-reading-ink);
+  --reader-mark-vocab-hover-line: var(--vocab-amber);
+  --reader-mark-vocab-hover-fill: var(--reader-annotation-vocab-fill-strong);
+  --reader-mark-vocab-hover-fill-soft: var(--reader-annotation-vocab-fill-strong);
+  --reader-mark-vocab-hover-ink: var(--reader-reading-ink-strong);
+  --reader-mark-phrase-line: var(--phrase-lavender);
+  --reader-mark-phrase-fill: var(--reader-annotation-phrase-fill);
+  --reader-mark-phrase-fill-soft: var(--reader-annotation-phrase-fill);
   --reader-mark-phrase-shadow: transparent;
-  --reader-mark-phrase-ink: rgb(106, 78, 168);
-  --reader-mark-phrase-hover-line: transparent;
-  --reader-mark-phrase-hover-fill: rgba(188, 165, 238, 0.58);
-  --reader-mark-phrase-hover-fill-soft: rgba(188, 165, 238, 0.5);
-  --reader-mark-phrase-hover-ink: rgb(90, 62, 154);
-  --reader-mark-context-dot: transparent;
-  --reader-mark-context-fill: rgba(165, 208, 239, 0.32);
-  --reader-mark-context-fill-quiet: rgba(165, 208, 239, 0.2);
-  --reader-mark-context-ink: rgb(38, 105, 153);
-  --reader-mark-context-hover-dot: transparent;
-  --reader-mark-context-hover-fill: rgba(138, 191, 232, 0.56);
-  --reader-mark-context-hover-ink: rgb(29, 89, 134);
-  --reader-mark-grammar-line-strong: rgba(95, 78, 138, 0.82);
-  --reader-mark-grammar-line-soft: rgba(95, 78, 138, 0.7);
-  --reader-mark-grammar-fill: rgba(95, 78, 138, 0.08);
-  --reader-mark-grammar-active-fill: rgba(95, 78, 138, 0.12);
+  --reader-mark-phrase-ink: var(--reader-reading-ink);
+  --reader-mark-phrase-hover-line: var(--phrase-lavender);
+  --reader-mark-phrase-hover-fill: var(--reader-annotation-phrase-fill-strong);
+  --reader-mark-phrase-hover-fill-soft: var(--reader-annotation-phrase-fill-strong);
+  --reader-mark-phrase-hover-ink: var(--reader-reading-ink-strong);
+  --reader-mark-context-dot: var(--context-blue);
+  --reader-mark-context-fill: var(--reader-annotation-context-fill);
+  --reader-mark-context-fill-quiet: var(--reader-annotation-context-fill);
+  --reader-mark-context-ink: var(--reader-reading-ink);
+  --reader-mark-context-hover-dot: var(--context-blue);
+  --reader-mark-context-hover-fill: var(--reader-annotation-context-fill-strong);
+  --reader-mark-context-hover-ink: var(--reader-reading-ink-strong);
+  --reader-mark-grammar-line-strong: var(--grammar-violet);
+  --reader-mark-grammar-line-soft: var(--grammar-violet);
+  --reader-mark-grammar-fill: var(--reader-annotation-grammar-fill);
+  --reader-mark-grammar-active-fill: var(--reader-annotation-grammar-fill-strong);
   --reader-record-user-yellow-fill: rgba(254, 240, 138, 0.72);
   --reader-record-user-yellow-fill-active: rgba(254, 226, 110, 0.82);
   --reader-record-user-yellow-line: #a16207;
@@ -494,12 +508,12 @@ body {
   --reader-record-user-rose-fill: rgba(255, 228, 230, 0.78);
   --reader-record-user-rose-fill-active: rgba(254, 205, 211, 0.86);
   --reader-record-user-rose-line: #be123c;
-  --reader-mark-term-line-strong: rgba(39, 108, 77, 0.58);
-  --reader-mark-term-line-soft: rgba(39, 108, 77, 0.24);
-  --reader-mark-term-fill: rgba(60, 140, 104, 0.12);
-  --reader-mark-logic-line-strong: rgba(37, 99, 235, 0.54);
-  --reader-mark-logic-line-soft: rgba(37, 99, 235, 0.22);
-  --reader-mark-logic-fill: rgba(37, 99, 235, 0.1);
+  --reader-mark-term-line-strong: var(--structure-green);
+  --reader-mark-term-line-soft: var(--structure-green);
+  --reader-mark-term-fill: var(--reader-annotation-structure-fill);
+  --reader-mark-logic-line-strong: var(--context-blue);
+  --reader-mark-logic-line-soft: var(--context-blue);
+  --reader-mark-logic-fill: var(--reader-annotation-context-fill);
   --reader-mark-active-surface: rgba(255, 255, 255, 0.72);
   --reader-mark-active-outline: rgba(37, 99, 235, 0.18);
   --reader-mark-active-shadow: rgba(28, 24, 18, 0.055);
@@ -527,27 +541,24 @@ body {
   --reader-entry-active-analysis-border: rgba(39, 108, 77, 0.26);
   --reader-sentence-analysis-surface: rgba(60, 140, 104, 0.05);
   --reader-sentence-analysis-outline: rgba(60, 140, 104, 0.12);
-  --reader-entry-chip-border: rgba(232, 228, 218, 0.82);
-  --reader-entry-chip-hover-border: rgba(98, 101, 109, 0.3);
-  --reader-entry-chip-surface: rgba(251, 250, 246, 0.76);
-  --reader-entry-chip-surface-hover: rgba(255, 255, 255, 0.88);
-  --reader-translation-line: rgba(210, 204, 192, 0.92);
-  --reader-translation-line-strong: rgba(187, 178, 160, 0.9);
-  --reader-translation-copy: rgba(70, 72, 78, 0.95);
-  --reader-translation-copy-strong: rgba(48, 50, 56, 0.98);
+  --reader-entry-chip-border: color-mix(in srgb, var(--hairline) 86%, transparent);
+  --reader-entry-chip-hover-border: color-mix(in srgb, var(--app-muted) 38%, var(--hairline));
+  --reader-entry-chip-surface: color-mix(in srgb, var(--surface) 82%, transparent);
+  --reader-entry-chip-surface-hover: var(--surface);
+  --reader-translation-line: color-mix(in srgb, var(--hairline) 86%, transparent);
+  --reader-translation-line-strong: color-mix(in srgb, var(--app-muted) 52%, var(--hairline));
+  --reader-translation-copy: var(--reader-reading-muted);
+  --reader-translation-copy-strong: var(--reader-reading-ink);
   --reader-translation-selection: rgba(177, 197, 233, 0.38);
   --reader-translation-selection-ink: rgba(38, 46, 58, 0.98);
-  --reader-slip-border: rgba(232, 228, 218, 0.66);
-  --reader-slip-rail: rgba(228, 176, 0, 0.12);
-  --reader-slip-surface-top: rgba(255, 255, 255, 0.54);
-  --reader-slip-surface-bottom: rgba(251, 250, 246, 0.72);
-  --reader-slip-icon-surface: rgba(228, 176, 0, 0.1);
-  --reader-slip-icon-ink: rgba(166, 119, 0, 0.96);
-  --reader-slip-icon-ring: rgba(228, 176, 0, 0.16);
-  --reader-slip-time: rgba(98, 101, 109, 0.68);
+  --reader-slip-border: color-mix(in srgb, var(--hairline) 82%, transparent);
+  --reader-slip-icon-surface: color-mix(in srgb, var(--vocab-amber) 12%, transparent);
+  --reader-slip-icon-ink: var(--vocab-amber);
+  --reader-slip-icon-ring: color-mix(in srgb, var(--vocab-amber) 22%, transparent);
+  --reader-slip-time: var(--reader-reading-muted);
   --reader-entry-note-icon-surface: rgba(255, 255, 255, 0.88);
   --reader-entry-note-icon-highlight: rgba(255, 255, 255, 0.82);
-  --reader-entry-note-icon-shadow: rgba(28, 24, 18, 0.04);
+  --reader-entry-note-icon-shadow: rgba(17, 17, 17, 0.04);
   --reader-entry-icon-surface: rgba(255, 255, 255, 0.64);
   --reader-gutter-note-surface: rgba(228, 176, 0, 0.13);
   --reader-gutter-note-ink: rgba(166, 119, 0, 0.96);
@@ -564,10 +575,10 @@ body {
   --reader-gutter-count-surface: rgba(60, 140, 104, 0.92);
   --reader-gutter-count-ink: rgba(252, 249, 242, 0.98);
   --reader-gutter-count-shadow: rgba(60, 140, 104, 0.24);
-  --reader-gutter-strip-border: rgba(109, 113, 123, 0.16);
-  --reader-gutter-strip-surface: rgba(252, 249, 242, 0.96);
-  --reader-gutter-strip-shadow: rgba(28, 24, 18, 0.12);
-  --reader-gutter-strip-item-ink: rgba(43, 45, 50, 0.86);
+  --reader-gutter-strip-border: color-mix(in srgb, var(--hairline) 84%, transparent);
+  --reader-gutter-strip-surface: color-mix(in srgb, var(--surface) 96%, transparent);
+  --reader-gutter-strip-shadow: rgba(17, 17, 17, 0.12);
+  --reader-gutter-strip-item-ink: var(--reader-reading-ink);
   --reader-gutter-strip-item-hover-surface: rgba(60, 140, 104, 0.1);
   --reader-gutter-strip-item-hover-ink: rgba(25, 31, 28, 0.96);
   --reader-gutter-strip-index-ink: rgba(60, 140, 104, 0.84);
@@ -609,20 +620,20 @@ body {
   --reader-user-range-stacked-dot-2: rgba(47, 116, 123, 0.1);
   --reader-user-range-focus-outline: rgba(145, 106, 55, 0.18);
   --reader-user-range-focus-shadow: rgba(145, 106, 55, 0.08);
-  --reader-mark-dimmed-ink: rgba(17, 17, 17, 0.25);
-  --reader-mark-term-hover-ink: rgb(39, 108, 77);
-  --reader-mark-term-hover-line-strong: rgba(39, 108, 77, 0.76);
-  --reader-mark-term-hover-fill: rgba(60, 140, 104, 0.18);
-  --reader-mark-logic-hover-ink: rgb(38, 105, 153);
-  --reader-mark-logic-hover-line-strong: rgba(37, 99, 235, 0.84);
-  --reader-mark-logic-hover-line-soft: rgba(37, 99, 235, 0.46);
-  --reader-mark-logic-hover-fill: rgba(37, 99, 235, 0.16);
-  --reader-analysis-tone-1: rgb(62, 129, 101);
-  --reader-analysis-tone-2: rgb(168, 118, 34);
-  --reader-analysis-tone-3: rgb(122, 89, 173);
-  --reader-analysis-tone-4: rgb(66, 111, 166);
-  --reader-analysis-tone-5: rgb(163, 90, 70);
-  --reader-analysis-tone-6: rgb(47, 124, 130);
+  --reader-mark-dimmed-ink: color-mix(in srgb, var(--reader-reading-ink) 34%, transparent);
+  --reader-mark-term-hover-ink: var(--reader-reading-ink-strong);
+  --reader-mark-term-hover-line-strong: var(--structure-green);
+  --reader-mark-term-hover-fill: var(--reader-annotation-structure-fill-strong);
+  --reader-mark-logic-hover-ink: var(--reader-reading-ink-strong);
+  --reader-mark-logic-hover-line-strong: var(--context-blue);
+  --reader-mark-logic-hover-line-soft: var(--context-blue);
+  --reader-mark-logic-hover-fill: var(--reader-annotation-context-fill-strong);
+  --reader-analysis-tone-1: var(--structure-green);
+  --reader-analysis-tone-2: var(--vocab-amber);
+  --reader-analysis-tone-3: var(--phrase-lavender);
+  --reader-analysis-tone-4: var(--context-blue);
+  --reader-analysis-tone-5: var(--grammar-violet);
+  --reader-analysis-tone-6: var(--reader-reading-muted);
   --reader-entry-note-grammar-accent: rgb(95, 78, 138);
   --reader-entry-note-grammar-accent-soft: rgba(95, 78, 138, 0.1);
   --reader-entry-note-analysis-accent: rgb(63, 122, 96);
@@ -641,88 +652,97 @@ body {
 }
 
 .dark {
-  --reader-floating-surface: rgba(42, 47, 53, 0.985);
-  --reader-floating-surface-strong: rgba(30, 34, 39, 0.965);
-  --reader-floating-border: color-mix(in srgb, var(--hairline) 84%, rgba(244, 240, 232, 0.08));
-  --reader-floating-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
-  --reader-entry-surface: rgba(39, 44, 50, 0.82);
-  --reader-entry-surface-strong: rgba(45, 50, 56, 0.92);
+  --reader-floating-surface: rgba(37, 37, 37, 0.985);
+  --reader-floating-surface-strong: rgba(37, 37, 37, 0.985);
+  --reader-floating-border: color-mix(in srgb, var(--hairline) 92%, transparent);
+  --reader-floating-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+  --reader-entry-surface: rgba(35, 35, 35, 0.88);
+  --reader-entry-surface-strong: rgba(42, 42, 42, 0.96);
   --reader-entry-shadow: 0 10px 26px rgba(0, 0, 0, 0.18);
-  --reader-selection-highlight: rgba(140, 178, 255, 0.24);
-  --reader-mark-active-surface: rgba(52, 58, 66, 0.82);
+  --reader-selection-highlight: rgba(140, 178, 255, 0.16);
+  --reader-record-user-yellow-fill: rgba(111, 88, 30, 0.62);
+  --reader-record-user-yellow-fill-active: rgba(132, 104, 34, 0.72);
+  --reader-record-user-yellow-line: var(--vocab-amber);
+  --reader-record-user-mint-fill: rgba(44, 82, 58, 0.62);
+  --reader-record-user-mint-fill-active: rgba(53, 101, 70, 0.72);
+  --reader-record-user-mint-line: var(--structure-green);
+  --reader-record-user-rose-fill: rgba(76, 61, 91, 0.62);
+  --reader-record-user-rose-fill-active: rgba(94, 75, 112, 0.72);
+  --reader-record-user-rose-line: var(--phrase-lavender);
+  --reader-mark-active-surface: rgba(42, 42, 42, 0.92);
   --reader-mark-active-outline: rgba(140, 178, 255, 0.24);
   --reader-mark-active-shadow: rgba(0, 0, 0, 0.16);
   --reader-mark-focus-outline: rgba(140, 178, 255, 0.2);
   --reader-mark-focus-shadow: rgba(140, 178, 255, 0.12);
-  --reader-entry-expanded-surface: rgba(39, 44, 50, 0.96);
+  --reader-entry-expanded-surface: rgba(35, 35, 35, 0.96);
   --reader-entry-active-shadow: rgba(0, 0, 0, 0.22);
   --reader-entry-active-outline: rgba(255, 255, 255, 0.05);
   --reader-entry-focus-outline: rgba(140, 178, 255, 0.18);
   --reader-entry-focus-shadow: rgba(0, 0, 0, 0.22);
-  --reader-mark-grammar-line-strong: rgba(176, 156, 231, 0.92);
-  --reader-mark-grammar-line-soft: rgba(156, 138, 210, 0.74);
-  --reader-mark-grammar-fill: rgba(95, 78, 138, 0.26);
-  --reader-mark-term-line-strong: rgba(131, 206, 171, 0.88);
-  --reader-mark-term-line-soft: rgba(111, 182, 149, 0.56);
-  --reader-mark-term-fill: rgba(76, 144, 112, 0.26);
-  --reader-mark-logic-line-strong: rgba(142, 179, 255, 0.92);
-  --reader-mark-logic-line-soft: rgba(122, 160, 238, 0.58);
-  --reader-mark-logic-fill: rgba(92, 132, 226, 0.26);
-  --reader-entry-chip-border: rgba(83, 89, 99, 0.86);
-  --reader-entry-chip-hover-border: rgba(176, 185, 198, 0.34);
-  --reader-entry-chip-surface: rgba(37, 42, 48, 0.84);
-  --reader-entry-chip-surface-hover: rgba(47, 53, 60, 0.96);
-  --reader-translation-line: rgba(84, 91, 101, 0.92);
-  --reader-translation-line-strong: rgba(110, 118, 130, 0.94);
-  --reader-translation-copy: rgba(202, 197, 188, 0.92);
-  --reader-translation-copy-strong: rgba(236, 232, 225, 0.98);
+  --reader-mark-grammar-line-strong: var(--grammar-violet);
+  --reader-mark-grammar-line-soft: var(--grammar-violet);
+  --reader-mark-grammar-fill: var(--reader-annotation-grammar-fill);
+  --reader-mark-term-line-strong: var(--structure-green);
+  --reader-mark-term-line-soft: var(--structure-green);
+  --reader-mark-term-fill: var(--reader-annotation-structure-fill);
+  --reader-mark-logic-line-strong: var(--context-blue);
+  --reader-mark-logic-line-soft: var(--context-blue);
+  --reader-mark-logic-fill: var(--reader-annotation-context-fill);
+  --reader-entry-chip-border: color-mix(in srgb, var(--hairline) 90%, transparent);
+  --reader-entry-chip-hover-border: color-mix(in srgb, var(--app-muted) 52%, var(--hairline));
+  --reader-entry-chip-surface: color-mix(in srgb, var(--surface-raised) 78%, transparent);
+  --reader-entry-chip-surface-hover: var(--surface-raised);
+  --reader-translation-line: color-mix(in srgb, var(--hairline) 88%, transparent);
+  --reader-translation-line-strong: color-mix(in srgb, var(--app-muted) 62%, var(--hairline));
+  --reader-translation-copy: var(--reader-reading-muted);
+  --reader-translation-copy-strong: var(--reader-reading-ink-strong);
   --reader-translation-selection: rgba(104, 136, 214, 0.34);
   --reader-translation-selection-ink: rgba(241, 237, 228, 0.98);
-  --reader-mark-vocab-fill: rgba(227, 193, 103, 0.28);
-  --reader-mark-vocab-fill-soft: rgba(227, 193, 103, 0.2);
-  --reader-mark-vocab-ink: rgba(246, 220, 151, 0.98);
-  --reader-mark-vocab-hover-fill: rgba(233, 200, 115, 0.44);
-  --reader-mark-vocab-hover-fill-soft: rgba(233, 200, 115, 0.36);
-  --reader-mark-vocab-hover-ink: rgba(252, 231, 180, 0.98);
-  --reader-mark-phrase-fill: rgba(172, 150, 228, 0.26);
-  --reader-mark-phrase-fill-soft: rgba(172, 150, 228, 0.18);
-  --reader-mark-phrase-ink: rgba(221, 209, 251, 0.98);
-  --reader-mark-phrase-hover-fill: rgba(186, 166, 238, 0.4);
-  --reader-mark-phrase-hover-fill-soft: rgba(186, 166, 238, 0.34);
-  --reader-mark-phrase-hover-ink: rgba(236, 228, 254, 0.98);
-  --reader-mark-context-fill: rgba(126, 183, 227, 0.26);
-  --reader-mark-context-fill-quiet: rgba(126, 183, 227, 0.18);
-  --reader-mark-context-ink: rgba(197, 228, 248, 0.98);
-  --reader-mark-context-hover-fill: rgba(139, 193, 236, 0.42);
-  --reader-mark-context-hover-ink: rgba(227, 242, 252, 0.98);
-  --reader-mark-dimmed-ink: rgba(243, 239, 230, 0.44);
-  --reader-mark-term-hover-ink: rgba(185, 233, 210, 0.98);
-  --reader-mark-term-hover-line-strong: rgba(131, 206, 171, 0.94);
-  --reader-mark-term-hover-fill: rgba(76, 144, 112, 0.36);
-  --reader-mark-logic-hover-ink: rgba(210, 229, 255, 0.98);
-  --reader-mark-logic-hover-line-strong: rgba(142, 179, 255, 0.98);
-  --reader-mark-logic-hover-line-soft: rgba(142, 179, 255, 0.64);
-  --reader-mark-logic-hover-fill: rgba(92, 132, 226, 0.36);
-  --reader-analysis-tone-1: rgba(146, 212, 181, 0.98);
-  --reader-analysis-tone-2: rgba(224, 181, 103, 0.98);
-  --reader-analysis-tone-3: rgba(194, 166, 241, 0.98);
-  --reader-analysis-tone-4: rgba(155, 190, 238, 0.98);
-  --reader-analysis-tone-5: rgba(214, 144, 124, 0.98);
-  --reader-analysis-tone-6: rgba(133, 204, 209, 0.98);
-  --reader-entry-note-grammar-accent: rgba(176, 156, 231, 0.96);
-  --reader-entry-note-grammar-accent-soft: rgba(176, 156, 231, 0.15);
-  --reader-entry-note-analysis-accent: rgba(146, 212, 181, 0.96);
-  --reader-entry-note-analysis-accent-soft: rgba(146, 212, 181, 0.15);
-  --reader-entry-note-term-accent: rgba(227, 193, 103, 0.58);
-  --reader-entry-note-term-accent-soft: rgba(227, 193, 103, 0.12);
-  --reader-entry-note-logic-accent: rgba(142, 179, 255, 0.58);
-  --reader-entry-note-logic-accent-soft: rgba(142, 179, 255, 0.12);
-  --reader-entry-note-context-accent: rgba(126, 183, 227, 0.58);
-  --reader-entry-note-context-accent-soft: rgba(126, 183, 227, 0.12);
-  --reader-entry-note-icon-surface: rgba(67, 74, 84, 0.58);
-  --reader-entry-note-icon-highlight: rgba(255, 255, 255, 0.06);
+  --reader-mark-vocab-fill: var(--reader-annotation-vocab-fill);
+  --reader-mark-vocab-fill-soft: var(--reader-annotation-vocab-fill);
+  --reader-mark-vocab-ink: var(--reader-reading-ink);
+  --reader-mark-vocab-hover-fill: var(--reader-annotation-vocab-fill-strong);
+  --reader-mark-vocab-hover-fill-soft: var(--reader-annotation-vocab-fill-strong);
+  --reader-mark-vocab-hover-ink: var(--reader-reading-ink-strong);
+  --reader-mark-phrase-fill: var(--reader-annotation-phrase-fill);
+  --reader-mark-phrase-fill-soft: var(--reader-annotation-phrase-fill);
+  --reader-mark-phrase-ink: var(--reader-reading-ink);
+  --reader-mark-phrase-hover-fill: var(--reader-annotation-phrase-fill-strong);
+  --reader-mark-phrase-hover-fill-soft: var(--reader-annotation-phrase-fill-strong);
+  --reader-mark-phrase-hover-ink: var(--reader-reading-ink-strong);
+  --reader-mark-context-fill: var(--reader-annotation-context-fill);
+  --reader-mark-context-fill-quiet: var(--reader-annotation-context-fill);
+  --reader-mark-context-ink: var(--reader-reading-ink);
+  --reader-mark-context-hover-fill: var(--reader-annotation-context-fill-strong);
+  --reader-mark-context-hover-ink: var(--reader-reading-ink-strong);
+  --reader-mark-dimmed-ink: color-mix(in srgb, var(--reader-reading-ink) 48%, transparent);
+  --reader-mark-term-hover-ink: var(--reader-reading-ink-strong);
+  --reader-mark-term-hover-line-strong: var(--structure-green);
+  --reader-mark-term-hover-fill: var(--reader-annotation-structure-fill-strong);
+  --reader-mark-logic-hover-ink: var(--reader-reading-ink-strong);
+  --reader-mark-logic-hover-line-strong: var(--context-blue);
+  --reader-mark-logic-hover-line-soft: var(--context-blue);
+  --reader-mark-logic-hover-fill: var(--reader-annotation-context-fill-strong);
+  --reader-analysis-tone-1: var(--structure-green);
+  --reader-analysis-tone-2: var(--vocab-amber);
+  --reader-analysis-tone-3: var(--phrase-lavender);
+  --reader-analysis-tone-4: var(--context-blue);
+  --reader-analysis-tone-5: var(--grammar-violet);
+  --reader-analysis-tone-6: var(--reader-reading-muted);
+  --reader-entry-note-grammar-accent: var(--grammar-violet);
+  --reader-entry-note-grammar-accent-soft: color-mix(in srgb, var(--grammar-violet) 15%, transparent);
+  --reader-entry-note-analysis-accent: var(--structure-green);
+  --reader-entry-note-analysis-accent-soft: color-mix(in srgb, var(--structure-green) 15%, transparent);
+  --reader-entry-note-term-accent: var(--vocab-amber);
+  --reader-entry-note-term-accent-soft: color-mix(in srgb, var(--vocab-amber) 12%, transparent);
+  --reader-entry-note-logic-accent: var(--context-blue);
+  --reader-entry-note-logic-accent-soft: color-mix(in srgb, var(--context-blue) 12%, transparent);
+  --reader-entry-note-context-accent: var(--context-blue);
+  --reader-entry-note-context-accent-soft: color-mix(in srgb, var(--context-blue) 12%, transparent);
+  --reader-entry-note-icon-surface: color-mix(in srgb, var(--surface-raised) 82%, transparent);
+  --reader-entry-note-icon-highlight: color-mix(in srgb, var(--app-ink) 6%, transparent);
   --reader-entry-note-icon-shadow: rgba(0, 0, 0, 0.22);
-  --reader-entry-icon-surface: rgba(59, 65, 73, 0.58);
+  --reader-entry-icon-surface: color-mix(in srgb, var(--surface-raised) 74%, transparent);
   --reader-gutter-note-surface: rgba(227, 193, 103, 0.18);
   --reader-gutter-note-ink: rgba(247, 223, 164, 0.98);
   --reader-gutter-note-ring: rgba(227, 193, 103, 0.3);
@@ -738,35 +758,35 @@ body {
   --reader-gutter-count-surface: rgba(131, 206, 171, 0.94);
   --reader-gutter-count-ink: rgba(24, 31, 28, 0.98);
   --reader-gutter-count-shadow: rgba(0, 0, 0, 0.24);
-  --reader-gutter-strip-border: rgba(89, 95, 105, 0.42);
-  --reader-gutter-strip-surface: rgba(34, 38, 43, 0.96);
+  --reader-gutter-strip-border: color-mix(in srgb, var(--hairline) 88%, transparent);
+  --reader-gutter-strip-surface: color-mix(in srgb, var(--surface-raised) 74%, transparent);
   --reader-gutter-strip-shadow: rgba(0, 0, 0, 0.24);
-  --reader-gutter-strip-item-ink: rgba(214, 208, 198, 0.88);
-  --reader-gutter-strip-item-hover-surface: rgba(131, 206, 171, 0.16);
-  --reader-gutter-strip-item-hover-ink: rgba(239, 242, 246, 0.98);
-  --reader-gutter-strip-index-ink: rgba(178, 231, 210, 0.9);
+  --reader-gutter-strip-item-ink: var(--reader-reading-ink);
+  --reader-gutter-strip-item-hover-surface: color-mix(in srgb, var(--structure-green) 16%, transparent);
+  --reader-gutter-strip-item-hover-ink: var(--reader-reading-ink-strong);
+  --reader-gutter-strip-index-ink: var(--structure-green);
   --reader-route-focus-frame-ring: rgba(140, 178, 255, 0.28);
   --reader-route-focus-frame-shadow: rgba(52, 88, 170, 0.18);
   --reader-route-focus-line: rgba(140, 178, 255, 0.62);
   --reader-route-focus-fill: rgba(140, 178, 255, 0.2);
   --reader-route-focus-range-outline: rgba(140, 178, 255, 0.16);
   --reader-route-focus-range-edge: rgba(140, 178, 255, 0.14);
-  --reader-note-focus-surface: rgba(74, 63, 21, 0.34);
-  --reader-note-focus-line: rgba(240, 198, 98, 0.98);
-  --reader-note-focus-fill: rgba(186, 145, 37, 0.3);
-  --reader-note-focus-edge: rgba(240, 198, 98, 0.2);
-  --reader-note-focus-outline: rgba(240, 198, 98, 0.18);
-  --reader-note-focus-shadow: rgba(240, 198, 98, 0.14);
-  --reader-note-focus-underline: rgba(248, 214, 130, 0.98);
-  --reader-user-highlight-warm-fill: rgba(235, 163, 127, 0.24);
-  --reader-user-highlight-warm-line: rgba(248, 194, 168, 0.8);
-  --reader-user-highlight-warm-edge: rgba(248, 194, 168, 0.12);
-  --reader-user-highlight-mint-fill: rgba(126, 182, 142, 0.22);
-  --reader-user-highlight-mint-line: rgba(174, 219, 186, 0.72);
-  --reader-user-highlight-mint-edge: rgba(174, 219, 186, 0.12);
-  --reader-user-highlight-rose-fill: rgba(169, 146, 219, 0.22);
-  --reader-user-highlight-rose-line: rgba(220, 205, 251, 0.72);
-  --reader-user-highlight-rose-edge: rgba(220, 205, 251, 0.12);
+  --reader-note-focus-surface: rgba(67, 54, 23, 0.52);
+  --reader-note-focus-line: var(--vocab-amber);
+  --reader-note-focus-fill: rgba(122, 96, 32, 0.42);
+  --reader-note-focus-edge: rgba(214, 182, 94, 0.18);
+  --reader-note-focus-outline: rgba(214, 182, 94, 0.16);
+  --reader-note-focus-shadow: rgba(214, 182, 94, 0.1);
+  --reader-note-focus-underline: var(--vocab-amber);
+  --reader-user-highlight-warm-fill: rgba(111, 88, 30, 0.32);
+  --reader-user-highlight-warm-line: var(--vocab-amber);
+  --reader-user-highlight-warm-edge: rgba(214, 182, 94, 0.12);
+  --reader-user-highlight-mint-fill: rgba(44, 82, 58, 0.3);
+  --reader-user-highlight-mint-line: var(--structure-green);
+  --reader-user-highlight-mint-edge: rgba(140, 202, 167, 0.12);
+  --reader-user-highlight-rose-fill: rgba(76, 61, 91, 0.3);
+  --reader-user-highlight-rose-line: var(--phrase-lavender);
+  --reader-user-highlight-rose-edge: rgba(185, 169, 215, 0.12);
   --reader-user-range-warm-line: rgba(248, 194, 168, 0.52);
   --reader-user-range-warm-fill-hover: rgba(235, 163, 127, 0.2);
   --reader-user-range-warm-line-hover: rgba(248, 194, 168, 0.82);
@@ -855,14 +875,14 @@ select {
 .daily-hero {
   position: relative;
   height: clamp(260px, 33vh, 480px);
-  background: #D4D0C8;
+  background: var(--surface-raised);
 }
 
 .daily-hero-fade {
   position: absolute;
   inset: auto 0 0 0;
   height: 40%;
-  background: linear-gradient(to top, #FAF9F6 0%, rgba(250, 249, 246, 0.6) 50%, transparent 100%);
+  background: linear-gradient(to top, var(--surface-canvas) 0%, color-mix(in srgb, var(--surface-canvas) 62%, transparent) 50%, transparent 100%);
   pointer-events: none;
 }
 
@@ -1371,47 +1391,34 @@ select {
 }
 
 .reader-dictionary-panel {
-  background:
-    radial-gradient(circle at 14% 0%, rgba(228, 176, 0, 0.04), transparent 10rem),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(251, 250, 246, 0.98)),
-    var(--surface-warm);
+  background: var(--surface-raised);
 }
 
 .reader-dictionary-card {
-  box-shadow:
-    0 1px 2px rgba(17, 17, 17, 0.03),
-    0 16px 42px rgba(28, 24, 18, 0.08);
+  box-shadow: none;
 }
 
 .reader-dictionary-toolbar-button {
-  border-color: rgba(232, 228, 218, 0.96);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(250, 249, 246, 0.96)),
-    var(--surface);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  border-color: var(--hairline);
+  background: var(--surface);
+  box-shadow: none;
   color: var(--muted-foreground);
   transition:
     transform 160ms ease,
     border-color 160ms ease,
-    box-shadow 160ms ease,
     background-color 160ms ease,
     color 160ms ease;
 }
 
 .reader-dictionary-toolbar-button:hover {
-  border-color: rgba(98, 101, 109, 0.28);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
+  border-color: color-mix(in srgb, var(--ink) 20%, var(--hairline));
   color: var(--ink);
 }
 
 .reader-dictionary-toolbar-button--active {
-  border-color: rgba(37, 99, 235, 0.2);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(234, 241, 255, 0.95)),
-    var(--lens-blue-soft);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.72),
-    0 8px 18px rgba(37, 99, 235, 0.08);
+  border-color: color-mix(in srgb, var(--lens-blue) 32%, var(--hairline));
+  background: var(--lens-blue-soft);
+  box-shadow: none;
   color: var(--lens-blue);
 }
 
@@ -1420,8 +1427,8 @@ select {
   align-items: center;
   min-height: 1.35rem;
   border-radius: 999px;
-  border: 1px solid rgba(60, 140, 104, 0.12);
-  background: rgba(60, 140, 104, 0.06);
+  border: 1px solid color-mix(in srgb, var(--structure-green) 18%, transparent);
+  background: color-mix(in srgb, var(--structure-green) 10%, transparent);
   padding: 0.1rem 0.45rem;
   font-size: 0.68rem;
   font-weight: 600;
@@ -1430,53 +1437,43 @@ select {
 }
 
 .reader-dictionary-meta-tag--count {
-  border-color: rgba(232, 228, 218, 0.88);
-  background: rgba(250, 249, 246, 0.78);
+  border-color: var(--hairline);
+  background: var(--surface-raised);
   color: var(--muted-foreground);
 }
 
 .reader-dictionary-secondary-button {
-  border-color: rgba(232, 228, 218, 0.9);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(250, 249, 246, 0.96)),
-    var(--surface);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  border-color: var(--hairline);
+  background: var(--surface);
+  box-shadow: none;
   color: var(--ink-soft);
   transition:
     transform 160ms ease,
     border-color 160ms ease,
-    box-shadow 160ms ease,
     background-color 160ms ease,
     color 160ms ease;
 }
 
 .reader-dictionary-secondary-button:hover {
-  border-color: rgba(98, 101, 109, 0.24);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  border-color: color-mix(in srgb, var(--ink) 18%, var(--hairline));
 }
 
 .reader-dictionary-secondary-button:disabled {
   transform: none;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.7),
-    0 4px 12px rgba(37, 99, 235, 0.05);
+  box-shadow: none;
 }
 
 .reader-dictionary-secondary-button--active {
-  border-color: rgba(228, 176, 0, 0.22);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(253, 248, 232, 0.98)),
-    var(--surface);
+  border-color: color-mix(in srgb, var(--vocab-amber) 32%, var(--hairline));
+  background: var(--surface-raised);
   color: var(--vocab-amber);
 }
 
 .reader-dictionary-segmented {
-  border: 1px solid rgba(232, 228, 218, 0.86);
+  border: 1px solid var(--hairline);
   border-radius: 0.9rem;
-  background:
-    linear-gradient(180deg, rgba(247, 246, 242, 0.84), rgba(255, 255, 255, 0.7)),
-    var(--reader-paper);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  background: var(--surface-raised);
+  box-shadow: none;
 }
 
 .reader-dictionary-tab {
@@ -1494,13 +1491,9 @@ select {
 }
 
 .reader-dictionary-tab--active {
-  border: 1px solid rgba(232, 228, 218, 0.96);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(251, 250, 246, 0.98)),
-    var(--surface);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.76),
-    0 8px 18px rgba(17, 17, 17, 0.05);
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  box-shadow: none;
   color: var(--ink);
 }
 
@@ -1511,7 +1504,6 @@ select {
 .reader-dictionary-tab-count--active {
   color: var(--muted-foreground);
 }
-
 .reader-dictionary-tertiary-button {
   border-radius: 999px;
   border: 1px solid transparent;
@@ -1598,7 +1590,7 @@ select {
 }
 
 .reader-immersive-paragraph-copy {
-  color: var(--ink);
+  color: var(--reader-reading-ink);
 }
 
 .reader-immersive-paragraph-cue {
@@ -1724,7 +1716,7 @@ select {
 }
 
 .reader-mark {
-  --reader-mark-fill: color-mix(in srgb, var(--vocab-amber) 24%, transparent);
+  --reader-mark-fill: var(--reader-annotation-vocab-fill);
   --reader-mark-line: color-mix(in srgb, var(--vocab-amber) 58%, transparent);
   --reader-mark-edge: color-mix(in srgb, var(--vocab-amber) 12%, transparent);
 
@@ -1732,7 +1724,7 @@ select {
   margin-inline: -0.035em;
   padding: 0.01em 0.11em 0.06em;
   border-radius: 0.18em;
-  color: var(--ink);
+  color: var(--reader-reading-ink);
   text-decoration-line: none;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
@@ -1842,6 +1834,7 @@ select {
 }
 
 .reader-record-plate-document {
+  color: var(--reader-reading-ink);
   --reader-record-selection-fill: rgba(37, 99, 235, 0.18);
   --reader-record-selection-fill-strong: rgba(37, 99, 235, 0.24);
   --reader-record-selection-outline: rgba(37, 99, 235, 0.2);
@@ -1937,7 +1930,7 @@ select {
   border-radius: 0.2rem;
   background: var(--reader-record-selection-fill-strong) !important;
   box-shadow: 0 0 0 1px var(--reader-record-selection-outline);
-  mix-blend-mode: multiply;
+
   opacity: 0.58;
   transition:
     opacity 120ms ease,
@@ -3388,7 +3381,7 @@ select {
   background-image: none !important;
   box-shadow: none !important;
   text-decoration: none !important;
-  color: rgba(17, 17, 17, 0.76) !important;
+  color: var(--reader-reading-muted) !important;
 }
 
 .reader-sentence--user-highlight {
@@ -3431,7 +3424,7 @@ select {
 
 .reader-analysis-atom--context-muted {
   --analysis-fill: transparent;
-  color: rgba(17, 17, 17, 0.76);
+  color: var(--reader-reading-muted);
 }
 
 .reader-analysis-atom--1,
@@ -4212,7 +4205,7 @@ select {
   background-color: transparent !important;
   background-image: none !important;
   box-shadow: none !important;
-  color: rgba(17, 17, 17, 0.76) !important;
+  color: var(--reader-reading-muted) !important;
 }
 
 .reader-user-range--warm-yellow:hover,
@@ -4490,27 +4483,21 @@ select {
 .reader-annotation-slip {
   border: 1px solid var(--reader-slip-border);
   border-radius: 8px;
-  background:
-    linear-gradient(90deg, var(--reader-slip-rail) 0 1px, transparent 1px),
-    linear-gradient(180deg, var(--reader-slip-surface-top), var(--reader-slip-surface-bottom)),
-    var(--surface-warm);
+  background: var(--surface-raised);
   padding: 0.72rem 0.86rem;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.72),
-    0 0.55rem 1.4rem rgba(28, 24, 18, 0.035);
+  box-shadow: none;
   cursor: pointer;
   transition:
     border-color 160ms ease,
-    box-shadow 160ms ease,
+    background-color 160ms ease,
     transform 160ms ease;
 }
 
 .reader-annotation-slip:hover,
 .reader-annotation-slip:focus-within {
-  border-color: rgba(204, 197, 182, 0.84);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.8),
-    0 0.85rem 1.8rem rgba(28, 24, 18, 0.055);
+  border-color: color-mix(in srgb, var(--ink) 20%, var(--hairline));
+  background: var(--surface);
+  box-shadow: none;
   transform: translateY(-1px);
 }
 
@@ -4594,7 +4581,7 @@ select {
   font-size: 0.84rem !important;
   font-weight: 380 !important;
   line-height: 1.62 !important;
-  color: color-mix(in srgb, var(--ink) 54%, transparent) !important;
+  color: var(--reader-reading-muted) !important;
   letter-spacing: 0.01em !important;
   text-indent: 0 !important; /* Ensure translation never indents first line */
 }
@@ -4627,33 +4614,33 @@ select {
 }
 
 .reader-shell--immersive .reader-mark--vocab.reader-mark--interactive:hover {
-  background-color: rgba(246, 214, 122, 0.12) !important;
-  color: rgb(140, 108, 18) !important;
-  border-bottom-color: rgba(246, 214, 122, 0.5) !important;
+  background-color: var(--reader-annotation-vocab-fill) !important;
+  color: var(--reader-reading-ink-strong) !important;
+  border-bottom-color: var(--reader-mark-vocab-line) !important;
 }
 
 .reader-shell--immersive .reader-mark--phrase.reader-mark--interactive:hover {
-  background-color: rgba(208, 191, 244, 0.12) !important;
-  color: rgb(106, 78, 168) !important;
-  border-bottom-color: rgba(208, 191, 244, 0.5) !important;
+  background-color: var(--reader-annotation-phrase-fill) !important;
+  color: var(--reader-reading-ink-strong) !important;
+  border-bottom-color: var(--reader-mark-phrase-line) !important;
 }
 
 .reader-shell--immersive .reader-mark--context.reader-mark--interactive:hover {
-  background-color: rgba(165, 208, 239, 0.12) !important;
-  color: rgb(38, 105, 153) !important;
-  border-bottom-color: rgba(165, 208, 239, 0.5) !important;
+  background-color: var(--reader-annotation-context-fill) !important;
+  color: var(--reader-reading-ink-strong) !important;
+  border-bottom-color: var(--reader-mark-context-dot) !important;
 }
 
 .reader-shell--immersive .reader-mark--term.reader-mark--interactive:hover {
-  background-color: rgba(60, 140, 104, 0.08) !important;
-  color: rgb(39, 108, 77) !important;
-  border-bottom-color: rgba(60, 140, 104, 0.4) !important;
+  background-color: var(--reader-annotation-structure-fill) !important;
+  color: var(--reader-reading-ink-strong) !important;
+  border-bottom-color: var(--reader-mark-term-line-strong) !important;
 }
 
 .reader-shell--immersive .reader-mark--logic.reader-mark--interactive:hover {
-  background-color: rgba(37, 99, 235, 0.06) !important;
-  color: rgb(37, 99, 235) !important;
-  border-bottom-color: rgba(37, 99, 235, 0.4) !important;
+  background-color: var(--reader-annotation-context-fill) !important;
+  color: var(--reader-reading-ink-strong) !important;
+  border-bottom-color: var(--reader-mark-logic-line-strong) !important;
 }
 
 .reader-shell--immersive .reader-mark--grammar,
@@ -4667,9 +4654,9 @@ select {
 
 .reader-shell--immersive .reader-mark--grammar.reader-mark--grammar-linked,
 .reader-shell--immersive .reader-mark--grammar.reader-mark--grammar-pinned {
-  background-color: rgba(95, 78, 138, 0.06) !important;
-  border-bottom: 1.5px solid rgba(95, 78, 138, 0.38) !important;
-  color: rgb(95, 78, 138) !important;
+  background-color: var(--reader-annotation-grammar-fill) !important;
+  border-bottom: 1.5px solid var(--reader-mark-grammar-line-strong) !important;
+  color: var(--reader-reading-ink-strong) !important;
 }
 
 /* Quieter User Highlights in Immersive Mode */
@@ -4715,7 +4702,7 @@ select {
   font-size: 0.85rem !important;
   font-weight: 380 !important;
   line-height: 1.68 !important;
-  color: color-mix(in srgb, var(--ink) 48%, transparent) !important;
+  color: var(--reader-reading-muted) !important;
 }
 
 /* Balance vertical margins for grammar/analysis card blocks in Intensive Mode to prevent visual cramping */

@@ -175,6 +175,116 @@ describe("globals.css — reader-theme-preview classes reference preview tokens"
 });
 
 // ---------------------------------------------------------------------------
+// Dark Reader color hierarchy contract
+// ---------------------------------------------------------------------------
+
+function darkThemeBlock(source: string): string {
+  const start = source.indexOf(".dark {\n  --reader-floating-surface:");
+  expect(start).toBeGreaterThanOrEqual(0);
+  const open = source.indexOf("{", start);
+  let depth = 1;
+  let index = open + 1;
+  while (depth > 0 && index < source.length) {
+    if (source[index] === "{") depth++;
+    else if (source[index] === "}") depth--;
+    index++;
+  }
+  return source.slice(start, index);
+}
+
+describe("Dark Reader color hierarchy", () => {
+  const darkSection = darkThemeBlock(GLOBALS_CSS);
+
+  it("uses neutral floating and entry surfaces rather than blue-gray recipes", () => {
+    expect(darkSection).toMatch(/--reader-floating-surface:\s*rgba\(37, 37, 37,/);
+    expect(darkSection).toMatch(/--reader-entry-surface:\s*rgba\(35, 35, 35,/);
+    expect(darkSection).not.toMatch(/rgba\(42, 47, 53/);
+    expect(darkSection).not.toMatch(/rgba\(39, 44, 50/);
+  });
+
+  it("defines Dark-specific subdued fills for every Reading Record user highlight", () => {
+    expect(darkSection).toMatch(/--reader-record-user-yellow-fill:\s*rgba\(111, 88, 30,/);
+    expect(darkSection).toMatch(/--reader-record-user-mint-fill:\s*rgba\(44, 82, 58,/);
+    expect(darkSection).toMatch(/--reader-record-user-rose-fill:\s*rgba\(76, 61, 91,/);
+  });
+
+  it("uses direct selection paint rather than a multiply blend overlay", () => {
+    const selectionStart = GLOBALS_CSS.indexOf(".reader-record-plate-document .slate-selection-area");
+    const selectionEnd = GLOBALS_CSS.indexOf("}", selectionStart);
+    const selectionSection = GLOBALS_CSS.slice(selectionStart, selectionEnd);
+    expect(selectionSection).not.toMatch(/mix-blend-mode/);
+    expect(selectionSection).toMatch(/var\(--reader-record-selection-fill-strong\)/);
+  });
+});
+// ---------------------------------------------------------------------------
+// Reader theme recipe convergence
+// ---------------------------------------------------------------------------
+
+describe("Reader theme recipe convergence", () => {
+  const darkSection = darkThemeBlock(GLOBALS_CSS);
+  it("uses the reading-muted token for context-muted marks and analysis atoms", () => {
+    const selectors = [
+      ".reader-mark--context-muted {",
+      ".reader-analysis-atom--context-muted {",
+      ".reader-user-range--context-muted {",
+    ];
+
+    for (const selector of selectors) {
+      const start = GLOBALS_CSS.indexOf(selector);
+      expect(start, `${selector} should exist`).toBeGreaterThanOrEqual(0);
+      const end = GLOBALS_CSS.indexOf("}", start);
+      const section = GLOBALS_CSS.slice(start, end);
+      expect(section).toMatch(/color:\s*var\(--reader-reading-muted\)/);
+      expect(section).not.toMatch(/rgba\(17,\s*17,\s*17,\s*0\.76\)/);
+    }
+  });
+
+  it("keeps Dark Reader support surfaces neutral rather than blue-gray", () => {
+    expect(darkSection).not.toMatch(/rgba\(83,\s*89,\s*99/);
+    expect(darkSection).not.toMatch(/rgba\(67,\s*74,\s*84/);
+    expect(darkSection).not.toMatch(/rgba\(59,\s*65,\s*73/);
+    expect(darkSection).not.toMatch(/rgba\(34,\s*38,\s*43/);
+    expect(darkSection).toMatch(/--reader-entry-chip-surface:\s*color-mix\(in srgb, var\(--surface-raised\)/);
+    expect(darkSection).toMatch(/--reader-gutter-strip-surface:\s*color-mix\(in srgb, var\(--surface-raised\)/);
+  });
+
+  it("removes Light-only cream recipes from dictionary, annotation slips, and Daily hero", () => {
+    const dictionaryStart = GLOBALS_CSS.indexOf(".reader-dictionary-panel {");
+    const dictionaryEnd = GLOBALS_CSS.indexOf(".reader-dictionary-tertiary-button {", dictionaryStart);
+    const dictionarySection = GLOBALS_CSS.slice(dictionaryStart, dictionaryEnd);
+    expect(dictionarySection).not.toMatch(/linear-gradient|rgba\(255,|rgba\(250,|rgba\(251,/);
+    expect(dictionarySection).toMatch(/background:\s*var\(--surface-raised\)/);
+    expect(dictionarySection).toMatch(/border-color:\s*var\(--hairline\)/);
+
+    const slipStart = GLOBALS_CSS.indexOf(".reader-annotation-slip {");
+    const slipEnd = GLOBALS_CSS.indexOf(".reader-annotation-slip-icon {", slipStart);
+    const slipSection = GLOBALS_CSS.slice(slipStart, slipEnd);
+    expect(slipSection).not.toMatch(/linear-gradient|var\(--surface-warm\)|rgba\(/);
+    expect(slipSection).toMatch(/background:\s*var\(--surface-raised\)/);
+
+    const heroStart = GLOBALS_CSS.indexOf(".daily-hero {");
+    const heroEnd = GLOBALS_CSS.indexOf("@media (min-width: 640px)", heroStart);
+    const heroSection = GLOBALS_CSS.slice(heroStart, heroEnd);
+    expect(heroSection).not.toMatch(/#D4D0C8|#FAF9F6|rgba\(250,\s*249,\s*246/);
+    expect(heroSection).toMatch(/background:\s*var\(--surface-raised\)/);
+    expect(heroSection).toMatch(/var\(--surface-canvas\)/);
+  });
+
+  it("maps analysis tones back to the Reader semantic palette", () => {
+    for (const semanticToken of [
+      "structure-green",
+      "vocab-amber",
+      "phrase-lavender",
+      "context-blue",
+      "grammar-violet",
+      "reader-reading-muted",
+    ]) {
+      expect(GLOBALS_CSS).toContain(`var(--${semanticToken})`);
+    }
+    expect(GLOBALS_CSS).not.toMatch(/--reader-analysis-tone-[1-6]:\s*(?:rgb|rgba)\(/);
+  });
+});
+// ---------------------------------------------------------------------------
 // Theme localStorage contract — Reader must not read/write theme keys
 // ---------------------------------------------------------------------------
 
