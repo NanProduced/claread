@@ -8,8 +8,8 @@
  *   - the document.documentElement dataset.appTheme attribute carries
  *     ONLY resolved light/dark — never "system" or "paper".
  *
- * Legacy Reader theme migration (paper -> system, no-overwrite, key
- * cleanup) is covered exhaustively in src/lib/appearance.test.ts.
+ * Global theme storage is `claread.theme.v1`; no legacy Reader-only
+ * theme storage is read, written, or migrated.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

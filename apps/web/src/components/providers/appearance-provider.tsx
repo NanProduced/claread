@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { ThemeProvider, useTheme } from "next-themes";
 
 /**
@@ -23,7 +23,6 @@ if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
 }
 
 import {
-  migrateLegacyReaderThemeStorage,
   normalizeThemePreference,
   THEME_STORAGE_KEY,
   type ResolvedTheme,
@@ -56,17 +55,6 @@ interface AppearanceContextValue {
 }
 
 const AppearanceContext = createContext<AppearanceContextValue | null>(null);
-
-/**
- * Run the one-time migration of the legacy Reader-only theme storage key
- * into the global theme preference before ThemeProvider initializes, so
- * the migrated value is picked up on first paint. The function is a no-op
- * on the server and when the legacy key is absent. When a migration
- * actually writes a value, the result is captured so the provider can
- * replay it through the same WebPreferences persistence/cloud-sync path
- * used for explicit preference changes.
- */
-const legacyReaderThemeMigrationResult = migrateLegacyReaderThemeStorage();
 
 function ThemeColorSync() {
   const { resolvedTheme } = useTheme();
@@ -104,10 +92,9 @@ export function normalizeResolvedTheme(value: unknown): ResolvedTheme {
 
 /**
  * Persist a theme preference into the local WebPreferences payload and
- * trigger the cloud sync path. Used both for explicit preference changes
- * (via `setThemePreference`) and for the one-time legacy Reader theme
- * migration replay, so the two paths share identical persistence
- * semantics.
+ * trigger the cloud sync path. Used for explicit preference changes
+ * (via `setThemePreference`) so the local payload and cloud profile
+ * stay in sync.
  */
 function persistThemePreference(next: ThemePreference) {
   try {
@@ -122,22 +109,9 @@ function persistThemePreference(next: ThemePreference) {
 function AppearanceContextBridge({ children }: { children: React.ReactNode }) {
   const { theme, resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
-  const didReplayLegacyReaderThemeMigration = useRef(false);
 
   useEffect(() => {
     setMounted(true); // eslint-disable-line react-hooks/set-state-in-effect
-  }, []);
-
-  // Replay a legacy Reader theme migration through the same
-  // persistence/cloud-sync path as an explicit preference change. This
-  // only fires once per provider instance and only when the migration
-  // actually wrote a value — `migrated === null` means no sync happens.
-  useEffect(() => {
-    const migrated = legacyReaderThemeMigrationResult.migrated;
-    if (migrated === null || didReplayLegacyReaderThemeMigration.current) return;
-
-    didReplayLegacyReaderThemeMigration.current = true;
-    persistThemePreference(migrated);
   }, []);
 
   const resolvedCurrent = useMemo<ResolvedTheme>(() => {
