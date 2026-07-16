@@ -16,6 +16,13 @@ const SCROLL_LOCK_MS = 700;
 const ACTIVE_SAFE_OFFSET = 8;
 const PANEL_ANCHOR_EDGE_PADDING = 18;
 
+const PLATE_DOCUMENT_SELECTOR = ".reader-record-plate-document";
+
+function getPlateDocumentRoot(): HTMLElement | null {
+  if (typeof document === "undefined") return null;
+  return document.querySelector<HTMLElement>(PLATE_DOCUMENT_SELECTOR);
+}
+
 /**
  * Locate the best scroll target for a reading unit inside the Reader Record
  * body. We never fall back to global `[data-unit-id]` because the rail itself
@@ -25,10 +32,11 @@ const PANEL_ANCHOR_EDGE_PADDING = 18;
  * 1. paragraph with `data-reader-record-unit-start="true"` and matching unitId
  * 2. first paragraph with matching unitId
  */
-function findUnitTarget(unitId: string): HTMLElement | null {
-  const body = document.querySelector<HTMLElement>(
-    ".reader-record-plate-document",
-  );
+function findUnitTarget(
+  unitId: string,
+  plateRoot: HTMLElement | null = getPlateDocumentRoot(),
+): HTMLElement | null {
+  const body = plateRoot;
   if (!body) return null;
 
   const paragraphs = body.querySelectorAll<HTMLElement>(
@@ -50,6 +58,48 @@ function findUnitTarget(unitId: string): HTMLElement | null {
 }
 
 /**
+ * Cache entry is valid only when it is still a live paragraph for `unitId`
+ * under the current plate document root. Detached or remounted nodes (common
+ * after Plate setValue) must not drive scroll spy or click positioning.
+ */
+function isValidCachedUnitTarget(
+  unitId: string,
+  el: HTMLElement,
+  plateRoot: HTMLElement | null,
+): boolean {
+  if (!el.isConnected) return false;
+  if (!plateRoot || !plateRoot.contains(el)) return false;
+  if (el.getAttribute("data-reader-record-node") !== "paragraph") return false;
+  if (el.getAttribute("data-unit-id") !== unitId) return false;
+  return true;
+}
+
+/**
+ * Single validated target resolver for scroll spy and click.
+ * Invalid cache entries are deleted and re-resolved immediately.
+ */
+function resolveValidatedUnitTarget(
+  unitId: string,
+  map: Map<string, HTMLElement>,
+  plateRoot: HTMLElement | null = getPlateDocumentRoot(),
+): HTMLElement | null {
+  const cached = map.get(unitId);
+  if (cached) {
+    if (isValidCachedUnitTarget(unitId, cached, plateRoot)) {
+      return cached;
+    }
+    map.delete(unitId);
+  }
+
+  const resolved = findUnitTarget(unitId, plateRoot);
+  if (resolved && isValidCachedUnitTarget(unitId, resolved, plateRoot)) {
+    map.set(unitId, resolved);
+    return resolved;
+  }
+  return null;
+}
+
+/**
  * Active unit for scroll spy.
  * - L0: last unit above safeTop, else first below, else first item.
  * - L1: only last heading above safeTop; lead zone (all headings below) → null.
@@ -61,11 +111,19 @@ function computeActiveUnitId(
   safeTop: number,
   mode: ReaderRecordNavigationMode,
 ): string | null {
+  // Query the plate root once per frame. Resolution remains lazy for only
+  // the ordered candidates actually examined by the scroll spy.
+  const plateRoot = getPlateDocumentRoot();
   let lastAbove: string | null = null;
   let firstBelow: string | null = null;
 
   for (const item of items) {
-    const target = targetMap.get(item.unitId);
+    // Prefer validated resolver so detached cache entries cannot drive active.
+    const target = resolveValidatedUnitTarget(
+      item.unitId,
+      targetMap,
+      plateRoot,
+    );
     if (!target) continue;
 
     const top = target.getBoundingClientRect().top;
@@ -366,22 +424,6 @@ export function ReaderRecordNavigationRail({
   const targetMapRef = useRef<Map<string, HTMLElement>>(new Map());
   const sourceIdentityKeyRef = useRef(sourceIdentityKey);
 
-  // --- Target map caching (performance) ---------------------------------
-  // Rebuild the target map only when items change, not on every scroll frame.
-  // Missing targets are lazily populated on scroll until the map is complete.
-  const refreshTargetsLazy = useCallback((): Map<string, HTMLElement> => {
-    const map = targetMapRef.current;
-    if (map.size >= items.length && items.length > 0) return map;
-    for (const item of items) {
-      if (map.has(item.unitId)) continue;
-      const target = findUnitTarget(item.unitId);
-      if (target) {
-        map.set(item.unitId, target);
-      }
-    }
-    return map;
-  }, [items]);
-
   // Invalidate cache when items change (different unit ids or count).
   useEffect(() => {
     targetMapRef.current = new Map();
@@ -458,10 +500,12 @@ export function ReaderRecordNavigationRail({
     }, SCROLL_LOCK_MS);
   }, []);
 
-  // --- Scroll-based active section (cached target map) ------------------
+  // --- Scroll-based active section (validated target map) ---------------
   useEffect(() => {
     if (typeof window === "undefined" || items.length === 0) return;
 
+    // Fence: rAF scheduled for this source must not commit after base/generation switches.
+    const fenceSourceIdentityKey = sourceIdentityKey;
     const scrollContainer = getScrollContainer() ?? window;
     let rafId: number | null = null;
     let pending = false;
@@ -471,13 +515,15 @@ export function ReaderRecordNavigationRail({
       pending = true;
       rafId = window.requestAnimationFrame(() => {
         pending = false;
+        // Drop stale frames from a previous source identity.
+        if (sourceIdentityKeyRef.current !== fenceSourceIdentityKey) {
+          return;
+        }
         if (lockedUnitIdRef.current) return;
 
-        // Use cached map — no querySelectorAll per frame.
-        const map = refreshTargetsLazy();
         const activeId = computeActiveUnitId(
           items,
-          map,
+          targetMapRef.current,
           TOPBAR_SAFE_HEIGHT + ACTIVE_SAFE_OFFSET,
           mode,
         );
@@ -497,7 +543,7 @@ export function ReaderRecordNavigationRail({
         window.cancelAnimationFrame(rafId);
       }
     };
-  }, [items, mode, refreshTargetsLazy]);
+  }, [items, mode, sourceIdentityKey]);
 
   // L0 only: default the active item to the first unit until scrolling provides a signal.
   // L1 lead zone must keep activeUnitId = null (no first-heading pseudo-active).
@@ -541,7 +587,8 @@ export function ReaderRecordNavigationRail({
   // --- Navigation actions -----------------------------------------------
   const handleItemClick = useCallback(
     (unitId: string) => {
-      const target = targetMapRef.current.get(unitId) ?? findUnitTarget(unitId);
+      // Same validated resolver as scroll spy — never scroll to a detached node.
+      const target = resolveValidatedUnitTarget(unitId, targetMapRef.current);
       if (target) {
         const scrollContainer = getScrollContainer() ?? window;
         const isWindow = scrollContainer === window;

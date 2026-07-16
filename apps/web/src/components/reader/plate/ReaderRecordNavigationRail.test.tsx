@@ -1651,7 +1651,12 @@ describe("ReaderRecordNavigationRail", () => {
 
     it("F12: L1 a11y copy never uses 文章目录/大纲/第 N 节; open/close + lead/active", async () => {
       const units = headingRichUnits();
-      renderTargets(units.map((u) => u.unit_id), [20, 40, 200, 300, 500, 600, 700]);
+      const { paragraphs } = renderTargets(
+        units.map((u) => u.unit_id),
+        [20, 40, 200, 300, 500, 600, 700],
+      );
+      paragraphs[1]!.setAttribute("data-reader-record-unit-start", "true");
+      paragraphs[4]!.setAttribute("data-reader-record-unit-start", "true");
 
       render(
         <ReaderRecordNavigationRail
@@ -1676,15 +1681,14 @@ describe("ReaderRecordNavigationRail", () => {
       expect(trigger.getAttribute("aria-label")).toMatch(/关闭章节导航/);
       expect(trigger.getAttribute("aria-label")).not.toMatch(forbidden);
 
-      // Lead: move all headings below safe line.
-      const body = document.querySelector(".reader-record-plate-document")!;
-      const ps = body.querySelectorAll<HTMLElement>('[data-reader-record-node="paragraph"]');
-      ps.forEach((el) => setRectTop(el, 200, 100));
+      // Lead: move all unit targets below safe line (validated live rects).
+      paragraphs.forEach((el) => setRectTop(el, 200, 100));
       triggerScroll();
       await waitFor(() => {
-        expect(trigger.getAttribute("aria-label")).toBe("关闭章节导航");
+        const label = trigger.getAttribute("aria-label");
+        expect(label).toBe("关闭章节导航");
+        expect(label).not.toMatch(/当前第/);
       });
-      expect(trigger.getAttribute("aria-label")).not.toMatch(/当前第/);
     });
 
     it("F11: L1 display strips markdown # from heading labels", async () => {
@@ -1786,6 +1790,99 @@ describe("ReaderRecordNavigationRail", () => {
         .querySelectorAll("button");
       expect(Array.from(rows).every((r) => r.getAttribute("aria-current") !== "true")).toBe(
         true,
+      );
+    });
+
+    it("revalidates target cache: detached nodes with same unit ids cannot keep false active", async () => {
+      const units = headingRichUnits();
+      // First mount: headings above safeTop → active chapter one.
+      const first = renderTargets(
+        units.map((u) => u.unit_id),
+        [20, 40, 200, 300, 500, 600, 700],
+      );
+      first.paragraphs[1]!.setAttribute("data-reader-record-unit-start", "true");
+      first.paragraphs[4]!.setAttribute("data-reader-record-unit-start", "true");
+
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units, { baseId: "base_cache", generation: 1 })}
+          plateDocument={plateFromUnits(units)}
+        />,
+      );
+
+      const trigger = screen.getByTestId("reader-record-outline-trigger");
+      triggerScroll();
+      await waitFor(() => {
+        expect(trigger.getAttribute("aria-label")).toBe(
+          "打开章节导航，当前第 1 项",
+        );
+      });
+
+      // Simulate Plate setValue: detach old paragraphs, mount new ones with the
+      // same unit ids but all below safeTop (lead). Stale cache must not win.
+      first.body.remove();
+      const second = renderTargets(
+        units.map((u) => u.unit_id),
+        [200, 220, 400, 500, 600, 700, 800],
+      );
+      second.paragraphs[1]!.setAttribute("data-reader-record-unit-start", "true");
+      second.paragraphs[4]!.setAttribute("data-reader-record-unit-start", "true");
+
+      triggerScroll();
+      await waitFor(() => {
+        expect(trigger.getAttribute("aria-label")).toBe("打开章节导航");
+        expect(trigger.getAttribute("aria-label")).not.toMatch(/当前第/);
+      });
+    });
+
+    it("click resolves live target after detached remount with same unit ids", async () => {
+      const units = headingRichUnits();
+      const first = renderTargets(
+        units.map((u) => u.unit_id),
+        [20, 40, 200, 300, 500, 600, 700],
+      );
+      first.paragraphs[1]!.setAttribute("data-reader-record-unit-start", "true");
+      first.paragraphs[4]!.setAttribute("data-reader-record-unit-start", "true");
+
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units, { baseId: "base_click", generation: 1 })}
+          plateDocument={plateFromUnits(units)}
+        />,
+      );
+
+      // Warm the target cache via spy.
+      triggerScroll();
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("reader-record-outline-trigger").getAttribute("aria-label"),
+        ).toMatch(/当前第 1 项/);
+      });
+
+      first.body.remove();
+      const second = renderTargets(
+        units.map((u) => u.unit_id),
+        [100, 500, 600, 700, 800, 900, 1000],
+      );
+      second.paragraphs[1]!.setAttribute("data-reader-record-unit-start", "true");
+      second.paragraphs[4]!.setAttribute("data-reader-record-unit-start", "true");
+      setRectTop(second.paragraphs[4]!, 500, 100);
+      vi.stubGlobal("scrollY", 0);
+
+      hoverTick(0);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+      fireEvent.click(panel.querySelectorAll("button")[1]!);
+
+      // Must scroll using the *new* connected u5 node, not the detached cache.
+      expect(window.scrollTo).toHaveBeenCalledWith({
+        top: 500 - 56 - 8,
+        behavior: "smooth",
+      });
+      expect(panel.querySelectorAll("button")[1]?.getAttribute("aria-current")).toBe(
+        "true",
       );
     });
 
