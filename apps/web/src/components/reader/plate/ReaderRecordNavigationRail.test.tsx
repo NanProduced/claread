@@ -7,6 +7,7 @@ import {
   READER_PLATE_SNAPSHOT_SCHEMA_KIND,
   READER_TEXT_RANGE_HASH_ALGORITHM,
   type ReaderPlateSnapshotDto,
+  type ReaderUnitType,
 } from "@/types/api/reader-plate";
 import {
   READER_RECORD_PLATE_DOCUMENT_SCHEMA_VERSION,
@@ -14,6 +15,13 @@ import {
 } from "@/lib/reader-plate/projection/reader-record-plate-document";
 
 import { ReaderRecordNavigationRail } from "./ReaderRecordNavigationRail";
+
+type SnapshotUnitInput = {
+  unit_id: string;
+  order_index: number;
+  label?: string | null;
+  unit_type?: ReaderUnitType;
+};
 
 function makeParagraph(
   unitId: string,
@@ -51,7 +59,8 @@ function makeParagraph(
 }
 
 function makeSnapshot(
-  units: { unit_id: string; order_index: number; label?: string | null }[],
+  units: SnapshotUnitInput[],
+  options?: { baseId?: string; generation?: number },
 ): ReaderPlateSnapshotDto {
   return {
     schema_kind: READER_PLATE_SNAPSHOT_SCHEMA_KIND,
@@ -70,12 +79,12 @@ function makeSnapshot(
       created_at: "2024-01-01T00:00:00Z",
       source_type: "text",
       source_metadata: {},
-      generation: 1,
+      generation: options?.generation ?? 1,
       product_state: "readable_enhancing",
       readiness_state: "article_ready",
     },
     base: {
-      base_id: "base_1",
+      base_id: options?.baseId ?? "base_1",
       content_sha256: "sha256",
       canonicalizer_version: "v1",
       builder_version: "v1",
@@ -85,8 +94,10 @@ function makeSnapshot(
     },
     navigation: {
       units: units.map((u) => ({
-        ...u,
-        unit_type: "body" as const,
+        unit_id: u.unit_id,
+        order_index: u.order_index,
+        label: u.label,
+        unit_type: u.unit_type ?? "body",
         boundary_quality: "normal" as const,
         base_start_utf16: 0,
         base_end_utf16: 10,
@@ -105,6 +116,27 @@ function makeSnapshot(
     parsed_decisions: [],
     value: [],
   };
+}
+
+/** unit_count>=6 && heading_count>=2 with lead body. */
+function headingRichUnits(): SnapshotUnitInput[] {
+  return [
+    { unit_id: "u1", order_index: 1, unit_type: "body", label: null },
+    { unit_id: "u2", order_index: 2, unit_type: "heading", label: "Chapter One" },
+    { unit_id: "u3", order_index: 3, unit_type: "body", label: null },
+    { unit_id: "u4", order_index: 4, unit_type: "body", label: null },
+    { unit_id: "u5", order_index: 5, unit_type: "heading", label: "Chapter Two" },
+    { unit_id: "u6", order_index: 6, unit_type: "body", label: null },
+    { unit_id: "u7", order_index: 7, unit_type: "body", label: null },
+  ];
+}
+
+function plateFromUnits(units: SnapshotUnitInput[]): ReaderRecordPlateDocument {
+  return makePlateDocument(
+    units.map((u) =>
+      makeParagraph(u.unit_id, u.label ?? `Paragraph for ${u.unit_id}.`, true),
+    ),
+  );
 }
 
 function makePlateDocument(
@@ -1394,5 +1426,495 @@ describe("ReaderRecordNavigationRail", () => {
     for (const tick of Array.from(ticks)) {
       expect(tick.className).not.toContain("pointer-events-none");
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // L1 deterministic heading navigation (T5.1c)
+  // ---------------------------------------------------------------------------
+
+  describe("L1 heading navigation", () => {
+    it("F1: heading-rich uses L1 mode with only heading ticks and 第 N 项 rows", async () => {
+      const units = headingRichUnits();
+      const snapshot = makeSnapshot(units);
+      const plateDocument = plateFromUnits(units);
+      // Render all units so heading targets exist; L1 only spies headings.
+      renderTargets(units.map((u) => u.unit_id), [20, 100, 200, 300, 400, 500, 600]);
+
+      render(
+        <ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />,
+      );
+
+      const rail = screen.getByTestId("reader-record-navigation-rail");
+      expect(rail.getAttribute("data-navigation-mode")).toBe("L1");
+      expect(rail.getAttribute("aria-label")).toBe("阅读定位");
+
+      const miniRail = screen.getByTestId("reader-record-mini-rail");
+      const ticks = miniRail.querySelectorAll("span[data-navigation-unit-id]");
+      expect(ticks).toHaveLength(2);
+      expect(ticks[0]?.getAttribute("data-navigation-unit-id")).toBe("u2");
+      expect(ticks[1]?.getAttribute("data-navigation-unit-id")).toBe("u5");
+
+      hoverTick(0);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+      expect(screen.getByText("Chapter One")).toBeTruthy();
+      expect(screen.getByText("Chapter Two")).toBeTruthy();
+      expect(screen.getByText("第 1 项")).toBeTruthy();
+      expect(screen.getByText("第 2 项")).toBeTruthy();
+      expect(screen.queryByText("第 1 段")).toBeNull();
+    });
+
+    it("F2: pure-body stays L0 段落导航", () => {
+      const units: SnapshotUnitInput[] = Array.from({ length: 6 }, (_, i) => ({
+        unit_id: `u${i + 1}`,
+        order_index: i + 1,
+        unit_type: "body" as const,
+        label: `Body ${i + 1}`,
+      }));
+      renderTargets(units.map((u) => u.unit_id));
+
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units)}
+          plateDocument={plateFromUnits(units)}
+        />,
+      );
+
+      const rail = screen.getByTestId("reader-record-navigation-rail");
+      expect(rail.getAttribute("data-navigation-mode")).toBe("L0");
+      const ticks = screen
+        .getByTestId("reader-record-mini-rail")
+        .querySelectorAll("span[data-navigation-unit-id]");
+      expect(ticks).toHaveLength(6);
+      expect(screen.getByTestId("reader-record-outline-trigger").getAttribute("aria-label")).toBe(
+        "打开段落导航，当前第 1 段",
+      );
+    });
+
+    it("F4b: single heading long article stays L0 (must not swallow full list)", () => {
+      const units: SnapshotUnitInput[] = [
+        { unit_id: "u1", order_index: 1, unit_type: "body", label: "A" },
+        { unit_id: "u2", order_index: 2, unit_type: "heading", label: "Only" },
+        { unit_id: "u3", order_index: 3, unit_type: "body", label: "B" },
+        { unit_id: "u4", order_index: 4, unit_type: "body", label: "C" },
+        { unit_id: "u5", order_index: 5, unit_type: "body", label: "D" },
+        { unit_id: "u6", order_index: 6, unit_type: "body", label: "E" },
+      ];
+      renderTargets(units.map((u) => u.unit_id));
+
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units)}
+          plateDocument={plateFromUnits(units)}
+        />,
+      );
+
+      expect(
+        screen.getByTestId("reader-record-navigation-rail").getAttribute("data-navigation-mode"),
+      ).toBe("L0");
+      expect(
+        screen
+          .getByTestId("reader-record-mini-rail")
+          .querySelectorAll("span[data-navigation-unit-id]"),
+      ).toHaveLength(6);
+    });
+
+    it("F5: document-fallback (empty nav units) forces L0", () => {
+      const plateDocument = makePlateDocument([
+        makeParagraph("unit_first", "First"),
+        makeParagraph("unit_second", "Second"),
+      ]);
+      renderTargets(["unit_first", "unit_second"]);
+
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot([])}
+          plateDocument={plateDocument}
+        />,
+      );
+
+      expect(
+        screen.getByTestId("reader-record-navigation-rail").getAttribute("data-navigation-mode"),
+      ).toBe("L0");
+      expect(
+        screen
+          .getByTestId("reader-record-mini-rail")
+          .querySelectorAll("span[data-navigation-unit-id]"),
+      ).toHaveLength(2);
+    });
+
+    it("F6: empty nav + empty document does not render rail", () => {
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot([])}
+          plateDocument={makePlateDocument([])}
+        />,
+      );
+      expect(screen.queryByTestId("reader-record-navigation-rail")).toBeNull();
+    });
+
+    it("F9: lead zone has null active, no aria-current, trigger without 当前第 N 项", async () => {
+      const units = headingRichUnits();
+      // All heading targets below safeTop (64) → lead zone.
+      renderTargets(units.map((u) => u.unit_id), [100, 200, 300, 400, 500, 600, 700]);
+
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units)}
+          plateDocument={plateFromUnits(units)}
+        />,
+      );
+
+      const trigger = screen.getByTestId("reader-record-outline-trigger");
+      await waitFor(() => {
+        expect(trigger.getAttribute("aria-label")).toBe("打开章节导航");
+      });
+      expect(trigger.getAttribute("aria-label")).not.toMatch(/当前第/);
+
+      hoverTick(0);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+      const rows = panel.querySelectorAll("button");
+      expect(Array.from(rows).every((r) => r.getAttribute("aria-current") !== "true")).toBe(
+        true,
+      );
+      // Keyboard focus may land on first heading without making it active.
+      const tabbable = Array.from(rows).filter((r) => r.getAttribute("tabindex") === "0");
+      expect(tabbable).toHaveLength(1);
+      expect(tabbable[0]?.getAttribute("aria-current")).toBeNull();
+    });
+
+    it("F1 spy: reading body under a heading keeps that heading active", async () => {
+      const units = headingRichUnits();
+      // u2 (heading) above safe line; body units not in L1 candidates.
+      // tops for all units; L1 only maps u2 and u5.
+      renderTargets(units.map((u) => u.unit_id), [20, 40, 200, 300, 500, 600, 700]);
+
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units)}
+          plateDocument={plateFromUnits(units)}
+        />,
+      );
+
+      const trigger = screen.getByTestId("reader-record-outline-trigger");
+      triggerScroll();
+      await waitFor(() => {
+        expect(trigger.getAttribute("aria-label")).toBe(
+          "打开章节导航，当前第 1 项",
+        );
+      });
+    });
+
+    it("L1 click scrolls to heading unit-start and locks active", async () => {
+      const units = headingRichUnits();
+      const { paragraphs } = renderTargets(
+        units.map((u) => u.unit_id),
+        [20, 500, 600, 700, 800, 900, 1000],
+      );
+      // paragraphs[1] is u2 heading unit-start (first unit in each is unit-start only for index 0
+      // in renderTargets — fix: renderTargets only marks i===0 as unit-start).
+      // Mark heading paragraphs as unit-start.
+      paragraphs[1]!.setAttribute("data-reader-record-unit-start", "true");
+      paragraphs[4]!.setAttribute("data-reader-record-unit-start", "true");
+      setRectTop(paragraphs[1]!, 500, 100);
+      vi.stubGlobal("scrollY", 0);
+
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units)}
+          plateDocument={plateFromUnits(units)}
+        />,
+      );
+
+      hoverTick(0);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+      const rows = panel.querySelectorAll("button");
+      fireEvent.click(rows[0]!);
+
+      expect(window.scrollTo).toHaveBeenCalledWith({
+        top: 500 - 56 - 8,
+        behavior: "smooth",
+      });
+      expect(rows[0]?.getAttribute("aria-current")).toBe("true");
+      expect(
+        screen.getByTestId("reader-record-outline-trigger").getAttribute("aria-label"),
+      ).toMatch(/关闭章节导航，当前第 1 项|打开章节导航，当前第 1 项/);
+    });
+
+    it("F12: L1 a11y copy never uses 文章目录/大纲/第 N 节; open/close + lead/active", async () => {
+      const units = headingRichUnits();
+      renderTargets(units.map((u) => u.unit_id), [20, 40, 200, 300, 500, 600, 700]);
+
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units)}
+          plateDocument={plateFromUnits(units)}
+        />,
+      );
+
+      const trigger = screen.getByTestId("reader-record-outline-trigger");
+      const forbidden = /文章目录|大纲|第 \d+ 节/;
+
+      triggerScroll();
+      await waitFor(() => {
+        expect(trigger.getAttribute("aria-label")).toMatch(/章节导航/);
+      });
+      expect(trigger.getAttribute("aria-label")).not.toMatch(forbidden);
+
+      fireEvent.click(trigger);
+      await waitFor(() => {
+        expect(trigger.getAttribute("aria-expanded")).toBe("true");
+      });
+      expect(trigger.getAttribute("aria-label")).toMatch(/关闭章节导航/);
+      expect(trigger.getAttribute("aria-label")).not.toMatch(forbidden);
+
+      // Lead: move all headings below safe line.
+      const body = document.querySelector(".reader-record-plate-document")!;
+      const ps = body.querySelectorAll<HTMLElement>('[data-reader-record-node="paragraph"]');
+      ps.forEach((el) => setRectTop(el, 200, 100));
+      triggerScroll();
+      await waitFor(() => {
+        expect(trigger.getAttribute("aria-label")).toBe("关闭章节导航");
+      });
+      expect(trigger.getAttribute("aria-label")).not.toMatch(/当前第/);
+    });
+
+    it("F11: L1 display strips markdown # from heading labels", async () => {
+      const units: SnapshotUnitInput[] = [
+        { unit_id: "u1", order_index: 1, unit_type: "body", label: null },
+        {
+          unit_id: "u2",
+          order_index: 2,
+          unit_type: "heading",
+          label: "# Markdown Title",
+        },
+        { unit_id: "u3", order_index: 3, unit_type: "body", label: null },
+        {
+          unit_id: "u4",
+          order_index: 4,
+          unit_type: "heading",
+          label: "## Second",
+        },
+        { unit_id: "u5", order_index: 5, unit_type: "body", label: null },
+        { unit_id: "u6", order_index: 6, unit_type: "body", label: null },
+      ];
+      renderTargets(units.map((u) => u.unit_id));
+
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units)}
+          plateDocument={plateFromUnits(units)}
+        />,
+      );
+
+      hoverTick(0);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+      expect(screen.getByText("Markdown Title")).toBeTruthy();
+      expect(screen.getByText("Second")).toBeTruthy();
+      expect(screen.queryByText("# Markdown Title")).toBeNull();
+    });
+
+    it("F8b: same unit ids across new base_id must reset active/scroll-lock state", async () => {
+      const units = headingRichUnits();
+      const tops = [20, 40, 200, 300, 500, 600, 700];
+      const { paragraphs } = renderTargets(
+        units.map((u) => u.unit_id),
+        tops,
+      );
+      paragraphs[1]!.setAttribute("data-reader-record-unit-start", "true");
+      paragraphs[4]!.setAttribute("data-reader-record-unit-start", "true");
+
+      const plateDocument = plateFromUnits(units);
+      const { rerender } = render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units, { baseId: "base_old", generation: 1 })}
+          plateDocument={plateDocument}
+        />,
+      );
+
+      const trigger = screen.getByTestId("reader-record-outline-trigger");
+      triggerScroll();
+      await waitFor(() => {
+        expect(trigger.getAttribute("aria-label")).toBe(
+          "打开章节导航，当前第 1 项",
+        );
+      });
+
+      // Click second heading to lock active = u5.
+      hoverTick(0);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+      fireEvent.click(panel.querySelectorAll("button")[1]!);
+      expect(panel.querySelectorAll("button")[1]?.getAttribute("aria-current")).toBe(
+        "true",
+      );
+
+      // New base, same u1..u7 labels — must not keep active=u5.
+      // Place all headings in lead zone so after reset active stays null.
+      paragraphs.forEach((p) => setRectTop(p, 200, 100));
+
+      rerender(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units, { baseId: "base_new", generation: 1 })}
+          plateDocument={plateDocument}
+        />,
+      );
+
+      triggerScroll();
+      await waitFor(() => {
+        // Panel may still be open; identity reset only clears active/focus/lock/map.
+        expect(trigger.getAttribute("aria-label")).toMatch(
+          /^(打开|关闭)章节导航$/,
+        );
+        expect(trigger.getAttribute("aria-label")).not.toMatch(/当前第/);
+      });
+      const rows = screen
+        .getByTestId("reader-record-navigation-panel")
+        .querySelectorAll("button");
+      expect(Array.from(rows).every((r) => r.getAttribute("aria-current") !== "true")).toBe(
+        true,
+      );
+    });
+
+    it("F8: generation change resets state even when base_id and unit ids match", async () => {
+      const units = headingRichUnits();
+      const { paragraphs } = renderTargets(
+        units.map((u) => u.unit_id),
+        [20, 40, 200, 300, 500, 600, 700],
+      );
+
+      const plateDocument = plateFromUnits(units);
+      const { rerender } = render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units, { baseId: "base_1", generation: 1 })}
+          plateDocument={plateDocument}
+        />,
+      );
+
+      const trigger = screen.getByTestId("reader-record-outline-trigger");
+      triggerScroll();
+      await waitFor(() => {
+        expect(trigger.getAttribute("aria-label")).toMatch(/当前第 1 项/);
+      });
+
+      paragraphs.forEach((p) => setRectTop(p, 200, 100));
+      rerender(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units, { baseId: "base_1", generation: 2 })}
+          plateDocument={plateDocument}
+        />,
+      );
+      triggerScroll();
+      await waitFor(() => {
+        expect(trigger.getAttribute("aria-label")).toBe("打开章节导航");
+      });
+    });
+
+    it("F7: base_id switch with different identity clears prior active", async () => {
+      const unitsA = headingRichUnits();
+      const unitsB: SnapshotUnitInput[] = [
+        { unit_id: "x1", order_index: 1, unit_type: "body", label: null },
+        { unit_id: "x2", order_index: 2, unit_type: "heading", label: "New One" },
+        { unit_id: "x3", order_index: 3, unit_type: "body", label: null },
+        { unit_id: "x4", order_index: 4, unit_type: "heading", label: "New Two" },
+        { unit_id: "x5", order_index: 5, unit_type: "body", label: null },
+        { unit_id: "x6", order_index: 6, unit_type: "body", label: null },
+      ];
+
+      const { body: bodyA } = renderTargets(
+        unitsA.map((u) => u.unit_id),
+        [20, 40, 200, 300, 500, 600, 700],
+      );
+      const { rerender } = render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(unitsA, { baseId: "base_a", generation: 1 })}
+          plateDocument={plateFromUnits(unitsA)}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("reader-record-outline-trigger").getAttribute("aria-label"),
+        ).toMatch(/当前第 1 项/);
+      });
+
+      // Swap plate document targets without wiping the React root.
+      bodyA.remove();
+      renderTargets(unitsB.map((u) => u.unit_id), [200, 300, 400, 500, 600, 700]);
+
+      rerender(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(unitsB, { baseId: "base_b", generation: 1 })}
+          plateDocument={plateFromUnits(unitsB)}
+        />,
+      );
+
+      triggerScroll();
+      await waitFor(() => {
+        const label = screen
+          .getByTestId("reader-record-outline-trigger")
+          .getAttribute("aria-label");
+        expect(label).toMatch(/^(打开|关闭)章节导航$/);
+        expect(label).not.toMatch(/当前第/);
+      });
+      expect(
+        screen
+          .getByTestId("reader-record-mini-rail")
+          .querySelectorAll("span[data-navigation-unit-id]"),
+      ).toHaveLength(2);
+      expect(screen.getByText("New One")).toBeTruthy();
+    });
+
+    it("keeps L1 scroll lock for 700ms after click", async () => {
+      const units = headingRichUnits();
+      const { paragraphs } = renderTargets(
+        units.map((u) => u.unit_id),
+        [20, 40, 200, 300, 500, 600, 700],
+      );
+      paragraphs[1]!.setAttribute("data-reader-record-unit-start", "true");
+      paragraphs[4]!.setAttribute("data-reader-record-unit-start", "true");
+
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units)}
+          plateDocument={plateFromUnits(units)}
+        />,
+      );
+
+      hoverTick(0);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+      const rows = panel.querySelectorAll("button");
+      fireEvent.click(rows[1]!);
+      expect(rows[1]?.getAttribute("aria-current")).toBe("true");
+
+      // During lock, spy would prefer first heading — must stay on second.
+      setRectTop(paragraphs[1]!, 40, 100);
+      setRectTop(paragraphs[4]!, 200, 100);
+      triggerScroll();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(rows[1]?.getAttribute("aria-current")).toBe("true");
+
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      triggerScroll();
+      await waitFor(() =>
+        expect(rows[0]?.getAttribute("aria-current")).toBe("true"),
+      );
+    });
   });
 });

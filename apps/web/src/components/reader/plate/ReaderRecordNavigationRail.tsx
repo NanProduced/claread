@@ -4,8 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
 import {
-  buildReaderRecordNavigationItems,
+  projectReaderRecordNavigation,
   type ReaderRecordNavigationItem,
+  type ReaderRecordNavigationMode,
 } from "@/lib/reader-plate/projection/reader-record-navigation";
 import type { ReaderRecordPlateDocument } from "@/lib/reader-plate/projection/reader-record-plate-document";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
@@ -48,10 +49,17 @@ function findUnitTarget(unitId: string): HTMLElement | null {
   return fallback;
 }
 
+/**
+ * Active unit for scroll spy.
+ * - L0: last unit above safeTop, else first below, else first item.
+ * - L1: only last heading above safeTop; lead zone (all headings below) → null.
+ *   Body coverage keeps the previous heading active because body is not a candidate.
+ */
 function computeActiveUnitId(
   items: ReaderRecordNavigationItem[],
   targetMap: Map<string, HTMLElement>,
   safeTop: number,
+  mode: ReaderRecordNavigationMode,
 ): string | null {
   let lastAbove: string | null = null;
   let firstBelow: string | null = null;
@@ -70,7 +78,30 @@ function computeActiveUnitId(
     }
   }
 
+  if (mode === "L1") {
+    // Lead zone: no heading has been crossed — do not pretend first heading is active.
+    return lastAbove;
+  }
+
   return lastAbove ?? firstBelow ?? items[0]?.unitId ?? null;
+}
+
+function buildNavigationTriggerLabel(
+  mode: ReaderRecordNavigationMode,
+  panelOpen: boolean,
+  activeIndex: number | null,
+): string {
+  if (mode === "L1") {
+    const action = panelOpen ? "关闭章节导航" : "打开章节导航";
+    if (activeIndex === null) {
+      return action;
+    }
+    return `${action}，当前第 ${activeIndex} 项`;
+  }
+
+  const action = panelOpen ? "关闭段落导航" : "打开段落导航";
+  // L0 always has a current segment index once items exist.
+  return `${action}，当前第 ${activeIndex ?? 1} 段`;
 }
 
 function clampPanelAnchorTop(top: number, railHeight: number): number {
@@ -155,6 +186,7 @@ function VisualTicks({
 
 interface NavigationPanelProps {
   items: ReaderRecordNavigationItem[];
+  mode: ReaderRecordNavigationMode;
   activeUnitId: string | null;
   focusedUnitId: string | null;
   panelOpen: boolean;
@@ -173,6 +205,7 @@ interface NavigationPanelProps {
 
 function NavigationPanel({
   items,
+  mode,
   activeUnitId,
   focusedUnitId,
   panelOpen,
@@ -273,6 +306,7 @@ function NavigationPanel({
               <NavigationPanelRow
                 key={item.unitId}
                 item={item}
+                mode={mode}
                 active={item.unitId === activeUnitId}
                 // Roving tabindex: only the focused item is tabbable (0),
                 // all others are -1. When closed, all are -1.
@@ -311,10 +345,11 @@ export function ReaderRecordNavigationRail({
   className,
   layout = "viewport",
 }: ReaderRecordNavigationRailProps) {
-  const items = useMemo(
-    () => buildReaderRecordNavigationItems(snapshot, plateDocument),
+  const projection = useMemo(
+    () => projectReaderRecordNavigation(snapshot, plateDocument),
     [snapshot, plateDocument],
   );
+  const { mode, items, sourceIdentityKey } = projection;
 
   const [activeUnitId, setActiveUnitId] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -329,6 +364,7 @@ export function ReaderRecordNavigationRail({
   const scrollLockTimerRef = useRef<number | null>(null);
   const lockedUnitIdRef = useRef<string | null>(null);
   const targetMapRef = useRef<Map<string, HTMLElement>>(new Map());
+  const sourceIdentityKeyRef = useRef(sourceIdentityKey);
 
   // --- Target map caching (performance) ---------------------------------
   // Rebuild the target map only when items change, not on every scroll frame.
@@ -350,6 +386,23 @@ export function ReaderRecordNavigationRail({
   useEffect(() => {
     targetMapRef.current = new Map();
   }, [items]);
+
+  // Source identity reset: base_id:generation change must clear all rail state,
+  // even when unit ids still look like u1/u2.
+  useEffect(() => {
+    if (sourceIdentityKeyRef.current === sourceIdentityKey) {
+      return;
+    }
+    sourceIdentityKeyRef.current = sourceIdentityKey;
+    setActiveUnitId(null);
+    setFocusedUnitId(null);
+    lockedUnitIdRef.current = null;
+    if (scrollLockTimerRef.current !== null) {
+      window.clearTimeout(scrollLockTimerRef.current);
+      scrollLockTimerRef.current = null;
+    }
+    targetMapRef.current = new Map();
+  }, [sourceIdentityKey]);
 
   const clearCloseTimer = useCallback(() => {
     if (closeTimerRef.current !== null) {
@@ -426,10 +479,10 @@ export function ReaderRecordNavigationRail({
           items,
           map,
           TOPBAR_SAFE_HEIGHT + ACTIVE_SAFE_OFFSET,
+          mode,
         );
-        if (activeId) {
-          setActiveUnitId(activeId);
-        }
+        // L1 lead zone yields null; must clear any previous active.
+        setActiveUnitId(activeId);
       });
     };
 
@@ -444,16 +497,19 @@ export function ReaderRecordNavigationRail({
         window.cancelAnimationFrame(rafId);
       }
     };
-  }, [items, refreshTargetsLazy]);
+  }, [items, mode, refreshTargetsLazy]);
 
-  // Default the active item to the first unit until scrolling provides a signal.
+  // L0 only: default the active item to the first unit until scrolling provides a signal.
+  // L1 lead zone must keep activeUnitId = null (no first-heading pseudo-active).
   useEffect(() => {
+    if (mode !== "L0") return;
     if (items.length > 0 && activeUnitId === null) {
       setActiveUnitId(items[0].unitId);
     }
-  }, [items, activeUnitId]);
+  }, [mode, items, activeUnitId]);
 
-  // Initialize focusedUnitId to the active item when the panel opens.
+  // Initialize focusedUnitId when the panel opens.
+  // L1 lead: active may be null, but keyboard focus can still land on first heading.
   useEffect(() => {
     if (panelOpen && focusedUnitId === null) {
       setFocusedUnitId(activeUnitId ?? items[0]?.unitId ?? null);
@@ -639,21 +695,24 @@ export function ReaderRecordNavigationRail({
   }
 
   const isCanvas = layout === "canvas";
-  const activeLabel =
-    items.find((item) => item.unitId === activeUnitId)?.label ??
-    items[0]?.label ??
-    "";
-  const activeIndex =
-    items.findIndex((item) => item.unitId === activeUnitId) + 1;
-  const triggerLabel = panelOpen
-    ? `关闭段落导航，当前第 ${activeIndex} 段`
-    : `打开段落导航，当前第 ${activeIndex} 段`;
+  const activeItemIndex =
+    activeUnitId === null
+      ? -1
+      : items.findIndex((item) => item.unitId === activeUnitId);
+  const activeIndexForLabel =
+    activeItemIndex >= 0 ? activeItemIndex + 1 : null;
+  const triggerLabel = buildNavigationTriggerLabel(
+    mode,
+    panelOpen,
+    activeIndexForLabel,
+  );
 
   return (
     <nav
       ref={wrapperRef}
       aria-label="阅读定位"
       data-testid="reader-record-navigation-rail"
+      data-navigation-mode={mode}
       data-layout={layout}
       className={cn(
         "hidden md:flex",
@@ -679,6 +738,7 @@ export function ReaderRecordNavigationRail({
       {/* Detail panel: rendered first so it sits to the left of the ticks. */}
       <NavigationPanel
         items={items}
+        mode={mode}
         activeUnitId={activeUnitId}
         focusedUnitId={focusedUnitId}
         panelOpen={panelOpen}
@@ -719,6 +779,7 @@ export function ReaderRecordNavigationRail({
 
 interface NavigationPanelRowProps {
   item: ReaderRecordNavigationItem;
+  mode: ReaderRecordNavigationMode;
   active: boolean;
   tabIndex?: number;
   onClick: () => void;
@@ -728,12 +789,18 @@ interface NavigationPanelRowProps {
 
 function NavigationPanelRow({
   item,
+  mode,
   active,
   tabIndex = -1,
   onClick,
   onKeyDown,
   registerRef,
 }: NavigationPanelRowProps) {
+  const indexLabel =
+    mode === "L1"
+      ? `第 ${item.fallbackIndex + 1} 项`
+      : `第 ${item.fallbackIndex + 1} 段`;
+
   return (
     <li>
       <button
@@ -755,7 +822,7 @@ function NavigationPanelRow({
           {item.label}
         </span>
         <span className="block text-[9px] leading-snug text-muted-foreground/75">
-          第 {item.fallbackIndex + 1} 段
+          {indexLabel}
         </span>
       </button>
     </li>

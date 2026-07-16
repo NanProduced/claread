@@ -1,17 +1,29 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildReaderRecordL1NavigationItems,
   buildReaderRecordNavigationItems,
-  type ReaderRecordNavigationItem,
+  buildReaderRecordSourceIdentityKey,
+  isL1NavigationEnabled,
+  projectReaderRecordNavigation,
+  stripHeadingDisplayMarkers,
 } from "./reader-record-navigation";
 import {
   READER_PLATE_SNAPSHOT_SCHEMA_KIND,
   READER_TEXT_RANGE_HASH_ALGORITHM,
   type ReaderPlateSnapshotDto,
+  type ReaderUnitType,
 } from "@/types/api/reader-plate";
 import {
   READER_RECORD_PLATE_DOCUMENT_SCHEMA_VERSION,
   type ReaderRecordPlateDocument,
 } from "@/lib/reader-plate/projection/reader-record-plate-document";
+
+type SnapshotUnitInput = {
+  unit_id: string;
+  order_index: number;
+  label?: string | null;
+  unit_type?: ReaderUnitType;
+};
 
 function makeParagraph(
   unitId: string,
@@ -49,7 +61,8 @@ function makeParagraph(
 }
 
 function makeSnapshot(
-  units: { unit_id: string; order_index: number; label?: string | null }[],
+  units: SnapshotUnitInput[],
+  options?: { baseId?: string; generation?: number },
 ): ReaderPlateSnapshotDto {
   return {
     schema_kind: READER_PLATE_SNAPSHOT_SCHEMA_KIND,
@@ -65,7 +78,7 @@ function makeSnapshot(
       title_generation_error_message: null,
       source_type: "text",
       source_metadata: {},
-      generation: 1,
+      generation: options?.generation ?? 1,
       product_state: "readable_enhancing",
       readiness_state: "article_ready",
       created_at: "2024-01-01T00:00:00Z",
@@ -73,7 +86,7 @@ function makeSnapshot(
       reading_variant: "beginner_reading",
     },
     base: {
-      base_id: "base_1",
+      base_id: options?.baseId ?? "base_1",
       content_sha256: "sha256",
       canonicalizer_version: "v1",
       builder_version: "v1",
@@ -83,8 +96,10 @@ function makeSnapshot(
     },
     navigation: {
       units: units.map((u) => ({
-        ...u,
-        unit_type: "body" as const,
+        unit_id: u.unit_id,
+        order_index: u.order_index,
+        label: u.label,
+        unit_type: u.unit_type ?? "body",
         boundary_quality: "normal" as const,
         base_start_utf16: 0,
         base_end_utf16: 10,
@@ -103,6 +118,27 @@ function makeSnapshot(
     parsed_decisions: [],
     value: [],
   };
+}
+
+/** F1 heading-rich fixture: unit_count>=6, heading_count>=2, with lead + body. */
+function headingRichUnits(): SnapshotUnitInput[] {
+  return [
+    { unit_id: "u1", order_index: 1, unit_type: "body", label: null },
+    { unit_id: "u2", order_index: 2, unit_type: "heading", label: "Chapter One" },
+    { unit_id: "u3", order_index: 3, unit_type: "body", label: null },
+    { unit_id: "u4", order_index: 4, unit_type: "body", label: null },
+    { unit_id: "u5", order_index: 5, unit_type: "heading", label: "Chapter Two" },
+    { unit_id: "u6", order_index: 6, unit_type: "body", label: null },
+    { unit_id: "u7", order_index: 7, unit_type: "body", label: null },
+  ];
+}
+
+function docFromUnits(units: SnapshotUnitInput[]): ReaderRecordPlateDocument {
+  return makeDocument(
+    units.map((u) =>
+      makeParagraph(u.unit_id, u.label ?? `Text for ${u.unit_id}.`, true),
+    ),
+  );
 }
 
 function makeDocument(
@@ -264,5 +300,213 @@ describe("buildReaderRecordNavigationItems", () => {
         label: "Second paragraph for the fallback outline.",
       }),
     ]);
+  });
+});
+
+describe("L1 navigation projection (T5.1c)", () => {
+  it("F1: heading-rich projects L1 with heading-only rows and closed coverage", () => {
+    const units = headingRichUnits();
+    const snapshot = makeSnapshot(units);
+    const document = docFromUnits(units);
+
+    expect(isL1NavigationEnabled(snapshot)).toBe(true);
+    const projection = projectReaderRecordNavigation(snapshot, document);
+    expect(projection.mode).toBe("L1");
+    expect(projection.items.map((i) => i.unitId)).toEqual(["u2", "u5"]);
+    expect(projection.l1Items).toEqual([
+      expect.objectContaining({
+        unitId: "u2",
+        startUnitId: "u2",
+        endUnitId: "u4",
+        coveredUnitIds: ["u2", "u3", "u4"],
+        label: "Chapter One",
+        fallbackIndex: 0,
+      }),
+      expect.objectContaining({
+        unitId: "u5",
+        startUnitId: "u5",
+        endUnitId: "u7",
+        coveredUnitIds: ["u5", "u6", "u7"],
+        label: "Chapter Two",
+        fallbackIndex: 1,
+      }),
+    ]);
+    // Lead body is not a row.
+    expect(projection.items.some((i) => i.unitId === "u1")).toBe(false);
+    // No depth/tree fields.
+    expect(projection.l1Items?.[0]).not.toHaveProperty("depth");
+    expect(projection.l1Items?.[0]).not.toHaveProperty("children");
+  });
+
+  it("F2: pure-body stays L0 with full unit list", () => {
+    const units: SnapshotUnitInput[] = Array.from({ length: 6 }, (_, i) => ({
+      unit_id: `u${i + 1}`,
+      order_index: i + 1,
+      unit_type: "body" as const,
+      label: null,
+    }));
+    const snapshot = makeSnapshot(units);
+    const document = docFromUnits(units);
+
+    const projection = projectReaderRecordNavigation(snapshot, document);
+    expect(projection.mode).toBe("L0");
+    expect(projection.l1Items).toBeNull();
+    expect(projection.items).toHaveLength(6);
+    expect(projection.items.map((i) => i.unitId)).toEqual(
+      units.map((u) => u.unit_id),
+    );
+  });
+
+  it("F3: heading + list/quote/body only lists headings; coverage includes non-heading", () => {
+    const units: SnapshotUnitInput[] = [
+      { unit_id: "u1", order_index: 1, unit_type: "body", label: null },
+      { unit_id: "u2", order_index: 2, unit_type: "heading", label: "Intro" },
+      { unit_id: "u3", order_index: 3, unit_type: "list", label: null },
+      { unit_id: "u4", order_index: 4, unit_type: "quote", label: null },
+      { unit_id: "u5", order_index: 5, unit_type: "heading", label: "Body" },
+      { unit_id: "u6", order_index: 6, unit_type: "body", label: null },
+    ];
+    const snapshot = makeSnapshot(units);
+    const document = docFromUnits(units);
+
+    const projection = projectReaderRecordNavigation(snapshot, document);
+    expect(projection.mode).toBe("L1");
+    expect(projection.items.map((i) => i.unitId)).toEqual(["u2", "u5"]);
+    expect(projection.l1Items?.[0]?.coveredUnitIds).toEqual(["u2", "u3", "u4"]);
+    expect(projection.l1Items?.[1]?.coveredUnitIds).toEqual(["u5", "u6"]);
+  });
+
+  it("F4: single heading with unit_count < 6 stays L0", () => {
+    const units: SnapshotUnitInput[] = [
+      { unit_id: "u1", order_index: 1, unit_type: "heading", label: "Only" },
+      { unit_id: "u2", order_index: 2, unit_type: "body", label: null },
+      { unit_id: "u3", order_index: 3, unit_type: "body", label: null },
+    ];
+    const snapshot = makeSnapshot(units);
+    const document = docFromUnits(units);
+
+    expect(isL1NavigationEnabled(snapshot)).toBe(false);
+    const projection = projectReaderRecordNavigation(snapshot, document);
+    expect(projection.mode).toBe("L0");
+    expect(projection.items).toHaveLength(3);
+  });
+
+  it("F4b: long text with exactly one heading must not swallow L0", () => {
+    const units: SnapshotUnitInput[] = [
+      { unit_id: "u1", order_index: 1, unit_type: "body", label: null },
+      { unit_id: "u2", order_index: 2, unit_type: "heading", label: "False short" },
+      { unit_id: "u3", order_index: 3, unit_type: "body", label: null },
+      { unit_id: "u4", order_index: 4, unit_type: "body", label: null },
+      { unit_id: "u5", order_index: 5, unit_type: "body", label: null },
+      { unit_id: "u6", order_index: 6, unit_type: "body", label: null },
+    ];
+    const snapshot = makeSnapshot(units);
+    const document = docFromUnits(units);
+
+    expect(isL1NavigationEnabled(snapshot)).toBe(false);
+    const projection = projectReaderRecordNavigation(snapshot, document);
+    expect(projection.mode).toBe("L0");
+    expect(projection.items).toHaveLength(6);
+    // Not a single-item "chapter" list.
+    expect(projection.items.map((i) => i.unitId)).not.toEqual(["u2"]);
+  });
+
+  it("F4c: short multi-heading (unit_count < 6) stays L0", () => {
+    const units: SnapshotUnitInput[] = [
+      { unit_id: "u1", order_index: 1, unit_type: "heading", label: "A" },
+      { unit_id: "u2", order_index: 2, unit_type: "body", label: null },
+      { unit_id: "u3", order_index: 3, unit_type: "heading", label: "B" },
+      { unit_id: "u4", order_index: 4, unit_type: "body", label: null },
+    ];
+    const snapshot = makeSnapshot(units);
+    const document = docFromUnits(units);
+
+    expect(isL1NavigationEnabled(snapshot)).toBe(false);
+    expect(projectReaderRecordNavigation(snapshot, document).mode).toBe("L0");
+  });
+
+  it("F5: empty navigation.units with document paragraphs forces L0 (no L1 guess)", () => {
+    const snapshot = makeSnapshot([]);
+    const document = makeDocument([
+      makeParagraph("unit_first", "First paragraph."),
+      makeParagraph("unit_second", "Second paragraph."),
+      makeParagraph("unit_third", "Third paragraph."),
+      makeParagraph("unit_fourth", "Fourth paragraph."),
+      makeParagraph("unit_fifth", "Fifth paragraph."),
+      makeParagraph("unit_sixth", "Sixth paragraph."),
+    ]);
+
+    expect(isL1NavigationEnabled(snapshot)).toBe(false);
+    const projection = projectReaderRecordNavigation(snapshot, document);
+    expect(projection.mode).toBe("L0");
+    expect(projection.items).toHaveLength(6);
+    expect(buildReaderRecordL1NavigationItems(snapshot, document)).toEqual([]);
+  });
+
+  it("F6: empty nav + empty document yields empty items (rail will not render)", () => {
+    const snapshot = makeSnapshot([]);
+    const document = makeDocument([]);
+    const projection = projectReaderRecordNavigation(snapshot, document);
+    expect(projection.mode).toBe("L0");
+    expect(projection.items).toEqual([]);
+  });
+
+  it("sourceIdentityKey is base_id:generation", () => {
+    const snapshot = makeSnapshot(headingRichUnits(), {
+      baseId: "base_xyz",
+      generation: 4,
+    });
+    expect(buildReaderRecordSourceIdentityKey(snapshot)).toBe("base_xyz:4");
+    expect(projectReaderRecordNavigation(snapshot, docFromUnits(headingRichUnits())).sourceIdentityKey).toBe(
+      "base_xyz:4",
+    );
+  });
+
+  it("F11: strips leading markdown # only for L1 display labels", () => {
+    expect(stripHeadingDisplayMarkers("# Title")).toBe("Title");
+    expect(stripHeadingDisplayMarkers("## Nested")).toBe("Nested");
+    expect(stripHeadingDisplayMarkers("Not a heading # mid")).toBe(
+      "Not a heading # mid",
+    );
+
+    const units: SnapshotUnitInput[] = [
+      { unit_id: "u1", order_index: 1, unit_type: "body", label: null },
+      {
+        unit_id: "u2",
+        order_index: 2,
+        unit_type: "heading",
+        label: "# Markdown Title",
+      },
+      { unit_id: "u3", order_index: 3, unit_type: "body", label: null },
+      {
+        unit_id: "u4",
+        order_index: 4,
+        unit_type: "heading",
+        label: "## Second",
+      },
+      { unit_id: "u5", order_index: 5, unit_type: "body", label: null },
+      { unit_id: "u6", order_index: 6, unit_type: "body", label: null },
+    ];
+    const snapshot = makeSnapshot(units);
+    const l1 = buildReaderRecordL1NavigationItems(snapshot, docFromUnits(units));
+    expect(l1[0]?.unitId).toBe("u2");
+    expect(l1[0]?.label).toBe("Markdown Title");
+    expect(l1[1]?.label).toBe("Second");
+  });
+
+  it("keeps L1 order by order_index, not label sort", () => {
+    const units: SnapshotUnitInput[] = [
+      { unit_id: "u1", order_index: 1, unit_type: "body", label: null },
+      { unit_id: "u2", order_index: 2, unit_type: "heading", label: "Zulu" },
+      { unit_id: "u3", order_index: 3, unit_type: "body", label: null },
+      { unit_id: "u4", order_index: 4, unit_type: "heading", label: "Alpha" },
+      { unit_id: "u5", order_index: 5, unit_type: "body", label: null },
+      { unit_id: "u6", order_index: 6, unit_type: "body", label: null },
+    ];
+    const l1 = buildReaderRecordL1NavigationItems(
+      makeSnapshot(units),
+      docFromUnits(units),
+    );
+    expect(l1.map((i) => i.label)).toEqual(["Zulu", "Alpha"]);
   });
 });
