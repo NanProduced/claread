@@ -76,6 +76,30 @@
 
 未来 SSE 只替换通知/事件传输，不反向定义本合同；其 Last-Event-ID 只是经授权、经 generation/base/gap 校验的 reconnect hint，不是 representation revision。PUX-R4 将另行定义 applier checkpoint、幂等和 interaction-preserving local projection；它不可以重写已持久化事件的领域含义。
 
+## Polling / Page Seam：accepted/rejected snapshot 合同边界
+
+> 来源：T4.2a-PUX-R4-R3-R1 闭合（commit `9a925f82`）。本节固化 polling/page seam 与 Reader Plate Surface 之间关于 accepted/rejected snapshot 的合同边界，防止把 Surface 的 duplicate-snapshot guard 误称为 stale/fence rejection。
+
+### accepted / rejected 定义
+
+- **accepted snapshot**：通过 polling/page seam 的 generation/base fence 与单调 cursor 校验的 snapshot，被允许进入 Surface value swap。
+- **rejected snapshot**：在 polling/page seam 被 stale sequence、generation/base fence 失败或 layer regression 拦截的 snapshot，**不得**进入 Surface value swap。cursor hold，当前 accepted UI 保持。
+
+### Surface 的 same-snapshot early-return 不是 rejection
+
+Reader Record Plate Surface 对 `snapshot_id` 与上次 targeted apply 相同的 accepted snapshot 做 early-return，仅是 **duplicate accepted snapshot guard**（防止同一 accepted snapshot 重复走 value swap / merger 路径），不承担 stale/fence rejection 语义。stale/fence rejection 只发生在 polling/page seam。
+
+### 跨 seam 的不变量
+
+1. rejected snapshot 的拒绝信号由 polling/page seam 产出（progressive-status `data-last-rejected` + `data-reject-reason`），Surface 不产生 rejection 标记。
+2. rejected snapshot 不得触发 Surface `setValue` / merger / targeted apply；当前 accepted UI（含已打开的 Quick Peek、grammar accordion、selection）必须保持。
+3. accepted snapshot 的 value swap 路径可与 Surface duplicate-snapshot guard 叠加：同一 `snapshot_id` 的重复 accepted 推送被 guard 跳过，但不改变其 accepted 身份。
+4. source identity（`{generation, base_id}`）变化时，polling/page seam 与 Surface 必须协同清理：seam 侧拒绝旧 source 的 in-flight snapshot，Surface 侧清理 selection、Quick Peek、anchor、restore token 与 grammar expansion（见 [`reader-record-plate-surface-ui.md`](./reader-record-plate-surface-ui.md) Quick Peek source-identity close）。
+
+### 未批准的传输改造
+
+本节不批准 SSE、WebSocket、JSON Patch、ETag/304、压缩或通用 tree diff。accepted/rejected 判定仍基于 polling/page seam 的 full snapshot reload 合同；PUX-R4 interaction-stable incremental projection 与 semantic fragment transport 仍属未实施范畴。
+
 ## O4-R2 实施门槛
 
 O4-R2 仅实现本合同，至少覆盖：

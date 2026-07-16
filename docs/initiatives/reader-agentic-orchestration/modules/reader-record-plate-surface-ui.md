@@ -868,6 +868,35 @@ Lookup 是 Claread 核心能力，但不能破坏文档阅读和 Plate selection
 
 后续可以增加“单击普通原文查词”设置项，但默认关闭。该能力难点在前端 click hit-test、拖选/双击冲突治理、Plate mark 优先级和词典查询质量，不是后端 anchor 数据结构。
 
+### Quick Peek source-identity close 与 frozen rect
+
+> 来源：T4.2a-PUX-R4-R3-R1 闭合（commit `9a925f82`）。本节固化 Quick Peek 在 full reload 与 source identity 切换时的视觉/交互语义。
+
+#### 稳定身份与重新锚定
+
+Quick Peek 的稳定身份是 `anchor_segment_id + markId + generation + baseId` 四元组。full reload（如同 source identity 内的 snapshot 刷新、Plate value 重建）发生时，若四元组未变，Quick Peek 必须保持打开并重新锚定到原 vocabulary mark：
+
+- 重新锚定使用 `[data-anchor-segment-id] [data-reader-record-vocabulary-mark-id]` 组合选择器精确定位原 mark，**不得**回退挂到同段 sibling mark。
+- 从 `setValue` 到 rAF 回调之间，Quick Peek 浮层使用 frozen rect 维持位置，避免出现 detached `(0,0)` panel。
+- rAF 回调内执行三重 guard：restore token 失配 / markId 切换 / `{generation, base_id}` fence 失配 → abort 并关闭 Quick Peek，不动 ref 产生遗留状态。
+
+#### Source-identity close
+
+`{generation, base_id}` 共同构成 source identity。任一变化时，Surface 必须一次性清理：
+
+- `activeSelection`
+- `lookupState` / `inspectState`
+- Quick Peek restore token（递增，使 pending rAF 失效）
+- `quickPeekAnchorRef`
+- `activeSentenceChunkId` / `activeGrammarItemId`
+- `grammarExpansionControlRef`（grammar expansion）
+
+禁止跨 source identity 恢复 Quick Peek 或 grammar expansion。source identity 切换后的旧 Quick Peek panel 必须关闭，不得遗留 detached panel。
+
+#### 与 polling/page seam 的关系
+
+rejected stale/fence snapshot 属于 polling/page seam（见 [`representation-event-contract.md`](./representation-event-contract.md#polling--page-seamacceptedrejected-snapshot-合同边界)）：当前 accepted UI 与已打开的 Quick Peek 必须保持，rejected snapshot 不得进入 Surface value swap 路径。Surface 的 same-snapshot early-return 只是 duplicate accepted snapshot guard，不承担 stale/fence rejection 语义。
+
 ### FloatingToolbarKit 接入（阶段二 V2-Step-1）✅ 已落地
 
 已用 Plate 官方 floating hook 接入 Claread selection toolbar，并收敛为新版 surface 的唯一划选 toolbar：
