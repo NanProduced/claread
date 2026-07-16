@@ -30,14 +30,14 @@ function favoriteButtonShellClassName(favorited: boolean, variant: FavoriteButto
     readerCommandControl,
     variant === "action-bar"
       ? "flex flex-1 justify-center rounded-none px-3.5 py-2.5 text-left sm:py-3.5 md:px-5"
-      : "min-h-[3.25rem] w-full justify-start rounded-[1rem] border-hairline px-3.5 py-2 text-left shadow-[0_8px_18px_rgba(17,17,17,0.04),inset_0_1px_0_rgba(255,255,255,0.72)]",
+      : "min-h-[3.25rem] w-full justify-start rounded-[1rem] border-hairline px-3.5 py-2 text-left shadow-[var(--app-secondary-shadow)]",
     favorited
       ? variant === "action-bar"
         ? "text-vocab-amber"
-        : "bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(252,251,248,0.98))] text-ink shadow-surface-quiet"
+        : "bg-surface-raised text-ink shadow-[var(--app-panel-shadow-quiet)]"
       : variant === "action-bar"
         ? "text-ink hover:text-ink-soft"
-        : "bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(249,247,241,0.98))] text-ink-soft hover:text-ink-soft",
+        : "bg-surface-raised text-ink-soft hover:text-ink-soft",
   );
 }
 

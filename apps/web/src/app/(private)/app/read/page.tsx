@@ -161,7 +161,7 @@ export default async function PasteToReadPage() {
   }
 
   return (
-    <main className="min-h-dvh bg-reader-paper px-5 py-6 text-ink lg:h-dvh lg:overflow-hidden sm:px-8 lg:px-12 xl:px-14 2xl:px-16">
+    <main className="min-h-dvh bg-surface-canvas px-5 py-6 text-ink lg:h-dvh lg:overflow-hidden sm:px-8 lg:px-12 xl:px-14 2xl:px-16">
       <div className="mx-auto flex w-full max-w-[2200px] flex-col md:h-full">
         <div className="grid gap-10 md:min-h-0 md:flex-1 md:grid-cols-[minmax(0,1fr)_20rem] md:gap-8 lg:grid-cols-[minmax(0,1fr)_24rem] lg:gap-12 xl:grid-cols-[minmax(0,1fr)_29rem] xl:gap-14 2xl:grid-cols-[minmax(0,1fr)_34rem] 2xl:gap-[4.5rem]">
           <section className="flex min-w-0 flex-col pt-4 sm:pt-6 md:min-h-0 md:pt-8 md:pr-8 xl:pt-10 xl:pr-12 2xl:pr-16">

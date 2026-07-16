@@ -172,7 +172,7 @@ function AskConversationJumpToLatestButton({
       aria-label="跳到最新消息"
       data-testid="ask-jump-to-latest"
       className={cn(
-        "absolute bottom-3 left-[50%] z-10 h-9 w-9 translate-x-[-50%] rounded-full border border-border/70 bg-background/86 text-muted-foreground shadow-[0_10px_28px_rgba(24,24,20,0.12)] backdrop-blur supports-[backdrop-filter]:bg-background/72 hover:border-border hover:bg-background hover:text-foreground dark:bg-background/86 dark:hover:bg-muted",
+        "absolute bottom-3 left-[50%] z-10 h-9 w-9 translate-x-[-50%] rounded-full border border-border/70 bg-background/86 text-muted-foreground shadow-[var(--app-panel-shadow-quiet)] backdrop-blur supports-[backdrop-filter]:bg-background/72 hover:border-border hover:bg-background hover:text-foreground",
       )}
       onClick={handleClick}
     >

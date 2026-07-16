@@ -156,8 +156,8 @@ export function AnnotationGutter({
                 gutterButtonClassName,
                 "relative",
                 noteActive
-                  ? "border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                  : "text-amber-500/80 hover:text-amber-600 dark:hover:text-amber-400",
+                  ? "border-vocab-amber/25 bg-vocab-amber/10 text-vocab-amber"
+                  : "text-vocab-amber/80 hover:text-vocab-amber",
               )}
               onClick={(event) => {
                 event.stopPropagation();
@@ -171,7 +171,7 @@ export function AnnotationGutter({
             >
               <MessageSquare className="h-[1.1rem] w-[1.1rem]" />
               {noteCount > 1 ? (
-                <span className="absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-500 text-[0.6rem] font-bold text-white shadow-sm ring-1 ring-background" aria-hidden="true">
+                <span className="absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-vocab-amber text-[0.6rem] font-bold text-white shadow-sm ring-1 ring-background" aria-hidden="true">
                   {noteCount}
                 </span>
               ) : null}
@@ -184,8 +184,8 @@ export function AnnotationGutter({
                 gutterButtonClassName,
                 "relative",
                 active
-                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                  : "text-emerald-500/80 hover:text-emerald-600 dark:hover:text-emerald-400",
+                  ? "border-structure-green/25 bg-structure-green/10 text-structure-green"
+                  : "text-structure-green/80 hover:text-structure-green",
               )}
               onMouseEnter={() => onHoverTargetKeyChange?.(primaryAnnotation?.targetKey ?? null)}
               onMouseLeave={() => onHoverTargetKeyChange?.(null)}
@@ -209,7 +209,7 @@ export function AnnotationGutter({
             >
               <Highlighter className="h-4 w-4" />
               {hasMultipleHighlights ? (
-                <span className="absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-500 text-[0.6rem] font-bold text-white shadow-sm ring-1 ring-background" aria-hidden="true">
+                <span className="absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-structure-green text-[0.6rem] font-bold text-white shadow-sm ring-1 ring-background" aria-hidden="true">
                   {highlightAnnotations.length}
                 </span>
               ) : null}

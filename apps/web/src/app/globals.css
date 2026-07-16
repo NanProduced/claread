@@ -239,7 +239,7 @@ body {
 
 .ask-conversation-scroll {
   scrollbar-width: thin;
-  scrollbar-color: rgba(24, 24, 20, 0.16) transparent;
+  scrollbar-color: color-mix(in srgb, var(--ink) 16%, transparent) transparent;
 }
 
 .ask-conversation-scroll::-webkit-scrollbar {
@@ -252,11 +252,11 @@ body {
 
 .ask-conversation-scroll::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(24, 24, 20, 0.12);
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
 }
 
 .ask-conversation-scroll:hover::-webkit-scrollbar-thumb {
-  background: rgba(24, 24, 20, 0.2);
+  background: color-mix(in srgb, var(--ink) 20%, transparent);
 }
 
 .ask-message-response [data-streamdown$="-wrapper"],
@@ -267,7 +267,7 @@ body {
   gap: 0.45rem;
   border-radius: 0.85rem;
   border: 1px solid color-mix(in srgb, var(--hairline) 22%, transparent);
-  background: color-mix(in srgb, var(--card) 82%, rgba(255, 255, 255, 0.48));
+  background: color-mix(in srgb, var(--card) 82%, var(--surface-raised));
   padding: 0.42rem;
   box-shadow: none;
 }
@@ -293,7 +293,7 @@ body {
   border: 1px solid color-mix(in srgb, var(--hairline) 22%, transparent) !important;
   border-radius: 0.95rem;
   background: color-mix(in srgb, var(--background) 88%, transparent) !important;
-  box-shadow: 0 4px 14px rgba(24, 24, 20, 0.06) !important;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--ink) 6%, transparent) !important;
   backdrop-filter: blur(10px);
   font-size: 0;
   margin: 0 !important;
@@ -414,7 +414,7 @@ body {
 
 .ask-message-response [data-streamdown="table-wrapper"] > div:last-child::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(24, 24, 20, 0.12);
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
 }
 
 .ask-message-response [data-streamdown="table-header"] {
@@ -966,6 +966,18 @@ select {
   font-weight: 600;
 }
 
+/* Reader settings theme preview — reuses the fixed Light/Dark preview
+ * tokens from tokens.css. No gradients, no raw HEX. */
+.reader-theme-preview--light {
+  background: var(--theme-preview-light-surface);
+  color: var(--theme-preview-light-line-strong);
+}
+
+.reader-theme-preview--dark {
+  background: var(--theme-preview-dark-surface);
+  color: var(--theme-preview-dark-line-strong);
+}
+
 .reader-settings-theme-swatch {
   display: inline-flex;
   width: 1rem;
@@ -974,17 +986,16 @@ select {
   margin-top: 0.1rem;
   border-radius: 999px;
   border: 1px solid transparent;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
 .reader-settings-theme-swatch--light {
-  border-color: rgba(220, 225, 232, 0.9);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(241, 244, 248, 0.98));
+  border-color: var(--theme-preview-light-chip-border);
+  background: var(--theme-preview-light-surface);
 }
 
 .reader-settings-theme-swatch--dark {
-  border-color: rgba(86, 92, 102, 0.94);
-  background: linear-gradient(180deg, rgba(46, 52, 59, 0.98), rgba(25, 29, 33, 1));
+  border-color: var(--theme-preview-dark-chip-border);
+  background: var(--theme-preview-dark-surface);
 }
 
 .reader-shell {
@@ -1625,11 +1636,11 @@ select {
 }
 
 .reader-immersive-paragraph-cue--note {
-  color: rgba(167, 119, 0, 0.9);
+  color: color-mix(in srgb, var(--vocab-amber) 90%, transparent);
 }
 
 .reader-immersive-paragraph-cue--highlight {
-  color: rgba(53, 126, 95, 0.92);
+  color: color-mix(in srgb, var(--structure-green) 92%, transparent);
 }
 
 .reader-immersive-paragraph-cue-count {
@@ -1684,7 +1695,7 @@ select {
   color: var(--surface);
   font-size: 0.75rem;
   font-weight: 700;
-  box-shadow: 0 10px 24px rgba(60, 140, 104, 0.24);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--structure-green) 24%, transparent);
 }
 
 .reader-lookup-token,
@@ -1709,13 +1720,13 @@ select {
 }
 
 .reader-plain-word:hover {
-  text-decoration-color: rgba(98, 101, 109, 0.45);
+  text-decoration-color: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
 }
 
 .reader-mark {
-  --reader-mark-fill: rgba(228, 176, 0, 0.24);
-  --reader-mark-line: rgba(166, 121, 0, 0.58);
-  --reader-mark-edge: rgba(130, 91, 0, 0.12);
+  --reader-mark-fill: color-mix(in srgb, var(--vocab-amber) 24%, transparent);
+  --reader-mark-line: color-mix(in srgb, var(--vocab-amber) 58%, transparent);
+  --reader-mark-edge: color-mix(in srgb, var(--vocab-amber) 12%, transparent);
 
   position: relative;
   margin-inline: -0.035em;

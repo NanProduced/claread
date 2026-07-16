@@ -26,7 +26,7 @@ export function ReaderDictionaryRecentStrip({
   }
 
   return (
-    <section className="rounded-[18px] border border-hairline/85 bg-surface/84 px-3.5 py-3.5 shadow-[0_1px_2px_rgba(17,17,17,0.04)]">
+    <section className="rounded-[18px] border border-hairline/85 bg-surface/84 px-3.5 py-3.5 shadow-[var(--app-panel-shadow-quiet)]">
       <button
         type="button"
         className={cn(

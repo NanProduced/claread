@@ -421,7 +421,7 @@ function ReaderSentenceAnalysisProjectionElement({
       data-target-scope={element.target_scope}
       data-target-key={element.target_key}
       data-anchor-segment-id={element.anchor_segment_id}
-      className="reader-plate-sentence-analysis rounded-2xl border border-teal-200/80 bg-[linear-gradient(180deg,rgba(240,253,250,0.96),rgba(236,253,245,0.76))] p-4 font-sans text-[0.92rem] leading-6 text-slate-800 shadow-sm shadow-teal-950/5"
+      className="reader-plate-sentence-analysis rounded-2xl border border-teal-200/80 bg-surface p-4 font-sans text-[0.92rem] leading-6 text-slate-800 shadow-sm"
     >
       <div className="flex items-center gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-teal-700">
         <span>句式拆解</span>

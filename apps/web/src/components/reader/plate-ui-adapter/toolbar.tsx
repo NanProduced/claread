@@ -29,7 +29,7 @@ export function ReaderToolbarRoot({
   return (
     <Toolbar
       className={cn(
-        "flex max-w-[min(38rem,calc(100vw-1rem))] flex-wrap items-center gap-1 rounded-full border border-hairline bg-surface-warm/95 p-1 text-ink shadow-[0_10px_30px_rgba(28,24,18,0.08)] backdrop-blur-md",
+        "flex max-w-[min(38rem,calc(100vw-1rem))] flex-wrap items-center gap-1 rounded-full border border-hairline bg-surface-raised/95 p-1 text-ink shadow-[var(--app-panel-shadow-quiet)] backdrop-blur-md",
         className,
       )}
       {...props}
@@ -74,7 +74,7 @@ export function ReaderToolbarButton({
       className={cn(
         readerToolbarActionBaseClassName,
         "min-h-8 min-w-8 px-2",
-        active && "bg-lens-blue-soft/60 text-ink shadow-[inset_0_0_0_1px_rgba(21,92,255,0.06)] font-semibold",
+        active && "bg-lens-blue-soft/60 text-ink font-semibold",
         className,
       )}
       size="default"

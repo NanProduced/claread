@@ -263,7 +263,7 @@ function NavigationPanel({
       <div
         className={cn(
           "flex max-h-[min(72vh,42rem)] flex-col overflow-hidden rounded-lg border border-hairline/50",
-          "bg-[var(--surface-raised)]/95 shadow-[0_10px_24px_rgba(23,21,17,0.08)] backdrop-blur-sm",
+          "bg-surface-raised/95 shadow-[var(--app-panel-shadow-quiet)] backdrop-blur-sm",
           "w-64",
         )}
       >

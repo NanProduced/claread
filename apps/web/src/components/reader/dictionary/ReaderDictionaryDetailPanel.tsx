@@ -911,7 +911,7 @@ export function ReaderDictionaryDetailPanel({
 
   return (
     <TooltipProvider>
-      <section className={`reader-tool-panel reader-dictionary-panel ${isCard ? "reader-dictionary-card" : ""} relative flex flex-col overflow-hidden ${panelWidthClass} shadow-surface-quiet bg-paper-warm border border-hairline/80 ${panelSizing}`}>
+      <section className={`reader-tool-panel reader-dictionary-panel ${isCard ? "reader-dictionary-card" : ""} relative flex flex-col overflow-hidden ${panelWidthClass} shadow-surface-quiet bg-surface-raised border border-hairline/80 ${panelSizing}`}>
       
       {/* Top Header Section with manual lookup entry & light tools */}
       <div className="flex items-center gap-2 border-b border-hairline/80 px-4.5 py-3 select-none">

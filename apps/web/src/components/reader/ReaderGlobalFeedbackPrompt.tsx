@@ -38,11 +38,11 @@ function PromptButton({
         "group inline-flex h-11 min-w-[6.5rem] items-center justify-center gap-2 bg-surface/72 px-3.5 text-[13px] font-semibold text-ink-soft",
         readerInlineFocusRing,
         readerTransitionFast,
-        "active:bg-surface-warm",
+        "active:bg-surface",
         intentClassName,
       )}
     >
-      <span className="inline-flex size-6 items-center justify-center rounded-[7px] border border-hairline/70 bg-background/72 text-current shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] transition-colors group-hover:border-current/20">
+      <span className="inline-flex size-6 items-center justify-center rounded-[7px] border border-hairline/70 bg-background/72 text-current transition-colors group-hover:border-current/20">
         {icon}
       </span>
       <span>{children}</span>
@@ -61,12 +61,12 @@ export function ReaderGlobalFeedbackPrompt({
       aria-label="阅读反馈"
       className={cn("mt-12 border-t border-hairline/60 pt-7 pb-16", className)}
     >
-      <div className="mx-auto flex w-full max-w-[48rem] flex-col items-stretch justify-between gap-3 rounded-[16px] border border-hairline/70 bg-[linear-gradient(180deg,color-mix(in_srgb,var(--surface)_72%,transparent),color-mix(in_srgb,var(--surface-warm)_72%,transparent))] px-3 py-3 shadow-[0_10px_30px_rgba(28,24,18,0.06),inset_0_1px_0_rgba(255,255,255,0.42)] sm:flex-row sm:items-center sm:pl-4 sm:pr-3">
+      <div className="mx-auto flex w-full max-w-[48rem] flex-col items-stretch justify-between gap-3 rounded-[16px] border border-hairline/70 bg-surface px-3 py-3 shadow-[var(--app-panel-shadow-quiet)] sm:flex-row sm:items-center sm:pl-4 sm:pr-3">
         <div className="min-w-0">
           <p className="text-[13px] font-semibold text-ink">这次解读有帮助吗？</p>
         </div>
 
-        <div className="grid grid-cols-3 gap-px overflow-hidden rounded-[12px] border border-hairline/75 bg-hairline/75 shadow-[0_1px_2px_rgba(30,25,18,0.04)]">
+        <div className="grid grid-cols-3 gap-px overflow-hidden rounded-[12px] border border-hairline/75 bg-hairline/75">
           <PromptButton
             intent="helpful"
             icon={<ThumbsUp className="size-4" aria-hidden="true" />}

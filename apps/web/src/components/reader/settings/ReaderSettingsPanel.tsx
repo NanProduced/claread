@@ -46,21 +46,21 @@ const themeOptions: Array<{
     label: "跟随系统",
     english: "System",
     description: "随操作系统浅色 / 深色自动切换。",
-    previewClass: "bg-surface-warm text-ink",
+    previewClass: "bg-surface text-ink",
   },
   {
     value: "light",
     label: "浅色",
     english: "Light",
     description: "更偏功能的明亮工作面。",
-    previewClass: "bg-[#fbfbfb] text-[#1f2937]/80",
+    previewClass: "reader-theme-preview--light",
   },
   {
     value: "dark",
     label: "深色",
     english: "Dark",
     description: "为夜读调好的暗色舞台。",
-    previewClass: "bg-[#18181c] text-[#a1a1a6]",
+    previewClass: "reader-theme-preview--dark",
   },
 ];
 
@@ -89,7 +89,7 @@ export function ReaderSettingsPanel({
       className={cn(
         "reader-tool-panel reader-settings-panel flex w-[min(20rem,calc(100vw-2rem))] flex-col overflow-hidden",
         !isFloating &&
-          "border border-border/55 bg-[#FDFBF7]/98 shadow-xl shadow-black/10 backdrop-blur-xl dark:bg-[#1A1A1E]/98",
+          "border border-border/55 bg-surface-raised/98 shadow-[var(--app-panel-shadow-quiet)] backdrop-blur-xl",
       )}
       data-reader-settings-panel={isFloating ? "floating" : "compact"}
     >
@@ -136,14 +136,14 @@ export function ReaderSettingsPanel({
                     readerSegmentedOption({ selected: active }),
                     "relative flex flex-col items-stretch rounded-[0.55rem] border bg-background/35 p-1 text-left",
                     active
-                      ? "border-vocab-amber/45 bg-vocab-amber/6 shadow-[0_2px_8px_rgba(195,155,98,0.06)]"
+                      ? "border-vocab-amber/45 bg-vocab-amber/6 shadow-[var(--app-panel-shadow-quiet)]"
                       : "border-hairline",
                   )}
                   onClick={() => onThemeChange(option.value)}
                 >
                   <div
                     className={cn(
-                      "relative flex h-10 flex-col justify-center gap-1.5 overflow-hidden rounded-[0.35rem] border border-hairline/20 p-2 shadow-[inset_0_1px_2px_rgba(0,0,0,0.02)]",
+                      "relative flex h-10 flex-col justify-center gap-1.5 overflow-hidden rounded-[0.35rem] border border-hairline/20 p-2",
                       readerTransitionStandard,
                       option.previewClass,
                     )}
@@ -155,7 +155,7 @@ export function ReaderSettingsPanel({
                     </div>
 
                     {active && (
-                      <span className="absolute right-1 top-1 flex h-3 w-3 items-center justify-center rounded-full bg-vocab-amber text-[0.5rem] font-bold text-white shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
+                      <span className="absolute right-1 top-1 flex h-3 w-3 items-center justify-center rounded-full bg-vocab-amber text-[0.5rem] font-bold text-white shadow-[var(--app-secondary-shadow)]">
                         ✓
                       </span>
                     )}
@@ -194,7 +194,7 @@ export function ReaderSettingsPanel({
                     readerSegmentedOption({ selected: active }),
                     "min-h-[2rem] flex-1 rounded-[0.45rem] border leading-none",
                     active
-                      ? "border-vocab-amber/30 bg-vocab-amber/8 text-vocab-amber font-bold shadow-[0_1px_2px_rgba(0,0,0,0.02)]"
+                      ? "border-vocab-amber/30 bg-vocab-amber/8 text-vocab-amber font-bold"
                       : "text-muted-foreground text-[0.8rem]",
                   )}
                   onClick={() => onChange(updateField(value, "fontScale", option.value))}
@@ -227,7 +227,7 @@ export function ReaderSettingsPanel({
                     readerSegmentedOption({ selected: active }),
                     "relative min-h-[3.15rem] flex-col rounded-[0.6rem] border bg-background/35 p-2",
                     active
-                      ? "border-vocab-amber/35 bg-vocab-amber/8 text-vocab-amber shadow-[0_1px_3px_rgba(0,0,0,0.02)]"
+                      ? "border-vocab-amber/35 bg-vocab-amber/8 text-vocab-amber"
                       : "border-hairline bg-transparent text-ink",
                   )}
                   onClick={() => onChange(updateField(value, "fontFamily", option.value))}
@@ -237,7 +237,7 @@ export function ReaderSettingsPanel({
                     {option.english}
                   </span>
                   {active && (
-                    <span className="absolute right-1 top-1 flex h-3 w-3 items-center justify-center rounded-full bg-vocab-amber text-[0.5rem] font-bold text-white shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
+                    <span className="absolute right-1 top-1 flex h-3 w-3 items-center justify-center rounded-full bg-vocab-amber text-[0.5rem] font-bold text-white shadow-[var(--app-secondary-shadow)]">
                       ✓
                     </span>
                   )}

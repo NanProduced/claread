@@ -51,7 +51,7 @@ export function ReaderStructuredInspectCard({
       className={
         compact
           ? "space-y-3"
-          : "rounded-[16px] border border-hairline/85 bg-surface/80 px-4 py-4 shadow-[0_1px_2px_rgba(17,17,17,0.04)]"
+          : "rounded-[16px] border border-hairline/85 bg-surface/80 px-4 py-4 shadow-[var(--app-panel-shadow-quiet)]"
       }
     >
       {!compact ? (

@@ -63,7 +63,7 @@ export const readerSegmentedOption = cva(
   {
     variants: {
       selected: {
-        true: "bg-background text-vocab-amber shadow-[0_2px_6px_rgba(0,0,0,0.04)]",
+        true: "bg-background text-vocab-amber shadow-[var(--app-panel-shadow-quiet)]",
         false: "text-muted-foreground",
       },
     },

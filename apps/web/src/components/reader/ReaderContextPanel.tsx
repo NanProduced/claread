@@ -63,7 +63,7 @@ export function ReaderContextPanel({
       role="dialog"
       aria-modal="false"
       className={cn(
-        "w-[14rem] rounded-xl border border-hairline/80 bg-surface-warm/95 p-1.5 text-ink shadow-[0_14px_44px_rgba(28,24,18,0.11)] backdrop-blur-md",
+        "w-[14rem] rounded-xl border border-hairline/80 bg-surface-raised/95 p-1.5 text-ink shadow-[var(--app-panel-shadow-quiet)] backdrop-blur-md",
         className
       )}
     >
@@ -183,7 +183,7 @@ function MenuItem({ icon, label, shortcut, onClick, disabled }: MenuItemProps) {
       className={cn(
         "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[0.82rem] font-medium text-ink transition-colors",
         "disabled:pointer-events-none disabled:opacity-40",
-        "hover:bg-lens-blue-soft/50 dark:hover:bg-zinc-800/80 hover:shadow-[inset_0_0_0_1px_rgba(21,92,255,0.06)]",
+        "hover:bg-surface",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
       )}
       onClick={onClick}

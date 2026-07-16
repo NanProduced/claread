@@ -121,7 +121,7 @@ function SuccessSeal() {
       <img
         src="/images/feedback/love.png"
         alt=""
-        className="h-full w-full object-contain drop-shadow-[0_12px_24px_rgba(170,42,58,0.18)]"
+        className="h-full w-full object-contain"
       />
     </span>
   );
@@ -132,7 +132,7 @@ function sentimentCopy(sentiment: FeedbackSentimentDto) {
     return {
       label: "有帮助",
       Icon: ThumbsUp,
-      activeClassName: "border-structure-green/35 bg-structure-green/10 text-structure-green shadow-[0_6px_14px_rgba(33,184,117,0.08)]",
+      activeClassName: "border-structure-green/35 bg-structure-green/10 text-structure-green",
       iconClassName: "border-structure-green/20 bg-structure-green/10",
     };
   }
@@ -141,7 +141,7 @@ function sentimentCopy(sentiment: FeedbackSentimentDto) {
     return {
       label: "有问题",
       Icon: ThumbsDown,
-      activeClassName: "border-error-red/30 bg-error-red/10 text-error-red shadow-[0_6px_14px_rgba(190,18,60,0.08)]",
+      activeClassName: "border-error-red/30 bg-error-red/10 text-error-red",
       iconClassName: "border-error-red/20 bg-error-red/10",
     };
   }
@@ -149,7 +149,7 @@ function sentimentCopy(sentiment: FeedbackSentimentDto) {
   return {
     label: "反馈",
     Icon: MessageSquareText,
-    activeClassName: "border-lens-blue/30 bg-lens-blue-soft/60 text-lens-blue shadow-[0_6px_14px_rgba(28,95,190,0.08)]",
+    activeClassName: "border-lens-blue/30 bg-lens-blue-soft/60 text-lens-blue",
     iconClassName: "border-lens-blue/20 bg-lens-blue/10",
   };
 }
@@ -336,7 +336,7 @@ export function FeedbackSheet({
     <div
       role="dialog"
       aria-modal="false"
-      className="fixed bottom-0 left-0 right-0 z-50 overflow-hidden rounded-t-[20px] border border-hairline/70 bg-[color-mix(in_srgb,var(--surface)_88%,transparent)] p-0 text-ink shadow-[0_24px_70px_rgba(28,24,18,0.16)] backdrop-blur-2xl ring-1 ring-inset ring-white/20 duration-300 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-8 ease-out sm:bottom-6 sm:left-auto sm:right-6 sm:w-[430px] sm:rounded-[20px]"
+      className="fixed bottom-0 left-0 right-0 z-50 overflow-hidden rounded-t-[20px] border border-hairline/70 bg-[color-mix(in_srgb,var(--surface)_88%,transparent)] p-0 text-ink shadow-[var(--app-panel-shadow-quiet)] backdrop-blur-2xl ring-1 ring-inset ring-white/20 duration-300 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-8 ease-out sm:bottom-6 sm:left-auto sm:right-6 sm:w-[430px] sm:rounded-[20px]"
       onKeyDown={handleKeyDown}
     >
       {submitState === "success" ? (
@@ -356,7 +356,7 @@ export function FeedbackSheet({
           </button>
           <SuccessSeal />
           <p className="text-base font-semibold text-ink">已收到反馈</p>
-          <span className="inline-flex items-center gap-1.5 rounded-[10px] border border-hairline/70 bg-surface-warm/80 px-3 py-1.5 text-[12px] font-medium text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5 rounded-[10px] border border-hairline/70 bg-surface-raised px-3 py-1.5 text-[12px] font-medium text-muted-foreground">
             <Check className="size-3 text-structure-green" />
             记录已写入
           </span>
@@ -426,8 +426,8 @@ export function FeedbackSheet({
                         "group flex min-h-11 items-center justify-between rounded-[12px] border px-3 py-2 text-left text-[13px] font-semibold transition-all duration-200",
                         readerInlineFocusRing,
                         feedbackType === opt.value
-                          ? "border-ink/70 bg-[linear-gradient(180deg,var(--ink),color-mix(in_srgb,var(--ink)_88%,var(--surface)))] text-background shadow-[0_7px_16px_rgba(30,25,18,0.13)]"
-                          : "border-hairline/80 bg-secondary/58 text-ink-soft shadow-[inset_0_1px_0_rgba(255,255,255,0.34)] hover:border-muted hover:bg-[var(--app-control-quiet)] hover:text-ink",
+                          ? "border-ink/70 bg-ink text-background"
+                          : "border-hairline/80 bg-secondary/58 text-ink-soft hover:border-muted hover:bg-[var(--app-control-quiet)] hover:text-ink",
                       )}
                       onClick={() => setFeedbackType(opt.value)}
                     >
@@ -458,9 +458,9 @@ export function FeedbackSheet({
                 placeholder={textareaPlaceholder}
                 rows={3}
                 className={cn(
-                  "min-h-[112px] w-full resize-none rounded-[14px] border border-hairline/85 bg-[color-mix(in_srgb,var(--surface-warm)_58%,transparent)] px-3.5 py-3 text-sm leading-6 text-ink placeholder:text-muted-foreground/65 shadow-[inset_0_2px_6px_rgba(30,25,18,0.025)] transition-all",
+                  "min-h-[112px] w-full resize-none rounded-[14px] border border-hairline/85 bg-surface-raised px-3.5 py-3 text-sm leading-6 text-ink placeholder:text-muted-foreground/65 transition-all",
                   readerInlineFocusRing,
-                  "hover:border-[var(--app-control-border-hover)] hover:bg-surface-warm/80",
+                  "hover:border-[var(--app-control-border-hover)] hover:bg-surface",
                   "focus:border-lens-blue/40 focus:bg-surface focus:ring-4 focus:ring-lens-blue/10",
                 )}
               />
@@ -488,10 +488,10 @@ export function FeedbackSheet({
                   disabled={!canSubmit}
                   onClick={handleSubmit}
                   className={cn(
-                    "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[12px] bg-ink px-5 text-sm font-semibold text-background shadow-[0_8px_18px_rgba(30,25,18,0.16)] ring-1 ring-inset ring-white/10 transition-all",
+                    "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[12px] bg-ink px-5 text-sm font-semibold text-background shadow-[var(--app-secondary-shadow)] ring-1 ring-inset ring-white/10 transition-all",
                     readerInlineFocusRing,
                     "disabled:pointer-events-none disabled:bg-muted/55 disabled:text-background/75 disabled:shadow-none",
-                    "hover:bg-ink-soft hover:shadow-[0_8px_18px_rgba(30,25,18,0.18)] active:scale-[0.98]",
+                    "hover:bg-ink-soft active:scale-[0.98]",
                   )}
                 >
                   {submitState === "submitting" ? (
@@ -531,7 +531,7 @@ function SentimentButton({ sentiment, active, onClick }: SentimentButtonProps) {
         readerInlineFocusRing,
         active
           ? meta.activeClassName
-          : "border-hairline/80 bg-secondary/58 text-ink-soft shadow-[inset_0_1px_0_rgba(255,255,255,0.34)] hover:border-muted hover:bg-[var(--app-control-quiet)] hover:text-ink",
+          : "border-hairline/80 bg-secondary/58 text-ink-soft hover:border-muted hover:bg-[var(--app-control-quiet)] hover:text-ink",
       )}
     >
       <span

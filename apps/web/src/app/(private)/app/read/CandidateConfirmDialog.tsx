@@ -188,7 +188,7 @@ export function CandidateConfirmDialog({
       >
         <DialogHeader className="border-b border-hairline/70 px-6 pb-4 pt-6 sm:px-8">
           <div className="flex items-start gap-3 pr-9">
-            <span className="mt-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-hairline/70 bg-reader-paper/70 text-ink">
+            <span className="mt-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-hairline/70 bg-surface/70 text-ink">
               <FileText aria-hidden className="h-4 w-4" />
             </span>
             <div className="min-w-0">
@@ -206,7 +206,7 @@ export function CandidateConfirmDialog({
         </DialogHeader>
 
         <div className="min-h-0 overflow-hidden px-6 py-5 sm:px-8">
-          <div className="flex h-full min-h-[22rem] flex-col rounded-[10px] border border-hairline/70 bg-reader-paper/54">
+          <div className="flex h-full min-h-[22rem] flex-col rounded-[10px] border border-hairline/70 bg-surface/54">
             <div className="flex items-center justify-between gap-4 border-b border-hairline/60 px-4 py-3 font-sans">
               <p className="text-[0.78rem] font-semibold tracking-[0.08em] text-muted-foreground">
                 {previewPresentation.title}
