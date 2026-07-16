@@ -1088,7 +1088,6 @@ export function ReaderRecordWorkbenchSurface({
         className={cn(
           "reader-shell min-w-0 overflow-visible rounded-panel border border-hairline shadow-surface-quiet",
           shellModeClass,
-          canvasThemeClass,
         )}
       >
         <header className="reader-header-band reader-header-band--immersive reader-header-band--clean sticky top-3 z-20 border-b-0 bg-background/88 px-5 py-6 shadow-none backdrop-blur transition-[padding,background-color,border-color,box-shadow,transform] sm:px-8 lg:px-10 lg:py-8">

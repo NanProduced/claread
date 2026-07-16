@@ -3727,7 +3727,7 @@ export function ReaderWorkbench({
         <div className="relative min-w-0">
         <article
             ref={articleRef}
-            className={`reader-shell min-w-0 overflow-visible rounded-panel border border-hairline shadow-surface-quiet ${shellModeClass} ${canvasThemeClass} ${
+            className={`reader-shell min-w-0 overflow-visible rounded-panel border border-hairline shadow-surface-quiet ${shellModeClass} ${
               managedSelectionVisible ? "reader-shell--managed-selection" : ""
             }`}
             onPointerDownCapture={(event) => {
