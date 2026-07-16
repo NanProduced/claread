@@ -2361,7 +2361,7 @@ describe("ReadingRecordPage direct load", () => {
       },
     });
 
-    renderReadingRecordPage(recordId, "default");
+    const { container } = renderReadingRecordPage(recordId, "default");
     await flushAsyncWork();
 
     // First poll → s2 accepted
@@ -2378,6 +2378,22 @@ describe("ReadingRecordPage direct load", () => {
       .getByTestId("reader-record-progressive-status")
       .getAttribute("data-phase");
     expect(phaseAfterS2).toBe("partial_ready");
+
+    // The accepted snapshot owns the Plate interaction state. Open Quick Peek
+    // before the next poll so a rejected snapshot must prove it never reaches
+    // the Surface value-swap path.
+    const vocabularyMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id], [data-reader-mark-id="mark_vocab_memory"]',
+    );
+    expect(vocabularyMark).not.toBeNull();
+    if (!vocabularyMark) {
+      throw new Error("Expected vocabulary mark in accepted snapshot");
+    }
+    fireEvent.click(vocabularyMark);
+    await flushAsyncWork();
+    expect(
+      screen.queryByTestId("reader-record-plate-lookup-panel"),
+    ).not.toBeNull();
 
     // Second poll → stale rejected
     await act(async () => {
@@ -2396,6 +2412,9 @@ describe("ReadingRecordPage direct load", () => {
         ?.textContent,
     ).toContain("进阶译文内容。");
     expect(status.getAttribute("data-phase")).toBe("partial_ready");
+    expect(
+      screen.queryByTestId("reader-record-plate-lookup-panel"),
+    ).not.toBeNull();
 
     // Cursor held at 2 (not advanced to 3) — next event poll still after_sequence=2
     await act(async () => {

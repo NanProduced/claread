@@ -242,6 +242,93 @@ function quickPeekAnchorBlockIdFromElement(
   return anchorSegmentId ? `paragraph:${anchorSegmentId}` : null;
 }
 
+/**
+ * T4.2a-PUX-R4-R3-R1: Safe CSS.escape wrapper. Uses native CSS.escape when
+ * available (all modern browsers); falls back to simple character escaping
+ * for environments that lack it (e.g., jsdom). The fallback handles the
+ * characters that matter for attribute value selectors: double-quote and
+ * backslash.
+ */
+function safeCssEscape(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return value.replace(/["\\]/g, "\\$&");
+}
+
+/**
+ * T4.2a-PUX-R4-R3-R1: Resolve a Quick Peek anchor element in the post-setValue
+ * DOM using stable business identity — NOT DOM path, HTMLElement ref, or Slate
+ * offset.
+ *
+ * - When `markId` is provided (vocabulary-activated Quick Peek): resolves to
+ *   the specific vocabulary mark element via
+ *   `[data-anchor-segment-id] [data-reader-record-vocabulary-mark-id]`.
+ *   This prevents wrong-anchoring to a different vocabulary on the same segment.
+ * - When `markId` is null (selection-based lookup): resolves to the paragraph
+ *   element via `[data-anchor-segment-id]`. The panel anchors to the paragraph
+ *   rather than the exact text range — acceptable since the range is lost
+ *   after full reload.
+ * - Returns null when the anchor segment or mark doesn't exist in the new DOM,
+ *   signaling fail-safe close.
+ */
+function resolveQuickPeekAnchorElement(
+  anchorSegmentId: string | null,
+  markId: string | null,
+): HTMLElement | null {
+  if (typeof document === "undefined" || !anchorSegmentId) return null;
+  const segmentSelector = `[data-anchor-segment-id="${safeCssEscape(anchorSegmentId)}"]`;
+  if (markId) {
+    return document.querySelector<HTMLElement>(
+      `${segmentSelector} [data-reader-record-vocabulary-mark-id="${safeCssEscape(markId)}"]`,
+    );
+  }
+  return document.querySelector<HTMLElement>(segmentSelector);
+}
+
+/**
+ * T4.2a-PUX-R4-R3-R1: Capture a frozen DOMRect from the current Quick Peek
+ * anchor before editor.tf.setValue detaches the old DOM. The frozen rect keeps
+ * the floating panel at its last known position during the React commit +
+ * rAF restore window, preventing a (0,0) flash.
+ */
+function captureQuickPeekFrozenRect(
+  anchor: NonNullable<ReaderQuickPeekAnchor>,
+): DOMRect | null {
+  if (anchor.kind === "element") {
+    const rect = anchor.element.getBoundingClientRect();
+    return rect.width > 0 || rect.height > 0 ? rect : null;
+  }
+  if (anchor.kind === "range") {
+    try {
+      const rect = anchor.getRect();
+      return rect.width > 0 || rect.height > 0 ? rect : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * T4.2a-PUX-R4-R3-R1: Interaction snapshot captured before editor.tf.setValue
+ * on all full-reload paths (with and without merger). Stores stable business
+ * identity for post-commit re-anchor — never HTMLElement refs or DOM paths.
+ *
+ * T4.2a-PUX-R4-R3-R1-P1: `token` is a monotonic request token checked in the
+ * rAF callback to ensure stale restores never overwrite the current Quick Peek
+ * state. The token is incremented at every invalidation point (new capture,
+ * dismiss, mark switch, generation switch).
+ */
+type QuickPeekInteractionSnapshot = {
+  anchorSegmentId: string | null;
+  markId: string | null;
+  generation: number;
+  baseId: string;
+  frozenRect: DOMRect | null;
+  token: number;
+};
+
 const READER_RECORD_DRAFT_COMMENT_SELECTOR =
   '[data-reader-record-comment-draft="true"]';
 
@@ -2570,15 +2657,35 @@ export function ReaderRecordPlateSurface({
     useState<ReaderStructuredInspectIntent | null>(null);
   const [quickPeekAnchorBlockId, setQuickPeekAnchorBlockId] =
     useState<string | null>(null);
+  // T4.2a-PUX-R4-R3-R1: Stable vocabulary mark ID for the currently-open
+  // Quick Peek. Set when the user activates a vocabulary mark; auto-cleared
+  // when Quick Peek closes (via the ref-sync effect below). Used as stable
+  // business identity for post-setValue re-anchor — never the HTMLElement ref.
+  const quickPeekAnchorMarkIdRef = useRef<string | null>(null);
   const quickPeekInteractionRef = useRef({
     blockId: null as string | null,
     isOpen: false,
   });
+  // T4.2a-PUX-R4-R3-R1-P1: Monotonic request token for Quick Peek restore.
+  // Incremented at every invalidation point (new capture, dismiss, mark
+  // switch, generation switch). The rAF callback checks this token before
+  // touching any ref — stale restores abort without side effects.
+  const quickPeekRestoreTokenRef = useRef(0);
   useEffect(() => {
+    const isOpen = lookupState.kind !== "idle" || inspectState !== null;
     quickPeekInteractionRef.current = {
       blockId: quickPeekAnchorBlockId,
-      isOpen: lookupState.kind !== "idle" || inspectState !== null,
+      isOpen,
     };
+    // T4.2a-PUX-R4-R3-R1: Auto-clear markId ref when Quick Peek closes so
+    // stale identity doesn't leak into the next open session.
+    // T4.2a-PUX-R4-R3-R1-P1: Invalidate pending restore + clear stale
+    // frozenRect ref so it cannot persist as a long-term virtual reference.
+    if (!isOpen) {
+      quickPeekAnchorMarkIdRef.current = null;
+      quickPeekRestoreTokenRef.current += 1;
+      quickPeekAnchorRef.current = null;
+    }
   }, [inspectState, lookupState.kind, quickPeekAnchorBlockId]);
   const [activeSentenceChunkId, setActiveSentenceChunkId] = useState<string | null>(null);
   const [activeGrammarItemId, setActiveGrammarItemId] = useState<string | null>(null);
@@ -2829,6 +2936,10 @@ export function ReaderRecordPlateSurface({
     // 但 prevSnapshot === snapshot（已更新），merger 不会被调用。用此 flag
     // 区分"真正的 fallback reload"和"effect 重新运行但无 merge 需要"。
     let mergerAttempted = false;
+    // T4.2a-PUX-R4-R3-R1: Quick Peek interaction snapshot captured before
+    // editor.tf.setValue on all full-reload paths. Used in the rAF callback
+    // to re-anchor the floating panel via stable business identity.
+    let capturedQuickPeekSnapshot: QuickPeekInteractionSnapshot | null = null;
 
     // T4.2a-PUX-R4-R2: When a reload context is present but localUserAssets
     // hasn't been synced to snapshot.user_assets yet, skip this run. The
@@ -2924,20 +3035,56 @@ export function ReaderRecordPlateSurface({
     }
 
     if (!appliedViaTargeted) {
-      // T4.2a-PUX-R4-R2.2-P2c: 仅在 merger 真正被调用且返回 fallback 时
-      // 确定性关闭 Quick Peek。effect 在 targeted_apply 成功后可能因
-      // plateValue 变化而再次运行;此时 mergerAttempted 为 false,不应关闭。
-      // setValue 会让所有 DOM 元素脱离;一个仍开着 Quick Peek 的 panel,
-      // 其 anchor ref 指向 detached HTMLElement 会让浮层 rect 落到页面左上角
-      // (0,0)。跨 reload 的 Quick Peek 重新锚定是后续单独任务。
-      if (
-        mergerAttempted &&
-        quickPeekInteractionRef.current.isOpen
-      ) {
-        setLookupState({ kind: "idle" });
-        setInspectState(null);
-        setQuickPeekAnchorBlockId(null);
-        quickPeekAnchorRef.current = null;
+      // T4.2a-PUX-R4-R3-R1: Capture Quick Peek interaction snapshot on ALL
+      // setValue paths (with and without merger). The previous code only
+      // closed Quick Peek when mergerAttempted was true, leaving the
+      // without-merger path (surface-mode toggle, localUserAssets
+      // re-projection) with a detached HTMLElement → (0,0) panel.
+      //
+      // New behavior: capture stable identity → freeze anchor rect →
+      // setValue → rAF re-anchor (if anchor exists) or fail-safe close.
+      // This never displays a detached (0,0) panel and never wrong-anchors
+      // to a different vocabulary on the same segment.
+      const quickPeekInteraction = quickPeekInteractionRef.current;
+      if (quickPeekInteraction.isOpen) {
+        const anchorSegmentId = quickPeekInteraction.blockId?.startsWith(
+          "paragraph:",
+        )
+          ? quickPeekInteraction.blockId.slice("paragraph:".length)
+          : null;
+        const anchor = quickPeekAnchorRef.current;
+        const frozenRect = anchor
+          ? captureQuickPeekFrozenRect(anchor)
+          : null;
+        if (frozenRect) {
+          // T4.2a-PUX-R4-R3-R1-P1: Increment token for this restore request.
+          // Any previous pending rAF with a lower token will abort on sight.
+          const restoreToken = (quickPeekRestoreTokenRef.current += 1);
+          capturedQuickPeekSnapshot = {
+            anchorSegmentId,
+            markId: quickPeekAnchorMarkIdRef.current,
+            generation: snapshot.record.generation,
+            baseId: snapshot.base.base_id,
+            frozenRect,
+            token: restoreToken,
+          };
+          // Freeze the anchor to prevent (0,0) during the restore window.
+          // autoUpdate will poll this frozen rect, keeping the panel at its
+          // last known position until re-anchor completes in rAF.
+          quickPeekAnchorRef.current = {
+            kind: "range",
+            getRect: () => frozenRect,
+          };
+          quickPeekFloating.refs.setPositionReference?.({
+            getBoundingClientRect: () => frozenRect,
+          });
+        } else {
+          // No rect available — close immediately as fail-safe.
+          setLookupState({ kind: "idle" });
+          setInspectState(null);
+          setQuickPeekAnchorBlockId(null);
+          quickPeekAnchorRef.current = null;
+        }
       }
       // T4.2a-PUX-R4-R2.1C: request cleanup of itemId-keyed grammar
       // expansion state before the full DOM rebuild. The Provider clears
@@ -2972,15 +3119,84 @@ export function ReaderRecordPlateSurface({
       }
     }
 
-    // Restore scroll on the next frame so React has committed the new DOM.
-    if (savedScrollTop !== null && savedScrollTop > 0) {
-      const targetTop = savedScrollTop;
+    // T4.2a-PUX-R4-R3-R1: Restore scroll and re-anchor Quick Peek on the
+    // next frame so React has committed the new DOM. The rAF callback
+    // resolves the new anchor element via stable business identity
+    // (anchorSegmentId + markId) and calls setPositionReference, or
+    // deterministically closes Quick Peek if the anchor is gone.
+    //
+    // T4.2a-PUX-R4-R3-R1-P1: The rAF callback checks a monotonic request
+    // token before touching any ref. Stale restores (token mismatch) or
+    // mark switches (markId mismatch) abort without side effects, ensuring
+    // the current Quick Peek state is never overwritten by an old request.
+    const needsQuickPeekReanchor = capturedQuickPeekSnapshot !== null;
+    const needsScrollRestore = savedScrollTop !== null && savedScrollTop > 0;
+
+    if (needsQuickPeekReanchor || needsScrollRestore) {
+      const targetTop = savedScrollTop ?? 0;
+      const quickPeekSnapshot = capturedQuickPeekSnapshot;
       const rafId = window.requestAnimationFrame(() => {
-        if (scrollContainer === null) return;
-        if (scrollContainer === window) {
-          window.scrollTo(0, targetTop);
-        } else {
-          (scrollContainer as HTMLElement).scrollTop = targetTop;
+        // Quick Peek re-anchor: resolve new DOM element via stable identity.
+        if (quickPeekSnapshot) {
+          // P1 guard 1: token mismatch → stale request, abort without
+          // touching refs. The latest request (or new mark handler) owns
+          // the ref state.
+          if (
+            quickPeekSnapshot.token !== quickPeekRestoreTokenRef.current
+          ) {
+            // Scroll restore still runs below — it's independent of Quick Peek.
+          } else if (!quickPeekInteractionRef.current.isOpen) {
+            // Quick Peek was closed by generation-scoped effect or other
+            // logic during the commit window. Clear stale ref.
+            quickPeekAnchorRef.current = null;
+          } else if (
+            snapshot.record.generation !== quickPeekSnapshot.generation ||
+            snapshot.base.base_id !== quickPeekSnapshot.baseId
+          ) {
+            // Fence mismatch: generation/base changed during commit.
+            // The generation-scoped effect will close Quick Peek; clear
+            // stale ref to prevent detached (0,0) panel.
+            quickPeekAnchorRef.current = null;
+          } else if (
+            quickPeekAnchorMarkIdRef.current !== quickPeekSnapshot.markId
+          ) {
+            // P1 guard 2: user switched to a different vocabulary mark
+            // during the commit window. Abort without touching refs —
+            // the new mark's handler owns the anchor ref.
+          } else {
+            // Resolve new DOM element via stable identity
+            const newElement = resolveQuickPeekAnchorElement(
+              quickPeekSnapshot.anchorSegmentId,
+              quickPeekSnapshot.markId,
+            );
+            if (newElement) {
+              // Re-anchor to the resolved element
+              quickPeekAnchorRef.current = {
+                kind: "element",
+                element: newElement,
+              };
+              quickPeekFloating.refs.setPositionReference?.({
+                getBoundingClientRect: () =>
+                  newElement.getBoundingClientRect(),
+                contextElement: newElement,
+              });
+              quickPeekFloating.update?.();
+            } else {
+              // Anchor not found in new DOM — fail-safe close
+              setLookupState({ kind: "idle" });
+              setInspectState(null);
+              setQuickPeekAnchorBlockId(null);
+              quickPeekAnchorRef.current = null;
+            }
+          }
+        }
+        // Scroll restore
+        if (needsScrollRestore && scrollContainer !== null) {
+          if (scrollContainer === window) {
+            window.scrollTo(0, targetTop);
+          } else {
+            (scrollContainer as HTMLElement).scrollTop = targetTop;
+          }
         }
       });
       // Update prevSnapshotRef AFTER successful apply but BEFORE cleanup.
@@ -3297,20 +3513,30 @@ export function ReaderRecordPlateSurface({
   const quickPeekOpen =
     !dictionaryOpen && (lookupState.kind !== "idle" || inspectState !== null);
 
-  // T4.2a-PUX-R2: generation-scoped interaction reset. On base generation
-  // change, clear selection / Quick Peek / panels that are tied to anchors
-  // of the previous generation. Scroll is intentionally preserved by the
-  // plateValue swap effect (scrollTop restore) and is not generation-scoped.
+  // T4.2a-PUX-R2: source-identity-scoped interaction reset. A base_id or
+  // generation change invalidates every anchor-bound interaction from the
+  // previous source. Scroll is intentionally preserved by the plateValue
+  // swap effect and is not source-identity-scoped.
   const generation = snapshot.record.generation;
-  const prevGenerationRef = useRef(generation);
+  const baseId = snapshot.base.base_id;
+  const prevSourceIdentityRef = useRef({ generation, baseId });
   useEffect(() => {
-    if (prevGenerationRef.current === generation) {
+    const previous = prevSourceIdentityRef.current;
+    if (
+      previous.generation === generation &&
+      previous.baseId === baseId
+    ) {
       return;
     }
-    prevGenerationRef.current = generation;
+    prevSourceIdentityRef.current = { generation, baseId };
     setActiveSelection(null);
     setLookupState({ kind: "idle" });
     setInspectState(null);
+    // T4.2a-PUX-R4-R3-R1-P1: Invalidate any pending Quick Peek restore from
+    // the previous generation so the old rAF cannot re-anchor into the new
+    // generation's DOM.
+    quickPeekRestoreTokenRef.current += 1;
+    quickPeekAnchorRef.current = null;
     setActiveSentenceChunkId(null);
     setActiveGrammarItemId(null);
     setGrammarExpandRequest(null);
@@ -3324,7 +3550,7 @@ export function ReaderRecordPlateSurface({
     // T4.2a-PUX-R4-R2.1C: drop itemId-keyed grammar expansion state —
     // the new generation's itemIds are not comparable to the old ones.
     grammarExpansionControlRef.current?.clear();
-  }, [generation]);
+  }, [baseId, generation]);
 
   useEffect(() => {
     if (isWorkspaceShell && sidebarMode === "locked" && dictionaryOpen) {
@@ -3609,11 +3835,19 @@ export function ReaderRecordPlateSurface({
     query,
     context,
     positionReference,
+    anchorBlockId,
     warningLabel = "dictionary",
   }: {
     query: string;
     context: ReaderRecordLookupContext;
     positionReference?: ReaderRecordLookupPositionReference;
+    // T4.2a-PUX-R4-R3-R1: Stable block identity fallback for selection-based
+    // lookup where positionReference.contextElement is not available (e.g.,
+    // runLookupForSelection passes only getRect). Without this, the Quick Peek
+    // anchor block ID would be null, and the post-setValue re-anchor would
+    // fail to resolve the anchor segment — causing a deterministic close
+    // instead of preserving the Quick Peek across full reload.
+    anchorBlockId?: string;
     warningLabel?: string;
   }) => {
     if (positionReference) {
@@ -3623,7 +3857,8 @@ export function ReaderRecordPlateSurface({
         contextElement: positionReference.contextElement,
       };
       setQuickPeekAnchorBlockId(
-        quickPeekAnchorBlockIdFromElement(positionReference.contextElement),
+        anchorBlockId ??
+          quickPeekAnchorBlockIdFromElement(positionReference.contextElement),
       );
       quickPeekFloating.refs.setPositionReference?.({
         getBoundingClientRect: positionReference.getRect,
@@ -3718,6 +3953,14 @@ export function ReaderRecordPlateSurface({
       };
       quickPeekAnchorRef.current = { kind: "element", element: anchor };
       setQuickPeekAnchorBlockId(quickPeekAnchorBlockIdFromElement(anchor));
+      // T4.2a-PUX-R4-R3-R1: Capture stable markId for post-setValue re-anchor.
+      // inspectState.markId also carries this, but lookup-based Quick Peek
+      // (vocab_highlight path) doesn't set inspectState — the ref is the
+      // single source of truth across both paths.
+      // T4.2a-PUX-R4-R3-R1-P1: Invalidate any pending restore from a previous
+      // mark so the old rAF cannot overwrite this new mark's anchor ref.
+      quickPeekAnchorMarkIdRef.current = mark.id;
+      quickPeekRestoreTokenRef.current += 1;
       quickPeekFloating.refs.setPositionReference?.({
         getBoundingClientRect: () => anchor.getBoundingClientRect(),
         contextElement: anchor,
@@ -3837,6 +4080,10 @@ export function ReaderRecordPlateSurface({
       query,
       context,
       positionReference,
+      // T4.2a-PUX-R4-R3-R1: Pass stable block identity from the selection
+      // bridge so that post-setValue re-anchor can resolve the anchor
+      // segment even without a contextElement DOM reference.
+      anchorBlockId: selection.blockId,
     });
     return true;
   }, [plateDocument.children, runDictionaryLookupRequest]);

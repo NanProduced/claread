@@ -8,7 +8,8 @@
  * 1. 合法 grammar 首发不调用 setValue，不 replace 既有 paragraph
  * 2. 既有 paragraph / 词汇 mark DOM identity 保留
  * 3. vocabulary Quick Peek 锚定同一 paragraph 时 grammar insert 后仍可见，浮层 rect 非零
- * 4. fallback full reload 时 Quick Peek 被关闭，旧 panel 不残留
+ * 4. T4.2a-PUX-R4-R3-R1: fallback full reload 时 Quick Peek 保持打开并重新锚定到原词汇，
+ *    浮层 rect 非零，不出现 detached (0,0) panel
  *
  * The merger is mocked to control targeted_apply vs fallback_full_reload,
  * avoiding the C6 fail-closed behavior that occurs when the real projection
@@ -1076,7 +1077,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2c grammar semantic in
     expect(paragraphBefore!.isSameNode(paragraphAfter)).toBe(true);
   });
 
-  it("fallback full reload 时 Quick Peek 被关闭，旧 panel 不残留", async () => {
+  it("T4.2a-PUX-R4-R3-R1: fallback full reload 时 Quick Peek 保持打开并重新锚定到原词汇，浮层 rect 非零", async () => {
     installQuickPeekFetchMock();
 
     const prevSnapshot = makeSnapshot();
@@ -1098,24 +1099,27 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2c grammar semantic in
     });
 
     // 打开 Quick Peek
-    const vocabMark = container.querySelector<HTMLElement>(
+    const vocabMarkBefore = container.querySelector<HTMLElement>(
       '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
-    expect(vocabMark).not.toBeNull();
-    if (!vocabMark) {
+    expect(vocabMarkBefore).not.toBeNull();
+    if (!vocabMarkBefore) {
       throw new Error("Expected vocabulary mark");
     }
 
-    selectTextInElement(vocabMark, 0, "memory".length);
+    selectTextInElement(vocabMarkBefore, 0, "memory".length);
     const lookupButton = await waitForSelectionAction(container, "lookup");
     await waitFor(() => {
       expect(lookupButton.disabled).toBe(false);
     });
     fireEvent.click(lookupButton);
 
-    // Quick Peek 已打开
-    const panel = await screen.findByTestId("reader-record-plate-lookup-panel");
-    expect(panel).toBeTruthy();
+    // Quick Peek 已打开 — 采样更新前状态
+    const panelBefore = await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(panelBefore).toBeTruthy();
+    const rectBefore = panelBefore.getBoundingClientRect();
+    expect(rectBefore.width).toBeGreaterThan(0);
+    expect(rectBefore.height).toBeGreaterThan(0);
 
     await act(async () => {
       rerender(
@@ -1126,19 +1130,926 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2c grammar semantic in
       );
     });
 
-    // Quick Peek 被关闭（lookupState idle, inspectState null, quickPeekAnchorBlockId null）
-    expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
-
-    // 旧 panel 不残留：无浮层元素残留
-    const lingeringPanels = container.querySelectorAll(
-      "[data-reader-record-plate-lookup-panel], [data-testid='reader-record-plate-lookup-panel']",
-    );
-    expect(lingeringPanels).toHaveLength(0);
-
-    // reload 确实发生了（paragraph 存在，setValue 重建 DOM）
+    // DOM 替换后采样：reload 确实发生了（setValue 重建 DOM）
     const paragraphAfter = container.querySelector(
       '[data-reader-record-node="paragraph"]',
     );
     expect(paragraphAfter).not.toBeNull();
+
+    // 原词汇 mark 在新 DOM 中仍存在（nextSnapshot 保留 vocab_mark_1 on seg_1）
+    const vocabMarkAfter = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocabMarkAfter).not.toBeNull();
+
+    // 等待 rAF 恢复窗口完成：Quick Peek 保持打开，重新锚定到原词汇
+    const panelAfter = await waitFor(() => {
+      const panel = screen.queryByTestId("reader-record-plate-lookup-panel");
+      if (!panel) {
+        throw new Error("Expected Quick Peek panel to remain open after fallback full reload");
+      }
+      return panel;
+    });
+    expect(panelAfter).toBeTruthy();
+
+    // 恢复后采样：浮层 rect 非零，不出现 detached (0,0) panel
+    const rectAfter = panelAfter.getBoundingClientRect();
+    expect(rectAfter.width).toBeGreaterThan(0);
+    expect(rectAfter.height).toBeGreaterThan(0);
+    // 不落在页面左上角 (0,0) — frozen rect 和 re-anchored rect 都应保持非零偏移
+    expect(rectAfter.left).toBeGreaterThan(0);
+    expect(rectAfter.top).toBeGreaterThan(0);
+  });
+});
+
+// ===========================================================================
+// T4.2a-PUX-R4-R3-R1: Quick Peek re-anchor fail-safe close scenarios
+//
+// These tests cover the deterministic-close branch of the R3-R1 re-anchor
+// logic: when the anchor is deleted, generation changes, or the resolver
+// fails, the Quick Peek must close without leaving a detached (0,0) panel.
+// Each test samples panel state before update, after DOM replace, and after
+// restore window.
+// ===========================================================================
+
+describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1 Quick Peek re-anchor fail-safe", () => {
+  it("anchor 词汇 mark 被删除 → Quick Peek 确定性关闭，无 detached panel", async () => {
+    installQuickPeekFetchMock();
+
+    const prevSnapshot = makeSnapshot();
+    // Next snapshot: same structure but vocabulary marks removed from seg_1
+    const nextSnapshot: ReaderPlateSnapshotDto = {
+      ...makeNextSnapshot(prevSnapshot),
+      value: [
+        {
+          ...makeUnit(),
+          children: [
+            {
+              ...makeUnit().children[0],
+              children: [
+                {
+                  ...(makeUnit().children[0] as ReaderSourceBlockNodeDto).children[0],
+                  children: [
+                    {
+                      ...((makeUnit().children[0] as ReaderSourceBlockNodeDto)
+                        .children[0] as ReaderAnchorSegmentNodeDto).children[0],
+                      reader_vocabulary_marks: [],
+                    },
+                  ],
+                },
+                ...((makeUnit().children[0] as ReaderSourceBlockNodeDto).children.slice(1)),
+              ],
+            } as ReaderSourceBlockNodeDto,
+            ...makeUnit().children.slice(1),
+          ],
+        },
+      ],
+    };
+    const event = makeGrammarFirstPublishEvent();
+
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_anchor_deleted",
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // 通过直接点击 vocabulary mark 打开 Quick Peek（走 handleActivateVocabulary
+    // 路径，设置 quickPeekAnchorMarkIdRef = mark.id，用于 re-anchor identity）
+    const vocabMarkBefore = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocabMarkBefore).not.toBeNull();
+
+    // 清除选区，避免 hasNonCollapsedNativeSelection 拦截
+    window.getSelection()?.removeAllRanges();
+    fireEvent.click(vocabMarkBefore!);
+
+    // 采样更新前状态：Quick Peek 已打开
+    const panelBefore = await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(panelBefore).toBeTruthy();
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // DOM 替换后采样：reload 发生，vocab_mark_1 不在新 DOM 中
+    const paragraphAfter = container.querySelector(
+      '[data-reader-record-node="paragraph"]',
+    );
+    expect(paragraphAfter).not.toBeNull();
+    expect(
+      container.querySelector('[data-reader-record-vocabulary-mark-id="vocab_mark_1"]'),
+    ).toBeNull();
+
+    // 恢复后采样：Quick Peek 被确定性关闭（resolver 返回 null → fail-safe close）
+    await waitFor(() => {
+      expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+    });
+  });
+
+  it("generation 切换 → Quick Peek 确定性关闭，无 detached panel", async () => {
+    installQuickPeekFetchMock();
+
+    const prevSnapshot = makeSnapshot();
+    // Next snapshot: generation changed from 1 to 2 (same base_id, same content)
+    const nextSnapshot: ReaderPlateSnapshotDto = {
+      ...makeNextSnapshot(prevSnapshot),
+      record: { ...prevSnapshot.record, generation: 2 },
+    };
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // 打开 Quick Peek
+    const vocabMarkBefore = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocabMarkBefore).not.toBeNull();
+
+    selectTextInElement(vocabMarkBefore!, 0, "memory".length);
+    const lookupButton = await waitForSelectionAction(container, "lookup");
+    await waitFor(() => {
+      expect(lookupButton.disabled).toBe(false);
+    });
+    fireEvent.click(lookupButton);
+
+    // 采样更新前状态：Quick Peek 已打开
+    const panelBefore = await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(panelBefore).toBeTruthy();
+
+    await act(async () => {
+      rerender(<ReaderRecordPlateSurface snapshot={nextSnapshot} />);
+    });
+
+    // DOM 替换后采样：generation-scoped effect 触发 → lookupState idle
+    // generation 变化触发的 effect 会 setLookupState({ kind: "idle" })
+    // 恢复后采样：Quick Peek 被确定性关闭
+    await waitFor(() => {
+      expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+    });
+  });
+
+  it("anchor segment 不在新 DOM → resolver 返回 null → Quick Peek 确定性关闭", async () => {
+    installQuickPeekFetchMock();
+
+    const prevSnapshot = makeSnapshot();
+    // Next snapshot: use split segment snapshot (seg_1 + seg_2) but remove
+    // seg_1 entirely, leaving only seg_2. The resolver for "seg_1" will
+    // return null because [data-anchor-segment-id="seg_1"] doesn't exist.
+    const splitSnapshot = makeSplitSegmentSnapshot();
+    const splitUnit = splitSnapshot.value[0];
+    const splitSourceBlock = splitUnit.children.find(
+      (child): child is ReaderSourceBlockNodeDto =>
+        child.type === "reader_source_block",
+    )!;
+    // Keep only seg_2 (remove seg_1 from source block children)
+    const revisedSourceBlock: ReaderSourceBlockNodeDto = {
+      ...splitSourceBlock,
+      children: splitSourceBlock.children.filter((child) => {
+        if (!("type" in child)) return true;
+        if (child.type !== "reader_anchor_segment") return true;
+        return child.anchor_segment_id !== "seg_1";
+      }),
+    };
+    const nextSnapshot: ReaderPlateSnapshotDto = {
+      ...splitSnapshot,
+      snapshot_id: "snapshot_no_seg_1",
+      last_event_sequence: 9,
+      value: [
+        {
+          ...splitUnit,
+          children: [
+            revisedSourceBlock,
+            ...splitUnit.children.filter(
+              (child) => child.type !== "reader_source_block",
+            ),
+          ],
+        },
+      ],
+    };
+
+    const event = makeGrammarFirstPublishEvent();
+
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_segment_removed",
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // 打开 Quick Peek on seg_1's vocab mark
+    const vocabMarkBefore = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocabMarkBefore).not.toBeNull();
+
+    selectTextInElement(vocabMarkBefore!, 0, "memory".length);
+    const lookupButton = await waitForSelectionAction(container, "lookup");
+    await waitFor(() => {
+      expect(lookupButton.disabled).toBe(false);
+    });
+    fireEvent.click(lookupButton);
+
+    // 采样更新前状态：Quick Peek 已打开
+    const panelBefore = await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(panelBefore).toBeTruthy();
+
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // DOM 替换后采样：seg_1 不在新 DOM 中
+    expect(
+      container.querySelector('[data-anchor-segment-id="seg_1"]'),
+    ).toBeNull();
+
+    // 恢复后采样：Quick Peek 被确定性关闭（resolver 返回 null → fail-safe close）
+    await waitFor(() => {
+      expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+    });
+  });
+});
+
+// ===========================================================================
+// T4.2a-PUX-R4-R3-R1-P1: Quick Peek async race guard
+//
+// These tests verify the monotonic request token and invalidation points
+// that prevent stale snapshots, stale rAF callbacks, or invalidated
+// interactions from overwriting the current Quick Peek state.
+//
+// P1 guards tested:
+//   P1-1: Token guard — consecutive snapshot updates don't corrupt state
+//   P1-2: Close invalidation — dismiss during pending restore stays closed
+//   P1-3: Mark switch invalidation — switching marks during restore keeps
+//         the new mark's Quick Peek open (stale rAF aborts)
+//   P1-4: Precise mark resolution — resolver uses markId, not just
+//         anchor_segment_id; deleting the original mark with a sibling mark
+//         remaining on the same segment still closes Quick Peek
+//   P1-5: Generation invalidation — generation switch during pending restore
+//         stays closed (token mismatch + generation-scoped effect)
+// ===========================================================================
+
+/**
+ * Build a snapshot with two vocabulary marks on seg_1:
+ *   vocab_mark_1: "memory" (offsets 14-20)
+ *   vocab_mark_2: "shapes" (offsets 21-27)
+ */
+function makeSnapshotWithTwoVocabMarks(): ReaderPlateSnapshotDto {
+  const vocabMark1 = makeVocabularyMark({
+    mark_id: "vocab_mark_1",
+    selected_text: "memory",
+    start_offset: 14,
+    end_offset: 20,
+    segment_start_utf16: 14,
+    segment_end_utf16: 20,
+    phrase: "memory",
+    gloss: "记忆",
+  });
+  const vocabMark2 = makeVocabularyMark({
+    mark_id: "vocab_mark_2",
+    selected_text: "shapes",
+    start_offset: 21,
+    end_offset: 27,
+    segment_start_utf16: 21,
+    segment_end_utf16: 27,
+    phrase: "shapes",
+    gloss: "塑造",
+  });
+  const snapshot = makeSnapshot();
+  return {
+    ...snapshot,
+    value: [makeUnit({ vocabularyMarks: [vocabMark1, vocabMark2] })],
+  };
+}
+
+describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1 async race guard", () => {
+  it("P1-1: 连续两次 snapshot 更新 → 第一次 restore 不得覆盖第二次", async () => {
+    installQuickPeekFetchMock();
+
+    const prevSnapshot = makeSnapshot();
+    const firstNext = makeNextSnapshot(prevSnapshot);
+    const secondNext: ReaderPlateSnapshotDto = {
+      ...makeNextSnapshot(firstNext),
+      snapshot_id: "snapshot_3",
+      last_event_sequence: 10,
+    };
+    const event = makeGrammarFirstPublishEvent(9);
+
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_consecutive_reload",
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // 打开 Quick Peek on vocab_mark_1
+    const vocabMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocabMark).not.toBeNull();
+    window.getSelection()?.removeAllRanges();
+    fireEvent.click(vocabMark!);
+
+    const panelBefore = await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(panelBefore).toBeTruthy();
+
+    // 第一次 reload — captures token N, schedules rAF #1
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={firstNext}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // 第二次 reload — cleanup cancels rAF #1, captures token N+1, schedules rAF #2
+    // 第一次 restore 的 rAF 不得覆盖第二次的 anchor state。
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={secondNext}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // 等待 rAF #2 恢复完成 — Quick Peek 仍然打开，panel 非 (0,0)
+    await waitFor(() => {
+      expect(screen.queryByTestId("reader-record-plate-lookup-panel")).not.toBeNull();
+    });
+
+    const panelAfter = screen.getByTestId("reader-record-plate-lookup-panel");
+    const rect = panelAfter.getBoundingClientRect();
+    expect(rect.width).toBeGreaterThan(0);
+    expect(rect.height).toBeGreaterThan(0);
+
+    // 原 vocabulary mark 在新 DOM 中仍存在
+    expect(
+      container.querySelector('[data-reader-record-vocabulary-mark-id="vocab_mark_1"]'),
+    ).not.toBeNull();
+  });
+
+  it("P1-2: restore pending 时 dismiss Quick Peek → 保持关闭", async () => {
+    installQuickPeekFetchMock();
+
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeNextSnapshot(prevSnapshot);
+    const event = makeGrammarFirstPublishEvent(9);
+
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_dismiss_during_restore",
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // 打开 Quick Peek
+    const vocabMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocabMark).not.toBeNull();
+    window.getSelection()?.removeAllRanges();
+    fireEvent.click(vocabMark!);
+
+    const panelBefore = await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(panelBefore).toBeTruthy();
+
+    // 触发 reload — captures snapshot, schedules rAF
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // 在 rAF fire 之前 dismiss Quick Peek
+    // onDismiss → setLookupState idle → lookupState.kind effect increments
+    // token + clears anchorRef → rAF token mismatch → aborts
+    await act(async () => {
+      const closeButton = screen.queryByRole("button", { name: "关闭预览卡片" });
+      if (closeButton) {
+        fireEvent.click(closeButton);
+      }
+    });
+
+    // 等待 rAF fire — token 已失效 → rAF aborts → Quick Peek 保持关闭
+    await waitFor(() => {
+      expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+    });
+  });
+
+  it("P1-3: restore pending 时切换到同段另一 vocabulary mark → 锚定新 mark", async () => {
+    installQuickPeekFetchMock();
+
+    const prevSnapshot = makeSnapshotWithTwoVocabMarks();
+    const nextSnapshot = makeNextSnapshot(prevSnapshot);
+    const event = makeGrammarFirstPublishEvent(9);
+
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_mark_switch_during_restore",
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // 打开 Quick Peek on vocab_mark_1
+    const vocabMark1 = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocabMark1).not.toBeNull();
+    window.getSelection()?.removeAllRanges();
+    fireEvent.click(vocabMark1!);
+
+    const panelBefore = await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(panelBefore).toBeTruthy();
+
+    // 触发 reload — captures snapshot with markId=vocab_mark_1, schedules rAF
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // 在 rAF fire 之前切换到 vocab_mark_2
+    // handleActivateVocabulary → sets markId ref to vocab_mark_2,
+    // increments token → stale rAF (markId=vocab_mark_1) aborts
+    const vocabMark2After = await waitFor(() => {
+      const mark = container.querySelector<HTMLElement>(
+        '[data-reader-record-vocabulary-mark-id="vocab_mark_2"]',
+      );
+      if (!mark) throw new Error("vocab_mark_2 not found in new DOM");
+      return mark;
+    });
+
+    await act(async () => {
+      window.getSelection()?.removeAllRanges();
+      fireEvent.click(vocabMark2After);
+    });
+
+    // 等待 rAF fire — token mismatch (incremented by mark switch) → rAF aborts
+    // Quick Peek 仍然打开（由 vocab_mark_2 的 handler 拥有），panel 非 (0,0)
+    await waitFor(() => {
+      expect(screen.queryByTestId("reader-record-plate-lookup-panel")).not.toBeNull();
+    });
+
+    const panelAfter = screen.getByTestId("reader-record-plate-lookup-panel");
+    const rect = panelAfter.getBoundingClientRect();
+    expect(rect.width).toBeGreaterThan(0);
+    expect(rect.height).toBeGreaterThan(0);
+  });
+
+  it("P1-4: resolver 精确定位原 vocabulary mark — 删除原 mark 保留同段其他 mark → Quick Peek 关闭", async () => {
+    installQuickPeekFetchMock();
+
+    const prevSnapshot = makeSnapshotWithTwoVocabMarks();
+    // Next snapshot: remove vocab_mark_1, keep vocab_mark_2 on same segment
+    const nextSnapshot: ReaderPlateSnapshotDto = {
+      ...makeNextSnapshot(prevSnapshot),
+      value: [
+        makeUnit({
+          vocabularyMarks: [
+            makeVocabularyMark({
+              mark_id: "vocab_mark_2",
+              selected_text: "shapes",
+              start_offset: 21,
+              end_offset: 27,
+              segment_start_utf16: 21,
+              segment_end_utf16: 27,
+              phrase: "shapes",
+              gloss: "塑造",
+            }),
+          ],
+        }),
+      ],
+    };
+    const event = makeGrammarFirstPublishEvent(9);
+
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_precise_mark_resolution",
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // 打开 Quick Peek on vocab_mark_1
+    const vocabMark1 = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocabMark1).not.toBeNull();
+    window.getSelection()?.removeAllRanges();
+    fireEvent.click(vocabMark1!);
+
+    const panelBefore = await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(panelBefore).toBeTruthy();
+
+    // 触发 reload — resolver searches for
+    // [data-anchor-segment-id="seg_1"] [data-reader-record-vocabulary-mark-id="vocab_mark_1"]
+    // 新 DOM 只有 vocab_mark_2（同段但不同 markId）→ resolver returns null → close
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // vocab_mark_1 不在新 DOM，vocab_mark_2 仍在
+    expect(
+      container.querySelector('[data-reader-record-vocabulary-mark-id="vocab_mark_1"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-reader-record-vocabulary-mark-id="vocab_mark_2"]'),
+    ).not.toBeNull();
+
+    // Quick Peek 确定性关闭（resolver 未命中 vocab_mark_2，不 fallback 到同段其他词）
+    await waitFor(() => {
+      expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+    });
+  });
+
+  it("P1-5: restore pending 时 generation 切换 → token 失效 → Quick Peek 保持关闭", async () => {
+    installQuickPeekFetchMock();
+
+    const prevSnapshot = makeSnapshot();
+    const firstNext = makeNextSnapshot(prevSnapshot);
+    const generationNext: ReaderPlateSnapshotDto = {
+      ...makeNextSnapshot(firstNext),
+      snapshot_id: "snapshot_gen2",
+      last_event_sequence: 10,
+      record: { ...prevSnapshot.record, generation: 2 },
+    };
+    const event = makeGrammarFirstPublishEvent(9);
+
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_generation_switch_during_restore",
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // 打开 Quick Peek on vocab_mark_1
+    const vocabMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocabMark).not.toBeNull();
+    window.getSelection()?.removeAllRanges();
+    fireEvent.click(vocabMark!);
+
+    const panelBefore = await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(panelBefore).toBeTruthy();
+
+    // 第一次 reload (generation=1) — captures snapshot, schedules rAF #1
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={firstNext}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // generation 切换到 2 — generation-scoped effect fires:
+    //   setLookupState idle, increments token, clears anchorRef
+    // value-swap effect also runs (new snapshot) → schedules rAF #2
+    // 但 rAF #2 的 token 已被 generation effect 失效 → aborts
+    await act(async () => {
+      rerender(<ReaderRecordPlateSurface snapshot={generationNext} />);
+    });
+
+    // Quick Peek 确定性关闭，无 detached panel
+    await waitFor(() => {
+      expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+    });
+  });
+});
+
+// ===========================================================================
+// T4.2a-PUX-R4-R3-R1-P1.1: Re-anchor contract coverage closeout
+//
+// Closes remaining contract gaps:
+//   P1.1-VT-1: base_id change during restore pending → old rAF aborts via
+//              token; no detached (0,0) panel
+//   duplicate-snapshot guard: same accepted snapshot identity early-returns
+//              without a false capture/setValue/rAF. This is not a fence
+//              rejection; rejected snapshots are covered at the polling/page seam.
+//   P1.1-VT-3: dismissed restore request → token invalid → resolver not
+//              executed, no re-hook of old HTMLElement, re-open works
+// ===========================================================================
+
+describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1.1 contract coverage closeout", () => {
+  it("P1.1-VT-1: restore pending 时 base_id 改变 → 旧 rAF 失效，无 (0,0) panel", async () => {
+    installQuickPeekFetchMock();
+
+    const prevSnapshot = makeSnapshot();
+    const firstNext = makeNextSnapshot(prevSnapshot);
+    // 第二次 reload: base_id 从 base_1 变为 base_2（generation 不变）
+    const baseChangeNext: ReaderPlateSnapshotDto = {
+      ...makeNextSnapshot(firstNext),
+      snapshot_id: "snapshot_base_changed",
+      last_event_sequence: 10,
+      base: { ...firstNext.base, base_id: "base_2" },
+    };
+    const event = makeGrammarFirstPublishEvent(9);
+
+    // 两次 reload 都走 fallback_full_reload（merger 检测到 base_changed
+    // 也会返回 fallback_full_reload，此处直接 mock）
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_base_change_during_restore",
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // 打开 Quick Peek on vocab_mark_1
+    const vocabMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocabMark).not.toBeNull();
+    window.getSelection()?.removeAllRanges();
+    fireEvent.click(vocabMark!);
+
+    const panelBefore = await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(panelBefore).toBeTruthy();
+
+    // 第一次 reload (base_id=base_1) — captures token T1, schedules rAF #1
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={firstNext}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // 第二次 reload (base_id=base_2, same generation) crosses the source
+    // identity boundary and must close Quick Peek without a re-anchor.
+    // The old rAF is invalidated by the source-identity reset.
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={baseChangeNext}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // After the restore window, base_1's interaction must remain closed.
+    await waitFor(() => {
+      expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+    });
+
+
+    // 原 vocabulary mark 在新 DOM 中仍存在
+    expect(
+      container.querySelector('[data-reader-record-vocabulary-mark-id="vocab_mark_1"]'),
+    ).not.toBeNull();
+  });
+
+  it("duplicate accepted snapshot early-return → 当前 Quick Peek 保持，不触发错误 restore", async () => {
+    installQuickPeekFetchMock();
+
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeNextSnapshot(prevSnapshot);
+    const event = makeGrammarFirstPublishEvent(9);
+
+    // 第一次 reload: merger 返回 targeted_apply（空 operations）
+    // → appliedViaTargeted=true, lastTargetedApplySnapshotIdRef = nextSnapshot.snapshot_id
+    mockedMerge.mockReturnValue({
+      kind: "targeted_apply",
+      operations: [],
+      preservedInteraction: {
+        preserveSelection: true,
+        preserveScroll: true,
+        preserveGrammarAccordion: true,
+        preserveQuickPeek: true,
+        preservePanels: true,
+      },
+      affectedTargetKeys: ["unit_1"],
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // 打开 Quick Peek on vocab_mark_1
+    const vocabMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocabMark).not.toBeNull();
+    window.getSelection()?.removeAllRanges();
+    fireEvent.click(vocabMark!);
+
+    const panelBefore = await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(panelBefore).toBeTruthy();
+
+    // 第一次 reload: targeted_apply 成功
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // Quick Peek 在 targeted_apply 后仍打开（sibling 更新不关闭）
+    expect(screen.queryByTestId("reader-record-plate-lookup-panel")).not.toBeNull();
+
+    // 重置 mock 计数 — 验证第二次 rerender 不再调用 merger
+    mockedMerge.mockClear();
+
+    // 第二次 rerender: 同一 snapshot_id（新对象引用）→ effect early-return
+    // (lastTargetedApplySnapshotIdRef === snapshot.snapshot_id)
+    // → 不 capture、不 setValue、不 schedule rAF
+    const sameSnapshotId: ReaderPlateSnapshotDto = { ...nextSnapshot };
+    await act(async () => {
+      rerender(<ReaderRecordPlateSurface snapshot={sameSnapshotId} />);
+    });
+
+    // merger 未被调用（early-return 路径跳过了 merger）
+    expect(mockedMerge).not.toHaveBeenCalled();
+
+    // Quick Peek 仍然打开，rect 非零
+    const panelAfter = screen.queryByTestId("reader-record-plate-lookup-panel");
+    expect(panelAfter).not.toBeNull();
+    const rectAfter = panelAfter!.getBoundingClientRect();
+    expect(rectAfter.width).toBeGreaterThan(0);
+    expect(rectAfter.height).toBeGreaterThan(0);
+    expect(rectAfter.left).toBeGreaterThan(0);
+    expect(rectAfter.top).toBeGreaterThan(0);
+  });
+
+  it("P1.1-VT-3: dismissed restore → token 无效 → resolver 不执行，无 re-hook，re-open 正常", async () => {
+    installQuickPeekFetchMock();
+
+    const prevSnapshot = makeSnapshot();
+    const nextSnapshot = makeNextSnapshot(prevSnapshot);
+    const event = makeGrammarFirstPublishEvent(9);
+
+    mockedMerge.mockReturnValue({
+      kind: "fallback_full_reload",
+      reason: "test_dismiss_no_rehook",
+    });
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={prevSnapshot} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".reader-record-plate-document")).not.toBeNull();
+    });
+
+    // 打开 Quick Peek on vocab_mark_1
+    const vocabMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocabMark).not.toBeNull();
+    window.getSelection()?.removeAllRanges();
+    fireEvent.click(vocabMark!);
+
+    const panelBefore = await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(panelBefore).toBeTruthy();
+
+    // Spy: 拦截 document.querySelector，检测 resolver 是否被调用
+    // resolver 使用 `[data-anchor-segment-id] [data-reader-record-vocabulary-mark-id]` 组合选择器
+    const querySelectorSpy = vi.spyOn(document, "querySelector");
+
+    // 触发 reload — captures token T1, schedules rAF
+    await act(async () => {
+      rerender(
+        <ReaderRecordPlateSurface
+          snapshot={nextSnapshot}
+          pendingReloadContext={makeReloadContext([event])}
+        />,
+      );
+    });
+
+    // 在 rAF fire 之前 dismiss Quick Peek
+    // onDismiss → setLookupState idle → lookupState.kind effect increments
+    // token to T2 + clears anchorRef → rAF token T1 !== T2 → abort
+    await act(async () => {
+      const closeButton = screen.queryByRole("button", { name: "关闭预览卡片" });
+      if (closeButton) {
+        fireEvent.click(closeButton);
+      }
+    });
+
+    // 等待 rAF fire — token 已失效 → rAF aborts → Quick Peek 保持关闭
+    await waitFor(() => {
+      expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+    });
+
+    // 断言: resolver 未执行 — 没有对组合选择器的 querySelector 调用
+    // (resolver 是唯一使用 segment + markId 组合选择器的代码路径)
+    const resolverCalls = querySelectorSpy.mock.calls.filter(
+      ([selector]) =>
+        typeof selector === "string" &&
+        selector.includes("data-anchor-segment-id") &&
+        selector.includes("data-reader-record-vocabulary-mark-id"),
+    );
+    expect(resolverCalls).toHaveLength(0);
+    querySelectorSpy.mockRestore();
+
+    // 断言: 无 detached panel 残留
+    expect(screen.queryByTestId("reader-record-plate-lookup-panel")).toBeNull();
+
+    // 断言: re-open Quick Peek 正常工作 — 证明旧 rAF 未留下 stale state
+    // （如果旧 rAF 执行了 resolver 并设置了 anchorRef，re-open 不会受影响
+    //   因为 open handler 设置新 anchorRef；但若旧 rAF 留下了 stale panel
+    //   state，re-open 可能出现异常）
+    const vocabMarkAfter = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(vocabMarkAfter).not.toBeNull();
+    window.getSelection()?.removeAllRanges();
+    await act(async () => {
+      fireEvent.click(vocabMarkAfter!);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("reader-record-plate-lookup-panel")).not.toBeNull();
+    });
+
+    const panelReopened = screen.getByTestId("reader-record-plate-lookup-panel");
+    const rectReopened = panelReopened.getBoundingClientRect();
+    expect(rectReopened.width).toBeGreaterThan(0);
+    expect(rectReopened.height).toBeGreaterThan(0);
+    expect(rectReopened.left).toBeGreaterThan(0);
+    expect(rectReopened.top).toBeGreaterThan(0);
   });
 });

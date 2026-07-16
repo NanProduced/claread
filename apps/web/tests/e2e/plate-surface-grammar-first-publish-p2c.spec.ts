@@ -7,8 +7,8 @@
  * - Test 1: vocabulary Quick Peek 锚定 seg_1 → grammar 首发到达 seg_2 →
  *   panel 保持正确锚定（targeted_apply 路径）或安全关闭（fallback_full_reload 路径）。
  *   关键不变式：panel 不会以零尺寸或位于 (0,0) 的 detached 状态残留。
- * - Test 2: structural change 触发 fallback_full_reload → Quick Peek 被确定性关闭，
- *   无 detached 浮层残留在 (0,0)。
+ * - Test 2: T4.2a-PUX-R4-R3-R1: structural change 触发 fallback_full_reload →
+ *   Quick Peek 保持打开并重新锚定到原词汇（anchor 仍存在），无 detached (0,0) panel。
  *
  * 行为说明（real projection）：
  *   真实 projection 中，anchor paragraph 的 text leaf 在首发时会获得
@@ -16,7 +16,7 @@
  *   触发 merger C6 check fail-closed → fallback_full_reload。
  *   这是正确且安全的行为。测试同时处理两种终态：
  *   - targeted_apply：断言 insertNodes 使用、Quick Peek 保留、rect 有效
- *   - fallback_full_reload：断言 Quick Peek 安全关闭、无 (0,0) panel 残留
+ *   - fallback_full_reload（R3-R1）：断言 Quick Peek 保持打开、重新锚定、rect 有效
  *
  * harness 位于 /e2e-plate-spike/surface（server-side env-gated），挂载真实
  * ReaderRecordPlateSurface。测试通过 `window.__spikeSurface` 驱动 reload pipeline。
@@ -234,11 +234,11 @@ test.describe("1. R2.2-P2c grammar 首发 Quick Peek 安全终态", () => {
 });
 
 // ===========================================================================
-// 2. fallback full reload（structural change）→ Quick Peek 被确定性关闭
+// 2. T4.2a-PUX-R4-R3-R1: fallback full reload → Quick Peek 保持打开并重新锚定
 // ===========================================================================
 
-test.describe("2. R2.2-P2c fallback full reload 关闭 Quick Peek", () => {
-  test("structural change 触发 fallback_full_reload → Quick Peek 关闭、无 (0,0) 残留", async ({
+test.describe("2. R3-R1 fallback full reload 重新锚定 Quick Peek", () => {
+  test("structural change 触发 fallback_full_reload → Quick Peek 保持打开、重新锚定到原词汇", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -269,8 +269,9 @@ test.describe("2. R2.2-P2c fallback full reload 关闭 Quick Peek", () => {
 
     // 触发 structural change（新增 sentence_analysis block）→
     // merger 检测拓扑变化（unit_block_set_changed）→ fallback_full_reload →
-    // setValue。Surface 在 setValue 前确定性关闭 Quick Peek 并清空 anchor ref，
-    // 防止浮层挂到 detached HTMLElement 而落到 (0,0)。
+    // setValue。R3-R1: Surface 在 setValue 前捕获 interaction snapshot
+    // （anchorSegmentId + markId + frozenRect），setValue 后 rAF 重新解析
+    // anchor element 并 setPositionReference。原词汇 mark 仍存在 → 保持打开。
     await page.evaluate(() => {
       const s = window.__spikeSurface!;
       const nextSnapshot = s.makeStructuralChangeSnapshot();
@@ -281,19 +282,26 @@ test.describe("2. R2.2-P2c fallback full reload 关闭 Quick Peek", () => {
       });
     });
 
-    // 等待 reload pipeline 完成。
+    // 等待 reload pipeline + rAF re-anchor 完成。
     await page.waitForTimeout(1000);
 
-    // fallback_full_reload 路径：Quick Peek 必须被关闭。
-    // 面板元素不应在 DOM 中可见。
-    await expect(panel).not.toBeVisible();
+    // R3-R1: fallback_full_reload 路径，anchor 仍存在 → Quick Peek 保持打开。
+    await expect(panel).toBeVisible({ timeout: 5_000 });
 
-    // 双重确认：通过 getPanelState 采集，确认无 detached 浮层残留。
+    // 采集 reload 后的浮层状态：非零尺寸、不在 (0,0)。
     const afterState = await getPanelState(page);
-    expect(afterState.visible).toBe(false);
+    expect(afterState.visible).toBe(true);
+    assertPanelSafe(afterState);
+
+    // 原词汇 mark 在新 DOM 中仍存在（re-anchor 目标）。
+    await expect(
+      page.locator(
+        '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+      ),
+    ).toBeVisible();
 
     await page.screenshot({
-      path: "test-results/p2c-fallback-full-reload-quick-peek-closed.png",
+      path: "test-results/p2c-fallback-full-reload-quick-peek-reanchored.png",
     });
   });
 });
