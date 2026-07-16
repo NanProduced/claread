@@ -130,7 +130,7 @@ export function SidebarRail({
       "focus-ring group flex min-h-8 items-center gap-2.5 rounded-[6px] px-2 text-[0.8125rem] transition-[background-color,color] duration-150",
       active
         ? "bg-[var(--app-control-quiet)] font-semibold text-ink"
-        : "font-medium text-muted hover:bg-[var(--app-control-quiet)] hover:text-ink",
+        : "font-medium text-muted-foreground hover:bg-[var(--app-control-quiet)] hover:text-ink",
     );
 
   function handleSidebarMouseEnter() {
@@ -192,7 +192,7 @@ export function SidebarRail({
             <button
               type="button"
               title={toggleLabel}
-              className="focus-ring flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink"
+              className="focus-ring flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-muted-foreground transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink"
               onClick={handleToggle}
               aria-label={toggleLabel}
             >
@@ -207,7 +207,7 @@ export function SidebarRail({
           <div className="mt-3 px-1">
             <button
               type="button"
-              className="focus-ring group flex min-h-8 w-full items-center gap-2 rounded-[7px] px-2 text-[0.8125rem] font-medium text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink"
+              className="focus-ring group flex min-h-8 w-full items-center gap-2 rounded-[7px] px-2 text-[0.8125rem] font-medium text-muted-foreground transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink"
               onClick={togglePalette}
               aria-label={`搜索或跳转，快捷键 ${shortcutLabel}`}
             >
@@ -246,7 +246,7 @@ export function SidebarRail({
                   <span>打开一篇文章后会显示在这里。</span>
                   <Link
                     href={appLibraryRoute}
-                    className="focus-ring inline-flex items-center gap-1 self-start rounded-[6px] px-2 py-1 text-[0.78rem] font-semibold text-muted hover:bg-[var(--app-control-quiet)] hover:text-ink"
+                    className="focus-ring inline-flex items-center gap-1 self-start rounded-[6px] px-2 py-1 text-[0.78rem] font-semibold text-muted-foreground hover:bg-[var(--app-control-quiet)] hover:text-ink"
                   >
                     阅读记录
                   </Link>
@@ -271,7 +271,7 @@ export function SidebarRail({
                         >
                           <FileText
                             aria-hidden="true"
-                            className={cn("mt-0.5 h-4 w-4 shrink-0", isCurrent ? "text-ink" : "text-muted group-hover:text-ink")}
+                            className={cn("mt-0.5 h-4 w-4 shrink-0", isCurrent ? "text-ink" : "text-muted-foreground group-hover:text-ink")}
                             strokeWidth={isCurrent ? 2.25 : 2}
                           />
                           <span className="min-w-0 flex-1">
@@ -289,7 +289,7 @@ export function SidebarRail({
                   <li>
                     <Link
                       href={appLibraryRoute}
-                      className="focus-ring flex min-h-8 items-center gap-2 rounded-[6px] px-2 text-[0.78rem] font-medium text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink"
+                      className="focus-ring flex min-h-8 items-center gap-2 rounded-[6px] px-2 text-[0.78rem] font-medium text-muted-foreground transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink"
                     >
                       更多
                     </Link>
@@ -311,7 +311,7 @@ export function SidebarRail({
                         aria-hidden="true"
                         className={cn(
                           "h-4 w-4 shrink-0",
-                          active ? "text-ink" : "text-muted group-hover:text-ink",
+                          active ? "text-ink" : "text-muted-foreground group-hover:text-ink",
                         )}
                         strokeWidth={active ? 2.25 : 2}
                       />
@@ -408,7 +408,7 @@ export function SidebarRail({
       >
         <button
           type="button"
-          className="focus-ring flex min-h-12 flex-col items-center justify-center gap-1 rounded-note text-[0.6875rem] font-semibold text-muted"
+          className="focus-ring flex min-h-12 flex-col items-center justify-center gap-1 rounded-note text-[0.6875rem] font-semibold text-muted-foreground"
           onClick={togglePalette}
         >
           <Search aria-hidden="true" className="h-4 w-4" />
@@ -423,7 +423,7 @@ export function SidebarRail({
               key={item.href}
               href={item.href}
               className={`focus-ring flex min-h-12 flex-col items-center justify-center gap-1 rounded-note text-[0.6875rem] ${
-                active ? "font-bold text-ink" : "font-semibold text-muted"
+                active ? "font-bold text-ink" : "font-semibold text-muted-foreground"
               }`}
             >
               <Icon aria-hidden="true" className="h-4 w-4" strokeWidth={active ? 2.5 : 2} />
@@ -434,7 +434,7 @@ export function SidebarRail({
         <NotificationCenterTrigger
           showLabel
           side="top"
-          className="text-muted"
+          className="text-muted-foreground"
         />
       </nav>
     </>

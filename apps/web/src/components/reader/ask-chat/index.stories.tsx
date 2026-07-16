@@ -123,7 +123,7 @@ export const ConversationState = () => {
             </>
           }
           actionMenu={
-            <div className="rounded-[16px] border border-hairline/70 bg-[rgba(255,255,255,0.92)] p-3 text-[12px] text-muted shadow-[0_8px_18px_rgba(17,17,17,0.03)]">
+            <div className="rounded-[16px] border border-hairline/70 bg-[rgba(255,255,255,0.92)] p-3 text-[12px] text-muted-foreground shadow-[0_8px_18px_rgba(17,17,17,0.03)]">
               添加其他文章
             </div>
           }

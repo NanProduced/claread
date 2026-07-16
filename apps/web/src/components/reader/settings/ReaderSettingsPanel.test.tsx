@@ -9,7 +9,7 @@ describe("ReaderSettingsPanel", () => {
   it("renders the floating variant as a single shell without lookup chrome", () => {
     const { container, unmount } = render(
       <ReaderSettingsPanel
-        themeName="paper"
+        themePreference="system"
         variant="floating"
         value={defaultReaderSettings}
         onChange={vi.fn()}
@@ -32,7 +32,7 @@ describe("ReaderSettingsPanel", () => {
 
     render(
       <ReaderSettingsPanel
-        themeName="paper"
+        themePreference="system"
         value={defaultReaderSettings}
         onChange={onChange}
         onThemeChange={onThemeChange}
@@ -50,6 +50,10 @@ describe("ReaderSettingsPanel", () => {
     expect(screen.queryByText("版心")).toBeNull();
     expect(screen.queryByText("纸面主题")).toBeNull();
     expect(screen.queryByText("标注层")).toBeNull();
+
+    // Reader 只提供 system/light/dark，不存在 Paper 选项
+    expect(screen.queryByText("Paper")).toBeNull();
+    expect(screen.getByText("跟随系统")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /深色 dark/i }));
     expect(onThemeChange).toHaveBeenCalledWith("dark");

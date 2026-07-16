@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 
+import * as SharedModule from "./shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   READER_SETTINGS_STORAGE_KEY,
@@ -207,5 +208,14 @@ describe("reader settings storage", () => {
       columnClassName: "max-w-[42rem]",
       paragraphDensityClassName: "reader-record-plate-density-immersive",
     });
+  });
+
+  it("does not export any runtime Reader canvas theme class", () => {
+    // The retired runtime canvas theme hook must not return. Reader canvas
+    // theming is owned entirely by AppearanceProvider, and
+    // `--reading-paper-surface` survives only as a class-free compat alias
+    // derived from the root/.dark `--reader-paper` token.
+    expect(SharedModule).not.toHaveProperty("READER_CANVAS_CLASS");
+    expect(SharedModule).not.toHaveProperty("readerThemeClassName");
   });
 });

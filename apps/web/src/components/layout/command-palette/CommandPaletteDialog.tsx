@@ -182,7 +182,7 @@ export function CommandPaletteDialog() {
             const Icon = cmd.icon;
             return (
               <CommandMenuItem key={cmd.id} onSelect={cmd.onSelect} value={cmd.label}>
-                {Icon && <Icon className="h-4 w-4 text-muted" />}
+                {Icon && <Icon className="h-4 w-4 text-muted-foreground" />}
                 {cmd.label}
                 {cmd.shortcut ? (
                   <CommandMenuShortcut>
@@ -212,7 +212,7 @@ export function CommandPaletteDialog() {
                         {cmd.label}
                       </div>
                       {record ? (
-                        <span className="ml-3 shrink-0 text-[0.72rem] text-muted/80">
+                        <span className="ml-3 shrink-0 text-[0.72rem] text-muted-foreground/80">
                           {formatRelativeTime(record.createdAt)}
                         </span>
                       ) : null}
@@ -241,7 +241,7 @@ export function CommandPaletteDialog() {
           ))}
         </CommandMenuGroup>
       </CommandMenuList>
-      <div className="flex items-center gap-3.5 border-t border-hairline/60 bg-[color-mix(in_srgb,var(--surface)_36%,transparent)] px-4 py-2.5 text-[0.72rem] text-muted/80">
+      <div className="flex items-center gap-3.5 border-t border-hairline/60 bg-[color-mix(in_srgb,var(--surface)_36%,transparent)] px-4 py-2.5 text-[0.72rem] text-muted-foreground/80">
         <span className="flex items-center gap-1.5">
           <Kbd className="px-1 py-0.5">↑</Kbd>
           <Kbd className="px-1 py-0.5">↓</Kbd>

@@ -85,7 +85,7 @@ export function AppShell({
         {sidebarMode !== "locked" ? (
           <button
             type="button"
-            className="app-sidebar-peek-button focus-ring fixed left-2 top-1.5 hidden h-8 w-8 items-center justify-center rounded-[6px] text-muted transition-[background-color,border-color,color] duration-150 ease-out hover:text-ink md:flex"
+            className="app-sidebar-peek-button focus-ring fixed left-2 top-1.5 hidden h-8 w-8 items-center justify-center rounded-[6px] text-muted-foreground transition-[background-color,border-color,color] duration-150 ease-out hover:text-ink md:flex"
             style={{ zIndex: "var(--app-z-shell-navigation)" }}
             aria-label="打开导航"
             title="打开导航"

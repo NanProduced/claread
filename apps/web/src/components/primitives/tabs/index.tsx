@@ -33,7 +33,7 @@ const TabsTrigger = React.forwardRef<
     <TabsPrimitive.Trigger
       ref={ref}
       className={cn(
-        "inline-flex min-h-9 items-center justify-center rounded-[var(--cl-radius-control-sm)] px-3 text-sm font-medium text-muted transition-colors data-[state=active]:bg-surface data-[state=active]:text-ink data-[state=active]:shadow-[var(--app-control-shadow-strong)]",
+        "inline-flex min-h-9 items-center justify-center rounded-[var(--cl-radius-control-sm)] px-3 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:bg-surface data-[state=active]:text-ink data-[state=active]:shadow-[var(--app-control-shadow-strong)]",
         primitiveFocusRing,
         className,
       )}

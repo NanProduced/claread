@@ -45,6 +45,40 @@ function extractRootSubBlock(source: string): string {
   }
   return source.slice(start, i);
 }
+function extractDarkBlock(source: string): string {
+  const start = source.indexOf(".dark {");
+  const open = source.indexOf("{", start);
+  let depth = 1;
+  let i = open + 1;
+  while (depth > 0 && i < source.length) {
+    const ch = source[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") depth--;
+    i++;
+  }
+  return source.slice(start, i);
+}
+
+function tokenHex(block: string, token: string): string {
+  const match = block.match(new RegExp(`--${token}:\\s*(#[0-9a-fA-F]{6});`));
+  expect(match, `Expected --${token} to be a six-digit hex color`).toBeTruthy();
+  return match?.[1] ?? "#000000";
+}
+
+function relativeLuminance(hex: string): number {
+  const channels = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255);
+  const linear = channels.map((channel) =>
+    channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
+  );
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const [lighter, darker] = [relativeLuminance(foreground), relativeLuminance(background)].sort(
+    (a, b) => b - a,
+  );
+  return (lighter + 0.05) / (darker + 0.05);
+}
 
 describe("web design tokens contract", () => {
   it("declares :root and .light as a single token block (no second drift set)", () => {
@@ -65,11 +99,37 @@ describe("web design tokens contract", () => {
 
   it("keeps the canonical Light neutrals on :root (canvas, surface, ink)", () => {
     const rootBlock = extractRootBlock(readTokens());
-    expect(rootBlock).toMatch(/--cl-color-app-canvas:\s*#f7f5f0;/);
+    expect(rootBlock).toMatch(/--cl-color-app-canvas:\s*#f8f8f8;/);
     expect(rootBlock).toMatch(/--cl-color-app-surface:\s*#ffffff;/);
     expect(rootBlock).toMatch(/--cl-color-app-ink:\s*#151515;/);
   });
 
+  it("keeps shadcn muted text and input boundaries contrast-safe in both themes", () => {
+    const source = readTokens();
+    const themes = [
+      { name: "Light", block: extractRootSubBlock(source) },
+      { name: "Dark", block: extractDarkBlock(source) },
+    ];
+
+    for (const theme of themes) {
+      const canvas = tokenHex(theme.block, "cl-color-app-canvas");
+      const surface = tokenHex(theme.block, "cl-color-app-surface");
+      const mutedForeground = tokenHex(theme.block, "cl-color-app-muted");
+      const input = tokenHex(theme.block, "cl-color-app-input");
+
+      expect(
+        contrastRatio(mutedForeground, canvas),
+        `${theme.name} muted foreground must meet WCAG text contrast on canvas`,
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrastRatio(input, surface),
+        `${theme.name} input boundary must meet WCAG non-text contrast on surface`,
+      ).toBeGreaterThanOrEqual(3);
+    }
+
+    expect(source).toMatch(/--cl-color-input:\s*var\(--cl-color-app-input\);/);
+    expect(source).toMatch(/--text-secondary:\s*var\(--muted-foreground\);/);
+  });
   it("strips Paper-warm rgba from the Light canvas/panel gradients", () => {
     const source = readTokens();
     const rootSubBlock = extractRootSubBlock(source);

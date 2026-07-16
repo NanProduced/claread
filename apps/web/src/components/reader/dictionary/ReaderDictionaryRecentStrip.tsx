@@ -36,7 +36,7 @@ export function ReaderDictionaryRecentStrip({
         onClick={() => setCollapsed((value) => !value)}
         aria-expanded={!collapsed}
       >
-        <span className="text-[0.72rem] font-semibold tracking-[0.06em] text-muted">查过历史</span>
+        <span className="text-[0.72rem] font-semibold tracking-[0.06em] text-muted-foreground">查过历史</span>
         <span className="inline-flex items-center gap-2 text-[0.68rem] font-semibold text-subtle">
           <span className="reader-dictionary-meta-tag reader-dictionary-meta-tag--count px-2 py-0.5">
             {recentItems.length}
@@ -75,7 +75,7 @@ export function ReaderDictionaryRecentStrip({
                     >
                       {item.query}
                     </p>
-                    <p className="line-clamp-2 text-[0.78rem] leading-5 text-muted">{summary}</p>
+                    <p className="line-clamp-2 text-[0.78rem] leading-5 text-muted-foreground">{summary}</p>
                   </div>
                 </button>
               );

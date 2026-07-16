@@ -1484,7 +1484,7 @@ function RelatedRecordPicker({
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-medium text-ink">{item.title || "Untitled"}</p>
-                <p className="mt-0.5 text-[11px] leading-4 text-muted">
+                <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
                   {item.updated_at ? "最近查看的文章" : "加入当前讨论"}
                 </p>
               </div>
@@ -1957,7 +1957,7 @@ function ContextSummaryDisclosure({
       </PlanHeader>
       <PlanContent className="space-y-4">
         <div className="space-y-2">
-          <p className="text-xs font-medium text-muted">当前文章</p>
+          <p className="text-xs font-medium text-muted-foreground">当前文章</p>
           <Attachments variant="inline" className="max-w-full">
             {chips
               .filter((chip) => !chip.startsWith("外部文章") && !chip.startsWith("外部资产"))
@@ -2019,19 +2019,19 @@ function ContextSummaryDisclosure({
                 ) : null}
               </Attachments>
               {currentRecordContext.article_overview ? (
-                <p className="text-[11px] leading-5 text-muted">{currentRecordContext.article_overview}</p>
+                <p className="text-[11px] leading-5 text-muted-foreground">{currentRecordContext.article_overview}</p>
               ) : null}
             </div>
           ) : null}
           {currentRecordContext?.record_insights.length ? (
-            <p className="text-[11px] leading-5 text-muted">
+            <p className="text-[11px] leading-5 text-muted-foreground">
               已并入 {currentRecordContext.record_insights.length} 条当前文章的稳定解析。
             </p>
           ) : null}
         </div>
         {externalRecordContexts.length > 0 ? (
           <div className="space-y-2">
-            <p className="text-xs font-medium text-muted">外部文章</p>
+            <p className="text-xs font-medium text-muted-foreground">外部文章</p>
             <Attachments variant="list" className="w-full gap-2">
               {externalRecordContexts.map((item) => (
                 <Attachment
@@ -2046,7 +2046,7 @@ function ContextSummaryDisclosure({
                   <AttachmentPreview fallbackIcon={<FileText className="h-4 w-4 text-muted-foreground" />} />
                   <div className="min-w-0 flex-1 space-y-1">
                     <AttachmentInfo className="text-xs font-medium text-ink-soft" />
-                    <p className="text-[11px] leading-5 text-muted">
+                    <p className="text-[11px] leading-5 text-muted-foreground">
                       {item.article_overview
                         ? "已并入文章概览。"
                         : item.record_insights.length > 0
@@ -2054,7 +2054,7 @@ function ContextSummaryDisclosure({
                           : "已定位到文章，但当前没有可用概览。"}
                     </p>
                     {item.article_overview ? (
-                      <p className="line-clamp-3 text-[11px] leading-5 text-muted">{item.article_overview}</p>
+                      <p className="line-clamp-3 text-[11px] leading-5 text-muted-foreground">{item.article_overview}</p>
                     ) : null}
                     {item.record_insights.length > 0 ? (
                       <Attachments variant="inline" className="max-w-full">
@@ -2077,7 +2077,7 @@ function ContextSummaryDisclosure({
         ) : null}
         {externalAssetContexts.length > 0 ? (
           <div className="space-y-2">
-            <p className="text-xs font-medium text-muted">外部资产</p>
+            <p className="text-xs font-medium text-muted-foreground">外部资产</p>
             <Attachments variant="list" className="w-full gap-2">
               {externalAssetContexts.map((item) => (
                 <Attachment
@@ -2095,10 +2095,10 @@ function ContextSummaryDisclosure({
                       {(item.record_title || item.record_id)} · {item.asset_type === "supplement" ? "AI 补充" : "稳定分析"}
                     </p>
                     {item.content_summary ? (
-                      <p className="text-[11px] leading-5 text-muted">{item.content_summary}</p>
+                      <p className="text-[11px] leading-5 text-muted-foreground">{item.content_summary}</p>
                     ) : null}
                     {!item.content_summary && item.content_md ? (
-                      <p className="line-clamp-3 text-[11px] leading-5 text-muted">{item.content_md}</p>
+                      <p className="line-clamp-3 text-[11px] leading-5 text-muted-foreground">{item.content_md}</p>
                     ) : null}
                   </div>
                 </Attachment>
@@ -2178,7 +2178,7 @@ function EvidenceDisclosure({
                     <AttachmentInfo className="text-xs" />
                   </Attachment>
                 </Attachments>
-                {item.detail ? <p className="text-[12px] leading-6 text-muted">{item.detail}</p> : null}
+                {item.detail ? <p className="text-[12px] leading-6 text-muted-foreground">{item.detail}</p> : null}
                 {item.record_title || item.source_article_title ? (
                   <p className="text-[11px] text-subtle">
                     {[item.record_title || item.source_article_title].filter(Boolean).join(" · ")}
@@ -2271,7 +2271,7 @@ function AgenticEvidenceDisclosure({
                   ) : null}
                 </Attachments>
                 {item.snippet ? (
-                  <p className="text-[12px] leading-6 text-muted">{item.snippet}</p>
+                  <p className="text-[12px] leading-6 text-muted-foreground">{item.snippet}</p>
                 ) : null}
               </div>
             </Attachment>
@@ -2467,7 +2467,7 @@ function TraceSummaryDisclosure({
           ) : null}
         </Attachments>
         {traceSummary.notes.length > 0 ? (
-          <div className="space-y-1.5 text-xs text-muted">
+          <div className="space-y-1.5 text-xs text-muted-foreground">
             {traceSummary.notes.map((note, index) => (
               <p key={index} className="leading-5">
                 {note}
@@ -2600,7 +2600,7 @@ function ResponseCards({ cards, onAnnotationFeedback, analysisRecordId }: { card
               </PlanHeader>
               <PlanContent className="space-y-3">
                 {card.translation_zh ? (
-                  <p className="text-xs leading-5 text-muted">{card.translation_zh}</p>
+                  <p className="text-xs leading-5 text-muted-foreground">{card.translation_zh}</p>
                 ) : null}
                 {card.main_clause ? (
                   <p className="text-xs font-medium text-ink-soft">
@@ -2616,13 +2616,13 @@ function ResponseCards({ cards, onAnnotationFeedback, analysisRecordId }: { card
                         title={part.label}
                         detail={part.text}
                       >
-                        {part.note ? <p className="text-xs text-muted">{part.note}</p> : null}
+                        {part.note ? <p className="text-xs text-muted-foreground">{part.note}</p> : null}
                       </TaskProcessCard>
                     ))}
                   </div>
                 ) : null}
                 {card.analysis_zh ? (
-                  <p className="text-xs leading-5 text-muted">{card.analysis_zh}</p>
+                  <p className="text-xs leading-5 text-muted-foreground">{card.analysis_zh}</p>
                 ) : null}
               </PlanContent>
             </Plan>
@@ -2845,7 +2845,7 @@ function AskPanelLoadingState({
           </span>
           <div className="min-w-0 flex-1">
             <Loader variant="text-shimmer" size="md" text={title} />
-            <p className="mt-1.5 text-[13px] leading-6 text-muted">{detail}</p>
+            <p className="mt-1.5 text-[13px] leading-6 text-muted-foreground">{detail}</p>
             <div className="mt-2.5">
               <Loader variant="loading-dots" size="sm" text="请稍候" />
             </div>
@@ -2975,7 +2975,7 @@ function MessageBubble({
                         ) : null}
                         {hasAnswerContent ? (
                           <MessageResponse
-                            className="ask-message-response border-0 bg-transparent p-0 text-[14.5px] leading-[1.82] text-ink-soft shadow-none [&_blockquote]:my-2 [&_blockquote]:text-[13px] [&_blockquote]:leading-[1.7] [&_blockquote]:text-muted-foreground [&_h2]:mt-6 [&_h2]:text-[1rem] [&_h2]:font-semibold [&_h2]:leading-7 [&_h2]:tracking-[-0.02em] [&_h2]:text-ink [&_h2:first-child]:mt-0 [&_h3]:mt-4 [&_h3]:text-[0.95rem] [&_h3]:font-semibold [&_h3]:leading-6 [&_h3]:text-ink-soft [&_h3:first-child]:mt-0 [&_li]:[&_p+p]:mt-1.5 [&_li]:[&_ul]:mt-2 [&_li]:[&_ol]:mt-2 [&_ol]:my-2.5 [&_ol]:space-y-2.5 [&_ol]:pl-4 [&_ol]:text-[14.5px] [&_ol]:leading-[1.72] [&_ol]:text-ink-soft [&_ol]:marker:font-medium [&_ol]:marker:text-muted [&_p]:my-0 [&_p]:text-[14.5px] [&_p]:leading-[1.82] [&_p]:text-ink-soft [&_p+p]:mt-3 [&_table]:my-3 [&_ul]:my-2.5 [&_ul]:space-y-2.5 [&_ul]:pl-4 [&_ul]:text-[14.5px] [&_ul]:leading-[1.72] [&_ul]:text-ink-soft [&_ul]:marker:text-[0.9em] [&_ul]:marker:text-muted"
+                            className="ask-message-response border-0 bg-transparent p-0 text-[14.5px] leading-[1.82] text-ink-soft shadow-none [&_blockquote]:my-2 [&_blockquote]:text-[13px] [&_blockquote]:leading-[1.7] [&_blockquote]:text-muted-foreground [&_h2]:mt-6 [&_h2]:text-[1rem] [&_h2]:font-semibold [&_h2]:leading-7 [&_h2]:tracking-[-0.02em] [&_h2]:text-ink [&_h2:first-child]:mt-0 [&_h3]:mt-4 [&_h3]:text-[0.95rem] [&_h3]:font-semibold [&_h3]:leading-6 [&_h3]:text-ink-soft [&_h3:first-child]:mt-0 [&_li]:[&_p+p]:mt-1.5 [&_li]:[&_ul]:mt-2 [&_li]:[&_ol]:mt-2 [&_ol]:my-2.5 [&_ol]:space-y-2.5 [&_ol]:pl-4 [&_ol]:text-[14.5px] [&_ol]:leading-[1.72] [&_ol]:text-ink-soft [&_ol]:marker:font-medium [&_ol]:marker:text-muted-foreground [&_p]:my-0 [&_p]:text-[14.5px] [&_p]:leading-[1.82] [&_p]:text-ink-soft [&_p+p]:mt-3 [&_table]:my-3 [&_ul]:my-2.5 [&_ul]:space-y-2.5 [&_ul]:pl-4 [&_ul]:text-[14.5px] [&_ul]:leading-[1.72] [&_ul]:text-ink-soft [&_ul]:marker:text-[0.9em] [&_ul]:marker:text-muted-foreground"
                           >
                             {message.content_md}
                           </MessageResponse>
@@ -3094,7 +3094,7 @@ function MessageBubble({
                           </div>
                           <PlanTrigger aria-label="上下文策略" />
                         </PlanHeader>
-                        <PlanContent className="space-y-3 text-[11px] leading-5 text-muted">
+                        <PlanContent className="space-y-3 text-[11px] leading-5 text-muted-foreground">
                           <p className="font-semibold text-ink-soft">本轮决策</p>
                           <Attachments variant="inline" className="max-w-full">
                             <Attachment
@@ -3175,7 +3175,7 @@ function MessageBubble({
               </MessageContent>
             )}
             <div className="flex items-center justify-end gap-2 pr-1 opacity-70 transition-opacity group-hover:opacity-100">
-              <span className="text-[10px] text-muted">
+              <span className="text-[10px] text-muted-foreground">
                 {message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
               </span>
             </div>
@@ -4326,7 +4326,7 @@ export function AiWorkspacePanel({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="ai-workspace-panel__surface-trigger inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted hover:bg-muted/10 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
+                    className="ai-workspace-panel__surface-trigger inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted/10 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
                     aria-label="选择 Ask Claread 面板形式"
                     title="选择面板形式"
                   >

@@ -11,7 +11,7 @@ function ClareadToaster() {
       toastOptions={{
         className:
           "app-toast-surface !rounded-[var(--cl-radius-surface-sm)] !border !border-hairline !text-ink !shadow-[var(--cl-shadow-2)]",
-        descriptionClassName: "!text-muted",
+        descriptionClassName: "!text-muted-foreground",
         actionButtonStyle: {
           background: "var(--ink)",
           color: "var(--surface)",

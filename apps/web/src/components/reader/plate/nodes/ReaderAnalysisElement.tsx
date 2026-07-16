@@ -132,7 +132,7 @@ export function ReaderAnalysisElement({
     ? parseSentenceAnalysisContent(element.content, element.chunks)
     : null;
   const headerIconActionClassName = cn(
-    "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted/68 transition-[color,opacity] duration-[var(--cl-duration-fast)] ease-[var(--cl-ease-standard)]",
+    "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/68 transition-[color,opacity] duration-[var(--cl-duration-fast)] ease-[var(--cl-ease-standard)]",
     "hover:text-ink active:text-ink focus-visible:text-ink",
     "[&_svg]:stroke-[1.9] hover:[&_svg]:stroke-[2.35] focus-visible:[&_svg]:stroke-[2.35]",
   );
@@ -224,7 +224,7 @@ export function ReaderAnalysisElement({
               {onDelete && element.deletable ? (
                 <button
                   type="button"
-                  className={cn(headerIconActionClassName, "text-muted/62 hover:text-destructive focus-visible:text-destructive")}
+                  className={cn(headerIconActionClassName, "text-muted-foreground/62 hover:text-destructive focus-visible:text-destructive")}
                   onClick={(event) => {
                     event.stopPropagation();
                     onDelete();
@@ -240,7 +240,7 @@ export function ReaderAnalysisElement({
             type="button"
             className={cn(
               readerInlineFocusRing,
-              "reader-entry-note-toggle inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-none border-0 bg-transparent p-0 text-muted/62 transition-[color,opacity] duration-[var(--cl-duration-fast)] ease-[var(--cl-ease-standard)] hover:bg-transparent hover:text-ink active:bg-transparent focus-visible:text-ink",
+              "reader-entry-note-toggle inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-none border-0 bg-transparent p-0 text-muted-foreground/62 transition-[color,opacity] duration-[var(--cl-duration-fast)] ease-[var(--cl-ease-standard)] hover:bg-transparent hover:text-ink active:bg-transparent focus-visible:text-ink",
               "[&_svg]:stroke-[1.85] hover:[&_svg]:stroke-[2.3] focus-visible:[&_svg]:stroke-[2.3]",
             )}
             onClick={(event) => {

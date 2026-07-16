@@ -26,11 +26,11 @@ export default async function SharePage({ params }: SharePageProps) {
   return (
     <main className="min-h-screen px-6 py-12">
       <article className="mx-auto max-w-3xl rounded-lg border border-[var(--border)] bg-[var(--surface)] p-8">
-        <p className="text-sm text-[var(--muted)]">Share {shareId}</p>
+        <p className="text-sm text-muted-foreground">Share {shareId}</p>
         <h1 className="mt-4 text-4xl font-semibold tracking-normal">
           Shared reading result placeholder
         </h1>
-        <p className="mt-5 text-lg leading-8 text-[var(--muted)]">
+        <p className="mt-5 text-lg leading-8 text-muted-foreground">
           This route is reserved for SSR share snapshots and dynamic metadata.
         </p>
       </article>

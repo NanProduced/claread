@@ -51,7 +51,7 @@ function Slider({
       {(label || showValue) && (
         <div className="flex items-center justify-between gap-3">
           {label ? <BaseSlider.Label className={primitiveLabelClass}>{label}</BaseSlider.Label> : <span />}
-          {showValue ? <BaseSlider.Value className="text-sm font-medium text-muted" /> : null}
+          {showValue ? <BaseSlider.Value className="text-sm font-medium text-muted-foreground" /> : null}
         </div>
       )}
       {description ? <p className={primitiveDescriptionClass}>{description}</p> : null}

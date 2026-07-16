@@ -50,7 +50,7 @@
 
 当前 Web Reader 先固定三层基础设施，再继续做组件扩展：
 
-1. **Light/Dark system.** 用户偏好为 `system | Light | Dark`；`system` 跟随操作系统解析。渲染主题仅允许 `Light | Dark` 两种 (`system` 不是第三套 token)。`:root` 与 `.light` 是同一份中性偏冷 Light token 的唯一声明来源；仅由 `.dark` 覆盖 Dark。Reader-internal 视觉装饰与 paper-grain 等工具类不属于本主题模型。Claread token 与 `lens-blue` / 语义标注色继续按语义层表达，避免在 CSS 中出现 `.paper` 选择器或主题为 `paper` 的 dataset 写入。Vintage Paper 等 shadcn theme 仅作 moodboard，不直接套用; 后续正式初始化 shadcn/ui 时, 应把 Claread token 映射到 shadcn semantic tokens, 而不是用第三方主题覆盖 Claread 视觉.
+1. **Light/Dark system.** 用户偏好为 `system | Light | Dark`；`system` 跟随操作系统解析。渲染主题仅允许 `Light | Dark` 两种 (`system` 不是第三套 token)。`:root` 与 `.light` 是同一份中性偏冷 Light token 的唯一声明来源；仅由 `.dark` 覆盖 Dark。Reader-internal 视觉装饰不属于本主题模型；`--reading-paper-surface` 仅作为 class-free 兼容名从 root/.dark token 派生，Reader 不再持有运行时 canvas 主题选择器或独立 Paper 渐变背景。Claread token 与 `lens-blue` / 语义标注色继续按语义层表达，避免在 CSS 中出现 `.paper` 选择器或主题为 `paper` 的 dataset 写入。Vintage Paper 等 shadcn theme 仅作 moodboard，不直接套用; 后续正式初始化 shadcn/ui 时, 应把 Claread token 映射到 shadcn semantic tokens, 而不是用第三方主题覆盖 Claread 视觉.
 2. **Reader Floating Layer.** 所有锚定原文 token、句子或 DOM selection 的短时浮层统一走 Floating UI。Radix / shadcn Popover 继续用于按钮触发的常规菜单；原文画布上的轻释义、选区工具栏、语法 hover、二级操作菜单归入 Reader floating layer。
 3. **Annotation Anchor Model.** 当前已支持句子级批注、单句内 `text_range` 和跨句/跨段 `multi_text`。Reader DOM 持续输出 `data-paragraph-id`、`data-sentence-id` 和原文 selection 锚点；后端已按 UTF-16 offset、hash、render scene 切片和 sentence 顺序做严格校验。后续重点是资产跳转强调和跨文章资产索引。
 4. **Plate Runtime as Web Projection.** Reader 2.0 将逐步迁移到 `canonical render_scene -> Plate document` 的投影模式；后端 canonical render scene 与小程序消费链路保持不变，Plate 只作为 Web projection/document runtime。

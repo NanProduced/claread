@@ -130,15 +130,15 @@ export function VocabularyDetailPanel({
                   {item.word}
                 </h2>
                 {item.phonetic && (
-                  <span className="text-sm font-sans text-muted">{item.phonetic}</span>
+                  <span className="text-sm font-sans text-muted-foreground">{item.phonetic}</span>
                 )}
                 {item.partOfSpeech && (
-                  <span className="rounded-pill border border-hairline/80 bg-surface/50 px-2 py-0.5 font-sans text-[0.75rem] font-semibold text-muted">
+                  <span className="rounded-pill border border-hairline/80 bg-surface/50 px-2 py-0.5 font-sans text-[0.75rem] font-semibold text-muted-foreground">
                     {item.partOfSpeech}
                   </span>
                 )}
                 {item.lemma && item.lemma.toLowerCase() !== item.word.toLowerCase() && (
-                  <span className="text-[0.8rem] font-sans text-muted">
+                  <span className="text-[0.8rem] font-sans text-muted-foreground">
                     原形: {item.lemma}
                   </span>
                 )}
@@ -146,7 +146,7 @@ export function VocabularyDetailPanel({
                   <button
                     type="button"
                     onClick={handlePlayAudio}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-hairline/80 bg-surface/50 text-muted transition-colors hover:bg-surface-warm hover:text-ink ml-1"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-hairline/80 bg-surface/50 text-muted-foreground transition-colors hover:bg-surface-warm hover:text-ink ml-1"
                     aria-label={audioPlaying ? "暂停" : "播放发音"}
                   >
                     {audioPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
@@ -155,7 +155,7 @@ export function VocabularyDetailPanel({
               </div>
               
               {/* Status Tags */}
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[0.72rem] font-semibold tracking-[0.06em] text-muted">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[0.72rem] font-semibold tracking-[0.06em] text-muted-foreground">
                 <span className="inline-flex items-center gap-1.5">
                   <Calendar className="h-3 w-3" />
                   {formatDate(item.createdAt)}
@@ -166,7 +166,7 @@ export function VocabularyDetailPanel({
                       ? "border-structure-green/30 bg-structure-green/10 text-structure-green"
                       : reviewLabel === "今日复习"
                         ? "border-vocab-amber/60 bg-vocab-amber/15 text-vocab-amber"
-                        : "border-hairline/60 bg-surface/50 text-muted"
+                        : "border-hairline/60 bg-surface/50 text-muted-foreground"
                   }`}
                 >
                   {item.mastered && <Check className="h-3 w-3" />}
@@ -176,7 +176,7 @@ export function VocabularyDetailPanel({
                   <span>复习 {item.reviewCount} 次</span>
                 )}
                 {item.nextReviewAt && !item.mastered && (
-                  <span className="text-muted/70">下次: {formatNextReview(item.nextReviewAt)}</span>
+                  <span className="text-muted-foreground/70">下次: {formatNextReview(item.nextReviewAt)}</span>
                 )}
               </div>
             </div>
@@ -200,7 +200,7 @@ export function VocabularyDetailPanel({
                   <TooltipTrigger asChild>
                     <button
                       type="button"
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-full text-muted transition-all hover:bg-surface-warm hover:text-error-red hover:font-bold outline-none"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-all hover:bg-surface-warm hover:text-error-red hover:font-bold outline-none"
                       onClick={() => onDelete?.(item)}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -215,7 +215,7 @@ export function VocabularyDetailPanel({
                       <button
                         type="button"
                         onClick={onClose}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-full text-muted transition-all hover:bg-surface-warm hover:text-ink hover:font-bold outline-none"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-all hover:bg-surface-warm hover:text-ink hover:font-bold outline-none"
                       >
                         <X className="h-5 w-5" />
                       </button>
@@ -303,7 +303,7 @@ export function VocabularyDetailPanel({
                   className={`pb-3 text-[0.88rem] font-semibold transition-colors border-b-2 outline-none ${
                     activeTab === tab.id
                       ? "border-ink text-ink"
-                      : "border-transparent text-muted hover:text-ink-soft"
+                      : "border-transparent text-muted-foreground hover:text-ink-soft"
                   }`}
                 >
                   {tab.label}
@@ -320,7 +320,7 @@ export function VocabularyDetailPanel({
                   {item.detailMeanings!.map((group, gi) => (
                     <div key={gi}>
                       {group.partOfSpeech && (
-                        <span className="inline-flex mb-4 px-2 py-0.5 rounded-[6px] bg-ink/[0.03] text-muted text-[0.75rem] font-mono font-semibold leading-none border border-hairline/50">
+                        <span className="inline-flex mb-4 px-2 py-0.5 rounded-[6px] bg-ink/[0.03] text-muted-foreground text-[0.75rem] font-mono font-semibold leading-none border border-hairline/50">
                           {group.partOfSpeech}
                         </span>
                       )}
@@ -343,7 +343,7 @@ export function VocabularyDetailPanel({
                                   {def.example}
                                 </p>
                                 {def.exampleTranslation && (
-                                  <p className="text-[0.85rem] leading-normal text-muted/95">
+                                  <p className="text-[0.85rem] leading-normal text-muted-foreground/95">
                                     {def.exampleTranslation}
                                   </p>
                                 )}

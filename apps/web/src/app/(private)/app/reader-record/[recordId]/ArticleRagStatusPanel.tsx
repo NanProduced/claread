@@ -162,7 +162,7 @@ export function ArticleRagStatusPanel({ recordId, generation }: ArticleRagStatus
     <aside
       data-testid="article-rag-status-panel"
       data-rag-status={state.status}
-      className="pointer-events-auto mx-3 my-2 flex flex-wrap items-center gap-2 rounded-lg border border-hairline/60 bg-surface/55 px-3 py-2 text-[0.78rem] text-muted sm:mx-4 lg:mx-5"
+      className="pointer-events-auto mx-3 my-2 flex flex-wrap items-center gap-2 rounded-lg border border-hairline/60 bg-surface/55 px-3 py-2 text-[0.78rem] text-muted-foreground sm:mx-4 lg:mx-5"
     >
       {state.status === "ready" ? (
         <>
@@ -173,7 +173,7 @@ export function ArticleRagStatusPanel({ recordId, generation }: ArticleRagStatus
             可用于文章引用问答
           </span>
           {typeof state.chunkCount === "number" ? (
-            <span data-testid="article-rag-status-meta" className="text-muted">
+            <span data-testid="article-rag-status-meta" className="text-muted-foreground">
               · 已索引 {state.chunkCount} 块
             </span>
           ) : null}
@@ -181,7 +181,7 @@ export function ArticleRagStatusPanel({ recordId, generation }: ArticleRagStatus
             type="button"
             disabled
             data-testid="article-rag-status-refresh"
-            className="ml-auto inline-flex items-center gap-1 rounded-full border border-hairline/70 bg-surface/60 px-2 py-0.5 text-[0.72rem] font-medium text-muted opacity-50"
+            className="ml-auto inline-flex items-center gap-1 rounded-full border border-hairline/70 bg-surface/60 px-2 py-0.5 text-[0.72rem] font-medium text-muted-foreground opacity-50"
           >
             已就绪
           </button>
@@ -196,12 +196,12 @@ export function ArticleRagStatusPanel({ recordId, generation }: ArticleRagStatus
           >
             后台准备文章引用中
           </span>
-          <span className="text-muted">· 不影响当前阅读</span>
+          <span className="text-muted-foreground">· 不影响当前阅读</span>
           <button
             type="button"
             disabled
             data-testid="article-rag-status-refresh"
-            className="ml-auto inline-flex items-center gap-1 rounded-full border border-hairline/70 bg-surface/60 px-2 py-0.5 text-[0.72rem] font-medium text-muted opacity-50"
+            className="ml-auto inline-flex items-center gap-1 rounded-full border border-hairline/70 bg-surface/60 px-2 py-0.5 text-[0.72rem] font-medium text-muted-foreground opacity-50"
           >
             准备中
           </button>
@@ -220,7 +220,7 @@ export function ArticleRagStatusPanel({ recordId, generation }: ArticleRagStatus
             type="button"
             disabled
             data-testid="article-rag-status-refresh"
-            className="ml-auto inline-flex items-center gap-1 rounded-full border border-hairline/70 bg-surface/60 px-2 py-0.5 text-[0.72rem] font-medium text-muted opacity-50"
+            className="ml-auto inline-flex items-center gap-1 rounded-full border border-hairline/70 bg-surface/60 px-2 py-0.5 text-[0.72rem] font-medium text-muted-foreground opacity-50"
           >
             处理中
           </button>
@@ -231,7 +231,7 @@ export function ArticleRagStatusPanel({ recordId, generation }: ArticleRagStatus
         <>
           <span
             data-testid="article-rag-status-label"
-            className="font-sans font-medium text-muted"
+            className="font-sans font-medium text-muted-foreground"
           >
             文章引用问答暂未准备
           </span>

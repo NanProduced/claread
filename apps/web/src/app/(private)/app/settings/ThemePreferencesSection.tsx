@@ -90,7 +90,7 @@ export function ThemePreferencesSection() {
                   </span>
                   <span
                     className={`text-[0.65rem] font-medium tracking-[0.08em] transition-colors ${
-                      active ? "text-lens-blue/70" : "text-muted"
+                      active ? "text-lens-blue/70" : "text-muted-foreground"
                     }`}
                   >
                     {option.english}
@@ -145,7 +145,7 @@ export function ThemePreferencesSection() {
                 </span>
                 <span
                   className={`text-[0.65rem] font-medium tracking-[0.08em] transition-colors ${
-                    active ? "text-lens-blue/70" : "text-muted"
+                    active ? "text-lens-blue/70" : "text-muted-foreground"
                   }`}
                 >
                   {option.english}

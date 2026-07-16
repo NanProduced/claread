@@ -64,7 +64,7 @@ const BentoCard = ({
         <h3 className="text-xl font-semibold tracking-[-0.01em] text-ink dark:text-neutral-300">
           {name}
         </h3>
-        <p className="max-w-lg text-sm leading-6 text-muted">{description}</p>
+        <p className="max-w-lg text-sm leading-6 text-muted-foreground">{description}</p>
       </div>
 
       {href && cta ? (

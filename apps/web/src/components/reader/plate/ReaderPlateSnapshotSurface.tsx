@@ -461,7 +461,7 @@ function ReaderSentenceAnalysisProjectionElement({
 export function ReaderPlateSnapshotSurface({
   value,
   readingClassName = "reader-serif text-ink",
-  translationClassName = "reader-font-sans text-[0.92rem] leading-[1.7] text-muted",
+  translationClassName = "reader-font-sans text-[0.92rem] leading-[1.7] text-muted-foreground",
   containerClassName = "px-5 py-8 sm:px-8 lg:px-10",
   columnClassName = "mx-auto max-w-[68ch]",
 }: ReaderPlateSnapshotSurfaceProps) {
@@ -555,7 +555,7 @@ export function ReaderPlateSnapshotSurface({
   if (!hasContent) {
     return (
       <div className={`${containerClassName} ${columnClassName}`.trim()}>
-        <p className="font-sans text-sm text-muted">这篇文章还没有可显示的正文内容。</p>
+        <p className="font-sans text-sm text-muted-foreground">这篇文章还没有可显示的正文内容。</p>
       </div>
     );
   }

@@ -69,4 +69,4 @@ export const panelSurface = cva(
 )
 
 export const primitiveLabelClass = "text-sm font-semibold text-ink"
-export const primitiveDescriptionClass = "text-sm leading-6 text-muted"
+export const primitiveDescriptionClass = "text-sm leading-6 text-muted-foreground"

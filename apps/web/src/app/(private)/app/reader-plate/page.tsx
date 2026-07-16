@@ -225,7 +225,7 @@ export default function ReaderPlatePage() {
     submitState.kind !== "pending";
 
   return (
-    <main className="paper-grain min-h-screen text-ink">
+    <main className="min-h-screen text-ink">
       <div className="mx-auto max-w-[72ch] px-5 py-10 sm:px-8 lg:py-14">
         <header className="mb-8">
           <p className="text-xs font-semibold tracking-[0.12em] text-lens-blue">
@@ -238,7 +238,7 @@ export default function ReaderPlatePage() {
 
         {submitState.kind === "pending" ? (
           <section className="rounded-note border border-hairline bg-surface p-10 shadow-surface-quiet">
-            <div className="flex items-center gap-3 text-sm text-muted">
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <span className="h-2 w-2 animate-pulse rounded-full bg-lens-blue" />
               正在解析文章结构，请稍候
             </div>
@@ -247,7 +247,7 @@ export default function ReaderPlatePage() {
 
         {isDirectRecordLoading ? (
           <section className="rounded-note border border-hairline bg-surface p-10 shadow-surface-quiet">
-            <div className="flex items-center gap-3 text-sm text-muted">
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <span className="h-2 w-2 animate-pulse rounded-full bg-lens-blue" />
               正在加载阅读快照，请稍候
             </div>
@@ -271,7 +271,7 @@ export default function ReaderPlatePage() {
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               <button
                 type="button"
-                className="text-xs font-medium text-muted underline-offset-4 hover:text-ink hover:underline"
+                className="text-xs font-medium text-muted-foreground underline-offset-4 hover:text-ink hover:underline"
                 onClick={() => setText(SAMPLE_TEXT)}
               >
                 填入示例文本
@@ -319,7 +319,7 @@ export default function ReaderPlatePage() {
             <div className="mt-8 flex justify-center">
               <button
                 type="button"
-                className="inline-flex h-9 items-center justify-center rounded-[8px] border border-hairline bg-surface px-4 font-sans text-xs font-medium text-muted transition-colors hover:text-ink"
+                className="inline-flex h-9 items-center justify-center rounded-[8px] border border-hairline bg-surface px-4 font-sans text-xs font-medium text-muted-foreground transition-colors hover:text-ink"
                 onClick={() => {
                   autoLoadedRecordIdRef.current = null;
                   setText("");

@@ -26,12 +26,12 @@ export function PageHeader({
       )}
     >
       <div className="max-w-[46rem]">
-        <p className="mb-3 text-[0.72rem] font-semibold tracking-[0.16em] text-muted">{eyebrow}</p>
+        <p className="mb-3 text-[0.72rem] font-semibold tracking-[0.16em] text-muted-foreground">{eyebrow}</p>
         <h1 className="max-w-[20ch] font-headline text-[2.35rem] font-semibold leading-[1.04] tracking-[-0.02em] text-ink sm:text-[3rem]">
           {title}
         </h1>
-        <div className="mt-4 max-w-[42rem] text-[0.95rem] leading-7 text-muted">{description}</div>
-        {message ? <div className="mt-3 max-w-[42rem] text-sm leading-6 text-muted">{message}</div> : null}
+        <div className="mt-4 max-w-[42rem] text-[0.95rem] leading-7 text-muted-foreground">{description}</div>
+        {message ? <div className="mt-3 max-w-[42rem] text-sm leading-6 text-muted-foreground">{message}</div> : null}
       </div>
       {actions ? <div className="flex shrink-0 flex-wrap gap-2 md:pt-2">{actions}</div> : null}
     </header>

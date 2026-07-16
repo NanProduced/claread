@@ -1,7 +1,7 @@
 /* ====================================================================
  * Web design tokens.
  *
- * Single source of truth: `:root` declares the canonical neutral-cool
+ * Single source of truth: `:root` declares the canonical neutral
  * Light palette. The `.light` block is a structural mirror of `:root`
  * so that explicit `<html class="light">` runs against identical
  * values (no second token set to drift). `.dark` re-declares only
@@ -18,21 +18,22 @@
   --font-reading-zh: "Source Han Serif SC", "Songti SC", "STSong", "Noto Serif SC", serif;
   --font-reading-book: Georgia, "Times New Roman", "Songti SC", "STSong", serif;
 
-  --cl-color-app-canvas: #f7f5f0;
+  --cl-color-app-canvas: #f8f8f8;
   --cl-color-app-surface: #ffffff;
-  --cl-color-app-surface-raised: #fbfaf6;
+  --cl-color-app-surface-raised: #f2f2f2;
   --cl-color-app-ink: #151515;
-  --cl-color-app-muted: #666a73;
-  --cl-color-app-subtle: #858a92;
-  --cl-color-app-hairline: #e3ded3;
+  --cl-color-app-muted: #6b6b6b;
+  --cl-color-app-subtle: #8b8b8b;
+  --cl-color-app-hairline: #e0e0e0;
+  --cl-color-app-input: #858585;
   --cl-color-app-accent: #1f5eff;
   --cl-color-app-accent-soft: #eaf1ff;
 
-  --cl-color-reader-paper: #faf9f6;
-  --cl-color-reader-paper-elevated: #fbfaf6;
+  --cl-color-reader-paper: #f5f5f5;
+  --cl-color-reader-paper-elevated: #f0f0f0;
   --cl-color-reader-paper-ink: #151515;
-  --cl-color-reader-paper-muted: #666a73;
-  --cl-color-reader-paper-line: #e3ded3;
+  --cl-color-reader-paper-muted: #6b6b6b;
+  --cl-color-reader-paper-line: #e0e0e0;
 
   --cl-color-vocab-amber: #e4b000;
   --cl-color-phrase-lavender: #b9a8e6;
@@ -49,11 +50,12 @@
   --cl-color-popover-foreground: var(--cl-color-app-ink);
   --cl-color-primary: var(--cl-color-app-accent);
   --cl-color-primary-foreground: var(--cl-color-app-surface);
+  --cl-color-muted: var(--cl-color-app-surface-raised);
   --cl-color-secondary: var(--cl-color-reader-paper);
   --cl-color-secondary-foreground: var(--cl-color-reader-paper-ink);
   --cl-color-muted-foreground: var(--cl-color-app-muted);
   --cl-color-border: var(--cl-color-app-hairline);
-  --cl-color-input: var(--cl-color-app-hairline);
+  --cl-color-input: var(--cl-color-app-input);
   --cl-color-ring: var(--cl-color-app-accent);
   --cl-color-accent: var(--cl-color-app-accent-soft);
   --cl-color-accent-foreground: var(--cl-color-app-accent);
@@ -109,7 +111,7 @@
   --surface-warm: var(--reader-paper-elevated);
   --ink: var(--app-ink);
   --ink-soft: color-mix(in srgb, var(--app-ink) 92%, white);
-  --muted: var(--app-muted);
+
   --subtle: var(--app-subtle);
   --hairline: var(--app-hairline);
   --lens-blue: var(--app-accent);
@@ -126,7 +128,7 @@
   --surface-overlay: var(--reader-paper-elevated);
 
   --text-primary: var(--ink);
-  --text-secondary: var(--muted);
+  --text-secondary: var(--muted-foreground);
 
   --action-primary: var(--cl-color-primary);
   --action-primary-foreground: var(--cl-color-primary-foreground);
@@ -166,26 +168,36 @@
   --accent-foreground: var(--cl-color-accent-foreground);
   --destructive: var(--cl-color-destructive);
   --destructive-foreground: var(--cl-color-destructive-foreground);
+  --muted: var(--cl-color-muted);
   --radius: var(--cl-radius-surface-sm);
 
-  --app-panel-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(251, 250, 246, 0.98));
-  --app-panel-muted-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(250, 249, 246, 0.92));
-  --app-nav-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(247, 245, 240, 0.96));
-  --app-control-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(249, 247, 241, 0.98));
-  --app-control-hover-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 244, 236, 1));
-  --app-control-quiet: rgba(250, 249, 246, 0.82);
-  --app-segmented-surface: linear-gradient(180deg, rgba(244, 241, 233, 0.72), rgba(251, 249, 244, 0.9));
-  --app-segmented-active-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 248, 243, 1));
+  --sidebar: var(--cl-color-app-surface);
+  --sidebar-foreground: var(--cl-color-app-ink);
+  --sidebar-primary: var(--cl-color-app-accent);
+  --sidebar-primary-foreground: var(--cl-color-primary-foreground);
+  --sidebar-accent: var(--cl-color-app-accent-soft);
+  --sidebar-accent-foreground: var(--cl-color-app-accent);
+  --sidebar-border: var(--cl-color-app-hairline);
+  --sidebar-ring: var(--cl-color-app-accent);
+
+  --app-panel-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 248, 248, 0.98));
+  --app-panel-muted-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(246, 246, 246, 0.92));
+  --app-nav-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(245, 245, 245, 0.96));
+  --app-control-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 246, 246, 0.98));
+  --app-control-hover-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 243, 243, 1));
+  --app-control-quiet: rgba(246, 246, 246, 0.82);
+  --app-segmented-surface: linear-gradient(180deg, rgba(240, 240, 240, 0.72), rgba(248, 248, 248, 0.9));
+  --app-segmented-active-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 248, 248, 1));
   --app-segmented-hover-surface: rgba(255, 255, 255, 0.58);
   --app-panel-shadow-quiet: 0 1px 2px rgba(17, 17, 17, 0.03), 0 8px 24px rgba(17, 17, 17, 0.04);
   --app-control-shadow: 0 8px 20px rgba(17, 17, 17, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.72);
   --app-control-shadow-strong: 0 8px 18px rgba(17, 17, 17, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.82);
-  --app-control-border-hover: rgba(113, 116, 124, 0.34);
-  --app-overlay: rgba(28, 28, 28, 0.22);
-  --app-tooltip-surface: rgba(24, 23, 20, 0.96);
-  --app-tooltip-foreground: rgba(250, 249, 246, 0.94);
-  --app-scroll-thumb: rgba(98, 101, 109, 0.26);
-  --app-switch-track: rgba(232, 228, 218, 0.9);
+  --app-control-border-hover: rgba(107, 107, 107, 0.34);
+  --app-overlay: rgba(20, 20, 20, 0.22);
+  --app-tooltip-surface: rgba(22, 22, 22, 0.96);
+  --app-tooltip-foreground: rgba(240, 240, 240, 0.94);
+  --app-scroll-thumb: rgba(107, 107, 107, 0.26);
+  --app-switch-track: rgba(224, 224, 224, 0.9);
   --app-switch-thumb-shadow: 0 2px 10px rgba(17, 17, 17, 0.15);
   --app-mobile-nav-shadow: 0 -10px 28px rgba(17, 17, 17, 0.06);
   --app-primary-border: rgba(46, 89, 219, 0.72);
@@ -194,9 +206,9 @@
   --app-primary-gradient-hover: linear-gradient(180deg, rgba(67, 111, 244, 0.98), rgba(42, 84, 214, 0.98));
   --app-primary-shadow: 0 12px 28px rgba(47, 92, 232, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.26);
   --app-primary-shadow-hover: 0 16px 32px rgba(47, 92, 232, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.22);
-  --app-secondary-border: rgba(30, 31, 37, 0.82);
-  --app-secondary-gradient: linear-gradient(180deg, rgba(34, 35, 41, 0.98), rgba(21, 22, 28, 0.98));
-  --app-secondary-gradient-hover: linear-gradient(180deg, rgba(40, 42, 49, 0.98), rgba(24, 25, 30, 0.98));
+  --app-secondary-border: rgba(30, 30, 30, 0.82);
+  --app-secondary-gradient: linear-gradient(180deg, rgba(34, 34, 34, 0.98), rgba(22, 22, 22, 0.98));
+  --app-secondary-gradient-hover: linear-gradient(180deg, rgba(40, 40, 40, 0.98), rgba(26, 26, 26, 0.98));
   --app-secondary-shadow: 0 10px 24px rgba(17, 17, 17, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.1);
   --app-secondary-shadow-hover: 0 14px 28px rgba(17, 17, 17, 0.18);
   --app-danger-border: rgba(190, 18, 60, 0.18);
@@ -204,66 +216,68 @@
   --app-danger-gradient-hover: linear-gradient(180deg, rgba(255, 249, 251, 1), rgba(255, 241, 245, 1));
   --reader-shell-gradient:
     linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0)),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 248, 243, 0.98));
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 248, 248, 0.98));
   --reader-shell-shadow: 0 1px 2px rgba(17, 17, 17, 0.03), 0 20px 46px rgba(17, 17, 17, 0.05);
   --reader-header-surface: rgba(255, 255, 255, 0.88);
   --reader-header-shadow: 0 16px 34px rgba(17, 17, 17, 0.045);
-  --reader-stage-rule: rgba(227, 222, 211, 0.94);
+  --reader-stage-rule: rgba(224, 224, 224, 0.94);
   --reader-stage-glow: rgba(31, 94, 255, 0.035);
   --reader-tool-surface-top: rgba(255, 255, 255, 0.94);
-  --reader-tool-surface-bottom: rgba(250, 248, 243, 0.98);
+  --reader-tool-surface-bottom: rgba(246, 246, 246, 0.98);
   --reader-tool-shadow: 0 14px 34px rgba(17, 17, 17, 0.055);
   --reader-tool-shadow-recessed: 0 10px 22px rgba(17, 17, 17, 0.035);
-  --reader-tool-border: rgba(227, 222, 211, 0.88);
-  --reader-immersive-cue-surface: rgba(252, 251, 247, 0.8);
-  --reader-immersive-cue-hover: rgba(234, 229, 220, 0.62);
-  --reader-immersive-focus: rgba(223, 216, 204, 0.28);
+  --reader-tool-border: rgba(224, 224, 224, 0.88);
+  --reader-immersive-cue-surface: rgba(248, 248, 248, 0.8);
+  --reader-immersive-cue-hover: rgba(230, 230, 230, 0.62);
+  --reader-immersive-focus: rgba(220, 220, 220, 0.28);
 }
 
 .dark {
-  --cl-color-app-canvas: #121518;
-  --cl-color-app-surface: #191d21;
-  --cl-color-app-surface-raised: #21262c;
-  --cl-color-app-ink: #f3efe7;
-  --cl-color-app-muted: #c7bcae;
-  --cl-color-app-subtle: #9a9084;
-  --cl-color-app-hairline: #4b5057;
+  --cl-color-app-canvas: #161616;
+  --cl-color-app-surface: #1e1e1e;
+  --cl-color-app-surface-raised: #2a2a2a;
+  --cl-color-app-ink: #e8e8e8;
+  --cl-color-app-muted: #9a9a9a;
+  --cl-color-app-subtle: #787878;
+  --cl-color-app-hairline: #3d3d3d;
+  --cl-color-app-input: #777777;
   --cl-color-app-accent: #8cb2ff;
   --cl-color-app-accent-soft: rgba(140, 178, 255, 0.18);
 
-  --cl-color-reader-paper: #1c2024;
-  --cl-color-reader-paper-elevated: #24292f;
-  --cl-color-reader-paper-ink: #f3efe7;
-  --cl-color-reader-paper-muted: #cbc1b4;
-  --cl-color-reader-paper-line: #545a62;
+  --cl-color-reader-paper: #1c1c1c;
+  --cl-color-reader-paper-elevated: #262626;
+  --cl-color-reader-paper-ink: #e8e8e8;
+  --cl-color-reader-paper-muted: #9a9a9a;
+  --cl-color-reader-paper-line: #3d3d3d;
 
-  --cl-color-popover: #262b31;
-  --cl-color-popover-foreground: #f3efe6;
-  --cl-color-primary-foreground: #151719;
-  --cl-color-secondary: #24292f;
-  --cl-color-secondary-foreground: #f2ede2;
-  --cl-color-destructive-foreground: #fff4f7;
+  --cl-color-popover: #2a2a2a;
+  --cl-color-popover-foreground: #e8e8e8;
+  --cl-color-primary-foreground: #161616;
+  --cl-color-secondary: #262626;
+  --cl-color-secondary-foreground: #e8e8e8;
+  --cl-color-destructive-foreground: #fef2f2;
 
+  --cl-color-muted: var(--cl-color-app-surface-raised);
   --ink-soft: color-mix(in srgb, var(--app-ink) 92%, black);
 
-  --app-panel-gradient: linear-gradient(180deg, rgba(33, 37, 42, 0.96), rgba(22, 25, 29, 0.98));
-  --app-panel-muted-gradient: linear-gradient(180deg, rgba(39, 43, 48, 0.92), rgba(29, 32, 36, 0.96));
-  --app-nav-gradient: linear-gradient(180deg, rgba(24, 28, 32, 0.95), rgba(17, 20, 24, 0.98));
-  --app-control-gradient: linear-gradient(180deg, rgba(41, 45, 50, 0.96), rgba(30, 34, 38, 0.98));
-  --app-control-hover-gradient: linear-gradient(180deg, rgba(47, 52, 58, 0.98), rgba(35, 40, 45, 1));
-  --app-control-quiet: rgba(34, 38, 43, 0.92);
-  --app-segmented-surface: linear-gradient(180deg, rgba(33, 37, 42, 0.96), rgba(25, 29, 33, 0.98));
-  --app-segmented-active-surface: linear-gradient(180deg, rgba(52, 57, 64, 0.98), rgba(38, 43, 49, 1));
-  --app-segmented-hover-surface: rgba(61, 67, 76, 0.72);
+  --app-panel-gradient: linear-gradient(180deg, rgba(30, 30, 30, 0.96), rgba(22, 22, 22, 0.98));
+  --app-panel-muted-gradient: linear-gradient(180deg, rgba(36, 36, 36, 0.92), rgba(26, 26, 26, 0.96));
+  --app-nav-gradient: linear-gradient(180deg, rgba(24, 24, 24, 0.95), rgba(18, 18, 18, 0.98));
+  --app-control-gradient: linear-gradient(180deg, rgba(38, 38, 38, 0.96), rgba(30, 30, 30, 0.98));
+  --app-control-hover-gradient: linear-gradient(180deg, rgba(44, 44, 44, 0.98), rgba(36, 36, 36, 1));
+  --app-control-quiet: rgba(34, 34, 34, 0.92);
+  --app-segmented-surface: linear-gradient(180deg, rgba(30, 30, 30, 0.96), rgba(24, 24, 24, 0.98));
+  --app-segmented-active-surface: linear-gradient(180deg, rgba(48, 48, 48, 0.98), rgba(38, 38, 38, 1));
+  --app-segmented-hover-surface: rgba(58, 58, 58, 0.72);
   --app-panel-shadow-quiet: 0 1px 2px rgba(8, 8, 8, 0.32), 0 12px 28px rgba(0, 0, 0, 0.22);
   --app-control-shadow: 0 12px 26px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   --app-control-shadow-strong: 0 14px 32px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  --app-control-border-hover: rgba(170, 178, 190, 0.32);
+  --app-control-border-hover: rgba(154, 154, 154, 0.32);
   --app-overlay: rgba(6, 6, 6, 0.42);
-  --app-tooltip-surface: rgba(244, 240, 232, 0.96);
-  --app-tooltip-foreground: rgba(25, 24, 20, 0.95);
-  --app-scroll-thumb: rgba(198, 188, 174, 0.32);
-  --app-switch-track: rgba(68, 74, 84, 0.9);
+  --app-tooltip-surface: rgba(240, 240, 240, 0.96);
+  --app-tooltip-foreground: rgba(22, 22, 22, 0.95);
+  --app-scroll-thumb: rgba(154, 154, 154, 0.32);
+  --app-switch-track: rgba(61, 61, 61, 0.9);
   --app-switch-thumb-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
   --app-mobile-nav-shadow: 0 -14px 34px rgba(0, 0, 0, 0.22);
   --app-primary-border: rgba(140, 178, 255, 0.42);
@@ -272,30 +286,29 @@
   --app-primary-gradient-hover: linear-gradient(180deg, rgba(164, 201, 255, 0.99), rgba(121, 160, 248, 1));
   --app-primary-shadow: 0 14px 30px rgba(67, 100, 173, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
   --app-primary-shadow-hover: 0 18px 34px rgba(67, 100, 173, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.14);
-  --app-secondary-border: rgba(86, 92, 102, 0.84);
-  --app-secondary-gradient: linear-gradient(180deg, rgba(46, 51, 57, 0.98), rgba(31, 36, 41, 0.98));
-  --app-secondary-gradient-hover: linear-gradient(180deg, rgba(53, 58, 64, 0.98), rgba(37, 42, 47, 1));
+  --app-secondary-border: rgba(80, 80, 80, 0.84);
+  --app-secondary-gradient: linear-gradient(180deg, rgba(42, 42, 42, 0.98), rgba(30, 30, 30, 0.98));
+  --app-secondary-gradient-hover: linear-gradient(180deg, rgba(48, 48, 48, 0.98), rgba(36, 36, 36, 1));
   --app-secondary-shadow: 0 12px 24px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   --app-secondary-shadow-hover: 0 16px 28px rgba(0, 0, 0, 0.22);
   --app-danger-border: rgba(190, 18, 60, 0.32);
-  --app-danger-gradient: linear-gradient(180deg, rgba(74, 39, 49, 0.92), rgba(56, 29, 37, 0.96));
-  --app-danger-gradient-hover: linear-gradient(180deg, rgba(85, 44, 55, 0.96), rgba(63, 31, 40, 1));
+  --app-danger-gradient: linear-gradient(180deg, rgba(70, 36, 42, 0.92), rgba(50, 26, 32, 0.96));
+  --app-danger-gradient-hover: linear-gradient(180deg, rgba(80, 40, 48, 0.96), rgba(58, 28, 36, 1));
   --reader-shell-gradient:
-    radial-gradient(circle at top center, rgba(140, 178, 255, 0.08), transparent 42%),
-    linear-gradient(180deg, rgba(35, 39, 44, 0.98), rgba(24, 28, 32, 0.98));
+    linear-gradient(180deg, rgba(30, 30, 30, 0.98), rgba(22, 22, 22, 0.98));
   --reader-shell-shadow: 0 1px 2px rgba(0, 0, 0, 0.34), 0 28px 72px rgba(0, 0, 0, 0.26);
-  --reader-header-surface: rgba(23, 26, 30, 0.88);
+  --reader-header-surface: rgba(22, 22, 22, 0.88);
   --reader-header-shadow: 0 20px 44px rgba(0, 0, 0, 0.24);
-  --reader-stage-rule: rgba(86, 92, 102, 0.92);
-  --reader-stage-glow: rgba(140, 178, 255, 0.08);
-  --reader-tool-surface-top: rgba(38, 42, 47, 0.94);
-  --reader-tool-surface-bottom: rgba(28, 32, 36, 0.98);
+  --reader-stage-rule: rgba(61, 61, 61, 0.92);
+  --reader-stage-glow: rgba(140, 178, 255, 0.06);
+  --reader-tool-surface-top: rgba(36, 36, 36, 0.94);
+  --reader-tool-surface-bottom: rgba(26, 26, 26, 0.98);
   --reader-tool-shadow: 0 20px 48px rgba(0, 0, 0, 0.24);
   --reader-tool-shadow-recessed: 0 12px 24px rgba(0, 0, 0, 0.18);
-  --reader-tool-border: rgba(81, 86, 95, 0.92);
-  --reader-immersive-cue-surface: rgba(38, 42, 47, 0.76);
-  --reader-immersive-cue-hover: rgba(58, 64, 72, 0.72);
-  --reader-immersive-focus: rgba(87, 94, 105, 0.42);
+  --reader-tool-border: rgba(61, 61, 61, 0.92);
+  --reader-immersive-cue-surface: rgba(36, 36, 36, 0.76);
+  --reader-immersive-cue-hover: rgba(52, 52, 52, 0.72);
+  --reader-immersive-focus: rgba(80, 80, 80, 0.42);
 
   --interactive-hover: var(--app-control-hover-gradient);
   --interactive-active: var(--app-segmented-active-surface);

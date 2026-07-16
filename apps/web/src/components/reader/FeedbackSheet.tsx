@@ -345,7 +345,7 @@ export function FeedbackSheet({
             type="button"
             onClick={onClose}
             className={cn(
-              "absolute right-4 top-4 inline-flex size-8 items-center justify-center rounded-[10px] border border-hairline/75 bg-secondary/70 text-muted",
+              "absolute right-4 top-4 inline-flex size-8 items-center justify-center rounded-[10px] border border-hairline/75 bg-secondary/70 text-muted-foreground",
               readerInlineFocusRing,
               readerTransitionFast,
               "hover:border-muted hover:bg-[var(--app-control-quiet)] hover:text-ink",
@@ -356,7 +356,7 @@ export function FeedbackSheet({
           </button>
           <SuccessSeal />
           <p className="text-base font-semibold text-ink">已收到反馈</p>
-          <span className="inline-flex items-center gap-1.5 rounded-[10px] border border-hairline/70 bg-surface-warm/80 px-3 py-1.5 text-[12px] font-medium text-muted">
+          <span className="inline-flex items-center gap-1.5 rounded-[10px] border border-hairline/70 bg-surface-warm/80 px-3 py-1.5 text-[12px] font-medium text-muted-foreground">
             <Check className="size-3 text-structure-green" />
             记录已写入
           </span>
@@ -374,7 +374,7 @@ export function FeedbackSheet({
                 type="button"
                 onClick={handleClose}
                 className={cn(
-                  "inline-flex size-9 items-center justify-center rounded-[12px] border border-hairline/75 bg-secondary/70 text-muted",
+                  "inline-flex size-9 items-center justify-center rounded-[12px] border border-hairline/75 bg-secondary/70 text-muted-foreground",
                   readerInlineFocusRing,
                   readerTransitionFast,
                   "hover:border-muted hover:bg-[var(--app-control-quiet)] hover:text-ink",
@@ -389,7 +389,7 @@ export function FeedbackSheet({
           <div className="flex flex-col gap-5 px-5 pt-5 pb-5">
             {(hasPositive || hasNegative || hasNeutral) && scope !== "app" ? (
               <fieldset className="flex flex-col gap-2.5">
-                <legend className="text-[12px] font-semibold text-muted">
+                <legend className="text-[12px] font-semibold text-muted-foreground">
                   评价
                 </legend>
                 <div className="grid grid-cols-2 gap-2.5">
@@ -413,7 +413,7 @@ export function FeedbackSheet({
 
             {showTypeOptions ? (
               <fieldset className="flex flex-col gap-2.5">
-                <legend className="text-[12px] font-semibold text-muted">
+                <legend className="text-[12px] font-semibold text-muted-foreground">
                   {typeLegend}
                 </legend>
                 <div className="grid grid-cols-2 gap-2">
@@ -445,7 +445,7 @@ export function FeedbackSheet({
             ) : null}
 
             <fieldset className="flex flex-col gap-2.5">
-              <legend className="text-[12px] font-semibold text-muted">
+              <legend className="text-[12px] font-semibold text-muted-foreground">
                 {textareaLegend}
                 {requiresExplanation ? (
                   <span className="ml-1 text-destructive/80">*</span>
@@ -458,7 +458,7 @@ export function FeedbackSheet({
                 placeholder={textareaPlaceholder}
                 rows={3}
                 className={cn(
-                  "min-h-[112px] w-full resize-none rounded-[14px] border border-hairline/85 bg-[color-mix(in_srgb,var(--surface-warm)_58%,transparent)] px-3.5 py-3 text-sm leading-6 text-ink placeholder:text-muted/65 shadow-[inset_0_2px_6px_rgba(30,25,18,0.025)] transition-all",
+                  "min-h-[112px] w-full resize-none rounded-[14px] border border-hairline/85 bg-[color-mix(in_srgb,var(--surface-warm)_58%,transparent)] px-3.5 py-3 text-sm leading-6 text-ink placeholder:text-muted-foreground/65 shadow-[inset_0_2px_6px_rgba(30,25,18,0.025)] transition-all",
                   readerInlineFocusRing,
                   "hover:border-[var(--app-control-border-hover)] hover:bg-surface-warm/80",
                   "focus:border-lens-blue/40 focus:bg-surface focus:ring-4 focus:ring-lens-blue/10",

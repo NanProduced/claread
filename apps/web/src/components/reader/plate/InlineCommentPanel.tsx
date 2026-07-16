@@ -149,19 +149,19 @@ function actionButtonClassName(enabled: boolean) {
     "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors focus-visible:outline-none";
   return enabled
     ? `${base} border-border/80 bg-background text-foreground hover:border-lens-blue/40 hover:bg-transparent`
-    : `${base} border-transparent bg-transparent text-muted/60`;
+    : `${base} border-transparent bg-transparent text-muted-foreground/60`;
 }
 
 function ghostActionClassName(tone: "default" | "danger" = "default") {
   return tone === "danger"
-    ? "grid h-8 w-8 place-items-center rounded-md text-muted transition-[color,transform] hover:bg-transparent hover:text-rose-600 active:scale-[0.96] focus-visible:outline-none focus-visible:text-rose-600"
-    : "grid h-8 w-8 place-items-center rounded-md text-muted transition-[color,transform] hover:bg-transparent hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:text-foreground";
+    ? "grid h-8 w-8 place-items-center rounded-md text-muted-foreground transition-[color,transform] hover:bg-transparent hover:text-rose-600 active:scale-[0.96] focus-visible:outline-none focus-visible:text-rose-600"
+    : "grid h-8 w-8 place-items-center rounded-md text-muted-foreground transition-[color,transform] hover:bg-transparent hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:text-foreground";
 }
 
 function saveActionClassName(enabled: boolean) {
   return enabled
     ? "grid h-8 w-8 place-items-center rounded-md bg-foreground text-background transition-[background-color,transform] hover:bg-foreground/90 active:scale-[0.96] focus-visible:bg-foreground/90 focus-visible:outline-none"
-    : "grid h-8 w-8 place-items-center rounded-md text-muted/40";
+    : "grid h-8 w-8 place-items-center rounded-md text-muted-foreground/40";
 }
 
 function IconTooltipButton({
@@ -269,7 +269,7 @@ export function InlineCommentPanel(props: InlineCommentPanelProps) {
             label="关闭笔记面板"
             tooltip="关闭"
             onClick={handleClose}
-            className="grid h-7 w-7 place-items-center rounded-md text-muted transition-[color,transform] hover:bg-transparent hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:text-foreground"
+            className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-[color,transform] hover:bg-transparent hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:text-foreground"
           >
             <X className="h-3.5 w-3.5" aria-hidden="true" />
           </IconTooltipButton>
@@ -368,7 +368,7 @@ function DraftComposer({
       ) : duplicateNote && duplicateAcknowledged ? (
         <div
           data-reader-record-note-duplicate="acknowledged"
-          className="rounded-md border border-border/60 bg-muted/20 px-2.5 py-2 text-xs leading-5 text-muted"
+          className="rounded-md border border-border/60 bg-muted/20 px-2.5 py-2 text-xs leading-5 text-muted-foreground"
         >
           将在同一选区新增一条独立笔记。
         </div>
@@ -381,7 +381,7 @@ function DraftComposer({
         placeholder="写下你的想法..."
         maxLength={500}
         aria-describedby={duplicateBlocked ? "reader-record-note-duplicate-help" : undefined}
-        className="min-h-[5.75rem] w-full resize-none border-0 bg-transparent px-0 py-2 text-sm leading-6 text-foreground outline-none placeholder:text-muted/65 focus:ring-0"
+        className="min-h-[5.75rem] w-full resize-none border-0 bg-transparent px-0 py-2 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/65 focus:ring-0"
         onChange={(e) => onDraftTextChange(e.currentTarget.value)}
       />
       {duplicateBlocked ? (
@@ -391,9 +391,9 @@ function DraftComposer({
       ) : null}
       <div className="flex items-center justify-between border-t border-border/50 pt-2">
         {statusMessage ? (
-          <span className="text-xs text-muted">{statusMessage}</span>
+          <span className="text-xs text-muted-foreground">{statusMessage}</span>
         ) : (
-          <span className="text-xs text-muted/60">{draftText.length}/500</span>
+          <span className="text-xs text-muted-foreground/60">{draftText.length}/500</span>
         )}
         <IconTooltipButton
           label={isSaving ? "保存中" : "保存笔记"}
@@ -455,7 +455,7 @@ function NoteView({
           {deleteConfirming ? (
             <span className="text-xs font-medium text-rose-600">确认删除？</span>
           ) : statusMessage ? (
-            <span className="text-xs text-muted">{statusMessage}</span>
+            <span className="text-xs text-muted-foreground">{statusMessage}</span>
           ) : (
             <span aria-hidden="true" />
           )}
@@ -532,7 +532,7 @@ function NoteView({
         onChange={(e) => onEditDraftChange(e.currentTarget.value)}
       />
       <div className="flex items-center justify-between border-t border-border/50 pt-2">
-        <span className="text-xs text-muted/60">{editDraft.length}/500</span>
+        <span className="text-xs text-muted-foreground/60">{editDraft.length}/500</span>
         <div className="flex items-center gap-1">
           <IconTooltipButton
             label="取消编辑笔记"

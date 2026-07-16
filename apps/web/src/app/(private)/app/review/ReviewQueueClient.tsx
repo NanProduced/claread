@@ -81,10 +81,10 @@ function CardContent({
           </h2>
           <div className="flex items-center gap-2">
             {item.phonetic && (
-              <span className="font-sans text-sm text-muted">{item.phonetic}</span>
+              <span className="font-sans text-sm text-muted-foreground">{item.phonetic}</span>
             )}
             {item.partOfSpeech && (
-              <span className="rounded-[6px] border border-hairline bg-surface-warm/50 px-2 py-0.5 font-sans text-[0.72rem] font-semibold text-muted">
+              <span className="rounded-[6px] border border-hairline bg-surface-warm/50 px-2 py-0.5 font-sans text-[0.72rem] font-semibold text-muted-foreground">
                 {item.partOfSpeech}
               </span>
             )}

@@ -36,7 +36,7 @@ export function SectionCard({
             {Icon ? <Icon aria-hidden="true" className="h-4 w-4 text-lens-blue" /> : null}
             <h2 className="text-base font-semibold text-ink">{title}</h2>
           </div>
-          {description ? <div className="mt-2 text-sm leading-6 text-muted">{description}</div> : null}
+          {description ? <div className="mt-2 text-sm leading-6 text-muted-foreground">{description}</div> : null}
         </div>
       ) : null}
       <div className={contentClassName}>{children}</div>

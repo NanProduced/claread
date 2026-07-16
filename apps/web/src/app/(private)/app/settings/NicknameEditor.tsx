@@ -103,7 +103,7 @@ export function NicknameEditor({ initialNickname, displayFallback }: NicknameEdi
           type="button"
           onClick={cancelEditing}
           disabled={editState === "saving"}
-          className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded text-muted hover:bg-muted/10 disabled:opacity-40"
+          className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded text-muted-foreground hover:bg-muted/10 disabled:opacity-40"
           aria-label="取消编辑"
         >
           <X className="size-5" strokeWidth={2} />
@@ -121,7 +121,7 @@ export function NicknameEditor({ initialNickname, displayFallback }: NicknameEdi
       <button
         type="button"
         onClick={startEditing}
-        className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded text-muted hover:bg-muted/10 hover:text-ink -ml-2"
+        className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded text-muted-foreground hover:bg-muted/10 hover:text-ink -ml-2"
         aria-label="编辑昵称"
       >
         <Pencil className="size-4" strokeWidth={1.8} />

@@ -26,7 +26,7 @@ export function SelectField({
     <div className="grid gap-3 border-t border-hairline py-5 md:grid-cols-[minmax(0,1fr)_220px] md:items-center">
       <div>
         <h3 className="text-sm font-semibold text-ink">{label}</h3>
-        <p className="mt-1 text-xs leading-5 text-muted">{description}</p>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
       </div>
       <Select
         items={items}

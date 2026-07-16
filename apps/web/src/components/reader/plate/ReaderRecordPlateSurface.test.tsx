@@ -40,6 +40,22 @@ import { Toolbar } from "@/components/ui/toolbar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppShellLayoutContext } from "@/components/layout/app-shell/app-shell-context";
 
+const themePreferenceSetter = vi.fn();
+let themePreferenceCurrent: "system" | "light" | "dark" = "system";
+
+vi.mock("@/components/providers/appearance-provider", () => ({
+  useAppearance: () => ({
+    get themePreference() {
+      return themePreferenceCurrent;
+    },
+    resolvedTheme: "light" as const,
+    setThemePreference: (next: "system" | "light" | "dark") => {
+      themePreferenceCurrent = next;
+      themePreferenceSetter(next);
+    },
+  }),
+}));
+
 vi.mock("@/components/editor/plugins/floating-toolbar-kit", async () => {
   const { createPlatePlugin } = await import("platejs/react");
   const { ReaderFloatingToolbarButtons } = await import(
@@ -132,11 +148,12 @@ afterEach(() => {
   window.getSelection()?.removeAllRanges();
   try {
     window.localStorage?.removeItem?.("claread.reader.settings.v4");
-    window.localStorage?.removeItem?.("claread.reader.themeName");
   } catch {
     // Ignore jsdom localStorage variants that do not expose the full Storage API.
   }
   cleanup();
+  themePreferenceCurrent = "system";
+  themePreferenceSetter.mockClear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -3624,7 +3641,10 @@ describe("ReaderRecordPlateSurface", () => {
 
     await user.click(menu.querySelector('[data-reader-record-more-theme="dark"]')!);
     await waitFor(() => {
-      expect(window.localStorage.getItem("claread.reader.themeName")).toBe("dark");
+      // Reader 切换主题只通过 AppearanceProvider 的 setThemePreference 写全局偏好，
+      // 不再直接读写旧 Reader 主题存储键。
+      expect(themePreferenceSetter).toHaveBeenCalledWith("dark");
+      expect(themePreferenceCurrent).toBe("dark");
     });
 
     await user.click(menu.querySelector('[data-reader-record-more-font-scale="lg"]')!);

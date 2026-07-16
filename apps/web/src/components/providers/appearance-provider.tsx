@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ThemeProvider, useTheme } from "next-themes";
 
 /**
@@ -23,12 +23,10 @@ if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
 }
 
 import {
-  LEGACY_APPEARANCE_STORAGE_KEY,
-  THEME_STORAGE_KEY,
-  migrateLegacyAppearanceTheme,
+  migrateLegacyReaderThemeStorage,
   normalizeThemePreference,
+  THEME_STORAGE_KEY,
   type ResolvedTheme,
-  type ThemeName,
   type ThemePreference,
   themeColorForTheme,
 } from "@/lib/appearance";
@@ -37,9 +35,7 @@ import {
   syncWebPreferencesToCloud,
 } from "@/lib/web-preferences-sync";
 import {
-  normalizeWebPreferences,
   persistWebPreferences,
-  WEB_PREFERENCES_STORAGE_KEY,
 } from "@/lib/web-preferences";
 
 /**
@@ -47,35 +43,30 @@ import {
  * ("system" | "light" | "dark"); `resolvedTheme` is the visual contract
  * applied to CSS / Tailwind / dataset attributes ("light" | "dark").
  * Setting `themePreference` persists into the cloud preferences payload
- * alongside the rest of WebPreferences. Reader-internal `ThemeName`
- * (paper|light|dark) callers continue to use the legacy `themeName`
- * field; that API is stable because the Reader sub-system is out of
- * scope for this refactor.
+ * alongside the rest of WebPreferences.
+ *
+ * AppearanceProvider is the single theme owner for the whole Web app,
+ * including every Reader page. Reader sub-systems consume
+ * `themePreference` / `resolvedTheme` / `setThemePreference` only.
  */
 interface AppearanceContextValue {
   themePreference: ThemePreference;
   resolvedTheme: ResolvedTheme;
-  /**
-   * Reader compatibility projection. Although its legacy type still admits
-   * `paper`, this provider only emits the resolved `light` or `dark` value.
-   */
-  themeName: ThemeName;
   setThemePreference: (value: ThemePreference) => void;
-  /**
-   * Reader-internal compatibility setter. A legacy `paper` input selects the
-   * system preference; it never re-enables a Paper visual theme.
-   */
-  setThemeName: (value: ThemeName) => void;
 }
 
 const AppearanceContext = createContext<AppearanceContextValue | null>(null);
 
-function readSystemOsTheme(): ResolvedTheme {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-    return "light";
-  }
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
+/**
+ * Run the one-time migration of the legacy Reader-only theme storage key
+ * into the global theme preference before ThemeProvider initializes, so
+ * the migrated value is picked up on first paint. The function is a no-op
+ * on the server and when the legacy key is absent. When a migration
+ * actually writes a value, the result is captured so the provider can
+ * replay it through the same WebPreferences persistence/cloud-sync path
+ * used for explicit preference changes.
+ */
+const legacyReaderThemeMigrationResult = migrateLegacyReaderThemeStorage();
 
 function ThemeColorSync() {
   const { resolvedTheme } = useTheme();
@@ -111,12 +102,42 @@ export function normalizeResolvedTheme(value: unknown): ResolvedTheme {
   return value === "dark" ? "dark" : "light";
 }
 
+/**
+ * Persist a theme preference into the local WebPreferences payload and
+ * trigger the cloud sync path. Used both for explicit preference changes
+ * (via `setThemePreference`) and for the one-time legacy Reader theme
+ * migration replay, so the two paths share identical persistence
+ * semantics.
+ */
+function persistThemePreference(next: ThemePreference) {
+  try {
+    const local = buildWebPreferencesFromLocal();
+    local.theme = next;
+    local.updated_at = new Date().toISOString();
+    persistWebPreferences(local);
+    syncWebPreferencesToCloud(local);
+  } catch {}
+}
+
 function AppearanceContextBridge({ children }: { children: React.ReactNode }) {
   const { theme, resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const didReplayLegacyReaderThemeMigration = useRef(false);
 
   useEffect(() => {
     setMounted(true); // eslint-disable-line react-hooks/set-state-in-effect
+  }, []);
+
+  // Replay a legacy Reader theme migration through the same
+  // persistence/cloud-sync path as an explicit preference change. This
+  // only fires once per provider instance and only when the migration
+  // actually wrote a value — `migrated === null` means no sync happens.
+  useEffect(() => {
+    const migrated = legacyReaderThemeMigrationResult.migrated;
+    if (migrated === null || didReplayLegacyReaderThemeMigration.current) return;
+
+    didReplayLegacyReaderThemeMigration.current = true;
+    persistThemePreference(migrated);
   }, []);
 
   const resolvedCurrent = useMemo<ResolvedTheme>(() => {
@@ -133,52 +154,18 @@ function AppearanceContextBridge({ children }: { children: React.ReactNode }) {
     return normalizeThemePreference(theme);
   }, [mounted, theme]);
 
-  /**
-   * Reader still consumes the legacy `ThemeName` type, but the app-shell
-   * never emits its retired `paper` member. `system` resolves to the same
-   * light/dark value used by every other visual consumer.
-   */
-  const themeNameCurrent = resolvedCurrent as ThemeName;
-
-  const applyThemeName = (next: ThemeName) => {
-    const mapped: ThemePreference =
-      next === "dark"
-        ? "dark"
-        : next === "light"
-          ? "light"
-          : "system";
-    setTheme(mapped);
-
-    try {
-      const local = buildWebPreferencesFromLocal();
-      local.theme = mapped;
-      local.updated_at = new Date().toISOString();
-      persistWebPreferences(local);
-      syncWebPreferencesToCloud(local);
-    } catch {}
-  };
-
   const applyPreference = (next: ThemePreference) => {
     setTheme(next);
-
-    try {
-      const local = buildWebPreferencesFromLocal();
-      local.theme = next;
-      local.updated_at = new Date().toISOString();
-      persistWebPreferences(local);
-      syncWebPreferencesToCloud(local);
-    } catch {}
+    persistThemePreference(next);
   };
 
   const value = useMemo<AppearanceContextValue>(
     () => ({
       themePreference: preferenceCurrent,
       resolvedTheme: resolvedCurrent,
-      themeName: themeNameCurrent,
       setThemePreference: applyPreference,
-      setThemeName: applyThemeName,
     }),
-    [preferenceCurrent, resolvedCurrent, themeNameCurrent],
+    [preferenceCurrent, resolvedCurrent],
   );
 
   return (

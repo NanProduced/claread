@@ -86,7 +86,7 @@ export function F7AskSidecarFixtureClient({
 
   return (
     <main
-      className="paper-grain min-h-screen text-ink"
+      className="min-h-screen text-ink"
       data-f7-fixture-page="ask-sidecar"
       data-f7-fixture-record-id={recordId}
     >
@@ -98,17 +98,17 @@ export function F7AskSidecarFixtureClient({
           <h1 className="mt-2 font-headline text-xl font-semibold text-ink sm:text-2xl">
             Ask Sidecar Fixture
           </h1>
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-1 text-sm text-muted-foreground">
             Page-level e2e fixture for Ask article_rag sidecar integration.
             Renders only AiWorkspacePanel, no Plate editor or FloatingToolbar.
           </p>
         </header>
 
         <section className="rounded-note border border-hairline bg-surface p-6 shadow-surface-quiet">
-          <p className="text-sm text-muted">Record ID</p>
+          <p className="text-sm text-muted-foreground">Record ID</p>
           <p className="font-mono text-sm text-ink">{recordId}</p>
 
-          <p className="mt-4 text-sm text-muted">Article preview</p>
+          <p className="mt-4 text-sm text-muted-foreground">Article preview</p>
           <p className="mt-1 text-sm text-ink">{FIXTURE_ARTICLE_TEXT}</p>
 
           <div className="mt-4 flex flex-wrap gap-2">

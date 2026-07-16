@@ -69,7 +69,7 @@ export default async function SettingsPage() {
               <div className="flex-1 space-y-3 pt-1">
                 <div>
                   <NicknameEditor initialNickname={realNickname} displayFallback={displayName} />
-                  <p className="mt-1.5 text-sm text-muted">
+                  <p className="mt-1.5 text-sm text-muted-foreground">
                     {settings.session.phone || "Web User"} 
                     <span className="mx-2 text-hairline">/</span> 
                     <span className={settings.status === "ready" ? "text-subtle" : "text-amber-600"}>
@@ -96,12 +96,12 @@ export default async function SettingsPage() {
           <Section title="Quota">
             <div className="space-y-6">
               <div>
-                <p className="text-sm font-medium text-muted mb-2">今日解析点数</p>
+                <p className="text-sm font-medium text-muted-foreground mb-2">今日解析点数</p>
                 <div className="flex items-baseline gap-2">
                   <span className="font-display text-[3.5rem] leading-none tracking-tight text-ink">
                     {quota ? quotaUsed : "--"}
                   </span>
-                  <span className="text-lg font-medium text-muted">/ {quota ? quotaLimit : "--"}</span>
+                  <span className="text-lg font-medium text-muted-foreground">/ {quota ? quotaLimit : "--"}</span>
                 </div>
                 
                 {/* Subtle Progress Track */}
@@ -117,9 +117,9 @@ export default async function SettingsPage() {
               
               {quota && (
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-                  <span className="text-muted">剩余可用 <strong className="font-semibold text-ink">{quota.remainingPoints ?? 0}</strong></span>
+                  <span className="text-muted-foreground">剩余可用 <strong className="font-semibold text-ink">{quota.remainingPoints ?? 0}</strong></span>
                   <span className="hidden sm:inline text-hairline">|</span>
-                  <span className="text-muted">额外奖励 <strong className="font-semibold text-ink">{quota.bonusPoints ?? 0}</strong></span>
+                  <span className="text-muted-foreground">额外奖励 <strong className="font-semibold text-ink">{quota.bonusPoints ?? 0}</strong></span>
                 </div>
               )}
 
@@ -138,7 +138,7 @@ export default async function SettingsPage() {
           <Section title="Appearance">
             <div className="mb-6">
               <h3 className="font-headline text-2xl font-semibold text-ink">主题偏好</h3>
-              <p className="mt-2 text-sm leading-relaxed text-muted">
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                 当前主题会同时影响全站外壳、功能页和阅读器视图。
               </p>
             </div>
@@ -152,7 +152,7 @@ export default async function SettingsPage() {
                 <h3 className="font-headline text-2xl font-semibold text-ink">默认透读设置</h3>
                 <TooltipProvider>
                   <Tooltip delayDuration={300}>
-                    <TooltipTrigger className="text-muted hover:text-ink focus:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue rounded-full p-1 transition-colors cursor-help">
+                    <TooltipTrigger className="text-muted-foreground hover:text-ink focus:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue rounded-full p-1 transition-colors cursor-help">
                       <HelpCircle className="h-5 w-5" />
                     </TooltipTrigger>
                     <TooltipContent side="right" className="max-w-[280px]">
@@ -161,7 +161,7 @@ export default async function SettingsPage() {
                   </Tooltip>
                 </TooltipProvider>
               </div>
-              <p className="mt-2 text-sm leading-relaxed text-muted">
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                 新建阅读任务时优先带入的目标与难度。
               </p>
             </div>
@@ -177,9 +177,9 @@ export default async function SettingsPage() {
             <div>
               <Link href={`${appSettingsRoute}/feedback` as Route} className="group inline-flex items-center gap-2 font-headline text-2xl font-semibold text-ink transition-colors hover:text-lens-blue">
                 <span>提交建议与反馈</span>
-                <ArrowRight className="h-5 w-5 text-muted transition-transform group-hover:translate-x-1.5 group-hover:text-lens-blue" />
+                <ArrowRight className="h-5 w-5 text-muted-foreground transition-transform group-hover:translate-x-1.5 group-hover:text-lens-blue" />
               </Link>
-              <p className="mt-3 text-sm text-muted max-w-md leading-relaxed">
+              <p className="mt-3 text-sm text-muted-foreground max-w-md leading-relaxed">
                 遇到体验问题或有新的想法？查阅历史记录或直接告诉 Claread 团队。
               </p>
             </div>

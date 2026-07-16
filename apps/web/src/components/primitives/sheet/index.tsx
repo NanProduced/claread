@@ -49,7 +49,7 @@ const SheetContent = React.forwardRef<
         {children}
         <DialogPrimitive.Close
           className={cn(
-            "absolute right-4 top-4 inline-flex size-9 items-center justify-center rounded-[var(--cl-radius-control-sm)] border border-hairline bg-secondary text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink",
+            "absolute right-4 top-4 inline-flex size-9 items-center justify-center rounded-[var(--cl-radius-control-sm)] border border-hairline bg-secondary text-muted-foreground transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink",
             primitiveFocusRing,
           )}
           aria-label="关闭侧边面板"

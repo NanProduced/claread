@@ -42,7 +42,7 @@ export function SegmentedControl<T extends string>({
                 "focus-ring relative flex h-8 items-center justify-center rounded-lg px-5 text-[0.8rem] font-medium tracking-[0.02em] transition-all duration-200",
                 active
                   ? "bg-surface text-ink shadow-[0_1px_3px_rgba(0,0,0,0.1)] ring-1 ring-black/5"
-                  : "text-muted hover:text-ink",
+                  : "text-muted-foreground hover:text-ink",
                 option.disabled && "cursor-not-allowed opacity-45",
               )}
               disabled={option.disabled}

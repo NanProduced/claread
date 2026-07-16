@@ -182,7 +182,7 @@ export function FeedbackForm() {
             <h2 className="max-w-[14em] font-headline text-[2rem] font-semibold leading-[1.08] text-ink sm:text-[2.35rem]">
               把问题或想法留给 Claread.
             </h2>
-            <p className="mt-3 max-w-[36rem] text-sm leading-6 text-muted">
+            <p className="mt-3 max-w-[36rem] text-sm leading-6 text-muted-foreground">
               我们会把这条反馈连同页面上下文一起记录，方便后续定位和处理。
             </p>
           </div>
@@ -264,7 +264,7 @@ export function FeedbackForm() {
                   <span
                     className={cn(
                       "mt-1 block text-[12px] leading-4",
-                      feedbackType === option.value ? "text-background/72" : "text-muted",
+                      feedbackType === option.value ? "text-background/72" : "text-muted-foreground",
                     )}
                   >
                     {option.description}
@@ -284,14 +284,14 @@ export function FeedbackForm() {
 
         <div className="mt-6 rounded-[18px] border border-hairline/85 bg-reader-paper/72 p-3.5 shadow-[inset_0_2px_6px_rgba(30,25,18,0.025)]">
           <div className="mb-2 flex items-center justify-between gap-3">
-            <label className="text-[12px] font-semibold text-muted" htmlFor={contentId}>
+            <label className="text-[12px] font-semibold text-muted-foreground" htmlFor={contentId}>
               反馈内容
             </label>
             <span className="text-[12px] text-subtle">{content.length} / 2000</span>
           </div>
           <textarea
             ref={textareaRef}
-            className="focus-ring min-h-36 w-full resize-y bg-transparent text-sm leading-6 text-ink outline-none placeholder:text-muted/62"
+            className="focus-ring min-h-36 w-full resize-y bg-transparent text-sm leading-6 text-ink outline-none placeholder:text-muted-foreground/62"
             id={contentId}
             maxLength={2000}
             onChange={(event) => setContent(event.target.value)}
@@ -308,7 +308,7 @@ export function FeedbackForm() {
                 ? "text-error-red"
                 : state.status === "success"
                   ? "text-structure-green"
-                  : "text-muted",
+                  : "text-muted-foreground",
             )}
             role={state.message ? "status" : undefined}
           >
@@ -338,7 +338,7 @@ export function FeedbackForm() {
         <div className="mb-5 flex items-end justify-between gap-4">
           <div>
             <h2 className="text-base font-semibold text-ink">我的反馈记录</h2>
-            <p className="mt-1 text-xs leading-5 text-muted">最近提交的反馈会显示在这里。</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">最近提交的反馈会显示在这里。</p>
           </div>
         </div>
         <MyFeedbackList refreshKey={listRefreshKey} />

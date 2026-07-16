@@ -8,7 +8,7 @@ export default {
 
 export const Default = () => (
   <SectionCard title="反馈" icon={MessageSquare} description="把不顺手的地方留在这里。">
-    <div className="rounded-note border border-hairline bg-reader-paper px-4 py-5 text-sm text-muted">
+    <div className="rounded-note border border-hairline bg-reader-paper px-4 py-5 text-sm text-muted-foreground">
       Form placeholder
     </div>
   </SectionCard>

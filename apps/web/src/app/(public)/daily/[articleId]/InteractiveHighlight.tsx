@@ -55,7 +55,7 @@ export function InteractiveHighlight({ highlight, children }: InteractiveHighlig
         >
           <div className="flex flex-col gap-2">
             {highlight.detail?.phonetic || highlight.detail?.pos ? (
-              <div className="flex items-center gap-2 text-xs text-muted">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 {highlight.detail?.phonetic && (
                   <span className="font-sans font-medium">{highlight.detail.phonetic}</span>
                 )}

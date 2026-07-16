@@ -204,7 +204,7 @@ function DesktopDiagnosisPlate({ activeId, baseId, onActivate, onBranchKeyDown, 
           ))}
         </div>
 
-        <p className="pointer-events-none absolute bottom-4 left-1/2 z-30 -translate-x-1/2 text-xs leading-5 text-muted">
+        <p className="pointer-events-none absolute bottom-4 left-1/2 z-30 -translate-x-1/2 text-xs leading-5 text-muted-foreground">
           点击字母切换诊断
         </p>
       </div>
@@ -257,7 +257,7 @@ function MobileDiagnosisPlate({ activeId, baseId, onActivate, onBranchKeyDown, b
                 role="region"
                 aria-labelledby={`${baseId}-${item.id}-mobile-button`}
                 hidden={!active}
-                className="mt-3 border-t border-hairline/70 pt-3 text-sm leading-6 text-muted"
+                className="mt-3 border-t border-hairline/70 pt-3 text-sm leading-6 text-muted-foreground"
               >
                 <p className="font-medium text-ink">{item.body}</p>
                 <p className="mt-1">{item.detail}</p>
@@ -276,9 +276,9 @@ function TypographyGuideLines() {
       <span className="absolute inset-x-[5%] top-[30%] border-t border-dotted border-[var(--diagnosis-guide)]" />
       <span className="absolute inset-x-[5%] top-[47%] border-t border-dotted border-[var(--diagnosis-guide-soft)]" />
       <span className="absolute inset-x-[5%] top-[63%] border-t border-[var(--diagnosis-guide-soft)]" />
-      <span className="absolute left-[5%] top-[30%] text-[0.68rem] leading-none text-muted">cap height</span>
-      <span className="absolute right-[6%] top-[47%] text-[0.68rem] leading-none text-muted">x-height</span>
-      <span className="absolute left-[5%] top-[64.5%] text-[0.68rem] leading-none text-muted">baseline</span>
+      <span className="absolute left-[5%] top-[30%] text-[0.68rem] leading-none text-muted-foreground">cap height</span>
+      <span className="absolute right-[6%] top-[47%] text-[0.68rem] leading-none text-muted-foreground">x-height</span>
+      <span className="absolute left-[5%] top-[64.5%] text-[0.68rem] leading-none text-muted-foreground">baseline</span>
       <span className="absolute left-[24%] top-[21%] h-[51%] w-px bg-[var(--diagnosis-guide-soft)]" />
       <span className="absolute left-[39%] top-[31%] h-[40%] w-px bg-[var(--diagnosis-guide-soft)]" />
       <span className="absolute left-[57%] top-[24%] h-[47%] w-px bg-[var(--diagnosis-guide-soft)]" />
@@ -355,7 +355,7 @@ function DesktopBranch({
             role="region"
             aria-labelledby={buttonId}
             hidden={!active}
-            className="mt-3 border-t border-hairline/70 pt-3 text-sm leading-6 text-muted"
+            className="mt-3 border-t border-hairline/70 pt-3 text-sm leading-6 text-muted-foreground"
           >
             <p className="font-medium text-ink">{item.body}</p>
             <p className="mt-1">{item.detail}</p>
@@ -411,7 +411,7 @@ function BranchTabButton({
         </span>
         <span
           className={cn(
-            "mt-1 block text-xs leading-5 text-muted transition-colors duration-200",
+            "mt-1 block text-xs leading-5 text-muted-foreground transition-colors duration-200",
             "group-hover:text-ink-soft group-focus-visible:text-ink-soft",
           )}
         >

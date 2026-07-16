@@ -61,7 +61,7 @@ export function ReaderStructuredInspectCard({
               {category}
             </span>
             {subtype ? (
-              <span className="rounded-[5px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.66rem] font-semibold leading-none text-muted">
+              <span className="rounded-[5px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.66rem] font-semibold leading-none text-muted-foreground">
                 {subtype}
               </span>
             ) : null}
@@ -73,15 +73,15 @@ export function ReaderStructuredInspectCard({
         <p className="text-sm leading-6 text-ink-soft">{summary}</p>
         {example ? (
           <div className="rounded-[7px] border border-hairline/60 bg-ink/[0.012] px-2.5 py-2">
-            <p className="text-[0.68rem] font-semibold text-muted">例句</p>
+            <p className="text-[0.68rem] font-semibold text-muted-foreground">例句</p>
             <p className="mt-1 text-xs leading-5 text-ink-soft">{example}</p>
             {exampleTranslation ? (
-              <p className="mt-0.5 text-[0.72rem] leading-5 text-muted">{exampleTranslation}</p>
+              <p className="mt-0.5 text-[0.72rem] leading-5 text-muted-foreground">{exampleTranslation}</p>
             ) : null}
           </div>
         ) : null}
         {reason ? (
-          <p className="text-xs leading-5 text-muted">
+          <p className="text-xs leading-5 text-muted-foreground">
             {reason}
           </p>
         ) : null}

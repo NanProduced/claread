@@ -229,7 +229,7 @@ export function ProductAnnotations() {
           <h2 className="mt-4 max-w-3xl font-headline text-4xl font-semibold leading-[1.08] text-ink sm:text-5xl md:text-6xl">
             四种标注，按阅读卡点逐个出现。
           </h2>
-          <p className="mt-6 max-w-2xl text-base leading-8 text-muted">
+          <p className="mt-6 max-w-2xl text-base leading-8 text-muted-foreground">
             不是功能清单，也不是一张复杂截图。每一段先说一个真实痛点，再展示 Claread 用哪一类标注把它解开。
           </p>
         </div>
@@ -348,7 +348,7 @@ function VocabularyFocusScene() {
         <h3 className="mt-4 max-w-[32rem] font-headline text-4xl font-semibold leading-[1.08] text-ink sm:text-5xl">
           查了单词，还是不清楚意思。
         </h3>
-        <p className="mt-6 max-w-[31rem] text-base leading-8 text-muted">
+        <p className="mt-6 max-w-[31rem] text-base leading-8 text-muted-foreground">
           Claread 把生词、短语和语境义分开标注，让解释回到正在读的这一句。
         </p>
 
@@ -402,7 +402,7 @@ function VocabularyStageButton({
         <span className={cn("size-2 rounded-full", tone.dot)} />
         <span className={cn("text-[0.95rem] font-semibold", active ? tone.text : "text-ink")}>{stage.title}</span>
       </span>
-      <span className="mt-1 block text-sm leading-6 text-muted">{stage.description}</span>
+      <span className="mt-1 block text-sm leading-6 text-muted-foreground">{stage.description}</span>
     </button>
   );
 }
@@ -543,7 +543,7 @@ function VocabularyLookupCard({
           <p className={cn("text-xs font-semibold", tone.quietText)}>{activeStage.resultTitle}</p>
           <p className="mt-1 text-sm font-semibold leading-6 text-ink">{activeStage.result}</p>
         </div>
-        {activeStage.helper ? <p className="mt-3 text-xs leading-5 text-muted">{activeStage.helper}</p> : null}
+        {activeStage.helper ? <p className="mt-3 text-xs leading-5 text-muted-foreground">{activeStage.helper}</p> : null}
       </motion.div>
     </div>
   );
@@ -556,7 +556,7 @@ function GrammarFeatureCopy() {
       <h3 className="mt-4 font-headline text-3xl font-semibold leading-tight text-ink sm:text-4xl">
         看懂大意，但不知道为什么。
       </h3>
-      <p className="mt-4 max-w-[33rem] text-base leading-8 text-muted">
+      <p className="mt-4 max-w-[33rem] text-base leading-8 text-muted-foreground">
         Claread 不讲整章语法，只标出影响当前句子的结构关系。语法点留在原句旁边，下一次遇到同类结构时也能读出来。
       </p>
       <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
@@ -571,7 +571,7 @@ function GrammarCopyPoint({ title, body }: { title: string; body: string }) {
   return (
     <div className="rounded-[0.85rem] border border-[#746694]/18 bg-[#F7F5F0]/55 px-4 py-3">
       <p className="text-sm font-semibold text-[#5f4e8a]">{title}</p>
-      <p className="mt-1 text-sm leading-6 text-muted">{body}</p>
+      <p className="mt-1 text-sm leading-6 text-muted-foreground">{body}</p>
     </div>
   );
 }
@@ -699,7 +699,7 @@ function GrammarNoteCard({ point, index, active }: { point: GrammarPoint; index:
         <span className="text-xs font-semibold text-[#5f4e8a]">语法旁注</span>
       </div>
       <p className="mt-3 text-sm font-semibold leading-5 text-ink">{point.title}</p>
-      <p className="mt-1 text-xs leading-5 text-muted">{point.label}</p>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">{point.label}</p>
       <p className="mt-3 text-sm leading-6 text-ink-soft">{point.content}</p>
     </motion.div>
   );
@@ -712,7 +712,7 @@ function SentenceAnalysisCopy() {
       <h3 className="mt-4 font-headline text-3xl font-semibold leading-tight text-ink sm:text-4xl">
         长句不是更长的词表。
       </h3>
-      <p className="mt-4 max-w-[33rem] text-base leading-8 text-muted">
+      <p className="mt-4 max-w-[33rem] text-base leading-8 text-muted-foreground">
         Claread 先把长句打散，再按主干、从句和修饰关系重新排好。你看到的不是翻译结果，而是这句话怎样成立。
       </p>
       <div className="mt-6 flex flex-col gap-2">
@@ -727,7 +727,7 @@ function SentenceCopyPoint({ title, body }: { title: string; body: string }) {
   return (
     <div className="rounded-[0.85rem] border border-[#3c8c68]/18 bg-[#F7F5F0]/55 px-4 py-3">
       <p className="text-sm font-semibold text-[#276c4d]">{title}</p>
-      <p className="mt-1 text-sm leading-6 text-muted">{body}</p>
+      <p className="mt-1 text-sm leading-6 text-muted-foreground">{body}</p>
     </div>
   );
 }
@@ -825,7 +825,7 @@ function SentenceAnalysisDemo() {
           >
             <div className="mb-4 flex items-center justify-between gap-3">
               <span className="text-xs font-semibold text-[#276c4d]">句子成分划分</span>
-              <span className="text-xs text-muted">主干先行，枝叶归位</span>
+              <span className="text-xs text-muted-foreground">主干先行，枝叶归位</span>
             </div>
             <div className="space-y-3">
               {sentencePieces.map((piece, index) => (
@@ -908,7 +908,7 @@ function SentencePieceRow({
           "mt-0.5 inline-flex min-h-6 shrink-0 items-center rounded-full border px-2 text-[0.68rem] font-semibold",
           index === 0
             ? "border-[#3c8c68]/30 bg-[#3c8c68]/12 text-[#276c4d]"
-            : "border-hairline/80 bg-surface/72 text-muted",
+            : "border-hairline/80 bg-surface/72 text-muted-foreground",
         )}
       >
         {piece.label}
@@ -917,7 +917,7 @@ function SentencePieceRow({
         <span className={cn("block text-sm leading-6", index === 0 ? "font-semibold text-ink" : "text-ink-soft")}>
           {piece.text}
         </span>
-        <span className="mt-0.5 block text-xs leading-5 text-muted">{piece.explanation}</span>
+        <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{piece.explanation}</span>
       </span>
     </motion.div>
   );
@@ -930,7 +930,7 @@ function TranslationFeatureCopy() {
       <h3 className="mt-4 font-headline text-3xl font-semibold leading-tight text-ink sm:text-4xl">
         译文只负责校准理解。
       </h3>
-      <p className="mt-4 max-w-[33rem] text-base leading-8 text-muted">
+      <p className="mt-4 max-w-[33rem] text-base leading-8 text-muted-foreground">
         Claread 先把原文按句切开，再把中文放在每句下方。英文仍是主阅读层，译文只在需要确认时低声出现。
       </p>
       <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
@@ -945,7 +945,7 @@ function TranslationCopyPoint({ title, body }: { title: string; body: string }) 
   return (
     <div className="rounded-[0.85rem] border border-[#4c91c2]/16 bg-[#F7F5F0]/55 px-4 py-3">
       <p className="text-sm font-semibold text-[#355f87]">{title}</p>
-      <p className="mt-1 text-sm leading-6 text-muted">{body}</p>
+      <p className="mt-1 text-sm leading-6 text-muted-foreground">{body}</p>
     </div>
   );
 }
@@ -976,11 +976,11 @@ function TranslationSwapDemo() {
             <span className="size-2 rounded-full bg-[#86bfe8]" />
             <span className="text-xs font-semibold text-ink">句级对照</span>
           </div>
-          <div className="inline-flex rounded-full border border-hairline bg-surface/76 p-0.5 text-[0.68rem] font-semibold text-muted">
+          <div className="inline-flex rounded-full border border-hairline bg-surface/76 p-0.5 text-[0.68rem] font-semibold text-muted-foreground">
             <span
               className={cn(
                 "rounded-full px-2.5 py-1 transition-colors duration-300",
-                visiblePhase === "source" ? "bg-[#4c91c2]/12 text-[#355f87]" : "text-muted",
+                visiblePhase === "source" ? "bg-[#4c91c2]/12 text-[#355f87]" : "text-muted-foreground",
               )}
             >
               原文
@@ -988,7 +988,7 @@ function TranslationSwapDemo() {
             <span
               className={cn(
                 "rounded-full px-2.5 py-1 transition-colors duration-300",
-                visiblePhase === "aligned" ? "bg-[#4c91c2]/12 text-[#355f87]" : "text-muted",
+                visiblePhase === "aligned" ? "bg-[#4c91c2]/12 text-[#355f87]" : "text-muted-foreground",
               )}
             >
               对照
@@ -1017,13 +1017,13 @@ function TranslationSourcePanel() {
     >
       <div className="mb-4 flex items-center justify-between gap-3">
         <span className="text-xs font-semibold text-[#355f87]">原文输入</span>
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-reader-paper px-2.5 py-1 text-xs text-muted">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-reader-paper px-2.5 py-1 text-xs text-muted-foreground">
           <Languages className="size-3" aria-hidden="true" />
           ready
         </span>
       </div>
       <p className="font-reading text-[1.16rem] leading-[2.05] text-ink sm:text-[1.28rem]">{translationSourceText}</p>
-      <div className="mt-5 flex items-center gap-2 text-xs font-semibold text-muted">
+      <div className="mt-5 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
         <span className="h-px flex-1 bg-hairline" />
         swap to sentence view
         <span className="h-px flex-1 bg-hairline" />
@@ -1056,7 +1056,7 @@ function TranslationAlignedPanel() {
             <span className="text-xs font-semibold text-[#355f87]">sentence</span>
           </div>
           <p className="font-reading text-[1.05rem] leading-7 text-ink">{sentence.source}</p>
-          <p className="mt-2 border-t border-hairline/60 pt-2 text-sm leading-6 text-muted">{sentence.translation}</p>
+          <p className="mt-2 border-t border-hairline/60 pt-2 text-sm leading-6 text-muted-foreground">{sentence.translation}</p>
         </motion.div>
       ))}
     </motion.div>

@@ -14,7 +14,7 @@ export default async function LoginPage() {
   return (
     <main className="min-h-screen overflow-hidden bg-[oklch(97%_0.012_84)] text-ink">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_8%_12%,rgba(37,99,235,0.08),transparent_26rem),radial-gradient(circle_at_90%_92%,rgba(17,17,17,0.055),transparent_24rem)]" />
-      <div className="paper-grain relative min-h-screen px-5 py-6 sm:px-8 lg:px-12">
+      <div className="relative min-h-screen px-5 py-6 sm:px-8 lg:px-12">
         <PublicSiteHeader showCta={false} priority />
 
         <div className="mx-auto grid max-w-7xl gap-8 py-7 lg:grid-cols-[minmax(0,1fr)_400px] lg:py-9 xl:gap-14">
@@ -25,7 +25,7 @@ export default async function LoginPage() {
             <h1 className="mt-3 max-w-4xl font-headline text-[2.45rem] font-semibold leading-[1.04] tracking-normal text-ink sm:text-[3.85rem]">
               今天 Claread 在读什么
             </h1>
-            <p className="mt-4 max-w-2xl text-base leading-7 text-muted sm:text-lg">
+            <p className="mt-4 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
               每天一篇精选英文，配上词汇、句子和语境标注。先读一篇，再决定要不要把 Claread 变成自己的阅读工具。
             </p>
 
@@ -42,7 +42,7 @@ export default async function LoginPage() {
                 <h2 className="mt-4 max-w-2xl font-headline text-3xl font-semibold leading-tight tracking-normal text-ink sm:text-[2.45rem]">
                   What makes a city readable?
                 </h2>
-                <p className="mt-3 text-sm leading-6 text-muted">The Atlantic · 中级 · 12 分钟</p>
+                <p className="mt-3 text-sm leading-6 text-muted-foreground">The Atlantic · 中级 · 12 分钟</p>
                 <div className="mt-5 border-t border-hairline pt-5 font-reading text-[1.28rem] leading-[1.82] text-ink">
                   Cities are not only built to be crossed, but also to be{" "}
                   <span className="rounded-sm bg-lens-blue-soft px-1.5 py-0.5 text-[#174ea6]">
@@ -64,7 +64,7 @@ export default async function LoginPage() {
                   </Link>
                   <div className="border-l border-hairline pl-4">
                     <p className="text-xs font-semibold text-ink">语境提示</p>
-                    <p className="mt-2 text-sm leading-6 text-muted">
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
                       readable 在这里不是“可读”，而是城市容易被理解和辨认。
                     </p>
                   </div>
@@ -81,7 +81,7 @@ export default async function LoginPage() {
               <h2 className="mt-3 font-headline text-3xl font-semibold tracking-normal text-ink">
                 继续使用 Claread
               </h2>
-              <p className="mt-3 text-sm leading-6 text-muted">
+              <p className="mt-3 text-sm leading-6 text-muted-foreground">
                 登录后保存你的解读、批注和生词。公开每日精读和示例可直接阅读。
               </p>
               {session.state !== "signed_out" ? (
@@ -95,7 +95,7 @@ export default async function LoginPage() {
               <Suspense fallback={<div className="mt-6 h-64 rounded-note bg-reader-paper" />}>
                 <PhoneLoginForm />
               </Suspense>
-              <p className="mt-5 border-t border-hairline pt-4 text-xs leading-5 text-muted">
+              <p className="mt-5 border-t border-hairline pt-4 text-xs leading-5 text-muted-foreground">
                 {session.state === "limited_debug"
                   ? "当前会话处于调试态。你可以进入工作区，但真实账户数据和保存能力会受限。"
                   : session.state === "signed_in"

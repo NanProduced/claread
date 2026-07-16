@@ -118,7 +118,7 @@ export function ReaderContextPanel({
             <div className="mx-2 my-1.5 h-px bg-hairline/70" />
             
             <div className="flex items-center justify-between px-2.5 py-1.5">
-              <span className="flex items-center gap-2.5 text-[11px] font-bold tracking-[0.02em] text-muted/80">
+              <span className="flex items-center gap-2.5 text-[11px] font-bold tracking-[0.02em] text-muted-foreground/80">
                 <Palette className="h-3.5 w-3.5" /> 颜色
               </span>
               <div className="flex items-center gap-1.5">
@@ -157,7 +157,7 @@ export function ReaderContextPanel({
       ) : null}
 
       {onClose ? (
-        <div className="mt-2.5 border-t border-hairline/70 px-2.5 pt-2.5 text-[0.68rem] text-muted/80">
+        <div className="mt-2.5 border-t border-hairline/70 px-2.5 pt-2.5 text-[0.68rem] text-muted-foreground/80">
           <span className="inline-flex items-center gap-2">
             <Kbd className="text-[0.62rem] min-h-4 min-w-4 px-1">Esc</Kbd>
             <span>关闭</span>
@@ -189,7 +189,7 @@ function MenuItem({ icon, label, shortcut, onClick, disabled }: MenuItemProps) {
       onClick={onClick}
       disabled={disabled}
     >
-      <span className="text-muted/80 size-4 flex items-center justify-center shrink-0">{icon}</span>
+      <span className="text-muted-foreground/80 size-4 flex items-center justify-center shrink-0">{icon}</span>
       <span>{label}</span>
       {shortcut ? <Kbd className="ml-auto text-[0.62rem] min-h-4 min-w-4 px-1">{shortcut}</Kbd> : null}
     </button>

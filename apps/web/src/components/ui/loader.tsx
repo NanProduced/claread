@@ -87,7 +87,7 @@ export function Loader({
 
   if (variant === "loading-dots") {
     return (
-      <span className={cn("inline-flex items-center gap-1.5 text-muted", SIZE_MAP[size], className)}>
+      <span className={cn("inline-flex items-center gap-1.5 text-muted-foreground", SIZE_MAP[size], className)}>
         {text ? <span>{text}</span> : null}
         <AnimatedDots size={size} />
       </span>
@@ -96,14 +96,14 @@ export function Loader({
 
   if (variant === "dots" || variant === "typing") {
     return (
-      <span className={cn("inline-flex items-center gap-1 text-muted", className)}>
+      <span className={cn("inline-flex items-center gap-1 text-muted-foreground", className)}>
         <AnimatedDots size={size} />
       </span>
     );
   }
 
   return (
-    <span className={cn("inline-flex items-center gap-2 text-muted", SIZE_MAP[size], className)}>
+    <span className={cn("inline-flex items-center gap-2 text-muted-foreground", SIZE_MAP[size], className)}>
       <LoaderCircle className={cn("animate-spin", SPINNER_SIZE_MAP[size])} aria-hidden="true" />
       {text ? <span>{text}</span> : null}
     </span>

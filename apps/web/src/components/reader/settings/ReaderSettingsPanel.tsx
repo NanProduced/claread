@@ -1,6 +1,6 @@
 "use client";
 
-import type { ThemeName } from "@/lib/appearance";
+import type { ThemePreference } from "@/lib/appearance";
 import { cn } from "@/lib/cn";
 import { readerCommandControl, readerSegmentedOption, readerTransitionStandard } from "../interaction";
 import {
@@ -10,10 +10,10 @@ import {
 } from "./shared";
 
 interface ReaderSettingsPanelProps {
-  themeName: ThemeName;
+  themePreference: ThemePreference;
   value: ReaderSettingsState;
   onChange: (next: ReaderSettingsState) => void;
-  onThemeChange: (next: ThemeName) => void;
+  onThemeChange: (next: ThemePreference) => void;
   onClose?: () => void;
   variant?: "default" | "floating";
 }
@@ -35,28 +35,32 @@ const fontFamilyOptions: Array<{
 ];
 
 const themeOptions: Array<{
-  value: ThemeName;
+  value: ThemePreference;
   label: string;
   english: string;
   description: string;
+  previewClass: string;
 }> = [
   {
-    value: "paper",
-    label: "纸质",
-    english: "Paper",
-    description: "默认母主题，纸感完整。",
+    value: "system",
+    label: "跟随系统",
+    english: "System",
+    description: "随操作系统浅色 / 深色自动切换。",
+    previewClass: "bg-surface-warm text-ink",
   },
   {
     value: "light",
     label: "浅色",
     english: "Light",
     description: "更偏功能的明亮工作面。",
+    previewClass: "bg-[#fbfbfb] text-[#1f2937]/80",
   },
   {
     value: "dark",
     label: "深色",
     english: "Dark",
     description: "为夜读调好的暗色舞台。",
+    previewClass: "bg-[#18181c] text-[#a1a1a6]",
   },
 ];
 
@@ -72,7 +76,7 @@ function updateField<K extends keyof ReaderSettingsState>(
 }
 
 export function ReaderSettingsPanel({
-  themeName,
+  themePreference,
   onChange,
   onClose,
   onThemeChange,
@@ -92,7 +96,7 @@ export function ReaderSettingsPanel({
       <div className="flex items-start justify-between gap-4 px-4 py-3.5 select-none">
         <div>
           <h2 className="font-headline text-[1.05rem] font-bold leading-none text-ink">阅读设置</h2>
-          <p className="mt-1 text-[0.66rem] leading-none text-muted">
+          <p className="mt-1 text-[0.66rem] leading-none text-muted-foreground">
             当前文章阅读体验
           </p>
         </div>
@@ -100,7 +104,7 @@ export function ReaderSettingsPanel({
         {onClose ? (
           <button
             type="button"
-            className={cn(readerCommandControl, "h-7 w-7 rounded-full p-0 text-[1.1rem] font-light leading-none text-muted hover:text-ink")}
+            className={cn(readerCommandControl, "h-7 w-7 rounded-full p-0 text-[1.1rem] font-light leading-none text-muted-foreground hover:text-ink")}
             onClick={onClose}
             aria-label="关闭阅读设置"
           >
@@ -122,7 +126,7 @@ export function ReaderSettingsPanel({
 
           <div className="grid grid-cols-3 gap-2">
             {themeOptions.map((option) => {
-              const active = themeName === option.value;
+              const active = themePreference === option.value;
               return (
                 <button
                   key={option.value}
@@ -141,11 +145,7 @@ export function ReaderSettingsPanel({
                     className={cn(
                       "relative flex h-10 flex-col justify-center gap-1.5 overflow-hidden rounded-[0.35rem] border border-hairline/20 p-2 shadow-[inset_0_1px_2px_rgba(0,0,0,0.02)]",
                       readerTransitionStandard,
-                      option.value === "paper"
-                        ? "bg-[#f4f0e6] text-[#4a3e3d]/80"
-                        : option.value === "light"
-                          ? "bg-[#fbfbfb] text-[#1f2937]/80"
-                          : "bg-[#18181c] text-[#a1a1a6]"
+                      option.previewClass,
                     )}
                   >
                     <div className="flex w-full flex-col gap-1.5 opacity-60">
@@ -195,7 +195,7 @@ export function ReaderSettingsPanel({
                     "min-h-[2rem] flex-1 rounded-[0.45rem] border leading-none",
                     active
                       ? "border-vocab-amber/30 bg-vocab-amber/8 text-vocab-amber font-bold shadow-[0_1px_2px_rgba(0,0,0,0.02)]"
-                      : "text-muted text-[0.8rem]",
+                      : "text-muted-foreground text-[0.8rem]",
                   )}
                   onClick={() => onChange(updateField(value, "fontScale", option.value))}
                 >

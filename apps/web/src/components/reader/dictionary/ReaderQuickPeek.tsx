@@ -92,7 +92,7 @@ function ReaderQuickPeekShell({
   className,
   footer,
   eyebrow,
-  eyebrowClassName = "text-muted",
+  eyebrowClassName = "text-muted-foreground",
   floatingRef,
   onDismiss,
   style,
@@ -190,7 +190,7 @@ export function ReaderQuickPeek({
             <span className="inline-flex items-center gap-1.5">
               <span>{structuredInspectCategoryLabel(inspect.annotationType)}</span>
               {inspectSubtype ? (
-                <span className="rounded-[5px] bg-ink/[0.045] px-1.5 py-0.5 text-[0.62rem] font-semibold tracking-normal text-muted">
+                <span className="rounded-[5px] bg-ink/[0.045] px-1.5 py-0.5 text-[0.62rem] font-semibold tracking-normal text-muted-foreground">
                   {inspectSubtype}
                 </span>
               ) : null}
@@ -264,7 +264,7 @@ export function ReaderQuickPeek({
     ? getInspectColorClass(lookup.annotationType)
     : lookup.lookupType === "phrase"
       ? "text-phrase-lavender"
-      : "text-muted";
+      : "text-muted-foreground";
   const canRequestMissingFallback = Boolean(
     onRequestAI &&
       notFoundResult &&
@@ -294,7 +294,7 @@ export function ReaderQuickPeek({
               {entryResult?.entry.word ?? lookup.query}
             </span>
             {entryResult?.entry.phonetic ? (
-              <span className="text-xs text-muted font-sans font-normal tracking-normal">{entryResult.entry.phonetic}</span>
+              <span className="text-xs text-muted-foreground font-sans font-normal tracking-normal">{entryResult.entry.phonetic}</span>
             ) : null}
           </div>
         }
@@ -311,7 +311,7 @@ export function ReaderQuickPeek({
                     {glossaryReason ? (
                       <span
                         className={cn(
-                          "block text-[0.78rem] leading-5 text-muted",
+                          "block text-[0.78rem] leading-5 text-muted-foreground",
                           glossaryText ? "mt-1" : "",
                         )}
                       >
@@ -328,7 +328,7 @@ export function ReaderQuickPeek({
                     )}
                   >
                     {hasVocabReadingHint ? (
-                      <span className="mb-1 block text-[0.68rem] font-semibold tracking-[0.08em] text-muted">
+                      <span className="mb-1 block text-[0.68rem] font-semibold tracking-[0.08em] text-muted-foreground">
                         词典释义
                       </span>
                     ) : null}
@@ -342,7 +342,7 @@ export function ReaderQuickPeek({
                       hasVocabReadingHint && "border-t border-hairline/55 pt-2",
                     )}
                   >
-                    <span className="block text-[0.68rem] font-semibold tracking-[0.08em] text-muted">
+                    <span className="block text-[0.68rem] font-semibold tracking-[0.08em] text-muted-foreground">
                       选择候选词条
                     </span>
                     <span className="mt-2 block space-y-1">
@@ -359,17 +359,17 @@ export function ReaderQuickPeek({
                               {candidate.label}
                             </span>
                             {candidate.preview ? (
-                              <span className="block truncate text-[0.68rem] leading-4 text-muted">
+                              <span className="block truncate text-[0.68rem] leading-4 text-muted-foreground">
                                 {candidate.preview}
                               </span>
                             ) : null}
                           </span>
-                          <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-subtle transition-colors group-hover:text-muted" />
+                          <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-subtle transition-colors group-hover:text-muted-foreground" />
                         </button>
                       ))}
                     </span>
                     {hiddenCandidateCount > 0 ? (
-                      <span className="mt-1.5 block text-xs leading-5 text-muted">
+                      <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
                         另有 {hiddenCandidateCount} 个候选，打开词典查看完整列表。
                       </span>
                     ) : null}
@@ -378,12 +378,12 @@ export function ReaderQuickPeek({
                 {notFoundResult ? (
                   <span
                     className={cn(
-                      "block text-sm leading-6 text-muted",
+                      "block text-sm leading-6 text-muted-foreground",
                       hasVocabReadingHint && "border-t border-hairline/55 pt-2",
                     )}
                   >
                     {hasVocabReadingHint ? (
-                      <span className="mb-1 block text-[0.68rem] font-semibold tracking-[0.08em] text-muted">
+                      <span className="mb-1 block text-[0.68rem] font-semibold tracking-[0.08em] text-muted-foreground">
                         词典释义
                       </span>
                     ) : null}
@@ -406,7 +406,7 @@ export function ReaderQuickPeek({
                 >
                   {lookup.annotationType === "phrase_gloss" ? "短语" : glossaryTitle}
                   {glossarySubtype ? (
-                    <span className="ml-1.5 rounded-[5px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-semibold tracking-normal text-muted">
+                    <span className="ml-1.5 rounded-[5px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-semibold tracking-normal text-muted-foreground">
                       {glossarySubtype}
                     </span>
                   ) : null}
@@ -414,17 +414,17 @@ export function ReaderQuickPeek({
                 <span className="mt-1.5 block text-[0.86rem] leading-6 text-ink-soft">{glossaryText}</span>
                 {glossaryExample ? (
                   <span className="mt-2 block border-t border-hairline/50 pt-2">
-                    <span className="block text-[0.68rem] font-semibold text-muted">例句</span>
+                    <span className="block text-[0.68rem] font-semibold text-muted-foreground">例句</span>
                     <span className="mt-1 block text-xs leading-5 text-ink-soft">{glossaryExample}</span>
                     {glossaryExampleTranslation ? (
-                      <span className="mt-0.5 block text-[0.72rem] leading-5 text-muted">
+                      <span className="mt-0.5 block text-[0.72rem] leading-5 text-muted-foreground">
                         {glossaryExampleTranslation}
                       </span>
                     ) : null}
                   </span>
                 ) : null}
                 {glossaryReason ? (
-                  <span className="mt-2 block text-xs leading-5 text-muted">
+                  <span className="mt-2 block text-xs leading-5 text-muted-foreground">
                     {glossaryReason}
                   </span>
                 ) : null}
@@ -432,7 +432,7 @@ export function ReaderQuickPeek({
             ) : null}
 
             {lookup.state.kind === "loading" ? (
-              <span className="mt-3 block text-sm leading-6 text-muted">正在查词...</span>
+              <span className="mt-3 block text-sm leading-6 text-muted-foreground">正在查词...</span>
             ) : null}
 
             {entryResult && !glossaryText && !isVocabHighlight ? (
@@ -443,7 +443,7 @@ export function ReaderQuickPeek({
 
             {disambiguationResult && !isVocabHighlight ? (
               <span className="mt-3 block">
-                <span className="block text-[0.72rem] font-semibold tracking-[0.08em] text-muted">
+                <span className="block text-[0.72rem] font-semibold tracking-[0.08em] text-muted-foreground">
                   选择候选词条
                 </span>
                 <span className="mt-2 block space-y-1.5">
@@ -460,20 +460,20 @@ export function ReaderQuickPeek({
                           {candidate.label}
                         </span>
                         {candidate.preview ? (
-                          <span className="block truncate text-[0.68rem] leading-4 text-muted">
+                          <span className="block truncate text-[0.68rem] leading-4 text-muted-foreground">
                             {candidate.preview}
                           </span>
                         ) : null}
                       </span>
                       <ChevronRight
                         aria-hidden="true"
-                        className="h-3.5 w-3.5 shrink-0 text-subtle transition-colors group-hover:text-muted"
+                        className="h-3.5 w-3.5 shrink-0 text-subtle transition-colors group-hover:text-muted-foreground"
                       />
                     </button>
                   ))}
                 </span>
                 {hiddenCandidateCount > 0 ? (
-                  <span className="mt-2 block text-xs leading-5 text-muted">
+                  <span className="mt-2 block text-xs leading-5 text-muted-foreground">
                     另有 {hiddenCandidateCount} 个候选，打开词典查看完整列表。
                   </span>
                 ) : null}
@@ -481,7 +481,7 @@ export function ReaderQuickPeek({
             ) : null}
 
             {notFoundResult && !isVocabHighlight ? (
-              <span className="mt-3 block text-sm leading-6 text-muted">当前词典暂未收录，可用 AI 补充词义。</span>
+              <span className="mt-3 block text-sm leading-6 text-muted-foreground">当前词典暂未收录，可用 AI 补充词义。</span>
             ) : null}
 
             {errorMessage ? (

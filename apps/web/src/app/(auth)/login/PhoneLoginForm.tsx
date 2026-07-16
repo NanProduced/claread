@@ -220,7 +220,7 @@ export function PhoneLoginForm() {
     <form className="mt-6 space-y-5" onSubmit={handleVerifyCode}>
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-3">
-          <label className="text-xs font-semibold text-muted" htmlFor="login-phone">
+          <label className="text-xs font-semibold text-muted-foreground" htmlFor="login-phone">
             手机号
           </label>
           <span className="text-xs text-subtle">中国大陆手机号</span>
@@ -241,7 +241,7 @@ export function PhoneLoginForm() {
       </div>
 
       <div className="space-y-2">
-        <label className="text-xs font-semibold text-muted" htmlFor="login-code">
+        <label className="text-xs font-semibold text-muted-foreground" htmlFor="login-code">
           验证码
         </label>
         <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_132px]">

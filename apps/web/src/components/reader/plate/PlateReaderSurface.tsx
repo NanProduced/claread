@@ -51,7 +51,6 @@ export interface PlateReaderSurfaceProps {
   columnClassName?: string;
   paragraphDensityClassName?: string;
   annotationVisibilityGroups?: ReaderAnnotationVisibilityGroups;
-  themeClassName?: string;
   activeSentenceId?: string | null;
   sentenceActionsOpenSentenceId?: string | null;
   selectedSentenceId?: string | null;
@@ -165,7 +164,6 @@ export function PlateReaderSurface({
   readingClassName,
   translationClassName = "reader-font-sans text-[0.88rem] leading-[1.62]",
     showTranslation,
-    themeClassName,
   }: PlateReaderSurfaceProps) {
   const paragraphNodes = useMemo(
     () => document.children.filter((node): node is ReaderParagraphNode => node.type === "reader_paragraph"),
@@ -626,7 +624,7 @@ export function PlateReaderSurface({
   );
 
   return (
-    <div className={`px-5 py-7 sm:px-8 lg:px-10 lg:py-9 ${themeClassName ?? ""} ${paragraphDensityClassName}`.trim()}>
+    <div className={`px-5 py-7 sm:px-8 lg:px-10 lg:py-9 ${paragraphDensityClassName}`.trim()}>
       <div className={`mx-auto ${columnClassName}`.trim()}>
         <Plate editor={editor} readOnly>
           <EditorContainer className="h-auto cursor-default overflow-visible bg-transparent px-0 py-0 [&_.slate-selection-area]:hidden">

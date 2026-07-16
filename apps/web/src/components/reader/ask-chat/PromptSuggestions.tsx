@@ -47,14 +47,14 @@ export function PromptSuggestions({
             <h3 className="text-[1.125rem] font-semibold leading-6 tracking-[-0.015em] text-ink">
               {title}
             </h3>
-            <p className="max-w-[30rem] text-[13px] leading-5 text-muted">
+            <p className="max-w-[30rem] text-[13px] leading-5 text-muted-foreground">
               {description}
             </p>
           </div>
         </div>
 
         {contextPreview ? (
-          <span className="mt-4 inline-flex max-w-full items-center rounded-md border border-border/65 bg-muted/25 px-2.5 py-1.5 text-xs leading-4 text-muted">
+          <span className="mt-4 inline-flex max-w-full items-center rounded-md border border-border/65 bg-muted/25 px-2.5 py-1.5 text-xs leading-4 text-muted-foreground">
             <span className="truncate">
               {contextLabel ? `${contextLabel} · ` : ""}
               {contextPreview}

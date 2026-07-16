@@ -19,7 +19,7 @@ export default async function ReaderPage({ params }: ReaderPageProps) {
     }
 
     return (
-      <main className="paper-grain min-h-screen px-5 py-8 text-ink">
+      <main className="min-h-screen px-5 py-8 text-ink">
         <section className="mx-auto max-w-2xl rounded-note border border-hairline bg-surface p-8 shadow-surface-quiet">
           <p className="text-xs font-semibold tracking-[0.12em] text-lens-blue">
             Reader
@@ -27,7 +27,7 @@ export default async function ReaderPage({ params }: ReaderPageProps) {
           <h1 className="mt-3 font-headline text-2xl font-semibold text-ink">
             无法打开阅读记录
           </h1>
-          <p className="mt-3 text-sm leading-6 text-muted">{result.message}</p>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">{result.message}</p>
         </section>
       </main>
     );

@@ -153,7 +153,7 @@ export function ReadingDefaultsSection({
       
       {!canEdit && (
         <div className="pt-2">
-          <p className="text-xs leading-5 text-muted">
+          <p className="text-xs leading-5 text-muted-foreground">
             当前会话未连接真实账户，无法保存共享默认值。
           </p>
         </div>

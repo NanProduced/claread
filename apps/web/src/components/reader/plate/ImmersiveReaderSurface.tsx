@@ -41,7 +41,6 @@ interface ImmersiveReaderSurfaceProps {
   readingClassName: string;
   columnClassName?: string;
   paragraphDensityClassName?: string;
-  themeClassName?: string;
   selectionFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   contextFocusRangesBySentence?: Map<string, ReaderJumpRangeSegment[]>;
   jumpTarget?: ReaderJumpTarget | null;
@@ -244,7 +243,6 @@ export function ImmersiveReaderSurface({
   readingClassName,
   columnClassName = "max-w-[68ch]",
   paragraphDensityClassName = "reader-density-immersive",
-  themeClassName,
   selectionFocusRangesBySentence = new Map<string, ReaderJumpRangeSegment[]>(),
   contextFocusRangesBySentence = new Map<string, ReaderJumpRangeSegment[]>(),
   jumpTarget = null,
@@ -534,7 +532,7 @@ export function ImmersiveReaderSurface({
 
   return (
     <div
-      className={`reader-immersive-stage px-5 py-8 sm:px-8 sm:py-9 lg:px-10 lg:py-12 ${themeClassName ?? ""} ${paragraphDensityClassName}`.trim()}
+      className={`reader-immersive-stage px-5 py-8 sm:px-8 sm:py-9 lg:px-10 lg:py-12 ${paragraphDensityClassName}`.trim()}
     >
       <div className={`mx-auto ${columnClassName}`.trim()}>
         <Plate editor={editor} readOnly>

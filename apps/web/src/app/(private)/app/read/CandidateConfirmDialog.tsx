@@ -198,7 +198,7 @@ export function CandidateConfirmDialog({
               <DialogDescription className="mt-2 max-w-[48rem] font-sans text-[0.86rem] leading-6">
                 {description}
               </DialogDescription>
-              <p className="mt-3 truncate font-sans text-[0.76rem] font-medium text-muted">
+              <p className="mt-3 truncate font-sans text-[0.76rem] font-medium text-muted-foreground">
                 {getSourceLabel(candidate)}
               </p>
             </div>
@@ -208,7 +208,7 @@ export function CandidateConfirmDialog({
         <div className="min-h-0 overflow-hidden px-6 py-5 sm:px-8">
           <div className="flex h-full min-h-[22rem] flex-col rounded-[10px] border border-hairline/70 bg-reader-paper/54">
             <div className="flex items-center justify-between gap-4 border-b border-hairline/60 px-4 py-3 font-sans">
-              <p className="text-[0.78rem] font-semibold tracking-[0.08em] text-muted">
+              <p className="text-[0.78rem] font-semibold tracking-[0.08em] text-muted-foreground">
                 {previewPresentation.title}
               </p>
               {previewPresentation.notice ? (
@@ -224,7 +224,7 @@ export function CandidateConfirmDialog({
               {previewText ? (
                 previewText
               ) : (
-                <span className="font-sans text-[0.86rem] text-muted">
+                <span className="font-sans text-[0.86rem] text-muted-foreground">
                   暂无可展示的正文预览。确认后，Claread 会使用已提取的正文进入透读。
                 </span>
               )}
@@ -236,23 +236,23 @@ export function CandidateConfirmDialog({
               >
                 {candidate?.documentOutline && candidate.documentOutline.length > 0 ? (
                   <div className="mb-2">
-                    <p className="mb-1 text-[0.72rem] font-semibold tracking-[0.08em] text-muted">
+                    <p className="mb-1 text-[0.72rem] font-semibold tracking-[0.08em] text-muted-foreground">
                       内容结构
                     </p>
                     <ul
                       data-testid="candidate-confirm-outline-list"
-                      className="list-disc space-y-0.5 pl-4 text-[0.78rem] leading-snug text-muted"
+                      className="list-disc space-y-0.5 pl-4 text-[0.78rem] leading-snug text-muted-foreground"
                     >
                       {candidate.documentOutline.map((item, index) => (
                         <li
                           key={`${item.order_index}-${index}`}
-                          className="marker:text-muted/60"
+                          className="marker:text-muted-foreground/60"
                         >
                           <span className="font-medium text-ink/82">
                             {item.block_type_label}
                           </span>
                           {item.heading_text ? (
-                            <span className="text-muted">
+                            <span className="text-muted-foreground">
                               {" · "}
                               {item.heading_text}
                             </span>

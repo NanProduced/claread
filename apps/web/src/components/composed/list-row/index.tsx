@@ -48,8 +48,8 @@ export function ListRow({
             {title}
           </div>
         )}
-        {description ? <div className={cn("mt-2 text-sm leading-6 text-muted", bodyClassName)}>{description}</div> : null}
-        {meta ? <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">{meta}</div> : null}
+        {description ? <div className={cn("mt-2 text-sm leading-6 text-muted-foreground", bodyClassName)}>{description}</div> : null}
+        {meta ? <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">{meta}</div> : null}
       </div>
       {trailing ? <div className="flex items-center justify-between gap-3 md:justify-end">{trailing}</div> : null}
     </article>

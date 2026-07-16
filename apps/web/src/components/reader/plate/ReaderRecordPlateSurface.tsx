@@ -64,7 +64,8 @@ import type {
   ReaderAskActionConfirmResponseDto,
   ReaderAskEntryActionDto,
 } from "@/types/api/reader-ask";
-import type { ThemeName } from "@/lib/appearance";
+import type { ThemePreference } from "@/lib/appearance";
+import { useAppearance } from "@/components/providers/appearance-provider";
 import {
   BookOpen,
   Check,
@@ -101,7 +102,6 @@ import {
   readStoredReaderSettings,
   persistReaderSettings,
   readerRecordPlateTypography,
-  readerThemeClassName,
   type ReaderFontFamily,
   type ReaderFontScale,
   type ReaderSettingsState,
@@ -416,7 +416,7 @@ function ReaderRecordArticleFeedbackButton({
       data-reader-record-article-feedback-action={choice}
       onClick={() => onSelect(choice)}
       className={cn(
-        "group relative inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-transparent px-2.5 text-[13px] font-medium text-muted",
+        "group relative inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-transparent px-2.5 text-[13px] font-medium text-muted-foreground",
         "flex-1 bg-transparent sm:flex-none",
         readerInlineFocusRing,
         readerTransitionFast,
@@ -467,7 +467,7 @@ function ReaderRecordArticleFeedback({
           </p>
           {selectedChoice ? (
             <p
-              className="mt-1.5 text-xs leading-5 text-muted"
+              className="mt-1.5 text-xs leading-5 text-muted-foreground"
               role="status"
               aria-live="polite"
             >
@@ -1068,7 +1068,7 @@ function writeStateClassName(writeState: ReaderRecordWriteState) {
   if (writeState.kind === "saved") {
     return "text-emerald-700";
   }
-  return "text-muted";
+  return "text-muted-foreground";
 }
 
 function buildTempUserAsset(
@@ -1888,7 +1888,7 @@ function ReaderRecordHeader({
           <h1
             data-reader-record-reading-title
             data-reader-record-title-state="failed_retryable"
-            className="font-headline text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] tracking-normal text-muted"
+            className="font-headline text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] tracking-normal text-muted-foreground"
           >
             标题生成失败
           </h1>
@@ -1929,7 +1929,7 @@ function ReaderRecordHeader({
             <>
               <div className="h-3.5 w-[1px] bg-hairline" />
               <span
-                className="text-[0.8rem] font-semibold text-muted"
+                className="text-[0.8rem] font-semibold text-muted-foreground"
                 data-reader-record-source-word-count={String(sourceWordCount)}
               >
                 {sourceWordCount} 词
@@ -1940,7 +1940,7 @@ function ReaderRecordHeader({
             <>
               <div className="h-3.5 w-[1px] bg-hairline" />
               <span
-                className="text-[0.8rem] font-semibold text-muted"
+                className="text-[0.8rem] font-semibold text-muted-foreground"
                 data-reader-record-reading-goal-variant="true"
               >
                 {readingGoalVariantLabel}
@@ -2011,7 +2011,7 @@ function ReaderRecordHeader({
       </div>
 
       {/* Zone 3: Bottom metadata — source label on the left, original link on the right only when sourceUrl exists */}
-      <div className="mt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-0 text-[0.78rem] text-muted tracking-wide leading-normal sm:leading-none select-none">
+      <div className="mt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-0 text-[0.78rem] text-muted-foreground tracking-wide leading-normal sm:leading-none select-none">
         <div className="flex flex-wrap items-center gap-1.5 font-medium">
           <span>
             {hasExternalSource
@@ -2025,7 +2025,7 @@ function ReaderRecordHeader({
             href={sourceUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="focus-ring inline-flex items-center gap-1.5 font-semibold text-muted transition-colors hover:text-ink"
+            className="focus-ring inline-flex items-center gap-1.5 font-semibold text-muted-foreground transition-colors hover:text-ink"
           >
             <Globe className="h-4 w-4 shrink-0" strokeWidth={1.75} />
             <span>英文原文</span>
@@ -2065,7 +2065,7 @@ function ReaderRecordTopBarTitle({
   if (titleState.kind === "failed_retryable") {
     return (
       <span
-        className="min-w-0 truncate text-[0.95rem] font-semibold text-muted"
+        className="min-w-0 truncate text-[0.95rem] font-semibold text-muted-foreground"
         data-reader-record-top-bar-title-state="failed_retryable"
       >
         标题生成失败
@@ -2086,7 +2086,7 @@ function ReaderRecordTopBarTitle({
 
   return (
     <span
-      className="min-w-0 truncate text-[0.95rem] font-semibold text-muted"
+      className="min-w-0 truncate text-[0.95rem] font-semibold text-muted-foreground"
       data-reader-record-top-bar-title-state="empty"
     >
       阅读记录
@@ -2099,7 +2099,7 @@ function ReaderRecordTopBar({
   surfaceMode,
   onModeChange,
   readerSettings,
-  themeName,
+  themePreference,
   onSettingsChange,
   onThemeChange,
 }: {
@@ -2107,9 +2107,9 @@ function ReaderRecordTopBar({
   surfaceMode: "intensive" | "immersive";
   onModeChange: (mode: "intensive" | "immersive") => void;
   readerSettings: ReaderSettingsState;
-  themeName: ThemeName;
+  themePreference: ThemePreference;
   onSettingsChange: (next: ReaderSettingsState) => void;
-  onThemeChange: (next: ThemeName) => void;
+  onThemeChange: (next: ThemePreference) => void;
 }) {
   const titleState = resolveReaderRecordTitleState(snapshot.record);
 
@@ -2129,7 +2129,7 @@ function ReaderRecordTopBar({
           surfaceMode={surfaceMode}
           onModeChange={onModeChange}
           readerSettings={readerSettings}
-          themeName={themeName}
+          themePreference={themePreference}
           onSettingsChange={onSettingsChange}
           onThemeChange={onThemeChange}
         />
@@ -2170,10 +2170,10 @@ async function copyReaderRecordLink(recordId: string): Promise<boolean> {
   }
 }
 
-const MORE_MENU_THEME_OPTIONS: Array<{ value: ThemeName; label: string }> = [
-  { value: "paper", label: "Paper" },
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
+const MORE_MENU_THEME_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
+  { value: "system", label: "跟随系统" },
+  { value: "light", label: "浅色" },
+  { value: "dark", label: "深色" },
 ];
 
 const MORE_MENU_FONT_SCALE_OPTIONS: Array<{ value: ReaderFontScale; label: string }> = [
@@ -2193,7 +2193,7 @@ function ReaderRecordMoreMenu({
   surfaceMode,
   onModeChange,
   readerSettings,
-  themeName,
+  themePreference,
   onSettingsChange,
   onThemeChange,
 }: {
@@ -2201,9 +2201,9 @@ function ReaderRecordMoreMenu({
   surfaceMode: "intensive" | "immersive";
   onModeChange: (mode: "intensive" | "immersive") => void;
   readerSettings: ReaderSettingsState;
-  themeName: ThemeName;
+  themePreference: ThemePreference;
   onSettingsChange: (next: ReaderSettingsState) => void;
-  onThemeChange: (next: ThemeName) => void;
+  onThemeChange: (next: ThemePreference) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const record = snapshot.record;
@@ -2260,7 +2260,7 @@ function ReaderRecordMoreMenu({
           type="button"
           aria-label="更多操作"
           data-testid="reader-record-more-menu-trigger"
-          className={cn(readerTopBarAction, "text-muted/90 hover:text-ink")}
+          className={cn(readerTopBarAction, "text-muted-foreground/90 hover:text-ink")}
         >
           <MoreVertical className="h-[18px] w-[18px]" strokeWidth={1.5} />
         </button>
@@ -2269,7 +2269,6 @@ function ReaderRecordMoreMenu({
         align="end"
         sideOffset={8}
         className={cn(
-          readerThemeClassName(themeName),
           "w-[340px] overflow-hidden rounded-xl border border-hairline/80 p-0 shadow-[0_8px_30px_rgba(23,21,17,0.08)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
           "bg-[var(--reading-paper-surface)] text-ink",
         )}
@@ -2279,7 +2278,7 @@ function ReaderRecordMoreMenu({
         {/* Compact header */}
         <div className="flex items-center justify-between border-b border-hairline/60 px-3.5 py-2.5">
           <span className="text-sm font-semibold text-ink">阅读体验</span>
-          <span className="text-xs font-medium text-muted">{modeLabel}</span>
+          <span className="text-xs font-medium text-muted-foreground">{modeLabel}</span>
         </div>
 
         <div className="p-2">
@@ -2288,14 +2287,14 @@ function ReaderRecordMoreMenu({
             data-reader-record-more-article-status="true"
             className="space-y-1 px-1 pb-1 pt-0.5"
           >
-            <span className="block text-xs font-semibold text-muted">文章状态</span>
+            <span className="block text-xs font-semibold text-muted-foreground">文章状态</span>
             <span
               className="block text-sm font-semibold text-ink"
               data-reader-record-more-article-status-label={articleStatusKey}
             >
               {articleStatusLabel}
             </span>
-            <span className="block text-[0.75rem] leading-relaxed text-muted">
+            <span className="block text-[0.75rem] leading-relaxed text-muted-foreground">
               {articleStatusDescription}
             </span>
           </div>
@@ -2317,10 +2316,10 @@ function ReaderRecordMoreMenu({
               )}
             >
               <span className="flex items-center gap-2.5">
-                <BookOpen className="h-4 w-4 text-muted" strokeWidth={1.5} />
+                <BookOpen className="h-4 w-4 text-muted-foreground" strokeWidth={1.5} />
                 <span className="flex flex-col">
                   <span>精读</span>
-                  <span className="text-[0.7rem] font-normal text-muted">逐句解析</span>
+                  <span className="text-[0.7rem] font-normal text-muted-foreground">逐句解析</span>
                 </span>
               </span>
               {surfaceMode === "intensive" ? (
@@ -2340,10 +2339,10 @@ function ReaderRecordMoreMenu({
               )}
             >
               <span className="flex items-center gap-2.5">
-                <Eye className="h-4 w-4 text-muted" strokeWidth={1.5} />
+                <Eye className="h-4 w-4 text-muted-foreground" strokeWidth={1.5} />
                 <span className="flex flex-col">
                   <span>沉浸</span>
-                  <span className="text-[0.7rem] font-normal text-muted">专注阅读</span>
+                  <span className="text-[0.7rem] font-normal text-muted-foreground">专注阅读</span>
                 </span>
               </span>
               {surfaceMode === "immersive" ? (
@@ -2356,7 +2355,7 @@ function ReaderRecordMoreMenu({
 
           {/* Font preview section */}
           <div className="space-y-2">
-            <span className="block px-1 text-xs font-semibold text-muted">字体</span>
+            <span className="block px-1 text-xs font-semibold text-muted-foreground">字体</span>
             <div className="grid grid-cols-3 gap-2">
               {MORE_MENU_FONT_FAMILY_OPTIONS.map((option) => (
                 <button
@@ -2384,7 +2383,7 @@ function ReaderRecordMoreMenu({
                   >
                     Ag
                   </span>
-                  <span className="text-[0.7rem] font-medium text-muted">{option.label}</span>
+                  <span className="text-[0.7rem] font-medium text-muted-foreground">{option.label}</span>
                 </button>
               ))}
             </div>
@@ -2394,7 +2393,7 @@ function ReaderRecordMoreMenu({
 
           {/* Theme section */}
           <div className="space-y-2">
-            <span className="block px-1 text-xs font-semibold text-muted">主题</span>
+            <span className="block px-1 text-xs font-semibold text-muted-foreground">主题</span>
             <div className="grid grid-cols-3 gap-2">
               {MORE_MENU_THEME_OPTIONS.map((option) => (
                 <button
@@ -2405,9 +2404,9 @@ function ReaderRecordMoreMenu({
                   className={cn(
                     "rounded-lg border px-2 py-1.5 text-xs font-semibold transition-colors",
                     "border-hairline/60 hover:border-hairline hover:bg-ink/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
-                    themeName === option.value
+                    themePreference === option.value
                       ? "border-surface-warm bg-surface-warm/60 text-ink"
-                      : "bg-transparent text-muted",
+                      : "bg-transparent text-muted-foreground",
                   )}
                 >
                   {option.label}
@@ -2420,7 +2419,7 @@ function ReaderRecordMoreMenu({
 
           {/* Font scale section */}
           <div className="space-y-2">
-            <span className="block px-1 text-xs font-semibold text-muted">字号</span>
+            <span className="block px-1 text-xs font-semibold text-muted-foreground">字号</span>
             <div className="flex rounded-lg border border-hairline/60 p-0.5">
               {MORE_MENU_FONT_SCALE_OPTIONS.map((option) => (
                 <button
@@ -2433,7 +2432,7 @@ function ReaderRecordMoreMenu({
                     "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
                     readerSettings.fontScale === option.value
                       ? "bg-surface-warm/70 text-ink shadow-sm"
-                      : "text-muted hover:bg-ink/[0.03]",
+                      : "text-muted-foreground hover:bg-ink/[0.03]",
                   )}
                 >
                   {option.label}
@@ -2460,7 +2459,7 @@ function ReaderRecordMoreMenu({
               {copied ? (
                 <Check className="h-4 w-4" strokeWidth={1.5} />
               ) : (
-                <Copy className="h-4 w-4 text-muted" strokeWidth={1.5} />
+                <Copy className="h-4 w-4 text-muted-foreground" strokeWidth={1.5} />
               )}
               <span>{copied ? "已复制链接" : "复制链接"}</span>
             </button>
@@ -2475,15 +2474,15 @@ function ReaderRecordMoreMenu({
                   "hover:bg-ink/[0.04] active:bg-ink/[0.08] text-ink/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
                 )}
               >
-                <Globe className="h-4 w-4 text-muted" strokeWidth={1.5} />
+                <Globe className="h-4 w-4 text-muted-foreground" strokeWidth={1.5} />
                 <span>英文原文</span>
               </a>
             ) : null}
             <div
               data-reader-record-more-action="source-info"
-              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-muted/80"
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-muted-foreground/80"
             >
-              <Globe className="h-4 w-4 text-muted/60" strokeWidth={1.5} />
+              <Globe className="h-4 w-4 text-muted-foreground/60" strokeWidth={1.5} />
               <span>
                 {hasExternalSource
                   ? `来源 ${sourceName ?? sourceDomain ?? sourceLabel}`
@@ -2496,7 +2495,7 @@ function ReaderRecordMoreMenu({
 
           {/* Footer metadata */}
           <div
-            className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 py-1 text-[0.7rem] text-muted"
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 py-1 text-[0.7rem] text-muted-foreground"
             data-reader-record-more-metadata="true"
           >
             {sourceWordCount !== null ? <span>{sourceWordCount} 词</span> : null}
@@ -2711,31 +2710,11 @@ export function ReaderRecordPlateSurface({
   const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(
     () => readStoredReaderSettings(),
   );
-  const [themeName, setThemeName] = useState<ThemeName>(() => {
-    if (typeof window === "undefined") {
-      return "paper";
-    }
-    try {
-      const stored = window.localStorage.getItem("claread.reader.themeName");
-      return stored === "light" || stored === "dark" ? stored : "paper";
-    } catch {
-      return "paper";
-    }
-  });
+  const { themePreference, setThemePreference } = useAppearance();
 
   useEffect(() => {
     activeSelectionRef.current = activeSelection;
   }, [activeSelection]);
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    try {
-      window.localStorage.setItem("claread.reader.themeName", themeName);
-    } catch {
-      // Ignore storage errors (e.g. private browsing, test env)
-    }
-  }, [themeName]);
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -2815,7 +2794,6 @@ export function ReaderRecordPlateSurface({
     [noteAnchorDraft, plateDocument.children],
   );
   const typography = readerRecordPlateTypography(readerSettings);
-  const themeClassName = readerThemeClassName(themeName);
   const contentColumnClassName =
     columnClassName ?? `mx-auto w-full max-w-[var(--reader-record-main-width)]`;
   const visibleBlocks = useMemo(() => {
@@ -5500,7 +5478,6 @@ export function ReaderRecordPlateSurface({
       data-testid="reader-record-plate-surface"
       data-reader-record-surface="plate-readonly-reading"
       onDoubleClickCapture={handleSurfaceDoubleClickCapture}
-      className={themeClassName}
     >
       <div
         ref={setWorkspaceEl}
@@ -5522,9 +5499,9 @@ export function ReaderRecordPlateSurface({
         surfaceMode={surfaceMode}
         onModeChange={handleModeChange}
         readerSettings={readerSettings}
-        themeName={themeName}
+        themePreference={themePreference}
         onSettingsChange={handleSettingsChange}
-            onThemeChange={setThemeName}
+            onThemeChange={setThemePreference}
           />
         </div>
         <section
@@ -5562,7 +5539,7 @@ export function ReaderRecordPlateSurface({
             >
               <TooltipProvider delayDuration={200}>
                 <div className="flex h-10 items-center gap-1 rounded-[7px] border border-border/75 bg-background/95 p-1 shadow-[0_10px_26px_rgba(15,23,42,0.12),0_1px_2px_rgba(15,23,42,0.08)] backdrop-blur-md">
-                  <span className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted">
+                  <span className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground">
                     <Palette className="h-3.5 w-3.5" aria-hidden="true" />
                     改色
                   </span>
@@ -5602,7 +5579,7 @@ export function ReaderRecordPlateSurface({
                         aria-label="删除高亮"
                         data-reader-record-highlight-action="delete"
                         onClick={handleDeleteHighlight}
-                        className="grid h-8 w-8 place-items-center rounded-md text-muted transition-[color,transform] hover:bg-transparent hover:text-rose-600 active:scale-[0.96] focus-visible:outline-none focus-visible:text-rose-600"
+                        className="grid h-8 w-8 place-items-center rounded-md text-muted-foreground transition-[color,transform] hover:bg-transparent hover:text-rose-600 active:scale-[0.96] focus-visible:outline-none focus-visible:text-rose-600"
                       >
                         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                         <span className="sr-only">删除</span>
@@ -5661,7 +5638,7 @@ export function ReaderRecordPlateSurface({
               {feedbackTarget.feedbackScope === "annotation" ? (
                 <button
                   type="button"
-                  className="block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-structure-green/10 disabled:cursor-not-allowed disabled:text-muted disabled:hover:bg-transparent"
+                  className="block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-structure-green/10 disabled:cursor-not-allowed disabled:text-muted-foreground disabled:hover:bg-transparent"
                   disabled={!feedbackTarget.analysisRecordId}
                   data-reader-record-disabled-reason={
                     feedbackTarget.analysisRecordId
@@ -5675,7 +5652,7 @@ export function ReaderRecordPlateSurface({
               ) : null}
               <button
                 type="button"
-                className="mt-0.5 block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-error-red/10 disabled:cursor-not-allowed disabled:text-muted disabled:hover:bg-transparent"
+                className="mt-0.5 block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-error-red/10 disabled:cursor-not-allowed disabled:text-muted-foreground disabled:hover:bg-transparent"
                 disabled={
                   feedbackTarget.feedbackScope === "annotation" &&
                   !feedbackTarget.analysisRecordId
@@ -5692,7 +5669,7 @@ export function ReaderRecordPlateSurface({
               </button>
               {feedbackTarget.feedbackScope === "annotation" &&
               !feedbackTarget.analysisRecordId ? (
-                <p className="mt-1 px-3 py-1 text-xs leading-5 text-muted" role="status">
+                <p className="mt-1 px-3 py-1 text-xs leading-5 text-muted-foreground" role="status">
                   当前标注反馈暂不可用
                 </p>
               ) : null}
@@ -5768,7 +5745,7 @@ export function ReaderRecordPlateSurface({
                   ? "text-rose-700"
                   : feedbackState.kind === "saved"
                     ? "text-emerald-700"
-                    : "text-muted"
+                    : "text-muted-foreground"
               }`}
               role="status"
               aria-live="polite"

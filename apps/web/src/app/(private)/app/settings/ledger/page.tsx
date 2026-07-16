@@ -43,7 +43,7 @@ function CreditStatement({ quota }: { quota: QuotaVm | null }) {
                   <button
                     type="button"
                     aria-label="积分规则说明"
-                    className="focus-ring inline-flex size-7 items-center justify-center rounded-full text-muted transition-colors hover:text-ink"
+                    className="focus-ring inline-flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-ink"
                   >
                     <HelpCircle className="size-4" aria-hidden="true" />
                   </button>
@@ -62,7 +62,7 @@ function CreditStatement({ quota }: { quota: QuotaVm | null }) {
         <div className="grid gap-px overflow-hidden rounded-note border border-hairline bg-hairline sm:grid-cols-3">
           {stats.map((item) => (
             <div key={item.label} className="bg-reader-paper px-4 py-3">
-              <p className="text-xs font-semibold text-muted">{item.label}</p>
+              <p className="text-xs font-semibold text-muted-foreground">{item.label}</p>
               <p className="mt-1.5 font-headline text-2xl font-semibold leading-none text-ink">{item.value}</p>
             </div>
           ))}
@@ -70,7 +70,7 @@ function CreditStatement({ quota }: { quota: QuotaVm | null }) {
 
         {typeof dailyFree === "number" && dailyFree > 0 ? (
           <div>
-            <div className="flex items-center justify-between gap-3 text-xs font-medium text-muted">
+            <div className="flex items-center justify-between gap-3 text-xs font-medium text-muted-foreground">
               <span>每日免费点数使用进度</span>
               <span>{formatPoints(dailyUsed)} / {formatPoints(dailyFree)} · {Math.round(usedPercent)}%</span>
             </div>
@@ -91,7 +91,7 @@ export default async function LedgerPage() {
     <main className="flex h-dvh flex-col overflow-y-auto bg-reader-paper px-4 py-8 text-ink sm:px-8 lg:px-16 xl:px-24">
       <div className="mx-auto flex w-full max-w-[920px] flex-col pb-24 pt-4 lg:pt-12">
         <div className="mb-8 border-b border-hairline pb-8">
-          <nav aria-label="Breadcrumb" className="mb-4 flex items-center gap-2 text-[0.68rem] font-bold tracking-[0.15em] text-muted">
+          <nav aria-label="Breadcrumb" className="mb-4 flex items-center gap-2 text-[0.68rem] font-bold tracking-[0.15em] text-muted-foreground">
             <Link href={appSettingsRoute} className="hover:text-ink hover:underline underline-offset-4 decoration-hairline transition-colors">
               Preferences
             </Link>
@@ -101,7 +101,7 @@ export default async function LedgerPage() {
           <h1 className="font-headline text-[2.5rem] font-semibold leading-[1] tracking-tight text-ink md:text-[3.2rem]">
             Credit Ledger.
           </h1>
-          <p className="mt-4 max-w-2xl text-sm leading-6 text-muted">
+          <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
             积分明细用于核对每一次阅读分析、Ask Claread 能力调用、奖励到账与积分退回。
           </p>
         </div>

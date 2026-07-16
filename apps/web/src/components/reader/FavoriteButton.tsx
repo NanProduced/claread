@@ -31,7 +31,7 @@ function favoriteButtonShellClassName(favorited: boolean, variant: FavoriteButto
       readerTopBarAction,
       favorited
         ? "text-vocab-amber hover:bg-vocab-amber/10 active:bg-vocab-amber/16"
-        : "text-muted/90 hover:text-ink",
+        : "text-muted-foreground/90 hover:text-ink",
     );
   }
 
@@ -203,7 +203,7 @@ export function FavoriteButton({ recordId, variant = "default" }: FavoriteButton
           <Heart
             aria-hidden="true"
             className={`h-[18px] w-[18px] shrink-0 ${
-              favorited ? "fill-vocab-amber text-vocab-amber" : "text-muted"
+              favorited ? "fill-vocab-amber text-vocab-amber" : "text-muted-foreground"
             }`}
             strokeWidth={1.5}
           />
@@ -233,7 +233,7 @@ export function FavoriteButton({ recordId, variant = "default" }: FavoriteButton
       >
         <Heart
           aria-hidden="true"
-          className={`h-4 w-4 shrink-0 ${favorited ? "fill-vocab-amber text-vocab-amber" : "text-muted"}`}
+          className={`h-4 w-4 shrink-0 ${favorited ? "fill-vocab-amber text-vocab-amber" : "text-muted-foreground"}`}
         />
         <span className="flex min-w-0 flex-col items-start">
           <span className="text-[0.92rem] font-semibold leading-none">{favorited ? "已收藏" : "收藏"}</span>

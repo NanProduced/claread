@@ -34,7 +34,7 @@ export default async function HomePage() {
             <h2 className="font-headline text-4xl font-semibold leading-tight text-ink">
               选一篇英文，开始透读。
             </h2>
-            <p className="mt-4 text-base leading-8 text-muted">
+            <p className="mt-4 text-base leading-8 text-muted-foreground">
               从公开示例开始，或进入工作区解读自己的第一篇文章。
             </p>
           </div>

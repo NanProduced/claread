@@ -124,7 +124,7 @@ export function ReadingRecordSection({
       <section className="px-1 py-10">
         {hasQuery ? (
           <div>
-            <p className="text-[0.85rem] leading-6 text-muted">
+            <p className="text-[0.85rem] leading-6 text-muted-foreground">
               当前检索条件下还没有匹配的阅读记录。
             </p>
             {onResetQuery ? (
@@ -137,7 +137,7 @@ export function ReadingRecordSection({
           </div>
         ) : (
           <div>
-            <p className="text-[0.85rem] leading-6 text-muted">
+            <p className="text-[0.85rem] leading-6 text-muted-foreground">
               还没有阅读记录。提交一篇新解读后会在这里显示。
             </p>
             <div className="mt-4">
@@ -168,7 +168,7 @@ export function ReadingRecordSection({
       </span>
     ) : (
       <ArrowRight
-        className="h-4 w-4 shrink-0 text-muted transition-all duration-200 group-hover:translate-x-1 group-hover:text-ink"
+        className="h-4 w-4 shrink-0 text-muted-foreground transition-all duration-200 group-hover:translate-x-1 group-hover:text-ink"
         aria-hidden="true"
       />
     );
@@ -177,7 +177,7 @@ export function ReadingRecordSection({
       <div className="group flex items-center justify-between gap-4 py-5 rounded-md px-2">
         <div className="min-w-0 flex-1">
           <p className={titleClass}>{item.title}</p>
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.7rem] text-muted">
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.7rem] text-muted-foreground">
             <span>{item.sourceLabel}</span>
             <span className="flex items-center gap-1">
               <Calendar className="h-3 w-3 opacity-60" />
@@ -186,7 +186,7 @@ export function ReadingRecordSection({
             <span>{statusLabelFor(item)}</span>
           </div>
           {item.productState === "needs_confirmation" ? (
-            <p className="mt-1 text-[0.72rem] leading-snug text-muted">
+            <p className="mt-1 text-[0.72rem] leading-snug text-muted-foreground">
               请确认已准备好的内容后开始阅读
             </p>
           ) : null}
@@ -211,7 +211,7 @@ export function ReadingRecordSection({
     <section className="pr-2">
       {priorityTop.length > 0 ? (
         <div data-testid="library-needs-attention" className="mb-4">
-          <h2 className="px-2 pb-2 text-[0.72rem] font-semibold tracking-[0.08em] text-muted">
+          <h2 className="px-2 pb-2 text-[0.72rem] font-semibold tracking-[0.08em] text-muted-foreground">
             需要处理
           </h2>
           <ul className="divide-y divide-hairline/40">

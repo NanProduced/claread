@@ -196,7 +196,7 @@ function ReaderProgressiveStatusStrip(props: {
       role="status"
       aria-live="polite"
     >
-      <div className="rounded-full border border-hairline/80 bg-surface/95 px-3.5 py-1.5 text-center text-xs text-muted shadow-surface-quiet backdrop-blur-sm">
+      <div className="rounded-full border border-hairline/80 bg-surface/95 px-3.5 py-1.5 text-center text-xs text-muted-foreground shadow-surface-quiet backdrop-blur-sm">
         {isReloading ? (
           <span data-testid="reader-record-progressive-reloading">
             {reloadStatusLabel(activeReloadReason)}
@@ -530,7 +530,7 @@ export default function ReadingRecordPage({
   }
 
   return (
-    <main className="paper-grain min-h-screen text-ink">
+    <main className="min-h-screen text-ink">
       <ReaderOpenedBeacon
         recordId={recordId}
         snapshotStateKind={deriveSnapshotStateKind(snapshotState.kind)}
@@ -547,7 +547,7 @@ export default function ReadingRecordPage({
 
         {snapshotState.kind === "loading" ? (
           <section className="rounded-note border border-hairline bg-surface p-10 shadow-surface-quiet">
-            <div className="flex items-center gap-3 text-sm text-muted">
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <span className="h-2 w-2 animate-pulse rounded-full bg-lens-blue" />
               正在加载阅读内容，请稍候
             </div>

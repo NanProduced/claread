@@ -65,7 +65,7 @@ const STATUS_LABELS: Record<string, { label: string; className: string }> = {
   pending: { label: "待处理", className: "border-vocab-amber/20 bg-vocab-amber/10 text-vocab-amber" },
   adopted: { label: "已采纳", className: "border-structure-green/20 bg-structure-green/10 text-structure-green" },
   resolved: { label: "已解决", className: "border-structure-green/20 bg-structure-green/10 text-structure-green" },
-  dismissed: { label: "已关闭", className: "border-muted/15 bg-muted/10 text-muted" },
+  dismissed: { label: "已关闭", className: "border-muted/15 bg-muted/10 text-muted-foreground" },
 };
 
 function getFeedbackTypeLabel(scope: FeedbackScopeDto, feedbackType: FeedbackTypeDto): string {
@@ -222,7 +222,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
   if (state.phase === "error") {
     return (
       <div className="rounded-[18px] border border-hairline/75 bg-surface/62 px-4 py-8 text-center">
-        <p className="text-sm text-muted">{state.message}</p>
+        <p className="text-sm text-muted-foreground">{state.message}</p>
       </div>
     );
   }
@@ -242,13 +242,13 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
           </div>
           <div>
             <p className="text-sm font-semibold text-ink">暂无反馈记录</p>
-            <p className="mt-1 text-xs text-muted">提交后会出现在这里。</p>
+            <p className="mt-1 text-xs text-muted-foreground">提交后会出现在这里。</p>
           </div>
         </div>
       ) : null}
 
       {items.map((item, index) => {
-        const statusCfg = STATUS_LABELS[item.status] ?? { label: item.status, className: "border-muted/15 bg-muted/10 text-muted" };
+        const statusCfg = STATUS_LABELS[item.status] ?? { label: item.status, className: "border-muted/15 bg-muted/10 text-muted-foreground" };
         const scopeLabel = SCOPE_LABELS[item.feedbackScope] ?? item.feedbackScope;
         const typeLabel = getFeedbackTypeLabel(item.feedbackScope, item.feedbackType);
         const platformLabel = PLATFORM_LABELS[item.clientPlatform];
@@ -271,7 +271,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="text-sm font-semibold text-ink">{scopeLabel}</span>
-                <span className="text-xs text-muted">{typeLabel}</span>
+                <span className="text-xs text-muted-foreground">{typeLabel}</span>
                 <span className={cn("inline-flex items-center rounded-[8px] border px-2 py-0.5 text-[11px] font-medium", statusCfg.className)}>
                   {statusCfg.label}
                 </span>
@@ -282,7 +282,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
                 </p>
               ) : null}
               {display.quote ? (
-                <blockquote className="mt-2 max-w-[74ch] text-[13px] leading-6 text-muted">
+                <blockquote className="mt-2 max-w-[74ch] text-[13px] leading-6 text-muted-foreground">
                   <span className="text-subtle">“</span>
                   <span className="break-words whitespace-pre-wrap">{display.quote}</span>
                   <span className="text-subtle">”</span>
@@ -290,7 +290,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
               ) : null}
               {item.resolutionNote ? (
                 <div className="mt-2 rounded-[12px] border border-hairline/70 bg-reader-paper/65 px-3 py-2">
-                  <p className="text-[12px] leading-5 text-muted">
+                  <p className="text-[12px] leading-5 text-muted-foreground">
                     处理说明：{item.resolutionNote}
                   </p>
                 </div>
@@ -330,7 +330,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
           type="button"
           disabled={loadingMore}
           onClick={handleLoadMore}
-          className="focus-ring mt-3 w-full rounded-[16px] border border-hairline/80 bg-surface/62 py-3 text-xs font-semibold text-muted transition-colors hover:border-muted hover:bg-surface hover:text-ink disabled:opacity-40"
+          className="focus-ring mt-3 w-full rounded-[16px] border border-hairline/80 bg-surface/62 py-3 text-xs font-semibold text-muted-foreground transition-colors hover:border-muted hover:bg-surface hover:text-ink disabled:opacity-40"
         >
           {loadingMore ? "加载中..." : "加载更多记录"}
         </button>

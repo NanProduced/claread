@@ -281,5 +281,3 @@ export const heroTranslationClassName =
 export const heroReaderColumnClassName = "max-w-[68ch]";
 export const heroReaderDensityClassName = "reader-density-intensive";
 export const heroImmersiveDensityClassName = "reader-density-immersive";
-export const heroIntensiveThemeClassName = "reader-shell--intensive";
-export const heroImmersiveThemeClassName = "reader-shell--immersive";

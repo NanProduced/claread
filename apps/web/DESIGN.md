@@ -2,13 +2,13 @@
 name: Claread Web Design System
 description: Claread Web 的 token-first 视觉系统与阅读型产品界面规范。
 colors:
-  surface-canvas: "#f7f5f0"
-  surface-stage: "#faf9f6"
-  surface-raised: "#fbfaf6"
-  surface-overlay: "#fbfaf6"
+  surface-canvas: "#f8f8f8"
+  surface-stage: "#f0f0f0"
+  surface-raised: "#f2f2f2"
+  surface-overlay: "#f0f0f0"
   text-primary: "#151515"
-  text-secondary: "#666a73"
-  border-subtle: "#e3ded3"
+  text-secondary: "#6b6b6b"
+  border-subtle: "#e0e0e0"
   action-primary: "#1f5eff"
   action-primary-soft: "#eaf1ff"
   feedback-success: "#3c8c68"
@@ -62,7 +62,7 @@ spacing:
 
 理解颜色只属于文章内部语义：词汇、短语、语境、语法和结构提示必须贴近原文，并以位置、文案或图标补足颜色语义。普通功能页不得借用这些颜色装饰卡片、导航或统计信息。
 
-浅色主题是中性偏冷的工作面；深色主题保持相同信息层级与语义映射。Reader 内部遗留的表面 token 名称不构成额外主题，也不得扩展为第三种外观选择。
+浅色主题是中性的工作面；深色主题保持相同信息层级与语义映射。Reader 内部遗留的表面 token 名称不构成额外主题，也不得扩展为第三种外观选择。shadcn 的 muted 是弱表面，文字必须使用 muted-foreground；input 使用独立的可辨识边界 token，不能复用装饰性 border。shadcn sidebar 语义 token（sidebar / sidebar-foreground / sidebar-primary / sidebar-primary-foreground / sidebar-accent / sidebar-accent-foreground / sidebar-border / sidebar-ring）映射回已有基础色，不引入独立色彩真相。
 
 ## Typography
 

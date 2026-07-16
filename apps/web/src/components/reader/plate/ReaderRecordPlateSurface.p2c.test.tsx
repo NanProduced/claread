@@ -46,6 +46,15 @@ vi.mock("@/lib/reader-plate-snapshot/incremental-projection-merger", () => ({
   mergeIncrementalProjection: vi.fn(),
 }));
 
+vi.mock("@/components/providers/appearance-provider", () => {
+  const stable = {
+    themePreference: "system" as const,
+    resolvedTheme: "light" as const,
+    setThemePreference: vi.fn(),
+  };
+  return { useAppearance: () => stable };
+});
+
 vi.mock("@/components/editor/plugins/floating-toolbar-kit", async () => {
   const { createPlatePlugin } = await import("platejs/react");
   const { ReaderFloatingToolbarButtons } = await import(
@@ -151,7 +160,6 @@ afterEach(() => {
   window.getSelection()?.removeAllRanges();
   try {
     window.localStorage?.removeItem?.("claread.reader.settings.v4");
-    window.localStorage?.removeItem?.("claread.reader.themeName");
   } catch {
     // Ignore jsdom localStorage variants that do not expose the full Storage API.
   }

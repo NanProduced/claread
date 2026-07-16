@@ -35,7 +35,7 @@ export function InfoCard({
         {Icon ? <Icon aria-hidden="true" className="h-4 w-4 text-lens-blue" /> : null}
         {title}
       </h2>
-      {description ? <div className="mt-2 text-sm leading-6 text-muted">{description}</div> : null}
+      {description ? <div className="mt-2 text-sm leading-6 text-muted-foreground">{description}</div> : null}
       {children ? <div className="mt-4">{children}</div> : null}
       {footer ? <div className="mt-5 border-t border-hairline pt-4">{footer}</div> : null}
     </section>

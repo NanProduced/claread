@@ -139,7 +139,7 @@ function VocabularyBookmarkRail({
       <div className="sticky top-8 px-4 lg:px-8 pb-16">
         <div className="relative mx-auto w-full max-w-[18.5rem]">
           {/* Paper clip decoration */}
-          <div className="pointer-events-none absolute -top-6 right-5 z-30 text-muted/40">
+          <div className="pointer-events-none absolute -top-6 right-5 z-30 text-muted-foreground/40">
             <svg width="20" height="42" viewBox="0 0 24 48" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M14 36V12a4 4 0 0 0-8 0v28a6 6 0 0 0 12 0V12a8 8 0 0 0-16 0v24" />
             </svg>
@@ -177,7 +177,7 @@ function VocabularyBookmarkRail({
                         type="button"
                         onClick={() => onGoalFilterChange(option.value)}
                         className={`flex w-full items-center justify-between px-1 py-2 text-left transition-colors outline-none focus-visible:ring-1 focus-visible:ring-lens-blue ${
-                          active ? "text-ink" : "text-subtle hover:text-muted"
+                          active ? "text-ink" : "text-subtle hover:text-muted-foreground"
                         }`}
                       >
                         <span className="inline-flex items-center gap-3">
@@ -190,7 +190,7 @@ function VocabularyBookmarkRail({
                             {option.label}
                           </span>
                         </span>
-                        <span className={`text-[0.7rem] ${active ? "text-muted font-medium" : "text-hairline/80"}`}>
+                        <span className={`text-[0.7rem] ${active ? "text-muted-foreground font-medium" : "text-hairline/80"}`}>
                           {option.count}
                         </span>
                       </button>
@@ -211,7 +211,7 @@ function VocabularyBookmarkRail({
                         <p className="font-headline text-[1rem] font-semibold leading-tight text-ink">
                           {item.word}
                         </p>
-                        <p className="mt-1 text-[0.72rem] text-muted">
+                        <p className="mt-1 text-[0.72rem] text-muted-foreground">
                           {formatDate(item.createdAt)} 加入
                         </p>
                       </div>
@@ -232,7 +232,7 @@ function VocabularyBookmarkRail({
                         <p className="font-headline text-[1rem] font-semibold leading-tight text-ink">
                           {item.word}
                         </p>
-                        <p className="mt-1 text-[0.72rem] text-muted">
+                        <p className="mt-1 text-[0.72rem] text-muted-foreground">
                           {sourceCountLabel(item)}
                         </p>
                       </div>
@@ -497,7 +497,7 @@ export function VocabularyClient({
             <h1 className="font-headline text-[2rem] font-semibold leading-[1] tracking-tight text-ink md:text-[2.5rem] lg:text-[3rem]">
               Vocabulary Book.
             </h1>
-            <p className="mt-3 max-w-[32ch] font-reading text-[1rem] leading-[1.75] text-muted">
+            <p className="mt-3 max-w-[32ch] font-reading text-[1rem] leading-[1.75] text-muted-foreground">
               阅读中留下的重点词汇与语境。
             </p>
           </div>
@@ -523,17 +523,17 @@ export function VocabularyClient({
         {/* ── Search Row ── */}
         <div className="mb-2 shrink-0 flex items-center justify-between pb-2 pl-2">
           <div className="flex w-full max-w-sm items-center gap-3">
-            <Search className="h-4 w-4 text-muted" />
+            <Search className="h-4 w-4 text-muted-foreground" />
             <input
               type="text"
               aria-label="搜索单词、释义或来源文章"
               placeholder="搜索单词、释义或来源文章..."
-              className="w-full bg-transparent text-[0.95rem] text-ink outline-none placeholder:text-muted"
+              className="w-full bg-transparent text-[0.95rem] text-ink outline-none placeholder:text-muted-foreground"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
-          <p className="shrink-0 text-[0.72rem] font-semibold tracking-[0.08em] text-muted">
+          <p className="shrink-0 text-[0.72rem] font-semibold tracking-[0.08em] text-muted-foreground">
             共 {items.length} 个生词 · {dueCount} 个待复习
           </p>
         </div>
@@ -569,10 +569,10 @@ export function VocabularyClient({
                           {item.word}
                         </h2>
                         {item.phonetic && (
-                          <span className="text-xs font-sans text-muted">{item.phonetic}</span>
+                          <span className="text-xs font-sans text-muted-foreground">{item.phonetic}</span>
                         )}
                         {item.partOfSpeech && (
-                          <span className="rounded-pill border border-hairline/80 bg-surface/50 px-2 py-0.5 font-sans text-[0.68rem] font-semibold text-muted">
+                          <span className="rounded-pill border border-hairline/80 bg-surface/50 px-2 py-0.5 font-sans text-[0.68rem] font-semibold text-muted-foreground">
                             {item.partOfSpeech}
                           </span>
                         )}
@@ -586,7 +586,7 @@ export function VocabularyClient({
                       {/* Primary context — NO border-left */}
                       {item.contextSentence && (
                         <div className="mt-2.5 pl-4">
-                          <p className="font-reading text-[0.92rem] italic leading-relaxed text-muted">
+                          <p className="font-reading text-[0.92rem] italic leading-relaxed text-muted-foreground">
                             {item.contextSentence}
                           </p>
                           {item.contextTranslation && (
@@ -598,29 +598,29 @@ export function VocabularyClient({
                       )}
 
                       {/* Metadata line */}
-                      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.68rem] font-semibold tracking-[0.08em] text-muted">
+                      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.68rem] font-semibold tracking-[0.08em] text-muted-foreground">
                         <span>{formatDate(item.createdAt)} 加入</span>
-                        <span className="text-muted/30 select-none">·</span>
+                        <span className="text-muted-foreground/30 select-none">·</span>
                         <span
                           className={
                             item.mastered
                               ? "text-structure-green"
                               : reviewLabel === "今日复习"
                                 ? "text-vocab-amber"
-                                : "text-muted"
+                                : "text-muted-foreground"
                           }
                         >
                           {reviewLabel}
                         </span>
                         {sourceLabel && (
                           <>
-                            <span className="text-muted/30 select-none">·</span>
+                            <span className="text-muted-foreground/30 select-none">·</span>
                             <span>{sourceLabel}</span>
                           </>
                         )}
                         {sourceHrefForItem(item) && (
                           <>
-                            <span className="text-muted/30 select-none">·</span>
+                            <span className="text-muted-foreground/30 select-none">·</span>
                             <span
                               onClick={(e) => e.stopPropagation()}
                             >
@@ -668,7 +668,7 @@ export function VocabularyClient({
                     查看全部生词
                   </Button>
                 ) : (
-                  <div className="mt-4 grid gap-5 border-t border-hairline/80 pt-6 text-[0.8rem] leading-6 text-muted sm:grid-cols-3">
+                  <div className="mt-4 grid gap-5 border-t border-hairline/80 pt-6 text-[0.8rem] leading-6 text-muted-foreground sm:grid-cols-3">
                     <div>
                       <p className="text-[0.68rem] font-bold tracking-[0.14em] text-ink">词汇与语境</p>
                       <p className="mt-2">每个生词都会留下来源语境、音标和释义，方便回看。</p>

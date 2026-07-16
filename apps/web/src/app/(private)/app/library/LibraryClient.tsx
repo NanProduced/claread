@@ -165,12 +165,12 @@ export function LibraryClient({
       {/* Search + count */}
       <div className="mb-4 shrink-0 flex items-center justify-between">
         <div className="flex w-full max-w-sm items-center gap-3">
-          <Search className="h-4 w-4 text-muted" />
+          <Search className="h-4 w-4 text-muted-foreground" />
           <input
             type="text"
             aria-label="搜索阅读记录标题"
             placeholder="搜索阅读记录标题..."
-            className="w-full bg-transparent text-[0.95rem] text-ink outline-none placeholder:text-muted"
+            className="w-full bg-transparent text-[0.95rem] text-ink outline-none placeholder:text-muted-foreground"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />

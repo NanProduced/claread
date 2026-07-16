@@ -10,9 +10,7 @@ vi.mock("@/components/providers/appearance-provider", () => ({
   useAppearance: () => ({
     themePreference: "system",
     resolvedTheme: "light",
-    themeName: "system",
     setThemePreference,
-    setThemeName: setThemePreference,
   }),
 }));
 

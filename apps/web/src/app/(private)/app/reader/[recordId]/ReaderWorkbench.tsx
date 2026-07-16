@@ -38,7 +38,6 @@ import {
   persistReaderSettings,
   readStoredReaderSettings,
   readerModeTypography,
-  readerThemeClassName,
   type ReaderSettingsState,
 } from "@/components/reader/settings";
 import { ReaderSettingsPanel } from "@/components/reader/settings/ReaderSettingsPanel";
@@ -725,7 +724,7 @@ export function ReaderWorkbench({
   const pointerSelectionActiveRef = useRef(false);
   const [dictionaryDockLayout, setDictionaryDockLayout] = useState<DictionaryDockLayout | null>(null);
   const dictionaryPanelVisible = Boolean(dictionaryRailOpen || dictionaryPinned);
-  const { themeName, setThemeName } = useAppearance();
+  const { themePreference, setThemePreference } = useAppearance();
 
   const {
     refs: {
@@ -3643,7 +3642,6 @@ export function ReaderWorkbench({
 
   const isImmersiveMode = readerSettings.mode === "immersive";
   const managedSelectionVisible = Boolean(textSelection && textSelectionVisualMode === "selection");
-  const canvasThemeClass = readerThemeClassName(themeName);
   const readingTypography = readerModeTypography(readerSettings);
   const readingClass = readingTypography.bodyClassName;
   const translationClass = readingTypography.translationClassName;
@@ -3668,14 +3666,14 @@ export function ReaderWorkbench({
   const headerTitleClass = isImmersiveMode
     ? `font-headline font-semibold tracking-[-0.02em] text-ink transition-[font-size,max-width,margin] mt-3 max-w-[20ch] text-[3rem] leading-[0.94] md:text-[4.35rem]`
     : "mt-2 max-w-[24ch] font-headline text-3xl font-semibold leading-tight tracking-normal text-ink md:text-[2.35rem]";
-  const headerMetaClass = `flex flex-wrap items-center gap-2 text-muted transition-[opacity,max-height,margin] ${
+  const headerMetaClass = `flex flex-wrap items-center gap-2 text-muted-foreground transition-[opacity,max-height,margin] ${
     isImmersiveMode
       ? "mt-4 max-h-16 text-[0.74rem] opacity-100"
       : "mt-3 text-xs opacity-100"
   }`;
   const headerEyebrowClass = isImmersiveMode
     ? "text-[0.72rem] font-semibold tracking-[0.22em] text-lens-blue"
-    : "text-xs font-semibold text-muted";
+    : "text-xs font-semibold text-muted-foreground";
 
   const formattedDate = useMemo(() => {
     try {
@@ -3724,7 +3722,7 @@ export function ReaderWorkbench({
   }
 
   return (
-    <main className="paper-grain reader-shell-page min-h-screen px-3 pb-24 pt-3 text-ink sm:px-4 md:pb-6 lg:px-5">
+    <main className="reader-shell-page min-h-screen px-3 pb-24 pt-3 text-ink sm:px-4 md:pb-6 lg:px-5">
       <div className="relative">
         <div className="relative min-w-0">
         <article
@@ -3804,8 +3802,8 @@ export function ReaderWorkbench({
                   <span className="text-lens-blue">
                     {isImmersiveMode ? "沉浸阅读" : "精读模式"}
                   </span>
-                  <span className="text-muted/60">·</span>
-                  <span className="text-muted font-medium">
+                  <span className="text-muted-foreground/60">·</span>
+                  <span className="text-muted-foreground font-medium">
                     {formattedDate || "今日"}
                   </span>
                 </div>
@@ -3818,7 +3816,7 @@ export function ReaderWorkbench({
 
                   {/* 3. Subtitle / Overview */}
                   {reader.contentSummary?.overview ? (
-                    <p className="mt-4 max-w-[72ch] text-[1.025rem] font-medium leading-[1.68] text-muted font-sans tracking-wide">
+                    <p className="mt-4 max-w-[72ch] text-[1.025rem] font-medium leading-[1.68] text-muted-foreground font-sans tracking-wide">
                       {reader.contentSummary.overview}
                     </p>
                   ) : null}
@@ -3833,11 +3831,11 @@ export function ReaderWorkbench({
                       <span>{dataSourceLabel[dataSource]}</span>
                     </span>
                     <div className="w-[1px] h-3.5 bg-hairline" />
-                    <span className="text-[0.8rem] font-semibold text-muted">
+                    <span className="text-[0.8rem] font-semibold text-muted-foreground">
                       {reader.article.sentences.length} 句
                     </span>
                     <div className="w-[1px] h-3.5 bg-hairline" />
-                    <span className="text-[0.8rem] font-semibold text-muted">
+                    <span className="text-[0.8rem] font-semibold text-muted-foreground">
                       {readingGoalLabel}
                     </span>
                   </div>
@@ -3862,7 +3860,7 @@ export function ReaderWorkbench({
                       <BookOpen
                         aria-hidden="true"
                         className={`h-[18px] w-[18px] shrink-0 transition-transform ${
-                          readerSettings.mode === "intensive" ? "text-vocab-amber" : "text-muted"
+                          readerSettings.mode === "intensive" ? "text-vocab-amber" : "text-muted-foreground"
                         }`}
                         strokeWidth={1.5}
                       />
@@ -3887,7 +3885,7 @@ export function ReaderWorkbench({
                       <Eye
                         aria-hidden="true"
                         className={`h-[18px] w-[18px] shrink-0 transition-transform ${
-                          readerSettings.mode === "immersive" ? "text-vocab-amber" : "text-muted"
+                          readerSettings.mode === "immersive" ? "text-vocab-amber" : "text-muted-foreground"
                         }`}
                         strokeWidth={1.5}
                       />
@@ -3915,7 +3913,7 @@ export function ReaderWorkbench({
                       <SlidersHorizontal
                         aria-hidden="true"
                         className={`h-[18px] w-[18px] shrink-0 transition-transform ${
-                          settingsPanelOpen ? "text-vocab-amber" : "text-muted"
+                          settingsPanelOpen ? "text-vocab-amber" : "text-muted-foreground"
                         }`}
                         strokeWidth={1.5}
                       />
@@ -3928,7 +3926,7 @@ export function ReaderWorkbench({
                 </div>
 
                 {/* 5. Footer Metadata (sitting below the action bar) */}
-                <div className="w-full flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-0 text-[0.78rem] text-muted tracking-wide leading-normal sm:leading-none select-none">
+                <div className="w-full flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-0 text-[0.78rem] text-muted-foreground tracking-wide leading-normal sm:leading-none select-none">
                   <div className="flex flex-wrap items-center gap-1.5 font-medium">
                     <span>
                       {articleSourceInfo
@@ -3937,13 +3935,13 @@ export function ReaderWorkbench({
                     </span>
                     {formattedDate && (
                       <>
-                        <span className="text-muted/60">·</span>
+                        <span className="text-muted-foreground/60">·</span>
                         <span>{formattedDate}</span>
                       </>
                     )}
                     {reader.article.sentences.length > 0 && (
                       <>
-                        <span className="text-muted/60">·</span>
+                        <span className="text-muted-foreground/60">·</span>
                         <span>约 {Math.max(1, Math.ceil(reader.article.sentences.length / 5))} 分钟阅读</span>
                       </>
                     )}
@@ -3955,13 +3953,13 @@ export function ReaderWorkbench({
                         href={articleSourceInfo.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="focus-ring inline-flex items-center gap-1.5 text-muted hover:text-ink transition-colors font-semibold cursor-pointer"
+                        className="focus-ring inline-flex items-center gap-1.5 text-muted-foreground hover:text-ink transition-colors font-semibold cursor-pointer"
                       >
                         <Globe className="h-4 w-4 shrink-0" strokeWidth={1.75} />
                         <span>英文原文</span>
                       </a>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 text-muted/60">
+                      <span className="inline-flex items-center gap-1.5 text-muted-foreground/60">
                         <Globe className="h-4 w-4 shrink-0" strokeWidth={1.75} />
                         <span>粘贴导入</span>
                       </span>
@@ -3984,7 +3982,6 @@ export function ReaderWorkbench({
                   readingClassName={readingClass}
                   columnClassName={readingColumnClass}
                   paragraphDensityClassName={paragraphDensityClass}
-                  themeClassName={canvasThemeClass}
                   jumpTarget={jumpTarget}
                   focusTarget={focusedReaderNoteTarget}
                   selectionFocusRangesBySentence={selectionFocusRangesBySentence}
@@ -4011,7 +4008,6 @@ export function ReaderWorkbench({
                   translationClassName={translationClass}
                   columnClassName={readingColumnClass}
                   paragraphDensityClassName={paragraphDensityClass}
-                  themeClassName={canvasThemeClass}
                   annotationVisibilityGroups={contentVisibility}
                   activeSentenceId={activeSentence?.sentenceId ?? null}
                   sentenceActionsOpenSentenceId={contextPanelVisible ? activeSentence?.sentenceId ?? null : null}
@@ -4468,10 +4464,10 @@ export function ReaderWorkbench({
           >
               <div className="mx-auto rounded-[1.5rem] border border-hairline bg-background/72 shadow-[0_-20px_40px_rgba(17,17,17,0.12)] md:mx-0 md:rounded-none md:border-0 md:bg-transparent md:shadow-none">
                 <ReaderSettingsPanel
-                  themeName={themeName}
+                  themePreference={themePreference}
                   value={readerSettings}
                   onChange={handleReaderSettingsChange}
-                  onThemeChange={setThemeName}
+                  onThemeChange={setThemePreference}
                   onClose={() => setSettingsPanelOpen(false)}
                 />
               </div>

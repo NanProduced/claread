@@ -58,7 +58,7 @@ function Select({
         {description ? <p className={primitiveDescriptionClass}>{description}</p> : null}
         <BaseSelect.Trigger aria-label={ariaLabel ?? label ?? "选择"} className={cn(controlVariants({ size, tone }), "w-full justify-between", className)}>
           <BaseSelect.Value className="truncate text-left" placeholder={placeholder} />
-          <BaseSelect.Icon className="text-muted">
+          <BaseSelect.Icon className="text-muted-foreground">
             <ChevronDown className="size-4" />
           </BaseSelect.Icon>
         </BaseSelect.Trigger>
@@ -82,7 +82,7 @@ function Select({
                   </span>
                   <div className="min-w-0">
                     <BaseSelect.ItemText className="block truncate">{item.label}</BaseSelect.ItemText>
-                    {item.description ? <p className="mt-0.5 text-xs leading-5 text-muted">{item.description}</p> : null}
+                    {item.description ? <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{item.description}</p> : null}
                   </div>
                 </BaseSelect.Item>
               ))}

@@ -45,7 +45,7 @@ export function ProductUtilityBento() {
           <h2 className="mt-4 max-w-3xl font-headline text-[clamp(2.15rem,4.2vw,3.9rem)] font-semibold leading-[1.08] tracking-normal text-ink [text-wrap:balance]">
             读到哪里，工具就在哪里。
           </h2>
-          <p className="mt-5 max-w-2xl text-base leading-8 text-muted">
+          <p className="mt-5 max-w-2xl text-base leading-8 text-muted-foreground">
             查词、追问、收藏和笔记，都贴着原文展开。
           </p>
         </div>

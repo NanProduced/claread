@@ -12,7 +12,7 @@ export const readerInlineFocusRing =
   "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 export const readerIconAction = cn(
-  "inline-flex items-center justify-center border border-transparent bg-transparent text-muted/80",
+  "inline-flex items-center justify-center border border-transparent bg-transparent text-muted-foreground/80",
   primitiveFocusRing,
   readerTransitionFast,
   "disabled:pointer-events-none disabled:opacity-40",
@@ -29,7 +29,7 @@ export const readerCommandControl = cn(
 
 export const readerTopBarAction = cn(
   "inline-flex items-center justify-center rounded-lg border border-transparent",
-  "h-9 w-9 shrink-0 text-muted/90",
+  "h-9 w-9 shrink-0 text-muted-foreground/90",
   primitiveFocusRing,
   readerTransitionFast,
   "hover:bg-ink/[0.05] hover:text-ink active:bg-ink/[0.09]",
@@ -64,7 +64,7 @@ export const readerSegmentedOption = cva(
     variants: {
       selected: {
         true: "bg-background text-vocab-amber shadow-[0_2px_6px_rgba(0,0,0,0.04)]",
-        false: "text-muted",
+        false: "text-muted-foreground",
       },
     },
     defaultVariants: {

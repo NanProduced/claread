@@ -754,7 +754,7 @@ function NavigationPanelRow({
         <span className="block truncate text-[11px] leading-snug">
           {item.label}
         </span>
-        <span className="block text-[9px] leading-snug text-muted/75">
+        <span className="block text-[9px] leading-snug text-muted-foreground/75">
           第 {item.fallbackIndex + 1} 段
         </span>
       </button>

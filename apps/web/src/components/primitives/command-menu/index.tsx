@@ -55,11 +55,11 @@ const CommandMenuInput = React.forwardRef<
   return (
     <div className="px-4 pt-4 pb-2 shrink-0">
       <div className="flex items-center gap-2.5 rounded-lg border border-hairline bg-[color-mix(in_srgb,var(--surface)_40%,transparent)] px-3 py-2.5 shadow-[inset_0_1px_2px_rgba(0,0,0,0.02)] transition-colors focus-within:border-lens-blue/30 focus-within:ring-2 focus-within:ring-lens-blue/10">
-        <Search className="size-4 text-muted/75 shrink-0" />
+        <Search className="size-4 text-muted-foreground/75 shrink-0" />
         <CommandPrimitive.Input
           ref={ref}
           className={cn(
-            "flex h-5 w-full bg-transparent text-[0.88rem] text-ink outline-none placeholder:text-muted/60",
+            "flex h-5 w-full bg-transparent text-[0.88rem] text-ink outline-none placeholder:text-muted-foreground/60",
             className,
           )}
           {...props}
@@ -91,7 +91,7 @@ const CommandMenuEmpty = React.forwardRef<
   return (
     <CommandPrimitive.Empty
       ref={ref}
-      className={cn("px-5 py-10 text-sm text-muted", className)}
+      className={cn("px-5 py-10 text-sm text-muted-foreground", className)}
       {...props}
     />
   )
@@ -105,7 +105,7 @@ const CommandMenuGroup = React.forwardRef<
     <CommandPrimitive.Group
       ref={ref}
       className={cn(
-        "[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pb-1.5 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:text-[0.68rem] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:tracking-[0.05em] [&_[cmdk-group-heading]]:text-muted/80",
+        "[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pb-1.5 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:text-[0.68rem] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:tracking-[0.05em] [&_[cmdk-group-heading]]:text-muted-foreground/80",
         className,
       )}
       {...props}

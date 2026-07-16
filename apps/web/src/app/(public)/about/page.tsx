@@ -7,7 +7,7 @@ export default function AboutPage() {
       <PublicSiteHeader currentHref={aboutRoute} />
       <section className="mx-auto mt-16 max-w-3xl">
         <h1 className="text-4xl font-semibold tracking-normal">About Claread</h1>
-        <p className="mt-5 text-lg leading-8 text-[var(--muted)]">
+        <p className="mt-5 text-lg leading-8 text-muted-foreground">
           Claread Web 不是营销站和功能页的拼接，而是一套以文章为中心的阅读产品。公开区先让用户看到 Daily 和示例，私有区再承接个人阅读记录、批注和词汇资产。
         </p>
       </section>

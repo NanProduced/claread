@@ -11,7 +11,6 @@
   --color-surface-raised: var(--surface-raised);
   --color-ink: var(--ink);
   --color-ink-soft: var(--ink-soft);
-  --color-muted: var(--muted);
   --color-subtle: var(--subtle);
   --color-hairline: var(--hairline);
   --color-lens-blue: var(--lens-blue);
@@ -60,6 +59,7 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);
   --color-accent: var(--accent);
@@ -68,6 +68,15 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
 
   --font-display: var(--font-reading-en), var(--font-reading-zh), Georgia, "Times New Roman", serif;
   --font-headline: var(--font-reading-en), var(--font-reading-zh), Georgia, "Times New Roman", serif;
@@ -431,6 +440,14 @@ body {
 }
 
 :root {
+  /*
+   * `--reading-paper-surface` is a legacy compat alias derived directly
+   * from the root/.dark `--reader-paper` token. It is intentionally
+   * class-free: no runtime canvas theme selector exists, and the Reader
+   * surface no longer paints an independent Paper gradient — it follows
+   * the global AppearanceProvider resolution like every other surface.
+   */
+  --reading-paper-surface: var(--reader-paper);
   --reader-floating-surface: rgba(255, 255, 255, 0.985);
   --reader-floating-surface-strong: rgba(251, 250, 246, 0.965);
   --reader-floating-border: color-mix(in srgb, var(--hairline) 86%, rgba(15, 23, 42, 0.08));
@@ -867,43 +884,8 @@ select {
   }
 }
 
-.paper-grain {
-  background-image:
-    linear-gradient(135deg, color-mix(in srgb, var(--app-ink) 8%, transparent) 0 1px, transparent 1px),
-    linear-gradient(
-      45deg,
-      color-mix(in srgb, var(--app-surface) 78%, transparent),
-      color-mix(in srgb, var(--app-canvas) 82%, transparent)
-    );
-  background-size: 18px 18px, auto;
-}
-
 .reader-shell-page {
   background-color: var(--app-canvas);
-}
-
-.reading-paper {
-  --reading-paper-surface: var(--reader-paper);
-  background:
-    radial-gradient(circle at 88% 12%, var(--reader-stage-glow), transparent 14rem),
-    var(--reader-shell-gradient),
-    var(--reading-paper-surface);
-}
-
-.reading-paper-light {
-  --reading-paper-surface: #faf9f6;
-  background:
-    radial-gradient(circle at 88% 12%, var(--reader-stage-glow), transparent 14rem),
-    var(--reader-shell-gradient),
-    var(--reading-paper-surface);
-}
-
-.reading-paper-dark {
-  --reading-paper-surface: #1b1f23;
-  background:
-    radial-gradient(circle at 88% 12%, var(--reader-stage-glow), transparent 14rem),
-    var(--reader-shell-gradient),
-    var(--reading-paper-surface);
 }
 
 .theme-preview-surface {
@@ -1267,7 +1249,7 @@ select {
       color-mix(in srgb, var(--reader-tool-surface-bottom) 95%, transparent)
     ),
     color-mix(in srgb, var(--reader-paper-elevated) 84%, transparent);
-  color: color-mix(in srgb, var(--muted) 92%, var(--ink));
+  color: color-mix(in srgb, var(--muted-foreground) 92%, var(--ink));
   box-shadow: var(--reader-tool-shadow-recessed);
 }
 
@@ -1406,7 +1388,7 @@ select {
     linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(250, 249, 246, 0.96)),
     var(--surface);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
-  color: var(--muted);
+  color: var(--muted-foreground);
   transition:
     transform 160ms ease,
     border-color 160ms ease,
@@ -1449,7 +1431,7 @@ select {
 .reader-dictionary-meta-tag--count {
   border-color: rgba(232, 228, 218, 0.88);
   background: rgba(250, 249, 246, 0.78);
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .reader-dictionary-secondary-button {
@@ -1497,7 +1479,7 @@ select {
 }
 
 .reader-dictionary-tab {
-  color: var(--muted);
+  color: var(--muted-foreground);
   transition:
     transform 160ms ease,
     border-color 160ms ease,
@@ -1526,13 +1508,13 @@ select {
 }
 
 .reader-dictionary-tab-count--active {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .reader-dictionary-tertiary-button {
   border-radius: 999px;
   border: 1px solid transparent;
-  color: var(--muted);
+  color: var(--muted-foreground);
   transition:
     border-color 160ms ease,
     background-color 160ms ease,
@@ -1817,7 +1799,7 @@ select {
 
 .reader-translation-copy {
   margin: 0;
-  color: var(--color-muted);
+  color: var(--muted-foreground);
   letter-spacing: 0.01em;
   text-wrap: pretty;
   user-select: text;
@@ -2361,7 +2343,7 @@ select {
 .reader-record-plate-translation {
   padding-block: 0.1rem 0.12rem;
   padding-inline: 0.88rem 0.25rem;
-  color: color-mix(in srgb, var(--muted) 80%, var(--ink) 20%);
+  color: color-mix(in srgb, var(--muted-foreground) 80%, var(--ink) 20%);
   font-size: var(--reader-record-translation-size);
   font-weight: 400;
   line-height: var(--reader-record-translation-leading);
@@ -2896,7 +2878,7 @@ select {
 
 .reader-record-plate-callout-icon-button:disabled {
   cursor: not-allowed;
-  color: color-mix(in srgb, var(--muted) 44%, transparent);
+  color: color-mix(in srgb, var(--muted-foreground) 44%, transparent);
 }
 
 .reader-record-plate-callout-icon-button:disabled:hover {
@@ -4094,7 +4076,7 @@ select {
   border-radius: 999px;
   background: var(--reader-entry-chip-surface);
   padding: 0.35rem 0.75rem;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 0.75rem;
   font-weight: 600;
   cursor: pointer;

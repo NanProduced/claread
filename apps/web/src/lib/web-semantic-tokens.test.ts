@@ -63,6 +63,41 @@ const GRADIENT_INTERACTIVE_TOKENS = [
   "interactive-quiet-hover",
 ] as const;
 
+/**
+ * shadcn/Tailwind semantic tokens that must exist as paired CSS variables
+ * in `:root, .light` and be exposed through `@theme` as Tailwind utilities.
+ * The sidebar tokens complete the shadcn Sidebar component contract.
+ */
+const SHADCN_PAIRED_TOKENS = [
+  "background",
+  "foreground",
+  "card",
+  "card-foreground",
+  "popover",
+  "popover-foreground",
+  "primary",
+  "primary-foreground",
+  "secondary",
+  "secondary-foreground",
+  "muted",
+  "muted-foreground",
+  "accent",
+  "accent-foreground",
+  "destructive",
+  "destructive-foreground",
+  "border",
+  "input",
+  "ring",
+  "sidebar",
+  "sidebar-foreground",
+  "sidebar-primary",
+  "sidebar-primary-foreground",
+  "sidebar-accent",
+  "sidebar-accent-foreground",
+  "sidebar-border",
+  "sidebar-ring",
+] as const;
+
 function blockRange(openSelector: RegExp) {
   const start = tokensCss.search(openSelector);
   if (start === -1) {
@@ -218,6 +253,22 @@ describe("Claread Web semantic tokens", () => {
     const root = blockRange(/:root,\s*\.light\s*\{/);
     for (const token of GRADIENT_INTERACTIVE_TOKENS) {
       assertTokenInBlock(root, token, "Light :root");
+    }
+  });
+
+  it("declares every shadcn paired token in :root, .light", () => {
+    const block = blockRange(/:root,\s*\.light\s*\{/);
+    for (const token of SHADCN_PAIRED_TOKENS) {
+      assertTokenInBlock(block, token, "Light :root (shadcn)");
+    }
+  });
+
+  it("exposes every shadcn paired token through @theme in globals.css", () => {
+    for (const token of SHADCN_PAIRED_TOKENS) {
+      expect(
+        new RegExp(`--color-${token}\\s*:`).test(globalsCss),
+        `globals.css @theme must expose --color-${token} as a Tailwind utility`,
+      ).toBe(true);
     }
   });
 });

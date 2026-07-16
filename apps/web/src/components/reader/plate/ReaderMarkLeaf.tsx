@@ -197,7 +197,7 @@ function renderLeafContent(
     const className = [
       annotationClassName,
       overlappingSelectionFocus && overlappingAnnotations.length > 0 ? "reader-user-range--selection-muted" : "",
-      overlappingContextFocus && overlappingAnnotations.length > 0 ? "reader-user-range--context-muted" : "",
+      overlappingContextFocus && overlappingAnnotations.length > 0 ? "reader-user-range--context-muted-foreground" : "",
       overlappingJumpFocus ? "reader-route-focus-range" : "",
       overlappingSelectionFocus ? "reader-selection-focus-range" : "",
       overlappingContextFocus ? "reader-context-focus-range" : "",
@@ -215,7 +215,7 @@ function renderLeafContent(
         <span
           className={`reader-analysis-atom reader-analysis-atom--${(overlappingAnalysis.index % 6) + 1} ${
             overlappingSelectionFocus ? "reader-analysis-atom--selection-muted" : ""
-          } ${overlappingContextFocus ? "reader-analysis-atom--context-muted" : ""}`}
+          } ${overlappingContextFocus ? "reader-analysis-atom--context-muted-foreground" : ""}`}
           data-analysis-index={overlappingAnalysis.index + 1}
           data-analysis-label={overlappingAnalysis.label}
           data-analysis-entry-id={overlappingAnalysis.entryId}
@@ -245,7 +245,7 @@ function renderLeafContent(
           className={[
             markSegmentClassName,
             overlappingSelectionFocus ? "reader-mark--selection-muted" : "",
-            overlappingContextFocus ? "reader-mark--context-muted" : "",
+            overlappingContextFocus ? "reader-mark--context-muted-foreground" : "",
           ]
             .filter(Boolean)
             .join(" ")}
@@ -675,7 +675,7 @@ export const ReaderMarkLeaf = memo(function ReaderMarkLeaf({
     const selectionMutedClass =
       !useSegmentedGrammarMark && selectionFocusedSegments.length > 0 ? "reader-mark--selection-muted" : "";
     const contextMutedClass =
-      !useSegmentedGrammarMark && contextFocusedSegments.length > 0 ? "reader-mark--context-muted" : "";
+      !useSegmentedGrammarMark && contextFocusedSegments.length > 0 ? "reader-mark--context-muted-foreground" : "";
 
     const grammarCueIndex =
       leaf.readerSentenceId && markKey

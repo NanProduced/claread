@@ -48,7 +48,7 @@ export default async function PasteToReadPage() {
           </h2>
           <Link
             href={dailyRoute}
-            className="text-[0.72rem] font-medium tracking-[0.02em] text-muted transition-colors hover:text-ink"
+            className="text-[0.72rem] font-medium tracking-[0.02em] text-muted-foreground transition-colors hover:text-ink"
           >
             查看全部 &rarr;
           </Link>
@@ -65,18 +65,18 @@ export default async function PasteToReadPage() {
               className="group grid gap-5 rounded-lg outline-offset-8 focus-ring sm:grid-cols-[minmax(0,1fr)_108px] sm:items-start md:grid-cols-[minmax(0,1fr)_112px] xl:grid-cols-[minmax(0,1fr)_124px] xl:gap-6"
             >
               <div className="min-w-0">
-                <p className="mb-3 font-sans text-[0.68rem] font-semibold tracking-[0.08em] text-muted">
+                <p className="mb-3 font-sans text-[0.68rem] font-semibold tracking-[0.08em] text-muted-foreground">
                   Featured
                 </p>
                 <h4 className="max-w-[15ch] text-balance font-headline text-[1.42rem] leading-[1.08] tracking-[-0.025em] text-ink transition-colors group-hover:text-lens-blue xl:text-[1.58rem]">
                   {leadPick.title}
                 </h4>
                 {leadPick.subtitle ? (
-                  <p className="mt-4 max-w-[22rem] line-clamp-3 font-reading text-[0.94rem] leading-[1.58] text-muted">
+                  <p className="mt-4 max-w-[22rem] line-clamp-3 font-reading text-[0.94rem] leading-[1.58] text-muted-foreground">
                     {getExcerpt(leadPick.subtitle, leadPick.title)}
                   </p>
                 ) : null}
-                <div className="mt-5 font-sans text-[0.74rem] font-medium tracking-[0.01em] text-muted">
+                <div className="mt-5 font-sans text-[0.74rem] font-medium tracking-[0.01em] text-muted-foreground">
                   {formatReadingMeta(
                     leadPick.readTimeMinutes,
                     leadPick.difficulty,
@@ -125,7 +125,7 @@ export default async function PasteToReadPage() {
                     <h4 className="max-w-[18ch] text-balance font-headline text-[1.06rem] leading-[1.16] tracking-[-0.02em] text-ink transition-colors group-hover:text-lens-blue">
                       {article.title}
                     </h4>
-                    <div className="mt-3 font-sans text-[0.72rem] font-medium tracking-[0.01em] text-muted">
+                    <div className="mt-3 font-sans text-[0.72rem] font-medium tracking-[0.01em] text-muted-foreground">
                       {formatReadingMeta(
                         article.readTimeMinutes,
                         article.difficulty,
@@ -143,14 +143,14 @@ export default async function PasteToReadPage() {
         <div className="mt-8 flex items-center justify-between border-t border-hairline/70 pt-5">
           <Link
             href={dailyRoute}
-            className="flex items-center gap-2 font-sans text-[0.76rem] font-medium tracking-[0.02em] text-muted transition-colors hover:text-ink"
+            className="flex items-center gap-2 font-sans text-[0.76rem] font-medium tracking-[0.02em] text-muted-foreground transition-colors hover:text-ink"
           >
             <span>阅读档案</span>
             <span className="text-[0.66rem] tracking-[0.08em]">Archive</span>
           </Link>
           <Link
             href={dailyRoute}
-            className="flex items-center gap-2 font-sans text-[0.76rem] font-medium tracking-[0.02em] text-muted transition-colors hover:text-ink"
+            className="flex items-center gap-2 font-sans text-[0.76rem] font-medium tracking-[0.02em] text-muted-foreground transition-colors hover:text-ink"
           >
             <span>更多阅读</span>
             <span className="text-[0.66rem] tracking-[0.08em]">More</span>
@@ -173,7 +173,7 @@ export default async function PasteToReadPage() {
                 <span className="block">Bring it to Claread.</span>
                 <span className="mt-1 block">Read It Deeply.</span>
               </h1>
-              <p className="mt-4 max-w-[28rem] font-reading text-[1.08rem] leading-[1.65] text-muted sm:text-[1.12rem]">
+              <p className="mt-4 max-w-[28rem] font-reading text-[1.08rem] leading-[1.65] text-muted-foreground sm:text-[1.12rem]">
                 从粘贴开始，进入深度阅读。
               </p>
             </div>
@@ -188,7 +188,7 @@ export default async function PasteToReadPage() {
             <details className="group mt-8 border-t border-hairline/70 pt-5 md:hidden">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-sans text-[0.86rem] font-semibold text-ink marker:hidden">
                 <span>今日值得透读</span>
-                <span className="text-[0.72rem] font-medium text-muted transition-colors group-open:text-ink">
+                <span className="text-[0.72rem] font-medium text-muted-foreground transition-colors group-open:text-ink">
                   展开
                 </span>
               </summary>

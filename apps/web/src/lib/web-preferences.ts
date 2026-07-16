@@ -1,6 +1,6 @@
 import type { ThemePreference } from "@/lib/appearance";
 
-export type WebThemeName = ThemePreference;
+export type WebThemePreference = ThemePreference;
 export type WebReaderMode = "intensive" | "immersive";
 export type WebFontFamily = "editorial" | "book" | "sans";
 export type WebFontScale = "sm" | "md" | "lg";
@@ -10,14 +10,14 @@ export const WEB_PREFERENCES_APPLIED_EVENT = "claread:web-preferences-applied";
 export const WEB_PREFERENCES_SYNC_READY_EVENT = "claread:web-preferences-sync-ready";
 
 export interface WebPreferences {
-  theme: WebThemeName;
+  theme: WebThemePreference;
   reader_mode: WebReaderMode;
   font_family: WebFontFamily;
   font_scale: WebFontScale;
   updated_at: string;
 }
 
-const VALID_THEMES: readonly WebThemeName[] = ["system", "light", "dark"];
+const VALID_THEMES: readonly WebThemePreference[] = ["system", "light", "dark"];
 const VALID_READER_MODES: readonly WebReaderMode[] = ["intensive", "immersive"];
 const VALID_FONT_FAMILIES: readonly WebFontFamily[] = ["editorial", "book", "sans"];
 const VALID_FONT_SCALES: readonly WebFontScale[] = ["sm", "md", "lg"];

@@ -35,7 +35,7 @@ export async function PublicSiteHeader({
     <header className={`mx-auto flex h-14 items-center justify-between gap-5 ${wide ? "max-w-[76rem]" : "max-w-7xl"}`}>
       <BrandLockup href={homeRoute} priority={priority} imageClassName="!w-28 sm:!w-36" />
       <div className="flex items-center gap-3">
-        <nav className="hidden items-center gap-2 text-[0.78rem] font-semibold text-muted md:flex">
+        <nav className="hidden items-center gap-2 text-[0.78rem] font-semibold text-muted-foreground md:flex">
           {navItems.map((item) => {
             const active = currentHref === item.href;
 

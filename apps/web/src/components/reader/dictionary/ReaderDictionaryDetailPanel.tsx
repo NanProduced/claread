@@ -81,7 +81,7 @@ function DictionaryIconAction({
         ? "text-structure-green hover:bg-transparent hover:text-structure-green/90"
         : tone === "error"
           ? "text-error-red hover:text-error-red/90"
-          : "text-muted hover:text-ink";
+          : "text-muted-foreground hover:text-ink";
 
   return (
     <Tooltip>
@@ -392,7 +392,7 @@ export function ReaderDictionaryDetailPanel({
             onClick={onCreateAINote}
             disabled={dictionaryAINoteState.kind === "saving"}
           >
-            <BookOpen aria-hidden="true" className="h-3.5 w-3.5 text-muted" />
+            <BookOpen aria-hidden="true" className="h-3.5 w-3.5 text-muted-foreground" />
             <span>AI 生成笔记</span>
           </button>
           {dictionaryAINoteState.kind === "saved" ? (
@@ -455,12 +455,12 @@ export function ReaderDictionaryDetailPanel({
         <div className="flex flex-wrap items-center gap-1.5">
           <p className={`text-[0.68rem] font-semibold tracking-[0.08em] ${toneClassName}`}>{label}</p>
           {!isVocabHighlightLookup && glossaryTitle ? (
-            <span className="rounded-[5px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-semibold leading-none text-muted">
+            <span className="rounded-[5px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-semibold leading-none text-muted-foreground">
               {glossaryTitle}
             </span>
           ) : null}
           {glossarySubtype ? (
-            <span className="rounded-[5px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-semibold leading-none text-muted">
+            <span className="rounded-[5px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-semibold leading-none text-muted-foreground">
               {glossarySubtype}
             </span>
           ) : null}
@@ -470,17 +470,17 @@ export function ReaderDictionaryDetailPanel({
         ) : null}
         {glossaryExample ? (
           <div className="space-y-1 pt-1">
-            <p className="text-[0.68rem] font-semibold text-muted">例句</p>
+            <p className="text-[0.68rem] font-semibold text-muted-foreground">例句</p>
             <p className="mt-1 text-xs leading-5 text-ink-soft select-text">{glossaryExample}</p>
             {glossaryExampleTranslation ? (
-              <p className="mt-0.5 text-[0.72rem] leading-5 text-muted select-text">
+              <p className="mt-0.5 text-[0.72rem] leading-5 text-muted-foreground select-text">
                 {glossaryExampleTranslation}
               </p>
             ) : null}
           </div>
         ) : null}
         {glossaryReason ? (
-          <p className="text-xs leading-5 text-muted select-text">{glossaryReason}</p>
+          <p className="text-xs leading-5 text-muted-foreground select-text">{glossaryReason}</p>
         ) : null}
       </div>
     );
@@ -519,7 +519,7 @@ export function ReaderDictionaryDetailPanel({
           </div>
             <button
               type="button"
-              className={cn(readerIconAction, "inline-flex h-6 w-6 shrink-0 justify-center rounded-[0.55rem] p-0 text-muted")}
+              className={cn(readerIconAction, "inline-flex h-6 w-6 shrink-0 justify-center rounded-[0.55rem] p-0 text-muted-foreground")}
               onClick={onToggleAIPanel}
               aria-label="折叠 AI 语境解读"
             >
@@ -564,23 +564,23 @@ export function ReaderDictionaryDetailPanel({
               <div className="flex flex-wrap items-center gap-1.5 text-[0.7rem] font-semibold text-vocab-amber">
                 <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
                 <span>未识别结果</span>
-                <span className="rounded bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] text-muted">
+                <span className="rounded bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] text-muted-foreground">
                   未验证
                 </span>
                 {classificationLabel ? (
-                  <span className="rounded bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] text-muted">
+                  <span className="rounded bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] text-muted-foreground">
                     {classificationLabel}
                   </span>
                 ) : null}
               </div>
               <p className="mt-2.5 text-xs leading-relaxed text-ink-soft select-text">{missingFallbackResult.summary}</p>
               {missingFallbackResult.reason ? (
-                <p className="mt-1.5 text-[0.68rem] leading-normal text-muted select-text">{missingFallbackResult.reason}</p>
+                <p className="mt-1.5 text-[0.68rem] leading-normal text-muted-foreground select-text">{missingFallbackResult.reason}</p>
               ) : null}
             </div>
             <button
               type="button"
-              className={cn(readerIconAction, "inline-flex h-6 w-6 shrink-0 justify-center rounded-[0.55rem] p-0 text-muted")}
+              className={cn(readerIconAction, "inline-flex h-6 w-6 shrink-0 justify-center rounded-[0.55rem] p-0 text-muted-foreground")}
               onClick={onToggleAIPanel}
               aria-label="折叠未识别结果"
             >
@@ -620,7 +620,7 @@ export function ReaderDictionaryDetailPanel({
                 未验证
               </span>
               {classificationLabel ? (
-                <span className="rounded bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] text-muted">
+                <span className="rounded bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] text-muted-foreground">
                   {classificationLabel}
                 </span>
               ) : null}
@@ -629,11 +629,11 @@ export function ReaderDictionaryDetailPanel({
               {missingFallbackResult.entry.word}
             </h4>
             {missingFallbackResult.entry.baseWord || missingFallbackResult.entry.phonetic ? (
-              <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[0.75rem] text-muted font-mono leading-none">
+              <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[0.75rem] text-muted-foreground font-mono leading-none">
                 {missingFallbackResult.entry.baseWord &&
                 normalizeDictionaryText(missingFallbackResult.entry.baseWord) !==
                   normalizeDictionaryText(missingFallbackResult.entry.word) ? (
-                  <span className="rounded bg-ink/[0.03] px-1.5 py-0.5 text-[0.66rem] text-muted">
+                  <span className="rounded bg-ink/[0.03] px-1.5 py-0.5 text-[0.66rem] text-muted-foreground">
                     原形 {missingFallbackResult.entry.baseWord}
                   </span>
                 ) : null}
@@ -643,7 +643,7 @@ export function ReaderDictionaryDetailPanel({
           </div>
           <button
             type="button"
-            className={cn(readerIconAction, "inline-flex h-6 w-6 shrink-0 justify-center rounded-[0.55rem] p-0 text-muted")}
+            className={cn(readerIconAction, "inline-flex h-6 w-6 shrink-0 justify-center rounded-[0.55rem] p-0 text-muted-foreground")}
             onClick={onToggleAIPanel}
             aria-label="折叠未验证词条"
           >
@@ -655,12 +655,12 @@ export function ReaderDictionaryDetailPanel({
         {aiEntryTags.length > 0 ? (
           <div className="mt-3 flex flex-wrap gap-1 select-none">
             {aiEntryTags.slice(0, 3).map((item) => (
-              <span key={item} className="rounded-[4px] bg-ink/[0.03] px-1.5 py-0.5 text-[0.66rem] font-medium text-muted">
+              <span key={item} className="rounded-[4px] bg-ink/[0.03] px-1.5 py-0.5 text-[0.66rem] font-medium text-muted-foreground">
                 {item}
               </span>
             ))}
             {aiEntryTags.length > 3 ? (
-              <span className="rounded-[4px] bg-ink/[0.03] px-1.5 py-0.5 text-[0.66rem] font-medium text-muted">+{aiEntryTags.length - 3}</span>
+              <span className="rounded-[4px] bg-ink/[0.03] px-1.5 py-0.5 text-[0.66rem] font-medium text-muted-foreground">+{aiEntryTags.length - 3}</span>
             ) : null}
           </div>
         ) : null}
@@ -695,7 +695,7 @@ export function ReaderDictionaryDetailPanel({
                   <div className="flex-1 min-w-0 select-text">
                     <div className="flex items-baseline flex-wrap gap-x-2">
                       {sense.partOfSpeech && (
-                        <span className="inline-flex px-1.5 py-0.5 rounded-[4px] bg-ink/[0.03] text-muted text-[0.68rem] font-mono leading-none">
+                        <span className="inline-flex px-1.5 py-0.5 rounded-[4px] bg-ink/[0.03] text-muted-foreground text-[0.68rem] font-mono leading-none">
                           {sense.partOfSpeech}
                         </span>
                       )}
@@ -731,7 +731,7 @@ export function ReaderDictionaryDetailPanel({
                   <div className="flex-1 min-w-0 select-text">
                     <div className="flex items-baseline flex-wrap gap-x-2">
                       {sense.partOfSpeech && (
-                        <span className="inline-flex px-1.5 py-0.5 rounded-[4px] bg-ink/[0.03] text-muted text-[0.68rem] font-mono leading-none">
+                        <span className="inline-flex px-1.5 py-0.5 rounded-[4px] bg-ink/[0.03] text-muted-foreground text-[0.68rem] font-mono leading-none">
                           {sense.partOfSpeech}
                         </span>
                       )}
@@ -751,7 +751,7 @@ export function ReaderDictionaryDetailPanel({
                           • {example.example}
                         </blockquote>
                         {example.exampleTranslation && (
-                          <figcaption className="text-[0.78rem] leading-normal text-muted/95 pl-3 select-text">
+                          <figcaption className="text-[0.78rem] leading-normal text-muted-foreground/95 pl-3 select-text">
                             {example.exampleTranslation}
                           </figcaption>
                         )}
@@ -823,13 +823,13 @@ export function ReaderDictionaryDetailPanel({
             onClick={() => setHistoryCollapsed((prev) => !prev)}
             aria-expanded={!historyCollapsed}
           >
-            <span className="text-[0.7rem] font-semibold tracking-[0.08em] text-muted">最近查阅</span>
-            <span className="rounded-[4px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-mono font-semibold text-muted">
+            <span className="text-[0.7rem] font-semibold tracking-[0.08em] text-muted-foreground">最近查阅</span>
+            <span className="rounded-[4px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-mono font-semibold text-muted-foreground">
               {history.length}
             </span>
             <ChevronDown
               aria-hidden="true"
-              className={`h-3.5 w-3.5 text-muted transition-transform duration-200 ${
+              className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${
                 !historyCollapsed ? "rotate-180" : ""
               }`}
             />
@@ -875,7 +875,7 @@ export function ReaderDictionaryDetailPanel({
                           <span className={`block truncate text-[0.8rem] font-semibold leading-none ${active ? "text-vocab-amber" : "text-ink group-hover:text-ink-soft"}`}>
                             {item.query}
                           </span>
-                          <span className="mt-1 block line-clamp-1 text-[0.7rem] leading-none text-muted">
+                          <span className="mt-1 block line-clamp-1 text-[0.7rem] leading-none text-muted-foreground">
                             {summary}
                           </span>
                         </span>
@@ -918,7 +918,7 @@ export function ReaderDictionaryDetailPanel({
         <div className="min-w-0 flex-1">
           {searchExpanded ? (
             <form onSubmit={handleSearchSubmit} className="relative flex min-w-0 items-center w-full">
-              <Search className="absolute left-3 h-3.5 w-3.5 text-muted pointer-events-none" />
+              <Search className="absolute left-3 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
               <input
                 ref={searchInputRef}
                 className="w-full bg-surface pl-8.5 pr-8 py-1.5 rounded-[6px] border border-hairline/70 focus:border-vocab-amber/40 focus:ring-1 focus:ring-vocab-amber/20 outline-none text-xs text-ink placeholder:text-subtle/80 transition-all font-medium"
@@ -929,7 +929,7 @@ export function ReaderDictionaryDetailPanel({
               />
               <button
                 type="button"
-                className={cn(readerIconAction, "absolute right-2.5 inline-flex h-5 w-5 justify-center rounded-[0.45rem] p-0 text-muted")}
+                className={cn(readerIconAction, "absolute right-2.5 inline-flex h-5 w-5 justify-center rounded-[0.45rem] p-0 text-muted-foreground")}
                 onClick={handleSearchClearOrCollapse}
                 aria-label={searchQuery.trim() ? "清空搜索" : "收起搜索"}
               >
@@ -974,18 +974,18 @@ export function ReaderDictionaryDetailPanel({
         {!lookup && !inspectVisible ? (
           <div className="flex min-h-[18rem] flex-col justify-center px-6 py-8 text-left select-none">
             <div className="mx-auto w-full max-w-[19rem]">
-              <div className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-hairline/75 bg-surface text-muted">
+              <div className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-hairline/75 bg-surface text-muted-foreground">
                 <BookOpen aria-hidden="true" className="h-4 w-4" />
               </div>
               <h3 className="mt-4 font-headline text-[1.35rem] font-bold text-ink leading-tight">从正文打开词典</h3>
-              <p className="mt-2 text-xs leading-5 text-muted">
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
                 双击单词查词，点击短语或语境标注查看 AI 解释，也可以用顶部搜索直接查询。
               </p>
               {history.length > 0 ? (
                 <div className="mt-5 border-t border-hairline/60 pt-3.5">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-[0.68rem] font-semibold tracking-[0.08em] text-muted">最近查阅</p>
-                    <span className="rounded-[4px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-mono font-semibold text-muted">
+                    <p className="text-[0.68rem] font-semibold tracking-[0.08em] text-muted-foreground">最近查阅</p>
+                    <span className="rounded-[4px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-mono font-semibold text-muted-foreground">
                       {history.length}
                     </span>
                   </div>
@@ -998,7 +998,7 @@ export function ReaderDictionaryDetailPanel({
                         onClick={() => onSelectHistory?.(item)}
                       >
                         <span className="block truncate text-[0.76rem] font-semibold leading-5 text-ink">{item.query}</span>
-                        <span className="block truncate text-[0.68rem] leading-4 text-muted">{dictionaryLookupHistorySummary(item)}</span>
+                        <span className="block truncate text-[0.68rem] leading-4 text-muted-foreground">{dictionaryLookupHistorySummary(item)}</span>
                       </button>
                     ))}
                   </div>
@@ -1048,7 +1048,7 @@ export function ReaderDictionaryDetailPanel({
         {lookup?.state.kind === "error" ? (
           <div className="space-y-4 px-5 py-5 select-none">
             <div>
-              <p className="text-[0.66rem] font-bold tracking-wider text-muted">查询失败</p>
+              <p className="text-[0.66rem] font-bold tracking-wider text-muted-foreground">查询失败</p>
               <h3 className="mt-1 font-headline text-[1.8rem] font-bold tracking-tight text-ink leading-none">{lookup.query}</h3>
             </div>
             <div className="rounded-[8px] border border-exam-red/20 bg-exam-red/[0.01] px-4 py-3">
@@ -1069,14 +1069,14 @@ export function ReaderDictionaryDetailPanel({
                     {entryResult.entry.word}
                   </h3>
                   {phoneticLabel && (
-                    <span className="text-xs text-muted font-mono leading-none tracking-wide select-text">
+                    <span className="text-xs text-muted-foreground font-mono leading-none tracking-wide select-text">
                       {phoneticLabel}
                     </span>
                   )}
                   {lemmaLabel || homographLabel ? (
                     <div className="flex flex-wrap items-center gap-1.5 text-[0.68rem] font-mono leading-none">
-                      {lemmaLabel ? <span className="rounded bg-ink/[0.03] px-1.5 py-0.5 text-muted">原形 {lemmaWord}</span> : null}
-                      {homographLabel ? <span className="rounded bg-ink/[0.03] px-1.5 py-0.5 text-muted">{homographLabel}</span> : null}
+                      {lemmaLabel ? <span className="rounded bg-ink/[0.03] px-1.5 py-0.5 text-muted-foreground">原形 {lemmaWord}</span> : null}
+                      {homographLabel ? <span className="rounded bg-ink/[0.03] px-1.5 py-0.5 text-muted-foreground">{homographLabel}</span> : null}
                     </div>
                   ) : null}
                 </div>
@@ -1084,14 +1084,14 @@ export function ReaderDictionaryDetailPanel({
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-hairline/60 pt-3">
                   <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                     {displayedTags.map((item) => (
-                      <span key={item} className="rounded-[4px] bg-ink/[0.03] px-1.5 py-0.5 text-[0.66rem] font-medium text-muted">
+                      <span key={item} className="rounded-[4px] bg-ink/[0.03] px-1.5 py-0.5 text-[0.66rem] font-medium text-muted-foreground">
                         {item}
                       </span>
                     ))}
                     {hiddenTagCount > 0 && !showAllTags ? (
                       <button
                         type="button"
-                        className="inline-flex rounded-[4px] border border-transparent bg-ink/[0.03] px-1.5 py-0.5 text-[0.66rem] font-medium text-muted transition-[background-color,color,border-color] duration-[var(--cl-duration-fast)] ease-[var(--cl-ease-standard)] hover:border-hairline/70 hover:bg-ink/[0.045] hover:text-ink"
+                        className="inline-flex rounded-[4px] border border-transparent bg-ink/[0.03] px-1.5 py-0.5 text-[0.66rem] font-medium text-muted-foreground transition-[background-color,color,border-color] duration-[var(--cl-duration-fast)] ease-[var(--cl-ease-standard)] hover:border-hairline/70 hover:bg-ink/[0.045] hover:text-ink"
                         onClick={() => setShowAllTags(true)}
                         aria-expanded={false}
                         aria-label={`展开剩余 ${hiddenTagCount} 个考试标签`}
@@ -1102,7 +1102,7 @@ export function ReaderDictionaryDetailPanel({
                     {hiddenTagCount > 0 && showAllTags ? (
                       <button
                         type="button"
-                        className={cn(readerIconAction, "inline-flex h-5 w-5 items-center justify-center rounded-[0.45rem] p-0 text-muted")}
+                        className={cn(readerIconAction, "inline-flex h-5 w-5 items-center justify-center rounded-[0.45rem] p-0 text-muted-foreground")}
                         onClick={() => setShowAllTags(false)}
                         aria-expanded
                         aria-label="收起考试标签"
@@ -1186,7 +1186,7 @@ export function ReaderDictionaryDetailPanel({
                           className={cn(
                             readerTransitionFast,
                             "relative flex items-baseline gap-1 pb-2 text-[0.78rem] font-bold",
-                            active ? "text-ink" : "text-muted hover:text-ink active:text-ink",
+                            active ? "text-ink" : "text-muted-foreground hover:text-ink active:text-ink",
                           )}
                           onClick={() => setActiveTab(item.id)}
                           aria-pressed={active}
@@ -1223,7 +1223,7 @@ export function ReaderDictionaryDetailPanel({
         {lookup && disambiguationResult ? (
           <div className="space-y-5 px-5 py-5 select-none">
             <div>
-              <p className="text-[0.66rem] font-bold tracking-wider text-muted">歧义选择</p>
+              <p className="text-[0.66rem] font-bold tracking-wider text-muted-foreground">歧义选择</p>
               <h3 className="mt-1 font-headline text-[1.8rem] font-bold tracking-tight text-ink leading-none">{lookup.query}</h3>
             </div>
             {hasContextualAnnotationInset ? renderContextualAnnotationInset() : null}
@@ -1233,9 +1233,9 @@ export function ReaderDictionaryDetailPanel({
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-[0.8rem] font-bold text-ink">{group.label}</p>
-                      <p className="mt-0.5 text-[0.68rem] text-muted">{group.hint}</p>
+                      <p className="mt-0.5 text-[0.68rem] text-muted-foreground">{group.hint}</p>
                     </div>
-                    <span className="rounded-[4px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-mono font-semibold text-muted">{group.candidates.length}</span>
+                    <span className="rounded-[4px] bg-ink/[0.04] px-1.5 py-0.5 text-[0.62rem] font-mono font-semibold text-muted-foreground">{group.candidates.length}</span>
                   </div>
                   <div className="mt-2.5 space-y-2">
                     {group.candidates.map((candidate) => (
@@ -1248,7 +1248,7 @@ export function ReaderDictionaryDetailPanel({
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
                             <p className="text-xs font-semibold text-ink leading-normal">{candidate.label}</p>
-                            {candidate.preview ? <p className="mt-1 line-clamp-1 text-[0.68rem] text-muted">{candidate.preview}</p> : null}
+                            {candidate.preview ? <p className="mt-1 line-clamp-1 text-[0.68rem] text-muted-foreground">{candidate.preview}</p> : null}
                           </div>
                           <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-subtle" />
                         </div>
@@ -1265,7 +1265,7 @@ export function ReaderDictionaryDetailPanel({
         {lookup && notFoundResult ? (
           <div className="space-y-4 px-5 py-5">
             <div>
-              <p className="text-[0.66rem] font-bold tracking-wider text-muted select-none">未收录结果</p>
+              <p className="text-[0.66rem] font-bold tracking-wider text-muted-foreground select-none">未收录结果</p>
               <h3 className="mt-1 font-headline text-[1.8rem] font-bold tracking-tight text-ink leading-none">{lookup.query}</h3>
             </div>
             {hasContextualAnnotationInset ? renderContextualAnnotationInset() : null}
@@ -1298,7 +1298,7 @@ export function ReaderDictionaryDetailPanel({
         {lookup && errorResult ? (
           <div className="space-y-4 px-5 py-5 select-none">
             <div>
-              <p className="text-[0.66rem] font-bold tracking-wider text-muted">词典暂不可用</p>
+              <p className="text-[0.66rem] font-bold tracking-wider text-muted-foreground">词典暂不可用</p>
               <h3 className="mt-1 font-headline text-[1.8rem] font-bold tracking-tight text-ink leading-none">{lookup.query}</h3>
             </div>
             <div className="rounded-[8px] border border-exam-red/20 bg-exam-red/[0.01] px-4 py-3">

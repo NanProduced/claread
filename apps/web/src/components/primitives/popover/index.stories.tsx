@@ -13,7 +13,7 @@ export const Default = () => (
     <PopoverContent>
       <div className="space-y-2">
         <h3 className="text-sm font-semibold text-ink">阅读偏好</h3>
-        <p className="text-sm leading-6 text-muted">这里展示轻量设置，不进入阻断式弹窗。</p>
+        <p className="text-sm leading-6 text-muted-foreground">这里展示轻量设置，不进入阻断式弹窗。</p>
       </div>
     </PopoverContent>
   </Popover>

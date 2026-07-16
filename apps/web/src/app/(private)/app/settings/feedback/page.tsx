@@ -8,7 +8,7 @@ export default function FeedbackPage() {
     <main className="flex h-dvh flex-col overflow-y-auto bg-reader-paper px-4 py-8 text-ink sm:px-8 lg:px-16 xl:px-24">
       <div className="mx-auto flex w-full max-w-[880px] flex-col pb-24 pt-4 lg:pt-12">
         <div className="mb-14 border-b border-hairline pb-8">
-          <nav aria-label="Breadcrumb" className="mb-4 flex items-center gap-2 text-[0.68rem] font-bold tracking-[0.15em] text-muted">
+          <nav aria-label="Breadcrumb" className="mb-4 flex items-center gap-2 text-[0.68rem] font-bold tracking-[0.15em] text-muted-foreground">
             <Link href={appSettingsRoute} className="hover:text-ink hover:underline underline-offset-4 decoration-hairline transition-colors">
               Preferences
             </Link>

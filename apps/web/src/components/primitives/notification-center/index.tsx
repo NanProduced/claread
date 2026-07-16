@@ -186,7 +186,7 @@ export function NotificationCenterTrigger({
         <button
           type="button"
           className={cn(
-            "focus-ring relative inline-flex items-center justify-center text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink",
+            "focus-ring relative inline-flex items-center justify-center text-muted-foreground transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink",
             showLabel ? "min-h-12 flex-col gap-1 rounded-note text-[0.6875rem] font-semibold" : "h-7 w-7 rounded-[6px]",
             className,
           )}
@@ -223,7 +223,7 @@ export function NotificationCenterTrigger({
           {unreadCount > 0 ? (
             <button
               type="button"
-              className="focus-ring inline-flex min-h-8 items-center gap-1 rounded-[6px] px-2 text-xs font-semibold text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink"
+              className="focus-ring inline-flex min-h-8 items-center gap-1 rounded-[6px] px-2 text-xs font-semibold text-muted-foreground transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink"
               onClick={markAllNotificationsRead}
             >
               <CheckCheck aria-hidden="true" className="h-3.5 w-3.5" />
@@ -254,7 +254,7 @@ export function NotificationCenterTrigger({
                   <div className="min-w-0 flex-1 pr-7">
                     <p className="text-sm font-semibold leading-5 text-ink">{entry.title}</p>
                     {entry.description ? (
-                      <p className="mt-1 text-xs leading-5 text-muted">{entry.description}</p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">{entry.description}</p>
                     ) : null}
                     {entry.action ? (
                       <button

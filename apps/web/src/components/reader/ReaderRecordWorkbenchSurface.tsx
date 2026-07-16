@@ -32,11 +32,10 @@ import {
   modeShowsTranslation,
   modeVisibility,
   readerModeTypography,
-  readerThemeClassName,
   ReaderSettingsPanel,
   type ReaderSettingsState,
 } from "@/components/reader/settings";
-import type { ThemeName } from "@/lib/appearance";
+import { useAppearance } from "@/components/providers/appearance-provider";
 import { cn } from "@/lib/cn";
 import {
   anchorDraftsForSelection,
@@ -215,7 +214,7 @@ function enhancementStatusTone(
     case "queued":
       return "border-lens-blue/25 bg-lens-blue-soft text-ink-soft";
     default:
-      return "border-hairline bg-surface-warm text-muted";
+      return "border-hairline bg-surface-warm text-muted-foreground";
   }
 }
 
@@ -486,7 +485,7 @@ export function ReaderRecordWorkbenchSurface({
   );
   const [readerSettings, setReaderSettings] =
     useState<ReaderSettingsState>(defaultReaderSettings);
-  const [themeName, setThemeName] = useState<ThemeName>("paper");
+  const { themePreference, setThemePreference } = useAppearance();
   const [settingsPanelOpen, setSettingsPanelOpen] = useState(false);
   const [expandedAnalysisEntryIds, setExpandedAnalysisEntryIds] = useState<
     string[]
@@ -520,7 +519,6 @@ export function ReaderRecordWorkbenchSurface({
 
   const isImmersiveMode = readerSettings.mode === "immersive";
   const typography = readerModeTypography(readerSettings);
-  const canvasThemeClass = readerThemeClassName(themeName);
   const showTranslation = modeShowsTranslation(readerSettings.mode);
   const contentVisibility = modeVisibility(readerSettings.mode);
   const sentenceCount = readerVm.article.sentences.length;
@@ -1082,7 +1080,7 @@ export function ReaderRecordWorkbenchSurface({
 
   return (
     <main
-      className="paper-grain reader-shell-page min-h-screen px-3 pb-24 pt-3 text-ink sm:px-4 md:pb-6 lg:px-5"
+      className="reader-shell-page min-h-screen px-3 pb-24 pt-3 text-ink sm:px-4 md:pb-6 lg:px-5"
       data-reader-record-workbench="true"
       data-testid="reader-record-workbench-surface"
     >
@@ -1099,17 +1097,17 @@ export function ReaderRecordWorkbenchSurface({
               <span className="text-lens-blue">
                 {isImmersiveMode ? "沉浸阅读" : "精读模式"}
               </span>
-              <span className="text-muted/60">·</span>
-              <span className="font-medium text-muted">{formattedDate}</span>
-              <span className="text-muted/60">·</span>
-              <span className="font-medium text-muted">Reading Record</span>
+              <span className="text-muted-foreground/60">·</span>
+              <span className="font-medium text-muted-foreground">{formattedDate}</span>
+              <span className="text-muted-foreground/60">·</span>
+              <span className="font-medium text-muted-foreground">Reading Record</span>
             </div>
 
             <div className="min-w-0">
               <h1 className="font-headline text-[clamp(2rem,4vw,3.25rem)] font-bold leading-[1.08] tracking-tight text-ink">
                 {snapshot.record.title}
               </h1>
-              <p className="mt-4 max-w-[72ch] font-sans text-[0.95rem] font-medium leading-[1.68] tracking-wide text-muted">
+              <p className="mt-4 max-w-[72ch] font-sans text-[0.95rem] font-medium leading-[1.68] tracking-wide text-muted-foreground">
                 正文、译文和标注来自当前阅读快照；当前为只读预览。
               </p>
             </div>
@@ -1121,16 +1119,16 @@ export function ReaderRecordWorkbenchSurface({
                   <span>{sourceTypeLabel(snapshot.record.source_type)}</span>
                 </span>
                 <div className="h-3.5 w-px bg-hairline" />
-                <span className="text-[0.8rem] font-semibold text-muted">
+                <span className="text-[0.8rem] font-semibold text-muted-foreground">
                   {sentenceCount} 句
                 </span>
                 <div className="h-3.5 w-px bg-hairline" />
-                <span className="text-[0.8rem] font-semibold text-muted">
+                <span className="text-[0.8rem] font-semibold text-muted-foreground">
                   {productStateLabel(snapshot.record.product_state)}
                 </span>
                 <div className="h-3.5 w-px bg-hairline" />
                 <span
-                  className="text-[0.8rem] font-semibold text-muted"
+                  className="text-[0.8rem] font-semibold text-muted-foreground"
                   data-testid="reader-record-readiness-chip"
                 >
                   {readinessLabel}
@@ -1157,7 +1155,7 @@ export function ReaderRecordWorkbenchSurface({
                       "h-[18px] w-[18px] shrink-0",
                       readerSettings.mode === "intensive"
                         ? "text-vocab-amber"
-                        : "text-muted",
+                        : "text-muted-foreground",
                     )}
                     strokeWidth={1.5}
                   />
@@ -1188,7 +1186,7 @@ export function ReaderRecordWorkbenchSurface({
                       "h-[18px] w-[18px] shrink-0",
                       readerSettings.mode === "immersive"
                         ? "text-vocab-amber"
-                        : "text-muted",
+                        : "text-muted-foreground",
                     )}
                     strokeWidth={1.5}
                   />
@@ -1216,7 +1214,7 @@ export function ReaderRecordWorkbenchSurface({
                     aria-hidden="true"
                     className={cn(
                       "h-[18px] w-[18px] shrink-0",
-                      settingsPanelOpen ? "text-vocab-amber" : "text-muted",
+                      settingsPanelOpen ? "text-vocab-amber" : "text-muted-foreground",
                     )}
                     strokeWidth={1.5}
                   />
@@ -1230,12 +1228,12 @@ export function ReaderRecordWorkbenchSurface({
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 text-[0.78rem] leading-normal tracking-wide text-muted sm:flex-row sm:items-center sm:justify-between sm:gap-0 sm:leading-none">
+            <div className="flex flex-col gap-3 text-[0.78rem] leading-normal tracking-wide text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:gap-0 sm:leading-none">
               <div className="flex flex-wrap items-center gap-1.5 font-medium">
                 <span>快照 {snapshot.snapshot_id}</span>
-                <span className="text-muted/60">·</span>
+                <span className="text-muted-foreground/60">·</span>
                 <span>事件序列 {snapshot.last_event_sequence}</span>
-                <span className="text-muted/60">·</span>
+                <span className="text-muted-foreground/60">·</span>
                 <span>只读预览</span>
               </div>
 
@@ -1279,10 +1277,10 @@ export function ReaderRecordWorkbenchSurface({
             {settingsPanelOpen ? (
               <div className="mx-auto w-full max-w-[82ch]">
                 <ReaderSettingsPanel
-                  themeName={themeName}
+                  themePreference={themePreference}
                   value={readerSettings}
                   onChange={updateReaderSettings}
-                  onThemeChange={setThemeName}
+                  onThemeChange={setThemePreference}
                   onClose={() => setSettingsPanelOpen(false)}
                 />
               </div>
@@ -1314,7 +1312,7 @@ export function ReaderRecordWorkbenchSurface({
               </div>
             ) : (
               <p
-                className="mx-auto mt-1 text-[0.78rem] font-medium tracking-wide text-muted"
+                className="mx-auto mt-1 text-[0.78rem] font-medium tracking-wide text-muted-foreground"
                 data-testid="reader-record-readiness-state"
               >
                 当前阶段：{readinessLabel}
@@ -1346,7 +1344,6 @@ export function ReaderRecordWorkbenchSurface({
               readingClassName={typography.bodyClassName}
               columnClassName={typography.columnClassName}
               paragraphDensityClassName={typography.paragraphDensityClassName}
-              themeClassName={canvasThemeClass}
               selectionFocusRangesBySentence={selectionFocusRangesBySentence}
               activeInlineMarkKey={activeInspect?.markId ?? null}
               onLookupIntent={handleLookupIntent}
@@ -1360,7 +1357,6 @@ export function ReaderRecordWorkbenchSurface({
               translationClassName={typography.translationClassName}
               columnClassName={typography.columnClassName}
               paragraphDensityClassName={typography.paragraphDensityClassName}
-              themeClassName={canvasThemeClass}
               annotationVisibilityGroups={contentVisibility}
               selectionFocusRangesBySentence={selectionFocusRangesBySentence}
               activeInlineMarkKey={activeInspect?.markId ?? null}

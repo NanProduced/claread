@@ -325,9 +325,9 @@ function GoalCard({
         <span className={`font-sans text-[0.85rem] tracking-tight ${active ? "font-semibold text-ink" : "font-medium text-ink/80 group-hover:text-ink"}`}>
           {goal.label}
         </span>
-        <span className="font-sans text-[0.72rem] tracking-wide text-muted">{SHORT_DESC[goal.value]}</span>
+        <span className="font-sans text-[0.72rem] tracking-wide text-muted-foreground">{SHORT_DESC[goal.value]}</span>
       </div>
-      <div className={`mt-0.5 flex h-7 w-7 items-center justify-center transition-colors duration-300 ${active ? "text-ink/80" : "text-subtle group-hover:text-muted"}`}>
+      <div className={`mt-0.5 flex h-7 w-7 items-center justify-center transition-colors duration-300 ${active ? "text-ink/80" : "text-subtle group-hover:text-muted-foreground"}`}>
         <Icon className="h-[1.15rem] w-[1.15rem]" strokeWidth={1.5} />
       </div>
     </button>
@@ -351,7 +351,7 @@ function VariantPill({
       className={`relative flex min-h-[2.25rem] w-full items-center justify-center gap-1.5 rounded-[8px] border px-1 transition-all duration-300 ease-out focus-ring ${
         active
           ? "border-lens-blue/30 bg-[rgba(37,99,235,0.06)] text-ink ring-1 ring-lens-blue/20"
-          : "border-hairline/60 bg-transparent text-muted hover:border-hairline hover:bg-ink/[0.03] hover:text-ink"
+          : "border-hairline/60 bg-transparent text-muted-foreground hover:border-hairline hover:bg-ink/[0.03] hover:text-ink"
       }`}
     >
       <span className={`text-[0.78rem] tracking-tight ${active ? "font-semibold" : "font-medium"}`}>{variant.label}</span>
@@ -731,7 +731,7 @@ export function AnalysisLoadingStatusBar({
             {LOADING_MESSAGES[messageIndex]}
           </p>
         </div>
-        <p className="mt-1 min-w-0 text-[0.72rem] font-medium leading-5 text-muted">
+        <p className="mt-1 min-w-0 text-[0.72rem] font-medium leading-5 text-muted-foreground">
           离开本页不会影响透读，完成后会保存到阅读记录
         </p>
       </div>
@@ -781,7 +781,7 @@ function SourceFilePreview({
                 >
                   {source.file.name}
                 </p>
-                <p className="mt-1 text-[0.76rem] font-medium text-muted">
+                <p className="mt-1 text-[0.76rem] font-medium text-muted-foreground">
                   {descriptor.label} · {formatFileSize(source.file.size)} · 点击开始透读后提取正文
                 </p>
                 {hasTextDraft ? (
@@ -818,7 +818,7 @@ function SourceFilePreview({
                 <span className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] border border-hairline/70 bg-reader-paper/76 text-ink">
                   <FileCheck2 aria-hidden className="h-5 w-5" />
                 </span>
-                <span className="rounded-full border border-hairline/70 bg-surface/58 px-2.5 py-1 text-[0.68rem] font-bold tracking-[0.12em] text-muted">
+                <span className="rounded-full border border-hairline/70 bg-surface/58 px-2.5 py-1 text-[0.68rem] font-bold tracking-[0.12em] text-muted-foreground">
                   {descriptor.badge}
                 </span>
               </div>
@@ -831,7 +831,7 @@ function SourceFilePreview({
                   />
                 ))}
               </div>
-              <p className="font-sans text-[0.76rem] font-semibold text-muted">
+              <p className="font-sans text-[0.76rem] font-semibold text-muted-foreground">
                 {descriptor.previewStatus}
               </p>
             </div>
@@ -1524,7 +1524,7 @@ export function AnalyzeSubmitForm({
               <p className="font-reading text-[1.16rem] leading-tight text-ink/78 xl:text-[1.28rem]">
                 Paste an English article here
               </p>
-              <p className="mt-2 max-w-[21rem] font-sans text-[0.78rem] leading-6 text-muted">
+              <p className="mt-2 max-w-[21rem] font-sans text-[0.78rem] leading-6 text-muted-foreground">
                 粘贴英文文章，或拖入 PDF / Markdown / TXT / 图片。
               </p>
             </div>
@@ -1538,7 +1538,7 @@ export function AnalyzeSubmitForm({
                 </span>
                 <div>
                   <p className="text-[0.92rem] font-semibold text-ink">松开以上传文件</p>
-                  <p className="mt-1 text-[0.76rem] font-medium text-muted">
+                  <p className="mt-1 text-[0.76rem] font-medium text-muted-foreground">
                     支持 PDF / Markdown / TXT / 图片，单个文件最大 25 MB
                   </p>
                 </div>
@@ -1621,7 +1621,7 @@ export function AnalyzeSubmitForm({
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-transparent px-3 font-sans text-[0.8rem] font-medium leading-none text-muted transition-colors duration-200 hover:bg-reader-paper/46 hover:text-ink data-[state=open]:bg-reader-paper/60 data-[state=open]:text-ink"
+                        className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-transparent px-3 font-sans text-[0.8rem] font-medium leading-none text-muted-foreground transition-colors duration-200 hover:bg-reader-paper/46 hover:text-ink data-[state=open]:bg-reader-paper/60 data-[state=open]:text-ink"
                       >
                         <span>
                           模式：{selectedGoalLabel}
@@ -1638,7 +1638,7 @@ export function AnalyzeSubmitForm({
                     >
                       <div className="flex items-center justify-between gap-4 px-1.5 pb-2 font-sans">
                         <p className="text-[0.85rem] font-semibold tracking-tight text-ink">透读模式</p>
-                        <span className="max-w-[14rem] truncate text-right text-[0.72rem] font-medium tracking-tight text-muted">
+                        <span className="max-w-[14rem] truncate text-right text-[0.72rem] font-medium tracking-tight text-muted-foreground">
                           当前：{selectedGoalLabel}
                           {selectedVariantLabel && selectedVariantLabel !== "学术通用" ? ` · ${selectedVariantLabel}` : ""}
                         </span>
@@ -1664,7 +1664,7 @@ export function AnalyzeSubmitForm({
 
                       <div className="mt-4 min-h-[7rem] px-1 pb-0.5">
                         <div className="mb-3 flex items-center gap-3">
-                          <span className="shrink-0 text-[0.72rem] font-semibold tracking-tight text-muted/90">细分方式</span>
+                          <span className="shrink-0 text-[0.72rem] font-semibold tracking-tight text-muted-foreground/90">细分方式</span>
                           <div className="h-px flex-1 bg-hairline/60" />
                         </div>
                         <div className="grid grid-cols-3 gap-2">
@@ -1748,7 +1748,7 @@ export function AnalyzeSubmitForm({
             >
               <div className="min-w-0">
                 <p className="font-semibold">已提取出待确认的英文正文</p>
-                <p className="mt-1 text-[0.76rem] text-muted">
+                <p className="mt-1 text-[0.76rem] text-muted-foreground">
                   请确认正文完整后进入透读。
                 </p>
               </div>
@@ -1815,7 +1815,7 @@ export function AnalyzeSubmitForm({
             </p>
           )}
           {state.preview ? (
-            <p className="mt-2 whitespace-pre-wrap rounded-[8px] border border-hairline/60 bg-reader-paper/40 p-2 text-[0.74rem] text-muted">
+            <p className="mt-2 whitespace-pre-wrap rounded-[8px] border border-hairline/60 bg-reader-paper/40 p-2 text-[0.74rem] text-muted-foreground">
               <span className="font-semibold text-ink/80">我们收到的内容：</span>
               {state.preview.slice(0, 240)}
             </p>

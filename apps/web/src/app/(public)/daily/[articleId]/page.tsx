@@ -100,7 +100,7 @@ function OptionalCoverPlate({ article }: { article: DailyReaderArticle }) {
           <span>{article.source}</span>
         </div>
       </div>
-      <figcaption className="mt-2 font-sans text-[0.68rem] leading-5 text-muted">
+      <figcaption className="mt-2 font-sans text-[0.68rem] leading-5 text-muted-foreground">
         {hasCover ? "Source image, cropped as an editorial plate." : "Generated editorial cover tone."}
       </figcaption>
     </figure>
@@ -111,7 +111,7 @@ function ArticleOpener({ article }: { article: DailyReaderArticle }) {
   return (
     <section className="border-y border-hairline bg-[#F3EFE6]">
       <div className="mx-auto grid max-w-[680px] px-5 py-10 sm:px-8 lg:py-14 xl:max-w-none xl:grid-cols-[minmax(0,1fr)_minmax(0,680px)_minmax(0,1fr)] xl:px-5">
-        <div className="mb-8 flex flex-wrap items-center justify-between gap-3 border-b border-ink/18 pb-3 font-sans text-[0.72rem] font-semibold tracking-[0.12em] text-muted xl:col-start-2">
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-3 border-b border-ink/18 pb-3 font-sans text-[0.72rem] font-semibold tracking-[0.12em] text-muted-foreground xl:col-start-2">
           <span>Claread Daily Reader</span>
           <span>{formatPublishDate(article.publishDate)}</span>
         </div>
@@ -126,7 +126,7 @@ function ArticleOpener({ article }: { article: DailyReaderArticle }) {
           </h1>
 
           {article.subtitle ? (
-            <p className="mt-5 max-w-[44rem] font-reading text-[1.08rem] leading-7 text-muted">
+            <p className="mt-5 max-w-[44rem] font-reading text-[1.08rem] leading-7 text-muted-foreground">
               {article.subtitle}
             </p>
           ) : null}
@@ -136,7 +136,7 @@ function ArticleOpener({ article }: { article: DailyReaderArticle }) {
               {article.tags.slice(0, 4).map((tag) => (
                 <span
                   key={tag}
-                  className="inline-block border border-hairline bg-surface-warm/54 px-3 py-1 text-xs font-medium text-muted"
+                  className="inline-block border border-hairline bg-surface-warm/54 px-3 py-1 text-xs font-medium text-muted-foreground"
                 >
                   {tag}
                 </span>
@@ -160,7 +160,7 @@ function ArticleOpener({ article }: { article: DailyReaderArticle }) {
 function ArticleByline({ article }: { article: DailyReaderArticle }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-4 border-b border-hairline pb-5">
-      <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted">
+      <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
         <span className="font-medium text-ink">{article.source}</span>
         <span aria-hidden="true" className="text-subtle">·</span>
         <time>{formatShortDate(article.publishDate)}</time>
@@ -172,7 +172,7 @@ function ArticleByline({ article }: { article: DailyReaderArticle }) {
       <div className="flex items-center gap-1">
         <Link
           href={loginSaveRoute(article.id)}
-          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface-warm hover:text-ink"
+          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-surface-warm hover:text-ink"
           aria-label="收藏"
         >
           <BookMarked aria-hidden="true" className="h-[18px] w-[18px]" />
@@ -181,14 +181,14 @@ function ArticleByline({ article }: { article: DailyReaderArticle }) {
           href={article.sourceUrl}
           target="_blank"
           rel="noreferrer"
-          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface-warm hover:text-ink"
+          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-surface-warm hover:text-ink"
           aria-label="查看原文"
         >
           <ExternalLink aria-hidden="true" className="h-[18px] w-[18px]" />
         </a>
         <button
           type="button"
-          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface-warm hover:text-ink"
+          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-surface-warm hover:text-ink"
           aria-label="分享"
         >
           <Share2 aria-hidden="true" className="h-[18px] w-[18px]" />
@@ -247,15 +247,15 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
   const sectionTitleClass =
     "font-sans text-[0.78rem] font-bold tracking-[0.08em] text-ink";
   const sectionCountClass =
-    "ml-2 align-middle font-sans text-[0.68rem] font-semibold tracking-normal text-muted";
+    "ml-2 align-middle font-sans text-[0.68rem] font-semibold tracking-normal text-muted-foreground";
   const analysisLabelClass =
-    "font-sans text-[0.7rem] font-semibold tracking-[0.08em] text-muted";
+    "font-sans text-[0.7rem] font-semibold tracking-[0.08em] text-muted-foreground";
 
   return (
     <section className="relative mt-20 border-t border-hairline pt-16">
       <div className="mb-12 flex items-center justify-center">
         <span className="block h-px w-12 bg-hairline"></span>
-        <h2 className="mx-4 text-xs font-bold tracking-[0.2em] text-muted">Analysis</h2>
+        <h2 className="mx-4 text-xs font-bold tracking-[0.2em] text-muted-foreground">Analysis</h2>
         <span className="block h-px w-12 bg-hairline"></span>
       </div>
 
@@ -292,7 +292,7 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
                   <p className="mt-3 text-[0.95rem] leading-[1.8] text-ink-soft">{move.explanation}</p>
                   {move.reusablePattern ? (
                     <div className="mt-4 border border-hairline bg-surface-warm/55 px-4 py-3">
-                      <p className="font-sans text-[0.72rem] font-semibold tracking-[0.08em] text-muted">
+                      <p className="font-sans text-[0.72rem] font-semibold tracking-[0.08em] text-muted-foreground">
                         可借句式
                       </p>
                       <p className="mt-1 font-reading text-[0.98rem] leading-[1.65] text-ink-soft">
@@ -325,7 +325,7 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
                   {note.breakdown ? (
                     <div className="mt-4 rounded-md bg-surface-warm/60 px-5 py-4">
                       <p className={analysisLabelClass}>结构拆解</p>
-                      <p className="mt-2 text-[0.9rem] leading-[1.7] text-muted">{note.breakdown}</p>
+                      <p className="mt-2 text-[0.9rem] leading-[1.7] text-muted-foreground">{note.breakdown}</p>
                     </div>
                   ) : null}
                   {note.takeaway ? (
@@ -354,7 +354,7 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
                   <p className="font-sans text-[1.05rem] font-bold text-ink">{item.expression}</p>
                   <p className="mt-1 text-[0.95rem] leading-[1.6] text-ink-soft">{item.gloss}</p>
                   {item.usageNote ? (
-                    <p className="mt-2 text-[0.85rem] leading-[1.6] text-muted">{item.usageNote}</p>
+                    <p className="mt-2 text-[0.85rem] leading-[1.6] text-muted-foreground">{item.usageNote}</p>
                   ) : null}
                 </div>
               ))}

@@ -18,7 +18,7 @@ export function StatCard({ title, items, className }: StatCardProps) {
       <dl className="mt-4 grid grid-cols-2 gap-x-5 gap-y-4 text-sm">
         {items.map((item) => (
           <div key={item.label}>
-            <dt className="text-xs text-muted">{item.label}</dt>
+            <dt className="text-xs text-muted-foreground">{item.label}</dt>
             <dd className="mt-1 font-semibold text-ink">{item.value}</dd>
           </div>
         ))}

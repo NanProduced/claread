@@ -27,12 +27,12 @@ export function ReadingNoteExpander({ note }: ReadingNoteProps) {
             {note.focusQuestion}
           </span>
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            <span className="font-sans text-[0.65rem] font-bold tracking-[0.1em] text-muted transition-colors group-hover:text-ink">
+            <span className="font-sans text-[0.65rem] font-bold tracking-[0.1em] text-muted-foreground transition-colors group-hover:text-ink">
               {isOpen ? "Close" : "Expand"}
             </span>
             <ChevronDown
               className={cn(
-                "h-3 w-3 text-muted transition-all duration-300 group-hover:text-ink",
+                "h-3 w-3 text-muted-foreground transition-all duration-300 group-hover:text-ink",
                 isOpen && "rotate-180"
               )}
             />
@@ -76,7 +76,7 @@ export function TranslationExpander({ translation }: TranslationProps) {
         aria-expanded={isOpen}
       >
         <div className="h-px w-10 bg-hairline transition-all duration-300 group-hover:w-16 group-hover:bg-muted" />
-        <span className="font-sans text-[0.65rem] font-bold tracking-[0.2em] text-muted transition-colors group-hover:text-ink">
+        <span className="font-sans text-[0.65rem] font-bold tracking-[0.2em] text-muted-foreground transition-colors group-hover:text-ink">
           {isOpen ? "Hide Translation" : "Show Translation"}
         </span>
       </button>
@@ -88,7 +88,7 @@ export function TranslationExpander({ translation }: TranslationProps) {
         )}
       >
         <div className="overflow-hidden">
-          <div className="mt-5 font-sans text-[0.95rem] leading-[1.85] text-muted">
+          <div className="mt-5 font-sans text-[0.95rem] leading-[1.85] text-muted-foreground">
             <p>{translation}</p>
           </div>
         </div>

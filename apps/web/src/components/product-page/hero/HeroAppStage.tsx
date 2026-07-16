@@ -55,8 +55,6 @@ import {
   heroDefaultRecord,
   heroImmersiveDensityClassName,
   heroImmersiveReadingClassName,
-  heroImmersiveThemeClassName,
-  heroIntensiveThemeClassName,
   heroReaderColumnClassName,
   heroReaderDensityClassName,
   heroReadingClassName,
@@ -823,7 +821,7 @@ function HeroSidebar({
               className={`focus-ring relative flex min-h-[38px] items-center justify-center rounded-[8px] transition-colors active:scale-[0.97] ${
                 active
                   ? "font-bold text-ink"
-                  : "font-semibold text-muted hover:bg-[var(--app-control-quiet)] hover:text-ink"
+                  : "font-semibold text-muted-foreground hover:bg-[var(--app-control-quiet)] hover:text-ink"
               }`}
               onClick={itemId ? () => onActivateView(itemId) : undefined}
             >
@@ -862,7 +860,7 @@ function HeroIconButton({
       type="button"
       aria-label={label}
       title={label}
-      className="focus-ring flex min-h-[38px] w-full items-center justify-center rounded-[8px] text-sm font-semibold text-muted transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink active:scale-[0.97]"
+      className="focus-ring flex min-h-[38px] w-full items-center justify-center rounded-[8px] text-sm font-semibold text-muted-foreground transition-colors hover:bg-[var(--app-control-quiet)] hover:text-ink active:scale-[0.97]"
     >
       {icon}
     </button>
@@ -895,7 +893,7 @@ function HeroComposeView({
             <span className="block">Bring it to Claread.</span>
             <span className="block">Read It Deeply.</span>
           </h2>
-          <p className="mt-4 max-w-[28rem] font-reading text-[1.04rem] leading-[1.65] text-muted">
+          <p className="mt-4 max-w-[28rem] font-reading text-[1.04rem] leading-[1.65] text-muted-foreground">
             从粘贴开始，进入深度阅读。
           </p>
         </div>
@@ -907,7 +905,7 @@ function HeroComposeView({
             <button
               type="button"
               aria-label="清空文本"
-              className="focus-ring absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-[9px] text-muted transition-colors hover:bg-reader-paper/50 hover:text-ink active:scale-[0.98]"
+              className="focus-ring absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-[9px] text-muted-foreground transition-colors hover:bg-reader-paper/50 hover:text-ink active:scale-[0.98]"
             >
               <X aria-hidden="true" className="h-4 w-4" />
             </button>
@@ -932,7 +930,7 @@ function HeroComposeView({
                         type="button"
                         aria-pressed={method.active}
                         className={`focus-ring group/source inline-flex min-h-9 items-center gap-2 px-0 text-[0.78rem] font-medium leading-none transition-colors active:scale-[0.98] ${
-                          method.active ? "text-ink hover:text-lens-blue" : "text-subtle/70 hover:text-muted"
+                          method.active ? "text-ink hover:text-lens-blue" : "text-subtle/70 hover:text-muted-foreground"
                         }`}
                       >
                         <span
@@ -953,7 +951,7 @@ function HeroComposeView({
                 <div className="flex flex-col-reverse items-stretch gap-3 sm:flex-row sm:items-center sm:justify-end">
                   <button
                     type="button"
-                    className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-transparent px-3 text-[0.78rem] font-semibold text-muted transition-colors hover:bg-reader-paper/55 hover:text-ink active:scale-[0.98]"
+                    className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-transparent px-3 text-[0.78rem] font-semibold text-muted-foreground transition-colors hover:bg-reader-paper/55 hover:text-ink active:scale-[0.98]"
                     onClick={() => onGoalChange(selectedGoal)}
                   >
                     <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
@@ -961,7 +959,7 @@ function HeroComposeView({
                       {selectedGoalMeta.label} · {selectedVariantLabel}
                     </span>
                   </button>
-                  <span className="hidden text-[0.72rem] font-medium tracking-[0.03em] text-muted xl:inline">
+                  <span className="hidden text-[0.72rem] font-medium tracking-[0.03em] text-muted-foreground xl:inline">
                     {characterCount} chars
                   </span>
                   <button
@@ -1006,7 +1004,7 @@ function HeroDailyPicks() {
         </h3>
         <button
           type="button"
-          className="focus-ring text-[0.72rem] font-medium tracking-[0.02em] text-muted transition-colors hover:text-ink"
+          className="focus-ring text-[0.72rem] font-medium tracking-[0.02em] text-muted-foreground transition-colors hover:text-ink"
         >
           查看全部 →
         </button>
@@ -1019,7 +1017,7 @@ function HeroDailyPicks() {
       <button type="button" className="focus-ring group block w-full border-b border-hairline/70 py-5 text-left">
         <div className="grid grid-cols-[minmax(0,1fr)_5.6rem] gap-4">
           <div className="min-w-0">
-            <p className="mb-3 font-sans text-[0.68rem] font-semibold tracking-[0.08em] text-muted">
+            <p className="mb-3 font-sans text-[0.68rem] font-semibold tracking-[0.08em] text-muted-foreground">
               Featured
             </p>
             <h5 className="text-balance font-headline text-[1.33rem] leading-[1.1] tracking-[-0.025em] text-ink transition-colors group-hover:text-lens-blue">
@@ -1028,10 +1026,10 @@ function HeroDailyPicks() {
           </div>
           <HeroDailyPickThumbnail index={0} />
         </div>
-        <p className="mt-4 line-clamp-2 font-reading text-[0.92rem] leading-[1.58] text-muted">
+        <p className="mt-4 line-clamp-2 font-reading text-[0.92rem] leading-[1.58] text-muted-foreground">
           {lead.subtitle}
         </p>
-        <div className="mt-4 font-sans text-[0.72rem] font-medium tracking-[0.01em] text-muted">
+        <div className="mt-4 font-sans text-[0.72rem] font-medium tracking-[0.01em] text-muted-foreground">
           {lead.source} · {lead.readTime} · {lead.difficulty}
         </div>
         <HeroTagList tags={lead.tags} />
@@ -1045,7 +1043,7 @@ function HeroDailyPicks() {
               <h5 className="text-balance font-headline text-[1.03rem] leading-[1.16] tracking-[-0.02em] text-ink transition-colors group-hover:text-lens-blue">
                 {article.title}
               </h5>
-              <div className="mt-2 font-sans text-[0.7rem] font-medium tracking-[0.01em] text-muted">
+              <div className="mt-2 font-sans text-[0.7rem] font-medium tracking-[0.01em] text-muted-foreground">
                 {article.source} · {article.readTime}
               </div>
               <HeroTagList tags={article.tags} />
@@ -1084,7 +1082,7 @@ function HeroTagList({ tags }: { tags: string[] }) {
       {tags.map((tag) => (
         <span
           key={tag}
-          className="rounded-pill border border-hairline/70 bg-surface/48 px-2 py-0.5 text-[0.62rem] font-semibold text-muted"
+          className="rounded-pill border border-hairline/70 bg-surface/48 px-2 py-0.5 text-[0.62rem] font-semibold text-muted-foreground"
         >
           {tag}
         </span>
@@ -1124,12 +1122,12 @@ function HeroLibraryView({
 
         <div className="mb-4 flex shrink-0 items-center justify-between pl-2">
           <div className="flex w-full max-w-sm items-center gap-3">
-            <Search className="h-4 w-4 text-muted" />
+            <Search className="h-4 w-4 text-muted-foreground" />
             <input
               type="text"
               aria-label="搜索标题、原文片段或阅读目标"
               placeholder="搜索标题、原文片段或阅读目标..."
-              className="w-full bg-transparent text-[0.95rem] text-ink outline-none placeholder:text-muted"
+              className="w-full bg-transparent text-[0.95rem] text-ink outline-none placeholder:text-muted-foreground"
               readOnly
             />
           </div>
@@ -1148,7 +1146,7 @@ function HeroLibraryView({
                 className={`focus-ring inline-flex items-center gap-1.5 rounded-pill px-3 py-1.5 text-[0.72rem] font-semibold tracking-[0.06em] transition-colors ${
                   index === 0
                     ? "bg-white text-ink shadow-[0_1px_3px_rgba(28,24,18,0.06)] ring-1 ring-hairline"
-                    : "text-muted hover:bg-black/[0.03] hover:text-ink"
+                    : "text-muted-foreground hover:bg-black/[0.03] hover:text-ink"
                 }`}
               >
                 {label === "仅收藏" ? <Heart className="h-3.5 w-3.5" /> : null}
@@ -1171,40 +1169,40 @@ function HeroLibraryView({
               className="group relative flex items-stretch justify-between gap-8 border-b border-hairline/45 py-7 first:pt-3"
             >
               <button type="button" className="focus-ring min-w-0 flex-1 text-left" onClick={onOpenReader}>
-                <div className="mb-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.66rem] font-semibold tracking-[0.1em] text-muted">
+                <div className="mb-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.66rem] font-semibold tracking-[0.1em] text-muted-foreground">
                   <span className="inline-flex items-center gap-1.5 font-bold text-vocab-amber">
                     <Sparkles className="h-3.5 w-3.5" />
                     {record.statusLabel}
                   </span>
-                  <span className="text-muted/30">·</span>
+                  <span className="text-muted-foreground/30">·</span>
                   <span>{record.goalLabel}</span>
-                  <span className="text-muted/30">·</span>
+                  <span className="text-muted-foreground/30">·</span>
                   <span>{record.variantLabel}</span>
-                  <span className="text-muted/30">·</span>
+                  <span className="text-muted-foreground/30">·</span>
                   <span>{record.sourceLabel}</span>
                 </div>
                 <h3 className="font-headline text-[1.45rem] font-bold leading-[1.28] tracking-tight text-ink transition-colors group-hover:text-lens-blue">
                   {record.title}
                 </h3>
-                <p className="mt-3 line-clamp-2 max-w-3xl font-reading text-[1rem] leading-[1.7] text-muted/95">
+                <p className="mt-3 line-clamp-2 max-w-3xl font-reading text-[1rem] leading-[1.7] text-muted-foreground/95">
                   {record.excerpt}
                 </p>
-                <div className="mt-4 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[0.72rem] font-medium tracking-[0.05em] text-muted">
-                  <span className="flex items-center gap-1 text-muted/75">
+                <div className="mt-4 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[0.72rem] font-medium tracking-[0.05em] text-muted-foreground">
+                  <span className="flex items-center gap-1 text-muted-foreground/75">
                     <Calendar className="h-3.5 w-3.5 opacity-60" />
                     {record.dateLabel}
                   </span>
-                  <span className="text-muted/30">·</span>
-                  <span className="flex items-center gap-1 text-muted/75">
+                  <span className="text-muted-foreground/30">·</span>
+                  <span className="flex items-center gap-1 text-muted-foreground/75">
                     <FileText className="h-3.5 w-3.5 opacity-60" />
                     {record.wordCount} 词
                   </span>
-                  <span className="text-muted/30">·</span>
+                  <span className="text-muted-foreground/30">·</span>
                   <span className="flex items-center gap-1 font-semibold text-vocab-amber">
                     <NotebookPen className="h-3.5 w-3.5" />
                     {record.noteCount} 笔记
                   </span>
-                  <span className="text-muted/30">·</span>
+                  <span className="text-muted-foreground/30">·</span>
                   <span className="flex items-center gap-1 font-semibold text-grammar-violet">
                     <BookMarked className="h-3.5 w-3.5" />
                     {record.vocabularyCount} 生词
@@ -1216,7 +1214,7 @@ function HeroLibraryView({
                   type="button"
                   aria-label={record.favorited ? "已收藏" : "收藏"}
                   className={`focus-ring inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-black/[0.035] ${
-                    record.favorited ? "text-vocab-amber" : "text-muted hover:text-ink"
+                    record.favorited ? "text-vocab-amber" : "text-muted-foreground hover:text-ink"
                   }`}
                 >
                   <Heart className={record.favorited ? "h-4 w-4 fill-current" : "h-4 w-4"} />
@@ -1224,7 +1222,7 @@ function HeroLibraryView({
                 <button
                   type="button"
                   title="继续阅读"
-                  className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-md text-muted opacity-100 transition-all hover:translate-x-1 hover:text-ink"
+                  className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-100 transition-all hover:translate-x-1 hover:text-ink"
                   onClick={onOpenReader}
                 >
                   <ArrowRight className="h-4.5 w-4.5" />
@@ -1241,7 +1239,7 @@ function HeroLibraryView({
           <h3 className="mt-3 font-headline text-[1.8rem] font-semibold leading-tight text-ink">
             最近读过的文章
           </h3>
-          <div className="mt-6 grid gap-3 text-[0.82rem] font-medium text-muted">
+          <div className="mt-6 grid gap-3 text-[0.82rem] font-medium text-muted-foreground">
             <div className="flex justify-between border-b border-hairline/70 pb-3">
               <span>总记录</span>
               <strong className="text-ink">{records.length}</strong>
@@ -1289,13 +1287,13 @@ function HeroVocabularyView({
             <h2 className="font-headline text-[2.55rem] font-semibold leading-none tracking-tight text-ink">
               Vocabulary Book.
             </h2>
-            <p className="mt-3 max-w-[32ch] font-reading text-[1rem] leading-[1.75] text-muted">
+            <p className="mt-3 max-w-[32ch] font-reading text-[1rem] leading-[1.75] text-muted-foreground">
               阅读中留下的重点词汇与语境。
             </p>
           </div>
           <button
             type="button"
-            className="focus-ring inline-flex min-h-11 items-center justify-center rounded-[10px] border border-hairline bg-surface px-5 text-[0.82rem] font-semibold tracking-[0.08em] text-muted"
+            className="focus-ring inline-flex min-h-11 items-center justify-center rounded-[10px] border border-hairline bg-surface px-5 text-[0.82rem] font-semibold tracking-[0.08em] text-muted-foreground"
           >
             <Play aria-hidden="true" className="mr-2 h-3.5 w-3.5" />
             开始复习 1 个
@@ -1304,16 +1302,16 @@ function HeroVocabularyView({
 
         <div className="mb-4 flex shrink-0 items-center justify-between pb-2 pl-2">
           <div className="flex w-full max-w-sm items-center gap-3">
-            <Search className="h-4 w-4 text-muted" />
+            <Search className="h-4 w-4 text-muted-foreground" />
             <input
               type="text"
               aria-label="搜索单词、释义或来源文章"
               placeholder="搜索单词、释义或来源文章..."
-              className="w-full bg-transparent text-[0.95rem] text-ink outline-none placeholder:text-muted"
+              className="w-full bg-transparent text-[0.95rem] text-ink outline-none placeholder:text-muted-foreground"
               readOnly
             />
           </div>
-          <p className="text-[0.72rem] font-semibold tracking-[0.08em] text-muted">
+          <p className="text-[0.72rem] font-semibold tracking-[0.08em] text-muted-foreground">
             共 {visibleItems.length} 个生词 · {reviewCount} 个待复习
           </p>
         </div>
@@ -1335,8 +1333,8 @@ function HeroVocabularyView({
                   <h3 className="font-headline text-[1.38rem] font-semibold leading-none tracking-tight text-ink">
                     {item.word}
                   </h3>
-                  {item.phonetic ? <span className="text-xs text-muted">{item.phonetic}</span> : null}
-                  <span className="rounded-pill border border-hairline/80 bg-surface/50 px-2 py-0.5 text-[0.68rem] font-semibold text-muted">
+                  {item.phonetic ? <span className="text-xs text-muted-foreground">{item.phonetic}</span> : null}
+                  <span className="rounded-pill border border-hairline/80 bg-surface/50 px-2 py-0.5 text-[0.68rem] font-semibold text-muted-foreground">
                     {item.partOfSpeech}
                   </span>
                 </div>
@@ -1344,18 +1342,18 @@ function HeroVocabularyView({
                   {item.shortMeaning}
                 </p>
                 <div className="mt-2.5 pl-4">
-                  <p className="line-clamp-1 font-reading text-[0.92rem] italic leading-relaxed text-muted">
+                  <p className="line-clamp-1 font-reading text-[0.92rem] italic leading-relaxed text-muted-foreground">
                     {item.contextSentence}
                   </p>
                   <p className="mt-1 line-clamp-1 text-[0.85rem] leading-normal text-subtle">
                     {item.contextTranslation}
                   </p>
                 </div>
-                <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.68rem] font-semibold tracking-[0.08em] text-muted">
+                <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.68rem] font-semibold tracking-[0.08em] text-muted-foreground">
                   <span>{item.reviewLabel}</span>
-                  <span className="text-muted/30">·</span>
+                  <span className="text-muted-foreground/30">·</span>
                   <span>{item.sourceCount}</span>
-                  <span className="text-muted/30">·</span>
+                  <span className="text-muted-foreground/30">·</span>
                   <span className="text-lens-blue">查看来源语境</span>
                 </div>
               </button>
@@ -1375,19 +1373,19 @@ function HeroVocabularyView({
                 {selectedItem.word}
               </h3>
               {selectedItem.phonetic ? (
-                <p className="mt-2 text-sm font-medium text-muted">{selectedItem.phonetic}</p>
+                <p className="mt-2 text-sm font-medium text-muted-foreground">{selectedItem.phonetic}</p>
               ) : null}
             </div>
             <button
               type="button"
-              className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-md text-muted hover:bg-black/[0.035] hover:text-ink"
+              className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-black/[0.035] hover:text-ink"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
 
           <div className="mt-6 flex flex-wrap items-center gap-2">
-            <span className="rounded-pill border border-hairline bg-reader-paper px-2.5 py-1 text-[0.72rem] font-semibold text-muted">
+            <span className="rounded-pill border border-hairline bg-reader-paper px-2.5 py-1 text-[0.72rem] font-semibold text-muted-foreground">
               {selectedItem.partOfSpeech}
             </span>
             <span className="rounded-pill border border-vocab-amber/20 bg-vocab-amber/10 px-2.5 py-1 text-[0.72rem] font-semibold text-vocab-amber">
@@ -1407,7 +1405,7 @@ function HeroVocabularyView({
             <p className="mt-3 font-reading text-[1rem] italic leading-7 text-ink">
               {selectedItem.contextSentence}
             </p>
-            <p className="mt-2 text-[0.88rem] leading-6 text-muted">
+            <p className="mt-2 text-[0.88rem] leading-6 text-muted-foreground">
               {selectedItem.contextTranslation}
             </p>
           </section>
@@ -1501,17 +1499,17 @@ function HeroQuickPeek({
         <div className="mt-3">
           <div className="flex flex-wrap items-center gap-2">
             {lookupPartOfSpeech ? (
-              <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[0.68rem] font-semibold text-muted">
+              <span className="rounded-pill border border-hairline bg-reader-paper px-2 py-0.5 text-[0.68rem] font-semibold text-muted-foreground">
                 {lookupPartOfSpeech}
               </span>
             ) : null}
             <p className="text-[0.92rem] font-medium leading-6 text-ink-soft">{body}</p>
           </div>
           {inspectReason ? (
-            <p className="mt-2 text-[0.78rem] leading-5 text-muted">{inspectReason}</p>
+            <p className="mt-2 text-[0.78rem] leading-5 text-muted-foreground">{inspectReason}</p>
           ) : null}
           {lookup?.contextSentence ? (
-            <p className="mt-3 border-t border-hairline/60 pt-2.5 font-reading text-[0.82rem] leading-5 text-muted">
+            <p className="mt-3 border-t border-hairline/60 pt-2.5 font-reading text-[0.82rem] leading-5 text-muted-foreground">
               {lookup.contextSentence}
             </p>
           ) : null}
@@ -1521,7 +1519,7 @@ function HeroQuickPeek({
       <div className="mt-3 flex items-center gap-1 border-t border-hairline/60 pt-2.5">
         <button
           type="button"
-          className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-[0.7rem] text-muted hover:bg-black/[0.04] hover:text-ink active:scale-[0.97]"
+          className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-[0.7rem] text-muted-foreground hover:bg-black/[0.04] hover:text-ink active:scale-[0.97]"
           aria-label="打开词典"
         >
           <BookOpen className="h-3.5 w-3.5" />
@@ -1576,10 +1574,10 @@ function HeroReaderView({
           <div className="reader-header-band-inner mx-auto flex w-full max-w-[82ch] flex-col gap-5">
             <div className="flex items-center gap-1.5 text-[0.8rem] font-semibold leading-none tracking-wide">
               <span className="text-lens-blue">{isImmersive ? "沉浸阅读" : "精读模式"}</span>
-              <span className="text-muted/60">·</span>
-              <span className="font-medium text-muted">{record.date}</span>
-              <span className="text-muted/60">·</span>
-              <span className="font-medium text-muted">{record.readingGoalLabel}</span>
+              <span className="text-muted-foreground/60">·</span>
+              <span className="font-medium text-muted-foreground">{record.date}</span>
+              <span className="text-muted-foreground/60">·</span>
+              <span className="font-medium text-muted-foreground">{record.readingGoalLabel}</span>
             </div>
 
             <div className="min-w-0">
@@ -1595,11 +1593,11 @@ function HeroReaderView({
                   解析结果
                 </span>
                 <div className="h-3.5 w-px bg-hairline" />
-                <span className="text-[0.8rem] font-semibold text-muted">
+                <span className="text-[0.8rem] font-semibold text-muted-foreground">
                   {record.scene.article.sentences.length} 句
                 </span>
                 <div className="h-3.5 w-px bg-hairline" />
-                <span className="text-[0.8rem] font-semibold text-muted">{record.sourceName}</span>
+                <span className="text-[0.8rem] font-semibold text-muted-foreground">{record.sourceName}</span>
               </div>
 
               <div className="flex select-none items-stretch divide-x divide-hairline border-t border-hairline sm:border-t-0">
@@ -1634,15 +1632,15 @@ function HeroReaderView({
               </div>
             </div>
 
-            <div className="flex w-full flex-col justify-between gap-3 text-[0.78rem] leading-normal tracking-wide text-muted sm:flex-row sm:items-center">
+            <div className="flex w-full flex-col justify-between gap-3 text-[0.78rem] leading-normal tracking-wide text-muted-foreground sm:flex-row sm:items-center">
               <div className="flex flex-wrap items-center gap-1.5 font-medium">
                 <span>来源 {record.sourceName}</span>
-                <span className="text-muted/60">·</span>
+                <span className="text-muted-foreground/60">·</span>
                 <span>{record.date}</span>
-                <span className="text-muted/60">·</span>
+                <span className="text-muted-foreground/60">·</span>
                 <span>约 {Math.max(1, Math.ceil(record.scene.article.sentences.length / 5))} 分钟阅读</span>
               </div>
-              <span className="inline-flex items-center gap-1.5 text-muted/60">
+              <span className="inline-flex items-center gap-1.5 text-muted-foreground/60">
                 <Globe className="h-4 w-4" />
                 粘贴导入
               </span>
@@ -1662,7 +1660,6 @@ function HeroReaderView({
               readingClassName={heroImmersiveReadingClassName}
               columnClassName={heroReaderColumnClassName}
               paragraphDensityClassName={heroImmersiveDensityClassName}
-              themeClassName={heroImmersiveThemeClassName}
               onLookupIntent={onLookupIntent}
               onInspectIntent={onInspectIntent}
             />
@@ -1674,7 +1671,6 @@ function HeroReaderView({
               translationClassName={heroTranslationClassName}
               columnClassName={heroReaderColumnClassName}
               paragraphDensityClassName={heroReaderDensityClassName}
-              themeClassName={heroIntensiveThemeClassName}
               activeSentenceId={record.selectedSentenceId}
               selectedSentenceId={record.selectedSentenceId}
               activeAnalysisEntryId={expandedEntryIds[0] ?? null}
@@ -1714,7 +1710,7 @@ function ReaderActionButton({
       }`}
       onClick={onClick}
     >
-      <span className={active ? "text-vocab-amber" : "text-muted"}>{icon}</span>
+      <span className={active ? "text-vocab-amber" : "text-muted-foreground"}>{icon}</span>
       <span className="flex min-w-0 flex-col items-start leading-none">
         <span className="whitespace-nowrap text-[0.85rem] font-semibold">{label}</span>
         <span className="mt-1 hidden whitespace-nowrap text-[0.65rem] font-medium text-subtle sm:block">

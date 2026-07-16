@@ -47,7 +47,7 @@ function renderHighlightedText(text: string, highlights: DailyReaderHighlight[])
 export function DailyArticleBody({ article }: { article: DailyReaderArticle }) {
   if (article.body.paragraphs.length === 0) {
     return (
-      <p className="text-sm leading-7 text-muted">
+      <p className="text-sm leading-7 text-muted-foreground">
         这篇每日精读暂无可展示正文。请稍后再试。
       </p>
     );
@@ -60,7 +60,7 @@ export function DailyArticleBody({ article }: { article: DailyReaderArticle }) {
 
         return (
           <section key={paragraph.id} className="group relative">
-            <span className="absolute -left-12 top-1.5 hidden w-6 select-none text-right font-sans text-[0.7rem] font-medium text-subtle transition-colors group-hover:text-muted sm:block">
+            <span className="absolute -left-12 top-1.5 hidden w-6 select-none text-right font-sans text-[0.7rem] font-medium text-subtle transition-colors group-hover:text-muted-foreground sm:block">
               {String(index + 1).padStart(2, "0")}
             </span>
             

@@ -18,7 +18,7 @@ export function EmptyState({ title, description, icon: Icon, action, className }
           <Icon aria-hidden="true" className="h-5 w-5" />
         </div>
         <h2 className="mt-4 font-headline text-2xl font-semibold text-ink">{title}</h2>
-        <p className="mt-3 text-sm leading-6 text-muted">{description}</p>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">{description}</p>
         {action ? <div className="mt-5">{action}</div> : null}
       </div>
     </section>

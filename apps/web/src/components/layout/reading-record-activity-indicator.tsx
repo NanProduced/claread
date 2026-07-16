@@ -159,20 +159,20 @@ export function ReadingRecordActivityIndicator({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-[0.8rem] font-semibold text-ink">旧任务处理中</p>
-            <span className="rounded-full border border-hairline/70 bg-reader-paper/70 px-2 py-0.5 text-[0.64rem] font-semibold tracking-[0.08em] text-muted">
+            <span className="rounded-full border border-hairline/70 bg-reader-paper/70 px-2 py-0.5 text-[0.64rem] font-semibold tracking-[0.08em] text-muted-foreground">
               Legacy
             </span>
           </div>
-          <p className="mt-0.5 truncate text-[0.72rem] font-medium text-muted">
+          <p className="mt-0.5 truncate text-[0.72rem] font-medium text-muted-foreground">
             旧 Reader 任务仍在运行
           </p>
-          <p className="mt-1 text-[0.7rem] leading-5 text-muted/90">
+          <p className="mt-1 text-[0.7rem] leading-5 text-muted-foreground/90">
             该任务仍使用旧入口，仅保留过渡查看能力。
           </p>
         </div>
         <button
           type="button"
-          className="focus-ring inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:bg-reader-paper/70 hover:text-ink"
+          className="focus-ring inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-reader-paper/70 hover:text-ink"
           onClick={() => router.push(actionHref as Route)}
           aria-label="打开旧任务"
         >

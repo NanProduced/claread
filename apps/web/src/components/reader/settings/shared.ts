@@ -1,5 +1,13 @@
-import type { ThemeName } from "@/lib/appearance";
 import type { VisualTone } from "@/types/view/ReaderMockVm";
+
+/**
+ * Reader canvas theming is owned entirely by AppearanceProvider. There is
+ * no per-Reader canvas theme class: the legacy Paper canvas selector and
+ * Paper gradient have been retired, and `--reading-paper-surface`
+ * survives only as a class-free compat alias derived from the root/.dark
+ * `--reader-paper` token. Reader sub-systems must not re-introduce a
+ * runtime canvas theme class.
+ */
 
 export type ReaderMode = "intensive" | "immersive";
 export type ReaderFontFamily = "editorial" | "book" | "sans";
@@ -138,18 +146,6 @@ export function persistReaderSettings(value: ReaderSettingsState) {
     );
   } catch {
   }
-}
-
-export function readerThemeClassName(theme: ThemeName) {
-  if (theme === "light") {
-    return "reading-paper-light";
-  }
-
-  if (theme === "dark") {
-    return "reading-paper-dark";
-  }
-
-  return "reading-paper";
 }
 
 export function readerTextClassName({

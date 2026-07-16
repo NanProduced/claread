@@ -106,7 +106,7 @@ function EmptyLeadState() {
       <h2 className="mt-4 max-w-xl font-headline text-[clamp(1.6rem,3vw,2.4rem)] font-semibold leading-tight tracking-normal text-ink">
         今日精读暂未发布
       </h2>
-      <p className="mt-3 max-w-xl text-sm leading-6 text-muted">
+      <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
         Web 已接入真实每日精读数据源。当前上游没有返回今日已发布文章，请稍后再来，或先回到首页。
       </p>
       <Link
@@ -132,13 +132,13 @@ function ArticleListItem({ article }: { article: DailyReaderListItem }) {
       <div className="grid grid-cols-[4.7rem_minmax(0,1fr)_1.25rem] gap-3">
         <p className="text-xs font-semibold leading-5 text-lens-blue">
           {formatPublishDate(article.publishDate)}
-          <span className="mt-1 block text-muted">{article.tags[0] ?? article.difficulty}</span>
+          <span className="mt-1 block text-muted-foreground">{article.tags[0] ?? article.difficulty}</span>
         </p>
         <div>
           <h3 className="font-headline text-xl font-semibold leading-snug tracking-normal text-ink">
             {article.title}
           </h3>
-          <p className="mt-2 text-xs leading-5 text-muted">{articleMeta(article)}</p>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">{articleMeta(article)}</p>
         </div>
         <ArrowRight
           aria-hidden="true"
@@ -169,7 +169,7 @@ export default async function DailyReaderPage() {
   return (
     <main className="min-h-screen overflow-hidden bg-[oklch(97%_0.012_84)] text-ink">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_80%_12%,rgba(37,99,235,0.08),transparent_24rem),radial-gradient(circle_at_8%_85%,rgba(17,17,17,0.055),transparent_22rem)]" />
-      <div className="paper-grain relative min-h-screen px-5 py-6 sm:px-8 lg:px-12">
+      <div className="relative min-h-screen px-5 py-6 sm:px-8 lg:px-12">
         <PublicSiteHeader currentHref={dailyRoute} priority />
 
         <section className="mx-auto max-w-7xl py-12 lg:py-16">
@@ -179,7 +179,7 @@ export default async function DailyReaderPage() {
           <h1 className="mt-4 max-w-3xl font-headline text-[clamp(2rem,4vw,3.6rem)] font-semibold leading-[1.06] tracking-normal text-ink">
             一份放在门口的英文报纸
           </h1>
-          <p className="mt-5 max-w-2xl text-base leading-8 text-muted sm:text-lg">
+          <p className="mt-5 max-w-2xl text-base leading-8 text-muted-foreground sm:text-lg">
             每天一篇，不催促、不打卡。打开就读，喜欢再加入自己的阅读记录。
           </p>
 
@@ -212,12 +212,12 @@ export default async function DailyReaderPage() {
                     {archiveItems.length > 0 ? archiveItems.map((article) => (
                       <ArticleListItem key={article.id} article={article} />
                     )) : (
-                      <p className="py-5 text-sm leading-6 text-muted">
+                      <p className="py-5 text-sm leading-6 text-muted-foreground">
                         暂无往期已发布文章。发布后会自动出现在这里。
                       </p>
                     )}
                   </div>
-                  <p className="mt-6 inline-flex items-center gap-2 text-xs leading-5 text-muted">
+                  <p className="mt-6 inline-flex items-center gap-2 text-xs leading-5 text-muted-foreground">
                     <LogIn aria-hidden="true" className="h-3.5 w-3.5 text-lens-blue" />
                     {session.state === "signed_out"
                       ? "公开每日精读可完整阅读；保存资产时再登录。"

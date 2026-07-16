@@ -15,7 +15,7 @@ export function ProductPainPoints() {
           <h2 className="mt-4 max-w-[38rem] text-balance font-headline text-[clamp(2.35rem,4.2vw,4.6rem)] font-semibold leading-[1.02] text-ink">
             英文阅读卡住，通常不是因为少一个中文翻译。
           </h2>
-          <p className="mt-5 max-w-[35rem] text-base leading-8 text-muted">
+          <p className="mt-5 max-w-[35rem] text-base leading-8 text-muted-foreground">
             真实的停顿发生在文本内部：词义、边界、主干和译文依赖。Claread 先诊断卡点，再给出对应标注。
           </p>
         </div>
