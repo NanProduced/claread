@@ -646,8 +646,8 @@ export function ReaderRecordNavigationRail({
   const activeIndex =
     items.findIndex((item) => item.unitId === activeUnitId) + 1;
   const triggerLabel = panelOpen
-    ? `关闭文章目录，当前第 ${activeIndex} 节`
-    : `打开文章目录，当前第 ${activeIndex} 节`;
+    ? `关闭段落导航，当前第 ${activeIndex} 段`
+    : `打开段落导航，当前第 ${activeIndex} 段`;
 
   return (
     <nav

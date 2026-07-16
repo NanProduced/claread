@@ -256,8 +256,8 @@ describe("ReaderRecordNavigationRail", () => {
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
     const trigger = screen.getByTestId("reader-record-outline-trigger");
-    // Active section is 1 (first item), so the label says "第 1 节".
-    expect(trigger.getAttribute("aria-label")).toBe("打开文章目录，当前第 1 节");
+    // Active unit is 1 (first item); L0 terminology uses 段落, not 节/目录.
+    expect(trigger.getAttribute("aria-label")).toBe("打开段落导航，当前第 1 段");
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
 
@@ -313,6 +313,7 @@ describe("ReaderRecordNavigationRail", () => {
       expect(panel.classList.contains("pointer-events-none")).toBe(false),
     );
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(trigger.getAttribute("aria-label")).toBe("关闭段落导航，当前第 1 段");
   });
 
   it("closes the panel when trigger is clicked again (toggle)", async () => {
@@ -793,7 +794,7 @@ describe("ReaderRecordNavigationRail", () => {
     triggerScroll();
     await waitFor(() => {
       const trigger = screen.getByTestId("reader-record-outline-trigger");
-      expect(trigger.getAttribute("aria-label")).toBe("打开文章目录，当前第 1 节");
+      expect(trigger.getAttribute("aria-label")).toBe("打开段落导航，当前第 1 段");
     });
 
     // Move Beta above the safe line; it becomes the last-above active unit.
@@ -803,7 +804,7 @@ describe("ReaderRecordNavigationRail", () => {
     triggerScroll();
     await waitFor(() => {
       const trigger = screen.getByTestId("reader-record-outline-trigger");
-      expect(trigger.getAttribute("aria-label")).toBe("打开文章目录，当前第 2 节");
+      expect(trigger.getAttribute("aria-label")).toBe("打开段落导航，当前第 2 段");
     });
   });
 
@@ -898,9 +899,11 @@ describe("ReaderRecordNavigationRail", () => {
     expect(rail.tagName.toLowerCase()).toBe("nav");
     expect(rail.getAttribute("aria-label")).toBe("阅读定位");
 
-    // Trigger is a button with proper aria.
+    // Trigger is a button with proper aria; L0 terminology only (no 文章目录/大纲/节).
     const trigger = screen.getByTestId("reader-record-outline-trigger");
     expect(trigger.tagName.toLowerCase()).toBe("button");
+    expect(trigger.getAttribute("aria-label")).toBe("打开段落导航，当前第 1 段");
+    expect(trigger.getAttribute("aria-label")).not.toMatch(/文章目录|大纲|第 \d+ 节/);
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
 
@@ -1299,7 +1302,7 @@ describe("ReaderRecordNavigationRail", () => {
     expect(trigger.className).toContain("min-w-[24px]");
   });
 
-  it("updates trigger aria-label when active section changes", async () => {
+  it("updates trigger aria-label when active unit changes", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
       { unit_id: "unit_2", order_index: 1, label: "Beta" },
@@ -1313,15 +1316,15 @@ describe("ReaderRecordNavigationRail", () => {
     render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
 
     const trigger = screen.getByTestId("reader-record-outline-trigger");
-    // Initially active is unit_1 (section 1).
-    expect(trigger.getAttribute("aria-label")).toBe("打开文章目录，当前第 1 节");
+    // Initially active is unit_1 (paragraph 1).
+    expect(trigger.getAttribute("aria-label")).toBe("打开段落导航，当前第 1 段");
 
     // Scroll so Beta is the last-above active unit.
     setRectTop(paragraphs[0]!, -20, 100);
     setRectTop(paragraphs[1]!, 40, 100);
     triggerScroll();
     await waitFor(() => {
-      expect(trigger.getAttribute("aria-label")).toBe("打开文章目录，当前第 2 节");
+      expect(trigger.getAttribute("aria-label")).toBe("打开段落导航，当前第 2 段");
     });
   });
 
