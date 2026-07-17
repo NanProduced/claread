@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     reader_vocabulary_model_profile: str = ""
     reader_grammar_bundle_model_profile: str = ""
     reader_title_model_profile: str = ""
+    # T5.8a: semantic outline registration only — default empty/disabled.
+    # Presence of these fields is NOT a live kill-switch wiring (T5.8b/d).
+    reader_semantic_outline_model_profile: str = ""
+    semantic_outline_generation_enabled: bool = False
     reader_worker_scan_interval_seconds: int = 5
     reader_worker_batch_size: int = 10
     # T1 acceptance: aligned with pipeline_runner.DEFAULT_PIPELINE_MAX_TICKS /

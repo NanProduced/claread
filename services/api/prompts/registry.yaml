@@ -1,4 +1,4 @@
-version: "0.0.5"
+version: "0.0.6"
 agents:
   vocabulary:
     file: agents/vocabulary.yaml
@@ -6,6 +6,8 @@ agents:
     file: agents/reader_layer_vocabulary.yaml
   reader_layer_grammar_bundle:
     file: agents/reader_layer_grammar_bundle.yaml
+  reader_semantic_outline:
+    file: agents/reader_semantic_outline.yaml
   reader_title_generation:
     file: agents/reader_title_generation.yaml
   reader_ask:

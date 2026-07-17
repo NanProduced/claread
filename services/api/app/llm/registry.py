@@ -16,6 +16,7 @@ from app.llm.routes import (
     MODEL_ROUTE_READER_ASK,
     MODEL_ROUTE_READER_ASK_REPLAN,
     MODEL_ROUTE_READER_LAYER_GRAMMAR_BUNDLE,
+    MODEL_ROUTE_READER_LAYER_SEMANTIC_OUTLINE,
     MODEL_ROUTE_READER_LAYER_TRANSLATION,
     MODEL_ROUTE_READER_LAYER_VOCABULARY,
     MODEL_ROUTE_READER_TITLE_GENERATION,
@@ -89,6 +90,7 @@ def _build_model_registry_cached(
     reader_translation_model_profile: str,
     reader_vocabulary_model_profile: str,
     reader_grammar_bundle_model_profile: str,
+    reader_semantic_outline_model_profile: str,
     reader_title_model_profile: str,
     reader_ask_replan_model_profile: str,
     daily_annotation_model_profile: str,
@@ -107,6 +109,7 @@ def _build_model_registry_cached(
         reader_translation_model_profile=reader_translation_model_profile,
         reader_vocabulary_model_profile=reader_vocabulary_model_profile,
         reader_grammar_bundle_model_profile=reader_grammar_bundle_model_profile,
+        reader_semantic_outline_model_profile=reader_semantic_outline_model_profile,
         reader_title_model_profile=reader_title_model_profile,
         reader_ask_replan_model_profile=reader_ask_replan_model_profile,
         daily_annotation_model_profile=daily_annotation_model_profile,
@@ -134,6 +137,9 @@ def _build_model_registry_cached(
             ),
             MODEL_ROUTE_READER_LAYER_GRAMMAR_BUNDLE: (
                 settings.reader_grammar_bundle_model_profile
+            ),
+            MODEL_ROUTE_READER_LAYER_SEMANTIC_OUTLINE: (
+                settings.reader_semantic_outline_model_profile
             ),
             MODEL_ROUTE_READER_TITLE_GENERATION: settings.reader_title_model_profile,
             MODEL_ROUTE_READER_ASK: (
@@ -174,6 +180,9 @@ def build_model_registry(settings: Settings) -> ModelRegistry:
         reader_vocabulary_model_profile=settings.reader_vocabulary_model_profile,
         reader_grammar_bundle_model_profile=(
             settings.reader_grammar_bundle_model_profile
+        ),
+        reader_semantic_outline_model_profile=(
+            settings.reader_semantic_outline_model_profile
         ),
         reader_title_model_profile=settings.reader_title_model_profile,
         reader_ask_replan_model_profile=settings.reader_ask_replan_model_profile,
