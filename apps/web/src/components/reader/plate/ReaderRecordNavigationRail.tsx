@@ -14,7 +14,6 @@ import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 const TOPBAR_SAFE_HEIGHT = 56; // px, sticky topbar + small gap
 const SCROLL_LOCK_MS = 700;
 const ACTIVE_SAFE_OFFSET = 8;
-const PANEL_ANCHOR_EDGE_PADDING = 18;
 
 const PLATE_DOCUMENT_SELECTOR = ".reader-record-plate-document";
 
@@ -162,12 +161,6 @@ function buildNavigationTriggerLabel(
   return `${action}，当前第 ${activeIndex ?? 1} 段`;
 }
 
-function clampPanelAnchorTop(top: number, railHeight: number): number {
-  const lower = PANEL_ANCHOR_EDGE_PADDING;
-  const upper = Math.max(lower, railHeight - PANEL_ANCHOR_EDGE_PADDING);
-  return Math.min(Math.max(top, lower), upper);
-}
-
 /**
  * Find the real scroll container for the Reader Record body. The app shell
  * wraps content in a Radix ScrollArea, so `window` is not always the element
@@ -248,9 +241,8 @@ interface NavigationPanelProps {
   activeUnitId: string | null;
   focusedUnitId: string | null;
   panelOpen: boolean;
-  panelAnchorTopPx: number | null;
-  anchorMode?: "hover" | "center";
   className?: string;
+  getRowRef: (unitId: string) => HTMLButtonElement | null;
   onItemClick: (unitId: string) => void;
   onItemKeyDown: (
     event: React.KeyboardEvent<HTMLButtonElement>,
@@ -267,86 +259,44 @@ function NavigationPanel({
   activeUnitId,
   focusedUnitId,
   panelOpen,
-  anchorMode = "hover",
-  panelAnchorTopPx,
   className,
+  getRowRef,
   onItemClick,
   onItemKeyDown,
   onMouseEnter,
   onMouseLeave,
   registerRowRef,
 }: NavigationPanelProps) {
-  const shouldUseHoverAnchor =
-    anchorMode === "hover" && panelAnchorTopPx !== null;
   const panelRef = useRef<HTMLDivElement>(null);
-  const [clampedTop, setClampedTop] = useState<number | null>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
 
+  // Keep the active or keyboard-focused row visible inside the panel's own
+  // scrollport. Focused row takes precedence while roving; otherwise the
+  // scroll-spy active row is kept in view.
   useEffect(() => {
-    if (!shouldUseHoverAnchor || panelAnchorTopPx === null) {
-      setClampedTop(null);
-      return;
+    if (!panelOpen) return;
+    const row = (focusedUnitId ? getRowRef(focusedUnitId) : null) ??
+      (activeUnitId ? getRowRef(activeUnitId) : null);
+    const scrollArea = scrollAreaRef.current;
+    if (row && scrollArea && scrollArea.contains(row) && typeof row.scrollIntoView === "function") {
+      row.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
-    const updateClamp = () => {
-      const panel = panelRef.current;
-      if (!panel) return;
-      const height = panel.offsetHeight;
-      const margin = 12; // safety margin
-
-      let targetTop = panelAnchorTopPx;
-
-      const wrapper = panel.parentElement;
-      if (!wrapper) return;
-
-      const wrapperHeight = wrapper.offsetHeight;
-      if (wrapperHeight === 0 && height === 0) {
-        setClampedTop(targetTop);
-        return;
-      }
-      if (targetTop + height > wrapperHeight - margin) {
-        targetTop = wrapperHeight - height - margin;
-      }
-
-      if (targetTop < margin) {
-        targetTop = margin;
-      }
-
-      setClampedTop(targetTop);
-    };
-
-    updateClamp();
-
-    if (typeof ResizeObserver !== "undefined" && panelRef.current) {
-      const observer = new ResizeObserver(updateClamp);
-      observer.observe(panelRef.current);
-      return () => observer.disconnect();
-    }
-  }, [shouldUseHoverAnchor, panelAnchorTopPx]);
+  }, [panelOpen, activeUnitId, focusedUnitId, getRowRef]);
 
   return (
     <div
       ref={panelRef}
       data-testid="reader-record-navigation-panel"
       data-reader-record-navigation-panel="true"
-      data-reader-record-navigation-panel-anchor-y={
-        shouldUseHoverAnchor ? String(Math.round(panelAnchorTopPx!)) : undefined
-      }
       className={cn(
         "reader-record-navigation-panel motion-reduce:transition-none",
         "transition-[transform,opacity,visibility] duration-200 ease-[var(--cl-ease-standard)]",
-        "absolute z-10 max-h-[min(72vh,42rem)] origin-right",
-        shouldUseHoverAnchor
-          ? "right-[calc(100%+8px)]"
-          : "right-0 top-1/2 -translate-y-1/2",
+        "absolute right-[calc(100%+8px)] top-1/2 z-10 max-h-[min(72vh,42rem)] origin-right -translate-y-1/2",
         panelOpen
           ? "visible translate-x-0 opacity-100"
           : "invisible translate-x-2 scale-[0.98] opacity-0 pointer-events-none",
         className,
       )}
-      style={
-        shouldUseHoverAnchor && clampedTop !== null
-          ? { top: `${clampedTop}px` }
-          : undefined
-      }
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       aria-hidden={!panelOpen}
@@ -358,7 +308,10 @@ function NavigationPanel({
           "w-64",
         )}
       >
-        <div className="max-h-[min(72vh,42rem)] overflow-y-auto py-2">
+        <div
+          ref={scrollAreaRef}
+          className="max-h-[min(72vh,42rem)] overflow-y-auto py-2"
+        >
           <ol className="flex flex-col">
             {items.map((item) => (
               <NavigationPanelRow
@@ -411,7 +364,6 @@ export function ReaderRecordNavigationRail({
 
   const [activeUnitId, setActiveUnitId] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
-  const [panelAnchorTopPx, setPanelAnchorTopPx] = useState<number | null>(null);
   // Roving tabindex: tracks which row currently holds tabIndex=0.
   const [focusedUnitId, setFocusedUnitId] = useState<string | null>(null);
 
@@ -462,21 +414,6 @@ export function ReaderRecordNavigationRail({
     clearCloseTimer();
     setPanelOpen(false);
   }, [clearCloseTimer]);
-
-  const setPanelAnchorFromElement = useCallback((element: Element) => {
-    const wrapper = wrapperRef.current;
-    if (!wrapper) {
-      return;
-    }
-    const wrapperRect = wrapper.getBoundingClientRect();
-    const elementRect = element.getBoundingClientRect();
-    setPanelAnchorTopPx(
-      clampPanelAnchorTop(
-        elementRect.top + elementRect.height / 2 - wrapperRect.top,
-        wrapperRect.height,
-      ),
-    );
-  }, []);
 
   const keepOpenPanel = useCallback(() => {
     if (!panelOpen) return;
@@ -719,11 +656,12 @@ export function ReaderRecordNavigationRail({
   );
 
   const handleTickMouseEnter = useCallback(
-    (event: React.MouseEvent<HTMLSpanElement>) => {
-      setPanelAnchorFromElement(event.currentTarget);
+    () => {
+      // T5.1e-PUX-Rail-R1: panel has a single stable vertical position; hover
+      // only opens it, it no longer re-anchors to the tick's y-coordinate.
       openPanel();
     },
-    [openPanel, setPanelAnchorFromElement],
+    [openPanel],
   );
 
   const registerRowRef = useCallback(
@@ -734,6 +672,11 @@ export function ReaderRecordNavigationRail({
         rowRefsRef.current.delete(unitId);
       }
     },
+    [],
+  );
+
+  const getRowRef = useCallback(
+    (unitId: string) => rowRefsRef.current.get(unitId) ?? null,
     [],
   );
 
@@ -789,8 +732,7 @@ export function ReaderRecordNavigationRail({
         activeUnitId={activeUnitId}
         focusedUnitId={focusedUnitId}
         panelOpen={panelOpen}
-        panelAnchorTopPx={panelAnchorTopPx}
-        anchorMode="hover"
+        getRowRef={getRowRef}
         onItemClick={handleItemClick}
         onItemKeyDown={handleItemKeyDown}
         onMouseEnter={keepOpenPanel}
@@ -800,8 +742,8 @@ export function ReaderRecordNavigationRail({
 
       {/* Accessible trigger button wrapping the visual ticks.
           The ticks are aria-hidden; the button's aria-label is the sole
-          screen-reader entry point. Mouse hover on individual ticks still
-          anchors and opens the panel. */}
+          screen-reader entry point. Mouse hover on individual ticks opens
+          the panel, but the panel stays at one stable vertical position. */}
       <button
         ref={triggerRef}
         type="button"

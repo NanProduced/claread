@@ -192,21 +192,22 @@ function ReaderProgressiveStatusStrip(props: {
       data-last-rejected={lastRejected ? "true" : "false"}
       data-reject-reason={rejectReason ?? ""}
       data-reloading={isReloading ? "true" : "false"}
-      className="pointer-events-none fixed bottom-4 left-1/2 z-40 max-w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2"
+      // T5.1e-PUX-Rail-R1: normal phases must not occlude the reading body
+      // with a fixed bottom floating toast. Keep the semantics and data
+      // attributes for tests/screen readers via a visually hidden region.
+      className="sr-only"
       role="status"
       aria-live="polite"
     >
-      <div className="rounded-full border border-hairline/80 bg-surface/95 px-3.5 py-1.5 text-center text-xs text-muted-foreground shadow-surface-quiet backdrop-blur-sm">
-        {isReloading ? (
-          <span data-testid="reader-record-progressive-reloading">
-            {reloadStatusLabel(activeReloadReason)}
-          </span>
-        ) : (
-          <span data-testid="reader-record-progressive-status-line">
-            {statusLine}
-          </span>
-        )}
-      </div>
+      {isReloading ? (
+        <span data-testid="reader-record-progressive-reloading">
+          {reloadStatusLabel(activeReloadReason)}
+        </span>
+      ) : (
+        <span data-testid="reader-record-progressive-status-line">
+          {statusLine}
+        </span>
+      )}
     </div>
   );
 }

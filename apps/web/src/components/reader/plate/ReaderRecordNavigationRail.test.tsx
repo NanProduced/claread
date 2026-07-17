@@ -571,7 +571,7 @@ describe("ReaderRecordNavigationRail", () => {
     expect(panelScrollArea?.className).not.toContain("flex-1");
   });
 
-  it("anchors the detail panel to the hovered outline tick", async () => {
+  it("keeps the detail panel at a stable vertical position across different hovered ticks", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
       { unit_id: "unit_2", order_index: 1, label: "Beta" },
@@ -597,18 +597,23 @@ describe("ReaderRecordNavigationRail", () => {
     fireEvent.mouseEnter(ticks[0]!);
     await waitFor(() => {
       expect(panel.classList.contains("pointer-events-none")).toBe(false);
-      expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBe("160");
     });
-    expect(panel.style.top).toBe("160px");
+    const firstTop = panel.style.top;
+    expect(panel.className).toContain("top-1/2");
+    expect(panel.className).toContain("-translate-y-1/2");
+    expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBeUndefined();
 
     fireEvent.mouseEnter(ticks[1]!);
     await waitFor(() => {
-      expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBe("340");
+      expect(panel.classList.contains("pointer-events-none")).toBe(false);
     });
-    expect(panel.style.top).toBe("340px");
+    expect(panel.style.top).toBe(firstTop);
+    expect(panel.className).toContain("top-1/2");
+    expect(panel.className).toContain("-translate-y-1/2");
+    expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBeUndefined();
   });
 
-  it("anchors the canvas detail panel to the hovered outline tick", async () => {
+  it("keeps the canvas detail panel at a stable vertical position", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
       { unit_id: "unit_2", order_index: 1, label: "Beta" },
@@ -641,11 +646,11 @@ describe("ReaderRecordNavigationRail", () => {
       expect(panel.classList.contains("pointer-events-none")).toBe(false);
     });
 
-    expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBe("340");
-    expect(panel.style.top).toBe("340px");
     expect(panel.className).toContain("right-[calc(100%+8px)]");
-    expect(panel.className).not.toContain("top-1/2");
-    expect(panel.className).not.toContain("-translate-y-1/2");
+    expect(panel.className).toContain("top-1/2");
+    expect(panel.className).toContain("-translate-y-1/2");
+    expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBeUndefined();
+    expect(panel.style.top).toBe("");
   });
 
   it("scrolls the unit start target into view using window.scrollTo when a panel row is clicked", async () => {
@@ -1360,7 +1365,7 @@ describe("ReaderRecordNavigationRail", () => {
     });
   });
 
-  it("hovering a visual tick anchors the panel to that tick's position", async () => {
+  it("hovering a visual tick opens the panel without re-anchoring it", async () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: "Alpha" },
       { unit_id: "unit_2", order_index: 1, label: "Beta" },
@@ -1388,21 +1393,163 @@ describe("ReaderRecordNavigationRail", () => {
       expect(panel.classList.contains("pointer-events-none")).toBe(false),
     );
 
-    // The anchor-y attribute should be set (non-empty) and correspond to
-    // the hovered tick's vertical center within the rail wrapper.
-    const anchorY = panel.getAttribute("data-reader-record-navigation-panel-anchor-y");
-    expect(anchorY).not.toBeNull();
-    expect(anchorY).not.toBe("");
+    // T5.1e-PUX-Rail-R1: no per-tick anchor attribute; panel is vertically
+    // centered via CSS.
+    expect(panel.getAttribute("data-reader-record-navigation-panel-anchor-y")).toBeNull();
+    expect(panel.className).toContain("top-1/2");
+    expect(panel.className).toContain("-translate-y-1/2");
 
-    // Hover the first tick — anchor should change to a different value.
+    // Hover the first tick — panel should stay open and keep the same stable
+    // positioning class.
     fireEvent.mouseEnter(ticks[0]!);
-    await waitFor(() => {
-      const newAnchorY = panel.getAttribute("data-reader-record-navigation-panel-anchor-y");
-      expect(newAnchorY).not.toBeNull();
-      // The values may differ because the ticks are at different vertical
-      // positions; at minimum the attribute must be present and numeric.
-      expect(Number.isFinite(Number(newAnchorY))).toBe(true);
-    });
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+    expect(panel.getAttribute("data-reader-record-navigation-panel-anchor-y")).toBeNull();
+    expect(panel.className).toContain("top-1/2");
+    expect(panel.className).toContain("-translate-y-1/2");
+  });
+
+  it("panel top does not change when hovering the topmost vs bottommost tick", async () => {
+    const units = Array.from({ length: 12 }, (_, i) => ({
+      unit_id: `unit_${i + 1}`,
+      order_index: i,
+      label: `Section ${i + 1}`,
+    }));
+    const snapshot = makeSnapshot(units);
+    const plateDocument = makePlateDocument(
+      units.map((u) => makeParagraph(u.unit_id, `Paragraph ${u.unit_id}.`)),
+    );
+    renderTargets(units.map((u) => u.unit_id));
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    const miniRail = screen.getByTestId("reader-record-mini-rail");
+    const ticks = miniRail.querySelectorAll<HTMLSpanElement>("span[data-navigation-unit-id]");
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+
+    fireEvent.mouseEnter(ticks[0]!);
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+    const topFromFirst = panel.style.top;
+
+    fireEvent.mouseEnter(ticks[ticks.length - 1]!);
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+    expect(panel.style.top).toBe(topFromFirst);
+    expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBeUndefined();
+  });
+
+  it("does not use hover-anchor reposition classes on the panel", async () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+    ]);
+    const plateDocument = makePlateDocument([makeParagraph("unit_1", "Alpha paragraph.")]);
+    renderTargets(["unit_1"]);
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    hoverTick(0);
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+
+    expect(panel.className).toContain("top-1/2");
+    expect(panel.className).toContain("-translate-y-1/2");
+    expect(panel.className).toContain("right-[calc(100%+8px)]");
+    expect(panel.style.top).toBe("");
+    expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBeUndefined();
+  });
+
+  it("opens the panel to the left of the rail when Ask is open", async () => {
+    const snapshot = makeSnapshot([
+      { unit_id: "unit_1", order_index: 0, label: "Alpha" },
+      { unit_id: "unit_2", order_index: 1, label: "Beta" },
+    ]);
+    const plateDocument = makePlateDocument([
+      makeParagraph("unit_1", "Alpha paragraph."),
+      makeParagraph("unit_2", "Beta paragraph."),
+    ]);
+    renderTargets(["unit_1", "unit_2"]);
+
+    render(
+      <ReaderRecordNavigationRail
+        snapshot={snapshot}
+        plateDocument={plateDocument}
+        askOpen
+      />,
+    );
+
+    hoverTick(0);
+    const rail = screen.getByTestId("reader-record-navigation-rail");
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+
+    // Viewport mode keeps the ask-open shift class; panel still opens leftward
+    // from the rail with no per-tick anchor.
+    expect(rail.className).toContain("2xl:right-[clamp");
+    expect(panel.className).toContain("right-[calc(100%+8px)]");
+    expect(panel.className).toContain("top-1/2");
+    expect(panel.className).toContain("-translate-y-1/2");
+    expect(panel.dataset.readerRecordNavigationPanelAnchorY).toBeUndefined();
+  });
+
+  it("scrolls the keyboard-focused row into view inside the panel scrollport", async () => {
+    const units = Array.from({ length: 12 }, (_, i) => ({
+      unit_id: `unit_${i + 1}`,
+      order_index: i,
+      label: `Section ${i + 1}`,
+    }));
+    const snapshot = makeSnapshot(units);
+    const plateDocument = makePlateDocument(
+      units.map((u) => makeParagraph(u.unit_id, `Paragraph ${u.unit_id}.`)),
+    );
+    renderTargets(units.map((u) => u.unit_id));
+
+    // jsdom does not implement scrollIntoView; install a no-op so the effect
+    // can be observed without throwing, then spy on it.
+    if (!("scrollIntoView" in Element.prototype)) {
+      Object.defineProperty(Element.prototype, "scrollIntoView", {
+        value: () => {},
+        configurable: true,
+        writable: true,
+      });
+    }
+    const scrollIntoViewSpy = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
+
+    render(<ReaderRecordNavigationRail snapshot={snapshot} plateDocument={plateDocument} />);
+
+    hoverTick(0);
+    const panel = screen.getByTestId("reader-record-navigation-panel");
+    await waitFor(() =>
+      expect(panel.classList.contains("pointer-events-none")).toBe(false),
+    );
+
+    const rows = panel.querySelectorAll("button");
+    expect(rows.length).toBe(units.length);
+
+    // Move focus down with ArrowDown; the newly focused row must be scrolled
+    // into view by the panel's scroll-into-view effect.
+    fireEvent.keyDown(rows[0]!, { key: "ArrowDown" });
+    await waitFor(() =>
+      expect(rows[1]?.getAttribute("tabindex")).toBe("0"),
+    );
+
+    expect(scrollIntoViewSpy).toHaveBeenCalled();
+    // The last call should target the newly focused row (unit_2).
+    const lastCallTarget = scrollIntoViewSpy.mock.contexts.length
+      ? scrollIntoViewSpy.mock.contexts[scrollIntoViewSpy.mock.contexts.length - 1]
+      : null;
+    expect(lastCallTarget).toBe(rows[1]);
+
+    scrollIntoViewSpy.mockRestore();
   });
 
   it("visual tick layer must not carry pointer-events-none (hover must be reachable in real browsers)", () => {

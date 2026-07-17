@@ -48,6 +48,26 @@ const toastMock = toastImpl as unknown as {
   dismiss: ReturnType<typeof vi.fn>;
 };
 
+// T5.1e-PUX-Rail-R1-P2: ReaderRecordPlateSurface consumes useAppearance.
+// Provide the same minimal mock used by ReaderRecordPlateSurface.test.tsx
+// so the page test can render the real surface without pulling in the full
+// app-shell AppearanceProvider.
+const themePreferenceSetter = vi.fn();
+let themePreferenceCurrent: "system" | "light" | "dark" = "system";
+
+vi.mock("@/components/providers/appearance-provider", () => ({
+  useAppearance: () => ({
+    get themePreference() {
+      return themePreferenceCurrent;
+    },
+    resolvedTheme: "light" as const,
+    setThemePreference: (next: "system" | "light" | "dark") => {
+      themePreferenceCurrent = next;
+      themePreferenceSetter(next);
+    },
+  }),
+}));
+
 const SOURCE_TEXT = "Institutional memory shapes policy choices.";
 const TRANSLATION_TEXT = "制度记忆会塑造政策选择。";
 
@@ -995,6 +1015,28 @@ describe("ReadingRecordPage static contract", () => {
 });
 
 describe("ReadingRecordPage direct load", () => {
+  it("renders the progressive status strip as screen-reader-only so it never occludes the body", async () => {
+    const snapshot = makeSnapshot(
+      "rec_progressive_quiet_1",
+      { readiness_state: "coverage_complete" },
+      {
+        enhancementLayers: [makePublishedLayer("translation", "layer_t1")],
+      },
+    );
+    installReaderRecordFetchMock(snapshot);
+
+    renderReadingRecordPage("rec_progressive_quiet_1");
+
+    await screen.findByTestId("reader-record-plate-surface");
+    const status = screen.getByTestId("reader-record-progressive-status");
+    expect(status.getAttribute("data-phase")).toBe("coverage_complete");
+    expect(status.textContent).toContain("完整解析完成");
+    // T5.1e-PUX-Rail-R1: normal phases must not use a fixed bottom floating toast.
+    expect(status.className).toContain("sr-only");
+    expect(status.className).not.toContain("fixed");
+    expect(status.className).not.toContain("bottom-4");
+  });
+
   it("loads snapshot data from the reader-plate BFF and renders the default Plate surface", async () => {
     expect(DEFAULT_READER_RECORD_SURFACE_MODE).toBe("plate");
 
