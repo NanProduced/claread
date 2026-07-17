@@ -2099,6 +2099,8 @@ select {
   --reader-z-workspace-chrome: 60;
   --app-z-shell-navigation: 70;
   --app-z-shell-overlay: 80;
+  --app-z-modal-backdrop: 90;
+  --app-z-modal: 100;
 }
 
 .app-shell {

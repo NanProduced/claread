@@ -14,7 +14,7 @@ import {
 
 const dialogContentVariants = cva(
   cn(
-    "fixed left-1/2 top-1/2 z-50 grid w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4",
+    "fixed left-1/2 top-1/2 z-[var(--app-z-modal)] grid w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4",
     "transition-[opacity,transform] duration-[var(--cl-duration-base)] ease-[var(--cl-ease-standard)] data-[state=closed]:opacity-0 data-[state=open]:opacity-100",
     panelSurface({ padding: "lg" }),
   ),
@@ -29,6 +29,7 @@ const dialogContentVariants = cva(
         sm: "max-w-md",
         md: "max-w-xl",
         lg: "max-w-2xl",
+        xl: "max-w-[min(70rem,calc(100vw-3rem))] max-h-[min(46rem,calc(100dvh-3rem))]",
       },
     },
     defaultVariants: {
@@ -54,7 +55,13 @@ const DialogOverlay = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
 >(function DialogOverlay({ className, ...props }, ref) {
-  return <DialogPrimitive.Overlay ref={ref} className={cn(primitiveOverlay, className)} {...props} />
+  return (
+    <DialogPrimitive.Overlay
+      ref={ref}
+      className={cn(primitiveOverlay, "z-[var(--app-z-modal-backdrop)]", className)}
+      {...props}
+    />
+  )
 })
 
 const DialogContent = React.forwardRef<
@@ -138,4 +145,5 @@ export {
   DialogTitle,
   DialogDescription,
   DialogClose,
+  dialogContentVariants,
 }

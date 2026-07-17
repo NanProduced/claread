@@ -123,6 +123,22 @@ Ask 是当前文章的右侧助手，不是全局聊天页面。有选区时默�
 
 Ask 的回答涉及原文时必须能回到文章锚点。回答不能直接改写原文；需要加入阅读页的内容由用户确认后以补充内容出现。文章引用尚未准备好时，Ask 继续保持可用，但不伪造引用或将该状态渲染为页面故障。
 
+### Settings dialog
+
+Settings Center 使用公共 Dialog primitive 的 `xl` size 承载，由受控组件 `SettingsDialogShell`（`apps/web/src/components/settings/SettingsDialogShell.tsx`）提供 shell。它只交付 Shell 与视觉基础，不接入路由拦截、不迁移现有 Settings 页面内容。
+
+**层级。** Dialog 使用两个语义 z-index token，定义在 `apps/web/src/app/globals.css` 的 `:root`：`--app-z-modal-backdrop: 90`（遮罩）与 `--app-z-modal: 100`（内容）。两者严格高于 `--app-z-shell-overlay: 80`，确保 modal 始终渲染在 shell overlay 之上。`DialogOverlay` 解析为 `var(--app-z-modal-backdrop)`，`DialogContent` 解析为 `var(--app-z-modal)`。
+
+**Surface 语义。** Settings Shell 显式使用静态 surface，不使用 `app-panel-surface` 渐变 recipe：内容列 `bg-surface`，左侧导航 `bg-surface-raised`，二者以 `border-hairline` 分割。遮罩使用 `app-overlay` 但显式覆盖为无 blur 的静态 overlay（`backdrop-blur-none`），不使用玻璃拟态或默认 backdrop blur。不得使用任何渐变、raw HEX/RGBA、私有阴影 recipe、Reader vocabulary/annotation 色。
+
+**Hover / current / focus 语义。** 导航项 hover 使用 `interactive-quiet-hover`（`--app-control-quiet`）；当前分区使用 `--app-control-current`（非蓝色），并同步 `aria-current="page"`。primary / ring 仅用于主操作与键盘焦点（`primitiveFocusRing`），导航选中不用蓝色。这与"导航与普通列表行使用一致的四态语法"一致：默认透明、hover/current 用安静中性表面、不扩散文章语义色。
+
+**响应式形态。** `xl` size 桌面尺寸目标：`min(70rem, calc(100vw - 3rem))` × `min(46rem, calc(100dvh - 3rem))`，圆角 `var(--cl-radius-surface-md)`（14px），左侧导航宽约 `13.5rem`。移动端（`< md`）降级为 full-screen sheet：`h-dvh w-screen rounded-none`，无圆角，顶部横向分区导航 + 单一内容列，内容单独滚动。移动端账户入口由后续任务决定。
+
+**可访问性。** `DialogTitle` 与 `DialogDescription` 提供 sr-only 可访问名称；关闭按钮带 `aria-label`；分区导航使用普通 button 语义（`nav[aria-label]` + `button[aria-current="page"]`），不使用 ARIA tabs 模型；移动端关闭按钮与分区按钮最小触控目标 44×44px（`max-md:size-11` / `max-md:min-h-11`），桌面端维持紧凑密度；Esc 关闭由 Radix Dialog 提供。
+
+**动效。** 入场/出场动效仅使用 `--cl-duration-base`（240ms）与 `--cl-ease-standard`，并提供 `motion-reduce:` 等价降级（即时或交叉淡化），不使用位移、缩放或弹跳。
+
 ## Do's and Don'ts
 
 ### Do:
