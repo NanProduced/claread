@@ -6,6 +6,7 @@ Contract modules (round 1):
 Independent runtime (round 2+):
 - document access, read_range, initial_anchor, agent, finalizer
 - Article RAG port/adapter + ``search_current_article`` (round 3)
+- Baseline context assembler + ``article_seed`` evidence (round 4-A1)
 
 The production HTTP path still goes through ``service`` → ``ask_runtime``
 and is **not** connected to the new agent loop yet.
@@ -16,6 +17,12 @@ from app.services.reader_record_ask.article_rag_port import (
     ArticleRagHitView,
     ArticleRagSearchOutcome,
     FakeArticleRagSearchPort,
+)
+from app.services.reader_record_ask.baseline_context import (
+    BaselineAgentContext,
+    BaselineContextAssembler,
+    BaselineStatus,
+    ModelContextChunk,
 )
 from app.services.reader_record_ask.context_envelope import (
     ENVELOPE_VERSION,
@@ -42,6 +49,9 @@ from app.services.reader_record_ask.evidence import (
     LEGAL_EVIDENCE_KIND_SOURCE,
     ArticleRagCitationEvidence,
     EvidenceHandleRef,
+    EvidenceKind,
+    EvidenceOrigin,
+    EvidenceSourceTool,
     ServerEvidenceHandle,
     ServerEvidenceObservation,
     assert_legal_evidence_kind_source,
@@ -101,12 +111,18 @@ __all__ = [
     "ArticleRagCitationEvidence",
     "ArticleRagHitView",
     "ArticleRagSearchOutcome",
+    "BaselineAgentContext",
+    "BaselineContextAssembler",
+    "BaselineStatus",
     "DEFAULT_MAX_READ_RANGE_CALLS",
     "DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS",
     "DocumentScopeSnapshot",
     "ENVELOPE_VERSION",
     "EvidenceHandleRef",
+    "EvidenceKind",
+    "EvidenceOrigin",
     "EvidenceRegistry",
+    "EvidenceSourceTool",
     "EnvelopeCapabilityState",
     "EnvelopeInitialAnchor",
     "EnvelopeVisibleRange",
@@ -117,6 +133,7 @@ __all__ = [
     "LEGAL_EVIDENCE_KIND_SOURCE",
     "MAX_UNIT_ORDER_SPAN_UNITS",
     "MAX_UNIT_ORDER_SPAN_WIDTH",
+    "ModelContextChunk",
     "READ_RANGE_OFFSET_UNIT",
     "ReadRangeLocator",
     "ReadRangeToolInput",

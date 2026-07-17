@@ -34,17 +34,34 @@ EvidenceKind = Literal[
     "read_range",
     "search_hit",
     "observation",
+    "article_seed",
 ]
 
+# Agent-callable tool names that may produce evidence. Retained as a
+# three-value Literal distinct from :data:`EvidenceOrigin` so the agent
+# tool interface stays narrow (``baseline_context`` is a server-only origin
+# and must never appear as an agent-callable tool name).
 EvidenceSourceTool = Literal[
     "initial_anchor",
     "read_range",
     "search_current_article",
 ]
 
-# Legal (kind, source_tool) pairs.  Rejects inconsistent combinations such as
-# kind=initial_anchor + source_tool=search_current_article.
-LEGAL_EVIDENCE_KIND_SOURCE: dict[EvidenceKind, frozenset[EvidenceSourceTool]] = {
+# Server-side evidence provenance. Strict superset of
+# :data:`EvidenceSourceTool` adding ``baseline_context`` (the full-article
+# baseline seed origin produced by the baseline context assembler, never an
+# agent-callable tool). Server evidence handles / minting / legal-map use
+# this strict four-value type.
+EvidenceOrigin = Literal[
+    "initial_anchor",
+    "read_range",
+    "search_current_article",
+    "baseline_context",
+]
+
+# Legal (kind, source) pairs.  Rejects inconsistent combinations such as
+# kind=initial_anchor + source=baseline_context.
+LEGAL_EVIDENCE_KIND_SOURCE: dict[EvidenceKind, frozenset[EvidenceOrigin]] = {
     "initial_anchor": frozenset({"initial_anchor"}),
     "read_range": frozenset({"read_range"}),
     "search_hit": frozenset({"search_current_article"}),
@@ -52,14 +69,19 @@ LEGAL_EVIDENCE_KIND_SOURCE: dict[EvidenceKind, frozenset[EvidenceSourceTool]] = 
     "observation": frozenset(
         {"initial_anchor", "read_range", "search_current_article"}
     ),
+    # article_seed is exclusively produced by the baseline context assembler.
+    # It must NOT carry initial_anchor / read_range / search_current_article
+    # because the full-article baseline is not a user selection, a tool-driven
+    # read range, or a RAG search hit.
+    "article_seed": frozenset({"baseline_context"}),
 }
 
 
 def assert_legal_evidence_kind_source(
     kind: EvidenceKind,
-    source_tool: EvidenceSourceTool,
+    source_tool: EvidenceOrigin,
 ) -> None:
-    """Raise ``ValueError`` when kind/source_tool are inconsistent."""
+    """Raise ``ValueError`` when kind/source are inconsistent."""
     allowed = LEGAL_EVIDENCE_KIND_SOURCE.get(kind)
     if allowed is None or source_tool not in allowed:
         raise ValueError(
@@ -116,7 +138,7 @@ class ServerEvidenceHandle(BaseModel):
     kind: EvidenceKind
     # Bind the handle to the turn envelope so finalizer can fence generation.
     envelope_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
-    source_tool: EvidenceSourceTool
+    source_tool: EvidenceOrigin
 
     @field_validator("handle_id")
     @classmethod
@@ -235,7 +257,7 @@ def mint_server_evidence_handle(
     *,
     kind: EvidenceKind,
     envelope_fingerprint: str,
-    source_tool: EvidenceSourceTool,
+    source_tool: EvidenceOrigin,
     handle_id: str | None = None,
 ) -> ServerEvidenceHandle:
     """Mint a server-owned evidence handle bound to an envelope fingerprint.
@@ -260,7 +282,7 @@ def build_server_evidence_observation(
     *,
     kind: EvidenceKind,
     envelope_fingerprint: str,
-    source_tool: EvidenceSourceTool,
+    source_tool: EvidenceOrigin,
     snippet: str | None = None,
     locator_summary: dict[str, Any] | None = None,
     unit_id: str | None = None,

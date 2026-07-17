@@ -524,8 +524,138 @@ describe("createNavigateAgenticSource — candidates", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// R4-A1: article_seed source navigation
+//
+// article_seed is a non-RAG evidence kind. When it carries a valid
+// unit_id / anchor_segment_id, it navigates the same way as initial_anchor
+// and read_range. When it has no locator, it is display-only (no_locator).
+// It must not be confused with search_hit (no ragNavigation expected).
+// ---------------------------------------------------------------------------
+
+describe("createNavigateAgenticSource — article_seed (R4-A1)", () => {
+  function seedSource(
+    overrides: Partial<AgenticSourceDescriptor> = {},
+  ): AgenticSourceDescriptor {
+    return {
+      handleId: "evh_seed",
+      kind: "article_seed",
+      evidenceScope: SCOPE_NO_STABLE,
+      unitId: "u1",
+      anchorSegmentId: "s1",
+      ragNavigation: null,
+      ...overrides,
+    };
+  }
+
+  it("22. article_seed with anchor_segment locator navigates", async () => {
+    const adapter = firstCandidateAdapter();
+    const result = await nav(() => PAGE_READY, adapter)(seedSource());
+    expect(result).toEqual({
+      status: "navigated",
+      mode: "anchor_segment",
+      targetId: "s1",
+    });
+  });
+
+  it("23. article_seed with unit-only locator navigates", async () => {
+    const adapter = firstCandidateAdapter();
+    const result = await nav(
+      () => PAGE_READY,
+      adapter,
+    )(seedSource({ anchorSegmentId: null }));
+    expect(result).toEqual({
+      status: "navigated",
+      mode: "unit",
+      targetId: "u1",
+    });
+  });
+
+  it("24. article_seed without locator → no_locator (display-only)", async () => {
+    const load = vi.fn(() => PAGE_READY);
+    const adapter = firstCandidateAdapter();
+    const result = await nav(load, adapter)(
+      seedSource({ unitId: null, anchorSegmentId: null }),
+    );
+    expect(result).toEqual({
+      status: "unavailable",
+      reason: "no_locator",
+    });
+    expect(load).not.toHaveBeenCalled();
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  it("25. article_seed missing scope → legacy_scope_missing (display-only)", async () => {
+    const load = vi.fn(() => PAGE_READY);
+    const adapter = firstCandidateAdapter();
+    const result = await nav(load, adapter)(
+      seedSource({ evidenceScope: null }),
+    );
+    expect(result).toEqual({
+      status: "unavailable",
+      reason: "legacy_scope_missing",
+    });
+    expect(load).not.toHaveBeenCalled();
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  it("26. article_seed identity mismatch → identity_mismatch.reading_record", async () => {
+    const result = await nav(
+      () => ({ ...PAGE_READY, readingRecordId: "other-record" }),
+      firstCandidateAdapter(),
+    )(seedSource());
+    expect(result).toEqual({
+      status: "identity_mismatch",
+      field: "reading_record",
+    });
+  });
+
+  it("27. article_seed stale generation → stale_generation", async () => {
+    const result = await nav(
+      () => ({ ...PAGE_READY, recordGeneration: 99 }),
+      firstCandidateAdapter(),
+    )(seedSource());
+    expect(result).toEqual({ status: "stale_generation" });
+  });
+
+  it("28. article_seed non-RAG stable=null still navigates when record/base/gen match", async () => {
+    const adapter = firstCandidateAdapter();
+    const result = await nav(
+      () => ({
+        ...PAGE_READY,
+        stableDocument: { status: "not_ready", stableDocumentId: null },
+      }),
+      adapter,
+    )(seedSource({ evidenceScope: SCOPE_NO_STABLE }));
+    expect(result).toEqual({
+      status: "navigated",
+      mode: "anchor_segment",
+      targetId: "s1",
+    });
+  });
+
+  it("29. article_seed all candidates miss → target_not_found", async () => {
+    const result = await nav(
+      () => PAGE_READY,
+      missAdapter(),
+    )(seedSource());
+    expect(result).toEqual({
+      status: "target_not_found",
+      attemptedModes: ["anchor_segment", "unit"],
+    });
+  });
+
+  it("30. article_seed does not leak internal fields in result", async () => {
+    const result = await nav(
+      () => PAGE_READY,
+      firstCandidateAdapter(),
+    )(seedSource());
+    assertNoSecrets(result);
+  });
+});
+
 describe("createNavigateAgenticSource — privacy / interface", () => {
-  it("29. results never contain fingerprint/hash/selector/snippet", async () => {
+  it("31. results never contain fingerprint/hash/selector/snippet", async () => {
     const cases: SourceNavigationResult[] = [
       await nav(() => PAGE_READY, firstCandidateAdapter())(searchSource()),
       await nav(() => PAGE_READY, missAdapter())(searchSource()),
@@ -540,7 +670,7 @@ describe("createNavigateAgenticSource — privacy / interface", () => {
     for (const r of cases) assertNoSecrets(r);
   });
 
-  it("30. Ask-facing callback accepts only AgenticSourceDescriptor (no Element/Document/identity)", async () => {
+  it("32. Ask-facing callback accepts only AgenticSourceDescriptor (no Element/Document/identity)", async () => {
     const navigate = nav(() => PAGE_READY, firstCandidateAdapter());
     // Type-level: NavigateAgenticSource is (source) => Promise<result>
     // Runtime: only one argument used.

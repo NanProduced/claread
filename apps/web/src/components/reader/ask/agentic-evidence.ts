@@ -41,6 +41,7 @@ const EVIDENCE_KIND_TITLES: Record<ReaderAskAgenticEvidenceKindDto, string> = {
   read_range: "阅读范围",
   search_hit: "文章检索",
   observation: "观察结果",
+  article_seed: "文章原文",
 };
 
 function isCompleteRagCitationForNavigation(

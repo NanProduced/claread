@@ -2268,7 +2268,11 @@ function canAttemptAgenticSourceNavigate(
   if (raw.kind === "search_hit") {
     return display.ragNavigation != null;
   }
-  if (raw.kind === "initial_anchor" || raw.kind === "read_range") {
+  if (
+    raw.kind === "initial_anchor" ||
+    raw.kind === "read_range" ||
+    raw.kind === "article_seed"
+  ) {
     return Boolean(raw.unit_id || raw.anchor_segment_id);
   }
   return false;
@@ -2297,6 +2301,8 @@ function navigateLabelForKind(kind: ReaderAskAgenticEvidenceItemDto["kind"]): st
       return "定位到文章中的阅读范围";
     case "search_hit":
       return "定位到文章中的检索依据";
+    case "article_seed":
+      return "定位到文章中的原文位置";
     default:
       return "定位到文章中的依据";
   }

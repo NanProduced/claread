@@ -305,6 +305,7 @@ def test_reader_record_ask_independent_runtime_avoids_legacy_agent_seams() -> No
         "context_envelope.py",
         "tool_contracts.py",
         "evidence.py",
+        "baseline_context.py",
         "production_stream.py",
         "production_wiring.py",
         "repository.py",

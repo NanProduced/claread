@@ -9,7 +9,17 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
+
+from app.services.reader_record_ask.evidence import LEGAL_EVIDENCE_KIND_SOURCE
 
 EXECUTION_VERSION_AGENTIC_V1 = "reader_record_ask_agentic_v1"
 
@@ -26,6 +36,7 @@ EvidenceKindPublic = Literal[
     "read_range",
     "search_hit",
     "observation",
+    "article_seed",
 ]
 
 ProgressPhase = Literal[
@@ -83,7 +94,12 @@ class ReaderRecordAskRagCitationPublic(BaseModel):
 
 
 class ReaderRecordAskEvidenceItem(BaseModel):
-    """One resolved evidence item for completed DTO / persistence."""
+    """One resolved evidence item for completed DTO / persistence.
+
+    Strict kind/source_tool legal-map + rag_citation presence is enforced
+    via :attr:`_validate_legal_kind_source` so hot completed, persistence,
+    and cold history all reject malformed evidence items fail-closed.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -94,6 +110,39 @@ class ReaderRecordAskEvidenceItem(BaseModel):
     unit_id: str | None = None
     anchor_segment_id: str | None = None
     rag_citation: ReaderRecordAskRagCitationPublic | None = None
+
+    @model_validator(mode="after")
+    def _validate_legal_kind_source(self) -> ReaderRecordAskEvidenceItem:
+        """Enforce the strict (kind, source_tool) legal map + rag_citation rules.
+
+        Rules:
+        - article_seed ↔ baseline_context, and rag_citation must be None.
+        - initial_anchor ↔ initial_anchor, and rag_citation must be None.
+        - read_range ↔ read_range, and rag_citation must be None.
+        - search_hit ↔ search_current_article, and rag_citation must be present.
+        - observation ↔ {initial_anchor, read_range, search_current_article},
+          and rag_citation must be None.
+        """
+        allowed = LEGAL_EVIDENCE_KIND_SOURCE.get(self.kind)
+        if allowed is None or self.source_tool not in allowed:
+            raise ValueError(
+                f"illegal evidence kind/source combination: kind={self.kind!r}, "
+                f"source_tool={self.source_tool!r}; allowed sources for this "
+                f"kind: {sorted(allowed) if allowed else []}"
+            )
+        # rag_citation presence rules.
+        if self.kind == "search_hit":
+            if self.rag_citation is None:
+                raise ValueError(
+                    "search_hit evidence requires a complete rag_citation"
+                )
+        else:
+            if self.rag_citation is not None:
+                raise ValueError(
+                    f"rag_citation is only valid for search_hit kind; "
+                    f"kind={self.kind!r} must not carry rag_citation"
+                )
+        return self
 
 
 class ReaderRecordAskEvidenceScope(BaseModel):

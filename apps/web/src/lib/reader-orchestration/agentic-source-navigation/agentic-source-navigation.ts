@@ -30,7 +30,8 @@ export type AgenticSourceKind =
   | "initial_anchor"
   | "read_range"
   | "search_hit"
-  | "observation";
+  | "observation"
+  | "article_seed";
 
 /**
  * Descriptor passed from Ask UI into the navigator.
@@ -212,7 +213,11 @@ function planSourceNavigation(
   // 3. locator legality by kind
   let candidates: DomNavigationCandidate[] = [];
 
-  if (source.kind === "initial_anchor" || source.kind === "read_range") {
+  if (
+    source.kind === "initial_anchor" ||
+    source.kind === "read_range" ||
+    source.kind === "article_seed"
+  ) {
     candidates = buildNonRagCandidates(source);
     if (candidates.length === 0) {
       return { status: "unavailable", reason: "no_locator" };
@@ -343,7 +348,11 @@ export function createNavigateAgenticSource(
         return { status: "unavailable", reason: "no_locator" };
       }
     }
-    if (source.kind === "initial_anchor" || source.kind === "read_range") {
+    if (
+      source.kind === "initial_anchor" ||
+      source.kind === "read_range" ||
+      source.kind === "article_seed"
+    ) {
       if (buildNonRagCandidates(source).length === 0) {
         return { status: "unavailable", reason: "no_locator" };
       }

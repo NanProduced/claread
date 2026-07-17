@@ -16,6 +16,10 @@ from app.services.reader_record_ask.agent import (
     create_reading_record_ask_agent,
 )
 from app.services.reader_record_ask.article_rag_port import ArticleRagSearchPort
+from app.services.reader_record_ask.baseline_context import (
+    BaselineAgentContext,
+    BaselineContextAssembler,
+)
 from app.services.reader_record_ask.context_envelope import (
     ReadingRecordAskContextEnvelope,
 )
@@ -54,7 +58,14 @@ from app.services.reader_record_ask.search_current_article_executor import (
 
 @dataclass(slots=True)
 class ReadingRecordAskRunResult:
-    """Outcome of one independent agent run (including finalizer)."""
+    """Outcome of one independent agent run (including finalizer).
+
+    ``baseline_context`` carries the typed baseline assembly result. When
+    ``baseline_context.baseline_status != "injected"`` the run fail-closed
+    before invoking the agent: ``final_text`` is ``None``, ``finalized`` is
+    ``None``, and ``agent_draft`` is ``None``. Callers (production stream)
+    must emit a terminal event, never an ok completed.
+    """
 
     final_text: str | None
     events: list[RuntimeEvent] = field(default_factory=list)
@@ -65,6 +76,7 @@ class ReadingRecordAskRunResult:
     agent_draft: AgentAnswerDraft | None = None
     finalized: FinalizedAskResult | None = None
     agent_output: Any = None
+    baseline_context: BaselineAgentContext | None = None
 
 
 async def run_reading_record_ask(
@@ -84,6 +96,12 @@ async def run_reading_record_ask(
 
     The model decides whether to call ``read_range`` / ``search_current_article``;
     there is no keyword routing or article/RAG prefetch.
+
+    Baseline article context is assembled before the agent run so the model
+    can see the article text (short articles: full text; medium/long:
+    deterministic first-N-units) even when RAG is off and there is no user
+    selection. Baseline failure is typed fail-closed: the agent is not
+    invoked, no pseudo-success completed is produced.
 
     ``event_sink`` is an optional live observation hook used by production
     stream for concurrent progress projection. Events are always retained on
@@ -126,7 +144,53 @@ async def run_reading_record_ask(
         )
     )
 
-    available_handles = [ref.handle_id for ref in registry.list_handle_refs()]
+    # Baseline context assembly — must happen before agent.run so the model
+    # sees the article text on the first turn. Fail-closed: when the baseline
+    # cannot be assembled, the agent is not invoked and no pseudo-success
+    # completed is produced. Production stream maps finalized=None +
+    # final_text=None to a terminal event.
+    assembler = BaselineContextAssembler(
+        envelope=envelope,
+        document_access=document_access,
+        registry=registry,
+    )
+    baseline = await assembler.assemble_baseline()
+
+    if not baseline.is_injected:
+        # Fail-closed: do not invoke the agent, do not emit composing/validating
+        # events, do not produce a finalized result. RunFinishedEvent carries
+        # the registered evidence count (initial_anchor only, if any) so
+        # production stream can close the progress loop.
+        deps.emit_event(
+            RunFinishedEvent(
+                read_range_calls=0,
+                evidence_count=len(registry),
+                search_current_article_calls=0,
+            )
+        )
+        return ReadingRecordAskRunResult(
+            final_text=None,
+            events=list(deps.events),
+            read_range_calls=0,
+            search_current_article_calls=0,
+            evidence_observations=registry.list_observations(),
+            initial_anchor_handle=initial_handle,
+            agent_draft=None,
+            finalized=None,
+            agent_output=None,
+            baseline_context=baseline,
+        )
+
+    # Available handles for the model = initial_anchor (if any) + baseline
+    # seed handles (1:1 with chunks). We deliberately do NOT scan the whole
+    # registry here: tool-created handles are returned to the model via tool
+    # results, and the baseline seed handles come from
+    # ``baseline.available_seed_handle_ids`` so the set of citable seed
+    # handles is exactly the set of chunks the model has seen text for.
+    available_handles: list[str] = []
+    if initial_handle is not None:
+        available_handles.append(initial_handle.handle_id)
+    available_handles.extend(baseline.available_seed_handle_ids)
     agent = create_reading_record_ask_agent(model)
     prompt = build_agent_user_prompt(
         user_message=user_message,
@@ -136,6 +200,7 @@ async def run_reading_record_ask(
             sort_keys=True,
         ),
         available_evidence_handle_ids=available_handles,
+        model_context_chunks=baseline.model_context_chunks,
     )
     result = await agent.run(prompt, deps=deps)
     draft = result.output
@@ -175,4 +240,5 @@ async def run_reading_record_ask(
         agent_draft=draft,
         finalized=finalized,
         agent_output=result.output,
+        baseline_context=baseline,
     )

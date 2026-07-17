@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ReaderAskStreamEnvelopeDto } from "@/types/api/reader-ask";
 import {
   isReaderAskAgenticCompletedPayload,
+  isReaderAskAgenticEvidenceList,
   isReaderAskAgenticEvidenceScope,
   isReaderAskAgenticProgressPayload,
   isReaderAskAgenticRunStartedPayload,
@@ -668,5 +669,524 @@ describe("agentic payload type guards", () => {
         rejected_handles: ["evh_aabbccddeeff00112233445566778899"],
       }),
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R4-A1: article_seed evidence wire guard
+//
+// article_seed is a new EvidenceKind with provenance `baseline_context`. The
+// strict completed guard must accept legal article_seed evidence items and
+// reject malformed ones (missing handle_id / unknown kind / bad rag_citation).
+// Cold hydration via thread detail also relies on the same list guard.
+// ---------------------------------------------------------------------------
+
+describe("agentic payload type guards — article_seed (R4-A1)", () => {
+  const ARTICLE_SEED_EVIDENCE = {
+    handle_id: "evh_seed_aabbccddeeff00112233445566778899",
+    kind: "article_seed",
+    source_tool: "baseline_context",
+    snippet: "article body snippet",
+    unit_id: "u1",
+    anchor_segment_id: null,
+  } as const;
+
+  const ARTICLE_SEED_COMPLETED = {
+    execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+    final_status: "ok",
+    answer_text: "Article-level answer.",
+    message_id: "msg-seed-1",
+    thread_id: "thread-1",
+    turn_run_id: "turn-run-1",
+    envelope_fingerprint: "env-fp-seed",
+    evidence_scope: AGENTIC_EVIDENCE_SCOPE,
+    evidence: [ARTICLE_SEED_EVIDENCE],
+  } as const;
+
+  it("accepts completed payload with legal article_seed evidence", () => {
+    expect(
+      isReaderAskAgenticCompletedPayload(ARTICLE_SEED_COMPLETED),
+    ).toBe(true);
+  });
+
+  it("accepts article_seed with null snippet and no locator", () => {
+    expect(
+      isReaderAskAgenticCompletedPayload({
+        ...ARTICLE_SEED_COMPLETED,
+        evidence: [
+          {
+            handle_id: "evh_seed_aabbccddeeff00112233445566778899",
+            kind: "article_seed",
+            source_tool: "baseline_context",
+            snippet: null,
+            unit_id: null,
+            anchor_segment_id: null,
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects completed payload when article_seed has malformed rag_citation", () => {
+    expect(
+      isReaderAskAgenticCompletedPayload({
+        ...ARTICLE_SEED_COMPLETED,
+        evidence: [
+          {
+            handle_id: "evh_seed_aabbccddeeff00112233445566778899",
+            kind: "article_seed",
+            source_tool: "baseline_context",
+            snippet: "snippet",
+            // article_seed should never carry rag_citation, but if present
+            // it must be a complete citation; partial citation is rejected.
+            rag_citation: { snippet: "partial" },
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects completed payload with unknown evidence kind", () => {
+    expect(
+      isReaderAskAgenticCompletedPayload({
+        ...ARTICLE_SEED_COMPLETED,
+        evidence: [
+          {
+            handle_id: "evh_x_aabbccddeeff00112233445566778899",
+            kind: "future_kind",
+            source_tool: "baseline_context",
+            snippet: "snippet",
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects completed payload with missing handle_id on article_seed", () => {
+    expect(
+      isReaderAskAgenticCompletedPayload({
+        ...ARTICLE_SEED_COMPLETED,
+        evidence: [
+          {
+            kind: "article_seed",
+            source_tool: "baseline_context",
+            snippet: "snippet",
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("cold hydration: evidence list guard accepts article_seed items", () => {
+    // ReaderAskMessageDto.agentic_evidence uses isReaderAskAgenticEvidenceList
+    // for cold-load validation. The guard must accept article_seed items.
+    const coldLoadEvidence = [
+      ARTICLE_SEED_EVIDENCE,
+      {
+        handle_id: "evh_anchor_aabbccddeeff00112233445566778899",
+        kind: "initial_anchor",
+        source_tool: "initial_anchor",
+        snippet: "selected sentence",
+        unit_id: "u1",
+        anchor_segment_id: "s1",
+      },
+    ];
+    expect(isReaderAskAgenticEvidenceList(coldLoadEvidence)).toBe(true);
+  });
+
+  it("cold hydration: evidence list guard rejects malformed article_seed", () => {
+    expect(
+      isReaderAskAgenticEvidenceList([
+        {
+          handle_id: "evh_seed_aabbccddeeff00112233445566778899",
+          // missing kind
+          source_tool: "baseline_context",
+          snippet: "snippet",
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  it("parses agentic message.completed with article_seed evidence over SSE", async () => {
+    const events = await collectEvents([
+      `event: message.completed\ndata: ${JSON.stringify(ARTICLE_SEED_COMPLETED)}\n\n`,
+    ]);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].event).toBe("message.completed");
+    expect(isReaderAskAgenticCompletedPayload(events[0].data)).toBe(true);
+    const evidence = (events[0].data as typeof ARTICLE_SEED_COMPLETED)
+      .evidence[0] as {
+      handle_id: string;
+      kind: string;
+      source_tool: string;
+      snippet?: string | null;
+      rag_citation?: unknown;
+    };
+    expect(evidence.kind).toBe("article_seed");
+    expect(evidence.source_tool).toBe("baseline_context");
+    expect(evidence.snippet).toBe("article body snippet");
+    // article_seed must not carry rag_citation.
+    expect(evidence.rag_citation).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R4-A1 rework: strict cold/hot evidence legal-map contract
+//
+// The guard must reject illegal (kind, source_tool) combinations and
+// rag_citation presence violations on both hot completed (SSE) and cold
+// hydration (evidence list guard) paths. Mirrors backend
+// `LEGAL_EVIDENCE_KIND_SOURCE` + rag_citation rules.
+// ---------------------------------------------------------------------------
+
+describe("agentic evidence legal-map — illegal combinations (R4-A1 rework)", () => {
+  const BASE_COMPLETED = {
+    execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+    final_status: "ok",
+    answer_text: "Answer.",
+    message_id: "msg-legal-1",
+    thread_id: "thread-1",
+    turn_run_id: "turn-run-1",
+    envelope_fingerprint: "env-fp-legal",
+    evidence_scope: AGENTIC_EVIDENCE_SCOPE,
+  } as const;
+
+  function makeCompletedWithEvidence(evidence: unknown) {
+    return { ...BASE_COMPLETED, evidence: [evidence] };
+  }
+
+  describe("hot completed guard rejects illegal kind/source pairs", () => {
+    it("rejects article_seed + initial_anchor (illegal source)", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_seed_aabbccddeeff00112233445566778899",
+            kind: "article_seed",
+            source_tool: "initial_anchor",
+            snippet: "snippet",
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects article_seed + read_range (illegal source)", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_seed_aabbccddeeff00112233445566778899",
+            kind: "article_seed",
+            source_tool: "read_range",
+            snippet: "snippet",
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects article_seed + search_current_article (illegal source)", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_seed_aabbccddeeff00112233445566778899",
+            kind: "article_seed",
+            source_tool: "search_current_article",
+            snippet: "snippet",
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects article_seed with any rag_citation present", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_seed_aabbccddeeff00112233445566778899",
+            kind: "article_seed",
+            source_tool: "baseline_context",
+            snippet: "snippet",
+            rag_citation: { snippet: "should not be here" },
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects initial_anchor + baseline_context (illegal source)", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_anchor_aabbccddeeff00112233445566778899",
+            kind: "initial_anchor",
+            source_tool: "baseline_context",
+            snippet: "snippet",
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects initial_anchor + read_range (illegal source)", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_anchor_aabbccddeeff00112233445566778899",
+            kind: "initial_anchor",
+            source_tool: "read_range",
+            snippet: "snippet",
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects initial_anchor with rag_citation present", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_anchor_aabbccddeeff00112233445566778899",
+            kind: "initial_anchor",
+            source_tool: "initial_anchor",
+            snippet: "snippet",
+            rag_citation: { snippet: "should not be here" },
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects read_range + baseline_context (illegal source)", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_range_aabbccddeeff00112233445566778899",
+            kind: "read_range",
+            source_tool: "baseline_context",
+            snippet: "snippet",
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects read_range with rag_citation present", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_range_aabbccddeeff00112233445566778899",
+            kind: "read_range",
+            source_tool: "read_range",
+            snippet: "snippet",
+            rag_citation: { snippet: "should not be here" },
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects search_hit + initial_anchor (illegal source)", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_search_aabbccddeeff00112233445566778899",
+            kind: "search_hit",
+            source_tool: "initial_anchor",
+            snippet: "snippet",
+            rag_citation: AGENTIC_SEARCH_HIT_EVIDENCE.rag_citation,
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects search_hit + baseline_context (illegal source)", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_search_aabbccddeeff00112233445566778899",
+            kind: "search_hit",
+            source_tool: "baseline_context",
+            snippet: "snippet",
+            rag_citation: AGENTIC_SEARCH_HIT_EVIDENCE.rag_citation,
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects search_hit without rag_citation", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_search_aabbccddeeff00112233445566778899",
+            kind: "search_hit",
+            source_tool: "search_current_article",
+            snippet: "snippet without citation",
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects observation + baseline_context (illegal source)", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_obs_aabbccddeeff00112233445566778899",
+            kind: "observation",
+            source_tool: "baseline_context",
+            snippet: "snippet",
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects observation with rag_citation present", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_obs_aabbccddeeff00112233445566778899",
+            kind: "observation",
+            source_tool: "initial_anchor",
+            snippet: "snippet",
+            rag_citation: { snippet: "should not be here" },
+          }),
+        ),
+      ).toBe(false);
+    });
+  });
+
+  describe("cold hydration evidence list guard rejects illegal kind/source pairs", () => {
+    it("rejects article_seed + initial_anchor in cold hydration", () => {
+      expect(
+        isReaderAskAgenticEvidenceList([
+          {
+            handle_id: "evh_seed_aabbccddeeff00112233445566778899",
+            kind: "article_seed",
+            source_tool: "initial_anchor",
+            snippet: "snippet",
+          },
+        ]),
+      ).toBe(false);
+    });
+
+    it("rejects search_hit without rag_citation in cold hydration", () => {
+      expect(
+        isReaderAskAgenticEvidenceList([
+          {
+            handle_id: "evh_search_aabbccddeeff00112233445566778899",
+            kind: "search_hit",
+            source_tool: "search_current_article",
+            snippet: "no citation",
+          },
+        ]),
+      ).toBe(false);
+    });
+
+    it("rejects initial_anchor with rag_citation in cold hydration", () => {
+      expect(
+        isReaderAskAgenticEvidenceList([
+          {
+            handle_id: "evh_anchor_aabbccddeeff00112233445566778899",
+            kind: "initial_anchor",
+            source_tool: "initial_anchor",
+            snippet: "no rag allowed",
+            rag_citation: { snippet: "illegal" },
+          },
+        ]),
+      ).toBe(false);
+    });
+
+    it("rejects article_seed with rag_citation in cold hydration", () => {
+      expect(
+        isReaderAskAgenticEvidenceList([
+          {
+            handle_id: "evh_seed_aabbccddeeff00112233445566778899",
+            kind: "article_seed",
+            source_tool: "baseline_context",
+            snippet: "no rag allowed",
+            rag_citation: { snippet: "illegal" },
+          },
+        ]),
+      ).toBe(false);
+    });
+  });
+
+  describe("hot completed guard accepts legal kind/source pairs", () => {
+    it("accepts article_seed + baseline_context without rag_citation", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_seed_aabbccddeeff00112233445566778899",
+            kind: "article_seed",
+            source_tool: "baseline_context",
+            snippet: "legal snippet",
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it("accepts initial_anchor + initial_anchor without rag_citation", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_anchor_aabbccddeeff00112233445566778899",
+            kind: "initial_anchor",
+            source_tool: "initial_anchor",
+            snippet: "legal snippet",
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it("accepts read_range + read_range without rag_citation", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_range_aabbccddeeff00112233445566778899",
+            kind: "read_range",
+            source_tool: "read_range",
+            snippet: "legal snippet",
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it("accepts search_hit + search_current_article with complete rag_citation", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence(AGENTIC_SEARCH_HIT_EVIDENCE),
+        ),
+      ).toBe(true);
+    });
+
+    it("accepts observation + initial_anchor without rag_citation", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_obs_aabbccddeeff00112233445566778899",
+            kind: "observation",
+            source_tool: "initial_anchor",
+            snippet: "legal snippet",
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it("accepts observation + read_range without rag_citation", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_obs_aabbccddeeff00112233445566778899",
+            kind: "observation",
+            source_tool: "read_range",
+            snippet: "legal snippet",
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it("accepts observation + search_current_article without rag_citation", () => {
+      expect(
+        isReaderAskAgenticCompletedPayload(
+          makeCompletedWithEvidence({
+            handle_id: "evh_obs_aabbccddeeff00112233445566778899",
+            kind: "observation",
+            source_tool: "search_current_article",
+            snippet: "legal snippet",
+          }),
+        ),
+      ).toBe(true);
+    });
   });
 });

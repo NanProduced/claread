@@ -4832,7 +4832,11 @@ describe("AiWorkspacePanel agentic source navigation UI", () => {
     expect(screen.queryByText("跳到文章位置")).toBeNull();
   });
 
-  it("observation and partial search_hit stay static even with scope", async () => {
+  // R4-A1 rework: "partial search_hit" (search_hit without rag_citation) is
+  // now illegal under the strict guard — isReaderAskAgenticEvidenceList
+  // rejects the whole list, so the disclosure would not render. The legal
+  // non-navigable kind is `observation` (no rag_citation, no nav button).
+  it("observation stays static even with scope", async () => {
     const onNavigate = vi.fn(async () => ({
       status: "navigated" as const,
       mode: "unit" as const,
@@ -4850,13 +4854,6 @@ describe("AiWorkspacePanel agentic source navigation UI", () => {
               kind: "observation",
               source_tool: "initial_anchor",
               snippet: "obs",
-            },
-            {
-              handle_id: "evh_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-              kind: "search_hit",
-              source_tool: "search_current_article",
-              snippet: "partial hit",
-              // no rag_citation → partial
             },
           ],
           agentic_evidence_scope: scope,

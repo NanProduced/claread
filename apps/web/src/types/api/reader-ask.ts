@@ -690,7 +690,8 @@ export type ReaderAskAgenticEvidenceKindDto =
   | "initial_anchor"
   | "read_range"
   | "search_hit"
-  | "observation";
+  | "observation"
+  | "article_seed";
 
 export type ReaderAskAgenticRagSourceScopeDto = "main_reading_text" | "heading";
 
@@ -857,6 +858,7 @@ const READER_ASK_AGENTIC_EVIDENCE_KINDS = new Set<string>([
   "read_range",
   "search_hit",
   "observation",
+  "article_seed",
 ]);
 
 const READER_ASK_AGENTIC_TERMINAL_STATUSES = new Set<string>([
@@ -864,6 +866,29 @@ const READER_ASK_AGENTIC_TERMINAL_STATUSES = new Set<string>([
   "invalid_citations",
   "failed",
   "cancelled",
+]);
+
+/**
+ * Legal (kind, source_tool) pairs — mirrors backend
+ * `LEGAL_EVIDENCE_KIND_SOURCE` in `services/api/app/services/reader_record_ask/evidence.py`.
+ *
+ * Rejects inconsistent combinations such as kind=article_seed +
+ * source_tool=initial_anchor. The source_tool field on the wire is a string,
+ * not a union, so this map is the single source of truth for cold/hot
+ * evidence contract validation on the Web side.
+ */
+const READER_ASK_AGENTIC_LEGAL_KIND_SOURCE: ReadonlyMap<
+  string,
+  ReadonlySet<string>
+> = new Map<string, ReadonlySet<string>>([
+  ["initial_anchor", new Set(["initial_anchor"])],
+  ["read_range", new Set(["read_range"])],
+  ["search_hit", new Set(["search_current_article"])],
+  [
+    "observation",
+    new Set(["initial_anchor", "read_range", "search_current_article"]),
+  ],
+  ["article_seed", new Set(["baseline_context"])],
 ]);
 
 function isReaderAskAgenticRagCitation(
@@ -910,10 +935,26 @@ export function isReaderAskAgenticEvidenceItem(
   ) {
     return false;
   }
-  if (item.rag_citation == null) {
-    return true;
+  // Strict legal-map check: kind ↔ source_tool must be a legal pair.
+  // Mirrors backend `LEGAL_EVIDENCE_KIND_SOURCE` validator.
+  const allowedSources = READER_ASK_AGENTIC_LEGAL_KIND_SOURCE.get(item.kind);
+  if (!allowedSources || !allowedSources.has(item.source_tool)) {
+    return false;
   }
-  return isReaderAskAgenticRagCitation(item.rag_citation);
+  // rag_citation presence rules:
+  // - search_hit MUST carry a complete rag_citation.
+  // - All other kinds MUST NOT carry rag_citation.
+  if (item.kind === "search_hit") {
+    if (item.rag_citation == null) {
+      return false;
+    }
+    return isReaderAskAgenticRagCitation(item.rag_citation);
+  }
+  // Non-search_hit kinds must not carry rag_citation at all.
+  if (item.rag_citation != null) {
+    return false;
+  }
+  return true;
 }
 
 /** Strict list guard for RR history / completed agentic evidence arrays. */

@@ -553,12 +553,21 @@ async def test_agent_direct_answer_zero_tools() -> None:
     assert result.search_current_article_calls == 0
     # Initial selection is registered even when the model uses zero tools.
     assert result.initial_anchor_handle is not None
-    assert len(result.evidence_observations) == 1
-    assert result.evidence_observations[0].handle.kind == "initial_anchor"
+    # R4-A1: baseline context adds an article_seed observation alongside the
+    # initial_anchor observation, so the total is 2 even with zero tool calls.
+    assert len(result.evidence_observations) == 2
+    kinds = {obs.handle.kind for obs in result.evidence_observations}
+    assert kinds == {"initial_anchor", "article_seed"}
+    initial_obs = next(
+        obs for obs in result.evidence_observations
+        if obs.handle.kind == "initial_anchor"
+    )
     # EnvelopeInitialAnchor strips whitespace on selected_text.
-    assert result.evidence_observations[0].snippet == _SEG_A1_TEXT.strip()
+    assert initial_obs.snippet == _SEG_A1_TEXT.strip()
     assert result.finalized is not None
     assert result.finalized.status == "ok"
+    # The model only cites the initial_anchor handle, so resolved_evidence
+    # contains just that one entry. article_seed is registered but uncited.
     assert len(result.finalized.resolved_evidence) == 1
     assert result.finalized.resolved_evidence[0].handle.kind == "initial_anchor"
     tool_calls = [e for e in result.events if isinstance(e, ToolCallEvent)]
@@ -576,7 +585,11 @@ async def test_agent_direct_answer_without_selection_has_no_initial_evidence() -
     )
     assert result.read_range_calls == 0
     assert result.initial_anchor_handle is None
-    assert result.evidence_observations == ()
+    # R4-A1: even without a user selection, baseline context now produces
+    # exactly one article_seed observation. There is no initial_anchor.
+    assert len(result.evidence_observations) == 1
+    assert result.evidence_observations[0].handle.kind == "article_seed"
+    assert result.evidence_observations[0].handle.source_tool == "baseline_context"
     assert result.finalized is not None
     assert result.finalized.status == "ok"
 
@@ -632,10 +645,10 @@ async def test_agent_one_read_range_and_cites_handle() -> None:
         model=FunctionModel(model_fn),
     )
     assert result.read_range_calls == 1
-    # initial_anchor + one read_range observation
-    assert len(result.evidence_observations) == 2
+    # R4-A1: initial_anchor + article_seed (baseline) + one read_range observation
+    assert len(result.evidence_observations) == 3
     kinds = {obs.handle.kind for obs in result.evidence_observations}
-    assert kinds == {"initial_anchor", "read_range"}
+    assert kinds == {"initial_anchor", "article_seed", "read_range"}
     read_obs = next(
         obs for obs in result.evidence_observations if obs.handle.kind == "read_range"
     )
@@ -673,8 +686,10 @@ async def test_agent_budget_exhaustion_after_three_reads() -> None:
     ]
     assert statuses.count("ok") == 3
     assert statuses.count("budget_exhausted") == 1
-    # Only three real loads (fourth is budget-gated).
-    assert access.load_count == 3
+    # R4-A1: baseline context loads the document scope once at turn start,
+    # then each successful read_range call loads the scope once. The fourth
+    # read_range is budget-gated and does NOT load. So total loads = 1 + 3 = 4.
+    assert access.load_count == 4
     assert result.final_text == "Done with available evidence."
 
 
@@ -708,8 +723,10 @@ async def test_document_injection_does_not_expand_tool_authority() -> None:
     text = (tool_results[0].payloads or {}).get("text", "")
     assert "ignore previous instructions" in text
     assert (tool_results[0].payloads or {}).get("untrusted") is True
-    # No extra calls induced by the injection string itself.
-    assert access.load_count == 1
+    # R4-A1: baseline context loads the document scope once at turn start,
+    # and the single read_range call loads it once more. The injection text
+    # inside u2 does NOT induce additional loads beyond baseline + read_range.
+    assert access.load_count == 2
 
 
 @pytest.mark.asyncio
