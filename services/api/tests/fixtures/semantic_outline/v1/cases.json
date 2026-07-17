@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "FX1",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [{"unit_id": "u1", "order_index": 1}, {"unit_id": "u2", "order_index": 2}, {"unit_id": "u3", "order_index": 3}, {"unit_id": "u4", "order_index": 4}, {"unit_id": "u5", "order_index": 5}, {"unit_id": "u6", "order_index": 6}], "anchors": [{"anchor_segment_id": "seg_u1", "unit_id": "u1"}]},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": [{"node_id": "oln_1", "depth": 1, "title": "Chapter One", "start_unit_id": "u1", "end_unit_id": "u6"}, {"node_id": "oln_2", "parent_node_id": "oln_1", "depth": 2, "title": "Detail", "start_unit_id": "u2", "end_unit_id": "u3"}]},
+      "expected": {"status": "ready", "node_ids": ["oln_1", "oln_2"], "titles": ["Chapter One", "Detail"], "drop_reasons": []}
+    },
+    {
+      "id": "FX2",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [{"unit_id": "u1", "order_index": 1}, {"unit_id": "u2", "order_index": 2}, {"unit_id": "u3", "order_index": 3}, {"unit_id": "u4", "order_index": 4}, {"unit_id": "u5", "order_index": 5}, {"unit_id": "u6", "order_index": 6}], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": [{"node_id": "oln_gap", "depth": 1, "title": "Middle section", "start_unit_id": "u2", "end_unit_id": "u5"}]},
+      "expected": {"status": "ready", "node_ids": ["oln_gap"], "titles": ["Middle section"], "drop_reasons": []}
+    },
+    {
+      "id": "FX3",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [], "anchors": []},
+      "input": {"field_present": false, "requested": false, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": []},
+      "expected": {"status": "unavailable", "node_ids": [], "titles": [], "drop_reasons": []}
+    },
+    {
+      "id": "FX4",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [{"unit_id": "u1", "order_index": 1}, {"unit_id": "u2", "order_index": 2}], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": [{"node_id": "oln_body", "depth": 1, "title": "Body-only section", "start_unit_id": "u1", "end_unit_id": "u2"}]},
+      "expected": {"status": "ready", "node_ids": ["oln_body"], "titles": ["Body-only section"], "drop_reasons": []}
+    },
+    {
+      "id": "FX5",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [{"unit_id": "u1", "order_index": 1}], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": [{"node_id": "oln_good", "depth": 1, "title": "Good", "start_unit_id": "u1", "end_unit_id": "u1"}, {"node_id": "oln_bad", "depth": 1, "title": "  ", "start_unit_id": "u1", "end_unit_id": "u1"}]},
+      "expected": {"status": "partial", "node_ids": ["oln_good"], "titles": ["Good"], "drop_reasons": ["empty_title"]}
+    },
+    {
+      "id": "FX6a",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": true, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": []},
+      "expected": {"status": "failed", "node_ids": [], "titles": [], "drop_reasons": ["worker_failure"]}
+    },
+    {
+      "id": "FX6b",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [], "anchors": []},
+      "input": {"field_present": false, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": []},
+      "expected": {"status": "unavailable", "node_ids": [], "titles": [], "drop_reasons": []}
+    },
+    {
+      "id": "FX6c",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_b", "generation": 1}, "attempted_nodes": []},
+      "expected": {"status": "stale", "node_ids": [], "titles": [], "drop_reasons": ["source_mismatch"]}
+    },
+    {
+      "id": "FX8a",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [{"unit_id": "u1", "order_index": 1}], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": [{"node_id": "oln_missing", "depth": 1, "title": "Missing end", "start_unit_id": "u1"}]},
+      "expected": {"status": "failed", "node_ids": [], "titles": [], "drop_reasons": ["missing_unit"]}
+    },
+    {
+      "id": "FX8b",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [{"unit_id": "u1", "order_index": 1}], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": [{"node_id": "oln_unknown", "depth": 1, "title": "Unknown", "start_unit_id": "missing", "end_unit_id": "u1"}]},
+      "expected": {"status": "failed", "node_ids": [], "titles": [], "drop_reasons": ["missing_unit"]}
+    },
+    {
+      "id": "FX8c",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [{"unit_id": "u1", "order_index": 1}, {"unit_id": "u2", "order_index": 2}, {"unit_id": "u3", "order_index": 3}, {"unit_id": "u4", "order_index": 4}], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": [{"node_id": "oln_first", "depth": 1, "title": "First", "start_unit_id": "u1", "end_unit_id": "u3"}, {"node_id": "oln_overlap", "depth": 1, "title": "Overlap", "start_unit_id": "u3", "end_unit_id": "u4"}]},
+      "expected": {"status": "partial", "node_ids": ["oln_first"], "titles": ["First"], "drop_reasons": ["range_overlap"]}
+    },
+    {
+      "id": "FX8d",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [{"unit_id": "u1", "order_index": 1}], "anchors": [{"anchor_segment_id": "seg_u1", "unit_id": "u1"}]},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": [{"node_id": "oln_anchor", "depth": 1, "title": "Anchor", "start_unit_id": "u1", "end_unit_id": "u1", "start_anchor_segment_id": "missing"}]},
+      "expected": {"status": "ready", "node_ids": ["oln_anchor"], "titles": ["Anchor"], "drop_reasons": ["invalid_anchor"], "start_anchor_segment_ids": [null], "skipped_node_count": 0}
+    },
+    {
+      "id": "FX8e",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [{"unit_id": "u1", "order_index": 1}], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": [{"node_id": "oln_same", "depth": 1, "title": "First", "start_unit_id": "u1", "end_unit_id": "u1"}, {"node_id": "oln_same", "depth": 1, "title": "Second", "start_unit_id": "u1", "end_unit_id": "u1"}]},
+      "expected": {"status": "partial", "node_ids": ["oln_same"], "titles": ["First"], "drop_reasons": ["duplicate_node_id"]}
+    },
+    {
+      "id": "FX11",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [{"unit_id": "u1", "order_index": 1}], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": [{"node_id": "oln_parent", "depth": 1, "title": " ", "start_unit_id": "u1", "end_unit_id": "u1"}, {"node_id": "oln_child", "parent_node_id": "oln_parent", "depth": 2, "title": "Child", "start_unit_id": "u1", "end_unit_id": "u1"}, {"node_id": "oln_grandchild", "parent_node_id": "oln_child", "depth": 3, "title": "Grandchild", "start_unit_id": "u1", "end_unit_id": "u1"}]},
+      "expected": {"status": "failed", "node_ids": [], "titles": [], "drop_reasons": ["empty_title", "parent_dropped", "parent_dropped"]}
+    },
+    {
+      "id": "FX12",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [{"unit_id": "u1", "order_index": 1}], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": [{"node_id": "oln_invalid", "depth": 1, "title": " ", "start_unit_id": "u1", "end_unit_id": "u1"}]},
+      "expected": {"status": "failed", "node_ids": [], "titles": [], "drop_reasons": ["empty_title"]}
+    },
+    {
+      "id": "FX13",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [{"unit_id": "u1", "order_index": 1}], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": [{"node_id": "oln_feff", "depth": 1, "title": "\uFEFFChapter One\uFEFF", "start_unit_id": "u1", "end_unit_id": "u1"}]},
+      "expected": {"status": "ready", "node_ids": ["oln_feff"], "titles": ["Chapter One"], "drop_reasons": []}
+    },
+    {
+      "id": "FX14",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [{"unit_id": "u1", "order_index": 1}], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": [{"node_id": "oln_nel", "depth": 1, "title": "\u0085Chapter Two\u0085", "start_unit_id": "u1", "end_unit_id": "u1"}]},
+      "expected": {"status": "ready", "node_ids": ["oln_nel"], "titles": ["\u0085Chapter Two\u0085"], "drop_reasons": []}
+    },
+    {
+      "id": "FX15",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [{"unit_id": "u1", "order_index": 1}], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": [{"node_id": "oln_parent", "depth": 1, "title": "Parent", "start_unit_id": "u1", "end_unit_id": "u1"}, {"node_id": "oln_parent", "depth": 1, "title": "Duplicate", "start_unit_id": "u1", "end_unit_id": "u1"}, {"node_id": "oln_child", "parent_node_id": "oln_parent", "depth": 2, "title": "Child", "start_unit_id": "u1", "end_unit_id": "u1"}]},
+      "expected": {"status": "partial", "node_ids": ["oln_parent", "oln_child"], "titles": ["Parent", "Child"], "drop_reasons": ["duplicate_node_id"], "skipped_node_count": 1}
+    },
+    {
+      "id": "FX16",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": false, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": []},
+      "expected": {"status": "failed", "node_ids": [], "titles": [], "drop_reasons": ["empty_attempt"], "skipped_node_count": 0}
+    },
+    {
+      "id": "FX17",
+      "context": {"source_identity": {"base_id": "base_a", "generation": 1}, "units": [], "anchors": []},
+      "input": {"field_present": true, "requested": true, "in_flight": true, "worker_failure": false, "projection_source_identity": {"base_id": "base_a", "generation": 1}, "attempted_nodes": []},
+      "expected": {"status": "pending", "node_ids": [], "titles": [], "drop_reasons": [], "skipped_node_count": 0}
+    }
+  ]
+}

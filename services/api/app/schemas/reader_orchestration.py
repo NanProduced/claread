@@ -531,6 +531,76 @@ class ReaderSnapshotAnchorSegment(BaseModel):
     hash_algorithm: Literal["fnv1a32-utf16"] = TEXT_RANGE_HASH_ALGORITHM
 
 
+# T5.2a: fragments only. They are deliberately not attached to
+# ReaderPlateSnapshot until the later projection/publication slice.
+ReaderSemanticOutlineStatus = Literal[
+    "unavailable", "pending", "partial", "ready", "failed", "stale"
+]
+
+
+class ReaderSemanticOutlineSourceIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_id: str = Field(min_length=1)
+    generation: int = Field(ge=1)
+
+
+class ReaderSemanticOutlinePublication(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outline_revision: str = Field(min_length=1)
+    layer_id: str | None = Field(default=None, min_length=1)
+    published_at: datetime | None = None
+
+
+class ReaderSemanticOutlineProvenance(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["llm", "hybrid", "deterministic"]
+    builder: str | None = Field(default=None, min_length=1)
+    model: str | None = Field(default=None, min_length=1)
+
+
+class ReaderSemanticOutlineNode(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str = Field(min_length=1)
+    parent_node_id: str | None = Field(default=None, min_length=1)
+    depth: int = Field(ge=1, le=3)
+    title: str = Field(min_length=1, max_length=80)
+    start_unit_id: str = Field(min_length=1)
+    end_unit_id: str = Field(min_length=1)
+    start_anchor_segment_id: str | None = Field(default=None, min_length=1)
+    end_anchor_segment_id: str | None = Field(default=None, min_length=1)
+    order_index: int = Field(ge=1)
+
+
+class ReaderSemanticOutlineDrop(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str | None = Field(default=None, min_length=1)
+    reason_code: str = Field(min_length=1)
+
+
+class ReaderSemanticOutlineDiagnostics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    drops: list[ReaderSemanticOutlineDrop] = Field(default_factory=list)
+    skipped_node_count: int = Field(ge=0)
+
+
+class ReaderSemanticOutlineProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_kind: Literal["reader_semantic_outline"] = "reader_semantic_outline"
+    schema_version: Literal[1] = 1
+    status: ReaderSemanticOutlineStatus
+    source_identity: ReaderSemanticOutlineSourceIdentity
+    publication: ReaderSemanticOutlinePublication
+    provenance: ReaderSemanticOutlineProvenance
+    nodes: list[ReaderSemanticOutlineNode] = Field(default_factory=list)
+    diagnostics: ReaderSemanticOutlineDiagnostics
+
 class ReaderSnapshotLayer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
