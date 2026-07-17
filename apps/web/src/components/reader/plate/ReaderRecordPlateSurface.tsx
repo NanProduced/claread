@@ -66,6 +66,8 @@ import type {
 } from "@/types/api/reader-ask";
 import type { ThemePreference } from "@/lib/appearance";
 import { useAppearance } from "@/components/providers/appearance-provider";
+import { createNavigateAgenticSource } from "@/lib/reader-orchestration/agentic-source-navigation/agentic-source-navigation";
+import { createCurrentPageIdentityLoader } from "@/lib/reader-orchestration/agentic-source-navigation/current-page-identity-loader";
 import {
   BookOpen,
   Check,
@@ -2778,6 +2780,22 @@ export function ReaderRecordPlateSurface({
     () => ({ ...snapshot, user_assets: localUserAssets }),
     [snapshot, localUserAssets],
   );
+  // R3C-C: Default Plate is the formal source-navigation path. Rebuild when
+  // snapshot identity changes. Construction only — no fetch during render;
+  // DOM adapter resolves at click time against `.reader-record-plate-document`.
+  const navigateAgenticSource = useMemo(() => {
+    const loadCurrentPageIdentity = createCurrentPageIdentityLoader({
+      readingRecordId: snapshot.record_id,
+      baseId: snapshot.base.base_id,
+      recordGeneration: snapshot.record.generation,
+    });
+    return createNavigateAgenticSource({ loadCurrentPageIdentity });
+  }, [
+    snapshot.record_id,
+    snapshot.base.base_id,
+    snapshot.record.generation,
+  ]);
+
   const askPageIdentity = useMemo<ReaderAskPageIdentity>(
     () => ({
       recordId: snapshot.record_id,
@@ -6033,6 +6051,7 @@ export function ReaderRecordPlateSurface({
           onDismissCapacityDowngradeNotice={() =>
             setCapacityDowngradeDismissed(true)
           }
+          onNavigateAgenticSource={navigateAgenticSource}
         />
         {dictionaryRailVisible ? (
           <div

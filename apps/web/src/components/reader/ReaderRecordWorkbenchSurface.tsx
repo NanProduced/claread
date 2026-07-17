@@ -70,9 +70,6 @@ import type {
   ReadingRecordProductState,
   ReadingRecordReadinessState,
 } from "@/types/api/reader-plate";
-import { createNavigateAgenticSource } from "@/lib/reader-orchestration/agentic-source-navigation/agentic-source-navigation";
-import { createCurrentPageIdentityLoader } from "@/lib/reader-orchestration/agentic-source-navigation/current-page-identity-loader";
-
 interface ReaderRecordWorkbenchSurfaceProps {
   snapshot: ReaderPlateSnapshotDto;
 }
@@ -486,20 +483,9 @@ export function ReaderRecordWorkbenchSurface({
     [snapshot],
   );
 
-  // R3C-A: Reader-owned source navigation — rebuild when snapshot identity changes.
-  // Does not embed querySelector/scroll/snippet search; only constructs the Ask callback.
-  const navigateAgenticSource = useMemo(() => {
-    const loadCurrentPageIdentity = createCurrentPageIdentityLoader({
-      readingRecordId: snapshot.record_id,
-      baseId: snapshot.base.base_id,
-      recordGeneration: snapshot.record.generation,
-    });
-    return createNavigateAgenticSource({ loadCurrentPageIdentity });
-  }, [
-    snapshot.record_id,
-    snapshot.base.base_id,
-    snapshot.record.generation,
-  ]);
+  // R3C-C: Workbench remains display-only for source navigation until it has a
+  // canonical DOM adapter (`.reader-record-plate-document` + unit/segment attrs).
+  // Do not pass onNavigateAgenticSource — Sources stay visible but non-navigable.
   const [readerSettings, setReaderSettings] =
     useState<ReaderSettingsState>(defaultReaderSettings);
   const { themePreference, setThemePreference } = useAppearance();
@@ -1433,7 +1419,6 @@ export function ReaderRecordWorkbenchSurface({
         onClearAttachments={() => setAskAttachments([])}
         onOpenSidecar={() => setAskSurface("sidecar")}
         onToggle={() => setAskOpen(false)}
-        onNavigateAgenticSource={navigateAgenticSource}
       />
 
       {lookupPreviewVisible ? (

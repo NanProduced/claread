@@ -1,5 +1,13 @@
 /** @vitest-environment jsdom */
 
+/**
+ * Workbench source-navigation seam (R3C-C fail-closed).
+ *
+ * Workbench remains display-only until it has a canonical DOM adapter
+ * (`.reader-record-plate-document` + unit/segment attrs). It must not pass
+ * onNavigateAgenticSource, or users get guaranteed target_not_found clicks.
+ */
+
 import { describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
 
@@ -85,51 +93,30 @@ function minimalSnapshot(
   } as ReaderPlateSnapshotDto;
 }
 
-describe("ReaderRecordWorkbenchSurface source navigation seam", () => {
-  it("41. passes only NavigateAgenticSource callback to AiWorkspacePanel", () => {
+describe("ReaderRecordWorkbenchSurface source navigation (display-only)", () => {
+  it("does not pass onNavigateAgenticSource (Workbench remains display-only until canonical DOM adapter)", () => {
     panelPropsSpy.mockClear();
     render(<ReaderRecordWorkbenchSurface snapshot={minimalSnapshot()} />);
     expect(panelPropsSpy).toHaveBeenCalled();
     const props = panelPropsSpy.mock.calls[0]![0] as Record<string, unknown>;
-    expect(typeof props.onNavigateAgenticSource).toBe("function");
+    // Fail-closed: no navigation callback → Sources show without jump buttons.
+    expect(props.onNavigateAgenticSource).toBeUndefined();
     expect(props).not.toHaveProperty("loadCurrentPageIdentity");
     expect(props).not.toHaveProperty("currentPageIdentity");
     expect(props).not.toHaveProperty("document");
     expect(props).not.toHaveProperty("domAdapter");
   });
 
-  it("42–43. snapshot identity is used and rebuilds when fence changes", () => {
-    panelPropsSpy.mockClear();
-    const { rerender } = render(
-      <ReaderRecordWorkbenchSurface snapshot={minimalSnapshot()} />,
-    );
-    const first = panelPropsSpy.mock.calls[0]![0] as {
-      onNavigateAgenticSource: unknown;
-    };
-    const firstCb = first.onNavigateAgenticSource;
-
-    rerender(
-      <ReaderRecordWorkbenchSurface
-        snapshot={minimalSnapshot({ generation: 2 })}
-      />,
-    );
-    const second = panelPropsSpy.mock.calls.at(-1)![0] as {
-      onNavigateAgenticSource: unknown;
-    };
-    expect(second.onNavigateAgenticSource).not.toBe(firstCb);
-  });
-
-  it("44–45. AiWorkspacePanel props exclude identity/DOM seams", () => {
+  it("AiWorkspacePanel props exclude identity/DOM seams and navigation callback", () => {
     panelPropsSpy.mockClear();
     render(<ReaderRecordWorkbenchSurface snapshot={minimalSnapshot()} />);
     const props = panelPropsSpy.mock.calls[0]![0] as Record<string, unknown>;
     const keys = Object.keys(props);
+    expect(keys).not.toContain("onNavigateAgenticSource");
     expect(keys).not.toContain("currentPageIdentity");
     expect(keys).not.toContain("loadCurrentPageIdentity");
     expect(keys).not.toContain("domAdapter");
     expect(keys).not.toContain("document");
     expect(keys).not.toContain("stableDocumentId");
-    // Only the Ask-facing navigation callback is exposed.
-    expect(typeof props.onNavigateAgenticSource).toBe("function");
   });
 });
