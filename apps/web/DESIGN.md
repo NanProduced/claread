@@ -125,7 +125,7 @@ Ask 的回答涉及原文时必须能回到文章锚点。回答不能直接改�
 
 ### Settings dialog
 
-Settings Center 使用公共 Dialog primitive 的 `xl` size 承载，由受控组件 `SettingsDialogShell`（`apps/web/src/components/settings/SettingsDialogShell.tsx`）提供 shell。它只交付 Shell 与视觉基础，不接入路由拦截、不迁移现有 Settings 页面内容。
+Settings Dialog 由 `SettingsDialogShell` 提供视觉容器与 rail 导航，由 `SettingsDialogRouteClient` 接入 `(.)settings` 路由拦截。`?section=` 控制当前 section，通过 `parseSettingsSection` 解析为 `account | preferences | usage | support` 白名单，非法值回退到 `preferences`；切换 section 使用 `router.replace` 避免累积历史记录，关闭 Dialog 使用 `router.back`。内容仍复用现有 Settings 内容组件 `SettingsSectionContent`。
 
 **层级。** Dialog 使用两个语义 z-index token，定义在 `apps/web/src/app/globals.css` 的 `:root`：`--app-z-modal-backdrop: 90`（遮罩）与 `--app-z-modal: 100`（内容）。两者严格高于 `--app-z-shell-overlay: 80`，确保 modal 始终渲染在 shell overlay 之上。`DialogOverlay` 解析为 `var(--app-z-modal-backdrop)`，`DialogContent` 解析为 `var(--app-z-modal)`。
 
@@ -133,7 +133,11 @@ Settings Center 使用公共 Dialog primitive 的 `xl` size 承载，由受控�
 
 **Hover / current / focus 语义。** 导航项 hover 使用 `interactive-quiet-hover`（`--app-control-quiet`）；当前分区使用 `--app-control-current`（非蓝色），并同步 `aria-current="page"`。primary / ring 仅用于主操作与键盘焦点（`primitiveFocusRing`），导航选中不用蓝色。这与"导航与普通列表行使用一致的四态语法"一致：默认透明、hover/current 用安静中性表面、不扩散文章语义色。
 
-**响应式形态。** `xl` size 桌面尺寸目标：`min(70rem, calc(100vw - 3rem))` × `min(46rem, calc(100dvh - 3rem))`，圆角 `var(--cl-radius-surface-md)`（14px），左侧导航宽约 `13.5rem`。移动端（`< md`）降级为 full-screen sheet：`h-dvh w-screen rounded-none`，无圆角，顶部横向分区导航 + 单一内容列，内容单独滚动。移动端账户入口由后续任务决定。
+**响应式形态。** 桌面端 Dialog 垂直、水平居中，尺寸目标：`min(76rem, calc(100vw - 4rem))` × `min(60rem, calc(100dvh - 4rem))`，圆角 `var(--cl-radius-surface-md)`（14px）。在 1024px 视口（如高度 768px）下约为 960px × 704px；在 1440px 视口下宽度上限约为 1216px。左侧 rail 宽约 `12rem`，分两组：
+- “账户”：个人资料（映射 `account` section）、偏好
+- “Claread”：用量与积分、支持
+
+每个目的地使用 16px `lucide-react` 图标与文本并列；“个人资料”仅为 UI 显示名称，不改变 URL section 白名单。移动端（`< md`）降级为 full-screen sheet：`h-dvh w-screen rounded-none`，无圆角，顶部横向分区导航 + 单一内容列，内容单独滚动。移动端账户入口由后续任务决定。
 
 **可访问性。** `DialogTitle` 与 `DialogDescription` 提供 sr-only 可访问名称；关闭按钮带 `aria-label`；分区导航使用普通 button 语义（`nav[aria-label]` + `button[aria-current="page"]`），不使用 ARIA tabs 模型；移动端关闭按钮与分区按钮最小触控目标 44×44px（`max-md:size-11` / `max-md:min-h-11`），桌面端维持紧凑密度；Esc 关闭由 Radix Dialog 提供。
 

@@ -40,10 +40,14 @@ function renderShell(overrides: RenderOverrides = {}) {
   return { onSectionChange, onOpenChange };
 }
 
-/** Returns the 4 section buttons inside the settings nav, in render order. */
+/** Returns the 4 destination section buttons inside the settings nav, in render order. */
 function getSectionButtons(): HTMLElement[] {
   const nav = screen.getByRole("navigation", { name: "设置分区" });
   return within(nav).getAllByRole("button");
+}
+
+function getDialog(): HTMLElement {
+  return screen.getByRole("dialog");
 }
 
 describe("SettingsDialogShell — controlled open/close", () => {
@@ -72,14 +76,21 @@ describe("SettingsDialogShell — section navigation semantics", () => {
     expect(screen.queryByRole("tabpanel")).toBeNull();
   });
 
-  it("renders 4 section buttons in order: 账户 / 偏好 / 用量与积分 / 支持", () => {
+  it("renders 4 destination buttons in order: 个人资料 / 偏好 / 用量与积分 / 支持", () => {
     renderShell();
     const buttons = getSectionButtons();
     expect(buttons).toHaveLength(4);
-    expect(buttons[0].textContent).toBe("账户");
+    expect(buttons[0].textContent).toBe("个人资料");
     expect(buttons[1].textContent).toBe("偏好");
     expect(buttons[2].textContent).toBe("用量与积分");
     expect(buttons[3].textContent).toBe("支持");
+  });
+
+  it("section id remains 'account' for the 个人资料 label", () => {
+    const { onSectionChange } = renderShell({ activeSection: "preferences" });
+    const buttons = getSectionButtons();
+    fireEvent.click(buttons[0]);
+    expect(onSectionChange).toHaveBeenCalledWith("account");
   });
 
   it("section id remains 'usage' for the 用量与积分 label", () => {
@@ -132,28 +143,81 @@ describe("SettingsDialogShell — section navigation semantics", () => {
   });
 });
 
+describe("SettingsDialogShell — rail information architecture", () => {
+  it("renders two rail groups with quiet labels 账户 and Claread", () => {
+    renderShell();
+    const nav = screen.getByRole("navigation", { name: "设置分区" });
+    expect(within(nav).getByText("账户")).toBeTruthy();
+    expect(within(nav).getByText("Claread")).toBeTruthy();
+  });
+
+  it("renders each destination with a 16px lucide icon", () => {
+    renderShell();
+    const nav = screen.getByRole("navigation", { name: "设置分区" });
+    const buttons = within(nav).getAllByRole("button");
+    expect(buttons).toHaveLength(4);
+    const icons = nav.querySelectorAll("svg");
+    expect(icons.length).toBeGreaterThanOrEqual(4);
+    for (const btn of buttons) {
+      expect(btn.querySelector("svg")).not.toBeNull();
+    }
+  });
+
+  it("does not render uppercase eyebrow group labels", () => {
+    renderShell();
+    const nav = screen.getByRole("navigation", { name: "设置分区" });
+    const labels = nav.querySelectorAll("div");
+    for (const label of labels) {
+      expect(label.className).not.toMatch(/uppercase/);
+    }
+  });
+
+  it("does not render an account profile entry in the rail", () => {
+    renderShell();
+    expect(screen.queryByText("Alex")).toBeNull();
+    const buttons = getSectionButtons();
+    expect(buttons).toHaveLength(4);
+  });
+
+  it("keeps the account section id while exposing the 个人资料 UI label", () => {
+    const { onSectionChange } = renderShell({ activeSection: "preferences" });
+    const profileBtn = screen.getByRole("button", { name: "个人资料" });
+    fireEvent.click(profileBtn);
+    expect(onSectionChange).toHaveBeenCalledWith("account");
+  });
+});
+
 describe("SettingsDialogShell — DialogContent primitive override regression", () => {
   it("uses !flex to override Dialog primitive default grid layout", () => {
     renderShell();
-    const dialog = screen.getByRole("dialog");
+    const dialog = getDialog();
     expect(dialog.className).toContain("!flex");
+  });
+
+  it("keeps the dialog itself fixed above the backdrop", () => {
+    renderShell();
+    const dialog = getDialog();
+    // `relative` would override DialogContent's base `fixed` utility and
+    // place the dialog after the overlay in normal document flow.
+    expect(dialog.className).toContain("!fixed");
+    expect(dialog.className).not.toMatch(/\brelative\b/);
   });
 
   it("uses !gap-0 to override Dialog primitive default gap-4", () => {
     renderShell();
-    const dialog = screen.getByRole("dialog");
+    const dialog = getDialog();
     expect(dialog.className).toContain("!gap-0");
   });
 
   it("uses !p-0 to override Dialog primitive default padding", () => {
     renderShell();
-    const dialog = screen.getByRole("dialog");
+    const dialog = getDialog();
     expect(dialog.className).toContain("!p-0");
   });
 
   it("keeps static surface overrides (!bg-none / !bg-surface / !shadow-none)", () => {
     renderShell();
-    const dialog = screen.getByRole("dialog");
+    const dialog = getDialog();
     expect(dialog.className).toContain("!bg-none");
     expect(dialog.className).toContain("!bg-surface");
     expect(dialog.className).toContain("!shadow-none");
@@ -161,10 +225,10 @@ describe("SettingsDialogShell — DialogContent primitive override regression", 
 });
 
 describe("SettingsDialogShell — responsive layout", () => {
-  it("desktop layout includes a left navigation (w-[13.5rem] and bg-surface-raised)", () => {
+  it("desktop layout includes a left navigation (w-[12rem] and bg-surface-raised)", () => {
     renderShell();
     const nav = screen.getByRole("navigation", { name: "设置分区" });
-    expect(nav.className).toContain("w-[13.5rem]");
+    expect(nav.className).toContain("w-[12rem]");
     expect(nav.className).toContain("bg-surface-raised");
     // Desktop nav is separated from content by a hairline border.
     expect(nav.className).toContain("md:border-r");
@@ -173,7 +237,7 @@ describe("SettingsDialogShell — responsive layout", () => {
 
   it("mobile layout is full-screen (h-dvh and rounded-none)", () => {
     renderShell();
-    const dialog = screen.getByRole("dialog");
+    const dialog = getDialog();
     expect(dialog.className).toContain("h-dvh");
     expect(dialog.className).toContain("rounded-none");
   });
@@ -187,21 +251,126 @@ describe("SettingsDialogShell — responsive layout", () => {
     expect(nav.className).toContain("md:flex-col");
   });
 
-  it("content panel uses static bg-surface and scrolls independently", () => {
+  it("right panel is a relative flex container for the section frame", () => {
+    // The Shell no longer provides its own scroll body — the
+    // SettingsDialogSectionFrame (passed as children) provides the
+    // fixed header + scrollable body. The Shell's right panel is just
+    // a structural container.
     renderShell();
-    const dialog = screen.getByRole("dialog");
-    // Content panel is the flex-1 child with bg-surface + overflow-y-auto.
-    const content = dialog.querySelector(".bg-surface.overflow-y-auto");
-    expect(content).not.toBeNull();
+    const dialog = getDialog();
+    const rightPanel = dialog.querySelector(".relative.flex.min-h-0.flex-1.flex-col");
+    expect(rightPanel).not.toBeNull();
+    // Children render inside the right panel.
+    expect(rightPanel?.textContent).toContain("shell-body");
+  });
+});
+
+describe("SettingsDialogShell — centered desktop geometry", () => {
+  it("does not top-anchor the desktop dialog (removed md:!top-6 / md:!translate-y-0)", () => {
+    renderShell();
+    const dialog = getDialog();
+    expect(dialog.className).not.toMatch(/(?:^| )md:!top-6/);
+    expect(dialog.className).not.toMatch(/(?:^| )md:!translate-y-0/);
+  });
+
+  it("constrains desktop width to min(76rem, calc(100vw - 4rem))", () => {
+    renderShell();
+    const dialog = getDialog();
+    expect(dialog.className).toContain(
+      "!w-[min(76rem,calc(100vw-4rem))]",
+    );
+    expect(dialog.className).toContain(
+      "!max-w-[min(76rem,calc(100vw-4rem))]",
+    );
+  });
+
+  it("constrains desktop height to min(60rem, calc(100dvh - 4rem))", () => {
+    renderShell();
+    const dialog = getDialog();
+    expect(dialog.className).toContain(
+      "h-[min(60rem,calc(100dvh-4rem))]",
+    );
+    expect(dialog.className).toContain(
+      "!max-h-[min(60rem,calc(100dvh-4rem))]",
+    );
+  });
+});
+
+describe("SettingsDialogShell — stable frame contract", () => {
+  it("desktop has a fixed viewport-relative height (not just max-h)", () => {
+    renderShell();
+    const dialog = getDialog();
+    // Fixed height ensures the dialog frame stays stable when switching
+    // between sections with different content lengths.
+    expect(dialog.className).toContain("h-[min(60rem,calc(100dvh-4rem))]");
+  });
+
+  it("mobile overrides to full-screen h-dvh", () => {
+    renderShell();
+    const dialog = getDialog();
+    expect(dialog.className).toContain("max-md:h-dvh");
+  });
+
+  it("dialog has overflow-hidden so content never escapes the frame", () => {
+    renderShell();
+    const dialog = getDialog();
+    expect(dialog.className).toContain("overflow-hidden");
+  });
+
+  it("all four sections share the same fixed outer frame", () => {
+    // Render with each section active and verify the dialog className
+    // (which encodes the frame dimensions) is identical across sections.
+    // renderShell doesn't expose unmount; cleanup() between renders
+    // detaches the previous DOM tree so each getByRole call is unambiguous.
+    renderShell({ activeSection: "account" });
+    const dialog1 = getDialog().className;
+    cleanup();
+
+    renderShell({ activeSection: "preferences" });
+    const dialog2 = getDialog().className;
+    cleanup();
+
+    renderShell({ activeSection: "usage" });
+    const dialog3 = getDialog().className;
+    cleanup();
+
+    renderShell({ activeSection: "support" });
+    const dialog4 = getDialog().className;
+
+    expect(dialog1).toBe(dialog2);
+    expect(dialog2).toBe(dialog3);
+    expect(dialog3).toBe(dialog4);
   });
 });
 
 describe("SettingsDialogShell — touch targets (mobile 44px minimum)", () => {
-  it("close button is size-9 on desktop but size-11 (44px) on mobile", () => {
+  it("renders two close buttons: mobile size-11 in fixed bar, desktop size-9 absolute", () => {
+    // The Shell splits the close button into two dedicated elements so each
+    // belongs to fixed chrome and never overlaps scroll content:
+    //   - mobile: size-11 (44px) inside the top close bar. The bar (parent)
+    //     carries `md:hidden`; the button itself just carries size-11.
+    //   - desktop: size-9 absolutely positioned in the right panel header,
+    //     carries `hidden md:inline-flex` directly so it only shows on md+.
     renderShell();
-    const closeBtn = screen.getByRole("button", { name: "关闭设置" });
-    expect(closeBtn.className).toContain("size-9");
-    expect(closeBtn.className).toContain("max-md:size-11");
+    const closeBtns = screen.getAllByRole("button", { name: "关闭设置" });
+    expect(closeBtns).toHaveLength(2);
+
+    const mobileClose = closeBtns.find((btn) =>
+      btn.className.includes("size-11"),
+    );
+    const desktopClose = closeBtns.find((btn) =>
+      btn.className.includes("size-9"),
+    );
+    expect(mobileClose).toBeDefined();
+    expect(desktopClose).toBeDefined();
+    // Mobile close lives in the dedicated close bar — the parent carries
+    // `md:hidden` so the entire bar (button included) is hidden on desktop.
+    const mobileBar = mobileClose!.parentElement!;
+    expect(mobileBar.className).toContain("md:hidden");
+    // Desktop close is absolute and only shows on md+ (hidden md:inline-flex).
+    expect(desktopClose!.className).toContain("absolute");
+    expect(desktopClose!.className).toContain("hidden");
+    expect(desktopClose!.className).toContain("md:inline-flex");
   });
 
   it("each section button has max-md:min-h-11 (44px) on mobile", () => {
@@ -226,11 +395,15 @@ describe("SettingsDialogShell — accessibility", () => {
     ).toBeTruthy();
   });
 
-  it("close button has aria-label '关闭设置'", () => {
+  it("both close buttons have aria-label '关闭设置'", () => {
+    // Two close buttons (mobile bar + desktop absolute) must both expose
+    // the same accessible name so AT users can close from either chrome.
     renderShell();
-    const closeBtn = screen.getByRole("button", { name: "关闭设置" });
-    expect(closeBtn).toBeTruthy();
-    expect(closeBtn.getAttribute("aria-label")).toBe("关闭设置");
+    const closeBtns = screen.getAllByRole("button", { name: "关闭设置" });
+    expect(closeBtns).toHaveLength(2);
+    for (const btn of closeBtns) {
+      expect(btn.getAttribute("aria-label")).toBe("关闭设置");
+    }
   });
 
   it("overlay is forced to no backdrop blur", () => {
@@ -243,11 +416,66 @@ describe("SettingsDialogShell — accessibility", () => {
     expect(overlay!.className).not.toMatch(/\bbackdrop-blur-md\b/);
   });
 
+  it("overlay is portalled to document.body (not inside any sidebar container)", () => {
+    // Radix DialogPortal renders into document.body by default. This
+    // assertion guards against custom portal containers that would
+    // inherit the sidebar's stacking context and break the z-index
+    // contract verified by the E2E backdrop-contract spec.
+    renderShell();
+    const overlay = document.querySelector(
+      ".app-overlay.fixed.inset-0",
+    ) as HTMLElement | null;
+    expect(overlay).not.toBeNull();
+    expect(overlay!.closest("body")).not.toBeNull();
+    // The overlay must NOT be a descendant of any sidebar element.
+    expect(overlay!.closest("[data-app-sidebar]")).toBeNull();
+  });
+
+  it("overlay does not carry pointer-events-none (must intercept clicks)", () => {
+    renderShell();
+    const overlay = document.querySelector(
+      ".app-overlay.fixed.inset-0",
+    ) as HTMLElement | null;
+    expect(overlay).not.toBeNull();
+    expect(overlay!.className).not.toContain("pointer-events-none");
+  });
+
   it("applies motion-reduce fallback on the dialog content", () => {
     renderShell();
-    const dialog = screen.getByRole("dialog");
+    const dialog = getDialog();
     expect(dialog.className).toContain("motion-reduce:transition-none");
     expect(dialog.className).toContain("motion-reduce:duration-0");
+  });
+});
+
+describe("SettingsDialogShell — onCloseAutoFocus forwarding", () => {
+  it("accepts onCloseAutoFocus prop without error", () => {
+    const onCloseAutoFocus = vi.fn();
+    render(
+      <SettingsDialogShell
+        open
+        onOpenChange={vi.fn()}
+        activeSection="account"
+        onSectionChange={vi.fn()}
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
+        <div>shell-body</div>
+      </SettingsDialogShell>,
+    );
+    expect(screen.getByText("shell-body")).toBeTruthy();
+  });
+
+  it("source forwards onCloseAutoFocus to DialogContent", () => {
+    // Source-level guarantee that the prop is passed to DialogContent,
+    // complementing the behavior test above. Radix's onCloseAutoFocus
+    // may not reliably fire in jsdom, so this assertion ensures the
+    // wiring is present regardless of jsdom focus-event limitations.
+    const source = readAppFile(
+      "src/components/settings/SettingsDialogShell.tsx",
+    );
+    expect(source).toContain("onCloseAutoFocus={onCloseAutoFocus}");
+    // The prop must be declared in the interface
+    expect(source).toMatch(/onCloseAutoFocus\?:\s*\(event: Event\)\s*=>\s*void/);
   });
 });
 

@@ -201,4 +201,106 @@ describe("SettingsSectionContent", () => {
       expect(container.firstChild).toBeNull();
     });
   });
+
+  describe("dialog mode — SettingsDialogSectionFrame wrapping", () => {
+    it("wraps account section with frame title '账户' and standard width", () => {
+      const { container } = render(
+        <SettingsSectionContent section="account" accountData={accountData} />,
+      );
+
+      const heading = screen.getByRole("heading", { name: "账户", level: 2 });
+      expect(heading).toBeTruthy();
+      // Section component renders inside the frame body.
+      expect(screen.getByTestId("account-section")).toBeTruthy();
+      // No fallback SettingsSectionLayout wrapper leaks into dialog mode.
+      expect(container.querySelector("section.group")).toBeNull();
+      // Standard width constraint is applied.
+      const bodyContentWrapper = screen.getByTestId("account-section")
+        .parentElement!;
+      expect(bodyContentWrapper.className).toContain("max-w-[34rem]");
+    });
+
+    it("wraps preferences section with frame title '偏好' and standard width", () => {
+      render(
+        <SettingsSectionContent
+          section="preferences"
+          preferencesData={preferencesData}
+        />,
+      );
+
+      expect(
+        screen.getByRole("heading", { name: "偏好", level: 2 }),
+      ).toBeTruthy();
+      expect(screen.getByTestId("preferences-section")).toBeTruthy();
+      const bodyContentWrapper = screen.getByTestId("preferences-section")
+        .parentElement!;
+      expect(bodyContentWrapper.className).toContain("max-w-[34rem]");
+    });
+
+    it("wraps usage section with frame title '用量与积分' and wide width", () => {
+      render(
+        <SettingsSectionContent
+          section="usage"
+          usageData={usageData}
+          usageShowLedger
+        />,
+      );
+
+      expect(
+        screen.getByRole("heading", { name: "用量与积分", level: 2 }),
+      ).toBeTruthy();
+      // showLedger still forwarded to UsageSection in dialog mode.
+      const usage = screen.getByTestId("usage-section");
+      expect(usage.getAttribute("data-show-ledger")).toBe("true");
+      // Wide width: no max-w-[34rem] constraint.
+      const bodyContentWrapper = screen.getByTestId("usage-section")
+        .parentElement!;
+      expect(bodyContentWrapper.className).not.toContain("max-w-[34rem]");
+    });
+
+    it("wraps support section with frame title '支持' and standard width", () => {
+      render(<SettingsSectionContent section="support" />);
+
+      expect(
+        screen.getByRole("heading", { name: "支持", level: 2 }),
+      ).toBeTruthy();
+      expect(screen.getByTestId("support-section")).toBeTruthy();
+      const bodyContentWrapper = screen.getByTestId("support-section")
+        .parentElement!;
+      expect(bodyContentWrapper.className).toContain("max-w-[34rem]");
+    });
+
+    it("exposes aria-labelledby linking the body region to the frame title", () => {
+      render(
+        <SettingsSectionContent section="account" accountData={accountData} />,
+      );
+
+      const heading = screen.getByRole("heading", { name: "账户", level: 2 });
+      const titleId = heading.getAttribute("id");
+      expect(titleId).toBeTruthy();
+      // The body region is the scrollable container that wraps the
+      // content wrapper holding the section component.
+      const sectionEl = screen.getByTestId("account-section");
+      const bodyRegion = sectionEl.parentElement!.parentElement!;
+      expect(bodyRegion.getAttribute("aria-labelledby")).toBe(titleId);
+    });
+
+    it("frame body has independent scroll (min-h-0 + overflow-y-auto)", () => {
+      render(
+        <SettingsSectionContent section="account" accountData={accountData} />,
+      );
+
+      const sectionEl = screen.getByTestId("account-section");
+      const bodyRegion = sectionEl.parentElement!.parentElement!;
+      expect(bodyRegion.className).toContain("min-h-0");
+      expect(bodyRegion.className).toContain("overflow-y-auto");
+    });
+
+    it("forwards usageShowLedger=false by default in dialog mode", () => {
+      render(<SettingsSectionContent section="usage" usageData={usageData} />);
+
+      const usage = screen.getByTestId("usage-section");
+      expect(usage.getAttribute("data-show-ledger")).toBe("false");
+    });
+  });
 });

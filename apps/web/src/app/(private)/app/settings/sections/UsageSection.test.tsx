@@ -113,3 +113,60 @@ describe("UsageSection", () => {
     expect(screen.getByTestId("credit-ledger-panel")).toBeTruthy();
   });
 });
+
+describe("UsageSection — showLedger link/ledger flow", () => {
+  it("hides the '查看明细账单' link when showLedger=true (Dialog mode)", () => {
+    // In Dialog mode the CreditLedgerPanel is rendered inline, so the
+    // "查看明细账单" link to the standalone ledger page is redundant.
+    render(
+      <UsageSection
+        quota={sampleQuota}
+        quotaUsed={3}
+        quotaLimit={10}
+        quotaPercentage={30}
+        showLedger
+      />,
+    );
+
+    expect(screen.queryByText("查看明细账单")).toBeNull();
+    // Ledger panel still mounts inline.
+    expect(screen.getByTestId("credit-ledger-panel")).toBeTruthy();
+  });
+
+  it("keeps the '查看明细账单' link when showLedger=false (fallback page mode)", () => {
+    render(
+      <UsageSection
+        quota={sampleQuota}
+        quotaUsed={3}
+        quotaLimit={10}
+        quotaPercentage={30}
+      />,
+    );
+
+    const link = screen.getByText("查看明细账单").closest("a");
+    expect(link).not.toBeNull();
+    expect(link?.getAttribute("href")).toBe("/app/settings/ledger");
+    // No inline ledger panel in fallback page mode.
+    expect(screen.queryByTestId("credit-ledger-panel")).toBeNull();
+  });
+
+  it("hides both link and ledger panel when quota is null even if showLedger=true", () => {
+    // No quota means no usage data to display; the link is gated on quota
+    // and the ledger panel is gated on showLedger. When quota is null,
+    // the link must not render regardless of showLedger.
+    render(
+      <UsageSection
+        quota={null}
+        quotaUsed={0}
+        quotaLimit={0}
+        quotaPercentage={0}
+        showLedger
+      />,
+    );
+
+    expect(screen.queryByText("查看明细账单")).toBeNull();
+    // Ledger panel is still rendered because showLedger=true; the panel
+    // itself is responsible for its own empty state.
+    expect(screen.getByTestId("credit-ledger-panel")).toBeTruthy();
+  });
+});

@@ -39,6 +39,7 @@ function CommandMenuDialog({
       <DialogContent
         size="md"
         showCloseButton={false}
+        overlayClassName="backdrop-blur-none"
         className="app-panel-surface overflow-hidden border-hairline/90 p-0 shadow-[0_24px_80px_rgba(28,24,18,0.16)]"
       >
         <DialogTitle className="sr-only">{title}</DialogTitle>

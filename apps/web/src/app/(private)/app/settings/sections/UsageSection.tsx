@@ -55,7 +55,10 @@ export function UsageSection({
         </div>
       )}
 
-      {quota && (
+      {/* "查看明细账单" link only renders in fallback page mode (showLedger=false).
+          In Dialog mode (showLedger=true), the CreditLedgerPanel is rendered
+          inline below, so the link to the standalone ledger page is redundant. */}
+      {quota && !showLedger ? (
         <div className="pt-2">
           <Link
             href={`${appSettingsRoute}/ledger` as Route}
@@ -65,7 +68,7 @@ export function UsageSection({
             <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
           </Link>
         </div>
-      )}
+      ) : null}
 
       {showLedger ? <CreditLedgerPanel /> : null}
     </div>

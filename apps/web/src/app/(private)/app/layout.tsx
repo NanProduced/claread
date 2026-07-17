@@ -6,8 +6,10 @@ import { getProjectedWebSession } from "@/services/bff/session";
 
 export default async function AppShellLayout({
   children,
+  settings,
 }: {
   children: React.ReactNode;
+  settings?: React.ReactNode;
 }) {
   const [session, recentResult] = await Promise.all([
     getProjectedWebSession(),
@@ -21,6 +23,7 @@ export default async function AppShellLayout({
       <AppShell userName="Claread" userContact={userContact} userPlanLabel="Free">
         <CloudPreferencesSync />
         {children}
+        {settings}
       </AppShell>
     </RecentReadingProvider>
   );

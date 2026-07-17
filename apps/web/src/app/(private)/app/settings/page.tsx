@@ -1,20 +1,9 @@
 import { ScrollArea } from "@/components/primitives/scroll-area";
-import { readReadingDefaultsFromSettings } from "@/lib/reading-defaults";
-import { getProfileSettings } from "@/services/bff/profile";
+import { loadSettingsData } from "./lib/loadSettingsData";
 import { SettingsSectionContent } from "./sections/SettingsSectionContent";
 
 export default async function SettingsPage() {
-  const settings = await getProfileSettings();
-  const quota = settings.quota;
-  const displayName = settings.profile?.nickname || settings.session.phone || "Web User";
-  const realNickname = settings.profile?.nickname || "";
-  const avatarText = displayName.trim().slice(0, 1).toUpperCase() || "U";
-  const readingDefaults = readReadingDefaultsFromSettings(settings.profile?.settings);
-  const canEditSharedDefaults = settings.status === "ready";
-
-  const quotaLimit = quota ? (quota.dailyFreePoints ?? quota.quotaLimit) : 0;
-  const quotaUsed = quota ? (quota.dailyUsedPoints ?? quota.quotaUsed) : 0;
-  const quotaPercentage = quotaLimit > 0 ? Math.min(100, Math.max(0, (quotaUsed / quotaLimit) * 100)) : 0;
+  const { accountData, preferencesData, usageData } = await loadSettingsData();
 
   return (
     <ScrollArea className="h-dvh bg-surface-canvas text-ink">
@@ -30,24 +19,9 @@ export default async function SettingsPage() {
           <div className="divide-y divide-hairline">
             <SettingsSectionContent
               mode="fallback"
-              accountData={{
-                nickname: realNickname,
-                displayFallback: displayName,
-                phone: settings.session.phone,
-                status: settings.status,
-                avatarText,
-              }}
-              preferencesData={{
-                readingGoal: readingDefaults.readingGoal,
-                readingVariant: readingDefaults.readingVariant,
-                canEdit: canEditSharedDefaults,
-              }}
-              usageData={{
-                quota,
-                quotaUsed,
-                quotaLimit,
-                quotaPercentage,
-              }}
+              accountData={accountData}
+              preferencesData={preferencesData}
+              usageData={usageData}
             />
           </div>
         </div>
