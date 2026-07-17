@@ -1,11 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import {
-  Award,
-  Clock,
-  RotateCcw,
-} from "lucide-react";
+import { Clock, Loader2, RotateCcw } from "lucide-react";
 
 import { FEEDBACK_CONFIG_BY_SCOPE } from "@/components/reader/FeedbackSheet";
 import type {
@@ -53,19 +49,17 @@ const PLATFORM_LABELS: Record<FeedbackClientPlatformDto, string> = {
   wechat_miniprogram: "小程序",
 };
 
-const SURFACE_LABELS: Record<string, string> = {
-  reader: "Reader",
-  dictionary: "词典",
-  settings: "设置页",
-  result_page: "结果页",
-  profile: "个人页",
+const SENTIMENT_LABELS: Record<string, string> = {
+  positive: "喜欢",
+  neutral: "建议",
+  negative: "遇阻",
 };
 
 const STATUS_LABELS: Record<string, { label: string; className: string }> = {
-  pending: { label: "待处理", className: "border-vocab-amber/20 bg-vocab-amber/10 text-vocab-amber" },
-  adopted: { label: "已采纳", className: "border-structure-green/20 bg-structure-green/10 text-structure-green" },
-  resolved: { label: "已解决", className: "border-structure-green/20 bg-structure-green/10 text-structure-green" },
-  dismissed: { label: "已关闭", className: "border-muted/15 bg-muted/10 text-muted-foreground" },
+  pending: { label: "待处理", className: "text-vocab-amber" },
+  adopted: { label: "已采纳", className: "text-structure-green" },
+  resolved: { label: "已解决", className: "text-structure-green" },
+  dismissed: { label: "已关闭", className: "text-muted-foreground" },
 };
 
 function getFeedbackTypeLabel(scope: FeedbackScopeDto, feedbackType: FeedbackTypeDto): string {
@@ -83,12 +77,6 @@ function getFeedbackTypeLabel(scope: FeedbackScopeDto, feedbackType: FeedbackTyp
 function formatDate(iso: string): string {
   const d = new Date(iso);
   return `${d.getMonth() + 1}月${d.getDate()}日`;
-}
-
-function iconForSentiment(sentiment: string) {
-  if (sentiment === "positive") return "/images/feedback/thumbs-up.png";
-  if (sentiment === "negative") return "/images/feedback/thumbs-down.png";
-  return "/images/feedback/comment.png";
 }
 
 function normalizeDisplayText(value: string | null): string | null {
@@ -109,13 +97,13 @@ function getFeedbackDisplay(item: FeedbackItem) {
 
 function SkeletonRow() {
   return (
-    <div className="flex animate-pulse items-start gap-3 rounded-[18px] border border-hairline/75 bg-surface/62 px-4 py-4">
-      <div className="size-10 shrink-0 rounded-[12px] bg-hairline/70" />
-      <div className="flex-1 space-y-3">
-        <div className="h-3.5 w-32 rounded bg-hairline/70" />
-        <div className="h-3 w-64 max-w-full rounded bg-hairline/60" />
+    <div className="flex animate-pulse items-start gap-3 rounded-lg border border-hairline/60 bg-surface px-3.5 py-3">
+      <div className="size-8 shrink-0 rounded bg-hairline/70" />
+      <div className="flex-1 space-y-2">
+        <div className="h-3.5 w-28 rounded bg-hairline/70" />
+        <div className="h-3 w-56 max-w-full rounded bg-hairline/60" />
       </div>
-      <div className="h-7 w-16 rounded-[10px] bg-hairline/60" />
+      <div className="h-7 w-14 rounded bg-hairline/60" />
     </div>
   );
 }
@@ -211,7 +199,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
 
   if (state.phase === "loading") {
     return (
-      <div className="space-y-2.5">
+      <div className="space-y-2">
         <SkeletonRow />
         <SkeletonRow />
         <SkeletonRow />
@@ -221,7 +209,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
 
   if (state.phase === "error") {
     return (
-      <div className="rounded-[18px] border border-hairline/75 bg-surface/62 px-4 py-8 text-center">
+      <div className="rounded-lg border border-hairline/60 bg-surface px-3.5 py-6 text-center">
         <p className="text-sm text-muted-foreground">{state.message}</p>
       </div>
     );
@@ -230,97 +218,84 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
   const { items, hasMore, loadingMore } = state;
 
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-2">
       {items.length === 0 ? (
-        <div className="flex flex-col items-center justify-center gap-4 rounded-[20px] border border-hairline/75 bg-surface/62 px-4 py-12 text-center">
-          <div className="relative size-20 opacity-90">
-            <img
-              src="/images/feedback/search.png"
-              alt=""
-              className="h-full w-full object-contain"
-            />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-ink">暂无反馈记录</p>
-            <p className="mt-1 text-xs text-muted-foreground">提交后会出现在这里。</p>
-          </div>
+        <div className="rounded-lg border border-hairline/60 bg-surface px-3.5 py-10 text-center">
+          <p className="text-sm font-medium text-ink">暂无反馈记录</p>
+          <p className="mt-1 text-xs text-muted-foreground">提交后会出现在这里。</p>
         </div>
       ) : null}
 
-      {items.map((item, index) => {
-        const statusCfg = STATUS_LABELS[item.status] ?? { label: item.status, className: "border-muted/15 bg-muted/10 text-muted-foreground" };
+      {items.map((item) => {
+        const statusCfg = STATUS_LABELS[item.status] ?? {
+          label: item.status,
+          className: "text-muted-foreground",
+        };
         const scopeLabel = SCOPE_LABELS[item.feedbackScope] ?? item.feedbackScope;
         const typeLabel = getFeedbackTypeLabel(item.feedbackScope, item.feedbackType);
         const platformLabel = PLATFORM_LABELS[item.clientPlatform];
-        const surfaceLabel = item.clientSurface ? SURFACE_LABELS[item.clientSurface] ?? item.clientSurface : null;
+        const sentimentLabel = SENTIMENT_LABELS[item.sentiment] ?? item.sentiment;
         const display = getFeedbackDisplay(item);
 
         return (
           <article
             key={item.id}
-            className="group grid grid-cols-[2.5rem_minmax(0,1fr)] items-start gap-3 rounded-[18px] border border-hairline/75 bg-surface/62 px-4 py-4 transition-all duration-200 hover:border-muted hover:bg-surface/86 hover:shadow-[var(--app-panel-shadow-quiet)] sm:grid-cols-[2.5rem_minmax(0,1fr)_auto]"
-            style={{ animationDelay: `${Math.min(index, 5) * 45}ms` }}
+            className="group flex flex-col gap-3 rounded-lg border border-hairline/60 bg-surface px-3.5 py-3 transition-colors hover:border-hairline hover:bg-surface-raised/50"
           >
-            <div className="relative mt-0.5 size-10 shrink-0">
-              <img
-                src={iconForSentiment(item.sentiment)}
-                alt=""
-                className="h-full w-full object-contain"
-              />
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="text-sm font-medium text-ink">{scopeLabel}</span>
+              <span className="text-xs text-muted-foreground">{typeLabel}</span>
+              <span className="text-xs text-muted-foreground">·</span>
+              <span className="text-xs text-muted-foreground">{sentimentLabel}</span>
+              <span className={cn("ml-auto text-xs font-medium", statusCfg.className)}>
+                {statusCfg.label}
+              </span>
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="text-sm font-semibold text-ink">{scopeLabel}</span>
-                <span className="text-xs text-muted-foreground">{typeLabel}</span>
-                <span className={cn("inline-flex items-center rounded-[8px] border px-2 py-0.5 text-[11px] font-medium", statusCfg.className)}>
-                  {statusCfg.label}
-                </span>
-              </div>
-              {display.note ? (
-                <p className="mt-1.5 break-words text-sm leading-6 text-ink-soft">
-                  {display.note}
-                </p>
-              ) : null}
-              {display.quote ? (
-                <blockquote className="mt-2 max-w-[74ch] text-[13px] leading-6 text-muted-foreground">
-                  <span className="text-subtle">“</span>
-                  <span className="break-words whitespace-pre-wrap">{display.quote}</span>
-                  <span className="text-subtle">”</span>
-                </blockquote>
-              ) : null}
-              {item.resolutionNote ? (
-                <div className="mt-2 rounded-[12px] border border-hairline/70 bg-surface-raised/65 px-3 py-2">
-                  <p className="text-[12px] leading-5 text-muted-foreground">
-                    处理说明：{item.resolutionNote}
-                  </p>
-                </div>
-              ) : null}
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-subtle">
-                <span className="inline-flex items-center gap-1">
-                  <Clock className="size-3" aria-hidden="true" />
-                  {formatDate(item.createdAt)}
-                </span>
-                <span>{platformLabel}</span>
-                {surfaceLabel ? <span>{surfaceLabel}</span> : null}
-                {item.rewardPoints > 0 ? (
-                  <span className="inline-flex items-center gap-1 text-vocab-amber">
-                    <Award className="size-3" aria-hidden="true" />
-                    +{item.rewardPoints}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-            {item.status === "pending" ? (
-              <button
-                type="button"
-                disabled={revokingId === item.id}
-                onClick={() => handleRevoke(item.id)}
-                className="focus-ring col-start-2 mt-1 inline-flex h-7 w-fit shrink-0 items-center gap-1 rounded-[8px] border border-transparent bg-transparent px-1.5 text-[11px] font-medium text-subtle transition-colors hover:border-hairline/75 hover:bg-[var(--app-control-quiet)] hover:text-ink disabled:opacity-40 sm:col-start-3 sm:row-start-1 sm:mt-0 sm:justify-self-end"
-              >
-                <RotateCcw className="size-3" aria-hidden="true" />
-                撤回
-              </button>
+
+            {display.note ? (
+              <p className="break-words text-sm leading-6 text-ink-soft">{display.note}</p>
             ) : null}
+            {display.quote ? (
+              <blockquote className="max-w-[74ch] text-xs leading-5 text-muted-foreground">
+                <span className="text-subtle">“</span>
+                <span className="break-words whitespace-pre-wrap">{display.quote}</span>
+                <span className="text-subtle">”</span>
+              </blockquote>
+            ) : null}
+            {item.resolutionNote ? (
+              <div className="rounded-md border border-hairline/60 bg-surface-raised/65 px-3 py-2">
+                <p className="text-xs leading-5 text-muted-foreground">
+                  处理说明：{item.resolutionNote}
+                </p>
+              </div>
+            ) : null}
+
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span className="inline-flex items-center gap-1 text-xs text-subtle">
+                <Clock className="size-3" aria-hidden="true" />
+                {formatDate(item.createdAt)}
+              </span>
+              <span className="text-xs text-subtle">{platformLabel}</span>
+              {item.rewardPoints > 0 ? (
+                <span className="text-xs text-vocab-amber">+{item.rewardPoints}</span>
+              ) : null}
+
+              {item.status === "pending" ? (
+                <button
+                  type="button"
+                  disabled={revokingId === item.id}
+                  onClick={() => handleRevoke(item.id)}
+                  className="focus-ring ml-auto inline-flex min-h-11 items-center gap-1 rounded-md border border-transparent px-3 text-xs font-medium text-subtle transition-colors hover:border-hairline/75 hover:bg-surface-raised hover:text-ink disabled:opacity-40"
+                >
+                  {revokingId === item.id ? (
+                    <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <RotateCcw className="size-3" aria-hidden="true" />
+                  )}
+                  撤回
+                </button>
+              ) : null}
+            </div>
           </article>
         );
       })}
@@ -330,7 +305,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
           type="button"
           disabled={loadingMore}
           onClick={handleLoadMore}
-          className="focus-ring mt-3 w-full rounded-[16px] border border-hairline/80 bg-surface/62 py-3 text-xs font-semibold text-muted-foreground transition-colors hover:border-muted hover:bg-surface hover:text-ink disabled:opacity-40"
+          className="min-h-11 w-full rounded-lg border border-hairline/60 bg-surface px-3 text-xs font-medium text-muted-foreground transition-colors hover:border-hairline hover:bg-surface-raised hover:text-ink disabled:opacity-40"
         >
           {loadingMore ? "加载中..." : "加载更多记录"}
         </button>

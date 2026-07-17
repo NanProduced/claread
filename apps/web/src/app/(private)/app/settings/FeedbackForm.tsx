@@ -1,9 +1,10 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
-import { Check, Loader2, SendHorizontal } from "lucide-react";
+import { Loader2, SendHorizontal } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { Button } from "@/components/primitives/button";
 import { MyFeedbackList } from "./MyFeedbackList";
 
 const FEEDBACK_TYPE_OPTIONS = [
@@ -16,24 +17,9 @@ const FEEDBACK_TYPE_OPTIONS = [
 ] as const;
 
 const SENTIMENT_OPTIONS = [
-  {
-    value: "positive",
-    label: "喜欢",
-    src: "/images/feedback/face-happy.png",
-    activeClassName: "border-structure-green/30 bg-structure-green/10 text-structure-green",
-  },
-  {
-    value: "neutral",
-    label: "建议",
-    src: "/images/feedback/face-neutral.png",
-    activeClassName: "border-lens-blue/30 bg-lens-blue/10 text-lens-blue",
-  },
-  {
-    value: "negative",
-    label: "遇阻",
-    src: "/images/feedback/face-sad.png",
-    activeClassName: "border-error-red/25 bg-error-red/10 text-error-red",
-  },
+  { value: "positive", label: "喜欢" },
+  { value: "neutral", label: "建议" },
+  { value: "negative", label: "遇阻" },
 ] as const;
 
 type FeedbackType = (typeof FEEDBACK_TYPE_OPTIONS)[number]["value"];
@@ -133,213 +119,141 @@ export function FeedbackForm() {
   }
 
   return (
-    <form className="space-y-10" onSubmit={handleSubmit}>
-      <style>{`
-        @keyframes settings-feedback-soft-pop {
-          0% { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.98); }
-          100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
-        }
-        .settings-feedback-panel {
-          animation: settings-feedback-soft-pop 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
-        }
-        .settings-feedback-ambient {
-          transform: var(--feedback-rest-transform);
-          transition: transform 520ms cubic-bezier(0.22, 1, 0.36, 1), filter 320ms ease, opacity 320ms ease;
-          will-change: transform;
-        }
-        .settings-feedback-panel:hover .settings-feedback-ambient,
-        .settings-feedback-panel:focus-within .settings-feedback-ambient {
-          transform: var(--feedback-hover-transform);
-          filter: saturate(1.04);
-        }
-        .settings-feedback-ambient[data-orbit="comment"] {
-          --feedback-rest-transform: translate3d(0, 0, 0) rotate(-3deg);
-          --feedback-hover-transform: translate3d(-5px, -10px, 0) rotate(4deg) scale(1.03);
-        }
-        .settings-feedback-ambient[data-orbit="love"] {
-          --feedback-rest-transform: translate3d(0, 0, 0) rotate(-8deg);
-          --feedback-hover-transform: translate3d(8px, -6px, 0) rotate(-2deg) scale(1.08);
-          transition-delay: 55ms;
-        }
-        .settings-feedback-ambient[data-orbit="search"] {
-          --feedback-rest-transform: translate3d(0, 0, 0) rotate(8deg);
-          --feedback-hover-transform: translate3d(8px, 4px, 0) rotate(-3deg) scale(1.05);
-          transition-delay: 95ms;
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .settings-feedback-panel,
-          .settings-feedback-ambient {
-            animation: none !important;
-            transition-duration: 0.01ms !important;
-          }
-        }
-      `}</style>
-
-      <section className="settings-feedback-panel relative isolate overflow-hidden rounded-[24px] border border-hairline/80 bg-surface p-5 shadow-[var(--app-panel-shadow-quiet)] sm:p-6">
-        <div className="pointer-events-none absolute inset-x-5 top-20 h-px bg-hairline/55" />
-        <div className="grid gap-6 lg:grid-cols-[1fr_13.5rem] lg:items-start">
-          <div className="min-w-0">
-            <h2 className="max-w-[14em] font-headline text-[2rem] font-semibold leading-[1.08] text-ink sm:text-[2.35rem]">
-              把问题或想法留给 Claread.
-            </h2>
-            <p className="mt-3 max-w-[36rem] text-sm leading-6 text-muted-foreground">
-              我们会把这条反馈连同页面上下文一起记录，方便后续定位和处理。
-            </p>
-          </div>
-
-          <div className="relative hidden min-h-[11rem] sm:block">
-            <img
-              src="/images/feedback/comment.png"
-              alt=""
-              data-orbit="comment"
-              className="settings-feedback-ambient absolute right-8 top-2 h-[7.2rem] w-[7.2rem] object-contain"
-            />
-            <img
-              src="/images/feedback/love.png"
-              alt=""
-              data-orbit="love"
-              className="settings-feedback-ambient absolute bottom-2 left-2 h-[4.6rem] w-[4.6rem] object-contain"
-            />
-            <img
-              src="/images/feedback/search.png"
-              alt=""
-              data-orbit="search"
-              className="settings-feedback-ambient absolute bottom-7 right-1 h-[4.4rem] w-[4.4rem] object-contain"
-            />
-          </div>
-        </div>
-
-        <div className="mt-7 grid grid-cols-3 gap-3">
-          {SENTIMENT_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => setSentiment(opt.value)}
-              aria-pressed={sentiment === opt.value}
-              className={cn(
-                "group relative min-h-[8.5rem] overflow-hidden rounded-[18px] border bg-surface/58 px-3 py-4 text-left transition-all duration-300 ease-[cubic-bezier(0.25,1,0.5,1)] hover:-translate-y-0.5 hover:border-muted hover:bg-surface",
-                sentiment === opt.value
-                  ? opt.activeClassName
-                  : "border-hairline/85 text-ink-soft",
-              )}
-            >
-              <span className="absolute inset-x-3 top-3 h-px bg-hairline/55" />
-              <span className="flex h-full flex-col items-center justify-center gap-3">
-                <img
-                  src={opt.src}
-                  alt=""
-                  className={cn(
-                    "h-14 w-14 object-contain transition-transform duration-300 ease-[cubic-bezier(0.25,1,0.5,1)] group-hover:-translate-y-1 group-hover:scale-110",
-                    sentiment === opt.value ? "-translate-y-1 scale-110" : "grayscale-[20%] opacity-90",
-                  )}
+    <form className="space-y-8" onSubmit={handleSubmit}>
+      <fieldset className="space-y-3">
+        <legend className="text-sm font-medium text-ink">总体感受</legend>
+        <div className="flex flex-wrap gap-2">
+          {SENTIMENT_OPTIONS.map((option) => {
+            const active = sentiment === option.value;
+            return (
+              <label
+                key={option.value}
+                className={cn(
+                  "flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 transition-colors focus-within:ring-2 focus-within:ring-lens-blue focus-within:ring-offset-2 focus-within:ring-offset-background",
+                  active
+                    ? "border-lens-blue bg-surface-canvas text-ink"
+                    : "border-hairline/60 bg-background text-muted-foreground hover:border-hairline hover:text-ink",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="feedback-sentiment"
+                  value={option.value}
+                  checked={active}
+                  onChange={() => setSentiment(option.value)}
+                  className="sr-only"
                 />
-                <span className="text-sm font-semibold">{opt.label}</span>
-              </span>
-              {sentiment === opt.value ? (
-                <span className="absolute right-3 top-3 inline-flex size-5 items-center justify-center rounded-full bg-ink text-background">
-                  <Check className="size-3" aria-hidden="true" />
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-6 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-          {FEEDBACK_TYPE_OPTIONS.map((option) => (
-            <button
-              className={cn(
-                "group min-h-[4.4rem] rounded-[15px] border px-3.5 py-3 text-left transition-all duration-200",
-                feedbackType === option.value
-                  ? "border-ink/70 bg-ink text-background shadow-[var(--app-secondary-shadow)]"
-                  : "border-hairline/80 bg-secondary/56 text-ink hover:border-muted hover:bg-[var(--app-control-quiet)]",
-              )}
-              key={option.value}
-              onClick={() => setFeedbackType(option.value)}
-              type="button"
-              aria-pressed={feedbackType === option.value}
-            >
-              <span className="flex items-start justify-between gap-3">
-                <span className="min-w-0">
-                  <span className="block text-sm font-semibold leading-5">{option.label}</span>
-                  <span
-                    className={cn(
-                      "mt-1 block text-[12px] leading-4",
-                      feedbackType === option.value ? "text-background/72" : "text-muted-foreground",
-                    )}
-                  >
-                    {option.description}
-                  </span>
-                </span>
-                <Check
+                <span
                   className={cn(
-                    "mt-0.5 size-4 shrink-0 transition-opacity",
-                    feedbackType === option.value ? "opacity-100" : "opacity-0 group-hover:opacity-35",
+                    "flex size-4 shrink-0 items-center justify-center rounded-full border",
+                    active ? "border-lens-blue" : "border-muted-foreground",
                   )}
                   aria-hidden="true"
+                >
+                  {active && <span className="size-2 rounded-full bg-lens-blue" />}
+                </span>
+                <span className="text-sm font-medium">{option.label}</span>
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
+
+      <fieldset className="space-y-3">
+        <legend className="text-sm font-medium text-ink">反馈类型</legend>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {FEEDBACK_TYPE_OPTIONS.map((option) => {
+            const active = feedbackType === option.value;
+            return (
+              <label
+                key={option.value}
+                className={cn(
+                  "flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 transition-colors focus-within:ring-2 focus-within:ring-lens-blue focus-within:ring-offset-2 focus-within:ring-offset-background",
+                  active
+                    ? "border-lens-blue bg-surface-canvas text-ink"
+                    : "border-hairline/60 bg-background text-muted-foreground hover:border-hairline hover:text-ink",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="feedback-type"
+                  value={option.value}
+                  checked={active}
+                  onChange={() => setFeedbackType(option.value)}
+                  className="sr-only"
                 />
-              </span>
-            </button>
-          ))}
+                <span
+                  className={cn(
+                    "flex size-4 shrink-0 items-center justify-center rounded-full border",
+                    active ? "border-lens-blue" : "border-muted-foreground",
+                  )}
+                  aria-hidden="true"
+                >
+                  {active && <span className="size-2 rounded-full bg-lens-blue" />}
+                </span>
+                <span className="text-sm font-medium">{option.label}</span>
+              </label>
+            );
+          })}
         </div>
+      </fieldset>
 
-        <div className="mt-6 rounded-[18px] border border-hairline/85 bg-surface-raised/72 p-3.5">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <label className="text-[12px] font-semibold text-muted-foreground" htmlFor={contentId}>
-              反馈内容
-            </label>
-            <span className="text-[12px] text-subtle">{content.length} / 2000</span>
-          </div>
-          <textarea
-            ref={textareaRef}
-            className="focus-ring min-h-36 w-full resize-y bg-transparent text-sm leading-6 text-ink outline-none placeholder:text-muted-foreground/62"
-            id={contentId}
-            maxLength={2000}
-            onChange={(event) => setContent(event.target.value)}
-            placeholder="写下具体问题、建议，或你希望 Claread 改进的地方。"
-            value={content}
-          />
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <label className="text-sm font-medium text-ink" htmlFor={contentId}>
+            反馈内容
+          </label>
+          <span className="text-xs text-muted-foreground">{content.length} / 2000</span>
         </div>
+        <textarea
+          ref={textareaRef}
+          id={contentId}
+          maxLength={2000}
+          value={content}
+          onChange={(event) => setContent(event.target.value)}
+          placeholder="写下具体问题、建议，或你希望 Claread 改进的地方。"
+          className="min-h-32 w-full rounded-lg border border-hairline/80 bg-surface px-3.5 py-3 text-sm leading-6 text-ink outline-none ring-offset-background placeholder:text-muted-foreground/70 focus-visible:ring-2 focus-visible:ring-lens-blue focus-visible:ring-offset-2"
+        />
+      </div>
 
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-hairline/70 pt-4">
-          <span
-            className={cn(
-              "min-h-5 text-xs",
-              state.status === "error"
-                ? "text-error-red"
-                : state.status === "success"
-                  ? "text-structure-green"
-                  : "text-muted-foreground",
-            )}
-            role={state.message ? "status" : undefined}
-          >
-            {state.message || " "}
-          </span>
-          <button
-            className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-[14px] bg-ink px-5 text-sm font-semibold text-background shadow-[var(--app-secondary-shadow)] transition-all hover:bg-ink-soft hover:shadow-[var(--app-secondary-shadow-hover)] active:scale-[0.98] disabled:pointer-events-none disabled:bg-muted/55 disabled:shadow-none"
-            disabled={!canSubmit}
-            type="submit"
-          >
-            {state.status === "submitting" ? (
-              <>
-                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                提交中
-              </>
-            ) : (
-              <>
-                <SendHorizontal className="size-4" aria-hidden="true" />
-                提交反馈
-              </>
-            )}
-          </button>
-        </div>
-      </section>
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+        <span
+          className={cn(
+            "min-h-5 text-xs",
+            state.status === "error"
+              ? "text-destructive"
+              : state.status === "success"
+                ? "text-structure-green"
+                : "text-muted-foreground",
+          )}
+          role={state.message ? "status" : undefined}
+        >
+          {state.message || " "}
+        </span>
+        <Button
+          variant="primary-ink"
+          type="submit"
+          disabled={!canSubmit}
+          className="min-h-11 justify-center px-5"
+        >
+          {state.status === "submitting" ? (
+            <>
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              提交中
+            </>
+          ) : (
+            <>
+              <SendHorizontal className="size-4" aria-hidden="true" />
+              提交反馈
+            </>
+          )}
+        </Button>
+      </div>
 
       <section className="border-t border-hairline pt-8">
-        <div className="mb-5 flex items-end justify-between gap-4">
-          <div>
-            <h2 className="text-base font-semibold text-ink">我的反馈记录</h2>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">最近提交的反馈会显示在这里。</p>
-          </div>
+        <div className="mb-4">
+          <h2 className="text-sm font-medium text-ink">我的反馈记录</h2>
+          <p className="mt-1 text-xs text-muted-foreground">最近提交的反馈会显示在这里。</p>
         </div>
         <MyFeedbackList refreshKey={listRefreshKey} />
       </section>
