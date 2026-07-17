@@ -367,21 +367,21 @@ export function SidebarRail({
                 </div>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
-                  <Link href={appSettingsRoute} className="gap-2">
+                  <Link href={`${appSettingsRoute}?section=account` as Route} className="gap-2">
                     <UserRound aria-hidden="true" className="h-4 w-4" />
                     <span>个人资料</span>
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
-                  <Link href={appSettingsRoute} className="gap-2">
+                  <Link href={`${appSettingsRoute}?section=preferences` as Route} className="gap-2">
                     <Settings aria-hidden="true" className="h-4 w-4" />
                     <span>偏好设置</span>
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
-                  <Link href={`${appSettingsRoute}/ledger` as Route} className="gap-2">
+                  <Link href={`${appSettingsRoute}?section=usage` as Route} className="gap-2">
                     <WalletCards aria-hidden="true" className="h-4 w-4" />
-                    <span>用量与订阅</span>
+                    <span>用量与积分</span>
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />

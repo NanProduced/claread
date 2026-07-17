@@ -170,3 +170,65 @@ describe("SidebarRail z-index contract", () => {
     expect(sidebar?.contains(menu)).toBe(true);
   });
 });
+
+describe("User menu settings links", () => {
+  it("opens the user menu to reveal settings menuitems", async () => {
+    const user = userEvent.setup();
+    render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
+
+    await user.click(screen.getByRole("button", { name: "打开用户菜单" }));
+
+    expect(screen.getByRole("menuitem", { name: "个人资料" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "偏好设置" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "用量与积分" })).toBeTruthy();
+  });
+
+  it("points each settings entry to the matching ?section= URL as a Link", async () => {
+    const user = userEvent.setup();
+    render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
+
+    await user.click(screen.getByRole("button", { name: "打开用户菜单" }));
+
+    const accountItem = screen.getByRole("menuitem", { name: "个人资料" });
+    const preferencesItem = screen.getByRole("menuitem", { name: "偏好设置" });
+    const usageItem = screen.getByRole("menuitem", { name: "用量与积分" });
+
+    expect(accountItem.tagName).toBe("A");
+    expect(accountItem.getAttribute("href")).toBe("/app/settings?section=account");
+
+    expect(preferencesItem.tagName).toBe("A");
+    expect(preferencesItem.getAttribute("href")).toBe("/app/settings?section=preferences");
+
+    expect(usageItem.tagName).toBe("A");
+    expect(usageItem.getAttribute("href")).toBe("/app/settings?section=usage");
+  });
+
+  it("does not link to /app/settings/ledger anymore", async () => {
+    const user = userEvent.setup();
+    render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
+
+    await user.click(screen.getByRole("button", { name: "打开用户菜单" }));
+
+    const menuItems = screen.getAllByRole("menuitem");
+    const ledgerLinks = menuItems.filter(
+      (item) =>
+        item.tagName === "A" &&
+        (item.getAttribute("href") ?? "").includes("/ledger"),
+    );
+    expect(ledgerLinks).toHaveLength(0);
+    expect(screen.queryByText("用量与订阅")).toBeNull();
+  });
+
+  it("keeps non-settings menu items unchanged", async () => {
+    const user = userEvent.setup();
+    render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
+
+    await user.click(screen.getByRole("button", { name: "打开用户菜单" }));
+
+    const homeItem = screen.getByRole("menuitem", { name: "公共首页" });
+    expect(homeItem.tagName).toBe("A");
+    expect(homeItem.getAttribute("href")).toBe("/");
+
+    expect(screen.getByRole("menuitem", { name: "退出登录" })).toBeTruthy();
+  });
+});
