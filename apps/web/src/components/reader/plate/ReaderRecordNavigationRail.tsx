@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
 import {
@@ -8,6 +8,12 @@ import {
   type ReaderRecordNavigationItem,
   type ReaderRecordNavigationMode,
 } from "@/lib/reader-plate/projection/reader-record-navigation";
+import {
+  projectReaderSemanticOutlineNav,
+  selectMostSpecificCoveringNode,
+  type ReaderOutlineSurface,
+  type ReaderSemanticOutlineNavItem,
+} from "@/lib/reader-plate/projection/semantic-outline-nav";
 import type { ReaderRecordPlateDocument } from "@/lib/reader-plate/projection/reader-record-plate-document";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 
@@ -16,6 +22,14 @@ const SCROLL_LOCK_MS = 700;
 const ACTIVE_SAFE_OFFSET = 8;
 
 const PLATE_DOCUMENT_SELECTOR = ".reader-record-plate-document";
+
+/** Row ref map keys — never bare unitId/nodeId (collision when node_id === unitId). */
+function detRowRefKey(unitId: string): string {
+  return `deterministic:${unitId}`;
+}
+function semRowRefKey(nodeId: string): string {
+  return `semantic:${nodeId}`;
+}
 
 function getPlateDocumentRoot(): HTMLElement | null {
   if (typeof document === "undefined") return null;
@@ -54,6 +68,35 @@ function findUnitTarget(
   }
 
   return fallback;
+}
+
+/**
+ * Prefer start_anchor_segment_id when it matches start_unit_id on the DOM;
+ * otherwise unit-start paragraph.
+ */
+function findOutlineNodeTarget(
+  item: ReaderSemanticOutlineNavItem,
+  plateRoot: HTMLElement | null = getPlateDocumentRoot(),
+): HTMLElement | null {
+  const body = plateRoot;
+  if (!body) return null;
+
+  if (item.startAnchorSegmentId) {
+    const paragraphs = body.querySelectorAll<HTMLElement>(
+      '[data-reader-record-node="paragraph"]',
+    );
+    for (const paragraph of paragraphs) {
+      if (
+        paragraph.getAttribute("data-anchor-segment-id") ===
+          item.startAnchorSegmentId &&
+        paragraph.getAttribute("data-unit-id") === item.startUnitId
+      ) {
+        return paragraph;
+      }
+    }
+  }
+
+  return findUnitTarget(item.startUnitId, body);
 }
 
 /**
@@ -98,6 +141,47 @@ function resolveValidatedUnitTarget(
   return null;
 }
 
+function isValidCachedOutlineTarget(
+  item: ReaderSemanticOutlineNavItem,
+  el: HTMLElement,
+  plateRoot: HTMLElement | null,
+): boolean {
+  if (!el.isConnected) return false;
+  if (!plateRoot || !plateRoot.contains(el)) return false;
+  if (el.getAttribute("data-reader-record-node") !== "paragraph") return false;
+  if (el.getAttribute("data-unit-id") !== item.startUnitId) return false;
+  if (item.startAnchorSegmentId) {
+    if (
+      el.getAttribute("data-anchor-segment-id") !== item.startAnchorSegmentId
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function resolveValidatedOutlineTarget(
+  item: ReaderSemanticOutlineNavItem,
+  map: Map<string, HTMLElement>,
+  plateRoot: HTMLElement | null = getPlateDocumentRoot(),
+): HTMLElement | null {
+  const cacheKey = `outline:${item.nodeId}`;
+  const cached = map.get(cacheKey);
+  if (cached) {
+    if (isValidCachedOutlineTarget(item, cached, plateRoot)) {
+      return cached;
+    }
+    map.delete(cacheKey);
+  }
+
+  const resolved = findOutlineNodeTarget(item, plateRoot);
+  if (resolved && isValidCachedOutlineTarget(item, resolved, plateRoot)) {
+    map.set(cacheKey, resolved);
+    return resolved;
+  }
+  return null;
+}
+
 /**
  * Active unit for scroll spy.
  * - L0: last unit above safeTop, else first below, else first item.
@@ -110,14 +194,11 @@ function computeActiveUnitId(
   safeTop: number,
   mode: ReaderRecordNavigationMode,
 ): string | null {
-  // Query the plate root once per frame. Resolution remains lazy for only
-  // the ordered candidates actually examined by the scroll spy.
   const plateRoot = getPlateDocumentRoot();
   let lastAbove: string | null = null;
   let firstBelow: string | null = null;
 
   for (const item of items) {
-    // Prefer validated resolver so detached cache entries cannot drive active.
     const target = resolveValidatedUnitTarget(
       item.unitId,
       targetMap,
@@ -130,17 +211,65 @@ function computeActiveUnitId(
       lastAbove = item.unitId;
     } else if (firstBelow === null) {
       firstBelow = item.unitId;
-      // Items are ordered; the first one below the safe line is enough.
       break;
     }
   }
 
   if (mode === "L1") {
-    // Lead zone: no heading has been crossed — do not pretend first heading is active.
     return lastAbove;
   }
 
   return lastAbove ?? firstBelow ?? items[0]?.unitId ?? null;
+}
+
+/**
+ * L2 active node:
+ * - lead: every depth=1 root start is still below safeTop → null
+ * - else: unit under safeTop, then most specific covering node
+ */
+function computeActiveOutlineNodeId(
+  panelItems: ReaderSemanticOutlineNavItem[],
+  tickItems: ReaderSemanticOutlineNavItem[],
+  orderedUnitIds: string[],
+  unitOrderById: Map<string, number>,
+  targetMap: Map<string, HTMLElement>,
+  safeTop: number,
+): string | null {
+  const plateRoot = getPlateDocumentRoot();
+
+  let anyRootAbove = false;
+  for (const root of tickItems) {
+    const target = resolveValidatedUnitTarget(
+      root.startUnitId,
+      targetMap,
+      plateRoot,
+    );
+    if (!target) continue;
+    if (target.getBoundingClientRect().top <= safeTop) {
+      anyRootAbove = true;
+      break;
+    }
+  }
+  if (!anyRootAbove) {
+    return null;
+  }
+
+  let currentUnitId: string | null = null;
+  for (const unitId of orderedUnitIds) {
+    const target = resolveValidatedUnitTarget(unitId, targetMap, plateRoot);
+    if (!target) continue;
+    if (target.getBoundingClientRect().top <= safeTop) {
+      currentUnitId = unitId;
+    } else if (currentUnitId !== null) {
+      break;
+    }
+  }
+
+  return selectMostSpecificCoveringNode(
+    panelItems,
+    unitOrderById,
+    currentUnitId,
+  );
 }
 
 function buildNavigationTriggerLabel(
@@ -157,8 +286,45 @@ function buildNavigationTriggerLabel(
   }
 
   const action = panelOpen ? "关闭段落导航" : "打开段落导航";
-  // L0 always has a current segment index once items exist.
   return `${action}，当前第 ${activeIndex ?? 1} 段`;
+}
+
+function buildSemanticTriggerLabel(
+  panelOpen: boolean,
+  activeIndex: number | null,
+): string {
+  const action = panelOpen ? "关闭内容大纲" : "打开内容大纲";
+  if (activeIndex === null) {
+    return action;
+  }
+  return `${action}，当前第 ${activeIndex} 项`;
+}
+
+function scrollElementIntoSafeView(target: HTMLElement) {
+  const scrollContainer = getScrollContainer() ?? window;
+  const isWindow = scrollContainer === window;
+  const scrollTop = isWindow
+    ? window.scrollY
+    : (scrollContainer as HTMLElement).scrollTop;
+  const containerTop = isWindow
+    ? 0
+    : (scrollContainer as HTMLElement).getBoundingClientRect().top;
+  const targetRect = target.getBoundingClientRect();
+  const targetOffset = targetRect.top - containerTop + scrollTop;
+  const safeOffset = Math.max(
+    0,
+    TOPBAR_SAFE_HEIGHT + ACTIVE_SAFE_OFFSET - containerTop,
+  );
+  const top = targetOffset - safeOffset;
+
+  if (isWindow) {
+    window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+  } else {
+    (scrollContainer as HTMLElement).scrollTo({
+      top: Math.max(0, top),
+      behavior: "smooth",
+    });
+  }
 }
 
 /**
@@ -190,18 +356,20 @@ function getScrollContainer(): Window | HTMLElement | null {
 }
 
 // ---------------------------------------------------------------------------
-// Visual ticks — purely decorative, aria-hidden. Mouse hover anchors the panel.
+// Visual ticks — purely decorative, aria-hidden.
 // ---------------------------------------------------------------------------
 
 interface VisualTicksProps {
-  items: ReaderRecordNavigationItem[];
-  activeUnitId: string | null;
-  onTickMouseEnter: (event: React.MouseEvent<HTMLSpanElement>) => void;
+  surface: ReaderOutlineSurface;
+  tickKeys: string[];
+  activeKey: string | null;
+  onTickMouseEnter: () => void;
 }
 
 function VisualTicks({
-  items,
-  activeUnitId,
+  surface,
+  tickKeys,
+  activeKey,
   onTickMouseEnter,
 }: VisualTicksProps) {
   return (
@@ -210,17 +378,20 @@ function VisualTicks({
       className="reader-record-mini-rail flex h-full w-full flex-col items-end justify-center gap-[2px] overflow-hidden py-4"
       aria-hidden="true"
     >
-      {items.map((item) => (
+      {tickKeys.map((key) => (
         <span
-          key={item.unitId}
+          key={`${surface}:${key}`}
           className="group relative flex min-h-[7px] w-10 flex-1 max-h-4 shrink items-center justify-end rounded-sm px-1"
-          data-navigation-unit-id={item.unitId}
+          data-navigation-tick-key={key}
+          {...(surface === "deterministic"
+            ? { "data-navigation-unit-id": key }
+            : { "data-outline-node-id": key })}
           onMouseEnter={onTickMouseEnter}
         >
           <span
             className={cn(
               "block h-[1.5px] rounded-full transition-all duration-150 ease-[var(--cl-ease-standard)]",
-              item.unitId === activeUnitId
+              key === activeKey
                 ? "w-5 bg-ink/60"
                 : "w-3.5 bg-ink/18 group-hover:bg-ink/40",
             )}
@@ -232,62 +403,135 @@ function VisualTicks({
 }
 
 // ---------------------------------------------------------------------------
-// Navigation panel — the main interactive list with roving tabindex.
+// Mode switch (not a menu)
+// ---------------------------------------------------------------------------
+
+interface OutlineModeSwitchProps {
+  surface: ReaderOutlineSurface;
+  onChange: (surface: ReaderOutlineSurface) => void;
+}
+
+function OutlineModeSwitch({ surface, onChange }: OutlineModeSwitchProps) {
+  return (
+    <div
+      role="group"
+      className="flex items-center gap-1 border-b border-hairline/40 px-2 py-1.5"
+      data-testid="reader-record-outline-mode-switch"
+      aria-label="导航方式"
+    >
+      <button
+        type="button"
+        data-testid="reader-record-outline-mode-deterministic"
+        aria-pressed={surface === "deterministic"}
+        className={cn(
+          "flex-1 rounded-md px-2 py-1 text-[10px] leading-snug transition-colors",
+          surface === "deterministic"
+            ? "bg-[var(--app-control-current)] font-medium text-ink"
+            : "text-ink/55 hover:bg-ink/[0.035] hover:text-ink",
+        )}
+        onClick={() => onChange("deterministic")}
+      >
+        定位
+      </button>
+      <button
+        type="button"
+        data-testid="reader-record-outline-mode-semantic"
+        aria-pressed={surface === "semantic"}
+        className={cn(
+          "flex-1 rounded-md px-2 py-1 text-[10px] leading-snug transition-colors",
+          surface === "semantic"
+            ? "bg-[var(--app-control-current)] font-medium text-ink"
+            : "text-ink/55 hover:bg-ink/[0.035] hover:text-ink",
+        )}
+        onClick={() => onChange("semantic")}
+      >
+        大纲
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Navigation panel
 // ---------------------------------------------------------------------------
 
 interface NavigationPanelProps {
-  items: ReaderRecordNavigationItem[];
-  mode: ReaderRecordNavigationMode;
-  activeUnitId: string | null;
-  focusedUnitId: string | null;
+  panelId: string;
+  surface: ReaderOutlineSurface;
+  hasL2: boolean;
+  isPartial: boolean;
+  detMode: ReaderRecordNavigationMode;
+  detItems: ReaderRecordNavigationItem[];
+  semItems: ReaderSemanticOutlineNavItem[];
+  activeKey: string | null;
+  focusedKey: string | null;
   panelOpen: boolean;
   className?: string;
-  getRowRef: (unitId: string) => HTMLButtonElement | null;
-  onItemClick: (unitId: string) => void;
-  onItemKeyDown: (
+  getRowRef: (key: string) => HTMLButtonElement | null;
+  onDetItemClick: (unitId: string) => void;
+  onSemItemClick: (nodeId: string) => void;
+  onDetItemKeyDown: (
     event: React.KeyboardEvent<HTMLButtonElement>,
     unitId: string,
   ) => void;
+  onSemItemKeyDown: (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    nodeId: string,
+  ) => void;
+  onSurfaceChange: (surface: ReaderOutlineSurface) => void;
   onMouseEnter: () => void;
   onMouseLeave: (event: React.MouseEvent<HTMLElement>) => void;
-  registerRowRef: (unitId: string, el: HTMLButtonElement | null) => void;
+  registerRowRef: (key: string, el: HTMLButtonElement | null) => void;
 }
 
 function NavigationPanel({
-  items,
-  mode,
-  activeUnitId,
-  focusedUnitId,
+  panelId,
+  surface,
+  hasL2,
+  isPartial,
+  detMode,
+  detItems,
+  semItems,
+  activeKey,
+  focusedKey,
   panelOpen,
   className,
   getRowRef,
-  onItemClick,
-  onItemKeyDown,
+  onDetItemClick,
+  onSemItemClick,
+  onDetItemKeyDown,
+  onSemItemKeyDown,
+  onSurfaceChange,
   onMouseEnter,
   onMouseLeave,
   registerRowRef,
 }: NavigationPanelProps) {
-  const panelRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
-  // Keep the active or keyboard-focused row visible inside the panel's own
-  // scrollport. Focused row takes precedence while roving; otherwise the
-  // scroll-spy active row is kept in view.
   useEffect(() => {
     if (!panelOpen) return;
-    const row = (focusedUnitId ? getRowRef(focusedUnitId) : null) ??
-      (activeUnitId ? getRowRef(activeUnitId) : null);
+    const toRefKey = (id: string) =>
+      surface === "semantic" ? semRowRefKey(id) : detRowRefKey(id);
+    const row =
+      (focusedKey ? getRowRef(toRefKey(focusedKey)) : null) ??
+      (activeKey ? getRowRef(toRefKey(activeKey)) : null);
     const scrollArea = scrollAreaRef.current;
-    if (row && scrollArea && scrollArea.contains(row) && typeof row.scrollIntoView === "function") {
+    if (
+      row &&
+      scrollArea &&
+      scrollArea.contains(row) &&
+      typeof row.scrollIntoView === "function"
+    ) {
       row.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
-  }, [panelOpen, activeUnitId, focusedUnitId, getRowRef]);
+  }, [panelOpen, activeKey, focusedKey, getRowRef, surface]);
 
   return (
     <div
-      ref={panelRef}
+      id={panelId}
       data-testid="reader-record-navigation-panel"
       data-reader-record-navigation-panel="true"
+      data-outline-surface={surface}
       className={cn(
         "reader-record-navigation-panel motion-reduce:transition-none",
         "transition-[transform,opacity,visibility] duration-200 ease-[var(--cl-ease-standard)]",
@@ -308,28 +552,59 @@ function NavigationPanel({
           "w-64",
         )}
       >
+        {hasL2 ? (
+          <OutlineModeSwitch surface={surface} onChange={onSurfaceChange} />
+        ) : null}
+        {surface === "semantic" && isPartial ? (
+          <div
+            className="border-b border-hairline/30 px-2.5 py-1 text-[9px] leading-snug text-muted-foreground/80"
+            data-testid="reader-record-outline-partial-hint"
+          >
+            部分内容大纲
+          </div>
+        ) : null}
         <div
           ref={scrollAreaRef}
           className="max-h-[min(72vh,42rem)] overflow-y-auto py-2"
         >
-          <ol className="flex flex-col">
-            {items.map((item) => (
-              <NavigationPanelRow
-                key={item.unitId}
-                item={item}
-                mode={mode}
-                active={item.unitId === activeUnitId}
-                // Roving tabindex: only the focused item is tabbable (0),
-                // all others are -1. When closed, all are -1.
-                tabIndex={
-                  panelOpen && item.unitId === focusedUnitId ? 0 : -1
-                }
-                onClick={() => onItemClick(item.unitId)}
-                onKeyDown={(event) => onItemKeyDown(event, item.unitId)}
-                registerRef={(el) => registerRowRef(item.unitId, el)}
-              />
-            ))}
-          </ol>
+          {surface === "deterministic" ? (
+            <ol className="flex flex-col">
+              {detItems.map((item) => (
+                <DeterministicPanelRow
+                  key={item.unitId}
+                  item={item}
+                  mode={detMode}
+                  active={item.unitId === activeKey}
+                  tabIndex={
+                    panelOpen && item.unitId === focusedKey ? 0 : -1
+                  }
+                  onClick={() => onDetItemClick(item.unitId)}
+                  onKeyDown={(event) => onDetItemKeyDown(event, item.unitId)}
+                  registerRef={(el) =>
+                    registerRowRef(detRowRefKey(item.unitId), el)
+                  }
+                />
+              ))}
+            </ol>
+          ) : (
+            <ol className="flex flex-col">
+              {semItems.map((item) => (
+                <SemanticPanelRow
+                  key={item.nodeId}
+                  item={item}
+                  active={item.nodeId === activeKey}
+                  tabIndex={
+                    panelOpen && item.nodeId === focusedKey ? 0 : -1
+                  }
+                  onClick={() => onSemItemClick(item.nodeId)}
+                  onKeyDown={(event) => onSemItemKeyDown(event, item.nodeId)}
+                  registerRef={(el) =>
+                    registerRowRef(semRowRefKey(item.nodeId), el)
+                  }
+                />
+              ))}
+            </ol>
+          )}
         </div>
       </div>
     </div>
@@ -356,47 +631,104 @@ export function ReaderRecordNavigationRail({
   className,
   layout = "viewport",
 }: ReaderRecordNavigationRailProps) {
-  const projection = useMemo(
+  const panelDomId = useId();
+  const panelId = `reader-record-nav-panel-${panelDomId.replace(/:/g, "")}`;
+
+  const detProjection = useMemo(
     () => projectReaderRecordNavigation(snapshot, plateDocument),
     [snapshot, plateDocument],
   );
-  const { mode, items, sourceIdentityKey } = projection;
+  const semProjection = useMemo(
+    () => projectReaderSemanticOutlineNav(snapshot, plateDocument),
+    [snapshot, plateDocument],
+  );
 
+  const { mode: detMode, items: detItems, sourceIdentityKey } = detProjection;
+  const hasL2 = semProjection.available;
+  const semItems = semProjection.panelItems;
+  const semTicks = semProjection.tickItems;
+
+  const [outlineSurface, setOutlineSurface] =
+    useState<ReaderOutlineSurface>("deterministic");
   const [activeUnitId, setActiveUnitId] = useState<string | null>(null);
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
-  // Roving tabindex: tracks which row currently holds tabIndex=0.
-  const [focusedUnitId, setFocusedUnitId] = useState<string | null>(null);
+  const [focusedKey, setFocusedKey] = useState<string | null>(null);
 
   const wrapperRef = useRef<HTMLElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const rowRefsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
   const closeTimerRef = useRef<number | null>(null);
   const scrollLockTimerRef = useRef<number | null>(null);
-  const lockedUnitIdRef = useRef<string | null>(null);
+  const lockedKeyRef = useRef<string | null>(null);
   const targetMapRef = useRef<Map<string, HTMLElement>>(new Map());
   const sourceIdentityKeyRef = useRef(sourceIdentityKey);
+  const outlineRevisionRef = useRef(semProjection.outlineRevision);
+  const outlineSurfaceRef = useRef(outlineSurface);
 
-  // Invalidate cache when items change (different unit ids or count).
+  useEffect(() => {
+    outlineSurfaceRef.current = outlineSurface;
+  }, [outlineSurface]);
+
+  // No L2 → force deterministic surface.
+  useEffect(() => {
+    if (!hasL2 && outlineSurface === "semantic") {
+      setOutlineSurface("deterministic");
+      setActiveNodeId(null);
+    }
+  }, [hasL2, outlineSurface]);
+
+  // Invalidate cache when det items or semantic tree identity changes.
   useEffect(() => {
     targetMapRef.current = new Map();
-  }, [items]);
+  }, [detItems, semProjection.outlineRevision, semItems.length]);
 
-  // Source identity reset: base_id:generation change must clear all rail state,
-  // even when unit ids still look like u1/u2.
+  // Source identity reset: base_id:generation change clears all rail state.
   useEffect(() => {
     if (sourceIdentityKeyRef.current === sourceIdentityKey) {
       return;
     }
     sourceIdentityKeyRef.current = sourceIdentityKey;
+    setOutlineSurface("deterministic");
     setActiveUnitId(null);
-    setFocusedUnitId(null);
-    lockedUnitIdRef.current = null;
+    setActiveNodeId(null);
+    setFocusedKey(null);
+    lockedKeyRef.current = null;
     if (scrollLockTimerRef.current !== null) {
       window.clearTimeout(scrollLockTimerRef.current);
       scrollLockTimerRef.current = null;
     }
+    // Cancel pending hover-close from the previous source so it cannot close
+    // a panel re-opened under the new identity.
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
     targetMapRef.current = new Map();
   }, [sourceIdentityKey]);
+
+  // Same-source outline_revision refresh: drop missing active/focus; keep panel.
+  useEffect(() => {
+    if (outlineRevisionRef.current === semProjection.outlineRevision) {
+      return;
+    }
+    outlineRevisionRef.current = semProjection.outlineRevision;
+    if (!semProjection.available) {
+      setActiveNodeId(null);
+      if (outlineSurfaceRef.current === "semantic") {
+        setFocusedKey(null);
+      }
+      return;
+    }
+    const ids = new Set(semProjection.panelItems.map((n) => n.nodeId));
+    setActiveNodeId((prev) => (prev && ids.has(prev) ? prev : null));
+    setFocusedKey((prev) => {
+      if (outlineSurfaceRef.current !== "semantic") return prev;
+      if (prev && ids.has(prev)) return prev;
+      return null;
+    });
+    targetMapRef.current = new Map();
+  }, [semProjection.outlineRevision, semProjection.available, semProjection.panelItems]);
 
   const clearCloseTimer = useCallback(() => {
     if (closeTimerRef.current !== null) {
@@ -427,22 +759,24 @@ export function ReaderRecordNavigationRail({
     }, 220);
   }, [clearCloseTimer]);
 
-  const lockActiveUnit = useCallback((unitId: string) => {
-    lockedUnitIdRef.current = unitId;
+  const lockActiveKey = useCallback((key: string) => {
+    lockedKeyRef.current = key;
     if (scrollLockTimerRef.current !== null) {
       window.clearTimeout(scrollLockTimerRef.current);
     }
     scrollLockTimerRef.current = window.setTimeout(() => {
-      lockedUnitIdRef.current = null;
+      lockedKeyRef.current = null;
     }, SCROLL_LOCK_MS);
   }, []);
 
-  // --- Scroll-based active section (validated target map) ---------------
+  // --- Scroll-based active (deterministic or semantic) -------------------
   useEffect(() => {
-    if (typeof window === "undefined" || items.length === 0) return;
+    if (typeof window === "undefined") return;
+    if (outlineSurface === "deterministic" && detItems.length === 0) return;
+    if (outlineSurface === "semantic" && semItems.length === 0) return;
 
-    // Fence: rAF scheduled for this source must not commit after base/generation switches.
     const fenceSourceIdentityKey = sourceIdentityKey;
+    const fenceSurface = outlineSurface;
     const scrollContainer = getScrollContainer() ?? window;
     let rafId: number | null = null;
     let pending = false;
@@ -452,20 +786,35 @@ export function ReaderRecordNavigationRail({
       pending = true;
       rafId = window.requestAnimationFrame(() => {
         pending = false;
-        // Drop stale frames from a previous source identity.
         if (sourceIdentityKeyRef.current !== fenceSourceIdentityKey) {
           return;
         }
-        if (lockedUnitIdRef.current) return;
+        if (outlineSurfaceRef.current !== fenceSurface) {
+          return;
+        }
+        if (lockedKeyRef.current) return;
 
-        const activeId = computeActiveUnitId(
-          items,
-          targetMapRef.current,
-          TOPBAR_SAFE_HEIGHT + ACTIVE_SAFE_OFFSET,
-          mode,
-        );
-        // L1 lead zone yields null; must clear any previous active.
-        setActiveUnitId(activeId);
+        const safeTop = TOPBAR_SAFE_HEIGHT + ACTIVE_SAFE_OFFSET;
+
+        if (fenceSurface === "semantic") {
+          const activeId = computeActiveOutlineNodeId(
+            semItems,
+            semTicks,
+            semProjection.orderedUnitIds,
+            semProjection.unitOrderById,
+            targetMapRef.current,
+            safeTop,
+          );
+          setActiveNodeId(activeId);
+        } else {
+          const activeId = computeActiveUnitId(
+            detItems,
+            targetMapRef.current,
+            safeTop,
+            detMode,
+          );
+          setActiveUnitId(activeId);
+        }
       });
     };
 
@@ -480,36 +829,60 @@ export function ReaderRecordNavigationRail({
         window.cancelAnimationFrame(rafId);
       }
     };
-  }, [items, mode, sourceIdentityKey]);
+  }, [
+    detItems,
+    detMode,
+    outlineSurface,
+    semItems,
+    semTicks,
+    semProjection.orderedUnitIds,
+    semProjection.unitOrderById,
+    sourceIdentityKey,
+  ]);
 
-  // L0 only: default the active item to the first unit until scrolling provides a signal.
-  // L1 lead zone must keep activeUnitId = null (no first-heading pseudo-active).
+  // L0 only: default active to first unit.
   useEffect(() => {
-    if (mode !== "L0") return;
-    if (items.length > 0 && activeUnitId === null) {
-      setActiveUnitId(items[0].unitId);
+    if (outlineSurface !== "deterministic") return;
+    if (detMode !== "L0") return;
+    if (detItems.length > 0 && activeUnitId === null) {
+      setActiveUnitId(detItems[0].unitId);
     }
-  }, [mode, items, activeUnitId]);
+  }, [outlineSurface, detMode, detItems, activeUnitId]);
 
-  // Initialize focusedUnitId when the panel opens.
-  // L1 lead: active may be null, but keyboard focus can still land on first heading.
+  // Initialize focused key when the panel opens.
   useEffect(() => {
-    if (panelOpen && focusedUnitId === null) {
-      setFocusedUnitId(activeUnitId ?? items[0]?.unitId ?? null);
+    if (panelOpen && focusedKey === null) {
+      if (outlineSurface === "semantic") {
+        setFocusedKey(activeNodeId ?? semItems[0]?.nodeId ?? null);
+      } else {
+        setFocusedKey(activeUnitId ?? detItems[0]?.unitId ?? null);
+      }
     }
     if (!panelOpen) {
-      setFocusedUnitId(null);
+      setFocusedKey(null);
     }
-  }, [panelOpen, activeUnitId, focusedUnitId, items]);
+  }, [
+    panelOpen,
+    focusedKey,
+    outlineSurface,
+    activeNodeId,
+    activeUnitId,
+    semItems,
+    detItems,
+  ]);
 
-  // Focus the row matching focusedUnitId when it changes (keyboard nav).
+  // Focus the row matching focusedKey when it changes (keyboard nav).
+  // Map key is surface-namespaced so node_id === unitId cannot collide.
   useEffect(() => {
-    if (!panelOpen || focusedUnitId === null) return;
-    const row = rowRefsRef.current.get(focusedUnitId);
+    if (!panelOpen || focusedKey === null) return;
+    const mapKey =
+      outlineSurfaceRef.current === "semantic"
+        ? semRowRefKey(focusedKey)
+        : detRowRefKey(focusedKey);
+    const row = rowRefsRef.current.get(mapKey);
     row?.focus();
-  }, [focusedUnitId, panelOpen]);
+  }, [focusedKey, panelOpen, outlineSurface]);
 
-  // Clean up lingering timers if the rail is unmounted.
   useEffect(() => {
     return () => {
       if (closeTimerRef.current !== null) {
@@ -521,96 +894,143 @@ export function ReaderRecordNavigationRail({
     };
   }, []);
 
-  // --- Navigation actions -----------------------------------------------
-  const handleItemClick = useCallback(
+  // --- Deterministic click (existing semantics: set active even if no DOM) --
+  const handleDetItemClick = useCallback(
     (unitId: string) => {
-      // Same validated resolver as scroll spy — never scroll to a detached node.
       const target = resolveValidatedUnitTarget(unitId, targetMapRef.current);
       if (target) {
-        const scrollContainer = getScrollContainer() ?? window;
-        const isWindow = scrollContainer === window;
-        const scrollTop = isWindow
-          ? window.scrollY
-          : (scrollContainer as HTMLElement).scrollTop;
-        const containerTop = isWindow
-          ? 0
-          : (scrollContainer as HTMLElement).getBoundingClientRect().top;
-        const targetRect = target.getBoundingClientRect();
-        const targetOffset = targetRect.top - containerTop + scrollTop;
-        const safeOffset = Math.max(
-          0,
-          TOPBAR_SAFE_HEIGHT + ACTIVE_SAFE_OFFSET - containerTop,
-        );
-        const top = targetOffset - safeOffset;
-
-        if (isWindow) {
-          window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
-        } else {
-          (scrollContainer as HTMLElement).scrollTo({
-            top: Math.max(0, top),
-            behavior: "smooth",
-          });
-        }
+        scrollElementIntoSafeView(target);
       }
       setActiveUnitId(unitId);
-      setFocusedUnitId(unitId);
-      lockActiveUnit(unitId);
+      setFocusedKey(unitId);
+      lockActiveKey(unitId);
     },
-    [lockActiveUnit],
+    [lockActiveKey],
   );
 
-  // --- Keyboard navigation (roving tabindex) ----------------------------
-  const focusRow = useCallback(
-    (unitId: string) => {
-      setFocusedUnitId(unitId);
+  // --- Semantic click (Phase 0 C: no target → no active / lock / scroll) ---
+  const handleSemItemClick = useCallback(
+    (nodeId: string) => {
+      const item = semItems.find((n) => n.nodeId === nodeId);
+      if (!item) return;
+      const target = resolveValidatedOutlineTarget(
+        item,
+        targetMapRef.current,
+      );
+      if (!target) {
+        // Fail closed for activation; keep keyboard focus on current row.
+        return;
+      }
+      scrollElementIntoSafeView(target);
+      setActiveNodeId(nodeId);
+      setFocusedKey(nodeId);
+      lockActiveKey(nodeId);
     },
-    [],
+    [lockActiveKey, semItems],
   );
 
-  const handleItemKeyDown = useCallback(
+  const handleDetItemKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLButtonElement>, unitId: string) => {
-      const currentIndex = items.findIndex((item) => item.unitId === unitId);
+      const currentIndex = detItems.findIndex((item) => item.unitId === unitId);
       if (currentIndex === -1) return;
 
       switch (event.key) {
         case "Enter":
         case " ": {
           event.preventDefault();
-          handleItemClick(unitId);
+          handleDetItemClick(unitId);
           break;
         }
         case "ArrowDown": {
           event.preventDefault();
-          const nextIndex = Math.min(items.length - 1, currentIndex + 1);
-          focusRow(items[nextIndex].unitId);
+          const nextIndex = Math.min(detItems.length - 1, currentIndex + 1);
+          setFocusedKey(detItems[nextIndex].unitId);
           break;
         }
         case "ArrowUp": {
           event.preventDefault();
           const prevIndex = Math.max(0, currentIndex - 1);
-          focusRow(items[prevIndex].unitId);
+          setFocusedKey(detItems[prevIndex].unitId);
           break;
         }
         case "Home": {
           event.preventDefault();
-          focusRow(items[0].unitId);
+          setFocusedKey(detItems[0].unitId);
           break;
         }
         case "End": {
           event.preventDefault();
-          focusRow(items[items.length - 1].unitId);
+          setFocusedKey(detItems[detItems.length - 1].unitId);
           break;
         }
         case "Escape": {
           event.preventDefault();
           closePanel();
-          // Return focus to the outline trigger button.
           triggerRef.current?.focus();
           break;
         }
       }
     },
-    [items, handleItemClick, focusRow, closePanel],
+    [detItems, handleDetItemClick, closePanel],
+  );
+
+  const handleSemItemKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>, nodeId: string) => {
+      const currentIndex = semItems.findIndex((item) => item.nodeId === nodeId);
+      if (currentIndex === -1) return;
+
+      switch (event.key) {
+        case "Enter":
+        case " ": {
+          event.preventDefault();
+          handleSemItemClick(nodeId);
+          break;
+        }
+        case "ArrowDown": {
+          event.preventDefault();
+          const nextIndex = Math.min(semItems.length - 1, currentIndex + 1);
+          setFocusedKey(semItems[nextIndex].nodeId);
+          break;
+        }
+        case "ArrowUp": {
+          event.preventDefault();
+          const prevIndex = Math.max(0, currentIndex - 1);
+          setFocusedKey(semItems[prevIndex].nodeId);
+          break;
+        }
+        case "Home": {
+          event.preventDefault();
+          setFocusedKey(semItems[0].nodeId);
+          break;
+        }
+        case "End": {
+          event.preventDefault();
+          setFocusedKey(semItems[semItems.length - 1].nodeId);
+          break;
+        }
+        case "Escape": {
+          event.preventDefault();
+          closePanel();
+          triggerRef.current?.focus();
+          break;
+        }
+      }
+    },
+    [semItems, handleSemItemClick, closePanel],
+  );
+
+  const handleSurfaceChange = useCallback(
+    (next: ReaderOutlineSurface) => {
+      if (next === "semantic" && !hasL2) return;
+      setOutlineSurface(next);
+      setFocusedKey(null);
+      lockedKeyRef.current = null;
+      if (scrollLockTimerRef.current !== null) {
+        window.clearTimeout(scrollLockTimerRef.current);
+        scrollLockTimerRef.current = null;
+      }
+    },
+    [hasL2],
   );
 
   const handleTriggerKeyDown = useCallback(
@@ -655,68 +1075,79 @@ export function ReaderRecordNavigationRail({
     [scheduleClose],
   );
 
-  const handleTickMouseEnter = useCallback(
-    () => {
-      // T5.1e-PUX-Rail-R1: panel has a single stable vertical position; hover
-      // only opens it, it no longer re-anchors to the tick's y-coordinate.
-      openPanel();
-    },
-    [openPanel],
-  );
+  const handleTickMouseEnter = useCallback(() => {
+    // Panel has a single stable vertical position; hover only opens it.
+    openPanel();
+  }, [openPanel]);
 
   const registerRowRef = useCallback(
-    (unitId: string, el: HTMLButtonElement | null) => {
+    (key: string, el: HTMLButtonElement | null) => {
       if (el) {
-        rowRefsRef.current.set(unitId, el);
+        rowRefsRef.current.set(key, el);
       } else {
-        rowRefsRef.current.delete(unitId);
+        rowRefsRef.current.delete(key);
       }
     },
     [],
   );
 
   const getRowRef = useCallback(
-    (unitId: string) => rowRefsRef.current.get(unitId) ?? null,
+    (key: string) => rowRefsRef.current.get(key) ?? null,
     [],
   );
 
-  if (items.length === 0) {
+  if (detItems.length === 0) {
     return null;
   }
 
   const isCanvas = layout === "canvas";
+  const effectiveSurface: ReaderOutlineSurface =
+    outlineSurface === "semantic" && hasL2 ? "semantic" : "deterministic";
+
+  const tickKeys =
+    effectiveSurface === "semantic"
+      ? semTicks.map((t) => t.nodeId)
+      : detItems.map((i) => i.unitId);
+
+  const activeKey =
+    effectiveSurface === "semantic" ? activeNodeId : activeUnitId;
+
   const activeItemIndex =
-    activeUnitId === null
+    activeKey === null
       ? -1
-      : items.findIndex((item) => item.unitId === activeUnitId);
+      : effectiveSurface === "semantic"
+        ? semItems.findIndex((item) => item.nodeId === activeKey)
+        : detItems.findIndex((item) => item.unitId === activeKey);
   const activeIndexForLabel =
     activeItemIndex >= 0 ? activeItemIndex + 1 : null;
-  const triggerLabel = buildNavigationTriggerLabel(
-    mode,
-    panelOpen,
-    activeIndexForLabel,
-  );
+
+  const triggerLabel =
+    effectiveSurface === "semantic"
+      ? buildSemanticTriggerLabel(panelOpen, activeIndexForLabel)
+      : buildNavigationTriggerLabel(detMode, panelOpen, activeIndexForLabel);
+
+  const navAriaLabel =
+    effectiveSurface === "semantic" ? "内容大纲" : "阅读定位";
 
   return (
     <nav
       ref={wrapperRef}
-      aria-label="阅读定位"
+      aria-label={navAriaLabel}
       data-testid="reader-record-navigation-rail"
-      data-navigation-mode={mode}
+      data-navigation-mode={
+        effectiveSurface === "semantic" ? "L2" : detMode
+      }
+      data-outline-surface={effectiveSurface}
+      data-has-semantic-outline={hasL2 ? "true" : "false"}
       data-layout={layout}
       className={cn(
         "hidden md:flex",
-        // When the detail panel is expanded, elevate the rail above the
-        // floating Ask window so the outline remains reachable. Semantic
-        // z-index: rail (30) < floating Ask (40) < expanded panel (50).
         panelOpen
           ? "z-[var(--reader-z-outline-panel-expanded,50)]"
           : "z-[var(--reader-z-outline-rail,30)]",
         isCanvas
           ? "reader-record-navigation-rail--canvas absolute right-0 top-1/2 h-[min(72vh,42rem)] w-full -translate-y-1/2"
           : "fixed right-3 top-1/2 h-[min(72vh,42rem)] -translate-y-1/2",
-        // Viewport-mode legacy shift when Ask is open. Canvas mode relies on
-        // the Reader Canvas CSS variables instead of this clamp.
         !isCanvas &&
           askOpen &&
           "2xl:right-[clamp(31.75rem,calc((100vw-124px-96ch)/2+0.25rem),38.25rem)]",
@@ -725,25 +1156,28 @@ export function ReaderRecordNavigationRail({
       onMouseLeave={handleMouseLeave}
       onBlur={handleBlur}
     >
-      {/* Detail panel: rendered first so it sits to the left of the ticks. */}
       <NavigationPanel
-        items={items}
-        mode={mode}
-        activeUnitId={activeUnitId}
-        focusedUnitId={focusedUnitId}
+        panelId={panelId}
+        surface={effectiveSurface}
+        hasL2={hasL2}
+        isPartial={semProjection.isPartial}
+        detMode={detMode}
+        detItems={detItems}
+        semItems={semItems}
+        activeKey={activeKey}
+        focusedKey={focusedKey}
         panelOpen={panelOpen}
         getRowRef={getRowRef}
-        onItemClick={handleItemClick}
-        onItemKeyDown={handleItemKeyDown}
+        onDetItemClick={handleDetItemClick}
+        onSemItemClick={handleSemItemClick}
+        onDetItemKeyDown={handleDetItemKeyDown}
+        onSemItemKeyDown={handleSemItemKeyDown}
+        onSurfaceChange={handleSurfaceChange}
         onMouseEnter={keepOpenPanel}
         onMouseLeave={handleMouseLeave}
         registerRowRef={registerRowRef}
       />
 
-      {/* Accessible trigger button wrapping the visual ticks.
-          The ticks are aria-hidden; the button's aria-label is the sole
-          screen-reader entry point. Mouse hover on individual ticks opens
-          the panel, but the panel stays at one stable vertical position. */}
       <button
         ref={triggerRef}
         type="button"
@@ -752,13 +1186,30 @@ export function ReaderRecordNavigationRail({
         className="relative flex min-h-[24px] min-w-[24px] cursor-pointer items-center justify-end"
         aria-label={triggerLabel}
         aria-expanded={panelOpen}
-        aria-haspopup="menu"
+        aria-controls={panelId}
         onClick={handleTriggerClick}
         onKeyDown={handleTriggerKeyDown}
       >
         <VisualTicks
-          items={items}
-          activeUnitId={activeUnitId}
+          surface={effectiveSurface}
+          tickKeys={tickKeys}
+          activeKey={
+            effectiveSurface === "semantic"
+              ? // Highlight root tick when active is root or descendant of root.
+                activeNodeId
+                  ? (semTicks.find(
+                      (t) =>
+                        t.nodeId === activeNodeId ||
+                        semItems.some(
+                          (n) =>
+                            n.nodeId === activeNodeId &&
+                            (n.nodeId === t.nodeId ||
+                              isDescendantOf(semItems, n.nodeId, t.nodeId)),
+                        ),
+                    )?.nodeId ?? null)
+                  : null
+              : activeUnitId
+          }
           onTickMouseEnter={handleTickMouseEnter}
         />
       </button>
@@ -766,7 +1217,23 @@ export function ReaderRecordNavigationRail({
   );
 }
 
-interface NavigationPanelRowProps {
+function isDescendantOf(
+  items: ReaderSemanticOutlineNavItem[],
+  nodeId: string,
+  ancestorId: string,
+): boolean {
+  let current = items.find((n) => n.nodeId === nodeId);
+  const seen = new Set<string>();
+  while (current?.parentNodeId) {
+    if (current.parentNodeId === ancestorId) return true;
+    if (seen.has(current.parentNodeId)) return false;
+    seen.add(current.parentNodeId);
+    current = items.find((n) => n.nodeId === current!.parentNodeId);
+  }
+  return false;
+}
+
+interface DeterministicPanelRowProps {
   item: ReaderRecordNavigationItem;
   mode: ReaderRecordNavigationMode;
   active: boolean;
@@ -776,7 +1243,7 @@ interface NavigationPanelRowProps {
   registerRef: (el: HTMLButtonElement | null) => void;
 }
 
-function NavigationPanelRow({
+function DeterministicPanelRow({
   item,
   mode,
   active,
@@ -784,7 +1251,7 @@ function NavigationPanelRow({
   onClick,
   onKeyDown,
   registerRef,
-}: NavigationPanelRowProps) {
+}: DeterministicPanelRowProps) {
   const indexLabel =
     mode === "L1"
       ? `第 ${item.fallbackIndex + 1} 项`
@@ -812,6 +1279,57 @@ function NavigationPanelRow({
         </span>
         <span className="block text-[9px] leading-snug text-muted-foreground/75">
           {indexLabel}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+interface SemanticPanelRowProps {
+  item: ReaderSemanticOutlineNavItem;
+  active: boolean;
+  tabIndex?: number;
+  onClick: () => void;
+  onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
+  registerRef: (el: HTMLButtonElement | null) => void;
+}
+
+function SemanticPanelRow({
+  item,
+  active,
+  tabIndex = -1,
+  onClick,
+  onKeyDown,
+  registerRef,
+}: SemanticPanelRowProps) {
+  const depth = Math.min(Math.max(item.depth, 1), 3);
+  const levelLabel =
+    depth === 1 ? "一级" : depth === 2 ? "二级" : "三级";
+
+  return (
+    <li>
+      <button
+        ref={registerRef}
+        type="button"
+        data-testid={`reader-record-outline-node-${item.nodeId}`}
+        data-outline-node-id={item.nodeId}
+        data-outline-depth={item.depth}
+        aria-label={`${levelLabel}，${item.title}`}
+        aria-current={active ? "true" : undefined}
+        tabIndex={tabIndex}
+        onClick={onClick}
+        onKeyDown={onKeyDown}
+        style={{ paddingLeft: `${8 + (depth - 1) * 12}px` }}
+        className={cn(
+          "relative w-full py-1.5 pr-2.5 text-left transition-colors duration-150 ease-[var(--cl-ease-standard)]",
+          "focus-visible:outline-none focus-visible:bg-ink/[0.035] focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+          active
+            ? "bg-[var(--app-control-current)] font-medium text-ink"
+            : "text-ink/60 hover:bg-ink/[0.035] hover:text-ink",
+        )}
+      >
+        <span className="block truncate text-[11px] leading-snug">
+          {item.title}
         </span>
       </button>
     </li>

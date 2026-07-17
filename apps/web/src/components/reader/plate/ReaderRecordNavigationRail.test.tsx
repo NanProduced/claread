@@ -60,7 +60,11 @@ function makeParagraph(
 
 function makeSnapshot(
   units: SnapshotUnitInput[],
-  options?: { baseId?: string; generation?: number },
+  options?: {
+    baseId?: string;
+    generation?: number;
+    semantic_outline?: ReaderPlateSnapshotDto["semantic_outline"];
+  },
 ): ReaderPlateSnapshotDto {
   return {
     schema_kind: READER_PLATE_SNAPSHOT_SCHEMA_KIND,
@@ -115,6 +119,66 @@ function makeSnapshot(
     user_assets: [],
     parsed_decisions: [],
     value: [],
+    semantic_outline: options?.semantic_outline,
+  };
+}
+
+function makeOutlineDto(
+  overrides?: Partial<
+    NonNullable<ReaderPlateSnapshotDto["semantic_outline"]>
+  >,
+  nodes?: NonNullable<
+    NonNullable<ReaderPlateSnapshotDto["semantic_outline"]>["nodes"]
+  >,
+): NonNullable<ReaderPlateSnapshotDto["semantic_outline"]> {
+  return {
+    schema_kind: "reader_semantic_outline",
+    schema_version: 1,
+    status: "ready",
+    source_identity: { base_id: "base_1", generation: 1 },
+    publication: {
+      outline_revision: "rev_1",
+      layer_id: "layer_ol",
+      published_at: "2026-07-17T00:00:00Z",
+    },
+    provenance: { kind: "llm", builder: "test", model: "m" },
+    nodes: nodes ?? [
+      {
+        node_id: "n1",
+        parent_node_id: null,
+        depth: 1,
+        title: "Root A",
+        start_unit_id: "unit_1",
+        end_unit_id: "unit_2",
+        start_anchor_segment_id: null,
+        end_anchor_segment_id: null,
+        order_index: 1,
+      },
+      {
+        node_id: "n2",
+        parent_node_id: "n1",
+        depth: 2,
+        title: "Child",
+        start_unit_id: "unit_2",
+        end_unit_id: "unit_2",
+        start_anchor_segment_id: null,
+        end_anchor_segment_id: null,
+        order_index: 2,
+      },
+      {
+        node_id: "n3",
+        parent_node_id: null,
+        depth: 1,
+        title: "Root B",
+        start_unit_id: "unit_3",
+        end_unit_id: "unit_3",
+        start_anchor_segment_id: null,
+        end_anchor_segment_id: null,
+        order_index: 3,
+      },
+    ],
+    diagnostics: { drops: [], skipped_node_count: 0 },
+    ...overrides,
   };
 }
 
@@ -220,7 +284,8 @@ function triggerScroll() {
 /** Hover a visual tick to open the panel (simulates mouse hover on the rail). */
 function hoverTick(index = 0) {
   const miniRail = screen.getByTestId("reader-record-mini-rail");
-  const ticks = miniRail.querySelectorAll("span[data-navigation-unit-id]");
+  // Prefer surface-agnostic tick key (works for deterministic unit + semantic node).
+  const ticks = miniRail.querySelectorAll("span[data-navigation-tick-key]");
   fireEvent.mouseEnter(ticks[index]!);
 }
 
@@ -942,7 +1007,9 @@ describe("ReaderRecordNavigationRail", () => {
     expect(trigger.getAttribute("aria-label")).toBe("打开段落导航，当前第 1 段");
     expect(trigger.getAttribute("aria-label")).not.toMatch(/文章目录|大纲|第 \d+ 节/);
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
-    expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
+    // T5.5a: no menu popup semantics; panel is controlled via aria-controls.
+    expect(trigger.getAttribute("aria-haspopup")).toBeNull();
+    expect(trigger.getAttribute("aria-controls")).toBeTruthy();
 
     // Visual ticks are aria-hidden spans.
     const miniRail = screen.getByTestId("reader-record-mini-rail");
@@ -2159,6 +2226,558 @@ describe("ReaderRecordNavigationRail", () => {
       await waitFor(() =>
         expect(rows[0]?.getAttribute("aria-current")).toBe("true"),
       );
+    });
+  });
+
+  describe("T5.5a semantic outline (L2)", () => {
+    const threeUnits: SnapshotUnitInput[] = [
+      { unit_id: "unit_1", order_index: 1, label: "U1" },
+      { unit_id: "unit_2", order_index: 2, label: "U2" },
+      { unit_id: "unit_3", order_index: 3, label: "U3" },
+    ];
+
+    function threeDoc() {
+      return makePlateDocument([
+        makeParagraph("unit_1", "A"),
+        makeParagraph("unit_2", "B"),
+        makeParagraph("unit_3", "C"),
+      ]);
+    }
+
+    it("shows mode switch for ready outline; ticks are depth=1 only", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto(),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      const rail = screen.getByTestId("reader-record-navigation-rail");
+      expect(rail.getAttribute("data-has-semantic-outline")).toBe("true");
+      expect(rail.getAttribute("data-outline-surface")).toBe("deterministic");
+      // Default deterministic ticks = 3 units.
+      expect(
+        screen
+          .getByTestId("reader-record-mini-rail")
+          .querySelectorAll("[data-navigation-tick-key]"),
+      ).toHaveLength(3);
+
+      hoverTick(0);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+      expect(
+        screen.getByTestId("reader-record-outline-mode-switch"),
+      ).toBeTruthy();
+
+      fireEvent.click(
+        screen.getByTestId("reader-record-outline-mode-semantic"),
+      );
+      await waitFor(() =>
+        expect(rail.getAttribute("data-outline-surface")).toBe("semantic"),
+      );
+      expect(rail.getAttribute("aria-label")).toBe("内容大纲");
+      expect(rail.getAttribute("data-navigation-mode")).toBe("L2");
+
+      // Semantic ticks: only roots n1, n3 — use outline node ids, not unit ids.
+      const ticks = screen
+        .getByTestId("reader-record-mini-rail")
+        .querySelectorAll("[data-navigation-tick-key]");
+      expect(ticks).toHaveLength(2);
+      expect(ticks[0]?.getAttribute("data-navigation-tick-key")).toBe("n1");
+      expect(ticks[0]?.getAttribute("data-outline-node-id")).toBe("n1");
+      expect(ticks[0]?.getAttribute("data-navigation-unit-id")).toBeNull();
+      expect(ticks[1]?.getAttribute("data-navigation-tick-key")).toBe("n3");
+      expect(ticks[1]?.getAttribute("data-outline-node-id")).toBe("n3");
+      expect(ticks[1]?.getAttribute("data-navigation-unit-id")).toBeNull();
+
+      // Panel shows full tree including depth-2 child.
+      expect(
+        screen.getByTestId("reader-record-outline-node-n2"),
+      ).toBeTruthy();
+      expect(
+        screen.getByTestId("reader-record-outline-node-n2").getAttribute(
+          "data-outline-depth",
+        ),
+      ).toBe("2");
+
+      // Mode switch a11y: group + pressed state.
+      const modeGroup = screen.getByTestId("reader-record-outline-mode-switch");
+      expect(modeGroup.getAttribute("role")).toBe("group");
+      expect(modeGroup.getAttribute("aria-label")).toBe("导航方式");
+      expect(
+        screen
+          .getByTestId("reader-record-outline-mode-semantic")
+          .getAttribute("aria-pressed"),
+      ).toBe("true");
+      expect(
+        screen
+          .getByTestId("reader-record-outline-mode-deterministic")
+          .getAttribute("aria-pressed"),
+      ).toBe("false");
+    });
+
+    it("partial shows quiet hint; untrusted statuses hide L2", () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      const { rerender } = render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "partial" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+      expect(
+        screen.getByTestId("reader-record-navigation-rail").getAttribute(
+          "data-has-semantic-outline",
+        ),
+      ).toBe("true");
+
+      for (const status of [
+        "pending",
+        "failed",
+        "stale",
+        "unavailable",
+      ] as const) {
+        rerender(
+          <ReaderRecordNavigationRail
+            snapshot={makeSnapshot(threeUnits, {
+              semantic_outline: makeOutlineDto({ status }),
+            })}
+            plateDocument={threeDoc()}
+          />,
+        );
+        expect(
+          screen.getByTestId("reader-record-navigation-rail").getAttribute(
+            "data-has-semantic-outline",
+          ),
+        ).toBe("false");
+        expect(
+          screen.queryByTestId("reader-record-outline-mode-switch"),
+        ).toBeNull();
+      }
+
+      rerender(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, { semantic_outline: null })}
+          plateDocument={threeDoc()}
+        />,
+      );
+      expect(
+        screen.getByTestId("reader-record-navigation-rail").getAttribute(
+          "data-has-semantic-outline",
+        ),
+      ).toBe("false");
+    });
+
+    it("source mismatch and missing start_unit fail-closed", () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      const { rerender } = render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({
+              source_identity: { base_id: "other", generation: 1 },
+            }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+      expect(
+        screen.getByTestId("reader-record-navigation-rail").getAttribute(
+          "data-has-semantic-outline",
+        ),
+      ).toBe("false");
+
+      rerender(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({}, [
+              {
+                node_id: "nx",
+                parent_node_id: null,
+                depth: 1,
+                title: "Ghost",
+                start_unit_id: "unit_missing",
+                end_unit_id: "unit_missing",
+                start_anchor_segment_id: null,
+                end_anchor_segment_id: null,
+                order_index: 1,
+              },
+            ]),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+      expect(
+        screen.getByTestId("reader-record-navigation-rail").getAttribute(
+          "data-has-semantic-outline",
+        ),
+      ).toBe("false");
+    });
+
+    it("click with DOM scrolls and sets active; missing DOM is no-op", async () => {
+      const { paragraphs } = renderTargets(
+        ["unit_1", "unit_2", "unit_3"],
+        [100, 300, 500],
+      );
+      paragraphs[0]!.setAttribute("data-reader-record-unit-start", "true");
+      paragraphs[1]!.setAttribute("data-reader-record-unit-start", "true");
+      paragraphs[2]!.setAttribute("data-reader-record-unit-start", "true");
+
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto(),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      hoverTick(0);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+      fireEvent.click(
+        screen.getByTestId("reader-record-outline-mode-semantic"),
+      );
+
+      const rootBtn = screen.getByTestId("reader-record-outline-node-n1");
+      fireEvent.click(rootBtn);
+      expect(window.scrollTo).toHaveBeenCalled();
+      expect(rootBtn.getAttribute("aria-current")).toBe("true");
+
+      // Remove all plate DOM → click child is no-op for active/scroll.
+      document
+        .querySelector(".reader-record-plate-document")
+        ?.remove();
+      vi.mocked(window.scrollTo).mockClear();
+      const childBtn = screen.getByTestId("reader-record-outline-node-n2");
+      fireEvent.click(childBtn);
+      expect(window.scrollTo).not.toHaveBeenCalled();
+      expect(childBtn.getAttribute("aria-current")).toBeNull();
+      // Previous active remains.
+      expect(rootBtn.getAttribute("aria-current")).toBe("true");
+    });
+
+    it("prefers start_anchor_segment_id when consistent with unit", async () => {
+      const body = document.createElement("div");
+      body.className = "reader-record-plate-document";
+      const unitStart = document.createElement("p");
+      unitStart.setAttribute("data-reader-record-node", "paragraph");
+      unitStart.setAttribute("data-unit-id", "unit_1");
+      unitStart.setAttribute("data-reader-record-unit-start", "true");
+      unitStart.setAttribute("data-anchor-segment-id", "seg_other");
+      setRectTop(unitStart, 400, 100);
+      const anchored = document.createElement("p");
+      anchored.setAttribute("data-reader-record-node", "paragraph");
+      anchored.setAttribute("data-unit-id", "unit_1");
+      anchored.setAttribute("data-anchor-segment-id", "seg_precise");
+      setRectTop(anchored, 120, 100);
+      body.appendChild(unitStart);
+      body.appendChild(anchored);
+      document.body.appendChild(body);
+
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({}, [
+              {
+                node_id: "na",
+                parent_node_id: null,
+                depth: 1,
+                title: "Anchored",
+                start_unit_id: "unit_1",
+                end_unit_id: "unit_1",
+                start_anchor_segment_id: "seg_precise",
+                end_anchor_segment_id: null,
+                order_index: 1,
+              },
+            ]),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      hoverTick(0);
+      await waitFor(() =>
+        expect(
+          screen
+            .getByTestId("reader-record-navigation-panel")
+            .classList.contains("pointer-events-none"),
+        ).toBe(false),
+      );
+      fireEvent.click(
+        screen.getByTestId("reader-record-outline-mode-semantic"),
+      );
+      fireEvent.click(screen.getByTestId("reader-record-outline-node-na"));
+      expect(window.scrollTo).toHaveBeenCalledWith({
+        top: 120 - 56 - 8,
+        behavior: "smooth",
+      });
+    });
+
+    it("source identity change forces deterministic and clears L2 active", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      const { rerender } = render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto(),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      hoverTick(0);
+      await waitFor(() =>
+        expect(
+          screen
+            .getByTestId("reader-record-navigation-panel")
+            .classList.contains("pointer-events-none"),
+        ).toBe(false),
+      );
+      fireEvent.click(
+        screen.getByTestId("reader-record-outline-mode-semantic"),
+      );
+      expect(
+        screen.getByTestId("reader-record-navigation-rail").getAttribute(
+          "data-outline-surface",
+        ),
+      ).toBe("semantic");
+
+      rerender(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            baseId: "base_2",
+            generation: 1,
+            semantic_outline: makeOutlineDto({
+              source_identity: { base_id: "base_2", generation: 1 },
+            }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-navigation-rail").getAttribute(
+            "data-outline-surface",
+          ),
+        ).toBe("deterministic"),
+      );
+    });
+
+    it("roving keyboard on semantic list and Escape returns to trigger", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto(),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      const trigger = screen.getByTestId("reader-record-outline-trigger");
+      fireEvent.click(trigger);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+      fireEvent.click(
+        screen.getByTestId("reader-record-outline-mode-semantic"),
+      );
+
+      const n1 = screen.getByTestId("reader-record-outline-node-n1");
+      const n2 = screen.getByTestId("reader-record-outline-node-n2");
+      n1.focus();
+      fireEvent.keyDown(n1, { key: "ArrowDown" });
+      await waitFor(() => expect(document.activeElement).toBe(n2));
+      fireEvent.keyDown(n2, { key: "Home" });
+      await waitFor(() => expect(document.activeElement).toBe(n1));
+      fireEvent.keyDown(n1, { key: "End" });
+      const n3 = screen.getByTestId("reader-record-outline-node-n3");
+      await waitFor(() => expect(document.activeElement).toBe(n3));
+      fireEvent.keyDown(n3, { key: "Escape" });
+      await waitFor(() => expect(document.activeElement).toBe(trigger));
+    });
+
+    it("L1 + L2 coexist: switching L2 does not change L1 items", async () => {
+      const units = headingRichUnits();
+      renderTargets(units.map((u) => u.unit_id));
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(units, {
+            semantic_outline: makeOutlineDto(
+              {},
+              [
+                {
+                  node_id: "ol1",
+                  parent_node_id: null,
+                  depth: 1,
+                  title: "Outline",
+                  start_unit_id: "u1",
+                  end_unit_id: "u7",
+                  start_anchor_segment_id: null,
+                  end_anchor_segment_id: null,
+                  order_index: 1,
+                },
+              ],
+            ),
+          })}
+          plateDocument={plateFromUnits(units)}
+        />,
+      );
+
+      const rail = screen.getByTestId("reader-record-navigation-rail");
+      expect(rail.getAttribute("data-navigation-mode")).toBe("L1");
+      expect(rail.getAttribute("data-has-semantic-outline")).toBe("true");
+
+      hoverTick(0);
+      await waitFor(() =>
+        expect(
+          screen
+            .getByTestId("reader-record-navigation-panel")
+            .classList.contains("pointer-events-none"),
+        ).toBe(false),
+      );
+      // Deterministic L1 rows still present (Chapter labels).
+      expect(screen.getByText("Chapter One")).toBeTruthy();
+
+      fireEvent.click(
+        screen.getByTestId("reader-record-outline-mode-semantic"),
+      );
+      expect(screen.getByText("Outline")).toBeTruthy();
+      expect(screen.queryByText("Chapter One")).toBeNull();
+
+      fireEvent.click(
+        screen.getByTestId("reader-record-outline-mode-deterministic"),
+      );
+      expect(screen.getByText("Chapter One")).toBeTruthy();
+      expect(rail.getAttribute("data-navigation-mode")).toBe("L1");
+    });
+
+    it("row ref namespace: node_id equal to unitId does not collide across surfaces", async () => {
+      // Collision fixture: outline node_id "unit_1" equals deterministic unitId.
+      const outline = makeOutlineDto({}, [
+        {
+          node_id: "unit_1",
+          parent_node_id: null,
+          depth: 1,
+          title: "Semantic Twin",
+          start_unit_id: "unit_1",
+          end_unit_id: "unit_2",
+          start_anchor_segment_id: null,
+          end_anchor_segment_id: null,
+          order_index: 1,
+        },
+        {
+          node_id: "unit_2",
+          parent_node_id: null,
+          depth: 1,
+          title: "Semantic Two",
+          start_unit_id: "unit_3",
+          end_unit_id: "unit_3",
+          start_anchor_segment_id: null,
+          end_anchor_segment_id: null,
+          order_index: 2,
+        },
+      ]);
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, { semantic_outline: outline })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      hoverTick(0);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+
+      // Deterministic: first row is unit_1 label "U1".
+      const detRows = panel.querySelectorAll(
+        "ol button:not([data-outline-node-id])",
+      );
+      // Mode switch buttons are outside ol — ol only has nav rows.
+      const detOlButtons = panel.querySelectorAll("ol button");
+      expect(detOlButtons[0]?.textContent).toContain("U1");
+      (detOlButtons[0] as HTMLButtonElement).focus();
+      fireEvent.keyDown(detOlButtons[0]!, { key: "ArrowDown" });
+      await waitFor(() =>
+        expect(document.activeElement).toBe(detOlButtons[1]),
+      );
+
+      fireEvent.click(
+        screen.getByTestId("reader-record-outline-mode-semantic"),
+      );
+      const semRow = screen.getByTestId("reader-record-outline-node-unit_1");
+      const semRow2 = screen.getByTestId("reader-record-outline-node-unit_2");
+      semRow.focus();
+      fireEvent.keyDown(semRow, { key: "ArrowDown" });
+      await waitFor(() => expect(document.activeElement).toBe(semRow2));
+      // Must be the semantic row, not a leftover deterministic unit_2 row.
+      expect(
+        (document.activeElement as HTMLElement).getAttribute(
+          "data-outline-node-id",
+        ),
+      ).toBe("unit_2");
+      expect(
+        (document.activeElement as HTMLElement).getAttribute("aria-label"),
+      ).toMatch(/Semantic Two/);
+    });
+
+    it("source identity switch cancels pending close timer", async () => {
+      vi.useFakeTimers();
+      try {
+        renderTargets(["unit_1", "unit_2", "unit_3"]);
+        const { rerender } = render(
+          <ReaderRecordNavigationRail
+            snapshot={makeSnapshot(threeUnits, {
+              semantic_outline: makeOutlineDto(),
+            })}
+            plateDocument={threeDoc()}
+          />,
+        );
+
+        hoverTick(0);
+        const panel = screen.getByTestId("reader-record-navigation-panel");
+        expect(panel.classList.contains("pointer-events-none")).toBe(false);
+
+        // Leave rail → schedule 220ms close.
+        fireEvent.mouseLeave(screen.getByTestId("reader-record-navigation-rail"));
+
+        // Switch source before the timer fires.
+        rerender(
+          <ReaderRecordNavigationRail
+            snapshot={makeSnapshot(threeUnits, {
+              baseId: "base_2",
+              generation: 1,
+              semantic_outline: makeOutlineDto({
+                source_identity: { base_id: "base_2", generation: 1 },
+              }),
+            })}
+            plateDocument={threeDoc()}
+          />,
+        );
+
+        // Open panel under the new source.
+        hoverTick(0);
+        expect(panel.classList.contains("pointer-events-none")).toBe(false);
+
+        // Old source's delayed close must not close the new panel.
+        await vi.advanceTimersByTimeAsync(300);
+        expect(panel.classList.contains("pointer-events-none")).toBe(false);
+        expect(panel.classList.contains("visible")).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });
