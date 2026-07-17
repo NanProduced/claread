@@ -1,7 +1,7 @@
 # Orchestration Runtime
 
-> 状态：`D6 ongoing；T4.2a-R2 durable ExecutionBudget / publish fence / route flip fencing 已代码级 review 通过（real-LLM validation pending）`
-> 最后更新：2026-07-13（DOC-R2：Plate Plugin 矩阵收敛为引用 `reader-plate-component-integration.md`；Observability 补 T4.2a-R2 持久化字段）
+> 状态：`D6 ongoing；T5.7 partial：semantic_outline worker_type 依赖 migration 0020；真实 outline LLM 未注册 route`
+> 最后更新：2026-07-18（T5.7：worker_loop 测试 schema 必须 apply 0020；outline generator 默认 Unconfigured）
 > 范围：bounded run/job、worker lease、Authorization Envelope、并发和框架边界。
 
 ## Runtime 形态
@@ -156,7 +156,9 @@ D6-P6 本地验证合同：
 
 - `/app/read` 和 `/app/reader-plate` 提交成功只证明 API 写入了 `article_ready` facts，并不代表 enhancement worker 已运行。
 - Web 页面通过 `/api/web/reader-plate/{recordId}/events` polling 和 snapshot reload 等待后续 `layer_published` / `parsed_decision_updated` 等 events；Web 不消费 `reader_jobs`。
-- 本地页面内验证新链路时，API、Web 和 `uv run reader-enhancement-worker` 必须同时运行。
+- 本地验证纯文本增强链路时，API、Web 和 `reader-enhancement-worker` 必须同时运行；验证 PDF、Markdown、图片 OCR 等 artifact-backed input 时，还必须启动 `reader-artifact-pipeline-worker`。
+- 当前共有 3 个进程级 worker entrypoint：enhancement 与 artifact 是默认完整链路的 2 个必需 worker；`reader-article-rag-index-worker` 仅在 `READER_ARTICLE_RAG_ENABLED=true` 时启用。
+- 仓库根目录可用 `pnpm reader:dev` 聚合启动 API、Web 和两个默认 worker，日志带进程名前缀；需要隔离日志时使用 `pnpm reader:api`、`pnpm reader:web`、`pnpm reader:worker:enhancement`、`pnpm reader:worker:artifact` 分终端运行。
 - `uv run reader-enhancement-worker --once` 是诊断单次消费入口；`uv run reader-enhancement-worker` 是持续消费入口。
 - 如果 DB 中 `translate_unit` 或后续 jobs 长时间停在 `queued`，且 `reader_events` 只有 `article_ready`，这是 worker 未运行或未消费队列，不是 article parsing failure。具体排查 SQL 见 `local-real-chain-runbook.md`。
 

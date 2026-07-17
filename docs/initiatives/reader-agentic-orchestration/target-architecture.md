@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 目标架构
 
-> 状态：`D6 进行中（T4.2a-R2 durable budget 已代码级 review；T5.3 semantic outline durable layer 已闭合；snapshot projection 待 T5.4-R0）`
-> 最后更新：2026-07-17（T5.3b：记录 semantic outline durable layer 决策；细则归 `implementation-plan.md` T5.3）
+> 状态：`D6 进行中（T5.3–T5.6b semantic outline durable + L2 UI + section_v1 已闭合；T5.7 真实 LLM outline 仍为受控/blocker）`
+> 最后更新：2026-07-18（T5.7：production readiness partial；默认 eligibility=false + Unconfigured generator；真实 route/prompt/profile 未注册）
 > 范围：用户提交内容的 `learning` Reader 解析。
 
 ## 目标
@@ -375,9 +375,16 @@ D4 正式路径从新 domain facts 直接生成 Base Plate Snapshot，不经过�
 | T4.2a-PUX-R1 | 2026-07-13 | Progressive Transition UX fixture 合同 closed（deterministic pure）：`progressive-transition.ts` + 21 tests 定义 canonical replay 与 stale/layer 单调 helpers；`progressive_transition` 不单独构成 runtime 验收，需由 T4.2a-PUX-R2 接入真实 polling / snapshot reload 才生效。详细见 [`implementation-plan.md`](./implementation-plan.md) T4.2a-PUX-R1。 |
 | T4.2a-PUX-R2 | 2026-07-13 | Progressive Transition runtime integration gate closed：`reader-record` page `reloadSnapshot` 经 progressive 校验才应用 snapshot；stale/layer regression 不覆盖 UI 且 cursor hold；底部 progressive status strip；Plate generation-scoped clear + scroll restore；4 page integration tests。无 LLM、无后端 orchestration。详细见 [`implementation-plan.md`](./implementation-plan.md) T4.2a-PUX-R2。 |
 | T5.2a | 2026-07-17 | Semantic outline validation contract closed（commit `2bf3db97`）：`ReaderSemanticOutlineProjection` + `validate_semantic_outline_projection`；status 集 `unavailable\|pending\|partial\|ready\|failed\|stale`；**明确不**挂入 `ReaderPlateSnapshot`。 |
-| T5.3 | 2026-07-17 | Semantic outline worker + durable publisher closed（commit `781e4117`）。durable truth 复用 `enhancement_layers`：`layer_type='semantic_outline'`、`target_scope='record'`、layer `target_key='document'`；job `build_semantic_outline`；worker `semantic_outline`；migration `0020_reader_semantic_outline_layer.sql`。默认 request eligibility = false；仅 `article_ready` 里程碑 + 显式 eligibility 才 bootstrap；不进既有 ExecutionBudget / `coverage_complete` tracked job 集合。候选先分配 revision-scoped opaque ids，再经 T5.2a validator；`V=0`/失败不发布。publish 事务内 `reader_jobs FOR UPDATE` + claimed/lease/identity + `_validate_fence`；新 fingerprint 原子 supersede + insert + `layer_published`；fence 失败保留旧 published 且零 event/sequence。仍不投影到 snapshot；T5.4-R0 设计 projection，T5.5 做 UI。继续禁止 SSE / WebSocket / JSON Patch / ETag/304 / 通用 tree diff。权威细节见 [`implementation-plan.md`](./implementation-plan.md#t53-semantic-outline-worker--durable-layer)。 |
+| T5.3 | 2026-07-17 | Semantic outline worker + durable publisher closed（commit `781e4117`）。durable truth 复用 `enhancement_layers`：`layer_type='semantic_outline'`、`target_scope='record'`、layer `target_key='document'`；job `build_semantic_outline`；worker `semantic_outline`；migration `0020_reader_semantic_outline_layer.sql`。默认 request eligibility = false；仅 `article_ready` 里程碑 + 显式 eligibility 才 bootstrap；不进既有 ExecutionBudget / `coverage_complete` tracked job 集合。候选先分配 revision-scoped opaque ids，再经 T5.2a validator；`V=0`/失败不发布。publish 事务内 `reader_jobs FOR UPDATE` + claimed/lease/identity + `_validate_fence`；新 fingerprint 原子 supersede + insert + `layer_published`；fence 失败保留旧 published 且零 event/sequence。继续禁止 SSE / WebSocket / JSON Patch / ETag/304 / 通用 tree diff。权威细节见 [`implementation-plan.md`](./implementation-plan.md#t53-semantic-outline-worker--durable-layer)。 |
+| T5.4a | 2026-07 | Optional `ReaderPlateSnapshot.semantic_outline` projection closed：仅 published ready\|partial；invalid/stale → None；不改 `navigation.units`。 |
+| T5.5a | 2026-07 | L2 content-outline Reader UI closed（Web rail）；revision-scoped node id 非 durable；默认不触发后端生成。 |
+| T5.6a/b | 2026-07 | Section identity/planner + `section_v1` translation lane closed（commit `c5abd4f7d`）：budget 共用 translation；coverage/ordinary loop 隔离；不扩 HTTP/UI（T5.6c 未做）。 |
+| T5.7 | 2026-07-18 | Production readiness **partial**：`worker_loop_env` apply migration `0020` 恢复 real-chain `worker_type=semantic_outline` span 写入；默认 generator = `UnconfiguredSemanticOutlineGenerator`（permanent fail-closed）；`allow_semantic_outline_request_eligibility` 仅 DI/测试。**真实 LLM executor blocker**：无 outline `MODEL_ROUTE` / prompt agent / profile settings — 不得猜测。outline 仍非 ExecutionBudget / coverage 必需。 |
 
 ## 待决问题
+
+- Semantic outline **自动** request eligibility 阈值（字数/route 等）与 L2 首次生成产品入口。
+- Semantic outline 真实模型成本上限与 profile 命名（注册 route 前不得写死）。
 
 - `article_ready` p50/p95 目标。
 - Length Class 数值边界和默认 Authorization Envelope 预算。

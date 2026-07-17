@@ -715,6 +715,19 @@ def default_semantic_outline_request_eligibility(
     return False
 
 
+def allow_semantic_outline_request_eligibility(
+    state: "_LockedActiveBaseState",
+) -> bool:
+    """Controlled / test DI seam only — never wire as production default.
+
+    Product auto-eligibility thresholds (length, route, cost) remain
+    undecided; this predicate is for integration tests and explicit
+    operator injection in non-production environments.
+    """
+    del state  # eligibility is unconditional when explicitly injected
+    return True
+
+
 @dataclass(frozen=True, slots=True)
 class _LockedActiveBaseState:
     record_id: UUID

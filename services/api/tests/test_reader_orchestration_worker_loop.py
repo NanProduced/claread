@@ -104,6 +104,12 @@ _MIGRATION_0015_SQL = (
 _MIGRATION_0017_SQL = (
     _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
 ).read_text(encoding="utf-8")
+# T5.3/T5.7: semantic_outline job_type + layer_type + worker_type CHECK.
+# Without 0020, pipeline worker_tick spans with worker_type=semantic_outline
+# fail CHECK and block real-chain readiness finalization.
+_MIGRATION_0020_SQL = (
+    _REPO_ROOT / "infra" / "migrations" / "0020_reader_semantic_outline_layer.sql"
+).read_text(encoding="utf-8")
 LEASE_DURATION = timedelta(seconds=30)
 
 
@@ -467,6 +473,7 @@ async def worker_loop_env() -> asyncpg.Pool:
     await admin.execute(BASELINE_SQL)
     await admin.execute(_MIGRATION_0015_SQL)
     await admin.execute(_MIGRATION_0017_SQL)
+    await admin.execute(_MIGRATION_0020_SQL)
     await admin.close()
     pool = await make_pool(schema_name)
     db_connection.DB_POOL = pool
@@ -959,11 +966,14 @@ async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload
     )
     candidate = await _find_candidate(service, article.record_id)
 
+    # T5.7: pipeline worker order includes non-budget semantic_outline ticks
+    # (usually no_job under default eligibility=false). Allow enough ticks so
+    # per-unit grammar jobs still finish after batch translation/vocabulary.
     result = await service.process_candidate(
         candidate=candidate,
         lease_owner_prefix="worker-loop-real-chain",
-        max_ticks=12,
-        max_jobs=12,
+        max_ticks=24,
+        max_jobs=24,
     )
 
     assert result.outcome == "processed"

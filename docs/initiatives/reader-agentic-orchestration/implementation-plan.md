@@ -109,10 +109,14 @@ Reader enhancement 的当前主链路按层分开理解：
 | T5.2a | semantic outline validation contract | 4-8h | T5.2 | **closed**（commit `2bf3db97`）：`validate_semantic_outline_projection` + `ReaderSemanticOutlineProjection` typed schema + fixture cases；**明确不**挂 `ReaderPlateSnapshot` |
 | T5.3 | semantic outline worker + durable publisher | 6-10h | T5.2a | **closed**（commit `781e4117`）：migration `0020` + `build_semantic_outline` job + record-level publisher + pipeline non-budget slot；详见下方 [T5.3](#t53-semantic-outline-worker--durable-layer) |
 | T5.3b | semantic outline formal docs sync | 1-2h | T5.3 | **docs-only**：把 T5.3 durable 长期事实写入本计划 / target-architecture / representation-event-contract；不改生产代码 |
-| T5.4-R0 | semantic outline snapshot projection design gate | 4-8h | T5.3 / T5.3b | **下一任务（只读）**：如何把已 published `semantic_outline` layer 投影进 `ReaderPlateSnapshot`（或独立 DTO）；不实现 UI；不冻结 L2 IA / partial 混排 / eligibility 阈值 |
-| T5.4 | semantic outline snapshot projection | 4-8h | T5.4-R0 | 经设计门后实现 snapshot 暴露；仍不改 L0/L1 `navigation.units`；不启用 SSE/patch |
-| T5.5 | semantic outline Reader UI | 6-10h | T5.4 | 内容大纲 UI（与 L0/L1 独立）；不得用「文章目录已交付」表述 L1 |
-| T5.6 | lazy section enhancement | 6-10h | T5.5/T2.2 | 当前 section、用户跳转 section、Ask-relevant region 优先增强；成本按 section 控制；**未实施** |
+| T5.4-R0 | semantic outline snapshot projection design gate | 4-8h | T5.3 / T5.3b | **closed（设计门）**：optional `ReaderPlateSnapshot.semantic_outline` 投影边界 |
+| T5.4a | semantic outline snapshot projection | 4-8h | T5.4-R0 | **closed**：published ready\|partial → 可选 snapshot 字段；invalid/stale → None；不改 `navigation.units`；不启用 SSE/patch |
+| T5.4b | snapshot formal docs / contract harden | 1-2h | T5.4a | **closed（文档+回归）** |
+| T5.5a | semantic outline L2 Reader UI | 6-10h | T5.4a | **closed（Web）**：内容大纲 rail 与 L0/L1 独立；revision-scoped node 不写 durable identity；默认不请求后端生成 |
+| T5.6a | section identity + request planner | 4-8h | T5.5a | **closed**：纯 `SectionIdentity` / candidates / `plan_explicit_section_request`（Admit/NoOp/Reject）；零 I/O |
+| T5.6b | section_v1 translation lane | 8-12h | T5.6a | **closed**（commit `c5abd4f7d`）：`request_origin=section_v1` + `translation_article_section_v1`；budget 共用 translation；coverage/ordinary supersede/worker tracked 用 `IS DISTINCT FROM` 隔离；bootstrap/drain/publisher 全量 range 校验；默认不扩 HTTP/UI |
+| T5.6c | “解析此段” HTTP/UI | — | T5.6b | **未实施**（本切片禁止） |
+| T5.7 | semantic outline production readiness | 6-10h | T5.3–T5.6b | **partial / 受控启用**：worker_loop fixture 应用 migration `0020`（`worker_type=semantic_outline` CHECK 来源）；默认 generator=`UnconfiguredSemanticOutlineGenerator`（fail-closed，无 LLM）；`allow_semantic_outline_request_eligibility` 仅 DI/测试；**真实 LLM executor 仍为 blocker**（缺 `MODEL_ROUTE` + prompt agent + profile settings，不得猜测） |
 | T6.1 | SSE reader event endpoint | 4-8h | T2.3 | 支持 cursor/reconnect/heartbeat；语义等价 polling；不引入不可恢复状态 |
 | T6.2 | committed patch envelope | 6-10h | T6.1 | layer/outline/progress 更新可局部 merge；raw LLM token 不进入 article annotation stream |
 | T6.3 | frontend patch merge | 6-10h | T6.2 | 页面不全量替换 snapshot；打开面板、selection、scroll 和当前阅读位置稳定 |
@@ -1223,13 +1227,23 @@ Focused tests 已通过：
 ### 明确未冻结 / 未宣称
 
 - request eligibility 产品阈值（长度/route 等）未写入默认实现；默认始终 false。
-- L2 / 内容大纲 UI IA、partial 节点与 L0/L1 混排未设计。
+- L2 首次自动生成入口、真实模型成本上限未产品冻结。
 - 真实 LLM outline 质量与成本未做样本验收。
-- 不得把「T5.3 closed」表述为「内容大纲已对用户交付」。
+- 不得把「T5.3/T5.4a/T5.5a closed」表述为「生产默认会生成内容大纲」。
+
+### T5.7 生产就绪边界（2026-07-18）
+
+1. **CHECK 来源**：`infra/migrations/0020_reader_semantic_outline_layer.sql` 已把 `semantic_outline` 写入 `reader_runtime_spans.worker_type` allow-list。不新增 0021 重复扩展；测试/fresh schema 必须 apply 到 0020（`worker_loop_env` 已补）。
+2. **默认安全**：`default_semantic_outline_request_eligibility ≡ false`；worker 默认 `UnconfiguredSemanticOutlineGenerator` → permanent `failed_terminal`，零 layer/event。
+3. **受控启用 seam**：注入 `allow_semantic_outline_request_eligibility` + `FakeSemanticOutlineGenerator`（或未来 real adapter）可跑通完整 fake real-chain。
+4. **真实 LLM blocker**：仓库尚无 `reader_layer_semantic_outline`（或等价）`MODEL_ROUTE`、无 outline prompt agent、无 settings profile 字段。在注册这些之前不得猜测模型配置或写死密钥/模型名。
+5. **不进入** ExecutionBudget / coverage 必需集 / ordinary supersede；不扩 transport。
 
 ### 下一任务
 
-**T5.4-R0**：semantic outline → `ReaderPlateSnapshot`（或独立 DTO）projection 只读设计门。通过后再实施 T5.4 / T5.5。
+1. 注册 outline model route + prompt + profile 后实现 real executor（T5.7 续）。
+2. 产品决策：自动 eligibility 阈值、L2 首次生成入口、真实成本上限。
+3. T5.6c「解析此段」HTTP/UI（独立任务）。
 
 ---
 

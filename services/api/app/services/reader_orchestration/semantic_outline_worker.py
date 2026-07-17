@@ -102,8 +102,60 @@ class SemanticOutlineGenerator(Protocol):
     ) -> SemanticOutlineExecutionResult: ...
 
 
+class SemanticOutlineGenerationError(Exception):
+    """Generator-side failure with permanent vs transient classification.
+
+    Permanent (``retryable=False``): configuration / 4xx-class parameter
+    errors — worker must fail-closed without blind retry.
+    Transient (``retryable=True``): reuses the job's bounded retry path.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_class: str,
+        failure_code: str,
+        retryable: bool = False,
+        model: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.failure_class = failure_class
+        self.failure_code = failure_code
+        self.retryable = retryable
+        self.model = model
+
+
+class UnconfiguredSemanticOutlineGenerator:
+    """Production-safe default: no LLM call, permanent configuration failure.
+
+    Real LLM outline requires an explicit model route + prompt agent + profile
+    (not yet registered). Do not invent those here; inject
+    :class:`FakeSemanticOutlineGenerator` in tests or a future real adapter
+    only after route/prompt exist.
+    """
+
+    async def generate(
+        self, context: SemanticOutlineJobContext
+    ) -> SemanticOutlineExecutionResult:
+        del context
+        raise SemanticOutlineGenerationError(
+            (
+                "semantic outline generator is not configured; inject an "
+                "explicit FakeSemanticOutlineGenerator (tests) or a real "
+                "adapter once MODEL_ROUTE + prompt + profile exist"
+            ),
+            failure_class="configuration",
+            failure_code="semantic_outline_generator_unconfigured",
+            retryable=False,
+        )
+
+
 class FakeSemanticOutlineGenerator:
-    """Test double: returns configured candidates or worker_failure."""
+    """Test / controlled double: returns configured candidates or worker_failure.
+
+    Never used as the production default; inject via DI.
+    """
 
     def __init__(
         self,
@@ -210,7 +262,8 @@ class SemanticOutlineWorkerService:
         job_runtime: ReaderJobRuntime | None = None,
     ) -> None:
         self._pool = pool
-        self._generator = generator or FakeSemanticOutlineGenerator()
+        # Default is fail-closed Unconfigured — never auto-calls a real LLM.
+        self._generator = generator or UnconfiguredSemanticOutlineGenerator()
         self._publisher = publisher or SemanticOutlineLayerPublisher(pool=pool)
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
 
@@ -391,6 +444,45 @@ class SemanticOutlineWorkerService:
             )
         except FenceViolationError:
             raise
+        except SemanticOutlineGenerationError as exc:
+            # Permanent configuration / 4xx-class: no blind retry; job + run
+            # must terminalize together (no run stuck in running/queued).
+            # Transient: bounded retry_later until max_attempts; run stays
+            # running so the next claim can resume.
+            terminal = (not exc.retryable) or (
+                context is not None and context.attempt_count >= context.max_attempts
+            )
+            failure_message = str(exc)[:240]
+            if terminal:
+                await self._complete_generation_error_failed_terminal(
+                    claim=claim,
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    failure_message=failure_message,
+                )
+                return SemanticOutlineJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="failed_terminal",
+                    error_code=exc.failure_code,
+                )
+            await self._job_runtime.transition(
+                job_id=claim.job_id,
+                target_status=STATUS_RETRY_LATER,
+                lease_token=claim.lease_token,
+                available_at=datetime.now(UTC) + retry_delay,
+                failure_class=exc.failure_class,
+                failure_code=exc.failure_code,
+                failure_message=failure_message,
+                rationale_code=exc.failure_code,
+            )
+            # Keep run open (running) for the next attempt — do not finish it.
+            return SemanticOutlineJobProcessResult(
+                claim=claim,
+                context=context,
+                status="retry_later",
+                error_code=exc.failure_code,
+            )
         except Exception as exc:
             if context is not None and context.attempt_count >= context.max_attempts:
                 await self._job_runtime.transition(
@@ -593,16 +685,60 @@ class SemanticOutlineWorkerService:
             failure_message=failure_code,
             rationale_code=failure_code,
         )
+        await self._mark_run_failed_terminal(
+            claim.run_id,
+            failure_class="validation",
+            failure_code=failure_code,
+        )
+
+    async def _complete_generation_error_failed_terminal(
+        self,
+        *,
+        claim: ClaimResult,
+        failure_class: str,
+        failure_code: str,
+        failure_message: str,
+    ) -> None:
+        """Terminalize job and its reader_run for permanent generation errors."""
+        await self._job_runtime.transition(
+            job_id=claim.job_id,
+            target_status=STATUS_FAILED_TERMINAL,
+            lease_token=claim.lease_token,
+            failure_class=failure_class,
+            failure_code=failure_code,
+            failure_message=failure_message,
+            rationale_code=failure_code,
+        )
+        await self._mark_run_failed_terminal(
+            claim.run_id,
+            failure_class=failure_class,
+            failure_code=failure_code,
+        )
+
+    async def _mark_run_failed_terminal(
+        self,
+        run_id: UUID,
+        *,
+        failure_class: str,
+        failure_code: str,
+    ) -> None:
         async with self.get_pool().acquire() as conn:
             await conn.execute(
                 """
                 UPDATE reader_runs
                 SET status = 'failed_terminal',
-                    finished_at = NOW(),
+                    failure_class = $2,
+                    failure_code = $3,
+                    finished_at = COALESCE(finished_at, NOW()),
                     updated_at = NOW()
                 WHERE id = $1
+                  AND status IN (
+                      'queued', 'running', 'waiting_user', 'waiting_quota', 'paused'
+                  )
                 """,
-                claim.run_id,
+                run_id,
+                failure_class,
+                failure_code,
             )
 
     async def _complete_job_retry_later(

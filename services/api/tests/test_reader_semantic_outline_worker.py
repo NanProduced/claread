@@ -20,6 +20,7 @@ from app.services.reader_orchestration.job_bootstrap import (
     SEMANTIC_OUTLINE_TARGET_SCOPE,
     EnhancementJobBootstrapService,
     _fingerprint_matches_base,
+    allow_semantic_outline_request_eligibility,
     default_semantic_outline_request_eligibility,
 )
 from app.services.reader_orchestration.job_runtime import (
@@ -39,7 +40,9 @@ from app.services.reader_orchestration.semantic_outline_worker import (
     OUTLINE_MAX_TOTAL_PREVIEW_CHARS,
     OUTLINE_MAX_UNIT_PREVIEW_CHARS,
     FakeSemanticOutlineGenerator,
+    SemanticOutlineGenerationError,
     SemanticOutlineWorkerService,
+    UnconfiguredSemanticOutlineGenerator,
     build_bounded_worker_input,
     clamp_candidates,
 )
@@ -214,6 +217,54 @@ def test_default_request_eligibility_is_false() -> None:
         readiness_state = "article_ready"
 
     assert default_semantic_outline_request_eligibility(_S()) is False  # type: ignore[arg-type]
+
+
+def test_explicit_allow_eligibility_is_true_for_controlled_di() -> None:
+    class _S:
+        readiness_state = "article_ready"
+
+    assert allow_semantic_outline_request_eligibility(_S()) is True  # type: ignore[arg-type]
+
+
+def test_bounded_worker_input_caps_preview_chars() -> None:
+    unit_rows = [
+        {
+            "unit_id": f"u{i}",
+            "order_index": i,
+            "unit_type": "body",
+            "unit_text": "x" * 500,
+        }
+        for i in range(1, 40)
+    ]
+    built = build_bounded_worker_input(
+        base_id="base",
+        generation=1,
+        unit_rows=unit_rows,
+        max_unit_preview_chars=50,
+        max_total_preview_chars=200,
+        max_units_for_preview=30,
+    )
+    assert built.total_preview_chars <= 200
+    assert all(len(u.preview) <= 50 for u in built.units)
+    # Unit identity always present even when preview emptied by budget.
+    assert len(built.units) == 39
+    assert all(u.unit_id.startswith("u") for u in built.units)
+
+
+def test_clamp_candidates_respects_max_nodes() -> None:
+    nodes = tuple(
+        SemanticOutlineCandidateNode(
+            candidate_ref=f"c{i}",
+            parent_candidate_ref=None,
+            depth=1,
+            title=f"t{i}",
+            start_unit_id="u1",
+            end_unit_id="u1",
+        )
+        for i in range(OUTLINE_MAX_ATTEMPTED_NODES + 5)
+    )
+    clamped = clamp_candidates(nodes)
+    assert len(clamped) == OUTLINE_MAX_ATTEMPTED_NODES
 
 
 def test_allocate_outline_revision_is_opaque() -> None:
