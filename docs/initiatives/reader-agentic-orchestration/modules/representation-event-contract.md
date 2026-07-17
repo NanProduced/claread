@@ -1,7 +1,7 @@
 # Snapshot Representation Event Contract
 
-> 状态：`已接受设计；O4-R2 后端 atomic slices A+B+C 已完成；O4-R2-D Web payload-aware classifier 已完成；PUX-R4 局部 applier / fragment / SSE 仍未实施`
-> 最后更新：2026-07-13（由 T4.2a-O4-R1 研究结论压缩；已完成 review 修订；O4-R2-D 由 T4.2a-O4-R2-D 追加状态）
+> 状态：`已接受设计；O4-R2 后端 atomic slices A+B+C 已完成；O4-R2-D Web payload-aware classifier 已完成；PUX-R4 局部 applier / fragment / SSE 仍未实施；T5.1 L0/L1 为 accepted-snapshot 本地投影（不扩 event/transport）`
+> 最后更新：2026-07-17（T5.1e：补 deterministic navigation 与 accepted/rejected snapshot 边界）
 > 范围：会改变 Reader Plate snapshot 可观察表示的写入，及其 `reader_events` 合同。
 
 ## 目标与边界
@@ -92,13 +92,23 @@ Reader Record Plate Surface 对 `snapshot_id` 与上次 targeted apply 相同的
 ### 跨 seam 的不变量
 
 1. rejected snapshot 的拒绝信号由 polling/page seam 产出（progressive-status `data-last-rejected` + `data-reject-reason`），Surface 不产生 rejection 标记。
-2. rejected snapshot 不得触发 Surface `setValue` / merger / targeted apply；当前 accepted UI（含已打开的 Quick Peek、grammar accordion、selection）必须保持。
+2. rejected snapshot 不得触发 Surface `setValue` / merger / targeted apply；当前 accepted UI（含已打开的 Quick Peek、grammar accordion、selection）必须保持。**确定性导航 rail 状态不得由 rejected snapshot 驱动交换**（不得用拒绝值重建 L0/L1 items 或 target map）。
 3. accepted snapshot 的 value swap 路径可与 Surface duplicate-snapshot guard 叠加：同一 `snapshot_id` 的重复 accepted 推送被 guard 跳过，但不改变其 accepted 身份。
-4. source identity（`{generation, base_id}`）变化时，polling/page seam 与 Surface 必须协同清理：seam 侧拒绝旧 source 的 in-flight snapshot，Surface 侧清理 selection、Quick Peek、anchor、restore token 与 grammar expansion（见 [`reader-record-plate-surface-ui.md`](./reader-record-plate-surface-ui.md) Quick Peek source-identity close）。
+4. source identity（`{generation, base_id}`）变化时，polling/page seam 与 Surface 必须协同清理：seam 侧拒绝旧 source 的 in-flight snapshot，Surface 侧清理 selection、Quick Peek、anchor、restore token 与 grammar expansion（见 [`reader-record-plate-surface-ui.md`](./reader-record-plate-surface-ui.md) Quick Peek source-identity close）；导航 rail 同步按 `sourceIdentityKey = base_id:generation` 清空 active / focus / scroll-lock / target cache（见同文件 [Deterministic Navigation](./reader-record-plate-surface-ui.md#deterministic-navigation-l0--l1)）。
+
+### Deterministic Navigation 与 accepted snapshot 边界
+
+> 来源：T5.1 L0/L1 闭合。导航不扩 representation event 合同；仅明确与 accepted/rejected 边界的关系。
+
+- **L0 / L1 是 accepted snapshot 上的本地 deterministic projection**（`projectReaderRecordNavigation` + `ReaderRecordNavigationRail`）。不新增 layer、`reader_events` 类型、polling 协议字段或 transport。
+- 导航只消费 **已 accepted** 的 snapshot + 当前 Plate document；rejected snapshot **不得**进入 Surface 或导航状态交换。
+- Surface 的 same-snapshot early-return 仍只是 **duplicate accepted snapshot guard**，不等于 stale/fence rejection；也不能替代导航侧的 source-identity reset 或 target-cache revalidation。
+- Plate `setValue` remount 后的 DOM 节点失效由前端 validated target resolver 处理（`isConnected` + 当前 plate document 归属 + unit_id 匹配）；这是本地投影正确性，不是新的 event 语义。
+- **明确未批准**：SSE、WebSocket、JSON Patch、ETag/304、通用 Plate tree diff 作为导航或 outline 交付通道。semantic outline 若未来落地，仍须先经独立 contract/fixture 门（T5.2），且不得污染 `navigation.units` 或阻塞 `article_ready`。
 
 ### 未批准的传输改造
 
-本节不批准 SSE、WebSocket、JSON Patch、ETag/304、压缩或通用 tree diff。accepted/rejected 判定仍基于 polling/page seam 的 full snapshot reload 合同；PUX-R4 interaction-stable incremental projection 与 semantic fragment transport 仍属未实施范畴。
+本节不批准 SSE、WebSocket、JSON Patch、ETag/304、压缩或通用 tree diff。accepted/rejected 判定仍基于 polling/page seam 的 full snapshot reload 合同；PUX-R4 interaction-stable incremental projection 与 semantic fragment transport 仍属未实施范畴。L0/L1 确定性导航的落地 **不**构成对上述传输改造的批准。
 
 ## O4-R2 实施门槛
 

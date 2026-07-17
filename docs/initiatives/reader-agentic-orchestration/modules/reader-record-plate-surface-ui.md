@@ -1,10 +1,80 @@
 # Reader Record Plate Surface UI
 
-> 状态：目标方案 + 当前实现基线；2026-07-03 已按 Annotation Visual Matrix 与浏览器验收结果重新校准；DOC-R2 补 T4.2a-PUX-R1/R2 progressive transition 引用
-> 最后更新：2026-07-13（DOC-R2：补 T4.2a-PUX-R1/R2 progressive transition runtime 引用；详细合同归 [`./streaming-and-projection.md`](./streaming-and-projection.md#t42a-pux-r2-runtime-integration)）
+> 状态：目标方案 + 当前实现基线；T5.1 L0/L1 deterministic navigation 已闭合；DOC-R2 progressive transition 引用仍有效
+> 最后更新：2026-07-17（T5.1e：沉淀 L0/L1 确定性导航 UI/身份/target-cache 长期事实）
 > 范围：`/app/reader-record/{recordId}` 在 Agentic Orchestration 架构下的 Reader Record 解析页 UI/UX、Plate.js 文档表面、选择交互、词典/Ask 联动、用户高亮/笔记和第一版实现边界。
 
 当前代码接入矩阵见 [`reader-plate-component-integration.md`](./reader-plate-component-integration.md)。本文件描述目标 UI/UX 和产品边界；若本文与代码事实冲突，以接入矩阵和当前代码为准，再反向更新本文。
+
+## Deterministic Navigation（L0 / L1）
+
+> 来源：T5.1a–d 已提交实现与 Chromium 合同（`701a9463` L0 文案、`970d54d8` L1 projection、`20be3d75` target-cache revalidation、`9fe6d94d` Chromium）。权威代码：`apps/web/src/lib/reader-plate/projection/reader-record-navigation.ts`、`apps/web/src/components/reader/plate/ReaderRecordNavigationRail.tsx`。本节描述**已落地**的确定性阅读定位，不是 semantic outline。
+
+### 分层与术语
+
+| 模式 | 产品名 | 数据来源 | 列表形态 |
+|------|--------|----------|----------|
+| **L0** | 段落导航 | `snapshot.navigation.units` 全量 reading units（空 units 时可 document-fallback 派生 unit 列表） | 扁平：一 unit 一行 / 一 tick |
+| **L1** | 章节导航 | 仅 `unit_type === "heading"` 的 snapshot units；前端纯派生 coverage | 扁平 heading 列表；**无** depth / tree / children |
+| （未实施） | 内容大纲 | long/very-long optional semantic outline | 与 L0/L1 独立；见 T5.2 |
+
+- `<nav aria-label>` **始终**为「阅读定位」。
+- **禁止**用「文章目录 / 大纲 / 第 N 节」描述当前确定性能力。
+- L0 trigger：`打开/关闭段落导航`；有 active 时追加「，当前第 N 段」。
+- L1 trigger：`打开/关闭章节导航`；仅当 active 非 null 时追加「，当前第 N 项」。lead 区不得声称「当前第 N 项」。
+
+### L1 启用门槛（严格 AND）
+
+```text
+enable_L1 =
+  navigation.units 非空
+  && unit_count >= 6
+  && heading_count >= 2
+```
+
+- document-fallback（`navigation.units` 为空）**永不** L1：无可靠 `unit_type`，禁止猜 heading 或合成伪节点/伪层级。
+- 未过门槛 → **完整回退 L0**（全 unit 段落导航）。
+- L1 行 identity = heading `unit_id`；coverage = 阅读序闭区间 `[startUnitId … endUnitId]`（含中间 body/list/quote）。首个 heading 之前的 lead body **不**占 L1 行。
+
+### 点击、scroll spy 与 lead
+
+- 定位只在 `.reader-record-plate-document` 内解析 paragraph；优先 `data-reader-record-unit-start="true"`，否则同 unit 首段。**禁止**全局 `[data-unit-id]`（rail 自身也可能带该属性）。
+- L1 点击 / scroll spy **只锚定 heading unit 的 unit-start**，不滚到 coverage 的 end unit。
+- safeTop = topbar 56px + 8px。
+- **L0 active**：`last unit with top <= safeTop`，否则 first below，否则 first item。
+- **L1 active**：仅 `last heading with top <= safeTop`；若所有 heading `top > safeTop` → **lead**：`activeUnitId = null`，无 `aria-current`，trigger 不得写「当前第 N 项」。panel 打开时 keyboard focus 可落到第一项 heading，**不等于** active。
+- body 不在 L1 候选中；用户滚过 heading 后的 body 时，上一 heading 保持 active。
+
+### Source identity 与 target cache
+
+- `sourceIdentityKey = base_id:generation`（`buildReaderRecordSourceIdentityKey`）。`base_id` 或 `generation` **任一**变化时，无论 unitId 是否仍像 `u1`/`u2`，必须清空：`activeUnitId`、`focusedUnitId`、scroll-lock、`targetMap`。
+- Plate `setValue` 会 remount DOM。target cache **不得**信任 map size；每项经单一 `resolveValidatedUnitTarget`（scroll spy 与 click **共用**）校验：
+  1. `el.isConnected`
+  2. 仍属于当前 `.reader-record-plate-document`
+  3. 仍是 `data-reader-record-node="paragraph"` 且 `data-unit-id` 匹配
+  - 失效 → 立刻从 cache 删除并重新 `findUnitTarget`。**禁止**用 detached 节点的 `getBoundingClientRect` 驱动 spy 或 click。
+- scroll spy 的 rAF 回调必须带 **source-identity fence**：调度时的 `sourceIdentityKey` 与当前 ref 不一致时，**不得** `setActiveUnitId`。
+
+### Snapshot / event 边界
+
+- L0/L1 是 **accepted snapshot** 上的本地 deterministic projection，不新增 enhancement layer、reader event、polling 协议或 transport。
+- rejected stale/fence snapshot 只在 polling/page seam 处理，不得进入 Surface 或导航状态交换（见 [`representation-event-contract.md`](./representation-event-contract.md#deterministic-navigation-与-accepted-snapshot-边界)）。
+- Surface same-snapshot early-return = duplicate accepted snapshot guard，**不是** stale/fence rejection。
+- **未批准** SSE、WebSocket、JSON Patch、ETag/304、通用 Plate tree diff 作为导航交付手段。
+
+### 与 semantic outline 的边界
+
+- 当前 L1 **不是** semantic outline 的替代实现，也不得被表述为「内容大纲已交付」。
+- semantic outline 仍是 long/very-long 才考虑的 optional top-level projection / independent enhancement（T5.2 只读 design gate 起）；不得污染 `navigation.units`，不阻塞 `article_ready`。
+- 本文件不冻结 semantic-outline DTO、partial 混排、worker、`layer_type` 或 publish 实现。
+
+### 实现落点（索引）
+
+| 能力 | 位置 |
+|------|------|
+| mode / gate / L1 items / sourceIdentityKey | `projectReaderRecordNavigation` 等 pure projection |
+| rail UI、spy、click、cache、fence | `ReaderRecordNavigationRail` |
+| Chromium 合同 | `apps/web/tests/e2e/plate-surface-l1-heading-navigation-t5-1d.spec.ts` |
 
 ## Progressive Transition UX 引用
 
