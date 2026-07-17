@@ -178,13 +178,20 @@ class ReaderEnhancementWorkerLoopService:
                                 'failed_terminal',
                                 'skipped'
                             )
+                              -- T5.6b: ordinary tracked only (null-safe)
+                              AND (job.input_json->>'request_origin')
+                                  IS DISTINCT FROM 'section_v1'
                         ) AS tracked_job_count,
                         COUNT(job.id) FILTER (
-                            WHERE job.status = 'queued'
-                               OR (
-                                   job.status = 'retry_later'
-                                   AND job.available_at <= NOW()
-                               )
+                            WHERE (
+                                   job.status = 'queued'
+                                   OR (
+                                       job.status = 'retry_later'
+                                       AND job.available_at <= NOW()
+                                   )
+                              )
+                              AND (job.input_json->>'request_origin')
+                                  IS DISTINCT FROM 'section_v1'
                         ) AS runnable_job_count
                     FROM reading_records record
                     JOIN reading_bases base

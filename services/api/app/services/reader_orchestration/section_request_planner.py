@@ -50,6 +50,7 @@ REASON_SECTION_ALREADY_COVERED_OR_INFLIGHT = "section_already_covered_or_infligh
 REASON_SECTION_RANGE_OVERLAP = "section_range_overlap"
 REASON_AMBIGUOUS_SECTION_RANGE = "ambiguous_section_range"
 REASON_LAYER_FAMILY_REQUIRED = "layer_family_required"
+REASON_TRANSLATION_BUDGET_EXHAUSTED = "translation_budget_exhausted"
 
 
 @dataclass(frozen=True, slots=True)

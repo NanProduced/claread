@@ -412,6 +412,152 @@ class ReaderJobRuntime:
                     await recorder.end_span(claim_span, status=STATUS_SUCCEEDED)
                     return claim
 
+    async def claim_job_by_id(
+        self,
+        *,
+        job_id: UUID,
+        lease_owner: str,
+        lease_duration: timedelta,
+        expected_reading_record_id: UUID | None = None,
+        expected_base_id: UUID | None = None,
+        expected_generation: int | None = None,
+        required_job_type: str | None = None,
+        required_target_type: str | None = None,
+        required_request_origin: str | None = None,
+        required_fingerprint_base: str | None = None,
+    ) -> ClaimResult | None:
+        """Atomically claim a **specific** job by id (T5.6b section drain).
+
+        Returns ``None`` when the job is missing, not claimable (already
+        claimed / terminal), fails fence, or fails shape/origin/fingerprint
+        checks. LLM work must run **after** this transaction commits.
+
+        Lease / attempt semantics match :meth:`claim_next_job`.
+        """
+        from app.services.reader_orchestration.job_bootstrap import (
+            _fingerprint_matches_base,
+        )
+
+        lease_token = uuid4()
+        lease_expires_at = datetime.now(UTC) + lease_duration
+        claim_started_at = time.monotonic()
+
+        async with self.get_pool().acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """
+                    SELECT *
+                    FROM reader_jobs
+                    WHERE id = $1
+                    FOR UPDATE
+                    """,
+                    job_id,
+                )
+                if row is None:
+                    return None
+                if row["status"] not in ("queued", "retry_later"):
+                    return None
+                if row["status"] == "retry_later" and row["available_at"] is not None:
+                    # available_at may be timezone-aware
+                    available_at = row["available_at"]
+                    now = datetime.now(UTC)
+                    if available_at.tzinfo is None:
+                        from datetime import timezone as _tz
+
+                        available_at = available_at.replace(tzinfo=_tz.utc)
+                    if available_at > now:
+                        return None
+
+                if (
+                    expected_reading_record_id is not None
+                    and row["reading_record_id"] != expected_reading_record_id
+                ):
+                    return None
+                if expected_base_id is not None and row["base_id"] != expected_base_id:
+                    return None
+                if (
+                    expected_generation is not None
+                    and int(row["expected_generation"]) != expected_generation
+                ):
+                    return None
+                if required_job_type is not None and str(row["job_type"]) != required_job_type:
+                    return None
+                if (
+                    required_target_type is not None
+                    and str(row["target_type"]) != required_target_type
+                ):
+                    return None
+
+                input_json = row["input_json"] or {}
+                if not isinstance(input_json, dict):
+                    input_json = {}
+                if required_request_origin is not None:
+                    if input_json.get("request_origin") != required_request_origin:
+                        return None
+                if required_fingerprint_base is not None:
+                    fp = str(row["operation_fingerprint"] or "")
+                    if not _fingerprint_matches_base(fp, required_fingerprint_base):
+                        return None
+
+                fence_error = await self._validate_fence(conn, row)
+                if fence_error is not None:
+                    await self._mark_job_superseded(
+                        conn,
+                        job_row=row,
+                        rationale_code=fence_error,
+                    )
+                    return None
+
+                updated = await conn.fetchrow(
+                    """
+                    UPDATE reader_jobs
+                    SET status = 'claimed',
+                        lease_owner = $2,
+                        lease_token = $3,
+                        lease_expires_at = $4,
+                        claimed_at = NOW(),
+                        attempt_count = attempt_count + 1,
+                        updated_at = NOW()
+                    WHERE id = $1
+                      AND status IN ('queued', 'retry_later')
+                    RETURNING *
+                    """,
+                    row["id"],
+                    lease_owner,
+                    lease_token,
+                    lease_expires_at,
+                )
+                if updated is None:
+                    return None
+
+                await self._insert_job_event(
+                    conn,
+                    reading_record_id=updated["reading_record_id"],
+                    run_id=updated["run_id"],
+                    job_id=updated["id"],
+                    event_type="job_claimed",
+                    payload={
+                        "lease_owner": lease_owner,
+                        "lease_token": str(lease_token),
+                        "lease_expires_at": lease_expires_at.isoformat(),
+                        "attempt_count": int(updated["attempt_count"]),
+                        "claim_mode": "by_job_id",
+                    },
+                )
+                run_envelope_json = await conn.fetchval(
+                    "SELECT envelope_json FROM reader_runs WHERE id = $1",
+                    updated["run_id"],
+                )
+                claim_wait_ms = int((time.monotonic() - claim_started_at) * 1000)
+                return _claim_result_from_row(
+                    updated,
+                    lease_owner=lease_owner,
+                    lease_token=lease_token,
+                    lease_expires_at=lease_expires_at,
+                    claim_wait_ms=claim_wait_ms,
+                    run_envelope_json=run_envelope_json,
+                )
+
     # ------------------------------------------------------------------
     # Heartbeat
     # ------------------------------------------------------------------

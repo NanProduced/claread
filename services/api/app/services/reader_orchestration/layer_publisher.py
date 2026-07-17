@@ -53,6 +53,16 @@ from .job_runtime import (
     _assert_lease_valid,
 )
 from .repository import ReaderOrchestrationRepository
+from .section_identity import (
+    SectionIdentityError,
+    SectionUnit,
+    decode_section_target_key,
+    expand_closed_unit_range,
+)
+from .section_lane import (
+    SECTION_REQUEST_ORIGIN,
+    TRANSLATION_SECTION_OPERATION_FINGERPRINT,
+)
 from .span_recorder import (
     SPAN_KIND_PUBLISH_FENCE,
     STATUS_FAILED,
@@ -190,6 +200,146 @@ class TranslationPublishValidationError(ValueError):
     def __init__(self, failure_code: str, message: str) -> None:
         super().__init__(message)
         self.failure_code = failure_code
+
+
+def _validate_section_translation_job_shape(
+    *,
+    job_row: Any,
+    input_json: dict[str, Any],
+    operation_fingerprint: str,
+    ordered_units: tuple[SectionUnit, ...] | None = None,
+) -> None:
+    """T5.6b: fail-closed shape checks for section_v1 translation jobs.
+
+    Ordinary (non-section) jobs are no-ops here. Section jobs must have
+    matching origin, canonical target_key, identity source fence, and
+    ``target_unit_ids`` equal to the full ordered closed range from
+    ``reading_units`` (not merely first/last ends).
+    """
+    origin = input_json.get("request_origin")
+    is_section_fp = _fingerprint_matches_base(
+        operation_fingerprint,
+        TRANSLATION_SECTION_OPERATION_FINGERPRINT,
+    )
+    if origin != SECTION_REQUEST_ORIGIN and not is_section_fp:
+        return
+    if origin != SECTION_REQUEST_ORIGIN:
+        raise TranslationPublishValidationError(
+            "section_origin_mismatch",
+            "section fingerprint requires request_origin=section_v1",
+        )
+    if not is_section_fp:
+        raise TranslationPublishValidationError(
+            "section_fingerprint_mismatch",
+            "section_v1 origin requires translation_article_section_v1 fingerprint",
+        )
+    target_key = str(job_row["target_key"] or "")
+    try:
+        start_u, end_u, sa, ea = decode_section_target_key(target_key)
+    except SectionIdentityError as exc:
+        raise TranslationPublishValidationError(
+            "section_target_key_invalid",
+            f"section target_key is not canonical: {exc}",
+        ) from exc
+    identity = input_json.get("section_identity")
+    if not isinstance(identity, dict):
+        raise TranslationPublishValidationError(
+            "section_identity_missing",
+            "section_v1 job requires section_identity object",
+        )
+    # Identity source fence must equal job record/base/generation.
+    job_record_id = str(job_row["reading_record_id"])
+    job_base_id = str(job_row["base_id"])
+    job_generation = int(job_row["expected_generation"])
+    id_record = identity.get("record_id")
+    id_base = identity.get("base_id")
+    id_gen = identity.get("generation")
+    if not isinstance(id_record, str) or id_record != job_record_id:
+        raise TranslationPublishValidationError(
+            "section_identity_record_mismatch",
+            "section_identity.record_id must equal job reading_record_id",
+        )
+    if not isinstance(id_base, str) or id_base != job_base_id:
+        raise TranslationPublishValidationError(
+            "section_identity_base_mismatch",
+            "section_identity.base_id must equal job base_id",
+        )
+    if not isinstance(id_gen, int) or isinstance(id_gen, bool) or id_gen != job_generation:
+        raise TranslationPublishValidationError(
+            "section_identity_generation_mismatch",
+            "section_identity.generation must equal job expected_generation",
+        )
+    if (
+        str(identity.get("start_unit_id") or "") != start_u
+        or str(identity.get("end_unit_id") or "") != end_u
+    ):
+        raise TranslationPublishValidationError(
+            "section_identity_range_mismatch",
+            "section_identity range does not match target_key",
+        )
+    id_sa = identity.get("start_anchor_segment_id") or None
+    id_ea = identity.get("end_anchor_segment_id") or None
+    if id_sa != sa or id_ea != ea:
+        raise TranslationPublishValidationError(
+            "section_identity_anchor_mismatch",
+            "section_identity anchors do not match target_key",
+        )
+    target_unit_ids = list(input_json.get("target_unit_ids") or [])
+    if not target_unit_ids:
+        raise TranslationPublishValidationError(
+            "section_target_units_empty",
+            "section_v1 job requires non-empty target_unit_ids",
+        )
+    if ordered_units is None:
+        # Callers that skip DB load still get end-point defense; full
+        # equality is enforced when ordered_units is supplied (publisher).
+        if target_unit_ids[0] != start_u or target_unit_ids[-1] != end_u:
+            raise TranslationPublishValidationError(
+                "section_target_units_range_mismatch",
+                "target_unit_ids ends do not match section identity range",
+            )
+        return
+    try:
+        canonical = expand_closed_unit_range(
+            start_unit_id=start_u,
+            end_unit_id=end_u,
+            ordered_units=ordered_units,
+        )
+    except SectionIdentityError as exc:
+        raise TranslationPublishValidationError(
+            "section_target_units_universe_invalid",
+            f"cannot rebuild canonical unit range: {exc}",
+        ) from exc
+    if tuple(target_unit_ids) != canonical:
+        raise TranslationPublishValidationError(
+            "section_target_units_not_canonical",
+            (
+                "target_unit_ids must equal the full ordered closed range "
+                f"{list(canonical)!r}, got {target_unit_ids!r}"
+            ),
+        )
+
+
+async def _load_ordered_units_for_job(
+    conn: asyncpg.Connection,
+    *,
+    reading_record_id: UUID,
+    base_id: UUID,
+) -> tuple[SectionUnit, ...]:
+    rows = await conn.fetch(
+        """
+        SELECT unit_id, order_index
+        FROM reading_units
+        WHERE reading_record_id = $1 AND base_id = $2
+        ORDER BY order_index ASC
+        """,
+        reading_record_id,
+        base_id,
+    )
+    return tuple(
+        SectionUnit(unit_id=str(r["unit_id"]), order_index=int(r["order_index"]))
+        for r in rows
+    )
 
 
 class TranslationLayerPublisher:
@@ -618,14 +768,17 @@ class TranslationLayerPublisher:
                         operation_fingerprint,
                         TRANSLATION_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
                     )
+                    or _fingerprint_matches_base(
+                        operation_fingerprint,
+                        TRANSLATION_SECTION_OPERATION_FINGERPRINT,
+                    )
                 ):
                     raise TranslationPublishValidationError(
                         "translation_batch_fingerprint_mismatch",
                         (
                             f"translation batch publish fingerprint "
-                            f"{operation_fingerprint!r} does not match either "
-                            f"{TRANSLATION_BATCH_OPERATION_FINGERPRINT!r} or "
-                            f"{TRANSLATION_STRUCTURED_BATCH_OPERATION_FINGERPRINT!r}"
+                            f"{operation_fingerprint!r} does not match short, "
+                            f"structured, or section translation bases"
                         ),
                     )
 
@@ -634,6 +787,21 @@ class TranslationLayerPublisher:
                 # mismatch (missing unit, extra unit, duplicate unit) fails
                 # the entire batch job before any layer is written.
                 input_json = job_row["input_json"]
+                if not isinstance(input_json, dict):
+                    input_json = {}
+                # T5.6b section lane: validate origin + canonical target key +
+                # full ordered closed-range target_unit_ids vs reading_units.
+                ordered_units = await _load_ordered_units_for_job(
+                    conn,
+                    reading_record_id=reading_record_id,
+                    base_id=base_id,
+                )
+                _validate_section_translation_job_shape(
+                    job_row=job_row,
+                    input_json=input_json,
+                    operation_fingerprint=operation_fingerprint,
+                    ordered_units=ordered_units,
+                )
                 target_unit_ids: list[str] = list(input_json.get("target_unit_ids") or [])
                 output_unit_ids = [unit_id for unit_id, _ in outputs]
                 if sorted(target_unit_ids) != sorted(output_unit_ids):

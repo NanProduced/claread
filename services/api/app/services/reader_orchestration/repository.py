@@ -517,6 +517,8 @@ class ReaderOrchestrationRepository:
         succeeded, failed_terminal, cancelled, superseded) initialized to
         0 so callers can branch on ``.get(status, 0)`` without KeyError.
         """
+        # T5.6b: coverage-required counts exclude section_v1 lane jobs.
+        # Null-safe ordinary predicate: missing request_origin stays ordinary.
         rows = await conn.fetch(
             """
             SELECT status, COUNT(*) AS count
@@ -525,6 +527,7 @@ class ReaderOrchestrationRepository:
               AND base_id = $2
               AND expected_generation = $3
               AND job_type = ANY($4::text[])
+              AND (input_json->>'request_origin') IS DISTINCT FROM 'section_v1'
             GROUP BY status
             """,
             record_id,

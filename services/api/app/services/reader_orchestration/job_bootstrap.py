@@ -518,7 +518,7 @@ async def _supersede_stale_fingerprint_jobs(
     target_scope: str,
     current_fingerprint: str,
 ) -> int:
-    """Mark active stale-fingerprint jobs as superseded.
+    """Mark active stale-fingerprint **ordinary-lane** jobs as superseded.
 
     Before bootstrapping jobs with the current strategy fingerprint, any
     pre-existing ``queued`` / ``retry_later`` / ``paused`` job of the same
@@ -526,6 +526,10 @@ async def _supersede_stale_fingerprint_jobs(
     ``operation_fingerprint`` differs from ``current_fingerprint`` is marked
     ``superseded`` with rationale_code
     ``strategy_fingerprint_superseded``.
+
+    T5.6b: only the **ordinary** translation lane is superseded
+    (``request_origin IS DISTINCT FROM 'section_v1'``). Section jobs must
+    never be cancelled by ordinary bootstrap fingerprint rotation.
 
     ``claimed`` and ``succeeded`` jobs are intentionally left untouched:
     a claimed job is being actively processed by a worker, and a succeeded
@@ -550,6 +554,7 @@ async def _supersede_stale_fingerprint_jobs(
           AND target_type = $5
           AND operation_fingerprint <> $6
           AND status IN ('queued', 'retry_later', 'paused')
+          AND (input_json->>'request_origin') IS DISTINCT FROM 'section_v1'
         """,
         record_id,
         base_id,
