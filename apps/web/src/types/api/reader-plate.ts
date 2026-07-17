@@ -35,7 +35,9 @@ export type ReaderLayerType =
   | "translation"
   | "vocabulary"
   | "grammar_note"
-  | "sentence_analysis";
+  | "sentence_analysis"
+  /** Inventory-only audit layer; trusted product projection is top-level `semantic_outline`. */
+  | "semantic_outline";
 
 export type AnchorSegmentType = "sentence" | "clause" | "fallback_window";
 
@@ -373,11 +375,25 @@ export interface ReaderSentenceAnalysisSnapshotLayerDto
   output: SentenceAnalysisLayerOutputDto;
 }
 
+/**
+ * Inventory row for durable semantic_outline layers (audit only).
+ * Product projection is optional top-level `ReaderPlateSnapshotDto.semantic_outline`.
+ */
+export interface ReaderSemanticOutlineSnapshotLayerDto
+  extends ReaderSnapshotLayerBaseDto {
+  layer_type: "semantic_outline";
+  target_scope: "record";
+  target_key: "document" | string;
+  /** Wire envelope; consumers must prefer top-level semantic_outline. */
+  output: Record<string, unknown>;
+}
+
 export type ReaderSnapshotLayerDto =
   | ReaderTranslationSnapshotLayerDto
   | ReaderVocabularySnapshotLayerDto
   | ReaderGrammarNoteSnapshotLayerDto
-  | ReaderSentenceAnalysisSnapshotLayerDto;
+  | ReaderSentenceAnalysisSnapshotLayerDto
+  | ReaderSemanticOutlineSnapshotLayerDto;
 
 export interface ReaderSnapshotAskSupplementDto {
   supplement_id: string;
@@ -449,6 +465,17 @@ export interface ReaderEnhancementProgressDto {
   layers: ReaderEnhancementProgressLayerDto[];
 }
 
+/**
+ * T5.4a/b: optional top-level outline projection.
+ * - absent (undefined): legacy backend without the field
+ * - null: new backend, no trusted published ready|partial
+ * - object: only ready|partial is consumable (see hasTrustedSemanticOutline)
+ */
+export type ReaderPlateSnapshotSemanticOutline =
+  | import("@/lib/reader-plate/projection/semantic-outline").ReaderSemanticOutlineProjectionDto
+  | null
+  | undefined;
+
 export interface ReaderPlateSnapshotDto {
   schema_kind: typeof READER_PLATE_SNAPSHOT_SCHEMA_KIND;
   snapshot_id: string;
@@ -465,6 +492,8 @@ export interface ReaderPlateSnapshotDto {
   user_assets: ReaderSnapshotUserAssetDto[];
   parsed_decisions: ReaderSnapshotParsedDecisionDto[];
   value: ReaderPlateValueDto;
+  /** Optional; undefined | null = no trusted outline. Do not parse enhancement_layers for L2. */
+  semantic_outline?: import("@/lib/reader-plate/projection/semantic-outline").ReaderSemanticOutlineProjectionDto | null;
 }
 
 // ---------------------------------------------------------------------------

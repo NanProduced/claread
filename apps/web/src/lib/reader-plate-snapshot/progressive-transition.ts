@@ -146,12 +146,26 @@ export function layerKey(layer: ReaderSnapshotLayerDto): string {
   return `${layer.layer_type}:${layer.layer_id}`;
 }
 
+/**
+ * T5.4b: semantic_outline inventory layers are optional document enhancement.
+ * They must not participate in progressive monotone key tracking or phase
+ * typing — outline 有↔无 alone must not trigger layer_regression.
+ */
+function isProgressiveTrackedEnhancementLayer(
+  layer: ReaderSnapshotLayerDto,
+): boolean {
+  return layer.layer_type !== "semantic_outline";
+}
+
 export function listPublishedLayerKeys(
   snapshot: ReaderPlateSnapshotDto,
 ): string[] {
   const layers = snapshot.enhancement_layers ?? [];
   return layers
-    .filter((layer) => layer.status === "published")
+    .filter(
+      (layer) =>
+        layer.status === "published" && isProgressiveTrackedEnhancementLayer(layer),
+    )
     .map(layerKey)
     .sort();
 }
@@ -161,7 +175,10 @@ export function listVisibleLayerTypes(
 ): ReaderLayerType[] {
   const types = new Set<ReaderLayerType>();
   for (const layer of snapshot.enhancement_layers ?? []) {
-    if (layer.status === "published") {
+    if (
+      layer.status === "published" &&
+      isProgressiveTrackedEnhancementLayer(layer)
+    ) {
       types.add(layer.layer_type);
     }
   }
@@ -230,6 +247,8 @@ export const LAYER_TYPE_LABEL_ZH: Readonly<Record<ReaderLayerType, string>> = {
   vocabulary: "词汇",
   grammar_note: "语法",
   sentence_analysis: "句法",
+  // Not used in progressive strip (outline excluded from tracked types).
+  semantic_outline: "大纲",
 };
 
 /**
@@ -1003,6 +1022,33 @@ function publishedLayer(
             note: "Institutional memory 是主语。",
           },
         ],
+      },
+    };
+  }
+  if (layerType === "semantic_outline") {
+    return {
+      layer_id: layerId,
+      owner: "system_ai" as const,
+      base_id: "base_pux_1",
+      target_scope: "record" as const,
+      target_key: "document",
+      status: "published" as const,
+      schema_version: 1,
+      published_at: "2026-07-13T00:00:00Z",
+      layer_type: "semantic_outline" as const,
+      output: {
+        schema_kind: "reader_semantic_outline",
+        schema_version: 1,
+        status: "ready",
+        source_identity: { base_id: "base_pux_1", generation: 1 },
+        publication: {
+          outline_revision: "olrev_fixture",
+          layer_id: layerId,
+          published_at: "2026-07-13T00:00:00Z",
+        },
+        provenance: { kind: "llm", builder: "fixture", model: "test" },
+        nodes: [],
+        diagnostics: { drops: [], skipped_node_count: 0 },
       },
     };
   }

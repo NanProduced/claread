@@ -340,3 +340,35 @@ export function validateSemanticOutlineProjection(
     diagnostics: { drops, skipped_node_count: attempted - valid },
   };
 }
+
+// ---------------------------------------------------------------------------
+// T5.4b: snapshot wire consumer helpers (null | undefined | object)
+// ---------------------------------------------------------------------------
+
+/**
+ * Trusted product projection only when a non-null object with ready|partial.
+ * `undefined` (legacy omit) and `null` (new backend) are equivalent: no outline.
+ * Other status objects are defensively ignored (must not throw or drive UI).
+ */
+export function hasTrustedSemanticOutline(
+  value: ReaderSemanticOutlineProjectionDto | null | undefined,
+): value is ReaderSemanticOutlineProjectionDto {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value !== "object") {
+    return false;
+  }
+  return value.status === "ready" || value.status === "partial";
+}
+
+/**
+ * Source-identity key for any future L2 outline cache (same formula as L0/L1).
+ * Pure helper only — T5.4b does not implement L2 state.
+ */
+export function buildOutlineSourceIdentityKey(
+  baseId: string,
+  generation: number,
+): string {
+  return `${baseId}:${generation}`;
+}
