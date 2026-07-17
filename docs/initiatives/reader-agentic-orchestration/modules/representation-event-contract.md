@@ -1,7 +1,7 @@
 # Snapshot Representation Event Contract
 
-> 状态：`已接受设计；O4-R2 后端 atomic slices A+B+C 已完成；O4-R2-D Web payload-aware classifier 已完成；PUX-R4 局部 applier / fragment / SSE 仍未实施；T5.1 L0/L1 为 accepted-snapshot 本地投影（不扩 event/transport）`
-> 最后更新：2026-07-17（T5.1e：补 deterministic navigation 与 accepted/rejected snapshot 边界）
+> 状态：`已接受设计；O4-R2 A+B+C + O4-R2-D 已完成；PUX-R4 / SSE 仍未实施；T5.1 L0/L1 为 accepted-snapshot 本地投影；T5.3 semantic_outline durable layer 已发布 `layer_published` 但不进 snapshot`
+> 最后更新：2026-07-17（T5.3b：补 semantic outline durable / snapshot 边界；不扩 transport）
 > 范围：会改变 Reader Plate snapshot 可观察表示的写入，及其 `reader_events` 合同。
 
 ## 目标与边界
@@ -104,11 +104,22 @@ Reader Record Plate Surface 对 `snapshot_id` 与上次 targeted apply 相同的
 - 导航只消费 **已 accepted** 的 snapshot + 当前 Plate document；rejected snapshot **不得**进入 Surface 或导航状态交换。
 - Surface 的 same-snapshot early-return 仍只是 **duplicate accepted snapshot guard**，不等于 stale/fence rejection；也不能替代导航侧的 source-identity reset 或 target-cache revalidation。
 - Plate `setValue` remount 后的 DOM 节点失效由前端 validated target resolver 处理（`isConnected` + 当前 plate document 归属 + unit_id 匹配）；这是本地投影正确性，不是新的 event 语义。
-- **明确未批准**：SSE、WebSocket、JSON Patch、ETag/304、通用 Plate tree diff 作为导航或 outline 交付通道。semantic outline 若未来落地，仍须先经独立 contract/fixture 门（T5.2），且不得污染 `navigation.units` 或阻塞 `article_ready`。
+- **明确未批准**：SSE、WebSocket、JSON Patch、ETag/304、通用 Plate tree diff 作为导航或 outline 交付通道。
+
+### Semantic outline durable layer 与 snapshot 边界
+
+> 来源：T5.2a `2bf3db97` + T5.3 `781e4117`（T5.3b 文档同步）。本节只固定 **event / snapshot 可观察边界**；worker/publisher 细节见 [`implementation-plan.md`](../implementation-plan.md#t53-semantic-outline-worker--durable-layer)。
+
+- **Durable truth**：published `enhancement_layers` 行，`layer_type='semantic_outline'`，`target_scope='record'`，`target_key='document'`。成功发布走既有 `reader_events.event_type='layer_published'`（payload 含 `layer_type` / target / generation），**不**新增 event type、**不**新增 representation_section。
+- **当前 snapshot 合同**：`ReaderPlateSnapshot` **仍不**挂 `semantic_outline` 字段或专用 projection；T5.2a schema 注释与 T5.3 实现均保持该边界。客户端若仅靠 snapshot 重建页面，**不得**假设 outline 已可见。
+- **发布 fail-closed**：validator `V=0` / failed / stale，或 job lease / route / provenance / target-key fence 失败时，**不** insert layer、**不**分配 sequence、**不**发 `layer_published`；旧同源 published outline 保持。
+- **与 L0/L1**：outline **不得**写入或改写 `navigation.units`；L0/L1 继续只做 accepted-snapshot 本地投影。outline **不**阻塞 `article_ready`。
+- **下一门**：T5.4-R0 设计如何（若）把 published outline 暴露进 snapshot / DTO；T5.5 才做 UI。在此之前，`layer_published`（`layer_type=semantic_outline`）对当前无 outline applier 的 Web 仍按既有 `layer_published` 可靠 reload 分类即可，但 reload 后的 snapshot **仍不含** outline projection。
+- **明确未批准**：不得借 outline durable 落地批准 SSE、WebSocket、JSON Patch、ETag/304、压缩或通用 tree diff。
 
 ### 未批准的传输改造
 
-本节不批准 SSE、WebSocket、JSON Patch、ETag/304、压缩或通用 tree diff。accepted/rejected 判定仍基于 polling/page seam 的 full snapshot reload 合同；PUX-R4 interaction-stable incremental projection 与 semantic fragment transport 仍属未实施范畴。L0/L1 确定性导航的落地 **不**构成对上述传输改造的批准。
+本节不批准 SSE、WebSocket、JSON Patch、ETag/304、压缩或通用 tree diff。accepted/rejected 判定仍基于 polling/page seam 的 full snapshot reload 合同；PUX-R4 interaction-stable incremental projection 与 semantic fragment transport 仍属未实施范畴。L0/L1 与 T5.3 outline durable 的落地 **均不**构成对上述传输改造的批准。
 
 ## O4-R2 实施门槛
 

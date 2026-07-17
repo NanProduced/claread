@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 实施计划
 
-> 状态：`D5 active / T4.2a-V1 closed — Contract / Output Integrity / sample-level Semantic Quality / Page UX PASS；Cost/Latency Baseline PARTIAL；T5.1 L0/L1 deterministic navigation 前端与 Chromium 合同已闭合；DOC-R2/R3 归档完成`
-> 最后更新：2026-07-17（T5.1e：同步 L0/L1 确定性导航长期事实；不扩 semantic outline 实现）
+> 状态：`D5 active / T4.2a-V1 closed；T5.1 L0/L1 已闭合；T5.2a validation contract + T5.3 semantic outline worker durable 已闭合；T5.4-R0 snapshot projection 为下一设计门；DOC-R2/R3 归档完成`
+> 最后更新：2026-07-17（T5.3b：同步 semantic outline worker durable 长期事实；不扩 snapshot/UI）
 
 ## 当前实施口径
 
@@ -47,7 +47,7 @@ Reader enhancement 的当前主链路按层分开理解：
 | M2 | Stable Progressive Delivery | 修复页面闪烁、折叠和无序输出 | 发布结果尽量按阅读顺序出现；前端状态不因 layer 更新丢失 |
 | M3 | Grouped Layer Execution | translation/vocabulary/grammar 支持 grouped/windowed 路径 | 中长文章降低调用次数；vocabulary 全文去重；window 结果仍 anchor-grounded |
 | M4 | Adaptive Planner | 自动选择短文 batch、structured batch、中长文 grouped/windowed、长文 section 策略 | 先落 deterministic router；LLM 只输出 schema profile，deterministic planner 决定执行策略 |
-| M5 | Outline and Longform | 长文导航与超长文 lazy enhancement | **L0/L1 deterministic navigation 已落地**（段落导航 + flat heading 章节导航；非树、非 semantic outline）；semantic outline 只在长文/超长文作为 optional enhancement 设计（T5.2+），不阻塞 `article_ready` |
+| M5 | Outline and Longform | 长文导航与超长文 lazy enhancement | **L0/L1 deterministic navigation 已落地**；**T5.3 semantic outline durable layer 已落地**（`enhancement_layers.layer_type='semantic_outline'`，record/`document` scope；默认不请求、不进 budget/coverage 必需路径、不挂 `ReaderPlateSnapshot`）；**T5.4-R0** 才设计 snapshot projection；**T5.5** 才做 UI；lazy section enhancement 后置 |
 | M6 | Streaming UX Upgrade | SSE / patch delivery 逐步替代高频全量 reload | 事件可恢复；更新不闪烁；后续支持 committed patch merge |
 
 ### 推荐执行顺序
@@ -104,10 +104,15 @@ Reader enhancement 的当前主链路按层分开理解：
 | T4.3a | longform bounded enhancement planner | 4-8h | T4.3 | 先为 long/very-long 的 vocabulary/grammar 选择高价值 targets；translation 仍优先沿用独立 semantic group planner，除非后续证据支持扩权 |
 | T4.4 | three-mode validation harness | 4-8h | T4.3/T5.1 | 用 fake/recorded outputs 覆盖 short batch、structured batch、grouped/windowed、section/selective 模式的 job plan、layer counts、usage attribution、completion state，并补 beginning/middle/end 与 section-jump 的位置敏感验收 |
 | T5.1 | deterministic L0/L1 navigation | 4-8h | Stable Base | **closed（前端 + Chromium）**：L0 = `navigation.units` 全量段落导航；L1 = 前端纯派生 flat heading 章节导航（非树、非 semantic outline）。启用门槛 `unit_count >= 6 && heading_count >= 2` 且 units 非空；document-fallback / 未过门槛完整回退 L0。lead 区 `active=null`；`sourceIdentityKey = base_id:generation` 正式 reset；validated target cache + rAF source-identity fence。commits `701a9463` / `970d54d8` / `20be3d75` / `9fe6d94d`。不调用 LLM、不阻塞 translation、不改 schema/event/transport。权威 UI 合同见 [`modules/reader-record-plate-surface-ui.md`](modules/reader-record-plate-surface-ui.md#deterministic-navigation-l0--l1) |
-| T5.1e | deterministic navigation contract docs sync | 1-2h | T5.1 | **docs-only**：把 L0/L1 分层、交互/身份、snapshot 边界与 semantic-outline 后置边界写入正式文档（本计划 + plate surface UI + representation event contract）；不改生产代码/测试 |
-| T5.2 | semantic outline contract + fixture design gate | 4-8h | T5.1 / R0 audit | **下一任务（只读）**：为 long/very-long 的 optional top-level semantic-outline projection 做 contract/fixture 设计门；不污染 `navigation.units`、不阻塞 `article_ready`；不冻结 worker/layer_type/publish 实现 |
-| T5.3 | semantic outline worker | 4-8h | T4.3/T5.2 | 仅长文/超长文启用；输出 section title/summary/key idea/anchor range，不改变 Stable Base；**未实施** |
-| T5.4 | lazy section enhancement | 6-10h | T5.3/T2.2 | 当前 section、用户跳转 section、Ask-relevant region 优先增强；成本按 section 控制 |
+| T5.1e | deterministic navigation contract docs sync | 1-2h | T5.1 | **docs-only closed**：L0/L1 分层、交互/身份、snapshot 边界与 semantic-outline 后置边界写入正式文档 |
+| T5.2 | semantic outline contract + fixture design gate | 4-8h | T5.1 | **closed（只读门 + 合同产物）**：optional semantic-outline 的 schema/status/fixture 边界；不污染 `navigation.units`、不阻塞 `article_ready` |
+| T5.2a | semantic outline validation contract | 4-8h | T5.2 | **closed**（commit `2bf3db97`）：`validate_semantic_outline_projection` + `ReaderSemanticOutlineProjection` typed schema + fixture cases；**明确不**挂 `ReaderPlateSnapshot` |
+| T5.3 | semantic outline worker + durable publisher | 6-10h | T5.2a | **closed**（commit `781e4117`）：migration `0020` + `build_semantic_outline` job + record-level publisher + pipeline non-budget slot；详见下方 [T5.3](#t53-semantic-outline-worker--durable-layer) |
+| T5.3b | semantic outline formal docs sync | 1-2h | T5.3 | **docs-only**：把 T5.3 durable 长期事实写入本计划 / target-architecture / representation-event-contract；不改生产代码 |
+| T5.4-R0 | semantic outline snapshot projection design gate | 4-8h | T5.3 / T5.3b | **下一任务（只读）**：如何把已 published `semantic_outline` layer 投影进 `ReaderPlateSnapshot`（或独立 DTO）；不实现 UI；不冻结 L2 IA / partial 混排 / eligibility 阈值 |
+| T5.4 | semantic outline snapshot projection | 4-8h | T5.4-R0 | 经设计门后实现 snapshot 暴露；仍不改 L0/L1 `navigation.units`；不启用 SSE/patch |
+| T5.5 | semantic outline Reader UI | 6-10h | T5.4 | 内容大纲 UI（与 L0/L1 独立）；不得用「文章目录已交付」表述 L1 |
+| T5.6 | lazy section enhancement | 6-10h | T5.5/T2.2 | 当前 section、用户跳转 section、Ask-relevant region 优先增强；成本按 section 控制；**未实施** |
 | T6.1 | SSE reader event endpoint | 4-8h | T2.3 | 支持 cursor/reconnect/heartbeat；语义等价 polling；不引入不可恢复状态 |
 | T6.2 | committed patch envelope | 6-10h | T6.1 | layer/outline/progress 更新可局部 merge；raw LLM token 不进入 article annotation stream |
 | T6.3 | frontend patch merge | 6-10h | T6.2 | 页面不全量替换 snapshot；打开面板、selection、scroll 和当前阅读位置稳定 |
@@ -388,14 +393,16 @@ Reader enhancement 的当前主链路按层分开理解：
 3. 原 T4.2a 实现阶段约 **85%**：实现与合同层已闭合；Sample A 仍 UNRESOLVED、Cost/Latency 仍 PARTIAL、PUX rejected-snapshot retry/backoff 仍待设计。下一阶段唯一预批准动作是 **T4.2a-LP-R2 Phase 0 snapshot payload profiling**（测量而非传输改造）：按文长、generation、surfaceMode、reload reason 记录 payload 与用户感知耗时。旧的 bounded-LLM document profiler 继续暂缓；不得把 ETag、压缩、SSE、fragment、planner 或 T6 patch merge 混入 LP-R2。
 4. T4.2 bounded LLM document profiler 与 T4.3 strategy planner 仍作为后续阶段：bounded profiler 只返回 genre/structure/schema_risk/selective hints；planner 选择 short batch、structured batch、grouped/windowed、section longform、selective longform。T4.1b/T4.1c 的三态可审计 runtime mode + compact grammar batch path 是 planner 的稳定输入。只有 deterministic router 在真实边界样本上出现稳定误判时才重新评估 profiler。
 5. bounded enhancement planner + specialized structured workers 的第一落点仍应是 long/very-long selective enhancement：planner 只负责选择候选 enhancement targets，专业 worker 负责 schema output 与 publish；translation semantic group planner 继续保持独立。
-6. **T5.1 L0/L1 deterministic navigation 已闭合**（前端 projection + rail + Chromium 合同；T5.1e 文档同步）。L1 是 accepted snapshot 上的本地 flat heading 投影，不是 semantic outline，也不是 Notion-like 树。very-long lazy enhancement 仍可复用 L1 的 heading unit 锚点；**T5.2** 才进入 semantic-outline 只读 design gate。semantic outline 只面向长文/超长文 optional enhancement，不默认全量生成，不污染 `navigation.units`，不阻塞 `article_ready`。
-7. Provider prompt cache / cache-hit 归因继续作为成本优化项跟踪，但不作为当前三模式架构是否成立的前提。
-8. 继续跟踪真实测试的 token、耗时、首个可用输出时间和输出质量，但避免每个局部补丁后真实跑长文或超长文。
+6. **T5.1 L0/L1 deterministic navigation 已闭合**（前端 projection + rail + Chromium；T5.1e 文档同步）。L1 是 accepted snapshot 上的本地 flat heading 投影，**不是** semantic outline。
+7. **T5.2a + T5.3 已闭合**（commits `2bf3db97` / `781e4117`）：semantic outline 以 `enhancement_layers` record/`document` durable layer 存在；默认不请求；不进既有 ExecutionBudget / coverage_complete 必需路径；不挂 `ReaderPlateSnapshot`。下一导航相关任务是 **T5.4-R0 snapshot projection 设计门**，不是直接做 UI 或 lazy section。
+8. Provider prompt cache / cache-hit 归因继续作为成本优化项跟踪，但不作为当前三模式架构是否成立的前提。
+9. 继续跟踪真实测试的 token、耗时、首个可用输出时间和输出质量，但避免每个局部补丁后真实跑长文或超长文。
 
 ### 暂缓项
 
 - 不先做完整 adaptive planner。
-- 不先做 semantic outline worker / DTO / layer_type / publish 实现（先做 T5.2 只读 design gate）。
+- 不在 T5.4-R0 设计门前实现 semantic outline snapshot projection 或 Reader UI（T5.4 / T5.5）。
+- 不冻结 request eligibility 阈值、L2 UI IA、partial 节点混排产品细节。
 - 不先做 SSE patch merge。
 - 不在 short/long/very-long 三种模式代码级闭环前，频繁真实跑长文或超长文页面验收。
 - 不把短文 batch 的 whole-article computation 理解成 whole-unit translation display。
@@ -418,7 +425,7 @@ Reader enhancement 的当前主链路按层分开理解：
 
 - `implementation-plan.md` 只记录任务拆分、依赖、状态和验收口径，不保存每轮 coding agent prompt。
 - 每轮 prompt 由人工根据当前代码事实和最近验收结果单独生成，并通过会话发给 coding agent。
-- 当前 T1.1a、T3.1、T3.2b、T3.3、T3.4a、T3.4b、T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1、T4.2a-R2 已完成代码级实施与 deterministic acceptance；**T4.2a-V1 已正式关闭**；**T5.1 L0/L1 deterministic navigation 前端与 Chromium 合同已闭合**（详见任务表 T5.1 / [`modules/reader-record-plate-surface-ui.md`](modules/reader-record-plate-surface-ui.md#deterministic-navigation-l0--l1)）。下一步优先 **T5.2 semantic outline contract + fixture design gate（只读）**，并继续 measurement/observability 与固定样本 V2；再评估 T4.2 bounded profiler 与 T4.3 strategy planner。不要把 planner / semantic outline worker / SSE patch / grammar quality tuning / L1 已闭合合同 混成一个无边界任务。
+- 当前 T1.1a、T3.1、T3.2b、T3.3、T3.4a、T3.4b、T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1、T4.2a-R2 已完成代码级实施与 deterministic acceptance；**T4.2a-V1 已正式关闭**；**T5.1 L0/L1**、**T5.2a validation contract**、**T5.3 semantic outline worker durable** 已闭合（详见任务表与下方 T5.3 章节）。导航相关下一步优先 **T5.4-R0 semantic outline snapshot projection 设计门（只读）**；不要把 snapshot projection / UI / lazy section / SSE patch / planner 混成一个无边界任务。
 - 评审 agent 完成 review 后，如发现实现改变了任务状态、产品合同或执行顺序，必须同步更新本计划和相关模块合同。
 
 ## 成功标准
@@ -1160,6 +1167,72 @@ Focused tests 已通过：
 - agent 只更新本计划的阶段/任务状态或决策引用。
 - 发现架构冲突时，先更新或讨论 `target-architecture.md` 的决策记录，再继续实现。
 
+## T5.3 Semantic Outline Worker + Durable Layer
+
+状态：**closed** on 2026-07-17（commit `781e4117`；前置 T5.2a validation contract `2bf3db97`；本轮 T5.3b 为 docs-only 同步）。
+
+### 已验证事实（可追溯代码 / commit）
+
+1. **Durable truth 复用 `enhancement_layers`**，不新增 outline 专用事实表。
+   - `layer_type = 'semantic_outline'`
+   - `target_scope = 'record'`，layer `target_key = 'document'`
+   - job：`reader_jobs.job_type = 'build_semantic_outline'`（job 行 `target_type = 'record'`，`target_key = reading_record_id`）
+   - worker_type：`semantic_outline`（runtime span allow-list）
+   - migration：`infra/migrations/0020_reader_semantic_outline_layer.sql`
+
+2. **默认不请求**。`default_semantic_outline_request_eligibility` 恒为 `False`；仅当注入的 request-eligibility 为真 **且** record 已达 `article_ready` 里程碑 readiness（`article_ready` / `initial_enhancement_ready` / `coverage_complete`）时，bootstrap 才创建 outline job。不阻塞 `article_ready` 发布路径。
+
+3. **不进入既有 budget / coverage 必需路径**。
+   - `semantic_outline` **不在** `WORKER_TYPE_TO_BUDGET_LAYER` / `_JOB_TYPE_TO_BUDGET_LAYER`。
+   - pipeline 以最低优先级 non-budget slot 调度（`pipeline_runner` worker order 末位）。
+   - `ENHANCEMENT_PIPELINE_JOB_TYPES`（worker loop 扫描 / completion finalizer tracked types）**不含** `build_semantic_outline`，故 outline job 不参与既有 `coverage_complete` 必需集合。
+
+4. **模型候选 → revision-scoped opaque IDs → T5.2a validator**。
+   - `map_candidates_to_opaque_nodes` 分配 `outline_revision` 与 opaque `node_id` / `parent_node_id`。
+   - 再调用 `validate_semantic_outline_projection`（T5.2a）。
+   - `V=0`、`worker_failure`，或 status ∈ `{failed, stale, unavailable, pending}`：**不得**发布 ready/partial layer（`outcome=not_published`，零 layer / 零 event / 零 sequence）。
+
+5. **发布前 job lease fence（与 grammar publisher 同类）**。`publish_from_candidates` **强制** `job_id` + `lease_token`；事务内先 `SELECT reader_jobs ... FOR UPDATE`，校验：
+   - `status = claimed`
+   - `job_type = build_semantic_outline`、target identity、record / base / `expected_generation`
+   - `operation_fingerprint` 与 outline fingerprint 族
+   - lease token + expiry（`_assert_lease_valid`）
+   - 完整 `ReaderJobRuntime._validate_fence`（含 route/strategy 一致性）
+   - source provenance 绑定锁定 claim 的 `run_id` / `job_id`，不信任调用方随意覆盖
+   - 任一失败：`FenceViolationError`；**不** supersede / insert / 分配 sequence。
+
+6. **Record-level 原子 replace**（新 fingerprint）：同一事务 supersede 旧 published → insert 新 published → `layer_published` event。同 fingerprint 幂等 reuse，不发新 event。失败 / stale / lease / provenance / target-key fence 失败均 **保留** 旧同源 published layer，且不产生新 layer / event / sequence。
+
+7. **Snapshot / UI 边界**。`ReaderSemanticOutlineProjection` 仅为 layer envelope / validator 形状；**当前不**挂入 `ReaderPlateSnapshot`。T5.4-R0 设计、T5.4 实现 projection；T5.5 做 UI。L0/L1 继续只消费 `navigation.units`；outline **不得**污染 `navigation.units`。
+
+8. **继续禁止**：SSE、WebSocket、JSON Patch、ETag/304、通用 Plate tree diff 作为 outline 交付通道。
+
+### 权威代码落点
+
+| 能力 | 路径 |
+|------|------|
+| migration | `infra/migrations/0020_reader_semantic_outline_layer.sql` |
+| typed projection + statuses | `services/api/app/schemas/reader_orchestration.py`（`ReaderSemanticOutline*`） |
+| validator | `services/api/app/services/reader_orchestration/semantic_outline.py` |
+| bootstrap + eligibility | `job_bootstrap.py`（`_bootstrap_semantic_outline_job`、`default_semantic_outline_request_eligibility`） |
+| publisher | `semantic_outline_publisher.py` |
+| worker | `semantic_outline_worker.py` |
+| pipeline slot | `pipeline_runner.py`（`semantic_outline` non-budget） |
+| seam tests | `services/api/tests/test_reader_semantic_outline_worker.py`（含 stale lease / superseded job / route fence 负向） |
+
+### 明确未冻结 / 未宣称
+
+- request eligibility 产品阈值（长度/route 等）未写入默认实现；默认始终 false。
+- L2 / 内容大纲 UI IA、partial 节点与 L0/L1 混排未设计。
+- 真实 LLM outline 质量与成本未做样本验收。
+- 不得把「T5.3 closed」表述为「内容大纲已对用户交付」。
+
+### 下一任务
+
+**T5.4-R0**：semantic outline → `ReaderPlateSnapshot`（或独立 DTO）projection 只读设计门。通过后再实施 T5.4 / T5.5。
+
+---
+
 ## 当前下一步
 
 以本文开头的 Adaptive Reader Orchestration 任务拆分为准。D5 guardrails 与 worker loop 旧章节保留为历史 closeout，不再作为下一轮任务入口。
@@ -1179,8 +1252,9 @@ Focused tests 已通过：
     - **O4-R2-D（Web payload-aware reader event classifier）已完成**：在 `apps/web` 引入唯一纯函数 `classifyReaderEvent`，替换静态 `RELOAD_TRIGGER_EVENT_TYPES` 判定；G1/G2/G3 表示事件、未知 schema/section/operation、target_keys 缺失/非法、generation/base fence 不一致一律 reload 或 reset，绝不当作 cursor-only 静默推进；保留 `layer_published`/`record_product_state_updated`/`projection_reset_required` 既有可靠 reload。PUX-R2 单 cursor / 单调 reload 合同保持不变：reload 成功才推进 cursor，stale snapshot 拒绝或 reload 失败时 cursor hold。Vitest 1043 tests / tsc clean / git diff --check clean。
     - **PUX-R4 interaction-stable incremental projection、semantic fragment transport、SSE 通知通道仍未实施**；snapshot HTTP schema、ETag、304、压缩、fragment route、JSON Patch、WebSocket 均未改动。
 8. T4.2 bounded LLM document profiler **继续暂缓**。只有 deterministic router 在真实边界样本上出现稳定误判时才重新评估；不得因为已有真实 baseline 就直接引入自由决策 LLM。
-9. **T5.1 L0/L1 deterministic navigation 已闭合**（commits `701a9463` L0 文案、`970d54d8` L1 projection、`20be3d75` target-cache revalidation、`9fe6d94d` Chromium 合同；T5.1e 正式文档同步）。L1 ≠ semantic outline；不得用「文章目录 / 大纲 / 第 N 节」描述当前确定性能力。详细 UI/身份/cache 合同见 [`modules/reader-record-plate-surface-ui.md`](modules/reader-record-plate-surface-ui.md#deterministic-navigation-l0--l1)；snapshot 边界见 [`modules/representation-event-contract.md`](modules/representation-event-contract.md#deterministic-navigation-与-accepted-snapshot-边界)。
-10. **下一导航相关任务 = T5.2 Semantic Outline Contract + Fixture Design Gate（只读）**。semantic outline 仍是 long/very-long 才考虑的 optional top-level projection / independent enhancement；不得污染 `navigation.units`、不阻塞 `article_ready`；本轮不冻结 DTO、partial 混排、worker、`layer_type` 或 publish 实现。T4.3 strategy planner 与 T5.3 semantic outline worker 继续后置。
-11. 持续记录 calls、token、**分层** duration（agent-run vs provider-request vs worker_tick wall）、首个可用输出时间和人工质量，但在没有同样本对照前不得宣称降本增效。
+9. **T5.1 L0/L1 deterministic navigation 已闭合**（commits `701a9463` / `970d54d8` / `20be3d75` / `9fe6d94d`；T5.1e 文档同步）。L1 ≠ semantic outline；不得用「文章目录 / 大纲 / 第 N 节」描述当前确定性能力。详见 [`modules/reader-record-plate-surface-ui.md`](modules/reader-record-plate-surface-ui.md#deterministic-navigation-l0--l1)。
+10. **T5.2a + T5.3 semantic outline durable 已闭合**（commits `2bf3db97` / `781e4117`；T5.3b 正式文档同步）。durable truth 在 `enhancement_layers`；默认不请求；job lease fence + record-level atomic replace；**仍不**挂 `ReaderPlateSnapshot`。详见上方 [T5.3](#t53-semantic-outline-worker--durable-layer)。
+11. **下一导航相关任务 = T5.4-R0 Semantic Outline Snapshot Projection Design Gate（只读）**。在实施 T5.4 projection / T5.5 UI 前先定 snapshot DTO 与 eligibility 产品暴露边界；不冻结 L2 UI IA、partial 混排细节或 eligibility 数值阈值；继续禁止 SSE / WebSocket / JSON Patch / ETag/304 / 通用 tree diff。
+12. 持续记录 calls、token、**分层** duration（agent-run vs provider-request vs worker_tick wall）、首个可用输出时间和人工质量，但在没有同样本对照前不得宣称降本增效。
 
-T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1 与 T4.2a-R2 已完成代码级实施和 deterministic acceptance。**T4.2a-V1 已正式关闭**（详见上方 T4.2a-V1 章节）。**T5.1 确定性导航前端合同已闭合**。如需 retry force-failed windows、扩展 finalizer 到 RAG substrate，或给 structured batch 独立 grammar budget/prompt/release policy，应分别作为后续独立任务设计。
+T3.5、T4.1、T4.1a、T4.1b、T4.1c、T4.2a-R1 与 T4.2a-R2 已完成代码级实施和 deterministic acceptance。**T4.2a-V1 已正式关闭**。**T5.1 / T5.2a / T5.3 已闭合**。如需 retry force-failed windows、扩展 finalizer 到 RAG substrate，或给 structured batch 独立 grammar budget/prompt/release policy，应分别作为后续独立任务设计。

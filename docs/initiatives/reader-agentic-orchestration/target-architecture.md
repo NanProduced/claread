@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 目标架构
 
-> 状态：`D6 进行中（T4.2a-R2 durable budget 已代码级 review 通过；real-LLM validation pending）`
-> 最后更新：2026-07-13（O4-R1：接受 snapshot representation event contract；细则归 `modules/representation-event-contract.md`）
+> 状态：`D6 进行中（T4.2a-R2 durable budget 已代码级 review；T5.3 semantic outline durable layer 已闭合；snapshot projection 待 T5.4-R0）`
+> 最后更新：2026-07-17（T5.3b：记录 semantic outline durable layer 决策；细则归 `implementation-plan.md` T5.3）
 > 范围：用户提交内容的 `learning` Reader 解析。
 
 ## 目标
@@ -374,6 +374,8 @@ D4 正式路径从新 domain facts 直接生成 Base Plate Snapshot，不经过�
 | T4.2a-R2 | 2026-07-13 | 三态路由（SHORT_BATCH / STRUCTURED_BATCH / GROUPED_WINDOWED）durable ExecutionBudget + publish fence + route flip fencing：per-layer `ExecutionBudget` 跨 `runner.run()` 持久化，每次入口通过 `load_durable()` 从 `reader_jobs` 聚合 `SUM(attempt_count)` / `MAX(max_attempts)` per `(record, base, generation, layer)` 重建；`max_effective_calls = planned_calls * max_multiplier`，默认 `max_multiplier=3` 与生产 `max_attempts=3` 对齐；`BUDGET_CONSUMING_OUTCOMES = {succeeded, retry_later, failed_terminal}` 消耗预算；预算耗尽 `stopped_reason = budget_exhausted` 或 `partial_budget_exhausted`；route flip fencing 由 bootstrap supersede + claim-time `_validate_fence` → `_check_route_consistency` + publish-time 同一 `_validate_fence`（6 个 publisher 方法）组成，mismatch 返回 `stale_route_fingerprint`；publish fence 失败后 worker 层 `transition(job_id, target_status="superseded", rationale_code="publish_fence_failed")` + run 标记 superseded；不新增 migration，状态为「代码级 review 通过 / deterministic acceptance complete / real LLM validation pending」。详细约束见 [`agent-brief.md`](./agent-brief.md) 不可违反决策与 [`implementation-plan.md`](./implementation-plan.md) T4.2a-R2 章节。 |
 | T4.2a-PUX-R1 | 2026-07-13 | Progressive Transition UX fixture 合同 closed（deterministic pure）：`progressive-transition.ts` + 21 tests 定义 canonical replay 与 stale/layer 单调 helpers；`progressive_transition` 不单独构成 runtime 验收，需由 T4.2a-PUX-R2 接入真实 polling / snapshot reload 才生效。详细见 [`implementation-plan.md`](./implementation-plan.md) T4.2a-PUX-R1。 |
 | T4.2a-PUX-R2 | 2026-07-13 | Progressive Transition runtime integration gate closed：`reader-record` page `reloadSnapshot` 经 progressive 校验才应用 snapshot；stale/layer regression 不覆盖 UI 且 cursor hold；底部 progressive status strip；Plate generation-scoped clear + scroll restore；4 page integration tests。无 LLM、无后端 orchestration。详细见 [`implementation-plan.md`](./implementation-plan.md) T4.2a-PUX-R2。 |
+| T5.2a | 2026-07-17 | Semantic outline validation contract closed（commit `2bf3db97`）：`ReaderSemanticOutlineProjection` + `validate_semantic_outline_projection`；status 集 `unavailable\|pending\|partial\|ready\|failed\|stale`；**明确不**挂入 `ReaderPlateSnapshot`。 |
+| T5.3 | 2026-07-17 | Semantic outline worker + durable publisher closed（commit `781e4117`）。durable truth 复用 `enhancement_layers`：`layer_type='semantic_outline'`、`target_scope='record'`、layer `target_key='document'`；job `build_semantic_outline`；worker `semantic_outline`；migration `0020_reader_semantic_outline_layer.sql`。默认 request eligibility = false；仅 `article_ready` 里程碑 + 显式 eligibility 才 bootstrap；不进既有 ExecutionBudget / `coverage_complete` tracked job 集合。候选先分配 revision-scoped opaque ids，再经 T5.2a validator；`V=0`/失败不发布。publish 事务内 `reader_jobs FOR UPDATE` + claimed/lease/identity + `_validate_fence`；新 fingerprint 原子 supersede + insert + `layer_published`；fence 失败保留旧 published 且零 event/sequence。仍不投影到 snapshot；T5.4-R0 设计 projection，T5.5 做 UI。继续禁止 SSE / WebSocket / JSON Patch / ETag/304 / 通用 tree diff。权威细节见 [`implementation-plan.md`](./implementation-plan.md#t53-semantic-outline-worker--durable-layer)。 |
 
 ## 待决问题
 

@@ -1,7 +1,7 @@
 # Reader Record Plate Surface UI
 
-> 状态：目标方案 + 当前实现基线；T5.1 L0/L1 deterministic navigation 已闭合；DOC-R2 progressive transition 引用仍有效
-> 最后更新：2026-07-17（T5.1e：沉淀 L0/L1 确定性导航 UI/身份/target-cache 长期事实）
+> 状态：目标方案 + 当前实现基线；T5.1 L0/L1 deterministic navigation 已闭合；T5.3 semantic outline durable 已闭合但 **UI 未交付**；DOC-R2 progressive transition 引用仍有效
+> 最后更新：2026-07-17（T5.3b：修正与 semantic outline durable 的边界表述；不实现大纲 UI）
 > 范围：`/app/reader-record/{recordId}` 在 Agentic Orchestration 架构下的 Reader Record 解析页 UI/UX、Plate.js 文档表面、选择交互、词典/Ask 联动、用户高亮/笔记和第一版实现边界。
 
 当前代码接入矩阵见 [`reader-plate-component-integration.md`](./reader-plate-component-integration.md)。本文件描述目标 UI/UX 和产品边界；若本文与代码事实冲突，以接入矩阵和当前代码为准，再反向更新本文。
@@ -16,7 +16,7 @@
 |------|--------|----------|----------|
 | **L0** | 段落导航 | `snapshot.navigation.units` 全量 reading units（空 units 时可 document-fallback 派生 unit 列表） | 扁平：一 unit 一行 / 一 tick |
 | **L1** | 章节导航 | 仅 `unit_type === "heading"` 的 snapshot units；前端纯派生 coverage | 扁平 heading 列表；**无** depth / tree / children |
-| （未实施） | 内容大纲 | long/very-long optional semantic outline | 与 L0/L1 独立；见 T5.2 |
+| （UI 未交付） | 内容大纲 | 后端 durable `enhancement_layers.semantic_outline` 已存在；**未**进 snapshot / 本 rail | 与 L0/L1 独立；见 T5.4-R0 / T5.5 |
 
 - `<nav aria-label>` **始终**为「阅读定位」。
 - **禁止**用「文章目录 / 大纲 / 第 N 节」描述当前确定性能力。
@@ -65,8 +65,10 @@ enable_L1 =
 ### 与 semantic outline 的边界
 
 - 当前 L1 **不是** semantic outline 的替代实现，也不得被表述为「内容大纲已交付」。
-- semantic outline 仍是 long/very-long 才考虑的 optional top-level projection / independent enhancement（T5.2 只读 design gate 起）；不得污染 `navigation.units`，不阻塞 `article_ready`。
-- 本文件不冻结 semantic-outline DTO、partial 混排、worker、`layer_type` 或 publish 实现。
+- **T5.3 已闭合**：后端可向 `enhancement_layers` 发布 `layer_type='semantic_outline'`（record/`document`，默认不请求，带 job lease fence）。详见 [`implementation-plan.md`](../implementation-plan.md#t53-semantic-outline-worker--durable-layer)。
+- **当前 Reader UI 仍不展示内容大纲**：outline **未**挂 `ReaderPlateSnapshot`，本 rail **不**消费 outline layer。T5.4-R0 设计 snapshot projection；T5.5 才做 UI。
+- outline **不得**污染 `navigation.units`，不阻塞 `article_ready`。
+- 本文件 **不**冻结 L2 / 内容大纲 UI IA、partial 节点与 L0/L1 混排、或 request eligibility 产品阈值。
 
 ### 实现落点（索引）
 
