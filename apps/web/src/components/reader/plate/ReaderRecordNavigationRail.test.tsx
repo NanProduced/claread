@@ -1031,7 +1031,7 @@ describe("ReaderRecordNavigationRail", () => {
 
     const activeRow = rows[0]!;
     expect(activeRow.className).not.toContain("border-l-");
-    expect(activeRow.className).toContain("bg-ink/[0.055]");
+    expect(activeRow.className).toContain("bg-[var(--app-control-current)]");
     expect(activeRow.className).toContain("font-medium");
 
     const inactiveRow = rows[1]!;

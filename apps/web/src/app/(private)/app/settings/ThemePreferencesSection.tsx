@@ -47,7 +47,6 @@ export function ThemePreferencesSection() {
     <div className="grid gap-6 sm:grid-cols-2 pt-4">
       {themeOptions.map((option) => {
         const active = themePreference === option.value;
-        const showSystemCard = option.value === "system";
 
         if (!option.previewable) {
           return (
@@ -56,7 +55,7 @@ export function ThemePreferencesSection() {
               type="button"
               aria-label={`${option.label} ${option.english}。${option.description}`}
               aria-pressed={active}
-              className={`group flex flex-col text-left transition-all`}
+              className="focus-ring group flex flex-col text-left transition-all"
               onClick={() => setThemePreference(option.value)}
             >
               <div
@@ -110,7 +109,7 @@ export function ThemePreferencesSection() {
             type="button"
             aria-label={`${option.label} ${option.english}。${option.description}`}
             aria-pressed={active}
-            className={`group flex flex-col text-left transition-all`}
+            className="focus-ring group flex flex-col text-left transition-all"
             onClick={() => setThemePreference(option.value)}
           >
             <div

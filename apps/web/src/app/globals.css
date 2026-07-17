@@ -4442,16 +4442,23 @@ select {
     transform 160ms ease;
 }
 
-.reader-annotation-gutter-strip-item:hover,
-.reader-annotation-gutter-strip-item:focus-visible,
-.reader-annotation-gutter-strip-item--active {
+.reader-annotation-gutter-strip-item:hover {
   background: var(--reader-gutter-strip-item-hover-surface);
   color: var(--reader-gutter-strip-item-hover-ink);
-  outline: none;
+  transform: translateX(1px);
 }
 
-.reader-annotation-gutter-strip-item:hover,
+.reader-annotation-gutter-strip-item:focus-visible {
+  background: var(--reader-gutter-strip-item-hover-surface);
+  color: var(--reader-gutter-strip-item-hover-ink);
+  outline: 2px solid var(--lens-blue);
+  outline-offset: 2px;
+}
+
 .reader-annotation-gutter-strip-item--active {
+  background: color-mix(in srgb, var(--reader-gutter-strip-item-hover-surface) 76%, var(--surface-raised));
+  color: var(--reader-gutter-strip-item-hover-ink);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lens-blue) 32%, transparent);
   transform: translateX(1px);
 }
 

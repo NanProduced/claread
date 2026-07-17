@@ -103,6 +103,8 @@ ui 字体服务导航、按钮、输入、状态、菜单和信息密集型界�
 
 主要行动稀少且明确；次要、outline、quiet 与 ghost 行为不得伪装成主行动。输入和搜索字段提供可见 label 或等价名称，错误不能只依赖颜色。
 
+导航与普通列表行使用一致的四态语法：默认透明；hover 与 keyboard focus 使用安静的中性 hover 表面；当前目的地使用更深、持续的 current 表面并同步 `aria-current="page"`；当前项不得复用 transient hover 表面。图标与文字在 pointer 和 keyboard focus 下同时提升。行内次级操作仅在 hover、focus-within、当前或展开时出现；文章语义色与危险操作仍是例外，不能扩散为普通导航色。
+
 ### Article status
 
 文章标题下的 badge 只呈现一句友好总览：“解析中”“解析完成”“等待继续”“需要确认”或“解析遇到问题”。它不显示内部执行名、百分比、模型或诊断。

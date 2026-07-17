@@ -130,6 +130,17 @@ describe("web design tokens contract", () => {
     expect(source).toMatch(/--cl-color-input:\s*var\(--cl-color-app-input\);/);
     expect(source).toMatch(/--text-secondary:\s*var\(--muted-foreground\);/);
   });
+  it("keeps quiet hover and persistent current navigation surfaces distinct in both themes", () => {
+    const source = readTokens();
+    const rootBlock = extractRootSubBlock(source);
+    const darkBlock = extractDarkBlock(source);
+
+    expect(rootBlock).toMatch(/--app-control-quiet:\s*#e8e8e8;/);
+    expect(rootBlock).toMatch(/--app-control-current:\s*#dedede;/);
+    expect(darkBlock).toMatch(/--app-control-quiet:\s*#242424;/);
+    expect(darkBlock).toMatch(/--app-control-current:\s*#303030;/);
+  });
+
   it("strips Paper-warm rgba from the Light canvas/panel gradients", () => {
     const source = readTokens();
     const rootSubBlock = extractRootSubBlock(source);

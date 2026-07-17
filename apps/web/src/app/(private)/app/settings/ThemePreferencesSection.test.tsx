@@ -38,4 +38,12 @@ describe("ThemePreferencesSection", () => {
     expect(screen.queryByText("Paper")).toBeNull();
     expect(screen.queryByText("纸质")).toBeNull();
   });
+
+  it("gives every theme preference a visible shared keyboard-focus treatment", () => {
+    render(<ThemePreferencesSection />);
+
+    for (const button of screen.getAllByRole("button")) {
+      expect(button.className).toContain("focus-ring");
+    }
+  });
 });

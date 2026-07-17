@@ -242,7 +242,8 @@
   --app-nav-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(245, 245, 245, 0.96));
   --app-control-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 246, 246, 0.98));
   --app-control-hover-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 243, 243, 1));
-  --app-control-quiet: rgba(246, 246, 246, 0.82);
+  --app-control-quiet: #e8e8e8;
+  --app-control-current: #dedede;
   --app-segmented-surface: linear-gradient(180deg, rgba(240, 240, 240, 0.72), rgba(248, 248, 248, 0.9));
   --app-segmented-active-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 248, 248, 1));
   --app-segmented-hover-surface: rgba(255, 255, 255, 0.58);
@@ -347,7 +348,8 @@
   --app-nav-gradient: linear-gradient(180deg, rgba(24, 24, 24, 0.95), rgba(18, 18, 18, 0.98));
   --app-control-gradient: linear-gradient(180deg, rgba(38, 38, 38, 0.96), rgba(30, 30, 30, 0.98));
   --app-control-hover-gradient: linear-gradient(180deg, rgba(44, 44, 44, 0.98), rgba(36, 36, 36, 1));
-  --app-control-quiet: rgba(34, 34, 34, 0.92);
+  --app-control-quiet: #242424;
+  --app-control-current: #303030;
   --app-segmented-surface: linear-gradient(180deg, rgba(30, 30, 30, 0.96), rgba(24, 24, 24, 0.98));
   --app-segmented-active-surface: linear-gradient(180deg, rgba(48, 48, 48, 0.98), rgba(38, 38, 38, 1));
   --app-segmented-hover-surface: rgba(58, 58, 58, 0.72);

@@ -190,6 +190,17 @@ describe("SidebarRail 最近阅读", () => {
     );
     const link = screen.getByRole("link", { name: /正在读的文章/ });
     expect(link.getAttribute("aria-current")).toBe("page");
+    expect(link.className).toContain("bg-[var(--app-control-current)]");
+    expect(link.className).not.toContain("bg-[var(--app-control-quiet)]");
+  });
+
+  it("marks global destinations as the current page without conflating them with recent records", () => {
+    render(<SidebarRail pathname={appLibraryRoute} recentRecords={[makeRecord()]} />);
+
+    for (const link of screen.getAllByRole("link", { name: "全部阅读记录" })) {
+      expect(link.getAttribute("aria-current")).toBe("page");
+    }
+    expect(screen.getByRole("link", { name: "Untitled 1" }).getAttribute("aria-current")).toBeNull();
   });
 
   it("shows 更多 pointing at appLibraryRoute", () => {

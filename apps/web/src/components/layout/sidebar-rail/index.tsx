@@ -129,8 +129,8 @@ export function SidebarRail({
     cn(
       "focus-ring group flex min-h-8 items-center gap-2.5 rounded-[6px] px-2 text-[0.8125rem] transition-[background-color,color] duration-150",
       active
-        ? "bg-[var(--app-control-quiet)] font-semibold text-ink"
-        : "font-medium text-muted-foreground hover:bg-[var(--app-control-quiet)] hover:text-ink",
+        ? "bg-[var(--app-control-current)] font-semibold text-ink"
+        : "font-medium text-muted-foreground hover:bg-[var(--app-control-quiet)] hover:text-ink focus-visible:bg-[var(--app-control-quiet)] focus-visible:text-ink",
     );
 
   function handleSidebarMouseEnter() {
@@ -225,9 +225,10 @@ export function SidebarRail({
               className={cn(
                 "focus-ring group flex min-h-8 items-center gap-2 rounded-[7px] px-2 text-[0.8125rem] transition-[background-color,color] duration-150",
                 newReadActive
-                  ? "bg-[var(--app-control-quiet)] font-semibold text-ink"
-                  : "bg-transparent font-semibold text-ink hover:bg-[var(--app-control-quiet)]",
+                  ? "bg-[var(--app-control-current)] font-semibold text-ink"
+                  : "bg-transparent font-semibold text-ink hover:bg-[var(--app-control-quiet)] focus-visible:bg-[var(--app-control-quiet)]",
               )}
+              aria-current={newReadActive ? "page" : undefined}
             >
               <NewReadIcon
                 aria-hidden="true"
@@ -271,7 +272,7 @@ export function SidebarRail({
                         >
                           <FileText
                             aria-hidden="true"
-                            className={cn("mt-0.5 h-4 w-4 shrink-0", isCurrent ? "text-ink" : "text-muted-foreground group-hover:text-ink")}
+                            className={cn("mt-0.5 h-4 w-4 shrink-0", isCurrent ? "text-ink" : "text-muted-foreground group-hover:text-ink group-focus-visible:text-ink")}
                             strokeWidth={isCurrent ? 2.25 : 2}
                           />
                           <span className="min-w-0 flex-1">
@@ -306,12 +307,17 @@ export function SidebarRail({
                   const active = isSidebarActive(pathname, item.href);
 
                   return (
-                    <Link key={item.href} href={item.href} className={navItemClassName(active)}>
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={navItemClassName(active)}
+                      aria-current={active ? "page" : undefined}
+                    >
                       <Icon
                         aria-hidden="true"
                         className={cn(
                           "h-4 w-4 shrink-0",
-                          active ? "text-ink" : "text-muted-foreground group-hover:text-ink",
+                          active ? "text-ink" : "text-muted-foreground group-hover:text-ink group-focus-visible:text-ink",
                         )}
                         strokeWidth={active ? 2.25 : 2}
                       />
@@ -387,7 +393,7 @@ export function SidebarRail({
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  className="gap-2 text-red-700 focus:text-red-700"
+                  className="gap-2"
                   disabled={logoutPending}
                   onSelect={() => {
                     void handleLogout();
@@ -425,6 +431,7 @@ export function SidebarRail({
               className={`focus-ring flex min-h-12 flex-col items-center justify-center gap-1 rounded-note text-[0.6875rem] ${
                 active ? "font-bold text-ink" : "font-semibold text-muted-foreground"
               }`}
+              aria-current={active ? "page" : undefined}
             >
               <Icon aria-hidden="true" className="h-4 w-4" strokeWidth={active ? 2.5 : 2} />
               <span>{item.label}</span>

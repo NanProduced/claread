@@ -859,9 +859,9 @@ function NavigationPanelRow({
         onKeyDown={onKeyDown}
         className={cn(
           "relative w-full px-2.5 py-1.5 text-left transition-colors duration-150 ease-[var(--cl-ease-standard)]",
-          "focus-visible:outline-none focus-visible:bg-ink/[0.04]",
+          "focus-visible:outline-none focus-visible:bg-ink/[0.035] focus-visible:ring-1 focus-visible:ring-lens-blue/30",
           active
-            ? "bg-ink/[0.055] font-medium text-ink"
+            ? "bg-[var(--app-control-current)] font-medium text-ink"
             : "text-ink/60 hover:bg-ink/[0.035] hover:text-ink",
         )}
       >

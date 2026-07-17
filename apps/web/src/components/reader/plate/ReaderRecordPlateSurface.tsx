@@ -5808,7 +5808,7 @@ export function ReaderRecordPlateSurface({
                             aria-label={`切换为${option.label}`}
                             data-reader-record-highlight-color={option.value}
                             onClick={() => handleUpdateHighlightColor(option.value)}
-                            className="group grid h-8 w-8 place-items-center rounded-md transition-transform hover:bg-transparent active:scale-[0.96] focus-visible:outline-none"
+                            className="focus-ring group grid h-8 w-8 place-items-center rounded-md transition-transform hover:bg-transparent active:scale-[0.96]"
                           >
                             <span
                               className={cn(
@@ -5834,7 +5834,7 @@ export function ReaderRecordPlateSurface({
                         aria-label="删除高亮"
                         data-reader-record-highlight-action="delete"
                         onClick={handleDeleteHighlight}
-                        className="grid h-8 w-8 place-items-center rounded-md text-muted-foreground transition-[color,transform] hover:bg-transparent hover:text-rose-600 active:scale-[0.96] focus-visible:outline-none focus-visible:text-rose-600"
+                        className="focus-ring grid h-8 w-8 place-items-center rounded-md text-muted-foreground transition-[color,transform] hover:bg-transparent hover:text-rose-600 active:scale-[0.96] focus-visible:text-rose-600"
                       >
                         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                         <span className="sr-only">删除</span>
