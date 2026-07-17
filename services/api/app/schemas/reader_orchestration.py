@@ -60,7 +60,13 @@ ReaderJobStatus = Literal[
     "cancelled",
     "superseded",
 ]
-ReaderLayerType = Literal["translation", "vocabulary", "grammar_note", "sentence_analysis"]
+ReaderLayerType = Literal[
+    "translation",
+    "vocabulary",
+    "grammar_note",
+    "sentence_analysis",
+    "semantic_outline",
+]
 ReaderTitleGenerationStatus = Literal["pending", "succeeded", "failed_retryable"]
 ReaderEnhancementProgressOverallStatus = Literal[
     "processing",

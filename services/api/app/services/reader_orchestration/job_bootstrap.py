@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -83,6 +84,20 @@ DISPLAY_TITLE_POLICY_VERSION = "reader_display_title_bootstrap_v1"
 DISPLAY_TITLE_OPERATION_FINGERPRINT = "display_title_zh_v1"
 DEFAULT_DISPLAY_TITLE_MAX_ATTEMPTS = 5
 _BOOTSTRAP_READY_PRODUCT_STATES = frozenset({"readable_enhancing", "processing"})
+
+# T5.3a semantic outline (optional, request-eligible only; not a budget layer).
+SEMANTIC_OUTLINE_RUN_TYPE = "semantic_outline_layer"
+SEMANTIC_OUTLINE_JOB_TYPE = "build_semantic_outline"
+SEMANTIC_OUTLINE_TARGET_SCOPE = "record"
+SEMANTIC_OUTLINE_TARGET_KEY = "document"
+SEMANTIC_OUTLINE_TRIGGER_KIND = "system"
+SEMANTIC_OUTLINE_POLICY_VERSION = "reader_semantic_outline_bootstrap_v1"
+SEMANTIC_OUTLINE_OPERATION_FINGERPRINT = "semantic_outline_document_v1"
+SEMANTIC_OUTLINE_INPUT_SHAPE_VERSION = "outline_input_v1"
+DEFAULT_SEMANTIC_OUTLINE_MAX_ATTEMPTS = 3
+_ARTICLE_READY_READINESS_STATES = frozenset(
+    {"article_ready", "initial_enhancement_ready", "coverage_complete"}
+)
 
 # T1.1 Short-article batch path: whole-article batch compute, per-unit publish.
 # When the active base text is below the short-article char threshold, the
@@ -655,6 +670,17 @@ class EnhancementBootstrapJobCounts:
     translation: int = 0
     vocabulary: int = 0
     grammar_bundle: int = 0
+    semantic_outline: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticOutlineBootstrapResult:
+    run_id: UUID
+    job_id: UUID
+    reading_record_id: UUID
+    base_id: UUID
+    expected_generation: int
+    operation_fingerprint: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -668,6 +694,20 @@ class EnhancementBootstrapSummary:
     translation_results: tuple[TranslationBootstrapResult, ...] = ()
     vocabulary_results: tuple[VocabularyBootstrapResult, ...] = ()
     grammar_results: tuple[GrammarBootstrapResult, ...] = ()
+    semantic_outline_results: tuple[SemanticOutlineBootstrapResult, ...] = ()
+
+
+# Injected request eligibility for semantic outline. Default is always-false
+# (opt-in). Tests and future product flags inject predicates; length thresholds
+# must not be hard-coded as product freezes in this module.
+SemanticOutlineRequestEligibility = Callable[["_LockedActiveBaseState"], bool]
+
+
+def default_semantic_outline_request_eligibility(
+    state: "_LockedActiveBaseState",
+) -> bool:
+    """Default: do not request outline jobs (explicit opt-in only)."""
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -679,6 +719,7 @@ class _LockedActiveBaseState:
     base_language: str
     last_event_sequence: int
     strategy: ReaderVariantStrategy
+    readiness_state: str = "submitted"
     # T1.1 short-article batch path: cached active base text. Populated
     # lazily by ``_load_article_route`` so the per-article route classifier
     # does not issue a second ``reading_bases.text`` SELECT when both the
@@ -1298,8 +1339,18 @@ class DisplayTitleJobBootstrapService:
 
 
 class EnhancementJobBootstrapService:
-    def __init__(self, *, pool: asyncpg.Pool | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        pool: asyncpg.Pool | None = None,
+        semantic_outline_request_eligibility: SemanticOutlineRequestEligibility
+        | None = None,
+    ) -> None:
         self._pool = pool
+        self._semantic_outline_request_eligibility = (
+            semantic_outline_request_eligibility
+            or default_semantic_outline_request_eligibility
+        )
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -1348,6 +1399,11 @@ class EnhancementJobBootstrapService:
                         force_legacy_grammar=force_legacy_grammar,
                     )
                 )
+                semantic_outline_results = await self._bootstrap_semantic_outline_job(
+                    conn,
+                    state=state,
+                    trace_id=trace_id,
+                )
 
         # Z+ path: dispatch to ZPlusBootstrapService AFTER the outer
         # transaction commits. ZPlusBootstrapService.bootstrap_grammar_window_plan
@@ -1379,11 +1435,49 @@ class EnhancementJobBootstrapService:
                 translation=len(translation_results),
                 vocabulary=len(vocabulary_results),
                 grammar_bundle=len(grammar_results),
+                semantic_outline=len(semantic_outline_results),
             ),
             display_title_results=tuple(display_title_results),
             translation_results=tuple(translation_results),
             vocabulary_results=tuple(vocabulary_results),
             grammar_results=tuple(grammar_results),
+            semantic_outline_results=tuple(semantic_outline_results),
+        )
+
+    async def bootstrap_semantic_outline_job(
+        self,
+        *,
+        record_id: UUID,
+        user_id: UUID,
+        trace_id: UUID | None = None,
+    ) -> SemanticOutlineBootstrapResult | None:
+        """Bootstrap a single outline job when request-eligible + article_ready."""
+        async with self.get_pool().acquire() as conn:
+            async with conn.transaction():
+                state = await _load_locked_active_base_state(
+                    conn,
+                    record_id=record_id,
+                    user_id=user_id,
+                )
+                if trace_id is None:
+                    trace_id = uuid4()
+                results = await self._bootstrap_semantic_outline_job(
+                    conn, state=state, trace_id=trace_id
+                )
+        return results[0] if results else None
+
+    async def _bootstrap_semantic_outline_job(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        state: _LockedActiveBaseState,
+        trace_id: UUID | None = None,
+    ) -> list[SemanticOutlineBootstrapResult]:
+        return await _bootstrap_semantic_outline_job(
+            conn,
+            state=state,
+            trace_id=trace_id,
+            request_eligibility=self._semantic_outline_request_eligibility,
         )
 
     async def _bootstrap_translation_jobs(
@@ -2455,6 +2549,7 @@ async def _load_locked_active_base_state(
             active_base_id,
             lifecycle_status,
             product_state,
+            readiness_state,
             reading_goal,
             reading_variant
         FROM reading_records
@@ -2517,7 +2612,125 @@ async def _load_locked_active_base_state(
         base_language=str(base_row["language"] or "en"),
         last_event_sequence=await _load_last_event_sequence(conn, record_id=record_id),
         strategy=strategy,
+        readiness_state=str(record_row["readiness_state"] or "submitted"),
     )
+
+
+async def _bootstrap_semantic_outline_job(
+    conn: asyncpg.Connection,
+    *,
+    state: _LockedActiveBaseState,
+    trace_id: UUID | None = None,
+    request_eligibility: SemanticOutlineRequestEligibility,
+) -> list[SemanticOutlineBootstrapResult]:
+    """Create one base-scoped outline job when eligible.
+
+    Hard gates:
+    - readiness_state has reached article_ready milestone
+    - injected request eligibility returns True
+    - stale fingerprint jobs superseded (queued/retry_later/paused only)
+    """
+    if state.readiness_state not in _ARTICLE_READY_READINESS_STATES:
+        return []
+    if not request_eligibility(state):
+        return []
+
+    if trace_id is None:
+        trace_id = uuid4()
+
+    fingerprint_base = (
+        f"{SEMANTIC_OUTLINE_OPERATION_FINGERPRINT}:"
+        f"{SEMANTIC_OUTLINE_INPUT_SHAPE_VERSION}"
+    )
+    operation_fingerprint = _compose_operation_fingerprint(
+        fingerprint_base, state.strategy
+    )
+    await _supersede_stale_fingerprint_jobs(
+        conn,
+        record_id=state.record_id,
+        base_id=state.base_id,
+        expected_generation=state.expected_generation,
+        job_type=SEMANTIC_OUTLINE_JOB_TYPE,
+        target_scope=SEMANTIC_OUTLINE_TARGET_SCOPE,
+        current_fingerprint=operation_fingerprint,
+    )
+
+    existing_job = await conn.fetchrow(
+        """
+        SELECT id
+        FROM reader_jobs
+        WHERE reading_record_id = $1
+          AND base_id = $2
+          AND job_type = $3
+          AND target_type = $4
+          AND target_key = $5
+          AND expected_generation = $6
+          AND operation_fingerprint = $7
+          AND status IN ('queued', 'claimed', 'retry_later', 'paused', 'succeeded')
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+        """,
+        state.record_id,
+        state.base_id,
+        SEMANTIC_OUTLINE_JOB_TYPE,
+        SEMANTIC_OUTLINE_TARGET_SCOPE,
+        str(state.record_id),
+        state.expected_generation,
+        operation_fingerprint,
+    )
+    if existing_job is not None:
+        return []
+
+    run_id, job_id = await _insert_record_job(
+        conn,
+        state=state,
+        run_type=SEMANTIC_OUTLINE_RUN_TYPE,
+        job_type=SEMANTIC_OUTLINE_JOB_TYPE,
+        target_scope=SEMANTIC_OUTLINE_TARGET_SCOPE,
+        policy_version=SEMANTIC_OUTLINE_POLICY_VERSION,
+        trigger_kind=SEMANTIC_OUTLINE_TRIGGER_KIND,
+        operation_fingerprint=operation_fingerprint,
+        max_attempts=DEFAULT_SEMANTIC_OUTLINE_MAX_ATTEMPTS,
+        envelope_json={
+            "record_id": str(state.record_id),
+            "base_id": str(state.base_id),
+            "target_scope": SEMANTIC_OUTLINE_TARGET_SCOPE,
+            "target_key": SEMANTIC_OUTLINE_TARGET_KEY,
+            "layer_type": "semantic_outline",
+            "input_shape_version": SEMANTIC_OUTLINE_INPUT_SHAPE_VERSION,
+            "trace_id": str(trace_id),
+            "source_identity": {
+                "base_id": str(state.base_id),
+                "generation": state.expected_generation,
+            },
+        },
+        input_signature_suffix=(
+            f"{state.base_language}:semantic_outline:"
+            f"{SEMANTIC_OUTLINE_INPUT_SHAPE_VERSION}"
+        ),
+        input_json={
+            "target_scope": SEMANTIC_OUTLINE_TARGET_SCOPE,
+            "target_key": SEMANTIC_OUTLINE_TARGET_KEY,
+            "layer_type": "semantic_outline",
+            "input_shape_version": SEMANTIC_OUTLINE_INPUT_SHAPE_VERSION,
+            "base_language": state.base_language,
+            "source_identity": {
+                "base_id": str(state.base_id),
+                "generation": state.expected_generation,
+            },
+        },
+        layer_name=None,
+    )
+    return [
+        SemanticOutlineBootstrapResult(
+            run_id=run_id,
+            job_id=job_id,
+            reading_record_id=state.record_id,
+            base_id=state.base_id,
+            expected_generation=state.expected_generation,
+            operation_fingerprint=operation_fingerprint,
+        )
+    ]
 
 
 async def _bootstrap_display_title_job(

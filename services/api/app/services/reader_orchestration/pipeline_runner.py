@@ -24,6 +24,11 @@ from app.services.reader_orchestration.display_title_worker import (
     DisplayTitleWorkerService,
 )
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
+from app.services.reader_orchestration.semantic_outline_worker import (
+    DEFAULT_SEMANTIC_OUTLINE_RETRY_DELAY,
+    SemanticOutlineJobProcessResult,
+    SemanticOutlineWorkerService,
+)
 from app.services.reader_orchestration.execution_budget import (
     BUDGET_CONSUMING_OUTCOMES,
     WORKER_TYPE_TO_BUDGET_LAYER,
@@ -57,6 +62,9 @@ from app.services.reader_orchestration.job_bootstrap import (
     GRAMMAR_OPERATION_FINGERPRINT,
     GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
     GRAMMAR_TARGET_SCOPE,
+    SEMANTIC_OUTLINE_JOB_TYPE,
+    SEMANTIC_OUTLINE_OPERATION_FINGERPRINT,
+    SEMANTIC_OUTLINE_TARGET_SCOPE,
     TRANSLATION_BATCH_JOB_TYPE,
     TRANSLATION_BATCH_OPERATION_FINGERPRINT,
     TRANSLATION_BATCH_TARGET_SCOPE,
@@ -124,6 +132,7 @@ WorkerType = Literal[
     "vocabulary_batch",  # T1.1 short-article batch
     "grammar_bundle",  # T4.1c: batch first, then legacy per-unit
     "grammar_bundle_window",  # Z+ window
+    "semantic_outline",  # T5.3a: optional, low priority, non-budget
 ]
 PipelineAttemptOutcome = Literal[
     "succeeded",
@@ -286,6 +295,7 @@ class EnhancementWorkerTickCounts:
     vocabulary_batch: int = 0
     grammar_bundle: int = 0
     grammar_bundle_window: int = 0
+    semantic_outline: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,6 +359,7 @@ class ReaderEnhancementPipelineRunner:
         pool: asyncpg.Pool | None = None,
         bootstrap_service: EnhancementJobBootstrapService | None = None,
         display_title_worker_service: DisplayTitleWorkerService | None = None,
+        semantic_outline_worker_service: SemanticOutlineWorkerService | None = None,
         translation_orchestrator: ReaderOrchestrator | None = None,
         translation_batch_worker_service: TranslationWorkerService | None = None,
         vocabulary_worker_service: VocabularyWorkerService | None = None,
@@ -364,6 +375,10 @@ class ReaderEnhancementPipelineRunner:
         )
         self._display_title_worker_service = (
             display_title_worker_service or DisplayTitleWorkerService(pool=pool)
+        )
+        self._semantic_outline_worker_service = (
+            semantic_outline_worker_service
+            or SemanticOutlineWorkerService(pool=pool)
         )
         self._translation_orchestrator = translation_orchestrator or ReaderOrchestrator(
             pool=pool
@@ -503,6 +518,7 @@ class ReaderEnhancementPipelineRunner:
             "vocabulary_batch": 0,
             "grammar_bundle": 0,
             "grammar_bundle_window": 0,
+            "semantic_outline": 0,
         }
         outcome_counts = {
             "succeeded": 0,
@@ -535,6 +551,7 @@ class ReaderEnhancementPipelineRunner:
                 "vocabulary",
                 "grammar_bundle_window",  # Z+ 优先
                 "grammar_bundle",  # T4.1c: batch first, then legacy per-unit
+                "semantic_outline",  # T5.3a: lowest priority; non-budget
             )
         else:
             worker_order = (
@@ -544,6 +561,7 @@ class ReaderEnhancementPipelineRunner:
                 "vocabulary_batch",  # T1.1 short-article batch
                 "vocabulary",
                 "grammar_bundle",  # T4.1c: batch first, then legacy per-unit
+                "semantic_outline",  # T5.3a: lowest priority; non-budget
             )
 
         while True:
@@ -681,6 +699,7 @@ class ReaderEnhancementPipelineRunner:
                 vocabulary_batch=tick_counts["vocabulary_batch"],
                 grammar_bundle=tick_counts["grammar_bundle"],
                 grammar_bundle_window=tick_counts["grammar_bundle_window"],
+                semantic_outline=tick_counts["semantic_outline"],
             ),
             outcome_counts=EnhancementOutcomeCounts(
                 succeeded=outcome_counts["succeeded"],
@@ -783,6 +802,15 @@ class ReaderEnhancementPipelineRunner:
                 lease_duration=lease_duration,
                 retry_delay=display_title_retry_delay,
             )
+        if worker_type == "semantic_outline":
+            return await self._run_semantic_outline_attempt(
+                record_id=record_id,
+                base_id=base_id,
+                expected_generation=expected_generation,
+                lease_owner=lease_owner,
+                lease_duration=lease_duration,
+                retry_delay=DEFAULT_SEMANTIC_OUTLINE_RETRY_DELAY,
+            )
         if worker_type == "translation":
             return await self._run_translation_attempt(
                 record_id=record_id,
@@ -835,6 +863,67 @@ class ReaderEnhancementPipelineRunner:
             lease_owner=lease_owner,
             lease_duration=lease_duration,
             retry_delay=grammar_retry_delay,
+        )
+
+    async def _run_semantic_outline_attempt(
+        self,
+        *,
+        record_id: UUID,
+        base_id: UUID,
+        expected_generation: int,
+        lease_owner: str,
+        lease_duration: timedelta,
+        retry_delay: timedelta,
+    ) -> ReaderPipelineWorkerAttempt:
+        before_superseded = await self._count_superseded_jobs(
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            job_type=SEMANTIC_OUTLINE_JOB_TYPE,
+            target_scope=SEMANTIC_OUTLINE_TARGET_SCOPE,
+            operation_fingerprint=SEMANTIC_OUTLINE_OPERATION_FINGERPRINT,
+        )
+        try:
+            result = await (
+                self._semantic_outline_worker_service.process_next_semantic_outline_job_for_record(
+                    record_id=record_id,
+                    base_id=base_id,
+                    expected_generation=expected_generation,
+                    lease_owner=lease_owner,
+                    lease_duration=lease_duration,
+                    retry_delay=retry_delay,
+                )
+            )
+        except FenceViolationError:
+            superseded_jobs = (
+                await self._count_superseded_jobs(
+                    record_id=record_id,
+                    base_id=base_id,
+                    expected_generation=expected_generation,
+                    job_type=SEMANTIC_OUTLINE_JOB_TYPE,
+                    target_scope=SEMANTIC_OUTLINE_TARGET_SCOPE,
+                    operation_fingerprint=SEMANTIC_OUTLINE_OPERATION_FINGERPRINT,
+                )
+                - before_superseded
+            )
+            return ReaderPipelineWorkerAttempt(
+                worker_type="semantic_outline",
+                outcome="superseded",
+                processed_job=True,
+                attention_code="publish_fence_failed",
+                superseded_jobs=max(0, superseded_jobs),
+            )
+
+        return await self._build_worker_attempt_from_result(
+            worker_type="semantic_outline",
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            job_type=SEMANTIC_OUTLINE_JOB_TYPE,
+            target_scope=SEMANTIC_OUTLINE_TARGET_SCOPE,
+            operation_fingerprint=SEMANTIC_OUTLINE_OPERATION_FINGERPRINT,
+            before_superseded=before_superseded,
+            result=result,
         )
 
     async def _run_display_title_attempt(
@@ -2419,6 +2508,7 @@ class ReaderEnhancementPipelineRunner:
             | VocabularyBatchJobProcessResult
             | GrammarJobProcessResult
             | GrammarBatchJobProcessResult
+            | SemanticOutlineJobProcessResult
             | None
         ),
         after_superseded: int | None = None,
