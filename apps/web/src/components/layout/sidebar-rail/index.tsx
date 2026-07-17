@@ -241,7 +241,7 @@ export function SidebarRail({
 
           <nav className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="阅读导航">
             <div className="px-2 text-[0.6875rem] font-medium leading-5 text-subtle">最近阅读</div>
-            <div className="mt-1 min-h-0 flex-1 overflow-y-auto pr-0.5 [scrollbar-color:color-mix(in_srgb,var(--muted)_34%,transparent)_transparent] [scrollbar-width:thin]">
+            <div className="mt-1 min-h-0 flex-1 overflow-y-auto pr-0.5 [scrollbar-color:color-mix(in_srgb,var(--muted-foreground)_34%,transparent)_transparent] [scrollbar-width:thin]">
               {recentList.length === 0 ? (
                 <div className="flex flex-col gap-2 px-1 py-3 text-[0.78rem] leading-5 text-subtle">
                   <span>打开一篇文章后会显示在这里。</span>
