@@ -14,6 +14,16 @@ from uuid import UUID
 import asyncpg
 
 from app.database import connection as db_connection
+from app.llm.routes import MODEL_ROUTE_READER_LAYER_SEMANTIC_OUTLINE
+from app.services.ai_usage import (
+    BILLING_MODE_INTERNAL_ONLY,
+    CAPABILITY_READER_SEMANTIC_OUTLINE,
+    STATUS_FAILED,
+    STATUS_SUCCEEDED as USAGE_STATUS_SUCCEEDED,
+    USAGE_SCOPE_SYSTEM_INTERNAL,
+    AIUsageEventCreate,
+    record_ai_usage_event,
+)
 
 from .job_bootstrap import (
     SEMANTIC_OUTLINE_JOB_TYPE,
@@ -71,6 +81,14 @@ class SemanticOutlineExecutionResult:
     worker_failure: bool = False
     model: str | None = None
     usage_data: dict[str, Any] | None = None
+    # T5.8b provenance (optional until real adapter)
+    prompt_version: str | None = None
+    model_route: str | None = None
+    model_profile: str | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
+    # True only after an actual provider/agent call completed or failed mid-call.
+    provider_call_made: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +126,9 @@ class SemanticOutlineGenerationError(Exception):
     Permanent (``retryable=False``): configuration / 4xx-class parameter
     errors — worker must fail-closed without blind retry.
     Transient (``retryable=True``): reuses the job's bounded retry path.
+
+    ``provider_call_made`` + optional ``usage_data`` drive T5.8 usage rules:
+    call with usage → one event; zero call / timeout without usage → zero events.
     """
 
     def __init__(
@@ -118,12 +139,26 @@ class SemanticOutlineGenerationError(Exception):
         failure_code: str,
         retryable: bool = False,
         model: str | None = None,
+        provider_call_made: bool = False,
+        usage_data: dict[str, Any] | None = None,
+        prompt_version: str | None = None,
+        model_route: str | None = None,
+        model_profile: str | None = None,
+        model_provider: str | None = None,
+        model_name: str | None = None,
     ) -> None:
         super().__init__(message)
         self.failure_class = failure_class
         self.failure_code = failure_code
         self.retryable = retryable
         self.model = model
+        self.provider_call_made = provider_call_made
+        self.usage_data = usage_data
+        self.prompt_version = prompt_version
+        self.model_route = model_route
+        self.model_profile = model_profile
+        self.model_provider = model_provider
+        self.model_name = model_name
 
 
 class UnconfiguredSemanticOutlineGenerator:
@@ -404,6 +439,9 @@ class SemanticOutlineWorkerService:
                     context=context,
                     publish_result=publish_result,
                 )
+                await self._maybe_record_success_usage(
+                    context=context, execution=execution
+                )
                 return SemanticOutlineJobProcessResult(
                     claim=claim,
                     context=context,
@@ -421,6 +459,10 @@ class SemanticOutlineWorkerService:
                     if not execution.worker_failure
                     else "semantic_outline_worker_failure",
                 )
+                # Provider already called: still one usage event when usage present.
+                await self._maybe_record_success_usage(
+                    context=context, execution=execution
+                )
                 return SemanticOutlineJobProcessResult(
                     claim=claim,
                     context=context,
@@ -434,6 +476,9 @@ class SemanticOutlineWorkerService:
                 context=context,
                 publish_result=publish_result,
                 available_at=datetime.now(UTC) + retry_delay,
+            )
+            await self._maybe_record_success_usage(
+                context=context, execution=execution
             )
             return SemanticOutlineJobProcessResult(
                 claim=claim,
@@ -460,6 +505,7 @@ class SemanticOutlineWorkerService:
                     failure_code=exc.failure_code,
                     failure_message=failure_message,
                 )
+                await self._maybe_record_error_usage(context=context, error=exc)
                 return SemanticOutlineJobProcessResult(
                     claim=claim,
                     context=context,
@@ -476,6 +522,8 @@ class SemanticOutlineWorkerService:
                 failure_message=failure_message,
                 rationale_code=exc.failure_code,
             )
+            # Timeout without usage → zero event; call with usage → one event.
+            await self._maybe_record_error_usage(context=context, error=exc)
             # Keep run open (running) for the next attempt — do not finish it.
             return SemanticOutlineJobProcessResult(
                 claim=claim,
@@ -740,6 +788,92 @@ class SemanticOutlineWorkerService:
                 failure_class,
                 failure_code,
             )
+
+    async def _maybe_record_success_usage(
+        self,
+        *,
+        context: SemanticOutlineJobContext,
+        execution: SemanticOutlineExecutionResult,
+    ) -> UUID | None:
+        """Record exactly one usage event when a provider call was made."""
+        if not execution.provider_call_made:
+            return None
+        return await record_ai_usage_event(
+            AIUsageEventCreate(
+                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
+                capability_code=CAPABILITY_READER_SEMANTIC_OUTLINE,
+                billing_mode=BILLING_MODE_INTERNAL_ONLY,
+                status=USAGE_STATUS_SUCCEEDED,
+                user_id=context.user_id,
+                reading_record_id=context.reading_record_id,
+                reader_run_id=context.run_id,
+                reader_job_id=context.job_id,
+                workflow_name="reader_orchestration",
+                workflow_version=SEMANTIC_OUTLINE_WORKER_VERSION,
+                prompt_version=execution.prompt_version,
+                model_route=(
+                    execution.model_route or MODEL_ROUTE_READER_LAYER_SEMANTIC_OUTLINE
+                ),
+                model_profile_id=execution.model_profile,
+                model_profile=execution.model_profile,
+                model_provider=execution.model_provider,
+                model_name=execution.model_name or execution.model,
+                planner_kind="llm_worker",
+                usage_data=execution.usage_data,
+                operation_fingerprint=context.operation_fingerprint,
+            )
+        )
+
+    async def _maybe_record_error_usage(
+        self,
+        *,
+        context: SemanticOutlineJobContext | None,
+        error: SemanticOutlineGenerationError,
+    ) -> UUID | None:
+        """Usage rules: call+usage → one failed event; zero-call / no usage → none.
+
+        Structured-output invalid after a call always records one event
+        (usage_data may be empty). Transient timeout without usage → zero.
+        """
+        if context is None:
+            return None
+        if not error.provider_call_made:
+            return None
+        if error.usage_data is None:
+            if error.retryable:
+                # Timeout/network without provider usage payload.
+                return None
+            # Structured invalid after a real call: still exactly one failed event
+            # even when no token payload was returned.
+            if error.failure_code != "model_output_invalid":
+                return None
+        return await record_ai_usage_event(
+            AIUsageEventCreate(
+                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
+                capability_code=CAPABILITY_READER_SEMANTIC_OUTLINE,
+                billing_mode=BILLING_MODE_INTERNAL_ONLY,
+                status=STATUS_FAILED,
+                user_id=context.user_id,
+                reading_record_id=context.reading_record_id,
+                reader_run_id=context.run_id,
+                reader_job_id=context.job_id,
+                workflow_name="reader_orchestration",
+                workflow_version=SEMANTIC_OUTLINE_WORKER_VERSION,
+                prompt_version=error.prompt_version,
+                model_route=(
+                    error.model_route or MODEL_ROUTE_READER_LAYER_SEMANTIC_OUTLINE
+                ),
+                model_profile_id=error.model_profile,
+                model_profile=error.model_profile,
+                model_provider=error.model_provider,
+                model_name=error.model_name or error.model,
+                planner_kind="llm_worker",
+                usage_data=error.usage_data,
+                operation_fingerprint=context.operation_fingerprint,
+                error_code=error.failure_code,
+                error_message=str(error)[:500],
+            )
+        )
 
     async def _complete_job_retry_later(
         self,

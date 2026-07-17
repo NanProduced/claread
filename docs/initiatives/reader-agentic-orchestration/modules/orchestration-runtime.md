@@ -1,7 +1,7 @@
 # Orchestration Runtime
 
-> 状态：`D6 ongoing；T5.7 partial：semantic_outline worker_type 依赖 migration 0020；真实 outline LLM 未注册 route`
-> 最后更新：2026-07-18（T5.7：worker_loop 测试 schema 必须 apply 0020；outline generator 默认 Unconfigured）
+> 状态：`D6 ongoing；T5.8b：outline real adapter 可 DI 注入；默认 Unconfigured + eligibility=false；usage 按 provider-call 规则`
+> 最后更新：2026-07-18（T5.8b：`SemanticOutlineExecutionPolicy` pre-call；`PydanticAISemanticOutlineGenerator` 非默认 DI）
 > 范围：bounded run/job、worker lease、Authorization Envelope、并发和框架边界。
 
 ## Runtime 形态

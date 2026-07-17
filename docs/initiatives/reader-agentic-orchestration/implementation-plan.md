@@ -118,7 +118,8 @@ Reader enhancement 的当前主链路按层分开理解：
 | T5.6c | “解析此段” HTTP/UI | — | T5.6b | **未实施**（本切片禁止） |
 | T5.7 | semantic outline production readiness | 6-10h | T5.3–T5.6b | **closed（commit `0fe6fed78`）**：fixture 应用 `0020`；默认 Unconfigured generator + job/run permanent 终态闭合；`allow_semantic_outline_request_eligibility` 仅 DI |
 | T5.8-R0 | real executor activation design gate | 2-4h | T5.7 | **closed（TMP）**：`TMP-t5.8-r0-...` R1-P2；usage 唯一记账、kill-switch 双检查、独立 policy、禁 empty stub |
-| T5.8a | outline route/prompt/settings registration | 2-4h | T5.8-R0 | **implemented / uncommitted（本切片）**：`MODEL_ROUTE_READER_LAYER_SEMANTIC_OUTLINE` + `reader_semantic_outline_model_profile`（默认空）+ `semantic_outline_generation_enabled`（默认 false）+ capability + **完整** prompt `reader_semantic_outline`；默认 worker 仍 Unconfigured；**未**接线 live kill-switch / real adapter / 真实 LLM |
+| T5.8a | outline route/prompt/settings registration | 2-4h | T5.8-R0 | **implemented（注册形状）**：route/profile/enabled 字段/capability/完整 prompt；默认关闭 |
+| T5.8b | controlled real adapter + policy + usage | 4-8h | T5.8a | **implemented / uncommitted**：`PydanticAISemanticOutlineGenerator`（DI only）；`SemanticOutlineExecutionPolicy` pre-call；worker `record_ai_usage_event` 按 call/usage 规则；默认仍 Unconfigured；**未** bootstrap kill-switch（T5.8d）；无默认启用/无真实 LLM |
 | T6.1 | SSE reader event endpoint | 4-8h | T2.3 | 支持 cursor/reconnect/heartbeat；语义等价 polling；不引入不可恢复状态 |
 | T6.2 | committed patch envelope | 6-10h | T6.1 | layer/outline/progress 更新可局部 merge；raw LLM token 不进入 article annotation stream |
 | T6.3 | frontend patch merge | 6-10h | T6.2 | 页面不全量替换 snapshot；打开面板、selection、scroll 和当前阅读位置稳定 |
