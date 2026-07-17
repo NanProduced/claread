@@ -537,8 +537,8 @@ class ReaderSnapshotAnchorSegment(BaseModel):
     hash_algorithm: Literal["fnv1a32-utf16"] = TEXT_RANGE_HASH_ALGORITHM
 
 
-# T5.2a: fragments only. They are deliberately not attached to
-# ReaderPlateSnapshot until the later projection/publication slice.
+# T5.2a/T5.4a: validator statuses. Snapshot only projects trusted published
+# ready|partial via optional ReaderPlateSnapshot.semantic_outline (None otherwise).
 ReaderSemanticOutlineStatus = Literal[
     "unavailable", "pending", "partial", "ready", "failed", "stale"
 ]
@@ -702,6 +702,8 @@ class ReaderPlateSnapshot(BaseModel):
     user_assets: list[ReaderSnapshotUserAsset] = Field(default_factory=list)
     parsed_decisions: list[ReaderSnapshotParsedDecision] = Field(default_factory=list)
     value: list[dict[str, Any]] = Field(default_factory=list)
+    # T5.4a: optional trusted published ready|partial only; else None → JSON null.
+    semantic_outline: ReaderSemanticOutlineProjection | None = None
 
 
 class ReaderPlainTextSubmitRequest(BaseModel):

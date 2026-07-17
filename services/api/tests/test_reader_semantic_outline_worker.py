@@ -203,8 +203,10 @@ def test_validator_receives_final_opaque_ids() -> None:
     assert result.nodes[1].parent_node_id == mapped.opaque_by_candidate["c1"]
 
 
-def test_snapshot_still_has_no_semantic_outline_field() -> None:
-    assert "semantic_outline" not in ReaderPlateSnapshot.model_fields
+def test_snapshot_semantic_outline_field_is_optional_default_none() -> None:
+    """T5.4a: optional field exists; default None (not required, not always object)."""
+    assert "semantic_outline" in ReaderPlateSnapshot.model_fields
+    assert ReaderPlateSnapshot.model_fields["semantic_outline"].default is None
 
 
 def test_default_request_eligibility_is_false() -> None:
@@ -547,7 +549,11 @@ async def test_ready_publish_with_nested_parent_edge(outline_env: asyncpg.Pool) 
     snapshot = await ArticleReadyPersistenceService(pool=outline_env).load_snapshot(
         record_id=article.record_id, user_id=user_id
     )
-    assert "semantic_outline" not in type(snapshot).model_fields
+    # T5.4a: trusted published ready|partial projects onto optional field.
+    assert snapshot.semantic_outline is not None
+    assert snapshot.semantic_outline.status in {"ready", "partial"}
+    assert snapshot.semantic_outline.publication.layer_id == str(layer["id"])
+    assert len(snapshot.semantic_outline.nodes) == 2
     progress_caps = {layer.capability for layer in snapshot.enhancement_progress.layers}
     assert "semantic_outline" not in progress_caps
     assert progress_caps <= {"translation", "vocabulary", "grammar"}

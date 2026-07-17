@@ -38,6 +38,7 @@ from .grammar_layer_payload import (
     build_grammar_item_id,
     get_grammar_item_terminal_span_index,
 )
+from .semantic_outline_snapshot import project_semantic_outline_for_snapshot
 
 
 def build_reader_plate_snapshot(
@@ -71,6 +72,14 @@ def build_reader_plate_snapshot(
     )
     decisions = _sort_parsed_decisions(build_result, parsed_decisions or [])
     units_by_id = {unit.unit_id: unit for unit in build_result.units}
+    snapshot_record = record or _build_default_snapshot_record(
+        build_result, snapshot_taken_at
+    )
+    semantic_outline = project_semantic_outline_for_snapshot(
+        build_result=build_result,
+        record_generation=snapshot_record.generation,
+        enhancement_layers=layers,
+    )
 
     return ReaderPlateSnapshot(
         snapshot_id=(
@@ -80,7 +89,7 @@ def build_reader_plate_snapshot(
         snapshot_taken_at=snapshot_taken_at,
         last_event_sequence=last_event_sequence,
         record_id=build_result.base.reading_record_id,
-        record=record or _build_default_snapshot_record(build_result, snapshot_taken_at),
+        record=snapshot_record,
         base=ReaderSnapshotBase(
             base_id=build_result.base.base_id,
             content_sha256=build_result.base.content_sha256,
@@ -129,6 +138,7 @@ def build_reader_plate_snapshot(
         user_assets=list(assets),
         parsed_decisions=list(decisions),
         value=_build_plate_value(build_result, layers),
+        semantic_outline=semantic_outline,
     )
 
 
