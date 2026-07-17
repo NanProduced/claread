@@ -189,6 +189,9 @@ def _function_model(answer: str = "ok answer", handles: list[str] | None = None)
                         {
                             "answer_text": answer,
                             "cited_evidence_handles": handles or [],
+                            # R4-A2: use "clarification" so the grounding
+                            # output_validator accepts empty-handle drafts.
+                            "response_kind": "clarification",
                         }
                     ),
                     tool_call_id="final-1",
@@ -708,6 +711,9 @@ async def test_rag_off_search_unavailable_still_completes() -> None:
                         {
                             "answer_text": "answer without rag",
                             "cited_evidence_handles": [],
+                            # R4-A2: "clarification" passes the grounding
+                            # output_validator with empty handles.
+                            "response_kind": "clarification",
                         }
                     ),
                     tool_call_id="final-1",

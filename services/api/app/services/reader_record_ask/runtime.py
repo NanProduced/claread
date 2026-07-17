@@ -155,12 +155,32 @@ async def run_reading_record_ask(
         registry=registry,
     )
     baseline = await assembler.assemble_baseline()
+    # Tell the output_validator whether ``response_kind="unavailable"`` is
+    # permitted. Only allowed when baseline is NOT available. Internal-only;
+    # never serialised, never enters public DTO or persistence.
+    deps.baseline_available = baseline.is_injected
 
     if not baseline.is_injected:
-        # Fail-closed: do not invoke the agent, do not emit composing/validating
-        # events, do not produce a finalized result. RunFinishedEvent carries
-        # the registered evidence count (initial_anchor only, if any) so
-        # production stream can close the progress loop.
+        # Typed fail-closed: map baseline failure to an internal
+        # FinalizedAskResult(status="unavailable") so production_stream can
+        # emit a typed terminal (not "missing_finalizer_result"). The
+        # reason is one of two stable values so the wire terminal_reason
+        # stays typed and audit-friendly. Do NOT invoke the agent, do not
+        # emit composing/validating events, do not produce a pseudo-success
+        # completed.
+        baseline_reason = (
+            "document_unavailable"
+            if baseline.baseline_status == "document_scope_unavailable"
+            else "baseline_unavailable"
+        )
+        finalized = FinalizedAskResult(
+            status="unavailable",
+            answer_text=None,
+            resolved_evidence=(),
+            rejected_handles=(),
+            reason=baseline_reason,
+            envelope_fingerprint=envelope.envelope_fingerprint,
+        )
         deps.emit_event(
             RunFinishedEvent(
                 read_range_calls=0,
@@ -176,7 +196,7 @@ async def run_reading_record_ask(
             evidence_observations=registry.list_observations(),
             initial_anchor_handle=initial_handle,
             agent_draft=None,
-            finalized=None,
+            finalized=finalized,
             agent_output=None,
             baseline_context=baseline,
         )
@@ -201,11 +221,16 @@ async def run_reading_record_ask(
         ),
         available_evidence_handle_ids=available_handles,
         model_context_chunks=baseline.model_context_chunks,
+        baseline_is_complete=baseline.is_complete,
     )
     result = await agent.run(prompt, deps=deps)
     draft = result.output
     if not isinstance(draft, AgentAnswerDraft):
-        draft = AgentAnswerDraft(answer_text=str(draft), cited_evidence_handles=[])
+        draft = AgentAnswerDraft(
+            answer_text=str(draft),
+            cited_evidence_handles=[],
+            response_kind="grounded_answer",
+        )
 
     # Pre-finalizer activity: composing, then validating. FinalAnswerEvent only
     # after finalize returns so UI "正在核对回答依据" matches real work.

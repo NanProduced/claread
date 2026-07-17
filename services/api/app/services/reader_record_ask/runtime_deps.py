@@ -41,6 +41,11 @@ class ReaderRecordAskDeps:
     max_search_current_article_calls: int = DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS
     events: list[RuntimeEvent] = field(default_factory=list)
     event_sink: RuntimeEventSink | None = None
+    # Set by runtime after baseline assembly. The grounding output_validator
+    # reads this to decide whether ``response_kind="unavailable"`` is
+    # permitted (only allowed when baseline is NOT available). Internal-only;
+    # never serialised, never enters public DTO or persistence.
+    baseline_available: bool = False
 
     def emit_event(self, event: RuntimeEvent) -> None:
         """Append an internal event and optionally notify a live sink.

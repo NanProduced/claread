@@ -37,10 +37,13 @@ from app.services.reader_record_ask.finalizer import FinalizedAskResult
 from app.services.reader_record_ask.production_stream import (
     TERMINAL_REASON_AGENT_OUTPUT_INVALID,
     TERMINAL_REASON_AGENT_RUN_FAILED,
+    TERMINAL_REASON_BASELINE_UNAVAILABLE,
+    TERMINAL_REASON_DOCUMENT_UNAVAILABLE,
     TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
     EvidenceScopeInvariantError,
     assert_evidence_scope_matches_items,
     build_completed_dto,
+    build_terminal_dto,
     evidence_scope_from_envelope,
     stream_agentic_thread_message,
 )
@@ -134,6 +137,7 @@ def _function_model(answer: str = "ok answer", handles: list[str] | None = None)
                         {
                             "answer_text": answer,
                             "cited_evidence_handles": handles or [],
+                            "response_kind": "grounded_answer",
                         }
                     ),
                     tool_call_id="f1",
@@ -513,6 +517,7 @@ async def test_fake_rag_port_can_produce_search_hit_evidence() -> None:
                         {
                             "answer_text": "about climate",
                             "cited_evidence_handles": [handle] if handle else [],
+                            "response_kind": "grounded_answer",
                         }
                     ),
                     tool_call_id="f1",
@@ -934,6 +939,238 @@ async def test_generic_exception_does_not_complete_or_leak_as_answer(
     assert "XYZ" not in log_blob
     # Must not use logger.exception (no traceback leakage into message text).
     assert "Traceback" not in log_blob
+
+
+# ---------------------------------------------------------------------------
+# R4-A2 baseline-unavailable typed terminal tests (scenarios 4, 16)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_baseline_document_unavailable_emits_typed_terminal() -> None:
+    """Baseline document_scope_unavailable → wire failed + document_unavailable.
+
+    The runtime maps a baseline failure to an internal
+    ``FinalizedAskResult(status="unavailable", reason="document_unavailable")``.
+    Production stream must:
+      - emit ``final_status="failed"`` on the wire (NOT "unavailable");
+      - emit ``terminal_reason="document_unavailable"`` (typed);
+      - never emit the legacy ``"missing_finalizer_result"`` reason.
+    """
+    repo = _FakeRepo()
+
+    async def _run(**kwargs):
+        return ReadingRecordAskRunResult(
+            final_text=None,
+            finalized=FinalizedAskResult(
+                status="unavailable",
+                answer_text=None,
+                reason="document_unavailable",
+                envelope_fingerprint=kwargs["envelope"].envelope_fingerprint,
+            ),
+        )
+
+    chunks = [
+        c
+        async for c in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            # raise_missing=True short-circuits load before snapshot is
+            # consulted for identity comparison, but the dataclass field
+            # is still required — supply a minimal valid snapshot.
+            document_access=InMemoryDocumentAccess(
+                snapshot=build_document_scope(
+                    reading_record_id=_RECORD,
+                    base_id=_BASE,
+                    record_generation=1,
+                    base_content_sha256=_SHA,
+                    units=[
+                        ReadingUnitView(
+                            unit_id="u1",
+                            order_index=0,
+                            text="x",
+                            text_hash="11111111",
+                            base_start_utf16=0,
+                            base_end_utf16=1,
+                        )
+                    ],
+                ),
+                raise_missing=True,
+            ),
+            model=_function_model(),
+            run_fn=_run,
+            auto_wire_dependencies=False,
+        )
+    ]
+    events = _parse_sse(chunks)
+    names = [n for n, _ in events]
+    assert EVENT_MESSAGE_COMPLETED not in names
+    assert EVENT_MESSAGE_INTERRUPTED in names
+    assert len(repo.terminal_writes) == 1
+    # Wire final_status is "failed" — internal "unavailable" must NEVER
+    # leak to the wire (the wire FinalStatus Literal has 5 values and
+    # does not include "unavailable").
+    assert repo.terminal_writes[0]["final_status"] == "failed"
+    assert repo.terminal_writes[0]["run_status"] == "failed"
+    # Typed terminal_reason (not "missing_finalizer_result").
+    assert (
+        repo.terminal_writes[0]["terminal_reason"]
+        == TERMINAL_REASON_DOCUMENT_UNAVAILABLE
+    )
+    # SSE terminal event carries the same typed reason.
+    for _name, data in events:
+        if _name == EVENT_AGENTIC_TERMINAL:
+            assert data.get("final_status") == "failed"
+            assert (
+                data.get("terminal_reason")
+                == TERMINAL_REASON_DOCUMENT_UNAVAILABLE
+            )
+            assert data.get("terminal_reason") != "missing_finalizer_result"
+
+
+@pytest.mark.asyncio
+async def test_baseline_envelope_mismatch_emits_baseline_unavailable_terminal() -> None:
+    """Baseline envelope_mismatch → wire failed + baseline_unavailable.
+
+    The runtime maps any non-document baseline failure to
+    ``reason="baseline_unavailable"``. Production stream must emit the
+    corresponding typed terminal_reason.
+    """
+    repo = _FakeRepo()
+
+    async def _run(**kwargs):
+        return ReadingRecordAskRunResult(
+            final_text=None,
+            finalized=FinalizedAskResult(
+                status="unavailable",
+                answer_text=None,
+                reason="baseline_unavailable",
+                envelope_fingerprint=kwargs["envelope"].envelope_fingerprint,
+            ),
+        )
+
+    chunks = [
+        c
+        async for c in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            document_access=InMemoryDocumentAccess(
+                snapshot=build_document_scope(
+                    reading_record_id=_RECORD,
+                    base_id=_BASE,
+                    record_generation=1,
+                    base_content_sha256=_SHA,
+                    units=[
+                        ReadingUnitView(
+                            unit_id="u1",
+                            order_index=0,
+                            text="x",
+                            text_hash="11111111",
+                            base_start_utf16=0,
+                            base_end_utf16=1,
+                        )
+                    ],
+                )
+            ),
+            model=_function_model(),
+            run_fn=_run,
+            auto_wire_dependencies=False,
+        )
+    ]
+    events = _parse_sse(chunks)
+    names = [n for n, _ in events]
+    assert EVENT_MESSAGE_COMPLETED not in names
+    assert EVENT_MESSAGE_INTERRUPTED in names
+    assert len(repo.terminal_writes) == 1
+    assert repo.terminal_writes[0]["final_status"] == "failed"
+    assert (
+        repo.terminal_writes[0]["terminal_reason"]
+        == TERMINAL_REASON_BASELINE_UNAVAILABLE
+    )
+    for _name, data in events:
+        if _name == EVENT_AGENTIC_TERMINAL:
+            assert data.get("final_status") == "failed"
+            assert (
+                data.get("terminal_reason")
+                == TERMINAL_REASON_BASELINE_UNAVAILABLE
+            )
+
+
+@pytest.mark.asyncio
+async def test_unavailable_internal_status_does_not_leak_to_wire() -> None:
+    """build_terminal_dto must NEVER emit final_status="unavailable" on wire.
+
+    Scenario 16: the wire FinalStatus Literal has 5 values
+    (ok / failed / interrupted / stale / cancelled — none is "unavailable").
+    Even if a caller passes final_status="failed", build_terminal_dto
+    must not override it with the internal "unavailable" status from
+    FinalizedAskResult.
+    """
+    envelope_fingerprint = "a" * 64
+    finalized = FinalizedAskResult(
+        status="unavailable",
+        answer_text=None,
+        reason=TERMINAL_REASON_BASELINE_UNAVAILABLE,
+        envelope_fingerprint=envelope_fingerprint,
+    )
+    # Caller maps internal "unavailable" to wire "failed" before calling.
+    terminal = build_terminal_dto(
+        finalized=finalized,
+        message_id="m-1",
+        thread_id="t-1",
+        turn_run_id="tr-1",
+        envelope_fingerprint=envelope_fingerprint,
+        final_status="failed",
+        terminal_reason=TERMINAL_REASON_BASELINE_UNAVAILABLE,
+    )
+    assert terminal.final_status == "failed"
+    assert terminal.terminal_reason == TERMINAL_REASON_BASELINE_UNAVAILABLE
+    # DTO must not carry any internal-only fields
+    dto_json = terminal.model_dump(mode="json")
+    assert "response_kind" not in dto_json
+    assert "is_complete" not in dto_json
+    assert "model_visible_chars" not in dto_json
+    assert "coverage" not in dto_json
+
+
+@pytest.mark.asyncio
+async def test_completed_dto_excludes_internal_response_kind_and_coverage() -> None:
+    """ReaderRecordAskCompletedDTO must never expose internal-only fields.
+
+    Scenario 16: ``response_kind`` and ``coverage`` / ``is_complete`` /
+    ``model_visible_chars`` are internal-only. They must not appear in
+    the public completed DTO, the persisted row, or the SSE payload.
+    """
+    from app.schemas.reader_record_ask_stream import ReaderRecordAskCompletedDTO
+
+    # Build a minimal completed DTO and inspect its serialized form.
+    dto = ReaderRecordAskCompletedDTO(
+        answer_text="answer",
+        message_id="m-1",
+        thread_id="t-1",
+        turn_run_id="tr-1",
+        envelope_fingerprint="a" * 64,
+        evidence_scope=evidence_scope_from_envelope(_envelope()),
+        evidence=[],
+    )
+    dto_json = dto.model_dump(mode="json")
+    # Internal-only fields must NOT appear on the public completed DTO.
+    assert "response_kind" not in dto_json
+    assert "coverage" not in dto_json
+    assert "is_complete" not in dto_json
+    assert "model_visible_chars" not in dto_json
+    assert "article_total_chars" not in dto_json
+    assert "baseline_status" not in dto_json
 
 
 def test_build_completed_dto_includes_typed_evidence_kinds() -> None:

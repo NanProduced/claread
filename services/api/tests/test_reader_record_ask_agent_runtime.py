@@ -201,6 +201,10 @@ def _final_result_part(
     content: str,
     handles: list[str] | None = None,
     tool_call_id: str = "final-1",
+    # R4-A2: default to "clarification" so the grounding output_validator
+    # accepts empty-handle drafts. Tests that need grounded_answer must
+    # cite real handles (validator rejects grounded_answer + empty handles).
+    response_kind: str = "clarification",
 ) -> ToolCallPart:
     return ToolCallPart(
         tool_name="final_result",
@@ -208,6 +212,7 @@ def _final_result_part(
             {
                 "answer_text": content,
                 "cited_evidence_handles": handles or [],
+                "response_kind": response_kind,
             }
         ),
         tool_call_id=tool_call_id,
@@ -906,6 +911,7 @@ async def test_structured_output_recovers_within_output_retry_budget() -> None:
                             {
                                 "answer_text": "",
                                 "cited_evidence_handles": [],
+                                "response_kind": "grounded_answer",
                             }
                         ),
                         tool_call_id="bad-1",
@@ -956,6 +962,7 @@ async def test_structured_output_exhausted_raises_unexpected_model_behavior() ->
                         {
                             "answer_text": "",
                             "cited_evidence_handles": [],
+                            "response_kind": "grounded_answer",
                         }
                     ),
                     tool_call_id=f"bad-{calls['n']}",
@@ -980,22 +987,34 @@ async def test_structured_output_exhausted_raises_unexpected_model_behavior() ->
 
 @pytest.mark.asyncio
 async def test_structured_output_success_still_runs_evidence_finalizer() -> None:
-    """Valid structured draft with a foreign handle is rejected by finalizer."""
-    foreign = "evh_" + ("ab" * 16)
+    """Valid structured draft (passes output_validator) still runs finalizer.
+
+    R4-A2: the grounding output_validator now gate-keeps foreign handles via
+    ModelRetry, so a draft with an unknown handle never reaches the finalizer
+    (foreign-handle rejection by the finalizer is covered directly in
+    test_reader_record_ask_rag_finalizer.py). Here we verify the happy path:
+    a draft citing a real initial_anchor handle passes the output_validator,
+    then the finalizer runs and accepts it.
+    """
     result = await run_reading_record_ask(
-        user_message="Cite something invented.",
+        user_message="Cite the selection.",
         envelope=_envelope(),
         document_access=_access(),
-        model=_text_model("Looks fine but bad citation.", handles=[foreign]),
+        model=_text_model(
+            "Looks fine and grounded.",
+            use_initial_anchor_from_prompt=True,
+        ),
         article_rag=None,
     )
-    assert result.final_text is None
+    assert result.final_text == "Looks fine and grounded."
     assert result.finalized is not None
-    assert result.finalized.status == "invalid_citations"
-    assert foreign in result.finalized.rejected_handles
-    # Draft was accepted by pydantic-ai; finalizer is the citation gate.
+    assert result.finalized.status == "ok"
+    # Draft was accepted by pydantic-ai output_validator; finalizer ran and
+    # resolved the cited initial_anchor handle.
     assert result.agent_draft is not None
     assert result.agent_draft.answer_text.startswith("Looks fine")
+    kinds = {obs.handle.kind for obs in result.finalized.resolved_evidence}
+    assert "initial_anchor" in kinds
 
 
 @pytest.mark.asyncio
@@ -1017,6 +1036,193 @@ async def test_rag_off_basic_answer_still_completes_via_initial_anchor() -> None
     assert result.search_current_article_calls == 0
     kinds = {obs.handle.kind for obs in result.finalized.resolved_evidence}
     assert "initial_anchor" in kinds
+
+
+# ---------------------------------------------------------------------------
+# R4-A2 sign-off: real output-validator seam integration tests.
+#
+# These two tests drive the FULL agent.run path through
+# create_reading_record_ask_agent (which wires grounding_validator via the
+# agent.output_validator decorator seam) and run_reading_record_ask. They
+# prove that a STRUCTURALLY VALID but GROUNDING-INVALID draft triggers
+# ModelRetry inside the registered output_validator, which counts against
+# retries["output"], producing either a second model call (success) or a
+# finite UnexpectedModelBehavior (budget exhausted). This is distinct from
+# the existing schema-validation retry tests above (which use empty
+# answer_text that fails AgentAnswerDraft.min_length=1).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_grounding_validator_retry_then_success_via_real_seam() -> None:
+    """Output-validator ModelRetry → second model call → grounded success.
+
+    Data flow:
+      1. First model call returns a structurally-valid draft
+         (answer_text non-empty, response_kind="grounded_answer") but with
+         EMPTY cited_evidence_handles — this passes Pydantic schema
+         validation but violates the grounding contract (grounded_answer
+         requires ≥1 handle).
+      2. grounding_validator (registered via agent.output_validator seam)
+         raises ModelRetry — counted against retries["output"].
+      3. Pydantic AI feeds the retry message back and makes a SECOND model
+         call. The second call extracts the real, server-registered
+         initial_anchor handle from the user prompt (where
+         build_agent_user_prompt placed it in available_evidence_handle_ids)
+         and returns grounded_answer + [real_handle].
+      4. grounding_validator passes; agent.run returns the draft.
+      5. The finalizer runs and accepts the draft.
+
+    Assertions:
+      - calls == 2 (initial + 1 repair).
+      - finalized.status == "ok".
+      - final evidence contains the real initial_anchor handle (not a
+        fabricated one).
+      - The failure was from the output validator (grounding), NOT from
+        schema validation: the first draft had valid answer_text (min_length
+        satisfied) — only the grounding contract was violated.
+    """
+    calls = {"n": 0}
+
+    async def model_fn(messages, info: AgentInfo):
+        del info
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # Structurally valid (non-empty answer_text) but grounding-
+            # invalid: grounded_answer with zero handles.
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="final_result",
+                        args=json.dumps(
+                            {
+                                "answer_text": "第一次回答",
+                                "cited_evidence_handles": [],
+                                "response_kind": "grounded_answer",
+                            }
+                        ),
+                        tool_call_id="bad-grounding-1",
+                    )
+                ]
+            )
+        # Second call: cite the real initial_anchor handle that
+        # build_agent_user_prompt placed in the prompt.
+        import re
+
+        blob = ""
+        for msg in messages:
+            for part in getattr(msg, "parts", []) or []:
+                blob += str(getattr(part, "content", "") or "")
+        match = re.search(r"evh_[0-9a-f]{32}", blob)
+        assert match is not None, "prompt must contain a real registered handle"
+        real_handle = match.group(0)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="final_result",
+                    args=json.dumps(
+                        {
+                            "answer_text": "第二次回答已引用证据",
+                            "cited_evidence_handles": [real_handle],
+                            "response_kind": "grounded_answer",
+                        }
+                    ),
+                    tool_call_id="ok-grounding-2",
+                )
+            ]
+        )
+
+    result = await run_reading_record_ask(
+        user_message="Summarize the selection.",
+        envelope=_envelope(),
+        document_access=_access(),
+        model=FunctionModel(model_fn),
+        article_rag=None,
+    )
+    # Exactly 2 model calls: initial attempt (grounding-invalid) + 1 repair
+    # (grounding-valid). Proves the retry came from the output validator.
+    assert calls["n"] == 2
+    assert result.final_text == "第二次回答已引用证据"
+    assert result.finalized is not None
+    assert result.finalized.status == "ok"
+    assert result.agent_draft is not None
+    assert result.agent_draft.answer_text == "第二次回答已引用证据"
+    # The resolved evidence contains the real initial_anchor handle — no
+    # fabricated handle was used to bypass the registry.
+    kinds = {obs.handle.kind for obs in result.finalized.resolved_evidence}
+    assert "initial_anchor" in kinds
+    # The cited handle on the draft matches a resolved observation handle.
+    cited = set(result.agent_draft.cited_evidence_handles)
+    resolved_ids = {
+        obs.handle.handle_id for obs in result.finalized.resolved_evidence
+    }
+    assert cited <= resolved_ids
+
+
+@pytest.mark.asyncio
+async def test_grounding_validator_retry_budget_exhausted_via_real_seam() -> None:
+    """Output-validator ModelRetry exhausts retries["output"] → finite failure.
+
+    Data flow:
+      Every model call returns a structurally-valid draft (non-empty
+      answer_text, response_kind="grounded_answer") with EMPTY handles —
+      grounding-invalid. grounding_validator raises ModelRetry on every
+      call. After DEFAULT_OUTPUT_RETRIES repairs, the framework raises
+      UnexpectedModelBehavior (not UsageLimitExceeded, not an infinite
+      loop).
+
+    Assertions:
+      - UnexpectedModelBehavior is raised (stable exception category).
+      - Model call count is EXACTLY DEFAULT_OUTPUT_RETRIES + 1
+        (initial attempt + N repairs).
+      - NOT UsageLimitExceeded.
+      - No infinite loop (hard ceiling check).
+      - Exception message references output validation / retries (stable
+        fragment, not full framework text).
+    """
+    from pydantic_ai.exceptions import UsageLimitExceeded
+
+    calls = {"n": 0}
+
+    async def model_fn(messages, info: AgentInfo):
+        del messages, info
+        calls["n"] += 1
+        # Always structurally valid (non-empty answer_text) but always
+        # grounding-invalid (grounded_answer + empty handles).
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="final_result",
+                    args=json.dumps(
+                        {
+                            "answer_text": "仍然没有依据",
+                            "cited_evidence_handles": [],
+                            "response_kind": "grounded_answer",
+                        }
+                    ),
+                    tool_call_id=f"bad-grounding-{calls['n']}",
+                )
+            ]
+        )
+
+    with pytest.raises(UnexpectedModelBehavior) as ei:
+        await run_reading_record_ask(
+            user_message="Summarize.",
+            envelope=_envelope(),
+            document_access=_access(),
+            model=FunctionModel(model_fn),
+            article_rag=None,
+        )
+    # Exact budget: initial attempt + DEFAULT_OUTPUT_RETRIES repairs.
+    assert calls["n"] == DEFAULT_OUTPUT_RETRIES + 1
+    # Hard ceiling against infinite retry.
+    assert calls["n"] <= DEFAULT_OUTPUT_RETRIES + 2
+    # Must NOT be a usage-limit failure (no usage_limits configured on
+    # the agent; the budget is the output-validator retry budget).
+    assert not isinstance(ei.value, UsageLimitExceeded)
+    # Stable fragment check — do not depend on full framework wording.
+    msg = str(ei.value).lower()
+    assert "output validation" in msg or "retries" in msg or "validator" in msg
 
 
 @pytest.mark.asyncio

@@ -22,16 +22,39 @@ from app.services.reader_record_ask.evidence import (
 from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
 from app.services.reader_record_ask.fence import FenceFn, run_fence
 
-FinalizeStatus = Literal["ok", "context_stale", "invalid_citations"]
+# Internal-only finalize status. Wire FinalStatus (in
+# reader_record_ask_stream.py) is a 5-value Literal that is NOT extended
+# here. ``"unavailable"`` is an internal status used by the runtime /
+# finalizer to signal document/baseline unavailability; production_stream
+# maps it to wire ``final_status="failed"`` + a typed ``terminal_reason``.
+FinalizeStatus = Literal[
+    "ok",
+    "context_stale",
+    "invalid_citations",
+    "unavailable",
+]
+
+# Internal-only response discriminator on AgentAnswerDraft. Never enters
+# the public SSE / completed / history DTO, persistence, or Web DTO.
+ResponseKind = Literal["grounded_answer", "clarification", "unavailable"]
 
 
 class AgentAnswerDraft(BaseModel):
-    """Structured agent output — answer text + opaque handle ids only."""
+    """Structured agent output — answer text + opaque handle ids + response kind.
+
+    ``response_kind`` is an internal-only discriminator validated by the
+    agent output_validator (grounding_validator.py). It is not serialised
+    into any wire DTO or persistence layer.
+    """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     answer_text: str = Field(min_length=1, max_length=20_000)
     cited_evidence_handles: list[str] = Field(default_factory=list)
+    # Required internal discriminator. Pydantic AI partial validation
+    # tolerates missing required fields during streaming; the final
+    # validation path + the output_validator enforce presence + semantics.
+    response_kind: ResponseKind
 
     @field_validator("cited_evidence_handles", mode="before")
     @classmethod
@@ -78,13 +101,20 @@ async def finalize_agent_answer(
 ) -> FinalizedAskResult:
     """Finalize the model draft into a fence-checked, handle-resolved result.
 
-    Rules
-    -----
-    - Registry must be bound to this envelope fingerprint.
-    - Each cited handle must be a mint-shaped id present in the registry.
-    - Observation handle fingerprint must match the envelope.
-    - Final generation fence must pass; otherwise status is ``context_stale``
-      and no answer/evidence is submitted.
+    Responsibility scope (R4-A2):
+    - Scope identity: registry must be bound to this envelope fingerprint
+      (non-retryable → ``invalid_citations``).
+    - Final generation fence (non-retryable → ``context_stale``).
+    - Handle resolution + envelope_fingerprint match (non-retryable
+      defense-in-depth → ``invalid_citations``). Grounding checks that
+      can be corrected by the model (handle existence, count limit,
+      response_kind semantics) live in the output_validator, not here.
+    - ``response_kind="unavailable"`` → return ``status="unavailable"``
+      with no answer/evidence. This is defense in depth: the validator
+      only allows ``unavailable`` when ``baseline_available=False``, but
+      runtime never invokes the agent in that case. If we ever reach
+      finalizer with ``unavailable``, production_stream maps to wire
+      ``final_status="failed"`` + ``terminal_reason`` from the runtime.
     """
     if registry.envelope_fingerprint != envelope.envelope_fingerprint:
         return FinalizedAskResult(
@@ -92,6 +122,19 @@ async def finalize_agent_answer(
             reason="evidence registry is not bound to this envelope",
             envelope_fingerprint=envelope.envelope_fingerprint,
             rejected_handles=tuple(draft.cited_evidence_handles),
+        )
+
+    # Defense-in-depth: if the model emitted unavailable despite
+    # baseline_available=True (validator should have rejected this), do
+    # not produce a pseudo-success completed. Return typed terminal.
+    if draft.response_kind == "unavailable":
+        return FinalizedAskResult(
+            status="unavailable",
+            answer_text=None,
+            resolved_evidence=(),
+            rejected_handles=(),
+            reason=None,
+            envelope_fingerprint=envelope.envelope_fingerprint,
         )
 
     fence_result = await run_fence(fence, envelope)

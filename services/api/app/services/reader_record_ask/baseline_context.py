@@ -313,6 +313,21 @@ class BaselineAgentContext:
             text). Diagnostic only; not for public DTO.
         article_chunk_count: Number of chunks produced. Diagnostic only.
         baseline_failure_reason: Human-readable reason when status != injected.
+        model_visible_chars: Sum of ``len(chunk.text)`` across all chunks.
+            Counts only the raw text the model actually sees — not
+            separators, tags, or handle listings. Diagnostic only; never
+            enters public DTO or persistence. Zero when not injected.
+        is_complete: True iff the full canonical article text entered the
+            model without truncation. Deterministic; computed at assembly
+            time. Short article + no XML/serialized truncation → True.
+            Medium/long path → always False (first-N-units selection
+            semantics; the model is nudged toward read_range/search for
+            full coverage). False when not injected. Never enters public
+            DTO or persistence.
+
+    Identity fields (record id, base id, generation, fingerprint, text_hash,
+    base_*_utf16) are deliberately NOT exposed here — only aggregate
+    diagnostic counters and a coverage boolean.
     """
 
     model_context_chunks: tuple[ModelContextChunk, ...] = ()
@@ -321,6 +336,8 @@ class BaselineAgentContext:
     article_total_chars: int = 0
     article_chunk_count: int = 0
     baseline_failure_reason: str | None = None
+    model_visible_chars: int = 0
+    is_complete: bool = False
 
     @property
     def is_injected(self) -> bool:
@@ -573,6 +590,11 @@ class BaselineContextAssembler:
             article_total_chars=total_chars,
             article_chunk_count=1,
             baseline_failure_reason=None,
+            model_visible_chars=len(truncated),
+            # Short article: complete iff no serialized-budget truncation
+            # occurred (the raw budget is not applied on this path — only
+            # the serialized hard budget can truncate a short article).
+            is_complete=(truncated == joined_text),
         )
 
     # ------------------------------------------------------------------
@@ -698,6 +720,12 @@ class BaselineContextAssembler:
             article_total_chars=total_chars,
             article_chunk_count=len(chunks),
             baseline_failure_reason=None,
+            model_visible_chars=sum(len(c.text) for c in chunks),
+            # Medium/long path uses "deterministic first-N-units" selection
+            # semantics. Even if all units happen to fit in budget, the
+            # path is designed for partial coverage — the model should
+            # use read_range/search_current_article for full coverage.
+            is_complete=False,
         )
 
     # ------------------------------------------------------------------

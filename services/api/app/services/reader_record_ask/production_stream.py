@@ -85,6 +85,15 @@ logger = logging.getLogger(__name__)
 TERMINAL_REASON_AGENT_OUTPUT_INVALID = "agent_output_invalid"
 TERMINAL_REASON_AGENT_RUN_FAILED = "agent_run_failed"
 
+# Baseline / document unavailable terminal reasons. Mapped from internal
+# FinalizeStatus="unavailable" produced when baseline assembly fails or
+# when the agent emits response_kind="unavailable" (defense in depth).
+# Wire FinalStatus is a 5-value Literal that does NOT include "unavailable";
+# production_stream always maps internal "unavailable" to wire "failed" +
+# one of these typed terminal_reasons.
+TERMINAL_REASON_DOCUMENT_UNAVAILABLE = "document_unavailable"
+TERMINAL_REASON_BASELINE_UNAVAILABLE = "baseline_unavailable"
+
 # Sentinel placed on the progress queue when the agent task finishes
 # (success or failure). Not a RuntimeEvent.
 _AGENT_DONE = object()
@@ -252,7 +261,14 @@ def build_terminal_dto(
     if finalized is not None:
         rejected = list(finalized.rejected_handles)
         terminal_reason = terminal_reason or finalized.reason
-        final_status = finalized.status if finalized.status != "ok" else final_status
+        # Only override final_status for wire-compatible internal statuses.
+        # ``"unavailable"`` is internal-only and must NEVER leak to wire —
+        # the caller maps it to ``"failed"`` + a typed terminal_reason
+        # before calling this function. Letting it override here would
+        # trip the wire FinalStatus Literal validator (5 values, no
+        # ``"unavailable"``).
+        if finalized.status not in ("ok", "unavailable"):
+            final_status = finalized.status
     return ReaderRecordAskTerminalDTO(
         final_status=final_status,  # type: ignore[arg-type]
         message_id=message_id,
@@ -852,16 +868,35 @@ async def stream_agentic_thread_message(
     if finalized is None or finalized.status != "ok" or run_result.final_text is None:
         status = finalized.status if finalized is not None else "failed"
         run_status = "stale" if status == "context_stale" else "failed"
+
+        # Map internal "unavailable" to wire "failed" + typed terminal_reason.
+        # Wire FinalStatus is a 5-value Literal that does NOT include
+        # "unavailable"; production must never emit it on the wire. The
+        # caller (runtime) sets finalized.reason to one of the two typed
+        # values when producing status="unavailable"; we defence-in-depth
+        # validate that here and fall back to a safe typed value.
+        if status == "unavailable":
+            wire_final_status = "failed"
+            typed_reason = finalized.reason if finalized is not None else None
+            if typed_reason not in (
+                TERMINAL_REASON_DOCUMENT_UNAVAILABLE,
+                TERMINAL_REASON_BASELINE_UNAVAILABLE,
+            ):
+                typed_reason = TERMINAL_REASON_BASELINE_UNAVAILABLE
+        else:
+            wire_final_status = status if status != "ok" else "failed"
+            typed_reason = (
+                finalized.reason if finalized is not None else "missing_finalizer_result"
+            )
+
         terminal = build_terminal_dto(
             finalized=finalized,
             message_id=assistant_msg["id"],
             thread_id=str(thread_id),
             turn_run_id=turn["id"],
             envelope_fingerprint=envelope.envelope_fingerprint,
-            final_status=status if status != "ok" else "failed",
-            terminal_reason=(
-                finalized.reason if finalized is not None else "missing_finalizer_result"
-            ),
+            final_status=wire_final_status,
+            terminal_reason=typed_reason,
         )
         terminal_json = terminal.model_dump(mode="json")
         await repo.terminal_agentic_turn_run(

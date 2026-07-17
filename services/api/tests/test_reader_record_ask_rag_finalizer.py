@@ -139,7 +139,14 @@ def _final_part(content: str, handles: list[str] | None = None) -> ToolCallPart:
     return ToolCallPart(
         tool_name="final_result",
         args=json.dumps(
-            {"answer_text": content, "cited_evidence_handles": handles or []}
+            {
+                "answer_text": content,
+                "cited_evidence_handles": handles or [],
+                # R4-A2: "clarification" passes the grounding output_validator
+                # with empty handles; tests needing grounded_answer cite real
+                # handles and override this explicitly.
+                "response_kind": "clarification",
+            }
         ),
         tool_call_id="final-1",
     )
@@ -376,6 +383,7 @@ async def test_finalizer_rejects_unknown_handle() -> None:
         draft=AgentAnswerDraft(
             answer_text="x",
             cited_evidence_handles=["evh_" + ("ab" * 16)],
+            response_kind="grounded_answer",
         ),
         fence=StaticGenerationFence(live_generation=1),
     )
@@ -406,6 +414,7 @@ async def test_finalizer_rejects_foreign_envelope_handle() -> None:
         draft=AgentAnswerDraft(
             answer_text="x",
             cited_evidence_handles=[obs.handle.handle_id],
+            response_kind="grounded_answer",
         ),
         fence=StaticGenerationFence(live_generation=1),
     )
@@ -431,6 +440,7 @@ async def test_finalizer_stale_fence_no_answer() -> None:
         draft=AgentAnswerDraft(
             answer_text="should not submit",
             cited_evidence_handles=[ref.handle_id],
+            response_kind="grounded_answer",
         ),
         fence=StaticGenerationFence(live_generation=99),
     )

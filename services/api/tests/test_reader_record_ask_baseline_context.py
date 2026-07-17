@@ -144,6 +144,9 @@ def _final_result_part(
     content: str,
     handles: list[str] | None = None,
     tool_call_id: str = "final-1",
+    # R4-A2: default to "clarification" so the grounding output_validator
+    # accepts empty-handle drafts.
+    response_kind: str = "clarification",
 ) -> ToolCallPart:
     return ToolCallPart(
         tool_name="final_result",
@@ -151,6 +154,7 @@ def _final_result_part(
             {
                 "answer_text": content,
                 "cited_evidence_handles": handles or [],
+                "response_kind": response_kind,
             }
         ),
         tool_call_id=tool_call_id,
@@ -560,7 +564,15 @@ async def test_baseline_failure_does_not_produce_pseudo_success() -> None:
         model=_text_model("should not be used"),
     )
     assert result.final_text is None
-    assert result.finalized is None
+    # R4-A2: baseline failure now returns a typed FinalizedAskResult
+    # (status="unavailable", reason="document_unavailable") instead of
+    # None, so production_stream can emit a typed terminal_reason
+    # instead of the legacy "missing_finalizer_result".
+    assert result.finalized is not None
+    assert result.finalized.status == "unavailable"
+    assert result.finalized.reason == "document_unavailable"
+    assert result.finalized.answer_text is None
+    assert result.finalized.resolved_evidence == ()
     assert result.baseline_context is not None
     assert result.baseline_context.baseline_status != "injected"
     assert result.baseline_context.baseline_failure_reason is not None
@@ -1529,3 +1541,104 @@ async def test_real_prompt_delta_within_hard_budget_all_scenarios() -> None:
         assert renderer_cost == real_delta, (
             f"{name}: renderer cost {renderer_cost} != real delta {real_delta}"
         )
+
+
+# ---------------------------------------------------------------------------
+# R4-A2 coverage awareness tests (scenarios 8, 9, 10)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_short_article_baseline_coverage_complete() -> None:
+    """Short article (≤6000 chars) → is_complete=True, model_visible_chars=len(joined).
+
+    Scenario 8: when the full canonical article text enters the model
+    prompt without truncation, the assembler must report coverage as
+    ``complete``. This is the deterministic signal the agent prompt uses
+    to permit article-level claims.
+    """
+    # Single short unit well under the 6000 char threshold and the
+    # serialized hard budget — no truncation possible.
+    text = "Hello world. " * 50  # ~650 chars
+    units = _make_units(text)
+    envelope = _make_envelope()
+    registry = _registry(envelope)
+    assembler = BaselineContextAssembler(
+        envelope=envelope,
+        document_access=_make_access(_make_scope(units)),
+        registry=registry,
+    )
+    baseline = await assembler.assemble_baseline()
+    assert baseline.is_injected
+    assert baseline.baseline_status == "injected"
+    assert baseline.is_complete is True
+    joined = text  # single unit → joined text equals the unit text
+    assert baseline.model_visible_chars == len(joined)
+    assert baseline.article_total_chars == len(joined)
+
+
+@pytest.mark.asyncio
+async def test_medium_long_article_baseline_coverage_partial() -> None:
+    """Medium/long article (>6000 chars) → is_complete=False.
+
+    Scenario 9: medium/long articles use first-N-units selection with a
+    strict raw-text budget, so the model only sees a subset. Coverage
+    must be ``partial`` to nudge the agent toward read_range/search for
+    full-article claims.
+    """
+    # Build an article well above the short-article threshold.
+    # 2 units × 5000 chars each = 10000 chars total (raw budget 8000).
+    text_a = "A" * 5000
+    text_b = "B" * 5000
+    units = _make_units(text_a, text_b)
+    envelope = _make_envelope()
+    registry = _registry(envelope)
+    assembler = BaselineContextAssembler(
+        envelope=envelope,
+        document_access=_make_access(_make_scope(units)),
+        registry=registry,
+    )
+    baseline = await assembler.assemble_baseline()
+    assert baseline.is_injected
+    assert baseline.baseline_status == "injected"
+    # Medium/long path is always partial — first-N-units selection
+    # semantics means the model never sees the full article on this path.
+    assert baseline.is_complete is False
+    assert baseline.model_visible_chars > 0
+    assert baseline.model_visible_chars <= MEDIUM_LONG_ARTICLE_BUDGET_CHARS
+    assert baseline.article_total_chars == 10000 + 1  # 5000 + "\n" + 5000
+
+
+@pytest.mark.asyncio
+async def test_xml_escaping_truncation_forces_coverage_partial() -> None:
+    """Short article with XML-escaping inflation → is_complete=False.
+
+    Scenario 10: even when the raw joined text is under the short-article
+    threshold, pathological inputs that inflate under XML escaping (e.g.
+    all ``&`` chars → 5× inflation) trigger the serialized hard budget.
+    When serialized truncation occurs, coverage must be ``partial`` even
+    on the short-article path.
+    """
+    # 4000 ``&`` chars: raw length 4000 (under 6000 short threshold),
+    # but XML-escaped length is 20000 (5× inflation), which exceeds the
+    # 16000 serialized hard budget → truncation → is_complete=False.
+    text = "&" * 4000
+    units = _make_units(text)
+    envelope = _make_envelope()
+    registry = _registry(envelope)
+    assembler = BaselineContextAssembler(
+        envelope=envelope,
+        document_access=_make_access(_make_scope(units)),
+        registry=registry,
+    )
+    baseline = await assembler.assemble_baseline()
+    assert baseline.is_injected
+    assert baseline.baseline_status == "injected"
+    # Serialized truncation occurred: chunk text is shorter than the
+    # full joined text.
+    assert baseline.is_complete is False
+    assert baseline.model_visible_chars < len(text)
+    assert len(baseline.model_context_chunks) == 1
+    chunk_text = baseline.model_context_chunks[0].text
+    assert len(chunk_text) == baseline.model_visible_chars
+    assert chunk_text != text  # truncated, not equal to full joined text
