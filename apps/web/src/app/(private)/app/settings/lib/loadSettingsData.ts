@@ -2,12 +2,11 @@ import "server-only";
 
 import { readReadingDefaultsFromSettings } from "@/lib/reading-defaults";
 import { getProfileSettings } from "@/services/bff/profile";
-import type { AccountData, PreferencesData, UsageData } from "../sections/SettingsSectionContent";
+import type { AccountData, PreferencesData } from "../sections/SettingsSectionContent";
 
 export interface SettingsData {
   accountData: AccountData;
   preferencesData: PreferencesData;
-  usageData: UsageData;
 }
 
 /**
@@ -19,7 +18,6 @@ export interface SettingsData {
  */
 export async function loadSettingsData(): Promise<SettingsData> {
   const settings = await getProfileSettings();
-  const quota = settings.quota;
 
   const displayName = settings.profile?.nickname || settings.session.phone || "Web User";
   const realNickname = settings.profile?.nickname || "";
@@ -27,11 +25,6 @@ export async function loadSettingsData(): Promise<SettingsData> {
 
   const readingDefaults = readReadingDefaultsFromSettings(settings.profile?.settings);
   const canEditSharedDefaults = settings.status === "ready";
-
-  const quotaLimit = quota ? (quota.dailyFreePoints ?? quota.quotaLimit) : 0;
-  const quotaUsed = quota ? (quota.dailyUsedPoints ?? quota.quotaUsed) : 0;
-  const quotaPercentage =
-    quotaLimit > 0 ? Math.min(100, Math.max(0, (quotaUsed / quotaLimit) * 100)) : 0;
 
   return {
     accountData: {
@@ -45,12 +38,6 @@ export async function loadSettingsData(): Promise<SettingsData> {
       readingGoal: readingDefaults.readingGoal,
       readingVariant: readingDefaults.readingVariant,
       canEdit: canEditSharedDefaults,
-    },
-    usageData: {
-      quota,
-      quotaUsed,
-      quotaLimit,
-      quotaPercentage,
     },
   };
 }

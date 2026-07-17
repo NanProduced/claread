@@ -5,7 +5,6 @@ import { CheckCircle2, AlertCircle } from "lucide-react";
 
 import { SegmentedControl } from "@/components/composed";
 import { Button } from "@/components/primitives/button";
-import { Alert, AlertDescription } from "@/components/primitives/alert";
 import {
   DEFAULT_READING_VARIANT_BY_GOAL,
   READING_GOAL_OPTIONS,
@@ -101,26 +100,35 @@ export function ReadingDefaultsSection({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      <p className="text-xs text-muted-foreground">
+        这里的设置仅作为每次新建阅读时的初始默认值。在实际解析文章前，您依然可以针对单篇文章自由调整。
+      </p>
 
-      <SegmentedControl
-        label="阅读目标"
-        value={draft.readingGoal}
-        onValueChange={handleGoalChange}
-        options={READING_GOAL_OPTIONS}
-      />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-[6rem_1fr]">
+        <span className="pt-2 text-xs text-muted-foreground">阅读目标</span>
+        <SegmentedControl
+          value={draft.readingGoal}
+          onValueChange={handleGoalChange}
+          options={READING_GOAL_OPTIONS}
+          className="[&_button]:min-h-11"
+        />
+      </div>
 
-      <SegmentedControl
-        label="解析模式"
-        value={draft.readingVariant}
-        onValueChange={handleVariantChange}
-        options={variantOptions}
-      />
-      
-      <div className="flex flex-wrap items-center gap-3 pt-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-[6rem_1fr]">
+        <span className="pt-2 text-xs text-muted-foreground">解析模式</span>
+        <SegmentedControl
+          value={draft.readingVariant}
+          onValueChange={handleVariantChange}
+          options={variantOptions}
+          className="[&_button]:min-h-11"
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 pt-2">
         <Button
           variant="primary-ink"
-          className="min-w-[128px] justify-center"
+          className="min-h-11 min-w-[128px] justify-center"
           disabled={!canEdit || !dirty || state.kind === "saving"}
           onClick={handleSave}
         >
@@ -128,35 +136,34 @@ export function ReadingDefaultsSection({
         </Button>
         <Button
           variant="ghost"
-          className="min-w-[96px] justify-center"
+          className="min-h-11 min-w-[96px] justify-center"
           disabled={!dirty || state.kind === "saving"}
           onClick={handleReset}
         >
           取消
         </Button>
       </div>
-      
-      {/* Feedback Messages */}
+
       {canEdit && (state.kind === "saved" || state.kind === "error") && (
-        <div className="pt-2 max-w-sm transition-all animate-in fade-in slide-in-from-top-1 duration-300">
-          <Alert 
-            variant={state.kind === "error" ? "destructive" : "default"} 
-            className={`py-2 px-3 flex items-center ${state.kind === "saved" ? "border-structure-green/30 bg-structure-green/5 text-structure-green [&>svg]:text-structure-green" : ""}`}
-          >
-            {state.kind === "saved" ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-            <AlertDescription className="text-xs font-medium ml-1">
-              {state.message}
-            </AlertDescription>
-          </Alert>
+        <div className="flex items-center gap-1.5 text-xs">
+          {state.kind === "saved" ? (
+            <>
+              <CheckCircle2 className="size-4 text-muted-foreground" />
+              <span className="text-muted-foreground">{state.message}</span>
+            </>
+          ) : (
+            <>
+              <AlertCircle className="size-4 text-destructive" />
+              <span className="text-destructive">{state.message}</span>
+            </>
+          )}
         </div>
       )}
-      
+
       {!canEdit && (
-        <div className="pt-2">
-          <p className="text-xs leading-5 text-muted-foreground">
-            当前会话未连接真实账户，无法保存共享默认值。
-          </p>
-        </div>
+        <p className="text-xs text-muted-foreground">
+          当前会话未连接真实账户，无法保存共享默认值。
+        </p>
       )}
     </div>
   );

@@ -17,14 +17,13 @@ import { SettingsDialogRouteClient } from "@/components/settings/SettingsDialogR
  * fallback page — no API contract is duplicated or altered.
  */
 export default async function InterceptedSettingsPage() {
-  const { accountData, preferencesData, usageData } = await loadSettingsData();
+  const { accountData, preferencesData } = await loadSettingsData();
 
   return (
     <React.Suspense fallback={null}>
       <SettingsDialogRouteClient
         accountData={accountData}
         preferencesData={preferencesData}
-        usageData={usageData}
       />
     </React.Suspense>
   );

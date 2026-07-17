@@ -1,49 +1,99 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
 import { ThemePreferencesSection } from "./ThemePreferencesSection";
+import type { ResolvedTheme, ThemePreference } from "@/lib/appearance";
 
-const setThemePreference = vi.fn();
-
-vi.mock("@/components/providers/appearance-provider", () => ({
-  useAppearance: () => ({
-    themePreference: "system",
-    resolvedTheme: "light",
-    setThemePreference,
-  }),
+const themeState = vi.hoisted(() => ({
+  themePreference: "system" as ThemePreference,
+  resolvedTheme: "light" as ResolvedTheme,
+  setThemePreference: vi.fn(),
 }));
 
+vi.mock("@/components/providers/appearance-provider", () => ({
+  useAppearance: () => themeState,
+}));
+
+beforeEach(() => {
+  themeState.themePreference = "system";
+  themeState.resolvedTheme = "light";
+  themeState.setThemePreference.mockClear();
+});
+
+afterEach(() => {
+  cleanup();
+});
+
 describe("ThemePreferencesSection", () => {
-  it("renders the system/light/dark preference selector", () => {
+  it("renders the three radio options", () => {
     render(<ThemePreferencesSection />);
 
-    expect(screen.getByText("跟随系统")).toBeTruthy();
-    expect(screen.getByText("浅色")).toBeTruthy();
-    expect(screen.getByText("深色")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: /深色 dark/i }));
-    expect(setThemePreference).toHaveBeenCalledWith("dark");
-
-    fireEvent.click(screen.getByRole("button", { name: /跟随系统 follow system/i }));
-    expect(setThemePreference).toHaveBeenCalledWith("system");
+    expect(screen.getByRole("radio", { name: /跟随系统/ })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /浅色/ })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /深色/ })).toBeTruthy();
   });
 
-  it("renders only two visual theme-preview cards (light and dark)", () => {
-    render(<ThemePreferencesSection />);
-    expect(screen.getAllByText("Light").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Dark").length).toBeGreaterThan(0);
+  it("checks only one option at a time", () => {
+    const { rerender } = render(<ThemePreferencesSection />);
+    const radios = screen.getAllByRole("radio");
 
-    // Paper must not appear as a preference label or preview chip.
-    expect(screen.queryByText("Paper")).toBeNull();
-    expect(screen.queryByText("纸质")).toBeNull();
+    expect(radios).toHaveLength(3);
+    expect(radios.filter((radio) => (radio as HTMLInputElement).checked)).toHaveLength(1);
+    expect((screen.getByRole("radio", { name: /跟随系统/ }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+
+    themeState.themePreference = "light";
+    rerender(<ThemePreferencesSection />);
+
+    expect((screen.getByRole("radio", { name: /浅色/ }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("radio", { name: /跟随系统/ }) as HTMLInputElement).checked).toBe(
+      false,
+    );
+    expect((screen.getByRole("radio", { name: /深色/ }) as HTMLInputElement).checked).toBe(false);
   });
 
-  it("gives every theme preference a visible shared keyboard-focus treatment", () => {
-    render(<ThemePreferencesSection />);
+  it("shows resolved theme hint only in system mode", () => {
+    const { rerender } = render(<ThemePreferencesSection />);
 
-    for (const button of screen.getAllByRole("button")) {
-      expect(button.className).toContain("focus-ring");
-    }
+    expect(screen.getByText("当前显示：浅色")).toBeTruthy();
+
+    themeState.themePreference = "light";
+    rerender(<ThemePreferencesSection />);
+    expect(screen.queryByText(/当前显示/)).toBeNull();
+
+    themeState.themePreference = "dark";
+    themeState.resolvedTheme = "dark";
+    rerender(<ThemePreferencesSection />);
+    expect(screen.queryByText(/当前显示/)).toBeNull();
+  });
+
+  it("calls setThemePreference with the correct values", () => {
+    const { rerender } = render(<ThemePreferencesSection />);
+
+    fireEvent.click(screen.getByRole("radio", { name: /深色/ }));
+    expect(themeState.setThemePreference).toHaveBeenCalledWith("dark");
+
+    fireEvent.click(screen.getByRole("radio", { name: /浅色/ }));
+    expect(themeState.setThemePreference).toHaveBeenCalledWith("light");
+
+    themeState.themePreference = "light";
+    rerender(<ThemePreferencesSection />);
+
+    fireEvent.click(screen.getByRole("radio", { name: /跟随系统/ }));
+    expect(themeState.setThemePreference).toHaveBeenCalledWith("system");
+  });
+
+  it("exposes a visible focus-within ring contract on each option label", () => {
+    const { container } = render(<ThemePreferencesSection />);
+
+    const labels = container.querySelectorAll("label");
+    expect(labels.length).toBe(3);
+    labels.forEach((label) => {
+      expect(label.className).toContain("focus-within:ring-2");
+      expect(label.className).toContain("focus-within:ring-lens-blue");
+    });
   });
 });

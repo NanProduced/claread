@@ -69,7 +69,7 @@ export function SettingsDialogSectionFrame({
         <div
           className={cn(
             "px-5 py-7 md:px-8 md:py-8",
-            width === "standard" && "max-w-[34rem]",
+            width === "standard" && "max-w-[40rem]",
           )}
         >
           {children}

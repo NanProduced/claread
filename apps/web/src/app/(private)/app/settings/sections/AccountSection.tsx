@@ -31,34 +31,38 @@ export function AccountSection({
   const needsReauth = status === "unauthenticated" || status === "limited_debug";
 
   return (
-    <div className="flex items-start gap-6">
-      <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-ink font-display text-2xl font-medium text-surface">
-        {avatarText}
-      </div>
-      <div className="flex-1 space-y-3 pt-1">
-        <div>
+    <div className="space-y-0">
+      <div className="mb-6 border-b border-hairline pb-6 md:grid md:grid-cols-[6rem_1fr] md:gap-4">
+        <div className="mb-2 text-sm text-muted-foreground md:mb-0">账户</div>
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-raised text-sm font-semibold text-text-secondary">
+            {avatarText}
+          </div>
           <NicknameEditor initialNickname={nickname} displayFallback={displayFallback} />
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            {phone || "Web User"}
-            <span className="mx-2 text-hairline">/</span>
-            <span className={status === "ready" ? "text-subtle" : "text-amber-600"}>
-              {statusLabel[status]}
-            </span>
-          </p>
         </div>
-        <div className="pt-2">
+      </div>
+
+      <div className="mb-6 border-b border-hairline pb-6 md:grid md:grid-cols-[6rem_1fr] md:gap-4">
+        <div className="mb-2 text-sm text-muted-foreground md:mb-0">登录信息</div>
+        <div className="space-y-1">
+          <p className="text-sm text-ink">{phone || "Web User"}</p>
+          <p className="text-sm text-muted-foreground">{statusLabel[status]}</p>
+        </div>
+      </div>
+
+      <div className="md:grid md:grid-cols-[6rem_1fr] md:gap-4">
+        <div className="mb-2 text-sm text-muted-foreground md:mb-0">会话</div>
+        <div>
           {needsReauth ? (
             <Button
               asChild
               variant="ghost"
-              className="h-auto p-0 text-sm font-semibold text-lens-blue hover:bg-transparent hover:underline hover:text-lens-blue-dark"
+              className="min-h-11 px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-raised hover:text-text-primary"
             >
               <Link href={loginRoute(appSettingsRoute)}>重新登录</Link>
             </Button>
           ) : (
-            <div className="inline-flex">
-              <LogoutButton />
-            </div>
+            <LogoutButton />
           )}
         </div>
       </div>

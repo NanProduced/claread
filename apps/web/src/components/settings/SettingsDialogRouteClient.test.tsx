@@ -74,13 +74,8 @@ const mockContent = vi.fn();
 vi.mock("@/app/(private)/app/settings/sections/SettingsSectionContent", () => ({
   SettingsSectionContent: (props: unknown) => {
     mockContent(props);
-    const { section, usageShowLedger } = props as {
-      section: string;
-      usageShowLedger: boolean;
-    };
-    return (
-      <div data-testid="content" data-section={section} data-ledger={usageShowLedger} />
-    );
+    const { section } = props as { section: string };
+    return <div data-testid="content" data-section={section} />;
   },
 }));
 
@@ -136,12 +131,6 @@ describe("SettingsDialogRouteClient", () => {
       readingVariant: "translation" as never,
       canEdit: true,
     },
-    usageData: {
-      quota: null,
-      quotaUsed: 0,
-      quotaLimit: 100,
-      quotaPercentage: 0,
-    },
   };
 
   it("renders SettingsDialogShell with open=true", () => {
@@ -177,11 +166,15 @@ describe("SettingsDialogRouteClient", () => {
     expect(screen.getByTestId("shell").dataset.section).toBe("preferences");
   });
 
-  it("passes usageShowLedger=true to SettingsSectionContent", () => {
+  it("does not pass usageData or usageShowLedger to SettingsSectionContent", () => {
     render(<SettingsDialogRouteClient {...defaultProps} />);
     expect(mockContent).toHaveBeenCalled();
-    const contentProps = mockContent.mock.calls[0][0] as { usageShowLedger: boolean };
-    expect(contentProps.usageShowLedger).toBe(true);
+    const contentProps = mockContent.mock.calls[0][0] as {
+      usageData?: unknown;
+      usageShowLedger?: boolean;
+    };
+    expect(contentProps.usageData).toBeUndefined();
+    expect(contentProps.usageShowLedger).toBeUndefined();
   });
 
   it("calls router.replace when section changes (no history accumulation)", () => {
@@ -220,12 +213,6 @@ describe("SettingsDialogRouteClient — opener focus capture & restoration", () 
       readingGoal: "balanced" as never,
       readingVariant: "translation" as never,
       canEdit: true,
-    },
-    usageData: {
-      quota: null,
-      quotaUsed: 0,
-      quotaLimit: 100,
-      quotaPercentage: 0,
     },
   };
 

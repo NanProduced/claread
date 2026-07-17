@@ -28,10 +28,13 @@ describe("AccountSection", () => {
     avatarText: "A",
   };
 
-  it("renders the avatar text", () => {
-    render(<AccountSection {...baseProps} status="ready" />);
+  it("renders the compact avatar text in a quiet raised surface", () => {
+    const { container } = render(<AccountSection {...baseProps} status="ready" />);
 
     expect(screen.getByText("A")).toBeTruthy();
+    const avatar = container.querySelector(".bg-surface-raised");
+    expect(avatar).not.toBeNull();
+    expect(avatar?.textContent).toBe("A");
   });
 
   it("renders NicknameEditor with nickname and displayFallback props", () => {
@@ -43,11 +46,25 @@ describe("AccountSection", () => {
     expect(editor.getAttribute("data-fallback")).toBe("Alice Display");
   });
 
+  it("renders the three section group labels", () => {
+    render(<AccountSection {...baseProps} status="ready" />);
+
+    expect(screen.getByText("账户")).toBeTruthy();
+    expect(screen.getByText("登录信息")).toBeTruthy();
+    expect(screen.getByText("会话")).toBeTruthy();
+  });
+
   it("renders the phone number with status label for ready status", () => {
     render(<AccountSection {...baseProps} status="ready" />);
 
     expect(screen.getByText("13800000000")).toBeTruthy();
     expect(screen.getByText("已连接")).toBeTruthy();
+  });
+
+  it("renders accurate status labels for non-ready states", () => {
+    render(<AccountSection {...baseProps} status="upstream_unavailable" />);
+
+    expect(screen.getByText("服务不可用")).toBeTruthy();
   });
 
   it("renders LogoutButton when status is ready", () => {
@@ -78,15 +95,5 @@ describe("AccountSection", () => {
     render(<AccountSection {...baseProps} phone={undefined} status="ready" />);
 
     expect(screen.getByText("Web User")).toBeTruthy();
-  });
-
-  it("shows status label as amber when status is not ready", () => {
-    const { container } = render(
-      <AccountSection {...baseProps} status="upstream_unavailable" />,
-    );
-
-    const statusSpan = container.querySelector(".text-amber-600");
-    expect(statusSpan).not.toBeNull();
-    expect(statusSpan?.textContent).toBe("服务不可用");
   });
 });

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { AccountData, PreferencesData, UsageData } from "@/app/(private)/app/settings/sections/SettingsSectionContent";
+import type { AccountData, PreferencesData } from "@/app/(private)/app/settings/sections/SettingsSectionContent";
 import type { SettingsSection } from "@/components/settings/SettingsDialogShell";
 import { SettingsDialogShell } from "@/components/settings/SettingsDialogShell";
 import { SettingsSectionContent } from "@/app/(private)/app/settings/sections/SettingsSectionContent";
@@ -27,7 +27,6 @@ export function parseSettingsSection(
 export interface SettingsDialogRouteClientProps {
   accountData: AccountData;
   preferencesData: PreferencesData;
-  usageData: UsageData;
 }
 
 /**
@@ -46,7 +45,6 @@ export interface SettingsDialogRouteClientProps {
 export function SettingsDialogRouteClient({
   accountData,
   preferencesData,
-  usageData,
 }: SettingsDialogRouteClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -110,8 +108,6 @@ export function SettingsDialogRouteClient({
         section={activeSection}
         accountData={accountData}
         preferencesData={preferencesData}
-        usageData={usageData}
-        usageShowLedger
       />
     </SettingsDialogShell>
   );

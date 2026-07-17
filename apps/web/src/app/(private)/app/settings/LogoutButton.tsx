@@ -17,7 +17,13 @@ export function LogoutButton() {
   }
 
   return (
-    <Button variant="ghost" className="h-auto px-0 py-1 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:underline hover:text-red-700" disabled={pending} onClick={handleLogout} type="button">
+    <Button
+      variant="ghost"
+      className="min-h-11 px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-raised hover:text-text-primary"
+      disabled={pending}
+      onClick={handleLogout}
+      type="button"
+    >
       {pending ? "正在退出..." : "退出登录"}
     </Button>
   );

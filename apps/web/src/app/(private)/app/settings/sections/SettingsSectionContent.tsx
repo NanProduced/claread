@@ -3,7 +3,6 @@ import type { SettingsDialogSectionWidth } from "@/components/settings/SettingsD
 import { SettingsDialogSectionFrame } from "@/components/settings/SettingsDialogSectionFrame";
 import type { ReadingDefaultState } from "@/lib/reading-defaults";
 import type { ProfileBffStatus } from "@/services/bff/profile";
-import type { QuotaVm } from "@/types/view/QuotaVm";
 import { AccountSection } from "./AccountSection";
 import { PreferencesSection } from "./PreferencesSection";
 import { SettingsSectionLayout } from "./SettingsSectionLayout";
@@ -22,32 +21,25 @@ export interface PreferencesData extends ReadingDefaultState {
   canEdit: boolean;
 }
 
-export interface UsageData {
-  quota: QuotaVm | null;
-  quotaUsed: number;
-  quotaLimit: number;
-  quotaPercentage: number;
-}
-
 /** Section metadata for Dialog mode (title, description, content width). */
 const SECTION_META: Record<
   SettingsSection,
   { title: string; description: string; width: SettingsDialogSectionWidth }
 > = {
   account: {
-    title: "账户",
-    description: "查看和编辑个人资料，管理登录状态。",
+    title: "个人资料",
+    description: "管理你的档案与登录状态。",
     width: "standard",
   },
   preferences: {
     title: "偏好",
-    description: "设置主题与新阅读的默认方式。",
+    description: "设置外观与新阅读的默认方式。",
     width: "standard",
   },
   usage: {
     title: "用量与积分",
-    description: "查看今日解析用量和积分明细。",
-    width: "wide",
+    description: "当前无需操作。",
+    width: "standard",
   },
   support: {
     title: "支持",
@@ -61,8 +53,6 @@ interface SettingsSectionContentProps {
   section?: SettingsSection;
   accountData?: AccountData;
   preferencesData?: PreferencesData;
-  usageData?: UsageData;
-  usageShowLedger?: boolean;
 }
 
 function renderAccount(data: AccountData) {
@@ -87,16 +77,8 @@ function renderPreferences(data: PreferencesData) {
   );
 }
 
-function renderUsage(data: UsageData, showLedger: boolean) {
-  return (
-    <UsageSection
-      quota={data.quota}
-      quotaUsed={data.quotaUsed}
-      quotaLimit={data.quotaLimit}
-      quotaPercentage={data.quotaPercentage}
-      showLedger={showLedger}
-    />
-  );
+function renderUsage() {
+  return <UsageSection />;
 }
 
 /**
@@ -124,8 +106,6 @@ export function SettingsSectionContent({
   section,
   accountData,
   preferencesData,
-  usageData,
-  usageShowLedger = false,
 }: SettingsSectionContentProps) {
   if (mode === "fallback") {
     return (
@@ -138,11 +118,7 @@ export function SettingsSectionContent({
             {renderPreferences(preferencesData)}
           </SettingsSectionLayout>
         ) : null}
-        {usageData ? (
-          <SettingsSectionLayout title="Quota">
-            {renderUsage(usageData, usageShowLedger)}
-          </SettingsSectionLayout>
-        ) : null}
+        <SettingsSectionLayout title="Quota">{renderUsage()}</SettingsSectionLayout>
         <SettingsSectionLayout title="Support">
           <SupportSection />
         </SettingsSectionLayout>
@@ -160,8 +136,8 @@ export function SettingsSectionContent({
     return wrapInFrame("preferences", renderPreferences(preferencesData));
   }
 
-  if (section === "usage" && usageData) {
-    return wrapInFrame("usage", renderUsage(usageData, usageShowLedger));
+  if (section === "usage") {
+    return wrapInFrame("usage", renderUsage());
   }
 
   if (section === "support") {

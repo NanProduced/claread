@@ -36,7 +36,7 @@ function renderFrame(overrides: FrameOverrides = {}) {
  *       <p>description</p> (optional)
  *     </div>
  *     <div class="min-h-0 overflow-y-auto" aria-labelledby>  <- body region
- *       <div class="px-5 py-7 md:px-8 md:py-8 max-w-[34rem]"> <- content wrapper
+ *       <div class="px-5 py-7 md:px-8 md:py-8 max-w-[40rem]"> <- content wrapper
  *         <div data-testid="frame-body">children</div>       <- children
  *       </div>
  *     </div>
@@ -126,10 +126,10 @@ describe("SettingsDialogSectionFrame — body scroll contract", () => {
 });
 
 describe("SettingsDialogSectionFrame — content width contract", () => {
-  it("standard width constrains content column to max-w-[34rem]", () => {
+  it("standard width constrains content column to max-w-[40rem]", () => {
     renderFrame({ width: "standard" });
     const contentWrapper = getContentWrapper();
-    expect(contentWrapper.className).toContain("max-w-[34rem]");
+    expect(contentWrapper.className).toContain("max-w-[40rem]");
   });
 
   it("wide width does NOT apply the standard column constraint", () => {
@@ -141,7 +141,7 @@ describe("SettingsDialogSectionFrame — content width contract", () => {
   it("defaults to standard width when width is omitted", () => {
     renderFrame();
     const contentWrapper = getContentWrapper();
-    expect(contentWrapper.className).toContain("max-w-[34rem]");
+    expect(contentWrapper.className).toContain("max-w-[40rem]");
   });
 
   it("body content padding scales up at md breakpoint (px-5 -> md:px-8)", () => {

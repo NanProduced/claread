@@ -3,7 +3,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProfileBffStatus } from "@/services/bff/profile";
-import type { QuotaVm } from "@/types/view/QuotaVm";
 import { SettingsSectionContent, type PreferencesData } from "./SettingsSectionContent";
 
 afterEach(cleanup);
@@ -29,15 +28,7 @@ vi.mock("./PreferencesSection", () => ({
 }));
 
 vi.mock("./UsageSection", () => ({
-  UsageSection: (props: { quotaUsed: number; showLedger?: boolean }) => (
-    <div
-      data-testid="usage-section"
-      data-used={props.quotaUsed}
-      data-show-ledger={String(props.showLedger ?? false)}
-    >
-      UsageSection
-    </div>
-  ),
+  UsageSection: () => <div data-testid="usage-section">UsageSection</div>,
 }));
 
 vi.mock("./SupportSection", () => ({
@@ -58,22 +49,6 @@ const preferencesData: PreferencesData = {
   canEdit: true,
 };
 
-const usageData = {
-  quota: {
-    profileId: "p1",
-    quotaUsed: 3,
-    quotaLimit: 10,
-    quotaType: "daily" as const,
-    dailyFreePoints: 10,
-    dailyUsedPoints: 3,
-    bonusPoints: 5,
-    remainingPoints: 7,
-  } satisfies QuotaVm,
-  quotaUsed: 3,
-  quotaLimit: 10,
-  quotaPercentage: 30,
-};
-
 describe("SettingsSectionContent", () => {
   describe("fallback mode", () => {
     it("renders all four SettingsSectionLayout wrappers in order", () => {
@@ -82,7 +57,6 @@ describe("SettingsSectionContent", () => {
           mode="fallback"
           accountData={accountData}
           preferencesData={preferencesData}
-          usageData={usageData}
         />,
       );
 
@@ -92,7 +66,7 @@ describe("SettingsSectionContent", () => {
       const titles = Array.from(layouts).map((layout) =>
         layout.querySelector("h2")?.textContent,
       );
-      expect(titles).toEqual(["Account", "Preferences", "Quota", "Support"]);
+      expect(titles).toEqual(["账户", "偏好", "用量与积分", "支持"]);
     });
 
     it("renders all four section components inside fallback layout", () => {
@@ -101,7 +75,6 @@ describe("SettingsSectionContent", () => {
           mode="fallback"
           accountData={accountData}
           preferencesData={preferencesData}
-          usageData={usageData}
         />,
       );
 
@@ -111,18 +84,16 @@ describe("SettingsSectionContent", () => {
       expect(screen.getByTestId("support-section")).toBeTruthy();
     });
 
-    it("forwards showLedger=false to UsageSection by default in fallback mode", () => {
+    it("renders usage placeholder even without any usage data prop", () => {
       render(
         <SettingsSectionContent
           mode="fallback"
           accountData={accountData}
           preferencesData={preferencesData}
-          usageData={usageData}
         />,
       );
 
-      const usage = screen.getByTestId("usage-section");
-      expect(usage.getAttribute("data-show-ledger")).toBe("false");
+      expect(screen.getByTestId("usage-section")).toBeTruthy();
     });
 
     it("still renders Account/Preferences/Usage wrappers when Support has no data props", () => {
@@ -131,13 +102,12 @@ describe("SettingsSectionContent", () => {
           mode="fallback"
           accountData={accountData}
           preferencesData={preferencesData}
-          usageData={usageData}
         />,
       );
 
       // Support section always renders in fallback mode regardless of data props.
       const supportLayout = Array.from(container.querySelectorAll("section.group")).find(
-        (section) => section.querySelector("h2")?.textContent === "Support",
+        (section) => section.querySelector("h2")?.textContent === "支持",
       );
       expect(supportLayout).not.toBeUndefined();
       expect(supportLayout?.querySelector('[data-testid="support-section"]')).not.toBeNull();
@@ -171,14 +141,10 @@ describe("SettingsSectionContent", () => {
       expect(screen.queryByTestId("support-section")).toBeNull();
     });
 
-    it("renders only UsageSection content with showLedger forwarded", () => {
-      const { container } = render(
-        <SettingsSectionContent section="usage" usageData={usageData} usageShowLedger />,
-      );
+    it("renders only UsageSection placeholder content without usage data", () => {
+      const { container } = render(<SettingsSectionContent section="usage" />);
 
-      const usage = screen.getByTestId("usage-section");
-      expect(usage).toBeTruthy();
-      expect(usage.getAttribute("data-show-ledger")).toBe("true");
+      expect(screen.getByTestId("usage-section")).toBeTruthy();
       expect(container.querySelector("section.group")).toBeNull();
       expect(screen.queryByTestId("account-section")).toBeNull();
       expect(screen.queryByTestId("preferences-section")).toBeNull();
@@ -203,12 +169,12 @@ describe("SettingsSectionContent", () => {
   });
 
   describe("dialog mode — SettingsDialogSectionFrame wrapping", () => {
-    it("wraps account section with frame title '账户' and standard width", () => {
+    it("wraps account section with frame title '个人资料' and standard width", () => {
       const { container } = render(
         <SettingsSectionContent section="account" accountData={accountData} />,
       );
 
-      const heading = screen.getByRole("heading", { name: "账户", level: 2 });
+      const heading = screen.getByRole("heading", { name: "个人资料", level: 2 });
       expect(heading).toBeTruthy();
       // Section component renders inside the frame body.
       expect(screen.getByTestId("account-section")).toBeTruthy();
@@ -217,7 +183,7 @@ describe("SettingsSectionContent", () => {
       // Standard width constraint is applied.
       const bodyContentWrapper = screen.getByTestId("account-section")
         .parentElement!;
-      expect(bodyContentWrapper.className).toContain("max-w-[34rem]");
+      expect(bodyContentWrapper.className).toContain("max-w-[40rem]");
     });
 
     it("wraps preferences section with frame title '偏好' and standard width", () => {
@@ -234,28 +200,20 @@ describe("SettingsSectionContent", () => {
       expect(screen.getByTestId("preferences-section")).toBeTruthy();
       const bodyContentWrapper = screen.getByTestId("preferences-section")
         .parentElement!;
-      expect(bodyContentWrapper.className).toContain("max-w-[34rem]");
+      expect(bodyContentWrapper.className).toContain("max-w-[40rem]");
     });
 
-    it("wraps usage section with frame title '用量与积分' and wide width", () => {
-      render(
-        <SettingsSectionContent
-          section="usage"
-          usageData={usageData}
-          usageShowLedger
-        />,
-      );
+    it("wraps usage placeholder section with frame title '用量与积分' and standard width", () => {
+      render(<SettingsSectionContent section="usage" />);
 
       expect(
         screen.getByRole("heading", { name: "用量与积分", level: 2 }),
       ).toBeTruthy();
-      // showLedger still forwarded to UsageSection in dialog mode.
-      const usage = screen.getByTestId("usage-section");
-      expect(usage.getAttribute("data-show-ledger")).toBe("true");
-      // Wide width: no max-w-[34rem] constraint.
+      expect(screen.getByTestId("usage-section")).toBeTruthy();
+      // Standard width constraint is applied (usage is now a placeholder).
       const bodyContentWrapper = screen.getByTestId("usage-section")
         .parentElement!;
-      expect(bodyContentWrapper.className).not.toContain("max-w-[34rem]");
+      expect(bodyContentWrapper.className).toContain("max-w-[40rem]");
     });
 
     it("wraps support section with frame title '支持' and standard width", () => {
@@ -267,7 +225,7 @@ describe("SettingsSectionContent", () => {
       expect(screen.getByTestId("support-section")).toBeTruthy();
       const bodyContentWrapper = screen.getByTestId("support-section")
         .parentElement!;
-      expect(bodyContentWrapper.className).toContain("max-w-[34rem]");
+      expect(bodyContentWrapper.className).toContain("max-w-[40rem]");
     });
 
     it("exposes aria-labelledby linking the body region to the frame title", () => {
@@ -275,7 +233,7 @@ describe("SettingsSectionContent", () => {
         <SettingsSectionContent section="account" accountData={accountData} />,
       );
 
-      const heading = screen.getByRole("heading", { name: "账户", level: 2 });
+      const heading = screen.getByRole("heading", { name: "个人资料", level: 2 });
       const titleId = heading.getAttribute("id");
       expect(titleId).toBeTruthy();
       // The body region is the scrollable container that wraps the
@@ -294,13 +252,6 @@ describe("SettingsSectionContent", () => {
       const bodyRegion = sectionEl.parentElement!.parentElement!;
       expect(bodyRegion.className).toContain("min-h-0");
       expect(bodyRegion.className).toContain("overflow-y-auto");
-    });
-
-    it("forwards usageShowLedger=false by default in dialog mode", () => {
-      render(<SettingsSectionContent section="usage" usageData={usageData} />);
-
-      const usage = screen.getByTestId("usage-section");
-      expect(usage.getAttribute("data-show-ledger")).toBe("false");
     });
   });
 });
