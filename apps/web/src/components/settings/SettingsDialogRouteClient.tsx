@@ -29,6 +29,54 @@ export interface SettingsDialogRouteClientProps {
   preferencesData: PreferencesData;
 }
 
+/** Check that an element and all its ancestors are actually visible. */
+function isElementVisible(el: HTMLElement): boolean {
+  let current: Element | null = el;
+  while (current) {
+    if (current instanceof HTMLElement && current.hidden) {
+      return false;
+    }
+    const style = getComputedStyle(current);
+    if (style.display === "none") return false;
+    if (style.visibility === "hidden" || style.visibility === "collapse") {
+      return false;
+    }
+    current = current.parentElement;
+  }
+  return true;
+}
+
+/** Find a visible, focusable user-menu trigger to restore focus to. */
+function queryFocusFallback(): HTMLElement | null {
+  const selectors = [
+    '[data-mobile-user-menu-trigger="true"]',
+    '[data-desktop-user-menu-trigger="true"]',
+  ];
+
+  for (const selector of selectors) {
+    const el = document.querySelector<HTMLElement>(selector);
+    if (!el || !el.isConnected) continue;
+
+    // Skip disabled form controls; anchors are never "disabled".
+    if (
+      (el instanceof HTMLButtonElement ||
+        el instanceof HTMLInputElement ||
+        el instanceof HTMLTextAreaElement ||
+        el instanceof HTMLSelectElement) &&
+      el.disabled
+    ) {
+      continue;
+    }
+
+    // Reject candidates hidden by themselves OR by any ancestor.
+    if (!isElementVisible(el)) continue;
+
+    return el;
+  }
+
+  return null;
+}
+
 /**
  * Client component rendered by the intercepted settings route
  * (`@settings/(.)settings/page.tsx`).
@@ -88,13 +136,21 @@ export function SettingsDialogRouteClient({
   const handleCloseAutoFocus = React.useCallback((event: Event) => {
     // Restore focus to the element that opened the dialog.
     // Radix's default would focus triggerRef (null for route-based dialogs),
-    // so we handle it here. Only focus if the element is still connected.
+    // so we handle it here. Connected opener always wins.
     if (opener && opener.isConnected) {
       opener.focus();
       event.preventDefault();
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+
+    // The original opener (e.g. a DropdownMenu Link) has been unmounted.
+    // Fall back to a visible, focusable user-menu trigger on the current page.
+    const fallback = queryFocusFallback();
+    if (fallback) {
+      fallback.focus();
+      event.preventDefault();
+    }
+  }, [opener]);
 
   return (
     <SettingsDialogShell

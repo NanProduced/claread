@@ -137,7 +137,9 @@ Settings Dialog 由 `SettingsDialogShell` 提供视觉容器与 rail 导航，�
 - “账户”：个人资料（映射 `account` section）、偏好
 - “Claread”：用量与积分、支持
 
-每个目的地使用 16px `lucide-react` 图标与文本并列；“个人资料”仅为 UI 显示名称，不改变 URL section 白名单。移动端（`< md`）降级为 full-screen sheet：`h-dvh w-screen rounded-none`，无圆角，顶部横向分区导航 + 单一内容列，内容单独滚动。移动端账户入口由后续任务决定。
+每个目的地使用 16px `lucide-react` 图标与文本并列；“个人资料”仅为 UI 显示名称，不改变 URL section 白名单。移动端（`< md`）降级为 full-screen sheet：`h-dvh w-screen rounded-none`，无圆角，顶部横向分区导航 + 单一内容列，内容单独滚动。
+
+**移动端入口。** 移动端不渲染左侧 Sidebar；底部固定导航（`md:hidden`）提供 6 列入口，最后一列为“我的”用户菜单触发器（`UserRound` 图标 + “我的”标签，触控目标 `min-h-12`）。点击后弹出与桌面 Sidebar 同一语义的用户菜单，内含三条 Settings 链接：`个人资料 → /app/settings?section=account`、`偏好设置 → /app/settings?section=preferences`、`用量与积分 → /app/settings?section=usage`。菜单使用默认 portal 渲染，避免被底部导航栏裁剪；关闭 Dialog 后焦点恢复到触发器或 app chrome，保持现有 `router.back()` 与焦点恢复契约。
 
 **可访问性。** `DialogTitle` 与 `DialogDescription` 提供 sr-only 可访问名称；关闭按钮带 `aria-label`；分区导航使用普通 button 语义（`nav[aria-label]` + `button[aria-current="page"]`），不使用 ARIA tabs 模型；移动端关闭按钮与分区按钮最小触控目标 44×44px（`max-md:size-11` / `max-md:min-h-11`），桌面端维持紧凑密度；Esc 关闭由 Radix Dialog 提供。
 

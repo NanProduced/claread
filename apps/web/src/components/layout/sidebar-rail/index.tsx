@@ -133,6 +133,56 @@ export function SidebarRail({
         : "font-medium text-muted-foreground hover:bg-[var(--app-control-quiet)] hover:text-ink focus-visible:bg-[var(--app-control-quiet)] focus-visible:text-ink",
     );
 
+  const userMenuContent = (
+    <>
+      <div className="px-3 py-2">
+        <div className="truncate text-[0.8125rem] font-semibold leading-5 text-ink">
+          {userName}
+        </div>
+        <div className="truncate text-[0.75rem] leading-5 text-subtle">
+          {userContact ?? "未绑定联系方式"}
+        </div>
+      </div>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem asChild>
+        <Link href={`${appSettingsRoute}?section=account` as Route} className="gap-2">
+          <UserRound aria-hidden="true" className="h-4 w-4" />
+          <span>个人资料</span>
+        </Link>
+      </DropdownMenuItem>
+      <DropdownMenuItem asChild>
+        <Link href={`${appSettingsRoute}?section=preferences` as Route} className="gap-2">
+          <Settings aria-hidden="true" className="h-4 w-4" />
+          <span>偏好设置</span>
+        </Link>
+      </DropdownMenuItem>
+      <DropdownMenuItem asChild>
+        <Link href={`${appSettingsRoute}?section=usage` as Route} className="gap-2">
+          <WalletCards aria-hidden="true" className="h-4 w-4" />
+          <span>用量与积分</span>
+        </Link>
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem asChild>
+        <Link href={homeRoute} className="gap-2">
+          <ExternalLink aria-hidden="true" className="h-4 w-4" />
+          <span>公共首页</span>
+        </Link>
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem
+        className="gap-2"
+        disabled={logoutPending}
+        onSelect={() => {
+          void handleLogout();
+        }}
+      >
+        <LogOut aria-hidden="true" className="h-4 w-4" />
+        <span>{logoutPending ? "正在退出..." : "退出登录"}</span>
+      </DropdownMenuItem>
+    </>
+  );
+
   function handleSidebarMouseEnter() {
     setSidebarPointerInside(true);
     onSidebarOverlayOpen?.();
@@ -329,13 +379,14 @@ export function SidebarRail({
             </div>
           </nav>
 
-          <div className="mt-3 border-t border-hairline/70 px-1 pt-3">
+          <div className="mt-3 hidden border-t border-hairline/70 px-1 pt-3 md:block">
             <DropdownMenu open={userMenuOpen} onOpenChange={handleUserMenuOpenChange}>
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
                   className="focus-ring flex min-h-10 w-full items-center gap-2.5 rounded-[8px] px-2 text-left transition-colors hover:bg-[var(--app-control-quiet)]"
                   aria-label="打开用户菜单"
+                  data-desktop-user-menu-trigger="true"
                 >
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink text-[0.75rem] font-semibold text-reader-paper">
                     {userInitial}
@@ -357,51 +408,7 @@ export function SidebarRail({
                 className="!z-[var(--app-z-shell-overlay)] w-60"
                 style={{ zIndex: "var(--app-z-shell-overlay)" }}
               >
-                <div className="px-3 py-2">
-                  <div className="truncate text-[0.8125rem] font-semibold leading-5 text-ink">
-                    {userName}
-                  </div>
-                  <div className="truncate text-[0.75rem] leading-5 text-subtle">
-                    {userContact ?? "未绑定联系方式"}
-                  </div>
-                </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
-                  <Link href={`${appSettingsRoute}?section=account` as Route} className="gap-2">
-                    <UserRound aria-hidden="true" className="h-4 w-4" />
-                    <span>个人资料</span>
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href={`${appSettingsRoute}?section=preferences` as Route} className="gap-2">
-                    <Settings aria-hidden="true" className="h-4 w-4" />
-                    <span>偏好设置</span>
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href={`${appSettingsRoute}?section=usage` as Route} className="gap-2">
-                    <WalletCards aria-hidden="true" className="h-4 w-4" />
-                    <span>用量与积分</span>
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
-                  <Link href={homeRoute} className="gap-2">
-                    <ExternalLink aria-hidden="true" className="h-4 w-4" />
-                    <span>公共首页</span>
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className="gap-2"
-                  disabled={logoutPending}
-                  onSelect={() => {
-                    void handleLogout();
-                  }}
-                >
-                  <LogOut aria-hidden="true" className="h-4 w-4" />
-                  <span>{logoutPending ? "正在退出..." : "退出登录"}</span>
-                </DropdownMenuItem>
+                {userMenuContent}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -409,7 +416,7 @@ export function SidebarRail({
       </aside>
 
       <nav
-        className="app-nav-surface fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-hairline px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[var(--app-mobile-nav-shadow)] md:hidden"
+        className="app-nav-surface fixed inset-x-0 bottom-0 z-40 grid grid-cols-6 border-t border-hairline px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[var(--app-mobile-nav-shadow)] md:hidden"
         aria-label="移动端导航"
       >
         <button
@@ -443,6 +450,27 @@ export function SidebarRail({
           side="top"
           className="text-muted-foreground"
         />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="focus-ring flex min-h-12 flex-col items-center justify-center gap-1 rounded-note text-[0.6875rem] font-semibold text-muted-foreground"
+              aria-label="打开用户菜单"
+              data-mobile-user-menu-trigger="true"
+            >
+              <UserRound aria-hidden="true" className="h-4 w-4" />
+              <span>我的</span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            side="top"
+            align="end"
+            className="w-60"
+            style={{ zIndex: "var(--app-z-shell-overlay)" }}
+          >
+            {userMenuContent}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </nav>
     </>
   );

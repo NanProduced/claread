@@ -83,8 +83,14 @@ import { SettingsDialogRouteClient, parseSettingsSection } from "./SettingsDialo
 
 afterEach(() => {
   cleanup();
-  // Remove any opener buttons left by focus-capture tests
+  // Remove any opener buttons, user-menu triggers, or their test wrappers
   document.querySelectorAll("button[id^='opener-']").forEach((el) => el.remove());
+  document
+    .querySelectorAll(
+      '[data-mobile-user-menu-trigger="true"], [data-desktop-user-menu-trigger="true"]',
+    )
+    .forEach((el) => el.remove());
+  document.querySelectorAll('[data-test-focus-wrapper="true"]').forEach((el) => el.remove());
   mockReplace.mockClear();
   mockBack.mockClear();
   mockShell.mockClear();
@@ -226,6 +232,49 @@ describe("SettingsDialogRouteClient — opener focus capture & restoration", () 
     return btn;
   }
 
+  /** Helper: create a user-menu trigger button with the expected data attribute. */
+  function createTrigger(
+    variant: "mobile" | "desktop",
+    options?: { disabled?: boolean; hidden?: boolean },
+  ): HTMLButtonElement {
+    const btn = document.createElement("button");
+    btn.setAttribute(
+      variant === "mobile"
+        ? "data-mobile-user-menu-trigger"
+        : "data-desktop-user-menu-trigger",
+      "true",
+    );
+    btn.textContent = `${variant} trigger`;
+    if (options?.disabled) btn.disabled = true;
+    if (options?.hidden) btn.style.display = "none";
+    document.body.appendChild(btn);
+    return btn;
+  }
+
+  /** Helper: create a trigger wrapped in a hidden ancestor (for ancestor-visibility tests). */
+  function createTriggerInHiddenAncestor(
+    variant: "mobile" | "desktop",
+    hiddenBy: "display" | "visibility" | "hidden-attribute",
+  ): { trigger: HTMLButtonElement; wrapper: HTMLDivElement } {
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("data-test-focus-wrapper", "true");
+    if (hiddenBy === "display") wrapper.style.display = "none";
+    if (hiddenBy === "visibility") wrapper.style.visibility = "hidden";
+    if (hiddenBy === "hidden-attribute") wrapper.hidden = true;
+
+    const trigger = document.createElement("button");
+    trigger.setAttribute(
+      variant === "mobile"
+        ? "data-mobile-user-menu-trigger"
+        : "data-desktop-user-menu-trigger",
+      "true",
+    );
+    trigger.textContent = `${variant} trigger`;
+    wrapper.appendChild(trigger);
+    document.body.appendChild(wrapper);
+    return { trigger, wrapper };
+  }
+
   /** Extract onCloseAutoFocus from the last Shell mock call. */
   function getLastOnCloseAutoFocus(): (event: Event) => void {
     const shellProps = mockShell.mock.calls.at(-1)![0] as {
@@ -259,7 +308,7 @@ describe("SettingsDialogRouteClient — opener focus capture & restoration", () 
     document.body.removeChild(opener);
   });
 
-  it("does NOT call focus() on a disconnected element", () => {
+  it("does NOT call focus() on a disconnected element when no fallback exists", () => {
     const opener = createAndFocusOpener("opener-2");
     expect(document.activeElement).toBe(opener);
 
@@ -274,8 +323,143 @@ describe("SettingsDialogRouteClient — opener focus capture & restoration", () 
     const preventDefault = vi.spyOn(event, "preventDefault");
     getLastOnCloseAutoFocus()(event);
 
-    // preventDefault must NOT be called when element is disconnected
+    // No fallback trigger exists, so preventDefault must NOT be called
     expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("focuses the mobile trigger when opener is disconnected", () => {
+    const opener = createAndFocusOpener("opener-fallback-mobile");
+    render(<SettingsDialogRouteClient {...defaultProps} />);
+    document.body.removeChild(opener);
+
+    const mobileTrigger = createTrigger("mobile");
+    const event = new Event("focus", { bubbles: false });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+    getLastOnCloseAutoFocus()(event);
+
+    expect(document.activeElement).toBe(mobileTrigger);
+    expect(preventDefault).toHaveBeenCalled();
+
+    document.body.removeChild(mobileTrigger);
+  });
+
+  it("focuses the desktop trigger when opener is disconnected and mobile trigger is absent", () => {
+    const opener = createAndFocusOpener("opener-fallback-desktop");
+    render(<SettingsDialogRouteClient {...defaultProps} />);
+    document.body.removeChild(opener);
+
+    const desktopTrigger = createTrigger("desktop");
+    const event = new Event("focus", { bubbles: false });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+    getLastOnCloseAutoFocus()(event);
+
+    expect(document.activeElement).toBe(desktopTrigger);
+    expect(preventDefault).toHaveBeenCalled();
+
+    document.body.removeChild(desktopTrigger);
+  });
+
+  it("prefers mobile trigger over desktop trigger when opener is disconnected", () => {
+    const opener = createAndFocusOpener("opener-prefer-mobile");
+    render(<SettingsDialogRouteClient {...defaultProps} />);
+    document.body.removeChild(opener);
+
+    const desktopTrigger = createTrigger("desktop");
+    const mobileTrigger = createTrigger("mobile");
+    const event = new Event("focus", { bubbles: false });
+    getLastOnCloseAutoFocus()(event);
+
+    expect(document.activeElement).toBe(mobileTrigger);
+
+    document.body.removeChild(mobileTrigger);
+    document.body.removeChild(desktopTrigger);
+  });
+
+  it("does not use a disabled mobile trigger as fallback", () => {
+    const opener = createAndFocusOpener("opener-disabled-fallback");
+    render(<SettingsDialogRouteClient {...defaultProps} />);
+    document.body.removeChild(opener);
+
+    const disabledMobile = createTrigger("mobile", { disabled: true });
+    const desktopTrigger = createTrigger("desktop");
+    const event = new Event("focus", { bubbles: false });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+    getLastOnCloseAutoFocus()(event);
+
+    expect(document.activeElement).toBe(desktopTrigger);
+    expect(preventDefault).toHaveBeenCalled();
+
+    document.body.removeChild(disabledMobile);
+    document.body.removeChild(desktopTrigger);
+  });
+
+  it("does not use a hidden mobile trigger as fallback", () => {
+    const opener = createAndFocusOpener("opener-hidden-fallback");
+    render(<SettingsDialogRouteClient {...defaultProps} />);
+    document.body.removeChild(opener);
+
+    const hiddenMobile = createTrigger("mobile", { hidden: true });
+    const desktopTrigger = createTrigger("desktop");
+    const event = new Event("focus", { bubbles: false });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+    getLastOnCloseAutoFocus()(event);
+
+    expect(document.activeElement).toBe(desktopTrigger);
+    expect(preventDefault).toHaveBeenCalled();
+
+    document.body.removeChild(hiddenMobile);
+    document.body.removeChild(desktopTrigger);
+  });
+
+  it("ignores mobile trigger inside ancestor display:none and uses desktop trigger", () => {
+    const opener = createAndFocusOpener("opener-ancestor-display");
+    render(<SettingsDialogRouteClient {...defaultProps} />);
+    document.body.removeChild(opener);
+
+    createTriggerInHiddenAncestor("mobile", "display");
+    const desktopTrigger = createTrigger("desktop");
+    const event = new Event("focus", { bubbles: false });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+    getLastOnCloseAutoFocus()(event);
+
+    expect(document.activeElement).toBe(desktopTrigger);
+    expect(preventDefault).toHaveBeenCalled();
+
+    document.body.removeChild(desktopTrigger);
+  });
+
+  it("ignores mobile trigger inside ancestor visibility:hidden and uses desktop trigger", () => {
+    const opener = createAndFocusOpener("opener-ancestor-visibility");
+    render(<SettingsDialogRouteClient {...defaultProps} />);
+    document.body.removeChild(opener);
+
+    createTriggerInHiddenAncestor("mobile", "visibility");
+    const desktopTrigger = createTrigger("desktop");
+    const event = new Event("focus", { bubbles: false });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+    getLastOnCloseAutoFocus()(event);
+
+    expect(document.activeElement).toBe(desktopTrigger);
+    expect(preventDefault).toHaveBeenCalled();
+
+    document.body.removeChild(desktopTrigger);
+  });
+
+  it("ignores mobile trigger inside ancestor with hidden attribute and uses desktop trigger", () => {
+    const opener = createAndFocusOpener("opener-ancestor-hidden-attr");
+    render(<SettingsDialogRouteClient {...defaultProps} />);
+    document.body.removeChild(opener);
+
+    createTriggerInHiddenAncestor("mobile", "hidden-attribute");
+    const desktopTrigger = createTrigger("desktop");
+    const event = new Event("focus", { bubbles: false });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+    getLastOnCloseAutoFocus()(event);
+
+    expect(document.activeElement).toBe(desktopTrigger);
+    expect(preventDefault).toHaveBeenCalled();
+
+    document.body.removeChild(desktopTrigger);
   });
 
   it("does not overwrite opener ref on re-render (Dialog internal focus migrations)", () => {

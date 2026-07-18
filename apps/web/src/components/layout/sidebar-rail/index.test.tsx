@@ -164,7 +164,9 @@ describe("SidebarRail z-index contract", () => {
     const sidebar = container.querySelector<HTMLElement>('[data-app-sidebar="rail"]');
     expect(sidebar).not.toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "打开用户菜单" }));
+    const trigger = container.querySelector<HTMLElement>('[data-desktop-user-menu-trigger="true"]');
+    expect(trigger).not.toBeNull();
+    await user.click(trigger!);
 
     const menu = await screen.findByRole("menu");
     expect(sidebar?.contains(menu)).toBe(true);
@@ -172,11 +174,13 @@ describe("SidebarRail z-index contract", () => {
 });
 
 describe("User menu settings links", () => {
-  it("opens the user menu to reveal settings menuitems", async () => {
+  it("opens the desktop user menu to reveal settings menuitems", async () => {
     const user = userEvent.setup();
-    render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
+    const { container } = render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
+    const trigger = container.querySelector<HTMLElement>('[data-desktop-user-menu-trigger="true"]');
+    expect(trigger).not.toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "打开用户菜单" }));
+    await user.click(trigger!);
 
     expect(screen.getByRole("menuitem", { name: "个人资料" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "偏好设置" })).toBeTruthy();
@@ -185,9 +189,11 @@ describe("User menu settings links", () => {
 
   it("points each settings entry to the matching ?section= URL as a Link", async () => {
     const user = userEvent.setup();
-    render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
+    const { container } = render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
+    const trigger = container.querySelector<HTMLElement>('[data-desktop-user-menu-trigger="true"]');
+    expect(trigger).not.toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "打开用户菜单" }));
+    await user.click(trigger!);
 
     const accountItem = screen.getByRole("menuitem", { name: "个人资料" });
     const preferencesItem = screen.getByRole("menuitem", { name: "偏好设置" });
@@ -205,9 +211,11 @@ describe("User menu settings links", () => {
 
   it("does not link to /app/settings/ledger anymore", async () => {
     const user = userEvent.setup();
-    render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
+    const { container } = render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
+    const trigger = container.querySelector<HTMLElement>('[data-desktop-user-menu-trigger="true"]');
+    expect(trigger).not.toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "打开用户菜单" }));
+    await user.click(trigger!);
 
     const menuItems = screen.getAllByRole("menuitem");
     const ledgerLinks = menuItems.filter(
@@ -221,14 +229,58 @@ describe("User menu settings links", () => {
 
   it("keeps non-settings menu items unchanged", async () => {
     const user = userEvent.setup();
-    render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
+    const { container } = render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
+    const trigger = container.querySelector<HTMLElement>('[data-desktop-user-menu-trigger="true"]');
+    expect(trigger).not.toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "打开用户菜单" }));
+    await user.click(trigger!);
 
     const homeItem = screen.getByRole("menuitem", { name: "公共首页" });
     expect(homeItem.tagName).toBe("A");
     expect(homeItem.getAttribute("href")).toBe("/");
 
     expect(screen.getByRole("menuitem", { name: "退出登录" })).toBeTruthy();
+  });
+});
+
+describe("Mobile settings entry", () => {
+  it("renders a user menu trigger in the mobile bottom nav", () => {
+    const { container } = render(<SidebarRail pathname="/app/library" sidebarMode="closed" />);
+    const mobileTrigger = container.querySelector<HTMLElement>('[data-mobile-user-menu-trigger="true"]');
+    expect(mobileTrigger).not.toBeNull();
+    expect(mobileTrigger?.getAttribute("aria-label")).toBe("打开用户菜单");
+    expect(mobileTrigger?.textContent).toContain("我的");
+  });
+
+  it("exposes the same three settings links from the mobile user menu", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<SidebarRail pathname="/app/library" sidebarMode="closed" />);
+    const mobileTrigger = container.querySelector<HTMLElement>('[data-mobile-user-menu-trigger="true"]');
+    expect(mobileTrigger).not.toBeNull();
+
+    await user.click(mobileTrigger!);
+
+    const accountItem = screen.getByRole("menuitem", { name: "个人资料" });
+    const preferencesItem = screen.getByRole("menuitem", { name: "偏好设置" });
+    const usageItem = screen.getByRole("menuitem", { name: "用量与积分" });
+
+    expect(accountItem.tagName).toBe("A");
+    expect(accountItem.getAttribute("href")).toBe("/app/settings?section=account");
+
+    expect(preferencesItem.tagName).toBe("A");
+    expect(preferencesItem.getAttribute("href")).toBe("/app/settings?section=preferences");
+
+    expect(usageItem.tagName).toBe("A");
+    expect(usageItem.getAttribute("href")).toBe("/app/settings?section=usage");
+  });
+
+  it("keeps the mobile trigger touch target at least 44x44", () => {
+    const sidebarSource = readFileSync(
+      resolve(process.cwd(), "src/components/layout/sidebar-rail/index.tsx"),
+      "utf8",
+    );
+    expect(sidebarSource).toMatch(
+      /min-h-12[\s\S]*?data-mobile-user-menu-trigger="true"/,
+    );
   });
 });

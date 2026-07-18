@@ -150,6 +150,25 @@ async function openUserMenuAndClickSettings(page: Page, label: "个人资料" | 
   await page.getByRole("menuitem", { name: label }).click();
 }
 
+async function openMobileUserMenuAndClickSettings(
+  page: Page,
+  label: "个人资料" | "偏好设置" | "用量与积分",
+) {
+  const trigger = page.locator('[data-mobile-user-menu-trigger="true"]');
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+  const menuitem = page.getByRole("menuitem", { name: label });
+  await expect(menuitem).toBeVisible();
+  await menuitem.click();
+}
+
+async function assertTouchTargetAtLeast44px(locator: Locator) {
+  const box = await locator.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.width, "touch target width must be at least 44px").toBeGreaterThanOrEqual(44);
+  expect(box!.height, "touch target height must be at least 44px").toBeGreaterThanOrEqual(44);
+}
+
 async function openUserMenuWithKeyboard(
   page: Page,
   label: "个人资料" | "偏好设置" | "用量与积分",
@@ -640,6 +659,46 @@ test.describe("Settings Dialog keyboard focus and reading continuity", () => {
     await libraryLink.click();
     await expect(page).toHaveURL(/\/app\/library/);
   });
+
+  test("closing dialog restores focus to visible desktop trigger, never hidden mobile trigger", async ({ page }) => {
+    // Desktop viewport: mobile bottom nav is inside md:hidden (display:none).
+    await openUserMenuAndClickSettings(page, "偏好设置");
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByRole("button", { name: "关闭设置" }).last().click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page).toHaveURL(/\/app\/read$/);
+
+    const focusState = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      return {
+        tag: el?.tagName ?? null,
+        ariaLabel: el?.getAttribute("aria-label") ?? null,
+        matchesDesktopTrigger: el?.matches('[data-desktop-user-menu-trigger="true"]') ?? false,
+        matchesMobileTrigger: el?.matches('[data-mobile-user-menu-trigger="true"]') ?? false,
+        mobileTriggerHidden: (() => {
+          const mobile = document.querySelector('[data-mobile-user-menu-trigger="true"]');
+          if (!mobile) return null;
+          let current: Element | null = mobile;
+          while (current) {
+            const style = getComputedStyle(current);
+            if (style.display === "none") return true;
+            if (style.visibility === "hidden" || style.visibility === "collapse") return true;
+            if (current instanceof HTMLElement && current.hidden) return true;
+            current = current.parentElement;
+          }
+          return false;
+        })(),
+      };
+    });
+
+    expect(focusState.tag).toBe("BUTTON");
+    expect(focusState.ariaLabel).toBe("打开用户菜单");
+    expect(focusState.matchesDesktopTrigger).toBe(true);
+    expect(focusState.matchesMobileTrigger).toBe(false);
+    expect(focusState.mobileTriggerHidden).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -781,6 +840,111 @@ for (const viewport of DESKTOP_VIEWPORTS) {
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// Mobile entry parity — discover and open Settings from the bottom nav
+// ---------------------------------------------------------------------------
+
+test.describe("Settings Dialog mobile entry from /app/read", () => {
+  test.setTimeout(180_000);
+
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockBffRoutes(page);
+    await loginWithMockPhone(page);
+    await expect(page).toHaveURL(/\/app\/read$/);
+  });
+
+  test("个人资料 opens dialog at ?section=account from mobile bottom nav", async ({ page }) => {
+    await openMobileUserMenuAndClickSettings(page, "个人资料");
+
+    await expect(page).toHaveURL(/\/app\/settings\?section=account$/);
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await expect(dialog).toBeVisible();
+    await expect(
+      dialog.getByRole("heading", { name: "个人资料", level: 2 }),
+    ).toBeVisible();
+
+    const trigger = page.locator('[data-mobile-user-menu-trigger="true"]');
+    await assertTouchTargetAtLeast44px(trigger);
+  });
+
+  test("偏好设置 opens dialog at ?section=preferences from mobile bottom nav", async ({ page }) => {
+    await openMobileUserMenuAndClickSettings(page, "偏好设置");
+
+    await expect(page).toHaveURL(/\/app\/settings\?section=preferences$/);
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await expect(dialog).toBeVisible();
+    await expect(
+      dialog.getByRole("heading", { name: "偏好", level: 2 }),
+    ).toBeVisible();
+
+    const trigger = page.locator('[data-mobile-user-menu-trigger="true"]');
+    await assertTouchTargetAtLeast44px(trigger);
+  });
+
+  test("用量与积分 opens dialog at ?section=usage from mobile bottom nav", async ({ page }) => {
+    await openMobileUserMenuAndClickSettings(page, "用量与积分");
+
+    await expect(page).toHaveURL(/\/app\/settings\?section=usage$/);
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await expect(dialog).toBeVisible();
+    await expect(
+      dialog.getByRole("heading", { name: "用量与积分", level: 2 }),
+    ).toBeVisible();
+
+    const trigger = page.locator('[data-mobile-user-menu-trigger="true"]');
+    await assertTouchTargetAtLeast44px(trigger);
+  });
+
+  test("closing dialog returns to /app/read and restores focus to mobile trigger", async ({ page }) => {
+    await openMobileUserMenuAndClickSettings(page, "偏好设置");
+
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await expect(dialog).toBeVisible();
+    await expect(page).toHaveURL(/\/app\/settings\?section=preferences$/);
+
+    await dialog.getByRole("button", { name: "关闭设置" }).first().click();
+    await expectDialogClosedAndBackOnReader(page);
+
+    const trigger = page.locator('[data-mobile-user-menu-trigger="true"]');
+    await expect(trigger).toBeVisible();
+    await expect(trigger).toBeEnabled();
+
+    // Focus must be restored to the mobile user-menu trigger, not just body.
+    await expect
+      .poll(async () => {
+        return page.evaluate(
+          (selector) => document.activeElement?.matches(selector) ?? false,
+          '[data-mobile-user-menu-trigger="true"]',
+        );
+      })
+      .toBe(true);
+
+    // The restored trigger remains keyboard-operable.
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("menuitem", { name: "个人资料" })).toBeVisible();
+  });
+
+  test("pressing Escape closes dialog and restores focus to mobile trigger", async ({ page }) => {
+    await openMobileUserMenuAndClickSettings(page, "偏好设置");
+
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await expect(dialog).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expectDialogClosedAndBackOnReader(page);
+
+    await expect
+      .poll(async () => {
+        return page.evaluate(
+          (selector) => document.activeElement?.matches(selector) ?? false,
+          '[data-mobile-user-menu-trigger="true"]',
+        );
+      })
+      .toBe(true);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Mobile layout geometry — full-screen sheet, chrome, scroll, overflow
