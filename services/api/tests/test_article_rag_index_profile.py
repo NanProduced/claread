@@ -24,14 +24,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import traceback
 from dataclasses import FrozenInstanceError
 from dataclasses import fields as dataclass_fields
 
 import pytest
 
 from app.services.reader_orchestration.article_rag_index_profile import (
+    DEFAULT_ARTICLE_RAG_INDEX_VERSION,
     ArticleRagIndexProfile,
+    ArticleRagIndexProfileResolution,
+    ArticleRagIndexProfileResolutionError,
     compute_article_rag_index_profile_fingerprint,
+    resolve_article_rag_index_profile,
 )
 
 
@@ -426,3 +431,525 @@ def test_two_unrelated_profiles_have_different_fingerprints():
     assert compute_article_rag_index_profile_fingerprint(
         a
     ) != compute_article_rag_index_profile_fingerprint(b)
+
+
+# ===========================================================================
+# P1-B: Immutable V1 IndexProfile registry and resolver
+# ===========================================================================
+#
+# These tests exercise the public resolver seam only.  They do NOT
+# import the internal registry or any private resolver helper.  The
+# resolver is the sole entry point for callers to obtain a profile
+# identity (profile + fingerprint) from an ``index_version`` string.
+#
+# The registry:
+#
+#   * is built from a single frozen V1 resolution
+#   * exposes a ``MappingProxyType``-backed, read-only mapping
+#   * has no runtime register/override/mutation/environment hook
+#   * never reads Settings, env vars, model registry, Zilliz, or any
+#     bootstrap/plan/retrieval/vector-store module
+#
+# The resolver:
+#
+#   * returns a frozen ``ArticleRagIndexProfileResolution``
+#   * fail-closes on any unregistered, blank, whitespace-padded,
+#     non-string, or malicious ``index_version``
+#   * never echoes, truncates, or persists the offending input
+
+
+# ---------------------------------------------------------------------------
+# Tracer bullet: resolver + DEFAULT constant + Resolution type exist
+# ---------------------------------------------------------------------------
+
+
+def test_tracer_bullet_resolver_default_returns_resolution():
+    """RED-first tracer bullet for P1-B public resolver seam.
+
+    The resolver MUST be importable and return an
+    :class:`ArticleRagIndexProfileResolution` when given the default
+    version constant.  RED before P1-B implementation: the symbols
+    ``resolve_article_rag_index_profile``,
+    ``DEFAULT_ARTICLE_RAG_INDEX_VERSION``, and
+    ``ArticleRagIndexProfileResolution`` do not exist in the module.
+    """
+    resolution = resolve_article_rag_index_profile(
+        DEFAULT_ARTICLE_RAG_INDEX_VERSION
+    )
+    assert isinstance(resolution, ArticleRagIndexProfileResolution)
+    assert isinstance(resolution.profile, ArticleRagIndexProfile)
+    assert isinstance(resolution.profile_fingerprint, str)
+
+
+# ---------------------------------------------------------------------------
+# DEFAULT constant points to V1
+# ---------------------------------------------------------------------------
+
+
+def test_default_article_rag_index_version_is_v1():
+    assert DEFAULT_ARTICLE_RAG_INDEX_VERSION == "article_rag_index_v1"
+
+
+# ---------------------------------------------------------------------------
+# V1 mapping: 11 fields exactly match the frozen contract
+# ---------------------------------------------------------------------------
+
+
+def test_resolver_returns_v1_profile_with_exact_11_fields():
+    """The resolved V1 profile MUST match the frozen V1 mapping
+    field-for-field.  This is the canonical V1 identity."""
+    resolution = resolve_article_rag_index_profile(
+        DEFAULT_ARTICLE_RAG_INDEX_VERSION
+    )
+    p = resolution.profile
+    assert p.index_version == "article_rag_index_v1"
+    assert p.plan_version == "article_rag_index_plan_v1"
+    assert p.chunker_version == "article_rag_index_plan_v1"
+    assert p.document_embedding_model == "text-embedding-v4"
+    assert p.document_embedding_dimension == 1024
+    assert p.document_embedding_text_type == "provider_default"
+    assert p.query_embedding_model == "text-embedding-v4"
+    assert p.query_embedding_text_type == "provider_default"
+    assert p.vector_namespace == "article_rag_index_v1"
+    assert p.retrieval_schema_version == "article_rag_retrieval_v1"
+    assert p.citation_mode_version == "article_rag_citation_v1"
+
+
+# ---------------------------------------------------------------------------
+# Fingerprint shape + matches compute helper
+# ---------------------------------------------------------------------------
+
+
+def test_resolver_fingerprint_is_sha256_hex_and_matches_compute():
+    resolution = resolve_article_rag_index_profile(
+        DEFAULT_ARTICLE_RAG_INDEX_VERSION
+    )
+    fp = resolution.profile_fingerprint
+    assert isinstance(fp, str)
+    assert len(fp) == 64
+    assert fp == fp.lower()
+    int(fp, 16)
+    assert fp == compute_article_rag_index_profile_fingerprint(
+        resolution.profile
+    )
+
+
+# ---------------------------------------------------------------------------
+# V1 golden digest: precomputed fixed literal + independent cross-check
+# ---------------------------------------------------------------------------
+
+
+# Precomputed golden digest for the V1 profile.  Populated after the
+# first GREEN run; left empty with an explicit pytest.fail guard until
+# then.  If the V1 mapping, canonical payload, or schema identity
+# changes, this digest will mismatch — which is the intended
+# regression signal.
+GOLDEN_DIGEST_V1_PROFILE = (
+    "e443f581eb3e86aeb9dbcdcee806783186bd85da6c987c60357b61905ea86d6d"
+)
+
+
+def test_v1_golden_digest_matches_resolver_fingerprint():
+    """The resolver's ``profile_fingerprint`` MUST equal the precomputed
+    golden literal, AND must equal an independent SHA-256 recomputed
+    from a hardcoded canonical payload (no production helper use)."""
+    if not GOLDEN_DIGEST_V1_PROFILE:
+        pytest.fail(
+            "GOLDEN_DIGEST_V1_PROFILE not yet populated — run the "
+            "production fingerprint once and paste the literal here."
+        )
+    resolution = resolve_article_rag_index_profile(
+        DEFAULT_ARTICLE_RAG_INDEX_VERSION
+    )
+    assert resolution.profile_fingerprint == GOLDEN_DIGEST_V1_PROFILE
+
+    # Independent cross-check: hardcode the canonical payload and hash
+    # it directly, without using any production helper.
+    expected_payload = {
+        "$schema": "article_rag_index_profile_fingerprint_v1",
+        "index_version": "article_rag_index_v1",
+        "plan_version": "article_rag_index_plan_v1",
+        "chunker_version": "article_rag_index_plan_v1",
+        "document_embedding_model": "text-embedding-v4",
+        "document_embedding_dimension": 1024,
+        "document_embedding_text_type": "provider_default",
+        "query_embedding_model": "text-embedding-v4",
+        "query_embedding_text_type": "provider_default",
+        "vector_namespace": "article_rag_index_v1",
+        "retrieval_schema_version": "article_rag_retrieval_v1",
+        "citation_mode_version": "article_rag_citation_v1",
+    }
+    raw = json.dumps(expected_payload, sort_keys=True, separators=(",", ":"))
+    expected = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    assert resolution.profile_fingerprint == expected
+
+
+# ---------------------------------------------------------------------------
+# Stability across repeated resolve calls
+# ---------------------------------------------------------------------------
+
+
+def test_repeated_resolve_returns_stable_result():
+    a = resolve_article_rag_index_profile(DEFAULT_ARTICLE_RAG_INDEX_VERSION)
+    b = resolve_article_rag_index_profile(DEFAULT_ARTICLE_RAG_INDEX_VERSION)
+    assert a.profile_fingerprint == b.profile_fingerprint
+    assert a.profile == b.profile
+
+
+def test_repeated_resolve_returns_same_singleton_instance():
+    """Characterize the current in-process registry singleton.
+
+    Durable identity and correctness rely on profile-fingerprint
+    equality, never Python object identity across processes, database
+    reads, or task recovery.
+    """
+    a = resolve_article_rag_index_profile(DEFAULT_ARTICLE_RAG_INDEX_VERSION)
+    b = resolve_article_rag_index_profile(DEFAULT_ARTICLE_RAG_INDEX_VERSION)
+    assert a is b
+
+
+# ---------------------------------------------------------------------------
+# Resolution constructor invariant: fingerprint must match profile
+# ---------------------------------------------------------------------------
+#
+# The public :class:`ArticleRagIndexProfileResolution` value object is
+# part of the module's public API.  It MUST NOT be constructible with a
+# ``profile_fingerprint`` that does not precisely equal
+# :func:`compute_article_rag_index_profile_fingerprint` applied to its
+# ``profile``.  Without this invariant, callers could build an
+# "immutable-but-invalid" resolution and later migrations/workers
+# could not trust ``resolution.profile_fingerprint``.
+
+
+def test_resolution_constructor_accepts_valid_profile_and_fingerprint():
+    """A correctly-paired (profile, fingerprint) MUST construct
+    successfully.  This guards against an over-strict ``__post_init__``
+    that rejects legitimate values.
+    """
+    valid = resolve_article_rag_index_profile(DEFAULT_ARTICLE_RAG_INDEX_VERSION)
+    rebuilt = ArticleRagIndexProfileResolution(
+        profile=valid.profile,
+        profile_fingerprint=valid.profile_fingerprint,
+    )
+    assert rebuilt.profile_fingerprint == valid.profile_fingerprint
+    assert rebuilt.profile == valid.profile
+
+
+def test_resolution_constructor_rejects_mismatched_fingerprint():
+    """RED-first tracer: a mismatched fingerprint MUST raise ValueError.
+
+    Before the fix, ``ArticleRagIndexProfileResolution`` had no
+    ``__post_init__`` invariant, so the following construction
+    succeeded — producing an immutable-but-invalid resolution.
+    """
+    valid = resolve_article_rag_index_profile(DEFAULT_ARTICLE_RAG_INDEX_VERSION)
+
+    with pytest.raises(ValueError):
+        ArticleRagIndexProfileResolution(
+            profile=valid.profile,
+            profile_fingerprint="not-a-sha256",
+        )
+
+
+@pytest.mark.parametrize(
+    "bad_fingerprint",
+    [
+        # 64-char lowercase hex but wrong content.
+        "0" * 64,
+        "a" * 64,
+        "f" * 64,
+        # Uppercase digest of the correct value — must still be rejected
+        # because the canonical fingerprint is lowercase hex.
+        "",
+        " " * 64,
+    ],
+)
+def test_resolution_constructor_rejects_wrong_fingerprint_content(
+    bad_fingerprint: str,
+):
+    valid = resolve_article_rag_index_profile(DEFAULT_ARTICLE_RAG_INDEX_VERSION)
+    with pytest.raises(ValueError):
+        ArticleRagIndexProfileResolution(
+            profile=valid.profile,
+            profile_fingerprint=bad_fingerprint,
+        )
+
+
+def test_resolution_constructor_rejects_uppercase_digest():
+    """The canonical fingerprint is lowercase hex; an uppercase digest
+    MUST be rejected even if it would be the same value in a
+    case-insensitive comparison.
+    """
+    valid = resolve_article_rag_index_profile(DEFAULT_ARTICLE_RAG_INDEX_VERSION)
+    uppercase_fp = valid.profile_fingerprint.upper()
+    # Sanity: uppercase is not equal to lowercase.
+    assert uppercase_fp != valid.profile_fingerprint
+    with pytest.raises(ValueError):
+        ArticleRagIndexProfileResolution(
+            profile=valid.profile,
+            profile_fingerprint=uppercase_fp,
+        )
+
+
+@pytest.mark.parametrize(
+    "non_string_fingerprint",
+    [None, True, False, 123, 1.5, [], {}],
+)
+def test_resolution_constructor_rejects_non_string_fingerprint(
+    non_string_fingerprint: object,
+):
+    valid = resolve_article_rag_index_profile(DEFAULT_ARTICLE_RAG_INDEX_VERSION)
+    with pytest.raises(TypeError):
+        ArticleRagIndexProfileResolution(
+            profile=valid.profile,
+            profile_fingerprint=non_string_fingerprint,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    "non_profile",
+    [None, object(), dict(), [], "not-a-profile", 123, True],
+)
+def test_resolution_constructor_rejects_non_article_rag_index_profile(
+    non_profile: object,
+):
+    valid = resolve_article_rag_index_profile(DEFAULT_ARTICLE_RAG_INDEX_VERSION)
+    with pytest.raises(TypeError):
+        ArticleRagIndexProfileResolution(
+            profile=non_profile,  # type: ignore[arg-type]
+            profile_fingerprint=valid.profile_fingerprint,
+        )
+
+
+_MALICIOUS_FINGERPRINTS = [
+    "sk-1234567890abcdef",
+    "https://malicious.example.com/path?token=secret",
+    "<script>alert('xss')</script>",
+    "密钥123",
+    "' OR 1=1; --",
+]
+
+
+@pytest.mark.parametrize("malicious", _MALICIOUS_FINGERPRINTS)
+def test_resolution_constructor_malicious_fingerprint_not_in_error(malicious: str):
+    """A malicious ``profile_fingerprint`` MUST raise ValueError, and
+    the offending input MUST NOT appear in ``str``, ``repr``,
+    ``repr(vars)``, or ``traceback.format_exception``.
+    """
+    valid = resolve_article_rag_index_profile(DEFAULT_ARTICLE_RAG_INDEX_VERSION)
+    with pytest.raises((ValueError, TypeError)) as exc_info:
+        ArticleRagIndexProfileResolution(
+            profile=valid.profile,
+            profile_fingerprint=malicious,
+        )
+    err = exc_info.value
+    for rendered in (str(err), repr(err), repr(vars(err))):
+        assert malicious not in rendered, (
+            f"malicious fingerprint leaked into error rendering: {rendered!r}"
+        )
+    tb_text = "".join(
+        traceback.format_exception(type(err), err, err.__traceback__)
+    )
+    assert malicious not in tb_text, (
+        f"malicious fingerprint leaked into traceback: {tb_text!r}"
+    )
+
+
+def test_resolution_constructor_error_messages_are_fixed_local_strings():
+    """Error messages MUST be fixed local literals — no echo, no
+    truncation, no interpolation of fingerprint or profile.
+    """
+    valid = resolve_article_rag_index_profile(DEFAULT_ARTICLE_RAG_INDEX_VERSION)
+
+    # Mismatched fingerprint -> ValueError with fixed message.
+    with pytest.raises(ValueError) as exc_info:
+        ArticleRagIndexProfileResolution(
+            profile=valid.profile,
+            profile_fingerprint="not-a-sha256",
+        )
+    assert str(exc_info.value) == "profile_fingerprint must match profile"
+
+    # Non-string fingerprint -> TypeError with fixed message.
+    with pytest.raises(TypeError) as exc_info:
+        ArticleRagIndexProfileResolution(
+            profile=valid.profile,
+            profile_fingerprint=123,  # type: ignore[arg-type]
+        )
+    assert str(exc_info.value) == "profile_fingerprint must be a str"
+
+    # Non-profile -> TypeError with fixed message.
+    with pytest.raises(TypeError) as exc_info:
+        ArticleRagIndexProfileResolution(
+            profile=object(),  # type: ignore[arg-type]
+            profile_fingerprint=valid.profile_fingerprint,
+        )
+    assert str(exc_info.value) == "profile must be an ArticleRagIndexProfile"
+
+
+def test_resolution_constructor_does_not_overwrite_caller_fingerprint():
+    """The constructor MUST NOT silently overwrite a caller-supplied
+    fingerprint with the computed one.  A mismatch MUST raise rather
+    than auto-correct.
+    """
+    valid = resolve_article_rag_index_profile(DEFAULT_ARTICLE_RAG_INDEX_VERSION)
+    computed = compute_article_rag_index_profile_fingerprint(valid.profile)
+    # Sanity: the resolver's fingerprint already equals the computed one.
+    assert valid.profile_fingerprint == computed
+
+    # A correct (profile, fingerprint) pair is preserved verbatim.
+    rebuilt = ArticleRagIndexProfileResolution(
+        profile=valid.profile,
+        profile_fingerprint=computed,
+    )
+    assert rebuilt.profile_fingerprint == computed
+
+
+# ---------------------------------------------------------------------------
+# Immutability: profile and resolution are frozen
+# ---------------------------------------------------------------------------
+
+
+def test_resolution_is_frozen():
+    resolution = resolve_article_rag_index_profile(
+        DEFAULT_ARTICLE_RAG_INDEX_VERSION
+    )
+    with pytest.raises(FrozenInstanceError):
+        resolution.profile_fingerprint = "tampered"  # type: ignore[misc]
+
+
+def test_resolved_profile_is_still_frozen():
+    resolution = resolve_article_rag_index_profile(
+        DEFAULT_ARTICLE_RAG_INDEX_VERSION
+    )
+    with pytest.raises(FrozenInstanceError):
+        resolution.profile.index_version = "v2"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Registry has no V2; unknown versions do not fall back
+# ---------------------------------------------------------------------------
+
+
+def test_registry_has_no_v2():
+    with pytest.raises(ArticleRagIndexProfileResolutionError):
+        resolve_article_rag_index_profile("article_rag_index_v2")
+
+
+def test_unknown_version_does_not_fallback_to_default():
+    with pytest.raises(ArticleRagIndexProfileResolutionError):
+        resolve_article_rag_index_profile("article_rag_index_v999")
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed: unregistered / blank / whitespace-padded / non-string
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_input",
+    [
+        "",
+        "   ",
+        "\t\n",
+        " article_rag_index_v1",
+        "article_rag_index_v1 ",
+        " article_rag_index_v1 ",
+        "\narticle_rag_index_v1",
+        "article_rag_index_v1\n",
+        123,
+        None,
+        True,
+        False,
+        1.5,
+        ["article_rag_index_v1"],
+    ],
+)
+def test_unregistered_or_malformed_index_version_fail_closed(bad_input: object):
+    with pytest.raises(ArticleRagIndexProfileResolutionError):
+        resolve_article_rag_index_profile(bad_input)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Malicious index_version never appears in error rendering / traceback
+# ---------------------------------------------------------------------------
+
+
+_MALICIOUS_INPUTS = [
+    "sk-1234567890abcdef",
+    "https://malicious.example.com/path?token=secret",
+    "<script>alert('xss')</script>",
+    "密钥123",
+    "article_rag_index_v1\napi_key=sk-leak",
+    "article_rag_index_v1\r\n<html>",
+    "' OR 1=1; --",
+]
+
+
+@pytest.mark.parametrize("malicious", _MALICIOUS_INPUTS)
+def test_malicious_index_version_not_in_error_rendering(malicious: str):
+    with pytest.raises(ArticleRagIndexProfileResolutionError) as exc_info:
+        resolve_article_rag_index_profile(malicious)
+    err = exc_info.value
+    # Fixed local message — no echo, no truncation, no interpolation.
+    assert str(err) == "Article RAG index profile is not registered"
+    for rendered in (str(err), repr(err), repr(vars(err))):
+        assert malicious not in rendered, (
+            f"malicious input leaked into error rendering: {rendered!r}"
+        )
+    tb_text = "".join(
+        traceback.format_exception(type(err), err, err.__traceback__)
+    )
+    assert malicious not in tb_text, (
+        f"malicious input leaked into traceback: {tb_text!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# __all__ completeness
+# ---------------------------------------------------------------------------
+
+
+def test_all_public_names_exported():
+    from app.services.reader_orchestration import article_rag_index_profile as mod
+
+    expected = {
+        "ArticleRagIndexProfile",
+        "compute_article_rag_index_profile_fingerprint",
+        "DEFAULT_ARTICLE_RAG_INDEX_VERSION",
+        "ArticleRagIndexProfileResolution",
+        "ArticleRagIndexProfileResolutionError",
+        "resolve_article_rag_index_profile",
+    }
+    assert set(mod.__all__) == expected
+
+
+# ---------------------------------------------------------------------------
+# V1 characterization parity: bootstrap / plan / retrieval
+# ---------------------------------------------------------------------------
+#
+# These imports are TEST-SIDE characterization only.  The production
+# profile module MUST NOT import bootstrap/plan/retrieval (no reverse
+# dependency).  We import them here to assert that the V1 mapping
+# registered in the profile module matches the existing identity
+# constants used by bootstrap / retrieval / plan.
+
+
+def test_v1_characterization_parity_with_bootstrap_plan_retrieval():
+    from app.services.reader_orchestration.article_rag_index_bootstrap import (
+        DEFAULT_INDEX_VERSION as bootstrap_default,
+    )
+    from app.services.reader_orchestration.article_rag_index_plan import (
+        CHUNKER_VERSION,
+    )
+    from app.services.reader_orchestration.article_rag_retrieval_service import (
+        DEFAULT_INDEX_VERSION as retrieval_default,
+    )
+
+    resolution = resolve_article_rag_index_profile(
+        DEFAULT_ARTICLE_RAG_INDEX_VERSION
+    )
+    p = resolution.profile
+    assert p.index_version == bootstrap_default
+    assert p.index_version == retrieval_default
+    assert p.plan_version == CHUNKER_VERSION
+    assert p.chunker_version == CHUNKER_VERSION
