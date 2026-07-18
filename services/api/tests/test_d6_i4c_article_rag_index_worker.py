@@ -2561,3 +2561,1469 @@ async def test_dashscope_400_terminalizes_article_rag_job_once_with_safe_diagnos
 
     # Cleanup: clear settings cache so env vars don't leak to other tests.
     settings_module.get_settings.cache_clear()
+
+
+# ===========================================================================
+# P1-D: Worker Frozen Profile Validation (TDD)
+# ===========================================================================
+#
+# The Article RAG worker must validate the bootstrap-frozen profile
+# identity (index_version, profile_fingerprint, chunker_version,
+# reader_jobs.input_hash, reader_article_rag_index_runs.profile_fingerprint)
+# before any embedding or vector-write side effect.
+#
+# All failure paths must:
+#   - fail-closed (failed_terminal)
+#   - not call embedding provider
+#   - not call vector writer
+#   - terminalize job + run + linked index-run atomically
+#   - emit exactly one terminal event
+#   - not echo malicious input in any error surface
+#
+# Hash golden values are computed INDEPENDENTLY in the test (not via the
+# production public seam) to provide genuine cross-validation.
+#
+# Frozen V1 profile identity (must match the P1-B resolver golden and
+# the migration 0021 backfill literal).  Tests reference this constant
+# instead of importing from production to keep cross-validation
+# independent of the very resolver under test.
+_P1D_V1_PROFILE_FINGERPRINT = (
+    "e443f581eb3e86aeb9dbcdcee806783186bd85da6c987c60357b61905ea86d6d"
+)
+_P1D_V1_INDEX_VERSION = "article_rag_index_v1"
+_P1D_V1_CHUNKER_VERSION = "article_rag_index_plan_v1"
+
+# Sentinel strings used to verify that malicious input is not echoed in
+# any error surface (str/repr/traceback/failure_message/output_ref_json/
+# error_json/payload_json).
+_P1D_SENTINEL_FINGERPRINT = "sk-P1D-FINGERPRINT-SENTINEL-LEAK-1234567890abcdef"
+_P1D_SENTINEL_INDEX_VERSION = "sk-P1D-INDEX-VERSION-SENTINEL-LEAK-0987654321"
+_P1D_SENTINEL_INPUT_HASH = "sk-P1D-INPUT-HASH-SENTINEL-LEAK-abcdef1234567890"
+
+# Fixed safe error messages used by the production failure paths.  These
+# are the only strings tests assert against when checking that the
+# sentinel is NOT present — they are intentionally generic and free of
+# any caller-supplied value.
+_P1D_SAFE_MESSAGES = {
+    "Article RAG index profile is not registered",
+    "Article RAG index profile fingerprint is missing or malformed",
+    "Article RAG index profile fingerprint does not match the resolved profile",
+    "Article RAG index plan chunker_version does not match the resolved profile",
+    "Article RAG index job input_hash does not match the canonical algorithm",
+    "Article RAG index run profile_fingerprint does not match the resolved profile",
+    "Article RAG index run profile_fingerprint drifted before vector write",
+}
+
+
+def _p1d_compute_expected_input_hash(
+    *,
+    stable_document_id: UUID,
+    base_id: UUID,
+    plan_content_sha256: str,
+    index_version: str,
+    profile_fingerprint: str,
+) -> str:
+    """Independent computation of the canonical P1-C input_hash.
+
+    Mirrors the production algorithm but is intentionally duplicated
+    here so tests provide genuine cross-validation rather than invoking
+    the public seam.  If the production algorithm drifts, this
+    independent computation will mismatch and the test will fail —
+    which is the intended regression signal.
+    """
+    raw = (
+        f"{stable_document_id}:"
+        f"{base_id}:"
+        f"{plan_content_sha256}:"
+        f"{index_version}:"
+        f"{profile_fingerprint}"
+    ).encode()
+    return hashlib.sha256(raw).hexdigest()
+
+
+async def _p1d_fetch_index_run_with_fingerprint(
+    conn: asyncpg.Connection,
+    *,
+    index_run_id: UUID,
+) -> asyncpg.Record:
+    """Fetch index_run row including profile_fingerprint (P1-D)."""
+    return await conn.fetchrow(
+        """
+        SELECT id, status, job_id, base_id, stable_document_id,
+               record_generation, index_version, chunker_version,
+               profile_fingerprint,
+               plan_content_sha256, chunk_count,
+               embedding_model, vector_store_provider, vector_collection,
+               reader_run_id, error_json, metadata_json, completed_at
+        FROM reader_article_rag_index_runs
+        WHERE id = $1
+        """,
+        index_run_id,
+    )
+
+
+async def _p1d_count_terminal_events(
+    conn: asyncpg.Connection,
+    *,
+    job_id: UUID,
+) -> int:
+    return await conn.fetchval(
+        "SELECT count(*) FROM reader_job_events WHERE job_id = $1 "
+        "AND event_type = 'job_failed_terminal'",
+        job_id,
+    )
+
+
+async def _p1d_count_retry_events(
+    conn: asyncpg.Connection,
+    *,
+    job_id: UUID,
+) -> int:
+    return await conn.fetchval(
+        "SELECT count(*) FROM reader_job_events WHERE job_id = $1 "
+        "AND event_type = 'job_retry_later'",
+        job_id,
+    )
+
+
+async def _p1d_set_job_input_json(
+    pool: asyncpg.Pool,
+    *,
+    job_id: UUID,
+    input_json: dict[str, Any],
+) -> None:
+    from app.database.json_compat import jsonb_param
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE reader_jobs SET input_json = $2::jsonb WHERE id = $1",
+            job_id,
+            jsonb_param(input_json),
+        )
+
+
+async def _p1d_set_job_input_hash(
+    pool: asyncpg.Pool,
+    *,
+    job_id: UUID,
+    input_hash: str,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE reader_jobs SET input_hash = $2 WHERE id = $1",
+            job_id,
+            input_hash,
+        )
+
+
+async def _p1d_set_index_run_fingerprint(
+    pool: asyncpg.Pool,
+    *,
+    index_run_id: UUID,
+    fingerprint: str,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE reader_article_rag_index_runs "
+            "SET profile_fingerprint = $2 WHERE id = $1",
+            index_run_id,
+            fingerprint,
+        )
+
+
+async def _p1d_fetch_job_payload(
+    pool: asyncpg.Pool,
+    *,
+    job_id: UUID,
+) -> dict[str, Any]:
+    """Fetch the job's input_json as a mutable dict (P1-D helper)."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT input_json, input_hash FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+    return {
+        "input_json": dict(row["input_json"]),
+        "input_hash": str(row["input_hash"]),
+    }
+
+
+def _p1d_assert_no_sentinel_in_surfaces(
+    *,
+    sentinel: str,
+    job: asyncpg.Record | None = None,
+    index_run: asyncpg.Record | None = None,
+    events: list[asyncpg.Record] | None = None,
+    exc: Exception | None = None,
+) -> None:
+    """Verify a malicious sentinel string is not echoed in any error surface.
+
+    Surfaces checked:
+      - str(exc) / repr(exc) / traceback.format_exception(exc)
+      - reader_jobs.failure_message
+      - reader_jobs.output_ref_json
+      - reader_article_rag_index_runs.error_json
+      - reader_job_events.payload_json (per event)
+    """
+    surfaces: list[str] = []
+
+    if exc is not None:
+        surfaces.append(str(exc))
+        surfaces.append(repr(exc))
+        import traceback as _tb
+        surfaces.extend(
+            _tb.format_exception(type(exc), exc, exc.__traceback__)
+        )
+
+    if job is not None:
+        fm = job.get("failure_message")
+        if isinstance(fm, str):
+            surfaces.append(fm)
+        orj = job.get("output_ref_json")
+        if orj is not None:
+            surfaces.append(json.dumps(orj, default=str))
+
+    if index_run is not None:
+        ej = index_run.get("error_json")
+        if ej is not None:
+            surfaces.append(json.dumps(ej, default=str))
+
+    if events:
+        for ev in events:
+            pj = ev.get("payload_json")
+            if pj is not None:
+                surfaces.append(json.dumps(pj, default=str))
+
+    for surface in surfaces:
+        assert sentinel not in surface, (
+            f"sentinel {sentinel!r} leaked into error surface: "
+            f"{surface[:200]!r}"
+        )
+
+
+# ===================================================================
+# P1-D Scenario 1: Happy path — valid P1-C job succeeds end-to-end
+# ===================================================================
+
+
+async def test_p1d_happy_path_p1c_job_succeeds_with_profile_validation(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-D Scenario 1: a valid P1-C bootstrap job must succeed end-to-end.
+
+    Asserts the bootstrap froze the correct profile identity across all
+    three layers (index-run column, input_json, input_hash) and the
+    worker succeeds without any profile validation failure.
+
+    Embedding provider and vector writer must each be called exactly
+    once; index-run indexed; job succeeded; reader run completed.
+    """
+    from app.services.reader_orchestration.article_rag_index_profile import (
+        resolve_article_rag_index_profile,
+    )
+
+    await _seed_paragraph_environment(worker_env)
+    bootstrap = _build_bootstrap_service(worker_env)
+    bootstrap_result = await bootstrap.bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # Verify the bootstrap froze the correct profile identity.
+    resolution = resolve_article_rag_index_profile(_P1D_V1_INDEX_VERSION)
+    assert bootstrap_result.profile_fingerprint == resolution.profile_fingerprint
+    assert bootstrap_result.profile_fingerprint == _P1D_V1_PROFILE_FINGERPRINT
+
+    # Verify the input_hash matches the independent P1-C computation.
+    payload = await _p1d_fetch_job_payload(
+        worker_env, job_id=bootstrap_result.job_id,
+    )
+    expected_hash = _p1d_compute_expected_input_hash(
+        stable_document_id=bootstrap_result.stable_document_id,
+        base_id=bootstrap_result.base_id,
+        plan_content_sha256=bootstrap_result.plan_content_sha256,
+        index_version=_P1D_V1_INDEX_VERSION,
+        profile_fingerprint=_P1D_V1_PROFILE_FINGERPRINT,
+    )
+    assert payload["input_hash"] == expected_hash
+    assert payload["input_json"]["profile_fingerprint"] == _P1D_V1_PROFILE_FINGERPRINT
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "succeeded"
+    assert embedding_provider.call_count == 1
+    assert vector_writer.call_count == 1
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+
+    assert job["status"] == "succeeded"
+    assert run["status"] == "completed"
+    assert index_run["status"] == "indexed"
+    assert index_run["profile_fingerprint"] == _P1D_V1_PROFILE_FINGERPRINT
+
+
+# ===================================================================
+# P1-D Scenario 2: input_json.profile_fingerprint missing
+# ===================================================================
+
+
+async def test_p1d_missing_profile_fingerprint_failed_terminal(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-D Scenario 2: input_json.profile_fingerprint missing -> failed_terminal.
+
+    Asserts:
+      - result.status == "failed_terminal"
+      - failure_code in the index_profile_invalid family
+      - embedding provider 0 calls
+      - vector writer 0 calls
+      - job failed_terminal
+      - run failed_terminal
+      - linked index-run failed (via trusted job_id lookup, not input_json)
+      - exactly 1 terminal event
+      - 0 retry_later events
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # Remove profile_fingerprint from input_json.
+    payload = await _p1d_fetch_job_payload(
+        worker_env, job_id=bootstrap_result.job_id,
+    )
+    input_json = payload["input_json"]
+    input_json.pop("profile_fingerprint", None)
+    await _p1d_set_job_input_json(
+        worker_env, job_id=bootstrap_result.job_id, input_json=input_json,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code in {
+        "index_profile_invalid",
+        "input_json_invalid",
+    }
+    assert result.retryable is False
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        terminal_events = await _p1d_count_terminal_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+        retry_events = await _p1d_count_retry_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert run["status"] == "failed_terminal"
+    assert index_run["status"] == "failed"
+    assert terminal_events == 1
+    assert retry_events == 0
+
+
+# ===================================================================
+# P1-D Scenario 3: profile_fingerprint malformed matrix
+# ===================================================================
+
+
+_P1D_MALFORMED_FINGERPRINT_CASES = [
+    pytest.param(None, id="none"),
+    pytest.param("", id="empty"),
+    pytest.param("   ", id="whitespace_only"),
+    pytest.param("a" * 63, id="too_short_63_chars"),
+    pytest.param("a" * 65, id="too_long_65_chars"),
+    pytest.param("A" * 64, id="uppercase_sha256"),
+    pytest.param("z" * 64, id="non_hex_sha256"),
+    pytest.param("key-like-string-value", id="key_like"),
+    pytest.param("http://example.com/fingerprint", id="uri"),
+    pytest.param("finger" + " " + "a" * 57, id="contains_space"),
+    pytest.param("finger\nprint" + "a" * 53, id="contains_newline"),
+    pytest.param("UNICODE_FINGERPRINT_Ñ_é", id="unicode"),
+    pytest.param(True, id="bool"),
+    pytest.param(12345, id="int"),
+    pytest.param("sk-P1D-FINGERPRINT-SENTINEL", id="raw_error_sentinel"),
+]
+
+
+@pytest.mark.parametrize("malformed_fingerprint", _P1D_MALFORMED_FINGERPRINT_CASES)
+async def test_p1d_malformed_profile_fingerprint_matrix(
+    worker_env: asyncpg.Pool,
+    malformed_fingerprint: Any,
+) -> None:
+    """P1-D Scenario 3: malformed profile_fingerprint must fail-closed.
+
+    Covers: None, empty, whitespace, bool, int, 63/65 chars, uppercase,
+    non-hex, key-like, URI, Unicode, newline, sentinel.
+
+    All cases must:
+      - fail_terminal
+      - 0 embedding calls
+      - 0 vector writer calls
+      - terminalize job + run + linked index-run
+      - 1 terminal event, 0 retry events
+      - not echo the malformed input in any error surface
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    payload = await _p1d_fetch_job_payload(
+        worker_env, job_id=bootstrap_result.job_id,
+    )
+    input_json = payload["input_json"]
+    input_json["profile_fingerprint"] = malformed_fingerprint
+    await _p1d_set_job_input_json(
+        worker_env, job_id=bootstrap_result.job_id, input_json=input_json,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.retryable is False
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        terminal_events = await _p1d_count_terminal_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+        retry_events = await _p1d_count_retry_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+        events = await conn.fetch(
+            "SELECT event_type, payload_json FROM reader_job_events "
+            "WHERE job_id = $1",
+            bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert run["status"] == "failed_terminal"
+    assert index_run["status"] == "failed"
+    assert terminal_events == 1
+    assert retry_events == 0
+
+    # Verify the malformed value is not echoed in any error surface.
+    sentinel_repr = repr(malformed_fingerprint)
+    if isinstance(malformed_fingerprint, str):
+        sentinel_str = malformed_fingerprint
+    else:
+        sentinel_str = sentinel_repr
+    # Only check non-empty sentinels (empty/None cannot leak meaningfully).
+    if sentinel_str and sentinel_str.strip():
+        _p1d_assert_no_sentinel_in_surfaces(
+            sentinel=sentinel_str,
+            job=job,
+            index_run=index_run,
+            events=events,
+        )
+
+
+# ===================================================================
+# P1-D Scenario 4: unknown/malicious index_version
+# ===================================================================
+
+
+async def test_p1d_unknown_index_version_failed_terminal(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-D Scenario 4: unknown index_version must fail-closed via resolver.
+
+    The worker must NOT:
+      - fallback to V1
+      - use a runtime default
+      - directly trust input_json
+      - echo the malicious version
+
+    The worker must use the P1-B public resolver and fail if the
+    version is not registered.
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    payload = await _p1d_fetch_job_payload(
+        worker_env, job_id=bootstrap_result.job_id,
+    )
+    input_json = payload["input_json"]
+    input_json["index_version"] = "article_rag_index_v999_unknown"
+    await _p1d_set_job_input_json(
+        worker_env, job_id=bootstrap_result.job_id, input_json=input_json,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code in {
+        "index_profile_invalid",
+        "input_json_invalid",
+    }
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        events = await conn.fetch(
+            "SELECT event_type, payload_json FROM reader_job_events "
+            "WHERE job_id = $1",
+            bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert run["status"] == "failed_terminal"
+    assert index_run["status"] == "failed"
+
+    # Verify the malicious version is not echoed.
+    _p1d_assert_no_sentinel_in_surfaces(
+        sentinel="article_rag_index_v999_unknown",
+        job=job,
+        index_run=index_run,
+        events=events,
+    )
+
+
+async def test_p1d_malicious_index_version_sentinel_not_echoed(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-D Scenario 4b: malicious index_version sentinel must not leak."""
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    payload = await _p1d_fetch_job_payload(
+        worker_env, job_id=bootstrap_result.job_id,
+    )
+    input_json = payload["input_json"]
+    input_json["index_version"] = _P1D_SENTINEL_INDEX_VERSION
+    await _p1d_set_job_input_json(
+        worker_env, job_id=bootstrap_result.job_id, input_json=input_json,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        events = await conn.fetch(
+            "SELECT event_type, payload_json FROM reader_job_events "
+            "WHERE job_id = $1",
+            bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert run["status"] == "failed_terminal"
+    assert index_run["status"] == "failed"
+
+    _p1d_assert_no_sentinel_in_surfaces(
+        sentinel=_P1D_SENTINEL_INDEX_VERSION,
+        job=job,
+        index_run=index_run,
+        events=events,
+    )
+
+
+# ===================================================================
+# P1-D Scenario 5: fingerprint mismatch with resolver
+# ===================================================================
+
+
+@pytest.mark.parametrize(
+    "wrong_fingerprint",
+    [
+        pytest.param("a" * 64, id="all_a"),
+        pytest.param("b" * 64, id="all_b"),
+        pytest.param("0" * 64, id="all_zeros"),
+        pytest.param("f" * 64, id="all_f"),
+    ],
+)
+async def test_p1d_fingerprint_mismatch_with_resolver_failed_terminal(
+    worker_env: asyncpg.Pool,
+    wrong_fingerprint: str,
+) -> None:
+    """P1-D Scenario 5: a format-valid but wrong fingerprint must fail.
+
+    The worker must not only check the shape (64-char hex) — it must
+    verify the fingerprint precisely equals the resolver's
+    profile_fingerprint for the resolved index_version.
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    payload = await _p1d_fetch_job_payload(
+        worker_env, job_id=bootstrap_result.job_id,
+    )
+    input_json = payload["input_json"]
+    input_json["profile_fingerprint"] = wrong_fingerprint
+    await _p1d_set_job_input_json(
+        worker_env, job_id=bootstrap_result.job_id, input_json=input_json,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code in {
+        "index_profile_mismatch",
+        "index_profile_invalid",
+        "input_json_invalid",
+    }
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        terminal_events = await _p1d_count_terminal_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+        retry_events = await _p1d_count_retry_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert run["status"] == "failed_terminal"
+    assert index_run["status"] == "failed"
+    assert terminal_events == 1
+    assert retry_events == 0
+
+
+# ===================================================================
+# P1-D Scenario 6: chunker_version mismatch with resolved profile
+# ===================================================================
+
+
+async def test_p1d_chunker_version_mismatch_failed_terminal(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-D Scenario 6: chunker_version != resolved profile.chunker_version.
+
+    A valid fingerprint but wrong chunker_version must fail-closed
+    with a fixed safe error message and no provider side effects.
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    payload = await _p1d_fetch_job_payload(
+        worker_env, job_id=bootstrap_result.job_id,
+    )
+    input_json = payload["input_json"]
+    input_json["chunker_version"] = "article_rag_index_plan_v999_mismatch"
+    await _p1d_set_job_input_json(
+        worker_env, job_id=bootstrap_result.job_id, input_json=input_json,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code in {
+        "index_profile_invalid",
+        "input_json_invalid",
+    }
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        terminal_events = await _p1d_count_terminal_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert run["status"] == "failed_terminal"
+    assert index_run["status"] == "failed"
+    assert terminal_events == 1
+
+
+# ===================================================================
+# P1-D Scenario 7: reader_jobs.input_hash mismatch
+# ===================================================================
+
+
+async def test_p1d_input_hash_old_algorithm_failed_terminal(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-D Scenario 7a: pre-P1-C hash algorithm (no fingerprint) must fail.
+
+    The worker must use the same public canonical hash seam as the
+    bootstrap.  An input_hash computed without the profile_fingerprint
+    field (pre-P1-C algorithm) must be rejected.
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # Compute the OLD (pre-P1-C) hash: same prefix, no fingerprint suffix.
+    old_hash_raw = (
+        f"{bootstrap_result.stable_document_id}:"
+        f"{bootstrap_result.base_id}:"
+        f"{bootstrap_result.plan_content_sha256}:"
+        f"{_P1D_V1_INDEX_VERSION}"
+    ).encode()
+    old_hash = hashlib.sha256(old_hash_raw).hexdigest()
+    await _p1d_set_job_input_hash(
+        worker_env, job_id=bootstrap_result.job_id, input_hash=old_hash,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code == "job_input_hash_mismatch"
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        terminal_events = await _p1d_count_terminal_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert run["status"] == "failed_terminal"
+    assert index_run["status"] == "failed"
+    assert terminal_events == 1
+
+
+@pytest.mark.parametrize(
+    "wrong_hash",
+    [
+        pytest.param("c" * 64, id="wrong_64_hex"),
+        pytest.param("0" * 64, id="all_zeros"),
+        pytest.param("malformed_hash", id="malformed_short"),
+        pytest.param("not-a-hex-at-all", id="malformed_non_hex"),
+    ],
+)
+async def test_p1d_input_hash_mismatch_matrix_failed_terminal(
+    worker_env: asyncpg.Pool,
+    wrong_hash: str,
+) -> None:
+    """P1-D Scenario 7b: any wrong/malformed input_hash must fail-closed."""
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    await _p1d_set_job_input_hash(
+        worker_env, job_id=bootstrap_result.job_id, input_hash=wrong_hash,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code == "job_input_hash_mismatch"
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        terminal_events = await _p1d_count_terminal_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert index_run["status"] == "failed"
+    assert terminal_events == 1
+
+
+# ===================================================================
+# P1-D Scenario 8: persisted index-run fingerprint mismatch
+# ===================================================================
+
+
+async def test_p1d_persisted_index_run_fingerprint_mismatch_failed_terminal(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-D Scenario 8: persisted index-run.profile_fingerprint mismatch.
+
+    input_json + resolver are correct, but the database
+    reader_article_rag_index_runs.profile_fingerprint has been changed
+    to a different valid SHA-256.  The worker must detect this before
+    calling embedding and fail-closed.
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # Mutate the persisted index-run fingerprint to a different valid SHA-256.
+    different_valid_fingerprint = "c" * 64
+    await _p1d_set_index_run_fingerprint(
+        worker_env,
+        index_run_id=bootstrap_result.index_run_id,
+        fingerprint=different_valid_fingerprint,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code in {
+        "index_profile_mismatch",
+        "index_profile_invalid",
+    }
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        terminal_events = await _p1d_count_terminal_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert run["status"] == "failed_terminal"
+    assert index_run["status"] == "failed"
+    assert terminal_events == 1
+
+
+# ===================================================================
+# P1-D Scenario 9: pre-vector-write TOCTOU
+# ===================================================================
+
+
+class _P1dFingerprintDriftEmbeddingProvider:
+    """Fake embedding provider that mutates the index-run fingerprint
+    during embed_texts to simulate a TOCTOU drift.
+
+    The embedding call succeeds (returns real embeddings), but the
+    persisted index-run profile_fingerprint is changed to a different
+    valid SHA-256 before the provider returns.  The pre-vector-write
+    guard must detect this drift and refuse to call the vector writer.
+    """
+
+    def __init__(
+        self,
+        *,
+        pool: asyncpg.Pool,
+        index_run_id: UUID,
+        drift_fingerprint: str = "d" * 64,
+    ) -> None:
+        self._pool = pool
+        self._index_run_id = index_run_id
+        self._drift_fingerprint = drift_fingerprint
+        self._inner = FakeArticleRagEmbeddingProvider()
+        self.call_count = 0
+
+    async def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+    ) -> list[ArticleRagEmbedding]:
+        self.call_count += 1
+        # Drift the persisted fingerprint DURING embedding.
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE reader_article_rag_index_runs "
+                "SET profile_fingerprint = $2 WHERE id = $1",
+                self._index_run_id,
+                self._drift_fingerprint,
+            )
+        return await self._inner.embed_texts(texts, model=model)
+
+
+async def test_p1d_pre_vector_write_toctou_fingerprint_drift(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-D Scenario 9: pre-vector-write TOCTOU fingerprint drift.
+
+    The embedding provider mutates the index-run fingerprint during
+    embed_texts.  The pre-vector-write guard must:
+      - detect the drift
+      - refuse to call vector writer (call_count == 0)
+      - not mark indexed
+      - terminalize job + run + index-run
+      - emit exactly 1 terminal event
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    embedding_provider = _P1dFingerprintDriftEmbeddingProvider(
+        pool=worker_env,
+        index_run_id=bootstrap_result.index_run_id,
+        drift_fingerprint="d" * 64,
+    )
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    # Embedding may have completed before drift was detected.
+    assert embedding_provider.call_count == 1
+    # Vector writer must NOT have been called.
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        terminal_events = await _p1d_count_terminal_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert run["status"] == "failed_terminal"
+    assert index_run["status"] == "failed"
+    assert terminal_events == 1
+
+
+# ===================================================================
+# P1-D Scenario 10: already-indexed idempotent fingerprint verification
+# ===================================================================
+
+
+async def test_p1d_already_indexed_idempotent_fingerprint_mismatch_failed(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-D Scenario 10: already-indexed path must also verify fingerprint.
+
+    The idempotent no-op path (index_run.status == 'indexed') must NOT
+    bypass the profile guard.  If the persisted fingerprint differs
+    from the resolver/input_json, the worker must fail-closed rather
+    than silently succeed with a stale identity.
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # Run the worker once to index the run.
+    first_provider = FakeArticleRagEmbeddingProvider()
+    first_writer = FakeArticleRagVectorWriter()
+    first_service = _build_worker_service(
+        worker_env,
+        embedding_provider=first_provider,
+        vector_writer=first_writer,
+    )
+    first_result = await first_service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+    assert first_result is not None
+    assert first_result.status == "succeeded"
+
+    # Re-enqueue a second job pointing at the same index-run via a fresh
+    # bootstrap (idempotent_noop path will return the existing indexed
+    # run).  Then mutate the persisted fingerprint to a different valid
+    # SHA-256 so the already-indexed path's fingerprint guard fires.
+    different_valid_fingerprint = "e" * 64
+    await _p1d_set_index_run_fingerprint(
+        worker_env,
+        index_run_id=bootstrap_result.index_run_id,
+        fingerprint=different_valid_fingerprint,
+    )
+
+    # Re-queue the original job to simulate a duplicate claim.
+    await _reset_job_to_queued(
+        worker_env, job_id=bootstrap_result.job_id,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code in {
+        "index_profile_mismatch",
+        "index_profile_invalid",
+    }
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        terminal_events = await _p1d_count_terminal_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert index_run["status"] == "failed"
+    assert terminal_events == 1
+
+
+# ===================================================================
+# P1-D Scenario 11: safe sentinel propagation
+# ===================================================================
+
+
+async def test_p1d_malicious_fingerprint_sentinel_not_echoed_in_surfaces(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-D Scenario 11a: malicious fingerprint sentinel must not leak.
+
+    Verifies the sentinel is NOT present in:
+      - reader_jobs.failure_message
+      - reader_jobs.output_ref_json
+      - reader_article_rag_index_runs.error_json
+      - reader_job_events.payload_json
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    payload = await _p1d_fetch_job_payload(
+        worker_env, job_id=bootstrap_result.job_id,
+    )
+    input_json = payload["input_json"]
+    input_json["profile_fingerprint"] = _P1D_SENTINEL_FINGERPRINT
+    await _p1d_set_job_input_json(
+        worker_env, job_id=bootstrap_result.job_id, input_json=input_json,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        events = await conn.fetch(
+            "SELECT event_type, payload_json FROM reader_job_events "
+            "WHERE job_id = $1",
+            bootstrap_result.job_id,
+        )
+
+    _p1d_assert_no_sentinel_in_surfaces(
+        sentinel=_P1D_SENTINEL_FINGERPRINT,
+        job=job,
+        index_run=index_run,
+        events=events,
+    )
+
+
+async def test_p1d_malicious_input_hash_sentinel_not_echoed_in_surfaces(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-D Scenario 11b: malicious input_hash sentinel must not leak."""
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    await _p1d_set_job_input_hash(
+        worker_env,
+        job_id=bootstrap_result.job_id,
+        input_hash=_P1D_SENTINEL_INPUT_HASH,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        events = await conn.fetch(
+            "SELECT event_type, payload_json FROM reader_job_events "
+            "WHERE job_id = $1",
+            bootstrap_result.job_id,
+        )
+
+    _p1d_assert_no_sentinel_in_surfaces(
+        sentinel=_P1D_SENTINEL_INPUT_HASH,
+        job=job,
+        index_run=index_run,
+        events=events,
+    )
+
+
+# ===================================================================
+# P1-D Scenario 12: context=None terminalization via trusted job_id lookup
+# ===================================================================
+
+
+async def test_p1d_context_none_terminalizes_linked_index_run_via_job_id(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-D Scenario 12: when _load_job_context fails, the worker must
+    terminalize the linked index-run via the trusted DB relationship
+    reader_article_rag_index_runs.job_id = claim.job_id, NOT via the
+    (potentially corrupt) input_json.index_run_id.
+
+    Setup:
+      - Remove profile_fingerprint from input_json (forces context=None)
+      - Also corrupt input_json.index_run_id to a bogus UUID
+
+    Asserts:
+      - The REAL index-run (linked via job_id) is terminalized to 'failed'
+      - The bogus index_run_id is NOT used to update any row
+      - job + run + linked index-run all terminal
+      - exactly 1 terminal event
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # Corrupt input_json: remove profile_fingerprint AND set bogus index_run_id.
+    bogus_index_run_id = str(uuid4())
+    payload = await _p1d_fetch_job_payload(
+        worker_env, job_id=bootstrap_result.job_id,
+    )
+    input_json = payload["input_json"]
+    input_json.pop("profile_fingerprint", None)
+    input_json["index_run_id"] = bogus_index_run_id
+    await _p1d_set_job_input_json(
+        worker_env, job_id=bootstrap_result.job_id, input_json=input_json,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        # The REAL index-run (linked via job_id) must be terminalized.
+        real_index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        terminal_events = await _p1d_count_terminal_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+        retry_events = await _p1d_count_retry_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert run["status"] == "failed_terminal"
+    assert real_index_run["status"] == "failed"
+    assert terminal_events == 1
+    assert retry_events == 0
+
+
+# ===================================================================
+# P1-D Scenario 13: vector write metadata carries profile_fingerprint
+# ===================================================================
+
+
+class _P1dMetadataCapturingVectorWriter:
+    """Fake vector writer that captures the ArticleRagVectorWriteMetadata
+    so tests can verify it carries the canonical profile_fingerprint.
+    """
+
+    def __init__(self) -> None:
+        self.call_count = 0
+        self.captured_metadata: ArticleRagVectorWriteMetadata | None = None
+
+    async def upsert_chunks(
+        self,
+        *,
+        collection: str,
+        chunks_with_embeddings: list[ArticleRagVectorChunk],
+        metadata: ArticleRagVectorWriteMetadata,
+    ) -> ArticleRagVectorWriteResult:
+        self.call_count += 1
+        self.captured_metadata = metadata
+        return ArticleRagVectorWriteResult(
+            collection=collection,
+            upserted_count=len(chunks_with_embeddings),
+            provider_metadata={"provider": "p1d_fake_capturing"},
+        )
+
+
+async def test_p1d_vector_write_metadata_carries_profile_fingerprint(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-D Scenario 13: ArticleRagVectorWriteMetadata must carry the
+    canonical profile_fingerprint on the happy path.
+    """
+    await _seed_paragraph_environment(worker_env)
+    await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = _P1dMetadataCapturingVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "succeeded"
+    assert vector_writer.call_count == 1
+    assert vector_writer.captured_metadata is not None
+    captured = vector_writer.captured_metadata
+    assert captured.profile_fingerprint == _P1D_V1_PROFILE_FINGERPRINT

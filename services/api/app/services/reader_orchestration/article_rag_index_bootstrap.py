@@ -77,7 +77,7 @@ _DEAD_JOB_STATUSES = frozenset({"failed_terminal", "cancelled", "superseded"})
 _EXECUTION_ACTIVE_INDEX_RUN_STATUSES = frozenset({"planned", "queued", "indexing"})
 
 
-def _compute_article_rag_index_build_input_hash(
+def compute_article_rag_index_build_input_hash(
     *,
     stable_document_id: UUID,
     base_id: UUID,
@@ -87,6 +87,11 @@ def _compute_article_rag_index_build_input_hash(
 ) -> str:
     """Compute the canonical ``reader_jobs.input_hash`` for an
     ``article_rag_index_build`` job under the P1-C algorithm.
+
+    This is the **public canonical input-hash seam** shared between the
+    bootstrap service (writer) and the worker (validator).  The worker
+    must NOT duplicate the hash algorithm; it must call this function
+    to recompute and verify the persisted ``reader_jobs.input_hash``.
 
     The digest covers ``stable_document_id``, ``base_id``,
     ``plan_content_sha256``, ``index_version``, and
@@ -102,6 +107,14 @@ def _compute_article_rag_index_build_input_hash(
             f"{profile_fingerprint}"
         ).encode()
     ).hexdigest()
+
+
+# Private alias retained for backward compatibility with existing
+# bootstrap call sites within this module.  New code (including the
+# worker) must call :func:`compute_article_rag_index_build_input_hash`.
+_compute_article_rag_index_build_input_hash = (
+    compute_article_rag_index_build_input_hash
+)
 
 
 # ---------------------------------------------------------------------------
