@@ -63,7 +63,7 @@ export function SettingsDialogSectionFrame({
         ) : null}
       </div>
       <div
-        className="min-h-0 overflow-y-auto"
+        className="min-h-0 overflow-y-auto overflow-x-hidden"
         aria-labelledby={titleId}
       >
         <div

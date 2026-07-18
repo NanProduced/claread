@@ -172,7 +172,7 @@ export function SettingsDialogShell({
             aria-label="设置分区"
             className={cn(
               "flex shrink-0 gap-1 overflow-x-auto bg-surface-raised p-2",
-              "md:w-[12rem] md:flex-col md:overflow-visible md:border-r md:border-hairline md:p-3",
+              "md:w-[12rem] md:flex-col md:overflow-y-auto md:border-r md:border-hairline md:p-3",
             )}
           >
             {SECTION_GROUPS.map((group) => (

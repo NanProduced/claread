@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 /**
  * Settings Dialog routing regression — real Chromium, mock auth.
@@ -196,6 +196,91 @@ async function openUserMenuWithKeyboard(
 async function expectDialogClosedAndBackOnReader(page: Page) {
   await expect(page.getByRole("dialog", { name: "设置" })).toHaveCount(0);
   await expect(page).toHaveURL(/\/app\/read$/);
+}
+
+async function setTheme(page: Page, theme: "light" | "dark") {
+  await page.evaluate((t) => {
+    localStorage.setItem("claread.theme.v1", t);
+  }, theme);
+}
+
+function parseRgb(rgb: string): [number, number, number, number] {
+  const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+  if (!m) return [0, 0, 0, 0];
+  const r = parseInt(m[1], 10);
+  const g = parseInt(m[2], 10);
+  const b = parseInt(m[3], 10);
+  const a = m[4] !== undefined ? parseFloat(m[4]) : 1;
+  return [r, g, b, a];
+}
+
+function colorDistance(left: string, right: string): number {
+  const [r1, g1, b1] = parseRgb(left);
+  const [r2, g2, b2] = parseRgb(right);
+  return Math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2);
+}
+
+async function getBackgroundColor(locator: Locator): Promise<string> {
+  return locator.evaluate((el) => getComputedStyle(el).backgroundColor);
+}
+
+async function assertNoHorizontalOverflow(page: Page, dialog: Locator) {
+  const overflows = await dialog.evaluate((dialogEl) => {
+    const html = document.documentElement;
+    const rightPanel = dialogEl.querySelector(
+      ".relative.flex.min-h-0.flex-1.flex-col",
+    ) as HTMLElement | null;
+    const body = dialogEl.querySelector(
+      ".min-h-0.overflow-y-auto",
+    ) as HTMLElement | null;
+    return {
+      page: html.scrollWidth > html.clientWidth,
+      dialog: dialogEl.scrollWidth > (dialogEl as HTMLElement).clientWidth,
+      rightPanel: rightPanel
+        ? rightPanel.scrollWidth > rightPanel.clientWidth
+        : false,
+      body: body ? body.scrollWidth > body.clientWidth : false,
+    };
+  });
+  expect(overflows.page, "page must not scroll horizontally").toBe(false);
+  expect(overflows.dialog, "dialog must not overflow horizontally").toBe(false);
+  expect(overflows.rightPanel, "right panel must not overflow horizontally").toBe(
+    false,
+  );
+  expect(overflows.body, "body must not overflow horizontally").toBe(false);
+}
+
+async function assertAllVisibleControlsWithinBounds(page: Page, dialog: Locator) {
+  const body = dialog.locator(".min-h-0.overflow-y-auto").first();
+  await expect(body).toBeVisible();
+
+  const bodyBox = await body.boundingBox();
+  expect(bodyBox).not.toBeNull();
+  const bodyLeft = bodyBox!.x;
+  const bodyRight = bodyBox!.x + bodyBox!.width;
+
+  // Covers visible labels for sr-only native radios; the input itself is
+  // hidden and therefore excluded by the visible filter.
+  const controls = await body
+    .locator("button, a, textarea, input, label")
+    .filter({ visible: true })
+    .all();
+  expect(controls.length).toBeGreaterThan(0);
+
+  for (const control of controls) {
+    const box = await control.boundingBox();
+    if (!box) continue;
+
+    // Allow 1px sub-pixel tolerance.
+    expect(
+      box.x,
+      "control left edge must sit inside the scroll body viewport",
+    ).toBeGreaterThanOrEqual(bodyLeft - 1);
+    expect(
+      box.x + box.width,
+      "control right edge must sit inside the scroll body viewport",
+    ).toBeLessThanOrEqual(bodyRight + 1);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -556,3 +641,313 @@ test.describe("Settings Dialog keyboard focus and reading continuity", () => {
     await expect(page).toHaveURL(/\/app\/library/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Desktop layout geometry — centered workspace, rail width, scroll contracts
+// ---------------------------------------------------------------------------
+
+const DESKTOP_VIEWPORTS = [
+  { width: 1440, height: 900 },
+  { width: 1920, height: 1080 },
+] as const;
+
+for (const viewport of DESKTOP_VIEWPORTS) {
+  test.describe(`Settings Dialog desktop layout geometry (${viewport.width}x${viewport.height})`, () => {
+    test.setTimeout(180_000);
+
+    test.beforeEach(async ({ page }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await mockBffRoutes(page);
+      await loginWithMockPhone(page);
+      await expect(page).toHaveURL(/\/app\/read$/);
+      await lockSidebar(page);
+    });
+
+    test("dialog is centered and stays within safe margins", async ({ page }) => {
+      await openUserMenuAndClickSettings(page, "个人资料");
+      const dialog = page.getByRole("dialog", { name: "设置" });
+      await expect(dialog).toBeVisible();
+
+      const box = await dialog.boundingBox();
+      expect(box).not.toBeNull();
+
+      const rem = 16;
+      const maxWidth = 76 * rem;
+      const maxHeight = 60 * rem;
+      const safeMargin = 2 * rem;
+      const expectedWidth = Math.min(maxWidth, viewport.width - safeMargin * 2);
+      const expectedHeight = Math.min(maxHeight, viewport.height - safeMargin * 2);
+
+      expect(box!.width).toBe(expectedWidth);
+      expect(box!.height).toBe(expectedHeight);
+      expect(box!.x).toBeCloseTo((viewport.width - expectedWidth) / 2, 0);
+      expect(box!.y).toBeCloseTo((viewport.height - expectedHeight) / 2, 0);
+
+      expect(box!.x).toBeGreaterThanOrEqual(safeMargin - 1);
+      expect(box!.y).toBeGreaterThanOrEqual(safeMargin - 1);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width - safeMargin + 1);
+      expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height - safeMargin + 1);
+    });
+
+    test("rail is 12rem and content area shrinks without horizontal overflow", async ({ page }) => {
+      await openUserMenuAndClickSettings(page, "偏好设置");
+      const dialog = page.getByRole("dialog", { name: "设置" });
+      const nav = dialog.getByRole("navigation", { name: "设置分区" });
+      await expect(nav).toBeVisible();
+
+      const navBox = await nav.boundingBox();
+      expect(navBox).not.toBeNull();
+      expect(navBox!.width).toBeCloseTo(12 * 16, 0);
+
+      const dialogBox = await dialog.boundingBox();
+      const rightPanel = dialog.locator(".relative.flex.min-h-0.flex-1.flex-col").first();
+      const rightBox = await rightPanel.boundingBox();
+      expect(rightBox).not.toBeNull();
+      expect(rightBox!.x).toBeCloseTo(navBox!.x + navBox!.width, 0);
+      // Allow a 2px tolerance for hairline borders / sub-pixel rounding.
+      const expectedRightWidth = dialogBox!.width - navBox!.width;
+      expect(rightBox!.width).toBeGreaterThanOrEqual(expectedRightWidth - 2);
+      expect(rightBox!.width).toBeLessThanOrEqual(expectedRightWidth + 2);
+
+      await assertNoHorizontalOverflow(page, dialog);
+    });
+
+    test("section header stays fixed while body scrolls independently", async ({ page }) => {
+      await openUserMenuAndClickSettings(page, "个人资料");
+      const dialog = page.getByRole("dialog", { name: "设置" });
+      const header = dialog.getByRole("heading", { name: "个人资料", level: 2 }).first();
+      const body = dialog.locator(".min-h-0.overflow-y-auto").first();
+      await expect(body).toBeVisible();
+
+      const headerBoxBefore = await header.boundingBox();
+      expect(headerBoxBefore).not.toBeNull();
+
+      // Inject a tall, transparent spacer so the body has scrollable range.
+      await dialog.evaluate((dialogEl) => {
+        const target = dialogEl.querySelector(".min-h-0.overflow-y-auto") as HTMLElement | null;
+        if (!target) return;
+        const spacer = document.createElement("div");
+        spacer.style.height = "2000px";
+        spacer.style.background = "transparent";
+        spacer.setAttribute("data-testid", "scroll-spacer");
+        target.appendChild(spacer);
+      });
+
+      await body.evaluate((el) => el.scrollTo(0, 500));
+      expect(await body.evaluate((el) => el.scrollTop)).toBe(500);
+      expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+      const headerBoxAfter = await header.boundingBox();
+      expect(headerBoxAfter!.y).toBeCloseTo(headerBoxBefore!.y, 0);
+
+      // Clean up the spacer so it cannot affect downstream tests.
+      await dialog.evaluate((dialogEl) => {
+        dialogEl.querySelector("[data-testid='scroll-spacer']")?.remove();
+      });
+    });
+
+    test("standard frame content column maxes at 40rem", async ({ page }) => {
+      await openUserMenuAndClickSettings(page, "个人资料");
+      const dialog = page.getByRole("dialog", { name: "设置" });
+      await dialog.getByRole("button", { name: "支持" }).click();
+      await expect(page).toHaveURL(/\/app\/settings\?section=support$/);
+
+      const wrapper = dialog.locator(".min-h-0.overflow-y-auto > div").first();
+      const maxWidth = await wrapper.evaluate((el) => getComputedStyle(el).maxWidth);
+      expect(maxWidth).toBe("640px");
+    });
+
+    test("preferences and support content are not clipped at 1440 width", async ({ page }) => {
+      // Skip the 1920 variant; the 1440 width is the tightest desktop case.
+      test.skip(viewport.width !== 1440, "only relevant at 1440px");
+
+      const sections = [
+        { menuLabel: "偏好设置" as const, navLabel: "偏好" as const, heading: "偏好" as const },
+        { menuLabel: "个人资料" as const, navLabel: "支持" as const, heading: "支持" as const },
+      ];
+
+      for (const [index, section] of sections.entries()) {
+        const dialog = page.getByRole("dialog", { name: "设置" });
+        if (index === 0) {
+          await openUserMenuAndClickSettings(page, section.menuLabel);
+          await expect(dialog).toBeVisible();
+        }
+        await dialog.getByRole("button", { name: section.navLabel }).click();
+        const heading = dialog.getByRole("heading", { name: section.heading, level: 2 });
+        await expect(heading).toBeVisible();
+        await assertNoHorizontalOverflow(page, dialog);
+        await assertAllVisibleControlsWithinBounds(page, dialog);
+      }
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Mobile layout geometry — full-screen sheet, chrome, scroll, overflow
+// ---------------------------------------------------------------------------
+
+test.describe("Settings Dialog mobile layout geometry", () => {
+  test.setTimeout(180_000);
+
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockBffRoutes(page);
+    await loginWithMockPhone(page);
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await lockSidebar(page);
+
+    await openUserMenuAndClickSettings(page, "个人资料");
+    await expect(page).toHaveURL(/\/app\/settings\?section=account$/);
+    await page.setViewportSize({ width: 390, height: 844 });
+  });
+
+  test("dialog fills the viewport precisely", async ({ page }) => {
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await expect(dialog).toBeVisible();
+    const box = await dialog.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBe(0);
+    expect(box!.y).toBe(0);
+    expect(box!.width).toBe(390);
+    expect(box!.height).toBe(844);
+  });
+
+  test("close button and nav buttons meet 44px touch targets", async ({ page }) => {
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    const closeBtn = dialog.getByRole("button", { name: "关闭设置" }).first();
+    await expect(closeBtn).toHaveCSS("height", "44px");
+    await expect(closeBtn).toHaveCSS("width", "44px");
+
+    const nav = dialog.getByRole("navigation", { name: "设置分区" });
+    const buttons = await nav.getByRole("button").all();
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const btn of buttons) {
+      await expect(btn).toHaveCSS("min-height", "44px");
+    }
+  });
+
+  test("top nav is horizontally scrollable and body scrolls independently", async ({ page }) => {
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    const nav = dialog.getByRole("navigation", { name: "设置分区" });
+    await expect(nav).toHaveCSS("overflow-x", "auto");
+
+    const closeBar = dialog.locator(".flex.shrink-0.justify-end.p-2").first();
+    const navBox = await nav.boundingBox();
+    const closeBarBox = await closeBar.boundingBox();
+    expect(closeBarBox).not.toBeNull();
+    expect(navBox).not.toBeNull();
+    expect(closeBarBox!.y + closeBarBox!.height).toBeLessThanOrEqual(navBox!.y + 1);
+
+    const body = dialog.locator(".min-h-0.overflow-y-auto").first();
+    await dialog.evaluate((dialogEl) => {
+      const target = dialogEl.querySelector(".min-h-0.overflow-y-auto") as HTMLElement | null;
+      if (!target) return;
+      const spacer = document.createElement("div");
+      spacer.style.height = "2000px";
+      spacer.style.background = "transparent";
+      spacer.setAttribute("data-testid", "mobile-scroll-spacer");
+      target.appendChild(spacer);
+    });
+
+    const navBoxBefore = navBox;
+    await body.evaluate((el) => el.scrollTo(0, 500));
+    expect(await body.evaluate((el) => el.scrollTop)).toBe(500);
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+    const navBoxAfter = await nav.boundingBox();
+    expect(navBoxAfter!.y).toBeCloseTo(navBoxBefore!.y, 0);
+
+    await dialog.evaluate((dialogEl) => {
+      dialogEl.querySelector("[data-testid='mobile-scroll-spacer']")?.remove();
+    });
+  });
+
+  test("no horizontal page overflow and close button does not overlap content", async ({ page }) => {
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await assertNoHorizontalOverflow(page, dialog);
+
+    const closeBtn = dialog.getByRole("button", { name: "关闭设置" }).first();
+    const closeBox = await closeBtn.boundingBox();
+    const body = dialog.locator(".min-h-0.overflow-y-auto").first();
+    const bodyBox = await body.boundingBox();
+    expect(closeBox).not.toBeNull();
+    expect(bodyBox).not.toBeNull();
+    expect(closeBox!.x + closeBox!.width).toBeLessThanOrEqual(390 + 1);
+    expect(closeBox!.y + closeBox!.height).toBeLessThanOrEqual(bodyBox!.y + 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Light / Dark computed style contract
+// ---------------------------------------------------------------------------
+
+for (const theme of ["light", "dark"] as const) {
+  test.describe(`Settings Dialog ${theme} theme computed styles`, () => {
+    test.setTimeout(180_000);
+
+    test.beforeEach(async ({ page }) => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await mockBffRoutes(page);
+      // Set the theme on the login origin before authenticating so the
+      // /app/read page mounts with the resolved theme already applied.
+      await page.goto("/login?next=/app/read");
+      await setTheme(page, theme);
+      await loginWithMockPhone(page);
+      await expect(page).toHaveURL(/\/app\/read$/);
+
+      // Explicitly verify the resolved theme class is applied before any
+      // color assertions; do not rely solely on localStorage or color distance.
+      const hasDarkClass = await page.evaluate(() =>
+        document.documentElement.classList.contains("dark"),
+      );
+      expect(hasDarkClass).toBe(theme === "dark");
+
+      await lockSidebar(page);
+    });
+
+    test("dialog and rail have opaque, layered backgrounds", async ({ page }) => {
+      await openUserMenuAndClickSettings(page, "个人资料");
+      const dialog = page.getByRole("dialog", { name: "设置" });
+      const nav = dialog.getByRole("navigation", { name: "设置分区" });
+
+      const dialogBg = await getBackgroundColor(dialog);
+      const railBg = await getBackgroundColor(nav);
+
+      const [, , , dialogAlpha] = parseRgb(dialogBg);
+      const [, , , railAlpha] = parseRgb(railBg);
+      expect(dialogAlpha).toBe(1);
+      expect(railAlpha).toBe(1);
+      expect(colorDistance(dialogBg, railBg)).toBeGreaterThan(10);
+
+      // Selected nav item sits on a visibly different surface than the rail.
+      const selectedBtn = dialog.locator('button[aria-current="page"]').first();
+      await expect(selectedBtn).toBeVisible();
+      const selectedBg = await getBackgroundColor(selectedBtn);
+      expect(colorDistance(selectedBg, railBg)).toBeGreaterThan(5);
+    });
+
+    test("header hairline and focus ring are visible", async ({ page }) => {
+      await openUserMenuAndClickSettings(page, "个人资料");
+      const dialog = page.getByRole("dialog", { name: "设置" });
+      const header = dialog.locator(".shrink-0.border-b.border-hairline").first();
+      const borderColor = await header.evaluate((el) => getComputedStyle(el).borderBottomColor);
+      const [, , , borderAlpha] = parseRgb(borderColor);
+      expect(borderAlpha).toBeGreaterThan(0);
+
+      // Focus a rail button and confirm a focus ring is painted.
+      const navBtn = dialog.getByRole("button", { name: "偏好" });
+      await navBtn.focus();
+      await expect(navBtn).toBeFocused();
+      const ring = await navBtn.evaluate((el) => {
+        const style = getComputedStyle(el);
+        return {
+          boxShadow: style.boxShadow,
+          outlineWidth: style.outlineWidth,
+        };
+      });
+      const hasVisibleRing =
+        ring.boxShadow !== "none" || parseFloat(ring.outlineWidth) > 0;
+      expect(hasVisibleRing).toBe(true);
+    });
+  });
+}

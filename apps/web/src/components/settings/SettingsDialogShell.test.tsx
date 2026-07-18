@@ -233,6 +233,8 @@ describe("SettingsDialogShell — responsive layout", () => {
     // Desktop nav is separated from content by a hairline border.
     expect(nav.className).toContain("md:border-r");
     expect(nav.className).toContain("border-hairline");
+    // Rail can scroll independently when future sections expand its content.
+    expect(nav.className).toContain("md:overflow-y-auto");
   });
 
   it("mobile layout is full-screen (h-dvh and rounded-none)", () => {

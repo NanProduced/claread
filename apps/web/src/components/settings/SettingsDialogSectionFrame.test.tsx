@@ -100,11 +100,12 @@ describe("SettingsDialogSectionFrame — header contract", () => {
 });
 
 describe("SettingsDialogSectionFrame — body scroll contract", () => {
-  it("body region has min-h-0 and overflow-y-auto for independent scroll", () => {
+  it("body region has min-h-0, overflow-y-auto and overflow-x-hidden", () => {
     renderFrame();
     const body = getBodyRegion();
     expect(body.className).toContain("min-h-0");
     expect(body.className).toContain("overflow-y-auto");
+    expect(body.className).toContain("overflow-x-hidden");
   });
 
   it("body region exposes aria-labelledby pointing to the title id", () => {
