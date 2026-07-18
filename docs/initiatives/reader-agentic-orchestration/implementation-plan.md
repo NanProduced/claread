@@ -119,7 +119,8 @@ Reader enhancement 的当前主链路按层分开理解：
 | T5.7 | semantic outline production readiness | 6-10h | T5.3–T5.6b | **closed（commit `0fe6fed78`）**：fixture 应用 `0020`；默认 Unconfigured generator + job/run permanent 终态闭合；`allow_semantic_outline_request_eligibility` 仅 DI |
 | T5.8-R0 | real executor activation design gate | 2-4h | T5.7 | **closed（TMP）**：`TMP-t5.8-r0-...` R1-P2；usage 唯一记账、kill-switch 双检查、独立 policy、禁 empty stub |
 | T5.8a | outline route/prompt/settings registration | 2-4h | T5.8-R0 | **implemented（注册形状）**：route/profile/enabled 字段/capability/完整 prompt；默认关闭 |
-| T5.8b | controlled real adapter + policy + usage | 4-8h | T5.8a | **implemented / uncommitted**：`PydanticAISemanticOutlineGenerator`（DI only）；`SemanticOutlineExecutionPolicy` pre-call；worker `record_ai_usage_event` 按 call/usage 规则；默认仍 Unconfigured；**未** bootstrap kill-switch（T5.8d）；无默认启用/无真实 LLM |
+| T5.8b | controlled real adapter + policy + usage | 4-8h | T5.8a | **committed（commit `86df75fda`）**：`PydanticAISemanticOutlineGenerator`（DI only）；`SemanticOutlineExecutionPolicy` pre-call；worker `record_ai_usage_event` 按 call/usage 规则；默认仍 Unconfigured；**未** bootstrap kill-switch（T5.8d）；无默认启用/无真实 LLM |
+| T5.8c | semantic outline opt-in real-LLM smoke harness | 2-4h | T5.8b | **implemented / uncommitted**：`tests/test_reader_semantic_outline_t58c_real_llm.py` 单一 `@pytest.mark.real_llm` 测试；默认 skip + 零外呼（conftest triple gate）；DI-only `PydanticAISemanticOutlineGenerator`；fail-closed 模型比对；单次 provider call；snapshot 真实验收 seam（production `build_reader_plate_snapshot` 前后构建，断言 `navigation.units` 逐值不变 + top-level `semantic_outline` ready\|partial + source identity 一致）+ published layer provenance fence（`generation`/`source_job_id`/`source_run_id`）+ usage audit；`observability_inconclusive` 不视为通过；**未** 真实执行（T5.8d 产品决策前禁用） |
 | T6.1 | SSE reader event endpoint | 4-8h | T2.3 | 支持 cursor/reconnect/heartbeat；语义等价 polling；不引入不可恢复状态 |
 | T6.2 | committed patch envelope | 6-10h | T6.1 | layer/outline/progress 更新可局部 merge；raw LLM token 不进入 article annotation stream |
 | T6.3 | frontend patch merge | 6-10h | T6.2 | 页面不全量替换 snapshot；打开面板、selection、scroll 和当前阅读位置稳定 |
@@ -1242,10 +1243,24 @@ Focused tests 已通过：
 4. **真实 LLM blocker**：仓库尚无 `reader_layer_semantic_outline`（或等价）`MODEL_ROUTE`、无 outline prompt agent、无 settings profile 字段。在注册这些之前不得猜测模型配置或写死密钥/模型名。
 5. **不进入** ExecutionBudget / coverage 必需集 / ordinary supersede；不扩 transport。
 
+### T5.8c opt-in real-LLM smoke harness 边界（2026-07-18）
+
+1. **设计门**：`C:/tmp/TMP-t5.8c-r0-semantic-outline-opt-in-eval-gate-2026-07-18.md` P2 修订版（§1.1.3 错误分类表拆分 timeout；§2.4 Smoke verdict 分层 functional/usage-audit）。
+2. **harness 文件**：`services/api/tests/test_reader_semantic_outline_t58c_real_llm.py`，单一 `@pytest.mark.real_llm` 测试。
+3. **默认 skip + 零外呼**：conftest.py triple gate（`CLAREAD_ALLOW_REAL_LLM_TESTS=1` + `CLAREAD_REAL_LLM_MODEL=<非空>` + `-m real_llm`）+ `fail_on_real_llm_attempts` autouse monkeypatch；任一缺失即 skip 且不构造模型。
+4. **fail-closed 模型比对**：测试自身在 `build_model_for_route` 后将 `model_config.model_name` 与 `CLAREAD_REAL_LLM_MODEL` 精确比较；不一致 `pytest.fail`，零 provider call（**不** `pytest.skip`）。
+5. **DI-only adapter**：`PydanticAISemanticOutlineGenerator(settings=..., policy=SemanticOutlineExecutionPolicy.for_tests(generation_enabled=True))`；生产默认仍 `UnconfiguredSemanticOutlineGenerator`。
+6. **单次 provider call**：policy `DEFAULT_MAX_PROVIDER_CALLS_PER_JOB=1` + PydanticAI `output retries=0` + 单一 `generate` 路径；无 repair、无 retry、无 rerun。
+7. **success-path 验收**：job `succeeded` + run `completed`；published `enhancement_layers` row `status='published'`，`base_id`/`generation`/`source_identity` fence 一致；envelope `status ∈ {ready, partial}`；`nodes` 非空；`provenance.model` = resolved model_name；`navigation.units`（`reading_units` 表）调用前后逐值不变；`ai_usage_events` 恰 1 行 `status='succeeded'`。
+8. **未真实执行**：本轮不设置真实 provider env、不运行 `-m real_llm`；invalid-output / timeout / usage-writer 失败路径不真实执行，仅由 T5.8b 既有 DB seam 覆盖。
+9. **leak-safe 报告**：仅记录 `job_id` / `run_id` / `model_name` / `status` / `node_count` / `usage` aggregate token totals / `functional_verdict` / `usage_audit_verdict`；**不**记录 API key / endpoint / 完整 prompt / 完整 provider payload。
+10. **observability_inconclusive**：usage writer 容错失败（`record_ai_usage_event` 返回 `None` 且 DB 实际 0 行）时，smoke verdict = `INCONCLUSIVE`；**不**视为完整通过；**不**据此确认成本或产品启用。
+11. **T5.8d 仍缺产品决策**：自动 eligibility 阈值、L2 首次生成入口、真实成本上限、bootstrap kill-switch wiring、`semantic_outline_generation_enabled` 默认是否打开；这些决策未落地前 harness 仅做 smoke 验收，不放开产品默认启用。
+
 ### 下一任务
 
-1. 注册 outline model route + prompt + profile 后实现 real executor（T5.7 续）。
-2. 产品决策：自动 eligibility 阈值、L2 首次生成入口、真实成本上限。
+1. 在人工明确授权且模型/profile/单篇成本上限已决后，运行一次 T5.8c real-LLM smoke（`tests/test_reader_semantic_outline_t58c_real_llm.py` + `-m real_llm` + `CLAREAD_ALLOW_REAL_LLM_TESTS=1` + `CLAREAD_REAL_LLM_MODEL=<authorized>`）。
+2. T5.8d 产品决策与 bootstrap admission kill-switch：自动 eligibility 阈值、L2 首次生成入口、真实成本上限、`semantic_outline_generation_enabled` 默认是否打开、kill-switch wiring。
 3. T5.6c「解析此段」HTTP/UI（独立任务）。
 
 ---

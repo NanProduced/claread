@@ -1,7 +1,7 @@
 # Orchestration Runtime
 
-> 状态：`D6 ongoing；T5.8b：outline real adapter 可 DI 注入；默认 Unconfigured + eligibility=false；usage 按 provider-call 规则`
-> 最后更新：2026-07-18（T5.8b：`SemanticOutlineExecutionPolicy` pre-call；`PydanticAISemanticOutlineGenerator` 非默认 DI）
+> 状态：`D6 ongoing；T5.8c：outline real adapter 可 DI 注入 + opt-in real-LLM smoke harness；默认 Unconfigured + eligibility=false；usage 按 provider-call 规则；harness 默认 skip + 零外呼；snapshot 真实验收 seam`
+> 最后更新：2026-07-18（T5.8c-R1-P1：harness 通过 production `ArticleReadyPersistenceService.load_snapshot` → `build_reader_plate_snapshot` 在 worker 调用前后构建 `ReaderPlateSnapshot`，断言 `navigation.units` 逐值不变 + top-level `semantic_outline` ready|partial + source identity 一致；published layer provenance fence 补齐 `generation`/`source_job_id`/`source_run_id`；conftest triple gate + fail-closed 模型比对 + DI-only adapter + 单次 provider call + usage audit；`observability_inconclusive` 不视为通过；harness 已准备、未真实执行、默认零外呼）
 > 范围：bounded run/job、worker lease、Authorization Envelope、并发和框架边界。
 
 ## Runtime 形态
