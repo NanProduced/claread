@@ -97,7 +97,17 @@ from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
     DATABASE_URL,
 )
 
-INDEX_WORKER_SCHEMA_SQL = BASELINE_SQL
+# P1-C: migration 0021 adds the durable ``profile_fingerprint`` column
+# (NOT NULL, SHA-256 CHECK) to ``reader_article_rag_index_runs``.  The
+# bootstrap service now writes this column on every fresh insert, so
+# the Article RAG worker test schema must apply migration 0021 on top
+# of BASELINE_SQL.  Per-file append (not a global BASELINE_SQL mutation).
+_MIGRATION_0021_PATH = (
+    REPO_ROOT / "infra" / "migrations" / "0021_reader_article_rag_profile_fingerprint.sql"
+)
+_MIGRATION_0021_SQL = _MIGRATION_0021_PATH.read_text(encoding="utf-8")
+
+INDEX_WORKER_SCHEMA_SQL = BASELINE_SQL + "\n" + _MIGRATION_0021_SQL
 
 
 # ---------------------------------------------------------------------------
@@ -633,9 +643,15 @@ async def test_input_json_excludes_forbidden_keys(
         "index_run_id",
         "index_version",
         "chunker_version",
+        "profile_fingerprint",
     }
     assert set(input_json.keys()) == expected_keys
     assert input_json["source"] == ARTICLE_RAG_INDEX_JOB_SOURCE
+    # P1-C: profile_fingerprint is the canonical SHA-256 of the V1
+    # ArticleRagIndexProfile, frozen into input_json by the bootstrap.
+    # The worker is permitted to ignore this field this round.
+    assert input_json["profile_fingerprint"] == result.profile_fingerprint
+    assert len(input_json["profile_fingerprint"]) == 64
 
     for forbidden in _FORBIDDEN_PAYLOAD_KEYS:
         assert forbidden not in input_json

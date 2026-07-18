@@ -131,7 +131,17 @@ from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
     DATABASE_URL,
 )
 
-INDEX_SMOKE_SCHEMA_SQL = BASELINE_SQL
+# P1-C: migration 0021 adds the durable ``profile_fingerprint`` column
+# (NOT NULL, SHA-256 CHECK) to ``reader_article_rag_index_runs``.  The
+# bootstrap service now writes this column on every fresh insert, so
+# the Article RAG e2e smoke test schema must apply migration 0021 on
+# top of BASELINE_SQL.  Per-file append (not a global BASELINE_SQL mutation).
+_MIGRATION_0021_PATH = (
+    REPO_ROOT / "infra" / "migrations" / "0021_reader_article_rag_profile_fingerprint.sql"
+)
+_MIGRATION_0021_SQL = _MIGRATION_0021_PATH.read_text(encoding="utf-8")
+
+INDEX_SMOKE_SCHEMA_SQL = BASELINE_SQL + "\n" + _MIGRATION_0021_SQL
 
 
 # ---------------------------------------------------------------------------
