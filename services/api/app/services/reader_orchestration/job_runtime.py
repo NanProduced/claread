@@ -650,57 +650,19 @@ class ReaderJobRuntime:
         Transitions from ``claimed`` require ``lease_token`` match and a
         non-expired lease. Transition to ``succeeded`` additionally validates
         the publish fence (generation, active base, base_id presence).
-        """
-        if target_status not in TRANSITION_TARGETS:
-            raise ValueError(
-                f"unsupported transition target {target_status!r}; "
-                f"use claim_next_job for claiming"
-            )
 
+        This is a convenience wrapper that opens its own transaction and
+        delegates to :meth:`transition_in_transaction`. Callers that already
+        hold an active transaction MUST call ``transition_in_transaction``
+        directly so the transition commits atomically with their other work.
+        """
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
-                row = await conn.fetchrow(
-                    "SELECT * FROM reader_jobs WHERE id = $1 FOR UPDATE",
-                    job_id,
-                )
-                if row is None:
-                    raise LookupError(f"reader job {job_id} not found")
-
-                current_status = row["status"]
-                allowed = _ALLOWED_TRANSITIONS.get(current_status, frozenset())
-                if target_status not in allowed:
-                    raise IllegalTransitionError(
-                        f"illegal transition {current_status!r} -> {target_status!r}"
-                    )
-
-                if current_status == STATUS_CLAIMED:
-                    if lease_token is None:
-                        raise LeaseTokenMismatchError(
-                            f"lease_token required for transition from claimed "
-                            f"for job {job_id}"
-                        )
-                    _assert_lease_valid(row, job_id, lease_token)
-
-                if target_status == STATUS_SUCCEEDED:
-                    fence_error = await self._validate_fence(conn, row)
-                    if fence_error is not None:
-                        raise FenceViolationError(
-                            f"publish fence failed for job {job_id}: {fence_error}"
-                        )
-
-                if target_status == STATUS_RETRY_LATER and available_at is None:
-                    raise ValueError(
-                        "available_at is required for retry_later transition"
-                    )
-                if target_status == STATUS_PAUSED and pause_owner is None:
-                    raise ValueError(
-                        "pause_owner is required for paused transition"
-                    )
-
-                updated = await self._apply_transition(
+                return await self.transition_in_transaction(
                     conn,
-                    job_row=row,
+                    job_id=job_id,
                     target_status=target_status,
+                    lease_token=lease_token,
                     available_at=available_at,
                     pause_owner=pause_owner,
                     output_ref=output_ref,
@@ -710,29 +672,238 @@ class ReaderJobRuntime:
                     rationale_code=rationale_code,
                 )
 
-                event_payload: dict[str, Any] = {
-                    "previous_status": current_status,
-                    "target_status": target_status,
-                }
-                if rationale_code is not None:
-                    event_payload["rationale_code"] = rationale_code
-                if target_status == STATUS_RETRY_LATER and available_at is not None:
-                    event_payload["available_at"] = available_at.isoformat()
-                if target_status == STATUS_PAUSED and pause_owner is not None:
-                    event_payload["pause_owner"] = pause_owner
+    async def transition_in_transaction(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        job_id: UUID,
+        target_status: str,
+        lease_token: UUID | None = None,
+        available_at: datetime | None = None,
+        pause_owner: str | None = None,
+        output_ref: dict[str, Any] | None = None,
+        failure_class: str | None = None,
+        failure_code: str | None = None,
+        failure_message: str | None = None,
+        rationale_code: str | None = None,
+    ) -> JobSnapshot:
+        """Transition a job inside the caller's already-active transaction.
 
-                await self._insert_job_event(
-                    conn,
-                    reading_record_id=updated["reading_record_id"],
-                    run_id=updated["run_id"],
-                    job_id=updated["id"],
-                    event_type=_EVENT_TYPE_FOR_TRANSITION.get(
-                        target_status, "job_transitioned"
-                    ),
-                    payload=event_payload,
+        Locks ``reader_jobs`` with ``SELECT ... FOR UPDATE``, validates the
+        legal transition, validates the lease (when transitioning from
+        ``claimed``), validates the publish fence (when ``target_status ==
+        succeeded``), applies the transition, and writes exactly one
+        ``reader_job_events`` row — all within the caller's transaction.
+
+        The caller owns the commit/rollback. This method MUST NOT open its
+        own ``conn.transaction()`` block.
+        """
+        _assert_caller_transaction_active(conn, seam="transition_in_transaction")
+        if target_status not in TRANSITION_TARGETS:
+            raise ValueError(
+                f"unsupported transition target {target_status!r}; "
+                f"use claim_next_job for claiming"
+            )
+
+        row = await conn.fetchrow(
+            "SELECT * FROM reader_jobs WHERE id = $1 FOR UPDATE",
+            job_id,
+        )
+        if row is None:
+            raise LookupError(f"reader job {job_id} not found")
+
+        current_status = row["status"]
+        allowed = _ALLOWED_TRANSITIONS.get(current_status, frozenset())
+        if target_status not in allowed:
+            raise IllegalTransitionError(
+                f"illegal transition {current_status!r} -> {target_status!r}"
+            )
+
+        if current_status == STATUS_CLAIMED:
+            if lease_token is None:
+                raise LeaseTokenMismatchError(
+                    f"lease_token required for transition from claimed "
+                    f"for job {job_id}"
+                )
+            _assert_lease_valid(row, job_id, lease_token)
+
+        if target_status == STATUS_SUCCEEDED:
+            fence_error = await self._validate_fence(conn, row)
+            if fence_error is not None:
+                raise FenceViolationError(
+                    f"publish fence failed for job {job_id}: {fence_error}"
                 )
 
-                return _job_snapshot_from_row(updated)
+        if target_status == STATUS_RETRY_LATER and available_at is None:
+            raise ValueError(
+                "available_at is required for retry_later transition"
+            )
+        if target_status == STATUS_PAUSED and pause_owner is None:
+            raise ValueError(
+                "pause_owner is required for paused transition"
+            )
+
+        updated = await self._apply_transition(
+            conn,
+            job_row=row,
+            target_status=target_status,
+            available_at=available_at,
+            pause_owner=pause_owner,
+            output_ref=output_ref,
+            failure_class=failure_class,
+            failure_code=failure_code,
+            failure_message=failure_message,
+            rationale_code=rationale_code,
+        )
+
+        event_payload: dict[str, Any] = {
+            "previous_status": current_status,
+            "target_status": target_status,
+        }
+        if rationale_code is not None:
+            event_payload["rationale_code"] = rationale_code
+        if output_ref is not None:
+            event_payload["output_ref"] = output_ref
+        if target_status == STATUS_RETRY_LATER and available_at is not None:
+            event_payload["available_at"] = available_at.isoformat()
+        if target_status == STATUS_PAUSED and pause_owner is not None:
+            event_payload["pause_owner"] = pause_owner
+
+        await self._insert_job_event(
+            conn,
+            reading_record_id=updated["reading_record_id"],
+            run_id=updated["run_id"],
+            job_id=updated["id"],
+            event_type=_EVENT_TYPE_FOR_TRANSITION.get(
+                target_status, "job_transitioned"
+            ),
+            payload=event_payload,
+        )
+
+        return _job_snapshot_from_row(updated)
+
+    async def transition_retryable_failure_in_transaction(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        retry_delay: timedelta,
+        failure_class: str | None = None,
+        failure_code: str | None = None,
+        failure_message: str | None = None,
+        rationale_code: str | None = None,
+        output_ref: dict[str, Any] | None = None,
+    ) -> JobSnapshot:
+        """Atomically retry-or-terminalize a claimed job's retryable failure.
+
+        Locks the claimed job with ``SELECT ... FOR UPDATE`` inside the
+        caller's transaction, validates the lease, and reads the persisted
+        ``attempt_count``/``max_attempts`` from the locked row. The
+        terminalization decision happens inside the DB lock — the caller
+        MUST NOT precompute it.
+
+        - ``attempt_count < max_attempts``: transition to ``retry_later``,
+          write one ``job_retry_later`` event, persist failure fields +
+          ``output_ref``.
+        - ``attempt_count >= max_attempts``: transition to
+          ``failed_terminal`` with
+          ``rationale_code="max_attempts_exceeded"``, write one
+          ``job_failed_terminal`` event, persist failure fields +
+          ``output_ref``.
+
+        Returns a typed :class:`JobSnapshot` whose ``status`` unambiguously
+        indicates the chosen branch (``retry_later`` or ``failed_terminal``).
+        Does NOT write Article RAG index-run tables; the caller owns those.
+
+        Raises :class:`LeaseTokenMismatchError` / :class:`LeaseExpiredError`
+        / :class:`IllegalTransitionError` on validation failure; in all such
+        cases no ``reader_jobs`` update and no ``reader_job_events`` insert
+        are applied.
+        """
+        _assert_caller_transaction_active(
+            conn, seam="transition_retryable_failure_in_transaction"
+        )
+        row = await conn.fetchrow(
+            "SELECT * FROM reader_jobs WHERE id = $1 FOR UPDATE",
+            job_id,
+        )
+        if row is None:
+            raise LookupError(f"reader job {job_id} not found")
+
+        current_status = row["status"]
+        if current_status != STATUS_CLAIMED:
+            raise IllegalTransitionError(
+                f"transition_retryable_failure_in_transaction requires "
+                f"status 'claimed'; job {job_id} is {current_status!r}"
+            )
+        _assert_lease_valid(row, job_id, lease_token)
+
+        attempt_count = int(row["attempt_count"])
+        max_attempts = int(row["max_attempts"])
+        is_final_attempt = attempt_count >= max_attempts
+
+        if is_final_attempt:
+            target_status = STATUS_FAILED_TERMINAL
+            effective_rationale = "max_attempts_exceeded"
+            available_at: datetime | None = None
+        else:
+            target_status = STATUS_RETRY_LATER
+            effective_rationale = rationale_code
+            available_at = datetime.now(UTC) + retry_delay
+
+        return await self.transition_in_transaction(
+            conn,
+            job_id=job_id,
+            target_status=target_status,
+            lease_token=lease_token,
+            available_at=available_at,
+            pause_owner=None,
+            output_ref=output_ref,
+            failure_class=failure_class,
+            failure_code=failure_code,
+            failure_message=failure_message,
+            rationale_code=effective_rationale,
+        )
+
+    async def validate_claim_in_transaction(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        validate_fence: bool = True,
+    ) -> JobSnapshot:
+        """Lock and validate a claimed job's lease (and optionally fence) without transitioning.
+
+        A public read-only seam for callers that need to re-validate the
+        claim inside their own transaction before performing side effects
+        (e.g. Article RAG's pre-vector-write validation). Locks
+        ``reader_jobs`` with ``SELECT ... FOR UPDATE``, validates the lease,
+        optionally validates the publish fence, and returns the current
+        :class:`JobSnapshot` without applying any transition or writing any
+        event. The caller owns the commit/rollback.
+        """
+        _assert_caller_transaction_active(conn, seam="validate_claim_in_transaction")
+        row = await conn.fetchrow(
+            "SELECT * FROM reader_jobs WHERE id = $1 FOR UPDATE",
+            job_id,
+        )
+        if row is None:
+            raise LookupError(f"reader job {job_id} not found")
+        if row["status"] != STATUS_CLAIMED:
+            raise IllegalTransitionError(
+                f"validate_claim_in_transaction requires status 'claimed'; "
+                f"job {job_id} is {row['status']!r}"
+            )
+        _assert_lease_valid(row, job_id, lease_token)
+        if validate_fence:
+            fence_error = await self._validate_fence(conn, row)
+            if fence_error is not None:
+                raise FenceViolationError(
+                    f"publish fence failed for job {job_id}: {fence_error}"
+                )
+        return _job_snapshot_from_row(row)
 
     # ------------------------------------------------------------------
     # Stale lease recovery
@@ -1078,7 +1249,7 @@ class ReaderJobRuntime:
             params.append(jsonb_param(output_ref))
             param_idx += 1
 
-        if target_status == STATUS_FAILED_TERMINAL:
+        if target_status in (STATUS_FAILED_TERMINAL, STATUS_RETRY_LATER):
             if failure_class is not None:
                 set_parts.append(f"failure_class = ${param_idx}")
                 params.append(failure_class)
@@ -1207,4 +1378,27 @@ def _assert_lease_valid(
     if lease_expires_at is not None and lease_expires_at < datetime.now(UTC):
         raise LeaseExpiredError(
             f"lease expired for job {job_id}"
+        )
+
+
+def _assert_caller_transaction_active(
+    conn: asyncpg.Connection,
+    *,
+    seam: str,
+) -> None:
+    """Fail-closed guard for in-transaction public seams.
+
+    All three ``*_in_transaction`` seams (``transition_in_transaction``,
+    ``transition_retryable_failure_in_transaction``,
+    ``validate_claim_in_transaction``) require the caller to have already
+    opened an ``async with conn.transaction()`` block. This guard rejects
+    bare connections BEFORE any SQL is issued, so a misuse cannot leave
+    partial state behind. The error message is local and stable (no
+    SDK/asyncpg internals, no key/URI) so it is safe to surface.
+    """
+    if not conn.is_in_transaction():
+        raise RuntimeError(
+            f"{seam} requires an active caller-owned transaction; "
+            f"wrap the call in 'async with conn.transaction()' before "
+            f"invoking this seam"
         )

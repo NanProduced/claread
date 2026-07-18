@@ -1629,3 +1629,588 @@ async def test_claim_supersedes_article_rag_index_build_with_active_base_mismatc
         )
     assert row["status"] == STATUS_SUPERSEDED
     assert row["rationale_code"] == "active_base_mismatch"
+
+
+# ---------------------------------------------------------------------------
+# P0-B: public atomic in-transaction retry terminalization seam
+# ---------------------------------------------------------------------------
+
+
+async def test_transition_retryable_failure_in_transaction_final_attempt_is_terminal(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """Tracer bullet: a claimed job at max_attempts must terminalize atomically.
+
+    This test exercises the public ``transition_retryable_failure_in_transaction``
+    seam that Article RAG will use to eliminate private runtime helper calls.
+    """
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="p0b-tracer",
+        operation_fingerprint="fp-p0b-tracer",
+        idempotency_key="id-p0b-tracer",
+        max_attempts=1,
+    )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="w1", lease_duration=timedelta(seconds=30)
+    )
+    assert claimed is not None
+    assert claimed.job_id == job_id
+
+    async with job_runtime_env.acquire() as conn:
+        async with conn.transaction():
+            snapshot = await runtime.transition_retryable_failure_in_transaction(
+                conn,
+                job_id=job_id,
+                lease_token=claimed.lease_token,
+                retry_delay=timedelta(seconds=60),
+                failure_class="embedding",
+                failure_code="embedding_failed",
+                failure_message="embedding provider throttled",
+                rationale_code="embedding_failed",
+                output_ref={"diagnostics": {"provider_status": 429}},
+            )
+
+    assert snapshot.status == STATUS_FAILED_TERMINAL
+    assert snapshot.rationale_code == "max_attempts_exceeded"
+
+    async with job_runtime_env.acquire() as conn:
+        job = await _fetch_job(job_runtime_env, job_id)
+        terminal_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events "
+            "WHERE job_id = $1 AND event_type = 'job_failed_terminal'",
+            job_id,
+        )
+        retry_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events "
+            "WHERE job_id = $1 AND event_type = 'job_retry_later'",
+            job_id,
+        )
+
+    assert job["status"] == STATUS_FAILED_TERMINAL
+    assert job["rationale_code"] == "max_attempts_exceeded"
+    assert terminal_events == 1
+    assert retry_events == 0
+
+
+async def test_transition_in_transaction_succeeded_within_caller_transaction(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """transition_in_transaction commits within caller's tx; 1 succeeded event."""
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="p0b-tit-succ",
+        operation_fingerprint="fp-p0b-tit-succ",
+        idempotency_key="id-p0b-tit-succ",
+    )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="w1", lease_duration=timedelta(seconds=30)
+    )
+    assert claimed is not None
+
+    async with job_runtime_env.acquire() as conn:
+        async with conn.transaction():
+            snapshot = await runtime.transition_in_transaction(
+                conn,
+                job_id=job_id,
+                target_status=STATUS_SUCCEEDED,
+                lease_token=claimed.lease_token,
+                output_ref={"artifact": "ok"},
+            )
+
+    assert snapshot.status == STATUS_SUCCEEDED
+    assert snapshot.lease_token is None
+
+    async with job_runtime_env.acquire() as conn:
+        succeeded_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events "
+            "WHERE job_id = $1 AND event_type = 'job_succeeded'",
+            job_id,
+        )
+    assert succeeded_events == 1
+
+
+async def test_transition_in_transaction_wrong_lease_rejected(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """Wrong lease token → LeaseTokenMismatchError; no job/event mutation."""
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="p0b-tit-wrong-lease",
+        operation_fingerprint="fp-p0b-tit-wrong-lease",
+        idempotency_key="id-p0b-tit-wrong-lease",
+    )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="w1", lease_duration=timedelta(seconds=30)
+    )
+    assert claimed is not None
+
+    wrong_token = uuid4()
+    async with job_runtime_env.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(LeaseTokenMismatchError):
+                await runtime.transition_in_transaction(
+                    conn,
+                    job_id=job_id,
+                    target_status=STATUS_SUCCEEDED,
+                    lease_token=wrong_token,
+                )
+
+    # Job should still be claimed; no event written by the failed attempt.
+    job = await _fetch_job(job_runtime_env, job_id)
+    assert job["status"] == STATUS_CLAIMED
+    async with job_runtime_env.acquire() as conn:
+        events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events WHERE job_id = $1",
+            job_id,
+        )
+    # claim_next_job writes a job_claimed event; no succeeded event.
+    assert events == 1
+
+
+async def test_transition_in_transaction_rollback_rolls_back_job_and_event(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """Caller rollback must roll back both job update and event insert."""
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="p0b-tit-rollback",
+        operation_fingerprint="fp-p0b-tit-rollback",
+        idempotency_key="id-p0b-tit-rollback",
+    )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="w1", lease_duration=timedelta(seconds=30)
+    )
+    assert claimed is not None
+
+    async with job_runtime_env.acquire() as conn:
+        try:
+            async with conn.transaction():
+                await runtime.transition_in_transaction(
+                    conn,
+                    job_id=job_id,
+                    target_status=STATUS_SUCCEEDED,
+                    lease_token=claimed.lease_token,
+                    output_ref={"artifact": "ok"},
+                )
+                raise RuntimeError("force rollback")
+        except RuntimeError:
+            pass
+
+    # Both job update and event insert must be rolled back.
+    job = await _fetch_job(job_runtime_env, job_id)
+    assert job["status"] == STATUS_CLAIMED
+    async with job_runtime_env.acquire() as conn:
+        succeeded_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events "
+            "WHERE job_id = $1 AND event_type = 'job_succeeded'",
+            job_id,
+        )
+    assert succeeded_events == 0
+
+
+async def test_transition_retryable_failure_in_transaction_below_cap(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """attempt_count=1, max_attempts=3 → retry_later + 1 retry event, lease cleared."""
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="p0b-below-cap",
+        operation_fingerprint="fp-p0b-below-cap",
+        idempotency_key="id-p0b-below-cap",
+        max_attempts=3,
+    )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="w1", lease_duration=timedelta(seconds=30)
+    )
+    assert claimed is not None
+    # claim_next_job increments attempt_count to 1.
+
+    async with job_runtime_env.acquire() as conn:
+        async with conn.transaction():
+            snapshot = await runtime.transition_retryable_failure_in_transaction(
+                conn,
+                job_id=job_id,
+                lease_token=claimed.lease_token,
+                retry_delay=timedelta(seconds=60),
+                failure_class="embedding",
+                failure_code="embedding_failed",
+                failure_message="throttled",
+                rationale_code="embedding_failed",
+                output_ref={"diagnostics": {"provider_status": 429}},
+            )
+
+    assert snapshot.status == STATUS_RETRY_LATER
+    assert snapshot.lease_token is None
+    assert snapshot.lease_owner is None
+
+    async with job_runtime_env.acquire() as conn:
+        retry_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events "
+            "WHERE job_id = $1 AND event_type = 'job_retry_later'",
+            job_id,
+        )
+        terminal_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events "
+            "WHERE job_id = $1 AND event_type = 'job_failed_terminal'",
+            job_id,
+        )
+    assert retry_events == 1
+    assert terminal_events == 0
+
+
+async def test_transition_retryable_failure_in_transaction_wrong_lease_rejected(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """Wrong lease on retryable seam → rejected; no mutation."""
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="p0b-wrong-lease",
+        operation_fingerprint="fp-p0b-wrong-lease",
+        idempotency_key="id-p0b-wrong-lease",
+        max_attempts=3,
+    )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="w1", lease_duration=timedelta(seconds=30)
+    )
+    assert claimed is not None
+
+    wrong_token = uuid4()
+    async with job_runtime_env.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(LeaseTokenMismatchError):
+                await runtime.transition_retryable_failure_in_transaction(
+                    conn,
+                    job_id=job_id,
+                    lease_token=wrong_token,
+                    retry_delay=timedelta(seconds=60),
+                    failure_class="embedding",
+                    failure_code="embedding_failed",
+                )
+
+    job = await _fetch_job(job_runtime_env, job_id)
+    assert job["status"] == STATUS_CLAIMED
+    async with job_runtime_env.acquire() as conn:
+        retry_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events "
+            "WHERE job_id = $1 AND event_type = 'job_retry_later'",
+            job_id,
+        )
+        terminal_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events "
+            "WHERE job_id = $1 AND event_type = 'job_failed_terminal'",
+            job_id,
+        )
+    assert retry_events == 0
+    assert terminal_events == 0
+
+
+async def test_transition_retryable_failure_in_transaction_repeat_call_fail_closed(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """Second terminalization on same lease is rejected; terminal event count stays 1."""
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="p0b-repeat",
+        operation_fingerprint="fp-p0b-repeat",
+        idempotency_key="id-p0b-repeat",
+        max_attempts=1,
+    )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="w1", lease_duration=timedelta(seconds=30)
+    )
+    assert claimed is not None
+
+    # First call terminalizes.
+    async with job_runtime_env.acquire() as conn:
+        async with conn.transaction():
+            snapshot = await runtime.transition_retryable_failure_in_transaction(
+                conn,
+                job_id=job_id,
+                lease_token=claimed.lease_token,
+                retry_delay=timedelta(seconds=60),
+                failure_class="embedding",
+                failure_code="embedding_failed",
+            )
+    assert snapshot.status == STATUS_FAILED_TERMINAL
+
+    # Second call with the same lease must fail closed — job is no longer claimed.
+    async with job_runtime_env.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(IllegalTransitionError):
+                await runtime.transition_retryable_failure_in_transaction(
+                    conn,
+                    job_id=job_id,
+                    lease_token=claimed.lease_token,
+                    retry_delay=timedelta(seconds=60),
+                    failure_class="embedding",
+                    failure_code="embedding_failed",
+                )
+
+    async with job_runtime_env.acquire() as conn:
+        terminal_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events "
+            "WHERE job_id = $1 AND event_type = 'job_failed_terminal'",
+            job_id,
+        )
+        retry_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events "
+            "WHERE job_id = $1 AND event_type = 'job_retry_later'",
+            job_id,
+        )
+    assert terminal_events == 1
+    assert retry_events == 0
+
+
+# ---------------------------------------------------------------------------
+# P0-B round 2: active-transaction guard (caller-owned tx is mandatory)
+# ---------------------------------------------------------------------------
+
+
+async def test_transition_in_transaction_requires_active_caller_transaction(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """Calling transition_in_transaction without an active transaction fails closed.
+
+    The seam MUST reject connections that are not inside an ``async with
+    conn.transaction()`` block BEFORE issuing any SQL — no job state mutation,
+    no event insert. Failures must raise a stable, local ``RuntimeError``
+    (not a raw asyncpg error or SDK exception).
+    """
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="p0b-guard-tit",
+        operation_fingerprint="fp-p0b-guard-tit",
+        idempotency_key="id-p0b-guard-tit",
+    )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="w1", lease_duration=timedelta(seconds=30)
+    )
+    assert claimed is not None
+
+    events_before = await _count_job_events(job_runtime_env, job_id)
+
+    async with job_runtime_env.acquire() as conn:
+        # NO conn.transaction() wrapper — the guard must reject this.
+        with pytest.raises(RuntimeError) as exc_info:
+            await runtime.transition_in_transaction(
+                conn,
+                job_id=job_id,
+                target_status=STATUS_SUCCEEDED,
+                lease_token=claimed.lease_token,
+            )
+        msg = str(exc_info.value)
+        # Local, stable message — no SDK/asyncpg internals, no key/URI.
+        assert "transaction" in msg.lower()
+
+    # Job state untouched; no new events.
+    job = await _fetch_job(job_runtime_env, job_id)
+    assert job["status"] == STATUS_CLAIMED
+    events_after = await _count_job_events(job_runtime_env, job_id)
+    assert events_after == events_before
+
+
+async def test_transition_retryable_failure_in_transaction_requires_active_caller_transaction(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """transition_retryable_failure_in_transaction fails closed without an active tx."""
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="p0b-guard-trf",
+        operation_fingerprint="fp-p0b-guard-trf",
+        idempotency_key="id-p0b-guard-trf",
+        max_attempts=1,
+    )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="w1", lease_duration=timedelta(seconds=30)
+    )
+    assert claimed is not None
+
+    events_before = await _count_job_events(job_runtime_env, job_id)
+
+    async with job_runtime_env.acquire() as conn:
+        # NO conn.transaction() wrapper — the guard must reject this.
+        with pytest.raises(RuntimeError) as exc_info:
+            await runtime.transition_retryable_failure_in_transaction(
+                conn,
+                job_id=job_id,
+                lease_token=claimed.lease_token,
+                retry_delay=timedelta(seconds=60),
+                failure_class="embedding",
+                failure_code="embedding_failed",
+            )
+        assert "transaction" in str(exc_info.value).lower()
+
+    # Job untouched; no new events.
+    job = await _fetch_job(job_runtime_env, job_id)
+    assert job["status"] == STATUS_CLAIMED
+    events_after = await _count_job_events(job_runtime_env, job_id)
+    assert events_after == events_before
+
+
+async def test_validate_claim_in_transaction_requires_active_caller_transaction(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """validate_claim_in_transaction fails closed without an active tx (no SQL issued)."""
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="p0b-guard-vc",
+        operation_fingerprint="fp-p0b-guard-vc",
+        idempotency_key="id-p0b-guard-vc",
+    )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="w1", lease_duration=timedelta(seconds=30)
+    )
+    assert claimed is not None
+
+    events_before = await _count_job_events(job_runtime_env, job_id)
+
+    async with job_runtime_env.acquire() as conn:
+        # NO conn.transaction() wrapper — the guard must reject this before any SQL.
+        with pytest.raises(RuntimeError) as exc_info:
+            await runtime.validate_claim_in_transaction(
+                conn,
+                job_id=job_id,
+                lease_token=claimed.lease_token,
+            )
+        assert "transaction" in str(exc_info.value).lower()
+
+    # Job untouched; no new events.
+    job = await _fetch_job(job_runtime_env, job_id)
+    assert job["status"] == STATUS_CLAIMED
+    events_after = await _count_job_events(job_runtime_env, job_id)
+    assert events_after == events_before
+
+
+async def _count_job_events(pool: asyncpg.Pool, job_id: UUID) -> int:
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events WHERE job_id = $1",
+            job_id,
+        )
+
+
+async def test_validate_claim_in_transaction_expired_lease_fail_closed(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    """Expired lease inside validate_claim_in_transaction is rejected with no mutation.
+
+    Even when the caller holds an active transaction, the seam must reject
+    an expired lease (``lease_expires_at < now``) by raising
+    ``LeaseExpiredError``. No ``reader_job_events`` row may be written and
+    the job status must remain ``claimed`` (caller's rollback is responsible
+    for any partial work; the seam itself writes nothing).
+    """
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="p0b-expired-lease",
+        operation_fingerprint="fp-p0b-expired-lease",
+        idempotency_key="id-p0b-expired-lease",
+    )
+
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="w1", lease_duration=timedelta(seconds=30)
+    )
+    assert claimed is not None
+
+    # Force the lease to be expired in the DB.
+    async with job_runtime_env.acquire() as conn:
+        await conn.execute(
+            "UPDATE reader_jobs SET lease_expires_at = NOW() - INTERVAL '1 hour' "
+            "WHERE id = $1",
+            job_id,
+        )
+
+    events_before = await _count_job_events(job_runtime_env, job_id)
+
+    async with job_runtime_env.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(LeaseExpiredError):
+                await runtime.validate_claim_in_transaction(
+                    conn,
+                    job_id=job_id,
+                    lease_token=claimed.lease_token,
+                )
+
+    # Job still claimed (the lease expiry update above did not change status);
+    # no new events written by the failed validation.
+    job = await _fetch_job(job_runtime_env, job_id)
+    assert job["status"] == STATUS_CLAIMED
+    events_after = await _count_job_events(job_runtime_env, job_id)
+    assert events_after == events_before

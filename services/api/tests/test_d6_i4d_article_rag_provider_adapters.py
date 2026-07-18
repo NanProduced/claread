@@ -29,6 +29,7 @@ import hashlib
 import json
 import os
 import sys
+import traceback
 import types
 from dataclasses import dataclass
 from typing import Any
@@ -391,8 +392,9 @@ async def test_embedding_wrapper_error_rewrapped_without_key(monkeypatch: pytest
         # Simulate a misconfigured SDK that echoes BOTH the API key
         # AND the chunk text into its EmbeddingError message.  The
         # adapter must NOT forward either — the contract is a fixed
-        # diagnostic that excludes both.  ``__cause__`` retains the
-        # original exception for ops inspection.
+        # diagnostic that excludes both.  The original exception is
+        # intentionally discarded; ops diagnosis depends only on the
+        # safe structured diagnostics envelope.
         raise bailian_embedding.EmbeddingError(
             "dashscope call failed api_key="
             f"{secret_api_key} status=403 chunk_text="
@@ -422,8 +424,313 @@ async def test_embedding_wrapper_error_rewrapped_without_key(monkeypatch: pytest
     assert err.failure_code == "embedding_backend_failed"
     assert err.retryable is True
     assert err.failure_class == "embedding"
-    # ``__cause__`` preserves the original SDK error for ops.
-    assert isinstance(err.__cause__, bailian_embedding.EmbeddingError)
+    # The original exception is intentionally discarded — no cause chain.
+    assert err.__cause__ is None
+    assert err.__context__ is None
+
+
+@pytest.mark.anyio
+async def test_embedding_wrapper_error_traceback_contains_no_sentinel(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """P0 safe-return TDD: traceback serialization must not leak sentinels.
+
+    The lower-layer ``EmbeddingError`` message carries hostile sentinels
+    (fake API key, fake chunk text, fake URI, fake raw upstream error).
+    The adapter MUST raise an outer error whose:
+
+    * ``str(error)`` is sentinel-free
+    * ``repr(error)`` is sentinel-free
+    * ``traceback.format_exception(error)`` is sentinel-free
+    * ``__cause__`` is None (no ``raise ... from exc`` chain)
+    * ``__context__`` is None (no implicit except-block chain)
+    * structured diagnostics still carry the safe fields
+
+    RED before fix: ``raise ... from exc`` propagates the lower
+    ``EmbeddingError`` as ``__cause__``, so ``traceback.format_exception``
+    serialises the lower message (with sentinels) into the rendered
+    traceback.
+    """
+    from app.infra import bailian_embedding
+
+    sentinel_api_key = "sk-traceback-leak-api-key-sentinel"
+    sentinel_chunk_text = "SENTINEL-TRACEBACK-CHUNK-DO-NOT-LEAK"
+    sentinel_uri = "https://traceback-leak-uri.example/path?token=secret"
+    sentinel_upstream = "raw upstream SDK message with api_key and uri"
+
+    async def _fake(texts, *, model=None, dimension=None):
+        raise bailian_embedding.EmbeddingError(
+            f"dashscope failed api_key={sentinel_api_key} "
+            f"chunk={sentinel_chunk_text} uri={sentinel_uri} "
+            f"upstream={sentinel_upstream}",
+            status_code=400,
+            provider_code="InvalidParameter",
+            retryable=False,
+            failed_batch_ordinal=1,
+            batch_count=2,
+        )
+
+    monkeypatch.setattr(bailian_embedding, "embed_texts_with_metadata", _fake)
+
+    with pytest.raises(DashScopeArticleRagEmbeddingProviderError) as exc_info:
+        await DashScopeArticleRagEmbeddingProvider().embed_texts([sentinel_chunk_text])
+
+    error = exc_info.value
+    sentinels = [sentinel_api_key, sentinel_chunk_text, sentinel_uri, sentinel_upstream]
+
+    # str / repr / traceback must all be sentinel-free.
+    for rendered in (str(error), repr(error)):
+        for s in sentinels:
+            assert s not in rendered, (
+                f"sentinel {s!r} leaked into adapter error rendering: {rendered!r}"
+            )
+
+    tb_lines = traceback.format_exception(type(error), error, error.__traceback__)
+    tb_text = "".join(tb_lines)
+    for s in sentinels:
+        assert s not in tb_text, (
+            f"sentinel {s!r} leaked into traceback.format_exception: {tb_text!r}"
+        )
+
+    # No cause / context chain — the lower exception is intentionally discarded.
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+    # Safe structured diagnostics still present.
+    diag = error.diagnostics
+    assert diag.get("provider_status") == 400
+    assert diag.get("provider_code") == "InvalidParameter"
+    assert diag.get("provider_retryable") is False
+    assert diag.get("failed_batch_ordinal") == 1
+    assert diag.get("batch_count") == 2
+
+
+@pytest.mark.anyio
+async def test_embedding_diagnostics_rejects_bool_ordinal_and_count(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """P0 Round 3 TDD: bool MUST NOT be accepted as ordinal/count.
+
+    ``bool`` is a subclass of ``int`` in Python, so the legacy check
+    ``isinstance(value, int) and value > 0`` accepts ``True`` (== 1)
+    as a valid positive integer.  This is a boundary bug: a future
+    caller that constructs ``EmbeddingError(failed_batch_ordinal=True)``
+    would surface ``True`` into diagnostics, where it would later be
+    JSON-serialised as ``true`` rather than ``1`` — breaking downstream
+    consumers that expect an int.
+
+    Verified through the public ``DashScopeArticleRagEmbeddingProvider.
+    embed_texts()`` seam only — no direct import of private helpers.
+    """
+    from app.infra import bailian_embedding
+
+    async def _fake_bool(texts, *, model=None, dimension=None):
+        # bool True is technically int(1) and passes ``> 0``.  This
+        # MUST be rejected so ``true`` does not leak into diagnostics.
+        raise bailian_embedding.EmbeddingError(
+            "fake bool ordinal/count leak",
+            status_code=400,
+            provider_code="InvalidParameter",
+            retryable=False,
+            failed_batch_ordinal=True,  # type: ignore[arg-type]
+            batch_count=True,  # type: ignore[arg-type]
+        )
+
+    async def _fake_int(texts, *, model=None, dimension=None):
+        # Genuine positive ints MUST still be accepted.
+        raise bailian_embedding.EmbeddingError(
+            "fake int ordinal/count ok",
+            status_code=400,
+            provider_code="InvalidParameter",
+            retryable=False,
+            failed_batch_ordinal=2,
+            batch_count=3,
+        )
+
+    # --- RED path: bool values must be rejected ---
+    monkeypatch.setattr(
+        bailian_embedding, "embed_texts_with_metadata", _fake_bool
+    )
+    with pytest.raises(DashScopeArticleRagEmbeddingProviderError) as exc_info:
+        await DashScopeArticleRagEmbeddingProvider().embed_texts(["x"])
+
+    diag_bool = exc_info.value.diagnostics
+    # provider_status / provider_code / provider_retryable still safe.
+    assert diag_bool.get("provider_status") == 400
+    assert diag_bool.get("provider_code") == "InvalidParameter"
+    assert diag_bool.get("provider_retryable") is False
+    # bool ordinal/count MUST NOT appear in diagnostics.
+    assert "failed_batch_ordinal" not in diag_bool, (
+        f"bool failed_batch_ordinal leaked into diagnostics: {diag_bool!r}"
+    )
+    assert "batch_count" not in diag_bool, (
+        f"bool batch_count leaked into diagnostics: {diag_bool!r}"
+    )
+
+    # --- GREEN path: genuine positive ints must still be accepted ---
+    monkeypatch.setattr(
+        bailian_embedding, "embed_texts_with_metadata", _fake_int
+    )
+    with pytest.raises(DashScopeArticleRagEmbeddingProviderError) as exc_info:
+        await DashScopeArticleRagEmbeddingProvider().embed_texts(["x"])
+
+    diag_int = exc_info.value.diagnostics
+    assert diag_int.get("failed_batch_ordinal") == 2
+    assert diag_int.get("batch_count") == 3
+
+
+@pytest.mark.anyio
+async def test_embedding_wrapper_error_exposes_only_safe_structured_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Structured DashScope diagnostics are actionable but never raw SDK text."""
+    from app.infra import bailian_embedding
+
+    secret_chunk_text = "SECRET-CHUNK-DO-NOT-LEAK"
+    secret_upstream_message = "upstream says api_key=sk-not-for-storage"
+
+    async def _fake(texts, *, model=None, dimension=None):
+        raise bailian_embedding.EmbeddingError(
+            secret_upstream_message,
+            status_code=429,
+            provider_code="Throttling.User",
+            retryable=True,
+            failed_batch_ordinal=2,
+            batch_count=3,
+        )
+
+    monkeypatch.setattr(bailian_embedding, "embed_texts_with_metadata", _fake)
+
+    with pytest.raises(DashScopeArticleRagEmbeddingProviderError) as exc_info:
+        await DashScopeArticleRagEmbeddingProvider().embed_texts([secret_chunk_text])
+
+    error = exc_info.value
+    assert error.diagnostics == {
+        "provider_status": 429,
+        "provider_code": "Throttling.User",
+        "provider_retryable": True,
+        "failed_batch_ordinal": 2,
+        "batch_count": 3,
+    }
+    serialized = json.dumps({"message": str(error), "diagnostics": error.diagnostics})
+    assert secret_chunk_text not in serialized
+    assert secret_upstream_message not in serialized
+    assert "sk-not-for-storage" not in serialized
+
+
+@pytest.mark.anyio
+async def test_article_rag_provider_sdk_call_raises_sanitized_through_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """P0 SDK-raise closure TDD: adapter rewraps SDK-raise as safe typed error.
+
+    The DashScope SDK can fail BEFORE returning a response object —
+    e.g. on transport/auth/serialisation errors that surface as a plain
+    ``RuntimeError`` carrying sensitive content (API key, chunk text,
+    URI, raw upstream error message).  The lower wrapper now closes
+    that path (see ``test_embed_texts_with_metadata_sdk_call_raises_is_caught_and_sanitized``
+    in ``test_rag_infra.py``); this test verifies the adapter's PUBLIC
+    seam converts the wrapper's safe ``EmbeddingError`` into a typed
+    ``DashScopeArticleRagEmbeddingProviderError`` whose message,
+    traceback, and diagnostics carry no sentinel.
+
+    Mock boundary is the SDK's ``dashscope.TextEmbedding.call`` (the
+    same boundary the wrapper test uses).  26 inputs produce 3 batches
+    (10/10/6); the raise happens on the first batch.
+    """
+    sentinel_api_key = "sk-adapter-raise-api-key-sentinel"
+    sentinel_chunk_text = "SENTINEL-ADAPTER-RAISE-CHUNK-DO-NOT-LEAK"
+    sentinel_uri = "https://adapter-raise-uri.example/path?token=secret"
+    sentinel_upstream = "raw upstream SDK message with api_key and uri"
+
+    class RaisingTextEmbedding:
+        @staticmethod
+        def call(**kwargs):
+            raise RuntimeError(
+                f"dashscope sdk direct raise api_key={sentinel_api_key} "
+                f"chunk={sentinel_chunk_text} uri={sentinel_uri} "
+                f"upstream={sentinel_upstream}"
+            )
+
+    from app.infra import bailian_embedding
+
+    # Patch the SDK boundary at the wrapper module attribute, and patch
+    # resolve_embedding_config so the wrapper does not need real
+    # settings/registry wiring.  ``monkeypatch.setattr`` does not parse
+    # dotted attribute paths, so we patch ``TextEmbedding`` on the
+    # ``bailian_embedding.dashscope`` module object directly.
+    monkeypatch.setattr(
+        bailian_embedding.dashscope, "TextEmbedding", RaisingTextEmbedding
+    )
+    monkeypatch.setattr(
+        bailian_embedding,
+        "resolve_embedding_config",
+        lambda: ("text-embedding-v4", 1024, "test-key"),
+    )
+
+    texts = [f"chunk-{i}" for i in range(26)]
+    with pytest.raises(DashScopeArticleRagEmbeddingProviderError) as exc_info:
+        await DashScopeArticleRagEmbeddingProvider().embed_texts(texts)
+
+    err = exc_info.value
+    # Safe fixed message — no sentinel interpolation.
+    msg = str(err)
+    assert "DashScope embedding call failed via bailian_embedding" in msg
+    assert "input_count=26" in msg
+    assert "EmbeddingError" in msg
+
+    # Retryable from SDK-raise path.
+    assert err.retryable is True
+
+    # Safe diagnostics — only bounded fields.  SDK-raise path has no
+    # status_code / provider_code, so the adapter MUST NOT include
+    # those keys.
+    diag = err.diagnostics
+    assert diag.get("provider_retryable") is True
+    assert diag.get("failed_batch_ordinal") == 1
+    assert diag.get("batch_count") == 3
+    assert "provider_status" not in diag, (
+        f"provider_status MUST NOT appear in SDK-raise diagnostics: {diag!r}"
+    )
+    assert "provider_code" not in diag, (
+        f"provider_code MUST NOT appear in SDK-raise diagnostics: {diag!r}"
+    )
+
+    # No exception chain.
+    assert err.__cause__ is None
+    assert err.__context__ is None
+
+    sentinels = [
+        sentinel_api_key,
+        sentinel_chunk_text,
+        sentinel_uri,
+        sentinel_upstream,
+    ]
+
+    # Diagnostics serialisation must be sentinel-free.
+    diag_serialized = json.dumps(diag, sort_keys=True)
+    for s in sentinels:
+        assert s not in diag_serialized, (
+            f"sentinel {s!r} leaked into diagnostics serialisation: "
+            f"{diag_serialized!r}"
+        )
+
+    # str / repr / traceback must all be sentinel-free.
+    for rendered in (str(err), repr(err)):
+        for s in sentinels:
+            assert s not in rendered, (
+                f"sentinel {s!r} leaked into adapter error rendering: "
+                f"{rendered!r}"
+            )
+
+    tb_text = "".join(
+        traceback.format_exception(type(err), err, err.__traceback__)
+    )
+    for s in sentinels:
+        assert s not in tb_text, (
+            f"sentinel {s!r} leaked into traceback.format_exception: "
+            f"{tb_text!r}"
+        )
 
 
 @pytest.mark.anyio

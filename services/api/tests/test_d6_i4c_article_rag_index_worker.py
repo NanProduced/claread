@@ -25,8 +25,10 @@ All embedding/vector providers are fake/in-memory — no real DashScope/Bailian/
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -41,6 +43,9 @@ from app.services.reader_orchestration.article_rag_index_bootstrap import (
 from app.services.reader_orchestration.article_rag_index_plan import (
     ArticleRagIndexPlanError,
     compute_plan_content_sha256,
+)
+from app.services.reader_orchestration.article_rag_embedding_provider import (
+    DashScopeArticleRagEmbeddingProvider,
 )
 from app.services.reader_orchestration.article_rag_index_worker import (
     ARTICLE_RAG_INDEX_JOB_SOURCE,
@@ -235,7 +240,8 @@ async def _fetch_job(
                expected_generation, operation_fingerprint, idempotency_key,
                input_hash, input_json, max_attempts, attempt_count,
                lease_owner, lease_token, lease_expires_at, claimed_at,
-               rationale_code, failure_class, failure_code
+               rationale_code, failure_class, failure_code, failure_message,
+               output_ref_json
         FROM reader_jobs
         WHERE id = $1
         """,
@@ -282,6 +288,13 @@ class _RetryableEmbeddingProvider:
             retryable=True,
             failure_class="embedding",
             failure_code="embedding_failed",
+            diagnostics={
+                "provider_status": 429,
+                "provider_code": "Throttling.User",
+                "provider_retryable": True,
+                "failed_batch_ordinal": 1,
+                "batch_count": 1,
+            },
         )
 
 
@@ -1179,6 +1192,15 @@ async def test_retryable_embedding_error_retry_later(
         job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
         assert job["status"] == "retry_later"
         assert job["rationale_code"] == "embedding_failed"
+        assert job["failure_class"] == "embedding"
+        assert job["failure_code"] == "embedding_failed"
+        assert dict(job["output_ref_json"])["diagnostics"] == {
+            "provider_status": 429,
+            "provider_code": "Throttling.User",
+            "provider_retryable": True,
+            "failed_batch_ordinal": 1,
+            "batch_count": 1,
+        }
 
         index_run = await _fetch_index_run(
             conn, index_run_id=bootstrap_result.index_run_id,
@@ -1188,11 +1210,100 @@ async def test_retryable_embedding_error_retry_later(
         error_json = dict(index_run["error_json"])
         assert error_json["failure_code"] == "embedding_failed"
         assert error_json["retryable"] is True
+        assert error_json["diagnostics"] == {
+            "provider_status": 429,
+            "provider_code": "Throttling.User",
+            "provider_retryable": True,
+            "failed_batch_ordinal": 1,
+            "batch_count": 1,
+        }
+        event_payload = await conn.fetchval(
+            "SELECT payload_json FROM reader_job_events WHERE job_id = $1 "
+            "AND event_type = 'job_retry_later' ORDER BY created_at DESC LIMIT 1",
+            bootstrap_result.job_id,
+        )
+        assert dict(event_payload)["output_ref"]["diagnostics"] == error_json["diagnostics"]
 
 
 # ===================================================================
 # Test 10a: retryable vector writer error -> retry_later
 # ===================================================================
+
+
+async def test_retryable_embedding_error_at_max_attempts_is_terminal_once(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """A claimed final attempt must not be returned to retry_later forever.
+
+    P0-B round 2 strengthening: also asserts exactly 0 ``job_retry_later``
+    events, vector writer never called, and a second ``process_next`` does
+    not produce a second ``job_failed_terminal`` event.
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    async with worker_env.acquire() as conn:
+        await conn.execute(
+            "UPDATE reader_jobs SET max_attempts = 1 WHERE id = $1",
+            bootstrap_result.job_id,
+        )
+
+    embedding_provider = _RetryableEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.retryable is False
+    assert result.failure_code == "embedding_failed"
+    # Vector writer must not be called when embedding fails terminally.
+    assert vector_writer.call_count == 0
+
+    # Second process_next must return None (job is terminal, not claimable).
+    second_result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+    assert second_result is None
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _fetch_index_run(conn, index_run_id=bootstrap_result.index_run_id)
+        terminal_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events WHERE job_id = $1 "
+            "AND event_type = 'job_failed_terminal'",
+            bootstrap_result.job_id,
+        )
+        retry_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events WHERE job_id = $1 "
+            "AND event_type = 'job_retry_later'",
+            bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert job["failure_class"] == "embedding"
+    assert job["failure_code"] == "embedding_failed"
+    assert job["rationale_code"] == "max_attempts_exceeded"
+    assert run["status"] == "failed_terminal"
+    assert run["failure_class"] == "embedding"
+    assert run["failure_code"] == "embedding_failed"
+    assert index_run["status"] == "failed"
+    assert dict(index_run["error_json"])["rationale_code"] == "max_attempts_exceeded"
+    assert terminal_events == 1
+    assert retry_events == 0
 
 
 async def test_retryable_vector_writer_error_retry_later(
@@ -1756,3 +1867,681 @@ async def test_input_json_source_mismatch_failed_terminal(
     assert result is not None
     assert result.status == "failed_terminal"
     assert result.failure_code == "input_json_invalid"
+
+
+async def test_rag_failure_does_not_block_article_ready_or_mutate_truth_layer(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P0-B non-blocking boundary: RAG failure must not touch the truth layer.
+
+    After a terminal embedding failure:
+    - reading_records.readiness_state stays 'article_ready'
+    - reader_events count does not increase (no new representation event)
+    - reading_bases / stable_document_blocks / reading_units / anchor segments
+      are unchanged
+    - only reader_jobs / reader_runs / reader_article_rag_index_runs /
+      reader_job_events may change
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    async with worker_env.acquire() as conn:
+        await conn.execute(
+            "UPDATE reader_jobs SET max_attempts = 1 WHERE id = $1",
+            bootstrap_result.job_id,
+        )
+        # Snapshot truth-layer state before failure.
+        record_before = await conn.fetchrow(
+            "SELECT readiness_state, product_state, lifecycle_status, "
+            "generation, active_base_id FROM reading_records WHERE id = $1",
+            _RECORD_ID,
+        )
+        base_before = await conn.fetchrow(
+            "SELECT id, status, record_generation FROM reading_bases "
+            "WHERE reading_record_id = $1 AND status = 'active'",
+            _RECORD_ID,
+        )
+        blocks_before = await conn.fetchval(
+            "SELECT count(*) FROM stable_document_blocks b "
+            "JOIN stable_reading_documents d ON d.id = b.stable_document_id "
+            "WHERE d.reading_record_id = $1",
+            _RECORD_ID,
+        )
+        units_before = await conn.fetchval(
+            "SELECT count(*) FROM reading_units WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+        anchors_before = await conn.fetchval(
+            "SELECT count(*) FROM anchor_segments WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+        reader_events_before = await conn.fetchval(
+            "SELECT count(*) FROM reader_events WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=_RetryableEmbeddingProvider(),
+        vector_writer=FakeArticleRagVectorWriter(),
+    )
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+    assert result is not None
+    assert result.status == "failed_terminal"
+
+    async with worker_env.acquire() as conn:
+        record_after = await conn.fetchrow(
+            "SELECT readiness_state, product_state, lifecycle_status, "
+            "generation, active_base_id FROM reading_records WHERE id = $1",
+            _RECORD_ID,
+        )
+        base_after = await conn.fetchrow(
+            "SELECT id, status, record_generation FROM reading_bases "
+            "WHERE reading_record_id = $1 AND status = 'active'",
+            _RECORD_ID,
+        )
+        blocks_after = await conn.fetchval(
+            "SELECT count(*) FROM stable_document_blocks b "
+            "JOIN stable_reading_documents d ON d.id = b.stable_document_id "
+            "WHERE d.reading_record_id = $1",
+            _RECORD_ID,
+        )
+        units_after = await conn.fetchval(
+            "SELECT count(*) FROM reading_units WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+        anchors_after = await conn.fetchval(
+            "SELECT count(*) FROM anchor_segments WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+        reader_events_after = await conn.fetchval(
+            "SELECT count(*) FROM reader_events WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+
+    # Truth layer MUST be untouched by RAG failure.
+    assert record_after["readiness_state"] == record_before["readiness_state"]
+    assert record_after["readiness_state"] == "article_ready"
+    assert record_after["product_state"] == record_before["product_state"]
+    assert record_after["lifecycle_status"] == record_before["lifecycle_status"]
+    assert record_after["generation"] == record_before["generation"]
+    assert record_after["active_base_id"] == record_before["active_base_id"]
+    assert base_after["id"] == base_before["id"]
+    assert base_after["status"] == base_before["status"]
+    assert base_after["record_generation"] == base_before["record_generation"]
+    assert blocks_after == blocks_before
+    assert units_after == units_before
+    assert anchors_after == anchors_before
+    # No new reader_events (no representation event published).
+    assert reader_events_after == reader_events_before
+
+
+# ---------------------------------------------------------------------------
+# P0-B round 2: atomic terminal path + rollback injection + diagnostics
+# ---------------------------------------------------------------------------
+
+
+async def test_terminal_embedding_400_atomic_job_run_index_run_and_events(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """400/InvalidParameter terminal failure must atomically update all 3 tables.
+
+    Asserts:
+    - reader_job = failed_terminal
+    - reader_run = failed
+    - reader_article_rag_index_runs = failed
+    - exactly 1 ``job_failed_terminal`` event
+    - exactly 0 ``job_retry_later`` events
+    - vector writer never called
+    - error_json contains only approved safe fields (no key, text, URI, SDK)
+    - article_ready + reader truth layer untouched
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    embedding_provider = _TerminalEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    async with worker_env.acquire() as conn:
+        record_before = await conn.fetchrow(
+            "SELECT readiness_state, active_base_id, generation FROM reading_records WHERE id = $1",
+            _RECORD_ID,
+        )
+        events_before = await conn.fetchval(
+            "SELECT count(*) FROM reader_events WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.retryable is False
+
+    assert embedding_provider.call_count == 1
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _fetch_index_run(conn, index_run_id=bootstrap_result.index_run_id)
+        terminal_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events WHERE job_id = $1 "
+            "AND event_type = 'job_failed_terminal'",
+            bootstrap_result.job_id,
+        )
+        retry_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events WHERE job_id = $1 "
+            "AND event_type = 'job_retry_later'",
+            bootstrap_result.job_id,
+        )
+        record_after = await conn.fetchrow(
+            "SELECT readiness_state, active_base_id, generation FROM reading_records WHERE id = $1",
+            _RECORD_ID,
+        )
+        events_after = await conn.fetchval(
+            "SELECT count(*) FROM reader_events WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert job["failure_class"] == "embedding"
+    assert job["failure_code"] == "embedding_failed"
+    assert run["status"] == "failed_terminal"
+    assert run["failure_class"] == "embedding"
+    assert run["failure_code"] == "embedding_failed"
+    assert index_run["status"] == "failed"
+    assert index_run["completed_at"] is not None
+    assert terminal_events == 1
+    assert retry_events == 0
+
+    # error_json contains only safe approved fields — no key, text, URI, SDK.
+    error_json = dict(index_run["error_json"])
+    approved_keys = {
+        "failure_class",
+        "failure_code",
+        "rationale_code",
+        "message",
+        "retryable",
+    }
+    assert set(error_json.keys()).issubset(approved_keys), (
+        f"unexpected error_json keys: {set(error_json.keys()) - approved_keys}"
+    )
+    for val in error_json.values():
+        assert val is None or isinstance(val, str | bool | int | float)
+        if isinstance(val, str):
+            lower = val.lower()
+            assert "sk-" not in lower
+            assert "http" not in lower
+            assert "dashscope" not in lower
+
+    # Non-blocking boundary: article_ready + reader_events untouched.
+    assert record_after["readiness_state"] == record_before["readiness_state"]
+    assert record_after["readiness_state"] == "article_ready"
+    assert record_after["active_base_id"] == record_before["active_base_id"]
+    assert record_after["generation"] == record_before["generation"]
+    assert events_after == events_before
+
+
+async def test_terminal_failure_rollback_when_index_run_update_fails(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """If the index-run update throws mid-transaction, the entire terminal path rolls back.
+
+    Injects a failure by monkey-patching the worker's
+    ``_update_index_run_status_in_transaction`` (via a custom vector writer
+    that mutates the index run to an invalid state right before the terminal
+    transition) — actually the cleanest injection is to make the
+    ``_update_index_run_status`` raise after the job transition has been
+    applied within the same caller-owned transaction.
+
+    Asserts after the rolled-back attempt:
+    - reader_job remains ``claimed`` (not failed_terminal)
+    - reader_run remains ``running`` (not failed)
+    - reader_article_rag_index_runs remains ``indexing`` (not failed)
+    - 0 ``job_failed_terminal`` events
+    - 0 ``job_retry_later`` events
+    - article_ready + reader truth layer untouched
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    embedding_provider = _TerminalEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    # Move the job into 'claimed' + index_run into 'indexing' by running
+    # process_next once with a happy embedding provider so the worker
+    # reaches the post-embed phase. Then we reset the job to claimed and
+    # re-run with the terminal provider + a patched index-run updater.
+    # Simpler: capture the post-claim state directly by triggering a
+    # terminal failure with a patched seam that raises AFTER the job
+    # transition but BEFORE the index-run update commits.
+    #
+    # We patch ``_update_index_run_status_in_transaction`` on the instance
+    # to raise an exception, simulating a DB-side failure (e.g. constraint
+    # violation, connection drop). The caller-owned transaction must roll
+    # back the job transition + terminal event too.
+    original_update = service._update_index_run_status_in_transaction
+
+    call_count = {"update": 0}
+
+    async def _explode(
+        conn,  # noqa: ANN001
+        index_run_id: UUID,
+        *,
+        status: str,
+        error_json: dict[str, Any],
+    ) -> None:
+        call_count["update"] += 1
+        # Patched call must be invoked within the caller's transaction.
+        # Verify we are inside one (proves atomicity refactor is in place).
+        assert conn.is_in_transaction(), (
+            "index-run update must run inside the caller-owned transaction"
+        )
+        raise RuntimeError("injected index-run update failure")
+
+    service._update_index_run_status_in_transaction = _explode  # type: ignore[assignment]
+
+    async with worker_env.acquire() as conn:
+        record_before = await conn.fetchrow(
+            "SELECT readiness_state, active_base_id, generation FROM reading_records WHERE id = $1",
+            _RECORD_ID,
+        )
+        reader_events_before = await conn.fetchval(
+            "SELECT count(*) FROM reader_events WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+
+    # The patched update will raise; process_next must propagate it.
+    with pytest.raises(RuntimeError, match="injected index-run update failure"):
+        await service.process_next(
+            lease_owner=_LEASE_OWNER,
+            lease_duration=_LEASE_DURATION,
+            retry_delay=_RETRY_DELAY,
+        )
+
+    assert call_count["update"] == 1, "patched index-run update must be called exactly once"
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _fetch_index_run(conn, index_run_id=bootstrap_result.index_run_id)
+        terminal_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events WHERE job_id = $1 "
+            "AND event_type = 'job_failed_terminal'",
+            bootstrap_result.job_id,
+        )
+        retry_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events WHERE job_id = $1 "
+            "AND event_type = 'job_retry_later'",
+            bootstrap_result.job_id,
+        )
+        record_after = await conn.fetchrow(
+            "SELECT readiness_state, active_base_id, generation FROM reading_records WHERE id = $1",
+            _RECORD_ID,
+        )
+        reader_events_after = await conn.fetchval(
+            "SELECT count(*) FROM reader_events WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+
+    # Rollback proof: job, run, index_run all unchanged from pre-terminal state.
+    assert job["status"] == "claimed"
+    assert run["status"] == "running"
+    assert index_run["status"] == "indexing"
+    assert terminal_events == 0
+    assert retry_events == 0
+    # Non-blocking boundary still holds.
+    assert record_after["readiness_state"] == record_before["readiness_state"]
+    assert record_after["readiness_state"] == "article_ready"
+    assert reader_events_after == reader_events_before
+
+    # Restore the original method (cleanup for any subsequent assertions).
+    service._update_index_run_status_in_transaction = original_update  # type: ignore[assignment]
+
+
+# ============================================================================
+# P0 Combined Integration Gate: real DashScope provider + real worker + real DB
+# ============================================================================
+
+
+# Sensitive sentinels that the fake SDK response echoes into its `message`.
+# None of these may appear in any persisted object (job failure_message,
+# output_ref_json, index_run error_json, or job_event payload_json).
+_SENTINEL_API_KEY = "sk-fake-api-key-sentinel-do-not-leak"
+_SENTINEL_CHUNK_TEXT = "SENTINEL-CHUNK-TEXT-DO-NOT-LEAK"
+_SENTINEL_URI = "https://fake-dashscope-uri-sentinel.do.not.leak"
+_SENTINEL_UPSTREAM_ERROR = "raw upstream SDK error sentinel with api_key and uri"
+
+
+async def test_dashscope_400_terminalizes_article_rag_job_once_with_safe_diagnostics(
+    worker_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P0 combined integration gate: real DashScope provider + real worker + real DB.
+
+    Mocks ONLY ``dashscope.TextEmbedding.call`` at the public external
+    boundary — no worker private methods are mocked, no fake provider is
+    used, no real network is called.
+
+    Proves the end-to-end 400/InvalidParameter terminal path:
+    1. SDK outbound batch ≤ 10 (v4 capability).
+    2. ``reader_jobs.status = failed_terminal`` on first attempt
+       (``max_attempts > 1`` — not retry-exhaustion terminal).
+    3. ``reader_runs.status = failed_terminal``.
+    4. ``reader_article_rag_index_runs.status = failed``.
+    5. Exactly 1 ``job_failed_terminal`` event.
+    6. 0 ``job_retry_later`` events.
+    7. Vector writer call_count = 0.
+    8. Second ``process_next()`` returns None; terminal event still 1.
+    9. Safe diagnostics contain only approved fields.
+    10-11. No sensitive sentinel in any persisted object.
+    12-14. ``article_ready`` + reader truth layer untouched.
+    """
+    # --- Arrange: enable legacy Bailian config (no registry route) ---
+    # The DashScope adapter delegates to ``bailian_embedding.embed_texts_with_metadata``
+    # which calls ``resolve_embedding_config()`` → ``get_settings()``.  We set
+    # ``BAILIAN_API_KEY`` so the legacy fallback resolves a non-empty key.
+    # This is configuration, NOT mocking — the only mock is
+    # ``dashscope.TextEmbedding.call``.
+    from app.config import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+    monkeypatch.setenv("BAILIAN_API_KEY", _SENTINEL_API_KEY)
+    monkeypatch.delenv("RAG_EMBEDDING_MODEL_PROFILE", raising=False)
+
+    # --- Arrange: mock ONLY dashscope.TextEmbedding.call ---
+    import dashscope
+
+    sdk_batch_sizes: list[int] = []
+
+    class _FakeDashScope400Response:
+        """Simulates a DashScope SDK 400/InvalidParameter response.
+
+        The ``message`` field is loaded with sensitive sentinels to prove
+        defence-in-depth: even if the SDK echoes them, they must NOT
+        appear in any persisted object.
+        """
+
+        status_code = 400
+        code = "InvalidParameter"
+        message = (
+            f"api_key={_SENTINEL_API_KEY} chunk_text={_SENTINEL_CHUNK_TEXT} "
+            f"uri={_SENTINEL_URI} upstream_error={_SENTINEL_UPSTREAM_ERROR}"
+        )
+        output: dict[str, Any] = {}
+        request_id = "fake-request-id-sentinel"
+        usage = {}
+
+    def _fake_sdk_call(**kwargs: Any) -> _FakeDashScope400Response:
+        # Record the batch size (number of input texts) per SDK call.
+        input_texts = kwargs.get("input", [])
+        sdk_batch_sizes.append(len(input_texts))
+        return _FakeDashScope400Response()
+
+    monkeypatch.setattr(dashscope.TextEmbedding, "call", _fake_sdk_call)
+
+    # --- Arrange: seed environment + bootstrap job ---
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # Keep max_attempts > 1 to prove 400 is terminal on the FIRST attempt,
+    # not because the retry budget was exhausted.
+    async with worker_env.acquire() as conn:
+        await conn.execute(
+            "UPDATE reader_jobs SET max_attempts = 3 WHERE id = $1",
+            bootstrap_result.job_id,
+        )
+
+        # Snapshot truth layer + reader events before failure.
+        record_before = await conn.fetchrow(
+            "SELECT readiness_state, product_state, lifecycle_status, "
+            "generation, active_base_id FROM reading_records WHERE id = $1",
+            _RECORD_ID,
+        )
+        base_before = await conn.fetchrow(
+            "SELECT id, status, record_generation FROM reading_bases "
+            "WHERE reading_record_id = $1 AND status = 'active'",
+            _RECORD_ID,
+        )
+        blocks_before = await conn.fetchval(
+            "SELECT count(*) FROM stable_document_blocks b "
+            "JOIN stable_reading_documents d ON d.id = b.stable_document_id "
+            "WHERE d.reading_record_id = $1",
+            _RECORD_ID,
+        )
+        units_before = await conn.fetchval(
+            "SELECT count(*) FROM reading_units WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+        anchors_before = await conn.fetchval(
+            "SELECT count(*) FROM anchor_segments WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+        reader_events_before = await conn.fetchval(
+            "SELECT count(*) FROM reader_events WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+
+    # --- Act: use real DashScopeArticleRagEmbeddingProvider ---
+    embedding_provider = DashScopeArticleRagEmbeddingProvider(
+        model_override="text-embedding-v4",
+    )
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    # --- Assert: 400 terminalized on first attempt ---
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.retryable is False
+
+    # 1. SDK outbound batch ≤ 10 (v4 capability).
+    assert len(sdk_batch_sizes) >= 1, "SDK must have been called at least once"
+    assert all(n <= 10 for n in sdk_batch_sizes), (
+        f"SDK batch size exceeds v4 capability 10: {sdk_batch_sizes}"
+    )
+
+    # 7. Vector writer never called.
+    assert vector_writer.call_count == 0
+
+    # --- Assert: job / run / index-run / event state ---
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _fetch_index_run(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        terminal_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events WHERE job_id = $1 "
+            "AND event_type = 'job_failed_terminal'",
+            bootstrap_result.job_id,
+        )
+        retry_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events WHERE job_id = $1 "
+            "AND event_type = 'job_retry_later'",
+            bootstrap_result.job_id,
+        )
+        all_events = await conn.fetch(
+            "SELECT event_type, payload_json FROM reader_job_events "
+            "WHERE job_id = $1",
+            bootstrap_result.job_id,
+        )
+
+    # 2. reader_jobs.status = failed_terminal
+    assert job["status"] == "failed_terminal"
+    assert job["failure_class"] == "embedding"
+    assert job["failure_code"] == "embedding_backend_failed"
+    assert job["attempt_count"] == 1, "must be terminal on first attempt"
+
+    # 3. reader_runs.status = failed_terminal
+    assert run["status"] == "failed_terminal"
+    assert run["failure_class"] == "embedding"
+    assert run["failure_code"] == "embedding_backend_failed"
+
+    # 4. reader_article_rag_index_runs.status = failed
+    assert index_run["status"] == "failed"
+    assert index_run["completed_at"] is not None
+
+    # 5. Exactly 1 job_failed_terminal event.
+    assert terminal_events == 1
+
+    # 6. 0 job_retry_later events.
+    assert retry_events == 0
+
+    # --- Assert: safe diagnostics (item 9) ---
+    error_json = dict(index_run["error_json"])
+    diagnostics = error_json.get("diagnostics", {})
+    assert diagnostics.get("provider_status") == 400
+    assert diagnostics.get("provider_code") == "InvalidParameter"
+    assert diagnostics.get("provider_retryable") is False
+    assert isinstance(diagnostics.get("failed_batch_ordinal"), int)
+    assert diagnostics["failed_batch_ordinal"] > 0
+    assert isinstance(diagnostics.get("batch_count"), int)
+    assert diagnostics["batch_count"] > 0
+
+    # --- Assert: no sensitive sentinel in any persisted object (items 10-11) ---
+    sentinels = [
+        _SENTINEL_API_KEY,
+        _SENTINEL_CHUNK_TEXT,
+        _SENTINEL_URI,
+        _SENTINEL_UPSTREAM_ERROR,
+    ]
+
+    # 10a. reader_jobs.failure_message
+    failure_message = str(job["failure_message"] or "")
+    for s in sentinels:
+        assert s not in failure_message, (
+            f"sentinel {s!r} leaked into reader_jobs.failure_message"
+        )
+
+    # 10b. reader_jobs.output_ref_json
+    output_ref = job["output_ref_json"]
+    output_ref_str = json.dumps(output_ref) if output_ref else ""
+    for s in sentinels:
+        assert s not in output_ref_str, (
+            f"sentinel {s!r} leaked into reader_jobs.output_ref_json"
+        )
+
+    # 10c. reader_article_rag_index_runs.error_json
+    error_json_str = json.dumps(error_json)
+    for s in sentinels:
+        assert s not in error_json_str, (
+            f"sentinel {s!r} leaked into reader_article_rag_index_runs.error_json"
+        )
+
+    # 10d. reader_job_events.payload_json (all events)
+    for ev in all_events:
+        ev_str = json.dumps(ev["payload_json"]) if ev["payload_json"] else ""
+        for s in sentinels:
+            assert s not in ev_str, (
+                f"sentinel {s!r} leaked into reader_job_events.payload_json "
+                f"(event_type={ev['event_type']})"
+            )
+
+    # --- Assert: second process_next() returns None, terminal event still 1 (item 8) ---
+    result2 = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+    assert result2 is None, "second process_next must find no claimable job"
+
+    async with worker_env.acquire() as conn:
+        terminal_events_after_second = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events WHERE job_id = $1 "
+            "AND event_type = 'job_failed_terminal'",
+            bootstrap_result.job_id,
+        )
+        # Duplicate processing must not produce a second terminal event.
+        assert terminal_events_after_second == 1
+
+    # --- Assert: non-blocking boundary (items 12-14) ---
+    async with worker_env.acquire() as conn:
+        record_after = await conn.fetchrow(
+            "SELECT readiness_state, product_state, lifecycle_status, "
+            "generation, active_base_id FROM reading_records WHERE id = $1",
+            _RECORD_ID,
+        )
+        base_after = await conn.fetchrow(
+            "SELECT id, status, record_generation FROM reading_bases "
+            "WHERE reading_record_id = $1 AND status = 'active'",
+            _RECORD_ID,
+        )
+        blocks_after = await conn.fetchval(
+            "SELECT count(*) FROM stable_document_blocks b "
+            "JOIN stable_reading_documents d ON d.id = b.stable_document_id "
+            "WHERE d.reading_record_id = $1",
+            _RECORD_ID,
+        )
+        units_after = await conn.fetchval(
+            "SELECT count(*) FROM reading_units WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+        anchors_after = await conn.fetchval(
+            "SELECT count(*) FROM anchor_segments WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+        reader_events_after = await conn.fetchval(
+            "SELECT count(*) FROM reader_events WHERE reading_record_id = $1",
+            _RECORD_ID,
+        )
+
+    # 12. reading_records.readiness_state still article_ready.
+    assert record_after["readiness_state"] == "article_ready"
+    assert record_after["readiness_state"] == record_before["readiness_state"]
+    assert record_after["product_state"] == record_before["product_state"]
+    assert record_after["lifecycle_status"] == record_before["lifecycle_status"]
+    assert record_after["generation"] == record_before["generation"]
+    assert record_after["active_base_id"] == record_before["active_base_id"]
+
+    # 13. reader_events count unchanged.
+    assert reader_events_after == reader_events_before
+
+    # 14. base / stable document / Unit / anchor identity + count unchanged.
+    assert base_after["id"] == base_before["id"]
+    assert base_after["status"] == base_before["status"]
+    assert base_after["record_generation"] == base_before["record_generation"]
+    assert blocks_after == blocks_before
+    assert units_after == units_before
+    assert anchors_after == anchors_before
+
+    # Cleanup: clear settings cache so env vars don't leak to other tests.
+    settings_module.get_settings.cache_clear()

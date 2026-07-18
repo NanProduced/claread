@@ -3,8 +3,10 @@
 使用 dashscope SDK 调用 text-embedding 模型。
 同步接口 + asyncio.to_thread() 包装为异步。
 
-dashscope TextEmbedding 单次最多 25 条输入，
-超过时自动分批调用。
+单批最大输入条数按 effective model 从不可变 capability registry 解析：
+``text-embedding-v3`` / ``text-embedding-v4`` 均为 10 条/批，
+未注册的 model 在任何 outbound 调用前 fail-closed。
+不重新引入全局 batch magic number（早期版本硬编码 25 条已被移除）。
 
 模型选择走统一 registry（rag_embedding route），
 通过 ``resolve_embedding_config`` 解析 provider/model/profile。
@@ -16,7 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 
 import dashscope
 
@@ -29,12 +33,127 @@ from app.infra.bailian_usage import (
 
 logger = logging.getLogger(__name__)
 
-_BATCH_SIZE = 25
 _LEGACY_FALLBACK_WARNING_EMITTED = False
 
 
+@dataclass(frozen=True)
+class _ModelCapability:
+    max_items: int
+
+
+_EMBEDDING_CAPABILITY_REGISTRY: Mapping[str, _ModelCapability] = MappingProxyType(
+    {
+        "text-embedding-v3": _ModelCapability(max_items=10),
+        "text-embedding-v4": _ModelCapability(max_items=10),
+    }
+)
+
+
+def _resolve_embedding_capability(effective_model: str) -> _ModelCapability:
+    """Resolve the immutable capability for the effective model.
+
+    Raises EmbeddingError(retryable=False) for an unregistered model. This
+    MUST happen before any outbound provider call. The error message is a
+    fixed, safe local diagnostic; it contains no API key, input text,
+    endpoint URI, raw configuration content, SDK object, or the effective
+    model value itself (the model is caller-supplied and may carry
+    hostile content).
+    """
+    capability = _EMBEDDING_CAPABILITY_REGISTRY.get(effective_model)
+    if capability is None:
+        raise EmbeddingError(
+            "embedding model capability is not registered; cannot determine safe batch size",
+            retryable=False,
+        )
+    return capability
+
+
 class EmbeddingError(Exception):
-    """Embedding 调用失败。"""
+    """Embedding failure with a deliberately small safe diagnostic envelope."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        provider_code: str | None = None,
+        retryable: bool | None = None,
+        failed_batch_ordinal: int | None = None,
+        batch_count: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.provider_code = provider_code
+        self.retryable = retryable
+        self.failed_batch_ordinal = failed_batch_ordinal
+        self.batch_count = batch_count
+
+
+def _safe_provider_status(value: object) -> int | None:
+    """Coerce a provider status to ``int`` in the HTTP-style 100–599 range.
+
+    Anything outside that range (including non-int values, 0, 99, 600+)
+    is returned as ``None``.  ``None`` status leaves the existing
+    retryability fallback in effect (``status_code is None or
+    status_code == 429 or status_code >= 500`` -> retryable=True).
+    """
+    if isinstance(value, bool):
+        # bool is a subclass of int; reject it explicitly so True/False
+        # cannot masquerade as 1/0 status codes.
+        return None
+    if isinstance(value, int) and 100 <= value <= 599:
+        return value
+    return None
+
+
+# P0 Round 3: explicit allowlist of DashScope provider codes that the
+# wrapper may surface in ``EmbeddingError.provider_code``.  Anything not
+# in this set is dropped to ``None`` — never echoed, truncated, or
+# logged.  This replaces the legacy ``isalnum()`` + length check, which
+# accepted both key-like strings (``sk-1234567890abcdef``) and arbitrary
+# Unicode alphanumeric strings (``密钥123``) because Python's
+# ``str.isalnum()`` returns True for CJK characters.
+#
+# Add new codes here ONLY after confirming they appear in the official
+# DashScope error-code reference.  Unknown codes fail-closed to None.
+#
+# P0 Closure Cleanup: removed ``InternalServerError`` and
+# ``ServiceUnavailable`` because no first-party DashScope
+# TextEmbedding endpoint documentation link could be provided to
+# confirm them as current Model Studio codes.  They can be re-added
+# when an official reference is supplied.
+_SAFE_PROVIDER_CODES: frozenset[str] = frozenset(
+    {
+        "InvalidParameter",
+        # ``Throttling.User`` is retained as a LEGACY COMPATIBILITY
+        # code: existing Article RAG provider/worker tests
+        # (test_d6_i4c, test_d6_i4d) rely on it as the canonical 429
+        # retryable code.  It is NOT confirmed as a current official
+        # Model Studio code — do not cite it as such.  Replace with
+        # the official code once a first-party reference is supplied.
+        "Throttling.User",
+        "Throttling",
+        "AccessDenied",
+        "InvalidApiKey",
+        "ModelNotFound",
+    }
+)
+
+
+def _safe_provider_code(value: object) -> str | None:
+    """Return ``value`` only if it is in the explicit DashScope allowlist.
+
+    Uses a fixed, known-safe set of provider codes (see
+    ``_SAFE_PROVIDER_CODES``).  Unknown values — including key-like
+    strings, arbitrary Unicode, and any future unmapped code — are
+    fail-closed to ``None``.  The original value is never echoed,
+    truncated, or logged.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    if value in _SAFE_PROVIDER_CODES:
+        return value
+    return None
 
 
 @dataclass
@@ -72,7 +191,8 @@ def _call_embedding_sync(
     """同步调用 dashscope TextEmbedding。
 
     Args:
-        texts: 待 embedding 的文本列表（不超过 25 条）
+        texts: 待 embedding 的文本列表（不超过当前 capability 的 max_items 条；
+            v3/v4 均为 10 条/批；未注册 model 在调用前 fail-closed）
         model: 模型名称
         dimension: 向量维度
         api_key: API Key
@@ -83,17 +203,53 @@ def _call_embedding_sync(
     Raises:
         EmbeddingError: 调用失败时
     """
-    resp = dashscope.TextEmbedding.call(
-        model=model,
-        input=texts,
-        dimension=dimension,
-        api_key=api_key,
-    )
+    # P0 SDK-raise closure: ``dashscope.TextEmbedding.call`` can raise
+    # an ordinary exception BEFORE returning a response object — e.g.
+    # on transport, auth, or serialisation failures that surface as a
+    # plain ``RuntimeError`` (or other ``Exception`` subclass) whose
+    # message may carry sensitive content (API key, chunk text, URI,
+    # raw upstream error).  We catch ``Exception`` (NOT
+    # ``BaseException`` — KeyboardInterrupt/SystemExit must still
+    # propagate), discard the original exception without copying its
+    # message / type name / repr / args / SDK object, and raise a
+    # fixed safe ``EmbeddingError`` OUTSIDE the except block so both
+    # ``__cause__`` and ``__context__`` remain None.
+    sdk_error: EmbeddingError | None = None
+    try:
+        resp = dashscope.TextEmbedding.call(
+            model=model,
+            input=texts,
+            dimension=dimension,
+            api_key=api_key,
+        )
+    except Exception:
+        # No field of the original exception is copied, persisted, or
+        # interpolated.  ``retryable=True`` because the SDK never
+        # returned a response, so the existing safe retryability
+        # fallback (``status_code is None``) applies.  ``status_code``
+        # and ``provider_code`` are left None — the outer loop will
+        # still populate ``failed_batch_ordinal`` and ``batch_count``.
+        sdk_error = EmbeddingError(
+            "embedding provider call failed before a response was available",
+            status_code=None,
+            provider_code=None,
+            retryable=True,
+        )
+
+    if sdk_error is not None:
+        # Raised OUTSIDE the except block: no ``__cause__``, no
+        # ``__context__``, no ``raise ... from exc`` / ``from None``.
+        raise sdk_error
 
     if resp.status_code != 200:
+        status_code = _safe_provider_status(resp.status_code)
+        provider_code = _safe_provider_code(resp.code)
+        retryable = status_code is None or status_code == 429 or status_code >= 500
         raise EmbeddingError(
-            f"Embedding call failed: status={resp.status_code}, "
-            f"code={resp.code}, message={resp.message}"
+            "embedding provider returned a non-success response",
+            status_code=status_code,
+            provider_code=provider_code,
+            retryable=retryable,
         )
 
     embeddings: list[list[float]] = []
@@ -184,7 +340,9 @@ async def embed_texts(
 ) -> list[list[float]]:
     """批量文本 embedding。
 
-    超过 25 条时自动分批调用。
+    超过当前 capability ``max_items`` 条时自动分批调用：
+    ``text-embedding-v3`` / ``text-embedding-v4`` 均为 10 条/批；
+    未注册 model 在任何 outbound 调用前 fail-closed。
 
     Args:
         texts: 待 embedding 的文本列表
@@ -206,10 +364,12 @@ async def embed_texts(
     if not api_key:
         raise EmbeddingError("No API key configured for embedding (registry or BAILIAN_API_KEY)")
 
+    capability = _resolve_embedding_capability(effective_model)
+
     all_embeddings: list[list[float]] = []
 
-    for i in range(0, len(texts), _BATCH_SIZE):
-        batch = texts[i : i + _BATCH_SIZE]
+    for i in range(0, len(texts), capability.max_items):
+        batch = texts[i : i + capability.max_items]
         batch_result = await asyncio.to_thread(
             _call_embedding_sync,
             texts=batch,
@@ -222,7 +382,7 @@ async def embed_texts(
     logger.debug(
         "Embedded %d texts in %d batch(es) (model=%s, dim=%d)",
         len(texts),
-        (len(texts) + _BATCH_SIZE - 1) // _BATCH_SIZE,
+        (len(texts) + capability.max_items - 1) // capability.max_items,
         effective_model,
         effective_dimension,
     )
@@ -254,19 +414,26 @@ async def embed_texts_with_metadata(
     if not api_key:
         raise EmbeddingError("No API key configured for embedding (registry or BAILIAN_API_KEY)")
 
+    capability = _resolve_embedding_capability(effective_model)
+
     all_embeddings: list[list[float]] = []
     usage_items: list[dict] = []
     batch_metadata: list[dict] = []
 
-    for i in range(0, len(texts), _BATCH_SIZE):
-        batch = texts[i : i + _BATCH_SIZE]
-        batch_result = await asyncio.to_thread(
-            _call_embedding_sync,
-            texts=batch,
-            model=effective_model,
-            dimension=effective_dimension,
-            api_key=api_key,
-        )
+    for i in range(0, len(texts), capability.max_items):
+        batch = texts[i : i + capability.max_items]
+        try:
+            batch_result = await asyncio.to_thread(
+                _call_embedding_sync,
+                texts=batch,
+                model=effective_model,
+                dimension=effective_dimension,
+                api_key=api_key,
+            )
+        except EmbeddingError as exc:
+            exc.failed_batch_ordinal = (i // capability.max_items) + 1
+            exc.batch_count = (len(texts) + capability.max_items - 1) // capability.max_items
+            raise
         all_embeddings.extend(batch_result.embeddings)
         usage_items.append(batch_result.usage_data)
         batch_metadata.append(
@@ -277,7 +444,7 @@ async def embed_texts_with_metadata(
             }
         )
 
-    batch_count = (len(texts) + _BATCH_SIZE - 1) // _BATCH_SIZE
+    batch_count = (len(texts) + capability.max_items - 1) // capability.max_items
     logger.debug(
         "Embedded %d texts in %d batch(es) (model=%s, dim=%d)",
         len(texts),

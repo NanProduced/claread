@@ -61,7 +61,6 @@ from .job_runtime import (
     ClaimResult,
     FenceViolationError,
     ReaderJobRuntime,
-    _assert_lease_valid,
 )
 
 # ---------------------------------------------------------------------------
@@ -101,13 +100,7 @@ FAILURE_CODE_ALREADY_INDEXED = "already_indexed"
 
 
 class ArticleRagIndexWorkerError(RuntimeError):
-    """Typed error for worker failures.
-
-    ``retryable`` controls whether the job transitions to ``retry_later``
-    or ``failed_terminal``.  ``failure_class`` / ``failure_code`` are
-    persisted on the job row.  ``rationale_code`` is persisted on both
-    the job row and the index run error_json.
-    """
+    """Typed error for worker failures with safe, structured diagnostics."""
 
     def __init__(
         self,
@@ -117,12 +110,14 @@ class ArticleRagIndexWorkerError(RuntimeError):
         failure_class: str,
         failure_code: str,
         rationale_code: str | None = None,
+        diagnostics: Mapping[str, str | int | bool | None] | None = None,
     ) -> None:
         super().__init__(message)
         self.retryable = retryable
         self.failure_class = failure_class
         self.failure_code = failure_code
         self.rationale_code = rationale_code or failure_code
+        self.diagnostics = dict(diagnostics or {})
 
 
 class _InputJsonError(ValueError):
@@ -710,10 +705,11 @@ class ArticleRagIndexWorkerService:
 
                     # Transition job to succeeded with rationale
                     # already_indexed (idempotent no-op).
-                    await self._transition_job_in_transaction(
-                        conn=conn,
-                        claim=claim,
+                    await self._job_runtime.transition_in_transaction(
+                        conn,
+                        job_id=claim.job_id,
                         target_status="succeeded",
+                        lease_token=claim.lease_token,
                         rationale_code=FAILURE_CODE_ALREADY_INDEXED,
                         output_ref={
                             "idempotent_noop": True,
@@ -964,7 +960,13 @@ class ArticleRagIndexWorkerService:
         context: _JobContext,
         index_run_snapshot: dict[str, Any],
     ) -> None:
-        """Re-lock job/index_run and validate fence before vector upsert."""
+        """Re-lock job/index_run and validate fence before vector upsert.
+
+        The job's status / lease / expiry / fence are validated exclusively
+        by the public ``validate_claim_in_transaction`` seam — this method
+        does NOT duplicate that logic. Only Article RAG-owned state
+        (index_run row) is checked separately here.
+        """
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
                 index_row = await conn.fetchrow(
@@ -1019,26 +1021,17 @@ class ArticleRagIndexWorkerService:
                         rationale_code=FAILURE_CODE_PLAN_HASH_MISMATCH,
                     )
 
-                job_row = await conn.fetchrow(
-                    "SELECT * FROM reader_jobs WHERE id = $1 FOR UPDATE",
-                    claim.job_id,
+                # Single source of truth for job status / lease / expiry /
+                # fence validation. Locks reader_jobs FOR UPDATE, validates
+                # status='claimed' + lease token + lease expiry + publish
+                # fence. Raises LeaseTokenMismatchError / LeaseExpiredError /
+                # IllegalTransitionError / FenceViolationError on failure;
+                # no partial mutation or event is written.
+                await self._job_runtime.validate_claim_in_transaction(
+                    conn,
+                    job_id=claim.job_id,
+                    lease_token=claim.lease_token,
                 )
-                if job_row is None:
-                    raise LookupError(f"reader job {claim.job_id} not found")
-                if str(job_row["status"]) != "claimed":
-                    raise ValueError(
-                        "pre-vector-write validation requires a claimed job"
-                    )
-                _assert_lease_valid(job_row, claim.job_id, claim.lease_token)
-
-                fence_error = await self._job_runtime._validate_fence(  # type: ignore[attr-defined]
-                    conn, job_row,
-                )
-                if fence_error is not None:
-                    raise FenceViolationError(
-                        f"publish fence failed for job {claim.job_id}: "
-                        f"{fence_error}"
-                    )
 
     # ------------------------------------------------------------------
     # Phase 5: mark indexed + transition job succeeded
@@ -1096,28 +1089,11 @@ class ArticleRagIndexWorkerService:
                         failure_code=FAILURE_CODE_INDEX_RUN_WRONG_JOB_ID,
                     )
 
-                # Lock job row + validate lease.
-                job_row = await conn.fetchrow(
-                    "SELECT * FROM reader_jobs WHERE id = $1 FOR UPDATE",
-                    claim.job_id,
-                )
-                if job_row is None:
-                    raise LookupError(f"reader job {claim.job_id} not found")
-                if str(job_row["status"]) != "claimed":
-                    raise ValueError(
-                        "mark-indexed requires a claimed job"
-                    )
-                _assert_lease_valid(job_row, claim.job_id, claim.lease_token)
-
-                # Publish fence: verify base/generation still valid.
-                fence_error = await self._job_runtime._validate_fence(  # type: ignore[attr-defined]
-                    conn, job_row,
-                )
-                if fence_error is not None:
-                    raise FenceViolationError(
-                        f"publish fence failed for job {claim.job_id}: "
-                        f"{fence_error}"
-                    )
+                # Lock job row + validate lease + publish fence (public seam).
+                # The actual transition to succeeded happens below via
+                # transition_in_transaction, which re-validates lease + fence
+                # atomically. Here we only need the index_run lock + state
+                # check; the job transition is fully owned by the runtime seam.
 
                 # Transition index run → indexed.
                 await conn.execute(
@@ -1153,11 +1129,11 @@ class ArticleRagIndexWorkerService:
                     "upserted_count": upserted_count,
                     "plan_content_sha256": index_run_snapshot["plan_content_sha256"],
                 }
-                await self._transition_job_in_transaction(
-                    conn=conn,
-                    claim=claim,
+                await self._job_runtime.transition_in_transaction(
+                    conn,
+                    job_id=claim.job_id,
                     target_status="succeeded",
-                    rationale_code=None,
+                    lease_token=claim.lease_token,
                     output_ref=output_ref,
                 )
 
@@ -1242,45 +1218,103 @@ class ArticleRagIndexWorkerService:
         retry_delay: timedelta,
         exc: ArticleRagIndexWorkerError,
     ) -> ArticleRagIndexWorkerResult:
-        """Transition job → retry_later, index run → queued."""
-        available_at = datetime.now(UTC) + retry_delay
-        await self._job_runtime.transition(
-            job_id=claim.job_id,
-            target_status="retry_later",
-            lease_token=claim.lease_token,
-            available_at=available_at,
-            rationale_code=exc.rationale_code,
-        )
-        await self._mark_run_status(
-            claim.run_id,
-            status="failed_retryable",
-            failure_class=exc.failure_class,
-            failure_code=exc.failure_code,
-            finished_at=datetime.now(UTC),
-        )
-        if context is not None:
-            await self._update_index_run_status(
-                context.index_run_id,
-                status="queued",
-                error_json={
-                    "failure_class": exc.failure_class,
-                    "failure_code": exc.failure_code,
-                    "rationale_code": exc.rationale_code,
-                    "message": str(exc),
-                    "retryable": True,
-                },
-            )
+        """Atomically retry-or-terminalize via the public runtime seam.
+
+        Opens a caller-owned transaction and delegates the retry-vs-terminal
+        decision to ``transition_retryable_failure_in_transaction``, which
+        reads ``attempt_count``/``max_attempts`` inside the DB lock. The
+        worker then updates ``reader_runs`` and ``reader_article_rag_index_runs``
+        in the same transaction based on the returned ``JobSnapshot.status``.
+        """
+        output_ref = {"diagnostics": exc.diagnostics} if exc.diagnostics else None
+        async with self.get_pool().acquire() as conn:
+            async with conn.transaction():
+                snapshot = await self._job_runtime.transition_retryable_failure_in_transaction(
+                    conn,
+                    job_id=claim.job_id,
+                    lease_token=claim.lease_token,
+                    retry_delay=retry_delay,
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    failure_message=str(exc),
+                    rationale_code=exc.rationale_code,
+                    output_ref=output_ref,
+                )
+
+                if snapshot.status == "failed_terminal":
+                    run_status = "failed_terminal"
+                    index_run_status = "failed"
+                    index_run_error_json = self._error_json(
+                        exc,
+                        retryable=False,
+                        rationale_code="max_attempts_exceeded",
+                        retry_exhausted=True,
+                    )
+                    result_status = "failed_terminal"
+                    result_retryable = False
+                else:
+                    run_status = "failed_retryable"
+                    index_run_status = "queued"
+                    index_run_error_json = self._error_json(exc, retryable=True)
+                    result_status = "retry_later"
+                    result_retryable = True
+
+                await self._mark_run_status_in_transaction(
+                    conn,
+                    claim.run_id,
+                    status=run_status,
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    finished_at=datetime.now(UTC),
+                )
+                if context is not None:
+                    await conn.execute(
+                        """
+                        UPDATE reader_article_rag_index_runs
+                        SET status = $2,
+                            error_json = $3::jsonb,
+                            completed_at = CASE WHEN $2 = 'failed'
+                                THEN COALESCE(completed_at, NOW()) ELSE completed_at END,
+                            updated_at = NOW()
+                        WHERE id = $1
+                        """,
+                        context.index_run_id,
+                        index_run_status,
+                        jsonb_param(index_run_error_json),
+                    )
+
         return ArticleRagIndexWorkerResult(
             job_id=claim.job_id,
             index_run_id=context.index_run_id if context else UUID(int=0),
             reading_record_id=claim.reading_record_id,
             stable_document_id=context.stable_document_id if context else UUID(int=0),
             base_id=claim.base_id or UUID(int=0),
-            status="retry_later",
+            status=result_status,
             chunk_count=0,
-            retryable=True,
+            retryable=result_retryable,
             failure_code=exc.failure_code,
         )
+
+    @staticmethod
+    def _error_json(
+        exc: ArticleRagIndexWorkerError,
+        *,
+        retryable: bool,
+        rationale_code: str | None = None,
+        retry_exhausted: bool = False,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "failure_class": exc.failure_class,
+            "failure_code": exc.failure_code,
+            "rationale_code": rationale_code or exc.rationale_code,
+            "message": str(exc),
+            "retryable": retryable,
+        }
+        if exc.diagnostics:
+            payload["diagnostics"] = exc.diagnostics
+        if retry_exhausted:
+            payload["retry_exhausted"] = True
+        return payload
 
     async def _handle_failed_terminal(
         self,
@@ -1289,35 +1323,49 @@ class ArticleRagIndexWorkerService:
         context: _JobContext | None,
         exc: ArticleRagIndexWorkerError,
     ) -> ArticleRagIndexWorkerResult:
-        """Transition job → failed_terminal, index run → failed."""
-        await self._job_runtime.transition(
-            job_id=claim.job_id,
-            target_status="failed_terminal",
-            lease_token=claim.lease_token,
-            failure_class=exc.failure_class,
-            failure_code=exc.failure_code,
-            failure_message=str(exc),
-            rationale_code=exc.rationale_code,
-        )
-        await self._mark_run_status(
-            claim.run_id,
-            status="failed_terminal",
-            failure_class=exc.failure_class,
-            failure_code=exc.failure_code,
-            finished_at=datetime.now(UTC),
-        )
-        if context is not None:
-            await self._update_index_run_status(
-                context.index_run_id,
-                status="failed",
-                error_json={
-                    "failure_class": exc.failure_class,
-                    "failure_code": exc.failure_code,
-                    "rationale_code": exc.rationale_code,
-                    "message": str(exc),
-                    "retryable": False,
-                },
-            )
+        """Atomically transition terminal state across three tables.
+
+        Transitions:
+          * reader job → ``failed_terminal``
+          * reader run → ``failed_terminal``
+          * Article RAG index run → ``failed``
+
+        All three mutations run in a single caller-owned transaction so a
+        failure at any step rolls back the entire terminal path. No reader
+        representation event is published; ``article_ready`` and the reader
+        truth layer (base / Unit / anchor / stable document) are untouched.
+        """
+        output_ref = {"diagnostics": exc.diagnostics} if exc.diagnostics else None
+        error_json = self._error_json(exc, retryable=False)
+        finished_at = datetime.now(UTC)
+        async with self.get_pool().acquire() as conn:
+            async with conn.transaction():
+                await self._job_runtime.transition_in_transaction(
+                    conn,
+                    job_id=claim.job_id,
+                    target_status="failed_terminal",
+                    lease_token=claim.lease_token,
+                    output_ref=output_ref,
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    failure_message=str(exc),
+                    rationale_code=exc.rationale_code,
+                )
+                await self._mark_run_status_in_transaction(
+                    conn,
+                    claim.run_id,
+                    status="failed_terminal",
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    finished_at=finished_at,
+                )
+                if context is not None:
+                    await self._update_index_run_status_in_transaction(
+                        conn,
+                        context.index_run_id,
+                        status="failed",
+                        error_json=error_json,
+                    )
         return ArticleRagIndexWorkerResult(
             job_id=claim.job_id,
             index_run_id=context.index_run_id if context else UUID(int=0),
@@ -1465,82 +1513,6 @@ class ArticleRagIndexWorkerService:
     # Low-level DB helpers
     # ------------------------------------------------------------------
 
-    async def _transition_job_in_transaction(
-        self,
-        *,
-        conn: asyncpg.Connection,
-        claim: ClaimResult,
-        target_status: str,
-        rationale_code: str | None,
-        output_ref: dict[str, Any] | None,
-    ) -> None:
-        """Transition job within the caller's transaction."""
-        job_row = await conn.fetchrow(
-            "SELECT * FROM reader_jobs WHERE id = $1 FOR UPDATE",
-            claim.job_id,
-        )
-        if job_row is None:
-            raise LookupError(f"reader job {claim.job_id} not found")
-        if str(job_row["status"]) != "claimed":
-            raise ValueError(
-                f"job {claim.job_id} status is '{job_row['status']}' "
-                f"(expected claimed) for in-transaction transition to "
-                f"{target_status}"
-            )
-        _assert_lease_valid(job_row, claim.job_id, claim.lease_token)
-
-        # For succeeded, validate publish fence.
-        if target_status == "succeeded":
-            fence_error = await self._job_runtime._validate_fence(  # type: ignore[attr-defined]
-                conn, job_row,
-            )
-            if fence_error is not None:
-                raise FenceViolationError(
-                    f"publish fence failed for job {claim.job_id}: "
-                    f"{fence_error}"
-                )
-
-        updated = await self._job_runtime._apply_transition(  # type: ignore[attr-defined]
-            conn,
-            job_row=job_row,
-            target_status=target_status,
-            available_at=None,
-            pause_owner=None,
-            output_ref=output_ref,
-            failure_class=None,
-            failure_code=None,
-            failure_message=None,
-            rationale_code=rationale_code,
-        )
-        event_type = self._event_type_for_target(target_status)
-        await self._job_runtime._insert_job_event(  # type: ignore[attr-defined]
-            conn,
-            reading_record_id=updated["reading_record_id"],
-            run_id=updated["run_id"],
-            job_id=updated["id"],
-            event_type=event_type,
-            payload={
-                "previous_status": "claimed",
-                "target_status": target_status,
-                **({"rationale_code": rationale_code} if rationale_code else {}),
-                **({"output_ref": output_ref} if output_ref else {}),
-            },
-        )
-
-    @staticmethod
-    def _event_type_for_target(target_status: str) -> str:
-        mapping = {
-            "succeeded": "job_succeeded",
-            "failed_terminal": "job_failed_terminal",
-            "retry_later": "job_retry_later",
-            "superseded": "job_superseded",
-            "cancelled": "job_cancelled",
-            "skipped": "job_skipped",
-            "paused": "job_paused",
-            "queued": "job_requeued",
-        }
-        return mapping.get(target_status, "job_transitioned")
-
     async def _mark_run_running(self, run_id: UUID) -> None:
         async with self.get_pool().acquire() as conn:
             await conn.execute(
@@ -1612,22 +1584,42 @@ class ArticleRagIndexWorkerService:
     ) -> None:
         """Update index run status + error_json (outside any transaction)."""
         async with self.get_pool().acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE reader_article_rag_index_runs
-                SET status = $2,
-                    error_json = $3::jsonb,
-                    completed_at = CASE
-                        WHEN $2 IN ('failed', 'superseded')
-                            THEN COALESCE(completed_at, NOW())
-                        WHEN $2 = 'queued'
-                            THEN NULL
-                        ELSE completed_at
-                    END,
-                    updated_at = NOW()
-                WHERE id = $1
-                """,
+            await self._update_index_run_status_in_transaction(
+                conn,
                 index_run_id,
-                status,
-                jsonb_param(error_json),
+                status=status,
+                error_json=error_json,
             )
+
+    async def _update_index_run_status_in_transaction(
+        self,
+        conn: asyncpg.Connection,
+        index_run_id: UUID,
+        *,
+        status: str,
+        error_json: dict[str, Any],
+    ) -> None:
+        """Update index run status + error_json inside the caller's transaction.
+
+        Counterpart to :meth:`_update_index_run_status` for the atomic
+        terminal path. The caller owns the commit/rollback.
+        """
+        await conn.execute(
+            """
+            UPDATE reader_article_rag_index_runs
+            SET status = $2,
+                error_json = $3::jsonb,
+                completed_at = CASE
+                    WHEN $2 IN ('failed', 'superseded')
+                        THEN COALESCE(completed_at, NOW())
+                    WHEN $2 = 'queued'
+                        THEN NULL
+                    ELSE completed_at
+                END,
+                updated_at = NOW()
+            WHERE id = $1
+            """,
+            index_run_id,
+            status,
+            jsonb_param(error_json),
+        )

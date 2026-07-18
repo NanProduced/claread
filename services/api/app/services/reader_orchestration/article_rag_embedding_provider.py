@@ -19,8 +19,11 @@ only:
     requeues ``retryable=True`` failures and transitions
     ``retryable=False`` ones to ``failed_terminal`` directly) and
     whose message NEVER carries the API key, chunk text, or any
-    verbatim SDK content.  Callers that need the upstream diagnostic
-    can inspect ``__cause__``.
+    verbatim SDK content.  The original ``EmbeddingError`` is
+    intentionally discarded — ops diagnosis depends only on the
+    safe structured diagnostics envelope (no ``__cause__`` /
+    ``__context__`` chain is preserved, so traceback serialisation
+    cannot leak the lower message).
 
 Default factory fail-closes: when ``reader_article_rag_embedding_provider``
 is empty/missing OR the wrapper's ``resolve_embedding_config`` returns
@@ -79,22 +82,7 @@ READER_ARTICLE_RAG_EMBEDDING_PROVIDER_DASHSCOPE = "dashscope"
 
 
 class DashScopeArticleRagEmbeddingProviderError(ArticleRagIndexWorkerError):
-    """Typed failure raised by :class:`DashScopeArticleRagEmbeddingProvider`.
-
-    Inherits :class:`ArticleRagIndexWorkerError` so the I4C worker's
-    exception handler (which only catches the worker base class)
-    requeues / fails the job correctly.
-
-    ``failure_code`` is a stable, machine-readable label the worker uses
-    to drive retry / terminal branching.  ``retryable=True`` for
-    transient DashScope errors; ``retryable=False`` for configuration
-    and coverage violations.
-
-    The error message is a fixed diagnostic that explicitly excludes
-    any chunk text or API key.  The underlying SDK exception (if any)
-    is preserved as ``__cause__`` for ops inspection; it is never
-    rendered into the message itself.
-    """
+    """Typed DashScope failure carrying only a safe diagnostic envelope."""
 
     def __init__(
         self,
@@ -104,6 +92,7 @@ class DashScopeArticleRagEmbeddingProviderError(ArticleRagIndexWorkerError):
         failure_code: str,
         failure_class: str = "embedding",
         rationale_code: str | None = None,
+        diagnostics: dict[str, str | int | bool | None] | None = None,
     ) -> None:
         super().__init__(
             message,
@@ -111,12 +100,59 @@ class DashScopeArticleRagEmbeddingProviderError(ArticleRagIndexWorkerError):
             failure_class=failure_class,
             failure_code=failure_code,
             rationale_code=rationale_code,
+            diagnostics=diagnostics,
         )
 
 
 def _text_sha256(text: str) -> str:
     """SHA-256 of the input text, hex-encoded (matching I4C convention)."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _safe_embedding_diagnostics(
+    exc: bailian_embedding.EmbeddingError,
+) -> dict[str, str | int | bool | None]:
+    """Return only bounded fields explicitly supplied by the wrapper.
+
+    Reuses the wrapper's shared whitelist helpers
+    (``_safe_provider_status`` / ``_safe_provider_code``) so the
+    adapter and the wrapper apply identical sanitisation rules.  The
+    wrapper already sanitises at the SDK boundary; this second pass
+    defends against an ``EmbeddingError`` constructed elsewhere that
+    bypassed the wrapper's whitelist (e.g. a test fake or a future
+    caller).
+    """
+    diagnostics: dict[str, str | int | bool | None] = {}
+    status = bailian_embedding._safe_provider_status(
+        getattr(exc, "status_code", None)
+    )
+    if status is not None:
+        diagnostics["provider_status"] = status
+    code = bailian_embedding._safe_provider_code(
+        getattr(exc, "provider_code", None)
+    )
+    if code is not None:
+        diagnostics["provider_code"] = code
+    retryable = getattr(exc, "retryable", None)
+    if isinstance(retryable, bool):
+        diagnostics["provider_retryable"] = retryable
+    ordinal = getattr(exc, "failed_batch_ordinal", None)
+    batch_count = getattr(exc, "batch_count", None)
+    # P0 Round 3: ``bool`` is a subclass of ``int`` in Python, so the
+    # legacy ``isinstance(value, int) and value > 0`` check accepts
+    # ``True`` (== 1) as a valid positive integer.  Reject bool
+    # explicitly so ``True``/``False`` cannot leak into diagnostics
+    # (where they would JSON-serialise as ``true``/``false`` instead
+    # of the expected int).
+    if isinstance(ordinal, int) and not isinstance(ordinal, bool) and ordinal > 0:
+        diagnostics["failed_batch_ordinal"] = ordinal
+    if (
+        isinstance(batch_count, int)
+        and not isinstance(batch_count, bool)
+        and batch_count > 0
+    ):
+        diagnostics["batch_count"] = batch_count
+    return diagnostics
 
 
 class DashScopeArticleRagEmbeddingProvider:
@@ -162,21 +198,20 @@ class DashScopeArticleRagEmbeddingProvider:
         *,
         model: str | None = None,
     ) -> list[ArticleRagEmbedding]:
-        """Embed chunk texts, returning one record per input text.
-
-        Order is preserved; SHA-256 is computed locally before the
-        wrapper is invoked. Empty input list returns empty list with no
-        wrapper call. Any ``EmbeddingError`` is re-wrapped as
-        :class:`DashScopeArticleRagEmbeddingProviderError` whose
-        message is a fixed diagnostic that excludes both the API key
-        and any chunk text.  The original SDK exception remains
-        reachable via ``__cause__``.
-        """
+        """Embed chunk texts while retaining only safe failure diagnostics."""
         if not texts:
             return []
 
         effective_model = model or self._model_override
 
+        # P0 safe-return: extract only the whitelisted diagnostic fields
+        # inside the except block, then raise the safe outer error AFTER
+        # leaving the block.  This ensures both ``__cause__`` (no
+        # ``raise ... from exc``) and ``__context__`` (no implicit chain
+        # from re-raising inside ``except``) are None, so traceback
+        # serialisation cannot echo the lower exception's message.
+        rewrap_error: DashScopeArticleRagEmbeddingProviderError | None = None
+        call_result = None
         try:
             call_result = await bailian_embedding.embed_texts_with_metadata(
                 texts,
@@ -184,20 +219,26 @@ class DashScopeArticleRagEmbeddingProvider:
                 dimension=None,
             )
         except bailian_embedding.EmbeddingError as exc:
-            # Per Fix 5: never forward the original SDK message — it
-            # may echo chunk text.  Surface a fixed diagnostic that
-            # names the wrapper, the input count, and the SDK
-            # exception class only.  ``__cause__`` preserves the
-            # original error for ops inspection.
-            raise DashScopeArticleRagEmbeddingProviderError(
+            diagnostics = _safe_embedding_diagnostics(exc)
+            retryable = (
+                bool(exc.retryable) if exc.retryable is not None else True
+            )
+            rewrap_error = DashScopeArticleRagEmbeddingProviderError(
                 "DashScope embedding call failed via bailian_embedding "
                 f"(input_count={len(texts)}, "
-                f"wrapper_exc={type(exc).__name__}); see __cause__ for "
-                "upstream diagnostic",
-                retryable=True,
+                f"wrapper_exc={type(exc).__name__}); safe diagnostics "
+                "in `.diagnostics`",
+                retryable=retryable,
                 failure_class="embedding",
                 failure_code="embedding_backend_failed",
-            ) from exc
+                diagnostics=diagnostics,
+            )
+
+        if rewrap_error is not None:
+            # Raised OUTSIDE the except block: no __cause__, no __context__.
+            raise rewrap_error
+
+        assert call_result is not None  # narrow type for type checkers
 
         embeddings = call_result.embeddings
         resolved_model = call_result.model
@@ -215,10 +256,6 @@ class DashScopeArticleRagEmbeddingProvider:
         for text, vector in zip(texts, embeddings, strict=True):
             vec_tuple = tuple(float(v) for v in vector)
             if resolved_dim and len(vec_tuple) != resolved_dim:
-                # Defence in depth — bailian_embedding should already
-                # have cross-checked; we re-check here so a future
-                # regression in the wrapper cannot silently propagate a
-                # wrong-dim vector.
                 raise DashScopeArticleRagEmbeddingProviderError(
                     "DashScope embedding returned a vector of unexpected "
                     f"length for a {resolved_dim}-dim config",
