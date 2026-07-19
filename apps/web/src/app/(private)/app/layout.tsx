@@ -1,6 +1,7 @@
 import { AppShell } from "@/components/layout";
 import { RecentReadingProvider } from "@/components/layout/recent-reading-context";
 import { CloudPreferencesSync } from "@/components/providers/CloudPreferencesSync";
+import { SettingsDialogProvider } from "@/components/settings/SettingsDialogProvider";
 import { getReadingRecordListFromWeb } from "@/services/bff/reading-records";
 import { getProjectedWebSession } from "@/services/bff/session";
 
@@ -20,11 +21,13 @@ export default async function AppShellLayout({
 
   return (
     <RecentReadingProvider initialItems={recentRecords}>
-      <AppShell userName="Claread" userContact={userContact} userPlanLabel="Free">
-        <CloudPreferencesSync />
-        {children}
-        {settings}
-      </AppShell>
+      <SettingsDialogProvider>
+        <AppShell userName="Claread" userContact={userContact} userPlanLabel="Free">
+          <CloudPreferencesSync />
+          {children}
+          {settings}
+        </AppShell>
+      </SettingsDialogProvider>
     </RecentReadingProvider>
   );
 }

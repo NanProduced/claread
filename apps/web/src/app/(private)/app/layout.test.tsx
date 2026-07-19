@@ -28,6 +28,18 @@ vi.mock('@/components/providers/CloudPreferencesSync', () => ({
   CloudPreferencesSync: () => null,
 }));
 
+// Mock the SettingsDialogProvider so the SSR test doesn't pull in
+// Radix Dialog client components (which would add client-only side effects).
+// The mock records that children were wrapped, so we can assert the
+// Provider is mounted at the AppShell level.
+const settingsDialogProviderMock = vi.fn((props: { children: React.ReactNode }) => (
+  <div data-testid="settings-dialog-provider">{props.children}</div>
+));
+vi.mock('@/components/settings/SettingsDialogProvider', () => ({
+  SettingsDialogProvider: (props: unknown) =>
+    settingsDialogProviderMock(props as { children: React.ReactNode }),
+}));
+
 import { renderToString } from 'react-dom/server';
 import AppShellLayout from './layout';
 
@@ -74,5 +86,31 @@ describe('AppShellLayout', () => {
     });
     const html = renderToString(element);
     expect(html).toContain('Children');
+  });
+
+  it('wraps the AppShell in SettingsDialogProvider so any nested client component can open Settings', async () => {
+    recentMock.mockResolvedValue({ ok: true, items: [], total: 0, limit: 10 });
+    sessionMock.mockResolvedValue({ phone: '13800000000' });
+    const element = await AppShellLayout({
+      children: <div data-testid="children-content">Children</div>,
+      settings: null,
+    });
+    const html = renderToString(element);
+    // The provider wrapper is present.
+    expect(html).toContain('data-testid="settings-dialog-provider"');
+    // The Provider wraps the AppShell, so the appshell markup appears
+    // AFTER the provider's opening tag.
+    const providerIdx = html.indexOf('data-testid="settings-dialog-provider"');
+    const appShellIdx = html.indexOf('data-testid="appshell"');
+    expect(appShellIdx).toBeGreaterThan(providerIdx);
+    // Children render inside the AppShell, inside the Provider.
+    const childrenIdx = html.indexOf('data-testid="children-content"');
+    expect(childrenIdx).toBeGreaterThan(appShellIdx);
+    // Provider was called with children (not settings slot).
+    expect(settingsDialogProviderMock).toHaveBeenCalled();
+    const lastCall = settingsDialogProviderMock.mock.calls.at(-1)![0] as {
+      children: React.ReactNode;
+    };
+    expect(lastCall.children).toBeDefined();
   });
 });
