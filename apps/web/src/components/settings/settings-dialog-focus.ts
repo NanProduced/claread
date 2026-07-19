@@ -8,10 +8,9 @@
  *   3. A visible, focusable `[data-desktop-user-menu-trigger="true"]`.
  *   4. `null` — let Radix Dialog's default behavior handle focus.
  *
- * This intentionally mirrors the existing focus restoration priority used
- * by `SettingsDialogRouteClient` (mobile user trigger → desktop user
- * trigger → Radix default). When the route-based Dialog is removed in a
- * later task, this helper stays as the single source of truth.
+ * This helper is the AppShell Settings Dialog''s single source of truth for
+ * focus restoration (captured opener → mobile user trigger → desktop user
+ * trigger → Radix default).
  */
 
 /** Whether an element and all its ancestors are actually visible. */

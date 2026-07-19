@@ -29,8 +29,8 @@ export interface SettingsDialogSectionFrameProps {
  * - Content column width constraint (standard vs wide).
  * - `aria-labelledby` linking the body region to the header title.
  *
- * This frame is ONLY used in Dialog mode. The fallback `/app/settings` page
- * uses `SettingsSectionLayout` with its own `md:grid` structure.
+ * This frame is used only by the AppShell Settings Dialog content adapter
+ * (`SettingsDialogContentClient`).
  */
 export function SettingsDialogSectionFrame({
   title,

@@ -11,8 +11,8 @@ import { getSettingsDialogProjection } from "@/services/bff/profile";
  * The projection reuses the existing session + `getUpstreamSessionMe`
  * upstream path and the same status semantics used by Settings, but
  * deliberately does NOT call `getUpstreamQuota`. See
- * `getSettingsDialogProjection` for the alignment guarantees with
- * `loadSettingsData()`.
+ * `getSettingsDialogProjection` for the status semantics and
+ * fallback behavior.
  *
  * Error envelope follows the existing Web API convention
  * (`{ ok: false, status, code, message }`) and always uses fixed

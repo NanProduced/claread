@@ -125,7 +125,11 @@ Ask 的回答涉及原文时必须能回到文章锚点。回答不能直接改�
 
 ### Settings dialog
 
-Settings Dialog 由 `SettingsDialogShell` 提供视觉容器与 rail 导航，由 `SettingsDialogRouteClient` 接入 `(.)settings` 路由拦截。`?section=` 控制当前 section，通过 `parseSettingsSection` 解析为 `account | preferences | usage | support` 白名单，非法值回退到 `preferences`；切换 section 使用 `router.replace` 避免累积历史记录，关闭 Dialog 使用 `router.back`。内容仍复用现有 Settings 内容组件 `SettingsSectionContent`。
+Settings Dialog 是 AppShell 持有的无导航 Dialog：由 `SettingsDialogProvider` 管理开关与当前 section 状态，由 `SettingsDialogHost` 负责拉取 `GET /api/web/settings-dialog` 并渲染 `SettingsDialogContentClient`。`SettingsDialogShell` 提供视觉容器与 rail 导航，`SettingsDialogSectionFrame` 为每个分区提供固定 header 与独立滚动 body。
+
+入口：Sidebar 用户菜单、移动端底部导航的“我的”触发器、Command Palette（`ControlOrMeta+K` → “设置”）均通过 Context 调用 `openSettings(section)` 打开 Dialog，不发生路由跳转。当前 section 通过 `parseSettingsSection` 解析为 `account | preferences | usage | support` 白名单，非法值回退到 `preferences`。
+
+地址栏语义：打开、切换 section、关闭 Dialog 都不改变地址栏。`history.state` marker 仅用于 Back/Forward 与 reload 恢复：打开时 `pushState` 写入 marker，切换 section 用 `replaceState` 更新 marker 的 section 字段；关闭时若当前 history entry 持有有效 marker，调用 `history.back()` 由 popstate 关闭 Dialog，若不持有 marker（例如宿主代码已替换 `history.state`，或 Dialog 状态从非受控历史来源恢复）则仅关闭本地 Dialog 状态，不调用 `history.back()`，不扰动宿主页面历史。两种情况下 pathname / search / hash 均不变化。reload 后 Provider 从 marker 恢复 Dialog 与当前 section。`/app/settings`、`/app/settings?section=…`、`/app/settings/feedback`、`/app/settings/ledger` 等旧路由式路径已退役，直接访问 redirect 到 `/app/read`。
 
 **层级。** Dialog 使用两个语义 z-index token，定义在 `apps/web/src/app/globals.css` 的 `:root`：`--app-z-modal-backdrop: 90`（遮罩）与 `--app-z-modal: 100`（内容）。两者严格高于 `--app-z-shell-overlay: 80`，确保 modal 始终渲染在 shell overlay 之上。`DialogOverlay` 解析为 `var(--app-z-modal-backdrop)`，`DialogContent` 解析为 `var(--app-z-modal)`。
 
@@ -141,7 +145,7 @@ Settings Dialog 由 `SettingsDialogShell` 提供视觉容器与 rail 导航，�
 
 每个目的地使用 16px `lucide-react` 图标与文本并列；“个人资料”仅为 UI 显示名称，不改变 URL section 白名单。移动端（`< md`）降级为 full-screen sheet：`h-dvh w-screen rounded-none`，无圆角，顶部横向分区导航 + 单一内容列，内容单独滚动。
 
-**移动端入口。** 移动端不渲染左侧 Sidebar；底部固定导航（`md:hidden`）提供 6 列入口，最后一列为“我的”用户菜单触发器（`UserRound` 图标 + “我的”标签，触控目标 `min-h-12`）。点击后弹出与桌面 Sidebar 同一语义的用户菜单，内含三条 Settings 链接：`个人资料 → /app/settings?section=account`、`偏好设置 → /app/settings?section=preferences`、`用量与积分 → /app/settings?section=usage`。菜单使用默认 portal 渲染，避免被底部导航栏裁剪；关闭 Dialog 后焦点恢复到触发器或 app chrome，保持现有 `router.back()` 与焦点恢复契约。
+**移动端入口。** 移动端不渲染左侧 Sidebar；底部固定导航（`md:hidden`）提供 6 列入口，最后一列为“我的”用户菜单触发器（`UserRound` 图标 + “我的”标签，触控目标 `min-h-12`）。点击后弹出与桌面 Sidebar 同一语义的用户菜单，内含三条 Settings 入口：个人资料、偏好设置、用量与积分，分别通过 Context 打开 Dialog 到对应的 `account` / `preferences` / `usage` section。菜单使用默认 portal 渲染，避免被底部导航栏裁剪；关闭 Dialog 后焦点恢复到触发器或 app chrome，遵循 Settings Dialog 现有的焦点恢复契约。
 
 **可访问性。** `DialogTitle` 与 `DialogDescription` 提供 sr-only 可访问名称；关闭按钮带 `aria-label`；分区导航使用普通 button 语义（`nav[aria-label]` + `button[aria-current="page"]`），不使用 ARIA tabs 模型；移动端关闭按钮与分区按钮最小触控目标 44×44px（`max-md:size-11` / `max-md:min-h-11`），桌面端维持紧凑密度；Esc 关闭由 Radix Dialog 提供。
 

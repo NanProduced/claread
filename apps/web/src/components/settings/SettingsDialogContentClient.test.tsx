@@ -61,8 +61,8 @@ vi.mock("@/components/settings/SettingsDialogSectionFrame", () => ({
   },
 }));
 
-// Crucially, we DO NOT mock SettingsSectionContent — the content client
-// must NOT import it. We assert this via the lint test below.
+// The content client must NOT import the retired legacy page-mode
+// composition components. We assert this via the lint test below.
 import { SettingsDialogContentClient } from "./SettingsDialogContentClient";
 
 afterEach(() => {
@@ -231,7 +231,7 @@ describe("SettingsDialogContentClient — DTO source of truth", () => {
     );
   });
 
-  it("does not import SettingsSectionContent (parallel dirty UI work)", async () => {
+  it("does not import retired legacy page-mode composition components", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
     const src = fs.readFileSync(

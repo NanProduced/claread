@@ -15,10 +15,10 @@ import { parseSettingsSection, type SettingsSection } from "./settings-dialog-hi
  * Section metadata for the AppShell Settings Dialog content adapter.
  *
  * These are minimal, read-only title/description pairs rendered inside
- * `SettingsDialogSectionFrame`. They intentionally mirror the metadata
- * the legacy `SettingsSectionContent` uses, but the data layer is the
- * source of truth for the DTO; we do not import the legacy fallback
- * composition component (which has parallel dirty UI work in flight).
+ * `SettingsDialogSectionFrame`. The data layer (`SettingsDialogData`
+ * from `lib/settings-dialog-data.ts`) is the source of truth for the
+ * DTO; this adapter does not import or fall back to any legacy
+ * page-mode composition component.
  */
 interface SectionMeta {
   title: string;
@@ -59,16 +59,9 @@ export interface SettingsDialogContentClientProps {
 /**
  * Client content adapter for the AppShell Settings Dialog.
  *
- * Renders the active section by composing the existing per-section
- * components (`AccountSection` / `PreferencesSection` /
- * `UsageSection` / `SupportSection`) inside a
- * `SettingsDialogSectionFrame`.
- *
- * Crucially, this adapter does NOT import `SettingsSectionContent`
- * (the legacy fallback composition component) — that component has
- * parallel dirty UI work in flight, and the AppShell Dialog must
- * stay decoupled from it so the next task can remove the route-based
- * Dialog without touching this adapter.
+ * Renders the active section by composing the per-section components
+ * (`AccountSection` / `PreferencesSection` / `UsageSection` /
+ * `SupportSection`) inside a `SettingsDialogSectionFrame`.
  *
  * Account / Preferences props come from `SettingsDialogData`
  * (the data-layer DTO from `lib/settings-dialog-data.ts`), not a

@@ -264,7 +264,7 @@ export type SettingsDialogProjectionResult =
  * `getUpstreamQuota` — the Settings Dialog must not issue a quota
  * request just to render the "用量与积分" placeholder.
  *
- * Behavior is aligned with `loadSettingsData()`:
+ * Status semantics:
  *   - anonymous / mock_phone → 401 with safe message, no upstream call;
  *   - missing nickname → falls back to session phone, then "Web User";
  *   - missing settings → falls back to default reading defaults;
