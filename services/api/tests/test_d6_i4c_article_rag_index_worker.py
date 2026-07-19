@@ -4343,47 +4343,57 @@ async def test_p1d_r1_multiple_job_id_links_fail_closed(
         user_id=_USER_ID,
     )
 
-    # Seed an extra failed index-run sharing the same job_id.  This
-    # bypasses any active unique index on (job_id, status) because the
-    # extra row is in a terminal status ('failed').
-    extra_index_run_id = uuid4()
+    # Seed failed and superseded index-runs sharing the same job_id.  The
+    # actual active uniqueness constraint is on
+    # (stable_document_id, index_version), and terminal rows are excluded
+    # from it.  There is no uniqueness constraint on job_id.
+    extra_failed_index_run_id = uuid4()
+    extra_superseded_index_run_id = uuid4()
     async with worker_env.acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO reader_article_rag_index_runs (
-                id, job_id, base_id, stable_document_id, reading_record_id,
-                reader_run_id, record_generation, index_version,
-                chunker_version, profile_fingerprint,
-                stable_document_content_sha256, canonical_text_sha256,
-                plan_content_sha256,
-                chunk_count, status, created_at, updated_at
-            ) VALUES (
-                $1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10, $11, $12,
-                $13, 'failed', NOW(), NOW()
+        for extra_index_run_id, terminal_status in (
+            (extra_failed_index_run_id, "failed"),
+            (extra_superseded_index_run_id, "superseded"),
+        ):
+            await conn.execute(
+                """
+                INSERT INTO reader_article_rag_index_runs (
+                    id, job_id, base_id, stable_document_id, reading_record_id,
+                    reader_run_id, record_generation, index_version,
+                    chunker_version, profile_fingerprint,
+                    stable_document_content_sha256, canonical_text_sha256,
+                    plan_content_sha256,
+                    chunk_count, status, created_at, updated_at
+                ) VALUES (
+                    $1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10, $11, $12,
+                    $13, $14, NOW(), NOW()
+                )
+                """,
+                extra_index_run_id,
+                bootstrap_result.job_id,
+                _BASE_ID,
+                _STABLE_DOC_ID,
+                _RECORD_ID,
+                1,
+                _P1D_V1_INDEX_VERSION,
+                _P1D_V1_CHUNKER_VERSION,
+                _P1D_V1_PROFILE_FINGERPRINT,
+                "0" * 64,
+                "0" * 64,
+                "0" * 64,
+                0,
+                terminal_status,
             )
-            """,
-            extra_index_run_id,
-            bootstrap_result.job_id,
-            _BASE_ID,
-            _STABLE_DOC_ID,
-            _RECORD_ID,
-            1,
-            _P1D_V1_INDEX_VERSION,
-            _P1D_V1_CHUNKER_VERSION,
-            _P1D_V1_PROFILE_FINGERPRINT,
-            "0" * 64,
-            "0" * 64,
-            "0" * 64,
-            0,
-        )
 
-    # Capture original statuses of both candidate rows.
+    # Capture original statuses of all candidate rows.
     async with worker_env.acquire() as conn:
         orig_main = await _p1d_fetch_index_run_with_fingerprint(
             conn, index_run_id=bootstrap_result.index_run_id,
         )
-        orig_extra = await _p1d_fetch_index_run_with_fingerprint(
-            conn, index_run_id=extra_index_run_id,
+        orig_failed = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=extra_failed_index_run_id,
+        )
+        orig_superseded = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=extra_superseded_index_run_id,
         )
 
     embedding_provider = FakeArticleRagEmbeddingProvider()
@@ -4413,8 +4423,11 @@ async def test_p1d_r1_multiple_job_id_links_fail_closed(
         main_now = await _p1d_fetch_index_run_with_fingerprint(
             conn, index_run_id=bootstrap_result.index_run_id,
         )
-        extra_now = await _p1d_fetch_index_run_with_fingerprint(
-            conn, index_run_id=extra_index_run_id,
+        failed_now = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=extra_failed_index_run_id,
+        )
+        superseded_now = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=extra_superseded_index_run_id,
         )
         terminal_events = await _p1d_count_terminal_events(
             conn, job_id=bootstrap_result.job_id,
@@ -4430,19 +4443,24 @@ async def test_p1d_r1_multiple_job_id_links_fail_closed(
 
     assert job["status"] == "failed_terminal"
     assert run["status"] == "failed_terminal"
-    # Both candidate index-runs must keep their original status — no
+    # All candidate index-runs must keep their original status — no
     # arbitrary update.
     assert main_now["status"] == orig_main["status"]
-    assert extra_now["status"] == orig_extra["status"]
+    assert failed_now["status"] == orig_failed["status"]
+    assert superseded_now["status"] == orig_superseded["status"]
     assert terminal_events == 1
     assert retry_events == 0
 
     # The error surface must not echo candidate IDs or row count.
-    _p1d_assert_no_sentinel_in_surfaces(
-        sentinel=str(extra_index_run_id),
-        job=job,
-        events=events,
-    )
+    for candidate_id in (
+        extra_failed_index_run_id,
+        extra_superseded_index_run_id,
+    ):
+        _p1d_assert_no_sentinel_in_surfaces(
+            sentinel=str(candidate_id),
+            job=job,
+            events=events,
+        )
 
 
 # ---------------------------------------------------------------------

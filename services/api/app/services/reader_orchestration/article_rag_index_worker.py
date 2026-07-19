@@ -1493,8 +1493,12 @@ class ArticleRagIndexWorkerService:
                     # corrupt ``input_json.index_run_id``.  Look up the
                     # linked index-run via the trusted DB relationship
                     # ``reader_article_rag_index_runs.job_id = claim.job_id``
-                    # and lock the full candidate set FOR UPDATE so a
-                    # concurrent worker cannot insert/drift under us.
+                    # and lock the current candidate set FOR UPDATE so
+                    # existing rows cannot drift while this transaction is
+                    # open.  PostgreSQL row locks do not prevent a new row
+                    # with the same job_id from being inserted; normal
+                    # writers must therefore continue treating job_id as a
+                    # single-owner link.
                     #
                     # ``job_id`` has NO unique constraint, so a fetchrow
                     # would arbitrarily pick one row.  Cardinality rules:
@@ -1524,8 +1528,8 @@ class ArticleRagIndexWorkerService:
                         )
                     # 0 or >1 rows: linked_index_run_id stays None; no
                     # arbitrary index-run is updated.  The job + run
-                    # terminalization above already committed in this
-                    # same transaction.
+                    # terminalization above is already staged in this same
+                    # transaction and commits atomically on context exit.
         return ArticleRagIndexWorkerResult(
             job_id=claim.job_id,
             index_run_id=(
