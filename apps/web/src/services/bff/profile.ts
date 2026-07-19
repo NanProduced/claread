@@ -1,5 +1,7 @@
 import "server-only";
 
+import { readReadingDefaultsFromSettings } from "@/lib/reading-defaults";
+import type { SettingsDialogData } from "@/lib/settings-dialog-data";
 import { getUpstreamSessionMe, patchUpstreamProfile } from "@/services/api/auth";
 import { getUpstreamQuota } from "@/services/api/quota";
 import { getWebSession, projectSession, type WebSession } from "@/services/bff/session";
@@ -230,4 +232,101 @@ export async function updateProfileSettings(
   }
 
   return { ok: true, httpStatus: 200 };
+}
+
+/**
+ * Result of projecting the minimal Settings Dialog data.
+ *
+ * Strict discriminated union:
+ *   - `ok: true`  → `httpStatus` is `200` and `data` is a non-null
+ *                    `SettingsDialogData`. There is no `message` arm.
+ *   - `ok: false` → `data` is `null` and `message` is a required,
+ *                    user-facing Chinese string. Raw upstream error
+ *                    details, tokens, or response bodies are never
+ *                    surfaced.
+ *
+ * The success arm carries `data: SettingsDialogData` (not
+ * `SettingsDialogData | null`), so route handlers and other consumers
+ * can branch on `result.ok` and access `result.data` without any
+ * nullable tolerance at the type level.
+ */
+export type SettingsDialogProjectionResult =
+  | { ok: true; httpStatus: 200; data: SettingsDialogData }
+  | { ok: false; httpStatus: number; data: null; message: string };
+
+/**
+ * Lazy, narrow BFF projection for the AppShell Settings Dialog.
+ *
+ * Returns the minimal DTO consumed by the Settings Dialog content
+ * components (`accountData` + `preferencesData`). It reuses the same
+ * session / `getUpstreamSessionMe` upstream path and the same status
+ * semantics as `getProfileSettings`, but deliberately does NOT call
+ * `getUpstreamQuota` — the Settings Dialog must not issue a quota
+ * request just to render the "用量与积分" placeholder.
+ *
+ * Behavior is aligned with `loadSettingsData()`:
+ *   - anonymous / mock_phone → 401 with safe message, no upstream call;
+ *   - missing nickname → falls back to session phone, then "Web User";
+ *   - missing settings → falls back to default reading defaults;
+ *   - `canEdit` is `true` only when status is "ready".
+ *
+ * Upstream failure responses never echo the raw upstream message; a
+ * fixed Chinese fallback is used to avoid leaking internal details.
+ */
+export async function getSettingsDialogProjection(): Promise<SettingsDialogProjectionResult> {
+  const webSession = await getWebSession();
+
+  if (webSession.kind === "anonymous" || webSession.kind === "mock_phone") {
+    return {
+      ok: false,
+      httpStatus: 401,
+      data: null,
+      message:
+        webSession.kind === "mock_phone"
+          ? "当前登录态未连接真实账户，请使用真实登录会话后查看账户。"
+          : "当前会话已过期，请重新登录。",
+    };
+  }
+
+  const sessionResult = await getUpstreamSessionMe(webSession.sessionToken);
+
+  if (!sessionResult.ok) {
+    const isUnavailable = sessionResult.status === 0 || sessionResult.status >= 500;
+    return {
+      ok: false,
+      httpStatus: isUnavailable ? 503 : sessionResult.status,
+      data: null,
+      message: isUnavailable
+        ? "服务暂时不可用，请稍后重试。"
+        : "账户信息暂时不可用。",
+    };
+  }
+
+  const profile = projectProfile(sessionResult.data);
+  const status: ProfileBffStatus = "ready";
+
+  const sessionPhone = "phone" in webSession ? webSession.phone : undefined;
+  const displayName = profile.nickname || sessionPhone || "Web User";
+  const realNickname = profile.nickname || "";
+  const avatarText = displayName.trim().slice(0, 1).toUpperCase() || "U";
+
+  const readingDefaults = readReadingDefaultsFromSettings(profile.settings);
+  const canEdit = status === "ready";
+
+  const data: SettingsDialogData = {
+    accountData: {
+      nickname: realNickname,
+      displayFallback: displayName,
+      phone: sessionPhone,
+      status,
+      avatarText,
+    },
+    preferencesData: {
+      readingGoal: readingDefaults.readingGoal,
+      readingVariant: readingDefaults.readingVariant,
+      canEdit,
+    },
+  };
+
+  return { ok: true, httpStatus: 200, data };
 }
