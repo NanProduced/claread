@@ -15,7 +15,6 @@ export const appReadRoute = "/app/read" as Route;
 export const appLibraryRoute = "/app/library" as Route;
 export const appVocabularyRoute = "/app/vocabulary" as Route;
 export const appReviewRoute = "/app/review" as Route;
-export const appSettingsRoute = "/app/settings" as Route;
 export const appReaderPlateRouteBase = "/app/reader-plate" as Route;
 export const appReadingRecordRouteBase = "/app/reader-record" as Route;
 
