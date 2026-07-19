@@ -38,11 +38,39 @@ from app.services.reader_orchestration.repository import (
     ReaderOrchestrationRepository,
 )
 
+from .article_rag_index_profile import (
+    DEFAULT_ARTICLE_RAG_INDEX_VERSION,
+    ArticleRagIndexProfile,
+    ArticleRagIndexProfileResolutionError,
+    resolve_article_rag_index_profile,
+)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 CHUNKER_VERSION = "article_rag_index_plan_v1"
+
+# P1-E: the single plan identity supported by this plan service.  V1
+# requires BOTH ``profile.plan_version`` and ``profile.chunker_version``
+# to equal this string; any other identity fails closed without
+# silently falling through to the V1 builder.  No V2 identity is
+# registered here.
+# P1-E-R1: single source of truth — derive from ``CHUNKER_VERSION``
+# rather than maintaining a duplicate literal.  ``CHUNKER_VERSION`` is
+# the public canonical identity constant; its byte value is unchanged.
+_SUPPORTED_PLAN_IDENTITY = CHUNKER_VERSION
+
+# P1-E: fixed local error messages used by the version-aware dispatch
+# wrapper.  These strings never interpolate the caller-supplied
+# ``index_version`` or any other input — the offending value is never
+# echoed in ``str``, ``repr``, ``args``, or traceback.
+_P1E_MSG_PROFILE_NOT_RESOLVED = (
+    "Article RAG index plan version is not supported"
+)
+_P1E_MSG_PLAN_IDENTITY_UNSUPPORTED = (
+    "Article RAG index plan version is not supported"
+)
 
 _CANONICAL_SEPARATOR_UTF16 = 2  # "\n\n" = 2 UTF-16 code units
 
@@ -378,6 +406,82 @@ class _SegmentRow:
 
 
 # ---------------------------------------------------------------------------
+# P1-E: version-aware plan dispatch seam (V1 only)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_v1_plan_profile(index_version: str) -> ArticleRagIndexProfile:
+    """Resolve ``index_version`` to the supported V1 plan profile.
+
+    This is the single, runtime-immutable dispatch seam that maps an
+    ``index_version`` string to a deterministic plan implementation
+    identity.  It is the ONLY entry point the plan service uses to
+    translate a caller-supplied ``index_version`` into a concrete
+    ``chunker_version``; callers MUST NOT pass their own
+    chunker/model/namespace strings to the plan builder.
+
+    The seam delegates profile resolution to
+    :func:`resolve_article_rag_index_profile` (the P1-B registry) and
+    then verifies that the resolved profile's ``plan_version`` AND
+    ``chunker_version`` both equal :data:`_SUPPORTED_PLAN_IDENTITY`.
+    A future V2 profile registered in the P1-B registry will fail
+    closed here rather than silently flowing into the V1 builder.
+
+    Exception-chain closure: ``ArticleRagIndexProfileResolutionError``
+    is caught, a fixed-safe :class:`ArticleRagIndexPlanError` is
+    constructed INSIDE the except block, and the new error is raised
+    OUTSIDE the except block.  This guarantees
+    ``err.__cause__ is None`` and ``err.__context__ is None``; no
+    ``raise ... from exc`` is used and the original exception's
+    message / type / repr / args are never copied or re-emitted.
+
+    Args:
+        index_version: The index version string to resolve.  The
+            offending value is NEVER echoed in any error surface.
+
+    Returns:
+        The frozen :class:`ArticleRagIndexProfile` for V1.  Its
+        ``chunker_version`` is the canonical source for
+        ``plan.chunker_version``.
+
+    Raises:
+        ArticleRagIndexPlanError: If the profile cannot be resolved,
+            or if the resolved profile's plan / chunker identity is
+            not the supported V1 identity.  The error message is a
+            fixed local string; the offending input is never echoed.
+    """
+    resolution_error: ArticleRagIndexPlanError | None = None
+    try:
+        resolution = resolve_article_rag_index_profile(index_version)
+    except ArticleRagIndexProfileResolutionError:
+        # Construct the fixed-safe wrapper error INSIDE the except
+        # block.  Do NOT use ``raise ... from exc`` — that would set
+        # ``__cause__``.  Do NOT raise here — that would set
+        # ``__context__`` implicitly.  Defer the raise to outside the
+        # except block so both chain attributes remain None.
+        resolution_error = ArticleRagIndexPlanError(
+            _P1E_MSG_PROFILE_NOT_RESOLVED
+        )
+
+    if resolution_error is not None:
+        # Raised outside the except block: __cause__ is None,
+        # __context__ is None.
+        raise resolution_error
+
+    profile = resolution.profile
+    # Forward-compatibility guard: a future V2 profile registered in
+    # the P1-B registry must NOT silently flow into the V1 builder.
+    # Unknown / unsupported plan/chunker identity fails closed with a
+    # fixed local message; the offending identity is never echoed.
+    if (
+        profile.plan_version != _SUPPORTED_PLAN_IDENTITY
+        or profile.chunker_version != _SUPPORTED_PLAN_IDENTITY
+    ):
+        raise ArticleRagIndexPlanError(_P1E_MSG_PLAN_IDENTITY_UNSUPPORTED)
+    return profile
+
+
+# ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
 
@@ -403,6 +507,7 @@ class ArticleRagIndexPlanService:
         record_id: UUID,
         user_id: UUID,
         include_rag_ask_only: bool = False,
+        index_version: str = DEFAULT_ARTICLE_RAG_INDEX_VERSION,
     ) -> ArticleRagIndexPlan:
         """Build the index plan for the active stable document of ``record_id``.
 
@@ -416,13 +521,30 @@ class ArticleRagIndexPlanService:
             When ``False`` (default) only ``main_reading`` blocks are
             indexed.  When ``True`` also includes ``rag_ask_only``
             blocks (e.g. table_cell, image_ocr, footnote, code_block).
+        index_version
+            P1-E-R1: Article RAG index version string used to resolve
+            the plan / chunker identity through
+            :func:`resolve_article_rag_index_profile`.  Omitting the
+            parameter defaults to
+            :data:`DEFAULT_ARTICLE_RAG_INDEX_VERSION` so the V1
+            default behaviour is preserved.  Explicit ``None`` is NOT
+            a valid input: it flows directly to the resolver, which
+            rejects non-string values via
+            :class:`ArticleRagIndexPlanError` (fail-closed).  Bootstrap
+            and worker callers MUST pass their already-frozen /
+            validated ``index_version`` explicitly.  Unknown / blank /
+            whitespace-padded / non-string / malicious values fail
+            closed via :class:`ArticleRagIndexPlanError`; the
+            offending input is never echoed.
 
         Raises
         ------
         LookupError
             If the record does not exist or does not belong to ``user_id``.
         ArticleRagIndexPlanError
-            If the stable document / base is stale, inactive, mismatched,
+            If the profile cannot be resolved, the resolved plan /
+            chunker identity is not the supported V1 identity, the
+            stable document / base is stale, inactive, mismatched,
             or no eligible blocks produce chunks.
         """
         pool = self._get_pool()
@@ -432,6 +554,7 @@ class ArticleRagIndexPlanService:
                 record_id=record_id,
                 user_id=user_id,
                 include_rag_ask_only=include_rag_ask_only,
+                index_version=index_version,
             )
 
     async def build_index_plan_in_transaction(
@@ -441,6 +564,7 @@ class ArticleRagIndexPlanService:
         record_id: UUID,
         user_id: UUID,
         include_rag_ask_only: bool = False,
+        index_version: str = DEFAULT_ARTICLE_RAG_INDEX_VERSION,
     ) -> ArticleRagIndexPlan:
         """Caller-managed-connection variant of :meth:`build_index_plan`.
 
@@ -454,14 +578,51 @@ class ArticleRagIndexPlanService:
         atomicity (e.g. the bootstrap service) open their own
         transaction before calling this method.
 
+        Parameters
+        ----------
+        conn
+            The caller-managed connection.
+        record_id
+            The reading record to index.
+        user_id
+            The requesting user (ownership check).
+        include_rag_ask_only
+            When ``False`` (default) only ``main_reading`` blocks are
+            indexed.  When ``True`` also includes ``rag_ask_only``
+            blocks.
+        index_version
+            P1-E-R1: Article RAG index version string used to resolve
+            the plan / chunker identity.  Omitting the parameter
+            defaults to :data:`DEFAULT_ARTICLE_RAG_INDEX_VERSION`.
+            Explicit ``None`` is NOT a valid input: it flows directly
+            to the resolver, which rejects non-string values
+            (fail-closed via :class:`ArticleRagIndexPlanError`).
+            Bootstrap and worker callers MUST pass their already-frozen
+            / validated ``index_version`` explicitly.  Unknown /
+            malicious values fail closed via
+            :class:`ArticleRagIndexPlanError`.
+
         Raises
         ------
         LookupError
             If the record does not exist or does not belong to ``user_id``.
         ArticleRagIndexPlanError
-            If the stable document / base is stale, inactive, mismatched,
+            If the profile cannot be resolved, the resolved plan /
+            chunker identity is not the supported V1 identity, the
+            stable document / base is stale, inactive, mismatched,
             or no eligible blocks produce chunks.
         """
+        # P1-E-R1: resolve the plan / chunker identity through the single
+        # runtime-immutable dispatch seam BEFORE any truth-layer read.
+        # Omitting ``index_version`` uses the signature default
+        # (``DEFAULT_ARTICLE_RAG_INDEX_VERSION``) so V1 default behaviour
+        # is byte-stable.  Explicit ``None`` is NOT a valid input: it is
+        # NOT normalized here — it flows directly to the resolver, which
+        # rejects non-string values (fail-closed).  Bootstrap and worker
+        # callers pass their already-frozen / validated ``index_version``
+        # explicitly.
+        resolved_profile = _resolve_v1_plan_profile(index_version)
+
         # 1. Load record with ownership check.
         record_row = await conn.fetchrow(
             """
@@ -674,7 +835,12 @@ class ArticleRagIndexPlanService:
             record_generation=record_generation,
             content_sha256=stable_content_sha256,
             canonical_text_sha256=canonical_text_sha256,
-            chunker_version=CHUNKER_VERSION,
+            # P1-E: source the chunker_version from the resolved V1
+            # profile rather than the module-level literal.  The V1
+            # profile's chunker_version equals CHUNKER_VERSION, so
+            # plan_content_sha256 and all downstream bytes stay
+            # byte-stable.
+            chunker_version=resolved_profile.chunker_version,
             chunks=tuple(chunks),
             warnings=(),
         )

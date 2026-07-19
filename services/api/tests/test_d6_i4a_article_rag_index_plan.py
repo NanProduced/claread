@@ -32,6 +32,7 @@ import pytest
 from app.contracts.annotation import utf16_code_unit_length
 from app.database.connection import init_connection
 from app.database.json_compat import jsonb_param
+from app.services.reader_orchestration import article_rag_index_plan as plan_module
 from app.services.reader_orchestration.article_rag_index_plan import (
     ArticleRagCitationRef,
     ArticleRagIndexChunk,
@@ -39,6 +40,13 @@ from app.services.reader_orchestration.article_rag_index_plan import (
     ArticleRagIndexPlanError,
     ArticleRagIndexPlanService,
     CHUNKER_VERSION,
+    compute_plan_content_sha256,
+)
+from app.services.reader_orchestration.article_rag_index_profile import (
+    DEFAULT_ARTICLE_RAG_INDEX_VERSION,
+    ArticleRagIndexProfile,
+    ArticleRagIndexProfileResolution,
+    compute_article_rag_index_profile_fingerprint,
 )
 
 pytestmark = pytest.mark.anyio
@@ -1656,3 +1664,947 @@ async def test_offset_bmp_emoji_alignment(index_env: asyncpg.Pool) -> None:
     assert plan.chunks[0].text == block_text
     assert plan.chunks[0].citation.canonical_text_start_utf16 == 2
     assert plan.chunks[0].citation.canonical_text_end_utf16 == 14
+
+
+# ===================================================================
+# P1-E: V1 characterization baseline + version-aware plan dispatch
+# ===================================================================
+
+
+# V1 frozen literals captured from the V1 plan builder.  These are
+# byte-stability anchors: any change to V1 plan / hash / chunk_id /
+# content_sha256 / embedding_text_sha256 / citation fields must be
+# detected here.  Literals are independently computable from the V1
+# contract (SHA-256 of known strings) — the test does NOT re-implement
+# the plan hash algorithm; it only asserts the production
+# ``compute_plan_content_sha256`` result equals the frozen literal.
+_P1E_V1_BASE_TEXT = "Hello article RAG world."
+_P1E_V1_BASE_TEXT_UTF16_LEN = 24  # ASCII-only, 24 code units
+_P1E_V1_CHUNKER_VERSION = "article_rag_index_plan_v1"
+_P1E_V1_CHUNK_ID = "9c0de682d80dc1f0"
+_P1E_V1_CONTENT_SHA256 = (
+    "d3e0a2214433bbc3728f44d75ddb2e530f63fb6af67a8ae9ed4a208f27db3c62"
+)
+_P1E_V1_EMBEDDING_TEXT_SHA256 = (
+    "d3e0a2214433bbc3728f44d75ddb2e530f63fb6af67a8ae9ed4a208f27db3c62"
+)
+# V1 plan_content_sha256 captured from the first green run of the
+# V1 characterization baseline.  Byte-stability anchor: any change to
+# V1 plan serialization (field order, separators, types) MUST be
+# detected here.
+_P1E_V1_PLAN_CONTENT_SHA256 = (
+    "48abeff21b4e5dedd7d06b60b27ecf37b0c50f4aca4487f11cec5798c4c40c8a"
+)
+
+
+# ===================================================================
+# P1-E-R1: Fail-closed dispatch closure + golden coverage expansion
+# ===================================================================
+
+# P1-E-R1: the fixed local error message used by the plan service's
+# version-aware dispatch wrapper.  The offending input is NEVER
+# echoed in str / repr / args / traceback.  This literal is
+# independently asserted by the fail-closed tests below.
+_P1E_R1_EXPECTED_FIXED_MESSAGE = (
+    "Article RAG index plan version is not supported"
+)
+
+# P1-E-R1: V1 golden literals for full plan / chunk / citation field
+# coverage.  Independently derived from the V1 contract (fixed UUIDs,
+# SHA-256 of known strings, fixed metadata dict) — the test does NOT
+# re-implement the plan hash algorithm or call production helpers to
+# generate expected values.  Multi-key or missing-key metadata drift
+# MUST fail here (complete dict == equality, no issubset).
+_P1E_V1_STABLE_DOCUMENT_CONTENT_SHA256 = "a" * 64  # _DEFAULT_STABLE_SHA256
+_P1E_V1_CANONICAL_TEXT_SHA256 = _P1E_V1_CONTENT_SHA256  # sha256 of base text
+_P1E_V1_SOURCE_SCOPE = "main_reading_text"
+_P1E_V1_EXPECTED_METADATA: dict = {
+    "block_type": "paragraph",
+    "block_order_index": 0,
+    "source_scope": "main_reading_text",
+    "default_route": "main_reading",
+    "chunk_index": 0,
+    "has_canonical_offsets": True,
+}
+
+
+class _P1ER1ProbeConnection:
+    """Probe connection that records all DB calls and raises
+    AssertionError if any truth-layer read is attempted.
+
+    Used to prove that the plan service fails closed BEFORE any
+    database read when the resolver rejects ``index_version``.
+    """
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    async def fetchrow(self, *args, **kwargs):
+        self.call_count += 1
+        raise AssertionError(
+            "Probe connection fetchrow was called — plan service "
+            "attempted a truth-layer read before the resolver rejected "
+            "the offending index_version."
+        )
+
+    async def fetch(self, *args, **kwargs):
+        self.call_count += 1
+        raise AssertionError(
+            "Probe connection fetch was called — plan service "
+            "attempted a truth-layer read before the resolver rejected "
+            "the offending index_version."
+        )
+
+    async def fetchval(self, *args, **kwargs):
+        self.call_count += 1
+        raise AssertionError(
+            "Probe connection fetchval was called — plan service "
+            "attempted a truth-layer read before the resolver rejected "
+            "the offending index_version."
+        )
+
+    async def execute(self, *args, **kwargs):
+        self.call_count += 1
+        raise AssertionError(
+            "Probe connection execute was called — plan service "
+            "attempted a truth-layer write before the resolver rejected "
+            "the offending index_version."
+        )
+
+
+def _assert_p1e_v1_golden_fields(plan: ArticleRagIndexPlan) -> None:
+    """Assert the plan matches the V1 golden literal fixture.
+
+    Covers all spec-required fields:
+      * plan.reading_record_id / stable_document_id / base_id /
+        record_generation / content_sha256 / canonical_text_sha256 /
+        chunker_version / warnings
+      * chunk.text / source_scope / metadata_json (complete dict ==)
+        / content_sha256 / embedding_text_sha256 / chunk_id
+      * all citation fields (block_ids / unit_ids /
+        anchor_segment_ids / canonical UTF-16 offsets / record /
+        document / base / generation)
+      * compute_plan_content_sha256(plan)
+      * ordered chunk IDs
+
+    Expected values are test-side literals — no production helpers
+    are called to generate them, and the plan hash algorithm is not
+    re-implemented.  metadata_json uses complete dict ``==`` (no
+    issubset, no production helper, no algorithm re-implementation);
+    a missing or extra key MUST fail.
+    """
+    # Plan-level fields.
+    assert plan.reading_record_id == _RECORD_ID
+    assert plan.stable_document_id == _STABLE_DOC_ID
+    assert plan.base_id == _BASE_ID
+    assert plan.record_generation == 1
+    assert plan.content_sha256 == _P1E_V1_STABLE_DOCUMENT_CONTENT_SHA256
+    assert plan.canonical_text_sha256 == _P1E_V1_CANONICAL_TEXT_SHA256
+    assert plan.chunker_version == _P1E_V1_CHUNKER_VERSION
+    assert plan.warnings == ()
+
+    # Chunk-level fields.
+    assert len(plan.chunks) == 1
+    chunk = plan.chunks[0]
+    assert chunk.chunk_id == _P1E_V1_CHUNK_ID
+    assert chunk.text == _P1E_V1_BASE_TEXT
+    assert chunk.source_scope == _P1E_V1_SOURCE_SCOPE
+    assert chunk.content_sha256 == _P1E_V1_CONTENT_SHA256
+    assert chunk.embedding_text_sha256 == _P1E_V1_EMBEDDING_TEXT_SHA256
+    # metadata_json: complete dict strict equality (no issubset,
+    # no production helper, no algorithm re-implementation).
+    assert chunk.metadata_json == _P1E_V1_EXPECTED_METADATA
+    # Extra-key / missing-key guard: the dict must have EXACTLY the
+    # expected keys.
+    assert set(chunk.metadata_json.keys()) == set(
+        _P1E_V1_EXPECTED_METADATA.keys()
+    )
+
+    # Citation-level fields.
+    citation = chunk.citation
+    assert citation.reading_record_id == _RECORD_ID
+    assert citation.stable_document_id == _STABLE_DOC_ID
+    assert citation.base_id == _BASE_ID
+    assert citation.record_generation == 1
+    assert citation.block_ids == ("paragraph-1",)
+    assert citation.unit_ids == ()
+    assert citation.anchor_segment_ids == ()
+    assert citation.canonical_text_start_utf16 == 0
+    assert citation.canonical_text_end_utf16 == _P1E_V1_BASE_TEXT_UTF16_LEN
+
+    # Ordered chunk IDs.
+    assert tuple(c.chunk_id for c in plan.chunks) == (_P1E_V1_CHUNK_ID,)
+
+    # Plan content sha256 (frozen literal — captured from production
+    # ``compute_plan_content_sha256``, NOT re-implemented here).
+    assert compute_plan_content_sha256(plan) == _P1E_V1_PLAN_CONTENT_SHA256
+
+
+async def _p1e_seed_minimal_v1_env(
+    pool: asyncpg.Pool,
+    *,
+    base_text: str = _P1E_V1_BASE_TEXT,
+) -> str:
+    """Seed the minimal V1 characterization environment.
+
+    1 paragraph block, no units, no segments.  Returns base content_sha256.
+    """
+    await _seed_full_environment(pool, base_text=base_text)
+    await _seed_block(
+        pool,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=base_text,
+        canonical_text_start_utf16=0,
+        canonical_text_end_utf16=_P1E_V1_BASE_TEXT_UTF16_LEN,
+        interpretation_policy=_main_reading_policy(),
+    )
+    return hashlib.sha256(base_text.encode("utf-8")).hexdigest()
+
+
+async def test_p1e_v1_characterization_baseline(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P1-E Step 1: V1 characterization baseline.
+
+    Freeze V1 outputs as fixed literals BEFORE modifying production
+    code.  If this test passes on the first run, report it as a
+    characterization baseline (no fake RED).
+    """
+    await _p1e_seed_minimal_v1_env(index_env)
+
+    service = _build_service(index_env)
+    plan = await service.build_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # V1 chunker_version (frozen literal).
+    assert plan.chunker_version == _P1E_V1_CHUNKER_VERSION
+    assert plan.chunker_version == CHUNKER_VERSION
+
+    # V1 plan content sha256 (frozen literal — captured from production
+    # ``compute_plan_content_sha256``).
+    actual_plan_sha = compute_plan_content_sha256(plan)
+    assert actual_plan_sha == _P1E_V1_PLAN_CONTENT_SHA256, (
+        f"V1 plan_content_sha256 drift: expected "
+        f"{_P1E_V1_PLAN_CONTENT_SHA256}, got {actual_plan_sha}"
+    )
+
+    # V1 chunk count (frozen literal).
+    assert len(plan.chunks) == 1
+
+    chunk = plan.chunks[0]
+
+    # V1 chunk_id (frozen literal — first 16 hex of sha256 of the
+    # canonical chunk_id format string).
+    assert chunk.chunk_id == _P1E_V1_CHUNK_ID
+
+    # V1 content_sha256 (frozen literal — sha256 of the block text).
+    assert chunk.content_sha256 == _P1E_V1_CONTENT_SHA256
+
+    # V1 embedding_text_sha256 (frozen literal — V1 embedding_text ==
+    # text, so this equals content_sha256).
+    assert chunk.embedding_text_sha256 == _P1E_V1_EMBEDDING_TEXT_SHA256
+
+    # V1 citation fields (frozen literals).
+    citation = chunk.citation
+    assert citation.reading_record_id == _RECORD_ID
+    assert citation.stable_document_id == _STABLE_DOC_ID
+    assert citation.base_id == _BASE_ID
+    assert citation.record_generation == 1
+    assert citation.block_ids == ("paragraph-1",)
+    assert citation.unit_ids == ()
+    assert citation.anchor_segment_ids == ()
+    assert citation.canonical_text_start_utf16 == 0
+    assert citation.canonical_text_end_utf16 == _P1E_V1_BASE_TEXT_UTF16_LEN
+
+    # P1-E-R1: full V1 golden coverage — complete plan / chunk /
+    # citation / metadata_json field table with strict dict ``==``
+    # (no issubset, no production helper, no algorithm re-implementation).
+    # Extra-key / missing-key metadata drift MUST fail.
+    _assert_p1e_v1_golden_fields(plan)
+
+
+async def test_p1e_tracer_bullet_index_version_kwarg_accepted(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P1-E Step 2: tracer bullet RED.
+
+    The plan service public API must accept an ``index_version`` keyword
+    argument so bootstrap / worker can pass their already-frozen /
+    validated ``index_version`` through.  The current API does NOT
+    accept this kwarg, so this test records the real RED.
+    """
+    await _p1e_seed_minimal_v1_env(index_env)
+
+    service = _build_service(index_env)
+    # The tracer bullet: passing ``index_version`` must be accepted.
+    plan = await service.build_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version=DEFAULT_ARTICLE_RAG_INDEX_VERSION,
+    )
+    assert plan.chunker_version == _P1E_V1_CHUNKER_VERSION
+
+
+async def test_p1e_v1_default_omitted_equals_explicit_v1(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P1-E: omitting ``index_version`` MUST produce the same V1 plan
+    as explicitly passing ``DEFAULT_ARTICLE_RAG_INDEX_VERSION``.
+
+    Equivalent across chunker_version, plan_content_sha256, chunk_count,
+    chunk_ids, content_sha256, embedding_text_sha256, and citation
+    fields.
+    """
+    # Two independent schemas so the two plans do not collide.
+    schema_a = f"test_i4a_p1e_a_{uuid4().hex}"
+    schema_b = f"test_i4a_p1e_b_{uuid4().hex}"
+    admin_conn = await _connect_admin()
+    try:
+        for schema in (schema_a, schema_b):
+            await admin_conn.execute(f'CREATE SCHEMA "{schema}"')
+            await admin_conn.execute(f'SET search_path TO "{schema}", public')
+            await admin_conn.execute(INDEX_PLAN_SCHEMA_SQL)
+        pool_a = await _make_pool(schema_a)
+        pool_b = await _make_pool(schema_b)
+        try:
+            await _p1e_seed_minimal_v1_env(pool_a)
+            await _p1e_seed_minimal_v1_env(pool_b)
+
+            plan_default = await _build_service(pool_a).build_index_plan(
+                record_id=_RECORD_ID,
+                user_id=_USER_ID,
+            )
+            plan_explicit = await _build_service(pool_b).build_index_plan(
+                record_id=_RECORD_ID,
+                user_id=_USER_ID,
+                index_version=DEFAULT_ARTICLE_RAG_INDEX_VERSION,
+            )
+
+            assert plan_default.chunker_version == plan_explicit.chunker_version
+            assert (
+                compute_plan_content_sha256(plan_default)
+                == compute_plan_content_sha256(plan_explicit)
+            )
+            assert len(plan_default.chunks) == len(plan_explicit.chunks)
+            for c_default, c_explicit in zip(
+                plan_default.chunks, plan_explicit.chunks, strict=True
+            ):
+                assert c_default.chunk_id == c_explicit.chunk_id
+                assert c_default.content_sha256 == c_explicit.content_sha256
+                assert (
+                    c_default.embedding_text_sha256
+                    == c_explicit.embedding_text_sha256
+                )
+                assert c_default.citation == c_explicit.citation
+        finally:
+            await pool_a.close()
+            await pool_b.close()
+    finally:
+        for schema in (schema_a, schema_b):
+            await admin_conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        await admin_conn.close()
+
+
+async def test_p1e_explicit_v1_matches_characterization(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P1-E: explicit V1 call MUST reproduce the V1 characterization
+    frozen literals."""
+    await _p1e_seed_minimal_v1_env(index_env)
+
+    service = _build_service(index_env)
+    plan = await service.build_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version=DEFAULT_ARTICLE_RAG_INDEX_VERSION,
+    )
+
+    assert plan.chunker_version == _P1E_V1_CHUNKER_VERSION
+    assert len(plan.chunks) == 1
+    chunk = plan.chunks[0]
+    assert chunk.chunk_id == _P1E_V1_CHUNK_ID
+    assert chunk.content_sha256 == _P1E_V1_CONTENT_SHA256
+    assert chunk.embedding_text_sha256 == _P1E_V1_EMBEDDING_TEXT_SHA256
+    assert chunk.citation.block_ids == ("paragraph-1",)
+    assert chunk.citation.unit_ids == ()
+    assert chunk.citation.anchor_segment_ids == ()
+    assert chunk.citation.canonical_text_start_utf16 == 0
+    assert chunk.citation.canonical_text_end_utf16 == _P1E_V1_BASE_TEXT_UTF16_LEN
+
+    # P1-E-R1: explicit V1 characterization must cover the same key
+    # fields as the baseline (single test-side expected literal
+    # fixture, no production algorithm copy).
+    _assert_p1e_v1_golden_fields(plan)
+
+
+async def test_p1e_unknown_index_version_fails_closed_no_fallback(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P1-E: unknown ``index_version`` MUST fail closed via the public
+    resolver; no fallback to V1, no DB writes, no plan construction."""
+    await _p1e_seed_minimal_v1_env(index_env)
+
+    service = _build_service(index_env)
+    unknown_version = "article_rag_index_v999"
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_index_plan(
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version=unknown_version,
+        )
+
+    err = exc_info.value
+    # The offending input MUST NOT be echoed in any surface.
+    assert unknown_version not in str(err)
+    assert unknown_version not in repr(err)
+
+
+async def test_p1e_malicious_index_version_not_in_surfaces(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P1-E: malicious ``index_version`` (whitespace-padded, sentinel,
+    HTML/script payload) MUST NOT appear in str / repr / traceback."""
+    import traceback as tb_module
+
+    await _p1e_seed_minimal_v1_env(index_env)
+
+    service = _build_service(index_env)
+    malicious_inputs = [
+        " article_rag_index_v1",  # leading whitespace
+        "article_rag_index_v1\n",  # trailing newline
+        "<script>alert('xss')</script>",
+        "article_rag_index_v2_malicious_sentinel_DO_NOT_LEAK",
+    ]
+    for malicious in malicious_inputs:
+        with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+            await service.build_index_plan(
+                record_id=_RECORD_ID,
+                user_id=_USER_ID,
+                index_version=malicious,
+            )
+        err = exc_info.value
+        err_str = str(err)
+        err_repr = repr(err)
+        err_tb = "".join(
+            tb_module.format_exception(type(err), err, err.__traceback__)
+        )
+        assert malicious not in err_str, (
+            f"malicious input leaked into str: {err_str!r}"
+        )
+        assert malicious not in err_repr, (
+            f"malicious input leaked into repr: {err_repr!r}"
+        )
+        assert malicious not in err_tb, (
+            f"malicious input leaked into traceback: {err_tb!r}"
+        )
+
+
+async def test_p1e_resolver_wrapper_closes_exception_chain(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P1-E: the plan service resolver wrapper MUST close the
+    exception chain.  The outer ``ArticleRagIndexPlanError`` must have
+    ``__cause__ is None`` AND ``__context__ is None``.
+
+    Triggered via the public ``build_index_plan`` seam.
+    """
+    await _p1e_seed_minimal_v1_env(index_env)
+
+    service = _build_service(index_env)
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_index_plan(
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version="article_rag_index_v999_unknown",
+        )
+    err = exc_info.value
+    assert err.__cause__ is None, (
+        f"__cause__ must be None, got {err.__cause__!r}"
+    )
+    assert err.__context__ is None, (
+        f"__context__ must be None, got {err.__context__!r}"
+    )
+
+
+async def test_p1e_plan_service_is_read_only(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P1-E: the plan service MUST be read-only.  It never writes to
+    the database, never calls embedding providers, never calls vector
+    writers.  Verified by inspecting the public API surface and
+    asserting no DB writes occur during plan construction.
+    """
+    await _p1e_seed_minimal_v1_env(index_env)
+
+    # Snapshot all tables the plan service could conceivably touch.
+    tables_to_check = [
+        "reader_article_rag_index_runs",
+        "reader_jobs",
+        "reader_runs",
+        "reader_job_events",
+    ]
+    pre_counts: dict[str, int] = {}
+    async with index_env.acquire() as conn:
+        for table in tables_to_check:
+            pre_counts[table] = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {table}"
+            )
+
+    service = _build_service(index_env)
+    plan = await service.build_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version=DEFAULT_ARTICLE_RAG_INDEX_VERSION,
+    )
+    assert len(plan.chunks) == 1
+
+    # No DB writes occurred.
+    async with index_env.acquire() as conn:
+        for table in tables_to_check:
+            post_count = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {table}"
+            )
+            assert post_count == pre_counts[table], (
+                f"Plan service wrote to {table}: "
+                f"{pre_counts[table]} -> {post_count}"
+            )
+
+
+# ===================================================================
+# P1-E-R1: explicit None fail-closed + non-string matrix
+# ===================================================================
+
+
+async def test_p1e_r1_explicit_none_index_version_fails_closed_before_db_read() -> None:
+    """P1-E-R1: explicit ``index_version=None`` MUST fail closed at the
+    resolver seam BEFORE any truth-layer read.
+
+    Before fix (real RED): ``None`` is normalized to
+    ``DEFAULT_ARTICLE_RAG_INDEX_VERSION`` inside the function body, the
+    resolver succeeds, and the plan service proceeds to a truth-layer
+    read on the probe connection.  The probe raises ``AssertionError``
+    — wrong error type, so ``pytest.raises(ArticleRagIndexPlanError)``
+    fails.  This is the real RED recorded for this round.
+
+    After fix: ``None`` flows directly to the resolver, which rejects
+    non-string inputs with ``ArticleRagIndexProfileResolutionError``;
+    the wrapper raises ``ArticleRagIndexPlanError`` with a fixed local
+    message.  The probe connection's ``call_count`` MUST be 0, proving
+    the plan service never reached the truth layer.
+
+    Contract:
+      * raises ``ArticleRagIndexPlanError``
+      * fixed safe message (no echo of None)
+      * ``__cause__ is None`` AND ``__context__ is None``
+      * ``probe.call_count == 0``
+      * "None" does not appear in str / repr / args / traceback
+    """
+    import traceback as tb_module
+
+    probe = _P1ER1ProbeConnection()
+    service = ArticleRagIndexPlanService(pool=None)
+    # Wrap the sentinel in a variable so the literal ``None`` does not
+    # appear at the call site (and therefore not in the traceback
+    # source line display).
+    sentinel = None
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_index_plan_in_transaction(
+            probe,
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version=sentinel,
+        )
+    err = exc_info.value
+    # Fixed safe message — no echo of the offending input.
+    assert str(err) == _P1E_R1_EXPECTED_FIXED_MESSAGE, (
+        f"unexpected error message: {str(err)!r}"
+    )
+    assert err.args == (_P1E_R1_EXPECTED_FIXED_MESSAGE,), (
+        f"unexpected error args: {err.args!r}"
+    )
+    # Exception chain closure — both chain attributes MUST be None.
+    assert err.__cause__ is None, (
+        f"__cause__ must be None, got {err.__cause__!r}"
+    )
+    assert err.__context__ is None, (
+        f"__context__ must be None, got {err.__context__!r}"
+    )
+    # DB call_count == 0 — the plan service never reached the truth
+    # layer.
+    assert probe.call_count == 0, (
+        f"probe was called {probe.call_count} times; plan service "
+        f"reached the truth layer before the resolver rejected None."
+    )
+    # Sentinel leak check across all resolver-controlled error
+    # surfaces.  ``str(None)`` is "None"; the fixed local message
+    # contains no "None", and the traceback source line shows
+    # ``index_version=sentinel`` (not the literal).  Only the
+    # exception message line of the traceback is checked — the full
+    # traceback naturally contains source code lines, file paths, and
+    # line numbers that are NOT resolver-echoed content.
+    err_str = str(err)
+    err_repr = repr(err)
+    tb_lines = tb_module.format_exception(
+        type(err), err, err.__traceback__
+    )
+    exception_message_line = tb_lines[-1] if tb_lines else ""
+    assert "None" not in err_str, (
+        f"'None' leaked into str: {err_str!r}"
+    )
+    assert "None" not in err_repr, (
+        f"'None' leaked into repr: {err_repr!r}"
+    )
+    assert "None" not in exception_message_line, (
+        f"'None' leaked into exception message line: "
+        f"{exception_message_line!r}"
+    )
+
+
+async def test_p1e_r1_non_string_index_version_matrix_fails_closed() -> None:
+    """P1-E-R1: every non-string ``index_version`` MUST fail closed at
+    the resolver seam BEFORE any truth-layer read.
+
+    Matrix (all through the public ``build_index_plan_in_transaction``
+    seam):
+      * ``None``      — currently normalized to V1 (real RED)
+      * ``True``      — bool, must not be accepted as 1
+      * ``1``         — int, must not be str-coerced
+      * ``1.5``       — float, must not be str-coerced
+      * ``[]``        — list, must not be str-coerced to "[]"
+      * ``{}``        — dict, must not be str-coerced to "{}"
+      * ``object()``  — arbitrary object
+
+    For each sentinel:
+      * raises ``ArticleRagIndexPlanError``
+      * fixed safe message (no echo, no str-coerce, no normalize)
+      * ``__cause__ is None`` AND ``__context__ is None``
+      * ``probe.call_count == 0`` (fails before any truth-layer read)
+      * no fallback to V1
+      * ``str(sentinel)`` and ``repr(sentinel)`` do not appear in
+        str / repr / args of the error, nor in the exception message
+        line of the traceback (the resolver-controlled surface).  The
+        full traceback naturally contains source code lines, file
+        paths, and line numbers that may incidentally contain short
+        markers like "1"; those are NOT resolver-echoed content.
+    """
+    import traceback as tb_module
+
+    # Matrix of non-string sentinels.  Each entry is the sentinel
+    # value itself; leak markers are derived from ``str(sentinel)`` and
+    # ``repr(sentinel)``.  ``None`` is included to close the
+    # normalization gap; the other entries characterize the
+    # fail-closed behavior for non-string types.
+    matrix: list = [
+        None,
+        True,
+        1,
+        1.5,
+        [],
+        {},
+        object(),
+    ]
+
+    for sentinel in matrix:
+        probe = _P1ER1ProbeConnection()
+        service = ArticleRagIndexPlanService(pool=None)
+        with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+            await service.build_index_plan_in_transaction(
+                probe,
+                record_id=_RECORD_ID,
+                user_id=_USER_ID,
+                index_version=sentinel,
+            )
+        err = exc_info.value
+        # Fixed safe message — no echo, no str-coerce, no normalize.
+        assert str(err) == _P1E_R1_EXPECTED_FIXED_MESSAGE, (
+            f"sentinel={sentinel!r} unexpected error message: {str(err)!r}"
+        )
+        assert err.args == (_P1E_R1_EXPECTED_FIXED_MESSAGE,), (
+            f"sentinel={sentinel!r} unexpected error args: {err.args!r}"
+        )
+        # Exception chain closure.
+        assert err.__cause__ is None, (
+            f"sentinel={sentinel!r} __cause__ must be None, "
+            f"got {err.__cause__!r}"
+        )
+        assert err.__context__ is None, (
+            f"sentinel={sentinel!r} __context__ must be None, "
+            f"got {err.__context__!r}"
+        )
+        # Fails before any truth-layer read.
+        assert probe.call_count == 0, (
+            f"sentinel={sentinel!r} probe was called "
+            f"{probe.call_count} times; plan service reached the truth "
+            f"layer before the resolver rejected the non-string input."
+        )
+        # Sentinel leak check across all resolver-controlled error
+        # surfaces: str / repr / args of the error, plus the exception
+        # message line of the traceback (the final
+        # "ExceptionType: message" line that the resolver is
+        # responsible for).  The full traceback naturally contains
+        # source code lines, file paths, and line numbers that may
+        # incidentally contain short markers like "1" (e.g. function
+        # name ``test_p1e_r1_...``, line numbers); those are NOT
+        # resolver-echoed content and are excluded from the check.
+        err_str = str(err)
+        err_repr = repr(err)
+        # Extract only the exception message line from the traceback
+        # (the final "ExceptionType: message" line).  This is the
+        # resolver-controlled surface; source lines and line numbers
+        # are excluded.
+        tb_lines = tb_module.format_exception(
+            type(err), err, err.__traceback__
+        )
+        exception_message_line = tb_lines[-1] if tb_lines else ""
+        leak_markers: list[str] = []
+        try:
+            leak_markers.append(str(sentinel))
+        except Exception:
+            pass
+        try:
+            leak_markers.append(repr(sentinel))
+        except Exception:
+            pass
+        for marker in leak_markers:
+            if not marker:
+                continue
+            assert marker not in err_str, (
+                f"sentinel={sentinel!r} marker {marker!r} leaked "
+                f"into str: {err_str!r}"
+            )
+            assert marker not in err_repr, (
+                f"sentinel={sentinel!r} marker {marker!r} leaked "
+                f"into repr: {err_repr!r}"
+            )
+            assert marker not in exception_message_line, (
+                f"sentinel={sentinel!r} marker {marker!r} leaked "
+                f"into exception message line: "
+                f"{exception_message_line!r}"
+            )
+
+
+# ===================================================================
+# P1-E-R1: unsupported identity public seam coverage
+# ===================================================================
+
+
+def _build_p1e_r1_fake_resolution(
+    *,
+    plan_version: str = CHUNKER_VERSION,
+    chunker_version: str = CHUNKER_VERSION,
+) -> ArticleRagIndexProfileResolution:
+    """Build a fake ``ArticleRagIndexProfileResolution`` from public
+    P1-A / P1-B value objects with an internally consistent
+    fingerprint.
+
+    Used by the unsupported identity tests to monkeypatch the plan
+    module's ``resolve_article_rag_index_profile`` collaborator.  The
+    fake resolver succeeds, but the resolved profile's
+    ``plan_version`` or ``chunker_version`` is intentionally set to an
+    unsupported literal — the plan service's dispatch guard must
+    fail-closed.
+
+    The fingerprint is computed via the public
+    :func:`compute_article_rag_index_profile_fingerprint`, so the
+    resolution construction itself passes the public P1-B invariant
+    check (``profile_fingerprint`` must equal the canonical
+    fingerprint of ``profile``).
+    """
+    profile = ArticleRagIndexProfile(
+        index_version=DEFAULT_ARTICLE_RAG_INDEX_VERSION,
+        plan_version=plan_version,
+        chunker_version=chunker_version,
+        document_embedding_model="text-embedding-v4",
+        document_embedding_dimension=1024,
+        document_embedding_text_type="provider_default",
+        query_embedding_model="text-embedding-v4",
+        query_embedding_text_type="provider_default",
+        vector_namespace="article_rag_index_v1",
+        retrieval_schema_version="article_rag_retrieval_v1",
+        citation_mode_version="article_rag_citation_v1",
+    )
+    fingerprint = compute_article_rag_index_profile_fingerprint(profile)
+    return ArticleRagIndexProfileResolution(
+        profile=profile,
+        profile_fingerprint=fingerprint,
+    )
+
+
+# Fixed non-sensitive substitute literals used by the unsupported
+# identity tests.  These are intentionally distinct from
+# ``CHUNKER_VERSION`` so the dispatch guard rejects them, and they
+# are never echoed in any error surface.
+_P1E_R1_UNSUPPORTED_PLAN_VERSION_LITERAL = (
+    "article_rag_index_plan_v1_test_unsupported_plan"
+)
+_P1E_R1_UNSUPPORTED_CHUNKER_VERSION_LITERAL = (
+    "article_rag_index_plan_v1_test_unsupported_chunker"
+)
+
+
+async def test_p1e_r1_resolved_unsupported_plan_version_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1-E-R1: resolver succeeds with an unsupported ``plan_version``
+    → dispatch MUST fail closed.
+
+    The fake resolver returns a public P1-A / P1-B value object with
+    an internally consistent fingerprint, but its ``plan_version`` is
+    set to a fixed unsupported literal (``chunker_version`` remains
+    the supported V1 identity).  The plan service's dispatch guard
+    MUST raise ``ArticleRagIndexPlanError`` with a fixed local message;
+    the offending identity is never echoed.
+
+    Contract:
+      * raises ``ArticleRagIndexPlanError``
+      * fixed safe message (no echo of the unsupported literal)
+      * ``__cause__ is None`` AND ``__context__ is None``
+      * ``probe.call_count == 0``
+      * no V2 registration, no runtime override / registry mutation
+    """
+    import traceback as tb_module
+
+    fake_resolution = _build_p1e_r1_fake_resolution(
+        plan_version=_P1E_R1_UNSUPPORTED_PLAN_VERSION_LITERAL,
+        chunker_version=CHUNKER_VERSION,
+    )
+
+    def fake_resolver(_index_version: str) -> ArticleRagIndexProfileResolution:
+        return fake_resolution
+
+    monkeypatch.setattr(
+        plan_module,
+        "resolve_article_rag_index_profile",
+        fake_resolver,
+    )
+
+    probe = _P1ER1ProbeConnection()
+    service = ArticleRagIndexPlanService(pool=None)
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_index_plan_in_transaction(
+            probe,
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version=DEFAULT_ARTICLE_RAG_INDEX_VERSION,
+        )
+    err = exc_info.value
+    assert str(err) == _P1E_R1_EXPECTED_FIXED_MESSAGE, (
+        f"unexpected error message: {str(err)!r}"
+    )
+    assert err.args == (_P1E_R1_EXPECTED_FIXED_MESSAGE,), (
+        f"unexpected error args: {err.args!r}"
+    )
+    assert err.__cause__ is None, (
+        f"__cause__ must be None, got {err.__cause__!r}"
+    )
+    assert err.__context__ is None, (
+        f"__context__ must be None, got {err.__context__!r}"
+    )
+    assert probe.call_count == 0, (
+        f"probe was called {probe.call_count} times; plan service "
+        f"reached the truth layer despite the unsupported plan_version."
+    )
+    # Unsupported literal must not appear in any resolver-controlled
+    # error surface (str / repr / args / exception message line).
+    err_str = str(err)
+    err_repr = repr(err)
+    tb_lines = tb_module.format_exception(
+        type(err), err, err.__traceback__
+    )
+    exception_message_line = tb_lines[-1] if tb_lines else ""
+    assert _P1E_R1_UNSUPPORTED_PLAN_VERSION_LITERAL not in err_str, (
+        f"unsupported plan_version leaked into str: {err_str!r}"
+    )
+    assert _P1E_R1_UNSUPPORTED_PLAN_VERSION_LITERAL not in err_repr, (
+        f"unsupported plan_version leaked into repr: {err_repr!r}"
+    )
+    assert _P1E_R1_UNSUPPORTED_PLAN_VERSION_LITERAL not in exception_message_line, (
+        f"unsupported plan_version leaked into exception message line: "
+        f"{exception_message_line!r}"
+    )
+
+
+async def test_p1e_r1_resolved_unsupported_chunker_version_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1-E-R1: resolver succeeds with an unsupported
+    ``chunker_version`` → dispatch MUST fail closed.
+
+    The fake resolver returns a public P1-A / P1-B value object with
+    an internally consistent fingerprint, but its ``chunker_version``
+    is set to a fixed unsupported literal (``plan_version`` remains
+    the supported V1 identity).  The plan service's dispatch guard
+    MUST raise ``ArticleRagIndexPlanError`` with a fixed local message;
+    the offending identity is never echoed.
+
+    Contract:
+      * raises ``ArticleRagIndexPlanError``
+      * fixed safe message (no echo of the unsupported literal)
+      * ``__cause__ is None`` AND ``__context__ is None``
+      * ``probe.call_count == 0``
+      * no V2 registration, no runtime override / registry mutation
+    """
+    import traceback as tb_module
+
+    fake_resolution = _build_p1e_r1_fake_resolution(
+        plan_version=CHUNKER_VERSION,
+        chunker_version=_P1E_R1_UNSUPPORTED_CHUNKER_VERSION_LITERAL,
+    )
+
+    def fake_resolver(_index_version: str) -> ArticleRagIndexProfileResolution:
+        return fake_resolution
+
+    monkeypatch.setattr(
+        plan_module,
+        "resolve_article_rag_index_profile",
+        fake_resolver,
+    )
+
+    probe = _P1ER1ProbeConnection()
+    service = ArticleRagIndexPlanService(pool=None)
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_index_plan_in_transaction(
+            probe,
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version=DEFAULT_ARTICLE_RAG_INDEX_VERSION,
+        )
+    err = exc_info.value
+    assert str(err) == _P1E_R1_EXPECTED_FIXED_MESSAGE, (
+        f"unexpected error message: {str(err)!r}"
+    )
+    assert err.args == (_P1E_R1_EXPECTED_FIXED_MESSAGE,), (
+        f"unexpected error args: {err.args!r}"
+    )
+    assert err.__cause__ is None, (
+        f"__cause__ must be None, got {err.__cause__!r}"
+    )
+    assert err.__context__ is None, (
+        f"__context__ must be None, got {err.__context__!r}"
+    )
+    assert probe.call_count == 0, (
+        f"probe was called {probe.call_count} times; plan service "
+        f"reached the truth layer despite the unsupported chunker_version."
+    )
+    # Unsupported literal must not appear in any resolver-controlled
+    # error surface (str / repr / args / exception message line).
+    err_str = str(err)
+    err_repr = repr(err)
+    tb_lines = tb_module.format_exception(
+        type(err), err, err.__traceback__
+    )
+    exception_message_line = tb_lines[-1] if tb_lines else ""
+    assert _P1E_R1_UNSUPPORTED_CHUNKER_VERSION_LITERAL not in err_str, (
+        f"unsupported chunker_version leaked into str: {err_str!r}"
+    )
+    assert _P1E_R1_UNSUPPORTED_CHUNKER_VERSION_LITERAL not in err_repr, (
+        f"unsupported chunker_version leaked into repr: {err_repr!r}"
+    )
+    assert _P1E_R1_UNSUPPORTED_CHUNKER_VERSION_LITERAL not in exception_message_line, (
+        f"unsupported chunker_version leaked into exception message line: "
+        f"{exception_message_line!r}"
+    )

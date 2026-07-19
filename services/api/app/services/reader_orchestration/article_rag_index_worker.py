@@ -926,10 +926,18 @@ class ArticleRagIndexWorkerService:
         async with self.get_pool().acquire() as conn:
             # Rebuild plan (read-only — no transaction needed, but we
             # use the connection for a consistent snapshot).
+            # P1-E: worker explicitly passes its P1-D-validated
+            # ``context.index_version`` to the plan service so the
+            # plan / chunker identity is derived from the same frozen
+            # profile that was validated at job-claim time.  The plan
+            # service re-resolves the profile through its own dispatch
+            # seam; an already-queued V1 job's plan interpretation
+            # stays frozen because the V1 profile is immutable.
             plan = await self._plan_service.build_index_plan_in_transaction(
                 conn,
                 record_id=context.reading_record_id,
                 user_id=context.user_id,
+                index_version=context.index_version,
             )
 
             row = await conn.fetchrow(

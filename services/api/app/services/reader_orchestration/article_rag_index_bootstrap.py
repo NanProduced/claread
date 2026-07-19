@@ -333,10 +333,19 @@ class ArticleRagIndexBootstrapService:
         #      - no active stable document → ArticleRagIndexPlanError
         #      - stale generation → ArticleRagIndexPlanError
         #      - no eligible chunks → ArticleRagIndexPlanError
+        #    P1-E: bootstrap explicitly passes its already-resolved
+        #    ``index_version`` to the plan service so the plan / chunker
+        #    identity is derived from the same frozen profile rather
+        #    than re-read from a global default.  The plan service
+        #    re-resolves the profile through its own dispatch seam and
+        #    sources ``plan.chunker_version`` from the resolved
+        #    profile, so ``plan.chunker_version`` equals
+        #    ``profile.chunker_version`` by construction.
         plan = await self._plan_service.build_index_plan_in_transaction(
             conn,
             record_id=reading_record_id,
             user_id=user_id,
+            index_version=index_version,
         )
 
         plan_content_sha256 = compute_plan_content_sha256(plan)

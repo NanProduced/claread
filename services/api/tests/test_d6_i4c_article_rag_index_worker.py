@@ -41,7 +41,9 @@ from app.services.reader_orchestration.article_rag_index_bootstrap import (
     DEFAULT_INDEX_VERSION,
 )
 from app.services.reader_orchestration.article_rag_index_plan import (
+    ArticleRagIndexPlan,
     ArticleRagIndexPlanError,
+    ArticleRagIndexPlanService,
     compute_plan_content_sha256,
 )
 from app.services.reader_orchestration.article_rag_embedding_provider import (
@@ -4586,3 +4588,149 @@ async def test_p1d_r1_resolver_wrapper_closes_exception_chain(
         events=events,
         exc=err,
     )
+
+
+# ===================================================================
+# P1-E: worker explicitly passes context.index_version to plan service
+# ===================================================================
+
+
+class _P1ECapturingPlanService:
+    """Test-only plan service stub that wraps the real plan service
+    and records the ``index_version`` kwarg passed to
+    ``build_index_plan_in_transaction``.
+
+    Used to verify P1-E: worker MUST explicitly pass its P1-D-validated
+    ``context.index_version`` to the plan service rather than relying
+    on the plan service's V1 default.
+    """
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._inner = ArticleRagIndexPlanService(pool=pool)
+        self.captured_index_versions: list[str | None] = []
+
+    async def build_index_plan_in_transaction(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        record_id: UUID,
+        user_id: UUID,
+        include_rag_ask_only: bool = False,
+        index_version: str | None = None,
+    ) -> ArticleRagIndexPlan:
+        self.captured_index_versions.append(index_version)
+        return await self._inner.build_index_plan_in_transaction(
+            conn,
+            record_id=record_id,
+            user_id=user_id,
+            include_rag_ask_only=include_rag_ask_only,
+            index_version=index_version,
+        )
+
+    async def build_index_plan(
+        self,
+        *,
+        record_id: UUID,
+        user_id: UUID,
+        include_rag_ask_only: bool = False,
+        index_version: str | None = None,
+    ) -> ArticleRagIndexPlan:
+        raise NotImplementedError(
+            "P1-E worker capture only wraps build_index_plan_in_transaction"
+        )
+
+
+async def test_p1e_worker_passes_context_index_version_to_plan_service(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-E: worker MUST explicitly pass its P1-D-validated
+    ``context.index_version`` to ``build_index_plan_in_transaction``.
+
+    Verified by injecting a capturing plan service stub into the
+    worker.  The captured value MUST equal the ``index_version``
+    frozen into the job payload by bootstrap (default V1).
+    """
+    await _seed_paragraph_environment(worker_env)
+
+    # Bootstrap freezes index_version into the job payload.
+    bootstrap_result = await _build_bootstrap_service(
+        worker_env,
+    ).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    assert bootstrap_result.index_version == DEFAULT_INDEX_VERSION
+
+    capturing_plan_service = _P1ECapturingPlanService(pool=worker_env)
+    service = ArticleRagIndexWorkerService(
+        pool=worker_env,
+        plan_service=capturing_plan_service,  # type: ignore[arg-type]
+        embedding_provider=FakeArticleRagEmbeddingProvider(),
+        vector_writer=FakeArticleRagVectorWriter(),
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "succeeded"
+
+    # The plan service was called exactly once during the plan reload
+    # phase and received the explicit context.index_version kwarg
+    # (NOT None — worker must pass the validated value, not rely on
+    # the plan service default).
+    assert len(capturing_plan_service.captured_index_versions) == 1
+    captured = capturing_plan_service.captured_index_versions[0]
+    assert captured == DEFAULT_INDEX_VERSION, (
+        f"Worker must explicitly pass context.index_version="
+        f"{DEFAULT_INDEX_VERSION!r} to plan service; got {captured!r}"
+    )
+
+
+async def test_p1e_worker_plan_chunker_version_matches_v1_profile(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-E: the plan rebuilt by the worker MUST carry the V1
+    ``chunker_version`` (sourced from the resolved V1 profile).
+
+    This is a byte-stability guard: the worker's plan reload path
+    goes through the new version-aware dispatch seam, so the rebuilt
+    plan's ``chunker_version`` must still equal the V1 literal.
+    """
+    await _seed_paragraph_environment(worker_env)
+
+    bootstrap_result = await _build_bootstrap_service(
+        worker_env,
+    ).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=FakeArticleRagEmbeddingProvider(),
+        vector_writer=FakeArticleRagVectorWriter(),
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "succeeded"
+    assert result.chunk_count == 1
+
+    # The index_run row must carry the V1 chunker_version sourced
+    # from the resolved profile (not a global default).
+    async with worker_env.acquire() as conn:
+        chunker = await conn.fetchval(
+            "SELECT chunker_version FROM reader_article_rag_index_runs "
+            "WHERE id = $1",
+            bootstrap_result.index_run_id,
+        )
+    assert chunker == "article_rag_index_plan_v1"

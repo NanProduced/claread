@@ -46,6 +46,7 @@ from app.services.reader_orchestration.article_rag_index_bootstrap import (
     DEFAULT_INDEX_VERSION,
 )
 from app.services.reader_orchestration.article_rag_index_plan import (
+    ArticleRagIndexPlan,
     ArticleRagIndexPlanError,
     ArticleRagIndexPlanService,
     compute_plan_content_sha256,
@@ -1537,10 +1538,12 @@ async def test_p1c_plan_chunker_mismatch_fails_closed(
     )
 
     class _DriftPlanService:
-        async def build_index_plan_in_transaction(self, conn, *, record_id, user_id):
+        async def build_index_plan_in_transaction(
+            self, conn, *, record_id, user_id, index_version=None
+        ):
             return divergent_plan
 
-        async def build_index_plan(self, *, record_id, user_id):
+        async def build_index_plan(self, *, record_id, user_id, index_version=None):
             return divergent_plan
 
     drift_service = ArticleRagIndexBootstrapService(
@@ -1974,3 +1977,120 @@ async def test_p1c_rework_indexed_historical_run_not_rejected_by_3layer_guard(
         assert job["input_hash"] == legacy_hash, (
             "Bootstrap must not overwrite legacy indexed job input_hash"
         )
+
+
+# ===================================================================
+# P1-E: bootstrap explicitly passes index_version to plan service
+# ===================================================================
+
+
+class _P1ECapturingPlanService:
+    """Test-only plan service stub that wraps the real plan service
+    and records the ``index_version`` kwarg passed to
+    ``build_index_plan_in_transaction``.
+
+    Used to verify P1-E: bootstrap MUST explicitly pass its already-
+    resolved ``index_version`` to the plan service rather than relying
+    on the plan service's V1 default.
+    """
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._inner = ArticleRagIndexPlanService(pool=pool)
+        self.captured_index_versions: list[str | None] = []
+
+    async def build_index_plan_in_transaction(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        record_id: UUID,
+        user_id: UUID,
+        include_rag_ask_only: bool = False,
+        index_version: str | None = None,
+    ) -> ArticleRagIndexPlan:
+        self.captured_index_versions.append(index_version)
+        return await self._inner.build_index_plan_in_transaction(
+            conn,
+            record_id=record_id,
+            user_id=user_id,
+            include_rag_ask_only=include_rag_ask_only,
+            index_version=index_version,
+        )
+
+    async def build_index_plan(
+        self,
+        *,
+        record_id: UUID,
+        user_id: UUID,
+        include_rag_ask_only: bool = False,
+        index_version: str | None = None,
+    ) -> ArticleRagIndexPlan:
+        raise NotImplementedError(
+            "P1-E bootstrap capture only wraps build_index_plan_in_transaction"
+        )
+
+
+async def test_p1e_bootstrap_passes_index_version_to_plan_service(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P1-E: bootstrap MUST explicitly pass its already-resolved
+    ``index_version`` to ``build_index_plan_in_transaction``.
+
+    Verified by injecting a capturing plan service stub that records
+    the ``index_version`` kwarg.  The captured value MUST equal the
+    ``index_version`` the bootstrap was called with (default
+    ``DEFAULT_INDEX_VERSION``).
+    """
+    await _seed_paragraph_environment(index_env)
+
+    capturing_plan_service = _P1ECapturingPlanService(pool=index_env)
+    service = ArticleRagIndexBootstrapService(
+        pool=index_env,
+        plan_service=capturing_plan_service,  # type: ignore[arg-type]
+    )
+
+    result = await service.bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # Bootstrap was called with the default index_version.
+    assert result.index_version == DEFAULT_INDEX_VERSION
+    assert result.chunker_version == "article_rag_index_plan_v1"
+
+    # The plan service was called exactly once and received the
+    # explicit index_version kwarg (NOT None — bootstrap must pass
+    # the resolved value, not rely on the plan service default).
+    assert len(capturing_plan_service.captured_index_versions) == 1
+    captured = capturing_plan_service.captured_index_versions[0]
+    assert captured == DEFAULT_INDEX_VERSION, (
+        f"Bootstrap must explicitly pass index_version="
+        f"{DEFAULT_INDEX_VERSION!r} to plan service; got {captured!r}"
+    )
+
+
+async def test_p1e_bootstrap_explicit_v1_index_version_propagates(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P1-E: bootstrap called with an explicit V1 ``index_version``
+    MUST forward that exact value to the plan service."""
+    await _seed_paragraph_environment(index_env)
+
+    capturing_plan_service = _P1ECapturingPlanService(pool=index_env)
+    service = ArticleRagIndexBootstrapService(
+        pool=index_env,
+        plan_service=capturing_plan_service,  # type: ignore[arg-type]
+    )
+
+    result = await service.bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version=DEFAULT_ARTICLE_RAG_INDEX_VERSION,
+    )
+
+    assert result.index_version == DEFAULT_ARTICLE_RAG_INDEX_VERSION
+    assert result.chunker_version == "article_rag_index_plan_v1"
+    assert len(capturing_plan_service.captured_index_versions) == 1
+    assert (
+        capturing_plan_service.captured_index_versions[0]
+        == DEFAULT_ARTICLE_RAG_INDEX_VERSION
+    )
