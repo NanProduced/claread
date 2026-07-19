@@ -1,28 +1,16 @@
-import { ScrollArea } from "@/components/primitives/scroll-area";
-import { loadSettingsData } from "./lib/loadSettingsData";
-import { SettingsSectionContent } from "./sections/SettingsSectionContent";
+import { redirect } from "next/navigation";
 
-export default async function SettingsPage() {
-  const { accountData, preferencesData } = await loadSettingsData();
+import { appReadRoute } from "@/lib/routes";
 
-  return (
-    <ScrollArea className="h-dvh bg-surface-canvas text-ink">
-      <main className="mx-auto flex w-full max-w-4xl flex-col px-6 py-16 sm:px-12 lg:px-24">
-        <div className="mx-auto w-full max-w-[880px] pb-32">
-          {/* Title */}
-          <div className="mb-8">
-            <h1 className="text-2xl font-semibold text-ink">设置</h1>
-          </div>
-
-          <div className="divide-y divide-hairline">
-            <SettingsSectionContent
-              mode="fallback"
-              accountData={accountData}
-              preferencesData={preferencesData}
-            />
-          </div>
-        </div>
-      </main>
-    </ScrollArea>
-  );
+/**
+ * `/app/settings` is no longer a routable page — Settings is a global
+ * modal owned by `SettingsDialogProvider`. Any direct navigation
+ * (typed URL, external link, refresh on a stale tab) lands here and
+ * is redirected to `/app/read`, the default host page.
+ *
+ * To open Settings, callers should use `useSettingsDialog().openSettings`
+ * (Sidebar user menu, Command Palette) so the address bar never changes.
+ */
+export default function SettingsRedirectPage(): never {
+  redirect(appReadRoute);
 }

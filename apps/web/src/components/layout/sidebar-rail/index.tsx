@@ -30,7 +30,6 @@ import {
   appLibraryRoute,
   appReadRoute,
   appReadResumeCandidateRoute,
-  appSettingsRoute,
   appVocabularyRoute,
   homeRoute,
   loginRouteBase,
@@ -38,6 +37,7 @@ import {
 import { formatShortcut } from "@/lib/shortcuts";
 import { NotificationCenterTrigger } from "@/components/primitives/notification-center";
 import { useCommandPalette } from "../command-palette";
+import { useSettingsDialog } from "@/components/settings/SettingsDialogProvider";
 import { cn } from "@/lib/cn";
 import { readingRecordStatusKey, readingRecordStatusLabel, shouldShowStatusLine } from "@/lib/reader-record-status";
 import type { AppShellVariant, AppSidebarMode } from "../app-shell/app-shell-context";
@@ -93,6 +93,7 @@ export function SidebarRail({
   const [sidebarPointerInside, setSidebarPointerInside] = useState(false);
   const [logoutPending, setLogoutPending] = useState(false);
   const togglePalette = useCommandPalette((s) => s.toggle);
+  const { openSettings } = useSettingsDialog();
   const shortcutLabel = formatShortcut("Primary+K");
   const sidebarVisible = sidebarMode !== "closed";
   const sidebarLocked = sidebarMode === "locked";
@@ -144,23 +145,26 @@ export function SidebarRail({
         </div>
       </div>
       <DropdownMenuSeparator />
-      <DropdownMenuItem asChild>
-        <Link href={`${appSettingsRoute}?section=account` as Route} className="gap-2">
-          <UserRound aria-hidden="true" className="h-4 w-4" />
-          <span>个人资料</span>
-        </Link>
+      <DropdownMenuItem
+        className="gap-2"
+        onSelect={() => openSettings("account")}
+      >
+        <UserRound aria-hidden="true" className="h-4 w-4" />
+        <span>个人资料</span>
       </DropdownMenuItem>
-      <DropdownMenuItem asChild>
-        <Link href={`${appSettingsRoute}?section=preferences` as Route} className="gap-2">
-          <Settings aria-hidden="true" className="h-4 w-4" />
-          <span>偏好设置</span>
-        </Link>
+      <DropdownMenuItem
+        className="gap-2"
+        onSelect={() => openSettings("preferences")}
+      >
+        <Settings aria-hidden="true" className="h-4 w-4" />
+        <span>偏好设置</span>
       </DropdownMenuItem>
-      <DropdownMenuItem asChild>
-        <Link href={`${appSettingsRoute}?section=usage` as Route} className="gap-2">
-          <WalletCards aria-hidden="true" className="h-4 w-4" />
-          <span>用量与积分</span>
-        </Link>
+      <DropdownMenuItem
+        className="gap-2"
+        onSelect={() => openSettings("usage")}
+      >
+        <WalletCards aria-hidden="true" className="h-4 w-4" />
+        <span>用量与积分</span>
       </DropdownMenuItem>
       <DropdownMenuSeparator />
       <DropdownMenuItem asChild>

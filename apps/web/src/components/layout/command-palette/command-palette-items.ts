@@ -1,14 +1,15 @@
 import { Library, Plus, Settings, BookMarked } from "lucide-react";
+import type { SettingsSection } from "@/components/settings/settings-dialog-history";
 import {
   appReadRoute,
   appLibraryRoute,
   appVocabularyRoute,
-  appSettingsRoute,
 } from "@/lib/routes";
 import type { CommandPaletteCommand } from "./command-palette-types";
 
 export function getPageCommands(
   navigate: (href: string) => void,
+  openSettings: (section?: SettingsSection) => void,
 ): CommandPaletteCommand[] {
   return [
     {
@@ -37,7 +38,7 @@ export function getPageCommands(
       label: "设置",
       icon: Settings,
       group: "pages",
-      onSelect: () => navigate(appSettingsRoute),
+      onSelect: () => openSettings("preferences"),
     },
   ];
 }

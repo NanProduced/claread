@@ -2,9 +2,9 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SidebarRail } from ".";
 
@@ -48,8 +48,19 @@ vi.mock("@/lib/shortcuts", () => ({
   formatShortcut: () => "⌘K",
 }));
 
+// --- Mock useSettingsDialog so we can assert openSettings(section) calls ---
+const openSettingsMock = vi.fn();
+vi.mock("@/components/settings/SettingsDialogProvider", () => ({
+  useSettingsDialog: () => ({ openSettings: openSettingsMock }),
+}));
+
 afterEach(() => {
   cleanup();
+  openSettingsMock.mockClear();
+});
+
+beforeEach(() => {
+  openSettingsMock.mockReset();
 });
 
 describe("SidebarRail z-index contract", () => {
@@ -173,8 +184,8 @@ describe("SidebarRail z-index contract", () => {
   });
 });
 
-describe("User menu settings links", () => {
-  it("opens the desktop user menu to reveal settings menuitems", async () => {
+describe("User menu settings entries (desktop)", () => {
+  it("reveals settings menuitems when the desktop user menu opens", async () => {
     const user = userEvent.setup();
     const { container } = render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
     const trigger = container.querySelector<HTMLElement>('[data-desktop-user-menu-trigger="true"]');
@@ -187,7 +198,37 @@ describe("User menu settings links", () => {
     expect(screen.getByRole("menuitem", { name: "用量与积分" })).toBeTruthy();
   });
 
-  it("points each settings entry to the matching ?section= URL as a Link", async () => {
+  it("calls openSettings with the matching section when each settings entry is clicked", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
+    const trigger = container.querySelector<HTMLElement>('[data-desktop-user-menu-trigger="true"]');
+    expect(trigger).not.toBeNull();
+
+    // Radix DropdownMenu closes after each item click. Re-open the menu
+    // before each click so we can exercise every entry in one test.
+
+    // Account
+    await user.click(trigger!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "个人资料" }));
+    expect(openSettingsMock).toHaveBeenCalledWith("account");
+    expect(openSettingsMock).toHaveBeenCalledTimes(1);
+    openSettingsMock.mockClear();
+
+    // Preferences
+    await user.click(trigger!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "偏好设置" }));
+    expect(openSettingsMock).toHaveBeenCalledWith("preferences");
+    expect(openSettingsMock).toHaveBeenCalledTimes(1);
+    openSettingsMock.mockClear();
+
+    // Usage
+    await user.click(trigger!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "用量与积分" }));
+    expect(openSettingsMock).toHaveBeenCalledWith("usage");
+    expect(openSettingsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not render any /app/settings or ?section= href in the user menu", async () => {
     const user = userEvent.setup();
     const { container } = render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
     const trigger = container.querySelector<HTMLElement>('[data-desktop-user-menu-trigger="true"]');
@@ -195,18 +236,27 @@ describe("User menu settings links", () => {
 
     await user.click(trigger!);
 
+    const menuItems = screen.getAllByRole("menuitem");
+    for (const item of menuItems) {
+      const href = item.getAttribute("href");
+      if (href) {
+        // Any href present must NOT point at the old settings routes.
+        expect(href).not.toMatch(/\/app\/settings/);
+        expect(href).not.toMatch(/[?&]section=/);
+      }
+    }
+
+    // Settings entries should not be anchors at all.
     const accountItem = screen.getByRole("menuitem", { name: "个人资料" });
     const preferencesItem = screen.getByRole("menuitem", { name: "偏好设置" });
     const usageItem = screen.getByRole("menuitem", { name: "用量与积分" });
 
-    expect(accountItem.tagName).toBe("A");
-    expect(accountItem.getAttribute("href")).toBe("/app/settings?section=account");
-
-    expect(preferencesItem.tagName).toBe("A");
-    expect(preferencesItem.getAttribute("href")).toBe("/app/settings?section=preferences");
-
-    expect(usageItem.tagName).toBe("A");
-    expect(usageItem.getAttribute("href")).toBe("/app/settings?section=usage");
+    expect(accountItem.tagName).not.toBe("A");
+    expect(accountItem.getAttribute("href")).toBeNull();
+    expect(preferencesItem.tagName).not.toBe("A");
+    expect(preferencesItem.getAttribute("href")).toBeNull();
+    expect(usageItem.tagName).not.toBe("A");
+    expect(usageItem.getAttribute("href")).toBeNull();
   });
 
   it("does not link to /app/settings/ledger anymore", async () => {
@@ -252,7 +302,7 @@ describe("Mobile settings entry", () => {
     expect(mobileTrigger?.textContent).toContain("我的");
   });
 
-  it("exposes the same three settings links from the mobile user menu", async () => {
+  it("exposes the same three settings entries from the mobile user menu and routes them through openSettings", async () => {
     const user = userEvent.setup();
     const { container } = render(<SidebarRail pathname="/app/library" sidebarMode="closed" />);
     const mobileTrigger = container.querySelector<HTMLElement>('[data-mobile-user-menu-trigger="true"]');
@@ -264,14 +314,28 @@ describe("Mobile settings entry", () => {
     const preferencesItem = screen.getByRole("menuitem", { name: "偏好设置" });
     const usageItem = screen.getByRole("menuitem", { name: "用量与积分" });
 
-    expect(accountItem.tagName).toBe("A");
-    expect(accountItem.getAttribute("href")).toBe("/app/settings?section=account");
+    // Settings entries must not be anchors — they open the AppShell Dialog.
+    expect(accountItem.tagName).not.toBe("A");
+    expect(accountItem.getAttribute("href")).toBeNull();
+    expect(preferencesItem.tagName).not.toBe("A");
+    expect(preferencesItem.getAttribute("href")).toBeNull();
+    expect(usageItem.tagName).not.toBe("A");
+    expect(usageItem.getAttribute("href")).toBeNull();
 
-    expect(preferencesItem.tagName).toBe("A");
-    expect(preferencesItem.getAttribute("href")).toBe("/app/settings?section=preferences");
+    // Click → openSettings(section). Radix closes after each click, so
+    // re-open the menu between clicks to exercise every entry.
+    fireEvent.click(accountItem);
+    expect(openSettingsMock).toHaveBeenCalledWith("account");
+    openSettingsMock.mockClear();
 
-    expect(usageItem.tagName).toBe("A");
-    expect(usageItem.getAttribute("href")).toBe("/app/settings?section=usage");
+    await user.click(mobileTrigger!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "偏好设置" }));
+    expect(openSettingsMock).toHaveBeenCalledWith("preferences");
+    openSettingsMock.mockClear();
+
+    await user.click(mobileTrigger!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "用量与积分" }));
+    expect(openSettingsMock).toHaveBeenCalledWith("usage");
   });
 
   it("keeps the mobile trigger touch target at least 44x44", () => {

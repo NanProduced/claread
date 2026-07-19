@@ -14,6 +14,7 @@ import {
   CommandMenuShortcut,
 } from "@/components/primitives/command-menu";
 import { Kbd } from "@/components/primitives/kbd";
+import { useSettingsDialog } from "@/components/settings/SettingsDialogProvider";
 import { formatShortcut } from "@/lib/shortcuts";
 import type {
   ReadingRecordListItemVm,
@@ -62,6 +63,7 @@ export function CommandPaletteDialog() {
   const router = useRouter();
   const open = useCommandPalette((s) => s.open);
   const setOpen = useCommandPalette((s) => s.setOpen);
+  const { openSettings } = useSettingsDialog();
   const [query, setQuery] = useState("");
   const [recentRecords, setRecentRecords] = useState<ReadingRecordListItemVm[]>(
     [],
@@ -82,8 +84,19 @@ export function CommandPaletteDialog() {
     [router, setOpen],
   );
 
+  // Open the AppShell Settings Dialog. Close the palette first so the
+  // dialog takes over focus / overlay. The address bar is NOT modified —
+  // Settings is a global modal owned by `SettingsDialogProvider`.
+  const openSettingsFromPalette = useCallback(
+    (section?: Parameters<typeof openSettings>[0]) => {
+      setOpen(false);
+      openSettings(section);
+    },
+    [setOpen, openSettings],
+  );
+
   const lastReaderUrl = recentRecords[0]?.readerUrl;
-  const pageCommands = getPageCommands(navigate);
+  const pageCommands = getPageCommands(navigate, openSettingsFromPalette);
   const commandCommands = getCommandCommands(navigate, lastReaderUrl);
 
   useEffect(() => {

@@ -3,11 +3,20 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 /**
  * Settings Dialog routing regression — real Chromium, mock auth.
  *
- * Verifies that opening Settings from the Reader sidebar user menu lands on
- * the correct intercepted route (?section=), keeps the underlying Reader page
- * in history, switches sections with replace semantics, and closes correctly
- * via close button, Escape, and overlay click. Also covers mobile viewport
- * sheet behaviour without modifying production UI, routing, or config.
+ * Verifies the AppShell-owned Settings Dialog contract:
+ *   - Opening Settings never changes URL (pathname, search, hash).
+ *   - Switching sections inside the Dialog never changes URL.
+ *   - Browser Back closes the Dialog and returns to the host page.
+ *   - Escape / close button / overlay click close the Dialog.
+ *   - Direct visits to legacy /app/settings, /app/settings?section=*,
+ *     /app/settings/feedback, /app/settings/ledger redirect to /app/read.
+ *   - Reloading the page while a Settings history marker is present
+ *     restores the Dialog and it can be closed normally.
+ *
+ * The Dialog is rendered by SettingsDialogProvider at the AppShell level.
+ * Opening it does NOT navigate: history.pushState writes a marker into
+ * history.state but uses location.href as the URL so the address bar
+ * is unchanged. Section switches use history.replaceState (no new entry).
  */
 
 // ---------------------------------------------------------------------------
@@ -183,12 +192,6 @@ async function openUserMenuWithKeyboard(
 
   // Radix DropdownMenu focuses the first item automatically. Navigate down to
   // the requested item without assuming mouse position.
-  const section =
-    label === "个人资料"
-      ? "account"
-      : label === "偏好设置"
-        ? "preferences"
-        : "usage";
   let attempts = 0;
   while (attempts < 6) {
     const isTarget = await page.evaluate(
@@ -207,14 +210,29 @@ async function openUserMenuWithKeyboard(
   }
 
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(
-    new RegExp(`/app/settings\\?section=${section}$`),
-  );
 }
 
 async function expectDialogClosedAndBackOnReader(page: Page) {
   await expect(page.getByRole("dialog", { name: "设置" })).toHaveCount(0);
   await expect(page).toHaveURL(/\/app\/read$/);
+}
+
+/**
+ * Assert that the current page URL does NOT contain any legacy Settings
+ * route pattern. Used to enforce the "URL never changes to /app/settings"
+ * contract across open / section-switch / close actions.
+ */
+async function expectNoSettingsUrl(page: Page) {
+  await expect(page).not.toHaveURL(/\/app\/settings/);
+}
+
+/**
+ * Assert that the page URL equals the captured snapshot, supporting both
+ * exact string and regex matchers. Used to enforce "address bar must not
+ * change at all" while opening or switching sections.
+ */
+async function expectUrlUnchanged(page: Page, expected: string | RegExp) {
+  await expect(page).toHaveURL(expected);
 }
 
 async function setTheme(page: Page, theme: "light" | "dark") {
@@ -303,10 +321,10 @@ async function assertAllVisibleControlsWithinBounds(page: Page, dialog: Locator)
 }
 
 // ---------------------------------------------------------------------------
-// Desktop routing from Reader sidebar
+// Desktop opening from Reader sidebar — URL never changes
 // ---------------------------------------------------------------------------
 
-test.describe("Settings Dialog routing from Reader sidebar", () => {
+test.describe("Settings Dialog opening from Reader sidebar", () => {
   test.setTimeout(180_000);
 
   test.beforeEach(async ({ page }) => {
@@ -317,10 +335,14 @@ test.describe("Settings Dialog routing from Reader sidebar", () => {
     await lockSidebar(page);
   });
 
-  test("个人资料 opens dialog at ?section=account and shows account heading", async ({ page }) => {
+  test("个人资料 opens dialog at account section without changing URL", async ({ page }) => {
+    const urlBefore = page.url();
+
     await openUserMenuAndClickSettings(page, "个人资料");
 
-    await expect(page).toHaveURL(/\/app\/settings\?section=account$/);
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
     await expect(
@@ -328,10 +350,14 @@ test.describe("Settings Dialog routing from Reader sidebar", () => {
     ).toBeVisible();
   });
 
-  test("偏好设置 opens dialog at ?section=preferences and shows preferences heading", async ({ page }) => {
+  test("偏好设置 opens dialog at preferences section without changing URL", async ({ page }) => {
+    const urlBefore = page.url();
+
     await openUserMenuAndClickSettings(page, "偏好设置");
 
-    await expect(page).toHaveURL(/\/app\/settings\?section=preferences$/);
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
     await expect(
@@ -339,10 +365,14 @@ test.describe("Settings Dialog routing from Reader sidebar", () => {
     ).toBeVisible();
   });
 
-  test("用量与积分 opens dialog at ?section=usage and shows placeholder", async ({ page }) => {
+  test("用量与积分 opens dialog at usage section without changing URL", async ({ page }) => {
+    const urlBefore = page.url();
+
     await openUserMenuAndClickSettings(page, "用量与积分");
 
-    await expect(page).toHaveURL(/\/app\/settings\?section=usage$/);
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
     await expect(
@@ -357,34 +387,43 @@ test.describe("Settings Dialog routing from Reader sidebar", () => {
     await expect(dialog.getByText("查看明细账单")).toHaveCount(0);
   });
 
-  test("switching sections inside dialog updates URL via replace and back returns to Reader", async ({ page }) => {
+  test("switching sections inside dialog does not change URL and Back returns to Reader", async ({ page }) => {
+    const urlBefore = page.url();
+
     await openUserMenuAndClickSettings(page, "个人资料");
-    await expect(page).toHaveURL(/\/app\/settings\?section=account$/);
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
 
     const dialog = page.getByRole("dialog", { name: "设置" });
     const nav = dialog.getByRole("navigation", { name: "设置分区" });
 
     await nav.getByRole("button", { name: "偏好" }).click();
-    await expect(page).toHaveURL(/\/app\/settings\?section=preferences$/);
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
     await expect(
       dialog.getByRole("heading", { name: "偏好", level: 2 }),
     ).toBeVisible();
 
     await nav.getByRole("button", { name: "用量与积分" }).click();
-    await expect(page).toHaveURL(/\/app\/settings\?section=usage$/);
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
     await expect(
       dialog.getByRole("heading", { name: "用量与积分", level: 2 }),
     ).toBeVisible();
 
-    // Because section switches use router.replace, browser back should skip
-    // them and return directly to the underlying Reader page.
+    // Section switches use replaceState (no history accumulation). Browser
+    // Back therefore returns to the underlying Reader page.
     await page.goBack();
     await expect(page).toHaveURL(/\/app\/read$/);
     await expect(dialog).toHaveCount(0);
   });
 
   test("close button closes dialog and returns to Reader", async ({ page }) => {
+    const urlBefore = page.url();
     await openUserMenuAndClickSettings(page, "个人资料");
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
 
@@ -399,7 +438,11 @@ test.describe("Settings Dialog routing from Reader sidebar", () => {
   });
 
   test("Escape closes dialog and returns to Reader", async ({ page }) => {
+    const urlBefore = page.url();
     await openUserMenuAndClickSettings(page, "偏好设置");
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
 
@@ -407,11 +450,13 @@ test.describe("Settings Dialog routing from Reader sidebar", () => {
     await expectDialogClosedAndBackOnReader(page);
   });
 
-  test("overlay click intercepts a sidebar click and closes dialog via router.back", async ({ page }) => {
+  test("overlay click intercepts a sidebar click and closes dialog via history.back", async ({ page }) => {
     // Use a wider viewport so the app sidebar is fully outside the centered
     // dialog content; the click then lands on the overlay, not on the dialog's
-    // own rail, and should trigger router.back().
+    // own rail, and should trigger history.back().
     await page.setViewportSize({ width: 1920, height: 1080 });
+
+    const urlBefore = page.url();
 
     // Capture the "全部阅读记录" link's bounding box BEFORE opening the dialog.
     // Radix Dialog marks portal-external siblings (including the sidebar) as
@@ -424,13 +469,16 @@ test.describe("Settings Dialog routing from Reader sidebar", () => {
     const targetY = libraryBox!.y + libraryBox!.height / 2;
 
     await openUserMenuAndClickSettings(page, "用量与积分");
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
-    await expect(page).toHaveURL(/\/app\/settings\?section=usage$/);
 
     // Click at the pre-captured sidebar link coordinates. The overlay is above
-    // the sidebar and will intercept; for the route-based dialog the overlay
-    // click triggers router.back(), returning to /app/read.
+    // the sidebar and will intercept; for the AppShell-owned dialog the overlay
+    // click triggers closeSettings() → history.back(), keeping the URL on
+    // /app/read (since the host page was already at /app/read).
     await page.mouse.click(targetX, targetY);
     await expect(dialog).toHaveCount(0, { timeout: 10_000 });
     await expect(page).toHaveURL(/\/app\/read$/);
@@ -459,7 +507,7 @@ test.describe("Settings Dialog mobile viewport", () => {
     // Open the dialog on desktop first, then resize to mobile to exercise
     // the responsive sheet layout. The user menu is a desktop sidebar affordance.
     await openUserMenuAndClickSettings(page, "个人资料");
-    await expect(page).toHaveURL(/\/app\/settings\?section=account$/);
+    await expectNoSettingsUrl(page);
     await page.setViewportSize({ width: 390, height: 844 });
   });
 
@@ -535,10 +583,14 @@ test.describe("Settings Dialog keyboard focus and reading continuity", () => {
     await lockSidebar(page);
   });
 
-  test("opens 个人资料 from user menu via keyboard and moves focus into dialog", async ({ page }) => {
+  test("opens 个人资料 from user menu via keyboard without changing URL", async ({ page }) => {
+    const urlBefore = page.url();
+
     await openUserMenuWithKeyboard(page, "个人资料");
 
-    await expect(page).toHaveURL(/\/app\/settings\?section=account$/);
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
 
@@ -549,7 +601,11 @@ test.describe("Settings Dialog keyboard focus and reading continuity", () => {
   });
 
   test("focus is trapped inside dialog and aria-current updates uniquely", async ({ page }) => {
+    const urlBefore = page.url();
+
     await openUserMenuWithKeyboard(page, "个人资料");
+    await expectUrlUnchanged(page, urlBefore);
+
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
 
@@ -569,6 +625,8 @@ test.describe("Settings Dialog keyboard focus and reading continuity", () => {
 
     // Switch sections and assert aria-current is unique and correct.
     await dialog.getByRole("button", { name: "偏好" }).click();
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
     await expect(
       dialog.getByRole("button", { name: "偏好" }),
     ).toHaveAttribute("aria-current", "page");
@@ -577,6 +635,8 @@ test.describe("Settings Dialog keyboard focus and reading continuity", () => {
     ).not.toHaveAttribute("aria-current", "page");
 
     await dialog.getByRole("button", { name: "用量与积分" }).click();
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
     await expect(
       dialog.getByRole("button", { name: "用量与积分" }),
     ).toHaveAttribute("aria-current", "page");
@@ -585,7 +645,11 @@ test.describe("Settings Dialog keyboard focus and reading continuity", () => {
 
   test("Escape closes dialog, restores focus to sidebar trigger and keeps Reader DOM inert", async ({ page }) => {
     const trigger = page.getByRole("button", { name: "打开用户菜单" });
+    const urlBefore = page.url();
+
     await openUserMenuWithKeyboard(page, "个人资料");
+    await expectUrlUnchanged(page, urlBefore);
+
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
 
@@ -633,7 +697,10 @@ test.describe("Settings Dialog keyboard focus and reading continuity", () => {
   });
 
   test("close button closes dialog, restores focus and keeps Reader link clickable", async ({ page }) => {
+    const urlBefore = page.url();
     await openUserMenuAndClickSettings(page, "个人资料");
+    await expectUrlUnchanged(page, urlBefore);
+
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
 
@@ -661,8 +728,11 @@ test.describe("Settings Dialog keyboard focus and reading continuity", () => {
   });
 
   test("closing dialog restores focus to visible desktop trigger, never hidden mobile trigger", async ({ page }) => {
+    const urlBefore = page.url();
     // Desktop viewport: mobile bottom nav is inside md:hidden (display:none).
     await openUserMenuAndClickSettings(page, "偏好设置");
+    await expectUrlUnchanged(page, urlBefore);
+
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
 
@@ -723,7 +793,10 @@ for (const viewport of DESKTOP_VIEWPORTS) {
     });
 
     test("dialog is centered and stays within safe margins", async ({ page }) => {
+      const urlBefore = page.url();
       await openUserMenuAndClickSettings(page, "个人资料");
+      await expectUrlUnchanged(page, urlBefore);
+
       const dialog = page.getByRole("dialog", { name: "设置" });
       await expect(dialog).toBeVisible();
 
@@ -749,7 +822,10 @@ for (const viewport of DESKTOP_VIEWPORTS) {
     });
 
     test("rail is 12rem and content area shrinks without horizontal overflow", async ({ page }) => {
+      const urlBefore = page.url();
       await openUserMenuAndClickSettings(page, "偏好设置");
+      await expectUrlUnchanged(page, urlBefore);
+
       const dialog = page.getByRole("dialog", { name: "设置" });
       const nav = dialog.getByRole("navigation", { name: "设置分区" });
       await expect(nav).toBeVisible();
@@ -772,7 +848,10 @@ for (const viewport of DESKTOP_VIEWPORTS) {
     });
 
     test("section header stays fixed while body scrolls independently", async ({ page }) => {
+      const urlBefore = page.url();
       await openUserMenuAndClickSettings(page, "个人资料");
+      await expectUrlUnchanged(page, urlBefore);
+
       const dialog = page.getByRole("dialog", { name: "设置" });
       const header = dialog.getByRole("heading", { name: "个人资料", level: 2 }).first();
       const body = dialog.locator(".min-h-0.overflow-y-auto").first();
@@ -806,10 +885,15 @@ for (const viewport of DESKTOP_VIEWPORTS) {
     });
 
     test("standard frame content column maxes at 40rem", async ({ page }) => {
+      const urlBefore = page.url();
       await openUserMenuAndClickSettings(page, "个人资料");
+      await expectUrlUnchanged(page, urlBefore);
+
       const dialog = page.getByRole("dialog", { name: "设置" });
       await dialog.getByRole("button", { name: "支持" }).click();
-      await expect(page).toHaveURL(/\/app\/settings\?section=support$/);
+      // Section switch must NOT change URL.
+      await expectUrlUnchanged(page, urlBefore);
+      await expectNoSettingsUrl(page);
 
       const wrapper = dialog.locator(".min-h-0.overflow-y-auto > div").first();
       const maxWidth = await wrapper.evaluate((el) => getComputedStyle(el).maxWidth);
@@ -827,11 +911,15 @@ for (const viewport of DESKTOP_VIEWPORTS) {
 
       for (const [index, section] of sections.entries()) {
         const dialog = page.getByRole("dialog", { name: "设置" });
+        const urlBefore = page.url();
         if (index === 0) {
           await openUserMenuAndClickSettings(page, section.menuLabel);
           await expect(dialog).toBeVisible();
+          await expectUrlUnchanged(page, urlBefore);
         }
         await dialog.getByRole("button", { name: section.navLabel }).click();
+        await expectUrlUnchanged(page, urlBefore);
+        await expectNoSettingsUrl(page);
         const heading = dialog.getByRole("heading", { name: section.heading, level: 2 });
         await expect(heading).toBeVisible();
         await assertNoHorizontalOverflow(page, dialog);
@@ -855,10 +943,14 @@ test.describe("Settings Dialog mobile entry from /app/read", () => {
     await expect(page).toHaveURL(/\/app\/read$/);
   });
 
-  test("个人资料 opens dialog at ?section=account from mobile bottom nav", async ({ page }) => {
+  test("个人资料 opens dialog at account section from mobile bottom nav without changing URL", async ({ page }) => {
+    const urlBefore = page.url();
+
     await openMobileUserMenuAndClickSettings(page, "个人资料");
 
-    await expect(page).toHaveURL(/\/app\/settings\?section=account$/);
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
     await expect(
@@ -869,10 +961,14 @@ test.describe("Settings Dialog mobile entry from /app/read", () => {
     await assertTouchTargetAtLeast44px(trigger);
   });
 
-  test("偏好设置 opens dialog at ?section=preferences from mobile bottom nav", async ({ page }) => {
+  test("偏好设置 opens dialog at preferences section from mobile bottom nav without changing URL", async ({ page }) => {
+    const urlBefore = page.url();
+
     await openMobileUserMenuAndClickSettings(page, "偏好设置");
 
-    await expect(page).toHaveURL(/\/app\/settings\?section=preferences$/);
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
     await expect(
@@ -883,10 +979,14 @@ test.describe("Settings Dialog mobile entry from /app/read", () => {
     await assertTouchTargetAtLeast44px(trigger);
   });
 
-  test("用量与积分 opens dialog at ?section=usage from mobile bottom nav", async ({ page }) => {
+  test("用量与积分 opens dialog at usage section from mobile bottom nav without changing URL", async ({ page }) => {
+    const urlBefore = page.url();
+
     await openMobileUserMenuAndClickSettings(page, "用量与积分");
 
-    await expect(page).toHaveURL(/\/app\/settings\?section=usage$/);
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
     await expect(
@@ -898,11 +998,12 @@ test.describe("Settings Dialog mobile entry from /app/read", () => {
   });
 
   test("closing dialog returns to /app/read and restores focus to mobile trigger", async ({ page }) => {
+    const urlBefore = page.url();
     await openMobileUserMenuAndClickSettings(page, "偏好设置");
+    await expectUrlUnchanged(page, urlBefore);
 
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
-    await expect(page).toHaveURL(/\/app\/settings\?section=preferences$/);
 
     await dialog.getByRole("button", { name: "关闭设置" }).first().click();
     await expectDialogClosedAndBackOnReader(page);
@@ -927,7 +1028,9 @@ test.describe("Settings Dialog mobile entry from /app/read", () => {
   });
 
   test("pressing Escape closes dialog and restores focus to mobile trigger", async ({ page }) => {
+    const urlBefore = page.url();
     await openMobileUserMenuAndClickSettings(page, "偏好设置");
+    await expectUrlUnchanged(page, urlBefore);
 
     const dialog = page.getByRole("dialog", { name: "设置" });
     await expect(dialog).toBeVisible();
@@ -961,7 +1064,7 @@ test.describe("Settings Dialog mobile layout geometry", () => {
     await lockSidebar(page);
 
     await openUserMenuAndClickSettings(page, "个人资料");
-    await expect(page).toHaveURL(/\/app\/settings\?section=account$/);
+    await expectNoSettingsUrl(page);
     await page.setViewportSize({ width: 390, height: 844 });
   });
 
@@ -1070,7 +1173,10 @@ for (const theme of ["light", "dark"] as const) {
     });
 
     test("dialog and rail have opaque, layered backgrounds", async ({ page }) => {
+      const urlBefore = page.url();
       await openUserMenuAndClickSettings(page, "个人资料");
+      await expectUrlUnchanged(page, urlBefore);
+
       const dialog = page.getByRole("dialog", { name: "设置" });
       const nav = dialog.getByRole("navigation", { name: "设置分区" });
 
@@ -1091,7 +1197,10 @@ for (const theme of ["light", "dark"] as const) {
     });
 
     test("header hairline and focus ring are visible", async ({ page }) => {
+      const urlBefore = page.url();
       await openUserMenuAndClickSettings(page, "个人资料");
+      await expectUrlUnchanged(page, urlBefore);
+
       const dialog = page.getByRole("dialog", { name: "设置" });
       const header = dialog.locator(".shrink-0.border-b.border-hairline").first();
       const borderColor = await header.evaluate((el) => getComputedStyle(el).borderBottomColor);
@@ -1115,3 +1224,365 @@ for (const theme of ["light", "dark"] as const) {
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// Library host page — opening Settings from a non-Reader host page
+// ---------------------------------------------------------------------------
+
+test.describe("Settings Dialog opens from Library host page without URL change", () => {
+  test.setTimeout(180_000);
+
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockBffRoutes(page);
+    await loginWithMockPhone(page);
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await lockSidebar(page);
+
+    // Navigate to /app/library via the sidebar link so the host page is
+    // the Library, not the Reader. The user menu is rendered by AppShell
+    // and is shared across all private routes.
+    const libraryLink = page.getByRole("link", { name: "全部阅读记录" }).first();
+    await expect(libraryLink).toBeVisible();
+    await libraryLink.click();
+    await expect(page).toHaveURL(/\/app\/library/);
+  });
+
+  test("个人资料 opens from Library at account section without changing URL", async ({ page }) => {
+    const urlBefore = page.url();
+    expect(urlBefore).toContain("/app/library");
+
+    await openUserMenuAndClickSettings(page, "个人资料");
+
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await expect(dialog).toBeVisible();
+    await expect(
+      dialog.getByRole("heading", { name: "个人资料", level: 2 }),
+    ).toBeVisible();
+  });
+
+  test("switching sections inside dialog opened from Library does not change URL", async ({ page }) => {
+    const urlBefore = page.url();
+    expect(urlBefore).toContain("/app/library");
+
+    await openUserMenuAndClickSettings(page, "个人资料");
+    await expectUrlUnchanged(page, urlBefore);
+
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    const nav = dialog.getByRole("navigation", { name: "设置分区" });
+
+    await nav.getByRole("button", { name: "偏好" }).click();
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+
+    await nav.getByRole("button", { name: "用量与积分" }).click();
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+  });
+
+  test("Back from Dialog opened on Library returns to Library", async ({ page }) => {
+    const urlBefore = page.url();
+    expect(urlBefore).toContain("/app/library");
+
+    await openUserMenuAndClickSettings(page, "偏好设置");
+    await expectUrlUnchanged(page, urlBefore);
+
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await expect(dialog).toBeVisible();
+
+    // Browser Back should close the dialog and return to the Library host page.
+    await page.goBack();
+    await expect(dialog).toHaveCount(0);
+    await expect(page).toHaveURL(/\/app\/library/);
+  });
+
+  test("close button closes dialog and returns to Library", async ({ page }) => {
+    const urlBefore = page.url();
+    expect(urlBefore).toContain("/app/library");
+
+    await openUserMenuAndClickSettings(page, "用量与积分");
+    await expectUrlUnchanged(page, urlBefore);
+
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByRole("button", { name: "关闭设置" }).last().click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page).toHaveURL(/\/app\/library/);
+  });
+
+  test("Escape closes dialog and returns to Library", async ({ page }) => {
+    const urlBefore = page.url();
+    expect(urlBefore).toContain("/app/library");
+
+    await openUserMenuAndClickSettings(page, "个人资料");
+    await expectUrlUnchanged(page, urlBefore);
+
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await expect(dialog).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(page).toHaveURL(/\/app\/library/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Command Palette entry — open Settings without changing URL
+// ---------------------------------------------------------------------------
+
+test.describe("Command Palette opens Settings Dialog without changing URL", () => {
+  test.setTimeout(180_000);
+
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockBffRoutes(page);
+    await loginWithMockPhone(page);
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await lockSidebar(page);
+  });
+
+  test("selecting 设置 from Command Palette opens preferences section without changing URL (Reader host)", async ({ page }) => {
+    const urlBefore = page.url();
+
+    // Trigger Cmd/Ctrl+K to open the Command Palette.
+    await page.keyboard.press("ControlOrMeta+K");
+
+    const palette = page.getByRole("dialog", { name: "命令面板" });
+    await expect(palette).toBeVisible();
+
+    // The page-settings command lives in the "页面" group. Use a scoped
+    // locator to avoid matching the nav button inside the Settings Dialog.
+    const settingsItem = palette.getByRole("option", { name: "设置" });
+    await expect(settingsItem).toBeVisible();
+    await settingsItem.click();
+
+    // Command Palette closes and Settings Dialog opens at preferences.
+    await expect(palette).toHaveCount(0);
+
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await expect(dialog).toBeVisible();
+    await expect(
+      dialog.getByRole("heading", { name: "偏好", level: 2 }),
+    ).toBeVisible();
+
+    // URL must NOT have changed at any point.
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+  });
+
+  test("selecting 设置 from Command Palette opens preferences section without changing URL (Library host)", async ({ page }) => {
+    // Navigate to /app/library via the sidebar link so the host page is
+    // the Library, not the Reader. The user menu and Command Palette are
+    // both rendered by AppShell and shared across all private routes.
+    const libraryLink = page.getByRole("link", { name: "全部阅读记录" }).first();
+    await expect(libraryLink).toBeVisible();
+    await libraryLink.click();
+    await expect(page).toHaveURL(/\/app\/library/);
+
+    const urlBefore = page.url();
+    expect(urlBefore).toContain("/app/library");
+
+    await page.keyboard.press("ControlOrMeta+K");
+
+    const palette = page.getByRole("dialog", { name: "命令面板" });
+    await expect(palette).toBeVisible();
+
+    const settingsItem = palette.getByRole("option", { name: "设置" });
+    await expect(settingsItem).toBeVisible();
+    await settingsItem.click();
+
+    await expect(palette).toHaveCount(0);
+
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await expect(dialog).toBeVisible();
+    await expect(
+      dialog.getByRole("heading", { name: "偏好", level: 2 }),
+    ).toBeVisible();
+
+    // URL must NOT have changed at any point.
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+
+    // Closing via Escape must keep the user on the Library host page.
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(page).toHaveURL(/\/app\/library/);
+    await expectNoSettingsUrl(page);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Legacy /app/settings routes — server redirect to /app/read
+// ---------------------------------------------------------------------------
+
+test.describe("Legacy /app/settings routes redirect to /app/read", () => {
+  test.setTimeout(120_000);
+
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockBffRoutes(page);
+    await loginWithMockPhone(page);
+    await expect(page).toHaveURL(/\/app\/read$/);
+  });
+
+  test("/app/settings redirects to /app/read and renders no full-page Settings UI", async ({ page }) => {
+    await page.goto("/app/settings");
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await expectNoSettingsUrl(page);
+
+    // No full-page Settings UI must be rendered after the redirect.
+    await expect(page.getByRole("heading", { name: "设置", level: 1 })).toHaveCount(0);
+    // AppShell Reader shell is the visible surface.
+    await expect(page.locator("[data-app-sidebar='rail']")).toBeVisible();
+  });
+
+  test("/app/settings?section=account redirects to /app/read", async ({ page }) => {
+    await page.goto("/app/settings?section=account");
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await expectNoSettingsUrl(page);
+  });
+
+  test("/app/settings?section=preferences redirects to /app/read", async ({ page }) => {
+    await page.goto("/app/settings?section=preferences");
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await expectNoSettingsUrl(page);
+  });
+
+  test("/app/settings?section=usage redirects to /app/read", async ({ page }) => {
+    await page.goto("/app/settings?section=usage");
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await expectNoSettingsUrl(page);
+  });
+
+  test("/app/settings?section=support redirects to /app/read", async ({ page }) => {
+    await page.goto("/app/settings?section=support");
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await expectNoSettingsUrl(page);
+  });
+
+  test("/app/settings/feedback redirects to /app/read", async ({ page }) => {
+    await page.goto("/app/settings/feedback");
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await expectNoSettingsUrl(page);
+    // No legacy feedback form surface.
+    await expect(page.getByRole("heading", { name: "意见反馈", level: 1 })).toHaveCount(0);
+  });
+
+  test("/app/settings/ledger redirects to /app/read", async ({ page }) => {
+    await page.goto("/app/settings/ledger");
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await expectNoSettingsUrl(page);
+    // No legacy ledger surface.
+    await expect(page.getByRole("heading", { name: "积分明细", level: 1 })).toHaveCount(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Page reload restoration — history marker survives reload
+// ---------------------------------------------------------------------------
+
+test.describe("Settings Dialog restores after page reload when history marker present", () => {
+  test.setTimeout(180_000);
+
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockBffRoutes(page);
+    await loginWithMockPhone(page);
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await lockSidebar(page);
+  });
+
+  test("reloading after opening Settings restores the Dialog and can be closed normally", async ({ page }) => {
+    const urlBefore = page.url();
+    expect(urlBefore).toMatch(/\/app\/read$/);
+
+    // Open Settings — pushes a marker into history.state without changing URL.
+    await openUserMenuAndClickSettings(page, "偏好设置");
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+
+    const dialogBefore = page.getByRole("dialog", { name: "设置" });
+    await expect(dialogBefore).toBeVisible();
+    await expect(
+      dialogBefore.getByRole("heading", { name: "偏好", level: 2 }),
+    ).toBeVisible();
+
+    // Reload: browser preserves history.state across reload, so the marker
+    // survives and SettingsDialogProvider re-opens the Dialog on mount.
+    await page.reload();
+
+    // URL must remain on the host page (no /app/settings).
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await expectNoSettingsUrl(page);
+
+    const dialogAfter = page.getByRole("dialog", { name: "设置" });
+    await expect(dialogAfter).toBeVisible();
+
+    // Close button must still work and return to the host page.
+    await dialogAfter.getByRole("button", { name: "关闭设置" }).last().click();
+    await expect(dialogAfter).toHaveCount(0);
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await expectNoSettingsUrl(page);
+  });
+
+  test("reloading after switching sections restores the Dialog at the latest section", async ({ page }) => {
+    const urlBefore = page.url();
+
+    await openUserMenuAndClickSettings(page, "个人资料");
+    await expectUrlUnchanged(page, urlBefore);
+
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    const nav = dialog.getByRole("navigation", { name: "设置分区" });
+
+    // Switch to usage — replaceState updates the marker's section field.
+    await nav.getByRole("button", { name: "用量与积分" }).click();
+    await expectUrlUnchanged(page, urlBefore);
+    await expectNoSettingsUrl(page);
+    await expect(
+      dialog.getByRole("heading", { name: "用量与积分", level: 2 }),
+    ).toBeVisible();
+
+    await page.reload();
+
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await expectNoSettingsUrl(page);
+
+    const dialogAfter = page.getByRole("dialog", { name: "设置" });
+    await expect(dialogAfter).toBeVisible();
+    // The latest section (usage) must be the one restored after reload.
+    await expect(
+      dialogAfter.getByRole("heading", { name: "用量与积分", level: 2 }),
+    ).toBeVisible();
+
+    // Escape must still close the dialog.
+    await page.keyboard.press("Escape");
+    await expect(dialogAfter).toHaveCount(0);
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await expectNoSettingsUrl(page);
+  });
+
+  test("Back after reload closes the restored Dialog and returns to the host page", async ({ page }) => {
+    const urlBefore = page.url();
+
+    await openUserMenuAndClickSettings(page, "个人资料");
+    await expectUrlUnchanged(page, urlBefore);
+
+    await page.reload();
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await expectNoSettingsUrl(page);
+
+    const dialog = page.getByRole("dialog", { name: "设置" });
+    await expect(dialog).toBeVisible();
+
+    // Browser Back: the marker entry was created by pushState, so Back
+    // returns to the host page entry and popstate closes the Dialog.
+    await page.goBack();
+    await expect(dialog).toHaveCount(0);
+    await expect(page).toHaveURL(/\/app\/read$/);
+    await expectNoSettingsUrl(page);
+  });
+});

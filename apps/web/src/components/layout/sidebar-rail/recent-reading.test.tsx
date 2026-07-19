@@ -50,6 +50,15 @@ vi.mock("@/lib/shortcuts", () => ({
   formatShortcut: () => "⌘K",
 }));
 
+// SidebarRail now calls useSettingsDialog() at the top level so the user menu
+// can openSettings(section) instead of linking to /app/settings. Provide a
+// no-op mock here so the recent-reading tests can mount SidebarRail without
+// pulling in the real SettingsDialogProvider. Assertions on openSettings
+// behavior live in index.test.tsx.
+vi.mock("@/components/settings/SettingsDialogProvider", () => ({
+  useSettingsDialog: () => ({ openSettings: vi.fn() }),
+}));
+
 function makeRecord(
   overrides: Partial<ReadingRecordListItemVm> = {},
 ): ReadingRecordListItemVm {

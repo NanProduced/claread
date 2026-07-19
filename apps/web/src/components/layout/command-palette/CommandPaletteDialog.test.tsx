@@ -15,6 +15,12 @@ vi.mock("next/navigation", () => ({
   useRouter: () => navigationMock,
 }));
 
+const openSettingsMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/components/settings/SettingsDialogProvider", () => ({
+  useSettingsDialog: () => ({ openSettings: openSettingsMock }),
+}));
+
 function makeReadingRecord(overrides: Record<string, unknown> = {}) {
   return {
     readingRecordId: "reading_record_1",
@@ -205,5 +211,19 @@ describe("CommandPaletteDialog", () => {
       }
       await Promise.resolve();
     });
+  });
+
+  it("opens the AppShell Settings Dialog (preferences section) when the 设置 command is selected without changing the URL", async () => {
+    stubReadingRecordFetch(() => []);
+
+    openCommandPalette();
+
+    const settingsItem = await screen.findByText("设置");
+    fireEvent.click(settingsItem);
+
+    // The Settings command must route through openSettings, not router.push.
+    expect(openSettingsMock).toHaveBeenCalledWith("preferences");
+    expect(openSettingsMock).toHaveBeenCalledTimes(1);
+    expect(navigationMock.push).not.toHaveBeenCalled();
   });
 });
