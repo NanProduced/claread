@@ -21,6 +21,9 @@ from app.schemas.reader_orchestration import (
     ReaderPlainTextSubmitRequest,
     ReaderPlainTextSubmitResponse,
     ReaderPlateSnapshot,
+    ReaderSectionTranslationOutcome,
+    ReaderSectionTranslationRequest,
+    ReaderSectionTranslationResponse,
     ReaderSourceArtifactUploadCompleteRequest,
     ReaderSourceArtifactUploadCompleteResponse,
     ReaderSourceArtifactUploadInitRequest,
@@ -109,6 +112,19 @@ from app.services.reader_orchestration.input_suitability_gate import (
 )
 from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
 from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
+from app.services.reader_orchestration.section_request_planner import (
+    ExplicitSectionIntent,
+    SectionRequestTrigger,
+)
+from app.services.reader_orchestration.section_translation_bootstrap import (
+    REASON_ALREADY_QUEUED,
+    SectionBootstrapOutcome,
+    SectionTranslationBootstrapService,
+)
+from app.services.reader_orchestration.section_translation_drain import (
+    SectionDrainOutcome,
+    SectionTranslationDrainService,
+)
 from app.services.reader_orchestration.stable_ready_input_application_service import (
     StableReadyInputApplicationError,
     StableReadyInputApplicationResult,
@@ -1374,3 +1390,209 @@ async def ensure_reader_article_rag_index_job(
             status_code=404, detail="Reader record not found"
         )
     return _build_article_rag_index_ensure_response(result)
+
+
+# ===========================================================================
+# T5.6c — Explicit section translation command
+#
+# Bounded synchronous orchestration of the existing
+# ``SectionTranslationBootstrapService`` + ``SectionTranslationDrainService``
+# behind an authenticated POST endpoint.
+#
+# Hard contracts:
+#   * Identity comes only from ``AuthUserDep`` (user_id) and the path
+#     (record_id). The body carries the full section range witness only.
+#   * ``layer_family`` / ``record_id`` / ``base_id`` / ``generation`` are
+#     server-authoritative and MUST NOT appear in the request body.
+#   * The route calls only the public service entry points
+#     (``request_section_translation`` and ``process_job_id``). It never
+#     imports the ordinary enhancement worker loop, never schedules
+#     background tasks, and never scans the section lane.
+#   * No new ``job_type`` is introduced; section execution reuses the
+#     existing ``TRANSLATION_BATCH_JOB_TYPE`` (translate_article /
+#     unit_range_v1) via the bootstrap + drain services.
+#   * Queued-recovery closure: when bootstrap returns NO_OP with
+#     ``reason=section_job_already_queued`` and an existing ``job_id``, the
+#     route MUST drain that job_id so a successful bootstrap write never
+#     leaves a dead queue.
+#   * Response shape is stable, minimal, and leak-safe (no prompt /
+#     provider payload / envelope / secret is ever echoed).
+# ===========================================================================
+
+
+def _map_drain_outcome_to_response(
+    *,
+    outcome: SectionDrainOutcome,
+    job_id: UUID | None,
+) -> ReaderSectionTranslationResponse:
+    """Map ``SectionDrainOutcome`` to the stable response shape."""
+    if outcome is SectionDrainOutcome.SUCCEEDED:
+        response_outcome: ReaderSectionTranslationOutcome = "succeeded"
+    elif outcome is SectionDrainOutcome.RETRY_LATER:
+        response_outcome = "retry_later"
+    elif outcome is SectionDrainOutcome.FAILED:
+        # Drain terminal failure → user-facing retry_later (not rejected).
+        response_outcome = "retry_later"
+    elif outcome is SectionDrainOutcome.ALREADY_CLAIMED:
+        response_outcome = "already_covered_or_inflight"
+    elif outcome is SectionDrainOutcome.BUDGET_DENIED:
+        response_outcome = "budget_exhausted"
+    elif outcome is SectionDrainOutcome.SUPERSEDED:
+        response_outcome = "superseded"
+    elif outcome is SectionDrainOutcome.REJECTED:
+        response_outcome = "rejected"
+    elif outcome is SectionDrainOutcome.NOT_FOUND:
+        # Job disappeared between bootstrap and drain → no work to do.
+        response_outcome = "rejected"
+    else:  # pragma: no cover — defensive exhaustiveness
+        response_outcome = "rejected"
+    return ReaderSectionTranslationResponse(
+        outcome=response_outcome,
+        job_id=str(job_id) if job_id is not None else None,
+        detail=None,
+    )
+
+
+@router.post(
+    "/records/{record_id}/section-translation",
+    response_model=ReaderSectionTranslationResponse,
+    summary="Trigger synchronous explicit-section translation (T5.6c)",
+)
+async def submit_section_translation(
+    record_id: UUID,
+    body: ReaderSectionTranslationRequest,
+    current_user: AuthUserDep,
+) -> ReaderSectionTranslationResponse:
+    """Bounded synchronous explicit-section translation command.
+
+    The route constructs an :class:`ExplicitSectionIntent` with
+    ``trigger=USER_EXPLICIT`` and ``layer_family='translation'`` from the
+    authenticated user + body witness, calls
+    :meth:`SectionTranslationBootstrapService.request_section_translation`,
+    and (when admitted or when recovering an already-queued job) calls
+    :meth:`SectionTranslationDrainService.process_job_id` with the
+    bootstrap-returned ``job_id`` and the server-resolved fence.
+
+    Bootstrap REJECT (forged range / source mismatch / non-trusted outline
+    / node-only / family forge) and bootstrap NO_OP that is NOT a queued
+    job (budget exhausted / already covered / range overlap) are returned
+    directly without invoking drain.
+    """
+    user_id = UUID(current_user.user_id)
+    intent = ExplicitSectionIntent(
+        trigger=SectionRequestTrigger.USER_EXPLICIT,
+        layer_family="translation",
+        start_unit_id=body.start_unit_id,
+        end_unit_id=body.end_unit_id,
+        start_anchor_segment_id=body.start_anchor_segment_id,
+        end_anchor_segment_id=body.end_anchor_segment_id,
+        # node_id / outline_revision are audit-only; never sufficient for
+        # admission. The planner ignores them for identity / fence.
+        node_id=body.node_id,
+        outline_revision=body.outline_revision,
+    )
+
+    bootstrap_service = SectionTranslationBootstrapService()
+    try:
+        bootstrap_result = await bootstrap_service.request_section_translation(
+            record_id=record_id,
+            user_id=user_id,
+            intent=intent,
+            authorized=True,
+        )
+    except LookupError:
+        # Non-owner / missing record → 404 (no leak of internal detail).
+        raise HTTPException(
+            status_code=404, detail="Reader record not found"
+        ) from None
+    except ValueError:
+        # Server-side fence conflict (e.g. stale generation) → 409 (no leak).
+        raise HTTPException(
+            status_code=409, detail="section_translation_fence_conflict"
+        ) from None
+
+    # Bootstrap REJECT → no drain (planner rejected the request).
+    if bootstrap_result.outcome is SectionBootstrapOutcome.REJECT:
+        return ReaderSectionTranslationResponse(
+            outcome="rejected",
+            job_id=(
+                str(bootstrap_result.job_id)
+                if bootstrap_result.job_id is not None
+                else None
+            ),
+            detail=bootstrap_result.reason,
+        )
+
+    # Bootstrap NO_OP → only drain when recovering an already-queued job.
+    # Other NO_OP reasons (budget exhausted / already covered / range
+    # overlap) imply no claimable work and must NOT invoke drain.
+    if bootstrap_result.outcome is SectionBootstrapOutcome.NO_OP:
+        if (
+            bootstrap_result.reason == REASON_ALREADY_QUEUED
+            and bootstrap_result.job_id is not None
+        ):
+            # queued-recovery closure: drain the existing job so a
+            # successful bootstrap write never leaves a dead queue.
+            pass
+        elif bootstrap_result.reason is not None and bootstrap_result.reason.startswith(
+            "translation_budget_exhausted"
+        ):
+            return ReaderSectionTranslationResponse(
+                outcome="budget_exhausted",
+                job_id=None,
+                detail=bootstrap_result.reason,
+            )
+        else:
+            # already_covered / range_overlap / other planner NO_OP.
+            return ReaderSectionTranslationResponse(
+                outcome="already_covered_or_inflight",
+                job_id=(
+                    str(bootstrap_result.job_id)
+                    if bootstrap_result.job_id is not None
+                    else None
+                ),
+                detail=bootstrap_result.reason,
+            )
+
+    # ADMITTED or queued-recovery: drain the job_id with the
+    # server-resolved fence from the bootstrap plan identity.
+    job_id = bootstrap_result.job_id
+    if job_id is None:
+        # Defensive: bootstrap ADMITTED without a job_id is a contract
+        # violation; surface as rejected (no leak).
+        return ReaderSectionTranslationResponse(
+            outcome="rejected",
+            job_id=None,
+            detail="bootstrap_admitted_without_job_id",
+        )
+
+    # The bootstrap plan's identity carries the server-resolved fence
+    # (record_id / base_id / generation). For ADMITTED this is always
+    # present; for queued-recovery it is present because the planner
+    # still resolved the identity before observing the existing job.
+    plan = bootstrap_result.plan
+    expected_base_id: UUID | None = None
+    expected_generation: int | None = None
+    if plan is not None and getattr(plan, "identity", None) is not None:
+        identity = plan.identity
+        try:
+            expected_base_id = UUID(identity.base_id)
+        except (ValueError, AttributeError):
+            expected_base_id = None
+        try:
+            expected_generation = int(identity.generation)
+        except (ValueError, TypeError, AttributeError):
+            expected_generation = None
+
+    drain_service = SectionTranslationDrainService()
+    drain_result = await drain_service.process_job_id(
+        job_id=job_id,
+        lease_owner="section_translation_route",
+        expected_reading_record_id=record_id,
+        expected_base_id=expected_base_id,
+        expected_generation=expected_generation,
+    )
+    return _map_drain_outcome_to_response(
+        outcome=drain_result.outcome,
+        job_id=drain_result.job_id,
+    )

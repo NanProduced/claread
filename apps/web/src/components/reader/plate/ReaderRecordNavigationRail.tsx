@@ -482,6 +482,10 @@ interface NavigationPanelProps {
   onMouseEnter: () => void;
   onMouseLeave: (event: React.MouseEvent<HTMLElement>) => void;
   registerRowRef: (key: string, el: HTMLButtonElement | null) => void;
+  // T5.6c: per-row section-translation state + handler. Forwarded to
+  // SemanticPanelRow only (L0/L1 rows are unaffected).
+  sectionTranslationStates: Map<string, SectionTranslationRowState>;
+  onResolveSection: (item: ReaderSemanticOutlineNavItem) => void;
 }
 
 function NavigationPanel({
@@ -505,6 +509,8 @@ function NavigationPanel({
   onMouseEnter,
   onMouseLeave,
   registerRowRef,
+  sectionTranslationStates,
+  onResolveSection,
 }: NavigationPanelProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
@@ -601,6 +607,10 @@ function NavigationPanel({
                   registerRef={(el) =>
                     registerRowRef(semRowRefKey(item.nodeId), el)
                   }
+                  sectionTranslationState={
+                    sectionTranslationStates.get(item.nodeId) ?? null
+                  }
+                  onResolve={() => onResolveSection(item)}
                 />
               ))}
             </ol>
@@ -622,6 +632,39 @@ export interface ReaderRecordNavigationRailProps {
    * visibility and viewport pinning inside ReaderRecordPlateSurface.
    */
   layout?: "viewport" | "canvas";
+  /**
+   * T5.6c: invoked after a successful explicit-section translation command
+   * so the page can fetch a fresh snapshot and the body's translation layer
+   * refreshes naturally. Optional — when omitted the rail still submits the
+   * command but cannot refresh the body.
+   */
+  onRequestSnapshotReload?: () => void | Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// T5.6c — explicit-section translation per-row state
+//
+// Only one in-flight request per row. Succeeded → trigger snapshot reload
+// (body translation layer refreshes naturally) and clear row state. Other
+// outcomes (retry_later / already_covered_or_inflight / budget_exhausted /
+// rejected / superseded) surface as a concise inline accessible message
+// that stays until the user retries or the snapshot identity changes.
+// ---------------------------------------------------------------------------
+
+type SectionTranslationRowState =
+  | { kind: "loading" }
+  | { kind: "feedback"; outcome: string; message: string };
+
+const SECTION_TRANSLATION_FEEDBACK: Record<string, string> = {
+  retry_later: "稍后重试",
+  already_covered_or_inflight: "已在解析中",
+  budget_exhausted: "解析额度已用完",
+  rejected: "无法解析此段",
+  superseded: "已过期，请刷新",
+};
+
+function feedbackMessageForOutcome(outcome: string): string {
+  return SECTION_TRANSLATION_FEEDBACK[outcome] ?? "无法解析此段";
 }
 
 export function ReaderRecordNavigationRail({
@@ -630,6 +673,7 @@ export function ReaderRecordNavigationRail({
   askOpen = false,
   className,
   layout = "viewport",
+  onRequestSnapshotReload,
 }: ReaderRecordNavigationRailProps) {
   const panelDomId = useId();
   const panelId = `reader-record-nav-panel-${panelDomId.replace(/:/g, "")}`;
@@ -647,6 +691,127 @@ export function ReaderRecordNavigationRail({
   const hasL2 = semProjection.available;
   const semItems = semProjection.panelItems;
   const semTicks = semProjection.tickItems;
+
+  // T5.6c: per-row section-translation state. Keyed by nodeId so each row
+  // tracks its own loading / feedback lifecycle. Cleared on snapshot identity
+  // or outline_revision change so stale feedback never persists across
+  // projections.
+  const [sectionTranslationStates, setSectionTranslationStates] = useState<
+    Map<string, SectionTranslationRowState>
+  >(() => new Map());
+  const sectionTranslationStatesRef = useRef(sectionTranslationStates);
+  useEffect(() => {
+    sectionTranslationStatesRef.current = sectionTranslationStates;
+  }, [sectionTranslationStates]);
+  const sectionTranslationInFlightRef = useRef<Set<string>>(new Set());
+
+  // Clear all row state when the snapshot identity or outline revision
+  // changes — the projection is now a different tree.
+  useEffect(() => {
+    setSectionTranslationStates(new Map());
+    sectionTranslationInFlightRef.current = new Set();
+  }, [sourceIdentityKey, semProjection.outlineRevision]);
+
+  const handleResolveSection = useCallback(
+    async (item: ReaderSemanticOutlineNavItem) => {
+      // Per-row re-entry guard: if a request is already in flight for this
+      // node, ignore the additional click. This complements the loading-state
+      // visual disabling and protects against double-submit race conditions.
+      if (sectionTranslationInFlightRef.current.has(item.nodeId)) {
+        return;
+      }
+      sectionTranslationInFlightRef.current.add(item.nodeId);
+      setSectionTranslationStates((prev) => {
+        const next = new Map(prev);
+        next.set(item.nodeId, { kind: "loading" });
+        return next;
+      });
+
+      const recordId = snapshot.record_id;
+      const payload = {
+        startUnitId: item.startUnitId,
+        endUnitId: item.endUnitId,
+        startAnchorSegmentId: item.startAnchorSegmentId,
+        endAnchorSegmentId: item.endAnchorSegmentId,
+        nodeId: item.nodeId,
+        outlineRevision: semProjection.outlineRevision,
+      };
+
+      try {
+        const response = await fetch(
+          `/api/web/reader-plate/records/${encodeURIComponent(recordId)}/section-translation`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+        );
+        const data = (await response.json().catch(() => null)) as
+          | {
+              ok: true;
+              outcome: string;
+              job_id: string | null;
+              detail: string | null;
+            }
+          | { ok: false; status?: number; code?: string; message?: string }
+          | null;
+
+        if (data && data.ok) {
+          if (data.outcome === "succeeded") {
+            // Clear row state; the snapshot reload will refresh the body's
+            // translation layer naturally.
+            setSectionTranslationStates((prev) => {
+              const next = new Map(prev);
+              next.delete(item.nodeId);
+              return next;
+            });
+            // Trigger the page's snapshot reload. Void-wrap so a rejected
+            // promise does not surface as an unhandled rejection; the user
+            // can retry the row.
+            void Promise.resolve(onRequestSnapshotReload?.()).catch(() => {
+              /* noop — reload failure is surfaced via the page's own error
+                 toast; the row stays clickable for retry. */
+            });
+          } else {
+            setSectionTranslationStates((prev) => {
+              const next = new Map(prev);
+              next.set(item.nodeId, {
+                kind: "feedback",
+                outcome: data.outcome,
+                message: feedbackMessageForOutcome(data.outcome),
+              });
+              return next;
+            });
+          }
+        } else {
+          // BFF error — surface a concise inline message. The BFF never
+          // leaks upstream exception messages; the generic fallback is safe.
+          setSectionTranslationStates((prev) => {
+            const next = new Map(prev);
+            next.set(item.nodeId, {
+              kind: "feedback",
+              outcome: "rejected",
+              message: "无法解析此段",
+            });
+            return next;
+          });
+        }
+      } catch {
+        setSectionTranslationStates((prev) => {
+          const next = new Map(prev);
+          next.set(item.nodeId, {
+            kind: "feedback",
+            outcome: "rejected",
+            message: "网络异常，请稍后重试",
+          });
+          return next;
+        });
+      } finally {
+        sectionTranslationInFlightRef.current.delete(item.nodeId);
+      }
+    },
+    [snapshot.record_id, semProjection.outlineRevision, onRequestSnapshotReload],
+  );
 
   const [outlineSurface, setOutlineSurface] =
     useState<ReaderOutlineSurface>("deterministic");
@@ -1176,6 +1341,8 @@ export function ReaderRecordNavigationRail({
         onMouseEnter={keepOpenPanel}
         onMouseLeave={handleMouseLeave}
         registerRowRef={registerRowRef}
+        sectionTranslationStates={sectionTranslationStates}
+        onResolveSection={handleResolveSection}
       />
 
       <button
@@ -1292,6 +1459,9 @@ interface SemanticPanelRowProps {
   onClick: () => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
   registerRef: (el: HTMLButtonElement | null) => void;
+  // T5.6c: per-row section-translation state. null = idle.
+  sectionTranslationState: SectionTranslationRowState | null;
+  onResolve: () => void;
 }
 
 function SemanticPanelRow({
@@ -1301,13 +1471,20 @@ function SemanticPanelRow({
   onClick,
   onKeyDown,
   registerRef,
+  sectionTranslationState,
+  onResolve,
 }: SemanticPanelRowProps) {
   const depth = Math.min(Math.max(item.depth, 1), 3);
   const levelLabel =
     depth === 1 ? "一级" : depth === 2 ? "二级" : "三级";
+  const isLoading = sectionTranslationState?.kind === "loading";
+  const feedback =
+    sectionTranslationState?.kind === "feedback"
+      ? sectionTranslationState
+      : null;
 
   return (
-    <li>
+    <li className="relative">
       <button
         ref={registerRef}
         type="button"
@@ -1321,7 +1498,14 @@ function SemanticPanelRow({
         onKeyDown={onKeyDown}
         style={{ paddingLeft: `${8 + (depth - 1) * 12}px` }}
         className={cn(
-          "relative w-full py-1.5 pr-2.5 text-left transition-colors duration-150 ease-[var(--cl-ease-standard)]",
+          "relative w-full py-1.5 text-left transition-colors duration-150 ease-[var(--cl-ease-standard)]",
+          // Reserve room on the right for the T5.6c action chip so the title
+          // truncates before it can underlap the chip. T5.6c-P2: the feedback
+          // state renders an inline feedback span (max-w 3.25rem) + "重试"
+          // button + gap + right inset 1.5 alongside the title; pr-[6rem]
+          // covers both idle (single chip) and feedback/retry (span + button)
+          // right-side states without clipping the title.
+          "pr-[6rem]",
           "focus-visible:outline-none focus-visible:bg-ink/[0.035] focus-visible:ring-1 focus-visible:ring-lens-blue/30",
           active
             ? "bg-[var(--app-control-current)] font-medium text-ink"
@@ -1332,6 +1516,103 @@ function SemanticPanelRow({
           {item.title}
         </span>
       </button>
+      {/* T5.6c: "解析此段" action chip. The chip is its own accessible
+          command tab stop (tabIndex=0) so keyboard users can reach and
+          activate it independently of the parent row's roving tabindex.
+          The parent row's roving tabindex (0 only on the focused row,
+          -1 elsewhere) is preserved because the chip is a sibling button,
+          not a child of the row button — Tab moves between the row's
+          button and the chip without disturbing the row's tabindex.
+          stopPropagation on click/keydown prevents the parent row's
+          onClick (body scroll) and onKeyDown (ArrowDown/Escape roving)
+          from firing when the chip is the target.
+          T5.6c-P2: feedback state no longer replaces the action — it
+          renders alongside a "重试" button so the user can retry without
+          waiting for a snapshot refresh. The retry button keeps the same
+          testid (`reader-record-outline-resolve-{nodeId}`) so the
+          accessible action locator is stable across idle/feedback states.
+          already_covered_or_inflight intentionally still routes through
+          the same fetch path so the backend queued-recovery drain can be
+          re-triggered by the user. */}
+      {isLoading ? (
+        <span
+          data-testid={`reader-record-outline-resolve-loading-${item.nodeId}`}
+          aria-live="polite"
+          className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] leading-tight text-muted-foreground/85"
+        >
+          正在解析…
+        </span>
+      ) : feedback ? (
+        <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1">
+          <span
+            data-testid={`reader-record-outline-resolve-feedback-${item.nodeId}`}
+            aria-live="polite"
+            className="max-w-[3.25rem] truncate text-[9px] leading-tight text-muted-foreground/85"
+          >
+            {feedback.message}
+          </span>
+          <button
+            type="button"
+            tabIndex={0}
+            data-testid={`reader-record-outline-resolve-${item.nodeId}`}
+            data-resolve-action="retry"
+            aria-label={`重试：${item.title}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onResolve();
+            }}
+            onKeyDown={(event) => {
+              // Allow Enter / Space to activate the retry button; stop
+              // propagation so the parent row's onKeyDown
+              // (ArrowDown/Escape roving) does not fire and the event
+              // does not bubble to the row's onClick path.
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                event.stopPropagation();
+                onResolve();
+              }
+            }}
+            className={cn(
+              "rounded-sm px-1.5 py-0.5 text-[9px] leading-tight",
+              "text-ink/55 hover:bg-ink/[0.06] hover:text-ink",
+              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+              "transition-colors duration-100 ease-[var(--cl-ease-standard)]",
+            )}
+          >
+            重试
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          tabIndex={0}
+          data-testid={`reader-record-outline-resolve-${item.nodeId}`}
+          data-resolve-action="resolve"
+          aria-label={`解析此段：${item.title}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onResolve();
+          }}
+          onKeyDown={(event) => {
+            // Allow Enter / Space to activate the chip; stop propagation so
+            // the parent row's onKeyDown (ArrowDown/Escape roving) does not
+            // fire and the event does not bubble to the row's onClick path.
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              event.stopPropagation();
+              onResolve();
+            }
+          }}
+          className={cn(
+            "absolute right-1.5 top-1/2 -translate-y-1/2 rounded-sm px-1.5 py-0.5 text-[9px] leading-tight",
+            "text-ink/55 hover:bg-ink/[0.06] hover:text-ink",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+            "transition-colors duration-100 ease-[var(--cl-ease-standard)]",
+          )}
+        >
+          解析此段
+        </button>
+      )}
     </li>
   );
 }

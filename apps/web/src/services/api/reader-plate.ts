@@ -13,6 +13,8 @@ import type {
   ReaderPlainTextSubmitRequestDto,
   ReaderPlainTextSubmitResponseDto,
   ReaderPlateSnapshotDto,
+  ReaderSectionTranslationRequestDto,
+  ReaderSectionTranslationResponseDto,
   ReaderSourceArtifactSubmitInputRequestDto,
   ReaderSourceArtifactSubmitInputResponseDto,
   ReaderSourceArtifactUploadCompleteRequestDto,
@@ -41,6 +43,7 @@ import type {
  *   - GET  /reader/records/{record_id}/stable-document
  *   - GET  /reader/records/{record_id}/article-rag-index/status
  *   - POST /reader/records/{record_id}/article-rag-index/ensure
+ *   - POST /reader/records/{record_id}/section-translation      (T5.6c)
  *
  * This module intentionally does NOT touch the legacy `/scene` endpoints.
  */
@@ -240,6 +243,25 @@ export function ensureUpstreamReaderArticleRagIndex(
 ): Promise<UpstreamResult<ReaderArticleRagIndexEnsureResponseDto>> {
   return fastApiFetch<ReaderArticleRagIndexEnsureResponseDto>(
     `/reader/records/${encodeURIComponent(recordId)}/article-rag-index/ensure`,
+    {
+      method: "POST",
+      sessionToken,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// T5.6c — Section translation (synchronous explicit-section command)
+// ---------------------------------------------------------------------------
+
+export function submitUpstreamReaderSectionTranslation(
+  recordId: string,
+  payload: ReaderSectionTranslationRequestDto,
+  sessionToken: string,
+): Promise<UpstreamResult<ReaderSectionTranslationResponseDto>> {
+  return fastApiFetch<ReaderSectionTranslationResponseDto>(
+    `/reader/records/${encodeURIComponent(recordId)}/section-translation`,
     {
       method: "POST",
       sessionToken,

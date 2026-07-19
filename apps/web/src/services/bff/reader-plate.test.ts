@@ -23,6 +23,7 @@ vi.mock("@/services/api/reader-plate", () => ({
   getUpstreamReaderStableDocument: vi.fn(),
   getUpstreamReaderArticleRagIndexStatus: vi.fn(),
   ensureUpstreamReaderArticleRagIndex: vi.fn(),
+  submitUpstreamReaderSectionTranslation: vi.fn(),
 }));
 
 import { getWebSession } from "@/services/bff/session";
@@ -38,6 +39,7 @@ import {
   initUpstreamReaderSourceArtifactUpload,
   pollUpstreamReaderEvents,
   submitUpstreamReaderPlainText,
+  submitUpstreamReaderSectionTranslation,
   submitUpstreamReaderSourceArtifactInput,
   submitUpstreamReaderUnifiedInput,
 } from "@/services/api/reader-plate";
@@ -53,6 +55,7 @@ import {
   initReaderSourceArtifactUploadFromWeb,
   pollReaderEventsFromWeb,
   submitReaderPlainTextFromWeb,
+  submitReaderSectionTranslationFromWeb,
   submitReaderSourceArtifactInputFromWeb,
   submitReaderUnifiedInputFromWeb,
   submitReadingRecordPlainTextFromWeb,
@@ -65,6 +68,7 @@ import type {
   ReaderCandidateDocumentConfirmResponseDto,
   ReaderCandidateDocumentReadResponse,
   ReaderPlateSnapshotDto,
+  ReaderSectionTranslationResponseDto,
   ReaderSourceArtifactSubmitInputResponseDto,
   ReaderSourceArtifactUploadCompleteResponseDto,
   ReaderSourceArtifactUploadInitResponseDto,
@@ -1828,3 +1832,300 @@ function makeCandidateDocumentReadResponse(
     ...rest,
   };
 }
+
+// ---------------------------------------------------------------------------
+// T5.6c — section translation (synchronous explicit-section command)
+// ---------------------------------------------------------------------------
+
+function makeSectionTranslationResponse(
+  overrides: Partial<ReaderSectionTranslationResponseDto> = {},
+): ReaderSectionTranslationResponseDto {
+  return {
+    outcome: "succeeded",
+    job_id: "job_section_1",
+    detail: null,
+    ...overrides,
+  };
+}
+
+describe("reader-plate BFF section translation (T5.6c)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("rejects empty recordId with invalid_input before hitting session or upstream", async () => {
+    const result = await submitReaderSectionTranslationFromWeb("", {
+      startUnitId: "u1",
+      endUnitId: "u2",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 400,
+      code: "invalid_input",
+    });
+    expect(getWebSession).not.toHaveBeenCalled();
+    expect(submitUpstreamReaderSectionTranslation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing startUnitId", { endUnitId: "u2" }],
+    ["missing endUnitId", { startUnitId: "u1" }],
+    ["blank startUnitId", { startUnitId: "   ", endUnitId: "u2" }],
+    ["blank endUnitId", { startUnitId: "u1", endUnitId: "" }],
+    ["non-string startUnitId", { startUnitId: 42, endUnitId: "u2" }],
+  ])("rejects %p with invalid_input before session or upstream", async (_label, input) => {
+    const result = await submitReaderSectionTranslationFromWeb("rec_1", input);
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 400,
+      code: "invalid_input",
+    });
+    expect(getWebSession).not.toHaveBeenCalled();
+    expect(submitUpstreamReaderSectionTranslation).not.toHaveBeenCalled();
+  });
+
+  it("rejects anonymous sessions with auth_required", async () => {
+    vi.mocked(getWebSession).mockResolvedValue({
+      kind: "anonymous",
+      source: "none",
+    });
+
+    const result = await submitReaderSectionTranslationFromWeb("rec_1", {
+      startUnitId: "u1",
+      endUnitId: "u2",
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
+    expect(submitUpstreamReaderSectionTranslation).not.toHaveBeenCalled();
+  });
+
+  it("rejects mock_phone sessions with auth_required", async () => {
+    vi.mocked(getWebSession).mockResolvedValue({
+      kind: "mock_phone",
+      source: "mock",
+      phone: "13800138000",
+    });
+
+    const result = await submitReaderSectionTranslationFromWeb("rec_1", {
+      startUnitId: "u1",
+      endUnitId: "u2",
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
+  });
+
+  it("forwards full range witness (anchors + audit-only fields) to upstream", async () => {
+    vi.mocked(submitUpstreamReaderSectionTranslation).mockResolvedValue({
+      ok: true,
+      data: makeSectionTranslationResponse(),
+    });
+
+    const result = await submitReaderSectionTranslationFromWeb("rec_1", {
+      startUnitId: "u3",
+      endUnitId: "u4",
+      startAnchorSegmentId: "seg_a",
+      endAnchorSegmentId: "seg_b",
+      nodeId: "node_1",
+      outlineRevision: "rev_9",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(vi.mocked(submitUpstreamReaderSectionTranslation).mock.calls[0]).toEqual([
+      "rec_1",
+      {
+        start_unit_id: "u3",
+        end_unit_id: "u4",
+        start_anchor_segment_id: "seg_a",
+        end_anchor_segment_id: "seg_b",
+        node_id: "node_1",
+        outline_revision: "rev_9",
+      },
+      "session-token",
+    ]);
+  });
+
+  it("forwards minimal range witness (no anchors / no audit) to upstream", async () => {
+    vi.mocked(submitUpstreamReaderSectionTranslation).mockResolvedValue({
+      ok: true,
+      data: makeSectionTranslationResponse({ outcome: "already_covered_or_inflight" }),
+    });
+
+    const result = await submitReaderSectionTranslationFromWeb("rec_1", {
+      startUnitId: "u1",
+      endUnitId: "u2",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.outcome).toBe("already_covered_or_inflight");
+    }
+    expect(vi.mocked(submitUpstreamReaderSectionTranslation).mock.calls[0]).toEqual([
+      "rec_1",
+      {
+        start_unit_id: "u1",
+        end_unit_id: "u2",
+        start_anchor_segment_id: null,
+        end_anchor_segment_id: null,
+        node_id: null,
+        outline_revision: null,
+      },
+      "session-token",
+    ]);
+  });
+
+  it("passes through all six stable outcome values without mutation", async () => {
+    const outcomes: Array<ReaderSectionTranslationResponseDto["outcome"]> = [
+      "succeeded",
+      "retry_later",
+      "already_covered_or_inflight",
+      "budget_exhausted",
+      "rejected",
+      "superseded",
+    ];
+    for (const outcome of outcomes) {
+      vi.mocked(submitUpstreamReaderSectionTranslation).mockResolvedValue({
+        ok: true,
+        data: makeSectionTranslationResponse({ outcome, detail: "rationale_code_x" }),
+      });
+      const result = await submitReaderSectionTranslationFromWeb("rec_1", {
+        startUnitId: "u1",
+        endUnitId: "u2",
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.outcome).toBe(outcome);
+        // detail (a stable reason code, not an exception message) is
+        // preserved as-is; the BFF does not mutate it.
+        expect(result.detail).toBe("rationale_code_x");
+      }
+    }
+  });
+
+  it("strips whitespace from range witness before forwarding", async () => {
+    vi.mocked(submitUpstreamReaderSectionTranslation).mockResolvedValue({
+      ok: true,
+      data: makeSectionTranslationResponse(),
+    });
+
+    await submitReaderSectionTranslationFromWeb("rec_1", {
+      startUnitId: "  u1  ",
+      endUnitId: "\tu2\n",
+      nodeId: "  node_1  ",
+    });
+
+    expect(vi.mocked(submitUpstreamReaderSectionTranslation).mock.calls[0]).toEqual([
+      "rec_1",
+      {
+        start_unit_id: "u1",
+        end_unit_id: "u2",
+        start_anchor_segment_id: null,
+        end_anchor_segment_id: null,
+        node_id: "node_1",
+        outline_revision: null,
+      },
+      "session-token",
+    ]);
+  });
+
+  it.each([
+    [404, "record_not_found"],
+    [401, "upstream_auth_failed"],
+    [409, "section_translation_conflict"],
+    [422, "invalid_input"],
+    [500, "upstream_unavailable"],
+    [0, "upstream_unavailable"],
+  ])("maps upstream %p to BFF code %p", async (status, code) => {
+    vi.mocked(submitUpstreamReaderSectionTranslation).mockResolvedValue({
+      ok: false,
+      status,
+      message: "upstream error body",
+    });
+
+    const result = await submitReaderSectionTranslationFromWeb("rec_1", {
+      startUnitId: "u1",
+      endUnitId: "u2",
+    });
+
+    expect(result).toMatchObject({ ok: false, code });
+    // The BFF never leaks the upstream error message verbatim — it surfaces
+    // a stable, friendly message per code.
+    if (!result.ok) {
+      expect(result.message).not.toContain("upstream error body");
+    }
+  });
+
+  it("does not leak upstream exception messages or provider payload on success", async () => {
+    vi.mocked(submitUpstreamReaderSectionTranslation).mockResolvedValue({
+      ok: true,
+      data: makeSectionTranslationResponse({ detail: null }),
+    });
+
+    const result = await submitReaderSectionTranslationFromWeb("rec_1", {
+      startUnitId: "u1",
+      endUnitId: "u2",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // Only the three contract fields are present on the success shape.
+      expect(Object.keys(result).sort()).toEqual(
+        ["detail", "job_id", "ok", "outcome"].sort(),
+      );
+    }
+  });
+
+  it("422 from upstream surfaces invalid_input (not section_translation_conflict)", async () => {
+    vi.mocked(submitUpstreamReaderSectionTranslation).mockResolvedValue({
+      ok: false,
+      status: 422,
+      message: "start_unit_id missing",
+    });
+
+    const result = await submitReaderSectionTranslationFromWeb("rec_1", {
+      startUnitId: "u1",
+      endUnitId: "u2",
+    });
+
+    expect(result).toMatchObject({ ok: false, code: "invalid_input", status: 400 });
+  });
+
+  it.each([
+    [400, "InternalValidationError: provider=acme payload={secret: 'abc'}"],
+    [418, "I'm a teapot: provider_response.id=internal-trace-928374"],
+    [451, "LegalReason: blocked due to upstream filter rule 'unauthenticated_record_access'"],
+  ])(
+    "unenumerated upstream %p does not leak internal upstream message verbatim",
+    async (status, internalMessage) => {
+      vi.mocked(submitUpstreamReaderSectionTranslation).mockResolvedValue({
+        ok: false,
+        status,
+        message: internalMessage,
+      });
+
+      const result = await submitReaderSectionTranslationFromWeb("rec_1", {
+        startUnitId: "u1",
+        endUnitId: "u2",
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        code: "upstream_error",
+        status,
+      });
+      if (!result.ok) {
+        // Stable, friendly generic message — never the upstream string.
+        expect(result.message).not.toContain(internalMessage);
+        // Negative coverage: none of the obvious internal tokens surface.
+        expect(result.message).not.toContain("InternalValidationError");
+        expect(result.message).not.toContain("secret");
+        expect(result.message).not.toContain("provider");
+        expect(result.message).not.toContain("internal-trace");
+        expect(result.message).not.toContain("LegalReason");
+        expect(result.message).not.toContain("unauthenticated_record_access");
+      }
+    },
+  );
+});

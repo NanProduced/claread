@@ -2780,4 +2780,1472 @@ describe("ReaderRecordNavigationRail", () => {
       }
     });
   });
+
+  // -------------------------------------------------------------------------
+  // T5.6c — explicit-section "解析此段" per-row action.
+  //
+  // Only trusted L2 (ready|partial, source identity match, units resolved)
+  // surfaces the action chip. Clicking sends the full range witness — never
+  // node-only — to the BFF endpoint. Succeeded → onRequestSnapshotReload +
+  // row state cleared. Other outcomes → inline accessible feedback. Per-row
+  // in-flight guard prevents double-submit. L0/L1 surfaces never show the
+  // chip; rail roving, keyboard, and snapshot identity semantics are
+  // preserved.
+  // -------------------------------------------------------------------------
+  describe("T5.6c section translation per-row action", () => {
+    const threeUnits: SnapshotUnitInput[] = [
+      { unit_id: "unit_1", order_index: 1, label: "U1" },
+      { unit_id: "unit_2", order_index: 2, label: "U2" },
+      { unit_id: "unit_3", order_index: 3, label: "U3" },
+    ];
+
+    function threeDoc() {
+      return makePlateDocument([
+        makeParagraph("unit_1", "A"),
+        makeParagraph("unit_2", "B"),
+        makeParagraph("unit_3", "C"),
+      ]);
+    }
+
+    /** Open the panel and switch to the semantic surface. */
+    async function openSemanticPanel() {
+      hoverTick(0);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+      fireEvent.click(
+        screen.getByTestId("reader-record-outline-mode-semantic"),
+      );
+      await waitFor(() =>
+        expect(
+          screen
+            .getByTestId("reader-record-navigation-rail")
+            .getAttribute("data-outline-surface"),
+        ).toBe("semantic"),
+      );
+    }
+
+    function mockFetchSuccess(
+      outcome: string,
+      body: { outcome: string; job_id: string | null; detail: string | null } = {
+        outcome: "succeeded",
+        job_id: "job_1",
+        detail: null,
+      },
+    ) {
+      vi.mocked(globalThis.fetch).mockResolvedValue(
+        new Response(JSON.stringify({ ok: true, ...body }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      void outcome;
+    }
+
+    function mockFetchBffError(
+      status: number,
+      code: string,
+      message: string,
+    ) {
+      vi.mocked(globalThis.fetch).mockResolvedValue(
+        new Response(
+          JSON.stringify({ ok: false, status, code, message }),
+          { status, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }
+
+    beforeEach(() => {
+      vi.spyOn(globalThis, "fetch").mockReset();
+    });
+
+    it("L2 trusted ready: shows '解析此段' chip on each semantic row", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+
+      // Three nodes (n1, n2, n3) → three resolve chips.
+      expect(
+        screen.getByTestId("reader-record-outline-resolve-n1"),
+      ).toBeTruthy();
+      expect(
+        screen.getByTestId("reader-record-outline-resolve-n2"),
+      ).toBeTruthy();
+      expect(
+        screen.getByTestId("reader-record-outline-resolve-n3"),
+      ).toBeTruthy();
+    });
+
+    it("L2 trusted partial: chip still shown", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "partial" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+
+      expect(
+        screen.getByTestId("reader-record-outline-resolve-n1"),
+      ).toBeTruthy();
+    });
+
+    it("L0/L1 deterministic surface: no resolve chip even with trusted outline", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      // Default surface is deterministic — no chip.
+      expect(
+        screen.queryByTestId("reader-record-outline-resolve-n1"),
+      ).toBeNull();
+
+      hoverTick(0);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+      // Panel open on deterministic; still no chip.
+      expect(
+        screen.queryByTestId("reader-record-outline-resolve-n1"),
+      ).toBeNull();
+    });
+
+    it("untrusted statuses hide L2 → no chip", () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      for (const status of [
+        "pending",
+        "failed",
+        "stale",
+        "unavailable",
+      ] as const) {
+        const { unmount } = render(
+          <ReaderRecordNavigationRail
+            snapshot={makeSnapshot(threeUnits, {
+              semantic_outline: makeOutlineDto({ status }),
+            })}
+            plateDocument={threeDoc()}
+          />,
+        );
+        expect(
+          screen.queryByTestId("reader-record-outline-resolve-n1"),
+        ).toBeNull();
+        unmount();
+      }
+    });
+
+    it("null outline: no chip", () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, { semantic_outline: null })}
+          plateDocument={threeDoc()}
+        />,
+      );
+      expect(
+        screen.queryByTestId("reader-record-outline-resolve-n1"),
+      ).toBeNull();
+    });
+
+    it("click sends full range witness (start/end unit + anchors + audit fields) — never node-only", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }, [
+              {
+                node_id: "n_anchored",
+                parent_node_id: null,
+                depth: 1,
+                title: "Anchored",
+                start_unit_id: "unit_1",
+                end_unit_id: "unit_2",
+                start_anchor_segment_id: "seg_a",
+                end_anchor_segment_id: "seg_b",
+                order_index: 1,
+              },
+            ]),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("succeeded");
+
+      fireEvent.click(
+        screen.getByTestId("reader-record-outline-resolve-n_anchored"),
+      );
+
+      await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1));
+
+      const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+      expect(url).toBe(
+        "/api/web/reader-plate/records/record_1/section-translation",
+      );
+      expect(init?.method).toBe("POST");
+      const body = JSON.parse((init?.body as string) ?? "{}");
+      // Full range witness — never node-only.
+      expect(body).toMatchObject({
+        startUnitId: "unit_1",
+        endUnitId: "unit_2",
+        startAnchorSegmentId: "seg_a",
+        endAnchorSegmentId: "seg_b",
+        nodeId: "n_anchored",
+        outlineRevision: "rev_1",
+      });
+    });
+
+    it("click on row without anchors sends null anchors (still full range)", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("succeeded");
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+
+      await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1));
+      const body = JSON.parse(
+        (vi.mocked(globalThis.fetch).mock.calls[0]![1]?.body as string) ?? "{}",
+      );
+      expect(body).toMatchObject({
+        startUnitId: "unit_1",
+        endUnitId: "unit_2",
+        startAnchorSegmentId: null,
+        endAnchorSegmentId: null,
+        nodeId: "n1",
+        outlineRevision: "rev_1",
+      });
+    });
+
+    it("loading state shows '正在解析…' and disables repeat click for the same row", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+
+      // Fetch never resolves → stays in loading.
+      vi.mocked(globalThis.fetch).mockImplementation(
+        () => new Promise(() => {}),
+      );
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-loading-n1"),
+        ).toBeTruthy(),
+      );
+      expect(
+        screen.queryByTestId("reader-record-outline-resolve-n1"),
+      ).toBeNull();
+
+      // Click the parent row button (chip is gone) — must not trigger a
+      // second fetch (in-flight guard).
+      fireEvent.click(screen.getByTestId("reader-record-outline-node-n1"));
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("succeeded outcome clears row state and triggers onRequestSnapshotReload", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      const onRequestSnapshotReload = vi.fn().mockResolvedValue(undefined);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+          onRequestSnapshotReload={onRequestSnapshotReload}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("succeeded");
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+
+      await waitFor(() =>
+        expect(onRequestSnapshotReload).toHaveBeenCalledTimes(1),
+      );
+      // Row state cleared → chip returns.
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-n1"),
+        ).toBeTruthy(),
+      );
+      expect(
+        screen.queryByTestId("reader-record-outline-resolve-loading-n1"),
+      ).toBeNull();
+      expect(
+        screen.queryByTestId("reader-record-outline-resolve-feedback-n1"),
+      ).toBeNull();
+    });
+
+    it.each([
+      ["retry_later", "稍后重试"],
+      ["already_covered_or_inflight", "已在解析中"],
+      ["budget_exhausted", "解析额度已用完"],
+      ["rejected", "无法解析此段"],
+      ["superseded", "已过期，请刷新"],
+    ] as const)(
+      "outcome '%s' surfaces inline accessible feedback message",
+      async (outcome, expectedMessage) => {
+        renderTargets(["unit_1", "unit_2", "unit_3"]);
+        render(
+          <ReaderRecordNavigationRail
+            snapshot={makeSnapshot(threeUnits, {
+              semantic_outline: makeOutlineDto({ status: "ready" }),
+            })}
+            plateDocument={threeDoc()}
+          />,
+        );
+
+        await openSemanticPanel();
+        mockFetchSuccess(outcome, {
+          outcome,
+          job_id: null,
+          detail: null,
+        });
+
+        fireEvent.click(
+          screen.getByTestId("reader-record-outline-resolve-n1"),
+        );
+
+        await waitFor(() =>
+          expect(
+            screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+          ).toBeTruthy(),
+        );
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1")
+            .textContent,
+        ).toBe(expectedMessage);
+        // No snapshot reload on non-succeeded outcomes.
+        // (onRequestSnapshotReload not provided → not called.)
+      },
+    );
+
+    it("BFF error (ok:false) surfaces '无法解析此段' feedback", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchBffError(409, "section_translation_conflict", "段落内容已更新");
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+      // BFF never leaks upstream message; UI shows generic rejected message.
+      expect(
+        screen.getByTestId("reader-record-outline-resolve-feedback-n1")
+          .textContent,
+      ).toBe("无法解析此段");
+    });
+
+    it("network failure surfaces '网络异常，请稍后重试'", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      vi.mocked(globalThis.fetch).mockRejectedValue(new Error("network"));
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+      expect(
+        screen.getByTestId("reader-record-outline-resolve-feedback-n1")
+          .textContent,
+      ).toBe("网络异常，请稍后重试");
+    });
+
+    it("per-row isolation: clicking row A does not put row B in loading", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      // Never resolves → both would stay in loading if clicked.
+      vi.mocked(globalThis.fetch).mockImplementation(
+        () => new Promise(() => {}),
+      );
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-loading-n1"),
+        ).toBeTruthy(),
+      );
+      // Row n3 still idle — its resolve chip still present.
+      expect(
+        screen.getByTestId("reader-record-outline-resolve-n3"),
+      ).toBeTruthy();
+      expect(
+        screen.queryByTestId("reader-record-outline-resolve-loading-n3"),
+      ).toBeNull();
+    });
+
+    it("snapshot identity change clears all row state", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      const { rerender } = render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      vi.mocked(globalThis.fetch).mockImplementation(
+        () => new Promise(() => {}),
+      );
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-loading-n1"),
+        ).toBeTruthy(),
+      );
+
+      // Switch source identity → all row state clears.
+      rerender(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            baseId: "base_2",
+            generation: 1,
+            semantic_outline: makeOutlineDto({
+              status: "ready",
+              source_identity: { base_id: "base_2", generation: 1 },
+            }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      // Even though fetch never resolved, the chip returns because the row
+      // state map was reset.
+      await waitFor(() =>
+        expect(
+          screen.queryByTestId("reader-record-outline-resolve-loading-n1"),
+        ).toBeNull(),
+      );
+    });
+
+    it("outline revision change clears all row state", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      const { rerender } = render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("rejected", {
+        outcome: "rejected",
+        job_id: null,
+        detail: null,
+      });
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+
+      // New outline revision → state cleared.
+      rerender(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({
+              status: "ready",
+              publication: {
+                outline_revision: "rev_2",
+                layer_id: "layer_ol",
+                published_at: "2026-07-18T00:00:00Z",
+              },
+            }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await waitFor(() =>
+        expect(
+          screen.queryByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeNull(),
+      );
+      // Chip returns (after re-opening semantic panel since rerender may
+      // force deterministic).
+      hoverTick(0);
+      await waitFor(() =>
+        expect(
+          screen
+            .getByTestId("reader-record-navigation-panel")
+            .classList.contains("pointer-events-none"),
+        ).toBe(false),
+      );
+      fireEvent.click(
+        screen.getByTestId("reader-record-outline-mode-semantic"),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-n1"),
+        ).toBeTruthy(),
+      );
+    });
+
+    it("resolve chip is its own accessible command tab stop (tabIndex=0)", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+
+      // The chip is its own accessible command tab stop — not trapped
+      // behind the parent row's roving tabindex.
+      const chip = screen.getByTestId("reader-record-outline-resolve-n1");
+      expect(chip.getAttribute("tabindex")).toBe("0");
+      expect(chip.tagName).toBe("BUTTON");
+    });
+
+    it("resolve chip can receive focus via Tab and is independently focusable", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+
+      const chip = screen.getByTestId("reader-record-outline-resolve-n1");
+      chip.focus();
+      expect(document.activeElement).toBe(chip);
+    });
+
+    it("Enter on resolve chip sends full range witness (keyboard activation)", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("succeeded");
+
+      const chip = screen.getByTestId("reader-record-outline-resolve-n1");
+      chip.focus();
+      fireEvent.keyDown(chip, { key: "Enter" });
+
+      await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+      const call = vi.mocked(globalThis.fetch).mock.calls[0]!;
+      const body = JSON.parse(String(call[1]?.body));
+      // Full range witness — never node-only.
+      expect(body).toMatchObject({
+        startUnitId: "unit_1",
+        endUnitId: "unit_2",
+        startAnchorSegmentId: null,
+        endAnchorSegmentId: null,
+        nodeId: "n1",
+        outlineRevision: "rev_1",
+      });
+    });
+
+    it("Space on resolve chip sends full range witness (keyboard activation)", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("succeeded");
+
+      const chip = screen.getByTestId("reader-record-outline-resolve-n1");
+      chip.focus();
+      fireEvent.keyDown(chip, { key: " " });
+
+      await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+      const call = vi.mocked(globalThis.fetch).mock.calls[0]!;
+      const body = JSON.parse(String(call[1]?.body));
+      expect(body).toMatchObject({
+        startUnitId: "unit_1",
+        endUnitId: "unit_2",
+        nodeId: "n1",
+        outlineRevision: "rev_1",
+      });
+    });
+
+    it("chip keyboard activation does not propagate to parent row (no body scroll)", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("succeeded");
+
+      vi.mocked(window.scrollTo).mockClear();
+      const chip = screen.getByTestId("reader-record-outline-resolve-n1");
+      chip.focus();
+      fireEvent.keyDown(chip, { key: "Enter" });
+
+      await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+      // Parent row's onClick triggers body scroll — must not fire when
+      // chip is keyboard-activated.
+      expect(window.scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("chip ArrowDown/Escape do not bubble to parent row's roving keyboard handler", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+
+      const chip = screen.getByTestId("reader-record-outline-resolve-n1");
+      const n1 = screen.getByTestId("reader-record-outline-node-n1");
+      const n2 = screen.getByTestId("reader-record-outline-node-n2");
+
+      // Put roving focus on n1.
+      n1.focus();
+      expect(document.activeElement).toBe(n1);
+
+      // Move focus to the chip and press ArrowDown — must NOT move roving
+      // to n2 (the parent row's roving handler must not fire).
+      chip.focus();
+      fireEvent.keyDown(chip, { key: "ArrowDown" });
+      expect(document.activeElement).toBe(chip);
+      // Roving tabindex on rows unchanged: n1 stays at 0, n2 stays at -1.
+      expect(n1.getAttribute("tabindex")).toBe("0");
+      expect(n2.getAttribute("tabindex")).toBe("-1");
+
+      // Escape on chip must NOT return focus to the trigger.
+      fireEvent.keyDown(chip, { key: "Escape" });
+      expect(document.activeElement).toBe(chip);
+    });
+
+    it("chip click does not propagate to the parent row (no body scroll)", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("succeeded");
+
+      vi.mocked(window.scrollTo).mockClear();
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+
+      await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+      // Parent row's onClick triggers body scroll — must not fire when chip
+      // is clicked.
+      expect(window.scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("rail roving keyboard navigation unaffected by chips", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      const trigger = screen.getByTestId("reader-record-outline-trigger");
+      fireEvent.click(trigger);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+      fireEvent.click(
+        screen.getByTestId("reader-record-outline-mode-semantic"),
+      );
+
+      const n1 = screen.getByTestId("reader-record-outline-node-n1");
+      const n2 = screen.getByTestId("reader-record-outline-node-n2");
+      n1.focus();
+      fireEvent.keyDown(n1, { key: "ArrowDown" });
+      await waitFor(() => expect(document.activeElement).toBe(n2));
+      fireEvent.keyDown(n2, { key: "Escape" });
+      await waitFor(() => expect(document.activeElement).toBe(trigger));
+    });
+
+    it("L0/L1 navigation items unchanged when outline is trusted but surface is deterministic", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      hoverTick(0);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+
+      // Deterministic L0 items (U1/U2/U3) are present and clickable; no chip.
+      const detButtons = panel.querySelectorAll("ol button[data-unit-id], ol button:not([data-outline-node-id])");
+      expect(detButtons.length).toBeGreaterThan(0);
+      expect(
+        screen.queryByTestId("reader-record-outline-resolve-n1"),
+      ).toBeNull();
+    });
+
+    // -------------------------------------------------------------------------
+    // T5.6c-P2 — retry action on non-success outcomes
+    //
+    // The P1 implementation replaced the action button with a feedback span
+    // on retry_later / rejected / superseded / etc., leaving the user with
+    // no in-row way to retry. P2 keeps the feedback span AND renders a
+    // "重试" button next to it so the user can retry without waiting for a
+    // snapshot refresh. The retry button uses the same testid as the idle
+    // action so the accessible action locator is stable across states.
+    // -------------------------------------------------------------------------
+
+    it("retry_later surfaces feedback AND a retry action button (same testid, label '重试')", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("retry_later", {
+        outcome: "retry_later",
+        job_id: null,
+        detail: null,
+      });
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+
+      // Feedback span appears with the message.
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+      expect(
+        screen.getByTestId("reader-record-outline-resolve-feedback-n1")
+          .textContent,
+      ).toBe("稍后重试");
+
+      // The retry action button is also present, with the same testid as
+      // the idle action — the accessible action locator is stable.
+      const retryAction = screen.getByTestId(
+        "reader-record-outline-resolve-n1",
+      );
+      expect(retryAction.tagName).toBe("BUTTON");
+      expect(retryAction.getAttribute("data-resolve-action")).toBe("retry");
+      expect(retryAction.textContent).toBe("重试");
+      expect(retryAction.getAttribute("aria-label")).toBe("重试：Root A");
+      // The retry action is its own accessible command tab stop.
+      expect(retryAction.getAttribute("tabindex")).toBe("0");
+    });
+
+    it("clicking retry sends a second full-range witness request", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("retry_later", {
+        outcome: "retry_later",
+        job_id: null,
+        detail: null,
+      });
+
+      // First click → retry_later feedback.
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+
+      // Second mock: succeeded (the user retries after a transient failure).
+      mockFetchSuccess("succeeded");
+
+      // Retry click → second fetch with full range witness.
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+
+      await waitFor(() =>
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2),
+      );
+      const secondCall = vi.mocked(globalThis.fetch).mock.calls[1]!;
+      const body = JSON.parse(String(secondCall[1]?.body));
+      expect(body).toMatchObject({
+        startUnitId: "unit_1",
+        endUnitId: "unit_2",
+        startAnchorSegmentId: null,
+        endAnchorSegmentId: null,
+        nodeId: "n1",
+        outlineRevision: "rev_1",
+      });
+    });
+
+    it("Enter on retry button sends a second full-range witness (keyboard activation)", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("retry_later", {
+        outcome: "retry_later",
+        job_id: null,
+        detail: null,
+      });
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+
+      mockFetchSuccess("succeeded");
+      const retryAction = screen.getByTestId(
+        "reader-record-outline-resolve-n1",
+      );
+      retryAction.focus();
+      fireEvent.keyDown(retryAction, { key: "Enter" });
+
+      await waitFor(() =>
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2),
+      );
+      const body = JSON.parse(
+        String(vi.mocked(globalThis.fetch).mock.calls[1]![1]?.body),
+      );
+      expect(body).toMatchObject({
+        startUnitId: "unit_1",
+        endUnitId: "unit_2",
+        nodeId: "n1",
+        outlineRevision: "rev_1",
+      });
+    });
+
+    it("Space on retry button sends a second full-range witness (keyboard activation)", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("rejected", {
+        outcome: "rejected",
+        job_id: null,
+        detail: null,
+      });
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+
+      mockFetchSuccess("succeeded");
+      const retryAction = screen.getByTestId(
+        "reader-record-outline-resolve-n1",
+      );
+      retryAction.focus();
+      fireEvent.keyDown(retryAction, { key: " " });
+
+      await waitFor(() =>
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2),
+      );
+      const body = JSON.parse(
+        String(vi.mocked(globalThis.fetch).mock.calls[1]![1]?.body),
+      );
+      expect(body).toMatchObject({
+        startUnitId: "unit_1",
+        endUnitId: "unit_2",
+        nodeId: "n1",
+        outlineRevision: "rev_1",
+      });
+    });
+
+    it("retry clears old feedback and enters loading state", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("retry_later", {
+        outcome: "retry_later",
+        job_id: null,
+        detail: null,
+      });
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+
+      // Second fetch never resolves → retry puts the row back into loading.
+      vi.mocked(globalThis.fetch).mockImplementation(
+        () => new Promise(() => {}),
+      );
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+
+      // Old feedback cleared; loading span visible; retry action button
+      // temporarily hidden (loading state replaces both feedback and
+      // action).
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-loading-n1"),
+        ).toBeTruthy(),
+      );
+      expect(
+        screen.queryByTestId("reader-record-outline-resolve-feedback-n1"),
+      ).toBeNull();
+      expect(
+        screen.queryByTestId("reader-record-outline-resolve-n1"),
+      ).toBeNull();
+    });
+
+    it("already_covered_or_inflight retry still hits fetch (queued-recovery re-trigger)", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("already_covered_or_inflight", {
+        outcome: "already_covered_or_inflight",
+        job_id: "job_existing",
+        detail: null,
+      });
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+      expect(
+        screen.getByTestId("reader-record-outline-resolve-feedback-n1")
+          .textContent,
+      ).toBe("已在解析中");
+
+      // The retry action is present even for already_covered_or_inflight —
+      // the user can re-trigger the request path so the backend
+      // queued-recovery drain can be re-invoked.
+      expect(
+        screen.getByTestId("reader-record-outline-resolve-n1"),
+      ).toBeTruthy();
+
+      mockFetchSuccess("succeeded");
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+
+      await waitFor(() =>
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2),
+      );
+      // Second request still goes through the same fetch path (no
+      // client-side short-circuit for already_covered_or_inflight).
+      const secondCall = vi.mocked(globalThis.fetch).mock.calls[1]!;
+      expect(secondCall[0]).toBe(
+        "/api/web/reader-plate/records/record_1/section-translation",
+      );
+      expect(secondCall[1]?.method).toBe("POST");
+    });
+
+    it("BFF error retry sends a second full-range witness", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchBffError(409, "section_translation_conflict", "段落内容已更新");
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+
+      mockFetchSuccess("succeeded");
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+
+      await waitFor(() =>
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2),
+      );
+      const body = JSON.parse(
+        String(vi.mocked(globalThis.fetch).mock.calls[1]![1]?.body),
+      );
+      expect(body).toMatchObject({
+        startUnitId: "unit_1",
+        endUnitId: "unit_2",
+        nodeId: "n1",
+        outlineRevision: "rev_1",
+      });
+    });
+
+    it("network failure retry sends a second full-range witness", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      vi.mocked(globalThis.fetch).mockRejectedValue(new Error("network"));
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+      expect(
+        screen.getByTestId("reader-record-outline-resolve-feedback-n1")
+          .textContent,
+      ).toBe("网络异常，请稍后重试");
+
+      mockFetchSuccess("succeeded");
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+
+      await waitFor(() =>
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2),
+      );
+      const body = JSON.parse(
+        String(vi.mocked(globalThis.fetch).mock.calls[1]![1]?.body),
+      );
+      expect(body).toMatchObject({
+        startUnitId: "unit_1",
+        endUnitId: "unit_2",
+        nodeId: "n1",
+        outlineRevision: "rev_1",
+      });
+    });
+
+    it("retry button is its own accessible command tab stop (tabIndex=0)", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("superseded", {
+        outcome: "superseded",
+        job_id: null,
+        detail: null,
+      });
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+
+      const retryAction = screen.getByTestId(
+        "reader-record-outline-resolve-n1",
+      );
+      expect(retryAction.getAttribute("tabindex")).toBe("0");
+      expect(retryAction.tagName).toBe("BUTTON");
+
+      // Independently focusable.
+      retryAction.focus();
+      expect(document.activeElement).toBe(retryAction);
+    });
+
+    it("retry click does not propagate to parent row (no body scroll)", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("retry_later", {
+        outcome: "retry_later",
+        job_id: null,
+        detail: null,
+      });
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+
+      vi.mocked(window.scrollTo).mockClear();
+      mockFetchSuccess("succeeded");
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+
+      await waitFor(() =>
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2),
+      );
+      // Parent row's onClick triggers body scroll — must not fire when
+      // retry button is clicked.
+      expect(window.scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("retry keyboard activation does not propagate to parent row (no body scroll)", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("retry_later", {
+        outcome: "retry_later",
+        job_id: null,
+        detail: null,
+      });
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+
+      vi.mocked(window.scrollTo).mockClear();
+      mockFetchSuccess("succeeded");
+      const retryAction = screen.getByTestId(
+        "reader-record-outline-resolve-n1",
+      );
+      retryAction.focus();
+      fireEvent.keyDown(retryAction, { key: "Enter" });
+
+      await waitFor(() =>
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2),
+      );
+      expect(window.scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("retry ArrowDown/Escape do not bubble to parent row's roving keyboard handler", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("retry_later", {
+        outcome: "retry_later",
+        job_id: null,
+        detail: null,
+      });
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+
+      const retryAction = screen.getByTestId(
+        "reader-record-outline-resolve-n1",
+      );
+      const n1 = screen.getByTestId("reader-record-outline-node-n1");
+      const n2 = screen.getByTestId("reader-record-outline-node-n2");
+
+      // Put roving focus on n1, then move to retry action.
+      n1.focus();
+      expect(document.activeElement).toBe(n1);
+      retryAction.focus();
+
+      // ArrowDown on retry action must NOT move roving to n2.
+      fireEvent.keyDown(retryAction, { key: "ArrowDown" });
+      expect(document.activeElement).toBe(retryAction);
+      expect(n1.getAttribute("tabindex")).toBe("0");
+      expect(n2.getAttribute("tabindex")).toBe("-1");
+
+      // Escape on retry action must NOT return focus to the trigger.
+      fireEvent.keyDown(retryAction, { key: "Escape" });
+      expect(document.activeElement).toBe(retryAction);
+    });
+
+    it("rail roving keyboard navigation unaffected by retry button presence", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      const trigger = screen.getByTestId("reader-record-outline-trigger");
+      fireEvent.click(trigger);
+      const panel = screen.getByTestId("reader-record-navigation-panel");
+      await waitFor(() =>
+        expect(panel.classList.contains("pointer-events-none")).toBe(false),
+      );
+      fireEvent.click(
+        screen.getByTestId("reader-record-outline-mode-semantic"),
+      );
+
+      // Put row n1 into feedback state so the retry button renders.
+      mockFetchSuccess("retry_later", {
+        outcome: "retry_later",
+        job_id: null,
+        detail: null,
+      });
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+
+      // Row roving still works alongside the retry button.
+      const n1 = screen.getByTestId("reader-record-outline-node-n1");
+      const n2 = screen.getByTestId("reader-record-outline-node-n2");
+      n1.focus();
+      fireEvent.keyDown(n1, { key: "ArrowDown" });
+      await waitFor(() => expect(document.activeElement).toBe(n2));
+      fireEvent.keyDown(n2, { key: "Escape" });
+      await waitFor(() => expect(document.activeElement).toBe(trigger));
+    });
+
+    it("snapshot identity change clears feedback + retry state (row returns to idle)", async () => {
+      renderTargets(["unit_1", "unit_2", "unit_3"]);
+      const { rerender } = render(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            semantic_outline: makeOutlineDto({ status: "ready" }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      await openSemanticPanel();
+      mockFetchSuccess("retry_later", {
+        outcome: "retry_later",
+        job_id: null,
+        detail: null,
+      });
+
+      fireEvent.click(screen.getByTestId("reader-record-outline-resolve-n1"));
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeTruthy(),
+      );
+      // Retry action present.
+      expect(
+        screen.getByTestId("reader-record-outline-resolve-n1"),
+      ).toBeTruthy();
+
+      // Switch source identity → all row state clears.
+      rerender(
+        <ReaderRecordNavigationRail
+          snapshot={makeSnapshot(threeUnits, {
+            baseId: "base_2",
+            generation: 1,
+            semantic_outline: makeOutlineDto({
+              status: "ready",
+              source_identity: { base_id: "base_2", generation: 1 },
+            }),
+          })}
+          plateDocument={threeDoc()}
+        />,
+      );
+
+      // Feedback cleared.
+      await waitFor(() =>
+        expect(
+          screen.queryByTestId("reader-record-outline-resolve-feedback-n1"),
+        ).toBeNull(),
+      );
+      // Idle action returns (resolve, not retry).
+      hoverTick(0);
+      await waitFor(() =>
+        expect(
+          screen
+            .getByTestId("reader-record-navigation-panel")
+            .classList.contains("pointer-events-none"),
+        ).toBe(false),
+      );
+      fireEvent.click(
+        screen.getByTestId("reader-record-outline-mode-semantic"),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("reader-record-outline-resolve-n1"),
+        ).toBeTruthy(),
+      );
+      expect(
+        screen
+          .getByTestId("reader-record-outline-resolve-n1")
+          .getAttribute("data-resolve-action"),
+      ).toBe("resolve");
+    });
+  });
 });

@@ -14,6 +14,7 @@ import {
   initUpstreamReaderSourceArtifactUpload,
   pollUpstreamReaderEvents,
   submitUpstreamReaderPlainText,
+  submitUpstreamReaderSectionTranslation,
   submitUpstreamReaderSourceArtifactInput,
   submitUpstreamReaderUnifiedInput,
 } from "@/services/api/reader-plate";
@@ -49,6 +50,8 @@ import type {
   ReaderInputAdapterSourceTypeDto,
   ReaderPlainTextSubmitResponseDto,
   ReaderPlateSnapshotDto,
+  ReaderSectionTranslationRequestDto,
+  ReaderSectionTranslationResponseDto,
   ReaderSourceArtifactSubmitInputRequestDto,
   ReaderSourceArtifactSubmitInputResponseDto,
   ReaderSourceArtifactUploadCompleteRequestDto,
@@ -75,7 +78,9 @@ export type ReaderPlateBffError = {
     | "candidate_conflict"
     | "candidate_not_found"
     | "candidate_conflict_open_reader"
-    | "candidate_conflict_return_to_library";
+    | "candidate_conflict_return_to_library"
+    // T5.6c: section-translation fence conflict (409 from upstream).
+    | "section_translation_conflict";
   message: string;
   recordId?: string;
 };
@@ -999,4 +1004,136 @@ export async function ensureReaderArticleRagIndexFromWeb(
   }
 
   return { ok: true, ...mapArticleRagIndexEnsure(upstreamResult.data) };
+}
+
+// ---------------------------------------------------------------------------
+// T5.6c — POST /reader/records/{record_id}/section-translation
+//
+// Synchronous explicit-section translation command. The Web BFF is a thin
+// passthrough: it enforces session, validates the request shape, forwards the
+// full section range witness to the upstream FastAPI route, and maps upstream
+// errors to the standard `ReaderPlateBffError` codes. The upstream response
+// body is leak-safe (no prompt / provider payload / envelope / secret) and is
+// returned as-is to the client. 409 from upstream is mapped to a dedicated
+// `section_translation_conflict` code so the client can distinguish fence
+// conflicts from generic candidate conflicts.
+// ---------------------------------------------------------------------------
+
+export type ReaderSectionTranslationResult =
+  | ({ ok: true } & ReaderSectionTranslationResponseDto)
+  | ReaderPlateBffError;
+
+function sectionTranslationUpstreamError(
+  status: number,
+  message: string,
+): ReaderPlateBffError {
+  if (status === 0 || status >= 500) {
+    return {
+      ok: false,
+      status: 503,
+      code: "upstream_unavailable",
+      message: "透读服务暂时不可用，请稍后重试。",
+    };
+  }
+  if (status === 401) {
+    return {
+      ok: false,
+      status: 401,
+      code: "upstream_auth_failed",
+      message: "登录态已失效，请重新登录后再试。",
+    };
+  }
+  if (status === 404) {
+    return {
+      ok: false,
+      status: 404,
+      code: "record_not_found",
+      message: "没有找到这条阅读记录。",
+    };
+  }
+  if (status === 409) {
+    return {
+      ok: false,
+      status: 409,
+      code: "section_translation_conflict",
+      message: "段落内容已更新，请刷新后再试。",
+    };
+  }
+  if (status === 422) {
+    return {
+      ok: false,
+      status: 400,
+      code: "invalid_input",
+      message: "请求参数不正确，请刷新后重试。",
+    };
+  }
+  // Unenumerated upstream status (e.g. 400 / 418 / other 4xx). We must
+  // never leak the upstream ``message`` verbatim — it can contain
+  // provider payload, exception text, or other internal signals. Map
+  // to a stable ``upstream_error`` code with a friendly generic
+  // Chinese message; preserve the upstream ``status`` so the client
+  // can still distinguish 4xx from 5xx-class failures if needed.
+  return {
+    ok: false,
+    status,
+    code: "upstream_error",
+    message: "解析服务异常，请稍后重试。",
+  };
+}
+
+function asNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export async function submitReaderSectionTranslationFromWeb(
+  recordId: string,
+  input: {
+    startUnitId?: unknown;
+    endUnitId?: unknown;
+    startAnchorSegmentId?: unknown;
+    endAnchorSegmentId?: unknown;
+    nodeId?: unknown;
+    outlineRevision?: unknown;
+  },
+): Promise<ReaderSectionTranslationResult> {
+  if (!recordId) {
+    return invalidInput("缺少 record_id。");
+  }
+
+  const startUnitId = asNonEmptyString(input.startUnitId);
+  const endUnitId = asNonEmptyString(input.endUnitId);
+  if (startUnitId === null || endUnitId === null) {
+    return invalidInput("start_unit_id 与 end_unit_id 必须同时提供。");
+  }
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const payload: ReaderSectionTranslationRequestDto = {
+    start_unit_id: startUnitId,
+    end_unit_id: endUnitId,
+    start_anchor_segment_id: asNonEmptyString(input.startAnchorSegmentId),
+    end_anchor_segment_id: asNonEmptyString(input.endAnchorSegmentId),
+    node_id: asNonEmptyString(input.nodeId),
+    outline_revision: asNonEmptyString(input.outlineRevision),
+  };
+
+  const upstreamResult = await submitUpstreamReaderSectionTranslation(
+    recordId,
+    payload,
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    return sectionTranslationUpstreamError(
+      upstreamResult.status,
+      upstreamResult.message,
+    );
+  }
+
+  return { ok: true, ...upstreamResult.data };
 }

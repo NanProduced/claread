@@ -1330,3 +1330,41 @@ export interface ReaderArticleRagIndexEnsureResponseDto {
   index_version: string | null;
   chunker_version: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// T5.6c — POST /reader/records/{record_id}/section-translation
+//
+// Mirrors `ReaderSectionTranslation*` in
+// `services/api/app/schemas/reader_orchestration.py`. The body carries the
+// full section range witness only; `record_id` / `base_id` / `generation`
+// / `layer_family` are server-authoritative and MUST NOT appear in the
+// request. `node_id` and `outline_revision` are audit-only and never
+// sufficient for admission. The response is leak-safe: no prompt, provider
+// payload, envelope or secret is ever echoed.
+// ---------------------------------------------------------------------------
+
+export type ReaderSectionTranslationOutcomeDto =
+  | "succeeded"
+  | "retry_later"
+  | "already_covered_or_inflight"
+  | "budget_exhausted"
+  | "rejected"
+  | "superseded";
+
+export interface ReaderSectionTranslationRequestDto {
+  start_unit_id: string;
+  end_unit_id: string;
+  start_anchor_segment_id?: string | null;
+  end_anchor_segment_id?: string | null;
+  /** Audit-only; never sufficient for admission. */
+  node_id?: string | null;
+  /** Audit-only; never sufficient for admission. */
+  outline_revision?: string | null;
+}
+
+export interface ReaderSectionTranslationResponseDto {
+  outcome: ReaderSectionTranslationOutcomeDto;
+  job_id: string | null;
+  /** Stable reason code for diagnostics; never an exception message. */
+  detail: string | null;
+}

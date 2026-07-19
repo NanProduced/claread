@@ -1565,3 +1565,52 @@ class ReaderArticleRagIndexEnsureResponse(BaseModel):
     job_id: str | None = None
     index_version: str | None = Field(default=None, min_length=1)
     chunker_version: str | None = Field(default=None, min_length=1)
+
+
+# ---------------------------------------------------------------------------
+# T5.6c — Explicit section translation command (synchronous bounded)
+# ---------------------------------------------------------------------------
+
+ReaderSectionTranslationOutcome = Literal[
+    "succeeded",
+    "retry_later",
+    "already_covered_or_inflight",
+    "budget_exhausted",
+    "rejected",
+    "superseded",
+]
+
+
+class ReaderSectionTranslationRequest(BaseModel):
+    """POST /reader/records/{record_id}/section-translation request body.
+
+    The body carries the full section range witness only. Identity fields
+    (``record_id`` / ``base_id`` / ``generation``) and ``layer_family`` are
+    server-authoritative and MUST NOT appear here. ``node_id`` and
+    ``outline_revision`` are audit-only and never sufficient for admission.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_unit_id: str = Field(min_length=1)
+    end_unit_id: str = Field(min_length=1)
+    start_anchor_segment_id: str | None = None
+    end_anchor_segment_id: str | None = None
+    node_id: str | None = None
+    outline_revision: str | None = None
+
+
+class ReaderSectionTranslationResponse(BaseModel):
+    """POST /reader/records/{record_id}/section-translation response.
+
+    Stable, minimal, leak-safe: no prompt / provider payload / envelope /
+    secret is ever echoed. ``job_id`` is exposed only when the bootstrap or
+    drain produced one (audit correlation). ``detail`` carries a stable
+    reason code for diagnostics; never an exception message.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: ReaderSectionTranslationOutcome
+    job_id: str | None = None
+    detail: str | None = None
