@@ -89,6 +89,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
@@ -118,6 +119,9 @@ from app.services.reader_record_ask.document_access import (  # noqa: E402
     ReadingUnitView,
     build_document_scope,
 )
+from app.services.reader_record_ask.baseline_context import (  # noqa: E402
+    ModelContextChunk,
+)
 from app.services.reader_record_ask.runtime import (  # noqa: E402
     run_reading_record_ask,
 )
@@ -138,6 +142,7 @@ from claread_eval.reader_record_ask.evaluation import (  # noqa: E402
     evaluate_artifact,
 )
 from claread_eval.reader_record_ask.evaluators.artifact import (  # noqa: E402
+    ModelContextSupportObservation,
     RawArtifact,
     RawEvidenceObservation,
     RawUsage,
@@ -674,6 +679,219 @@ def _build_usage_from_budget(
     )
 
 
+def _compute_model_context_fingerprint(
+    chunks: tuple[ModelContextChunk, ...] | Sequence[ModelContextChunk],
+) -> str | None:
+    """R4-A4-0 final closure (P0-3): canonical SHA-256 over actual chunks.
+
+    Computes a deterministic SHA-256 over the actual
+    ``model_context_chunks`` (the chunks the model REALLY saw). The
+    framing is length-prefixed and unambiguous:
+
+        for each chunk in chunk_ordinal order:
+            u64_be(ordinal)
+            || u64_be(len(handle_id_utf8)) || handle_id_utf8
+            || u64_be(len(text_utf8))      || text_utf8
+
+    The hash binds ``ordinal`` + ``handle_id`` + ``text`` for every
+    chunk — a change to any of the three (truncation, handle rename,
+    chunk reorder) produces a different fingerprint. Simple
+    concatenation is forbidden (path/content boundary could shift).
+
+    Returns ``None`` when ``chunks`` is empty — the artifact will
+    carry ``model_context_fingerprint=None`` which the evaluator
+    treats as ``instrumentation_incomplete`` for new artifacts
+    (fail-closed) or as ``legacy_artifact`` when combined with empty
+    observations.
+
+    This fingerprint is the artifact-internal integrity binding. It
+    is NOT an independent security proof — it only ensures that each
+    observation was computed against the same set of chunks the
+    artifact records.
+    """
+    chunks_list = list(chunks)
+    if not chunks_list:
+        return None
+    # Sort by chunk_ordinal for order-independence (defensive; the
+    # assembler already produces them in ordinal order).
+    sorted_chunks = sorted(chunks_list, key=lambda c: c.chunk_ordinal)
+    hasher = hashlib.sha256()
+    for chunk in sorted_chunks:
+        ordinal_bytes = chunk.chunk_ordinal.to_bytes(8, "big", signed=False)
+        handle_bytes = chunk.handle_id.encode("utf-8")
+        text_bytes = chunk.text.encode("utf-8")
+        hasher.update(ordinal_bytes)
+        hasher.update(len(handle_bytes).to_bytes(8, "big", signed=False))
+        hasher.update(handle_bytes)
+        hasher.update(len(text_bytes).to_bytes(8, "big", signed=False))
+        hasher.update(text_bytes)
+    return hasher.hexdigest()
+
+
+def _collect_model_context_handle_ids(
+    chunks: tuple[ModelContextChunk, ...] | Sequence[ModelContextChunk],
+) -> list[str]:
+    """Return de-duplicated, order-preserving handle_ids from ``chunks``.
+
+    The evaluator uses this list to verify that each observation's
+    ``supporting_handle_ids`` came from real model-visible chunks.
+    An empty list means the model saw no chunks (runtime exception
+    before baseline assembly, or assembler failure) — observations
+    cannot be authoritative in that case.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for chunk in chunks:
+        if chunk.handle_id not in seen:
+            seen.add(chunk.handle_id)
+            out.append(chunk.handle_id)
+    return out
+
+
+def _compute_model_context_support(
+    case: ReaderRecordAskR4A3Case,
+    model_context_chunks: tuple[ModelContextChunk, ...] | Sequence[ModelContextChunk],
+) -> tuple[list[ModelContextSupportObservation], str | None, list[str]]:
+    """R4-A4-0 final closure (P0-1..P0-4): typed per-fact model-context support.
+
+    Reads the ACTUAL ``result.baseline_context.model_context_chunks``
+    (the chunks the model REALLY saw after the baseline assembler
+    applied raw 8000 / serialized 16000 / 16-chunk cap budgets).
+    This replaces the buggy previous implementation that read
+    ``document_access.snapshot.units`` (all units, no budget cap) —
+    for medium/long articles the model sees only a prefix of the
+    units, so alias membership against ``snapshot.units`` produced
+    false "supported" verdicts for facts whose only alias was in the
+    truncated tail.
+
+    For each :class:`AtomicExpectedFact` with non-empty
+    ``source_aliases``:
+
+    - Match each alias (case-insensitive substring) against each
+      chunk's text INDEPENDENTLY.
+    - ``support=True`` iff at least one real chunk hit an alias.
+    - Record ALL hitting chunks' handle_ids in
+      ``supporting_handle_ids`` (de-duplicated, order-preserving by
+      chunk_ordinal). This is the authoritative
+      fact→chunk→handle→citation binding.
+    - When ``support=False``, ``supporting_handle_ids`` is empty.
+
+    Returns:
+        ``(observations, model_context_fingerprint,
+        model_context_handle_ids)``:
+
+        - ``observations``: list of
+          :class:`ModelContextSupportObservation` carrying only
+          ``fact_id``, ``support``, ``model_context_fingerprint``,
+          ``supporting_handle_ids``. The chunk text / article body /
+          alias hit fragments are NEVER persisted.
+        - ``model_context_fingerprint``: canonical SHA-256 over the
+          actual chunks (see :func:`_compute_model_context_fingerprint`).
+          ``None`` when ``model_context_chunks`` is empty.
+        - ``model_context_handle_ids``: de-duplicated, order-preserving
+          list of chunk handle_ids (see
+          :func:`_collect_model_context_handle_ids`).
+
+    Contract properties (see :class:`ModelContextSupportObservation`
+    docstring):
+
+    - Does NOT use ``document_access.snapshot.units``.
+    - Does NOT use the public snippet.
+    - Does NOT persist chunk text / article body / alias hit fragments.
+    - Does NOT trust the case author's declaration — support is
+      independently verified against real chunk text.
+    - ``supporting_handle_ids`` enable the evaluator to verify
+      fact→chunk→handle→citation binding (the previous contract
+      bound every fact to ``cited_handles[0]`` which silently
+      mis-bound facts supported by the second chunk).
+    - ``model_context_fingerprint`` closes the
+      ``expected_baseline_fingerprint=None`` bypass — the evaluator
+      compares each observation's fingerprint against the artifact's
+      fingerprint, and there is no caller-supplied parameter to skip
+      the check.
+    - R4-A4-0 final gate closure (P0-3): empty ``model_context_chunks``
+      is handled EXPLICITLY and fail-safe. Returns
+      ``([], None, [])`` — no observations are constructed (so no
+      ``fingerprint=""`` ValidationError can fire), the fingerprint is
+      ``None``, and the handle_ids list is empty. The caller is
+      responsible for setting ``model_context_capture_status`` to
+      ``"unavailable"`` (run produced no chunks — e.g.
+      envelope_mismatch / no_units) or ``"failed"`` (run raised
+      before/independent of baseline assembly). This function does
+      NOT disguise the empty-chunks state as legacy — the caller
+      MUST write an explicit
+      ``model_context_instrumentation_version
+      ="reader_record_ask_model_context_v1"`` plus the appropriate
+      ``capture_status`` literal.
+    """
+    # P0-3: explicit empty-chunks handling. This MUST be the FIRST
+    # check so we never enter the per-fact loop with an empty
+    # ``fingerprint`` (which would force ``fingerprint or ""`` →
+    # ``""`` and trigger a ValidationError on
+    # :class:`ModelContextSupportObservation` because the field
+    # validator requires a 64-lowercase-hex SHA-256). The empty-
+    # chunks state returns ``([], None, [])`` so the caller can
+    # write ``capture_status="unavailable"`` or ``"failed"``
+    # explicitly — neither a legacy disguise nor a ValidationError.
+    chunks_list = list(model_context_chunks)
+    if not chunks_list:
+        return [], None, []
+
+    atomic_facts = case.expected.atomic_facts
+    if not atomic_facts:
+        return [], _compute_model_context_fingerprint(model_context_chunks), (
+            _collect_model_context_handle_ids(model_context_chunks)
+        )
+
+    fingerprint = _compute_model_context_fingerprint(model_context_chunks)
+    handle_ids = _collect_model_context_handle_ids(model_context_chunks)
+
+    # Pre-compute lowercased chunk text + chunk handle for matching.
+    # We do NOT persist chunk text — only use it transiently here.
+    chunks_lower: list[tuple[str, str]] = [
+        (chunk.handle_id, chunk.text.lower()) for chunk in model_context_chunks
+    ]
+
+    observations: list[ModelContextSupportObservation] = []
+    for fact in atomic_facts:
+        if not fact.source_aliases:
+            # Metadata-only fact (no grounding constraint) — skip.
+            # The evaluator treats this as vacuously grounded.
+            continue
+        aliases_lower = [a.lower() for a in fact.source_aliases if a]
+        if not aliases_lower:
+            # All aliases were empty strings — vacuously skip.
+            continue
+
+        # Find all chunks whose text contains any alias. Record
+        # handle_ids in chunk_ordinal order (de-duplicated).
+        hitting_handles: list[str] = []
+        seen_handles: set[str] = set()
+        for chunk_handle, chunk_text_lower in chunks_lower:
+            if any(alias in chunk_text_lower for alias in aliases_lower):
+                if chunk_handle not in seen_handles:
+                    seen_handles.add(chunk_handle)
+                    hitting_handles.append(chunk_handle)
+
+        support = bool(hitting_handles)
+        # When support=False, supporting_handle_ids MUST be empty
+        # (enforced by :class:`ModelContextSupportObservation`
+        # contract: the evaluator treats support=True + empty list as
+        # instrumentation_incomplete, but support=False + empty list
+        # is the correct "not supported" shape). ``fingerprint`` is
+        # guaranteed non-None here because ``chunks_list`` is
+        # non-empty (P0-3 early return above).
+        observations.append(
+            ModelContextSupportObservation(
+                fact_id=fact.fact_id,
+                support=support,
+                model_context_fingerprint=fingerprint or "",
+                supporting_handle_ids=hitting_handles if support else [],
+            )
+        )
+    return observations, fingerprint, handle_ids
+
+
 async def _run_one_case(
     case: ReaderRecordAskR4A3Case,
     budget_model: BudgetedUsageModel,
@@ -740,6 +958,31 @@ async def _run_one_case(
             start_input_tokens,
             start_output_tokens,
         )
+        # R4-A4-0 final closure (P0-4): on runtime exception we MUST
+        # NOT reconstruct model context from ``document_access.snapshot``
+        # — the model never saw a baseline (it raised before/independent
+        # of baseline assembly, or the baseline assembler itself
+        # failed). ``model_context_support`` is empty,
+        # ``model_context_fingerprint`` is None, and
+        # ``model_context_handle_ids`` is empty. The evaluator
+        # surfaces this as ``instrumentation_incomplete`` (fail-closed
+        # for new artifacts) — the run cannot be authoritatively
+        # evaluated. This explicitly replaces the previous behavior
+        # which computed support against ``snapshot.units`` even on
+        # exception (producing misleading "supported" verdicts for a
+        # run that never actually executed).
+        #
+        # R4-A4-0 final gate closure (P0-1): the explicit lifecycle
+        # fields ``model_context_instrumentation_version`` /
+        # ``model_context_capture_status`` distinguish this runtime-
+        # exception state from legacy artifacts WITHOUT inspecting
+        # ``error`` or ``finalized_reason``. ``capture_status="failed"``
+        # tells the evaluator + aggregator + readiness audit that
+        # this is an instrumentation blocker (NOT a model correctness
+        # failure, NOT rework-eligible, NOT clusterable as
+        # fact-not-grounded). The cross-field validator on
+        # :class:`RawArtifact` enforces fingerprint=None /
+        # handle_ids=[] / observations=[] for this state.
         return RawArtifact(
             case_id=case.id,
             run_id=run_id,
@@ -756,6 +999,13 @@ async def _run_one_case(
             dataset_id=dataset_identity.dataset_id,
             dataset_schema_version=dataset_identity.schema_version,
             dataset_content_sha256=dataset_identity.content_sha256,
+            model_context_support=[],
+            model_context_fingerprint=None,
+            model_context_handle_ids=[],
+            model_context_instrumentation_version=(
+                "reader_record_ask_model_context_v1"
+            ),
+            model_context_capture_status="failed",
         )
 
     latency = time.monotonic() - start
@@ -786,6 +1036,54 @@ async def _run_one_case(
     baseline_status = baseline.baseline_status if baseline is not None else None
     baseline_is_complete = baseline.is_complete if baseline is not None else None
     baseline_is_injected = baseline.is_injected if baseline is not None else None
+
+    # R4-A4-0 final closure (P0-1..P0-4): compute typed model-context
+    # support observations against the ACTUAL model-visible context —
+    # ``result.baseline_context.model_context_chunks`` — NOT
+    # ``document_access.snapshot.units`` (which is the full document
+    # scope, NOT what the model sees after the baseline assembler's
+    # raw 8000 / serialized 16000 / 16-chunk cap budgets). Each
+    # observation records ``supporting_handle_ids`` — the chunk
+    # handle_ids whose text contained an alias hit — so the evaluator
+    # can verify the authoritative fact→chunk→handle→citation binding
+    # (the previous contract bound every fact to ``cited_handles[0]``
+    # which silently mis-bound facts supported by the second chunk).
+    # ``model_context_fingerprint`` closes the
+    # ``expected_baseline_fingerprint=None`` bypass — the evaluator
+    # compares each observation's fingerprint against the artifact's
+    # own ``model_context_fingerprint``.
+    #
+    # R4-A4-0 final gate closure (P0-1 + P0-3): the explicit lifecycle
+    # fields ``model_context_instrumentation_version`` /
+    # ``model_context_capture_status`` distinguish the two success-
+    # path states WITHOUT inspecting ``finalized_reason`` or
+    # ``baseline_status``:
+    #
+    #   - ``capture_status="captured"`` — baseline assembled AND
+    #     produced ≥1 chunk. The cross-field validator enforces
+    #     fingerprint≠None + handle_ids≠[] for this state.
+    #   - ``capture_status="unavailable"`` — model ran (no exception)
+    #     but baseline assembly yielded 0 chunks (e.g.
+    #     envelope_mismatch / no_units). The cross-field validator
+    #     enforces fingerprint=None + handle_ids=[] + observations=[]
+    #     for this state. This is an instrumentation blocker (NOT a
+    #     model correctness failure) — the run cannot be
+    #     authoritatively evaluated because there was no
+    #     model-visible context to ground against.
+    #
+    # P0-3: ``_compute_model_context_support`` returns
+    # ``([], None, [])`` for empty chunks WITHOUT throwing a
+    # ValidationError. The caller (here) maps that empty state to
+    # ``capture_status="unavailable"``.
+    actual_chunks: tuple[ModelContextChunk, ...] = ()
+    if baseline is not None:
+        actual_chunks = baseline.model_context_chunks
+    success_support, success_fingerprint, success_handle_ids = (
+        _compute_model_context_support(case, actual_chunks)
+    )
+    success_capture_status: str = (
+        "captured" if success_fingerprint is not None else "unavailable"
+    )
 
     return RawArtifact(
         case_id=case.id,
@@ -818,6 +1116,13 @@ async def _run_one_case(
         dataset_id=dataset_identity.dataset_id,
         dataset_schema_version=dataset_identity.schema_version,
         dataset_content_sha256=dataset_identity.content_sha256,
+        model_context_support=success_support,
+        model_context_fingerprint=success_fingerprint,
+        model_context_handle_ids=success_handle_ids,
+        model_context_instrumentation_version=(
+            "reader_record_ask_model_context_v1"
+        ),
+        model_context_capture_status=success_capture_status,
     )
 
 

@@ -534,7 +534,7 @@ def test_report_no_commit_section_present() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_failure_cluster_field_shape() -> None:
+def test_failure_cluster_field_shape() -> str:
     """FailureCluster carries the documented fields."""
     cluster = FailureCluster(
         dimension="unsupported_temporal_claims",
@@ -548,3 +548,262 @@ def test_failure_cluster_field_shape() -> None:
     assert cluster.failed_count == 3
     assert cluster.total_count == 3
     assert cluster.case_ids == ["case-A", "case-B", "case-C"]
+
+
+# ---------------------------------------------------------------------------
+# R4-A4-0 (Task 5) — parameterized report date / files / tracker path /
+# dynamic per_config keys.
+# ---------------------------------------------------------------------------
+
+
+def _make_aggregated_with_real_flash_config() -> AggregatedReport:
+    """Build an AggregatedReport with a real ``deepseek-v4-flash`` Phase 1
+    config and no Phase 2/3 data — mirrors the R4-A3 Phase 1 baseline run.
+    """
+    from claread_eval.reader_record_ask.evaluators.aggregator import (
+        CaseEvalResult,
+    )
+
+    case = _make_case("case-flash")
+    cases_by_id = {case.id: case}
+    cr = CaseEvalResult(
+        case_id="case-flash",
+        run_id="phase1-20260719-015626",
+        run_index=0,
+        model_short_name="deepseek-v4-flash",
+        thinking_enabled=False,
+        dimensions=[
+            _make_dim("answer_success", passed=True),
+            _make_dim("unsupported_temporal_claims", passed=True),
+            _make_dim("exhaustive_completeness", passed=True),
+            _make_dim("instruction_following", passed=True),
+        ],
+        latency_seconds=2.0,
+        total_tokens=1000,
+        total_requests=1,
+    )
+    return aggregate_results([cr], cases_by_id)
+
+
+def test_report_renders_real_flash_config_key() -> None:
+    """§9 must render the real ``deepseek-v4-flash|thinking=False`` key
+    instead of the hardcoded ``deepseek-chat|thinking=False``.
+
+    R4-A4-0 (Task 5) regression: the old report's ``_AB_CONFIGS`` was
+    hardcoded to ``deepseek-chat`` so Phase 1 real run with
+    ``deepseek-v4-flash`` showed ``N/A (no data)`` even though data
+    existed. The fixed report matches by regex.
+    """
+    aggregated = _make_aggregated_with_real_flash_config()
+    report = generate_r4_a3_report(
+        **_default_report_kwargs(
+            aggregated=aggregated,
+            real_model_blocked=False,
+            verdict="rework",
+        )
+    )
+    assert "## 9. Flash non-thinking / Flash thinking / Pro 对照" in report
+    # Real Phase 1 data is rendered with the real config key.
+    assert "deepseek-v4-flash|thinking=False" in report
+    # Phase 2 / Phase 3 show explicit no-data rows.
+    assert "N/A (no data)" in report
+
+
+def test_report_date_parameter_used_in_title() -> None:
+    """``report_date`` parameter flows into the title block (R4-A4-0 Task 5).
+
+    The old report hardcoded ``2026-07-17``. The fixed report uses the
+    parameter; when omitted, it defaults to today's date.
+    """
+    kwargs = _default_report_kwargs()
+    kwargs["report_date"] = "2026-07-19"
+    report = generate_r4_a3_report(**kwargs)
+    assert "生成时间: 2026-07-19" in report
+    # Old hardcoded date must NOT appear when an explicit date is passed.
+    assert "生成时间: 2026-07-17" not in report
+
+
+def test_modified_files_parameter_used_in_section_2() -> None:
+    """``modified_files`` parameter flows into §2.1 (R4-A4-0 Task 5).
+
+    The old report hardcoded the previous round's Task 5 file list. The
+    fixed report renders the caller-supplied list.
+    """
+    kwargs = _default_report_kwargs()
+    kwargs["modified_files"] = [
+        "evals/claread_eval/reader_record_ask/evaluators/numeric_grounding.py",
+        "evals/claread_eval/reader_record_ask/report.py",
+    ]
+    kwargs["task_label"] = "R4-A4-0"
+    report = generate_r4_a3_report(**kwargs)
+    assert "### 2.1 本轮修改文件（R4-A4-0）" in report
+    assert "numeric_grounding.py" in report
+    assert "report.py" in report
+    # Old hardcoded stale files must NOT appear.
+    assert "新建)" not in report
+
+
+def test_tracker_path_parameter_used_in_section_14() -> None:
+    """``tracker_path`` parameter flows into §14 (R4-A4-0 Task 5)."""
+    kwargs = _default_report_kwargs()
+    kwargs["tracker_path"] = (
+        "docs/tmp/reader-orchestration/"
+        "TMP-reader-record-ask-r4-product-ready-tracker-2026-07-19.md"
+    )
+    kwargs["report_date"] = "2026-07-19"
+    report = generate_r4_a3_report(**kwargs)
+    assert (
+        "docs/tmp/reader-orchestration/"
+        "TMP-reader-record-ask-r4-product-ready-tracker-2026-07-19.md"
+    ) in report
+    assert "日期=2026-07-19" in report
+
+
+def test_per_config_total_runs_rendered_in_section_7() -> None:
+    """§7 per-config table must render ``total_runs`` explicitly.
+
+    R4-A4-0 (Task 5): aggregator now writes ``total_runs`` to per_config
+    buckets; the report reads it via ``metrics.get('total_runs', 0)``.
+    """
+    aggregated = _make_aggregated_with_real_flash_config()
+    report = generate_r4_a3_report(
+        **_default_report_kwargs(
+            aggregated=aggregated,
+            real_model_blocked=False,
+            verdict="rework",
+        )
+    )
+    assert "## 7. 真实模型每配置调用次数/延迟/token/通过率" in report
+    # total_runs column header is present.
+    assert "total_runs" in report
+    # Real Phase 1 data shows total_runs=1 (single case_result).
+    assert "deepseek-v4-flash|thinking=False" in report
+
+
+def test_30_artifact_fixture_regression() -> None:
+    """30-artifact fixture regression: build a synthetic 30-run aggregate
+    mirroring the R4-A3 Phase 1 baseline (10 cases × 3 runs each, all
+    on ``deepseek-v4-flash|thinking=False``) and verify the report shows
+    consistent numbers in §7 and §17.
+
+    R4-A4-0 (Task 5): the user spec requires a "real 30-artifact
+    fixture/report regression". This test uses synthetic artifacts
+    (not the real run's raw answers) to avoid leaking BBC body / raw
+    answer / raw reasoning into tracked fixtures.
+    """
+    from claread_eval.reader_record_ask.evaluators.aggregator import (
+        CaseEvalResult,
+    )
+
+    # 10 distinct case ids × 3 runs each = 30 case_results.
+    case_ids = [
+        "bbc-absent-year-unknown",
+        "bbc-argument-structure-unknown",
+        "bbc-author-intent-unknown",
+        "bbc-city-enumeration-unknown",
+        "bbc-core-viewpoint-unknown",
+        "bbc-exercise-one-unknown",
+        "bbc-main-idea-unknown",
+        "bbc-publish-date-unknown",
+        "syn-short-exercise-one-suggestion",
+        "syn-short-main-idea-suggestion",
+    ]
+    cases = [_make_case(cid) for cid in case_ids]
+    cases_by_id = {c.id: c for c in cases}
+
+    case_results: list[CaseEvalResult] = []
+    for cid in case_ids:
+        for run_idx in range(3):
+            case_results.append(
+                CaseEvalResult(
+                    case_id=cid,
+                    run_id="phase1-20260719-015626",
+                    run_index=run_idx,
+                    model_short_name="deepseek-v4-flash",
+                    thinking_enabled=False,
+                    dimensions=[
+                        _make_dim("answer_success", passed=True),
+                        _make_dim("unsupported_temporal_claims", passed=True),
+                        _make_dim("exhaustive_completeness", passed=True),
+                        _make_dim("instruction_following", passed=True),
+                    ],
+                    latency_seconds=2.0,
+                    total_tokens=3500,
+                    total_requests=1,
+                )
+            )
+
+    aggregated = aggregate_results(case_results, cases_by_id)
+    assert aggregated.total_runs == 30
+    assert aggregated.total_cases == 10
+
+    artifacts = [
+        RawArtifact(
+            case_id=cid,
+            run_id="phase1-20260719-015626",
+            run_index=idx,
+            model_short_name="deepseek-v4-flash",
+            model_route="reader_ask",
+            thinking_enabled=False,
+            final_text="synthetic non-leaking answer",
+            finalized_status="ok",
+            finalized_reason=None,
+            response_kind="grounded_answer",
+            cited_evidence_handles=["ev-1"],
+            resolved_evidence=[],
+            all_evidence_observations=[],
+            read_range_calls=0,
+            search_current_article_calls=0,
+            baseline_status="injected",
+            baseline_is_complete=True,
+            baseline_is_injected=True,
+            agent_usage=RawUsage(
+                requests=1,
+                input_tokens=3000,
+                output_tokens=500,
+            ),
+            latency_seconds=2.0,
+            envelope_fingerprint="test-fingerprint",
+            error=None,
+        )
+        for cid in case_ids
+        for idx in range(3)
+    ]
+    assert len(artifacts) == 30
+
+    # Build a dataset containing all 10 cases so §17 reports
+    # "总 case 数: 10" and "有 artifact 的 case 数: 10".
+    dataset = ReaderRecordAskR4A3Dataset(
+        id="reader-record-ask-r4-a3",
+        schema_version="r4-a3-dataset-v1",
+        description="R4-A3 30-artifact fixture dataset",
+        case_globs=["cases/*.json"],
+        tags=["r4-a3", "test"],
+        cases=cases,
+    )
+
+    report = generate_r4_a3_report(
+        **_default_report_kwargs(
+            aggregated=aggregated,
+            dataset=dataset,
+            artifacts=artifacts,
+            real_model_blocked=False,
+            verdict="rework",
+            allow_r4_a4=True,
+            allow_r4_b1=False,
+        )
+    )
+
+    # §7 per-config table shows total_runs=30 for flash config.
+    assert "deepseek-v4-flash|thinking=False" in report
+    # The number 30 must appear as the total_runs column value.
+    # (Format: ``| `deepseek-v4-flash|thinking=False` | 30 | ...``)
+    assert "| 30 |" in report
+
+    # §17 真实覆盖状态 shows 10 cases and 30 artifacts.
+    assert "总 case 数: 10" in report
+    assert "有 artifact 的 case 数: 10" in report
+
+    # §9 comparison: Phase 1 row has real data, Phase 2/3 show no data.
+    assert "deepseek-v4-flash|thinking=False" in report
+    assert "N/A (no data)" in report

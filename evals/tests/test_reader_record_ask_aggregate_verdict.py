@@ -877,6 +877,16 @@ class TestAggregateEndToEndVerdictPrecedence:
         falls to row 2 (blocked_incomplete_real_model_run) — so this
         test MUST write a completed manifest matching the dataset
         identity to reach the normal path.
+
+        R4-A4-0 final gate closure (P0-1/P0-2): "all-valid" under the
+        new contract means the artifact carries the explicit captured
+        lifecycle (``model_context_instrumentation_version=v1``,
+        ``model_context_capture_status=captured``). Legacy artifacts
+        (no lifecycle fields) are correctly blocked by
+        ``legacy_artifact_count`` in :class:`AggregateReadinessAudit`
+        — see ``test_aggregate_legacy_artifact_yields_blocked_incomplete``
+        for that contract. This test builds a captured artifact so the
+        normal-path precedence row is reachable.
         """
         from claread_eval.reader_record_ask.loader import (
             load_r4_a3_dataset_with_snapshot,
@@ -888,7 +898,8 @@ class TestAggregateEndToEndVerdictPrecedence:
         snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
         identity = snapshot.identity
 
-        # Artifact carries the matching identity.
+        # Artifact carries the matching identity AND the captured
+        # lifecycle fields (so it is NOT classified as legacy).
         artifacts = [
             _make_artifact(
                 case_id="case-a",
@@ -896,6 +907,15 @@ class TestAggregateEndToEndVerdictPrecedence:
                 dataset_id=identity.dataset_id,
                 dataset_schema_version=identity.schema_version,
                 dataset_content_sha256=identity.content_sha256,
+            ).model_copy(
+                update={
+                    "model_context_instrumentation_version": (
+                        "reader_record_ask_model_context_v1"
+                    ),
+                    "model_context_capture_status": "captured",
+                    "model_context_fingerprint": "a" * 64,
+                    "model_context_handle_ids": ["evh_" + "0" * 32],
+                }
             ),
         ]
         runs_dir = tmp_path / "runs"

@@ -43,6 +43,51 @@ from pydantic import (
 _SHA256_LOWERCASE_HEX_RE: re.Pattern[str] = re.compile(r"^[0-9a-f]{64}$")
 
 # ---------------------------------------------------------------------------
+# R4-A4-0 final gate closure (P0-1): explicit instrumentation lifecycle
+# ---------------------------------------------------------------------------
+# Distinguishes 4 mutually-exclusive states WITHOUT inspecting error text
+# or finalized_reason:
+#
+#   1. legacy artifact (pre-R4-A4-0 final gate):
+#        version=None, capture_status=None
+#        → indeterminate_requires_new_artifact (replay only)
+#        → blocked_incomplete_real_model_run (authoritative aggregate)
+#
+#   2. new successful artifact (model ran, baseline captured):
+#        version="reader_record_ask_model_context_v1",
+#        capture_status="captured"
+#        → MUST have legal fingerprint + model_context_handle_ids +
+#          complete observations for required source facts
+#
+#   3. baseline unavailable (model ran but baseline assembly yielded no
+#      model_context_chunks — e.g. envelope_mismatch / no_units):
+#        version="reader_record_ask_model_context_v1",
+#        capture_status="unavailable"
+#        → fingerprint=None, handle_ids=[], observations=[]
+#        → instrumentation/run incomplete blocker (NOT model failure)
+#
+#   4. runtime exception (run_reading_record_ask raised before/independent
+#      of baseline assembly, or baseline assembler itself failed):
+#        version="reader_record_ask_model_context_v1",
+#        capture_status="failed"
+#        → fingerprint=None, handle_ids=[], observations=[]
+#        → instrumentation/run incomplete blocker (NOT model failure)
+#
+# The version literal is the migration marker — only artifacts produced
+# AFTER R4-A4-0 final gate closure carry it. ``None`` always means legacy.
+# The capture_status literal distinguishes the three new-artifact states
+# without parsing error text or finalized_reason.
+# ---------------------------------------------------------------------------
+MODEL_CONTEXT_INSTRUMENTATION_VERSION_LITERAL = Literal[
+    "reader_record_ask_model_context_v1",
+]
+MODEL_CONTEXT_CAPTURE_STATUS_LITERAL = Literal[
+    "captured",
+    "unavailable",
+    "failed",
+]
+
+# ---------------------------------------------------------------------------
 # P0-2: Evaluator-consumed enum literals
 # ---------------------------------------------------------------------------
 # These mirror the production-side Literal types so a typo'd
@@ -230,6 +275,125 @@ class RawUsage(BaseModel):
         return v
 
 
+class ModelContextSupportObservation(BaseModel):
+    """R4-A4-0 final closure: typed per-fact model-context support observation.
+
+    Computed at harness run time against the **actual model-visible
+    context** — i.e. ``result.baseline_context.model_context_chunks`` —
+    NOT ``document_access.snapshot.units`` and NOT the truncated public
+    snippet. The model sees only the chunks that survived the
+    short/medium-long baseline assembler (raw 8000 / serialized 16000 /
+    16-chunk cap), so the support observation MUST be computed against
+    those exact chunks.
+
+    Contract properties (spec: R4-A4-0 final closure P0-1..P0-4):
+
+    - **Reads actual ``model_context_chunks``.** The harness passes the
+      real :class:`ModelContextChunk` tuple from
+      ``ReadingRecordAskRunResult.baseline_context``. For each atomic
+      fact, support is computed by matching ``source_aliases`` against
+      the concatenated text of those chunks (NOT snapshot.units, NOT
+      the 500/2000-char public snippet).
+    - **Does NOT persist chunk text / article body / alias hit
+      fragments.** Only ``fact_id``, ``support`` (bool),
+      ``model_context_fingerprint`` (SHA-256 over canonical framing of
+      ``model_context_chunks``), and ``supporting_handle_ids`` (the
+      de-duplicated, order-preserving list of chunk handle_ids whose
+      text actually contained an alias hit) are stored.
+    - **Does NOT trust the case author's declaration.** ``support=True``
+      means at least one real model-visible chunk hit an alias. A case
+      author cannot declare a non-existent alias and have it auto-pass.
+    - **Proves cited handle corresponds to model-visible baseline.**
+      ``supporting_handle_ids`` are the chunk handle_ids that
+      contributed the support. The evaluator requires at least one of
+      them to appear in ``artifact.cited_evidence_handles`` for the
+      fact to be grounded — this is the authoritative
+      fact→chunk→handle→citation binding. The previous contract bound
+      every fact to ``cited_handles[0]`` which silently mis-bound
+      facts supported by the second chunk to the first chunk's handle.
+    - **Fingerprint is artifact-internal integrity binding.**
+      ``model_context_fingerprint`` MUST equal
+      ``RawArtifact.model_context_fingerprint`` (the canonical framing
+      of all chunks the model saw). A mismatch means the observation
+      was computed against a different baseline than the artifact
+      records — the observation is not authoritative for this artifact.
+      This is NOT an independent security proof; it is an internal
+      consistency check that closes the ``expected_baseline_fingerprint
+      =None`` bypass.
+    - **Legacy artifacts missing this field →
+      ``coverage_incomplete``.** The evaluator surfaces this as
+      ``indeterminate_requires_new_artifact`` (not auto-pass, not
+      auto-fail). Old artifacts cannot be authoritatively re-evaluated
+      under the new contract; they require a new run.
+
+    P0-1 strict contract: ``fact_id`` is :class:`StrictStr` with a
+    non-empty validator. ``support`` is :class:`StrictBool`.
+    ``model_context_fingerprint`` is :class:`StrictStr` with the same
+    64-lowercase-hex SHA-256 format validator as
+    ``RawArtifact.dataset_content_sha256`` so the two can be compared
+    byte-for-byte. ``supporting_handle_ids`` is a list of
+    :class:`StrictStr` (each non-empty, no whitespace-only entries);
+    it MUST be empty when ``support=False`` and SHOULD be non-empty
+    when ``support=True`` (an empty list with ``support=True`` is
+    treated by the evaluator as ``instrumentation_incomplete`` —
+    fail-closed, not auto-pass).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fact_id: StrictStr
+    support: StrictBool
+    model_context_fingerprint: StrictStr
+    supporting_handle_ids: list[StrictStr] = Field(default_factory=list)
+
+    @field_validator("fact_id")
+    @classmethod
+    def _non_empty_fact_id(cls, v: str) -> str:
+        """Reject empty or whitespace-only fact ids.
+
+        ``StrictStr`` rejects bool/int/float, but ``""`` would silently
+        pass and then fail to match any atomic_fact in the evaluator's
+        ``{obs.fact_id: obs for obs in ...}`` lookup, causing the fact
+        to be incorrectly marked coverage_incomplete.
+        """
+        if not v or not v.strip():
+            raise ValueError("fact_id must be a non-empty, non-whitespace string")
+        return v
+
+    @field_validator("model_context_fingerprint")
+    @classmethod
+    def _sha256_lowercase_hex(cls, v: str) -> str:
+        """Require exactly 64 lowercase hex chars.
+
+        The fingerprint MUST be byte-for-byte comparable to
+        ``RawArtifact.model_context_fingerprint``. Uppercase hex, short
+        strings, and non-hex characters are all rejected.
+        """
+        if not _SHA256_LOWERCASE_HEX_RE.match(v):
+            raise ValueError(
+                "model_context_fingerprint must be 64 lowercase hex chars (SHA-256)"
+            )
+        return v
+
+    @field_validator("supporting_handle_ids")
+    @classmethod
+    def _non_empty_handle_ids(cls, v: list[str]) -> list[str]:
+        """Reject empty/whitespace handle_ids in the list.
+
+        Each entry must be a non-empty, non-whitespace string. The list
+        itself may be empty (when ``support=False`` or when the harness
+        cannot determine which chunk supported the fact — the latter is
+        treated by the evaluator as ``instrumentation_incomplete``).
+        """
+        for h in v:
+            if not h or not h.strip():
+                raise ValueError(
+                    "supporting_handle_ids entries must be non-empty, "
+                    "non-whitespace strings"
+                )
+        return v
+
+
 class RawArtifact(BaseModel):
     """Evaluator input — pure data view of one independent agent run.
 
@@ -377,6 +541,88 @@ class RawArtifact(BaseModel):
     cited_evidence_handles: list[StrictStr] = Field(default_factory=list)
     resolved_evidence: list[RawEvidenceObservation] = Field(default_factory=list)
     all_evidence_observations: list[RawEvidenceObservation] = Field(default_factory=list)
+
+    # R4-A4-0 final closure (P0-1..P0-4): typed model-context support
+    # observations computed against the ACTUAL model-visible context
+    # (``result.baseline_context.model_context_chunks``), NOT
+    # ``document_access.snapshot.units`` and NOT the truncated public
+    # snippet. Each observation binds a ``fact_id`` to a ``support``
+    # boolean + ``model_context_fingerprint`` + ``supporting_handle_ids``
+    # (the chunk handle_ids whose text contained an alias hit). The full
+    # chunk text / article body / alias hit fragments are NEVER
+    # persisted — only these compact verdicts.
+    #
+    # ``model_context_fingerprint`` (below) is the canonical SHA-256
+    # over the actual ``model_context_chunks`` (ordinal + handle_id +
+    # text bytes, length-prefixed framing). Each observation's
+    # ``model_context_fingerprint`` MUST equal this value — the
+    # evaluator rejects observations whose fingerprint does not match.
+    # This closes the ``expected_baseline_fingerprint=None`` bypass:
+    # the fingerprint is now carried by the artifact itself, so the
+    # evaluator cannot be called without it.
+    #
+    # ``model_context_handle_ids`` is the de-duplicated, order-preserving
+    # list of chunk handle_ids in the actual model-visible context. The
+    # evaluator requires each observation's ``supporting_handle_ids``
+    # to be a subset of this list — observations naming handles that
+    # were not in the model context are rejected as
+    # ``instrumentation_incomplete`` (fail-closed).
+    #
+    # Legacy artifacts predating R4-A4-0 final closure have:
+    #   - ``model_context_support = []``
+    #   - ``model_context_fingerprint = None``
+    #   - ``model_context_handle_ids = []``
+    # The evaluator surfaces this as
+    # ``indeterminate_requires_new_artifact`` (NOT auto-pass, NOT
+    # auto-fail). Old artifacts cannot be authoritatively re-evaluated
+    # under the new contract; they require a new run.
+    model_context_support: list[ModelContextSupportObservation] = Field(
+        default_factory=list
+    )
+    # R4-A4-0 final closure (P0-3): canonical SHA-256 over actual
+    # ``model_context_chunks``. ``None`` for legacy artifacts or
+    # artifacts produced when ``run_reading_record_ask`` raised before
+    # assembling the baseline (P0-4 exception path).
+    model_context_fingerprint: StrictStr | None = None
+    # R4-A4-0 final closure (P0-2): handle_ids of the actual
+    # model-visible chunks. Empty for legacy artifacts / exception
+    # paths. The evaluator uses this to verify that each observation's
+    # ``supporting_handle_ids`` came from real chunks.
+    model_context_handle_ids: list[StrictStr] = Field(default_factory=list)
+
+    # ------------------------------------------------------------------
+    # R4-A4-0 final gate closure (P0-1): explicit instrumentation
+    # lifecycle.
+    # ------------------------------------------------------------------
+    # ``model_context_instrumentation_version`` is the migration marker:
+    #   - ``None`` → legacy artifact (pre-R4-A4-0 final gate). Evaluator
+    #     surfaces as ``indeterminate_requires_new_artifact`` (replay)
+    #     or ``blocked_incomplete_real_model_run`` (authoritative).
+    #   - ``"reader_record_ask_model_context_v1"`` → new artifact. The
+    #     capture_status literal then distinguishes captured /
+    #     unavailable / failed.
+    #
+    # ``model_context_capture_status`` is None iff version is None
+    # (legacy). For new artifacts it MUST be one of:
+    #   - ``"captured"`` — baseline assembled, model_context_chunks
+    #     non-empty. MUST have legal fingerprint + handle_ids.
+    #   - ``"unavailable"`` — model ran but baseline assembly yielded no
+    #     chunks (envelope_mismatch / no_units). fingerprint=None,
+    #     handle_ids=[], observations=[].
+    #   - ``"failed"`` — runtime exception before/independent of
+    #     baseline, or baseline assembler itself failed.
+    #     fingerprint=None, handle_ids=[], observations=[].
+    #
+    # The cross-field validator below enforces the (version, status,
+    # fingerprint, handle_ids, observations) invariants. This replaces
+    # the previous heuristic (fingerprint=None + observations=[] →
+    # legacy OR exception — indistinguishable).
+    model_context_instrumentation_version: (
+        MODEL_CONTEXT_INSTRUMENTATION_VERSION_LITERAL | None
+    ) = None
+    model_context_capture_status: (
+        MODEL_CONTEXT_CAPTURE_STATUS_LITERAL | None
+    ) = None
 
     # Latency — direct input to usage_observability. ``mode="before"``
     # validator rejects bool/str/NaN/Infinity/negative; JSON integer
@@ -547,3 +793,127 @@ class RawArtifact(BaseModel):
         if v < 0:
             raise ValueError("latency_seconds must be non-negative")
         return v
+
+    @model_validator(mode="after")
+    def _validate_model_context_instrumentation_lifecycle(self) -> RawArtifact:
+        """R4-A4-0 final gate closure (P0-1): enforce the 4-state
+        instrumentation lifecycle invariants.
+
+        The 4 mutually-exclusive states are distinguished by
+        ``(model_context_instrumentation_version,
+        model_context_capture_status)`` without inspecting error text
+        or finalized_reason:
+
+        1. **legacy** — version=None AND capture_status=None. Allowed
+           to have empty fingerprint / handle_ids / observations
+           (pre-R4-A4-0 final gate artifact).
+        2. **captured** — version=v1 AND capture_status="captured".
+           When at least one required atomic fact has source_aliases,
+           the harness MUST have produced a fingerprint AND
+           handle_ids. When there are no required source facts
+           (metadata-only / no atomic_facts), fingerprint is allowed
+           to be None (no chunks needed capture) — this is the
+           no-facts case, not an instrumentation gap.
+        3. **unavailable** — version=v1 AND capture_status="unavailable".
+           fingerprint MUST be None, handle_ids MUST be empty,
+           observations MUST be empty.
+        4. **failed** — version=v1 AND capture_status="failed".
+           fingerprint MUST be None, handle_ids MUST be empty,
+           observations MUST be empty.
+
+        Any other combination is contract corruption and is rejected
+        at the artifact load boundary (fail-closed).
+
+        The validator deliberately does NOT inspect ``error`` or
+        ``finalized_reason`` — those are display-only fields and
+        must not drive lifecycle classification.
+        """
+        v = self.model_context_instrumentation_version
+        s = self.model_context_capture_status
+
+        # Invariant 1: version and status are BOTH None (legacy) or
+        # BOTH non-None (new artifact). A mixed state is corruption.
+        if (v is None) != (s is None):
+            raise ValueError(
+                "model_context_instrumentation_version and "
+                "model_context_capture_status must be both None "
+                "(legacy artifact) or both non-None (new artifact); "
+                f"got version={v!r}, status={s!r}"
+            )
+
+        if v is None and s is None:
+            # Legacy artifact. No further constraints — the evaluator
+            # surfaces this as indeterminate_requires_new_artifact
+            # (replay) or blocked_incomplete_real_model_run
+            # (authoritative). We deliberately allow legacy artifacts
+            # to carry non-empty fingerprint / handle_ids / observations
+            # in case a partial migration wrote them, but the evaluator
+            # will still treat the artifact as legacy because version
+            # is None.
+            return self
+
+        # New artifact (v is not None, s is not None).
+        # The Literal types already constrain v ∈ {"reader_record_ask_model_context_v1"}
+        # and s ∈ {"captured", "unavailable", "failed"}.
+
+        if s == "captured":
+            # fingerprint + handle_ids MUST be present when capture
+            # succeeded. The only exception is when there are zero
+            # model_context_chunks (e.g. empty document) — in that
+            # case the harness MUST have set capture_status="unavailable"
+            # instead. So under "captured", fingerprint is non-None
+            # and handle_ids is non-empty.
+            if self.model_context_fingerprint is None:
+                raise ValueError(
+                    "model_context_capture_status='captured' requires "
+                    "model_context_fingerprint to be set (got None); "
+                    "use capture_status='unavailable' when no chunks "
+                    "were captured"
+                )
+            if not self.model_context_handle_ids:
+                raise ValueError(
+                    "model_context_capture_status='captured' requires "
+                    "model_context_handle_ids to be non-empty "
+                    "(got []); use capture_status='unavailable' when "
+                    "no chunks were captured"
+                )
+            # observations may be empty only when no required atomic
+            # fact has source_aliases (metadata-only / no atomic_facts).
+            # The evaluator enforces the per-fact observation
+            # completeness check; here we only enforce that captured
+            # observations reference handles that are in
+            # model_context_handle_ids.
+            handle_set = set(self.model_context_handle_ids)
+            for obs in self.model_context_support:
+                unknown = [
+                    h for h in obs.supporting_handle_ids if h not in handle_set
+                ]
+                if unknown:
+                    raise ValueError(
+                        "model_context_capture_status='captured' "
+                        "observation references handle_ids not in "
+                        "model_context_handle_ids; first unknown="
+                        f"{unknown[0]!r}"
+                    )
+            return self
+
+        # s in {"unavailable", "failed"}.
+        # fingerprint MUST be None, handle_ids MUST be empty,
+        # observations MUST be empty.
+        if self.model_context_fingerprint is not None:
+            raise ValueError(
+                f"model_context_capture_status={s!r} requires "
+                "model_context_fingerprint=None (got "
+                f"{self.model_context_fingerprint!r})"
+            )
+        if self.model_context_handle_ids:
+            raise ValueError(
+                f"model_context_capture_status={s!r} requires "
+                "model_context_handle_ids=[] (got non-empty)"
+            )
+        if self.model_context_support:
+            raise ValueError(
+                f"model_context_capture_status={s!r} requires "
+                "model_context_support=[] (got non-empty)"
+            )
+        return self

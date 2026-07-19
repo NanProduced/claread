@@ -3,31 +3,48 @@
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
 spec.md` — Requirement: P1-4 instruction count effectiveness.
 
-Previous implementation only counted explicit numbered markers (Q1,
-第N题, 1./2./3.). Several gaps:
+R4-A4-0 (Task 3) — exercise item count semantics
+================================================
 
-1. Single unnumbered question (e.g. "文章主旨是什么？") → counted as 0
-   because no numbered markers match. Should count as 1.
-2. One question with A/B/C/D options → the options were not recognized
-   as a single exercise. Should count as 1, not 5.
-3. Decimals like "1.5" at line start → falsely matched LIST_ITEM_RE
-   as list item "1". Should NOT match.
-4. When count cannot be reliably determined (no markers, no
-   interrogative punctuation), the evaluator silently PASSed. Should
-   emit ``indeterminate`` and FAIL (never silently PASS).
+The previous implementation had two bugs:
 
-New contract:
+1. **Multi-``?`` indeterminate false positive**: an unnumbered
+   single exercise block containing multiple related sub-questions
+   (separated by ``?``) was marked ``indeterminate`` and FAILED. Per
+   the new contract, an unnumbered block is ONE top-level exercise by
+   default; only an explicit ``allow_subquestions: true`` dataset
+   field allows each ``?`` to count as a separate item.
 
-- ``requested_count_kind="exercise_items"``: count distinct exercise
-  items via numbered markers (Q1/第N题/1.) and, as fallback, multiple-
-  choice options (A./B./C./D.) or a single interrogative sentence.
-  Multiple interrogatives → indeterminate. No markers → indeterminate.
-- ``requested_count_kind="sentences"``: split by Chinese 。！？ and
-  ASCII .!? (NOT between two alphanumeric chars, to avoid splitting
-  decimals like "1.5" and abbreviations like "e.g.").
-- ``requested_count_kind="none"``: always pass.
-- When count is ``indeterminate`` and a constraint exists → FAIL with
-  ``severity="medium"`` and details containing ``indeterminate``.
+2. **Reference-answer numbering double-count**: when the model's
+   answer contained a "参考答案" section with its own ``1. 2. 3.``
+   numbering, those reference-answer numbers were counted as
+   additional exercise items, inflating the count. The new contract
+   strips the reference-answer section before counting.
+
+Frozen product semantics (spec: "冻结产品语义"):
+
+- Top-level numbered markers (``1. 2. 3.``, ``第1题``, ``Q1``) are
+  the AUTHORITATIVE signal for exercise item count. When present,
+  they determine the count regardless of ``allow_subquestions``.
+- An unnumbered single exercise block, even with multiple related
+  sub-questions, defaults to ONE top-level exercise item.
+- ``allow_subquestions: true`` (explicit dataset field) allows each
+  ``?`` in an unnumbered block to count as a separate item.
+- Multiple-choice options (``A./B./C./D.``) are options of ONE
+  question, not separate exercises.
+- Reference-answer numbering (after a ``参考答案`` marker) is NOT
+  counted as new exercise items.
+
+Failure pattern separation (spec: "indeterminate 与
+actual_count_mismatch 必须用不同 failure pattern"):
+
+- ``indeterminate``: count truly cannot be determined (no markers,
+  no interrogatives, no multiple-choice options). Severity=medium.
+- ``actual_count_mismatch``: count was determined but does not match
+  ``requested_count``. Severity=high.
+
+The aggregator's ``_extract_failure_pattern`` distinguishes these
+two via the details string.
 """
 
 from __future__ import annotations
@@ -57,14 +74,17 @@ MULTIPLE_CHOICE_RE = re.compile(r"(?:^|\n)\s*[A-Da-d]\s*[.、)]")
 # Interrogative punctuation (Chinese ？ and ASCII ?)
 INTERROGATIVE_RE = re.compile(r"[？?]")
 
+# R4-A4-0 (Task 3): reference-answer section marker. When the answer
+# contains a "参考答案" / "答案" / "参考解答" header, everything AFTER
+# the marker is the reference answer and must NOT be counted as new
+# exercise items. The marker itself is the boundary.
+REFERENCE_ANSWER_MARKER_RE = re.compile(
+    r"(?:参考答案|参考解答|答案|参考答复)\s*[:：]",
+)
+
 # Sentence boundary: Chinese 。！？ always; ASCII .!? only when NOT
 # between two alphanumeric characters (avoids splitting decimals like
 # "1.5" and abbreviations like "e.g.").
-#
-# The pattern matches a sequence of sentence-ending punctuation where:
-# - Chinese 。！？ always counts as a boundary.
-# - ASCII .!? counts as a boundary when NOT preceded by alphanumeric
-#   OR NOT followed by alphanumeric (i.e., not between two alnum chars).
 SENTENCE_BOUNDARY_RE = re.compile(
     r"[。！？]+|(?<![a-zA-Z0-9])[.!?]+|[.!?]+(?![a-zA-Z0-9])"
 )
@@ -77,38 +97,73 @@ class _CountResult:
     ``count is None`` means ``indeterminate`` — the evaluator cannot
     reliably determine the count from the text. In that case, if a
     count constraint exists, the dimension FAILs (never silently PASS).
+
+    ``failure_kind`` distinguishes indeterminate from
+    actual_count_mismatch at the evaluator-output level so the
+    aggregator's failure-pattern extractor can produce distinct
+    patterns. Values: ``"determinate"`` / ``"indeterminate"``.
     """
 
     count: int | None
     reason: str
+    failure_kind: str = "determinate"
 
 
-def _count_exercise_items(text: str) -> _CountResult:
+def _strip_reference_answer(text: str) -> str:
+    """Strip the reference-answer section from ``text``.
+
+    R4-A4-0 (Task 3): when the model's answer includes a "参考答案："
+    or equivalent marker, everything after the marker is the reference
+    answer (sample solution) and its ``1. 2. 3.`` numbering must NOT
+    be counted as new exercise items.
+
+    Returns the text up to (but not including) the first reference-
+    answer marker. If no marker is present, returns ``text`` unchanged.
+    """
+    m = REFERENCE_ANSWER_MARKER_RE.search(text)
+    if m is None:
+        return text
+    return text[: m.start()]
+
+
+def _count_exercise_items(
+    text: str,
+    *,
+    allow_subquestions: bool = False,
+) -> _CountResult:
     """Count distinct exercise items in ``text``.
 
-    Numbered markers (Q1, 第N题, 1.) are de-duplicated by taking the
-    max across signals — ``第1题`` and ``1.`` referring to the same
-    item are NOT double-counted.
+    R4-A4-0 (Task 3) contract:
 
-    When no numbered markers are present, fall back to:
-    1. Multiple-choice options (A./B./C./D.) → 1 item (one question
-       with options).
-    2. Single interrogative sentence (one ？/?) → 1 item.
-    3. Multiple interrogatives → indeterminate (could be one multi-
-       part question or multiple exercises).
-    4. No markers and no interrogatives → indeterminate.
+    - Top-level numbered markers (Q1, 第N题, 1.) are AUTHORITATIVE.
+      When present, they determine the count via max-across-signals
+      deduplication. ``allow_subquestions`` is ignored in this branch.
+    - When NO numbered markers are present:
+      - Multiple-choice options (A./B./C./D.) → count=1 (one question
+        with options).
+      - Single interrogative (one ？/?) → count=1.
+      - Multiple interrogatives + ``allow_subquestions=False``
+        (default) → count=1 (one compound exercise block).
+      - Multiple interrogatives + ``allow_subquestions=True`` →
+        count = number of interrogatives.
+      - No markers, no interrogatives, no multiple-choice →
+        ``indeterminate``.
     """
+    # R4-A4-0 (Task 3): strip the reference-answer section before
+    # counting so its ``1. 2. 3.`` numbering is not误计为新题.
+    counting_text = _strip_reference_answer(text)
+
     signals: list[int] = []
 
-    q_matches = {m.group(1) for m in Q_MARK_RE.finditer(text)}
+    q_matches = {m.group(1) for m in Q_MARK_RE.finditer(counting_text)}
     if q_matches:
         signals.append(len(q_matches))
 
-    ordinal_matches = {m.group(1) for m in ORDINAL_TOPIC_RE.finditer(text)}
+    ordinal_matches = {m.group(1) for m in ORDINAL_TOPIC_RE.finditer(counting_text)}
     if ordinal_matches:
         signals.append(len(ordinal_matches))
 
-    list_matches = LIST_ITEM_RE.findall(text)
+    list_matches = LIST_ITEM_RE.findall(counting_text)
     if list_matches:
         # Distinct list indices (deduplicate "1." appearing multiple times)
         signals.append(len(set(list_matches)))
@@ -120,25 +175,38 @@ def _count_exercise_items(text: str) -> _CountResult:
         )
 
     # No numbered markers — try multiple-choice options.
-    if MULTIPLE_CHOICE_RE.search(text):
+    if MULTIPLE_CHOICE_RE.search(counting_text):
         return _CountResult(
             count=1,
             reason="multiple-choice options detected (one question with options)",
         )
 
     # Try interrogative sentences.
-    interrogatives = INTERROGATIVE_RE.findall(text)
+    interrogatives = INTERROGATIVE_RE.findall(counting_text)
     if len(interrogatives) == 1:
         return _CountResult(
             count=1,
             reason="single unnumbered interrogative sentence",
         )
     if len(interrogatives) > 1:
+        if allow_subquestions:
+            return _CountResult(
+                count=len(interrogatives),
+                reason=(
+                    f"allow_subquestions=True; {len(interrogatives)} "
+                    "interrogative markers counted as separate items"
+                ),
+            )
+        # R4-A4-0 (Task 3): default behavior — an unnumbered block
+        # with multiple related sub-questions is ONE top-level
+        # exercise. The previous implementation returned indeterminate
+        # here, which was a false positive.
         return _CountResult(
-            count=None,  # indeterminate
+            count=1,
             reason=(
-                f"{len(interrogatives)} interrogative markers; cannot "
-                "distinguish multi-part question from multiple exercises"
+                f"unnumbered compound exercise block ({len(interrogatives)} "
+                "sub-questions) counted as 1 top-level exercise "
+                "(allow_subquestions=False)"
             ),
         )
 
@@ -149,6 +217,7 @@ def _count_exercise_items(text: str) -> _CountResult:
             "no exercise markers and no interrogative punctuation; "
             "cannot reliably determine count"
         ),
+        failure_kind="indeterminate",
     )
 
 
@@ -191,6 +260,9 @@ def evaluate_instruction_following(
     See module docstring for the full contract. When the count is
     ``indeterminate`` and a constraint exists, the dimension FAILs
     with ``severity="medium"`` and details containing ``indeterminate``.
+    When the count is determined but does not match ``requested_count``,
+    the dimension FAILs with ``severity="high"`` and details containing
+    ``actual_count_mismatch``.
     """
     final_text = artifact.final_text or ""
     kind = case.expected.requested_count_kind
@@ -216,7 +288,10 @@ def evaluate_instruction_following(
         )
 
     if kind == "exercise_items":
-        result = _count_exercise_items(final_text)
+        result = _count_exercise_items(
+            final_text,
+            allow_subquestions=case.expected.allow_subquestions,
+        )
         if result.count is None:
             # Indeterminate — cannot silently PASS.
             return EvalDimensionResult(
@@ -229,13 +304,24 @@ def evaluate_instruction_following(
                 ),
             )
         passed = result.count == requested
+        if passed:
+            return EvalDimensionResult(
+                dimension=DIMENSION,
+                passed=True,
+                severity="none",
+                details=(
+                    f"instruction_following: exercise_items actual={result.count} "
+                    f"requested={requested}; {result.reason}"
+                ),
+            )
+        # R4-A4-0 (Task 3): distinct failure pattern for count mismatch.
         return EvalDimensionResult(
             dimension=DIMENSION,
-            passed=passed,
-            severity="none" if passed else "high",
+            passed=False,
+            severity="high",
             details=(
-                f"instruction_following: exercise_items actual={result.count} "
-                f"requested={requested}; {result.reason}"
+                f"instruction_following: exercise_items actual_count_mismatch; "
+                f"actual={result.count} requested={requested}; {result.reason}"
             ),
         )
 
@@ -253,13 +339,23 @@ def evaluate_instruction_following(
             )
         # "一句话" → ≤ requested sentences acceptable; >requested ⇒ failure.
         passed = result.count <= requested
+        if passed:
+            return EvalDimensionResult(
+                dimension=DIMENSION,
+                passed=True,
+                severity="none",
+                details=(
+                    f"instruction_following: sentences actual={result.count} "
+                    f"requested<={requested}; {result.reason}"
+                ),
+            )
         return EvalDimensionResult(
             dimension=DIMENSION,
-            passed=passed,
-            severity="none" if passed else "high",
+            passed=False,
+            severity="high",
             details=(
-                f"instruction_following: sentences actual={result.count} "
-                f"requested<={requested}; {result.reason}"
+                f"instruction_following: sentences actual_count_mismatch; "
+                f"actual={result.count} requested<={requested}; {result.reason}"
             ),
         )
 

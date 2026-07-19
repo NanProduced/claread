@@ -25,6 +25,18 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from claread_eval.reader_record_ask.evaluators.context_support_contract import (
+    CLASSIFICATION_LEGACY as _REASON_LEGACY,
+)
+from claread_eval.reader_record_ask.evaluators.context_support_contract import (
+    CLASSIFICATION_SUPPORTED as _REASON_SUPPORTED,
+)
+from claread_eval.reader_record_ask.evaluators.context_support_contract import (
+    INSTRUMENTATION_INCOMPLETE_CLASSIFICATIONS as _INSTRUMENTATION_INCOMPLETE_REASONS,
+)
+from claread_eval.reader_record_ask.evaluators.context_support_contract import (
+    MODEL_FAILURE_CLASSIFICATIONS as _MODEL_FAILURE_REASONS,
+)
 from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
 from claread_eval.reader_record_ask.schema import ReaderRecordAskR4A3Case
 
@@ -98,7 +110,14 @@ def _parse_recall(details: str) -> float | None:
 
 
 def _extract_failure_pattern(dimension: str, details: str) -> str:
-    """Derive a short, stable failure-pattern key from evaluator details."""
+    """Derive a short, stable failure-pattern key from evaluator details.
+
+    R4-A4-0 final gate closure (P0-2): for ``context_support`` the
+    typed ``classification`` field on :class:`EvalDimensionResult` is
+    the SINGLE source of truth — see :func:`_extract_failure_pattern_typed`.
+    This string-based fallback is kept only for dimensions that do
+    not yet populate ``classification``.
+    """
     if dimension == "unsupported_temporal_claims":
         m = _YEAR_IN_DETAILS_RE.search(details)
         if m:
@@ -113,6 +132,16 @@ def _extract_failure_pattern(dimension: str, details: str) -> str:
             return f"missing-{first}" if first else "incomplete-enumeration"
         return "incomplete-enumeration"
     if dimension == "instruction_following":
+        # R4-A4-0 (Task 3): distinguish ``indeterminate`` (count could
+        # not be determined) from ``actual_count_mismatch`` (count was
+        # determined but did not match ``requested_count``). The
+        # previous implementation grouped both under ``count-mismatch``,
+        # causing the report to label indeterminate cases as
+        # "生成 5 题" (a count-mismatch description).
+        if "indeterminate" in details:
+            return "indeterminate"
+        if "actual_count_mismatch" in details:
+            return "actual-count-mismatch"
         return "count-mismatch"
     if dimension == "entity_precision":
         return "type-confusion"
@@ -127,10 +156,59 @@ def _extract_failure_pattern(dimension: str, details: str) -> str:
     if dimension == "usage_observability":
         return "observability-missing"
     if dimension == "context_support":
+        # P0-2: typed classification is the SINGLE source of truth.
+        # This fallback is only reached when ``classification`` is
+        # None (e.g. legacy / metadata-only path). Defaulting to
+        # ``fact-not-grounded`` here would mis-cluster
+        # instrumentation blockers — the typed path
+        # (:func:`_extract_failure_pattern_typed`) handles the
+        # blocker distinction. ``fact-not-grounded`` is the safe
+        # fallback for legacy artifacts (which the readiness audit
+        # blocks at the verdict seam anyway).
         return "fact-not-grounded"
     if dimension == "answer_success":
         return "answer-failed"
     return "failure"
+
+
+def _extract_failure_pattern_typed(
+    dimension: str,
+    details: str,
+    classification: str | None,
+) -> str:
+    """R4-A4-0 final gate closure (P0-2): typed failure-pattern key.
+
+    For ``context_support``, the typed ``classification`` field
+    distinguishes:
+
+    - **instrumentation blockers** (``baseline_unavailable`` /
+      ``runtime_exception`` / ``instrumentation_incomplete``) →
+      cluster pattern ``instrumentation-incomplete``. These do NOT
+      enter rework and do NOT count as ``confirmed_model_failure``.
+    - **real model correctness failures** (``fact_not_supported`` /
+      ``fact_not_cited``) → cluster pattern ``fact-not-grounded``.
+      These DO enter rework and DO count as ``confirmed_model_failure``.
+    - **legacy artifact** (``legacy_artifact``) → cluster pattern
+      ``legacy-artifact``. Replay classifies as
+      ``indeterminate_requires_new_artifact``; authoritative aggregate
+      blocks via the readiness audit.
+    - **supported / None** → not a failure (no cluster).
+
+    For all other dimensions, falls back to
+    :func:`_extract_failure_pattern` (string-based details parsing).
+    """
+    if dimension == "context_support" and classification is not None:
+        if classification in _INSTRUMENTATION_INCOMPLETE_REASONS:
+            return "instrumentation-incomplete"
+        if classification in _MODEL_FAILURE_REASONS:
+            return "fact-not-grounded"
+        if classification == _REASON_LEGACY:
+            return "legacy-artifact"
+        if classification == _REASON_SUPPORTED:
+            # Should not reach here because ``passed=True`` skips
+            # cluster formation. Defense-in-depth.
+            return "supported"
+    return _extract_failure_pattern(dimension, details)
 
 
 def _identify_failure_clusters(
@@ -152,7 +230,13 @@ def _identify_failure_clusters(
             if dim.passed:
                 continue
             # Deterministic failure — LLM judge note is ignored.
-            pattern = _extract_failure_pattern(dim.dimension, dim.details)
+            # R4-A4-0 final gate closure (P0-2): use typed
+            # ``classification`` field when available so
+            # instrumentation blockers do NOT cluster as
+            # ``fact-not-grounded``.
+            pattern = _extract_failure_pattern_typed(
+                dim.dimension, dim.details, dim.classification
+            )
             key = (dim.dimension, qcat, pattern)
             if key not in cluster_map:
                 cluster_map[key] = {"failed_count": 0, "case_ids": []}
@@ -258,6 +342,13 @@ def aggregate_results(
                     instruction_pass += 1
 
         per_config[key] = {
+            # R4-A4-0 (Task 5): ``total_runs`` MUST be explicitly written.
+            # The previous implementation computed it
+            # (``total_runs = len(group)``) but did NOT include it in the
+            # per_config dict, causing the report generator to read 0
+            # from the default and display "total_runs=0" despite 30
+            # real runs.
+            "total_runs": total_runs,
             "pass_rate": pass_count / total_runs if total_runs else 0.0,
             "avg_latency": sum(latencies) / len(latencies) if latencies else 0.0,
             "avg_tokens": sum(tokens) / len(tokens) if tokens else 0.0,

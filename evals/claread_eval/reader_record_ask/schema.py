@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 
 class AtomicExpectedFact(BaseModel):
@@ -26,6 +26,12 @@ class AtomicExpectedFact(BaseModel):
       its absence does not fail the dimension.
     - ``severity``: failure severity when ``required=True`` and the fact
       is not mentioned.
+
+    R4-A4-0 final closure (P1-1): ``required`` is now
+    :class:`StrictBool` — rejects ``"false"`` / ``"true"`` / ``0`` /
+    ``1`` / ``0.0`` / ``1.0``. The previous lenient ``bool`` allowed
+    ``required=0`` to silently coerce to ``required=False``, weakening
+    the contract.
     """
 
     model_config = {"extra": "forbid"}
@@ -33,7 +39,7 @@ class AtomicExpectedFact(BaseModel):
     fact_id: str
     answer_alias_groups: list[list[str]] = Field(default_factory=list)
     source_aliases: list[str] = Field(default_factory=list)
-    required: bool = True
+    required: StrictBool = True
     severity: Literal["high", "medium", "low"] = "high"
 
 
@@ -45,8 +51,31 @@ class ReaderRecordAskR4A3Expected(BaseModel):
     the constraints it actually wants to assert.
     """
 
-    # exhaustive_completeness: type -> expected entity set
+    # exhaustive_completeness: type -> expected entity set.
+    #
+    # R4-A4-0 (Task 2): each entity entry may use ``|``-separated alias
+    # lists (e.g. ``"Thunder Bay|雷霆湾|桑德贝"``). Any alias in the
+    # list matching the final_text counts as a hit. This mirrors the
+    # ``entity_catalog`` alias contract so recall and precision share
+    # the same alias vocabulary.
     expected_entity_set: dict[str, list[str]] = Field(default_factory=dict)
+    # exhaustive_completeness (R4-A4-0 Task 2): explicit recall scope.
+    # When ``False`` (default), the evaluator does NOT require every
+    # entity in ``expected_entity_set`` to appear in the answer. Only
+    # when the user question explicitly asks for an exhaustive list
+    # (e.g. ``city_enumeration``) should this be set to ``True``.
+    # Cases like ``main_idea`` / ``core_viewpoint`` / ``author_intent``
+    # / ``argument_structure`` / ``exercise_one`` default to ``False``
+    # because the user did not ask for an exhaustive entity enumeration.
+    # The evaluator MUST NOT infer the scope from ``question_category``,
+    # suggestion text, or keywords — only this explicit field.
+    #
+    # R4-A4-0 final closure (P1-1): now :class:`StrictBool` — rejects
+    # ``"false"`` / ``"true"`` / ``0`` / ``1`` / ``0.0`` / ``1.0``.
+    # The previous lenient ``bool`` allowed ``requires_exhaustive_entity_recall=1``
+    # to silently coerce to ``True`` even when the case author meant a
+    # tag / count, not a boolean.
+    requires_exhaustive_entity_recall: StrictBool = False
     # unsupported_temporal_claims: trusted metadata or article evidence allows
     # year/date tokens that the answer may legitimately cite.
     allowed_temporal_claims: list[str] = Field(default_factory=list)
@@ -55,6 +84,23 @@ class ReaderRecordAskR4A3Expected(BaseModel):
     # instruction_following
     requested_count: int | None = None
     requested_count_kind: Literal["exercise_items", "sentences", "none"] = "none"
+    # instruction_following (R4-A4-0 Task 3): explicit subquestion
+    # permission for ``exercise_one`` cases. When ``False`` (default),
+    # an unnumbered single exercise block containing multiple related
+    # sub-questions (separated by ``?``) is counted as ONE top-level
+    # exercise item — the evaluator must NOT inflate the count by
+    # treating each ``?`` as a separate item. When ``True``, the case
+    # author explicitly allows compound sub-questions to be counted as
+    # separate items.
+    #
+    # Top-level numbering markers (``1.``, ``2.``, ``Q1``, ``第1题``)
+    # always determine the count regardless of this flag — they are
+    # the authoritative signal that the model produced N distinct
+    # exercises. ``allow_subquestions`` only affects how an unnumbered
+    # block with multiple ``?`` is interpreted.
+    #
+    # R4-A4-0 final closure (P1-1): now :class:`StrictBool`.
+    allow_subquestions: StrictBool = False
     # entity_precision: type -> allowed entity set (legacy field — still
     # respected by the evaluator; ``entity_catalog`` below is the
     # preferred typed catalog going forward).

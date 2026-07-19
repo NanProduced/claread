@@ -58,6 +58,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+from claread_eval.reader_record_ask.evaluators.context_support_contract import (
+    INSTRUMENTATION_INCOMPLETE_CLASSIFICATIONS as INSTRUMENTATION_INCOMPLETE_REASONS,
+)
+from claread_eval.reader_record_ask.evaluators.context_support_contract import (
+    LEGACY_BLOCKER_CLASSIFICATIONS as LEGACY_BLOCKER_REASONS,
+)
+
 EVALS_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = EVALS_ROOT.parent
 # Dataset Git governance: the R4-A3 working dataset lives under
@@ -241,6 +248,27 @@ def _load_artifacts(artifact_dir: Path, run_id: str) -> list:
 # check inside ``_decide_final_verdict``.
 # ---------------------------------------------------------------------------
 
+# R4-A4-0 final gate closure (P1 de-dup): classification reason tags
+# and the three routing frozensets are imported from
+# :mod:`evaluators.context_support_contract` — the SINGLE source of
+# truth shared by the evaluator, aggregator, and runner. The previous
+# private mirror (``_RUNNER_REASON_*`` /
+# ``INSTRUMENTATION_INCOMPLETE_REASONS`` /
+# ``LEGACY_BLOCKER_REASONS``) was a manually-synced copy that could
+# drift out of sync; the contract module eliminates that drift.
+#
+# ``fact_not_supported`` / ``fact_not_cited`` are intentionally NOT
+# in :data:`INSTRUMENTATION_INCOMPLETE_CLASSIFICATIONS` — they are
+# real model correctness failures that DO enter rework.
+#
+# Legacy is NOT an instrumentation_incomplete reason (the run did not
+# fail — it predates the new contract), but the verdict outcome is
+# the same: blocked_incomplete_real_model_run, allow_r4_a4=False,
+# allow_r4_b1=False. Kept as a separate set
+# (:data:`LEGACY_BLOCKER_CLASSIFICATIONS`) so the
+# ``instrumentation_incomplete_count`` audit field stays semantically
+# narrow (only the 3 instrumentation-incomplete reasons).
+
 
 class AggregateReadinessAudit:
     """Typed audit result concentrating ALL normal-verdict preconditions.
@@ -297,6 +325,31 @@ class AggregateReadinessAudit:
       via ``all([])``).
     - ``evaluated_case_result_count``: ``len(case_results)`` after
       the evaluator gate. Must equal ``planned_count`` AND be > 0.
+    - ``instrumentation_incomplete_count``: R4-A4-0 final gate closure
+      (P0-2). Count of evaluated ``context_support`` dimensions whose
+      typed ``classification`` falls in
+      :data:`INSTRUMENTATION_INCOMPLETE_REASONS` (``baseline_unavailable``
+      / ``runtime_exception`` / ``instrumentation_incomplete``). These
+      are instrumentation/run-incomplete blockers — NOT model
+      correctness failures. They MUST NOT enter rework, MUST NOT count
+      as ``confirmed_model_failure``, and MUST NOT cluster as
+      ``fact-not-grounded``. The verdict falls to
+      ``blocked_incomplete_real_model_run`` with
+      ``allow_r4_a4 = allow_r4_b1 = False`` via precedence row 9.5
+      in :func:`_decide_final_verdict`. ``fact_not_supported`` /
+      ``fact_not_cited`` classifications are NOT counted here — they
+      are real model failures that DO enter rework.
+    - ``legacy_artifact_count``: R4-A4-0 final gate closure (P0-2).
+      Count of evaluated ``context_support`` dimensions whose typed
+      ``classification`` is ``legacy_artifact`` (version=None,
+      status=None — predates the new contract). Per user spec, legacy
+      artifacts MUST also be blocked in the authoritative aggregate
+      even when dataset identity matches — they require new artifacts.
+      Legacy is NOT counted under ``instrumentation_incomplete_count``
+      (the run did not fail — it predates the contract) but produces
+      the same verdict outcome via the same precedence row 9.5. The
+      aggregator routes legacy to the ``legacy-artifact`` cluster
+      (NOT ``fact-not-grounded``).
 
     The ``ready_for_normal_verdict`` property is the SINGLE source of
     truth consulted by :func:`_decide_normal_verdict` (defense-in-depth)
@@ -321,6 +374,16 @@ class AggregateReadinessAudit:
         "unknown_planned_case_count",
         "unknown_artifact_case_count",
         "evaluated_case_result_count",
+        # R4-A4-0 final gate closure (P0-2): instrumentation-incomplete
+        # blocker count. See class docstring above.
+        "instrumentation_incomplete_count",
+        # R4-A4-0 final gate closure (P0-2): legacy-artifact blocker
+        # count. Legacy artifacts (version=None, status=None) cannot
+        # be authoritatively re-evaluated under the new contract —
+        # the authoritative aggregate MUST block them and require new
+        # artifacts. NOT counted under ``instrumentation_incomplete_count``
+        # because the run did not fail — it predates the contract.
+        "legacy_artifact_count",
     )
 
     def __init__(
@@ -340,6 +403,8 @@ class AggregateReadinessAudit:
         unknown_planned_case_count: int,
         unknown_artifact_case_count: int,
         evaluated_case_result_count: int,
+        instrumentation_incomplete_count: int = 0,
+        legacy_artifact_count: int = 0,
     ) -> None:
         self.artifact_load_clean = artifact_load_clean
         self.discovered_file_count = discovered_file_count
@@ -355,6 +420,8 @@ class AggregateReadinessAudit:
         self.unknown_planned_case_count = unknown_planned_case_count
         self.unknown_artifact_case_count = unknown_artifact_case_count
         self.evaluated_case_result_count = evaluated_case_result_count
+        self.instrumentation_incomplete_count = instrumentation_incomplete_count
+        self.legacy_artifact_count = legacy_artifact_count
 
     @property
     def ready_for_normal_verdict(self) -> bool:
@@ -380,6 +447,21 @@ class AggregateReadinessAudit:
             and self.unknown_artifact_case_count == 0
             and self.evaluated_case_result_count == self.planned_count
             and self.evaluated_case_result_count > 0
+            # R4-A4-0 final gate closure (P0-2): instrumentation-incomplete
+            # blockers (capture_status=unavailable/failed, fingerprint
+            # mismatch, missing required observation, duplicate/unknown
+            # observation, supporting handle not in model context) MUST
+            # NOT reach the normal accepted/rework path. They are NOT
+            # model correctness failures.
+            and self.instrumentation_incomplete_count == 0
+            # R4-A4-0 final gate closure (P0-2): legacy artifacts also
+            # MUST NOT reach the normal accepted/rework path — they
+            # cannot be authoritatively re-evaluated under the new
+            # contract. The authoritative aggregate MUST block them
+            # and require new artifacts (per user spec: "authoritative
+            # aggregate 若 dataset identity 恰好匹配，也不得 accepted；
+            # 应 blocked_incomplete_real_model_run").
+            and self.legacy_artifact_count == 0
         )
 
     @property
@@ -387,7 +469,10 @@ class AggregateReadinessAudit:
         """``True`` iff the evaluator MAY be run.
 
         This is ``ready_for_normal_verdict`` MINUS the
-        ``evaluated_case_result_count`` checks. It is consulted by
+        ``evaluated_case_result_count``,
+        ``instrumentation_incomplete_count``, and
+        ``legacy_artifact_count`` checks (all three are unknown
+        until AFTER the evaluator runs). It is consulted by
         :func:`aggregate` to decide whether to invoke the 11-dimension
         evaluator at all. When ``False``, the evaluator is skipped and
         ``evaluated_case_result_count`` stays at ``0`` — the verdict
@@ -395,17 +480,21 @@ class AggregateReadinessAudit:
         :func:`_decide_final_verdict` precedence rows 1-8.
 
         When ``True``, the evaluator runs and produces
-        ``case_results``. The actual ``evaluated_case_result_count``
-        is then set on a NEW :class:`AggregateReadinessAudit` instance
-        (this class is mutable via ``__slots__`` but the aggregate
-        rebuilds it post-evaluator for clarity) and passed to
+        ``case_results``. The actual ``evaluated_case_result_count``,
+        ``instrumentation_incomplete_count``, and
+        ``legacy_artifact_count`` are then set on a NEW
+        :class:`AggregateReadinessAudit` instance (this class is
+        mutable via ``__slots__`` but the aggregate rebuilds it
+        post-evaluator for clarity) and passed to
         :func:`_decide_final_verdict`.
 
         The split between ``pre_evaluator_ready`` and
         ``ready_for_normal_verdict`` is necessary because
-        ``evaluated_case_result_count`` is not known until AFTER the
-        evaluator runs — we cannot make it a precondition for RUNNING
-        the evaluator (chicken-and-egg).
+        ``evaluated_case_result_count``,
+        ``instrumentation_incomplete_count``, and
+        ``legacy_artifact_count`` are not known until AFTER
+        the evaluator runs — we cannot make them preconditions for
+        RUNNING the evaluator (chicken-and-egg).
         """
         return (
             self.artifact_load_clean
@@ -558,9 +647,46 @@ def _decide_final_verdict(
        is_complete False / evaluable != planned)      → blocked_incomplete_real_model_run  (F, F)
     8. unknown dataset case (planned or artifact)     → blocked_incomplete_real_model_run  (F, F)
     9. evaluated_case_result_count mismatch           → blocked_incomplete_real_model_run  (F, F)
+    9.5. instrumentation_incomplete (capture_status != captured,
+        fingerprint mismatch, missing required obs,
+        duplicate/unknown obs, supporting handle not in model context)
+        OR legacy_artifact (version=None, status=None — pre-contract)
+                                                      → blocked_incomplete_real_model_run  (F, F)
     10. no manifest + no artifact (not yet run)       → blocked_by_real_model_run          (F, F)
     11. completed manifest + full coverage + all pass → accepted                           (T, T)
     12. completed manifest + full coverage + qual fail→ rework                             (T, F)
+
+    R4-A4-0 final gate closure (P0-2) — precedence 9.5 is the typed
+    blocker row. It fires AFTER 9 (count mismatch) and BEFORE 10
+    (never-ran), so:
+
+    - If the evaluator was skipped (case_results empty),
+      ``instrumentation_incomplete_count`` and ``legacy_artifact_count``
+      are both 0 — precedence 9 fires first (count mismatch), 9.5 is
+      never reached.
+    - If the evaluator ran and ALL artifacts had clean instrumentation
+      (capture_status=captured, fingerprint matches, observations
+      complete, version=v1), 9.5 does not fire — fall through to
+      normal path.
+    - If the evaluator ran and ANY artifact had an instrumentation
+      blocker (capture_status=unavailable/failed, fingerprint mismatch,
+      missing/duplicate/unknown observation, supporting handle not in
+      model context), 9.5 fires with
+      ``("blocked_incomplete_real_model_run", False, False)``. These
+      blockers MUST NOT enter rework (NOT a model correctness failure)
+      and MUST NOT cluster as ``fact-not-grounded``. Real model
+      failures (``fact_not_supported`` / ``fact_not_cited``) do NOT
+      trip 9.5 — they fall through to the normal accepted/rework path.
+    - If the evaluator ran and ANY artifact is legacy (version=None,
+      status=None — predates the new contract), 9.5 also fires with
+      ``("blocked_incomplete_real_model_run", False, False)``. Per
+      user spec, legacy artifacts MUST NOT be accepted in the
+      authoritative aggregate even when dataset identity matches —
+      they require new artifacts. Legacy artifacts are counted under
+      ``legacy_artifact_count`` (NOT ``instrumentation_incomplete_count``)
+      because the run did not fail — it predates the contract. The
+      aggregator routes legacy to the ``legacy-artifact`` cluster
+      (NOT ``fact-not-grounded``).
 
     Precedence (high → low):
 
@@ -768,6 +894,46 @@ def _decide_final_verdict(
     ):
         return "blocked_incomplete_real_model_run", False, False
 
+    # Precedence 9.5: instrumentation_incomplete OR legacy_artifact —
+    # R4-A4-0 final gate closure (P0-2). The evaluator ran and produced
+    # the expected number of case_results, BUT at least one
+    # ``context_support`` dimension carries a typed ``classification``
+    # in :data:`INSTRUMENTATION_INCOMPLETE_REASONS`
+    # (``baseline_unavailable`` / ``runtime_exception`` /
+    # ``instrumentation_incomplete``) OR in
+    # :data:`LEGACY_BLOCKER_REASONS` (``legacy_artifact``). Both signal
+    # that the model-context instrumentation could NOT authoritatively
+    # evaluate the case — capture_status != captured, fingerprint
+    # mismatch, missing required observation, duplicate / unknown
+    # observation, supporting handle not in model context, OR the
+    # artifact predates the new contract (legacy).
+    #
+    # Such cases MUST NOT enter rework (they are NOT model correctness
+    # failures), MUST NOT count as ``confirmed_model_failure``, and
+    # MUST NOT cluster as ``fact-not-grounded`` (the aggregator's
+    # :func:`_extract_failure_pattern_typed` routes them to the
+    # ``instrumentation-incomplete`` or ``legacy-artifact`` cluster
+    # instead).
+    #
+    # Per user spec: "Legacy artifact: authoritative aggregate 若
+    # dataset identity 恰好匹配，也不得 accepted；应
+    # blocked_incomplete_real_model_run，要求新 artifacts". Legacy
+    # artifacts are NOT counted under ``instrumentation_incomplete_count``
+    # (the run did not fail — it predates the contract) but produce
+    # the same verdict outcome.
+    #
+    # Real model failures (``fact_not_supported`` / ``fact_not_cited``)
+    # do NOT trip this row — they fall through to the normal
+    # accepted/rework path via precedence 11/12.
+    if (
+        readiness is not None
+        and (
+            readiness.instrumentation_incomplete_count > 0
+            or readiness.legacy_artifact_count > 0
+        )
+    ):
+        return "blocked_incomplete_real_model_run", False, False
+
     # Precedence 10: no manifest + no artifacts → blocked_by_real_model_run.
     # NOTE: allow_r4_a4=False per the frozen contract (bug fix:
     # previous implementation incorrectly returned True).
@@ -789,6 +955,14 @@ def aggregate(
     runs_dir: Path,
     dataset_dir: Path,
     report_output: Path,
+    *,
+    # R4-A4-0 (Task 5): parameterized report inputs so the runner no
+    # longer relies on hardcoded date / file list / tracker path. CLI
+    # optional flags flow through here.
+    report_date: str | None = None,
+    modified_files: list[str] | None = None,
+    task_label: str = "Task 5",
+    tracker_path: str | None = None,
 ) -> int:
     """Load artifacts, run 11 evaluators, aggregate, generate report.
 
@@ -1083,13 +1257,50 @@ def aggregate(
 
     # ------------------------------------------------------------------
     # P0-2 final closure: rebuild readiness with actual
-    # evaluated_case_result_count and pass to _decide_final_verdict.
+    # evaluated_case_result_count, instrumentation_incomplete_count,
+    # and legacy_artifact_count, then pass to _decide_final_verdict.
     # ------------------------------------------------------------------
     # The post-evaluator readiness is a NEW instance (the class is
     # mutable via __slots__ but rebuilding is clearer and avoids
-    # half-updated state). Only ``evaluated_case_result_count``
-    # changes — all other fields are carried over from
-    # ``pre_eval_readiness``.
+    # half-updated state). ``evaluated_case_result_count``,
+    # ``instrumentation_incomplete_count``, and
+    # ``legacy_artifact_count`` are computed from ``case_results`` —
+    # all other fields are carried over from ``pre_eval_readiness``.
+    #
+    # R4-A4-0 final gate closure (P0-2): ``instrumentation_incomplete_count``
+    # is the count of evaluated ``context_support`` dimensions whose
+    # typed ``classification`` falls in
+    # :data:`INSTRUMENTATION_INCOMPLETE_REASONS` (``baseline_unavailable``
+    # / ``runtime_exception`` / ``instrumentation_incomplete``). When
+    # this count is > 0, precedence row 9.5 in
+    # :func:`_decide_final_verdict` forces
+    # ``blocked_incomplete_real_model_run`` — these are NOT model
+    # failures and MUST NOT enter rework. ``fact_not_supported`` /
+    # ``fact_not_cited`` classifications are intentionally NOT counted
+    # here — they are real model failures that DO enter rework.
+    #
+    # ``legacy_artifact_count`` is the count of evaluated
+    # ``context_support`` dimensions whose typed ``classification`` is
+    # ``legacy_artifact`` (version=None, status=None). Per user spec,
+    # legacy artifacts MUST also be blocked in the authoritative
+    # aggregate — they cannot be authoritatively re-evaluated under
+    # the new contract. Legacy is NOT counted under
+    # ``instrumentation_incomplete_count`` (the run did not fail — it
+    # predates the contract) but produces the same verdict outcome.
+    instrumentation_incomplete_count = sum(
+        1
+        for cr in case_results
+        for d in cr.dimensions
+        if d.dimension == "context_support"
+        and d.classification in INSTRUMENTATION_INCOMPLETE_REASONS
+    )
+    legacy_artifact_count = sum(
+        1
+        for cr in case_results
+        for d in cr.dimensions
+        if d.dimension == "context_support"
+        and d.classification in LEGACY_BLOCKER_REASONS
+    )
     readiness = AggregateReadinessAudit(
         artifact_load_clean=pre_eval_readiness.artifact_load_clean,
         discovered_file_count=pre_eval_readiness.discovered_file_count,
@@ -1105,6 +1316,8 @@ def aggregate(
         unknown_planned_case_count=pre_eval_readiness.unknown_planned_case_count,
         unknown_artifact_case_count=pre_eval_readiness.unknown_artifact_case_count,
         evaluated_case_result_count=len(case_results),
+        instrumentation_incomplete_count=instrumentation_incomplete_count,
+        legacy_artifact_count=legacy_artifact_count,
     )
 
     aggregated = aggregate_results(case_results, cases_by_id)
@@ -1243,6 +1456,19 @@ def aggregate(
                 "evaluated_case_result_count": (
                     readiness.evaluated_case_result_count
                 ),
+                # R4-A4-0 final gate closure (P0-2): typed
+                # instrumentation-incomplete blocker count. > 0 means
+                # the verdict falls to
+                # ``blocked_incomplete_real_model_run`` via precedence
+                # row 9.5 — these are NOT model failures and do NOT
+                # enter rework.
+                "instrumentation_incomplete_count": (
+                    readiness.instrumentation_incomplete_count
+                ),
+                # R4-A4-0 final gate closure (P0-2): legacy-artifact
+                # blocker count. Per user spec, legacy artifacts MUST
+                # also be blocked in the authoritative aggregate.
+                "legacy_artifact_count": readiness.legacy_artifact_count,
                 "pre_evaluator_ready": readiness.pre_evaluator_ready,
                 "ready_for_normal_verdict": readiness.ready_for_normal_verdict,
             },
@@ -1286,6 +1512,16 @@ def aggregate(
             else str(HARNESS_TEST_PATH),
             "tracker_path": _TRACKER_PATH,
         },
+        # R4-A4-0 (Task 5): parameterize previously hardcoded values.
+        # The report no longer carries stale date / file list / tracker
+        # path from the previous round. ``report_date`` defaults to
+        # today when caller does not pass it; ``modified_files`` and
+        # ``tracker_path`` are taken from CLI args (or fall back to
+        # canonical defaults).
+        report_date=report_date,
+        modified_files=modified_files,
+        task_label=task_label,
+        tracker_path=tracker_path,
     )
 
     report_output.parent.mkdir(parents=True, exist_ok=True)
@@ -1309,7 +1545,9 @@ def aggregate(
         f"unknown_planned_case={readiness.unknown_planned_case_count} "
         f"unknown_artifact_case={readiness.unknown_artifact_case_count} "
         f"evaluated_case_results={readiness.evaluated_case_result_count} "
-        f"planned={readiness.planned_count}"
+        f"planned={readiness.planned_count} "
+        f"instrumentation_incomplete={readiness.instrumentation_incomplete_count} "
+        f"legacy_artifact={readiness.legacy_artifact_count}"
     )
     print(
         f"coverage_audit: manifest_present={coverage_audit.manifest_present} "
@@ -1375,6 +1613,36 @@ def main() -> int:
         default=str(DEFAULT_REPORT_OUTPUT),
         help="Path to write the markdown report (aggregate phase).",
     )
+    parser.add_argument(
+        "--report-date",
+        default=None,
+        help=(
+            "Date label to print in the report title and tracker update "
+            "(YYYY-MM-DD). Defaults to today's date when not provided."
+        ),
+    )
+    parser.add_argument(
+        "--modified-file",
+        action="append",
+        default=None,
+        help=(
+            "Path modified in the current round (repeatable). Rendered in "
+            "§2.1 '本轮修改文件' of the report. Pass one flag per file."
+        ),
+    )
+    parser.add_argument(
+        "--task-label",
+        default="Task 5",
+        help="Task label rendered in §2.1 header (default: 'Task 5').",
+    )
+    parser.add_argument(
+        "--tracker-path",
+        default=None,
+        help=(
+            "Path to the tracker markdown file referenced in §14. Defaults "
+            "to the canonical tracker path when not provided."
+        ),
+    )
     args = parser.parse_args()
 
     # P0 explicit dataset-dir binding: resolve dataset dir from CLI > env.
@@ -1396,6 +1664,10 @@ def main() -> int:
             runs_dir=Path(args.runs_dir),
             dataset_dir=dataset_dir,
             report_output=Path(args.report_output),
+            report_date=args.report_date,
+            modified_files=args.modified_file,
+            task_label=args.task_label,
+            tracker_path=args.tracker_path,
         )
     # Phase 2/3 require --prior-run-id.
     if args.phase in ("2", "3") and not args.prior_run_id:

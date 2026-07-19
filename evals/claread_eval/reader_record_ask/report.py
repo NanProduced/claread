@@ -40,15 +40,17 @@ from claread_eval.reader_record_ask.schema import (
 
 _MAX_SNIPPET_CHARS = 200
 
-# Expected A/B columns for the per-config comparison table. The keys must
-# match the ``per_config`` buckets produced by ``aggregate_results`` —
-# "model_short_name|thinking=<bool>" — but the report renders three logical
-# columns (Flash non-thinking / Flash thinking / Pro thinking) regardless of
-# which configs actually ran.
-_AB_CONFIGS: tuple[tuple[str, str, str], ...] = (
-    ("Flash non-thinking", "deepseek-chat|thinking=False", "flash_no_thinking"),
-    ("Flash thinking", "deepseek-chat|thinking=True", "flash_thinking"),
-    ("Pro thinking", "deepseek-pro|thinking=True", "pro_thinking"),
+# R4-A4-0 (Task 5): canonical A/B comparison phases. The model name is
+# NOT hardcoded — it is matched as a case-insensitive regex against
+# ``aggregated.per_config`` keys, so the report renders real run data
+# for whatever model actually ran (e.g. ``deepseek-v4-flash``) while
+# still showing explicit "no data" rows for phases that didn't run.
+# The ``chat`` alternative preserves backward compatibility with older
+# fixtures that used ``deepseek-chat`` as the short name.
+_CANONICAL_PHASES: tuple[tuple[str, str, str], ...] = (
+    ("Flash non-thinking", r"(?:flash|chat)", "thinking=False"),
+    ("Flash thinking", r"(?:flash|chat)", "thinking=True"),
+    ("Pro thinking", r"pro", "thinking=True"),
 )
 
 # 15 required content sections per spec Requirement: 交付报告内容.
@@ -110,21 +112,28 @@ def _render_files_and_dirty_tree(
     harness_choice: str,
     rejected_harness: str,
     rejected_reason: str,
+    modified_files: list[str] | None,
+    task_label: str,
 ) -> str:
-    """Sections 2 + 3: 本轮文件 + 并行脏树 + harness 方案."""
+    """Sections 2 + 3: 本轮文件 + 并行脏树 + harness 方案.
+
+    R4-A4-0 (Task 5): ``modified_files`` is now parameterized — the
+    report no longer hardcodes the previous round's Task 5 file list.
+    Callers pass the actual modified-files list for the current round.
+    """
     dirty_tree_lines = (
         "\n".join(f"- `{p}`" for p in parallel_dirty)
         if parallel_dirty
         else "- (空)"
     )
+    if modified_files:
+        modified_lines = "\n".join(f"- `{p}`" for p in modified_files)
+    else:
+        modified_lines = "- (未提供)"
     return (
         f"## 2. 本轮文件与并行脏树区分\n\n"
-        f"### 2.1 本轮修改文件（Task 5）\n\n"
-        f"- `evals/claread_eval/reader_record_ask/report.py` (新建)\n"
-        f"- `evals/scripts/run_reader_record_ask_r4_a3.py` (新建)\n"
-        f"- `evals/tests/test_reader_record_ask_report.py` (新建)\n"
-        f"- `docs/tmp/reader-orchestration/review/"
-        f"TMP-reader-record-ask-r4-a3-eval-2026-07-17.md` (新建 TMP 报告)\n\n"
+        f"### 2.1 本轮修改文件（{task_label}）\n\n"
+        f"{modified_lines}\n\n"
         f"### 2.2 并行脏树（不在本轮允许路径，未修改）\n\n"
         f"{dirty_tree_lines}\n\n"
         f"## 3. Harness 方案及另一方案被拒原因\n\n"
@@ -345,28 +354,77 @@ def _render_ab_comparison(
     aggregated: AggregatedReport,
     real_model_blocked: bool,
 ) -> str:
-    """Section 9: Flash non-thinking / Flash thinking / Pro 对照."""
+    """Section 9: Flash non-thinking / Flash thinking / Pro 对照.
+
+    R4-A4-0 (Task 5): the per-config rows are no longer looked up by
+    hardcoded model name. Each canonical phase (Flash non-thinking /
+    Flash thinking / Pro thinking) is matched against
+    ``aggregated.per_config`` keys via a case-insensitive regex on the
+    model portion of the ``model_short_name|thinking=<bool>`` key. This
+    lets the report render real run data for whatever model actually
+    ran (e.g. ``deepseek-v4-flash|thinking=False``) while still showing
+    explicit ``N/A (no data)`` rows for phases that didn't run.
+    """
+    header = (
+        "| 配置 | pass_rate | avg_latency | avg_tokens | total_requests | "
+        "unsupported_claim_count | completeness_recall_avg | "
+        "instruction_following_rate |"
+    )
+    sep = "|" + "---|" * 8
+
     if real_model_blocked:
+        rows = [
+            "| Flash non-thinking | N/A (blocked) | N/A | N/A | N/A | N/A | N/A | N/A |",
+            "| Flash thinking | N/A (blocked) | N/A | N/A | N/A | N/A | N/A | N/A |",
+            "| Pro thinking | N/A (blocked) | N/A | N/A | N/A | N/A | N/A | N/A |",
+        ]
         return (
             "## 9. Flash non-thinking / Flash thinking / Pro 对照\n\n"
             "**状态: N/A (blocked)** — 真实模型未运行，无法生成 A/B 对照。\n\n"
-            "| 配置 | pass_rate | avg_latency | avg_tokens | total_requests | "
-            "unsupported_claim_count | completeness_recall_avg | "
-            "instruction_following_rate |\n"
-            "|---|---|---|---|---|---|---|---|\n"
-            "| Flash non-thinking | N/A (blocked) | N/A | N/A | N/A | N/A | N/A | N/A |\n"
-            "| Flash thinking | N/A (blocked) | N/A | N/A | N/A | N/A | N/A | N/A |\n"
-            "| Pro thinking | N/A (blocked) | N/A | N/A | N/A | N/A | N/A | N/A |\n"
+            f"{header}\n{sep}\n" + "\n".join(rows) + "\n"
         )
 
-    def _row(label: str, key: str) -> str:
-        metrics = aggregated.per_config.get(key)
-        if not metrics:
+    def _find_phase_keys(model_pattern: str, thinking_flag: str) -> list[str]:
+        """R4-A4-0 final closure (P1-2): return ALL matching config keys.
+
+        Returns:
+            - Empty list: 0 matches → caller renders ``N/A (no data)``.
+            - Single-element list: 1 match → caller renders the row.
+            - Multi-element list: >1 matches → caller renders
+              ``AMBIGUOUS (N matches: key1, key2, ...)`` fail-closed.
+              The previous implementation silently returned the first
+              match, which depended on dict insertion order and could
+              mask a real config collision (e.g. ``deepseek-v4-flash|
+              thinking=False`` and ``deepseek-chat|thinking=False``
+              both matching ``(?:flash|chat)``).
+        """
+        import re as _re
+
+        pat = _re.compile(model_pattern, _re.IGNORECASE)
+        return [
+            key for key in aggregated.per_config
+            if thinking_flag in key and pat.search(key)
+        ]
+
+    def _row(label: str, model_pattern: str, thinking_flag: str) -> str:
+        keys = _find_phase_keys(model_pattern, thinking_flag)
+        if not keys:
             return (
                 f"| {label} | N/A (no data) | N/A | N/A | N/A | N/A | N/A | N/A |"
             )
+        if len(keys) > 1:
+            # R4-A4-0 final closure (P1-2): >1 match is ambiguous —
+            # fail-closed. Do NOT silently pick the first key.
+            joined = ", ".join(keys)
+            return (
+                f"| {label} | AMBIGUOUS ({len(keys)} matches: "
+                f"{joined}) | N/A | N/A | N/A | N/A | N/A | N/A |"
+            )
+        key = keys[0]
+        metrics = aggregated.per_config[key]
         return (
-            f"| {label} | {float(metrics.get('pass_rate', 0.0)):.2f} | "
+            f"| {label} (`{key}`) | "
+            f"{float(metrics.get('pass_rate', 0.0)):.2f} | "
             f"{float(metrics.get('avg_latency', 0.0)):.2f} | "
             f"{float(metrics.get('avg_tokens', 0.0)):.0f} | "
             f"{int(metrics.get('total_requests', 0))} | "
@@ -375,16 +433,16 @@ def _render_ab_comparison(
             f"{float(metrics.get('instruction_following_rate', 0.0)):.2f} |"
         )
 
-    header = (
-        "| 配置 | pass_rate | avg_latency | avg_tokens | total_requests | "
-        "unsupported_claim_count | completeness_recall_avg | "
-        "instruction_following_rate |"
-    )
-    sep = "|" + "---|" * 8
-    rows = [_row(label, key) for label, key, _ in _AB_CONFIGS]
+    rows = [
+        _row(label, model_pat, thinking_flag)
+        for label, model_pat, thinking_flag in _CANONICAL_PHASES
+    ]
     table = "\n".join([header, sep, *rows])
     return (
         "## 9. Flash non-thinking / Flash thinking / Pro 对照\n\n"
+        "R4-A4-0 (Task 5): per-config rows are matched by regex against "
+        "real ``aggregated.per_config`` keys (no hardcoded model names). "
+        "Phases that did not run show ``N/A (no data)``.\n\n"
         f"{table}\n"
     )
 
@@ -592,19 +650,31 @@ def _render_next_step_decision(
     )
 
 
-_TRACKER_PATH = (
+_DEFAULT_TRACKER_PATH = (
     "docs/tmp/reader-orchestration/"
     "TMP-reader-record-ask-r4-product-ready-tracker-2026-07-17.md"
 )
 
 
-def _render_tracker_update(verdict: str) -> str:
-    """Section 14: R4 tracker 更新."""
+def _render_tracker_update(
+    verdict: str,
+    *,
+    tracker_path: str | None = None,
+    report_date: str | None = None,
+) -> str:
+    """Section 14: R4 tracker 更新.
+
+    R4-A4-0 (Task 5): ``tracker_path`` and ``report_date`` are now
+    parameterized — the report no longer hardcodes the previous round's
+    tracker file path or decision-log date.
+    """
+    path = tracker_path or _DEFAULT_TRACKER_PATH
+    date = report_date or "2026-07-17"
     return (
         "## 14. R4 tracker 更新\n\n"
-        f"- tracker 文件: `{_TRACKER_PATH}`\n"
+        f"- tracker 文件: `{path}`\n"
         f"- §6 任务板 R4-A3 行状态: `{verdict}`\n"
-        f"- §11 决策日志: 追加一行 (日期=2026-07-17, 决策=R4-A3 裁决="
+        f"- §11 决策日志: 追加一行 (日期={date}, 决策=R4-A3 裁决="
         f"{verdict}, 原因=详见本评测报告)。\n"
         f"- §12 per-round 模板: 追加 R4-A3 轮次记录。\n"
         f"- 仅追加，不重写已签收的 R4-0/R4-A1/R4-A2 段落。\n"
@@ -870,6 +940,13 @@ def generate_r4_a3_report(
     allow_r4_a4: bool,
     allow_r4_b1: bool,
     run_metadata: dict[str, Any] | None = None,
+    # R4-A4-0 (Task 5) — parameterize previously hardcoded values so
+    # the report no longer carries stale date / file list / tracker
+    # path from the previous round.
+    report_date: str | None = None,
+    modified_files: list[str] | None = None,
+    task_label: str = "Task 5",
+    tracker_path: str | None = None,
 ) -> str:
     """Generate the R4-A3 evaluation markdown report.
 
@@ -893,9 +970,15 @@ def generate_r4_a3_report(
     # Title
     total_runs = aggregated.total_runs
     total_cases = aggregated.total_cases
+    # R4-A4-0 (Task 5): use parameterized ``report_date`` instead of
+    # the hardcoded "2026-07-17" from the previous round.
+    if report_date is None:
+        from datetime import date as _date
+
+        report_date = _date.today().isoformat()
     sections.append(
         "# TMP — Reader Record Ask R4-A3 评测报告\n\n"
-        f"> 生成时间: 2026-07-17  \n"
+        f"> 生成时间: {report_date}  \n"
         f"> dataset: `{dataset.id}`  \n"
         f"> 总 cases: {total_cases}  \n"
         f"> 总 runs: {total_runs}  \n"
@@ -911,6 +994,8 @@ def generate_r4_a3_report(
             harness_choice=harness_choice,
             rejected_harness=rejected_harness,
             rejected_reason=rejected_reason,
+            modified_files=modified_files,
+            task_label=task_label,
         )
     )
     sections.append(_render_dataset_cases(dataset))
@@ -957,7 +1042,13 @@ def generate_r4_a3_report(
             verdict=verdict,
         )
     )
-    sections.append(_render_tracker_update(verdict))
+    sections.append(
+        _render_tracker_update(
+            verdict,
+            tracker_path=tracker_path,
+            report_date=report_date,
+        )
+    )
     sections.append(_render_no_commit(parallel_dirty))
 
     # Sections 16-19: rework closure additions

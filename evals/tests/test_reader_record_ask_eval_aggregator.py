@@ -274,6 +274,8 @@ def test_per_config_metrics() -> None:
     assert "pro|thinking=True" in report.per_config
 
     flash_cfg = report.per_config["flash|thinking=False"]
+    # R4-A4-0 (Task 5): ``total_runs`` MUST be explicitly written.
+    assert flash_cfg["total_runs"] == 2
     assert flash_cfg["pass_rate"] == 0.5  # 1 of 2 runs fully passed
     assert flash_cfg["avg_latency"] == 15.0  # (10+20)/2
     assert flash_cfg["avg_tokens"] == 1500.0  # (1000+2000)/2
@@ -283,6 +285,7 @@ def test_per_config_metrics() -> None:
     assert flash_cfg["instruction_following_rate"] == 1.0
 
     pro_cfg = report.per_config["pro|thinking=True"]
+    assert pro_cfg["total_runs"] == 1
     assert pro_cfg["pass_rate"] == 1.0
     assert pro_cfg["unsupported_claim_count"] == 0
     assert pro_cfg["completeness_recall_avg"] == 0.0  # no failure → no recall parsed

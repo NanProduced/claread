@@ -299,6 +299,8 @@ def _make_readiness(
     unknown_planned_case_count: int = 0,
     unknown_artifact_case_count: int = 0,
     evaluated_case_result_count: int = 1,
+    instrumentation_incomplete_count: int = 0,
+    legacy_artifact_count: int = 0,
 ) -> _RUNNER.AggregateReadinessAudit:
     return _RUNNER.AggregateReadinessAudit(
         artifact_load_clean=artifact_load_clean,
@@ -315,6 +317,8 @@ def _make_readiness(
         unknown_planned_case_count=unknown_planned_case_count,
         unknown_artifact_case_count=unknown_artifact_case_count,
         evaluated_case_result_count=evaluated_case_result_count,
+        instrumentation_incomplete_count=instrumentation_incomplete_count,
+        legacy_artifact_count=legacy_artifact_count,
     )
 
 
