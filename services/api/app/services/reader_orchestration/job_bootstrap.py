@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import asyncpg
 
+from app.config.settings import Settings
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 from app.services.reader_orchestration.document_feature_extractor import (
@@ -726,6 +727,38 @@ def allow_semantic_outline_request_eligibility(
     """
     del state  # eligibility is unconditional when explicitly injected
     return True
+
+
+def settings_aware_semantic_outline_request_eligibility(
+    settings: Settings,
+) -> SemanticOutlineRequestEligibility:
+    """T5.8d-dev-activation: build a request-eligibility predicate from settings.
+
+    Dev-only freeze: ``activation_ready = semantic_outline_generation_enabled
+    AND reader_semantic_outline_model_profile != ""``. When ``activation_ready``
+    is True, every record that has reached the existing ``article_ready``
+    milestone auto-qualifies for semantic outline bootstrap (no extra
+    thresholds, no whitelist, no CTA).
+
+    The ``article_ready`` readiness_state gate is enforced separately by
+    :func:`_bootstrap_semantic_outline_job` (it short-circuits before
+    calling the predicate). This predicate only expresses the
+    settings-derived activation flag.
+
+    Committed defaults stay closed
+    (``semantic_outline_generation_enabled=False``,
+    ``reader_semantic_outline_model_profile=""``) so this predicate returns
+    False under default settings; the production composition root is the
+    only caller that wires it.
+    """
+    activation_ready = bool(
+        settings.semantic_outline_generation_enabled
+    ) and bool(settings.reader_semantic_outline_model_profile)
+
+    def _predicate(_state: "_LockedActiveBaseState") -> bool:
+        return activation_ready
+
+    return _predicate
 
 
 @dataclass(frozen=True, slots=True)

@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import asyncpg
 
+from app.config.settings import Settings, get_settings
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 from app.services.ai_usage import (
@@ -80,6 +81,7 @@ from app.services.reader_orchestration.job_bootstrap import (
     EnhancementBootstrapJobCounts,
     EnhancementBootstrapSummary,
     EnhancementJobBootstrapService,
+    settings_aware_semantic_outline_request_eligibility,
 )
 from app.services.reader_orchestration.job_runtime import (
     ClaimResult,
@@ -368,18 +370,48 @@ class ReaderEnhancementPipelineRunner:
         grammar_window_publisher: GrammarWindowPublisher | None = None,
         job_runtime: ReaderJobRuntime | None = None,
         enable_zplus_grammar: bool = True,
+        settings: Settings | None = None,
     ) -> None:
         self._pool = pool
-        self._bootstrap_service = bootstrap_service or EnhancementJobBootstrapService(
-            pool=pool
-        )
+        # T5.8d-dev-activation: dev-only auto-activation of semantic outline.
+        # activation_ready = semantic_outline_generation_enabled
+        # AND reader_semantic_outline_model_profile != "". Committed defaults
+        # stay closed; only an explicit settings injection (or env override
+        # via get_settings()) can flip this on. When activation_ready=False,
+        # bootstrap stays on the always-false default predicate and the
+        # worker keeps the fail-closed UnconfiguredSemanticOutlineGenerator.
+        resolved_settings = settings or get_settings()
+        activation_ready = bool(
+            resolved_settings.semantic_outline_generation_enabled
+        ) and bool(resolved_settings.reader_semantic_outline_model_profile)
+        if bootstrap_service is not None:
+            self._bootstrap_service = bootstrap_service
+        elif activation_ready:
+            self._bootstrap_service = EnhancementJobBootstrapService(
+                pool=pool,
+                semantic_outline_request_eligibility=(
+                    settings_aware_semantic_outline_request_eligibility(resolved_settings)
+                ),
+            )
+        else:
+            self._bootstrap_service = EnhancementJobBootstrapService(pool=pool)
         self._display_title_worker_service = (
             display_title_worker_service or DisplayTitleWorkerService(pool=pool)
         )
-        self._semantic_outline_worker_service = (
-            semantic_outline_worker_service
-            or SemanticOutlineWorkerService(pool=pool)
-        )
+        if semantic_outline_worker_service is not None:
+            self._semantic_outline_worker_service = semantic_outline_worker_service
+        elif activation_ready:
+            # Delay import to avoid pulling PydanticAI / provider stack at
+            # module load when activation is off (mirrors grammar_window).
+            from app.services.reader_orchestration.semantic_outline_executor import (
+                PydanticAISemanticOutlineGenerator,
+            )
+            self._semantic_outline_worker_service = SemanticOutlineWorkerService(
+                pool=pool,
+                generator=PydanticAISemanticOutlineGenerator(settings=resolved_settings),
+            )
+        else:
+            self._semantic_outline_worker_service = SemanticOutlineWorkerService(pool=pool)
         self._translation_orchestrator = translation_orchestrator or ReaderOrchestrator(
             pool=pool
         )

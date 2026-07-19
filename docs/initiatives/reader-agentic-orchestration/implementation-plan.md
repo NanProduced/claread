@@ -120,7 +120,8 @@ Reader enhancement 的当前主链路按层分开理解：
 | T5.8-R0 | real executor activation design gate | 2-4h | T5.7 | **closed（TMP）**：`TMP-t5.8-r0-...` R1-P2；usage 唯一记账、kill-switch 双检查、独立 policy、禁 empty stub |
 | T5.8a | outline route/prompt/settings registration | 2-4h | T5.8-R0 | **implemented（注册形状）**：route/profile/enabled 字段/capability/完整 prompt；默认关闭 |
 | T5.8b | controlled real adapter + policy + usage | 4-8h | T5.8a | **committed（commit `86df75fda`）**：`PydanticAISemanticOutlineGenerator`（DI only）；`SemanticOutlineExecutionPolicy` pre-call；worker `record_ai_usage_event` 按 call/usage 规则；默认仍 Unconfigured；**未** bootstrap kill-switch（T5.8d）；无默认启用/无真实 LLM |
-| T5.8c | semantic outline opt-in real-LLM smoke harness | 2-4h | T5.8b | **implemented / uncommitted**：`tests/test_reader_semantic_outline_t58c_real_llm.py` 单一 `@pytest.mark.real_llm` 测试；默认 skip + 零外呼（conftest triple gate）；DI-only `PydanticAISemanticOutlineGenerator`；fail-closed 模型比对；单次 provider call；snapshot 真实验收 seam（production `build_reader_plate_snapshot` 前后构建，断言 `navigation.units` 逐值不变 + top-level `semantic_outline` ready\|partial + source identity 一致）+ published layer provenance fence（`generation`/`source_job_id`/`source_run_id`）+ usage audit；`observability_inconclusive` 不视为通过；**未** 真实执行（T5.8d 产品决策前禁用） |
+| T5.8c | semantic outline opt-in real-LLM smoke harness | 2-4h | T5.8b | **committed（commit `062389e7d`）**：`tests/test_reader_semantic_outline_t58c_real_llm.py` 单一 `@pytest.mark.real_llm` 测试；默认 skip + 零外呼（conftest triple gate）；DI-only `PydanticAISemanticOutlineGenerator`；fail-closed 模型比对；单次 provider call；snapshot 真实验收 seam（production `build_reader_plate_snapshot` 前后构建，断言 `navigation.units` 逐值不变 + top-level `semantic_outline` ready\|partial + source identity 一致）+ published layer provenance fence（`generation`/`source_job_id`/`source_run_id`）+ usage audit；`observability_inconclusive` 不视为通过；**未** 真实执行（T5.8d 产品决策前禁用） |
+| T5.8d-dev-activation | dev auto-activation of semantic outline main path | 2-4h | T5.8b | **implemented / uncommitted**：开发期自动激活路线。`activation_ready = semantic_outline_generation_enabled AND reader_semantic_outline_model_profile != ""`。`job_bootstrap.settings_aware_semantic_outline_request_eligibility(settings)` 工厂派生谓词；`pipeline_runner.ReaderEnhancementPipelineRunner.__init__` 接收 `settings: Settings \| None = None`，activation_ready=True 时条件注入 `PydanticAISemanticOutlineGenerator`（延迟导入，仿 grammar_window）+ settings-aware eligibility，否则保持 `UnconfiguredSemanticOutlineGenerator` + 默认 always-false 谓词。committed defaults 仍关闭（`semantic_outline_generation_enabled=False`、`reader_semantic_outline_model_profile=""`）；显式注入优先于 activation_ready 自动装配。不包含 beta / 白名单 / CTA / capability endpoint / 历史数据兼容 / 迁移保留。TDD 覆盖 A 默认关闭 / B 自动资格 / C 装配（含 sentinel 区分未传 vs 显式 bootstrap override + C7 显式 bootstrap override identity）/ D 真链路 seam / E runner-level 公开 `bootstrap_missing_jobs` 真 seam 共 20 测试（`tests/test_reader_semantic_outline_dev_activation.py`）；未运行真实 LLM；不改 `.env` / migration / schema / Web / Ask / Article RAG / job_runtime RAG hunk |
 | T6.1 | SSE reader event endpoint | 4-8h | T2.3 | 支持 cursor/reconnect/heartbeat；语义等价 polling；不引入不可恢复状态 |
 | T6.2 | committed patch envelope | 6-10h | T6.1 | layer/outline/progress 更新可局部 merge；raw LLM token 不进入 article annotation stream |
 | T6.3 | frontend patch merge | 6-10h | T6.2 | 页面不全量替换 snapshot；打开面板、selection、scroll 和当前阅读位置稳定 |
@@ -1222,7 +1223,7 @@ Focused tests 已通过：
 | migration | `infra/migrations/0020_reader_semantic_outline_layer.sql` |
 | typed projection + statuses | `services/api/app/schemas/reader_orchestration.py`（`ReaderSemanticOutline*`） |
 | validator | `services/api/app/services/reader_orchestration/semantic_outline.py` |
-| bootstrap + eligibility | `job_bootstrap.py`（`_bootstrap_semantic_outline_job`、`default_semantic_outline_request_eligibility`） |
+| bootstrap + eligibility | `job_bootstrap.py`（`_bootstrap_semantic_outline_job`、`default_semantic_outline_request_eligibility`、`allow_semantic_outline_request_eligibility` DI、`settings_aware_semantic_outline_request_eligibility` dev-activation factory [T5.8d-dev-activation]） |
 | publisher | `semantic_outline_publisher.py` |
 | worker | `semantic_outline_worker.py` |
 | pipeline slot | `pipeline_runner.py`（`semantic_outline` non-budget） |
@@ -1255,12 +1256,16 @@ Focused tests 已通过：
 8. **未真实执行**：本轮不设置真实 provider env、不运行 `-m real_llm`；invalid-output / timeout / usage-writer 失败路径不真实执行，仅由 T5.8b 既有 DB seam 覆盖。
 9. **leak-safe 报告**：仅记录 `job_id` / `run_id` / `model_name` / `status` / `node_count` / `usage` aggregate token totals / `functional_verdict` / `usage_audit_verdict`；**不**记录 API key / endpoint / 完整 prompt / 完整 provider payload。
 10. **observability_inconclusive**：usage writer 容错失败（`record_ai_usage_event` 返回 `None` 且 DB 实际 0 行）时，smoke verdict = `INCONCLUSIVE`；**不**视为完整通过；**不**据此确认成本或产品启用。
-11. **T5.8d 仍缺产品决策**：自动 eligibility 阈值、L2 首次生成入口、真实成本上限、bootstrap kill-switch wiring、`semantic_outline_generation_enabled` 默认是否打开；这些决策未落地前 harness 仅做 smoke 验收，不放开产品默认启用。
+11. **T5.8d 待决事项（仅未来生产化/产品化路线，不阻塞当前开发期 activation_ready 自动主链路）**：自动 eligibility 阈值、L2 首次生成入口、真实成本上限、bootstrap kill-switch wiring、`semantic_outline_generation_enabled` 默认是否打开、capability seam / CTA（如选 B.3-a）等仅是未来生产化/产品化路线的待决事项；不阻塞当前开发期 `activation_ready = semantic_outline_generation_enabled AND reader_semantic_outline_model_profile != ""` 自动主链路。当前开发期只需在本地环境显式配置 `SEMANTIC_OUTLINE_GENERATION_ENABLED=true` + `READER_SEMANTIC_OUTLINE_MODEL_PROFILE=<profile>`，随后由人工执行真实 LLM 验证（仍受 conftest real-LLM gate 约束）。不引入 beta、白名单、CTA、capability seam 作为当前开发主线前置；这些决策未落地前 harness 仅做 smoke 验收，不放开产品默认启用。
+12. **T5.8d-dev-activation 已实施（开发期自动激活路线，非产品决策）**：`activation_ready = semantic_outline_generation_enabled AND reader_semantic_outline_model_profile != ""`。`job_bootstrap.settings_aware_semantic_outline_request_eligibility(settings)` 派生谓词；`pipeline_runner.ReaderEnhancementPipelineRunner` 接收 `settings` 参数，activation_ready=True 时条件注入 `PydanticAISemanticOutlineGenerator` + settings-aware eligibility，否则保持 `UnconfiguredSemanticOutlineGenerator` + 默认 always-false 谓词。committed defaults 仍关闭；显式注入优先于自动装配。仅开发期适用，不包含 beta / 白名单 / CTA / capability endpoint / 历史数据兼容 / 迁移保留。TDD 20 测试（含 runner-level bootstrap_missing_jobs 真 seam、sentinel 与显式 bootstrap override）覆盖 A 默认关闭 / B 自动资格 / C 装配 / D 真链路 seam / E runner-level 公开 bootstrap seam；未运行真实 LLM。
 
 ### 下一任务
 
-1. 在人工明确授权且模型/profile/单篇成本上限已决后，运行一次 T5.8c real-LLM smoke（`tests/test_reader_semantic_outline_t58c_real_llm.py` + `-m real_llm` + `CLAREAD_ALLOW_REAL_LLM_TESTS=1` + `CLAREAD_REAL_LLM_MODEL=<authorized>`）。
-2. T5.8d 产品决策与 bootstrap admission kill-switch：自动 eligibility 阈值、L2 首次生成入口、真实成本上限、`semantic_outline_generation_enabled` 默认是否打开、kill-switch wiring。
+1. 两条独立边界，互不互为前置：
+   - **T5.8c pytest smoke**（`tests/test_reader_semantic_outline_t58c_real_llm.py` + `-m real_llm`）：仅在人工授权且本地 profile 已配置后运行；受 conftest triple gate 与 `CLAREAD_ALLOW_REAL_LLM_TESTS=1` / `CLAREAD_REAL_LLM_MODEL=<authorized>` 约束。
+   - **本地应用 T5.8d-dev-activation 自动主链路**：配置 `SEMANTIC_OUTLINE_GENERATION_ENABLED=true` 和 `READER_SEMANTIC_OUTLINE_MODEL_PROFILE=<profile>` 后可运行；**不**经过 pytest / conftest gate，运行时门是 `activation_ready`、profile/route 配置及既有 execution policy。
+   - 单篇成本上限、beta、白名单、CTA、capability seam **不**写成当前开发期前置。
+2. T5.8d 待决事项（仅未来生产化/产品化路线，不阻塞当前开发期 activation_ready 自动主链路）：自动 eligibility 阈值（产品级，不同于 dev activation 的 `article_ready` 直通）、L2 首次生成入口、真实成本上限、`semantic_outline_generation_enabled` 默认是否打开、kill-switch wiring、capability seam / CTA（如选 B.3-a）。这些仅是未来生产化/产品化路线的待决事项；不阻塞当前开发期 `activation_ready` 自动主链路。当前开发期只需在本地环境显式配置 `SEMANTIC_OUTLINE_GENERATION_ENABLED=true` + `READER_SEMANTIC_OUTLINE_MODEL_PROFILE=<profile>`，随后由人工执行真实 LLM 验证（仍受 conftest real-LLM gate 约束）。不引入 beta、白名单、CTA、capability seam 作为当前开发主线前置。
 3. T5.6c「解析此段」HTTP/UI（独立任务）。
 
 ---

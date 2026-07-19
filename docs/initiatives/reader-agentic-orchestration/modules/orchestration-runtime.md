@@ -1,7 +1,7 @@
 # Orchestration Runtime
 
-> 状态：`D6 ongoing；T5.8c：outline real adapter 可 DI 注入 + opt-in real-LLM smoke harness；默认 Unconfigured + eligibility=false；usage 按 provider-call 规则；harness 默认 skip + 零外呼；snapshot 真实验收 seam`
-> 最后更新：2026-07-18（T5.8c-R1-P1：harness 通过 production `ArticleReadyPersistenceService.load_snapshot` → `build_reader_plate_snapshot` 在 worker 调用前后构建 `ReaderPlateSnapshot`，断言 `navigation.units` 逐值不变 + top-level `semantic_outline` ready|partial + source identity 一致；published layer provenance fence 补齐 `generation`/`source_job_id`/`source_run_id`；conftest triple gate + fail-closed 模型比对 + DI-only adapter + 单次 provider call + usage audit；`observability_inconclusive` 不视为通过；harness 已准备、未真实执行、默认零外呼）
+> 状态：`D6 ongoing；T5.8c：outline real adapter 可 DI 注入 + opt-in real-LLM smoke harness；默认 Unconfigured + eligibility=false；usage 按 provider-call 规则；harness 默认 skip + 零外呼；snapshot 真实验收 seam；T5.8d-dev-activation：开发期 activation_ready 自动装配 PydanticAI 生成器 + settings-aware eligibility（committed defaults 仍关闭）`
+> 最后更新：2026-07-19（T5.8d-dev-activation：`ReaderEnhancementPipelineRunner.__init__` 接收 `settings: Settings | None = None`，`activation_ready = semantic_outline_generation_enabled AND reader_semantic_outline_model_profile != ""`。activation_ready=True 时条件注入 `PydanticAISemanticOutlineGenerator`（延迟导入，仿 grammar_window）+ `settings_aware_semantic_outline_request_eligibility(settings)`；否则保持 `UnconfiguredSemanticOutlineGenerator` + 默认 always-false 谓词。committed defaults 仍关闭；显式注入优先于自动装配。TDD 15 测试覆盖 A 默认关闭 / B 自动资格 / C 装配 / D 真链路 seam；未运行真实 LLM；不包含 beta / CTA / capability seam / 历史数据兼容）
 > 范围：bounded run/job、worker lease、Authorization Envelope、并发和框架边界。
 
 ## Runtime 形态
