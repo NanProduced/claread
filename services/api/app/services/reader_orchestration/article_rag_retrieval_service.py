@@ -52,6 +52,7 @@ Security contract
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 from uuid import UUID
@@ -63,6 +64,11 @@ from .article_rag_index_plan import (
     ArticleRagIndexPlan,
     ArticleRagIndexPlanService,
     compute_plan_content_sha256,
+)
+from .article_rag_index_profile import (
+    DEFAULT_ARTICLE_RAG_INDEX_VERSION,
+    ArticleRagIndexProfileResolutionError,
+    resolve_article_rag_index_profile,
 )
 from .article_rag_index_worker import (
     ArticleRagEmbeddingProvider,
@@ -82,8 +88,10 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-# Default index version to look up.  Matches D6-I4B's default.
-DEFAULT_INDEX_VERSION = "article_rag_index_v1"
+# P1-F: ``DEFAULT_INDEX_VERSION`` is now an alias of the P1-B profile
+# module's ``DEFAULT_ARTICLE_RAG_INDEX_VERSION`` — no second literal
+# source of truth.  The value is unchanged (``"article_rag_index_v1"``).
+DEFAULT_INDEX_VERSION = DEFAULT_ARTICLE_RAG_INDEX_VERSION
 
 # Hard cap on top-k.  Prevents the caller from requesting an unbounded
 # number of hits and accidentally draining the entire index in a single
@@ -98,6 +106,9 @@ _INDEX_RUN_QUERYABLE_STATUSES = frozenset({"indexed"})
 # Failure codes — stable, machine-readable.
 FAILURE_CODE_RETRIEVAL_NO_INDEXED_RUN = "retrieval_no_indexed_run"
 FAILURE_CODE_RETRIEVAL_PLAN_HASH_MISMATCH = "retrieval_plan_hash_mismatch"
+FAILURE_CODE_RETRIEVAL_INDEX_RUN_PLAN_MISMATCH = (
+    "retrieval_index_run_plan_mismatch"
+)
 FAILURE_CODE_RETRIEVAL_EMPTY_QUERY = "retrieval_empty_query"
 FAILURE_CODE_RETRIEVAL_INVALID_LIMIT = "retrieval_invalid_limit"
 FAILURE_CODE_RETRIEVAL_VECTOR_METADATA_MISMATCH = (
@@ -109,6 +120,48 @@ FAILURE_CODE_RETRIEVAL_NO_VECTOR_COLLECTION = "retrieval_no_vector_collection"
 FAILURE_CODE_RETRIEVAL_EMBEDDING_MODEL_MISMATCH = (
     "retrieval_embedding_model_mismatch"
 )
+FAILURE_CODE_RETRIEVAL_EMBEDDING_DIMENSION_MISMATCH = (
+    "retrieval_embedding_dimension_mismatch"
+)
+# P1-F: profile resolution / indexed-run identity validation failure
+# codes.  ``_INVALID`` covers NULL / malformed / unregistered inputs;
+# ``_MISMATCH`` covers valid-format but resolver-inconsistent values.
+FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID = (
+    "retrieval_index_profile_invalid"
+)
+FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH = (
+    "retrieval_index_profile_mismatch"
+)
+
+# P1-F: fixed local error messages for profile failures.  These strings
+# never interpolate caller-supplied input — the offending value is never
+# echoed in ``str``, ``repr``, ``args``, or traceback.
+_P1F_MSG_PROFILE_NOT_RESOLVED = (
+    "Article RAG index profile is not supported"
+)
+_P1F_MSG_INDEXED_RUN_PROFILE_INVALID = (
+    "Article RAG index run profile fingerprint is not registered"
+)
+_P1F_MSG_INDEXED_RUN_PROFILE_MISMATCH = (
+    "Article RAG index run profile does not match resolver"
+)
+_P1F_MSG_PLAN_IDENTITY_MISMATCH = (
+    "Article RAG index plan identity does not match resolver"
+)
+_P1F_MSG_INDEX_RUN_PLAN_MISMATCH = (
+    "Article RAG indexed run does not match the current plan"
+)
+_P1F_MSG_QUERY_EMBEDDING_MODEL_MISMATCH = (
+    "Article RAG query embedding model does not match profile"
+)
+_P1F_MSG_QUERY_EMBEDDING_DIMENSION_MISMATCH = (
+    "Article RAG query embedding dimension does not match profile"
+)
+
+# P1-F: canonical SHA-256 fingerprint format enforced by migration 0021's
+# CHECK constraint.  Used to distinguish ``_INVALID`` (NULL / malformed)
+# from ``_MISMATCH`` (valid format but wrong value).
+_PROFILE_FINGERPRINT_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 # Denylist for returned metadata — keys that MUST NOT appear on the
 # returned ``metadata_json``.  Mirrors the I4D writer denylist extended
@@ -260,6 +313,14 @@ class _IndexedRunSnapshot:
     a non-default collection name); without ``embedding_model`` the
     query vector and the indexed vectors would be in different
     embedding spaces, producing silently bad results.
+
+    P1-F: ``profile_fingerprint`` is the durable identity column added
+    by migration 0021.  The retrieval service reads it and validates
+    it against ``resolution.profile_fingerprint`` as part of the 5-field
+    identity check.  NULL / malformed fingerprints fail closed with
+    ``retrieval_index_profile_invalid``; valid-format but resolver-
+    inconsistent fingerprints fail closed with
+    ``retrieval_index_profile_mismatch``.
     """
 
     index_run_id: UUID
@@ -273,6 +334,7 @@ class _IndexedRunSnapshot:
     status: str
     vector_collection: str | None = None
     embedding_model: str | None = None
+    profile_fingerprint: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +463,37 @@ class ArticleRagRetrievalService:
                 failure_code=FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED,
             )
 
+        # Phase 0 (P1-F): resolve the immutable IndexProfile.  This is
+        # the sole entry point for obtaining a profile identity.  Any
+        # non-string, empty, whitespace-padded, unregistered, or
+        # malicious ``index_version`` fails closed here — BEFORE any
+        # DB, plan, embedding, or vector call.  The wrapper error is
+        # constructed INSIDE the except block and raised OUTSIDE it so
+        # both ``__cause__`` and ``__context__`` remain None (the
+        # resolver's exception is NOT chained).
+        resolution = None
+        resolution_error: ArticleRagRetrievalServiceError | None = None
+        try:
+            resolution = resolve_article_rag_index_profile(index_version)
+        except ArticleRagIndexProfileResolutionError:
+            resolution_error = ArticleRagRetrievalServiceError(
+                _P1F_MSG_PROFILE_NOT_RESOLVED,
+                retryable=False,
+                failure_code=FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID,
+            )
+        if resolution_error is not None:
+            # Raised outside the except block: __cause__ is None,
+            # __context__ is None.
+            raise resolution_error
+        if resolution is None:  # pragma: no cover - defensive invariant
+            raise ArticleRagRetrievalServiceError(
+                _P1F_MSG_PROFILE_NOT_RESOLVED,
+                retryable=False,
+                failure_code=FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID,
+            )
+
+        profile = resolution.profile
+
         pool = self._pool
         if pool is None:
             pool = self._plan_service._get_pool()  # type: ignore[attr-defined]
@@ -419,29 +512,121 @@ class ArticleRagRetrievalService:
             # both are propagated as-is to the caller because they are
             # already typed failures with no chunk text or token
             # content.
+            #
+            # P1-F: forward ``index_version=profile.index_version``
+            # explicitly so the plan service uses the same frozen
+            # profile identity as the retrieval path.  No path forwards
+            # ``None`` or the caller's raw input — always the resolved
+            # profile's ``index_version``.
             plan = await self._plan_service.build_index_plan_in_transaction(
                 conn,
                 record_id=reading_record_id,
                 user_id=user_id,
+                index_version=profile.index_version,
             )
+
+            # Phase A.2 (P1-F): validate the plan's chunker_version
+            # matches the resolved profile's chunker_version.  A
+            # mismatch means the plan was built with a different
+            # chunker identity than the one the resolver produced for
+            # this index_version — fail closed.
+            if plan.chunker_version != profile.chunker_version:
+                raise ArticleRagRetrievalServiceError(
+                    _P1F_MSG_PLAN_IDENTITY_MISMATCH,
+                    retryable=False,
+                    failure_code=(
+                        FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+                    ),
+                )
 
             # Phase B: locate an indexed run for the same
             # (stable_document_id, index_version).  Absence fails closed.
             indexed = await self._load_indexed_run(
                 conn,
                 stable_document_id=plan.stable_document_id,
-                index_version=index_version,
+                index_version=profile.index_version,
             )
             if indexed is None:
                 raise ArticleRagRetrievalServiceError(
                     f"no queryable index run for "
                     f"stable_document_id={plan.stable_document_id} "
-                    f"index_version={index_version}",
+                    f"index_version={profile.index_version}",
                     retryable=False,
                     failure_code=FAILURE_CODE_RETRIEVAL_NO_INDEXED_RUN,
                 )
 
-            # Phase C: validate plan hash matches the indexed run.
+            # Phase C: validate the indexed run's frozen profile identity
+            # before interpreting downstream plan metadata.
+            if indexed.index_version != profile.index_version:
+                raise ArticleRagRetrievalServiceError(
+                    _P1F_MSG_INDEXED_RUN_PROFILE_MISMATCH,
+                    retryable=False,
+                    failure_code=(
+                        FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+                    ),
+                )
+
+            fingerprint = indexed.profile_fingerprint
+            if (
+                not isinstance(fingerprint, str)
+                or not _PROFILE_FINGERPRINT_PATTERN.fullmatch(fingerprint)
+            ):
+                raise ArticleRagRetrievalServiceError(
+                    _P1F_MSG_INDEXED_RUN_PROFILE_INVALID,
+                    retryable=False,
+                    failure_code=(
+                        FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
+                    ),
+                )
+            if fingerprint != resolution.profile_fingerprint:
+                raise ArticleRagRetrievalServiceError(
+                    _P1F_MSG_INDEXED_RUN_PROFILE_MISMATCH,
+                    retryable=False,
+                    failure_code=(
+                        FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+                    ),
+                )
+            if indexed.chunker_version != profile.chunker_version:
+                raise ArticleRagRetrievalServiceError(
+                    _P1F_MSG_INDEXED_RUN_PROFILE_MISMATCH,
+                    retryable=False,
+                    failure_code=(
+                        FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+                    ),
+                )
+            if indexed.embedding_model != profile.document_embedding_model:
+                raise ArticleRagRetrievalServiceError(
+                    _P1F_MSG_INDEXED_RUN_PROFILE_MISMATCH,
+                    retryable=False,
+                    failure_code=(
+                        FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+                    ),
+                )
+            if indexed.vector_collection != profile.vector_namespace:
+                raise ArticleRagRetrievalServiceError(
+                    _P1F_MSG_INDEXED_RUN_PROFILE_MISMATCH,
+                    retryable=False,
+                    failure_code=(
+                        FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+                    ),
+                )
+
+            # Phase C.1: the durable index-run row must describe the
+            # exact plan rebuilt from current Postgres truth.
+            if (
+                indexed.base_id != plan.base_id
+                or indexed.record_generation != plan.record_generation
+                or indexed.chunk_count != len(plan.chunks)
+            ):
+                raise ArticleRagRetrievalServiceError(
+                    _P1F_MSG_INDEX_RUN_PLAN_MISMATCH,
+                    retryable=False,
+                    failure_code=(
+                        FAILURE_CODE_RETRIEVAL_INDEX_RUN_PLAN_MISMATCH
+                    ),
+                )
+
+            # Phase C.2: validate the deterministic plan hash last.
             current_plan_hash = compute_plan_content_sha256(plan)
             if current_plan_hash != indexed.plan_content_sha256:
                 raise ArticleRagRetrievalServiceError(
@@ -453,27 +638,18 @@ class ArticleRagRetrievalService:
                     failure_code=FAILURE_CODE_RETRIEVAL_PLAN_HASH_MISMATCH,
                 )
 
-            # Phase C.2: the indexed run must carry a vector_collection
-            # so the searcher can be routed correctly.  Old index runs
-            # that predate this column may have it NULL — refuse to
-            # query such a run (the searcher would either pick the wrong
-            # collection or trigger a collection-mismatch failure).
-            if not (indexed.vector_collection or "").strip():
-                raise ArticleRagRetrievalServiceError(
-                    f"indexed run {indexed.index_run_id} has no "
-                    "vector_collection recorded; cannot route the "
-                    "search to a known Zilliz collection",
-                    retryable=False,
-                    failure_code=FAILURE_CODE_RETRIEVAL_NO_VECTOR_COLLECTION,
-                )
-
-        # Phase D: embed query (outside DB tx).  Pass the indexed run's
-        # embedding_model so a future model migration does not silently
-        # re-embed the query in a different vector space than the one
-        # used at index time.
+        # Phase D: embed query (outside DB tx).  P1-F: the model is
+        # sourced from ``profile.query_embedding_model`` — NOT from the
+        # indexed run's ``embedding_model``.  The indexed run's
+        # ``embedding_model`` is the *document* embedding model used at
+        # index time; the *query* embedding model is a distinct profile
+        # field that may diverge in future versions.  In V1 they are
+        # both ``"text-embedding-v4"``, but the routing must use the
+        # profile so a future V2 query model does not silently use the
+        # V1 document model.
         try:
             query_embeddings = await self._embedding_provider.embed_texts(
-                [query_text], model=indexed.embedding_model
+                [query_text], model=profile.query_embedding_model
             )
         except ArticleRagIndexWorkerError as exc:
             # Surface the worker-base failure as a retrieval failure so
@@ -509,40 +685,60 @@ class ArticleRagRetrievalService:
                 failure_code=FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED,
             )
 
-        # Phase D.2: assert the embedding provider used the indexed
-        # run's model.  A mismatch means the query vector and the
-        # indexed vectors are in different spaces → silently wrong
-        # hits.  Fail closed.
+        # Phase D.2 (P1-F): assert the embedding provider used the
+        # profile's ``query_embedding_model``.  The NULL bypass is
+        # removed — the check is strict.  A mismatch means the query
+        # vector and the indexed vectors are in different spaces →
+        # silently wrong hits.  The offending model name is never
+        # echoed in the error message.
         if (
-            indexed.embedding_model is not None
-            and (query_embedding.model or "").strip()
-            and (indexed.embedding_model or "").strip()
-            and query_embedding.model != indexed.embedding_model
+            not isinstance(query_embedding.model, str)
+            or query_embedding.model != profile.query_embedding_model
         ):
             raise ArticleRagRetrievalServiceError(
-                f"embedding provider returned model="
-                f"{query_embedding.model!r} but indexed run "
-                f"{indexed.index_run_id} was built with model="
-                f"{indexed.embedding_model!r}; query vector would be "
-                "incompatible with indexed vectors",
+                _P1F_MSG_QUERY_EMBEDDING_MODEL_MISMATCH,
                 retryable=False,
-                failure_code=FAILURE_CODE_RETRIEVAL_EMBEDDING_MODEL_MISMATCH,
+                failure_code=(
+                    FAILURE_CODE_RETRIEVAL_EMBEDDING_MODEL_MISMATCH
+                ),
             )
 
-        # Phase E: vector search (outside DB tx, no I/O to DB).  Route
-        # to the indexed run's vector_collection — NOT to a hard-coded
-        # constant.  Real deployments may use a non-default collection
-        # name (``reader_article_rag_zilliz_collection``); routing to
-        # the wrong collection would either return zero hits (best
-        # case) or hits from a different index (worst case).
-        target_collection = (indexed.vector_collection or "").strip()
+        # Phase D.3: the vector's reported and actual dimensions must
+        # both equal the immutable profile.  bool is rejected even
+        # though it is an int subclass.
+        expected_dimension = profile.document_embedding_dimension
+        if (
+            not isinstance(query_embedding.dim, int)
+            or isinstance(query_embedding.dim, bool)
+            or query_embedding.dim != expected_dimension
+            or len(query_vector) != expected_dimension
+        ):
+            raise ArticleRagRetrievalServiceError(
+                _P1F_MSG_QUERY_EMBEDDING_DIMENSION_MISMATCH,
+                retryable=False,
+                failure_code=(
+                    FAILURE_CODE_RETRIEVAL_EMBEDDING_DIMENSION_MISMATCH
+                ),
+            )
+
+        # Phase E: vector search (outside DB tx, no I/O to DB).  P1-F:
+        # the collection is sourced from ``profile.vector_namespace`` —
+        # NOT from the indexed run's ``vector_collection``.  The 5-field
+        # validation in Phase C.3 already asserted
+        # ``indexed.vector_collection == profile.vector_namespace``, so
+        # routing by the profile is equivalent but is the canonical
+        # source of truth.  Real deployments may use a non-default
+        # collection name; routing to the wrong collection would either
+        # return zero hits (best case) or hits from a different index
+        # (worst case).
+        target_collection = profile.vector_namespace
         try:
             search_result = await self._vector_searcher.search(
                 collection=target_collection,
                 query_vector=query_vector,
                 limit=limit,
                 stable_document_id=plan.stable_document_id,
-                index_version=index_version,
+                index_version=profile.index_version,
             )
         except ArticleRagVectorSearcherError as exc:
             raise ArticleRagRetrievalServiceError(
@@ -575,7 +771,7 @@ class ArticleRagRetrievalService:
             len(hits),
             reading_record_id,
             limit,
-            index_version,
+            profile.index_version,
         )
 
         return ArticleRagRetrievalResult(
@@ -583,7 +779,7 @@ class ArticleRagRetrievalService:
             stable_document_id=plan.stable_document_id,
             base_id=plan.base_id,
             record_generation=plan.record_generation,
-            index_version=index_version,
+            index_version=profile.index_version,
             plan_content_sha256=current_plan_hash,
             # Same ``indexed`` snapshot used for plan-hash / collection /
             # embedding-model checks — not a second "latest run" lookup.
@@ -617,7 +813,8 @@ class ArticleRagRetrievalService:
             SELECT id, stable_document_id, base_id, record_generation,
                    index_version, chunker_version, plan_content_sha256,
                    chunk_count, status, updated_at,
-                   vector_collection, embedding_model
+                   vector_collection, embedding_model,
+                   profile_fingerprint
             FROM reader_article_rag_index_runs
             WHERE stable_document_id = $1
               AND index_version = $2
@@ -649,6 +846,11 @@ class ArticleRagRetrievalService:
             embedding_model=(
                 str(row["embedding_model"])
                 if row["embedding_model"] is not None
+                else None
+            ),
+            profile_fingerprint=(
+                str(row["profile_fingerprint"])
+                if row["profile_fingerprint"] is not None
                 else None
             ),
         )
@@ -843,6 +1045,7 @@ __all__ = [
     "MAX_RETRIEVAL_LIMIT",
     "FAILURE_CODE_RETRIEVAL_NO_INDEXED_RUN",
     "FAILURE_CODE_RETRIEVAL_PLAN_HASH_MISMATCH",
+    "FAILURE_CODE_RETRIEVAL_INDEX_RUN_PLAN_MISMATCH",
     "FAILURE_CODE_RETRIEVAL_EMPTY_QUERY",
     "FAILURE_CODE_RETRIEVAL_INVALID_LIMIT",
     "FAILURE_CODE_RETRIEVAL_VECTOR_METADATA_MISMATCH",
@@ -850,6 +1053,9 @@ __all__ = [
     "FAILURE_CODE_RETRIEVAL_VECTOR_SEARCH_FAILED",
     "FAILURE_CODE_RETRIEVAL_NO_VECTOR_COLLECTION",
     "FAILURE_CODE_RETRIEVAL_EMBEDDING_MODEL_MISMATCH",
+    "FAILURE_CODE_RETRIEVAL_EMBEDDING_DIMENSION_MISMATCH",
+    "FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID",
+    "FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH",
     "ArticleRagRetrievalServiceError",
     "ArticleRagRetrievalHit",
     "ArticleRagRetrievalResult",

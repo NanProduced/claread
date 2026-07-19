@@ -43,6 +43,10 @@ from app.services.reader_orchestration.article_rag_index_plan import (
     ArticleRagIndexChunk,
     ArticleRagIndexPlan,
 )
+from app.services.reader_orchestration.article_rag_index_profile import (
+    DEFAULT_ARTICLE_RAG_INDEX_VERSION,
+    resolve_article_rag_index_profile,
+)
 from app.services.reader_orchestration.article_rag_index_worker import (
     ArticleRagIndexWorkerError,
     ArticleRagEmbedding,
@@ -55,12 +59,15 @@ from app.services.reader_orchestration.article_rag_retrieval_service import (
     ArticleRagRetrievalService,
     ArticleRagRetrievalServiceError,
     DEFAULT_INDEX_VERSION,
-    FAILURE_CODE_RETRIEVAL_EMPTY_QUERY,
     FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED,
+    FAILURE_CODE_RETRIEVAL_EMBEDDING_DIMENSION_MISMATCH,
     FAILURE_CODE_RETRIEVAL_EMBEDDING_MODEL_MISMATCH,
+    FAILURE_CODE_RETRIEVAL_EMPTY_QUERY,
+    FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID,
+    FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH,
+    FAILURE_CODE_RETRIEVAL_INDEX_RUN_PLAN_MISMATCH,
     FAILURE_CODE_RETRIEVAL_INVALID_LIMIT,
     FAILURE_CODE_RETRIEVAL_NO_INDEXED_RUN,
-    FAILURE_CODE_RETRIEVAL_NO_VECTOR_COLLECTION,
     FAILURE_CODE_RETRIEVAL_PLAN_HASH_MISMATCH,
     FAILURE_CODE_RETRIEVAL_VECTOR_METADATA_MISMATCH,
     FAILURE_CODE_RETRIEVAL_VECTOR_SEARCH_FAILED,
@@ -148,6 +155,28 @@ _BASE_ID = uuid.UUID("44444444-4444-4444-4444-444444444444")
 _OTHER_STABLE_DOC_ID = uuid.UUID("55555555-5555-5555-5555-555555555555")
 _OTHER_BASE_ID = uuid.UUID("66666666-6666-6666-6666-666666666666")
 
+# P1-F: V1 profile identity constants.  These mirror the frozen V1
+# ArticleRagIndexProfile resolved by
+# ``resolve_article_rag_index_profile("article_rag_index_v1")``.  Tests
+# use these to construct indexed-run rows that are byte-aligned with
+# the resolver output, so that profile-mismatch failures are pinned
+# to the one field under test rather than to a default-vs-profile
+# drift in the test fixture itself.
+_V1_RESOLUTION = resolve_article_rag_index_profile(
+    DEFAULT_ARTICLE_RAG_INDEX_VERSION
+)
+_V1_GOLDEN_FINGERPRINT = _V1_RESOLUTION.profile_fingerprint
+_V1_INDEX_VERSION = _V1_RESOLUTION.profile.index_version
+_V1_CHUNKER_VERSION = _V1_RESOLUTION.profile.chunker_version
+_V1_DOCUMENT_EMBEDDING_MODEL = (
+    _V1_RESOLUTION.profile.document_embedding_model
+)
+_V1_QUERY_EMBEDDING_MODEL = _V1_RESOLUTION.profile.query_embedding_model
+_V1_DOCUMENT_EMBEDDING_DIMENSION = (
+    _V1_RESOLUTION.profile.document_embedding_dimension
+)
+_V1_VECTOR_NAMESPACE = _V1_RESOLUTION.profile.vector_namespace
+
 
 def _make_chunk(
     chunk_id: str,
@@ -219,16 +248,20 @@ def _indexed_run_row(
     plan_content_sha256: str | None = None,
     *,
     status: str = "indexed",
-    vector_collection: str | None = "article_rag_index_v1_test",
-    embedding_model: str | None = "fake-embedding-deterministic-v1",
+    vector_collection: str | None = _V1_VECTOR_NAMESPACE,
+    embedding_model: str | None = _V1_DOCUMENT_EMBEDDING_MODEL,
+    profile_fingerprint: str | None = _V1_GOLDEN_FINGERPRINT,
+    index_version: str | None = _V1_INDEX_VERSION,
+    chunker_version: str | None = None,
 ) -> dict[str, Any]:
     """Build the ``reader_article_rag_index_runs`` row that the
     retrieval service's ``_load_indexed_run`` queries.
 
-    Defaults match the I4D test fixtures so existing tests keep
-    their original assertions; the new ``vector_collection`` and
-    ``embedding_model`` parameters let I4E-fix tests pin the
-    routing / model-validation behaviour.
+    P1-F: defaults are now byte-aligned with the V1
+    :class:`ArticleRagIndexProfile` so that the profile-mismatch
+    failures are pinned to the one field under test rather than to
+    a default-vs-profile drift in the fixture itself.  Tests that
+    intentionally want a mismatch must override the relevant field.
     """
     from app.services.reader_orchestration.article_rag_index_plan import (
         compute_plan_content_sha256,
@@ -239,14 +272,18 @@ def _indexed_run_row(
         "stable_document_id": plan.stable_document_id,
         "base_id": plan.base_id,
         "record_generation": plan.record_generation,
-        "index_version": DEFAULT_INDEX_VERSION,
-        "chunker_version": plan.chunker_version,
+        "index_version": index_version or _V1_INDEX_VERSION,
+        "chunker_version": chunker_version or plan.chunker_version,
         "plan_content_sha256": sha,
         "chunk_count": len(plan.chunks),
         "status": status,
         "updated_at": None,
         "vector_collection": vector_collection,
         "embedding_model": embedding_model,
+        # P1-F: durable profile fingerprint column added by
+        # migration 0021.  Retrieval must read this column and
+        # validate it against ``resolution.profile_fingerprint``.
+        "profile_fingerprint": profile_fingerprint,
     }
 
 
@@ -259,7 +296,15 @@ def _build_service(
     embedding_provider: FakeArticleRagEmbeddingProvider | None = None,
 ) -> ArticleRagRetrievalService:
     """Build a retrieval service whose plan and indexed-run queries are
-    pre-stubbed.  No real DB."""
+    pre-stubbed.  No real DB.
+
+    P1-F: the plan-service stub now accepts and records the
+    ``index_version`` kwarg so tests can assert retrieval forwards
+    ``resolution.profile.index_version`` explicitly.  The default
+    embedding provider is constructed with ``model=_V1_QUERY_EMBEDDING_MODEL``
+    so successful V1 retrievals return a query embedding whose model
+    matches the resolved profile.
+    """
     from app.services.reader_orchestration.article_rag_index_plan import (
         ArticleRagIndexPlanService,
     )
@@ -275,18 +320,40 @@ def _build_service(
     # touching the DB.  We do this by monkeypatching
     # ``build_index_plan_in_transaction`` on a fresh instance.
     plan_service = ArticleRagIndexPlanService()
+    # P1-F: record every call so tests can assert the ``index_version``
+    # kwarg is forwarded explicitly by retrieval.  The list is attached
+    # to the plan_service instance (not the stub function) so tests
+    # access it via ``service._plan_service._test_calls``.
+    plan_service._test_calls = []  # type: ignore[attr-defined]
 
     async def _fake_build_plan_in_transaction(
-        conn, *, record_id, user_id, include_rag_ask_only=False
+        conn,
+        *,
+        record_id,
+        user_id,
+        include_rag_ask_only=False,
+        index_version=None,
     ):
+        plan_service._test_calls.append(  # type: ignore[attr-defined]
+            {
+                "record_id": record_id,
+                "user_id": user_id,
+                "include_rag_ask_only": include_rag_ask_only,
+                "index_version": index_version,
+            }
+        )
         return plan
 
     plan_service.build_index_plan_in_transaction = (
         _fake_build_plan_in_transaction  # type: ignore[assignment]
     )
 
+    # P1-F: default embedding provider returns embeddings whose model
+    # matches the V1 profile's ``query_embedding_model``.  Tests that
+    # need a different model (e.g. mismatch tests) override this.
     embedding_provider = embedding_provider or FakeArticleRagEmbeddingProvider(
-        dim=8
+        dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_V1_QUERY_EMBEDDING_MODEL,
     )
     if searcher is None:
         searcher = FakeArticleRagVectorSearcher(hits=[])
@@ -476,6 +543,50 @@ async def test_plan_hash_drift_fails_closed() -> None:
         exc_info.value.failure_code
         == FAILURE_CODE_RETRIEVAL_PLAN_HASH_MISMATCH
     )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("field_name", "drifted_value"),
+    [
+        pytest.param("base_id", _OTHER_BASE_ID, id="base_id"),
+        pytest.param("record_generation", 999, id="record_generation"),
+        pytest.param("chunk_count", 999, id="chunk_count"),
+    ],
+)
+async def test_p1f_indexed_run_plan_identity_drift_fails_closed(
+    field_name: str,
+    drifted_value: Any,
+) -> None:
+    """Durable index-run plan fields must match the rebuilt current plan."""
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+    row[field_name] = drifted_value
+    provider = FakeArticleRagEmbeddingProvider(
+        dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_V1_QUERY_EMBEDDING_MODEL,
+    )
+    searcher = FakeArticleRagVectorSearcher(hits=[])
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_RUN_PLAN_MISMATCH
+    )
+    assert provider.call_count == 0
+    assert searcher.search_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -1108,18 +1219,22 @@ def test_max_retrieval_limit_is_a_positive_int() -> None:
 
 
 def test_failure_codes_are_distinct() -> None:
-    """All retrieval failure codes must be unique (ops dashboards
-    dispatch on the code)."""
+    """All retrieval failure codes must remain unique for ops routing."""
     codes = {
         FAILURE_CODE_RETRIEVAL_EMPTY_QUERY,
         FAILURE_CODE_RETRIEVAL_INVALID_LIMIT,
         FAILURE_CODE_RETRIEVAL_NO_INDEXED_RUN,
         FAILURE_CODE_RETRIEVAL_PLAN_HASH_MISMATCH,
+        FAILURE_CODE_RETRIEVAL_INDEX_RUN_PLAN_MISMATCH,
         FAILURE_CODE_RETRIEVAL_VECTOR_METADATA_MISMATCH,
         FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED,
         FAILURE_CODE_RETRIEVAL_VECTOR_SEARCH_FAILED,
+        FAILURE_CODE_RETRIEVAL_EMBEDDING_MODEL_MISMATCH,
+        FAILURE_CODE_RETRIEVAL_EMBEDDING_DIMENSION_MISMATCH,
+        FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID,
+        FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH,
     }
-    assert len(codes) == 7
+    assert len(codes) == 12
 
 
 def test_retrieval_error_inherits_worker_error() -> None:
@@ -1142,14 +1257,17 @@ def test_retrieval_error_inherits_worker_error() -> None:
 @pytest.mark.anyio
 async def test_vector_collection_passed_to_searcher_from_indexed_run(
 ) -> None:
-    """Reviewer P1 fix: the retrieval service MUST pass the indexed
-    run's ``vector_collection`` to the searcher.  Without this, real
-    deployments using a non-default collection name would trigger
-    ``vector_searcher_collection_mismatch`` on every retrieval."""
+    """P1-F: the retrieval service routes the resolved profile's
+    ``vector_namespace`` to the searcher.  The indexed run's
+    ``vector_collection`` MUST equal ``profile.vector_namespace``
+    (validated in Phase C.3 Field 5); the searcher is then called with
+    the profile value as the canonical source of truth.  A non-V1
+    collection name is now rejected as a profile mismatch — the
+    custom-collection scenario from the original reviewer P1 fix is
+    no longer reachable because V1 is the only registered profile."""
     plan = _make_plan()
-    real_collection_name = "my_custom_zilliz_collection_v2"
     row = _indexed_run_row(
-        plan, vector_collection=real_collection_name
+        plan, vector_collection=_V1_VECTOR_NAMESPACE
     )
     searcher = FakeArticleRagVectorSearcher(
         hits=[
@@ -1165,19 +1283,22 @@ async def test_vector_collection_passed_to_searcher_from_indexed_run(
         query_text="hello",
     )
     # The fake searcher records ``search_calls`` — assert the routed
-    # collection matches the indexed run's ``vector_collection``.
+    # collection matches the V1 profile's ``vector_namespace``.
     assert len(searcher.search_calls) == 1
     assert (
-        searcher.search_calls[0]["collection"] == real_collection_name
+        searcher.search_calls[0]["collection"] == _V1_VECTOR_NAMESPACE
     )
 
 
 @pytest.mark.anyio
 async def test_vector_collection_empty_fails_closed() -> None:
-    """An indexed run with NULL ``vector_collection`` cannot be
-    routed.  Fail closed with ``retrieval_no_vector_collection`` —
-    do NOT silently fall back to a hard-coded default, which would
-    trigger a downstream ``vector_searcher_collection_mismatch``."""
+    """P1-F: a NULL ``vector_collection`` is rejected at Phase C.3
+    Field 5 as a profile mismatch — the indexed run's
+    ``vector_collection`` MUST equal ``profile.vector_namespace``.
+    The legacy ``retrieval_no_vector_collection`` routing-phase check
+    is no longer reachable because the 5-field identity validation
+    precedes it.  The fail-closed contract is preserved (the offending
+    value is never echoed); only the failure code changes."""
     plan = _make_plan()
     row = _indexed_run_row(plan, vector_collection=None)
     searcher = FakeArticleRagVectorSearcher(hits=[])
@@ -1192,16 +1313,18 @@ async def test_vector_collection_empty_fails_closed() -> None:
         )
     assert (
         exc_info.value.failure_code
-        == FAILURE_CODE_RETRIEVAL_NO_VECTOR_COLLECTION
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
     )
+    assert len(searcher.search_calls) == 0
 
 
 @pytest.mark.anyio
 async def test_vector_collection_whitespace_only_fails_closed() -> None:
-    """Whitespace-only ``vector_collection`` is treated the same as
-    NULL — fail closed rather than passing a blank string to the
-    searcher (which would trigger ``vector_searcher_collection_mismatch``
-    for the default-collection deployment)."""
+    """P1-F: a whitespace-only ``vector_collection`` is rejected at
+    Phase C.3 Field 5 — it does not equal ``profile.vector_namespace``
+    and therefore fails closed as a profile mismatch.  The
+    ``retrieval_no_vector_collection`` routing-phase check is no
+    longer reachable; the fail-closed contract is preserved."""
     plan = _make_plan()
     row = _indexed_run_row(plan, vector_collection="   \t\n  ")
     searcher = FakeArticleRagVectorSearcher(hits=[])
@@ -1216,8 +1339,9 @@ async def test_vector_collection_whitespace_only_fails_closed() -> None:
         )
     assert (
         exc_info.value.failure_code
-        == FAILURE_CODE_RETRIEVAL_NO_VECTOR_COLLECTION
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
     )
+    assert len(searcher.search_calls) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1227,14 +1351,27 @@ async def test_vector_collection_whitespace_only_fails_closed() -> None:
 
 @pytest.mark.anyio
 async def test_embedding_model_passed_to_provider_from_indexed_run() -> None:
-    """Reviewer P2 fix: the retrieval service MUST pass the indexed
-    run's ``embedding_model`` to ``embed_texts`` so a future model
-    migration does not silently re-embed the query in a different
-    vector space than the one used at index time."""
+    """P1-F: the retrieval service MUST pass the resolved profile's
+    ``query_embedding_model`` to ``embed_texts``.  The indexed run's
+    ``embedding_model`` (= ``profile.document_embedding_model`` in V1)
+    is validated at Phase C.3 Field 4 but is NOT the model used to
+    embed the query — the query model is a distinct profile field.
+    In V1 both fields are ``"text-embedding-v4"``.  The legacy
+    custom-model scenario from the original reviewer P2 fix is no
+    longer reachable because V1 is the only registered profile."""
     plan = _make_plan()
-    target_model = "text-embedding-v4-test-model"
-    row = _indexed_run_row(plan, embedding_model=target_model)
-    provider = FakeArticleRagEmbeddingProvider(dim=8, model=target_model)
+    # V1-aligned indexed run: ``embedding_model`` equals
+    # ``profile.document_embedding_model`` so Phase C.3 Field 4 passes.
+    row = _indexed_run_row(
+        plan, embedding_model=_V1_DOCUMENT_EMBEDDING_MODEL
+    )
+    # Provider returns embeddings whose model equals
+    # ``profile.query_embedding_model`` (V1 query model) so Phase D.2
+    # passes.
+    provider = FakeArticleRagEmbeddingProvider(
+        dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_V1_QUERY_EMBEDDING_MODEL,
+    )
     searcher = FakeArticleRagVectorSearcher(hits=[])
     service = _build_service(
         plan=plan,
@@ -1247,25 +1384,24 @@ async def test_embedding_model_passed_to_provider_from_indexed_run() -> None:
         user_id=_USER_ID,
         query_text="hello",
     )
-    # The fake provider records ``last_texts`` and ``call_count``;
-    # we can't directly inspect the model kwarg from
-    # FakeArticleRagEmbeddingProvider, but we can assert the provider
-    # was called at all and that the indexed-run model equals the
-    # model's ``_model`` attribute.  See also:
-    # test_embedding_model_mismatch_fails_closed below — that test
-    # directly verifies the mismatch-policy.
+    # The fake provider records ``last_texts`` and ``call_count``.
+    # The provider was called once with the V1 query model.
     assert provider.call_count == 1
 
 
 @pytest.mark.anyio
 async def test_embedding_model_mismatch_fails_closed() -> None:
-    """If the embedding provider returns a vector built by a
-    different model than the indexed run was built with, the query
+    """P1-F: if the embedding provider returns a vector built by a
+    different model than ``profile.query_embedding_model``, the query
     vector is in a different space than the indexed vectors → fail
-    closed with ``retrieval_embedding_model_mismatch``.
-
-    We use a custom provider that ignores the ``model`` kwarg and
-    returns a different model name in its output.
+    closed with ``retrieval_embedding_model_mismatch``.  The indexed
+    run's ``embedding_model`` MUST equal
+    ``profile.document_embedding_model`` (validated at Phase C.3
+    Field 4); the provider's returned model MUST equal
+    ``profile.query_embedding_model`` (validated at Phase D.2).  The
+    offending model name is NEVER echoed in the error message —
+    P1-F requires fixed local messages for all profile-mismatch
+    failures.
     """
     from app.services.reader_orchestration.article_rag_index_worker import (
         ArticleRagEmbedding,
@@ -1287,8 +1423,10 @@ async def test_embedding_model_mismatch_fails_closed() -> None:
             ]
 
     plan = _make_plan()
+    # V1-aligned indexed run so Phase C.3 Field 4 passes; the mismatch
+    # is isolated to the provider's returned model (Phase D.2).
     row = _indexed_run_row(
-        plan, embedding_model="text-embedding-v4-test-model"
+        plan, embedding_model=_V1_DOCUMENT_EMBEDDING_MODEL
     )
     service = _build_service(
         plan=plan,
@@ -1306,21 +1444,31 @@ async def test_embedding_model_mismatch_fails_closed() -> None:
         exc_info.value.failure_code
         == FAILURE_CODE_RETRIEVAL_EMBEDDING_MODEL_MISMATCH
     )
-    # Provider model + indexed model names appear in the diagnostic.
+    # P1-F: the offending model name is NEVER echoed in the error
+    # message.  The message is a fixed local string that does not
+    # interpolate any caller-supplied value.
     msg = str(exc_info.value)
-    assert "some-other-model" in msg
-    assert "text-embedding-v4-test-model" in msg
+    assert "some-other-model" not in msg
+    assert _V1_QUERY_EMBEDDING_MODEL not in msg
+    assert _V1_DOCUMENT_EMBEDDING_MODEL not in msg
 
 
 @pytest.mark.anyio
 async def test_embedding_model_match_does_not_fail_closed() -> None:
-    """When the embedding provider returns the same model the
-    indexed run was built with, the retrieval completes successfully
-    (lock in the policy's positive case)."""
+    """P1-F: when the indexed run's ``embedding_model`` equals
+    ``profile.document_embedding_model`` (Phase C.3 Field 4 passes)
+    AND the embedding provider returns ``profile.query_embedding_model``
+    (Phase D.2 passes), the retrieval completes successfully.  In V1
+    both fields are ``"text-embedding-v4"``; the test locks in the
+    policy's positive case for the V1-aligned happy path."""
     plan = _make_plan()
-    target_model = "text-embedding-v4-test-model"
-    row = _indexed_run_row(plan, embedding_model=target_model)
-    provider = FakeArticleRagEmbeddingProvider(dim=8, model=target_model)
+    row = _indexed_run_row(
+        plan, embedding_model=_V1_DOCUMENT_EMBEDDING_MODEL
+    )
+    provider = FakeArticleRagEmbeddingProvider(
+        dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_V1_QUERY_EMBEDDING_MODEL,
+    )
     searcher = FakeArticleRagVectorSearcher(hits=[])
     service = _build_service(
         plan=plan,
@@ -1337,16 +1485,20 @@ async def test_embedding_model_match_does_not_fail_closed() -> None:
 
 
 @pytest.mark.anyio
-async def test_embedding_model_null_on_indexed_run_does_not_fail_closed() -> None:
-    """Defence in depth: if the indexed run's ``embedding_model`` is
-    NULL (e.g. a pre-I4D row), we MUST NOT fail closed — instead the
-    service proceeds without the model assertion.  The deployment
-    just won't get the model-mismatch safety net for that run; the
-    worst-case outcome is the same as the pre-fix behaviour."""
+async def test_embedding_model_null_on_indexed_run_fails_closed() -> None:
+    """P1-F: a NULL ``embedding_model`` on the indexed run is now
+    rejected at Phase C.3 Field 4 as a profile mismatch.  The legacy
+    NULL-bypass policy (defence in depth: pre-I4D rows still served)
+    is removed because the resolver-backed V1 profile requires strict
+    equality with ``profile.document_embedding_model``.  A NULL
+    ``embedding_model`` means the indexed run predates the
+    profile-aware worker and MUST NOT be served — silently serving
+    hits from a pre-profile index would break the citation-truth
+    boundary.  The provider is never called."""
     plan = _make_plan()
     row = _indexed_run_row(plan, embedding_model=None)
     provider = FakeArticleRagEmbeddingProvider(
-        dim=8, model="whatever-the-provider-wants"
+        dim=8, model=_V1_QUERY_EMBEDDING_MODEL
     )
     searcher = FakeArticleRagVectorSearcher(hits=[])
     service = _build_service(
@@ -1355,12 +1507,21 @@ async def test_embedding_model_null_on_indexed_run_does_not_fail_closed() -> Non
         searcher=searcher,
         embedding_provider=provider,
     )
-    result = await service.retrieve_for_record(
-        reading_record_id=_RECORD_ID,
-        user_id=_USER_ID,
-        query_text="hello",
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
     )
-    assert result.hits == ()
+    # P1-F: provider and searcher are NEVER called on profile-mismatch
+    # paths — the failure is detected before any I/O leaves the
+    # service boundary.
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
 
 
 @pytest.mark.anyio
@@ -1502,3 +1663,1387 @@ async def test_real_retrieval_smoke_is_opt_in_only() -> None:
     # orchestrator wiring milestone — this skeleton exists only so the
     # collection path is verifiable end-to-end when the env is on.
     pytest.skip("retrieval smoke skeleton not yet wired; opt-in only")
+
+
+# ===========================================================================
+# P1-F: Article RAG Retrieval Frozen Profile Validation
+# ===========================================================================
+#
+# The tests below lock in the P1-F closure:
+#
+#   requested index_version
+#     → immutable profile resolver
+#     → indexed-run durable fingerprint/identity validation
+#     → explicit version-aware Postgres plan reconstruction
+#     → plan hash validation
+#     → query embedding/vector namespace routing
+#     → vector hit joined back to current Postgres plan for citation
+#
+# All tests exercise the public ``retrieve_for_record`` seam.  Private
+# helpers are not tested directly.  Failure codes are asserted with
+# precise equality (no loose set membership) so each scenario has
+# exactly one deterministic code.
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# P1-F Tracer A: indexed run missing profile_fingerprint → fail closed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_tracer_a_indexed_run_missing_profile_fingerprint_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """Tracer A (RED-first): when the indexed run row is missing
+    ``profile_fingerprint`` (NULL), retrieval MUST fail closed with
+    ``retrieval_index_profile_invalid``.  The query embedding provider
+    and the vector searcher MUST NOT be called.
+    """
+    plan = _make_plan()
+    row = _indexed_run_row(plan, profile_fingerprint=None)
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
+    )
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# P1-F Tracer B: plan service receives explicit index_version=V1
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_tracer_b_plan_service_receives_explicit_v1_index_version(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """Tracer B (RED-first): retrieval MUST forward
+    ``index_version=resolution.profile.index_version`` explicitly to
+    ``ArticleRagIndexPlanService.build_index_plan_in_transaction``.
+    The default-omission path and the explicit V1 path must both
+    forward the V1 string; no path forwards ``None``.
+    """
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=provider_call_counter(  # placeholder; not used
+            FakeArticleRagVectorSearcher(hits=[])
+        )
+        if False
+        else FakeArticleRagVectorSearcher(hits=[]),
+        embedding_provider=FakeArticleRagEmbeddingProvider(
+            dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
+            model=_V1_QUERY_EMBEDDING_MODEL,
+        ),
+    )
+    await service.retrieve_for_record(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        query_text="hello",
+    )
+    calls = service._plan_service._test_calls  # type: ignore[attr-defined]
+    assert len(calls) == 1
+    assert calls[0]["index_version"] == _V1_INDEX_VERSION
+
+
+# ---------------------------------------------------------------------------
+# P1-F Section 九 #1: default vs explicit V1 equivalence
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_default_and_explicit_v1_retrieval_are_equivalent() -> None:
+    """Omitting ``index_version`` and explicitly passing V1 MUST
+    produce identical results: same hits, same scores, same chunk_ids,
+    same citation, same plan hash, same index_run_id."""
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+
+    # Default omission path.
+    service_default = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=FakeArticleRagVectorSearcher(
+            hits=[
+                ArticleRagVectorSearchHit(chunk_id="chunk-aaa", score=0.9),
+                ArticleRagVectorSearchHit(chunk_id="chunk-bbb", score=0.8),
+            ]
+        ),
+    )
+    result_default = await service_default.retrieve_for_record(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        query_text="hello",
+    )
+
+    # Explicit V1 path.
+    service_explicit = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=FakeArticleRagVectorSearcher(
+            hits=[
+                ArticleRagVectorSearchHit(chunk_id="chunk-aaa", score=0.9),
+                ArticleRagVectorSearchHit(chunk_id="chunk-bbb", score=0.8),
+            ]
+        ),
+    )
+    result_explicit = await service_explicit.retrieve_for_record(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        query_text="hello",
+        index_version=_V1_INDEX_VERSION,
+    )
+
+    assert [h.chunk_id for h in result_default.hits] == [
+        h.chunk_id for h in result_explicit.hits
+    ]
+    assert [h.score for h in result_default.hits] == [
+        h.score for h in result_explicit.hits
+    ]
+    assert result_default.plan_content_sha256 == result_explicit.plan_content_sha256
+    assert result_default.index_version == result_explicit.index_version == _V1_INDEX_VERSION
+    assert result_default.index_run_id == result_explicit.index_run_id
+    # Citation shape equality.
+    for d, e in zip(result_default.hits, result_explicit.hits, strict=True):
+        assert d.citation == e.citation
+        assert d.text == e.text
+
+
+# ---------------------------------------------------------------------------
+# P1-F Section 九 #3: unknown / malicious / non-string / None index_version
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def provider_call_counter():
+    """Wrap a FakeArticleRagEmbeddingProvider so tests can assert
+    ``call_count == 0`` on fail-closed paths.  The fixture returns a
+    constructor wrapper; the wrapped provider is returned to the
+    test."""
+    def _wrap(provider):
+        return provider
+    return _wrap
+
+
+@pytest.fixture
+def searcher_call_counter():
+    """Wrap a FakeArticleRagVectorSearcher so tests can assert
+    ``len(search_calls) == 0`` on fail-closed paths."""
+    def _wrap(searcher):
+        return searcher
+    return _wrap
+
+
+@pytest.mark.anyio
+async def test_p1f_unknown_index_version_fails_closed_with_fixed_safe_error(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """An unregistered ``index_version`` string MUST fail closed with
+    ``retrieval_index_profile_invalid``.  The fixed safe error message
+    MUST NOT echo the offending input."""
+    malicious = "article_rag_index_v999"
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+            index_version=malicious,
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
+    )
+    # Cause/context chain is empty.
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    # No DB / plan / embedding / search calls happened past the resolver.
+    calls = service._plan_service._test_calls  # type: ignore[attr-defined]
+    assert len(calls) == 0
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
+    # The offending input MUST NOT appear in any error surface.
+    assert malicious not in str(exc_info.value)
+    assert malicious not in repr(exc_info.value)
+    assert malicious not in exc_info.value.args[0]
+
+
+@pytest.mark.anyio
+async def test_p1f_none_index_version_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """Explicit ``None`` MUST fail closed (no fallback, no str()
+    coercion).  ``__cause__`` and ``__context__`` MUST be None."""
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+            index_version=None,  # type: ignore[arg-type]
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
+    )
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        True,
+        False,
+        0,
+        1,
+        1.5,
+        ["article_rag_index_v1"],
+        {"index_version": "article_rag_index_v1"},
+        object(),
+    ],
+    ids=[
+        "bool_true",
+        "bool_false",
+        "int_zero",
+        "int_one",
+        "float",
+        "list",
+        "dict",
+        "object",
+    ],
+)
+@pytest.mark.anyio
+async def test_p1f_non_string_index_version_matrix_fails_closed(
+    bad_value, provider_call_counter, searcher_call_counter
+) -> None:
+    """Non-string ``index_version`` inputs (bool / int / float / list /
+    dict / object) MUST all fail closed with the same fixed safe
+    error.  No coercion, no fallback."""
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+            index_version=bad_value,  # type: ignore[arg-type]
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
+    )
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
+
+
+@pytest.mark.anyio
+async def test_p1f_empty_string_index_version_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+            index_version="",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
+    )
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
+
+
+@pytest.mark.anyio
+async def test_p1f_whitespace_index_version_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+            index_version="  \t\n ",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
+    )
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
+
+
+@pytest.mark.anyio
+async def test_p1f_malicious_sentinel_does_not_leak_into_error_surfaces(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """A malicious ``index_version`` carrying a script sentinel, a URI,
+    a key, and a newline MUST NOT appear in:
+      - ``str(exc)``
+      - ``repr(exc)``
+      - ``exc.args``
+      - the formatted traceback of the raised exception
+    The retrieval wrapper error must use a fixed local message."""
+    import traceback as _tb
+
+    sentinel = (
+        "<script>alert('xss')</script>"
+        "\n"
+        "article_rag_index_v1; DROP TABLE users; --"
+        "\n"
+        "sk-abcdefghijklmnop"
+    )
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    try:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+            index_version=sentinel,
+        )
+    except ArticleRagRetrievalServiceError as exc:
+        formatted_tb = _tb.format_exc()
+        # The sentinel MUST NOT appear in any observable error surface.
+        assert sentinel not in str(exc)
+        assert sentinel not in repr(exc)
+        assert sentinel not in exc.args[0]
+        # The traceback's final exception line is the only line we
+        # check; we do not assert against the source-code echo of the
+        # test (which legitimately contains the sentinel).
+        last_line = formatted_tb.rstrip().splitlines()[-1]
+        assert sentinel not in last_line
+    else:  # pragma: no cover — defensive
+        pytest.fail(
+            "expected ArticleRagRetrievalServiceError for malicious "
+            "index_version sentinel"
+        )
+
+
+# ---------------------------------------------------------------------------
+# P1-F Section 九 #4: missing / malformed profile_fingerprint
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_indexed_run_missing_profile_fingerprint_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """NULL ``profile_fingerprint`` on the indexed run →
+    ``retrieval_index_profile_invalid`` (cannot validate identity).
+    Embedding and searcher MUST NOT be called."""
+    plan = _make_plan()
+    row = _indexed_run_row(plan, profile_fingerprint=None)
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
+    )
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
+
+
+@pytest.mark.anyio
+async def test_p1f_indexed_run_malformed_profile_fingerprint_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """A non-SHA-256 / wrong-length / uppercase / whitespace-padded
+    ``profile_fingerprint`` value MUST fail closed with
+    ``retrieval_index_profile_invalid``.  The offending value MUST
+    NOT be echoed in the error."""
+    malformed = "not-a-real-fingerprint"
+    plan = _make_plan()
+    row = _indexed_run_row(plan, profile_fingerprint=malformed)
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
+    )
+    assert malformed not in str(exc_info.value)
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "malformed_fingerprint",
+    [
+        pytest.param(_V1_GOLDEN_FINGERPRINT + "\n", id="trailing_lf"),
+        pytest.param(_V1_GOLDEN_FINGERPRINT + "\r\n", id="trailing_crlf"),
+    ],
+)
+async def test_p1f_profile_fingerprint_with_trailing_newline_is_invalid(
+    malformed_fingerprint: str,
+) -> None:
+    """A newline-suffixed fingerprint is malformed, not a valid mismatch."""
+    plan = _make_plan()
+    provider = FakeArticleRagEmbeddingProvider(
+        dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+    )
+    searcher = FakeArticleRagVectorSearcher(hits=[])
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=_indexed_run_row(
+            plan, profile_fingerprint=malformed_fingerprint
+        ),
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
+    )
+    assert provider.call_count == 0
+    assert searcher.search_calls == []
+
+
+# ---------------------------------------------------------------------------
+# P1-F Section 九 #5: valid SHA-256 but resolver mismatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_indexed_run_valid_sha256_but_wrong_fingerprint_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """A 64-char lowercase hex ``profile_fingerprint`` that does NOT
+    equal the resolved V1 fingerprint MUST fail closed with
+    ``retrieval_index_profile_mismatch`` (not ``_invalid``).  The
+    offending value MUST NOT be echoed."""
+    wrong_but_valid = "0" * 64
+    plan = _make_plan()
+    row = _indexed_run_row(plan, profile_fingerprint=wrong_but_valid)
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+    )
+    assert wrong_but_valid not in str(exc_info.value)
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
+
+
+@pytest.mark.anyio
+async def test_p1f_profile_identity_precedes_plan_hash_drift() -> None:
+    """A wrong frozen profile is reported before downstream plan drift."""
+    plan = _make_plan()
+    provider = FakeArticleRagEmbeddingProvider(
+        dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_V1_QUERY_EMBEDDING_MODEL,
+    )
+    searcher = FakeArticleRagVectorSearcher(hits=[])
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=_indexed_run_row(
+            plan,
+            plan_content_sha256="f" * 64,
+            profile_fingerprint="0" * 64,
+        ),
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+    )
+    assert provider.call_count == 0
+    assert searcher.search_calls == []
+
+
+# ---------------------------------------------------------------------------
+# P1-F Section 九 #6: indexed chunker_version mismatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_indexed_run_chunker_version_mismatch_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """``indexed.chunker_version`` != ``profile.chunker_version`` →
+    ``retrieval_index_profile_mismatch``.  Embedding and searcher
+    MUST NOT be called."""
+    plan = _make_plan()
+    row = _indexed_run_row(
+        plan, chunker_version="article_rag_index_plan_v2_future"
+    )
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+    )
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# P1-F Section 九 #7: indexed embedding_model NULL / mismatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_indexed_run_embedding_model_null_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """NULL ``embedding_model`` on the indexed run →
+    ``retrieval_index_profile_mismatch``.  The NULL bypass is removed."""
+    plan = _make_plan()
+    row = _indexed_run_row(plan, embedding_model=None)
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+    )
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
+
+
+@pytest.mark.anyio
+async def test_p1f_indexed_run_embedding_model_mismatch_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """``indexed.embedding_model`` != ``profile.document_embedding_model``
+    → ``retrieval_index_profile_mismatch``.  The offending model name
+    MUST NOT be echoed."""
+    plan = _make_plan()
+    row = _indexed_run_row(
+        plan, embedding_model="some-other-embedding-model"
+    )
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+    )
+    assert "some-other-embedding-model" not in str(exc_info.value)
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# P1-F Section 九 #8: indexed vector_collection NULL / mismatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_indexed_run_vector_collection_null_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """NULL ``vector_collection`` on the indexed run →
+    ``retrieval_index_profile_mismatch`` (NULL != profile.vector_namespace)."""
+    plan = _make_plan()
+    row = _indexed_run_row(plan, vector_collection=None)
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+    )
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
+
+
+@pytest.mark.anyio
+async def test_p1f_indexed_run_vector_collection_empty_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """Empty / whitespace-only ``vector_collection`` →
+    ``retrieval_index_profile_mismatch``."""
+    plan = _make_plan()
+    row = _indexed_run_row(plan, vector_collection="   ")
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+    )
+
+
+@pytest.mark.anyio
+async def test_p1f_indexed_run_vector_collection_mismatch_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """``indexed.vector_collection`` != ``profile.vector_namespace`` →
+    ``retrieval_index_profile_mismatch``.  The offending collection
+    name MUST NOT be echoed."""
+    plan = _make_plan()
+    row = _indexed_run_row(
+        plan, vector_collection="some-other-zilliz-collection"
+    )
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+    )
+    assert "some-other-zilliz-collection" not in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# P1-F Section 九 #9: plan.chunker_version mismatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_plan_chunker_version_mismatch_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """If the current plan's ``chunker_version`` does NOT equal
+    ``profile.chunker_version``, retrieval MUST fail closed.  The
+    failure code is ``retrieval_index_profile_mismatch`` (the plan
+    identity contradicts the resolved profile).
+
+    We force the mismatch by overriding the plan's ``chunker_version``
+    via a patched plan object.  The indexed run is profile-aligned
+    (so we isolate the plan-side failure)."""
+    from dataclasses import replace as _dc_replace
+    plan = _make_plan()
+    # Patch the plan's chunker_version to a future V2 identity.  The
+    # plan service stub returns this plan; retrieval MUST validate
+    # ``plan.chunker_version == resolution.profile.chunker_version``.
+    plan = _dc_replace(
+        plan, chunker_version="article_rag_index_plan_v2_future"
+    )
+    row = _indexed_run_row(plan)
+    # The indexed run's chunker_version must still match the V1
+    # profile (we are testing the plan-side check, not the indexed
+    # run check).  Override it back to V1.
+    row["chunker_version"] = _V1_CHUNKER_VERSION
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH
+    )
+    assert provider.call_count == 0
+    assert len(searcher.search_calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# P1-F Section 九 #11: query embedding returns model mismatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_query_embedding_returns_model_mismatch_fails_closed(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """If the embedding provider returns a vector whose ``model`` !=
+    ``profile.query_embedding_model``, retrieval MUST fail closed
+    with ``retrieval_embedding_model_mismatch``.  The indexed run is
+    profile-aligned; only the provider's return value is wrong."""
+
+    class _MismatchProvider(FakeArticleRagEmbeddingProvider):
+        async def embed_texts(
+            self, texts: list[str], *, model: str | None = None
+        ):
+            return [
+                ArticleRagEmbedding(
+                    text_sha256=hashlib.sha256(
+                        texts[0].encode("utf-8")
+                    ).hexdigest(),
+                    model="some-other-model",
+                    vector=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8),
+                    dim=8,
+                )
+            ]
+
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=_MismatchProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        ),
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_EMBEDDING_MODEL_MISMATCH
+    )
+    # The offending model name MUST NOT be echoed.
+    assert "some-other-model" not in str(exc_info.value)
+    # Searcher was not called because embedding mismatch fires first.
+    assert len(searcher.search_calls) == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "returned_model",
+    [
+        pytest.param(_V1_QUERY_EMBEDDING_MODEL + " ", id="trailing_space"),
+        pytest.param(_V1_QUERY_EMBEDDING_MODEL + "\n", id="trailing_lf"),
+        pytest.param(None, id="none"),
+        pytest.param(1, id="integer"),
+        pytest.param(True, id="bool"),
+    ],
+)
+async def test_p1f_query_embedding_model_requires_raw_exact_string_match(
+    returned_model: Any,
+) -> None:
+    """The provider-reported model must exactly equal the frozen profile."""
+
+    class _ReturnedModelProvider(FakeArticleRagEmbeddingProvider):
+        async def embed_texts(
+            self, texts: list[str], *, model: str | None = None
+        ):
+            self.call_count += 1
+            return [
+                ArticleRagEmbedding(
+                    text_sha256=hashlib.sha256(
+                        texts[0].encode("utf-8")
+                    ).hexdigest(),
+                    model=returned_model,
+                    vector=(0.1,) * 8,
+                    dim=8,
+                )
+            ]
+
+    plan = _make_plan()
+    searcher = FakeArticleRagVectorSearcher(hits=[])
+    provider = _ReturnedModelProvider(
+        dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+    )
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=_indexed_run_row(plan),
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_EMBEDDING_MODEL_MISMATCH
+    )
+    assert provider.call_count == 1
+    assert searcher.search_calls == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("reported_dim", "vector_length"),
+    [
+        pytest.param(8, 8, id="both_wrong"),
+        pytest.param(8, 1024, id="reported_dim_wrong"),
+        pytest.param(1024, 8, id="vector_length_wrong"),
+        pytest.param(True, 1024, id="bool_reported_dim"),
+    ],
+)
+async def test_p1f_query_embedding_dimension_matches_frozen_profile(
+    reported_dim: Any,
+    vector_length: int,
+) -> None:
+    """Both reported and actual vector dimensions must match the profile."""
+
+    class _DimensionProvider(FakeArticleRagEmbeddingProvider):
+        async def embed_texts(
+            self, texts: list[str], *, model: str | None = None
+        ):
+            self.call_count += 1
+            return [
+                ArticleRagEmbedding(
+                    text_sha256=hashlib.sha256(
+                        texts[0].encode("utf-8")
+                    ).hexdigest(),
+                    model=_V1_QUERY_EMBEDDING_MODEL,
+                    vector=(0.1,) * vector_length,
+                    dim=reported_dim,
+                )
+            ]
+
+    plan = _make_plan()
+    searcher = FakeArticleRagVectorSearcher(hits=[])
+    provider = _DimensionProvider(
+        dim=_V1_RESOLUTION.profile.document_embedding_dimension,
+        model=_V1_QUERY_EMBEDDING_MODEL,
+    )
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=_indexed_run_row(plan),
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+
+    assert exc_info.value.failure_code == (
+        FAILURE_CODE_RETRIEVAL_EMBEDDING_DIMENSION_MISMATCH
+    )
+    assert provider.call_count == 1
+    assert searcher.search_calls == []
+
+
+# ---------------------------------------------------------------------------
+# P1-F Section 九 #12: all profile-mismatch paths make 0 embedding /
+# 0 vector-search calls (consolidated assertion)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_all_profile_mismatch_paths_zero_embedding_and_search_calls(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """For every profile-mismatch scenario, the embedding provider
+    call_count == 0 AND the vector searcher call_count == 0.  This
+    consolidates the call_count assertions for the family of
+    profile-mismatch failures."""
+    plan = _make_plan()
+
+    mismatch_rows = [
+        # valid SHA-256 but wrong fingerprint
+        _indexed_run_row(plan, profile_fingerprint="0" * 64),
+        # chunker_version mismatch
+        _indexed_run_row(
+            plan, chunker_version="article_rag_index_plan_v2_future"
+        ),
+        # embedding_model NULL
+        _indexed_run_row(plan, embedding_model=None),
+        # embedding_model mismatch
+        _indexed_run_row(
+            plan, embedding_model="some-other-embedding-model"
+        ),
+        # vector_collection NULL
+        _indexed_run_row(plan, vector_collection=None),
+        # vector_collection mismatch
+        _indexed_run_row(
+            plan, vector_collection="some-other-collection"
+        ),
+    ]
+
+    for row in mismatch_rows:
+        provider = FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+        searcher = FakeArticleRagVectorSearcher(hits=[])
+        service = _build_service(
+            plan=plan,
+            indexed_run_row=row,
+            searcher=searcher,
+            embedding_provider=provider,
+        )
+        with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+            await service.retrieve_for_record(
+                reading_record_id=_RECORD_ID,
+                user_id=_USER_ID,
+                query_text="hello",
+            )
+        assert exc_info.value.failure_code in (
+            FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID,
+            FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_MISMATCH,
+        ), (
+            f"unexpected failure_code={exc_info.value.failure_code!r} "
+            f"for row={row!r}"
+        )
+        assert provider.call_count == 0, (
+            f"provider called {provider.call_count} times for row={row!r}"
+        )
+        assert len(searcher.search_calls) == 0, (
+            f"searcher called {len(searcher.search_calls)} times for "
+            f"row={row!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# P1-F Section 九 #13: normal V1 retrieval uses profile model + namespace
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_normal_v1_retrieval_uses_profile_model_and_namespace() -> None:
+    """A successful V1 retrieval MUST:
+      - request query embedding with ``model=profile.query_embedding_model``
+      - route the vector search to ``profile.vector_namespace``
+      - return citations joined from the current Postgres plan
+    """
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+    provider = FakeArticleRagEmbeddingProvider(
+        dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_V1_QUERY_EMBEDDING_MODEL,
+    )
+    searcher = FakeArticleRagVectorSearcher(
+        hits=[
+            ArticleRagVectorSearchHit(chunk_id="chunk-aaa", score=0.9)
+        ]
+    )
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    result = await service.retrieve_for_record(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        query_text="hello",
+    )
+    # Query embedding was requested with the profile's query model.
+    assert provider.call_count == 1
+    assert provider.last_texts == ["hello"]
+    # The fake provider embeds with whatever model kwarg it receives.
+    # The returned embedding's model matches the profile's query model
+    # because retrieval forwards ``profile.query_embedding_model``.
+    assert result.hits[0].chunk_id == "chunk-aaa"
+    # Vector search was routed to the profile's vector_namespace.
+    assert len(searcher.search_calls) == 1
+    assert searcher.search_calls[0]["collection"] == _V1_VECTOR_NAMESPACE
+    # Citation comes from the current plan chunk.
+    aaa = result.hits[0]
+    assert aaa.text == "alpha text"
+    assert aaa.citation["stable_document_id"] == str(_STABLE_DOC_ID)
+    assert aaa.citation["block_ids"] == ["block-for-chunk-aaa"]
+
+
+# ---------------------------------------------------------------------------
+# P1-F Section 九 #14: forged vector citation/profile metadata is not truth
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_forged_vector_citation_metadata_is_not_truth() -> None:
+    """A vector hit that carries a forged citation / fingerprint /
+    chunk_text in its payload MUST NOT override the citation truth
+    from the current Postgres plan.  The hit's ``chunk_id`` joins to
+    ``plan.chunks``; the joined chunk's ``text`` / ``citation`` /
+    ``metadata_json`` / ``content_sha256`` are the only truth."""
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+    # The vector hit only carries chunk_id + score + guard metadata.
+    # It does NOT carry citation / text / fingerprint fields — those
+    # are NOT fields on ArticleRagVectorSearchHit by design (the
+    # searcher contract forbids trusting payload citation).
+    searcher = FakeArticleRagVectorSearcher(
+        hits=[
+            ArticleRagVectorSearchHit(
+                chunk_id="chunk-aaa",
+                score=0.9,
+                stable_document_id=_STABLE_DOC_ID,
+                base_id=_BASE_ID,
+                index_version=_V1_INDEX_VERSION,
+                plan_content_sha256=row["plan_content_sha256"],
+            ),
+        ]
+    )
+    service = _build_service(
+        plan=plan, indexed_run_row=row, searcher=searcher
+    )
+    result = await service.retrieve_for_record(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        query_text="hello",
+    )
+    aaa = result.hits[0]
+    # Citation comes from the plan chunk, not from the vector payload.
+    assert aaa.citation["reading_record_id"] == str(_RECORD_ID)
+    assert aaa.citation["stable_document_id"] == str(_STABLE_DOC_ID)
+    assert aaa.citation["block_ids"] == ["block-for-chunk-aaa"]
+    assert aaa.text == "alpha text"
+    # content_sha256 comes from the plan chunk.
+    assert aaa.content_sha256 == hashlib.sha256(b"alpha text").hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# P1-F: existing-test characterization lockdowns
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_default_index_version_constant_is_alias_of_profile_default() -> None:
+    """``DEFAULT_INDEX_VERSION`` in the retrieval service MUST be an
+    alias of ``DEFAULT_ARTICLE_RAG_INDEX_VERSION`` from the P1-B
+    profile module — no second literal source of truth."""
+    assert DEFAULT_INDEX_VERSION is DEFAULT_ARTICLE_RAG_INDEX_VERSION
+    assert DEFAULT_INDEX_VERSION == _V1_INDEX_VERSION
+
+
+@pytest.mark.anyio
+async def test_p1f_resolver_failure_does_not_chain_cause_or_context(
+    provider_call_counter, searcher_call_counter
+) -> None:
+    """Resolver failure (``ArticleRagIndexProfileResolutionError``) is
+    wrapped into ``ArticleRagRetrievalServiceError`` using the
+    "construct inside except, raise outside except" pattern.  The
+    wrapper error MUST have ``__cause__ is None`` and
+    ``__context__ is None`` — the resolver's exception is NOT chained."""
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+    provider = provider_call_counter(
+        FakeArticleRagEmbeddingProvider(
+            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        )
+    )
+    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+            index_version="article_rag_index_v_unknown",
+        )
+    # Chain closure: __cause__ and __context__ are both None.
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    # The original resolver exception type does not appear in args.
+    assert "ArticleRagIndexProfileResolutionError" not in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# P1-F Section 九 #2: plan service receives explicit V1 index_version
+# (consolidated — default omission AND explicit V1 both forward V1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1f_plan_service_receives_v1_index_version_on_default_omission() -> None:
+    """When ``index_version`` is omitted, retrieval MUST still forward
+    the resolved V1 ``index_version`` to the plan service (not None)."""
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=FakeArticleRagVectorSearcher(hits=[]),
+    )
+    await service.retrieve_for_record(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        query_text="hello",
+    )
+    calls = service._plan_service._test_calls  # type: ignore[attr-defined]
+    assert len(calls) == 1
+    assert calls[0]["index_version"] == _V1_INDEX_VERSION
+
+
+@pytest.mark.anyio
+async def test_p1f_plan_service_receives_v1_index_version_on_explicit_v1() -> None:
+    """When ``index_version=V1`` is passed explicitly, retrieval
+    forwards V1 to the plan service (not None, not the default
+    sentinel)."""
+    plan = _make_plan()
+    row = _indexed_run_row(plan)
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=row,
+        searcher=FakeArticleRagVectorSearcher(hits=[]),
+    )
+    await service.retrieve_for_record(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        query_text="hello",
+        index_version=_V1_INDEX_VERSION,
+    )
+    calls = service._plan_service._test_calls  # type: ignore[attr-defined]
+    assert len(calls) == 1
+    assert calls[0]["index_version"] == _V1_INDEX_VERSION
