@@ -26,12 +26,8 @@ export function SegmentedControl<T extends string>({
 }: SegmentedControlProps<T>) {
   return (
     <fieldset className={cn("min-w-0", className)}>
-      {label ? (
-        <legend className="mb-3 text-[0.66rem] font-bold tracking-[0.2em] text-subtle">
-          {label}
-        </legend>
-      ) : null}
-      <div className="inline-flex flex-wrap items-center rounded-xl bg-hairline/40 p-1 shadow-inner">
+      {label ? <legend className="mb-2 text-sm font-medium text-ink">{label}</legend> : null}
+      <div className="inline-flex min-h-11 max-w-full flex-wrap items-center overflow-hidden rounded-[var(--cl-radius-control-sm)] border border-hairline bg-surface-raised/60 p-0.5">
         {options.map((option) => {
           const active = option.value === value;
           return (
@@ -39,10 +35,10 @@ export function SegmentedControl<T extends string>({
               key={option.value}
               type="button"
               className={cn(
-                "focus-ring relative flex h-8 items-center justify-center rounded-lg px-5 text-[0.8rem] font-medium tracking-[0.02em] transition-all duration-200",
+                "focus-ring relative flex min-h-10 items-center justify-center rounded-[calc(var(--cl-radius-control-sm)-2px)] px-3 text-sm font-medium transition-colors",
                 active
-                  ? "bg-surface text-ink shadow-[0_1px_3px_rgba(0,0,0,0.1)] ring-1 ring-black/5"
-                  : "text-muted-foreground hover:text-ink",
+                  ? "bg-surface text-ink"
+                  : "text-muted-foreground hover:bg-[var(--interactive-quiet-hover)] hover:text-ink",
                 option.disabled && "cursor-not-allowed opacity-45",
               )}
               disabled={option.disabled}
@@ -50,7 +46,7 @@ export function SegmentedControl<T extends string>({
               aria-pressed={active}
               title={option.description}
             >
-              <span className="relative z-10">{option.label}</span>
+              {option.label}
             </button>
           );
         })}

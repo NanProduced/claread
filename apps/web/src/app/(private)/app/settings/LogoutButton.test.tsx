@@ -46,6 +46,8 @@ describe("LogoutButton", () => {
 
     const button = screen.getByRole("button", { name: "退出登录" });
     expect(button.className).toContain("hover:bg-surface-raised");
+    expect(button.className).toContain("border-hairline");
+    expect(button.className).toContain("bg-surface");
     expect(button.className).not.toContain("hover:underline");
     expect(button.className).not.toContain("hover:text-red-700");
   });

@@ -1,6 +1,7 @@
 import Link from "next/link";
+
 import { Button } from "@/components/primitives/button";
-import { appSettingsRoute, loginRoute } from "@/lib/routes";
+import { appReadRoute, loginRoute } from "@/lib/routes";
 import type { ProfileBffStatus } from "@/services/bff/profile";
 import { LogoutButton } from "../LogoutButton";
 import { NicknameEditor } from "../NicknameEditor";
@@ -31,41 +32,47 @@ export function AccountSection({
   const needsReauth = status === "unauthenticated" || status === "limited_debug";
 
   return (
-    <div className="space-y-0">
-      <div className="mb-6 border-b border-hairline pb-6 md:grid md:grid-cols-[6rem_1fr] md:gap-4">
-        <div className="mb-2 text-sm text-muted-foreground md:mb-0">账户</div>
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-raised text-sm font-semibold text-text-secondary">
+    <div className="divide-y divide-hairline">
+      <section className="py-7 first:pt-0" aria-labelledby="account-identity-heading">
+        <h3 id="account-identity-heading" className="text-sm font-medium text-ink">账户</h3>
+        <div className="mt-5 flex items-center gap-3">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-surface-raised text-sm font-semibold text-text-secondary">
             {avatarText}
           </div>
           <NicknameEditor initialNickname={nickname} displayFallback={displayFallback} />
         </div>
-      </div>
+      </section>
 
-      <div className="mb-6 border-b border-hairline pb-6 md:grid md:grid-cols-[6rem_1fr] md:gap-4">
-        <div className="mb-2 text-sm text-muted-foreground md:mb-0">登录信息</div>
-        <div className="space-y-1">
-          <p className="text-sm text-ink">{phone || "Web User"}</p>
-          <p className="text-sm text-muted-foreground">{statusLabel[status]}</p>
-        </div>
-      </div>
+      <section className="py-7" aria-labelledby="account-login-heading">
+        <h3 id="account-login-heading" className="text-sm font-medium text-ink">登录信息</h3>
+        <dl className="mt-4 divide-y divide-hairline text-sm">
+          <div className="flex min-h-12 items-center justify-between gap-6 py-3 first:pt-0">
+            <dt className="text-muted-foreground">账号</dt>
+            <dd className="text-right text-ink">{phone || "Web User"}</dd>
+          </div>
+          <div className="flex min-h-12 items-center justify-between gap-6 py-3 last:pb-0">
+            <dt className="text-muted-foreground">状态</dt>
+            <dd className="text-right text-muted-foreground">{statusLabel[status]}</dd>
+          </div>
+        </dl>
+      </section>
 
-      <div className="md:grid md:grid-cols-[6rem_1fr] md:gap-4">
-        <div className="mb-2 text-sm text-muted-foreground md:mb-0">会话</div>
-        <div>
+      <section className="py-7" aria-labelledby="account-session-heading">
+        <h3 id="account-session-heading" className="text-sm font-medium text-ink">会话</h3>
+        <div className="mt-3">
           {needsReauth ? (
             <Button
               asChild
               variant="ghost"
-              className="min-h-11 px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-raised hover:text-text-primary"
+              className="min-h-11 rounded-[var(--cl-radius-control-sm)] px-4 text-sm font-medium text-text-secondary hover:bg-surface-raised hover:text-text-primary"
             >
-              <Link href={loginRoute(appSettingsRoute)}>重新登录</Link>
+              <Link href={loginRoute(appReadRoute)}>重新登录</Link>
             </Button>
           ) : (
             <LogoutButton />
           )}
         </div>
-      </div>
+      </section>
     </div>
   );
 }

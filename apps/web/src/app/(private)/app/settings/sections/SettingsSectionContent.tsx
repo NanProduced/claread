@@ -111,15 +111,15 @@ export function SettingsSectionContent({
     return (
       <>
         {accountData ? (
-          <SettingsSectionLayout title="Account">{renderAccount(accountData)}</SettingsSectionLayout>
+          <SettingsSectionLayout title="账户">{renderAccount(accountData)}</SettingsSectionLayout>
         ) : null}
         {preferencesData ? (
-          <SettingsSectionLayout title="Preferences">
+          <SettingsSectionLayout title="偏好">
             {renderPreferences(preferencesData)}
           </SettingsSectionLayout>
         ) : null}
-        <SettingsSectionLayout title="Quota">{renderUsage()}</SettingsSectionLayout>
-        <SettingsSectionLayout title="Support">
+        <SettingsSectionLayout title="用量与积分">{renderUsage()}</SettingsSectionLayout>
+        <SettingsSectionLayout title="支持">
           <SupportSection />
         </SettingsSectionLayout>
       </>

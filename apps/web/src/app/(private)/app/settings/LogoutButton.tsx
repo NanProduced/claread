@@ -19,7 +19,7 @@ export function LogoutButton() {
   return (
     <Button
       variant="ghost"
-      className="min-h-11 px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-raised hover:text-text-primary"
+      className="min-h-11 border border-hairline bg-surface px-4 py-2.5 text-sm font-medium text-ink hover:bg-surface-raised"
       disabled={pending}
       onClick={handleLogout}
       type="button"

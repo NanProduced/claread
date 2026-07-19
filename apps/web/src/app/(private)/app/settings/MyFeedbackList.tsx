@@ -56,9 +56,9 @@ const SENTIMENT_LABELS: Record<string, string> = {
 };
 
 const STATUS_LABELS: Record<string, { label: string; className: string }> = {
-  pending: { label: "待处理", className: "text-vocab-amber" },
-  adopted: { label: "已采纳", className: "text-structure-green" },
-  resolved: { label: "已解决", className: "text-structure-green" },
+  pending: { label: "待处理", className: "text-muted-foreground" },
+  adopted: { label: "已采纳", className: "text-feedback-success" },
+  resolved: { label: "已解决", className: "text-feedback-success" },
   dismissed: { label: "已关闭", className: "text-muted-foreground" },
 };
 
@@ -97,7 +97,7 @@ function getFeedbackDisplay(item: FeedbackItem) {
 
 function SkeletonRow() {
   return (
-    <div className="flex animate-pulse items-start gap-3 rounded-lg border border-hairline/60 bg-surface px-3.5 py-3">
+    <div className="flex animate-pulse items-start gap-3 border-b border-hairline px-1 py-4">
       <div className="size-8 shrink-0 rounded bg-hairline/70" />
       <div className="flex-1 space-y-2">
         <div className="h-3.5 w-28 rounded bg-hairline/70" />
@@ -209,7 +209,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
 
   if (state.phase === "error") {
     return (
-      <div className="rounded-lg border border-hairline/60 bg-surface px-3.5 py-6 text-center">
+      <div className="border-y border-hairline px-1 py-6 text-center">
         <p className="text-sm text-muted-foreground">{state.message}</p>
       </div>
     );
@@ -220,7 +220,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
   return (
     <div className="space-y-2">
       {items.length === 0 ? (
-        <div className="rounded-lg border border-hairline/60 bg-surface px-3.5 py-10 text-center">
+        <div className="border-y border-hairline px-1 py-10 text-center">
           <p className="text-sm font-medium text-ink">暂无反馈记录</p>
           <p className="mt-1 text-xs text-muted-foreground">提交后会出现在这里。</p>
         </div>
@@ -240,7 +240,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
         return (
           <article
             key={item.id}
-            className="group flex flex-col gap-3 rounded-lg border border-hairline/60 bg-surface px-3.5 py-3 transition-colors hover:border-hairline hover:bg-surface-raised/50"
+            className="group flex flex-col gap-3 border-b border-hairline px-1 py-4 transition-colors hover:bg-[var(--interactive-quiet-hover)]"
           >
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="text-sm font-medium text-ink">{scopeLabel}</span>
@@ -263,7 +263,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
               </blockquote>
             ) : null}
             {item.resolutionNote ? (
-              <div className="rounded-md border border-hairline/60 bg-surface-raised/65 px-3 py-2">
+              <div className="border-t border-hairline pt-2">
                 <p className="text-xs leading-5 text-muted-foreground">
                   处理说明：{item.resolutionNote}
                 </p>
@@ -277,7 +277,7 @@ export function MyFeedbackList({ refreshKey = 0 }: MyFeedbackListProps) {
               </span>
               <span className="text-xs text-subtle">{platformLabel}</span>
               {item.rewardPoints > 0 ? (
-                <span className="text-xs text-vocab-amber">+{item.rewardPoints}</span>
+                <span className="text-xs text-muted-foreground">+{item.rewardPoints}</span>
               ) : null}
 
               {item.status === "pending" ? (

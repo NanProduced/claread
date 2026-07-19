@@ -1,65 +1,47 @@
 "use client";
 
-import { cn } from "@/lib/cn";
 import { useAppearance } from "@/components/providers/appearance-provider";
-import type { ThemePreference } from "@/lib/appearance";
 
-interface ThemeOption {
-  value: ThemePreference;
-  label: string;
-}
-
-const themeOptions: ThemeOption[] = [
+const themeOptions = [
   { value: "system", label: "跟随系统" },
   { value: "light", label: "浅色" },
   { value: "dark", label: "深色" },
-];
+] as const;
 
 export function ThemePreferencesSection() {
   const { themePreference, resolvedTheme, setThemePreference } = useAppearance();
 
   return (
-    <fieldset className="space-y-2">
-      <legend className="sr-only">主题偏好</legend>
-      {themeOptions.map((option) => {
-        const active = themePreference === option.value;
-
-        return (
-          <label
-            key={option.value}
-            className={cn(
-              "flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 transition-colors focus-within:ring-2 focus-within:ring-lens-blue focus-within:ring-offset-2 focus-within:ring-offset-background",
-              active
-                ? "border-lens-blue bg-surface-canvas text-ink"
-                : "border-hairline/60 bg-background text-muted-foreground hover:border-hairline hover:text-ink",
-            )}
-          >
-            <input
-              type="radio"
-              name="theme-preference"
-              value={option.value}
-              checked={active}
-              onChange={() => setThemePreference(option.value)}
-              className="sr-only"
-            />
-            <span
-              className={cn(
-                "flex size-4 items-center justify-center rounded-full border",
-                active ? "border-lens-blue" : "border-muted-foreground",
-              )}
-              aria-hidden="true"
-            >
-              {active && <span className="size-2 rounded-full bg-lens-blue" />}
-            </span>
-            <span className="text-sm font-medium">{option.label}</span>
+    <div className="divide-y divide-hairline">
+      <div className="flex min-h-16 items-center justify-between gap-6 py-4 first:pt-0">
+        <div className="min-w-0">
+          <label htmlFor="theme-preference" className="text-sm font-medium text-ink">
+            主题
           </label>
-        );
-      })}
-      {themePreference === "system" && (
-        <p className="text-xs text-muted-foreground">
-          当前显示：{resolvedTheme === "dark" ? "深色" : "浅色"}
-        </p>
-      )}
-    </fieldset>
+
+        </div>
+        <div className="shrink-0">
+          <select
+            id="theme-preference"
+            value={themePreference}
+            onChange={(event) =>
+              setThemePreference(event.target.value as (typeof themeOptions)[number]["value"])
+            }
+            className="min-h-10 rounded-[var(--cl-radius-control-sm)] border border-hairline bg-surface px-3 text-sm text-ink outline-none transition-colors hover:bg-surface-raised focus-visible:ring-2 focus-visible:ring-lens-blue focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          >
+            {themeOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          {themePreference === "system" ? (
+            <p className="mt-1.5 text-right text-xs text-muted-foreground">
+              当前：{resolvedTheme === "dark" ? "深色" : "浅色"}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }

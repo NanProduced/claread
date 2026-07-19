@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Pencil, Check, X } from "lucide-react";
 
@@ -13,6 +13,7 @@ interface NicknameEditorProps {
 
 export function NicknameEditor({ initialNickname, displayFallback }: NicknameEditorProps) {
   const router = useRouter();
+  const errorId = useId();
   const [editState, setEditState] = useState<EditState>("idle");
   const [draft, setDraft] = useState(initialNickname);
   const [errorMessage, setErrorMessage] = useState("");
@@ -74,60 +75,69 @@ export function NicknameEditor({ initialNickname, displayFallback }: NicknameEdi
 
   if (editState === "editing" || editState === "saving") {
     return (
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          maxLength={50}
-          disabled={editState === "saving"}
-          placeholder="输入昵称"
-          aria-label="编辑昵称"
-          className="h-9 flex-1 rounded border border-lens-blue bg-surface-raised px-3 text-sm text-ink outline-none focus:ring-1 focus:ring-lens-blue disabled:opacity-50"
-          autoFocus
-          onKeyDown={(e) => {
-            if (e.key === "Enter") saveNickname();
-            if (e.key === "Escape") cancelEditing();
-          }}
-        />
-        <button
-          type="button"
-          onClick={saveNickname}
-          disabled={editState === "saving"}
-          className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded text-structure-green hover:bg-structure-green/10 disabled:opacity-40"
-          aria-label="保存昵称"
-        >
-          <Check className="size-5" strokeWidth={2} />
-        </button>
-        <button
-          type="button"
-          onClick={cancelEditing}
-          disabled={editState === "saving"}
-          className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded text-muted-foreground hover:bg-muted/10 disabled:opacity-40"
-          aria-label="取消编辑"
-        >
-          <X className="size-5" strokeWidth={2} />
-        </button>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            maxLength={50}
+            disabled={editState === "saving"}
+            placeholder="输入昵称"
+            aria-label="编辑昵称"
+            aria-invalid={Boolean(errorMessage)}
+            aria-describedby={errorMessage ? errorId : undefined}
+            className="h-10 min-w-0 flex-1 rounded-[var(--cl-radius-control-sm)] border border-hairline bg-surface px-3 text-sm text-ink outline-none transition-colors focus-visible:ring-2 focus-visible:ring-lens-blue focus-visible:ring-offset-2 disabled:opacity-50"
+            autoFocus
+            onKeyDown={(event) => {
+              if (event.key === "Enter") saveNickname();
+              if (event.key === "Escape") cancelEditing();
+            }}
+          />
+          <button
+            type="button"
+            onClick={saveNickname}
+            disabled={editState === "saving"}
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-[var(--cl-radius-control-sm)] text-text-secondary transition-colors hover:bg-surface-raised hover:text-ink disabled:opacity-40"
+            aria-label="保存昵称"
+          >
+            <Check className="size-5" strokeWidth={2} />
+          </button>
+          <button
+            type="button"
+            onClick={cancelEditing}
+            disabled={editState === "saving"}
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-[var(--cl-radius-control-sm)] text-muted-foreground transition-colors hover:bg-surface-raised hover:text-ink disabled:opacity-40"
+            aria-label="取消编辑"
+          >
+            <X className="size-5" strokeWidth={2} />
+          </button>
+        </div>
+        {errorMessage ? (
+          <p id={errorId} role="alert" className="mt-2 text-xs text-destructive">
+            {errorMessage}
+          </p>
+        ) : null}
       </div>
     );
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-base font-semibold text-ink">{shownName}</span>
+    <div className="flex min-w-0 items-center gap-2">
+      <span className="truncate text-base font-semibold text-ink">{shownName}</span>
       {editState === "saved" ? (
-        <span className="text-xs font-medium text-structure-green">已保存</span>
+        <span className="shrink-0 text-xs font-medium text-feedback-success">已保存</span>
       ) : null}
       <button
         type="button"
         onClick={startEditing}
-        className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded text-muted-foreground hover:bg-muted/10 hover:text-ink -ml-2"
+        className="-ml-2 flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-[var(--cl-radius-control-sm)] text-muted-foreground transition-colors hover:bg-surface-raised hover:text-ink"
         aria-label="编辑昵称"
       >
         <Pencil className="size-4" strokeWidth={1.8} />
       </button>
       {editState === "error" && errorMessage ? (
-        <span className="text-xs text-red-500">{errorMessage}</span>
+        <span id={errorId} role="alert" className="text-xs text-destructive">{errorMessage}</span>
       ) : null}
     </div>
   );

@@ -27,73 +27,44 @@ afterEach(() => {
 });
 
 describe("ThemePreferencesSection", () => {
-  it("renders the three radio options", () => {
+  it("renders one compact theme select with all supported values", () => {
     render(<ThemePreferencesSection />);
 
-    expect(screen.getByRole("radio", { name: /跟随系统/ })).toBeTruthy();
-    expect(screen.getByRole("radio", { name: /浅色/ })).toBeTruthy();
-    expect(screen.getByRole("radio", { name: /深色/ })).toBeTruthy();
+    const select = screen.getByRole("combobox", { name: "主题" }) as HTMLSelectElement;
+    expect(select.value).toBe("system");
+    expect(select.querySelectorAll("option")).toHaveLength(3);
+    expect(screen.getByRole("option", { name: "跟随系统" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "浅色" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "深色" })).toBeTruthy();
   });
 
-  it("checks only one option at a time", () => {
+  it("shows the resolved theme only for the system preference", () => {
     const { rerender } = render(<ThemePreferencesSection />);
-    const radios = screen.getAllByRole("radio");
-
-    expect(radios).toHaveLength(3);
-    expect(radios.filter((radio) => (radio as HTMLInputElement).checked)).toHaveLength(1);
-    expect((screen.getByRole("radio", { name: /跟随系统/ }) as HTMLInputElement).checked).toBe(
-      true,
-    );
+    expect(screen.getByText("当前：浅色")).toBeTruthy();
 
     themeState.themePreference = "light";
     rerender(<ThemePreferencesSection />);
-
-    expect((screen.getByRole("radio", { name: /浅色/ }) as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByRole("radio", { name: /跟随系统/ }) as HTMLInputElement).checked).toBe(
-      false,
-    );
-    expect((screen.getByRole("radio", { name: /深色/ }) as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByText(/当前：/)).toBeNull();
   });
 
-  it("shows resolved theme hint only in system mode", () => {
-    const { rerender } = render(<ThemePreferencesSection />);
+  it("keeps the three-value AppearanceProvider contract", () => {
+    render(<ThemePreferencesSection />);
+    const select = screen.getByRole("combobox", { name: "主题" });
 
-    expect(screen.getByText("当前显示：浅色")).toBeTruthy();
-
-    themeState.themePreference = "light";
-    rerender(<ThemePreferencesSection />);
-    expect(screen.queryByText(/当前显示/)).toBeNull();
-
-    themeState.themePreference = "dark";
-    themeState.resolvedTheme = "dark";
-    rerender(<ThemePreferencesSection />);
-    expect(screen.queryByText(/当前显示/)).toBeNull();
-  });
-
-  it("calls setThemePreference with the correct values", () => {
-    const { rerender } = render(<ThemePreferencesSection />);
-
-    fireEvent.click(screen.getByRole("radio", { name: /深色/ }));
+    fireEvent.change(select, { target: { value: "dark" } });
     expect(themeState.setThemePreference).toHaveBeenCalledWith("dark");
-
-    fireEvent.click(screen.getByRole("radio", { name: /浅色/ }));
+    fireEvent.change(select, { target: { value: "light" } });
     expect(themeState.setThemePreference).toHaveBeenCalledWith("light");
-
-    themeState.themePreference = "light";
-    rerender(<ThemePreferencesSection />);
-
-    fireEvent.click(screen.getByRole("radio", { name: /跟随系统/ }));
+    fireEvent.change(select, { target: { value: "system" } });
     expect(themeState.setThemePreference).toHaveBeenCalledWith("system");
   });
 
-  it("exposes a visible focus-within ring contract on each option label", () => {
+  it("uses a labelled, token-based focusable control", () => {
     const { container } = render(<ThemePreferencesSection />);
+    const select = screen.getByRole("combobox", { name: "主题" });
 
-    const labels = container.querySelectorAll("label");
-    expect(labels.length).toBe(3);
-    labels.forEach((label) => {
-      expect(label.className).toContain("focus-within:ring-2");
-      expect(label.className).toContain("focus-within:ring-lens-blue");
-    });
+    expect(select.className).toContain("focus-visible:ring-lens-blue");
+    expect(select.className).toContain("border-hairline");
+    expect(container.querySelectorAll('input[type="radio"]')).toHaveLength(0);
   });
 });

@@ -133,6 +133,8 @@ Settings Dialog 由 `SettingsDialogShell` 提供视觉容器与 rail 导航，�
 
 **Hover / current / focus 语义。** 导航项 hover 使用 `interactive-quiet-hover`（`--app-control-quiet`）；当前分区使用 `--app-control-current`（非蓝色），并同步 `aria-current="page"`。primary / ring 仅用于主操作与键盘焦点（`primitiveFocusRing`），导航选中不用蓝色。这与"导航与普通列表行使用一致的四态语法"一致：默认透明、hover/current 用安静中性表面、不扩散文章语义色。
 
+**内容语法。** 标准 Settings 内容列应在可用空间内居中，并保持 `max-w-[40rem]` 的任务列宽度。内容以分区标题、细分隔线与设置行为主；同一组互斥选项使用紧凑的原生 radio 或 segmented control，类型较多时使用原生 select。不得把每个选项都渲染为独立 card，也不得在无未保存修改时保留禁用的保存操作。反馈页先提供输入，再提供分类和历史记录；历史使用列表分隔线而非多层卡片。
+
 **响应式形态。** 桌面端 Dialog 垂直、水平居中，尺寸目标：`min(76rem, calc(100vw - 4rem))` × `min(60rem, calc(100dvh - 4rem))`，圆角 `var(--cl-radius-surface-md)`（14px）。在 1024px 视口（如高度 768px）下约为 960px × 704px；在 1440px 视口下宽度上限约为 1216px。左侧 rail 宽约 `12rem`，分两组：
 - “账户”：个人资料（映射 `account` section）、偏好
 - “Claread”：用量与积分、支持
