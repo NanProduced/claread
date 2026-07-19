@@ -109,14 +109,6 @@ def compute_article_rag_index_build_input_hash(
     ).hexdigest()
 
 
-# Private alias retained for backward compatibility with existing
-# bootstrap call sites within this module.  New code (including the
-# worker) must call :func:`compute_article_rag_index_build_input_hash`.
-_compute_article_rag_index_build_input_hash = (
-    compute_article_rag_index_build_input_hash
-)
-
-
 # ---------------------------------------------------------------------------
 # Error
 # ---------------------------------------------------------------------------
@@ -554,7 +546,7 @@ class ArticleRagIndexBootstrapService:
                         existing_job_fp = existing_job_input_json.get(
                             "profile_fingerprint"
                         )
-                    expected_input_hash = _compute_article_rag_index_build_input_hash(
+                    expected_input_hash = compute_article_rag_index_build_input_hash(
                         stable_document_id=plan.stable_document_id,
                         base_id=plan.base_id,
                         plan_content_sha256=plan_content_sha256,
@@ -653,7 +645,7 @@ class ArticleRagIndexBootstrapService:
         # reflects the canonical profile frozen into this job.  The
         # fingerprint is appended after index_version so the new field
         # is additive and does not shift the existing prefix bytes.
-        input_hash = _compute_article_rag_index_build_input_hash(
+        input_hash = compute_article_rag_index_build_input_hash(
             stable_document_id=plan.stable_document_id,
             base_id=plan.base_id,
             plan_content_sha256=plan_content_sha256,

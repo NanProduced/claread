@@ -105,6 +105,10 @@ FAILURE_CODE_ALREADY_INDEXED = "already_indexed"
 FAILURE_CODE_INDEX_PROFILE_INVALID = "index_profile_invalid"
 FAILURE_CODE_INDEX_PROFILE_MISMATCH = "index_profile_mismatch"
 FAILURE_CODE_JOB_INPUT_HASH_MISMATCH = "job_input_hash_mismatch"
+# P1-D-R1: cardinality check on reader_article_rag_index_runs.job_id.
+# There is NO unique constraint on job_id, so 0 / multiple / id-mismatched
+# linkages all fail-closed with this fixed safe code.
+FAILURE_CODE_INDEX_RUN_LINK_INVALID = "index_run_link_invalid"
 
 # Fixed safe error messages for P1-D validation failures.  These strings
 # are intentionally generic and free of any caller-supplied value so a
@@ -130,11 +134,19 @@ _P1D_MSG_INDEX_RUN_FINGERPRINT_MISMATCH = (
 _P1D_MSG_INDEX_RUN_FINGERPRINT_DRIFTED = (
     "Article RAG index run profile_fingerprint drifted before vector write"
 )
+# P1-D-R1: cardinality / linkage failure message.  Must NOT echo job_id,
+# index_run_id, row count, fingerprint/hash, payload, URI/key/sentinel.
+_P1D_MSG_INDEX_RUN_LINK_INVALID = (
+    "Article RAG index job link to index run is not resolvable"
+)
 
 # Canonical SHA-256 shape: 64-character lowercase hex string.
 # Used by _validate_canonical_sha256 to reject malformed fingerprints
 # and hashes without echoing the offending value.
-_SHA256_HEX_PATTERN = "^[0-9a-f]{64}$"
+# P1-D-R1: re.fullmatch (not re.match + $) — Python ``$`` accepts a
+# single trailing newline, which would let ``"a"*64 + "\n"`` pass.
+# Trailing LF/CRLF is malformed (not a mismatch).
+_SHA256_HEX_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +235,10 @@ class ArticleRagVectorWriteMetadata:
     # P1-D: canonical profile_fingerprint carried as diagnostic identity.
     # Does NOT change collection routing in V1; downstream retrieval /
     # citation truth is unaffected by this field.
-    profile_fingerprint: str = ""
+    # P1-D-R1: required (no default).  Omitting it must raise TypeError
+    # at construction time so callers cannot accidentally write a vector
+    # without identity provenance.
+    profile_fingerprint: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -1474,28 +1489,43 @@ class ArticleRagIndexWorkerService:
                         error_json=error_json,
                     )
                 else:
-                    # P1-D: context=None — do NOT trust the potentially
+                    # P1-D-R1: context=None — do NOT trust the potentially
                     # corrupt ``input_json.index_run_id``.  Look up the
                     # linked index-run via the trusted DB relationship
-                    # ``reader_article_rag_index_runs.job_id = claim.job_id``.
-                    # If no linked row exists, only the job + run are
-                    # terminalized and no other index-run row is touched.
-                    linked_row = await conn.fetchrow(
+                    # ``reader_article_rag_index_runs.job_id = claim.job_id``
+                    # and lock the full candidate set FOR UPDATE so a
+                    # concurrent worker cannot insert/drift under us.
+                    #
+                    # ``job_id`` has NO unique constraint, so a fetchrow
+                    # would arbitrarily pick one row.  Cardinality rules:
+                    #   - exactly 1 row → mark that single index-run failed
+                    #   - 0 rows         → terminalize only job + run
+                    #   - >1 rows        → terminalize only job + run,
+                    #                       leave ALL candidate index-run
+                    #                       rows untouched for human repair
+                    # In all cases the transaction commits atomically —
+                    # no partial commit is permitted.
+                    linked_rows = await conn.fetch(
                         """
                         SELECT id
                         FROM reader_article_rag_index_runs
                         WHERE job_id = $1
+                        FOR UPDATE
                         """,
                         claim.job_id,
                     )
-                    if linked_row is not None:
-                        linked_index_run_id = UUID(str(linked_row["id"]))
+                    if len(linked_rows) == 1:
+                        linked_index_run_id = UUID(str(linked_rows[0]["id"]))
                         await self._update_index_run_status_in_transaction(
                             conn,
                             linked_index_run_id,
                             status="failed",
                             error_json=error_json,
                         )
+                    # 0 or >1 rows: linked_index_run_id stays None; no
+                    # arbitrary index-run is updated.  The job + run
+                    # terminalization above already committed in this
+                    # same transaction.
         return ArticleRagIndexWorkerResult(
             job_id=claim.job_id,
             index_run_id=(
@@ -1671,7 +1701,7 @@ class ArticleRagIndexWorkerService:
                 failure_code=FAILURE_CODE_INDEX_PROFILE_INVALID,
                 rationale_code=FAILURE_CODE_INDEX_PROFILE_INVALID,
             )
-        if re.match(_SHA256_HEX_PATTERN, payload_fingerprint) is None:
+        if _SHA256_HEX_PATTERN.fullmatch(payload_fingerprint) is None:
             raise ArticleRagIndexWorkerError(
                 _P1D_MSG_FINGERPRINT_MISSING_OR_MALFORMED,
                 retryable=False,
@@ -1684,16 +1714,23 @@ class ArticleRagIndexWorkerService:
         # The resolver fail-closes on unknown/blank/whitespace/malicious
         # versions with a fixed local message that does not echo input.
         payload_index_version = str(input_json["index_version"])
+        # P1-D-R1: construct the outer error inside the except block but
+        # raise it OUTSIDE, so both __cause__ and __context__ are None.
+        # We do NOT copy the resolver exception's type / message / repr /
+        # args; only the fixed local safe message is preserved.
+        resolution_error_to_raise: ArticleRagIndexWorkerError | None = None
         try:
             resolution = resolve_article_rag_index_profile(payload_index_version)
-        except ArticleRagIndexProfileResolutionError as exc:
-            raise ArticleRagIndexWorkerError(
+        except ArticleRagIndexProfileResolutionError:
+            resolution_error_to_raise = ArticleRagIndexWorkerError(
                 _P1D_MSG_PROFILE_NOT_REGISTERED,
                 retryable=False,
                 failure_class="index_profile_invalid",
                 failure_code=FAILURE_CODE_INDEX_PROFILE_INVALID,
                 rationale_code=FAILURE_CODE_INDEX_PROFILE_INVALID,
-            ) from exc
+            )
+        if resolution_error_to_raise is not None:
+            raise resolution_error_to_raise
 
         # Layer 4: payload fingerprint must precisely equal the resolver
         # fingerprint.  A format-valid but wrong fingerprint (e.g.
@@ -1738,7 +1775,7 @@ class ArticleRagIndexWorkerService:
         if (
             not isinstance(persisted_input_hash, str)
             or not persisted_input_hash
-            or re.match(_SHA256_HEX_PATTERN, persisted_input_hash) is None
+            or _SHA256_HEX_PATTERN.fullmatch(persisted_input_hash) is None
         ):
             raise ArticleRagIndexWorkerError(
                 _P1D_MSG_INPUT_HASH_MISMATCH,
@@ -1751,14 +1788,18 @@ class ArticleRagIndexWorkerService:
         # Trusted lookup: find the linked index-run by job_id, not by
         # input_json.index_run_id.  This is the same relationship the
         # context=None terminalization path uses (see _handle_failed_terminal).
-        # If no linked row exists, defer to the downstream
-        # ``_mark_indexing_or_detect_noop`` check which will fail-closed
-        # with the more specific ``index_run_missing`` /
-        # ``index_run_wrong_job_id`` failure codes (preserving the
-        # pre-P1-D behavior for those cases).  Only when a linked row
-        # exists do we recompute and verify ``input_hash`` here.
+        #
+        # P1-D-R1: ``reader_article_rag_index_runs.job_id`` has NO unique
+        # constraint, so a ``fetchrow`` would arbitrarily pick one row.
+        # We must read the FULL candidate set and verify cardinality:
+        #   - exactly 1 row, AND its id == payload_index_run_id → proceed
+        #   - 0 rows                                                  → fail-closed
+        #   - >1 rows                                                  → fail-closed
+        #   - 1 row but id != payload_index_run_id                     → fail-closed
+        # All four failure modes use ``index_run_link_invalid`` with a
+        # fixed safe message that echoes no caller-supplied value.
         async with self.get_pool().acquire() as conn:
-            linked_index_run = await conn.fetchrow(
+            linked_index_run_rows = await conn.fetch(
                 """
                 SELECT id, plan_content_sha256
                 FROM reader_article_rag_index_runs
@@ -1766,25 +1807,35 @@ class ArticleRagIndexWorkerService:
                 """,
                 claim.job_id,
             )
-        if linked_index_run is not None:
-            trusted_plan_content_sha256 = str(
-                linked_index_run["plan_content_sha256"]
+        if (
+            len(linked_index_run_rows) != 1
+            or UUID(str(linked_index_run_rows[0]["id"])) != payload_index_run_id
+        ):
+            raise ArticleRagIndexWorkerError(
+                _P1D_MSG_INDEX_RUN_LINK_INVALID,
+                retryable=False,
+                failure_class="index_run_link_invalid",
+                failure_code=FAILURE_CODE_INDEX_RUN_LINK_INVALID,
+                rationale_code=FAILURE_CODE_INDEX_RUN_LINK_INVALID,
             )
-            expected_input_hash = compute_article_rag_index_build_input_hash(
-                stable_document_id=payload_stable_doc_id,
-                base_id=payload_base_id,
-                plan_content_sha256=trusted_plan_content_sha256,
-                index_version=payload_index_version,
-                profile_fingerprint=payload_fingerprint,
+        trusted_plan_content_sha256 = str(
+            linked_index_run_rows[0]["plan_content_sha256"]
+        )
+        expected_input_hash = compute_article_rag_index_build_input_hash(
+            stable_document_id=payload_stable_doc_id,
+            base_id=payload_base_id,
+            plan_content_sha256=trusted_plan_content_sha256,
+            index_version=payload_index_version,
+            profile_fingerprint=payload_fingerprint,
+        )
+        if persisted_input_hash != expected_input_hash:
+            raise ArticleRagIndexWorkerError(
+                _P1D_MSG_INPUT_HASH_MISMATCH,
+                retryable=False,
+                failure_class="job_input_hash_mismatch",
+                failure_code=FAILURE_CODE_JOB_INPUT_HASH_MISMATCH,
+                rationale_code=FAILURE_CODE_JOB_INPUT_HASH_MISMATCH,
             )
-            if persisted_input_hash != expected_input_hash:
-                raise ArticleRagIndexWorkerError(
-                    _P1D_MSG_INPUT_HASH_MISMATCH,
-                    retryable=False,
-                    failure_class="job_input_hash_mismatch",
-                    failure_code=FAILURE_CODE_JOB_INPUT_HASH_MISMATCH,
-                    rationale_code=FAILURE_CODE_JOB_INPUT_HASH_MISMATCH,
-                )
 
         return _JobContext(
             job_id=claim.job_id,

@@ -793,7 +793,15 @@ async def test_plan_hash_mismatch_fail_closed_no_vector_write(
 
 async def test_index_run_missing_fail_closed(worker_env: asyncpg.Pool) -> None:
     """Requirement 6: when the index_run row is missing (deleted), the
-    worker fails closed with failure_code=index_run_missing."""
+    worker fails closed with failure_code=index_run_link_invalid.
+
+    P1-D-R1: ``_load_job_context`` now reads the full candidate set
+    linked by ``job_id`` and verifies cardinality BEFORE the downstream
+    ``_mark_indexing_or_detect_noop`` check runs.  Deleting the index_run
+    row yields 0 linked rows → ``index_run_link_invalid`` (replaces the
+    pre-P1-D ``index_run_missing`` code, which can no longer be reached
+    through ``_load_job_context``).
+    """
     await _seed_paragraph_environment(worker_env)
     bootstrap = _build_bootstrap_service(worker_env)
     bootstrap_result = await bootstrap.bootstrap_article_rag_index(
@@ -822,7 +830,7 @@ async def test_index_run_missing_fail_closed(worker_env: asyncpg.Pool) -> None:
 
     assert result is not None
     assert result.status == "failed_terminal"
-    assert result.failure_code == "index_run_missing"
+    assert result.failure_code == "index_run_link_invalid"
 
     async with worker_env.acquire() as conn:
         job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
@@ -877,7 +885,15 @@ async def test_index_run_wrong_status_fail_closed(worker_env: asyncpg.Pool) -> N
 async def test_index_run_wrong_job_id_fail_closed(worker_env: asyncpg.Pool) -> None:
     """Requirement 6: when the index_run references a different job_id
     than the current claim, the worker fails closed with
-    failure_code=index_run_wrong_job_id."""
+    failure_code=index_run_link_invalid.
+
+    P1-D-R1: ``_load_job_context`` now reads the full candidate set
+    linked by ``claim.job_id``.  Repointing the index_run at a bogus
+    job_id leaves 0 rows linked to ``claim.job_id`` →
+    ``index_run_link_invalid`` (replaces the pre-P1-D
+    ``index_run_wrong_job_id`` code, which can no longer be reached
+    through ``_load_job_context``).
+    """
     await _seed_paragraph_environment(worker_env)
     bootstrap = _build_bootstrap_service(worker_env)
     bootstrap_result = await bootstrap.bootstrap_article_rag_index(
@@ -908,7 +924,7 @@ async def test_index_run_wrong_job_id_fail_closed(worker_env: asyncpg.Pool) -> N
 
     assert result is not None
     assert result.status == "failed_terminal"
-    assert result.failure_code == "index_run_wrong_job_id"
+    assert result.failure_code == "index_run_link_invalid"
 
 
 # ===================================================================
@@ -1656,6 +1672,7 @@ async def test_no_real_network_calls_fake_providers_only(
                 chunker_version="test",
                 plan_content_sha256="a" * 64,
                 chunk_count=0,
+                profile_fingerprint=_P1D_V1_PROFILE_FINGERPRINT,
             ),
         )
     assert exc_info.value.failure_code == "vector_writer_unconfigured"
@@ -2932,10 +2949,7 @@ async def test_p1d_missing_profile_fingerprint_failed_terminal(
 
     assert result is not None
     assert result.status == "failed_terminal"
-    assert result.failure_code in {
-        "index_profile_invalid",
-        "input_json_invalid",
-    }
+    assert result.failure_code == "index_profile_invalid"
     assert result.retryable is False
     assert embedding_provider.call_count == 0
     assert vector_writer.call_count == 0
@@ -3127,10 +3141,7 @@ async def test_p1d_unknown_index_version_failed_terminal(
 
     assert result is not None
     assert result.status == "failed_terminal"
-    assert result.failure_code in {
-        "index_profile_invalid",
-        "input_json_invalid",
-    }
+    assert result.failure_code == "index_profile_invalid"
     assert embedding_provider.call_count == 0
     assert vector_writer.call_count == 0
 
@@ -3276,11 +3287,7 @@ async def test_p1d_fingerprint_mismatch_with_resolver_failed_terminal(
 
     assert result is not None
     assert result.status == "failed_terminal"
-    assert result.failure_code in {
-        "index_profile_mismatch",
-        "index_profile_invalid",
-        "input_json_invalid",
-    }
+    assert result.failure_code == "index_profile_mismatch"
     assert embedding_provider.call_count == 0
     assert vector_writer.call_count == 0
 
@@ -3348,10 +3355,7 @@ async def test_p1d_chunker_version_mismatch_failed_terminal(
 
     assert result is not None
     assert result.status == "failed_terminal"
-    assert result.failure_code in {
-        "index_profile_invalid",
-        "input_json_invalid",
-    }
+    assert result.failure_code == "index_profile_invalid"
     assert embedding_provider.call_count == 0
     assert vector_writer.call_count == 0
 
@@ -3542,10 +3546,7 @@ async def test_p1d_persisted_index_run_fingerprint_mismatch_failed_terminal(
 
     assert result is not None
     assert result.status == "failed_terminal"
-    assert result.failure_code in {
-        "index_profile_mismatch",
-        "index_profile_invalid",
-    }
+    assert result.failure_code == "index_profile_mismatch"
     assert embedding_provider.call_count == 0
     assert vector_writer.call_count == 0
 
@@ -3740,10 +3741,7 @@ async def test_p1d_already_indexed_idempotent_fingerprint_mismatch_failed(
 
     assert result is not None
     assert result.status == "failed_terminal"
-    assert result.failure_code in {
-        "index_profile_mismatch",
-        "index_profile_invalid",
-    }
+    assert result.failure_code == "index_profile_mismatch"
     assert embedding_provider.call_count == 0
     assert vector_writer.call_count == 0
 
@@ -4027,3 +4025,546 @@ async def test_p1d_vector_write_metadata_carries_profile_fingerprint(
     assert vector_writer.captured_metadata is not None
     captured = vector_writer.captured_metadata
     assert captured.profile_fingerprint == _P1D_V1_PROFILE_FINGERPRINT
+
+
+# ===================================================================
+# P1-D-R1 Rework: fail-closed gap RED tests.
+#
+# These tests were added in the P1-D-R1 rework round to close 5
+# fail-closed gaps discovered in the P1-D review.  Each test asserts
+# the desired post-fix behaviour; before the fixes they FAIL (RED).
+# ===================================================================
+
+
+# ---------------------------------------------------------------------
+# RED 1: ArticleRagVectorWriteMetadata.profile_fingerprint must be a
+# constructor required argument (no "" default).
+# ---------------------------------------------------------------------
+
+
+async def test_p1d_r1_metadata_omission_raises_typeerror() -> None:
+    """RED 1: omitting profile_fingerprint must raise TypeError.
+
+    Before the fix, ``profile_fingerprint: str = ""`` allows callers to
+    silently omit the field, which is fail-open.  After the fix the
+    field has no default and construction fails with TypeError.
+    """
+    from uuid import uuid4 as _uuid4
+
+    with pytest.raises(TypeError):
+        ArticleRagVectorWriteMetadata(
+            collection="probe",
+            reading_record_id=_uuid4(),
+            stable_document_id=_uuid4(),
+            base_id=_uuid4(),
+            record_generation=1,
+            index_version="probe",
+            chunker_version="probe",
+            plan_content_sha256="0" * 64,
+            chunk_count=0,
+            # profile_fingerprint intentionally omitted — must TypeError.
+        )
+
+
+# ---------------------------------------------------------------------
+# RED 2: SHA-256 strict fullmatch — trailing LF/CRLF must be rejected
+# as malformed, not accepted as a shape-pass then mismatch.
+# ---------------------------------------------------------------------
+
+
+async def test_p1d_r1_fingerprint_trailing_lf_rejected_as_malformed(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """RED 2a: 64-hex + trailing LF must fail shape check (fullmatch).
+
+    Before the fix, ``re.match("^[0-9a-f]{64}$", value)`` accepts a
+    single trailing newline because Python ``$`` matches before a
+    final ``\\n``.  The fingerprint passes the shape check and then
+    fails the resolver-equality check, producing
+    ``index_profile_mismatch``.  After the fix, ``re.fullmatch`` rejects
+    the trailing LF as malformed, producing ``index_profile_invalid``.
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(
+        worker_env,
+    ).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    payload = await _p1d_fetch_job_payload(
+        worker_env, job_id=bootstrap_result.job_id,
+    )
+    input_json = payload["input_json"]
+    input_json["profile_fingerprint"] = "a" * 64 + "\n"
+    await _p1d_set_job_input_json(
+        worker_env, job_id=bootstrap_result.job_id, input_json=input_json,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code == "index_profile_invalid"
+    assert result.retryable is False
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+
+async def test_p1d_r1_fingerprint_trailing_crlf_rejected_as_malformed(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """RED 2b: 64-hex + trailing CRLF must fail shape check (fullmatch)."""
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(
+        worker_env,
+    ).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    payload = await _p1d_fetch_job_payload(
+        worker_env, job_id=bootstrap_result.job_id,
+    )
+    input_json = payload["input_json"]
+    input_json["profile_fingerprint"] = "a" * 64 + "\r\n"
+    await _p1d_set_job_input_json(
+        worker_env, job_id=bootstrap_result.job_id, input_json=input_json,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code == "index_profile_invalid"
+    assert result.retryable is False
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+
+async def test_p1d_r1_input_hash_trailing_lf_rejected_as_malformed(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """RED 2c: valid 64-hex + trailing LF in input_hash must be rejected.
+
+    The failure_code is ``job_input_hash_mismatch`` either way (malformed
+    or mismatch); the semantic distinction is that the strict fullmatch
+    rejects the trailing LF at the shape gate rather than letting it
+    through to the equality check.  This is a characterization test —
+    it may pass on the first run because the failure_code is the same.
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(
+        worker_env,
+    ).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # A valid-shape 64-hex value that is NOT the real V1 hash, with LF.
+    await _p1d_set_job_input_hash(
+        worker_env,
+        job_id=bootstrap_result.job_id,
+        input_hash="a" * 64 + "\n",
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code == "job_input_hash_mismatch"
+    assert result.retryable is False
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+
+async def test_p1d_r1_input_hash_trailing_crlf_rejected_as_malformed(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """RED 2d: valid 64-hex + trailing CRLF in input_hash must be rejected."""
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(
+        worker_env,
+    ).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    await _p1d_set_job_input_hash(
+        worker_env,
+        job_id=bootstrap_result.job_id,
+        input_hash="a" * 64 + "\r\n",
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code == "job_input_hash_mismatch"
+    assert result.retryable is False
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+
+# ---------------------------------------------------------------------
+# RED 3: job_id cardinality check — 0/multiple linked index-runs must
+# fail-closed with index_run_link_invalid.
+# ---------------------------------------------------------------------
+
+
+async def test_p1d_r1_zero_job_id_links_fail_closed(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """RED 3a: zero linked index-runs for job_id must fail-closed.
+
+    Before the fix, ``_load_job_context`` uses ``fetchrow`` which
+    returns None for 0 rows; the code then skips the input_hash
+    recompute and defers to ``_mark_indexing_or_detect_noop`` which
+    raises ``index_run_missing``.  After the fix, the cardinality check
+    in ``_load_job_context`` raises ``index_run_link_invalid`` directly.
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(
+        worker_env,
+    ).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # Delete the linked index-run row so the job_id lookup returns 0 rows.
+    async with worker_env.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM reader_article_rag_index_runs WHERE id = $1",
+            bootstrap_result.index_run_id,
+        )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code == "index_run_link_invalid"
+    assert result.retryable is False
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        terminal_events = await _p1d_count_terminal_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+        retry_events = await _p1d_count_retry_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert run["status"] == "failed_terminal"
+    assert terminal_events == 1
+    assert retry_events == 0
+
+
+async def test_p1d_r1_multiple_job_id_links_fail_closed(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """RED 3b: multiple index-runs sharing same job_id must fail-closed.
+
+    Before the fix, ``_load_job_context`` uses ``fetchrow`` which
+    arbitrarily picks one row.  After the fix, the cardinality check
+    reads the full candidate set and raises ``index_run_link_invalid``
+    for >1 rows.  ``_handle_failed_terminal(context=None)`` also reads
+    the full candidate set and refuses to update any row when the
+    cardinality is not exactly 1.
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(
+        worker_env,
+    ).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # Seed an extra failed index-run sharing the same job_id.  This
+    # bypasses any active unique index on (job_id, status) because the
+    # extra row is in a terminal status ('failed').
+    extra_index_run_id = uuid4()
+    async with worker_env.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO reader_article_rag_index_runs (
+                id, job_id, base_id, stable_document_id, reading_record_id,
+                reader_run_id, record_generation, index_version,
+                chunker_version, profile_fingerprint,
+                stable_document_content_sha256, canonical_text_sha256,
+                plan_content_sha256,
+                chunk_count, status, created_at, updated_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10, $11, $12,
+                $13, 'failed', NOW(), NOW()
+            )
+            """,
+            extra_index_run_id,
+            bootstrap_result.job_id,
+            _BASE_ID,
+            _STABLE_DOC_ID,
+            _RECORD_ID,
+            1,
+            _P1D_V1_INDEX_VERSION,
+            _P1D_V1_CHUNKER_VERSION,
+            _P1D_V1_PROFILE_FINGERPRINT,
+            "0" * 64,
+            "0" * 64,
+            "0" * 64,
+            0,
+        )
+
+    # Capture original statuses of both candidate rows.
+    async with worker_env.acquire() as conn:
+        orig_main = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        orig_extra = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=extra_index_run_id,
+        )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code == "index_run_link_invalid"
+    assert result.retryable is False
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        main_now = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        extra_now = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=extra_index_run_id,
+        )
+        terminal_events = await _p1d_count_terminal_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+        retry_events = await _p1d_count_retry_events(
+            conn, job_id=bootstrap_result.job_id,
+        )
+        events = await conn.fetch(
+            "SELECT event_type, payload_json FROM reader_job_events "
+            "WHERE job_id = $1",
+            bootstrap_result.job_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert run["status"] == "failed_terminal"
+    # Both candidate index-runs must keep their original status — no
+    # arbitrary update.
+    assert main_now["status"] == orig_main["status"]
+    assert extra_now["status"] == orig_extra["status"]
+    assert terminal_events == 1
+    assert retry_events == 0
+
+    # The error surface must not echo candidate IDs or row count.
+    _p1d_assert_no_sentinel_in_surfaces(
+        sentinel=str(extra_index_run_id),
+        job=job,
+        events=events,
+    )
+
+
+# ---------------------------------------------------------------------
+# RED 4: resolver exception chain must be closed — __cause__ and
+# __context__ must both be None on the outer ArticleRagIndexWorkerError.
+# ---------------------------------------------------------------------
+
+
+class _P1dR1ErrorCapturingWorker(ArticleRagIndexWorkerService):
+    """Test-only worker subclass that captures the actual
+    ArticleRagIndexWorkerError at the terminal handler entry, then
+    delegates to super.
+
+    Used to verify the resolver exception chain is fully closed
+    (__cause__ is None, __context__ is None, no sentinel in
+    str/repr/traceback).
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.captured_errors: list[ArticleRagIndexWorkerError] = []
+
+    async def _handle_failed_terminal(
+        self,
+        *,
+        claim: Any,
+        context: Any,
+        exc: ArticleRagIndexWorkerError,
+    ) -> ArticleRagIndexWorkerResult:
+        self.captured_errors.append(exc)
+        return await super()._handle_failed_terminal(
+            claim=claim, context=context, exc=exc,
+        )
+
+
+async def test_p1d_r1_resolver_wrapper_closes_exception_chain(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """RED 4: resolver exception wrapper must not chain __cause__/__context__.
+
+    Before the fix, ``raise ArticleRagIndexWorkerError(...) from exc``
+    sets ``__cause__ = exc`` (the ArticleRagIndexProfileResolutionError)
+    and implicit chaining sets ``__context__``.  After the fix, the
+    outer error is constructed inside the except block but raised
+    outside it, so both ``__cause__`` and ``__context__`` are None.
+    """
+    import traceback as tb_module
+
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(
+        worker_env,
+    ).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    payload = await _p1d_fetch_job_payload(
+        worker_env, job_id=bootstrap_result.job_id,
+    )
+    input_json = payload["input_json"]
+    input_json["index_version"] = _P1D_SENTINEL_INDEX_VERSION
+    await _p1d_set_job_input_json(
+        worker_env, job_id=bootstrap_result.job_id, input_json=input_json,
+    )
+
+    embedding_provider = FakeArticleRagEmbeddingProvider()
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _P1dR1ErrorCapturingWorker(
+        pool=worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.failure_code == "index_profile_invalid"
+    assert embedding_provider.call_count == 0
+    assert vector_writer.call_count == 0
+    assert len(service.captured_errors) == 1
+
+    err = service.captured_errors[0]
+    # __cause__ must be None (no explicit chaining).
+    assert err.__cause__ is None, (
+        f"__cause__ must be None, got {err.__cause__!r}"
+    )
+    # __context__ must be None (no implicit chaining).
+    assert err.__context__ is None, (
+        f"__context__ must be None, got {err.__context__!r}"
+    )
+
+    # str/repr/traceback must not carry the sentinel index_version.
+    err_str = str(err)
+    err_repr = repr(err)
+    err_tb = "".join(
+        tb_module.format_exception(type(err), err, err.__traceback__)
+    )
+    assert _P1D_SENTINEL_INDEX_VERSION not in err_str
+    assert _P1D_SENTINEL_INDEX_VERSION not in err_repr
+    assert _P1D_SENTINEL_INDEX_VERSION not in err_tb
+
+    # Verify persisted surfaces also carry no sentinel.
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        index_run = await _p1d_fetch_index_run_with_fingerprint(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        events = await conn.fetch(
+            "SELECT event_type, payload_json FROM reader_job_events "
+            "WHERE job_id = $1",
+            bootstrap_result.job_id,
+        )
+
+    _p1d_assert_no_sentinel_in_surfaces(
+        sentinel=_P1D_SENTINEL_INDEX_VERSION,
+        job=job,
+        index_run=index_run,
+        events=events,
+        exc=err,
+    )

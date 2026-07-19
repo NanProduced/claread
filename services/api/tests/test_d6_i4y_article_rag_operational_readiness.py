@@ -275,6 +275,11 @@ class TestFactoriesReturnUnconfiguredByDefault:
                     chunker_version="probe",
                     plan_content_sha256="0" * 64,
                     chunk_count=0,
+                    # P1-D-R1: profile_fingerprint is now a required field;
+                    # this construction only feeds an unconfigured writer
+                    # which raises before reading the fingerprint, so a
+                    # canonical-shape placeholder is sufficient.
+                    profile_fingerprint="0" * 64,
                 ),
             )
 

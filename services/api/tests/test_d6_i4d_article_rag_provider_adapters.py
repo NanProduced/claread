@@ -203,6 +203,12 @@ def _make_write_metadata(
         chunker_version="chunker-v1",
         plan_content_sha256=hashlib.sha256(b"plan").hexdigest(),
         chunk_count=chunk_count,
+        # P1-D-R1: profile_fingerprint is now a required field.  Use the
+        # canonical V1 fingerprint literal so provider adapter fixtures
+        # remain constructible without importing the production resolver.
+        profile_fingerprint=(
+            "e443f581eb3e86aeb9dbcdcee806783186bd85da6c987c60357b61905ea86d6d"
+        ),
     )
 
 
