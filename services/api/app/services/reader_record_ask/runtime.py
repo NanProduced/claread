@@ -15,6 +15,9 @@ from app.services.reader_record_ask.agent import (
     build_agent_user_prompt,
     create_reading_record_ask_agent,
 )
+from app.services.reader_record_ask.answer_correctness_policy import (
+    build_answer_correctness_policy,
+)
 from app.services.reader_record_ask.article_rag_port import ArticleRagSearchPort
 from app.services.reader_record_ask.baseline_context import (
     BaselineAgentContext,
@@ -201,6 +204,22 @@ async def run_reading_record_ask(
             baseline_context=baseline,
         )
 
+    # R4-A4-1B: construct the answer-correctness policy once after baseline
+    # assembly and write-once assign to deps. The grounding output_validator
+    # reads it on every final draft, and R4-A4-1C renders
+    # ``render_prompt_block()`` from this same instance for the user prompt.
+    # Uses the model-visible chunk text tuple (NOT registry scan / snippets
+    # / citation handles). The fail-closed path above returns early,
+    # leaving deps.answer_correctness_policy at its default ``None``; the
+    # agent is not invoked in that path so no prompt is composed.
+    deps.answer_correctness_policy = build_answer_correctness_policy(
+        user_message=user_message,
+        model_visible_chunk_texts=tuple(
+            chunk.text for chunk in baseline.model_context_chunks
+        ),
+        baseline_is_complete=baseline.is_complete,
+    )
+
     # Available handles for the model = initial_anchor (if any) + baseline
     # seed handles (1:1 with chunks). We deliberately do NOT scan the whole
     # registry here: tool-created handles are returned to the model via tool
@@ -212,6 +231,14 @@ async def run_reading_record_ask(
         available_handles.append(initial_handle.handle_id)
     available_handles.extend(baseline.available_seed_handle_ids)
     agent = create_reading_record_ask_agent(model)
+    # R4-A4-1C: render the turn-specific correctness block from the same
+    # policy instance the grounding output_validator will use (write-once
+    # convention). The block is the ONLY place turn-specific year allowset,
+    # completeness constraint, and explicit exercise count enter the user
+    # prompt. ``deps.answer_correctness_policy`` is guaranteed non-None here
+    # because the fail-closed path above returned early when baseline
+    # assembly failed.
+    correctness_block = deps.answer_correctness_policy.render_prompt_block()
     prompt = build_agent_user_prompt(
         user_message=user_message,
         agent_context_json=json.dumps(
@@ -222,6 +249,7 @@ async def run_reading_record_ask(
         available_evidence_handle_ids=available_handles,
         model_context_chunks=baseline.model_context_chunks,
         baseline_is_complete=baseline.is_complete,
+        correctness_block=correctness_block,
     )
     result = await agent.run(prompt, deps=deps)
     draft = result.output

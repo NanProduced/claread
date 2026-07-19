@@ -22,6 +22,10 @@ from app.services.reader_record_ask.agent import (
     _render_coverage_block,
     build_agent_user_prompt,
 )
+from app.services.reader_record_ask.answer_correctness_policy import (
+    AnswerCorrectnessPolicy,
+    build_answer_correctness_policy,
+)
 from app.services.reader_record_ask.context_envelope import (
     ReadingRecordAskContextEnvelope,
     VerifiedEnvelopeInput,
@@ -108,13 +112,15 @@ def _ctx(
     envelope: ReadingRecordAskContextEnvelope,
     baseline_available: bool = True,
     partial_output: bool = False,
+    answer_correctness_policy: AnswerCorrectnessPolicy | None = None,
 ) -> Any:
     """Build a minimal RunContext-like object for the validator.
 
     The validator only reads ``ctx.partial_output``, ``ctx.deps.evidence_registry``,
-    ``ctx.deps.envelope.envelope_fingerprint``, and ``ctx.deps.baseline_available``.
-    A ``SimpleNamespace`` is sufficient and avoids constructing a full
-    ``RunContext`` (which requires a model + usage trackers).
+    ``ctx.deps.envelope.envelope_fingerprint``, ``ctx.deps.baseline_available``,
+    and ``ctx.deps.answer_correctness_policy``. A ``SimpleNamespace`` is
+    sufficient and avoids constructing a full ``RunContext`` (which requires
+    a model + usage trackers).
     """
     deps = ReaderRecordAskDeps(
         envelope=envelope,
@@ -122,6 +128,7 @@ def _ctx(
         fence=StaticGenerationFence(live_generation=1),
         evidence_registry=registry,
         baseline_available=baseline_available,
+        answer_correctness_policy=answer_correctness_policy,
     )
     return SimpleNamespace(deps=deps, partial_output=partial_output)
 
@@ -192,16 +199,12 @@ async def test_grounded_answer_cross_registry_handle_triggers_model_retry() -> N
         reading_record_id=_RECORD_2,
         base_id=_BASE_2,
     )
-    other_registry = _registry_with_seed(
-        fingerprint=envelope_other.envelope_fingerprint, count=1
-    )
+    other_registry = _registry_with_seed(fingerprint=envelope_other.envelope_fingerprint, count=1)
     foreign_obs = other_registry.list_observations()[0]
     foreign_handle = foreign_obs.handle.handle_id
 
     envelope = _envelope()
-    target_registry = _registry_with_seed(
-        fingerprint=envelope.envelope_fingerprint, count=1
-    )
+    target_registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint, count=1)
     ctx = _ctx(
         registry=target_registry,
         envelope=envelope,
@@ -443,8 +446,7 @@ def test_agent_prompt_external_knowledge_boundary_contract() -> None:
     # Must forbid using article evidence to back external facts
     assert "article" in instructions.lower()
     assert (
-        "external" in instructions.lower()
-        or "not provided by the article" in instructions.lower()
+        "external" in instructions.lower() or "not provided by the article" in instructions.lower()
     )
 
 
@@ -718,3 +720,356 @@ async def test_duplicate_check_runs_before_registry_resolution() -> None:
     # The duplicate error fires, NOT the "not registered" error.
     assert "remove duplicate handles" in str(exc_info.value)
     assert "not registered" not in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# R4-A4-1B: AnswerCorrectnessPolicy composition tests (T1–T10)
+#
+# These tests verify the grounding_validator now composes the policy check
+# after the existing grounding checks. The policy is injected via
+# ``ctx.deps.answer_correctness_policy`` (write-once by runtime).
+# ---------------------------------------------------------------------------
+
+_STRICT_USER_MESSAGE = "这篇文章主要说了什么"
+_NON_STRICT_USER_MESSAGE = "结合现实解释"
+_ONE_EXERCISE_USER_MESSAGE = "基于文章出一道选择题，只允许一题"
+
+
+def _strict_policy(
+    *,
+    chunks: tuple[str, ...] = ("no year in this chunk",),
+    baseline_is_complete: bool = True,
+    user_message: str = _STRICT_USER_MESSAGE,
+) -> AnswerCorrectnessPolicy:
+    return build_answer_correctness_policy(
+        user_message=user_message,
+        model_visible_chunk_texts=chunks,
+        baseline_is_complete=baseline_is_complete,
+    )
+
+
+def _draft_with_year(year: str) -> AgentAnswerDraft:
+    return _draft(
+        answer_text=f"文章报道了 {year} 年的事件。",
+        handles=None,
+        response_kind="clarification",
+    )
+
+
+@pytest.mark.asyncio
+async def test_t1_policy_read_from_deps_by_validator() -> None:
+    """T1: The validator reads the policy from ``ctx.deps`` and uses the
+    model-visible chunk text it was constructed with. A policy built from
+    chunk text containing no years, combined with a draft mentioning 2025,
+    must trigger a temporal violation — proving the validator consumes the
+    injected policy rather than skipping it.
+    """
+    envelope = _envelope()
+    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
+    policy = _strict_policy(chunks=("no year in this chunk",))
+    ctx = _ctx(
+        registry=registry,
+        envelope=envelope,
+        answer_correctness_policy=policy,
+    )
+    draft = _draft_with_year("2025")
+    with pytest.raises(ModelRetry) as exc_info:
+        await grounding_validator(ctx, draft)
+    # The temporal retry message is the frozen constant from the policy module.
+    assert "unsupported date" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_t2_strict_complete_unsupported_year_triggers_retry() -> None:
+    """T2: short complete baseline + strict article question → unsupported
+    year in draft triggers ModelRetry (temporal_claim_unsupported)."""
+    envelope = _envelope()
+    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
+    policy = _strict_policy(
+        chunks=("no year in this chunk",),
+        baseline_is_complete=True,
+    )
+    ctx = _ctx(
+        registry=registry,
+        envelope=envelope,
+        answer_correctness_policy=policy,
+    )
+    draft = _draft_with_year("2025")
+    violations = policy.evaluate_draft(draft_answer_text=draft.answer_text)
+    assert len(violations) == 1
+    assert violations[0].kind == "temporal_claim_unsupported"
+    with pytest.raises(ModelRetry) as exc_info:
+        await grounding_validator(ctx, draft)
+    assert exc_info.value.args[0] == violations[0].detail
+
+
+@pytest.mark.asyncio
+async def test_t3_article_visible_year_passes() -> None:
+    """T3: when the chunk text contains 2023 and the draft mentions 2023,
+    the temporal guard passes (year ∈ allowset). No ModelRetry from policy."""
+    envelope = _envelope()
+    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
+    policy = _strict_policy(
+        chunks=("文章发表于 2023 年 5 月。",),
+        baseline_is_complete=True,
+    )
+    assert "2023" in policy.temporal_allowset
+    ctx = _ctx(
+        registry=registry,
+        envelope=envelope,
+        answer_correctness_policy=policy,
+    )
+    draft = _draft_with_year("2023")
+    # Must not raise — the year is in the allowset.
+    result = await grounding_validator(ctx, draft)
+    assert result is draft
+
+
+@pytest.mark.asyncio
+async def test_policy_runs_after_valid_grounded_answer() -> None:
+    """A valid article_seed citation passes grounding before policy retry."""
+    envelope = _envelope()
+    registry = _registry_with_seed(
+        fingerprint=envelope.envelope_fingerprint,
+        count=1,
+    )
+    policy = _strict_policy(
+        chunks=("文章发表于 2023 年 5 月。",),
+        baseline_is_complete=True,
+    )
+    ctx = _ctx(
+        registry=registry,
+        envelope=envelope,
+        answer_correctness_policy=policy,
+    )
+    handle = registry.list_handle_refs()[0].handle_id
+    draft = _draft(
+        answer_text="文章报道了 2025 年的事件。",
+        handles=[handle],
+        response_kind="grounded_answer",
+    )
+
+    with pytest.raises(ModelRetry) as exc_info:
+        await grounding_validator(ctx, draft)
+
+    assert (
+        exc_info.value.args[0]
+        == policy.evaluate_draft(draft_answer_text=draft.answer_text)[0].detail
+    )
+
+
+@pytest.mark.asyncio
+async def test_t4_partial_baseline_temporal_guard_fail_open() -> None:
+    """T4: baseline_is_complete=False + strict + unsupported year → no
+    policy violation (partial baseline always fail-open)."""
+    envelope = _envelope()
+    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
+    policy = _strict_policy(
+        chunks=("no year in this chunk",),
+        baseline_is_complete=False,
+    )
+    ctx = _ctx(
+        registry=registry,
+        envelope=envelope,
+        answer_correctness_policy=policy,
+    )
+    draft = _draft_with_year("2025")
+    # Must not raise — partial baseline fail-open.
+    result = await grounding_validator(ctx, draft)
+    assert result is draft
+
+
+@pytest.mark.asyncio
+async def test_t5_non_strict_question_fail_open() -> None:
+    """T5: non-strict question + complete baseline + unsupported year → no
+    policy violation (temporal guard disabled for non-strict)."""
+    envelope = _envelope()
+    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
+    policy = _strict_policy(
+        chunks=("no year in this chunk",),
+        baseline_is_complete=True,
+        user_message=_NON_STRICT_USER_MESSAGE,
+    )
+    assert policy.is_article_only_strict is False
+    ctx = _ctx(
+        registry=registry,
+        envelope=envelope,
+        answer_correctness_policy=policy,
+    )
+    draft = _draft_with_year("2025")
+    # Must not raise — non-strict fail-open.
+    result = await grounding_validator(ctx, draft)
+    assert result is draft
+
+
+@pytest.mark.asyncio
+async def test_t6_one_exercise_request_multiple_items_triggers_retry() -> None:
+    """T6: user asks for exactly one exercise but the draft contains two
+    top-level items → ModelRetry (explicit_count_mismatch)."""
+    envelope = _envelope()
+    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
+    policy = _strict_policy(
+        chunks=("文章正文。",),
+        baseline_is_complete=True,
+        user_message=_ONE_EXERCISE_USER_MESSAGE,
+    )
+    assert policy.explicit_output.requested_count == 1
+    assert policy.explicit_output.extraction_confidence == "high"
+    ctx = _ctx(
+        registry=registry,
+        envelope=envelope,
+        answer_correctness_policy=policy,
+    )
+    draft = _draft(
+        answer_text="1. 第一题：文章的主旨是什么？\n2. 第二题：文章发表于哪一年？",
+        response_kind="clarification",
+    )
+    violations = policy.evaluate_draft(draft_answer_text=draft.answer_text)
+    assert any(v.kind == "explicit_count_mismatch" for v in violations)
+    with pytest.raises(ModelRetry) as exc_info:
+        await grounding_validator(ctx, draft)
+    # The first violation is surfaced (sorted by kind).
+    assert exc_info.value.args[0] == violations[0].detail
+
+
+@pytest.mark.asyncio
+async def test_t7_policy_violation_detail_does_not_leak_sensitive_data() -> None:
+    """T7: the ModelRetry detail must not leak answer text, user question,
+    handle ids, identity, or exception text. It must be a short frozen
+    constant from the policy module."""
+    envelope = _envelope()
+    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
+    sensitive_user_message = "这篇文章主要说了什么"
+    sensitive_chunk = "文章发表于 2023 年 5 月，作者 evh_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa。"
+    policy = _strict_policy(
+        chunks=(sensitive_chunk,),
+        baseline_is_complete=True,
+        user_message=sensitive_user_message,
+    )
+    ctx = _ctx(
+        registry=registry,
+        envelope=envelope,
+        answer_correctness_policy=policy,
+    )
+    # Draft with an unsupported year (2025 not in allowset).
+    draft = _draft(
+        answer_text=("文章报道了 2025 年的事件。evh_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        response_kind="clarification",
+    )
+    with pytest.raises(ModelRetry) as exc_info:
+        await grounding_validator(ctx, draft)
+    detail = exc_info.value.args[0]
+    # Short and fixed.
+    assert len(detail) < 300
+    # Must not contain handle ids.
+    assert "evh_" not in detail
+    # Must not contain the user question verbatim.
+    assert sensitive_user_message not in detail
+    # Must not contain the answer text.
+    assert "2025" not in detail
+    assert "文章报道了" not in detail
+    # Must not contain exception/traceback markers.
+    assert "Exception" not in detail
+    assert "Traceback" not in detail
+    assert "Error" not in detail
+
+
+@pytest.mark.asyncio
+async def test_t8_grounding_behavior_non_regression_with_policy_none() -> None:
+    """T8: when policy is None (the default), the validator behaves exactly
+    as before — grounding checks still fire, no policy check runs. This is
+    a non-regression guard for the existing grounding contract."""
+    envelope = _envelope()
+    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
+    # policy=None (default) — existing grounding path must still fire.
+    ctx = _ctx(
+        registry=registry,
+        envelope=envelope,
+        baseline_available=True,
+        answer_correctness_policy=None,
+    )
+    # grounded_answer with empty handles must still ModelRetry (grounding).
+    draft = _draft(
+        answer_text="answer without handles",
+        handles=[],
+        response_kind="grounded_answer",
+    )
+    with pytest.raises(ModelRetry) as exc_info:
+        await grounding_validator(ctx, draft)
+    # Grounding error, not policy error.
+    assert "grounded_answer requires" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_t9_policy_none_skips_policy_path_completely() -> None:
+    """T9: when policy is None, a draft that WOULD have triggered a policy
+    violation must pass (proving the policy path is skipped entirely)."""
+    envelope = _envelope()
+    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
+    ctx = _ctx(
+        registry=registry,
+        envelope=envelope,
+        answer_correctness_policy=None,
+    )
+    # This draft would fail the temporal guard IF a strict policy were
+    # injected. With policy=None it must pass.
+    draft = _draft_with_year("2025")
+    result = await grounding_validator(ctx, draft)
+    assert result is draft
+
+
+@pytest.mark.asyncio
+async def test_t10_policy_evaluate_draft_called_once_per_validator_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T10: the validator calls ``policy.evaluate_draft`` exactly once per
+    invocation — no rebuild, no drift, no double-evaluation."""
+    envelope = _envelope()
+    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
+    policy = _strict_policy(
+        chunks=("no year in this chunk",),
+        baseline_is_complete=True,
+    )
+    call_count = {"n": 0}
+    original_evaluate = policy.evaluate_draft
+
+    def counting_evaluate(*, draft_answer_text: str):
+        call_count["n"] += 1
+        return original_evaluate(draft_answer_text=draft_answer_text)
+
+    # ``AnswerCorrectnessPolicy`` is a frozen dataclass; we cannot monkeypatch
+    # the bound method directly. Instead we wrap it in a small proxy that
+    # delegates evaluate_draft and exposes the same attribute set used by
+    # the validator.
+    class _CountingProxy:
+        def __init__(self, inner: AnswerCorrectnessPolicy) -> None:
+            self._inner = inner
+
+        @property
+        def temporal_allowset(self):
+            return self._inner.temporal_allowset
+
+        @property
+        def explicit_output(self):
+            return self._inner.explicit_output
+
+        @property
+        def is_article_only_strict(self):
+            return self._inner.is_article_only_strict
+
+        @property
+        def baseline_is_complete(self):
+            return self._inner.baseline_is_complete
+
+        def evaluate_draft(self, *, draft_answer_text: str):
+            return counting_evaluate(draft_answer_text=draft_answer_text)
+
+    ctx = _ctx(
+        registry=registry,
+        envelope=envelope,
+        answer_correctness_policy=_CountingProxy(policy),  # type: ignore[arg-type]
+    )
+    draft = _draft_with_year("2025")
+    with pytest.raises(ModelRetry):
+        await grounding_validator(ctx, draft)
+    assert call_count["n"] == 1

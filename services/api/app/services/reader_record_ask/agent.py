@@ -71,6 +71,21 @@ Behaviour:
 - Your final output must be the structured answer with answer_text and
   cited_evidence_handles (opaque handle ids only).
 
+## Answer correctness policy
+- For article-grounded questions, do not fabricate facts the supplied
+  article context does not provide.
+- When baseline coverage is complete and the requested fact is absent,
+  state that the article does not provide it. Do not call a tool merely
+  to recheck an already complete baseline.
+- When baseline coverage is partial and the answer requires broader or
+  exhaustive article coverage, use the available article tools first.
+- Extension, comparison, and example questions may use external facts
+  only under the separate Article knowledge vs general knowledge rules.
+- When the user explicitly requests a specific number of exercise items,
+  output exactly that many — no more, no less. If a turn-specific
+  ``<answer_correctness>`` block carries an explicit count, follow it
+  exactly. If no explicit count is provided, do not impose one.
+
 Response kind:
 - Your final output must set ``response_kind`` to one of:
   - ``grounded_answer``: you provide a non-empty ``answer_text`` and cite
@@ -149,6 +164,7 @@ def build_agent_user_prompt(
     available_evidence_handle_ids: Sequence[str] = (),
     model_context_chunks: Sequence[ModelContextChunk] = (),
     baseline_is_complete: bool = False,
+    correctness_block: str | None = None,
 ) -> str:
     """Compose the single user turn for the agent (no keyword routing).
 
@@ -172,16 +188,40 @@ def build_agent_user_prompt(
     model; it carries no identity fields (record id / base id / generation
     / fingerprint / hash). Coverage is a fact the agent uses to decide
     whether to expand context via tools — it is NOT a routing signal.
+
+    ``correctness_block`` carries the turn-specific answer-correctness
+    rules rendered by
+    :meth:`AnswerCorrectnessPolicy.render_prompt_block`. When provided,
+    it is placed immediately after the coverage block and before the
+    user question so the model sees the rules that apply to this turn.
+    The block is the ONLY place turn-specific year allowset, completeness
+    constraint, and explicit exercise count enter the user prompt. Pass
+    ``None`` (or omit) when no policy is available; the prompt then
+    carries no ``<answer_correctness>`` marker.
     """
     handles_block = render_handles_block(available_evidence_handle_ids)
     baseline_block = render_baseline_block(model_context_chunks)
     coverage_block = _render_coverage_block(is_complete=baseline_is_complete)
+    # R4-A4-1C: turn-specific correctness rules from the policy. Placed
+    # after coverage and before the user question so the model sees the
+    # rules that govern this turn. ``correctness_block`` is the rendered
+    # output of ``AnswerCorrectnessPolicy.render_prompt_block()`` and is
+    # the ONLY place turn-specific year allowset / completeness constraint
+    # / explicit exercise count enter the user prompt. ``None`` means no
+    # policy (e.g., fail-closed path); no ``<answer_correctness>`` marker
+    # is emitted in that case.
+    correctness_section = (
+        f"\n## Answer correctness (turn-specific rules)\n{correctness_block}\n"
+        if correctness_block
+        else ""
+    )
     return (
         "## Current turn context (server projection; not tool arguments)\n"
         f"{agent_context_json}\n"
         f"{handles_block}\n"
         f"{baseline_block}\n"
         f"{coverage_block}"
+        f"{correctness_section}"
         "## User question\n"
         f"{user_message.strip()}\n"
     )

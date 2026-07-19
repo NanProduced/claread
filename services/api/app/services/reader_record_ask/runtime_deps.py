@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from app.services.reader_record_ask.answer_correctness_policy import (
+    AnswerCorrectnessPolicy,
+)
 from app.services.reader_record_ask.article_rag_port import ArticleRagSearchPort
 from app.services.reader_record_ask.context_envelope import (
     ReadingRecordAskContextEnvelope,
@@ -46,6 +49,11 @@ class ReaderRecordAskDeps:
     # permitted (only allowed when baseline is NOT available). Internal-only;
     # never serialised, never enters public DTO or persistence.
     baseline_available: bool = False
+    # R4-A4-1B: write-once — set by runtime after baseline assembly, read
+    # only by grounding_validator. ``None`` on the fail-closed path (baseline
+    # not injected) and in tests that do not exercise the policy. Internal-only;
+    # never serialised, never enters public DTO or persistence.
+    answer_correctness_policy: AnswerCorrectnessPolicy | None = None
 
     def emit_event(self, event: RuntimeEvent) -> None:
         """Append an internal event and optionally notify a live sink.

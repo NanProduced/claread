@@ -95,6 +95,19 @@ async def grounding_validator(
     else:  # unavailable
         _check_unavailable(draft, ctx.deps.baseline_available)
 
+    # R4-A4-1B: answer-correctness policy. Constructed once by runtime
+    # after baseline assembly and write-once assigned to deps. Only the
+    # first violation is surfaced (design §6.4) — it is enough to guide
+    # the model's retry and keeps the RetryPromptPart short. The detail
+    # detail uses a fixed safe template (the count violation interpolates
+    # only bounded integers); it never contains answer text, handles,
+    # identity, or exception text.
+    policy = ctx.deps.answer_correctness_policy
+    if policy is not None:
+        violations = policy.evaluate_draft(draft_answer_text=draft.answer_text)
+        if violations:
+            raise ModelRetry(violations[0].detail)
+
     return draft
 
 
@@ -121,9 +134,7 @@ def _check_grounded_answer(
             f"handles; return only the MINIMAL sufficient set (at most "
             f"{MAX_CITED_EVIDENCE_HANDLES})"
         )
-    _verify_handles_in_registry(
-        draft.cited_evidence_handles, registry, envelope_fingerprint
-    )
+    _verify_handles_in_registry(draft.cited_evidence_handles, registry, envelope_fingerprint)
 
 
 def _check_handles_valid_if_present(
@@ -138,9 +149,7 @@ def _check_handles_valid_if_present(
             f"clarification cites {len(draft.cited_evidence_handles)} "
             f"handles; at most {MAX_CITED_EVIDENCE_HANDLES} allowed"
         )
-    _verify_handles_in_registry(
-        draft.cited_evidence_handles, registry, envelope_fingerprint
-    )
+    _verify_handles_in_registry(draft.cited_evidence_handles, registry, envelope_fingerprint)
 
 
 def _check_unavailable(draft: AgentAnswerDraft, baseline_available: bool) -> None:
@@ -177,19 +186,12 @@ def _verify_handles_in_registry(
 
     for raw_id in handle_ids:
         if not is_valid_evidence_handle_id(raw_id):
-            raise ModelRetry(
-                f"cited handle {raw_id!r} is not a valid mint-shaped handle id"
-            )
+            raise ModelRetry(f"cited handle {raw_id!r} is not a valid mint-shaped handle id")
         observation = registry.get(raw_id)
         if observation is None:
-            hint = (
-                f"; available handles: {sorted(available)}"
-                if available
-                else ""
-            )
+            hint = f"; available handles: {sorted(available)}" if available else ""
             raise ModelRetry(
-                f"cited handle {raw_id!r} is not registered in this turn's "
-                f"evidence registry{hint}"
+                f"cited handle {raw_id!r} is not registered in this turn's evidence registry{hint}"
             )
         if observation.handle.envelope_fingerprint != envelope_fingerprint:
             raise ModelRetry(
