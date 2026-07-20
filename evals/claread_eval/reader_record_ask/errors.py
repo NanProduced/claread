@@ -41,7 +41,7 @@ context.
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Final, Literal
 
 from pydantic import BaseModel
 
@@ -53,9 +53,54 @@ from pydantic import BaseModel
 #: it caught. This is the fail-closed default.
 _SAFE_CODE_RUNTIME_EXCEPTION: Final[str] = "runtime_exception"
 
+# R4-A4-2R5R Task 4: Single source of truth for safe error codes.
+# ``SafeErrorCode`` is a ``Literal`` of every legal safe-code value.
+# ``_SAFE_SUMMARIES`` is keyed by this Literal, and
+# ``_RECOGNIZED_SAFE_CODES`` is derived from it. Downstream consumers
+# (``RawArtifact.safe_error_code``, harness classification) import this
+# Literal so there is exactly ONE allowlist — no duplicated copies in
+# artifact.py and the harness.
+SafeErrorCode = Literal[
+    "runtime_exception",
+    "db_connect_failed",
+    "db_record_load_failed",
+    "db_record_stale",
+    "model_route_unresolved",
+    "model_request_failed",
+    "envelope_build_failed",
+    "document_scope_build_failed",
+    "budget_exhausted",
+    "preflight_failed",
+    "case_load_failed",
+    "artifact_write_failed",
+    # R4-A4-2R5/R4-A4-2R5R failure taxonomy: separate model-fault output
+    # failures from provider/network/generic runtime exceptions. The
+    # three codes below are emitted ONLY when the harness classifies the
+    # exception type (e.g. ``UnexpectedModelBehavior`` from pydantic_ai)
+    # — never via free-text parsing of ``str(exc)``. The exception's
+    # message body is NOT read; only ``type(exc).__name__`` is used.
+    "output_retry_exhausted",
+    "agent_output_invalid",
+    # R4-A4-2R5R2 Task 2: conservative fallback when
+    # ``UnexpectedModelBehavior`` is raised but the harness CANNOT prove
+    # the output-validator retry budget was exhausted. Proof requires
+    # BOTH ``output_validation_final_attempts`` AND
+    # ``output_validation_retry_requests`` to EXACTLY equal
+    # ``DEFAULT_OUTPUT_RETRIES + 1`` (3). Any missing/unequal/undersized/
+    # oversized counter, or a counter inflated by partial-only calls,
+    # falls back to this conservative code. This covers pydantic-ai
+    # internal errors (malformed JSON from model, invalid tool call,
+    # etc.) that raise ``UnexpectedModelBehavior`` WITHOUT exhausting
+    # the output validator, AND the case where the validator was called
+    # 3 times but only 2 raised ModelRetry (the 3rd passed, then a
+    # subsequent non-validator UMB occurred). Conservative — does NOT
+    # claim retry exhaustion.
+    "unexpected_model_behavior",
+]
+
 #: Allowlist of recognized safe codes. A code must be in this mapping to
 #: be emitted; unknown hints fall back to ``runtime_exception``.
-_SAFE_SUMMARIES: Final[dict[str, str]] = {
+_SAFE_SUMMARIES: Final[dict[SafeErrorCode, str]] = {
     "runtime_exception": "Runtime exception during agent execution.",
     "db_connect_failed": "Failed to connect to the configured database.",
     "db_record_load_failed": "Failed to load the requested record from the database.",
@@ -68,12 +113,23 @@ _SAFE_SUMMARIES: Final[dict[str, str]] = {
     "preflight_failed": "Pre-flight check failed before any model call.",
     "case_load_failed": "Failed to load the requested eval case.",
     "artifact_write_failed": "Failed to write the artifact to the run directory.",
+    "output_retry_exhausted": (
+        "Agent output retry budget exhausted; the model did not produce "
+        "valid structured output within the configured retry budget."
+    ),
+    "agent_output_invalid": (
+        "Agent output failed final validation after retries."
+    ),
+    "unexpected_model_behavior": (
+        "pydantic-ai raised UnexpectedModelBehavior without proof of "
+        "output-validator retry exhaustion. Conservative classification."
+    ),
 }
 
 #: Set of recognized safe codes — used by :func:`project_exception` to
 #: validate the caller's hint without leaking the hint itself when it
 #: is not in the allowlist.
-_RECOGNIZED_SAFE_CODES: Final[frozenset[str]] = frozenset(_SAFE_SUMMARIES.keys())
+_RECOGNIZED_SAFE_CODES: Final[frozenset[SafeErrorCode]] = frozenset(_SAFE_SUMMARIES.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +143,7 @@ class SafeErrorProjection(BaseModel):
     Field semantics:
 
     - ``safe_code``: allowlisted short code. Always one of
-      :data:`_RECOGNIZED_SAFE_CODES`.
+      :data:`_RECOGNIZED_SAFE_CODES` (typed via :data:`SafeErrorCode`).
     - ``exception_type``: the exception's class name. This is metadata
       (e.g. ``"TimeoutError"``, ``"ValueError"``), not content.
     - ``safe_summary``: fixed, allowlisted summary string looked up by
@@ -96,7 +152,7 @@ class SafeErrorProjection(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    safe_code: str
+    safe_code: SafeErrorCode
     exception_type: str
     safe_summary: str
 
@@ -109,7 +165,7 @@ class SafeErrorProjection(BaseModel):
 def project_exception(
     exc: BaseException,
     *,
-    hint: str = _SAFE_CODE_RUNTIME_EXCEPTION,
+    hint: SafeErrorCode | str = _SAFE_CODE_RUNTIME_EXCEPTION,
 ) -> SafeErrorProjection:
     """Project ``exc`` into an allowlisted :class:`SafeErrorProjection`.
 
@@ -127,7 +183,9 @@ def project_exception(
     Returns:
         A :class:`SafeErrorProjection` carrying only allowlisted data.
     """
-    safe_code = hint if hint in _RECOGNIZED_SAFE_CODES else _SAFE_CODE_RUNTIME_EXCEPTION
+    safe_code: SafeErrorCode = (
+        hint if hint in _RECOGNIZED_SAFE_CODES else _SAFE_CODE_RUNTIME_EXCEPTION
+    )
     return SafeErrorProjection(
         safe_code=safe_code,
         exception_type=type(exc).__name__,
@@ -156,7 +214,7 @@ def safe_error_string(projection: SafeErrorProjection) -> str:
 def project_exception_to_string(
     exc: BaseException,
     *,
-    hint: str = _SAFE_CODE_RUNTIME_EXCEPTION,
+    hint: SafeErrorCode | str = _SAFE_CODE_RUNTIME_EXCEPTION,
 ) -> str:
     """Convenience: project ``exc`` and render as a string.
 

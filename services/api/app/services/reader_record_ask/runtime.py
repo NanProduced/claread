@@ -44,7 +44,10 @@ from app.services.reader_record_ask.initial_anchor_evidence import (
 from app.services.reader_record_ask.read_range_executor import (
     DEFAULT_MAX_READ_RANGE_CALLS,
 )
-from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+from app.services.reader_record_ask.runtime_deps import (
+    ReaderRecordAskDeps,
+    RuntimeObservation,
+)
 from app.services.reader_record_ask.runtime_events import (
     ComposingAnswerEvent,
     FinalAnswerEvent,
@@ -94,6 +97,7 @@ async def run_reading_record_ask(
     max_read_range_calls: int = DEFAULT_MAX_READ_RANGE_CALLS,
     max_search_current_article_calls: int = DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS,
     event_sink: RuntimeEventSink | None = None,
+    observation: RuntimeObservation | None = None,
 ) -> ReadingRecordAskRunResult:
     """Run the independent Reading Record Ask agent once, then finalize.
 
@@ -109,6 +113,28 @@ async def run_reading_record_ask(
     ``event_sink`` is an optional live observation hook used by production
     stream for concurrent progress projection. Events are always retained on
     ``deps.events`` for tests and final diagnostics.
+
+    R4-A4-2R5R2 Task 1+2: ``observation`` is an internal-only mutable
+    :class:`RuntimeObservation` container. When non-None, the runtime
+    writes ``baseline_context`` after assembly succeeds (BEFORE the
+    ``is_injected`` check, so both ``captured`` and ``unavailable``
+    states are observable), and the grounding output_validator
+    increments TWO PRECISE counters: ``output_validation_final_attempts``
+    on every FINAL-mode call (partial-mode calls do NOT touch it), and
+    ``output_validation_retry_requests`` ONLY when ``ModelRetry`` is
+    raised in final mode (a normal pass does NOT increment it). The
+    harness reads all three fields on the success path and the
+    exception path to preserve actual baseline audit data when the
+    agent raises mid-flight, and to classify
+    ``UnexpectedModelBehavior`` as ``output_retry_exhausted`` (retry
+    budget proven exhausted — requires BOTH counters to EXACTLY equal
+    ``DEFAULT_OUTPUT_RETRIES + 1``) vs.
+    ``unexpected_model_behavior`` (conservative fallback — counters
+    missing/unequal/undersized/oversized, or partial-only calls
+    inflated the count). Production callers pass ``None`` (default) —
+    no observation is recorded, no overhead, no DTO/SSE/Web/persistence
+    contract change. The runtime never READS from the container, so
+    the run result is structurally unaffected by observation.
     """
     if evidence_registry is not None:
         if evidence_registry.envelope_fingerprint != envelope.envelope_fingerprint:
@@ -137,6 +163,7 @@ async def run_reading_record_ask(
         max_read_range_calls=max_read_range_calls,
         max_search_current_article_calls=max_search_current_article_calls,
         event_sink=event_sink,
+        observation=observation,
     )
 
     projection = envelope.to_agent_projection()
@@ -152,12 +179,34 @@ async def run_reading_record_ask(
     # cannot be assembled, the agent is not invoked and no pseudo-success
     # completed is produced. Production stream maps finalized=None +
     # final_text=None to a terminal event.
+    # R4-A4-2R5R3 Issue #1: write execution_stage BEFORE assembly runs so
+    # the harness can disambiguate a ``ValidationError`` raised during
+    # assembly (``baseline_assembly`` → ``runtime_exception``) from one
+    # raised inside the validator-owned ``output_validation`` stage.
+    # Other ``agent_run`` errors remain conservative runtime failures.
+    # ``None`` in production.
+    if observation is not None:
+        observation.execution_stage = "baseline_assembly"
     assembler = BaselineContextAssembler(
         envelope=envelope,
         document_access=document_access,
         registry=registry,
     )
     baseline = await assembler.assemble_baseline()
+
+    # R4-A4-2R5R Task 1: internal-only typed observation seam. Write
+    # the assembled baseline to the observation container BEFORE the
+    # ``is_injected`` check so both ``captured`` (chunks present) and
+    # ``unavailable`` (assembly succeeded but 0 chunks) states are
+    # observable by the harness. When assembly itself raises, this
+    # write is never reached and ``observation.baseline_context`` stays
+    # ``None`` (``failed`` state) — matching the fail-closed contract.
+    # The runtime never READS from the container, so the run result is
+    # structurally unaffected. ``observation`` is ``None`` in
+    # production — no overhead.
+    if observation is not None:
+        observation.baseline_context = baseline
+
     # Tell the output_validator whether ``response_kind="unavailable"`` is
     # permitted. Only allowed when baseline is NOT available. Internal-only;
     # never serialised, never enters public DTO or persistence.
@@ -251,7 +300,23 @@ async def run_reading_record_ask(
         baseline_is_complete=baseline.is_complete,
         correctness_block=correctness_block,
     )
+    # Mark the broad agent-loop stage before awaiting ``agent.run()``.
+    # The grounding validator temporarily narrows this to
+    # ``output_validation``; only that nested stage proves an exception
+    # originated from our validator. ``None`` in production.
+    if observation is not None:
+        observation.execution_stage = "agent_run"
     result = await agent.run(prompt, deps=deps)
+    # R4-A4-2R5R3 Issue #1: write execution_stage AFTER ``agent.run()``
+    # returns successfully and BEFORE the finalizer starts. A
+    # ``ValidationError`` raised AFTER this transition did NOT come
+    # from the output validator — it came from the finalizer or later
+    # code, and MUST be classified as ``runtime_exception``. This is
+    # the precise typed seam the harness classifier reads to
+    # disambiguate validator-stage vs finalizer-stage ValidationErrors.
+    # ``None`` in production.
+    if observation is not None:
+        observation.execution_stage = "agent_run_completed"
     draft = result.output
     if not isinstance(draft, AgentAnswerDraft):
         draft = AgentAnswerDraft(
@@ -265,6 +330,13 @@ async def run_reading_record_ask(
     deps.emit_event(ComposingAnswerEvent())
     deps.emit_event(ValidatingEvidenceEvent())
 
+    # R4-A4-2R5R3 Issue #1: write execution_stage BEFORE
+    # ``finalize_agent_answer()`` is awaited. A ``ValidationError``
+    # raised while this stage is current is conservatively classified
+    # as ``runtime_exception`` — it did not come from the output
+    # validator. ``None`` in production.
+    if observation is not None:
+        observation.execution_stage = "finalizer"
     finalized = await finalize_agent_answer(
         envelope=envelope,
         registry=registry,

@@ -158,6 +158,25 @@ def load_r4_a3_dataset_with_snapshot(
             file_bytes = case_path.read_bytes()
             case_raw = json.loads(file_bytes.decode("utf-8"))
             case = ReaderRecordAskR4A3Case.model_validate(case_raw)
+            # R4-A4-2R5R2 Task 4: LOADER-OWNED provenance. Inspect the
+            # RAW JSON dict (before any Pydantic coercion or legacy
+            # migration) to determine whether this case explicitly
+            # authored ``atomic_facts`` or relies on the loader's auto-
+            # migration from ``required_article_facts``. The result is
+            # written to the case's ``_atomic_facts_origin`` PrivateAttr
+            # (not a JSON-parseable field) so dataset authors CANNOT
+            # forge ``"explicit"`` provenance by setting a field in the
+            # JSON file. The preflight guard reads
+            # :attr:`ReaderRecordAskR4A3Case.atomic_facts_origin`.
+            raw_expected = case_raw.get("expected") or {}
+            raw_atomic_facts = raw_expected.get("atomic_facts") or []
+            raw_required_article_facts = (
+                raw_expected.get("required_article_facts") or []
+            )
+            if not raw_atomic_facts and raw_required_article_facts:
+                case._atomic_facts_origin = "legacy_migrated"
+            else:
+                case._atomic_facts_origin = "explicit"
             _migrate_legacy_required_article_facts(case)
             if case.id in seen_ids:
                 raise ReaderRecordAskDatasetLoadError(
@@ -217,6 +236,14 @@ def _migrate_legacy_required_article_facts(
 
     When a case already declares ``atomic_facts``, the legacy field is
     ignored (new contract wins).
+
+    R4-A4-2R5R2 Task 4: per-fact ``origin`` field has been REMOVED from
+    :class:`AtomicExpectedFact`. Provenance is now LOADER-OWNED and
+    tracked on the case via ``_atomic_facts_origin`` (set by the loader
+    BEFORE this function is called, based on raw JSON inspection). The
+    ``fact_id`` pattern ``legacy-{idx}`` is retained for human-
+    readability but is NO LONGER the source of truth — the typed
+    :attr:`ReaderRecordAskR4A3Case.atomic_facts_origin` property is.
     """
     if case.expected.atomic_facts:
         return  # new contract already in use

@@ -2,7 +2,27 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, StrictBool, StrictStr
+from pydantic import BaseModel, Field, PrivateAttr, StrictBool, StrictStr
+
+# R4-A4-2R5R3 Issue #2: shared typed Literal for loader-owned
+# atomic_facts provenance. This is the SINGLE source of truth — the
+# PrivateAttr on :class:`ReaderRecordAskR4A3Case` AND the public
+# :attr:`ReaderRecordAskR4A3Case.atomic_facts_origin` property both
+# use this Literal. The ``real_phase1`` preflight guard accepts ONLY
+# ``"explicit"``; any other value fail-closes BEFORE the model builder
+# or provider is called.
+#
+# Values:
+# - ``"explicit"``: the case file's ``expected.atomic_facts`` key was
+#   present with at least one entry (the dataset author explicitly
+#   authored atomic_facts). This is the ONLY value the preflight
+#   accepts for ``real_phase1`` runs.
+# - ``"legacy_migrated"``: the case file had no/empty
+#   ``expected.atomic_facts`` AND non-empty
+#   ``expected.required_article_facts`` — the loader auto-migrated
+#   legacy facts to atomic_facts. The preflight guard REJECTS this
+#   value for ``real_phase1`` runs (fail-closed).
+AtomicFactsOrigin = Literal["explicit", "legacy_migrated"]
 
 
 class AtomicExpectedFact(BaseModel):
@@ -32,6 +52,15 @@ class AtomicExpectedFact(BaseModel):
     ``1`` / ``0.0`` / ``1.0``. The previous lenient ``bool`` allowed
     ``required=0`` to silently coerce to ``required=False``, weakening
     the contract.
+
+    R4-A4-2R5R2 Task 4: the ``origin`` field has been REMOVED from this
+    model. Provenance is now LOADER-OWNED — see
+    :attr:`ReaderRecordAskR4A3Case.atomic_facts_origin`. Dataset JSON
+    authors CANNOT declare or forge provenance on individual
+    :class:`AtomicExpectedFact` entries; only the loader decides
+    provenance by inspecting the raw JSON (does the case file declare
+    ``expected.atomic_facts`` explicitly, or does it rely on the
+    loader's auto-migration from ``required_article_facts``?).
     """
 
     model_config = {"extra": "forbid"}
@@ -238,6 +267,69 @@ class ReaderRecordAskR4A3Case(BaseModel):
     # for backwards compat with cases authored under R4-A4-2R; the
     # harness checks BOTH when both are present (defense-in-depth).
     expected_runtime_fixture_fingerprint: StrictStr | None = None
+
+    # R4-A4-2R5R2 Task 4 + R4-A4-2R5R3 Issue #2: LOADER-OWNED
+    # provenance for atomic_facts.
+    #
+    # This is a Pydantic ``PrivateAttr`` — it is NOT parsed from JSON
+    # and CANNOT be set by dataset authors. Only the loader sets it,
+    # by inspecting the raw JSON dict BEFORE Pydantic parsing:
+    #
+    # - ``"explicit"``: the case file's ``expected.atomic_facts`` key
+    #   was present with at least one entry (the dataset author
+    #   explicitly authored atomic_facts).
+    # - ``"legacy_migrated"``: the case file had no/empty
+    #   ``expected.atomic_facts`` AND non-empty
+    #   ``expected.required_article_facts`` — the loader auto-migrated
+    #   legacy facts to atomic_facts.
+    # - ``"explicit"`` (default): for backwards compat with cases that
+    #   have no atomic_facts AND no required_article_facts (the
+    #   preflight guard's "no atomic_facts" check handles these).
+    #
+    # The ``real_phase1`` preflight guard reads this typed field via
+    # the :attr:`atomic_facts_origin` property to fail-closed BEFORE
+    # paid calls when a case relies on legacy auto-migration. Dataset
+    # JSON authors CANNOT forge ``"explicit"`` provenance — the field
+    # is not in the JSON schema, not parsed, and not settable via
+    # ``model_validate``. This closes the audit finding where a
+    # dataset author could set ``origin="explicit"`` on individual
+    # AtomicExpectedFact entries to bypass the guard.
+    #
+    # R4-A4-2R5R3 Issue #2: the field type is now the shared
+    # :data:`AtomicFactsOrigin` Literal (was ``str``). This removes
+    # the ``# type: ignore[return-value]`` from the property — the
+    # PrivateAttr and the property now share the SAME typed Literal,
+    # so the property return is type-safe without coercion. The
+    # loader is still the only writer; the typed Literal is the
+    # single source of truth.
+    #
+    # The field is a ``PrivateAttr`` (not a regular field) so it:
+    #   1. Is excluded from ``model_dump()`` / ``model_dump_json()``
+    #      (does not enter the dataset identity hash, does not enter
+    #      artifact JSON).
+    #   2. Is NOT parsed from input JSON (dataset authors cannot set
+    #      it).
+    #   3. Defaults to ``"explicit"`` for backwards compat with cases
+    #      constructed directly in tests (e.g., ``ReaderRecordAskR4A3Case(...)``
+    #      without going through the loader).
+    _atomic_facts_origin: AtomicFactsOrigin = PrivateAttr(default="explicit")
+
+    @property
+    def atomic_facts_origin(self) -> AtomicFactsOrigin:
+        """Loader-owned typed provenance for this case's atomic_facts.
+
+        See the class docstring on ``_atomic_facts_origin`` for the
+        full contract. Reads return the shared
+        :data:`AtomicFactsOrigin` Literal; the loader is the only
+        writer.
+
+        R4-A4-2R5R3 Issue #2: the return type is now the shared
+        :data:`AtomicFactsOrigin` Literal (matching the PrivateAttr
+        type). The previous ``# type: ignore[return-value]`` is
+        REMOVED — both sides use the same typed Literal, so the
+        return is type-safe without coercion.
+        """
+        return self._atomic_facts_origin
 
 
 class ReaderRecordAskR4A3Dataset(BaseModel):
