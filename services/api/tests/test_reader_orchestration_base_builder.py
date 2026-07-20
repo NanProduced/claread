@@ -182,6 +182,7 @@ def _build_vocabulary_layer(
     start_offset: int | None = None,
     end_offset: int | None = None,
     target_scope: str = "unit",
+    learning_note: str | None = None,
 ) -> ReaderSnapshotLayer:
     segment = next(
         (
@@ -223,8 +224,9 @@ def _build_vocabulary_layer(
             "item_type": item_type,
             "anchor": anchor.model_dump(mode="json"),
             "phrase": selected_text,
-            "phrase_type": "collocation",
+            "phrase_type": "fixed_collocation",
             "gloss": "短语释义",
+            "learning_note": learning_note,
             "example": "示例用法",
         }
     else:
@@ -975,25 +977,27 @@ def test_reader_plate_snapshot_drops_translation_group_with_empty_translated_tex
 
 
 def test_reader_plate_snapshot_projects_vocabulary_marks_into_source_leaves() -> None:
+    # Non-overlapping happy-path spans on the sample sentence:
+    # results | prompted the team to rethink | approach
     result = _build_result("The results prompted the team to rethink their approach.")
     layers = [
         _build_vocabulary_layer(
             result,
             layer_id="vocab-layer-1",
             item_type="vocab_highlight",
-            selected_text="prompted",
+            selected_text="results",
         ),
         _build_vocabulary_layer(
             result,
             layer_id="vocab-layer-2",
             item_type="phrase_gloss",
-            selected_text="prompted the team",
+            selected_text="prompted the team to rethink",
         ),
         _build_vocabulary_layer(
             result,
             layer_id="vocab-layer-3",
             item_type="context_gloss",
-            selected_text="prompted the team to rethink",
+            selected_text="approach",
         ),
     ]
 
@@ -1029,10 +1033,82 @@ def test_reader_plate_snapshot_projects_vocabulary_marks_into_source_leaves() ->
         for mark in leaf["reader_vocabulary_marks"]  # type: ignore[index]
     )
     assert any(
-        mark["item_type"] == "vocab_highlight" and mark["headword"] == "prompted"
+        mark["item_type"] == "vocab_highlight" and mark["headword"] == "results"
         for leaf in marked_leaves
         for mark in leaf["reader_vocabulary_marks"]  # type: ignore[index]
     )
+    assert any(
+        mark["item_type"] == "context_gloss" and mark.get("display") == "approach"
+        for leaf in marked_leaves
+        for mark in leaf["reader_vocabulary_marks"]  # type: ignore[index]
+    )
+
+
+def test_reader_plate_snapshot_projects_phrase_gloss_learning_note_when_present() -> None:
+    result = _build_result("The results prompted the team to rethink their approach.")
+    note = "常见搭配：`prompt` + 宾语 + to do。"
+    layer = _build_vocabulary_layer(
+        result,
+        layer_id="vocab-phrase-note",
+        item_type="phrase_gloss",
+        selected_text="prompted the team to rethink",
+        learning_note=note,
+    )
+
+    snapshot = build_reader_plate_snapshot(
+        result,
+        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        last_event_sequence=18,
+        enhancement_layers=[layer],
+    )
+
+    marks = [
+        mark
+        for unit_node in snapshot.value
+        for child in unit_node["children"]  # type: ignore[index]
+        if isinstance(child, dict) and child.get("type") == "reader_source_block"
+        for anchor_node in child["children"]  # type: ignore[index]
+        if isinstance(anchor_node, dict) and anchor_node.get("type") == "reader_anchor_segment"
+        for leaf in anchor_node["children"]  # type: ignore[index]
+        if isinstance(leaf, dict)
+        for mark in leaf.get("reader_vocabulary_marks", [])
+        if isinstance(mark, dict) and mark.get("item_type") == "phrase_gloss"
+    ]
+    assert marks
+    assert all(mark.get("learning_note") == note for mark in marks)
+
+
+def test_reader_plate_snapshot_phrase_gloss_without_learning_note_does_not_error() -> None:
+    result = _build_result("The results prompted the team to rethink their approach.")
+    layer = _build_vocabulary_layer(
+        result,
+        layer_id="vocab-phrase-no-note",
+        item_type="phrase_gloss",
+        selected_text="prompted the team to rethink",
+        learning_note=None,
+    )
+
+    snapshot = build_reader_plate_snapshot(
+        result,
+        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        last_event_sequence=19,
+        enhancement_layers=[layer],
+    )
+
+    marks = [
+        mark
+        for unit_node in snapshot.value
+        for child in unit_node["children"]  # type: ignore[index]
+        if isinstance(child, dict) and child.get("type") == "reader_source_block"
+        for anchor_node in child["children"]  # type: ignore[index]
+        if isinstance(anchor_node, dict) and anchor_node.get("type") == "reader_anchor_segment"
+        for leaf in anchor_node["children"]  # type: ignore[index]
+        if isinstance(leaf, dict)
+        for mark in leaf.get("reader_vocabulary_marks", [])
+        if isinstance(mark, dict) and mark.get("item_type") == "phrase_gloss"
+    ]
+    assert marks
+    assert all(mark.get("learning_note") is None for mark in marks)
 
 
 def test_reader_plate_snapshot_projects_grammar_note_marks_and_sentence_analysis_nodes() -> None:

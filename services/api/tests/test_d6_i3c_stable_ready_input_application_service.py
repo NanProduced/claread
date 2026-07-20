@@ -10,8 +10,8 @@ from uuid import UUID
 import pytest
 
 from app.services.reader_orchestration.base_builder import (
+    AUTO_SEGMENTER_POLICY,
     DETERMINISTIC_READING_BASE_BUILDER_VERSION,
-    DETERMINISTIC_SEGMENTER_VERSION,
     EXACT_CANONICAL_TEXT_VERSION,
 )
 from app.services.reader_orchestration.document_freeze_persistence import (
@@ -403,7 +403,7 @@ def test_happy_path_pasted_text_persists_marks_event_and_loads_snapshot() -> Non
         captured["builder_version"]
         == DETERMINISTIC_READING_BASE_BUILDER_VERSION
     )
-    assert captured["segmenter_version"] == DETERMINISTIC_SEGMENTER_VERSION
+    assert captured["segmenter_version"] == AUTO_SEGMENTER_POLICY
     assert captured["language"] == "en"
     assert captured["now"] == _FROZEN_AT
     assert captured["plan"].stable_document.source_profile_json == {

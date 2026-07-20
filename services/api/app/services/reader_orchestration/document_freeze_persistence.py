@@ -475,7 +475,12 @@ async def persist_stable_document_freeze_plan(
         canonical_text_utf16_length,
         canonicalizer_version,
         builder_version,
-        segmenter_version,
+        # R7-1: persist the RESOLVED segmenter identity (spaCy main
+        # path vs named regex v2 fallback), not the requested auto
+        # policy label, so reading_bases.segmenter_version reflects
+        # the segmenter that actually ran. Caller-pinned labels are
+        # resolved to themselves by the base builder.
+        build_result.base.segmenter_version,
         language,
         stable_doc.title,
         jsonb_param(navigation_json),
@@ -996,8 +1001,10 @@ async def _insert_reading_unit(
 
     The SQL column order mirrors the existing
     ``repository.insert_reading_units`` so behavior and params stay
-    consistent. ``metadata_json`` is ``{}`` (no extra metadata is
-    produced by the deterministic builder).
+    consistent. ``metadata_json`` carries the R7-1 ``sentence_provider``
+    tag when the unit's anchor segments came from the sentence stage
+    (spaCy main path or named regex v2 fallback); it is empty for
+    clause / fallback-window units.
     """
     await conn.execute(
         """
@@ -1024,7 +1031,11 @@ async def _insert_reading_unit(
         unit.base_start_utf16,
         unit.base_end_utf16,
         unit.text_hash,
-        jsonb_param({}),
+        jsonb_param(
+            {"sentence_provider": unit.sentence_provider}
+            if unit.sentence_provider
+            else {}
+        ),
     )
 
 

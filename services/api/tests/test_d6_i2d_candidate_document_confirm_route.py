@@ -15,8 +15,8 @@ from app.services.reader_orchestration import (
     build_reader_plate_snapshot,
 )
 from app.services.reader_orchestration.base_builder import (
+    AUTO_SEGMENTER_POLICY,
     DETERMINISTIC_READING_BASE_BUILDER_VERSION,
-    DETERMINISTIC_SEGMENTER_VERSION,
     EXACT_CANONICAL_TEXT_VERSION,
 )
 from app.services.reader_orchestration.candidate_document_confirm_application_service import (
@@ -214,7 +214,7 @@ def test_confirm_candidate_document_calls_application_service_with_fixed_version
         user_id=USER_ID,
         canonicalizer_version=EXACT_CANONICAL_TEXT_VERSION,
         builder_version=DETERMINISTIC_READING_BASE_BUILDER_VERSION,
-        segmenter_version=DETERMINISTIC_SEGMENTER_VERSION,
+        segmenter_version=AUTO_SEGMENTER_POLICY,
         language="fr",
     )
     assert response.json() == {

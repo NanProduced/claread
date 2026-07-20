@@ -21,6 +21,9 @@ from app.schemas.reader_orchestration import (
     ReaderOrchestrationReadingVariant,
     ReaderPlateSnapshot,
 )
+from app.services.reader_orchestration._text import (
+    resolve_default_reader_language,
+)
 from app.services.reader_orchestration.article_rag_auto_ensure_service import (
     ArticleRagAutoEnsureService,
     build_default_auto_ensure_service,
@@ -29,8 +32,8 @@ from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
 from app.services.reader_orchestration.base_builder import (
+    AUTO_SEGMENTER_POLICY,
     DETERMINISTIC_READING_BASE_BUILDER_VERSION,
-    DETERMINISTIC_SEGMENTER_VERSION,
     EXACT_CANONICAL_TEXT_VERSION,
 )
 from app.services.reader_orchestration.document_freeze_persistence import (
@@ -144,7 +147,7 @@ class StableReadyInputApplicationService:
         ),
     ) -> StableReadyInputApplicationResult:
         frozen_at = now or datetime.now(UTC)
-        language_value = (language or "en").strip() or "en"
+        language_value = resolve_default_reader_language(language)
         source_metadata_value = dict(source_metadata or {})
         pool = self._get_pool()
 
@@ -236,7 +239,7 @@ class StableReadyInputApplicationService:
                             plan=plan,
                             canonicalizer_version=EXACT_CANONICAL_TEXT_VERSION,
                             builder_version=DETERMINISTIC_READING_BASE_BUILDER_VERSION,
-                            segmenter_version=DETERMINISTIC_SEGMENTER_VERSION,
+                            segmenter_version=AUTO_SEGMENTER_POLICY,
                             language=language_value,
                             now=frozen_at,
                         )

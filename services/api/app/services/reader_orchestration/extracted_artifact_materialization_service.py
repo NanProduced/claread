@@ -40,9 +40,12 @@ from app.services.reader_orchestration.article_rag_auto_ensure_service import (
     ArticleRagAutoEnsureService,
     build_default_auto_ensure_service,
 )
+from app.services.reader_orchestration._text import (
+    resolve_default_reader_language,
+)
 from app.services.reader_orchestration.base_builder import (
+    AUTO_SEGMENTER_POLICY,
     DETERMINISTIC_READING_BASE_BUILDER_VERSION,
-    DETERMINISTIC_SEGMENTER_VERSION,
     EXACT_CANONICAL_TEXT_VERSION,
 )
 from app.services.reader_orchestration.candidate_document_creation_service import (
@@ -296,7 +299,7 @@ class ExtractedArtifactMaterializationService:
         record_row = await conn.fetchrow(
             """
             SELECT active_base_id, lifecycle_status, product_state,
-                   readiness_state
+                   readiness_state, language
             FROM reading_records
             WHERE id = $1
               AND user_id = $2
@@ -336,6 +339,13 @@ class ExtractedArtifactMaterializationService:
                 f"materialization has already run or state was advanced",
                 reason_code="materialization_already_run",
             )
+
+        # R7-1: reading_records.language is the authoritative language
+        # source for the sentence-segmentation policy (never guessed
+        # from the body text). Missing/blank values use the Reader-wide
+        # default rule, matching the article-ready / stable-ready
+        # submission paths.
+        language_value = resolve_default_reader_language(record_row["language"])
 
         # 3. Lock and validate the SPECIFIC original_input
         input_row = await conn.fetchrow(
@@ -442,6 +452,7 @@ class ExtractedArtifactMaterializationService:
                 filename=filename,
                 source_metadata=source_metadata,
                 source_text=source_text,
+                language=language_value,
                 suitability=suitability,
                 now=now,
             )
@@ -488,6 +499,7 @@ class ExtractedArtifactMaterializationService:
         filename: str | None,
         source_metadata: dict[str, Any],
         source_text: str,
+        language: str,
         suitability: InputSuitabilityResult,
         now: datetime,
     ) -> MaterializationResult:
@@ -528,7 +540,8 @@ class ExtractedArtifactMaterializationService:
             plan=plan,
             canonicalizer_version=EXACT_CANONICAL_TEXT_VERSION,
             builder_version=DETERMINISTIC_READING_BASE_BUILDER_VERSION,
-            segmenter_version=DETERMINISTIC_SEGMENTER_VERSION,
+            segmenter_version=AUTO_SEGMENTER_POLICY,
+            language=language,
             user_id=user_id,
             now=now,
         )

@@ -475,7 +475,7 @@ def _confirm(
     user_id: UUID = _USER_ID,
     canonicalizer_version: str = "test_canonicalizer_v1",
     builder_version: str = "test_builder_v1",
-    segmenter_version: str = "test_segmenter_v1",
+    segmenter_version: str = "regex_sentence_clause_window_v1",
     language: str | None = "en",
     now: datetime | None = _FROZEN_AT,
 ) -> CandidateDocumentConfirmApplicationResult:

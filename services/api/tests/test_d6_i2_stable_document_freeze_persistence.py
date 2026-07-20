@@ -272,7 +272,7 @@ def _persist(
             plan=plan,
             canonicalizer_version="test_canonicalizer_v1",
             builder_version="test_builder_v1",
-            segmenter_version="test_segmenter_v1",
+            segmenter_version="regex_sentence_clause_window_v1",
             language=language,
             candidate_document_id=candidate_document_id,
             user_id=user_id,
@@ -1609,7 +1609,18 @@ class TestReadingUnitsInsert:
             assert isinstance(text_hash, str)
             assert len(text_hash) == 8  # fnv1a32-utf16
             metadata = call.args[9]
-            assert metadata == {}
+            # R7-1: metadata_json records the actual sentence provider
+            # for sentence-stage units (spaCy main path, named regex v2
+            # fallback, or pinned regex v1); it stays empty for units
+            # built by the clause / fallback-window stage.
+            assert isinstance(metadata, dict)
+            assert set(metadata) <= {"sentence_provider"}
+            assert metadata.get("sentence_provider") in (
+                None,
+                "spacy_en_core_web_sm",
+                "regex_v2",
+                "regex_v1",
+            )
 
             # UTF-16 offsets must slice back to the unit text from the
             # EXACT canonical text.
@@ -2613,7 +2624,7 @@ class TestCanonicalizerVersionAlignment:
                 plan=plan,
                 canonicalizer_version="my_pass_through_v7",
                 builder_version="test_builder_v1",
-                segmenter_version="test_segmenter_v1",
+                segmenter_version="regex_sentence_clause_window_v1",
                 language="en",
                 now=datetime(2026, 6, 25, 12, 0, 0, tzinfo=UTC),
             )

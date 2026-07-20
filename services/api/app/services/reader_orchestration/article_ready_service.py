@@ -15,6 +15,7 @@ from app.schemas.reader_orchestration import (
     ReaderPlateSnapshot,
 )
 
+from ._text import resolve_default_reader_language
 from .base_builder import LowImpactReadingBaseBuildInput, build_low_impact_reading_base
 from .repository import ReaderOrchestrationRepository
 from .snapshot import build_reader_plate_snapshot
@@ -64,7 +65,7 @@ class ArticleReadyPersistenceService:
         request: PlainTextArticleReadySubmitRequest,
     ) -> ArticleReadyPersistenceResult:
         title = _resolve_title(request.title, request.plain_text)
-        language = (request.language or "en").strip() or "en"
+        language = resolve_default_reader_language(request.language)
         now = datetime.now(UTC)
 
         record_id = uuid4()

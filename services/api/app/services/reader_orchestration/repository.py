@@ -351,7 +351,11 @@ class ReaderOrchestrationRepository:
                 unit.base_start_utf16,
                 unit.base_end_utf16,
                 unit.text_hash,
-                jsonb_param({}),
+                jsonb_param(
+                    {"sentence_provider": unit.sentence_provider}
+                    if unit.sentence_provider
+                    else {}
+                ),
             )
 
     async def insert_anchor_segments(

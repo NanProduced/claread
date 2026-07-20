@@ -85,8 +85,8 @@ from app.services.reader_orchestration.artifact_input_status_query_service impor
     ArtifactPipelineStatusQueryService,
 )
 from app.services.reader_orchestration.base_builder import (
+    AUTO_SEGMENTER_POLICY,
     DETERMINISTIC_READING_BASE_BUILDER_VERSION,
-    DETERMINISTIC_SEGMENTER_VERSION,
     EXACT_CANONICAL_TEXT_VERSION,
 )
 from app.services.reader_orchestration.candidate_document_creation_service import (
@@ -834,7 +834,7 @@ async def confirm_candidate_document(
             user_id=UUID(current_user.user_id),
             canonicalizer_version=EXACT_CANONICAL_TEXT_VERSION,
             builder_version=DETERMINISTIC_READING_BASE_BUILDER_VERSION,
-            segmenter_version=DETERMINISTIC_SEGMENTER_VERSION,
+            segmenter_version=AUTO_SEGMENTER_POLICY,
             language=body.language,
         )
     except CandidateDocumentConfirmApplicationError as exc:
