@@ -280,6 +280,14 @@ class TestFactoriesReturnUnconfiguredByDefault:
                     # which raises before reading the fingerprint, so a
                     # canonical-shape placeholder is sufficient.
                     profile_fingerprint="0" * 64,
+                    # P1-G: embedding_model / embedding_dimension /
+                    # embedding_text_type are now required fields.  This
+                    # construction only feeds an unconfigured writer which
+                    # raises before reading any of these fields, so
+                    # canonical-shape placeholders are sufficient.
+                    embedding_model="probe",
+                    embedding_dimension=0,
+                    embedding_text_type="probe",
                 ),
             )
 

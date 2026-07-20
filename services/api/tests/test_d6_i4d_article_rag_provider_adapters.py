@@ -31,7 +31,7 @@ import os
 import sys
 import traceback
 import types
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -145,7 +145,7 @@ def _stub_embed_texts_with_metadata(
 
 
 def _make_embedding(
-    *, text: str, model: str = "text-embedding-v4", dim: int = 8
+    *, text: str, model: str = "text-embedding-v4", dim: int = 1024
 ) -> ArticleRagEmbedding:
     """Build a deterministic :class:`ArticleRagEmbedding` for fixture use."""
     text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -164,7 +164,7 @@ def _make_chunk(
     citation: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
     model: str = "text-embedding-v4",
-    dim: int = 8,
+    dim: int = 1024,
 ) -> ArticleRagVectorChunk:
     """Build a :class:`ArticleRagVectorChunk` matching I4C's contract."""
     content_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -209,6 +209,14 @@ def _make_write_metadata(
         profile_fingerprint=(
             "e443f581eb3e86aeb9dbcdcee806783186bd85da6c987c60357b61905ea86d6d"
         ),
+        # P1-G-R1: embedding_model / embedding_dimension / embedding_text_type
+        # are required fields sourced from the V1 profile.  These fixture
+        # values now match the V1 profile canonical values (1024 /
+        # text-embedding-v4 / provider_default) so the writer's profile
+        # metadata validation passes without per-test opt-in.
+        embedding_model="text-embedding-v4",
+        embedding_dimension=1024,
+        embedding_text_type="provider_default",
     )
 
 
@@ -1292,7 +1300,7 @@ async def test_zilliz_writer_upserts_chunks_with_no_text(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
         collection=_FAKE_ZILLIZ_COLLECTION,
-        dim=8,
+        dim=1024,
     )
     chunks = [_make_chunk(text=f"text-{i}") for i in range(3)]
     metadata = _make_write_metadata(chunk_count=3)
@@ -1332,7 +1340,7 @@ async def test_zilliz_writer_idempotent_on_chunk_id(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
         collection=_FAKE_ZILLIZ_COLLECTION,
-        dim=8,
+        dim=1024,
     )
     chunk = _make_chunk(text="re-upsertable", chunk_id="chunk-fixed-id")
     metadata = _make_write_metadata(chunk_count=1)
@@ -1366,7 +1374,7 @@ async def test_zilliz_writer_propagates_partial_upsert_count(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
         collection=_FAKE_ZILLIZ_COLLECTION,
-        dim=8,
+        dim=1024,
     )
     chunks = [_make_chunk(text=f"text-{i}") for i in range(3)]
     metadata = _make_write_metadata(chunk_count=3)
@@ -1405,7 +1413,7 @@ async def test_zilliz_writer_no_token_in_raised_error(
         uri=_FAKE_ZILLIZ_URI,
         token=secret_token,
         collection=_FAKE_ZILLIZ_COLLECTION,
-        dim=8,
+        dim=1024,
     )
     chunk = _make_chunk(text=secret_chunk_text)
     metadata = _make_write_metadata(chunk_count=1)
@@ -1448,7 +1456,7 @@ async def test_zilliz_writer_lazy_sdk_init(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
         collection=_FAKE_ZILLIZ_COLLECTION,
-        dim=8,
+        dim=1024,
     )
     # SDK not constructed yet.
     assert fake_client.has_collection_calls == []
@@ -1526,7 +1534,7 @@ async def test_zilliz_writer_repairs_existing_collection_without_vector_index(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
         collection=_FAKE_ZILLIZ_COLLECTION,
-        dim=8,
+        dim=1024,
     )
 
     result = await writer.upsert_chunks(
@@ -1568,7 +1576,7 @@ async def test_zilliz_writer_skips_index_creation_when_vector_index_exists(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
         collection=_FAKE_ZILLIZ_COLLECTION,
-        dim=8,
+        dim=1024,
     )
 
     result = await writer.upsert_chunks(
@@ -1594,7 +1602,7 @@ async def test_zilliz_writer_collection_mismatch_rejected(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
         collection=_FAKE_ZILLIZ_COLLECTION,
-        dim=8,
+        dim=1024,
     )
     chunk = _make_chunk(text="mismatch-test")
     with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
@@ -1617,7 +1625,7 @@ async def test_zilliz_writer_empty_chunks_returns_zero(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
         collection=_FAKE_ZILLIZ_COLLECTION,
-        dim=8,
+        dim=1024,
     )
     result = await writer.upsert_chunks(
         collection=_FAKE_ZILLIZ_COLLECTION,
@@ -1644,7 +1652,7 @@ async def test_zilliz_writer_accepts_none_canonical_offsets(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
         collection=_FAKE_ZILLIZ_COLLECTION,
-        dim=8,
+        dim=1024,
     )
 
     none_offsets_citation = {
@@ -1887,7 +1895,7 @@ async def test_zilliz_error_message_omits_chunk_text(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
         collection=_FAKE_ZILLIZ_COLLECTION,
-        dim=8,
+        dim=1024,
     )
     chunk = _make_chunk(text=secret_chunk_text)
     metadata = _make_write_metadata(chunk_count=1)
@@ -2159,3 +2167,929 @@ async def test_real_zilliz_smoke_is_opt_in_only(monkeypatch: pytest.MonkeyPatch)
     )
     assert isinstance(result, ArticleRagVectorWriteResult)
     assert result.upserted_count >= 0
+
+
+# ===================================================================
+# P1-G: ZillizArticleRagVectorWriter defence-in-depth contract
+#
+# The writer must validate, BEFORE any pymilvus client/network/upsert
+# call, that the configured collection / metadata collection / call
+# collection all match, that writer dim / metadata dim / chunk dim /
+# vector len all match, and that chunk.embedding.model matches
+# metadata.embedding_model.  Any mismatch must raise a typed
+# ZillizArticleRagVectorWriterError with retryable=False and a
+# stable failure_code, and the pymilvus fake client MUST record
+# zero upsert calls.
+#
+# Each test asserts a public-seam contract.  Before the P1-G production
+# fixes they FAIL (RED); after the fixes they PASS (GREEN).
+# ===================================================================
+
+
+# P1-G writer failure codes (must be unique per scenario; exact-match only).
+_P1G_WRITER_FAILURE_CODE_COLLECTION_MISMATCH = (
+    "vector_writer_collection_mismatch"
+)
+_P1G_WRITER_FAILURE_CODE_DIMENSION_MISMATCH = (
+    "vector_writer_dimension_mismatch"
+)
+_P1G_WRITER_FAILURE_CODE_MODEL_MISMATCH = "vector_writer_model_mismatch"
+
+# P1-G-R1: writer profile metadata mismatch failure code.  Used when the
+# 5 profile fields (fingerprint, collection, model, dim, text_type) do not
+# match the resolved V1 profile.  Defined here (before the P1-G dim matrix
+# test) so the parametrize decorator can reference it at module import time.
+_P1G_R1_FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH = (
+    "vector_writer_profile_mismatch"
+)
+
+# P1-G V1 profile literals (must match the P1-B resolver output exactly).
+_P1G_V1_DOC_EMBEDDING_MODEL = "text-embedding-v4"
+_P1G_V1_DOC_EMBEDDING_DIM = 1024
+_P1G_V1_DOC_EMBEDDING_TEXT_TYPE = "provider_default"
+_P1G_V1_VECTOR_NAMESPACE = "article_rag_index_v1"
+
+
+def _p1g_make_embedding(
+    *,
+    text: str,
+    model: str = _P1G_V1_DOC_EMBEDDING_MODEL,
+    dim: int = _P1G_V1_DOC_EMBEDDING_DIM,
+    vector_len: int | None = None,
+) -> ArticleRagEmbedding:
+    """Build a deterministic ArticleRagEmbedding with explicit dim and
+    vector_len control (P1-G tests need to be able to set them
+    independently to exercise the dim-vs-vector-len mismatch matrix).
+    """
+    text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    effective_vec_len = vector_len if vector_len is not None else dim
+    return ArticleRagEmbedding(
+        text_sha256=text_sha,
+        model=model,
+        vector=tuple(float(i) / max(effective_vec_len, 1) for i in range(effective_vec_len)),
+        dim=dim,
+    )
+
+
+def _p1g_make_chunk(
+    *,
+    text: str,
+    model: str = _P1G_V1_DOC_EMBEDDING_MODEL,
+    dim: int = _P1G_V1_DOC_EMBEDDING_DIM,
+    vector_len: int | None = None,
+    chunk_id: str | None = None,
+) -> ArticleRagVectorChunk:
+    """Build an ArticleRagVectorChunk with explicit model/dim/vector_len."""
+    content_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return ArticleRagVectorChunk(
+        chunk_id=chunk_id or f"p1g-chunk-{hashlib.sha1(text.encode()).hexdigest()[:8]}",
+        content_sha256=content_sha,
+        embedding_text_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        embedding=_p1g_make_embedding(text=text, model=model, dim=dim, vector_len=vector_len),
+        citation={
+            "reading_record_id": str(_RECORD_ID),
+            "stable_document_id": str(_STABLE_DOC_ID),
+            "base_id": str(_BASE_ID),
+            "record_generation": 1,
+            "block_ids": [str(uuid4())],
+            "unit_ids": [],
+            "anchor_segment_ids": [],
+            "canonical_text_start_utf16": 0,
+            "canonical_text_end_utf16": 12,
+        },
+        metadata={"chunk_kind": "block", "language": "en"},
+    )
+
+
+def _p1g_make_write_metadata(
+    *,
+    collection: str = _P1G_V1_VECTOR_NAMESPACE,
+    embedding_model: str = _P1G_V1_DOC_EMBEDDING_MODEL,
+    embedding_dimension: int = _P1G_V1_DOC_EMBEDDING_DIM,
+    embedding_text_type: str = _P1G_V1_DOC_EMBEDDING_TEXT_TYPE,
+    chunk_count: int = 1,
+) -> ArticleRagVectorWriteMetadata:
+    """Build ArticleRagVectorWriteMetadata with all P1-G required fields.
+
+    The P1-G production contract requires ``embedding_model``,
+    ``embedding_dimension`` and ``embedding_text_type`` to be required
+    fields on the dataclass.  This helper provides V1 profile defaults
+    so individual tests can override only the field under test.
+    """
+    return ArticleRagVectorWriteMetadata(
+        collection=collection,
+        reading_record_id=_RECORD_ID,
+        stable_document_id=_STABLE_DOC_ID,
+        base_id=_BASE_ID,
+        record_generation=1,
+        index_version="article_rag_index_v1",
+        chunker_version="article_rag_index_plan_v1",
+        plan_content_sha256=hashlib.sha256(b"plan").hexdigest(),
+        chunk_count=chunk_count,
+        profile_fingerprint=(
+            "e443f581eb3e86aeb9dbcdcee806783186bd85da6c987c60357b61905ea86d6d"
+        ),
+        embedding_model=embedding_model,
+        embedding_dimension=embedding_dimension,
+        embedding_text_type=embedding_text_type,
+    )
+
+
+# ---------------------------------------------------------------------
+# Scenario 10: configured / call / metadata collection three-way
+# mismatch → client/upsert 0 calls.
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1g_zilliz_writer_call_collection_mismatch_zero_upsert(
+    _pymilvus_clean: None, monkeypatch: pytest.MonkeyPatch,
+):
+    """RED: call collection != writer._collection → fail-closed, 0 upserts."""
+    fake_client = _install_pymilvus_stub(monkeypatch)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+    )
+    chunk = _p1g_make_chunk(text="call-collection-mismatch")
+    metadata = _p1g_make_write_metadata()
+
+    with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
+        await writer.upsert_chunks(
+            collection="some-other-call-collection",
+            chunks_with_embeddings=[chunk],
+            metadata=metadata,
+        )
+
+    assert exc_info.value.retryable is False
+    assert (
+        exc_info.value.failure_code
+        == _P1G_WRITER_FAILURE_CODE_COLLECTION_MISMATCH
+    )
+    assert fake_client.upsert_calls == []
+    assert fake_client.has_collection_calls == []
+    assert fake_client.create_collection_calls == []
+
+
+@pytest.mark.anyio
+async def test_p1g_zilliz_writer_metadata_collection_mismatch_zero_upsert(
+    _pymilvus_clean: None, monkeypatch: pytest.MonkeyPatch,
+):
+    """RED: metadata.collection != writer._collection → fail-closed, 0 upserts.
+
+    Even when the call collection matches the writer's configured
+    collection, a metadata.collection mismatch must fail-closed BEFORE
+    any client call.  This is the defence-in-depth check that prevents
+    a worker bug from smuggling a wrong-namespace metadata payload
+    through the writer.
+    """
+    fake_client = _install_pymilvus_stub(monkeypatch)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+    )
+    chunk = _p1g_make_chunk(text="metadata-collection-mismatch")
+    # Metadata carries a WRONG collection while call collection matches
+    # the writer's configured collection.
+    metadata = _p1g_make_write_metadata(collection="wrong-metadata-collection")
+
+    with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
+        await writer.upsert_chunks(
+            collection=_P1G_V1_VECTOR_NAMESPACE,
+            chunks_with_embeddings=[chunk],
+            metadata=metadata,
+        )
+
+    assert exc_info.value.retryable is False
+    assert (
+        exc_info.value.failure_code
+        == _P1G_WRITER_FAILURE_CODE_COLLECTION_MISMATCH
+    )
+    assert fake_client.upsert_calls == []
+    assert fake_client.has_collection_calls == []
+    assert fake_client.create_collection_calls == []
+
+
+# ---------------------------------------------------------------------
+# Scenario 11: dim matrix — writer/metadata/chunk/vector-len mismatch
+# → client/upsert 0 calls.
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "writer_dim,metadata_dim,chunk_dim,chunk_vec_len,expected_failure_code,label",
+    [
+        # writer vs metadata mismatch — profile check catches metadata
+        # dim != V1 profile dim (1024) before the legacy metadata dim
+        # check.  P1-G-R1 changed the failure code from
+        # vector_writer_dimension_mismatch to vector_writer_profile_mismatch.
+        (
+            1024, 512, 512, 512,
+            _P1G_R1_FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH,
+            "writer_metadata_dim_mismatch",
+        ),
+        # metadata vs chunk mismatch — metadata dim matches V1 profile
+        # (1024), so profile check passes; per-chunk check catches.
+        (
+            1024, 1024, 512, 512,
+            _P1G_WRITER_FAILURE_CODE_DIMENSION_MISMATCH,
+            "metadata_chunk_dim_mismatch",
+        ),
+        # chunk dim vs vector len mismatch (dim correct, vector wrong)
+        (
+            1024, 1024, 1024, 1023,
+            _P1G_WRITER_FAILURE_CODE_DIMENSION_MISMATCH,
+            "chunk_dim_vs_vector_len_mismatch",
+        ),
+        # chunk dim wrong, vector len "correct" relative to writer
+        (
+            1024, 1024, 512, 1024,
+            _P1G_WRITER_FAILURE_CODE_DIMENSION_MISMATCH,
+            "chunk_dim_wrong_vector_len_correct",
+        ),
+        # bool dim is never a valid dimension — profile check catches
+        # metadata bool dim (True != 1024) before the legacy metadata
+        # dim check.  P1-G-R1 changed the failure code.
+        (
+            1024, True, 1024, 1024,
+            _P1G_R1_FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH,
+            "metadata_bool_dim",
+        ),
+        (
+            1024, 1024, True, 1024,
+            _P1G_WRITER_FAILURE_CODE_DIMENSION_MISMATCH,
+            "chunk_bool_dim",
+        ),
+    ],
+    ids=[
+        "writer_metadata_dim_mismatch",
+        "metadata_chunk_dim_mismatch",
+        "chunk_dim_vs_vector_len_mismatch",
+        "chunk_dim_wrong_vector_len_correct",
+        "metadata_bool_dim",
+        "chunk_bool_dim",
+    ],
+)
+@pytest.mark.anyio
+async def test_p1g_zilliz_writer_dim_matrix_zero_upsert(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+    writer_dim: int,
+    metadata_dim: int,
+    chunk_dim: int,
+    chunk_vec_len: int,
+    expected_failure_code: str,
+    label: str,
+):
+    """RED: any dim mismatch in the writer/metadata/chunk/vector-len
+    chain must fail-closed with 0 upsert calls.
+    """
+    fake_client = _install_pymilvus_stub(monkeypatch)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        dim=writer_dim,
+    )
+    chunk = _p1g_make_chunk(
+        text=f"dim-matrix-{label}",
+        dim=chunk_dim,
+        vector_len=chunk_vec_len,
+    )
+    metadata = _p1g_make_write_metadata(embedding_dimension=metadata_dim)
+
+    with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
+        await writer.upsert_chunks(
+            collection=_P1G_V1_VECTOR_NAMESPACE,
+            chunks_with_embeddings=[chunk],
+            metadata=metadata,
+        )
+
+    assert exc_info.value.retryable is False
+    assert (
+        exc_info.value.failure_code == expected_failure_code
+    ), (
+        f"unexpected failure_code for {label}: "
+        f"expected {expected_failure_code!r}, "
+        f"got {exc_info.value.failure_code!r}"
+    )
+    assert fake_client.upsert_calls == []
+    assert fake_client.has_collection_calls == []
+    assert fake_client.create_collection_calls == []
+
+
+# ---------------------------------------------------------------------
+# Scenario 12: chunk.embedding.model != metadata.embedding_model →
+# client/upsert 0 calls.
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1g_zilliz_writer_chunk_model_mismatch_zero_upsert(
+    _pymilvus_clean: None, monkeypatch: pytest.MonkeyPatch,
+):
+    """RED: chunk model != metadata model → fail-closed, 0 upserts."""
+    fake_client = _install_pymilvus_stub(monkeypatch)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+    )
+    # Chunk claims a different model than the metadata.
+    chunk = _p1g_make_chunk(text="chunk-model-mismatch", model="wrong-chunk-model")
+    metadata = _p1g_make_write_metadata()
+
+    with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
+        await writer.upsert_chunks(
+            collection=_P1G_V1_VECTOR_NAMESPACE,
+            chunks_with_embeddings=[chunk],
+            metadata=metadata,
+        )
+
+    assert exc_info.value.retryable is False
+    assert (
+        exc_info.value.failure_code
+        == _P1G_WRITER_FAILURE_CODE_MODEL_MISMATCH
+    )
+    assert fake_client.upsert_calls == []
+    assert fake_client.has_collection_calls == []
+    assert fake_client.create_collection_calls == []
+
+
+@pytest.mark.anyio
+async def test_p1g_zilliz_writer_multi_chunk_second_model_mismatch_zero_upsert(
+    _pymilvus_clean: None, monkeypatch: pytest.MonkeyPatch,
+):
+    """RED: 2nd chunk model mismatch → fail-closed, 0 upserts (no partial)."""
+    fake_client = _install_pymilvus_stub(monkeypatch)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+    )
+    chunks = [
+        _p1g_make_chunk(text="first-chunk-ok"),
+        _p1g_make_chunk(text="second-chunk-bad-model", model="wrong-model"),
+        _p1g_make_chunk(text="third-chunk-ok"),
+    ]
+    metadata = _p1g_make_write_metadata(chunk_count=3)
+
+    with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
+        await writer.upsert_chunks(
+            collection=_P1G_V1_VECTOR_NAMESPACE,
+            chunks_with_embeddings=chunks,
+            metadata=metadata,
+        )
+
+    assert exc_info.value.retryable is False
+    assert (
+        exc_info.value.failure_code
+        == _P1G_WRITER_FAILURE_CODE_MODEL_MISMATCH
+    )
+    assert fake_client.upsert_calls == []
+
+
+# ---------------------------------------------------------------------
+# Scenario 13: valid V1 metadata + chunks → row built + fake upsert
+# succeeds.
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1g_zilliz_writer_valid_v1_metadata_upserts(
+    _pymilvus_clean: None, monkeypatch: pytest.MonkeyPatch,
+):
+    """RED: when all P1-G contracts hold, the writer must accept the
+    metadata, build rows, and forward to the SDK upsert.
+    """
+    fake_client = _install_pymilvus_stub(monkeypatch, upserted_count=2)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+    )
+    chunks = [
+        _p1g_make_chunk(text="valid-chunk-one"),
+        _p1g_make_chunk(text="valid-chunk-two"),
+    ]
+    metadata = _p1g_make_write_metadata(chunk_count=2)
+
+    result = await writer.upsert_chunks(
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        chunks_with_embeddings=chunks,
+        metadata=metadata,
+    )
+
+    assert result.collection == _P1G_V1_VECTOR_NAMESPACE
+    assert result.upserted_count == 2
+    assert len(fake_client.upsert_calls) == 1
+    assert fake_client.upsert_calls[0]["collection_name"] == _P1G_V1_VECTOR_NAMESPACE
+    rows = fake_client.upsert_calls[0]["data"]
+    assert len(rows) == 2
+    # Row carries the embedding_model (already a pre-P1-G row field).
+    # P1-G defence-in-depth validates chunk.embedding.model ==
+    # metadata.embedding_model before this point, so the row value is
+    # guaranteed to equal the profile model.
+    assert rows[0]["embedding_model"] == _P1G_V1_DOC_EMBEDDING_MODEL
+    assert rows[1]["embedding_model"] == _P1G_V1_DOC_EMBEDDING_MODEL
+
+
+# ---------------------------------------------------------------------
+# Scenario 14: malicious sentinel must NOT appear in str(error),
+# repr(error), traceback.format_exception(error).  Also asserts that
+# the writer does not echo the malicious model, vector content, or
+# chunk text in any error surface.
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_p1g_zilliz_writer_sentinel_not_in_error_surface(
+    _pymilvus_clean: None, monkeypatch: pytest.MonkeyPatch,
+):
+    """RED: malicious sentinel values must not appear in any error surface.
+
+    Verifies that a malicious chunk model, vector content, and chunk
+    text are NOT echoed in str(error), repr(error), or
+    traceback.format_exception(error) when the writer fails closed due
+    to a model mismatch.
+    """
+    fake_client = _install_pymilvus_stub(monkeypatch)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+    )
+
+    sentinel_model = "sk-P1G-SENTINEL-MODEL-DO-NOT-LEAK-1234567890abcdef"
+    sentinel_text = "P1G-SENTINEL-CHUNK-TEXT-DO-NOT-LEAK-0987654321"
+    sentinel_vector_marker = 0.1357924680  # unique marker value
+
+    chunk = _p1g_make_chunk(
+        text=sentinel_text,
+        model=sentinel_model,
+    )
+    # Overwrite vector with a marker so we can assert it does not leak.
+    chunk = ArticleRagVectorChunk(
+        chunk_id=chunk.chunk_id,
+        content_sha256=chunk.content_sha256,
+        embedding_text_sha256=chunk.embedding_text_sha256,
+        embedding=ArticleRagEmbedding(
+            text_sha256=chunk.embedding.text_sha256,
+            model=sentinel_model,
+            vector=tuple([sentinel_vector_marker] * _P1G_V1_DOC_EMBEDDING_DIM),
+            dim=_P1G_V1_DOC_EMBEDDING_DIM,
+        ),
+        citation=chunk.citation,
+        metadata=chunk.metadata,
+    )
+    metadata = _p1g_make_write_metadata()
+
+    with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
+        await writer.upsert_chunks(
+            collection=_P1G_V1_VECTOR_NAMESPACE,
+            chunks_with_embeddings=[chunk],
+            metadata=metadata,
+        )
+
+    err = exc_info.value
+    err_str = str(err)
+    err_repr = repr(err)
+    err_tb = "".join(traceback.format_exception(type(err), err, err.__traceback__))
+
+    for surface in (err_str, err_repr, err_tb):
+        assert sentinel_model not in surface, (
+            f"sentinel model leaked into error surface: {surface!r}"
+        )
+        assert sentinel_text not in surface, (
+            f"sentinel chunk text leaked into error surface: {surface!r}"
+        )
+        assert str(sentinel_vector_marker) not in surface, (
+            f"sentinel vector marker leaked into error surface: {surface!r}"
+        )
+
+    # Failure code must be the stable model-mismatch label, not a
+    # caller-supplied value.
+    assert err.failure_code == _P1G_WRITER_FAILURE_CODE_MODEL_MISMATCH
+    assert err.retryable is False
+    assert fake_client.upsert_calls == []
+
+
+# ===================================================================
+# P1-G-R1: Writer constructor dimension matrix (RED test A)
+#
+# Verifies the writer constructor explicitly rejects bool dim (which
+# Python treats as an int subclass) and never echoes the caller-supplied
+# dim value in any error surface.
+# ===================================================================
+
+
+_P1G_R1_SENTINEL_DIMENSION = "P1G-R1-SENTINEL-DIMENSION-DO-NOT-LEAK"
+_P1G_R1_FAILURE_CODE_VECTOR_WRITER_UNCONFIGURED = "vector_writer_unconfigured"
+# _P1G_R1_FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH is defined earlier
+# (near the P1-G failure code constants) so the P1-G dim matrix parametrize
+# can reference it at module import time.
+
+
+@pytest.mark.parametrize(
+    "bad_dim,label",
+    [
+        (True, "bool_true"),
+        (False, "bool_false"),
+        (0, "zero"),
+        (-1, "negative"),
+        (_P1G_R1_SENTINEL_DIMENSION, "sentinel_string"),
+        (None, "none"),
+        (1.5, "float"),
+    ],
+    ids=[
+        "bool_true",
+        "bool_false",
+        "zero",
+        "negative",
+        "sentinel_string",
+        "none",
+        "float",
+    ],
+)
+def test_p1g_r1_writer_constructor_rejects_invalid_dim(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+    bad_dim: Any,
+    label: str,
+):
+    """RED: writer constructor must reject bool/non-int/non-positive dim.
+
+    Bool is a subclass of int in Python, so ``isinstance(True, int)``
+    returns True.  The constructor must explicitly reject bool values.
+    The sentinel string must NOT appear in any error surface.
+    """
+    fake_client = _install_pymilvus_stub(monkeypatch)
+    with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
+        ZillizArticleRagVectorWriter(
+            uri=_FAKE_ZILLIZ_URI,
+            token=_FAKE_ZILLIZ_TOKEN,
+            collection=_FAKE_ZILLIZ_COLLECTION,
+            dim=bad_dim,
+        )
+
+    err = exc_info.value
+    assert err.retryable is False
+    assert err.failure_code == _P1G_R1_FAILURE_CODE_VECTOR_WRITER_UNCONFIGURED
+
+    # Sentinel must NOT leak into any error surface.
+    err_str = str(err)
+    err_repr = repr(err)
+    err_args = repr(err.args)
+    err_tb = "".join(
+        traceback.format_exception(type(err), err, err.__traceback__)
+    )
+    for surface in (err_str, err_repr, err_args, err_tb):
+        assert _P1G_R1_SENTINEL_DIMENSION not in surface, (
+            f"sentinel dim leaked into error surface ({label}): "
+            f"{surface!r}"
+        )
+
+    # No pymilvus client constructed.
+    assert fake_client.has_collection_calls == []
+    assert fake_client.create_collection_calls == []
+    assert fake_client.upsert_calls == []
+
+
+def test_p1g_r1_writer_constructor_accepts_positive_int_dim(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Positive characterization: dim=1024 must still construct OK.
+
+    This is NOT a RED test — it verifies the constructor still accepts
+    valid positive int dim values after the bool-rejection fix.
+    """
+    fake_client = _install_pymilvus_stub(monkeypatch)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_FAKE_ZILLIZ_COLLECTION,
+        dim=1024,
+    )
+    assert writer.collection == _FAKE_ZILLIZ_COLLECTION
+    # No client constructed yet (lazy).
+    assert fake_client.has_collection_calls == []
+
+
+# ===================================================================
+# P1-G-R1: Empty batch metadata validation matrix (RED test B)
+#
+# Verifies that an empty chunks list does NOT skip metadata validation.
+# Invalid metadata must fail-closed even when chunks_with_embeddings=[].
+# ===================================================================
+
+
+def _p1g_r1_make_valid_metadata() -> ArticleRagVectorWriteMetadata:
+    """Build V1-profile-matching metadata for the empty-batch tests."""
+    return _p1g_make_write_metadata(chunk_count=0)
+
+
+@pytest.mark.parametrize(
+    "metadata_kwarg,failure_code,label",
+    [
+        # dim mismatch with V1 profile (writer=1024, metadata=512).
+        # Profile check (step 2) fires before existing metadata dim
+        # check (step 3).
+        (
+            {"embedding_dimension": 512},
+            _P1G_R1_FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH,
+            "dim_mismatch",
+        ),
+        # bool dim — profile check catches True != 1024 first.
+        (
+            {"embedding_dimension": True},
+            _P1G_R1_FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH,
+            "bool_dim",
+        ),
+        # non-str model — profile check catches 12345 !=
+        # "text-embedding-v4" first.
+        (
+            {"embedding_model": 12345},
+            _P1G_R1_FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH,
+            "model_non_str",
+        ),
+        # empty model — profile check catches "" !=
+        # "text-embedding-v4" first.
+        (
+            {"embedding_model": ""},
+            _P1G_R1_FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH,
+            "model_empty",
+        ),
+        # non-V1 text_type — profile check catches mismatch.
+        (
+            {"embedding_text_type": "malicious-text-type"},
+            _P1G_R1_FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH,
+            "text_type_non_v1",
+        ),
+        # collection mismatch — existing 3-way collection identity
+        # check (step 1) fires first.
+        (
+            {"collection": "wrong-metadata-collection"},
+            "vector_writer_collection_mismatch",
+            "collection_mismatch",
+        ),
+        # fingerprint mismatch — profile check catches.
+        (
+            {"profile_fingerprint": "a" * 64},
+            _P1G_R1_FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH,
+            "fingerprint_mismatch",
+        ),
+        # unknown/malicious index_version — resolver raises, wrapped
+        # as profile mismatch.
+        (
+            {"index_version": "P1G-R1-MALICIOUS-VERSION"},
+            _P1G_R1_FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH,
+            "unknown_index_version",
+        ),
+    ],
+    ids=[
+        "dim_mismatch",
+        "bool_dim",
+        "model_non_str",
+        "model_empty",
+        "text_type_non_v1",
+        "collection_mismatch",
+        "fingerprint_mismatch",
+        "unknown_index_version",
+    ],
+)
+@pytest.mark.anyio
+async def test_p1g_r1_empty_batch_invalid_metadata_fails_closed(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+    metadata_kwarg: dict[str, Any],
+    failure_code: str,
+    label: str,
+):
+    """RED: invalid metadata must fail-closed even when batch is empty."""
+    fake_client = _install_pymilvus_stub(monkeypatch)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+    )
+    metadata = _p1g_r1_make_valid_metadata()
+    # Apply the invalid override.
+    metadata = dataclass_replace(metadata, **metadata_kwarg)
+
+    with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
+        await writer.upsert_chunks(
+            collection=_P1G_V1_VECTOR_NAMESPACE,
+            chunks_with_embeddings=[],
+            metadata=metadata,
+        )
+
+    err = exc_info.value
+    assert err.retryable is False
+    assert err.failure_code == failure_code, (
+        f"unexpected failure_code for {label}: "
+        f"expected {failure_code!r}, got {err.failure_code!r}"
+    )
+    # No client / network / upsert call.
+    assert fake_client.upsert_calls == []
+    assert fake_client.has_collection_calls == []
+    assert fake_client.create_collection_calls == []
+
+
+@pytest.mark.anyio
+async def test_p1g_r1_empty_batch_valid_metadata_returns_zero(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """RED: valid V1-profile-matching empty batch returns upserted_count=0."""
+    fake_client = _install_pymilvus_stub(monkeypatch)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+    )
+    metadata = _p1g_r1_make_valid_metadata()
+
+    result = await writer.upsert_chunks(
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        chunks_with_embeddings=[],
+        metadata=metadata,
+    )
+
+    assert result.upserted_count == 0
+    assert result.collection == _P1G_V1_VECTOR_NAMESPACE
+    # No client / upsert call for empty batch.
+    assert fake_client.upsert_calls == []
+    assert fake_client.has_collection_calls == []
+    assert fake_client.create_collection_calls == []
+
+
+# ===================================================================
+# P1-G-R1: Writer profile metadata 5-field validation (RED test C)
+#
+# Verifies the writer validates all 5 profile fields against the
+# resolved V1 profile via the public resolver, with safe exception
+# unwrapping (no __cause__, no __context__).
+# ===================================================================
+
+
+_P1G_R1_V1_PROFILE_FINGERPRINT = (
+    "e443f581eb3e86aeb9dbcdcee806783186bd85da6c987c60357b61905ea86d6d"
+)
+
+
+@pytest.mark.parametrize(
+    "field,value,label",
+    [
+        ("profile_fingerprint", "b" * 64, "fingerprint_mismatch"),
+        # collection mismatch is caught by existing 3-way collection identity
+        # check (step 1) before the profile check (step 2) — writer is
+        # constructed with collection == profile.vector_namespace, so any
+        # metadata.collection override that differs from writer collection
+        # also differs from profile.vector_namespace.
+        ("collection", "wrong-collection-name", "collection_mismatch"),
+        ("embedding_model", "wrong-embedding-model", "model_mismatch"),
+        ("embedding_dimension", 768, "dimension_mismatch"),
+        ("embedding_text_type", "wrong_text_type", "text_type_mismatch"),
+    ],
+    ids=[
+        "fingerprint_mismatch",
+        "collection_mismatch",
+        "model_mismatch",
+        "dimension_mismatch",
+        "text_type_mismatch",
+    ],
+)
+@pytest.mark.anyio
+async def test_p1g_r1_writer_profile_metadata_5_field_validation(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: Any,
+    label: str,
+):
+    """RED: each of the 5 profile fields must match the resolved V1 profile."""
+    fake_client = _install_pymilvus_stub(monkeypatch)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+    )
+    metadata = _p1g_make_write_metadata(chunk_count=1)
+    # Override one field with a wrong value.
+    metadata = dataclass_replace(metadata, **{field: value})
+    chunk = _p1g_make_chunk(text=f"profile-5-field-{label}")
+
+    with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
+        await writer.upsert_chunks(
+            collection=_P1G_V1_VECTOR_NAMESPACE,
+            chunks_with_embeddings=[chunk],
+            metadata=metadata,
+        )
+
+    err = exc_info.value
+    assert err.retryable is False
+    # For collection_mismatch, the existing 3-way collection identity check
+    # (step 1) fires first with vector_writer_collection_mismatch.  For all
+    # other fields, the new profile check (step 2) fires first with
+    # vector_writer_profile_mismatch.
+    if label == "collection_mismatch":
+        assert err.failure_code == "vector_writer_collection_mismatch", (
+            f"unexpected failure_code for {label}: "
+            f"expected 'vector_writer_collection_mismatch', "
+            f"got {err.failure_code!r}"
+        )
+    else:
+        assert err.failure_code == _P1G_R1_FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH, (
+            f"unexpected failure_code for {label}: "
+            f"expected {_P1G_R1_FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH!r}, "
+            f"got {err.failure_code!r}"
+        )
+    # No client / upsert call.
+    assert fake_client.upsert_calls == []
+    assert fake_client.has_collection_calls == []
+    assert fake_client.create_collection_calls == []
+
+
+@pytest.mark.anyio
+async def test_p1g_r1_writer_unknown_index_version_resolver_error_unwrapped(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """RED: resolver exception must be safely unwrapped (no cause/context)."""
+    fake_client = _install_pymilvus_stub(monkeypatch)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+    )
+    metadata = _p1g_make_write_metadata(chunk_count=1)
+    metadata = dataclass_replace(
+        metadata, index_version="P1G-R1-MALICIOUS-UNKNOWN-VERSION"
+    )
+    sentinel = "P1G-R1-MALICIOUS-UNKNOWN-VERSION"
+    chunk = _p1g_make_chunk(text="unknown-version-resolver-test")
+
+    with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
+        await writer.upsert_chunks(
+            collection=_P1G_V1_VECTOR_NAMESPACE,
+            chunks_with_embeddings=[chunk],
+            metadata=metadata,
+        )
+
+    err = exc_info.value
+    assert err.retryable is False
+    assert err.failure_code == _P1G_R1_FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH
+    # Safe exception unwrapping: no __cause__, no __context__.
+    assert err.__cause__ is None
+    assert err.__context__ is None
+    # Sentinel version must NOT leak into error surfaces.
+    err_str = str(err)
+    err_repr = repr(err)
+    err_tb = "".join(
+        traceback.format_exception(type(err), err, err.__traceback__)
+    )
+    for surface in (err_str, err_repr, err_tb):
+        assert sentinel not in surface, (
+            f"sentinel version leaked into error surface: {surface!r}"
+        )
+    assert fake_client.upsert_calls == []
+
+
+@pytest.mark.anyio
+async def test_p1g_r1_writer_valid_v1_profile_metadata_passes(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Positive characterization: valid V1 profile metadata succeeds."""
+    fake_client = _install_pymilvus_stub(monkeypatch, upserted_count=1)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_FAKE_ZILLIZ_URI,
+        token=_FAKE_ZILLIZ_TOKEN,
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+    )
+    metadata = _p1g_make_write_metadata(chunk_count=1)
+    chunk = _p1g_make_chunk(text="valid-v1-profile-metadata")
+
+    result = await writer.upsert_chunks(
+        collection=_P1G_V1_VECTOR_NAMESPACE,
+        chunks_with_embeddings=[chunk],
+        metadata=metadata,
+    )
+
+    assert result.upserted_count == 1
+    assert result.collection == _P1G_V1_VECTOR_NAMESPACE
+    assert len(fake_client.upsert_calls) == 1

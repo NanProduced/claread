@@ -68,6 +68,10 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from .article_rag_index_profile import (
+    ArticleRagIndexProfileResolutionError,
+    resolve_article_rag_index_profile,
+)
 from .article_rag_index_worker import (
     ArticleRagIndexWorkerError,
     ArticleRagVectorChunk,
@@ -77,6 +81,54 @@ from .article_rag_index_worker import (
     FAILURE_CODE_VECTOR_WRITE_FAILED,
     FAILURE_CODE_VECTOR_WRITER_UNCONFIGURED,
     UnconfiguredArticleRagVectorWriter,
+)
+
+# P1-G: Zilliz writer defence-in-depth failure codes.  All
+# retryable=False, fixed safe message that does NOT echo the malicious
+# model, vector content, chunk text, URI, token, collection name, or
+# any caller-supplied value.
+FAILURE_CODE_VECTOR_WRITER_COLLECTION_MISMATCH = (
+    "vector_writer_collection_mismatch"
+)
+FAILURE_CODE_VECTOR_WRITER_DIMENSION_MISMATCH = (
+    "vector_writer_dimension_mismatch"
+)
+FAILURE_CODE_VECTOR_WRITER_MODEL_MISMATCH = "vector_writer_model_mismatch"
+
+# P1-G: fixed safe messages for writer defence-in-depth failures.
+# Must NOT echo URI, token, collection name, dim value, model name,
+# vector content, chunk text, or SDK error.
+_P1G_MSG_WRITER_COLLECTION_MISMATCH = (
+    "Article RAG vector writer collection does not match the configured "
+    "writer collection or the metadata collection"
+)
+_P1G_MSG_WRITER_DIMENSION_MISMATCH = (
+    "Article RAG vector writer dimension contract is violated across "
+    "writer configuration, metadata, chunk embedding, or vector length"
+)
+_P1G_MSG_WRITER_MODEL_MISMATCH = (
+    "Article RAG vector writer chunk embedding model does not match the "
+    "metadata embedding model"
+)
+
+# P1-G-R1: fixed safe message for writer constructor dim rejection.
+# Must NOT echo dim value, repr(dim), or any caller-supplied sentinel.
+_P1G_R1_MSG_WRITER_UNCONFIGURED_DIM = (
+    "ZillizArticleRagVectorWriter requires a positive integer dim"
+)
+# P1-G-R1: fixed safe message for writer profile metadata mismatch.
+# Used when the 5 profile fields (fingerprint, collection, model, dim,
+# text_type) do not match the resolved V1 profile.  Must NOT echo any
+# caller-supplied value (version, fingerprint, model, text type,
+# collection, dim).
+_P1G_R1_MSG_WRITER_PROFILE_MISMATCH = (
+    "Article RAG vector writer metadata does not match the resolved "
+    "V1 profile identity"
+)
+
+# P1-G-R1: failure code for writer profile metadata mismatch.
+FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH = (
+    "vector_writer_profile_mismatch"
 )
 
 if TYPE_CHECKING:
@@ -799,9 +851,16 @@ class ZillizArticleRagVectorWriter:
                 failure_class="configuration",
                 failure_code=FAILURE_CODE_VECTOR_WRITER_UNCONFIGURED,
             )
-        if not isinstance(dim, int) or dim <= 0:
+        # P1-G-R1: explicitly reject bool — Python ``bool`` is a subclass
+        # of ``int``, so ``isinstance(True, int)`` returns True.  The
+        # legacy ``not isinstance(dim, int)`` check let ``dim=True``
+        # through (True > 0).  We now reject bool explicitly.  The error
+        # message is a fixed safe literal — it MUST NOT interpolate
+        # ``dim``, ``repr(dim)``, or any caller-supplied value, so a
+        # malicious sentinel cannot leak into error surfaces.
+        if isinstance(dim, bool) or not isinstance(dim, int) or dim <= 0:
             raise ZillizArticleRagVectorWriterError(
-                f"ZillizArticleRagVectorWriter requires a positive dim; got {dim!r}",
+                _P1G_R1_MSG_WRITER_UNCONFIGURED_DIM,
                 retryable=False,
                 failure_class="configuration",
                 failure_code=FAILURE_CODE_VECTOR_WRITER_UNCONFIGURED,
@@ -875,22 +934,160 @@ class ZillizArticleRagVectorWriter:
         surface to the worker as retryable
         :data:`FAILURE_CODE_VECTOR_WRITE_FAILED` via D6-I4C's Phase-4
         check.
+
+        P1-G defence-in-depth: BEFORE any client / network / upsert
+        call, validate the full frozen vector-space contract:
+
+          1. ``collection == self._collection == metadata.collection``
+             (three-way collection identity check).
+          2. ``metadata.embedding_dimension`` is a non-bool int and
+             equals ``self._dim``.
+          3. For each chunk: ``chunk.embedding.dim`` is a non-bool int
+             and equals ``metadata.embedding_dimension``.
+          4. For each chunk: ``len(chunk.embedding.vector)`` equals
+             ``metadata.embedding_dimension``.
+          5. For each chunk: ``chunk.embedding.model`` is a str and
+             equals ``metadata.embedding_model``.
+
+        Any failure raises :class:`ZillizArticleRagVectorWriterError`
+        with a fixed safe message (no echo of caller-supplied values),
+        ``retryable=False``, and the appropriate stable
+        ``failure_code``.  ``client.upsert_calls`` stays empty.
         """
-        if collection != self._collection:
+        # P1-G check 1: three-way collection identity.  No strip, no
+        # case-normalisation, no fallback.  Fixed safe message; no
+        # echo of collection name (caller or configured or metadata).
+        if (
+            collection != self._collection
+            or metadata.collection != self._collection
+            or collection != metadata.collection
+        ):
             raise ZillizArticleRagVectorWriterError(
-                "ZillizArticleRagVectorWriter received a mismatched "
-                f"collection {collection!r} (writer configured for "
-                f"{self._collection!r})",
+                _P1G_MSG_WRITER_COLLECTION_MISMATCH,
                 retryable=False,
-                failure_class="vector_write",
-                failure_code=FAILURE_CODE_VECTOR_WRITE_FAILED,
+                failure_class="vector_writer_collection_mismatch",
+                failure_code=FAILURE_CODE_VECTOR_WRITER_COLLECTION_MISMATCH,
             )
+
+        # P1-G-R1 check 2: resolver/profile metadata identity.
+        # Validate all 5 frozen profile fields against the resolved V1
+        # profile via the public resolver.  This MUST happen BEFORE the
+        # empty-batch early return so that invalid metadata fails closed
+        # even when ``chunks_with_embeddings == []``.
+        #
+        # Safe exception unwrapping: if the resolver raises, we capture
+        # the failure signal inside the except block but construct and
+        # raise the outer exception OUTSIDE the except block.  This
+        # ensures ``__cause__ is None`` and ``__context__ is None`` —
+        # the resolver's internal exception (which may echo the
+        # malicious version) is not reachable via the error chain.
+        resolver_failed = False
+        try:
+            resolution = resolve_article_rag_index_profile(
+                metadata.index_version
+            )
+        except ArticleRagIndexProfileResolutionError:
+            resolver_failed = True
+            resolution = None  # type: ignore[assignment]
+
+        if resolver_failed or resolution is None:
+            raise ZillizArticleRagVectorWriterError(
+                _P1G_R1_MSG_WRITER_PROFILE_MISMATCH,
+                retryable=False,
+                failure_class="vector_writer_profile_mismatch",
+                failure_code=FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH,
+            )
+
+        # At this point resolution is non-None — mypy can't infer the
+        # narrowing through the ``resolver_failed`` flag, so assert.
+        assert resolution is not None
+
+        profile = resolution.profile
+        if (
+            metadata.profile_fingerprint != resolution.profile_fingerprint
+            or metadata.collection != profile.vector_namespace
+            or metadata.embedding_model != profile.document_embedding_model
+            or metadata.embedding_dimension
+            != profile.document_embedding_dimension
+            or metadata.embedding_text_type
+            != profile.document_embedding_text_type
+        ):
+            raise ZillizArticleRagVectorWriterError(
+                _P1G_R1_MSG_WRITER_PROFILE_MISMATCH,
+                retryable=False,
+                failure_class="vector_writer_profile_mismatch",
+                failure_code=FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH,
+            )
+
+        # P1-G check 2 (legacy): metadata.embedding_dimension must be a
+        # non-bool int and equal the writer's configured dim.  This is
+        # now redundant with the profile check above (which validates
+        # dim == profile.document_embedding_dimension == 1024 == self._dim
+        # in normal operation), but kept for defence in depth — if a
+        # future change decouples writer dim from profile dim, this
+        # check still catches the mismatch.
+        metadata_dim = metadata.embedding_dimension
+        if isinstance(metadata_dim, bool) or not isinstance(metadata_dim, int):
+            raise ZillizArticleRagVectorWriterError(
+                _P1G_MSG_WRITER_DIMENSION_MISMATCH,
+                retryable=False,
+                failure_class="vector_writer_dimension_mismatch",
+                failure_code=FAILURE_CODE_VECTOR_WRITER_DIMENSION_MISMATCH,
+            )
+        if metadata_dim != self._dim:
+            raise ZillizArticleRagVectorWriterError(
+                _P1G_MSG_WRITER_DIMENSION_MISMATCH,
+                retryable=False,
+                failure_class="vector_writer_dimension_mismatch",
+                failure_code=FAILURE_CODE_VECTOR_WRITER_DIMENSION_MISMATCH,
+            )
+
+        # P1-G-R1: empty batch early return.  This MUST come AFTER the
+        # metadata + profile validation so that invalid metadata fails
+        # closed even when the batch is empty.  A valid empty batch
+        # returns ``upserted_count=0`` without any client/network call.
         if not chunks_with_embeddings:
             return ArticleRagVectorWriteResult(
                 collection=collection,
                 upserted_count=0,
                 provider_metadata={"provider": self.provider_name},
             )
+
+        metadata_model = metadata.embedding_model
+        # P1-G checks 3-5: per-chunk dim / vector-len / model
+        # validation.  Any single bad chunk fails the whole batch
+        # before any client call (no partial upsert).
+        for chunk in chunks_with_embeddings:
+            emb = chunk.embedding
+            chunk_dim = emb.dim
+            if isinstance(chunk_dim, bool) or not isinstance(chunk_dim, int):
+                raise ZillizArticleRagVectorWriterError(
+                    _P1G_MSG_WRITER_DIMENSION_MISMATCH,
+                    retryable=False,
+                    failure_class="vector_writer_dimension_mismatch",
+                    failure_code=FAILURE_CODE_VECTOR_WRITER_DIMENSION_MISMATCH,
+                )
+            if chunk_dim != metadata_dim:
+                raise ZillizArticleRagVectorWriterError(
+                    _P1G_MSG_WRITER_DIMENSION_MISMATCH,
+                    retryable=False,
+                    failure_class="vector_writer_dimension_mismatch",
+                    failure_code=FAILURE_CODE_VECTOR_WRITER_DIMENSION_MISMATCH,
+                )
+            if len(emb.vector) != metadata_dim:
+                raise ZillizArticleRagVectorWriterError(
+                    _P1G_MSG_WRITER_DIMENSION_MISMATCH,
+                    retryable=False,
+                    failure_class="vector_writer_dimension_mismatch",
+                    failure_code=FAILURE_CODE_VECTOR_WRITER_DIMENSION_MISMATCH,
+                )
+            if not isinstance(emb.model, str) or emb.model != metadata_model:
+                raise ZillizArticleRagVectorWriterError(
+                    _P1G_MSG_WRITER_MODEL_MISMATCH,
+                    retryable=False,
+                    failure_class="vector_writer_model_mismatch",
+                    failure_code=FAILURE_CODE_VECTOR_WRITER_MODEL_MISMATCH,
+                )
 
         rows = [
             _build_article_rag_upsert_row(chunk, metadata=metadata)
