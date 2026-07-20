@@ -41,7 +41,6 @@ from app.services.reader_orchestration.article_rag_ask_context_resolver import (
     ArticleRagAskContextResolveResult,
 )
 from app.services.reader_orchestration.article_rag_ask_prompt_attachment import (
-    DEFAULT_ATTACHMENT_INDEX_VERSION,
     DEFAULT_ATTACHMENT_LIMIT,
     DEFAULT_ATTACHMENT_MAX_CONTEXT_CHARS,
     FAILURE_CODE_ATTACHMENT_UNEXPECTED_ERROR,
@@ -90,7 +89,6 @@ class _FakeResolver:
         enabled: bool = True,
         limit: int = DEFAULT_ATTACHMENT_LIMIT,
         max_context_chars: int = DEFAULT_ATTACHMENT_MAX_CONTEXT_CHARS,
-        index_version: str = DEFAULT_ATTACHMENT_INDEX_VERSION,
     ) -> ArticleRagAskContextResolveResult:
         self.calls.append(
             {
@@ -100,7 +98,6 @@ class _FakeResolver:
                 "enabled": bool(enabled),
                 "limit": int(limit),
                 "max_context_chars": int(max_context_chars),
-                "index_version": index_version,
             }
         )
         if self.raise_exc is not None:
@@ -157,7 +154,6 @@ def _make_bundle(
         stable_document_id=_STABLE_DOC_ID,
         base_id=_BASE_ID,
         record_generation=1,
-        index_version="article_rag_index_v1",
         plan_content_sha256=_PLAN_HASH,
     )
 
@@ -184,7 +180,6 @@ def _make_resolver_result(
         retryable=retryable,
         fallback_allowed=fallback_allowed,
         reading_record_id=_RECORD_ID,
-        index_version="article_rag_index_v1",
         query_sha256=query_sha256,
         omitted_hit_count=omitted_hit_count,
         budget_exceeded=budget_exceeded,
@@ -248,7 +243,6 @@ async def test_available_includes_context_and_citations() -> None:
     assert attachment.base_id == _BASE_ID
     assert attachment.record_generation == 1
     assert attachment.plan_content_sha256 == _PLAN_HASH
-    assert attachment.index_version == "article_rag_index_v1"
     assert attachment.query_sha256 == hashlib.sha256(b"hello").hexdigest()
     # Budget / omitted are echoed.
     assert attachment.omitted_hit_count == 0
@@ -528,7 +522,6 @@ async def test_malformed_available_with_no_bundle_fails_soft() -> None:
                 retryable=False,
                 fallback_allowed=True,
                 reading_record_id=_RECORD_ID,
-                index_version="article_rag_index_v1",
                 query_sha256=hashlib.sha256(b"x").hexdigest(),
             )
 
@@ -563,7 +556,6 @@ async def test_malformed_available_with_empty_prompt_text_fails_soft() -> None:
                 retryable=False,
                 fallback_allowed=True,
                 reading_record_id=_RECORD_ID,
-                index_version="article_rag_index_v1",
                 query_sha256=hashlib.sha256(b"x").hexdigest(),
             )
 
@@ -642,14 +634,12 @@ async def test_parameter_passthrough_to_resolver() -> None:
         enabled=False,
         limit=12,
         max_context_chars=8000,
-        index_version="custom-v2",
     )
     assert len(resolver.calls) == 1
     call = resolver.calls[0]
     assert call["enabled"] is False
     assert call["limit"] == 12
     assert call["max_context_chars"] == 8000
-    assert call["index_version"] == "custom-v2"
     assert call["reading_record_id"] == str(_RECORD_ID)
     assert call["query_text"] == "hello"
 
@@ -705,7 +695,6 @@ async def test_stable_ids_preserved_on_no_context_paths() -> None:
     assert attachment.base_id == _BASE_ID
     assert attachment.record_generation == 1
     assert attachment.plan_content_sha256 == _PLAN_HASH
-    assert attachment.index_version == "article_rag_index_v1"
     # Budget / omitted are echoed even on the no-context paths
     # (they came from the resolver's plan, not the bundle).
     assert attachment.omitted_hit_count == 3
@@ -776,7 +765,6 @@ async def test_attachment_deterministic_for_same_input() -> None:
 def test_default_constants() -> None:
     assert DEFAULT_ATTACHMENT_LIMIT == 8
     assert DEFAULT_ATTACHMENT_MAX_CONTEXT_CHARS == 4000
-    assert DEFAULT_ATTACHMENT_INDEX_VERSION == "article_rag_index_v1"
 
 
 def test_failure_code_constant() -> None:
@@ -852,7 +840,6 @@ async def test_unknown_resolver_status_fails_soft() -> None:
                 retryable=False,
                 fallback_allowed=True,
                 reading_record_id=_RECORD_ID,
-                index_version="article_rag_index_v1",
                 query_sha256=hashlib.sha256(b"x").hexdigest(),
             )
 
@@ -889,7 +876,6 @@ async def test_empty_string_resolver_status_fails_soft() -> None:
                 retryable=False,
                 fallback_allowed=True,
                 reading_record_id=_RECORD_ID,
-                index_version="article_rag_index_v1",
                 query_sha256=hashlib.sha256(b"x").hexdigest(),
             )
 

@@ -137,7 +137,6 @@ def _make_assembly(
             "stable_document_id": _STABLE_DOC_ID,
             "base_id": _BASE_ID, "record_generation": 1,
             "plan_content_sha256": _PLAN_HASH,
-            "index_version": "article_rag_index_v1",
             "source_pack_hash": source_pack_hash,
         },
     )
@@ -444,7 +443,6 @@ def test_metadata_json_contains_only_allowlisted_keys() -> None:
         "base_id",
         "record_generation",
         "plan_content_sha256",
-        "index_version",
         "source_pack_hash",
     }
     assert set(result.metadata_json.keys()) <= expected_keys
@@ -591,7 +589,6 @@ async def test_bridge_consumes_real_i4n_assembly() -> None:
                     "stable_document_id": _STABLE_DOC_ID,
                     "base_id": _BASE_ID, "record_generation": 1,
                     "plan_content_sha256": _PLAN_HASH,
-                    "index_version": "article_rag_index_v1",
                     "source_pack_hash": _SOURCE_PACK_HASH,
                 },
             )

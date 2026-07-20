@@ -74,7 +74,6 @@ class ReaderRecordAskRagCitationPublic(BaseModel):
 
     rag_substrate_id: str
     index_run_id: str
-    index_version: str
     plan_content_sha256: str
     source_scope: Literal["main_reading_text", "heading"]
     block_type: str
@@ -271,7 +270,6 @@ def evidence_item_from_observation(obs: Any) -> ReaderRecordAskEvidenceItem:
         rag_public = ReaderRecordAskRagCitationPublic(
             rag_substrate_id=rag.rag_substrate_id,
             index_run_id=rag.index_run_id,
-            index_version=rag.index_version,
             plan_content_sha256=rag.plan_content_sha256,
             source_scope=rag.source_scope,
             block_type=rag.block_type,

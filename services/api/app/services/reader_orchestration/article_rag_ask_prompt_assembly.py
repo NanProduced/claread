@@ -66,7 +66,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 
 from .article_rag_ask_runtime_adapter import (
     ArticleRagAskRuntimeContext,
@@ -132,7 +132,6 @@ _ALLOWED_METADATA_KEYS = frozenset(
         "base_id",
         "record_generation",
         "plan_content_sha256",
-        "index_version",
         "source_pack_hash",
     }
 )

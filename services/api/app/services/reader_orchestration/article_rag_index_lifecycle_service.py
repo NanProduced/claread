@@ -129,8 +129,6 @@ class ArticleRagIndexEnsureResult:
     record_generation: int | None = None
     index_run_id: UUID | None = None
     job_id: UUID | None = None
-    index_version: str | None = None
-    chunker_version: str | None = None
 
 
 # ``status`` query result status values:
@@ -170,7 +168,6 @@ class ArticleRagIndexLifecycleStatus:
     base_id: UUID | None = None
     record_generation: int | None = None
     index_run_id: UUID | None = None
-    index_version: str | None = None
     plan_content_sha256: str | None = None
     chunk_count: int | None = None
     reason_code: str | None = None
@@ -213,7 +210,6 @@ class ArticleRagIndexLifecycleService:
         reading_record_id: UUID,
         user_id: UUID,
         expected_generation: int,
-        index_version: str = DEFAULT_INDEX_VERSION,
         chunker_version: str | None = None,
         now: datetime | None = None,
     ) -> ArticleRagIndexEnsureResult:
@@ -311,7 +307,7 @@ class ArticleRagIndexLifecycleService:
                     conn,
                     reading_record_id=reading_record_id,
                     user_id=user_id,
-                    index_version=index_version,
+                    index_version=DEFAULT_INDEX_VERSION,
                     now=now,
                 )
             )
@@ -340,8 +336,6 @@ class ArticleRagIndexLifecycleService:
                 record_generation=bootstrap_result.record_generation,
                 index_run_id=bootstrap_result.index_run_id,
                 job_id=bootstrap_result.job_id,
-                index_version=bootstrap_result.index_version,
-                chunker_version=bootstrap_result.chunker_version,
             )
 
         return ArticleRagIndexEnsureResult(
@@ -354,8 +348,6 @@ class ArticleRagIndexLifecycleService:
             record_generation=bootstrap_result.record_generation,
             index_run_id=bootstrap_result.index_run_id,
             job_id=bootstrap_result.job_id,
-            index_version=bootstrap_result.index_version,
-            chunker_version=bootstrap_result.chunker_version,
         )
 
     # -----------------------------------------------------------------
@@ -368,7 +360,6 @@ class ArticleRagIndexLifecycleService:
         *,
         reading_record_id: UUID,
         user_id: UUID,
-        index_version: str = DEFAULT_INDEX_VERSION,
     ) -> ArticleRagIndexLifecycleStatus:
         """Read-only lifecycle status query.
 
@@ -472,7 +463,7 @@ class ArticleRagIndexLifecycleService:
             LIMIT 1
             """,
             stable_document_id,
-            index_version,
+            DEFAULT_INDEX_VERSION,
         )
         if index_row is None:
             return ArticleRagIndexLifecycleStatus(
@@ -516,7 +507,6 @@ class ArticleRagIndexLifecycleService:
                 base_id=active_base_id,
                 record_generation=actual_generation,
                 index_run_id=UUID(str(index_row["id"])),
-                index_version=str(index_row["index_version"]),
                 plan_content_sha256=str(index_row["plan_content_sha256"]),
                 chunk_count=int(index_row["chunk_count"]),
                 reason_code="index_run_base_or_generation_mismatch",
@@ -532,7 +522,6 @@ class ArticleRagIndexLifecycleService:
                 base_id=active_base_id,
                 record_generation=actual_generation,
                 index_run_id=UUID(str(index_row["id"])),
-                index_version=str(index_row["index_version"]),
                 plan_content_sha256=str(index_row["plan_content_sha256"]),
                 chunk_count=int(index_row["chunk_count"]),
                 reason_code="index_run_failed",
@@ -547,7 +536,6 @@ class ArticleRagIndexLifecycleService:
                 base_id=active_base_id,
                 record_generation=actual_generation,
                 index_run_id=UUID(str(index_row["id"])),
-                index_version=str(index_row["index_version"]),
                 plan_content_sha256=str(index_row["plan_content_sha256"]),
                 chunk_count=int(index_row["chunk_count"]),
                 reason_code="index_run_superseded",
@@ -562,7 +550,6 @@ class ArticleRagIndexLifecycleService:
                 base_id=active_base_id,
                 record_generation=actual_generation,
                 index_run_id=UUID(str(index_row["id"])),
-                index_version=str(index_row["index_version"]),
                 plan_content_sha256=str(index_row["plan_content_sha256"]),
                 chunk_count=int(index_row["chunk_count"]),
                 reason_code="index_run_queued",
@@ -577,7 +564,6 @@ class ArticleRagIndexLifecycleService:
                 base_id=active_base_id,
                 record_generation=actual_generation,
                 index_run_id=UUID(str(index_row["id"])),
-                index_version=str(index_row["index_version"]),
                 plan_content_sha256=str(index_row["plan_content_sha256"]),
                 chunk_count=int(index_row["chunk_count"]),
                 reason_code="index_run_indexing",
@@ -595,7 +581,6 @@ class ArticleRagIndexLifecycleService:
                 base_id=active_base_id,
                 record_generation=actual_generation,
                 index_run_id=UUID(str(index_row["id"])),
-                index_version=str(index_row["index_version"]),
                 plan_content_sha256=str(index_row["plan_content_sha256"]),
                 chunk_count=int(index_row["chunk_count"]),
                 reason_code="indexed",
@@ -610,7 +595,6 @@ class ArticleRagIndexLifecycleService:
             base_id=active_base_id,
             record_generation=actual_generation,
             index_run_id=UUID(str(index_row["id"])),
-            index_version=str(index_row["index_version"]),
             plan_content_sha256=str(index_row["plan_content_sha256"]),
             chunk_count=int(index_row["chunk_count"]),
             reason_code="unknown_index_run_status",

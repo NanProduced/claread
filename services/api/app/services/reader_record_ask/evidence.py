@@ -167,7 +167,6 @@ class ArticleRagCitationEvidence(BaseModel):
 
     rag_substrate_id: str = Field(min_length=1)
     index_run_id: str = Field(min_length=1)
-    index_version: str = Field(min_length=1)
     plan_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_scope: Literal["main_reading_text", "heading"]
     block_type: str = Field(min_length=1)

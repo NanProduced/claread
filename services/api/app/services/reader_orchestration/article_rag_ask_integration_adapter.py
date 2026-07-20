@@ -94,7 +94,6 @@ SEGMENT_KIND = "article_rag_context"
 # adapter have a single import surface.
 DEFAULT_INTEGRATION_LIMIT = 8
 DEFAULT_INTEGRATION_MAX_CONTEXT_CHARS = 4000
-DEFAULT_INTEGRATION_INDEX_VERSION = "article_rag_index_v1"
 
 # The ``metadata_json`` allowlist.  Every key on the segment's
 # ``metadata_json`` MUST be in this set; any other key on the
@@ -117,7 +116,6 @@ _ALLOWED_METADATA_KEYS = frozenset(
         "base_id",
         "record_generation",
         "plan_content_sha256",
-        "index_version",
         "source_pack_hash",
     }
 )
@@ -268,7 +266,6 @@ class _AttachmentServiceLike(Protocol):
         enabled: bool = ...,
         limit: int = ...,
         max_context_chars: int = ...,
-        index_version: str = ...,
     ) -> ArticleRagAskPromptAttachment: ...
 
 
@@ -437,7 +434,6 @@ def _metadata_from_attachment(
         "base_id": attachment.base_id,
         "record_generation": attachment.record_generation,
         "plan_content_sha256": attachment.plan_content_sha256,
-        "index_version": attachment.index_version,
         "source_pack_hash": attachment.source_pack_hash,
     }
     return _scrub_metadata(raw)
@@ -569,7 +565,6 @@ class ArticleRagAskIntegrationAdapter:
         enabled: bool = True,
         limit: int = DEFAULT_INTEGRATION_LIMIT,
         max_context_chars: int = DEFAULT_INTEGRATION_MAX_CONTEXT_CHARS,
-        index_version: str = DEFAULT_INTEGRATION_INDEX_VERSION,
     ) -> ArticleRagAskPromptSegment:
         """Build a deterministic Ask prompt segment.
 
@@ -582,7 +577,6 @@ class ArticleRagAskIntegrationAdapter:
         if self._attachment_service is None:
             return self._make_unexpected_segment(
                 reading_record_id=reading_record_id,
-                index_version=index_version,
             )
 
         # 2. Delegate to the attachment service.  The attachment
@@ -600,7 +594,6 @@ class ArticleRagAskIntegrationAdapter:
                 enabled=enabled,
                 limit=limit,
                 max_context_chars=max_context_chars,
-                index_version=index_version,
             )
         except Exception as exc:  # noqa: BLE001 — defensive catch-all
             # Unexpected attachment service exception — the
@@ -616,7 +609,6 @@ class ArticleRagAskIntegrationAdapter:
             )
             return self._make_unexpected_segment(
                 reading_record_id=reading_record_id,
-                index_version=index_version,
             )
 
         # 3. Defensive shape check: a regression / hostile fake
@@ -624,7 +616,6 @@ class ArticleRagAskIntegrationAdapter:
         if not isinstance(attachment, ArticleRagAskPromptAttachment):
             return self._make_unexpected_segment(
                 reading_record_id=reading_record_id,
-                index_version=index_version,
             )
 
         # 4. The include path: the attachment says we have
@@ -642,7 +633,6 @@ class ArticleRagAskIntegrationAdapter:
             if not _include_path_shape_ok(attachment):
                 return self._make_unexpected_segment(
                     reading_record_id=reading_record_id,
-                    index_version=index_version,
                 )
             return ArticleRagAskPromptSegment(
                 kind=SEGMENT_KIND,
@@ -688,7 +678,6 @@ class ArticleRagAskIntegrationAdapter:
         if not _attachment_status_ok(attachment.status):
             return self._make_unexpected_segment(
                 reading_record_id=reading_record_id,
-                index_version=index_version,
             )
         return ArticleRagAskPromptSegment(
             kind=SEGMENT_KIND,
@@ -720,7 +709,6 @@ class ArticleRagAskIntegrationAdapter:
     def _make_unexpected_segment(
         *,
         reading_record_id: UUID,
-        index_version: str,
     ) -> ArticleRagAskPromptSegment:
         """Build a fail-soft segment for the unexpected-error
         path.
@@ -749,7 +737,6 @@ class ArticleRagAskIntegrationAdapter:
                 "failure_code": FAILURE_CODE_INTEGRATION_UNEXPECTED_ERROR,
                 "retryable": False,
                 "fallback_allowed": True,
-                "index_version": index_version,
             },
         )
 
@@ -757,7 +744,6 @@ class ArticleRagAskIntegrationAdapter:
 __all__ = [
     "DEFAULT_INTEGRATION_LIMIT",
     "DEFAULT_INTEGRATION_MAX_CONTEXT_CHARS",
-    "DEFAULT_INTEGRATION_INDEX_VERSION",
     "FAILURE_CODE_INTEGRATION_UNEXPECTED_ERROR",
     "SEGMENT_KIND",
     "ArticleRagAskPromptSegment",

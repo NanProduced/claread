@@ -160,14 +160,12 @@ class _FakeLifecycleService:
         *,
         reading_record_id: UUID,
         user_id: UUID,
-        index_version: str = _INDEX_VERSION,
     ) -> ArticleRagIndexLifecycleStatus:
         self.status_calls.append(
             {
                 "conn": conn,
                 "reading_record_id": reading_record_id,
                 "user_id": user_id,
-                "index_version": index_version,
             }
         )
         if self._status_error is not None:
@@ -182,8 +180,6 @@ class _FakeLifecycleService:
         reading_record_id: UUID,
         user_id: UUID,
         expected_generation: int,
-        index_version: str = _INDEX_VERSION,
-        chunker_version: str | None = None,
         now: Any = None,
     ) -> ArticleRagIndexEnsureResult:
         self.ensure_calls.append(
@@ -192,8 +188,6 @@ class _FakeLifecycleService:
                 "reading_record_id": reading_record_id,
                 "user_id": user_id,
                 "expected_generation": expected_generation,
-                "index_version": index_version,
-                "chunker_version": chunker_version,
                 "now": now,
             }
         )
@@ -216,7 +210,6 @@ def _make_status_result(
     base_id: UUID | None = _BASE_ID,
     record_generation: int | None = _GENERATION,
     index_run_id: UUID | None = _INDEX_RUN_ID,
-    index_version: str | None = _INDEX_VERSION,
     plan_content_sha256: str | None = _PLAN_SHA,
     chunk_count: int | None = 5,
 ) -> ArticleRagIndexLifecycleStatus:
@@ -228,7 +221,6 @@ def _make_status_result(
         base_id=base_id,
         record_generation=record_generation,
         index_run_id=index_run_id,
-        index_version=index_version,
         plan_content_sha256=plan_content_sha256,
         chunk_count=chunk_count,
         reason_code=reason_code,
@@ -245,8 +237,6 @@ def _make_ensure_result(
     record_generation: int | None = _GENERATION,
     index_run_id: UUID | None = _INDEX_RUN_ID,
     job_id: UUID | None = _JOB_ID,
-    index_version: str | None = _INDEX_VERSION,
-    chunker_version: str | None = _CHUNKER_VERSION,
 ) -> ArticleRagIndexEnsureResult:
     return ArticleRagIndexEnsureResult(
         reading_record_id=_RECORD_ID,
@@ -258,8 +248,6 @@ def _make_ensure_result(
         record_generation=record_generation,
         index_run_id=index_run_id,
         job_id=job_id,
-        index_version=index_version,
-        chunker_version=chunker_version,
     )
 
 
@@ -350,7 +338,8 @@ class TestGetStatusHappyPath:
         assert body["base_id"] == str(_BASE_ID)
         assert body["record_generation"] == _GENERATION
         assert body["index_run_id"] == str(_INDEX_RUN_ID)
-        assert body["index_version"] == _INDEX_VERSION
+        assert "index_version" not in body
+        assert "chunker_version" not in body
         assert body["plan_content_sha256"] == _PLAN_SHA
         assert body["chunk_count"] == 5
         assert body["reason_code"] == "indexed"
@@ -362,7 +351,7 @@ class TestGetStatusHappyPath:
         call = service.status_calls[0]
         assert call["reading_record_id"] == _RECORD_ID
         assert call["user_id"] == _USER_ID
-        assert call["index_version"] == _INDEX_VERSION
+        assert "index_version" not in call
 
 
 # ===========================================================================
@@ -383,7 +372,6 @@ class TestGetStatusNonIndexedStates:
             base_id=_BASE_ID,
             record_generation=_GENERATION,
             index_run_id=None,
-            index_version=None,
             plan_content_sha256=None,
             chunk_count=None,
         )
@@ -400,7 +388,6 @@ class TestGetStatusNonIndexedStates:
         assert body["status"] == "not_indexed"
         assert body["reason_code"] == "no_index_run"
         assert body["index_run_id"] is None
-        assert body["index_version"] is None
         assert body["plan_content_sha256"] is None
         assert body["chunk_count"] is None
 
@@ -465,7 +452,6 @@ class TestGetStatusNotFound:
             base_id=None,
             record_generation=None,
             index_run_id=None,
-            index_version=None,
             plan_content_sha256=None,
             chunk_count=None,
         )
@@ -495,7 +481,6 @@ class TestGetStatusNotFound:
             base_id=None,
             record_generation=None,
             index_run_id=None,
-            index_version=None,
             plan_content_sha256=None,
             chunk_count=None,
         )
@@ -549,8 +534,6 @@ class TestPostEnsureEnqueued:
         assert body["record_generation"] == _GENERATION
         assert body["index_run_id"] == str(_INDEX_RUN_ID)
         assert body["job_id"] == str(_JOB_ID)
-        assert body["index_version"] == _INDEX_VERSION
-        assert body["chunker_version"] == _CHUNKER_VERSION
         # user_id is intentionally NOT in the response.
         assert "user_id" not in body
 
@@ -559,15 +542,13 @@ class TestPostEnsureEnqueued:
         assert conn.transaction_exited is True
 
         # Service was called with the auth user_id, the path record_id,
-        # the body's expected_generation, and the default index_version.
+        # the body's expected_generation, with fixed server-side index identity.
         assert len(service.ensure_calls) == 1
         call = service.ensure_calls[0]
         assert call["reading_record_id"] == _RECORD_ID
         assert call["user_id"] == _USER_ID
         assert call["expected_generation"] == _GENERATION
-        assert call["index_version"] == _INDEX_VERSION
-        # chunker_version is NOT accepted from the body; route passes None.
-        assert call["chunker_version"] is None
+        # The public route and lifecycle seam do not accept chunker_version.
 
 
 # ===========================================================================
@@ -622,8 +603,6 @@ class TestPostEnsureTypedNonSuccess:
             record_generation=2,
             index_run_id=None,
             job_id=None,
-            index_version=None,
-            chunker_version=None,
         )
 
         with _mock_auth(_USER_ID):
@@ -656,8 +635,6 @@ class TestPostEnsureTypedNonSuccess:
             record_generation=_GENERATION,
             index_run_id=None,
             job_id=None,
-            index_version=None,
-            chunker_version=None,
         )
 
         with _mock_auth(_USER_ID):
@@ -687,8 +664,6 @@ class TestPostEnsureTypedNonSuccess:
             record_generation=_GENERATION,
             index_run_id=None,
             job_id=None,
-            index_version=None,
-            chunker_version=None,
         )
 
         with _mock_auth(_USER_ID):
@@ -864,8 +839,6 @@ class TestTransactionBehavior:
             reading_record_id: UUID,
             user_id: UUID,
             expected_generation: int,
-            index_version: str = _INDEX_VERSION,
-            chunker_version: str | None = None,
             now: Any = None,
         ) -> ArticleRagIndexEnsureResult:
             captured_in_transaction.append(conn.is_in_transaction())
@@ -982,34 +955,56 @@ class TestNoRealBackendCalls:
 
 
 # ===========================================================================
-# Bonus: index_version query parameter handling
 # ===========================================================================
 
 
-class TestIndexVersionQueryParameter:
-    async def test_status_route_passes_custom_index_version(
+
+class TestRound1OpenApiAndExternalVersionGates:
+    async def test_public_schemas_have_no_version_fields(self) -> None:
+        from app.schemas.reader_orchestration import (
+            ReaderArticleRagIndexEnsureRequest,
+            ReaderArticleRagIndexEnsureResponse,
+            ReaderArticleRagIndexStatusResponse,
+        )
+
+        assert "index_version" not in ReaderArticleRagIndexEnsureRequest.model_fields
+        assert "index_version" not in ReaderArticleRagIndexEnsureResponse.model_fields
+        assert "chunker_version" not in ReaderArticleRagIndexEnsureResponse.model_fields
+        assert "index_version" not in ReaderArticleRagIndexStatusResponse.model_fields
+
+    async def test_openapi_status_parameters_exclude_index_version(
         self, route_env: dict[str, Any]
     ) -> None:
         app = route_env["app"]
-        service: _FakeLifecycleService = route_env["service"]
+        schema = app.openapi()
+        path_item = schema["paths"][
+            "/reader/records/{record_id}/article-rag-index/status"
+        ]["get"]
+        params = path_item.get("parameters") or []
+        names = {p.get("name") for p in params}
+        assert "index_version" not in names
+        assert "record_id" in names
 
-        with _mock_auth(_USER_ID):
-            async with _create_client(app) as client:
-                response = await client.get(
-                    f"/reader/records/{_RECORD_ID}/article-rag-index/status"
-                    "?index_version=custom_v2",
-                    headers=AUTH_HEADERS,
-                )
-
-        assert response.status_code == 200
-        assert service.status_calls[0]["index_version"] == "custom_v2"
-
-    async def test_ensure_route_passes_custom_index_version(
+    async def test_openapi_ensure_request_response_exclude_version_fields(
         self, route_env: dict[str, Any]
     ) -> None:
         app = route_env["app"]
-        service: _FakeLifecycleService = route_env["service"]
+        schema = app.openapi()
+        components = schema["components"]["schemas"]
+        ensure_req = components["ReaderArticleRagIndexEnsureRequest"]["properties"]
+        ensure_resp = components["ReaderArticleRagIndexEnsureResponse"]["properties"]
+        status_resp = components["ReaderArticleRagIndexStatusResponse"]["properties"]
+        assert "index_version" not in ensure_req
+        assert "index_version" not in ensure_resp
+        assert "chunker_version" not in ensure_resp
+        assert "index_version" not in status_resp
+        assert "chunker_version" not in status_resp
 
+    async def test_ensure_body_index_version_is_rejected_extra(
+        self, route_env: dict[str, Any]
+    ) -> None:
+        """extra=forbid: clients cannot select index_version via body."""
+        app = route_env["app"]
         with _mock_auth(_USER_ID):
             async with _create_client(app) as client:
                 response = await client.post(
@@ -1020,14 +1015,7 @@ class TestIndexVersionQueryParameter:
                         "index_version": "custom_v2",
                     },
                 )
-
-        assert response.status_code == 200
-        assert service.ensure_calls[0]["index_version"] == "custom_v2"
-
-
-# ===========================================================================
-# Bonus: ensure record_not_found → 404
-# ===========================================================================
+        assert response.status_code == 422
 
 
 class TestPostEnsureRecordNotFound:
@@ -1049,8 +1037,6 @@ class TestPostEnsureRecordNotFound:
             record_generation=None,
             index_run_id=None,
             job_id=None,
-            index_version=None,
-            chunker_version=None,
         )
 
         with _mock_auth(_USER_ID):

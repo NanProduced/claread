@@ -156,7 +156,6 @@ _ALLOWED_METADATA_KEYS = frozenset(
         "base_id",
         "record_generation",
         "plan_content_sha256",
-        "index_version",
         "source_pack_hash",
     }
 )

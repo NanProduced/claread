@@ -249,7 +249,6 @@ async def execute_search_current_article(
         citation = ArticleRagCitationEvidence(
             rag_substrate_id=str(outcome.rag_substrate_id),
             index_run_id=str(outcome.rag_substrate_id),
-            index_version=outcome.index_version or "article_rag_index_v1",
             plan_content_sha256=outcome.plan_content_sha256,
             source_scope=hit.source_scope,  # type: ignore[arg-type]
             block_type=hit.block_type,

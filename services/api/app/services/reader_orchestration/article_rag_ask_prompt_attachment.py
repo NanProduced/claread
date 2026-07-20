@@ -50,7 +50,7 @@ Security contract
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -63,7 +63,6 @@ from .article_rag_ask_context_resolver import (
     ArticleRagAskContextResolveStatus,
 )
 from .article_rag_context_service import (
-    DEFAULT_INDEX_VERSION,
     DEFAULT_LIMIT,
     DEFAULT_MAX_CONTEXT_CHARS,
 )
@@ -80,7 +79,6 @@ logger = logging.getLogger(__name__)
 # attachment service have a single import surface.
 DEFAULT_ATTACHMENT_LIMIT = DEFAULT_LIMIT  # 8
 DEFAULT_ATTACHMENT_MAX_CONTEXT_CHARS = DEFAULT_MAX_CONTEXT_CHARS  # 4000
-DEFAULT_ATTACHMENT_INDEX_VERSION = DEFAULT_INDEX_VERSION  # "article_rag_index_v1"
 
 # Failure codes — stable, machine-readable.  We deliberately
 # surface the resolver's failure_code when one is available (so
@@ -212,7 +210,6 @@ class ArticleRagAskPromptAttachment:
     # Stable ids echoed from the resolver.  ``None`` when the
     # resolver has none (e.g. disabled path).
     reading_record_id: UUID | None
-    index_version: str | None
     stable_document_id: UUID | None
     base_id: UUID | None
     record_generation: int | None
@@ -236,7 +233,6 @@ class _ResolverLike(Protocol):
         enabled: bool = ...,
         limit: int = ...,
         max_context_chars: int = ...,
-        index_version: str = ...,
     ) -> ArticleRagAskContextResolveResult: ...
 
 
@@ -335,7 +331,6 @@ class ArticleRagAskPromptAttachmentService:
         enabled: bool = True,
         limit: int = DEFAULT_ATTACHMENT_LIMIT,
         max_context_chars: int = DEFAULT_ATTACHMENT_MAX_CONTEXT_CHARS,
-        index_version: str = DEFAULT_ATTACHMENT_INDEX_VERSION,
     ) -> ArticleRagAskPromptAttachment:
         """Build an :class:`ArticleRagAskPromptAttachment` for the
         Ask layer.
@@ -351,7 +346,6 @@ class ArticleRagAskPromptAttachmentService:
             return self._make_unexpected_attachment(
                 status="not_indexed_or_unavailable",
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 enabled=enabled,
             )
 
@@ -371,7 +365,6 @@ class ArticleRagAskPromptAttachmentService:
                 enabled=enabled,
                 limit=limit,
                 max_context_chars=max_context_chars,
-                index_version=index_version,
             )
         except Exception as exc:  # noqa: BLE001 — defensive catch-all
             # Unexpected resolver exception — the cause class name
@@ -387,7 +380,6 @@ class ArticleRagAskPromptAttachmentService:
             return self._make_unexpected_attachment(
                 status="not_indexed_or_unavailable",
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 enabled=enabled,
             )
 
@@ -400,7 +392,6 @@ class ArticleRagAskPromptAttachmentService:
         return self._build_from_resolver_result(
             resolver_result=resolver_result,
             reading_record_id=reading_record_id,
-            index_version=index_version,
         )
 
     # ------------------------------------------------------------------
@@ -412,7 +403,6 @@ class ArticleRagAskPromptAttachmentService:
         *,
         resolver_result: ArticleRagAskContextResolveResult,
         reading_record_id: UUID,
-        index_version: str,
     ) -> ArticleRagAskPromptAttachment:
         """Build the attachment from a (possibly malformed)
         resolver result.
@@ -439,7 +429,6 @@ class ArticleRagAskPromptAttachmentService:
             return ArticleRagAskPromptAttachmentService._make_unexpected_attachment(
                 status="not_indexed_or_unavailable",
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 enabled=True,
             )
 
@@ -457,7 +446,6 @@ class ArticleRagAskPromptAttachmentService:
             return ArticleRagAskPromptAttachmentService._make_unexpected_attachment(
                 status="not_indexed_or_unavailable",
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 enabled=bool(resolver_result.enabled),
             )
 
@@ -479,7 +467,6 @@ class ArticleRagAskPromptAttachmentService:
             omitted_hit_count=resolver_result.omitted_hit_count,
             budget_exceeded=resolver_result.budget_exceeded,
             reading_record_id=resolver_result.reading_record_id,
-            index_version=resolver_result.index_version,
             stable_document_id=resolver_result.stable_document_id,
             base_id=resolver_result.base_id,
             record_generation=resolver_result.record_generation,
@@ -498,7 +485,6 @@ class ArticleRagAskPromptAttachmentService:
             return ArticleRagAskPromptAttachmentService._make_unexpected_attachment(
                 status="not_indexed_or_unavailable",
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 enabled=True,
             )
 
@@ -512,7 +498,6 @@ class ArticleRagAskPromptAttachmentService:
             return ArticleRagAskPromptAttachmentService._make_unexpected_attachment(
                 status="not_indexed_or_unavailable",
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 enabled=True,
             )
 
@@ -538,7 +523,6 @@ class ArticleRagAskPromptAttachmentService:
             omitted_hit_count=resolver_result.omitted_hit_count,
             budget_exceeded=resolver_result.budget_exceeded,
             reading_record_id=resolver_result.reading_record_id,
-            index_version=resolver_result.index_version,
             stable_document_id=resolver_result.stable_document_id,
             base_id=resolver_result.base_id,
             record_generation=resolver_result.record_generation,
@@ -550,7 +534,6 @@ class ArticleRagAskPromptAttachmentService:
         *,
         status: ArticleRagAskContextResolveStatus,
         reading_record_id: UUID,
-        index_version: str,
         enabled: bool,
     ) -> ArticleRagAskPromptAttachment:
         """Build a fail-soft attachment for the unexpected-error
@@ -578,7 +561,6 @@ class ArticleRagAskPromptAttachmentService:
             omitted_hit_count=None,
             budget_exceeded=None,
             reading_record_id=reading_record_id,
-            index_version=index_version,
             stable_document_id=None,
             base_id=None,
             record_generation=None,
@@ -589,7 +571,6 @@ class ArticleRagAskPromptAttachmentService:
 __all__ = [
     "DEFAULT_ATTACHMENT_LIMIT",
     "DEFAULT_ATTACHMENT_MAX_CONTEXT_CHARS",
-    "DEFAULT_ATTACHMENT_INDEX_VERSION",
     "FAILURE_CODE_ATTACHMENT_UNEXPECTED_ERROR",
     "ArticleRagAskPromptAttachment",
     "ArticleRagAskPromptAttachmentService",

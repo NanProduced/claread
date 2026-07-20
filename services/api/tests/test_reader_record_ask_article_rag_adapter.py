@@ -38,7 +38,6 @@ class _FakeResult:
     stable_document_id: UUID = _DOC
     base_id: UUID = _BASE
     record_generation: int = 1
-    index_version: str = "article_rag_index_v1"
     plan_content_sha256: str = _PLAN
     index_run_id: UUID | None = _RUN
     hits: tuple[Any, ...] = ()

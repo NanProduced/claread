@@ -60,7 +60,6 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from app.services.reader_orchestration.article_rag_ask_context_provider import (
-    DEFAULT_FACADE_INDEX_VERSION,
     DEFAULT_FACADE_LIMIT,
     DEFAULT_FACADE_MAX_CONTEXT_CHARS,
     ArticleRagAskContextProvider,
@@ -196,7 +195,6 @@ class _ProviderLike(Protocol):
         enabled: bool = ...,
         limit: int = ...,
         max_context_chars: int = ...,
-        index_version: str = ...,
     ) -> Any: ...
 
 
@@ -250,7 +248,6 @@ class ArticleRagPromptIntegration:
         enabled: bool = True,
         limit: int = DEFAULT_FACADE_LIMIT,
         max_context_chars: int = DEFAULT_FACADE_MAX_CONTEXT_CHARS,
-        index_version: str = DEFAULT_FACADE_INDEX_VERSION,
     ) -> ArticleRagPromptIntegrationResult:
         """Integrate Article RAG context into ``prompt_payload``.
 
@@ -305,7 +302,6 @@ class ArticleRagPromptIntegration:
                 enabled=enabled,
                 limit=limit,
                 max_context_chars=max_context_chars,
-                index_version=index_version,
             )
         except Exception as exc:  # noqa: BLE001 — defensive catch-all
             logger.info(

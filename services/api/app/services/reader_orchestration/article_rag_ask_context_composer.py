@@ -17,7 +17,7 @@ deterministic transform:
     rewrites the citation dict.
   * ``source_pack_hash`` is a deterministic SHA-256 over the stable
     pack identity (``reading_record_id`` / ``stable_document_id`` /
-    ``base_id`` / ``record_generation`` / ``index_version`` /
+    ``base_id`` / ``record_generation`` /
     ``plan_content_sha256`` / ``context_ids`` / ``chunk_ids`` /
     per-item text sha256 / per-item citation sha256).  It
     explicitly EXCLUDES ``provider_metadata`` and ``query_sha256``:
@@ -205,7 +205,6 @@ class ArticleRagAskContextBundle:
     stable_document_id: Any = field(default=None)
     base_id: Any = field(default=None)
     record_generation: int = 0
-    index_version: str = ""
     plan_content_sha256: str = ""
 
 
@@ -283,7 +282,6 @@ def _compute_source_pack_hash(
       * ``stable_document_id`` (str)
       * ``base_id`` (str)
       * ``record_generation`` (str)
-      * ``index_version``
       * ``plan_content_sha256``
       * per-item ``context_id`` (preserves order)
       * per-item ``chunk_id`` (preserves order)
@@ -307,7 +305,6 @@ def _compute_source_pack_hash(
         str(pack.stable_document_id),
         str(pack.base_id),
         str(pack.record_generation),
-        pack.index_version,
         pack.plan_content_sha256,
     ]
     for item in pack.items:
@@ -384,7 +381,6 @@ class ArticleRagAskContextComposer:
                 stable_document_id=pack.stable_document_id,
                 base_id=pack.base_id,
                 record_generation=pack.record_generation,
-                index_version=pack.index_version,
                 plan_content_sha256=pack.plan_content_sha256,
             )
             return bundle
@@ -438,7 +434,6 @@ class ArticleRagAskContextComposer:
             stable_document_id=pack.stable_document_id,
             base_id=pack.base_id,
             record_generation=pack.record_generation,
-            index_version=pack.index_version,
             plan_content_sha256=pack.plan_content_sha256,
         )
 

@@ -59,22 +59,19 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from dataclasses import dataclass
+from typing import Literal, Protocol
 from uuid import UUID
 
 from .article_rag_ask_context_composer import (
     ArticleRagAskContextBundle,
-    ArticleRagAskContextComposer,
     ArticleRagAskContextComposerError,
 )
 from .article_rag_context_service import (
     ArticleRagContextPack,
-    ArticleRagContextService,
     ArticleRagContextServiceError,
     DEFAULT_LIMIT as _DEFAULT_CONTEXT_LIMIT,
     DEFAULT_MAX_CONTEXT_CHARS as _DEFAULT_MAX_CONTEXT_CHARS,
-    DEFAULT_INDEX_VERSION,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,7 +91,6 @@ DEFAULT_RESOLVER_MAX_CONTEXT_CHARS = _DEFAULT_MAX_CONTEXT_CHARS  # 4000
 
 # Default index version.  Mirrors the I4F default; deployments
 # can override per call.
-DEFAULT_RESOLVER_INDEX_VERSION = DEFAULT_INDEX_VERSION
 
 # Failure codes — stable, machine-readable.  We deliberately
 # reuse the upstream failure codes when available, and add a
@@ -160,7 +156,6 @@ class ArticleRagAskContextResolveResult:
     retryable: bool
     fallback_allowed: bool
     reading_record_id: UUID | None
-    index_version: str | None
     query_sha256: str | None
     # ``omitted_hit_count`` and ``budget_exceeded`` are echoed
     # only when a bundle is present (otherwise they are N/A).
@@ -196,7 +191,6 @@ class _ContextServiceLike(Protocol):
         query_text: str,
         limit: int = ...,
         max_context_chars: int = ...,
-        index_version: str = ...,
     ) -> ArticleRagContextPack: ...
 
 
@@ -272,7 +266,6 @@ class ArticleRagAskContextResolver:
         enabled: bool = True,
         limit: int = DEFAULT_RESOLVER_LIMIT,
         max_context_chars: int = DEFAULT_RESOLVER_MAX_CONTEXT_CHARS,
-        index_version: str = DEFAULT_RESOLVER_INDEX_VERSION,
     ) -> ArticleRagAskContextResolveResult:
         """Resolve a deterministic RAG context for the Ask layer.
 
@@ -299,8 +292,6 @@ class ArticleRagAskContextResolver:
         limit
             Forwarded to the context service.
         max_context_chars
-            Forwarded to the context service.
-        index_version
             Forwarded to the context service.
 
         Returns
@@ -330,7 +321,6 @@ class ArticleRagAskContextResolver:
                 retryable=False,
                 fallback_allowed=True,
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 query_sha256=query_hash,
             )
 
@@ -340,7 +330,6 @@ class ArticleRagAskContextResolver:
                 status="not_indexed_or_unavailable",
                 failure_code=FAILURE_CODE_RESOLVER_UNEXPECTED_ERROR,
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 query_sha256=query_hash,
                 reason=(
                     "ArticleRagAskContextResolver has no "
@@ -353,7 +342,6 @@ class ArticleRagAskContextResolver:
                 status="not_indexed_or_unavailable",
                 failure_code=FAILURE_CODE_RESOLVER_UNEXPECTED_ERROR,
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 query_sha256=query_hash,
                 reason=(
                     "ArticleRagAskContextResolver has no composer "
@@ -371,7 +359,6 @@ class ArticleRagAskContextResolver:
                 query_text=query_text,
                 limit=limit,
                 max_context_chars=max_context_chars,
-                index_version=index_version,
             )
         except ArticleRagContextServiceError as exc:
             # Typed upstream failure — preserve upstream
@@ -396,7 +383,6 @@ class ArticleRagAskContextResolver:
                 retryable=bool(exc.retryable),
                 fallback_allowed=True,
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 query_sha256=query_hash,
             )
         except Exception as exc:  # noqa: BLE001 — defensive catch-all
@@ -408,7 +394,6 @@ class ArticleRagAskContextResolver:
                 status="not_indexed_or_unavailable",
                 failure_code=FAILURE_CODE_RESOLVER_UNEXPECTED_ERROR,
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 query_sha256=query_hash,
                 reason=(
                     "ArticleRagAskContextResolver caught an "
@@ -435,7 +420,6 @@ class ArticleRagAskContextResolver:
                 retryable=False,
                 fallback_allowed=True,
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 # Use the locally computed ``query_hash`` for
                 # consistency with every other path.  ``pack.query_sha256``
                 # would be the same value by construction, but a
@@ -472,7 +456,6 @@ class ArticleRagAskContextResolver:
                 retryable=bool(exc.retryable),
                 fallback_allowed=True,
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 query_sha256=query_hash,
                 stable_document_id=pack.stable_document_id,
                 base_id=pack.base_id,
@@ -484,7 +467,6 @@ class ArticleRagAskContextResolver:
                 status="composer_rejected",
                 failure_code=FAILURE_CODE_RESOLVER_UNEXPECTED_ERROR,
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 query_sha256=query_hash,
                 reason=(
                     "ArticleRagAskContextResolver caught an "
@@ -509,7 +491,6 @@ class ArticleRagAskContextResolver:
                 retryable=False,
                 fallback_allowed=True,
                 reading_record_id=reading_record_id,
-                index_version=index_version,
                 query_sha256=query_hash,
                 stable_document_id=pack.stable_document_id,
                 base_id=pack.base_id,
@@ -533,7 +514,6 @@ class ArticleRagAskContextResolver:
             retryable=False,
             fallback_allowed=True,
             reading_record_id=reading_record_id,
-            index_version=index_version,
             query_sha256=query_hash,
             omitted_hit_count=bundle.omitted_hit_count,
             budget_exceeded=bundle.budget_exceeded,
@@ -553,7 +533,6 @@ class ArticleRagAskContextResolver:
         status: ArticleRagAskContextResolveStatus,
         failure_code: str,
         reading_record_id: UUID,
-        index_version: str,
         query_sha256: str,
         reason: str,
         cause: BaseException,
@@ -592,7 +571,6 @@ class ArticleRagAskContextResolver:
             retryable=False,
             fallback_allowed=True,
             reading_record_id=reading_record_id,
-            index_version=index_version,
             query_sha256=query_sha256,
         )
 
@@ -600,7 +578,6 @@ class ArticleRagAskContextResolver:
 __all__ = [
     "DEFAULT_RESOLVER_LIMIT",
     "DEFAULT_RESOLVER_MAX_CONTEXT_CHARS",
-    "DEFAULT_RESOLVER_INDEX_VERSION",
     "FAILURE_CODE_RESOLVER_DISABLED",
     "FAILURE_CODE_RESOLVER_COMPOSER_REJECTED",
     "FAILURE_CODE_RESOLVER_UNEXPECTED_ERROR",

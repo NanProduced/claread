@@ -111,7 +111,6 @@ def _make_section(
             "base_id": _BASE_ID,
             "record_generation": 1,
             "plan_content_sha256": _PLAN_HASH,
-            "index_version": "article_rag_index_v1",
             "source_pack_hash": source_pack_hash,
         }
     return ArticleRagAskPromptSection(
@@ -551,7 +550,6 @@ def test_metadata_json_contains_only_allowlisted_keys() -> None:
         "base_id",
         "record_generation",
         "plan_content_sha256",
-        "index_version",
         "source_pack_hash",
     }
     assert set(ctx.metadata_json.keys()) <= expected_keys
@@ -595,7 +593,6 @@ def test_metadata_json_value_with_secret_substring_is_dropped() -> None:
             "base_id": _BASE_ID,
             "record_generation": 1,
             "plan_content_sha256": _PLAN_HASH,
-            "index_version": "article_rag_index_v1",
             # Hostile: token-shaped.
             "source_pack_hash": f"token={secret}",
         },

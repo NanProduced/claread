@@ -6,7 +6,6 @@ Final orchestrator that chains the I4H → I4I → I4J → I4K → I4L
   ArticleRagAskContextProvider.build_for_ask(
       reading_record_id, user_id, query_text, *,
       limit=..., max_context_chars=..., enabled=True,
-      index_version=...,
   ) -> ArticleRagAskPromptAssembly
 
 The facade is the SINGLE boundary between the Article RAG
@@ -74,7 +73,6 @@ from .article_rag_ask_prompt_assembly import (
     ArticleRagAskPromptAssemblyService,
 )
 from .article_rag_ask_runtime_adapter import (
-    ArticleRagAskRuntimeAdapter,
     ArticleRagAskRuntimeContext,
 )
 
@@ -98,7 +96,6 @@ FAILURE_CODE_FACADE_UNEXPECTED_ERROR = (
 # the facade have a single import surface.
 DEFAULT_FACADE_LIMIT = 8
 DEFAULT_FACADE_MAX_CONTEXT_CHARS = 4000
-DEFAULT_FACADE_INDEX_VERSION = "article_rag_index_v1"
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +129,6 @@ class _IntegrationAdapterLike(Protocol):
         enabled: bool = ...,
         limit: int = ...,
         max_context_chars: int = ...,
-        index_version: str = ...,
     ) -> Any: ...
 
 
@@ -272,7 +268,6 @@ class ArticleRagAskContextProvider:
         enabled: bool = True,
         limit: int = DEFAULT_FACADE_LIMIT,
         max_context_chars: int = DEFAULT_FACADE_MAX_CONTEXT_CHARS,
-        index_version: str = DEFAULT_FACADE_INDEX_VERSION,
     ) -> ArticleRagAskPromptAssembly:
         """Build an :class:`ArticleRagAskPromptAssembly` for the
         Ask layer.
@@ -312,7 +307,6 @@ class ArticleRagAskContextProvider:
                 enabled=enabled,
                 limit=limit,
                 max_context_chars=max_context_chars,
-                index_version=index_version,
             )
         except Exception as exc:  # noqa: BLE001 — defensive catch-all
             return self._make_fail_soft_assembly_from_exception(
@@ -460,7 +454,6 @@ def _make_fail_soft_assembly_with_failure_code(
 __all__ = [
     "DEFAULT_FACADE_LIMIT",
     "DEFAULT_FACADE_MAX_CONTEXT_CHARS",
-    "DEFAULT_FACADE_INDEX_VERSION",
     "FAILURE_CODE_FACADE_UNEXPECTED_ERROR",
     "ArticleRagAskContextProvider",
 ]

@@ -24,7 +24,6 @@ _HANDLE = "evh_" + ("ab" * 16)
 _COMPLETE_RAG = {
     "rag_substrate_id": "substrate-1",
     "index_run_id": "index-run-1",
-    "index_version": "v1",
     "plan_content_sha256": "plan-sha-abc",
     "source_scope": "main_reading_text",
     "block_type": "paragraph",

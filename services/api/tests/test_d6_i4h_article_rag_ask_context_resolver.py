@@ -45,7 +45,6 @@ from app.services.reader_orchestration.article_rag_ask_context_composer import (
     FAILURE_CODE_ASK_CONTEXT_EMPTY_TEXT,
 )
 from app.services.reader_orchestration.article_rag_ask_context_resolver import (
-    DEFAULT_RESOLVER_INDEX_VERSION,
     DEFAULT_RESOLVER_LIMIT,
     DEFAULT_RESOLVER_MAX_CONTEXT_CHARS,
     FAILURE_CODE_RESOLVER_COMPOSER_REJECTED,
@@ -98,7 +97,6 @@ class _FakeContextService:
         query_text: str,
         limit: int = DEFAULT_RESOLVER_LIMIT,
         max_context_chars: int = DEFAULT_RESOLVER_MAX_CONTEXT_CHARS,
-        index_version: str = DEFAULT_RESOLVER_INDEX_VERSION,
     ) -> ArticleRagContextPack:
         self.calls.append(
             {
@@ -107,7 +105,6 @@ class _FakeContextService:
                 "query_text": query_text,
                 "limit": int(limit),
                 "max_context_chars": int(max_context_chars),
-                "index_version": index_version,
             }
         )
         if self.raise_exc is not None:
@@ -185,7 +182,6 @@ def _make_pack(
         stable_document_id=_STABLE_DOC_ID,
         base_id=_BASE_ID,
         record_generation=1,
-        index_version="article_rag_index_v1",
         plan_content_sha256=_PLAN_HASH,
         query_sha256=query_sha256,
         items=tuple(items),
@@ -211,7 +207,6 @@ def _make_bundle(pack: ArticleRagContextPack) -> ArticleRagAskContextBundle:
         stable_document_id=pack.stable_document_id,
         base_id=pack.base_id,
         record_generation=pack.record_generation,
-        index_version=pack.index_version,
         plan_content_sha256=pack.plan_content_sha256,
     )
 
@@ -320,7 +315,6 @@ async def test_available_happy_path() -> None:
     assert result.base_id == _BASE_ID
     assert result.record_generation == 1
     assert result.plan_content_sha256 == _PLAN_HASH
-    assert result.index_version == "article_rag_index_v1"
     assert result.reading_record_id == _RECORD_ID
 
 
@@ -336,13 +330,11 @@ async def test_parameter_passthrough_to_context_service() -> None:
         query_text="hello",
         limit=12,
         max_context_chars=8000,
-        index_version="custom-v2",
     )
     assert len(context_service.calls) == 1
     call = context_service.calls[0]
     assert call["limit"] == 12
     assert call["max_context_chars"] == 8000
-    assert call["index_version"] == "custom-v2"
     assert call["reading_record_id"] == str(_RECORD_ID)
     assert call["user_id"] == str(_USER_ID)
     assert call["query_text"] == "hello"
@@ -726,7 +718,6 @@ async def test_fallback_allowed_for_every_non_ok_status() -> None:
 def test_default_constants() -> None:
     assert DEFAULT_RESOLVER_LIMIT == 8
     assert DEFAULT_RESOLVER_MAX_CONTEXT_CHARS == 4000
-    assert DEFAULT_RESOLVER_INDEX_VERSION == "article_rag_index_v1"
 
 
 def test_failure_codes_are_distinct() -> None:
@@ -749,7 +740,6 @@ def test_status_literal_values() -> None:
         retryable=False,
         fallback_allowed=True,
         reading_record_id=None,
-        index_version=None,
         query_sha256=None,
     ).status == "available"
     assert ArticleRagAskContextResolveResult(
@@ -760,7 +750,6 @@ def test_status_literal_values() -> None:
         retryable=False,
         fallback_allowed=True,
         reading_record_id=None,
-        index_version=None,
         query_sha256=None,
     ).status == "empty"
     assert ArticleRagAskContextResolveResult(
@@ -771,7 +760,6 @@ def test_status_literal_values() -> None:
         retryable=False,
         fallback_allowed=True,
         reading_record_id=None,
-        index_version=None,
         query_sha256=None,
     ).status == "disabled"
     assert ArticleRagAskContextResolveResult(
@@ -782,7 +770,6 @@ def test_status_literal_values() -> None:
         retryable=False,
         fallback_allowed=True,
         reading_record_id=None,
-        index_version=None,
         query_sha256=None,
     ).status == "composer_rejected"
     assert ArticleRagAskContextResolveResult(
@@ -793,7 +780,6 @@ def test_status_literal_values() -> None:
         retryable=False,
         fallback_allowed=True,
         reading_record_id=None,
-        index_version=None,
         query_sha256=None,
     ).status == "not_indexed_or_unavailable"
 
@@ -915,7 +901,6 @@ def _make_pack_with_mismatched_query_sha256(
         stable_document_id=_STABLE_DOC_ID,
         base_id=_BASE_ID,
         record_generation=1,
-        index_version="article_rag_index_v1",
         plan_content_sha256=_PLAN_HASH,
         query_sha256=bogus_pack_hash,
         items=tuple(items if items is not None else []),
@@ -1072,7 +1057,6 @@ async def test_composer_returning_empty_bundle_maps_to_composer_rejected() -> (
                 stable_document_id=pack.stable_document_id,
                 base_id=pack.base_id,
                 record_generation=pack.record_generation,
-                index_version=pack.index_version,
                 plan_content_sha256=pack.plan_content_sha256,
             )
 

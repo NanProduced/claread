@@ -124,7 +124,6 @@ def _make_segment(
             "base_id": _BASE_ID,
             "record_generation": 1,
             "plan_content_sha256": _PLAN_HASH,
-            "index_version": "article_rag_index_v1",
             "source_pack_hash": source_pack_hash,
         }
     return ArticleRagAskPromptSegment(
@@ -266,7 +265,6 @@ def test_no_context_path_empty_section() -> None:
                 "base_id": _BASE_ID,
                 "record_generation": 1,
                 "plan_content_sha256": _PLAN_HASH,
-                "index_version": "article_rag_index_v1",
                 "source_pack_hash": None,
             },
         )
@@ -504,7 +502,6 @@ def test_metadata_json_value_with_secret_substring_is_dropped() -> None:
                 "base_id": _BASE_ID,
                 "record_generation": 1,
                 "plan_content_sha256": _PLAN_HASH,
-                "index_version": "article_rag_index_v1",
                 # Hostile value: token-shaped.  Must be dropped.
                 "source_pack_hash": f"token={secret}",
             },
@@ -565,7 +562,6 @@ def test_metadata_json_contains_only_allowlisted_keys() -> None:
         "base_id",
         "record_generation",
         "plan_content_sha256",
-        "index_version",
         "source_pack_hash",
     }
     assert set(section.metadata_json.keys()) <= expected_keys
@@ -648,7 +644,6 @@ def test_no_context_section_preserves_stable_ids_in_metadata_json() -> None:
                 "base_id": _BASE_ID,
                 "record_generation": 1,
                 "plan_content_sha256": _PLAN_HASH,
-                "index_version": "article_rag_index_v1",
                 "source_pack_hash": None,
             },
         )
@@ -660,7 +655,6 @@ def test_no_context_section_preserves_stable_ids_in_metadata_json() -> None:
     assert str(section.metadata_json["base_id"]) == str(_BASE_ID)
     assert section.metadata_json["record_generation"] == 1
     assert section.metadata_json["plan_content_sha256"] == _PLAN_HASH
-    assert section.metadata_json["index_version"] == "article_rag_index_v1"
     assert section.metadata_json["failure_code"] == "context_no_indexed_run"
 
 

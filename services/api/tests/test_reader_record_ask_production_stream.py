@@ -475,7 +475,6 @@ async def test_fake_rag_port_can_produce_search_hit_evidence() -> None:
                 summary="ok",
                 hits=(hit,),
                 rag_substrate_id=UUID("55555555-5555-5555-5555-555555555555"),
-                index_version="article_rag_index_v1",
                 plan_content_sha256="c" * 64,
                 stable_document_id=_DOC,
                 base_id=_BASE,
@@ -1436,7 +1435,6 @@ def _rag_public(**overrides: object) -> ReaderRecordAskRagCitationPublic:
     payload = dict(
         rag_substrate_id="substrate-1",
         index_run_id="substrate-1",
-        index_version="v1",
         plan_content_sha256="c" * 64,
         source_scope="main_reading_text",
         block_type="paragraph",
@@ -1464,7 +1462,6 @@ def test_search_hit_scope_match_allows_completed_dto() -> None:
     cit = ArticleRagCitationEvidence(
         rag_substrate_id=substrate,
         index_run_id=substrate,
-        index_version="article_rag_index_v1",
         plan_content_sha256="c" * 64,
         source_scope="main_reading_text",
         block_type="paragraph",
@@ -1555,7 +1552,6 @@ def test_build_completed_dto_search_hit_mismatch_raises_not_ok() -> None:
     cit = ArticleRagCitationEvidence(
         rag_substrate_id=substrate,
         index_run_id=substrate,
-        index_version="article_rag_index_v1",
         plan_content_sha256="c" * 64,
         source_scope="main_reading_text",
         block_type="paragraph",
@@ -1611,7 +1607,6 @@ async def test_scope_invariant_violation_stream_terminals_without_completed() ->
         cit = ArticleRagCitationEvidence(
             rag_substrate_id=substrate,
             index_run_id=substrate,
-            index_version="article_rag_index_v1",
             plan_content_sha256="c" * 64,
             source_scope="main_reading_text",
             block_type="paragraph",
@@ -1722,7 +1717,6 @@ def test_evidence_item_from_observation_maps_rag() -> None:
     cit = ArticleRagCitationEvidence(
         rag_substrate_id=substrate,
         index_run_id=substrate,
-        index_version="article_rag_index_v1",
         plan_content_sha256="c" * 64,
         source_scope="main_reading_text",
         block_type="paragraph",

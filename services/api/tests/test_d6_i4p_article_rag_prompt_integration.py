@@ -119,7 +119,6 @@ def _make_attach_assembly(
             "base_id": _BASE_ID,
             "record_generation": 1,
             "plan_content_sha256": _PLAN_HASH,
-            "index_version": "article_rag_index_v1",
             "source_pack_hash": source_pack_hash,
         },
     )
@@ -693,7 +692,6 @@ async def test_provider_receives_correct_kwargs() -> None:
         enabled=True,
         limit=5,
         max_context_chars=2000,
-        index_version="article_rag_index_v1",
     )
 
     assert isinstance(result, ArticleRagPromptIntegrationResult)
@@ -705,7 +703,6 @@ async def test_provider_receives_correct_kwargs() -> None:
     assert call["enabled"] is True
     assert call["limit"] == 5
     assert call["max_context_chars"] == 2000
-    assert call["index_version"] == "article_rag_index_v1"
     # Sidecar: attach path carries citations / context_ids out of band.
     assert result.sidecar.should_attach is True
     assert len(result.sidecar.citations) > 0

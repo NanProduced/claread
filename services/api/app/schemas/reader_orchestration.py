@@ -1533,7 +1533,6 @@ class ReaderArticleRagIndexStatusResponse(BaseModel):
     base_id: str | None = None
     record_generation: int | None = Field(default=None, ge=1)
     index_run_id: str | None = None
-    index_version: str | None = Field(default=None, min_length=1)
     plan_content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     chunk_count: int | None = Field(default=None, ge=0)
     reason_code: str | None = None
@@ -1542,16 +1541,15 @@ class ReaderArticleRagIndexStatusResponse(BaseModel):
 class ReaderArticleRagIndexEnsureRequest(BaseModel):
     """POST /reader/records/{record_id}/article-rag-index/ensure body.
 
-    ``extra="forbid"`` so unknown fields (including ``user_id`` and
-    ``chunker_version``) are rejected with 422.  ``user_id`` is sourced
-    only from ``AuthUserDep``; ``chunker_version`` is intentionally not
-    exposed to clients (I4S: bootstrap plan service is the authority).
+    ``extra="forbid"`` so unknown fields (including ``user_id``,
+    ``index_version``, and ``chunker_version``) are rejected with 422.
+    ``user_id`` is sourced only from ``AuthUserDep``.  Index identity is
+    fixed server-side; clients cannot select a version.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     expected_generation: int = Field(ge=1)
-    index_version: str | None = Field(default=None, min_length=1)
 
 
 class ReaderArticleRagIndexEnsureResponse(BaseModel):
@@ -1571,8 +1569,6 @@ class ReaderArticleRagIndexEnsureResponse(BaseModel):
     record_generation: int | None = Field(default=None, ge=1)
     index_run_id: str | None = None
     job_id: str | None = None
-    index_version: str | None = Field(default=None, min_length=1)
-    chunker_version: str | None = Field(default=None, min_length=1)
 
 
 # ---------------------------------------------------------------------------

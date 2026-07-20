@@ -72,7 +72,6 @@ class _FakeLifecycleService:
         reading_record_id: UUID,
         user_id: UUID,
         expected_generation: int,
-        index_version: str = "v1",
         chunker_version: str | None = None,
         now: datetime | None = None,
     ) -> ArticleRagIndexEnsureResult:

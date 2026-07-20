@@ -267,7 +267,7 @@ class ArticleRagRetrievalResult:
     ``hits`` are ordered by score descending (the searcher returns
     score-descending; we preserve that ordering through the join).
     ``stable_document_id`` / ``base_id`` / ``record_generation`` /
-    ``index_version`` / ``plan_content_sha256`` are the **current**
+    ``plan_content_sha256`` are the **current**
     plan's authoritative values; they are echoed here for ops
     diagnostics.
 
@@ -285,7 +285,6 @@ class ArticleRagRetrievalResult:
     stable_document_id: UUID
     base_id: UUID
     record_generation: int
-    index_version: str
     plan_content_sha256: str
     index_run_id: UUID
     hits: tuple[ArticleRagRetrievalHit, ...]
@@ -405,7 +404,6 @@ class ArticleRagRetrievalService:
         user_id: UUID,
         query_text: str,
         limit: int = 10,
-        index_version: str = DEFAULT_INDEX_VERSION,
     ) -> ArticleRagRetrievalResult:
         """Retrieve hits for ``query_text`` against ``reading_record_id``.
 
@@ -425,9 +423,6 @@ class ArticleRagRetrievalService:
             Maximum number of hits to return.  Must be in
             ``[1, MAX_RETRIEVAL_LIMIT]``.  Out-of-range fails closed
             with ``failure_code=retrieval_invalid_limit``.
-        index_version
-            The index version to target.  Defaults to
-            ``"article_rag_index_v1"`` (matches I4B's default).
 
         Raises
         ------
@@ -474,7 +469,9 @@ class ArticleRagRetrievalService:
         resolution = None
         resolution_error: ArticleRagRetrievalServiceError | None = None
         try:
-            resolution = resolve_article_rag_index_profile(index_version)
+            resolution = resolve_article_rag_index_profile(
+                DEFAULT_INDEX_VERSION
+            )
         except ArticleRagIndexProfileResolutionError:
             resolution_error = ArticleRagRetrievalServiceError(
                 _P1F_MSG_PROFILE_NOT_RESOLVED,
@@ -738,7 +735,6 @@ class ArticleRagRetrievalService:
                 query_vector=query_vector,
                 limit=limit,
                 stable_document_id=plan.stable_document_id,
-                index_version=profile.index_version,
             )
         except ArticleRagVectorSearcherError as exc:
             raise ArticleRagRetrievalServiceError(
@@ -779,7 +775,6 @@ class ArticleRagRetrievalService:
             stable_document_id=plan.stable_document_id,
             base_id=plan.base_id,
             record_generation=plan.record_generation,
-            index_version=profile.index_version,
             plan_content_sha256=current_plan_hash,
             # Same ``indexed`` snapshot used for plan-hash / collection /
             # embedding-model checks — not a second "latest run" lookup.
@@ -807,6 +802,9 @@ class ArticleRagRetrievalService:
         ``queued``, ``indexing``, ``failed``, ``superseded`` are all
         refused.  If multiple rows exist (shouldn't happen but we
         defend against it), the most recently updated one wins.
+
+        ``index_version`` is an internal identity key (fixed DEFAULT
+        profile until Round 2); it is not a caller-selected API parameter.
         """
         row = await conn.fetchrow(
             """

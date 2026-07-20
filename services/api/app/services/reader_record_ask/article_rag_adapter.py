@@ -31,7 +31,6 @@ class _RetrievalLike(Protocol):
         user_id: UUID,
         query_text: str,
         limit: int = ...,
-        index_version: str = ...,
     ) -> Any: ...
 
 
@@ -183,11 +182,9 @@ class RetrievalBackedArticleRagPort:
         *,
         retrieval: _RetrievalLike,
         lifecycle_status_probe: _LifecycleStatusProbe | None = None,
-        index_version: str = "article_rag_index_v1",
     ) -> None:
         self._retrieval = retrieval
         self._lifecycle_status_probe = lifecycle_status_probe
-        self._index_version = index_version
 
     async def search_current_article(
         self,
@@ -238,7 +235,6 @@ class RetrievalBackedArticleRagPort:
                 user_id=user_id,
                 query_text=query,
                 limit=limit,
-                index_version=self._index_version,
             )
         except LookupError:
             return ArticleRagSearchOutcome(
@@ -304,7 +300,6 @@ class RetrievalBackedArticleRagPort:
                 stable_document_id=stable_document_id,
                 base_id=base_id,
                 record_generation=record_generation,
-                index_version=str(getattr(result, "index_version", "") or ""),
                 plan_content_sha256=plan_hash,
             )
         try:
@@ -336,7 +331,6 @@ class RetrievalBackedArticleRagPort:
                     "heading, canonical UTF-16 range, plan content hash)"
                 ),
                 rag_substrate_id=substrate_id,
-                index_version=str(result.index_version),
                 plan_content_sha256=plan_hash,
                 stable_document_id=stable_document_id,
                 base_id=base_id,
@@ -349,7 +343,6 @@ class RetrievalBackedArticleRagPort:
             summary=f"Article RAG returned {len(eligible)} eligible hit(s)",
             hits=tuple(eligible),
             rag_substrate_id=substrate_id,
-            index_version=str(result.index_version),
             plan_content_sha256=plan_hash,
             stable_document_id=stable_document_id,
             base_id=base_id,

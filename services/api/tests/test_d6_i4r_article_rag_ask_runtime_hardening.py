@@ -117,7 +117,6 @@ def _make_attach_assembly() -> ArticleRagAskPromptAssembly:
         fallback_allowed=True,
         metadata_json={
             "stable_document_id": "doc-1",
-            "index_version": "article_rag_index_v1",
             "omitted_hit_count": 0,
             "budget_exceeded": False,
         },

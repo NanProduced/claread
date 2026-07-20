@@ -27,7 +27,6 @@ from typing import Any
 import pytest
 
 from app.services.reader_orchestration.article_rag_ask_integration_adapter import (
-    DEFAULT_INTEGRATION_INDEX_VERSION,
     DEFAULT_INTEGRATION_LIMIT,
     DEFAULT_INTEGRATION_MAX_CONTEXT_CHARS,
     FAILURE_CODE_INTEGRATION_UNEXPECTED_ERROR,
@@ -80,7 +79,6 @@ class _FakeAttachmentService:
         enabled: bool = True,
         limit: int = DEFAULT_INTEGRATION_LIMIT,
         max_context_chars: int = DEFAULT_INTEGRATION_MAX_CONTEXT_CHARS,
-        index_version: str = DEFAULT_INTEGRATION_INDEX_VERSION,
     ) -> ArticleRagAskPromptAttachment:
         self.calls.append(
             {
@@ -90,7 +88,6 @@ class _FakeAttachmentService:
                 "enabled": bool(enabled),
                 "limit": int(limit),
                 "max_context_chars": int(max_context_chars),
-                "index_version": index_version,
             }
         )
         if self.raise_exc is not None:
@@ -169,7 +166,6 @@ def _make_attachment(
         omitted_hit_count=omitted_hit_count,
         budget_exceeded=budget_exceeded,
         reading_record_id=_RECORD_ID,
-        index_version="article_rag_index_v1",
         stable_document_id=_STABLE_DOC_ID,
         base_id=_BASE_ID,
         record_generation=1,
@@ -455,13 +451,11 @@ async def test_metadata_json_contains_only_allowlisted_keys() -> None:
         "base_id",
         "record_generation",
         "plan_content_sha256",
-        "index_version",
         "source_pack_hash",
     }
     assert set(segment.metadata_json.keys()) <= expected_keys
     # Sanity: the include path populates the safe fields.
     assert segment.metadata_json["status"] == "available"
-    assert segment.metadata_json["index_version"] == "article_rag_index_v1"
     assert str(segment.metadata_json["stable_document_id"]) == str(
         _STABLE_DOC_ID
     )
@@ -545,7 +539,6 @@ async def test_provider_metadata_vector_projection_keys_absent() -> None:
             omitted_hit_count=0,
             budget_exceeded=False,
             reading_record_id=_RECORD_ID,
-            index_version="article_rag_index_v1",
             stable_document_id=_STABLE_DOC_ID,
             base_id=_BASE_ID,
             record_generation=1,
@@ -653,7 +646,6 @@ async def test_stable_ids_and_budget_propagated() -> None:
     assert str(segment.metadata_json["base_id"]) == str(_BASE_ID)
     assert segment.metadata_json["record_generation"] == 1
     assert segment.metadata_json["plan_content_sha256"] == _PLAN_HASH
-    assert segment.metadata_json["index_version"] == "article_rag_index_v1"
     assert segment.metadata_json["source_pack_hash"] == _SOURCE_PACK_HASH
     # Budget fields surface in metadata_json.
     assert segment.metadata_json["omitted_hit_count"] == 4
@@ -690,7 +682,6 @@ async def test_stable_ids_propagated_on_no_context_paths() -> None:
     assert str(segment.metadata_json["base_id"]) == str(_BASE_ID)
     assert segment.metadata_json["record_generation"] == 1
     assert segment.metadata_json["plan_content_sha256"] == _PLAN_HASH
-    assert segment.metadata_json["index_version"] == "article_rag_index_v1"
     # source_pack_hash is None on the empty path.
     assert segment.metadata_json["source_pack_hash"] is None
     # Budget fields are echoed.
@@ -718,14 +709,12 @@ async def test_parameter_passthrough_to_attachment_service() -> None:
         enabled=False,
         limit=12,
         max_context_chars=8000,
-        index_version="custom-v2",
     )
     assert len(attachment_service.calls) == 1
     call = attachment_service.calls[0]
     assert call["enabled"] is False
     assert call["limit"] == 12
     assert call["max_context_chars"] == 8000
-    assert call["index_version"] == "custom-v2"
     assert call["reading_record_id"] == str(_RECORD_ID)
     assert call["query_text"] == "hello"
 
@@ -801,7 +790,6 @@ async def test_segment_deterministic_for_same_input() -> None:
 def test_default_constants() -> None:
     assert DEFAULT_INTEGRATION_LIMIT == 8
     assert DEFAULT_INTEGRATION_MAX_CONTEXT_CHARS == 4000
-    assert DEFAULT_INTEGRATION_INDEX_VERSION == "article_rag_index_v1"
 
 
 def test_segment_kind_constant() -> None:
@@ -929,7 +917,6 @@ async def test_include_path_shape_validation_fails_soft_on_status_mismatch() -> 
         omitted_hit_count = 0
         budget_exceeded = False
         reading_record_id = _RECORD_ID
-        index_version = "article_rag_index_v1"
         stable_document_id = _STABLE_DOC_ID
         base_id = _BASE_ID
         record_generation = 1
@@ -979,7 +966,6 @@ async def test_include_path_shape_validation_fails_soft_on_empty_prompt() -> (
         omitted_hit_count = 0
         budget_exceeded = False
         reading_record_id = _RECORD_ID
-        index_version = "article_rag_index_v1"
         stable_document_id = _STABLE_DOC_ID
         base_id = _BASE_ID
         record_generation = 1
@@ -1158,7 +1144,6 @@ async def test_metadata_json_drops_non_scalar_value() -> None:
         omitted_hit_count = 0
         budget_exceeded = False
         reading_record_id = _RECORD_ID
-        index_version = "article_rag_index_v1"
         stable_document_id = _STABLE_DOC_ID
         base_id = _BASE_ID
         record_generation = 1
@@ -1370,7 +1355,6 @@ def _make_attachment_with_status(
         omitted_hit_count=0,
         budget_exceeded=False,
         reading_record_id=_RECORD_ID,
-        index_version="article_rag_index_v1",
         stable_document_id=_STABLE_DOC_ID,
         base_id=_BASE_ID,
         record_generation=1,

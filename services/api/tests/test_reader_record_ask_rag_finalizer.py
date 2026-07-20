@@ -127,7 +127,6 @@ def _ok_outcome(*hits: ArticleRagHitView) -> ArticleRagSearchOutcome:
         summary="ok",
         hits=hits or (_eligible_hit(),),
         rag_substrate_id=_SUBSTRATE,
-        index_version="article_rag_index_v1",
         plan_content_sha256=_PLAN,
         stable_document_id=_DOC,
         base_id=_BASE,
@@ -256,7 +255,6 @@ async def test_search_preserves_typed_non_ok_status(status: str) -> None:
                 detail_code=status,
                 rag_substrate_id=_SUBSTRATE if status == "empty" else None,
                 plan_content_sha256=_PLAN if status == "empty" else None,
-                index_version="article_rag_index_v1",
             )
         ]
     )

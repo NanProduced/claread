@@ -59,7 +59,6 @@ class ArticleRagSearchOutcome:
     summary: str
     hits: tuple[ArticleRagHitView, ...] = ()
     rag_substrate_id: UUID | None = None
-    index_version: str | None = None
     plan_content_sha256: str | None = None
     stable_document_id: UUID | None = None
     base_id: UUID | None = None

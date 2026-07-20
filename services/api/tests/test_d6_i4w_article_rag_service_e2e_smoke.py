@@ -46,7 +46,6 @@ from app.services.reader_orchestration.article_rag_ask_context_composer import (
     ArticleRagAskContextComposer,
 )
 from app.services.reader_orchestration.article_rag_ask_context_provider import (
-    DEFAULT_FACADE_INDEX_VERSION,
     ArticleRagAskContextProvider,
 )
 from app.services.reader_orchestration.article_rag_ask_context_resolver import (
@@ -547,7 +546,6 @@ async def test_article_ready_to_ask_full_e2e_flow(smoke_env: asyncpg.Pool) -> No
     assert retrieval_result.reading_record_id == _RECORD_ID
     assert retrieval_result.stable_document_id == _STABLE_DOC_ID
     assert retrieval_result.base_id == _BASE_ID
-    assert retrieval_result.index_version == DEFAULT_INDEX_VERSION
     assert (
         retrieval_result.plan_content_sha256
         == index_run_row["plan_content_sha256"]
@@ -597,7 +595,6 @@ async def test_article_ready_to_ask_full_e2e_flow(smoke_env: asyncpg.Pool) -> No
         reading_record_id=_RECORD_ID,
         user_id=_USER_ID,
         query_text="Roman Empire trade",
-        index_version=DEFAULT_FACADE_INDEX_VERSION,
     )
     assert isinstance(assembly, ArticleRagAskPromptAssembly)
     # On the happy path, the assembly chain attaches the prompt block.

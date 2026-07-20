@@ -612,7 +612,6 @@ async def test_no_hits_returns_empty_result() -> None:
     assert result.hits == ()
     assert result.stable_document_id == _STABLE_DOC_ID
     assert result.base_id == _BASE_ID
-    assert result.index_version == DEFAULT_INDEX_VERSION
     assert result.plan_content_sha256
 
 
@@ -1189,7 +1188,6 @@ async def test_retrieval_result_echoes_current_plan_truth() -> None:
     assert result.stable_document_id == plan.stable_document_id
     assert result.base_id == plan.base_id
     assert result.record_generation == plan.record_generation
-    assert result.index_version == DEFAULT_INDEX_VERSION
     # plan_content_sha256 is the CURRENT plan's hash (== indexed run
     # by Phase C invariant).
     from app.services.reader_orchestration.article_rag_index_plan import (
@@ -1769,72 +1767,10 @@ async def test_p1f_tracer_b_plan_service_receives_explicit_v1_index_version(
 
 
 # ---------------------------------------------------------------------------
-# P1-F Section 九 #1: default vs explicit V1 equivalence
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.anyio
-async def test_p1f_default_and_explicit_v1_retrieval_are_equivalent() -> None:
-    """Omitting ``index_version`` and explicitly passing V1 MUST
-    produce identical results: same hits, same scores, same chunk_ids,
-    same citation, same plan hash, same index_run_id."""
-    plan = _make_plan()
-    row = _indexed_run_row(plan)
-
-    # Default omission path.
-    service_default = _build_service(
-        plan=plan,
-        indexed_run_row=row,
-        searcher=FakeArticleRagVectorSearcher(
-            hits=[
-                ArticleRagVectorSearchHit(chunk_id="chunk-aaa", score=0.9),
-                ArticleRagVectorSearchHit(chunk_id="chunk-bbb", score=0.8),
-            ]
-        ),
-    )
-    result_default = await service_default.retrieve_for_record(
-        reading_record_id=_RECORD_ID,
-        user_id=_USER_ID,
-        query_text="hello",
-    )
-
-    # Explicit V1 path.
-    service_explicit = _build_service(
-        plan=plan,
-        indexed_run_row=row,
-        searcher=FakeArticleRagVectorSearcher(
-            hits=[
-                ArticleRagVectorSearchHit(chunk_id="chunk-aaa", score=0.9),
-                ArticleRagVectorSearchHit(chunk_id="chunk-bbb", score=0.8),
-            ]
-        ),
-    )
-    result_explicit = await service_explicit.retrieve_for_record(
-        reading_record_id=_RECORD_ID,
-        user_id=_USER_ID,
-        query_text="hello",
-        index_version=_V1_INDEX_VERSION,
-    )
-
-    assert [h.chunk_id for h in result_default.hits] == [
-        h.chunk_id for h in result_explicit.hits
-    ]
-    assert [h.score for h in result_default.hits] == [
-        h.score for h in result_explicit.hits
-    ]
-    assert result_default.plan_content_sha256 == result_explicit.plan_content_sha256
-    assert result_default.index_version == result_explicit.index_version == _V1_INDEX_VERSION
-    assert result_default.index_run_id == result_explicit.index_run_id
-    # Citation shape equality.
-    for d, e in zip(result_default.hits, result_explicit.hits, strict=True):
-        assert d.citation == e.citation
-        assert d.text == e.text
-
 
 # ---------------------------------------------------------------------------
-# P1-F Section 九 #3: unknown / malicious / non-string / None index_version
+# P1-F fixtures for profile-mismatch call-count assertions
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture
 def provider_call_counter():
@@ -1854,277 +1790,6 @@ def searcher_call_counter():
     def _wrap(searcher):
         return searcher
     return _wrap
-
-
-@pytest.mark.anyio
-async def test_p1f_unknown_index_version_fails_closed_with_fixed_safe_error(
-    provider_call_counter, searcher_call_counter
-) -> None:
-    """An unregistered ``index_version`` string MUST fail closed with
-    ``retrieval_index_profile_invalid``.  The fixed safe error message
-    MUST NOT echo the offending input."""
-    malicious = "article_rag_index_v999"
-    plan = _make_plan()
-    row = _indexed_run_row(plan)
-    provider = provider_call_counter(
-        FakeArticleRagEmbeddingProvider(
-            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
-        )
-    )
-    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
-    service = _build_service(
-        plan=plan,
-        indexed_run_row=row,
-        searcher=searcher,
-        embedding_provider=provider,
-    )
-    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
-        await service.retrieve_for_record(
-            reading_record_id=_RECORD_ID,
-            user_id=_USER_ID,
-            query_text="hello",
-            index_version=malicious,
-        )
-    assert (
-        exc_info.value.failure_code
-        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
-    )
-    # Cause/context chain is empty.
-    assert exc_info.value.__cause__ is None
-    assert exc_info.value.__context__ is None
-    # No DB / plan / embedding / search calls happened past the resolver.
-    calls = service._plan_service._test_calls  # type: ignore[attr-defined]
-    assert len(calls) == 0
-    assert provider.call_count == 0
-    assert len(searcher.search_calls) == 0
-    # The offending input MUST NOT appear in any error surface.
-    assert malicious not in str(exc_info.value)
-    assert malicious not in repr(exc_info.value)
-    assert malicious not in exc_info.value.args[0]
-
-
-@pytest.mark.anyio
-async def test_p1f_none_index_version_fails_closed(
-    provider_call_counter, searcher_call_counter
-) -> None:
-    """Explicit ``None`` MUST fail closed (no fallback, no str()
-    coercion).  ``__cause__`` and ``__context__`` MUST be None."""
-    plan = _make_plan()
-    row = _indexed_run_row(plan)
-    provider = provider_call_counter(
-        FakeArticleRagEmbeddingProvider(
-            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
-        )
-    )
-    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
-    service = _build_service(
-        plan=plan,
-        indexed_run_row=row,
-        searcher=searcher,
-        embedding_provider=provider,
-    )
-    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
-        await service.retrieve_for_record(
-            reading_record_id=_RECORD_ID,
-            user_id=_USER_ID,
-            query_text="hello",
-            index_version=None,  # type: ignore[arg-type]
-        )
-    assert (
-        exc_info.value.failure_code
-        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
-    )
-    assert exc_info.value.__cause__ is None
-    assert exc_info.value.__context__ is None
-    assert provider.call_count == 0
-    assert len(searcher.search_calls) == 0
-
-
-@pytest.mark.parametrize(
-    "bad_value",
-    [
-        True,
-        False,
-        0,
-        1,
-        1.5,
-        ["article_rag_index_v1"],
-        {"index_version": "article_rag_index_v1"},
-        object(),
-    ],
-    ids=[
-        "bool_true",
-        "bool_false",
-        "int_zero",
-        "int_one",
-        "float",
-        "list",
-        "dict",
-        "object",
-    ],
-)
-@pytest.mark.anyio
-async def test_p1f_non_string_index_version_matrix_fails_closed(
-    bad_value, provider_call_counter, searcher_call_counter
-) -> None:
-    """Non-string ``index_version`` inputs (bool / int / float / list /
-    dict / object) MUST all fail closed with the same fixed safe
-    error.  No coercion, no fallback."""
-    plan = _make_plan()
-    row = _indexed_run_row(plan)
-    provider = provider_call_counter(
-        FakeArticleRagEmbeddingProvider(
-            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
-        )
-    )
-    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
-    service = _build_service(
-        plan=plan,
-        indexed_run_row=row,
-        searcher=searcher,
-        embedding_provider=provider,
-    )
-    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
-        await service.retrieve_for_record(
-            reading_record_id=_RECORD_ID,
-            user_id=_USER_ID,
-            query_text="hello",
-            index_version=bad_value,  # type: ignore[arg-type]
-        )
-    assert (
-        exc_info.value.failure_code
-        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
-    )
-    assert exc_info.value.__cause__ is None
-    assert exc_info.value.__context__ is None
-    assert provider.call_count == 0
-    assert len(searcher.search_calls) == 0
-
-
-@pytest.mark.anyio
-async def test_p1f_empty_string_index_version_fails_closed(
-    provider_call_counter, searcher_call_counter
-) -> None:
-    plan = _make_plan()
-    row = _indexed_run_row(plan)
-    provider = provider_call_counter(
-        FakeArticleRagEmbeddingProvider(
-            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
-        )
-    )
-    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
-    service = _build_service(
-        plan=plan,
-        indexed_run_row=row,
-        searcher=searcher,
-        embedding_provider=provider,
-    )
-    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
-        await service.retrieve_for_record(
-            reading_record_id=_RECORD_ID,
-            user_id=_USER_ID,
-            query_text="hello",
-            index_version="",
-        )
-    assert (
-        exc_info.value.failure_code
-        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
-    )
-    assert provider.call_count == 0
-    assert len(searcher.search_calls) == 0
-
-
-@pytest.mark.anyio
-async def test_p1f_whitespace_index_version_fails_closed(
-    provider_call_counter, searcher_call_counter
-) -> None:
-    plan = _make_plan()
-    row = _indexed_run_row(plan)
-    provider = provider_call_counter(
-        FakeArticleRagEmbeddingProvider(
-            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
-        )
-    )
-    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
-    service = _build_service(
-        plan=plan,
-        indexed_run_row=row,
-        searcher=searcher,
-        embedding_provider=provider,
-    )
-    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
-        await service.retrieve_for_record(
-            reading_record_id=_RECORD_ID,
-            user_id=_USER_ID,
-            query_text="hello",
-            index_version="  \t\n ",
-        )
-    assert (
-        exc_info.value.failure_code
-        == FAILURE_CODE_RETRIEVAL_INDEX_PROFILE_INVALID
-    )
-    assert provider.call_count == 0
-    assert len(searcher.search_calls) == 0
-
-
-@pytest.mark.anyio
-async def test_p1f_malicious_sentinel_does_not_leak_into_error_surfaces(
-    provider_call_counter, searcher_call_counter
-) -> None:
-    """A malicious ``index_version`` carrying a script sentinel, a URI,
-    a key, and a newline MUST NOT appear in:
-      - ``str(exc)``
-      - ``repr(exc)``
-      - ``exc.args``
-      - the formatted traceback of the raised exception
-    The retrieval wrapper error must use a fixed local message."""
-    import traceback as _tb
-
-    sentinel = (
-        "<script>alert('xss')</script>"
-        "\n"
-        "article_rag_index_v1; DROP TABLE users; --"
-        "\n"
-        "sk-abcdefghijklmnop"
-    )
-    plan = _make_plan()
-    row = _indexed_run_row(plan)
-    provider = provider_call_counter(
-        FakeArticleRagEmbeddingProvider(
-            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
-        )
-    )
-    searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
-    service = _build_service(
-        plan=plan,
-        indexed_run_row=row,
-        searcher=searcher,
-        embedding_provider=provider,
-    )
-    try:
-        await service.retrieve_for_record(
-            reading_record_id=_RECORD_ID,
-            user_id=_USER_ID,
-            query_text="hello",
-            index_version=sentinel,
-        )
-    except ArticleRagRetrievalServiceError as exc:
-        formatted_tb = _tb.format_exc()
-        # The sentinel MUST NOT appear in any observable error surface.
-        assert sentinel not in str(exc)
-        assert sentinel not in repr(exc)
-        assert sentinel not in exc.args[0]
-        # The traceback's final exception line is the only line we
-        # check; we do not assert against the source-code echo of the
-        # test (which legitimately contains the sentinel).
-        last_line = formatted_tb.rstrip().splitlines()[-1]
-        assert sentinel not in last_line
-    else:  # pragma: no cover — defensive
-        pytest.fail(
-            "expected ArticleRagRetrievalServiceError for malicious "
-            "index_version sentinel"
-        )
-
 
 # ---------------------------------------------------------------------------
 # P1-F Section 九 #4: missing / malformed profile_fingerprint
@@ -2990,7 +2655,6 @@ async def test_p1f_resolver_failure_does_not_chain_cause_or_context(
             reading_record_id=_RECORD_ID,
             user_id=_USER_ID,
             query_text="hello",
-            index_version="article_rag_index_v_unknown",
         )
     # Chain closure: __cause__ and __context__ are both None.
     assert exc_info.value.__cause__ is None
@@ -3026,24 +2690,57 @@ async def test_p1f_plan_service_receives_v1_index_version_on_default_omission() 
     assert calls[0]["index_version"] == _V1_INDEX_VERSION
 
 
+# ---------------------------------------------------------------------------
+# Round 1-R1: public retrieve seam without version selection
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.anyio
-async def test_p1f_plan_service_receives_v1_index_version_on_explicit_v1() -> None:
-    """When ``index_version=V1`` is passed explicitly, retrieval
-    forwards V1 to the plan service (not None, not the default
-    sentinel)."""
+async def test_round1_retrieve_without_version_param_returns_plan_backed_hits() -> None:
+    """No version argument: fixed internal DEFAULT yields plan-backed hits."""
     plan = _make_plan()
     row = _indexed_run_row(plan)
-    service = _build_service(
-        plan=plan,
-        indexed_run_row=row,
-        searcher=FakeArticleRagVectorSearcher(hits=[]),
+    searcher = FakeArticleRagVectorSearcher(
+        hits=[ArticleRagVectorSearchHit(chunk_id="chunk-aaa", score=0.9)]
     )
-    await service.retrieve_for_record(
+    service = _build_service(plan=plan, indexed_run_row=row, searcher=searcher)
+    result = await service.retrieve_for_record(
         reading_record_id=_RECORD_ID,
         user_id=_USER_ID,
         query_text="hello",
-        index_version=_V1_INDEX_VERSION,
     )
-    calls = service._plan_service._test_calls  # type: ignore[attr-defined]
-    assert len(calls) == 1
-    assert calls[0]["index_version"] == _V1_INDEX_VERSION
+    assert len(result.hits) == 1
+    hit = result.hits[0]
+    assert hit.chunk_id == "chunk-aaa"
+    assert hit.citation["block_ids"] == ["block-for-chunk-aaa"]
+    from app.services.reader_orchestration.article_rag_index_plan import (
+        compute_plan_content_sha256,
+    )
+    assert result.plan_content_sha256 == compute_plan_content_sha256(plan)
+    assert result.plan_content_sha256 == row["plan_content_sha256"]
+
+
+@pytest.mark.anyio
+async def test_round1_retrieve_rejects_legacy_index_version_kwarg_before_io() -> None:
+    """Legacy index_version= kwarg is not part of the public interface."""
+    plan = _make_plan()
+    provider = FakeArticleRagEmbeddingProvider(
+        dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_V1_QUERY_EMBEDDING_MODEL,
+    )
+    searcher = FakeArticleRagVectorSearcher(hits=[])
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=_indexed_run_row(plan),
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+    with pytest.raises(TypeError):
+        await service.retrieve_for_record(  # type: ignore[call-arg]
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+            index_version="article_rag_index_v1",
+        )
+    assert provider.call_count == 0
+    assert searcher.search_calls == []

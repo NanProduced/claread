@@ -205,6 +205,10 @@ def _make_bootstrap_result(
         chunker_version=chunker_version,
         plan_content_sha256="a" * 64,
         chunk_count=5,
+        # Internal bootstrap identity (not an external lifecycle DTO field).
+        profile_fingerprint=(
+            "e443f581eb3e86aeb9dbcdcee806783186bd85da6c987c60357b61905ea86d6d"
+        ),
         job_id=_JOB_ID,
         job_status="queued",
         idempotent_noop=idempotent_noop,
@@ -393,12 +397,13 @@ class TestEnsureHappyPath:
         assert result.record_generation == _GENERATION
         assert result.index_run_id == _INDEX_RUN_ID
         assert result.job_id == _JOB_ID
-        assert result.index_version == _INDEX_VERSION
-        assert result.chunker_version == _CHUNKER_VERSION
-        # Bootstrap was called exactly once with the right args.
+        assert not hasattr(result, "index_version")
+        assert not hasattr(result, "chunker_version")
+        # Bootstrap was called exactly once with fixed DEFAULT identity.
         assert len(bootstrap.calls) == 1
         assert bootstrap.calls[0]["reading_record_id"] == _RECORD_ID
         assert bootstrap.calls[0]["user_id"] == _USER_ID
+        assert bootstrap.calls[0]["index_version"] == _INDEX_VERSION
 
     async def test_bootstrap_idempotent_noop_is_passed_through(self) -> None:
         bootstrap = _FakeBootstrapService(
@@ -446,13 +451,13 @@ class TestEnsureHappyPath:
         )
 
         # Despite the mismatch, the ensure path returns ``enqueued``
-        # (not chunker_version_mismatch) and exposes the actual
-        # chunker_version so the caller can decide what to do.
+        # (not chunker_version_mismatch).  EnsureResult no longer echoes
+        # chunker_version on the public lifecycle DTO.
         assert result.status == ENSURE_STATUS_ENQUEUED
         assert result.idempotent_noop is False
         assert result.index_run_id == _INDEX_RUN_ID
         assert result.job_id == _JOB_ID
-        assert result.chunker_version == "different_v2"
+        assert not hasattr(result, "chunker_version")
 
     async def test_chunker_version_match_returns_enqueued(self) -> None:
         bootstrap = _FakeBootstrapService(
@@ -470,7 +475,7 @@ class TestEnsureHappyPath:
         )
 
         assert result.status == ENSURE_STATUS_ENQUEUED
-        assert result.chunker_version == _CHUNKER_VERSION
+        assert not hasattr(result, "chunker_version")
 
 
 # ===========================================================================

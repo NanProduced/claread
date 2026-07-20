@@ -68,10 +68,8 @@ from uuid import UUID
 
 from .article_rag_index_worker import ArticleRagIndexWorkerError
 from .article_rag_retrieval_service import (
-    DEFAULT_INDEX_VERSION,
     MAX_RETRIEVAL_LIMIT,
     ArticleRagRetrievalResult,
-    ArticleRagRetrievalService,
     ArticleRagRetrievalServiceError,
 )
 
@@ -243,7 +241,6 @@ class ArticleRagContextPack:
     stable_document_id: UUID
     base_id: UUID
     record_generation: int
-    index_version: str
     plan_content_sha256: str
     query_sha256: str
     items: tuple[ArticleRagContextItem, ...]
@@ -273,7 +270,6 @@ class _RetrievalServiceLike(Protocol):
         user_id: UUID,
         query_text: str,
         limit: int = ...,
-        index_version: str = ...,
     ) -> ArticleRagRetrievalResult: ...
 
 
@@ -339,7 +335,6 @@ _ALLOWED_PROVIDER_METADATA_KEYS = frozenset({
     "latency_ms",
     "total_latency_ms",
     "embedding_model",
-    "index_version",
     "plan_content_sha256",
     "region",
     "namespace",
@@ -499,7 +494,6 @@ class ArticleRagContextService:
         query_text: str,
         limit: int = DEFAULT_LIMIT,
         max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
-        index_version: str = DEFAULT_INDEX_VERSION,
     ) -> ArticleRagContextPack:
         """Build a deterministic context pack for ``query_text``.
 
@@ -589,7 +583,6 @@ class ArticleRagContextService:
                     user_id=user_id,
                     query_text=query_text,
                     limit=limit,
-                    index_version=index_version,
                 )
             )
         except ArticleRagRetrievalServiceError as exc:
@@ -616,14 +609,12 @@ class ArticleRagContextService:
                 "limit=%d index_version=%s",
                 reading_record_id,
                 limit,
-                index_version,
             )
             return ArticleRagContextPack(
                 reading_record_id=retrieval_result.reading_record_id,
                 stable_document_id=retrieval_result.stable_document_id,
                 base_id=retrieval_result.base_id,
                 record_generation=retrieval_result.record_generation,
-                index_version=retrieval_result.index_version,
                 plan_content_sha256=retrieval_result.plan_content_sha256,
                 query_sha256=query_hash,
                 items=(),
@@ -689,14 +680,13 @@ class ArticleRagContextService:
         logger.debug(
             "Article RAG context pack served %d items "
             "(omitted=%d, budget_exceeded=%s, total_chars=%d) for "
-            "record=%s limit=%d index_version=%s",
+            "record=%s limit=%d",
             len(items),
             omitted,
             budget_exceeded,
             total_chars,
             reading_record_id,
             limit,
-            index_version,
         )
 
         return ArticleRagContextPack(
@@ -704,7 +694,6 @@ class ArticleRagContextService:
             stable_document_id=retrieval_result.stable_document_id,
             base_id=retrieval_result.base_id,
             record_generation=retrieval_result.record_generation,
-            index_version=retrieval_result.index_version,
             plan_content_sha256=retrieval_result.plan_content_sha256,
             query_sha256=query_hash,
             items=tuple(items),

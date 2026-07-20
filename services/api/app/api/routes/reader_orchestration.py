@@ -58,9 +58,6 @@ from app.schemas.reader_orchestration import (
     ReaderArticleRagIndexStatusResponse,
 )
 from app.services.auth.dependencies import AuthUserDep
-from app.services.reader_orchestration.article_rag_index_bootstrap import (
-    DEFAULT_INDEX_VERSION,
-)
 from app.services.reader_orchestration.article_rag_index_lifecycle_service import (
     ENSURE_STATUS_RECORD_NOT_FOUND,
     STATUS_UNAVAILABLE,
@@ -1229,7 +1226,6 @@ def _build_article_rag_index_status_response(
             if result.index_run_id is not None
             else None
         ),
-        index_version=result.index_version,
         plan_content_sha256=result.plan_content_sha256,
         chunk_count=result.chunk_count,
         reason_code=result.reason_code,
@@ -1261,8 +1257,6 @@ def _build_article_rag_index_ensure_response(
         job_id=(
             str(result.job_id) if result.job_id is not None else None
         ),
-        index_version=result.index_version,
-        chunker_version=result.chunker_version,
     )
 
 
@@ -1274,17 +1268,12 @@ def _build_article_rag_index_ensure_response(
 async def get_reader_article_rag_index_status(
     record_id: UUID,
     current_user: AuthUserDep,
-    index_version: str | None = Query(
-        default=None,
-        description="Article RAG index version; defaults to the service's "
-        "DEFAULT_INDEX_VERSION when omitted.",
-    ),
 ) -> ReaderArticleRagIndexStatusResponse:
     """Read-only Article RAG index lifecycle status query.
 
     Does NOT write, lock rows, or read chunk text / embedding vector /
     Plate JSON / Markdown / DOM / Slate / UI fields.  ``user_id`` comes
-    only from ``AuthUserDep``.
+    only from ``AuthUserDep``.  Index identity is fixed server-side.
 
     HTTP mapping:
       * ``status=unavailable`` + ``reason_code=record_not_found`` → 404
@@ -1299,7 +1288,6 @@ async def get_reader_article_rag_index_status(
                 conn,
                 reading_record_id=record_id,
                 user_id=UUID(current_user.user_id),
-                index_version=index_version or DEFAULT_INDEX_VERSION,
             )
     except HTTPException:
         raise
@@ -1342,8 +1330,8 @@ async def ensure_reader_article_rag_index_job(
 
     The route opens the transaction; the service writes ``index_runs`` /
     ``reader_runs`` / ``reader_jobs`` inside it.  ``user_id`` comes only
-    from ``AuthUserDep``; ``chunker_version`` is intentionally NOT
-    accepted (I4S: bootstrap plan service is the authority).
+    from ``AuthUserDep``.  Index identity is fixed server-side; clients
+    cannot select ``index_version`` or ``chunker_version``.
 
     HTTP mapping:
       * ``status=record_not_found`` → 404
@@ -1354,7 +1342,6 @@ async def ensure_reader_article_rag_index_job(
     """
     service = _get_article_rag_index_lifecycle_service()
     pool = _get_reader_pool()
-    index_version = body.index_version or DEFAULT_INDEX_VERSION
 
     try:
         async with pool.acquire() as conn:
@@ -1365,7 +1352,6 @@ async def ensure_reader_article_rag_index_job(
                         reading_record_id=record_id,
                         user_id=UUID(current_user.user_id),
                         expected_generation=body.expected_generation,
-                        index_version=index_version,
                     )
                 )
     except HTTPException:

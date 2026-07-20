@@ -46,7 +46,6 @@ from app.services.reader_orchestration.article_rag_index_worker import (
     ArticleRagIndexWorkerError,
 )
 from app.services.reader_orchestration.article_rag_retrieval_service import (
-    DEFAULT_INDEX_VERSION,
     MAX_RETRIEVAL_LIMIT,
     ArticleRagRetrievalHit,
     ArticleRagRetrievalResult,
@@ -88,7 +87,6 @@ class _FakeRetrievalService:
         user_id: uuid.UUID,
         query_text: str,
         limit: int = DEFAULT_LIMIT,
-        index_version: str = DEFAULT_INDEX_VERSION,
     ) -> ArticleRagRetrievalResult:
         self.calls.append(
             {
@@ -96,7 +94,6 @@ class _FakeRetrievalService:
                 "user_id": str(user_id),
                 "query_text": query_text,
                 "limit": int(limit),
-                "index_version": index_version,
             }
         )
         if self.raise_exc is not None:
@@ -105,7 +102,6 @@ class _FakeRetrievalService:
         return self.result_factory(
             reading_record_id=reading_record_id,
             limit=limit,
-            index_version=index_version,
         )
 
 
@@ -118,7 +114,6 @@ def _make_retrieval_result(
         stable_document_id=_STABLE_DOC_ID,
         base_id=_BASE_ID,
         record_generation=1,
-        index_version=DEFAULT_INDEX_VERSION,
         plan_content_sha256=_PLAN_HASH,
         index_run_id=_INDEX_RUN_ID,
         hits=tuple(hits or ()),
@@ -207,7 +202,6 @@ async def test_happy_path_fields_complete_and_order_stable() -> None:
     assert pack.reading_record_id == _RECORD_ID
     assert pack.stable_document_id == _STABLE_DOC_ID
     assert pack.base_id == _BASE_ID
-    assert pack.index_version == DEFAULT_INDEX_VERSION
     assert pack.plan_content_sha256 == _PLAN_HASH
     # provider_metadata is passed through (ops diagnostic only).
     assert pack.provider_metadata == {"provider": "fake-in-memory"}
@@ -225,7 +219,6 @@ async def test_happy_path_retrieval_called_with_correct_kwargs() -> None:
         user_id=_USER_ID,
         query_text="hello",
         limit=7,
-        index_version="custom-v2",
     )
     assert len(retrieval.calls) == 1
     call = retrieval.calls[0]
@@ -233,7 +226,6 @@ async def test_happy_path_retrieval_called_with_correct_kwargs() -> None:
     assert call["user_id"] == str(_USER_ID)
     assert call["query_text"] == "hello"
     assert call["limit"] == 7
-    assert call["index_version"] == "custom-v2"
 
 
 # ---------------------------------------------------------------------------
@@ -868,7 +860,6 @@ def _make_retrieval_result_with_provider_metadata(
         stable_document_id=base.stable_document_id,
         base_id=base.base_id,
         record_generation=base.record_generation,
-        index_version=base.index_version,
         plan_content_sha256=base.plan_content_sha256,
         index_run_id=base.index_run_id,
         hits=base.hits,
@@ -1240,7 +1231,6 @@ async def test_provider_metadata_keeps_only_whitelisted_scalar_keys() -> None:
         "latency_ms": 42,
         "total_latency_ms": 100,
         "embedding_model": "text-embedding-v4",
-        "index_version": "article_rag_index_v1",
         "plan_content_sha256": "abc123" + "f" * 58,
         "region": "us-west-2",
         "namespace": "default",

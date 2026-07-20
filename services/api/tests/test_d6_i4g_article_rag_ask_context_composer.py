@@ -112,7 +112,6 @@ def _make_pack(
         stable_document_id=_STABLE_DOC_ID,
         base_id=_BASE_ID,
         record_generation=1,
-        index_version="article_rag_index_v1",
         plan_content_sha256=_PLAN_HASH,
         query_sha256=query_sha256,
         items=tuple(items),
@@ -321,7 +320,6 @@ def test_source_pack_hash_changes_when_stable_ids_change() -> None:
         stable_document_id=uuid.UUID("99999999-9999-9999-9999-999999999999"),
         base_id=_BASE_ID,
         record_generation=1,
-        index_version="article_rag_index_v1",
         plan_content_sha256=_PLAN_HASH,
         query_sha256="0" * 64,
         items=tuple(items),
@@ -696,5 +694,4 @@ def test_bundle_echoes_stable_pack_ids() -> None:
     assert bundle.stable_document_id == _STABLE_DOC_ID
     assert bundle.base_id == _BASE_ID
     assert bundle.record_generation == 1
-    assert bundle.index_version == "article_rag_index_v1"
     assert bundle.plan_content_sha256 == _PLAN_HASH

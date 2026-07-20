@@ -19,7 +19,6 @@ from typing import Any
 import pytest
 
 from app.services.reader_orchestration.article_rag_ask_context_provider import (
-    DEFAULT_FACADE_INDEX_VERSION,
     DEFAULT_FACADE_LIMIT,
     DEFAULT_FACADE_MAX_CONTEXT_CHARS,
     FAILURE_CODE_FACADE_UNEXPECTED_ERROR,
@@ -102,7 +101,6 @@ def _make_segment(
             "stable_document_id": _STABLE_DOC_ID,
             "base_id": _BASE_ID, "record_generation": 1,
             "plan_content_sha256": _PLAN_HASH,
-            "index_version": "article_rag_index_v1",
             "source_pack_hash": source_pack_hash,
         },
     )
@@ -141,7 +139,6 @@ def _make_context(
             "stable_document_id": _STABLE_DOC_ID,
             "base_id": _BASE_ID, "record_generation": 1,
             "plan_content_sha256": _PLAN_HASH,
-            "index_version": "article_rag_index_v1",
             "source_pack_hash": source_pack_hash,
         },
     )
@@ -586,12 +583,11 @@ async def test_parameters_passthrough_to_integration_adapter():
     await provider.build_for_ask(
         reading_record_id=_RECORD_ID, user_id=_USER_ID,
         query_text="hello", enabled=False, limit=12,
-        max_context_chars=8000, index_version="custom-v2",
+        max_context_chars=8000,
     )
     assert integration_adapter.calls[0]["enabled"] is False
     assert integration_adapter.calls[0]["limit"] == 12
     assert integration_adapter.calls[0]["max_context_chars"] == 8000
-    assert integration_adapter.calls[0]["index_version"] == "custom-v2"
 
 
 # 7. Default construction
@@ -600,7 +596,6 @@ async def test_parameters_passthrough_to_integration_adapter():
 def test_default_constants():
     assert DEFAULT_FACADE_LIMIT == 8
     assert DEFAULT_FACADE_MAX_CONTEXT_CHARS == 4000
-    assert DEFAULT_FACADE_INDEX_VERSION == "article_rag_index_v1"
 
 
 def test_failure_code_constant():
