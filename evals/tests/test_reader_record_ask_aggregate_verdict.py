@@ -188,6 +188,13 @@ def _make_case(
     case_id: str = "case-a",
     article_text: str = "Hello world.",
 ) -> ReaderRecordAskR4A3Case:
+    # R4-A4-2R3: ``phase_tags`` is intentionally empty. These tests
+    # exercise the aggregate VERDICT precedence (identity mismatch,
+    # budget exhaustion, coverage gap, normal path) — NOT the runtime
+    # fixture identity contract. Tagging the case as ``real_phase1``
+    # would trigger the R4-A4-2R3 strict requirement that
+    # ``expected_runtime_fixture_fingerprint`` be declared, which is
+    # orthogonal to what these tests verify.
     return ReaderRecordAskR4A3Case(
         id=case_id,
         source_kind="synthetic_short",
@@ -202,7 +209,7 @@ def _make_case(
         question_category="main_idea",
         expected=ReaderRecordAskR4A3Expected(),
         tags=[],
-        phase_tags=["real_phase1"],
+        phase_tags=[],
     )
 
 

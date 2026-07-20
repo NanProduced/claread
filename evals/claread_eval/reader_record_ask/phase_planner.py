@@ -219,6 +219,29 @@ class PhasePlanner:
         return {k: list(v) for k, v in self._prior_eval_results.items()}
 
     # ------------------------------------------------------------------
+    # R4-A4-2R2 P1: self-contained budget audit projection
+    # ------------------------------------------------------------------
+
+    @property
+    def planned_logical_runs(self) -> int:
+        """Total number of logical runs planned for this phase.
+
+        R4-A4-2R2 P1: the manifest persists this value so the aggregate
+        can audit ``retries_consumed = executed_requests - planned_logical_runs``
+        WITHOUT reconstructing the historical cap from the current
+        shell env.
+
+        For Phase 1: ``len(cases_to_run) * repetitions`` (e.g. 10 cases
+        × 3 reps = 30). For Phase 2/3: same formula, with the phase's
+        own ``repetitions`` value (typically 1).
+
+        Note: this is the LOGICAL run count, not the executed-request
+        count. A logical run may consume 0..N provider requests
+        depending on retries / tool-call loops / budget exhaustion.
+        """
+        return len(self.cases_to_run) * self._repetitions
+
+    # ------------------------------------------------------------------
     # Budget stop recording (called by harness, not by the planner itself)
     # ------------------------------------------------------------------
 

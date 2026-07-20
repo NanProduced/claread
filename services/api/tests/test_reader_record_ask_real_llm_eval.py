@@ -119,8 +119,16 @@ from app.services.reader_record_ask.document_access import (  # noqa: E402
     ReadingUnitView,
     build_document_scope,
 )
+from app.services.reader_record_ask.agent import (  # noqa: E402
+    DEFAULT_OUTPUT_RETRIES,
+    DEFAULT_TOOL_RETRIES,
+)
 from app.services.reader_record_ask.baseline_context import (  # noqa: E402
+    BaselineContextAssembler,
     ModelContextChunk,
+)
+from app.services.reader_record_ask.evidence_registry import (  # noqa: E402
+    EvidenceRegistry,
 )
 from app.services.reader_record_ask.runtime import (  # noqa: E402
     run_reading_record_ask,
@@ -156,9 +164,14 @@ from claread_eval.reader_record_ask.phase_planner import (  # noqa: E402
     PhasePlanner,
 )
 from claread_eval.reader_record_ask.run_manifest import (  # noqa: E402
+    AUDIT_CONTRACT_VERSION_V2,
     MANIFEST_SCHEMA_VERSION,
     ReaderRecordAskRunManifest,
     write_manifest_atomic,
+)
+from claread_eval.reader_record_ask.runtime_fixture import (  # noqa: E402
+    compute_runtime_fixture_fingerprint,
+    precheck_required_facts_support,
 )
 from claread_eval.reader_record_ask.schema import (  # noqa: E402
     ReaderRecordAskR4A3Case,
@@ -926,6 +939,21 @@ async def _run_one_case(
     dataset version (the working dataset is gitignored and can drift
     between phases).
 
+    R4-A4-2R3 P0-1: the artifact's ``runtime_fixture_fingerprint`` is
+    the ACTUAL identity recomputed from
+    ``result.baseline_context`` (SHA-256 over ``baseline_status +
+    is_complete + ordered (chunk_ordinal, chunk_text)`` via
+    length-prefixed framing). It MUST NOT be copied from the preflight
+    (expected) value. The aggregate verifies the three-layer identity
+    contract:
+
+        dataset expected == manifest preflight == artifact actual
+
+    When the baseline is None / has no chunks (capture_status=
+    "unavailable") or the runtime raised (capture_status="failed"),
+    the actual fingerprint is None — the aggregate's instrumentation
+    / incomplete gate blocks the run rather than forging an identity.
+
     ``budget_model`` is the wrapped :class:`BudgetedUsageModel` — it
     enforces the request/token cap and aggregates usage. The underlying
     provider model is ``budget_model.wrapped``.
@@ -1006,6 +1034,15 @@ async def _run_one_case(
                 "reader_record_ask_model_context_v1"
             ),
             model_context_capture_status="failed",
+            # R4-A4-2R3 P0-1: runtime exception → actual fingerprint
+            # is None. The preflight (expected) value MUST NOT be
+            # copied here — the artifact's actual fingerprint is
+            # derived ONLY from ``result.baseline_context``, which
+            # never materialized because the runtime raised before
+            # the agent returned. The aggregate's instrumentation /
+            # incomplete gate blocks the run rather than forging an
+            # actual identity.
+            runtime_fixture_fingerprint=None,
         )
 
     latency = time.monotonic() - start
@@ -1085,6 +1122,30 @@ async def _run_one_case(
         "captured" if success_fingerprint is not None else "unavailable"
     )
 
+    # R4-A4-2R3 P0-1: recompute the ACTUAL runtime_fixture_fingerprint
+    # from ``result.baseline_context`` — do NOT copy the preflight
+    # (expected) value. The preflight fingerprint is the dataset's
+    # declared expected identity; the artifact's actual fingerprint
+    # MUST be independently derived from the baseline the model
+    # actually saw. The two MUST agree (deterministic assembly), but
+    # copying preflight → actual would hide any runtime drift (e.g.
+    # a monkeypatched assembler, a DB mutation between preflight and
+    # run, a different chunk truncation). When the baseline is None
+    # or has no chunks (capture_status="unavailable"), the actual
+    # fingerprint is None — the aggregate's instrumentation/
+    # incomplete gate blocks the run rather than forging an identity.
+    actual_runtime_fp: str | None = None
+    if baseline is not None and baseline.model_context_chunks:
+        actual_chunk_views: list[tuple[int, str]] = [
+            (chunk.chunk_ordinal, chunk.text)
+            for chunk in baseline.model_context_chunks
+        ]
+        actual_runtime_fp = compute_runtime_fixture_fingerprint(
+            baseline_status=baseline.baseline_status,
+            is_complete=baseline.is_complete,
+            chunks=actual_chunk_views,
+        )
+
     return RawArtifact(
         case_id=case.id,
         run_id=run_id,
@@ -1123,6 +1184,14 @@ async def _run_one_case(
             "reader_record_ask_model_context_v1"
         ),
         model_context_capture_status=success_capture_status,
+        # R4-A4-2R3 P0-1: ACTUAL fingerprint recomputed from
+        # ``result.baseline_context`` (NOT the preflight/expected
+        # value). The aggregate's three-layer check verifies:
+        #   dataset expected == manifest preflight == artifact actual.
+        # When actual is None (baseline unavailable / no chunks),
+        # the aggregate's instrumentation gate blocks the run —
+        # the harness does NOT forge an actual identity.
+        runtime_fixture_fingerprint=actual_runtime_fp,
     )
 
 
@@ -1397,9 +1466,16 @@ def _preflight_check(
 
 async def _preflight_runtime_inputs(
     cases: list[ReaderRecordAskR4A3Case],
-) -> list[tuple[ReaderRecordAskR4A3Case, ReadingRecordAskContextEnvelope, InMemoryDocumentAccess]]:
-    """Build (envelope, document_access) for EVERY selected case before
-    any paid provider call (P0-3).
+) -> list[
+    tuple[
+        ReaderRecordAskR4A3Case,
+        ReadingRecordAskContextEnvelope,
+        InMemoryDocumentAccess,
+        str,
+    ]
+]:
+    """Build (envelope, document_access, runtime_fixture_fingerprint) for
+    EVERY selected case before any paid provider call (P0-3).
 
     Returns a list of ``(case, envelope, document_access)`` tuples, one
     per selected case, in case order. If ANY case cannot be prepared
@@ -1421,12 +1497,28 @@ async def _preflight_runtime_inputs(
     which raises ``pytest.skip`` on any failure. The skip message uses
     only ``exception_type`` — no DB connection string or article body
     is leaked (P1-2).
+
+    R4-A4-2R P0-Identity: after each case's envelope is built, the
+    runtime ``envelope_fingerprint`` is verified against the case's
+    declared ``expected_envelope_fingerprint`` (if present). Mismatch
+    or missing-runtime fingerprint fails closed via ``pytest.skip``
+    BEFORE the model is constructed — so calls=0 and builder=0. This
+    closes the audit finding where a BBC runtime record's
+    model-visible baseline chunks contained ``2015`` but the dataset's
+    ``allowed_temporal_claims`` was empty: the dataset author now
+    commits to a specific runtime identity, and any drift (re-base,
+    re-generation, different record) is caught pre-call.
     """
+    # Clear the per-process preflight chunk stash so a stale entry
+    # from a prior phase cannot leak into the current preflight.
+    _clear_preflight_chunk_stash()
+
     prepared: list[
         tuple[
             ReaderRecordAskR4A3Case,
             ReadingRecordAskContextEnvelope,
             InMemoryDocumentAccess,
+            str,
         ]
     ] = []
     for case in cases:
@@ -1436,8 +1528,338 @@ async def _preflight_runtime_inputs(
             )
         else:
             envelope, document_access = _build_synthetic_runtime_inputs(case)
-        prepared.append((case, envelope, document_access))
+        # R4-A4-2R P0-Identity: verify the runtime envelope_fingerprint
+        # matches the dataset's declared expected identity. This is the
+        # fail-closed pre-call binding. ``_verify_runtime_identity``
+        # raises ``pytest.skip`` on mismatch — the harness does NOT
+        # construct the model or make any provider call.
+        _verify_runtime_identity(case, envelope)
+
+        # R4-A4-2R2 P0-1: assemble baseline context deterministically
+        # (same envelope + document_access → same chunks; only
+        # handle_ids are random, and they are EXCLUDED from the
+        # fingerprint). Compute runtime_fixture_fingerprint from the
+        # ACTUAL BaselineAgentContext, then verify against the case's
+        # declared expected value.
+        runtime_fixture_fp = await _compute_preflight_runtime_fixture_fingerprint(
+            case=case,
+            envelope=envelope,
+            document_access=document_access,
+        )
+
+        # R4-A4-2R2 P0-3: semantic precheck — every required atomic
+        # fact must be supported by ≥1 model-visible chunk. Unsupported
+        # required fact = invalid evaluation case → fail-closed
+        # (calls=0) BEFORE the model is constructed.
+        _precheck_required_facts_support_preflight(case, runtime_fixture_fp)
+
+        prepared.append((case, envelope, document_access, runtime_fixture_fp))
     return prepared
+
+
+# Per-process stash mapping runtime_fixture_fingerprint → chunk views.
+# Populated by _compute_preflight_runtime_fixture_fingerprint;
+# consumed by _precheck_required_facts_support_preflight. Cleared at
+# the start of each _preflight_runtime_inputs call. The fingerprint
+# uniquely identifies the chunk set (deterministic), so a single
+# lookup is sufficient.
+_PREFLIGHT_CHUNK_STASH: dict[str, list[tuple[int, str]]] = {}
+
+
+def _stash_preflight_chunks_for_fp(
+    fp: str,
+    chunks_view: list[tuple[int, str]],
+) -> None:
+    """Stash the preflight assembler's chunk views keyed by fingerprint.
+
+    The stash is per-process (not per-test). It is cleared at the
+    start of each :func:`_preflight_runtime_inputs` call so a stale
+    entry from a prior phase cannot leak into the current preflight.
+    """
+    _PREFLIGHT_CHUNK_STASH[fp] = list(chunks_view)
+
+
+def _get_stashed_preflight_chunks(
+    fp: str,
+) -> list[tuple[int, str]] | None:
+    """Look up stashed chunk views by fingerprint. Returns None if absent."""
+    return _PREFLIGHT_CHUNK_STASH.get(fp)
+
+
+def _clear_preflight_chunk_stash() -> None:
+    """Clear the preflight chunk stash. Called at the start of each
+    :func:`_preflight_runtime_inputs` invocation.
+    """
+    _PREFLIGHT_CHUNK_STASH.clear()
+
+
+async def _compute_preflight_runtime_fixture_fingerprint(
+    *,
+    case: ReaderRecordAskR4A3Case,
+    envelope: ReadingRecordAskContextEnvelope,
+    document_access: InMemoryDocumentAccess,
+) -> str:
+    """R4-A4-2R2 P0-1: assemble baseline context in preflight and compute
+    the deterministic ``runtime_fixture_fingerprint``.
+
+    The baseline assembly is deterministic in terms of
+    ``baseline_status``, ``is_complete``, and
+    ``(chunk_ordinal, chunk_text)`` — only ``handle_id`` is random
+    (minted via ``secrets.token_hex(16)``). Because
+    :func:`compute_runtime_fixture_fingerprint` deliberately excludes
+    ``handle_id``, two preflight assemblies of the same
+    (envelope, document_access) produce the SAME fingerprint.
+
+    The computed fingerprint is verified against the case's declared
+    ``expected_runtime_fixture_fingerprint``:
+
+    - R4-A4-2R3 P0-2: For ALL ``real_phase1`` cases (BBC AND
+      synthetic): the expected fingerprint is REQUIRED. Missing /
+      empty / mismatch → ``pytest.skip`` (fail-closed; calls=0,
+      builder=0) BEFORE the model is constructed. This expands the
+      R4-A4-2R2 BBC-only requirement to ALL real_phase1 cases so
+      the aggregate's three-layer identity check has a dataset
+      expected value to compare against for every audited case.
+    - For ``offline_only`` / non-real_phase1 cases: this function
+      is never called (offline_only cases never enter the real-model
+      run path; non-real_phase1 cases are not selected by the
+      Phase 1 planner).
+
+    The computed fingerprint is returned to the caller. R4-A4-2R3
+    P0-1: the per-case run NO LONGER consumes this value for the
+    artifact — the artifact's ``runtime_fixture_fingerprint`` is
+    recomputed from ``result.baseline_context`` (the ACTUAL baseline
+    the model saw). The preflight fingerprint is persisted ONLY in
+    the manifest's ``runtime_fixture_identities`` map (as the
+    expected/preflight identity for the three-layer check).
+    """
+    # Construct a fresh EvidenceRegistry bound to this envelope. The
+    # registry's envelope_fingerprint MUST match the turn envelope's
+    # fingerprint or the assembler returns baseline_status=
+    # "envelope_mismatch" — which is a deterministic failure mode,
+    # not an exception.
+    registry = EvidenceRegistry(envelope.envelope_fingerprint)
+    assembler = BaselineContextAssembler(
+        envelope=envelope,
+        document_access=document_access,
+        registry=registry,
+    )
+    baseline = await assembler.assemble_baseline()
+
+    chunks_view: list[tuple[int, str]] = [
+        (chunk.chunk_ordinal, chunk.text)
+        for chunk in baseline.model_context_chunks
+    ]
+    computed_fp = compute_runtime_fixture_fingerprint(
+        baseline_status=baseline.baseline_status,
+        is_complete=baseline.is_complete,
+        chunks=chunks_view,
+    )
+
+    # Stash the chunk views for the semantic precheck
+    # (_precheck_required_facts_support_preflight). The fingerprint
+    # uniquely identifies the chunk set (deterministic), so a single
+    # lookup is sufficient.
+    _stash_preflight_chunks_for_fp(computed_fp, chunks_view)
+
+    expected_fp = case.expected_runtime_fixture_fingerprint
+    # R4-A4-2R3 P0-2: ALL real_phase1 cases (BBC + synthetic) MUST
+    # declare expected_runtime_fixture_fingerprint. This expands the
+    # R4-A4-2R2 BBC-only requirement. The aggregate's three-layer
+    # identity check requires a dataset expected value for every
+    # real_phase1 case.
+    is_real_phase1 = "real_phase1" in (case.phase_tags or [])
+
+    if is_real_phase1:
+        # Required for ALL real_phase1 cases — fail-closed on missing,
+        # empty, or mismatch.
+        if not expected_fp:
+            pytest.skip(
+                f"R4-A4-2R3 P0-Identity: case {case.id!r} is a "
+                f"real_phase1 case but does not declare "
+                f"expected_runtime_fixture_fingerprint. This field is "
+                f"REQUIRED for ALL real_phase1 cases (BBC and "
+                f"synthetic) — fail-closed BEFORE model construction "
+                f"(provider calls = 0, model builder calls = 0). "
+                f"Compute the fingerprint offline from the same "
+                f"(envelope, document_access) and add it to the "
+                f"dataset."
+            )
+        if computed_fp != expected_fp:
+            pytest.skip(
+                f"R4-A4-2R3 P0-Identity: case {case.id!r} runtime "
+                f"fixture fingerprint mismatch — dataset declares a "
+                f"different runtime_fixture_fingerprint than the "
+                f"actual (envelope, document_access) produced. This "
+                f"is a fail-closed pre-call binding; provider calls "
+                f"= 0, model builder calls = 0. The runtime baseline "
+                f"(status / is_complete / chunks) drifted from the "
+                f"dataset's declared identity. Re-compute the "
+                f"expected fingerprint from the current runtime or "
+                f"fix the runtime source."
+            )
+    else:
+        # Non-real_phase1 case — optional. When present, mismatch →
+        # fail-closed. When absent, accept the computed fingerprint.
+        if expected_fp is not None and expected_fp != computed_fp:
+            pytest.skip(
+                f"R4-A4-2R3 P0-Identity: case {case.id!r} runtime "
+                f"fixture fingerprint mismatch — dataset declares a "
+                f"different runtime_fixture_fingerprint than the "
+                f"actual (envelope, document_access) produced. "
+                f"Fail-closed BEFORE model construction (provider "
+                f"calls = 0, model builder calls = 0)."
+            )
+
+    return computed_fp
+
+
+def _precheck_required_facts_support_preflight(
+    case: ReaderRecordAskR4A3Case,
+    runtime_fixture_fp: str,
+) -> None:
+    """R4-A4-2R2 P0-3: semantic precheck — required facts must be
+    supported by the actual model-visible fixture.
+
+    For each ``required=True`` atomic fact with non-empty
+    ``source_aliases``, at least one alias must be a case-insensitive
+    substring of at least one chunk's text.
+
+    Unsupported required fact = INVALID evaluation case → ``pytest.skip``
+    BEFORE the model is constructed (calls=0, builder=0). The harness
+    does NOT auto-generate expected facts or temporal allowset from
+    runtime article text — the dataset author must declare them
+    upfront and verify they are supportable.
+
+    The chunks are retrieved from the per-process preflight chunk
+    stash, populated by
+    :func:`_compute_preflight_runtime_fixture_fingerprint`. The
+    fingerprint uniquely identifies the chunk set (deterministic), so
+    a single lookup is sufficient.
+    """
+    chunks_view = _get_stashed_preflight_chunks(runtime_fixture_fp)
+    if chunks_view is None:
+        # No stashed chunks — this should never happen because the
+        # fingerprint was just computed. Fail-closed.
+        pytest.skip(
+            f"R4-A4-2R2 P0-3: case {case.id!r} runtime fixture "
+            f"fingerprint {runtime_fixture_fp[:8]}... has no stashed "
+            f"chunks for the semantic precheck. The preflight chunk "
+            f"stash is inconsistent — fail-closed BEFORE model "
+            f"construction (provider calls = 0)."
+        )
+
+    atomic_facts_view: list[tuple[str, tuple[str, ...], bool]] = [
+        (
+            fact.fact_id,
+            tuple(fact.source_aliases) if fact.source_aliases else (),
+            bool(fact.required),
+        )
+        for fact in (case.expected.atomic_facts or [])
+    ]
+
+    unsupported = precheck_required_facts_support(
+        atomic_facts=atomic_facts_view,
+        chunks=chunks_view,
+    )
+    if unsupported:
+        pytest.skip(
+            f"R4-A4-2R2 P0-3: case {case.id!r} has required atomic "
+            f"facts unsupported by the model-visible fixture: "
+            f"{unsupported!r}. This is an invalid evaluation case — "
+            f"the dataset author declared facts the fixture cannot "
+            f"ground. Fail-closed BEFORE model construction (provider "
+            f"calls = 0, model builder calls = 0). Either remove the "
+            f"unsupported facts from the dataset, mark them "
+            f"required=False, or fix the fixture so the aliases "
+            f"appear in the model-visible chunks."
+        )
+
+
+def _verify_runtime_identity(
+    case: ReaderRecordAskR4A3Case,
+    envelope: ReadingRecordAskContextEnvelope,
+) -> None:
+    """R4-A4-2R P0-Identity: verify runtime envelope_fingerprint matches
+    the case's declared ``expected_envelope_fingerprint``.
+
+    Contract:
+
+    - If ``case.expected_envelope_fingerprint is None``: backwards-compat
+      with cases authored before R4-A4-2R. No check is performed — the
+      case runs even if the runtime identity drifts. New cases SHOULD
+      declare this field.
+    - If ``case.expected_envelope_fingerprint`` is set: the runtime
+      ``envelope.envelope_fingerprint`` MUST be non-None AND exactly
+      equal to the declared value. Any mismatch or missing runtime
+      fingerprint raises ``pytest.skip`` (fail-closed) BEFORE any model
+      builder is invoked or provider call is made.
+
+    R4-A4-2R2: this envelope-only check is RETAINED for defense-in-
+    depth. The primary identity contract is now
+    ``runtime_fixture_fingerprint`` (verified in
+    :func:`_compute_preflight_runtime_fixture_fingerprint`), which
+    binds the actual model-visible chunks. The envelope fingerprint
+    catches metadata drift (record_id / base_id / generation) that
+    the chunk fingerprint would also catch, but catching it earlier
+    (before baseline assembly) produces a clearer skip message.
+
+    Why ``pytest.skip`` (not ``pytest.fail``):
+
+    - The harness is run via ``pytest -m real_llm``. ``pytest.skip``
+      prevents the run from proceeding while still being a normal exit
+      from the test runner's perspective (no traceback, no partial
+      artifacts written).
+    - Critically, the skip fires from within ``_prepare_phase`` BEFORE
+      ``_build_model_for_prepared_phase`` is called, so the model
+      builder is never invoked and the :class:`BudgetedUsageModel`
+      wrapper is never constructed — provider calls are structurally
+      impossible.
+
+    Identity binding:
+
+    - ``envelope_fingerprint`` is the deterministic SHA-256 over the
+      envelope fields (envelope_version, user_id, reading_record_id,
+      base_id, record_generation, stable_document_id,
+      base_content_sha256, initial_anchor, visible_range). For BBC
+      cases, all of these come from the DB at runtime — so the
+      fingerprint captures the EXACT base content / generation / record
+      the model will see. For synthetic cases, all of these are
+      deterministic (UUID(int=1) etc., base_content_sha256 =
+      sha256(article_text)).
+    - This is the pre-call identity binding. The post-call binding
+      (``model_context_fingerprint`` over actual baseline chunks with
+      random handle_ids) remains unchanged — it is carried by the
+      artifact for internal integrity, but cannot be used pre-call
+      because the handle_ids are not known until baseline assembly.
+    """
+    expected = case.expected_envelope_fingerprint
+    if expected is None:
+        # Backwards-compat: case does not declare an expected identity.
+        # No check is performed. New cases SHOULD declare this field.
+        return
+    runtime = envelope.envelope_fingerprint
+    if not runtime:
+        # Runtime fingerprint is missing — this should never happen for
+        # a successfully built envelope, but fail-closed regardless.
+        pytest.skip(
+            f"R4-A4-2R P0-Identity: case {case.id!r} expected_envelope_fingerprint "
+            f"is set but runtime envelope_fingerprint is empty/None "
+            f"(envelope build returned no fingerprint — DB or synthetic "
+            f"builder is broken)"
+        )
+    if runtime != expected:
+        # Mismatch: the runtime base/generation/record drifted from the
+        # declared expected identity. Fail-closed — do NOT construct
+        # the model, do NOT make any provider call.
+        pytest.skip(
+            f"R4-A4-2R P0-Identity: case {case.id!r} runtime envelope_fingerprint "
+            f"does not match expected_envelope_fingerprint — dataset declares "
+            f"a different runtime identity than the DB/article_text produced. "
+            f"This is a fail-closed pre-call binding; provider calls = 0, "
+            f"model builder calls = 0. Update the dataset's "
+            f"expected_envelope_fingerprint or fix the runtime source."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1563,8 +1985,13 @@ class PreparedPhaseContext:
     - ``prior_artifacts`` / ``prior_eval_results``: Phase 2/3 inputs.
     - ``planner``: :class:`PhasePlanner` with ``cases_to_run`` and
       ``repetitions`` already resolved.
-    - ``prepared_inputs``: ``(case, envelope, document_access)`` for
-      EVERY selected case, built before any provider call.
+    - ``prepared_inputs``: ``(case, envelope, document_access,
+      runtime_fixture_fingerprint)`` for EVERY selected case, built
+      before any provider call. The runtime_fixture_fingerprint is the
+      R4-A4-2R2 P0-1 deterministic identity (SHA-256 over
+      baseline_status + is_complete + ordered chunks) — it is the
+      contract the per-case run persists on the artifact and the
+      aggregate verifies against dataset expected + manifest identity.
     - ``max_requests`` / ``max_tokens``: budget caps from env.
 
     The caller resolves/builds the model AFTER receiving this context,
@@ -1588,6 +2015,7 @@ class PreparedPhaseContext:
             ReaderRecordAskR4A3Case,
             ReadingRecordAskContextEnvelope,
             InMemoryDocumentAccess,
+            str,
         ],
         ...,
     ]
@@ -1823,7 +2251,7 @@ async def _execute_phase(
 
     artifacts: list[RawArtifact] = []
     repetitions = prepared.planner.repetitions
-    for case, envelope, document_access in prepared.prepared_inputs:
+    for case, envelope, document_access, _runtime_fixture_fp in prepared.prepared_inputs:
         for run_index in range(repetitions):
             # P1-1: snapshot the wrapper's cumulative counters BEFORE
             # this case runs. The artifact records only this case's
@@ -1915,7 +2343,26 @@ def _write_budget_exhausted_manifest(
     is immune to post-write mutation of the in-memory tracking structures.
     ``stop_reason`` uses the allowlisted code ``"budget_exhausted"`` —
     never the raw exception text.
+
+    R4-A4-2R2 P0-2 + P1: the manifest also persists the per-case
+    ``runtime_fixture_identities`` (for the aggregate three-layer
+    check) and self-contained budget audit fields
+    (``planned_logical_runs`` / ``request_cap`` / ``token_cap`` /
+    ``retry_policy`` / ``retry_headroom``) so the aggregate does NOT
+    reconstruct historical caps from the current shell env.
+
+    R4-A4-2R3 P0-2 + P1: the manifest now declares
+    ``audit_contract_version="r4-a4-2r3"`` (V2 strict). V2 requires
+    the typed ``retry_policy`` dict
+    (``{"tool_max_retries": int, "output_max_retries": int}`` sourced
+    from ``agent.DEFAULT_TOOL_RETRIES`` / ``agent.DEFAULT_OUTPUT_RETRIES``)
+    and a non-null ``retry_headroom = request_cap - planned_logical_runs``
+    so the aggregate can audit budget exhaustion without env
+    reconstruction. The V2 contract is enforced by
+    :func:`run_manifest._parse_and_validate_manifest_dict` Rule 18.
     """
+    runtime_fixture_identities = _build_runtime_fixture_identities(prepared)
+    retry_policy, retry_headroom = _build_v2_retry_audit(prepared)
     manifest = ReaderRecordAskRunManifest(
         schema_version=MANIFEST_SCHEMA_VERSION,
         run_id=prepared.session.run_id,
@@ -1930,6 +2377,13 @@ def _write_budget_exhausted_manifest(
         executed_requests=executed_requests,
         executed_tokens=executed_tokens,
         stop_reason="budget_exhausted",
+        runtime_fixture_identities=runtime_fixture_identities,
+        planned_logical_runs=prepared.planner.planned_logical_runs,
+        request_cap=prepared.max_requests,
+        token_cap=prepared.max_tokens,
+        retry_policy=retry_policy,
+        retry_headroom=retry_headroom,
+        audit_contract_version=AUDIT_CONTRACT_VERSION_V2,
     )
     write_manifest_atomic(manifest, prepared.session.manifest_path)
 
@@ -1946,7 +2400,20 @@ def _write_completed_manifest(
     On normal completion, ``remaining_run_indices`` is empty and
     ``planned_run_indices == completed_run_indices`` (per-case set
     equality). ``stop_reason`` is ``None`` (allowlisted).
+
+    R4-A4-2R2 P0-2 + P1: same persistence contract as
+    :func:`_write_budget_exhausted_manifest` — the manifest carries
+    ``runtime_fixture_identities`` and self-contained budget fields
+    so the aggregate can audit identity and budget without any env
+    reconstruction.
+
+    R4-A4-2R3 P0-2 + P1: the manifest now declares
+    ``audit_contract_version="r4-a4-2r3"`` (V2 strict) with the typed
+    ``retry_policy`` dict and non-null ``retry_headroom``. See
+    :func:`_write_budget_exhausted_manifest` for the full V2 contract.
     """
+    runtime_fixture_identities = _build_runtime_fixture_identities(prepared)
+    retry_policy, retry_headroom = _build_v2_retry_audit(prepared)
     manifest = ReaderRecordAskRunManifest(
         schema_version=MANIFEST_SCHEMA_VERSION,
         run_id=prepared.session.run_id,
@@ -1961,8 +2428,81 @@ def _write_completed_manifest(
         executed_requests=executed_requests,
         executed_tokens=executed_tokens,
         stop_reason=None,
+        runtime_fixture_identities=runtime_fixture_identities,
+        planned_logical_runs=prepared.planner.planned_logical_runs,
+        request_cap=prepared.max_requests,
+        token_cap=prepared.max_tokens,
+        retry_policy=retry_policy,
+        retry_headroom=retry_headroom,
+        audit_contract_version=AUDIT_CONTRACT_VERSION_V2,
     )
     write_manifest_atomic(manifest, prepared.session.manifest_path)
+
+
+def _build_v2_retry_audit(
+    prepared: PreparedPhaseContext,
+) -> tuple[dict[str, int], int]:
+    """R4-A4-2R3 P1: build the typed V2 retry_policy + retry_headroom.
+
+    ``retry_policy`` records the ACTUAL tool/output retry limits used
+    by :func:`create_reading_record_ask_agent` — sourced from
+    :data:`agent.DEFAULT_TOOL_RETRIES` /
+    :data:`agent.DEFAULT_OUTPUT_RETRIES` (the single source of truth).
+    The dict uses the strict V2 key contract
+    (``tool_max_retries`` / ``output_max_retries``) enforced by
+    :func:`run_manifest._parse_and_validate_manifest_dict` Rule 18e.
+
+    ``retry_headroom`` = ``request_cap - planned_logical_runs``. V2
+    Rule 18h requires this exact relationship. Both values come from
+    the :class:`PreparedPhaseContext` (NOT from current env) so a
+    historical run's budget is auditable without reconstruction.
+
+    Returns ``(retry_policy, retry_headroom)``.
+    """
+    retry_policy: dict[str, int] = {
+        "tool_max_retries": DEFAULT_TOOL_RETRIES,
+        "output_max_retries": DEFAULT_OUTPUT_RETRIES,
+    }
+    # V2 Rule 18h: retry_headroom == request_cap - planned_logical_runs.
+    # ``prepared.max_requests`` is the resolved request cap (from env
+    # at run time, persisted on the manifest). ``planned_logical_runs``
+    # is the planner's logical run count (cases × repetitions).
+    retry_headroom: int = prepared.max_requests - prepared.planner.planned_logical_runs
+    return retry_policy, retry_headroom
+
+
+def _build_runtime_fixture_identities(
+    prepared: PreparedPhaseContext,
+) -> dict[str, str]:
+    """R4-A4-2R2 P0-2: build the per-case runtime fixture identity map.
+
+    The manifest persists the case's verified
+    ``runtime_fixture_fingerprint`` for every case in
+    ``planned_run_indices``. The aggregate uses this map to perform
+    the three-layer identity check:
+
+        dataset expected == manifest identity == artifact actual.
+
+    Source: the ``prepared_inputs`` 4-tuple carries the preflight-
+    computed (and dataset-verified) fingerprint for each case. We
+    iterate the planned cases (NOT the prepared inputs — they are
+    the same set, but ``planned_run_indices`` is the authoritative
+    case universe for the manifest).
+    """
+    # Build a case_id → fingerprint lookup from prepared_inputs.
+    fingerprint_by_case_id: dict[str, str] = {
+        case.id: runtime_fixture_fp
+        for case, _envelope, _document_access, runtime_fixture_fp in prepared.prepared_inputs
+    }
+    # Only emit identities for cases in planned_run_indices (defense-
+    # in-depth: ensures the manifest's identity universe matches the
+    # planned universe exactly).
+    identities: dict[str, str] = {}
+    for case_id in prepared.planned_run_indices:
+        fp = fingerprint_by_case_id.get(case_id)
+        if fp is not None:
+            identities[case_id] = fp
+    return identities
 
 
 # ---------------------------------------------------------------------------
@@ -2750,8 +3290,15 @@ def _make_minimal_case(
     record_id: str | None = None,
     article_text: str | None = "Hello world.",
     phase_tags: list[str] | None = None,
+    expected_envelope_fingerprint: str | None = None,
 ) -> ReaderRecordAskR4A3Case:
-    """Build a minimal :class:`ReaderRecordAskR4A3Case` for preflight tests."""
+    """Build a minimal :class:`ReaderRecordAskR4A3Case` for preflight tests.
+
+    R4-A4-2R P0-Identity: ``expected_envelope_fingerprint`` is an
+    optional kwarg for the new runtime fixture identity field. When
+    ``None`` (default), no preflight identity check is performed
+    (backwards-compat with pre-R4-A4-2R cases).
+    """
     from claread_eval.reader_record_ask.schema import (  # noqa: PLC0415
         ReaderRecordAskR4A3Expected,
     )
@@ -2770,6 +3317,7 @@ def _make_minimal_case(
         question_category="main_idea",
         expected=ReaderRecordAskR4A3Expected(),
         phase_tags=phase_tags or [],
+        expected_envelope_fingerprint=expected_envelope_fingerprint,
     )
 
 
@@ -3002,8 +3550,15 @@ async def test_p0_3_preflight_runtime_inputs_all_ready_succeeds(
 ) -> None:
     """P0-3: when ALL selected cases' runtime inputs are successfully
     prepared, ``_preflight_runtime_inputs`` returns the full list of
-    ``(case, envelope, document_access)`` tuples — the harness then
-    proceeds to the paid-call loop.
+    ``(case, envelope, document_access, runtime_fixture_fingerprint)``
+    tuples — the harness then proceeds to the paid-call loop.
+
+    R4-A4-2R2: the 4th tuple element is the deterministic
+    runtime_fixture_fingerprint (SHA-256 over baseline_status +
+    is_complete + ordered chunks). For synthetic cases without a
+    declared ``expected_runtime_fixture_fingerprint``, the preflight
+    accepts the computed fingerprint (synthetic cases are
+    deterministic by construction).
     """
     case_a = _make_minimal_case(
         case_id="synthetic-a",
@@ -3021,11 +3576,186 @@ async def test_p0_3_preflight_runtime_inputs_all_ready_succeeds(
     assert len(prepared) == 2
     assert prepared[0][0].id == "synthetic-a"
     assert prepared[1][0].id == "synthetic-b"
-    # Each entry must have a valid envelope + document_access.
-    for _case, envelope, document_access in prepared:
+    # Each entry must have a valid envelope + document_access + runtime_fixture_fp.
+    for _case, envelope, document_access, runtime_fixture_fp in prepared:
         assert envelope is not None
         assert document_access is not None
         assert envelope.envelope_fingerprint
+        # R4-A4-2R2: the 4th element is a 64-char lowercase hex SHA-256.
+        assert isinstance(runtime_fixture_fp, str)
+        assert len(runtime_fixture_fp) == 64
+        assert all(c in "0123456789abcdef" for c in runtime_fixture_fp)
+
+
+# ---------------------------------------------------------------------------
+# R4-A4-2R P0-Identity: harness pre-call check (_verify_runtime_identity)
+# ---------------------------------------------------------------------------
+# Scenarios 1 + 2 from the 8 required test scenarios:
+# 1. fingerprint match → preflight continues (returns normally).
+# 2. fingerprint mismatch/missing → fail-closed (pytest.skip BEFORE any
+#    model builder is invoked or provider call is made — calls=0, builder=0).
+#
+# The function under test reads only ``envelope.envelope_fingerprint``.
+# We use ``SimpleNamespace`` mocks for the envelope (no need to build a
+# real ``ReadingRecordAskContextEnvelope`` pydantic model). The case is
+# built via ``_make_minimal_case`` with the new
+# ``expected_envelope_fingerprint`` kwarg added by R4-A4-2R.
+# ---------------------------------------------------------------------------
+
+
+def _make_envelope_mock(fingerprint: str | None):
+    """Build a minimal envelope mock for ``_verify_runtime_identity``.
+
+    The function only reads ``envelope.envelope_fingerprint``, so a
+    :class:`SimpleNamespace` is sufficient and avoids the cost of
+    constructing a full :class:`ReadingRecordAskContextEnvelope`
+    (which requires verified DB-bound fields).
+    """
+    from types import SimpleNamespace
+    return SimpleNamespace(envelope_fingerprint=fingerprint)
+
+
+_VALID_FP_A = "a" * 64  # 64-char lowercase hex SHA-256 (test constant)
+_VALID_FP_B = "b" * 64  # different valid fingerprint
+
+
+def test_r4_a4_2r_verify_runtime_identity_no_expected_returns_normally() -> None:
+    """Backwards-compat: case does not declare
+    ``expected_envelope_fingerprint`` → no check is performed (returns
+    normally even when the runtime fingerprint is missing).
+
+    This preserves compatibility with cases authored before R4-A4-2R.
+    New cases SHOULD declare the field.
+    """
+    case = _make_minimal_case(case_id="case-no-expected")
+    assert case.expected_envelope_fingerprint is None
+    envelope = _make_envelope_mock(fingerprint=None)
+    # Must NOT raise.
+    _verify_runtime_identity(case, envelope)
+
+
+def test_r4_a4_2r_verify_runtime_identity_match_returns_normally() -> None:
+    """Scenario 1: expected == runtime → returns normally (preflight
+    continues, model will be built)."""
+    case = _make_minimal_case(
+        case_id="case-match",
+        expected_envelope_fingerprint=_VALID_FP_A,
+    )
+    envelope = _make_envelope_mock(fingerprint=_VALID_FP_A)
+    _verify_runtime_identity(case, envelope)
+
+
+def test_r4_a4_2r_verify_runtime_identity_mismatch_skips() -> None:
+    """Scenario 2: expected != runtime → pytest.skip (fail-closed BEFORE
+    model builder is invoked, calls=0, builder=0).
+
+    The skip fires from within ``_preflight_runtime_inputs`` BEFORE
+    ``_build_model_for_prepared_phase`` is called — provider calls are
+    structurally impossible.
+    """
+    case = _make_minimal_case(
+        case_id="case-mismatch",
+        expected_envelope_fingerprint=_VALID_FP_A,
+    )
+    envelope = _make_envelope_mock(fingerprint=_VALID_FP_B)
+    with pytest.raises(pytest.skip.Exception):
+        _verify_runtime_identity(case, envelope)
+
+
+def test_r4_a4_2r_verify_runtime_identity_missing_runtime_skips() -> None:
+    """Scenario 2 (missing runtime): expected declared but runtime
+    ``envelope_fingerprint`` is None → pytest.skip (fail-closed)."""
+    case = _make_minimal_case(
+        case_id="case-missing-runtime",
+        expected_envelope_fingerprint=_VALID_FP_A,
+    )
+    envelope = _make_envelope_mock(fingerprint=None)
+    with pytest.raises(pytest.skip.Exception):
+        _verify_runtime_identity(case, envelope)
+
+
+def test_r4_a4_2r_verify_runtime_identity_empty_runtime_skips() -> None:
+    """Scenario 2 (empty runtime): expected declared but runtime
+    ``envelope_fingerprint`` is empty string → pytest.skip (fail-closed).
+
+    Treated identically to missing — fail-closed when the runtime
+    envelope does not carry a usable fingerprint.
+    """
+    case = _make_minimal_case(
+        case_id="case-empty-runtime",
+        expected_envelope_fingerprint=_VALID_FP_A,
+    )
+    envelope = _make_envelope_mock(fingerprint="")
+    with pytest.raises(pytest.skip.Exception):
+        _verify_runtime_identity(case, envelope)
+
+
+def test_r4_a4_2r_verify_runtime_identity_empty_expected_skips() -> None:
+    """Edge case: empty-string expected fingerprint can never match a
+    valid 64-char runtime → pytest.skip.
+
+    Dataset authors MUST NOT publish empty strings; the harness treats
+    empty as declared (not None) and fails closed. The schema accepts
+    empty (StrictStr only enforces type), but the runtime check
+    rejects it — defense-in-depth.
+    """
+    case = _make_minimal_case(
+        case_id="case-empty-expected",
+        expected_envelope_fingerprint="",
+    )
+    envelope = _make_envelope_mock(fingerprint=_VALID_FP_A)
+    with pytest.raises(pytest.skip.Exception):
+        _verify_runtime_identity(case, envelope)
+
+
+@pytest.mark.asyncio
+async def test_r4_a4_2r_preflight_runtime_inputs_skips_on_identity_mismatch(
+    tmp_path: Path,
+) -> None:
+    """Scenario 2 (integration): ``_preflight_runtime_inputs`` skips
+    the WHOLE phase when a case's runtime identity mismatches — BEFORE
+    any provider call.
+
+    This is the integration counterpart to
+    :func:`test_r4_a4_2r_verify_runtime_identity_mismatch_skips`. The
+    skip fires at zero paid calls because
+    ``_preflight_runtime_inputs`` is called BEFORE
+    ``BudgetedUsageModel`` wraps the provider model.
+    """
+    case = _make_minimal_case(
+        case_id="case-integration-mismatch",
+        article_text="Hello world.",
+        expected_envelope_fingerprint=_VALID_FP_A,
+    )
+    # The synthetic builder computes the REAL envelope_fingerprint
+    # deterministically (sha256(article_text) feeds into
+    # base_content_sha256, which feeds into envelope_fingerprint). It
+    # will NOT equal _VALID_FP_A, so _verify_runtime_identity must
+    # skip the whole phase.
+    with pytest.raises(pytest.skip.Exception):
+        await _preflight_runtime_inputs([case])
+
+
+@pytest.mark.asyncio
+async def test_r4_a4_2r_preflight_runtime_inputs_passes_when_no_expected_declared(
+    tmp_path: Path,
+) -> None:
+    """Scenario 1 (integration): when a case does not declare
+    ``expected_envelope_fingerprint``, ``_preflight_runtime_inputs``
+    proceeds normally (no identity check). This is the backwards-compat
+    path — existing cases without the field continue to work."""
+    case = _make_minimal_case(
+        case_id="case-no-expected-integration",
+        article_text="Hello world.",
+        # expected_envelope_fingerprint omitted — defaults to None.
+    )
+    prepared = await _preflight_runtime_inputs([case])
+    assert len(prepared) == 1
+    # R4-A4-2R2: prepared_inputs tuple is now 4 elements
+    # (case, envelope, document_access, runtime_fixture_fingerprint).
+    _case, envelope, _document_access, _runtime_fp = prepared[0]
+    assert envelope is not None
+    assert envelope.envelope_fingerprint  # real fingerprint populated
 
 
 # ---------------------------------------------------------------------------
@@ -3423,6 +4153,13 @@ def _make_fake_prepared_phase(
     env gate + dataset dir + session layout). The session layout's
     ``runs_root`` points at ``tmp_path`` so any manifest writes land in
     the test's tmp directory.
+
+    R4-A4-2R2: ``prepared_inputs`` carries a 4-tuple including the
+    ``runtime_fixture_fingerprint``. The fingerprint is computed via
+    the same deterministic path the harness preflight uses
+    (BaselineContextAssembler + compute_runtime_fixture_fingerprint)
+    so manifest-writing tests can pass the
+    ``runtime_fixture_identities`` field through validation.
     """
     case = _make_minimal_case(
         article_text="Hello world.",
@@ -3437,6 +4174,26 @@ def _make_fake_prepared_phase(
         prior_eval_results=None,
     )
     envelope, document_access = _build_synthetic_runtime_inputs(case)
+    # Compute the runtime_fixture_fingerprint via the same deterministic
+    # path the harness preflight uses.
+    registry = EvidenceRegistry(envelope.envelope_fingerprint)
+    assembler = BaselineContextAssembler(
+        envelope=envelope,
+        document_access=document_access,
+        registry=registry,
+    )
+    import asyncio as _asyncio  # noqa: PLC0415
+
+    baseline = _asyncio.run(assembler.assemble_baseline())
+    chunks_view: list[tuple[int, str]] = [
+        (chunk.chunk_ordinal, chunk.text)
+        for chunk in baseline.model_context_chunks
+    ]
+    runtime_fixture_fp = compute_runtime_fixture_fingerprint(
+        baseline_status=baseline.baseline_status,
+        is_complete=baseline.is_complete,
+        chunks=chunks_view,
+    )
     planned_run_indices = {case.id: list(range(planner.repetitions))}
     return PreparedPhaseContext(
         phase=phase,
@@ -3447,7 +4204,7 @@ def _make_fake_prepared_phase(
         prior_eval_results=None,
         planner=planner,
         cases_to_run=(case,),
-        prepared_inputs=((case, envelope, document_access),),
+        prepared_inputs=((case, envelope, document_access, runtime_fixture_fp),),
         max_requests=30,
         max_tokens=200_000,
         planned_run_indices=planned_run_indices,
@@ -3834,3 +4591,464 @@ async def test_run_real_phase_entry_no_manifest_on_unexpected_exception(
         f"manifest file should NOT exist when _execute_phase raised an "
         f"unexpected exception (got {manifest_path})"
     )
+
+
+# ---------------------------------------------------------------------------
+# R4-A4-2R3 P0-1: Actual Fixture Capture — Scenarios 1, 2, 3
+# ---------------------------------------------------------------------------
+# Scenario 1: preflight==actual pass (success path — artifact's recomputed
+#             fingerprint matches the preflight computed fingerprint).
+# Scenario 2: monkeypatch mismatch blocked — when the baseline assembler
+#             produces different chunks than preflight, the artifact's
+#             actual fingerprint differs from preflight; the aggregate's
+#             three-layer check blocks (verified in
+#             test_reader_record_ask_runtime_fixture_identity.py).
+# Scenario 3: runtime exception → null + incomplete — when the runtime
+#             raises, ``runtime_fixture_fingerprint=None`` and
+#             ``capture_status="failed"`` (the aggregate's
+#             instrumentation gate blocks).
+#
+# These tests exercise :func:`_run_one_case` directly (no real LLM call).
+# :func:`run_reading_record_ask` is monkeypatched to return a controlled
+# result with a known ``baseline_context`` — this is the ONLY seam that
+# determines the artifact's actual ``runtime_fixture_fingerprint``.
+# ---------------------------------------------------------------------------
+
+
+def _make_baseline_chunk(
+    *,
+    chunk_ordinal: int,
+    text: str,
+    handle_id: str = "evh_test_chunk",
+) -> ModelContextChunk:
+    """Build a minimal :class:`ModelContextChunk` for scenario tests."""
+    return ModelContextChunk(
+        handle_id=handle_id,
+        chunk_ordinal=chunk_ordinal,
+        text=text,
+    )
+
+
+def _make_result_mock(
+    *,
+    baseline_status: str = "injected",
+    is_complete: bool = True,
+    is_injected: bool = True,
+    chunks: tuple[ModelContextChunk, ...] = (),
+    final_text: str = "Test answer.",
+) -> Any:
+    """Build a minimal ``run_reading_record_ask`` result mock.
+
+    The mock carries a ``baseline_context`` whose
+    ``model_context_chunks`` drive the actual
+    ``runtime_fixture_fingerprint`` computation in :func:`_run_one_case`.
+    Other fields are stubbed to satisfy the success path.
+    """
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    baseline_mock = SimpleNamespace(
+        baseline_status=baseline_status,
+        is_complete=is_complete,
+        is_injected=is_injected,
+        model_context_chunks=tuple(chunks),
+    )
+    return SimpleNamespace(
+        baseline_context=baseline_mock,
+        final_text=final_text,
+        finalized=SimpleNamespace(
+            status="ok",
+            reason="complete",
+            resolved_evidence=[],
+        ),
+        agent_draft=SimpleNamespace(
+            response_kind="grounded_answer",
+            cited_evidence_handles=[],
+        ),
+        evidence_observations=[],
+        read_range_calls=0,
+        search_current_article_calls=0,
+    )
+
+
+def _make_dataset_identity() -> DatasetIdentity:
+    """Build a minimal :class:`DatasetIdentity` for scenario tests."""
+    return DatasetIdentity(
+        dataset_id="test-dataset",
+        schema_version="test-schema-v1",
+        content_sha256="a" * 64,
+    )
+
+
+@pytest.mark.asyncio
+async def test_r4_a4_2r3_scenario1_preflight_equals_actual_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scenario 1: success path — the artifact's recomputed
+    ``runtime_fixture_fingerprint`` matches the preflight computed
+    fingerprint (deterministic assembly).
+
+    R4-A4-2R3 P0-1: the artifact's actual fingerprint is recomputed
+    from ``result.baseline_context`` (NOT copied from preflight).
+    When the baseline assembler is deterministic, the two agree.
+    """
+    # The chunks the (mocked) runtime will return.
+    runtime_chunks = (
+        _make_baseline_chunk(chunk_ordinal=0, text="Hello world."),
+        _make_baseline_chunk(chunk_ordinal=1, text="Second chunk."),
+    )
+    # The preflight-equivalent chunk views (chunk_ordinal, text).
+    preflight_chunks_view: list[tuple[int, str]] = [
+        (chunk.chunk_ordinal, chunk.text) for chunk in runtime_chunks
+    ]
+    expected_fp = compute_runtime_fixture_fingerprint(
+        baseline_status="injected",
+        is_complete=True,
+        chunks=preflight_chunks_view,
+    )
+
+    case = _make_minimal_case(
+        case_id="case-scenario1",
+        article_text="Hello world.",
+        phase_tags=["real_phase1"],
+        expected_envelope_fingerprint=_VALID_FP_A,
+    )
+    case.expected_runtime_fixture_fingerprint = expected_fp
+
+    result_mock = _make_result_mock(
+        baseline_status="injected",
+        is_complete=True,
+        chunks=runtime_chunks,
+    )
+
+    async def _fake_run_reading_record_ask(**_kwargs):  # noqa: ANN202
+        return result_mock
+
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "run_reading_record_ask",
+        _fake_run_reading_record_ask,
+    )
+
+    artifact = await _run_one_case(
+        case=case,
+        budget_model=_FakeBudgetedModelForManifest(),
+        model_config=_make_minimal_model_config(),
+        run_id="test-run",
+        run_index=0,
+        envelope=_make_envelope_mock(_VALID_FP_A),
+        document_access=object(),  # not read by _run_one_case success path
+        start_requests=0,
+        start_input_tokens=0,
+        start_output_tokens=0,
+        dataset_identity=_make_dataset_identity(),
+    )
+
+    # Three-layer identity: artifact actual == preflight computed.
+    assert artifact.runtime_fixture_fingerprint == expected_fp, (
+        "Scenario 1: artifact's recomputed runtime_fixture_fingerprint "
+        "MUST match the preflight computed fingerprint (deterministic "
+        "assembly). R4-A4-2R3 P0-1: the artifact actual is recomputed "
+        "from result.baseline_context — copying preflight would hide "
+        "any runtime drift."
+    )
+    # The capture_status is "captured" (baseline produced >=1 chunk).
+    assert artifact.model_context_capture_status == "captured"
+    assert artifact.error is None
+    assert artifact.runtime_fixture_fingerprint is not None
+    assert len(artifact.runtime_fixture_fingerprint) == 64
+
+
+@pytest.mark.asyncio
+async def test_r4_a4_2r3_scenario2_actual_differs_from_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scenario 2: when the baseline assembler produces different chunks
+    than preflight (simulated via monkeypatched
+    ``run_reading_record_ask``), the artifact's actual
+    ``runtime_fixture_fingerprint`` DIFFERS from the preflight (expected)
+    value. The aggregate's three-layer check (verified in
+    ``test_reader_record_ask_runtime_fixture_identity.py``) blocks the
+    run.
+
+    R4-A4-2R3 P0-1: copying preflight → artifact would HIDE this drift.
+    The recomputation from ``result.baseline_context`` is what makes
+    the three-layer check meaningful.
+    """
+    # Preflight (expected) — computed offline from chunk set A.
+    preflight_chunks_view: list[tuple[int, str]] = [
+        (0, "Hello world."),
+        (1, "Second chunk."),
+    ]
+    preflight_fp = compute_runtime_fixture_fingerprint(
+        baseline_status="injected",
+        is_complete=True,
+        chunks=preflight_chunks_view,
+    )
+
+    case = _make_minimal_case(
+        case_id="case-scenario2",
+        article_text="Hello world.",
+        phase_tags=["real_phase1"],
+        expected_envelope_fingerprint=_VALID_FP_A,
+    )
+    case.expected_runtime_fixture_fingerprint = preflight_fp
+
+    # Runtime returns DIFFERENT chunks (chunk set B — different text).
+    # This simulates baseline drift: e.g. a monkeypatched assembler,
+    # a DB mutation between preflight and run, or different chunk
+    # truncation. The artifact's actual fingerprint is recomputed
+    # from these DIFFERENT chunks — it MUST NOT equal preflight.
+    runtime_chunks = (
+        _make_baseline_chunk(chunk_ordinal=0, text="DIFFERENT chunk text."),
+        _make_baseline_chunk(chunk_ordinal=1, text="Second chunk."),
+    )
+    actual_fp_expected = compute_runtime_fixture_fingerprint(
+        baseline_status="injected",
+        is_complete=True,
+        chunks=[(c.chunk_ordinal, c.text) for c in runtime_chunks],
+    )
+    assert actual_fp_expected != preflight_fp, (
+        "test setup invariant: runtime chunks must differ from preflight"
+    )
+
+    result_mock = _make_result_mock(
+        baseline_status="injected",
+        is_complete=True,
+        chunks=runtime_chunks,
+    )
+
+    async def _fake_run_reading_record_ask(**_kwargs):  # noqa: ANN202
+        return result_mock
+
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "run_reading_record_ask",
+        _fake_run_reading_record_ask,
+    )
+
+    artifact = await _run_one_case(
+        case=case,
+        budget_model=_FakeBudgetedModelForManifest(),
+        model_config=_make_minimal_model_config(),
+        run_id="test-run",
+        run_index=0,
+        envelope=_make_envelope_mock(_VALID_FP_A),
+        document_access=object(),
+        start_requests=0,
+        start_input_tokens=0,
+        start_output_tokens=0,
+        dataset_identity=_make_dataset_identity(),
+    )
+
+    # The artifact's actual fingerprint reflects the RUNTIME chunks
+    # (not the preflight chunks). It differs from preflight.
+    assert artifact.runtime_fixture_fingerprint == actual_fp_expected, (
+        "Scenario 2: artifact's runtime_fixture_fingerprint MUST be "
+        "recomputed from result.baseline_context (actual chunks)."
+    )
+    assert artifact.runtime_fixture_fingerprint != preflight_fp, (
+        "Scenario 2: when runtime baseline drifts from preflight, the "
+        "artifact's actual fingerprint MUST differ from preflight. "
+        "Copying preflight → artifact would hide the drift — R4-A4-2R3 "
+        "P0-1 forbids this."
+    )
+    # The aggregate's three-layer check (verified separately in
+    # test_reader_record_ask_runtime_fixture_identity.py) blocks
+    # the run when actual != preflight.
+    assert artifact.model_context_capture_status == "captured"
+
+
+@pytest.mark.asyncio
+async def test_r4_a4_2r3_scenario2_baseline_unavailable_actual_null(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scenario 2 (variant): when the baseline assembler yields 0 chunks
+    (capture_status="unavailable"), the artifact's actual
+    ``runtime_fixture_fingerprint`` is None — the aggregate's
+    instrumentation gate blocks the run rather than forging an identity.
+
+    R4-A4-2R3 P0-1: even if preflight computed a valid fingerprint,
+    the actual fingerprint MUST be None when the runtime baseline
+    produced no chunks. The harness does NOT forge an actual identity
+    by copying preflight.
+    """
+    preflight_chunks_view: list[tuple[int, str]] = [
+        (0, "Hello world."),
+    ]
+    preflight_fp = compute_runtime_fixture_fingerprint(
+        baseline_status="injected",
+        is_complete=True,
+        chunks=preflight_chunks_view,
+    )
+
+    case = _make_minimal_case(
+        case_id="case-scenario2-unavailable",
+        article_text="Hello world.",
+        phase_tags=["real_phase1"],
+        expected_envelope_fingerprint=_VALID_FP_A,
+    )
+    case.expected_runtime_fixture_fingerprint = preflight_fp
+
+    # Runtime returns baseline with NO chunks (envelope_mismatch /
+    # no_units scenario). The actual fingerprint MUST be None.
+    result_mock = _make_result_mock(
+        baseline_status="envelope_mismatch",
+        is_complete=False,
+        chunks=(),  # empty
+    )
+
+    async def _fake_run_reading_record_ask(**_kwargs):  # noqa: ANN202
+        return result_mock
+
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "run_reading_record_ask",
+        _fake_run_reading_record_ask,
+    )
+
+    artifact = await _run_one_case(
+        case=case,
+        budget_model=_FakeBudgetedModelForManifest(),
+        model_config=_make_minimal_model_config(),
+        run_id="test-run",
+        run_index=0,
+        envelope=_make_envelope_mock(_VALID_FP_A),
+        document_access=object(),
+        start_requests=0,
+        start_input_tokens=0,
+        start_output_tokens=0,
+        dataset_identity=_make_dataset_identity(),
+    )
+
+    # Actual fingerprint is None — runtime baseline produced no chunks.
+    assert artifact.runtime_fixture_fingerprint is None, (
+        "Scenario 2 (unavailable): when runtime baseline yields 0 "
+        "chunks, the artifact's actual fingerprint MUST be None. "
+        "Forging an identity by copying preflight is forbidden."
+    )
+    # capture_status="unavailable" — the aggregate's instrumentation
+    # gate blocks the run.
+    assert artifact.model_context_capture_status == "unavailable"
+    assert artifact.error is None  # no exception — model ran, baseline empty
+
+
+@pytest.mark.asyncio
+async def test_r4_a4_2r3_scenario3_runtime_exception_actual_null(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scenario 3: runtime exception → ``runtime_fixture_fingerprint=None``
+    and ``model_context_capture_status="failed"``. The aggregate's
+    instrumentation gate blocks the run rather than forging an identity.
+
+    R4-A4-2R3 P0-1: when the runtime raises (before/independent of
+    baseline assembly), the actual fingerprint is None. The preflight
+    (expected) value MUST NOT be copied — there is no
+    ``result.baseline_context`` to recompute from.
+    """
+    preflight_chunks_view: list[tuple[int, str]] = [
+        (0, "Hello world."),
+    ]
+    preflight_fp = compute_runtime_fixture_fingerprint(
+        baseline_status="injected",
+        is_complete=True,
+        chunks=preflight_chunks_view,
+    )
+
+    case = _make_minimal_case(
+        case_id="case-scenario3-exception",
+        article_text="Hello world.",
+        phase_tags=["real_phase1"],
+        expected_envelope_fingerprint=_VALID_FP_A,
+    )
+    case.expected_runtime_fixture_fingerprint = preflight_fp
+
+    async def _fake_run_reading_record_ask(**_kwargs):  # noqa: ANN202
+        raise RuntimeError("simulated runtime failure")
+
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "run_reading_record_ask",
+        _fake_run_reading_record_ask,
+    )
+
+    artifact = await _run_one_case(
+        case=case,
+        budget_model=_FakeBudgetedModelForManifest(),
+        model_config=_make_minimal_model_config(),
+        run_id="test-run",
+        run_index=0,
+        envelope=_make_envelope_mock(_VALID_FP_A),
+        document_access=object(),
+        start_requests=0,
+        start_input_tokens=0,
+        start_output_tokens=0,
+        dataset_identity=_make_dataset_identity(),
+    )
+
+    # Actual fingerprint is None — runtime raised before baseline.
+    assert artifact.runtime_fixture_fingerprint is None, (
+        "Scenario 3: runtime exception → actual fingerprint MUST be "
+        "None. R4-A4-2R3 P0-1: the preflight (expected) value MUST "
+        "NOT be copied — there is no result.baseline_context to "
+        "recompute from."
+    )
+    # capture_status="failed" — aggregate's instrumentation gate blocks.
+    assert artifact.model_context_capture_status == "failed"
+    # model_context fields also empty (cross-field invariant).
+    assert artifact.model_context_fingerprint is None
+    assert artifact.model_context_handle_ids == []
+    assert artifact.model_context_support == []
+    # Error recorded (safe code only — no raw exception text leak).
+    assert artifact.error is not None
+    assert artifact.safe_error_code is not None
+
+
+@pytest.mark.asyncio
+async def test_r4_a4_2r3_scenario3_budget_exhausted_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scenario 3 (variant): ``BudgetExhaustedError`` is re-raised by
+    :func:`_run_one_case` — the harness records a BudgetStopResult and
+    no artifact is written for the in-flight request.
+
+    R4-A4-2R3 P0-1: the budget-exhausted path does NOT forge an
+    artifact with a copied fingerprint. The harness skips the artifact
+    write entirely; only already-completed requests are recorded.
+    """
+    case = _make_minimal_case(
+        case_id="case-scenario3-budget",
+        article_text="Hello world.",
+        phase_tags=["real_phase1"],
+        expected_envelope_fingerprint=_VALID_FP_A,
+    )
+
+    async def _fake_run_reading_record_ask(**_kwargs):  # noqa: ANN202
+        raise BudgetExhaustedError(
+            cap_kind="request_cap",
+            executed_requests=5,
+            executed_tokens=200,
+            request_cap=5,
+            token_cap=10_000,
+        )
+
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "run_reading_record_ask",
+        _fake_run_reading_record_ask,
+    )
+
+    # BudgetExhaustedError MUST propagate (no artifact written).
+    with pytest.raises(BudgetExhaustedError):
+        await _run_one_case(
+            case=case,
+            budget_model=_FakeBudgetedModelForManifest(),
+            model_config=_make_minimal_model_config(),
+            run_id="test-run",
+            run_index=0,
+            envelope=_make_envelope_mock(_VALID_FP_A),
+            document_access=object(),
+            start_requests=0,
+            start_input_tokens=0,
+            start_output_tokens=0,
+            dataset_identity=_make_dataset_identity(),
+        )

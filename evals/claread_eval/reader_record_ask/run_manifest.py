@@ -34,7 +34,7 @@ import json
 import os
 import re
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
@@ -45,6 +45,35 @@ RunManifestStatus = Literal["completed", "budget_exhausted"]
 #: reject manifests carrying a different version (forward / backward
 #: incompatibility is fail-closed).
 MANIFEST_SCHEMA_VERSION: str = "reader_record_ask.run_manifest/v1"
+
+#: R4-A4-2R3 audit contract version. Distinguishes manifests that
+#: enforce the strict V2 identity/budget contract from legacy V1
+#: (R4-A4-2R2) manifests. V2 requires:
+#:
+#: - ``runtime_fixture_identities`` covers every key in
+#:   ``planned_run_indices`` exactly (no missing, no extra).
+#: - Each identity value is a strict 64-char lowercase hex SHA-256.
+#: - ``planned_logical_runs == manifest.planned_count``.
+#: - ``retry_policy`` is a typed dict with ``tool_max_retries`` /
+#:   ``output_max_retries`` non-negative ints.
+#: - ``retry_headroom`` is a non-negative int (NOT null).
+#: - ``request_cap`` is a non-negative int (NOT null).
+#:
+#: V1 (legacy) compat is selected by EXPLICIT version (``"r4-a4-2r2"``
+#: or ``None``), NOT by guessing from an empty ``runtime_fixture_identities``
+#: dict. R4-A4-2R3 closes the "empty dict bypass" — a V2 manifest with
+#: an empty identity map is corrupt, not legacy.
+AUDIT_CONTRACT_VERSION_V1: str = "r4-a4-2r2"
+AUDIT_CONTRACT_VERSION_V2: str = "r4-a4-2r3"
+_AUDIT_CONTRACT_VERSIONS: frozenset[str | None] = frozenset(
+    {AUDIT_CONTRACT_VERSION_V1, AUDIT_CONTRACT_VERSION_V2, None}
+)
+
+#: Required keys for V2 ``retry_policy`` dict.
+_RETRY_POLICY_REQUIRED_KEYS: tuple[str, ...] = (
+    "tool_max_retries",
+    "output_max_retries",
+)
 
 #: Allowlist of safe stop_reason values. ``None`` is emitted for
 #: ``status="completed"``; ``"budget_exhausted"`` for budget stops.
@@ -204,6 +233,39 @@ class ReaderRecordAskRunManifest:
     executed_requests: int
     executed_tokens: int
     stop_reason: str | None
+    # R4-A4-2R2 P0-2: per-case runtime fixture identity map. The
+    # harness writes the case's ``expected_runtime_fixture_fingerprint``
+    # (== the preflight-computed actual fingerprint) for every case in
+    # ``planned_run_indices``. The aggregate compares this against
+    # each artifact's ``runtime_fixture_fingerprint`` (three-layer
+    # check: dataset expected == manifest identity == artifact actual).
+    # Empty for backwards compat with pre-R4-A4-2R2 manifests.
+    runtime_fixture_identities: dict[str, str] = field(default_factory=dict)
+    # R4-A4-2R2 P1: self-contained budget audit fields. The harness
+    # writes these from env/config at run time; the aggregate reads
+    # them from the manifest (NOT from current shell env) so a
+    # historical run's budget is auditable without reconstructing the
+    # env. Defaults preserve backwards compat with pre-R4-A4-2R2
+    # manifests (the aggregate surfaces ``None`` / 0 for old manifests
+    # and falls back to env-derived values for ``request_cap`` only
+    # when the manifest field is absent).
+    planned_logical_runs: int = 0
+    request_cap: int | None = None
+    token_cap: int | None = None
+    # R4-A4-2R3 P1: ``retry_policy`` is now a typed dict
+    # ``{"tool_max_retries": int, "output_max_retries": int}`` (V2) or
+    # an empty dict (V1 legacy). The V2 contract is enforced in
+    # :func:`_parse_and_validate_manifest_dict`.
+    retry_policy: dict[str, Any] = field(default_factory=dict)
+    retry_headroom: int | None = None
+    # R4-A4-2R3 P0-2: explicit audit contract version. ``None`` or
+    # ``"r4-a4-2r2"`` selects V1 (legacy) compat — current R4-A4-2R2
+    # rules apply. ``"r4-a4-2r3"`` selects V2 strict — the manifest
+    # MUST satisfy the strict identity/budget contract documented on
+    # :data:`AUDIT_CONTRACT_VERSION_V2`. The aggregate uses this field
+    # (NOT empty-dict guessing) to decide which validation path to
+    # apply.
+    audit_contract_version: str | None = None
 
     # ------------------------------------------------------------------
     # Counts (read-only projections over the index dicts)
@@ -324,6 +386,21 @@ class ReaderRecordAskRunManifest:
         :data:`MANIFEST_SCHEMA_VERSION`, ``stop_reason`` is not in
         :data:`_ALLOWED_STOP_REASONS`, or the per-case invariant
         (``planned == completed ∪ remaining``, disjoint) is violated.
+
+        R4-A4-2R2: the six new fields (``runtime_fixture_identities``,
+        ``planned_logical_runs``, ``request_cap``, ``token_cap``,
+        ``retry_policy``, ``retry_headroom``) are OPTIONAL for
+        backwards compatibility with pre-R4-A4-2R2 manifests. When
+        absent they fall back to the dataclass defaults. When present
+        they MUST pass strict type validation in
+        :func:`_parse_and_validate_manifest_dict`.
+
+        R4-A4-2R3: ``audit_contract_version`` is OPTIONAL (defaults to
+        ``None`` = V1 legacy). When present and equal to
+        :data:`AUDIT_CONTRACT_VERSION_V2`, the strict V2 contract is
+        enforced (identity map covers planned, keys match, planned
+        runs equal, retry_policy typed dict, retry_headroom non-null,
+        request_cap non-null).
         """
         data = _parse_and_validate_manifest_dict(s)
         return cls(
@@ -340,6 +417,24 @@ class ReaderRecordAskRunManifest:
             executed_requests=data["executed_requests"],
             executed_tokens=data["executed_tokens"],
             stop_reason=data["stop_reason"],
+            # R4-A4-2R2 optional fields — use .get() with defaults so
+            # pre-R4-A4-2R2 manifests (which never carried these keys)
+            # round-trip cleanly.
+            runtime_fixture_identities=data.get(
+                "runtime_fixture_identities", {}
+            ),
+            planned_logical_runs=data.get("planned_logical_runs", 0),
+            request_cap=data.get("request_cap", None),
+            token_cap=data.get("token_cap", None),
+            # R4-A4-2R3: retry_policy is now a dict (V2 typed contract)
+            # or empty dict (V1 legacy). The string "default" from
+            # pre-R4-A4-2R3 manifests is migrated to ``{}`` so the
+            # dataclass type stays ``dict[str, Any]``.
+            retry_policy=data.get("retry_policy", {}),
+            retry_headroom=data.get("retry_headroom", None),
+            # R4-A4-2R3: audit_contract_version (None / "r4-a4-2r2" /
+            # "r4-a4-2r3").
+            audit_contract_version=data.get("audit_contract_version", None),
         )
 
 
@@ -875,6 +970,195 @@ def _parse_and_validate_manifest_dict(s: str) -> dict[str, Any]:
     stop_reason = data["stop_reason"]
     if stop_reason not in _ALLOWED_STOP_REASONS:
         raise RunManifestError(reason="corrupt_manifest")
+
+    # R4-A4-2R2 Rules 11-16: optional budget/identity fields. Each is
+    # OPTIONAL (defaults applied in ``from_json`` when absent). When
+    # PRESENT, strict type validation runs so a corrupt manifest cannot
+    # smuggle malformed budget/identity data into the aggregate audit.
+    #
+    # Rule 11: ``runtime_fixture_identities`` — optional dict of
+    # non-empty case_id → 64-char lowercase hex SHA-256. Empty dict is
+    # valid (backwards compat for pre-R4-A4-2R2 manifests). When keys
+    # are present, values MUST be strict SHA-256 hex (same regex as
+    # ``dataset_content_sha256``).
+    if "runtime_fixture_identities" in data:
+        rfi = data["runtime_fixture_identities"]
+        if not isinstance(rfi, dict):
+            raise RunManifestError(reason="corrupt_manifest")
+        for k, v in rfi.items():
+            if not isinstance(k, str) or not k:
+                raise RunManifestError(reason="corrupt_manifest")
+            if not isinstance(v, str):
+                raise RunManifestError(reason="corrupt_manifest")
+            if not _SHA256_LOWERCASE_HEX_RE.match(v):
+                raise RunManifestError(reason="corrupt_manifest")
+
+    # Rule 12: ``planned_logical_runs`` — optional non-negative int
+    # (bool rejected). Default 0 (backwards compat).
+    if "planned_logical_runs" in data:
+        plr = data["planned_logical_runs"]
+        if (
+            not isinstance(plr, int)
+            or isinstance(plr, bool)
+            or plr < 0
+        ):
+            raise RunManifestError(reason="corrupt_manifest")
+
+    # Rule 13: ``request_cap`` — optional non-negative int OR null.
+    # Bool rejected. Default None (backwards compat / unlimited).
+    if "request_cap" in data and data["request_cap"] is not None:
+        rc = data["request_cap"]
+        if (
+            not isinstance(rc, int)
+            or isinstance(rc, bool)
+            or rc < 0
+        ):
+            raise RunManifestError(reason="corrupt_manifest")
+
+    # Rule 14: ``token_cap`` — optional non-negative int OR null.
+    # Bool rejected. Default None (backwards compat / unlimited).
+    if "token_cap" in data and data["token_cap"] is not None:
+        tc = data["token_cap"]
+        if (
+            not isinstance(tc, int)
+            or isinstance(tc, bool)
+            or tc < 0
+        ):
+            raise RunManifestError(reason="corrupt_manifest")
+
+    # Rule 15: ``retry_policy`` — R4-A4-2R3 changes type to dict.
+    # Accept (a) dict (V2 typed contract — keys validated below in
+    # V2 strict block) or (b) the legacy string ``"default"`` (V1
+    # backwards compat — migrated to ``{}`` in ``from_json``) or
+    # (c) absent (defaults to ``{}``). Any other type rejected.
+    if "retry_policy" in data:
+        rp = data["retry_policy"]
+        if isinstance(rp, str):
+            # V1 legacy: only the literal ``"default"`` is accepted.
+            if rp != "default":
+                raise RunManifestError(reason="corrupt_manifest")
+            # Migrate to empty dict so the dataclass type stays dict.
+            data["retry_policy"] = {}
+        elif isinstance(rp, dict):
+            # V2 typed contract — full key/type validation deferred to
+            # the V2 strict block below (Rule 18). Here we only ensure
+            # all values are ints (or bools rejected) so a corrupt
+            # dict cannot smuggle arbitrary types into the dataclass.
+            for _k, v in rp.items():
+                if not isinstance(_k, str) or not _k:
+                    raise RunManifestError(reason="corrupt_manifest")
+                if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+                    raise RunManifestError(reason="corrupt_manifest")
+        else:
+            raise RunManifestError(reason="corrupt_manifest")
+
+    # Rule 16: ``retry_headroom`` — optional non-negative int OR null.
+    # Bool rejected. Default None (backwards compat).
+    if "retry_headroom" in data and data["retry_headroom"] is not None:
+        rh = data["retry_headroom"]
+        if (
+            not isinstance(rh, int)
+            or isinstance(rh, bool)
+            or rh < 0
+        ):
+            raise RunManifestError(reason="corrupt_manifest")
+
+    # Rule 17 (R4-A4-2R3): ``audit_contract_version`` — optional
+    # non-empty str. Must be one of ``_AUDIT_CONTRACT_VERSIONS`` (which
+    # includes ``None`` as a sentinel for "field absent"). Any other
+    # string rejected (forward / backward incompatibility is fail-
+    # closed).
+    if "audit_contract_version" in data and data["audit_contract_version"] is not None:
+        acv = data["audit_contract_version"]
+        if not isinstance(acv, str) or not acv:
+            raise RunManifestError(reason="corrupt_manifest")
+        if acv not in _AUDIT_CONTRACT_VERSIONS:
+            raise RunManifestError(reason="corrupt_manifest")
+
+    # Rule 18 (R4-A4-2R3): V2 strict contract. When
+    # ``audit_contract_version == AUDIT_CONTRACT_VERSION_V2``, enforce
+    # the full strict identity/budget contract documented on
+    # :data:`AUDIT_CONTRACT_VERSION_V2`. A V2 manifest that fails any
+    # of these checks is corrupt — there is NO legacy bypass for V2.
+    acv_value = data.get("audit_contract_version", None)
+    if acv_value == AUDIT_CONTRACT_VERSION_V2:
+        # 18a: ``runtime_fixture_identities`` MUST be present and a
+        # non-empty dict. (Empty dict is V1-only — V2 requires
+        # coverage of every planned case.)
+        rfi = data.get("runtime_fixture_identities", None)
+        if not isinstance(rfi, dict) or not rfi:
+            raise RunManifestError(reason="corrupt_manifest")
+
+        # 18b: identity map keys MUST exactly equal
+        # ``planned_run_indices.keys()`` (no missing, no extra).
+        planned_keys = set(data["planned_run_indices"].keys())
+        identity_keys = set(rfi.keys())
+        if planned_keys != identity_keys:
+            raise RunManifestError(reason="corrupt_manifest")
+
+        # 18c: each value MUST be a strict 64-char lowercase hex
+        # SHA-256 (Rule 11 already validated the type/regex, but
+        # defense-in-depth: re-assert non-empty + regex match here).
+        for v in rfi.values():
+            if not isinstance(v, str) or not _SHA256_LOWERCASE_HEX_RE.match(v):
+                raise RunManifestError(reason="corrupt_manifest")
+
+        # 18d: ``planned_logical_runs`` MUST equal ``planned_count``
+        # (sum of len of planned_run_indices values). This catches a
+        # harness bug where the planner's logical-run count drifts
+        # from the manifest's planned-indices count.
+        plr = data.get("planned_logical_runs", 0)
+        planned_count = sum(
+            len(v) for v in data["planned_run_indices"].values()
+        )
+        if not isinstance(plr, int) or isinstance(plr, bool) or plr != planned_count:
+            raise RunManifestError(reason="corrupt_manifest")
+
+        # 18e: ``retry_policy`` MUST be a dict with the required keys
+        # ``tool_max_retries`` and ``output_max_retries``, each a
+        # non-negative int (bool rejected).
+        rp = data.get("retry_policy", None)
+        if not isinstance(rp, dict):
+            raise RunManifestError(reason="corrupt_manifest")
+        for req_key in _RETRY_POLICY_REQUIRED_KEYS:
+            if req_key not in rp:
+                raise RunManifestError(reason="corrupt_manifest")
+            rv = rp[req_key]
+            if (
+                not isinstance(rv, int)
+                or isinstance(rv, bool)
+                or rv < 0
+            ):
+                raise RunManifestError(reason="corrupt_manifest")
+
+        # 18f: ``retry_headroom`` MUST be a non-negative int (NOT
+        # null). V2 contracts require an explicit headroom value so
+        # the aggregate can audit ``retries_consumed`` without
+        # reconstructing from env.
+        rh = data.get("retry_headroom", None)
+        if (
+            not isinstance(rh, int)
+            or isinstance(rh, bool)
+            or rh < 0
+        ):
+            raise RunManifestError(reason="corrupt_manifest")
+
+        # 18g: ``request_cap`` MUST be a non-negative int (NOT null).
+        # V2 contracts require an explicit cap so the aggregate can
+        # audit budget exhaustion without env reconstruction.
+        rc = data.get("request_cap", None)
+        if (
+            not isinstance(rc, int)
+            or isinstance(rc, bool)
+            or rc < 0
+        ):
+            raise RunManifestError(reason="corrupt_manifest")
+
+        # 18h: ``retry_headroom`` MUST equal
+        # ``request_cap - planned_logical_runs`` (the contract from
+        # R4-A4-2R3 P1). Drift indicates a harness bug.
+        if rh != rc - plr:
+            raise RunManifestError(reason="corrupt_manifest")
 
     # Semantic invariants (status/stop_reason/remaining consistency,
     # completed ∩ remaining disjoint, completed/remaining ⊆ planned).

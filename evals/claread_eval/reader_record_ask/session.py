@@ -78,7 +78,20 @@ class RunSessionLayout:
         run_id: str,
         prior_run_id: str | None = None,
     ) -> None:
-        self._runs_root = Path(runs_root)
+        # R4-A4-2R P0-Path: normalize ``runs_root`` to an absolute
+        # canonical path at construction. This is the deep-module
+        # contract: writer (harness subprocess) and reader (aggregate)
+        # MUST resolve to the same absolute ``runs_root`` even when
+        # constructed with different relative inputs from different
+        # cwds. Without normalization, a relative path slipping through
+        # (e.g. via env var or direct caller) would resolve differently
+        # in the harness subprocess (cwd=``services/api/``) vs the
+        # aggregate main process (cwd=``evals/``), producing the
+        # historical ``services/services/api/tmp/...`` double-resolution
+        # bug where aggregate could not find the artifacts written by
+        # the harness. The runner script ALSO normalizes at its entry
+        # point — this is belt-and-suspenders at the deep module.
+        self._runs_root = Path(runs_root).resolve()
         self._run_id = run_id
         self._prior_run_id = prior_run_id
         self.validate()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, StrictBool
+from pydantic import BaseModel, Field, StrictBool, StrictStr
 
 
 class AtomicExpectedFact(BaseModel):
@@ -177,6 +177,67 @@ class ReaderRecordAskR4A3Case(BaseModel):
     # - ``targeted_phase2_candidate``: expected to fail in Phase 1 and
     #   enter Phase 2
     phase_tags: list[str] = Field(default_factory=list)
+    # R4-A4-2R P0-Identity: explicit, auditable model-visible fixture
+    # identity for real-BBC cases. When present, the harness preflight
+    # verifies that the runtime envelope's ``envelope_fingerprint``
+    # matches ``expected_envelope_fingerprint`` EXACTLY before any model
+    # builder is invoked or provider call is made. Mismatch → fail-
+    # closed (calls=0, builder=0). The aggregate also verifies each
+    # artifact's ``envelope_fingerprint`` matches the declared expected
+    # value; mismatch → ``blocked_incomplete_real_model_run``.
+    #
+    # This closes the audit finding where a BBC runtime record's
+    # model-visible baseline chunks contained ``2015`` but the dataset's
+    # ``allowed_temporal_claims`` was empty, causing the evaluator to
+    # misjudge a body-supported year as a hallucination. By binding the
+    # runtime to an auditable, deterministic identity, the dataset
+    # author commits to a specific base_content_sha256 / record_id /
+    # generation combination, and any drift (re-base, re-generation,
+    # different record) is caught BEFORE paid calls are made.
+    #
+    # Synthetic cases may also declare this field; the harness computes
+    # the envelope_fingerprint deterministically from
+    # ``base_content_sha256 = sha256(article_text)`` and fixed UUIDs, so
+    # the declared value can be computed offline and verified at
+    # preflight.
+    #
+    # ``None`` (default) preserves backwards compat with cases authored
+    # before R4-A4-2R — no preflight check is performed, no aggregate
+    # check is performed. New cases SHOULD declare this field.
+    expected_envelope_fingerprint: StrictStr | None = None
+
+    # R4-A4-2R2 P0-1: true model-visible fixture identity. Deterministic
+    # SHA-256 over ``baseline_status + is_complete + ordered
+    # (chunk_ordinal, chunk_text)``. Excludes random evidence handle_ids,
+    # absolute paths, record UUIDs, base_ids, stable_document_ids, and
+    # timestamps. Two assemblies from the same snapshot produce the
+    # same hash; chunk content / order / truncation / coverage changes
+    # produce a different hash.
+    #
+    # Contract:
+    # - Required for ``real_phase1`` cases with ``source_kind =
+    #   "bbc_record"``. Missing / empty / mismatch → harness preflight
+    #   fail-closed (``pytest.skip`` BEFORE model builder, calls=0,
+    #   builder=0).
+    # - Optional for ``synthetic_short`` / ``synthetic_medium_long``
+    #   cases (the harness computes the fingerprint deterministically
+    #   from ``article_text``, so the declared value can be computed
+    #   offline and verified at preflight). Synthetic cases SHOULD
+    #   declare this field.
+    # - Optional for ``offline_only`` cases (backwards compat — these
+    #   cases never enter the real-model run path, so no preflight
+    #   check fires).
+    #
+    # The aggregate performs a three-layer check:
+    #   dataset expected == manifest identity == artifact actual.
+    # Missing / mixed / mismatch / foreign identity → typed blocker
+    # (``blocked_incomplete_real_model_run``), NOT display-only.
+    #
+    # Supersedes ``expected_envelope_fingerprint`` as the final
+    # identity contract. ``expected_envelope_fingerprint`` is retained
+    # for backwards compat with cases authored under R4-A4-2R; the
+    # harness checks BOTH when both are present (defense-in-depth).
+    expected_runtime_fixture_fingerprint: StrictStr | None = None
 
 
 class ReaderRecordAskR4A3Dataset(BaseModel):

@@ -641,6 +641,24 @@ class RawArtifact(BaseModel):
     final_text: str | None = None
     finalized_reason: str | None = None
     envelope_fingerprint: str | None = None
+
+    # R4-A4-2R2 P0-2: actual runtime fixture fingerprint persisted for
+    # post-call audit. Deterministic SHA-256 over baseline_status +
+    # is_complete + ordered (chunk_ordinal, chunk_text); excludes
+    # random handle_ids, paths, UUIDs, timestamps. Computed by the
+    # harness from the ACTUAL ``BaselineAgentContext`` produced by
+    # ``run_reading_record_ask`` (NOT from the preflight's preview
+    # assembly). The aggregate compares this against the dataset's
+    # declared ``expected_runtime_fixture_fingerprint`` and the
+    # manifest's per-case identity — three-layer check.
+    #
+    # ``None`` is allowed for backwards compat with pre-R4-A4-2R2
+    # artifacts (the harness MUST populate this for new writes, but
+    # old artifacts on disk may lack the field). When present, the
+    # SHA MUST be 64 lowercase hex chars — the format validator
+    # below rejects malformed values.
+    runtime_fixture_fingerprint: StrictStr | None = None
+
     error: str | None = None
 
     # P1-2: safe error code — allowlisted code from project_safe_error().
@@ -714,6 +732,25 @@ class RawArtifact(BaseModel):
         if v is not None and not _SHA256_LOWERCASE_HEX_RE.match(v):
             raise ValueError(
                 "dataset_content_sha256 must be 64 lowercase hex chars when present"
+            )
+        return v
+
+    @field_validator("runtime_fixture_fingerprint")
+    @classmethod
+    def _runtime_fixture_fingerprint_hex_or_none(cls, v: str | None) -> str | None:
+        """R4-A4-2R2 P0-2: require 64 lowercase hex chars when present.
+
+        ``None`` is allowed for backwards compat with pre-R4-A4-2R2
+        artifacts (the harness MUST populate this for new writes, but
+        old artifacts on disk may lack the field). When present, the
+        SHA MUST be 64 lowercase hex chars — the same strict format as
+        ``dataset_content_sha256`` so the aggregate can compare it
+        byte-for-byte against the manifest's identity map and the
+        dataset's declared expected value.
+        """
+        if v is not None and not _SHA256_LOWERCASE_HEX_RE.match(v):
+            raise ValueError(
+                "runtime_fixture_fingerprint must be 64 lowercase hex chars when present"
             )
         return v
 
