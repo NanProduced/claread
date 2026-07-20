@@ -20,6 +20,8 @@ from app.schemas.reader_orchestration import (
     TranslationLayerGenerationOutput,
     TranslationLayerOutput,
     VocabularyLayerOutput,
+    VocabularyPhraseGlossItem,
+    VocabularyPhraseType,
 )
 
 
@@ -314,6 +316,95 @@ def test_vocabulary_layer_output_accepts_empty_items() -> None:
 
     assert output.schema_version == 1
     assert output.items == []
+
+
+def _phrase_gloss_anchor() -> ReaderTextRangeAnchor:
+    selected = "give up"
+    return ReaderTextRangeAnchor(
+        base_id="base-1",
+        unit_id="u1",
+        anchor_segment_id="s1",
+        sentence_id="s1",
+        start_offset=0,
+        end_offset=7,
+        selected_text=selected,
+        text_hash=compute_text_range_hash(selected),
+    )
+
+
+@pytest.mark.parametrize(
+    "phrase_type",
+    ["verb_expression", "fixed_collocation", "name_or_term", "idiom"],
+)
+def test_vocabulary_phrase_gloss_accepts_new_phrase_types(
+    phrase_type: VocabularyPhraseType,
+) -> None:
+    item = VocabularyPhraseGlossItem(
+        anchor=_phrase_gloss_anchor(),
+        phrase="give up",
+        phrase_type=phrase_type,
+        gloss="放弃",
+        learning_note=None,
+    )
+    assert item.phrase_type == phrase_type
+    dumped = item.model_dump()
+    assert dumped["learning_note"] is None
+    round_trip = VocabularyPhraseGlossItem.model_validate(dumped)
+    assert round_trip.phrase_type == phrase_type
+
+
+def test_vocabulary_phrase_gloss_learning_note_markdown_round_trip() -> None:
+    note = "用法：`give up` + 名词。\n- 常见于戒除义"
+    item = VocabularyPhraseGlossItem(
+        anchor=_phrase_gloss_anchor(),
+        phrase="give up",
+        phrase_type="verb_expression",
+        gloss="放弃；戒掉",
+        learning_note=note,
+        example="She gave up smoking.",
+    )
+    dumped = item.model_dump()
+    assert dumped["learning_note"] == note
+    restored = VocabularyPhraseGlossItem.model_validate(dumped)
+    assert restored.learning_note == note
+    assert restored.example == "She gave up smoking."
+
+    layer = VocabularyLayerOutput(items=[item])
+    layer_restored = VocabularyLayerOutput.model_validate(layer.model_dump())
+    assert layer_restored.items[0].learning_note == note  # type: ignore[union-attr]
+
+    # Published + candidate field descriptions carry the Markdown contract.
+    published_desc = VocabularyPhraseGlossItem.model_fields["learning_note"].description or ""
+    assert "Markdown" in published_desc
+    assert "raw HTML" in published_desc
+    assert "headings" in published_desc
+
+    from app.services.reader_orchestration.vocabulary_worker import (
+        VocabularyPhraseGlossCandidateItem,
+    )
+
+    candidate_desc = (
+        VocabularyPhraseGlossCandidateItem.model_fields["learning_note"].description or ""
+    )
+    assert "Markdown" in candidate_desc
+    assert "raw HTML" in candidate_desc
+
+
+@pytest.mark.parametrize(
+    "old_type",
+    ["collocation", "phrasal_verb", "proper_noun", "compound", "other"],
+)
+def test_vocabulary_phrase_gloss_rejects_old_phrase_types(old_type: str) -> None:
+    with pytest.raises(ValidationError):
+        VocabularyPhraseGlossItem.model_validate(
+            {
+                "item_type": "phrase_gloss",
+                "anchor": _phrase_gloss_anchor().model_dump(),
+                "phrase": "give up",
+                "phrase_type": old_type,
+                "gloss": "放弃",
+            }
+        )
 
 
 def test_grammar_note_item_requires_spans_from_same_unit() -> None:

@@ -84,15 +84,31 @@ MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH = 240
 MAX_VOCABULARY_DIAGNOSTIC_ITEMS = 8
 MAX_VOCABULARY_DIAGNOSTIC_TEXT_LENGTH = 80
 
-# T3.3 phrase_gloss deterministic guard. The LLM sometimes marks long
-# clause-like spans or full sentences (including questions) as phrase_gloss,
-# which violates the "lexical expression" product semantics. The prompt
-# carries explicit selection rules; this guard is the fail-closed backstop
-# that rejects obvious sentence-shaped / over-long candidates before
-# grounding. Reasonable proper nouns, compounds and idioms are kept.
-_PHRASE_GLOSS_MAX_WORDS = 7
+# phrase_gloss deterministic guard. The LLM sometimes marks full sentences
+# (including questions) as phrase_gloss, which violates the "lexical
+# expression" product semantics. The prompt carries selection rules; this
+# guard is the fail-closed backstop that rejects obvious sentence-shaped
+# candidates before grounding. There is no universal word-count cap:
+# legitimate multiword names, terms, and fixed expressions must not be
+# rejected solely for length.
 _PHRASE_GLOSS_SENTENCE_TERMINATORS = (".", "!", "?", "。", "！", "？")
-_PHRASE_GLOSS_GUARD_REASON_CODE = "phrase_gloss_too_long_or_clause_like"
+# Sentence-shaped phrase_gloss (terminal punctuation), not a word-count rule.
+_PHRASE_GLOSS_GUARD_REASON_CODE = "phrase_gloss_sentence_like"
+
+# context_gloss is a single lexical item only. Multiword spans belong to
+# phrase_gloss; do not auto-convert — skip with a diagnostic.
+_CONTEXT_GLOSS_NOT_SINGLE_LEXICAL_ITEM = "context_gloss_not_single_lexical_item"
+
+# R7-2: vocabulary_highlight is a single lexical item only (a word or
+# one of its forms). A single-word headword must never package a
+# multiword selected_text ("missed a deadline" / headword "deadline"):
+# Quick Peek queries the dictionary by headword, so a multiword mark
+# makes highlight range, title, and dictionary content disagree.
+# Multiword expressions that deserve explanation must be emitted by the
+# LLM as independent phrase_gloss candidates; the backend NEVER
+# auto-converts an invalid highlight into phrase_gloss — it skips the
+# candidate with this diagnostic reason_code.
+_VOCAB_HIGHLIGHT_NOT_SINGLE_LEXICAL_ITEM = "vocab_highlight_not_single_lexical_item"
 
 # Universal phrase_gloss selection rules. These are NOT variant-specific
 # (they apply to every reading_variant), so they live here as a constant
@@ -100,20 +116,31 @@ _PHRASE_GLOSS_GUARD_REASON_CODE = "phrase_gloss_too_long_or_clause_like"
 # policy lines are still injected via the strategy section.
 _PHRASE_GLOSS_RULES_SECTION = (
     "<phrase_gloss_rules>\n"
-    "phrase_gloss is a lexical expression, NOT a full sentence, a full "
-    "clause, or a long predicate span. Prefer fixed collocations, phrasal "
-    "verbs, idioms, common collocations, compounds, and proper nouns.\n"
-    "- Typical length: 2-5 words. 6-7 words only with strong justification; "
-    "8+ words are almost always wrong - skip.\n"
+    "phrase_gloss is a multiword lexical expression, NOT a full sentence "
+    "or a complete clause/statement. Use one of the four phrase_type values:\n"
+    "- verb_expression: verb-centered multiword expressions (phrasal verbs, "
+    "prepositional verbs, conventional verb combinations)\n"
+    "- fixed_collocation: conventional fixed combinations that are not "
+    "primarily an idiom, name/term, or verb expression\n"
+    "- name_or_term: multiword proper names, institutions, places, work "
+    "titles, or domain terms\n"
+    "- idiom: figurative or non-compositional expressions\n"
+    "If none of the four types fits a useful learning point, skip it.\n"
     "- Do NOT mark complete questions or statements that end with terminal "
     "punctuation (. ! ?). If the whole sentence needs explanation, that "
     "belongs to grammar / sentence_analysis, not phrase_gloss.\n"
+    "- Do NOT reject a legitimate name, term, or fixed expression only "
+    "because it is longer than a short collocation; length alone is not a "
+    "rejection rule. Still skip clause-like predicate spans that are not "
+    "lexical expressions.\n"
     "- reject: \"Are we to have nothing tonight?\"\n"
     "- reject: \"threw them through the bars of my window\"\n"
-    "- accept: \"stole back\"\n"
-    "- accept: \"at any rate\"\n"
-    "- accept: \"caught sight of\"\n"
-    "- accept: \"letter of credit\"\n"
+    "- accept: \"stole back\" (verb_expression)\n"
+    "- accept: \"at any rate\" (fixed_collocation)\n"
+    "- accept: \"caught sight of\" (verb_expression)\n"
+    "- accept: \"letter of credit\" (name_or_term)\n"
+    "- accept: long multiword institution names when they are true names "
+    "or terms (name_or_term)\n"
     "</phrase_gloss_rules>\n"
 )
 
@@ -187,7 +214,35 @@ class VocabularyCandidateItemBase(BaseModel):
 
 class VocabularyHighlightCandidateItem(VocabularyCandidateItemBase):
     item_type: Literal["vocab_highlight"] = "vocab_highlight"
-    headword: str = Field(min_length=1, max_length=64)
+    # R7-2: the description is an LLM-facing generation constraint (the
+    # single-lexical-item contract is ALSO enforced post-hoc by the
+    # deterministic backend guard ``_vocab_highlight_guard_reason_code``;
+    # no Pydantic validator is used, so one illegal candidate is skipped
+    # with a diagnostic instead of rejecting the whole LLM output).
+    selected_text: str = Field(
+        min_length=1,
+        max_length=MAX_VOCABULARY_CANDIDATE_TEXT_LENGTH,
+        description=(
+            "Exactly one lexical item copied verbatim from the anchor "
+            "segment: a single word or one of its forms. Hyphenated "
+            "words (well-known), apostrophe forms (don't, students') "
+            "and orthographic abbreviations with internal periods "
+            "(U.K.) each count as ONE item. Never a whitespace-"
+            "separated multiword span (missed a deadline, take place) "
+            "and never a clause or sentence - multiword expressions "
+            "belong to phrase_gloss."
+        ),
+    )
+    headword: str = Field(
+        min_length=1,
+        max_length=64,
+        description=(
+            "The canonical dictionary form of the single selected_text "
+            "item (e.g. selected_text 'missed' -> headword 'miss'). "
+            "Never use a single-word headword to package a multiword "
+            "selected_text."
+        ),
+    )
     brief_explanation: str | None = Field(
         default=None,
         max_length=MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH,
@@ -202,14 +257,23 @@ class VocabularyPhraseGlossCandidateItem(VocabularyCandidateItemBase):
     item_type: Literal["phrase_gloss"] = "phrase_gloss"
     phrase: str = Field(min_length=1, max_length=MAX_VOCABULARY_CANDIDATE_TEXT_LENGTH)
     phrase_type: Literal[
-        "collocation",
-        "phrasal_verb",
+        "verb_expression",
+        "fixed_collocation",
+        "name_or_term",
         "idiom",
-        "proper_noun",
-        "compound",
-        "other",
     ]
     gloss: str = Field(min_length=1, max_length=MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH)
+    learning_note: str | None = Field(
+        default=None,
+        max_length=MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH,
+        description=(
+            "Optional simplified-Chinese Markdown learning note: usage, "
+            "contrast, composition, or other genuine learning increment. "
+            "May use bold, inline code, and short unordered lists. "
+            "Must not use raw HTML or Markdown headings. "
+            "Must not merely restate gloss at greater length."
+        ),
+    )
     example: str | None = Field(
         default=None,
         max_length=MAX_VOCABULARY_CANDIDATE_NOTE_LENGTH,
@@ -2340,33 +2404,84 @@ def _phrase_gloss_guard_reason_code(
 ) -> str | None:
     """Deterministic fail-closed guard for phrase_gloss candidates.
 
-    The LLM sometimes marks long clause-like spans or whole sentences
-    (including questions) as phrase_gloss, which violates the "lexical
-    expression" product semantics. This guard rejects obvious
-    sentence-shaped / over-long candidates BEFORE grounding so they never
-    reach the published layer.
+    The LLM sometimes marks whole sentences (including questions) as
+    phrase_gloss, which violates the "lexical expression" product
+    semantics. This guard rejects obvious sentence-shaped candidates
+    BEFORE grounding so they never reach the published layer.
 
     A candidate is rejected when either ``selected_text`` (the anchored
-    span the user sees) or ``phrase`` (the canonical label):
-        - ends with terminal sentence punctuation (. ! ? and their
-          full-width forms), indicating a complete sentence / question; or
-        - exceeds ``_PHRASE_GLOSS_MAX_WORDS`` words, indicating a clause-like
-          or over-long span.
+    span the user sees) or ``phrase`` (the canonical label) ends with
+    terminal sentence punctuation (. ! ? and their full-width forms),
+    indicating a complete sentence / question.
+
+    There is no universal word-count rejection. Legitimate multiword
+    names, terms, and fixed expressions must pass even when longer than
+    a short collocation. Semantic clause-vs-expression judgment remains
+    in the prompt.
 
     Returns the guard reason_code when the candidate should be skipped, or
-    ``None`` when it passes. The guard is intentionally conservative so
-    reasonable proper nouns, compounds and idioms (e.g.
-    "between Scylla and Charybdis" = 4 words,
-    "the elephant in the room" = 5 words) are kept.
+    ``None`` when it passes.
     """
     for field_value in (item.selected_text, item.phrase):
         stripped = field_value.strip()
         if stripped.endswith(_PHRASE_GLOSS_SENTENCE_TERMINATORS):
             return _PHRASE_GLOSS_GUARD_REASON_CODE
-        # Word count by whitespace split. This is intentionally simple; the
-        # guard only rejects obviously over-long spans, not borderline ones.
-        if len(stripped.split()) > _PHRASE_GLOSS_MAX_WORDS:
-            return _PHRASE_GLOSS_GUARD_REASON_CODE
+    return None
+
+
+def _context_gloss_guard_reason_code(
+    item: VocabularyContextGlossCandidateItem,
+) -> str | None:
+    """Fail-closed guard: context_gloss must be a single lexical item.
+
+    After trim, ``selected_text`` must not contain whitespace. Hyphenated
+    words and apostrophe forms remain valid. Multiword units belong to
+    phrase_gloss; this guard skips without auto-conversion.
+    """
+    stripped = item.selected_text.strip()
+    if any(char.isspace() for char in stripped):
+        return _CONTEXT_GLOSS_NOT_SINGLE_LEXICAL_ITEM
+    return None
+
+
+def _is_single_lexical_item(text: str) -> bool:
+    """R7-2: whether the trimmed ``text`` is exactly one lexical item.
+
+    One lexical item = one orthographic word. Hyphenated words
+    (``well-known``), ASCII/curly apostrophe forms and possessives
+    (``don't``, ``students'``) and orthographic abbreviations with
+    internal periods (``U.K.``, ``e.g.``) all count as ONE item: the
+    core rejection condition is multiple whitespace-separated lexical
+    tokens. Empty/whitespace-only input is not a lexical item.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    return not any(char.isspace() for char in stripped)
+
+
+def _vocab_highlight_guard_reason_code(
+    item: VocabularyHighlightCandidateItem,
+) -> str | None:
+    """Fail-closed guard: vocab_highlight must be a single lexical item
+    (R7-2).
+
+    After trim, ``selected_text`` must be one lexical item (see
+    :func:`_is_single_lexical_item`): hyphens, ASCII/curly apostrophes,
+    possessives and orthographic abbreviations with internal periods
+    are allowed; multiple whitespace-separated tokens are rejected.
+
+    On rejection the candidate is skipped with a diagnostic. This
+    guard NEVER auto-converts the candidate to phrase_gloss, NEVER
+    modifies the source span, and NEVER extracts a single word from a
+    multiword ``selected_text`` — multiword expressions must come from
+    the LLM as independent phrase_gloss candidates.
+
+    Returns the guard reason_code when the candidate should be skipped,
+    or ``None`` when it passes.
+    """
+    if not _is_single_lexical_item(item.selected_text):
+        return _VOCAB_HIGHLIGHT_NOT_SINGLE_LEXICAL_ITEM
     return None
 
 
@@ -2407,15 +2522,38 @@ def _build_vocabulary_output_from_candidates(
             )
             continue
 
-        # T3.3 phrase_gloss deterministic guard. Runs BEFORE grounding so
-        # obviously sentence-shaped / over-long phrase_gloss candidates are
-        # fail-closed skipped and recorded in diagnostics. This is the
-        # backstop for the prompt-level selection rules; it does NOT replace
-        # them. Only phrase_gloss is guarded here - vocab_highlight is a
-        # single headword and context_gloss may legitimately be a single
-        # context-dependent word.
-        if isinstance(item, VocabularyPhraseGlossCandidateItem):
+        # vocab_highlight / phrase_gloss / context_gloss deterministic
+        # guards. Run BEFORE grounding so invalid candidates are
+        # fail-closed skipped and recorded in diagnostics. Do not
+        # auto-convert between item types.
+        if isinstance(item, VocabularyHighlightCandidateItem):
+            guard_reason = _vocab_highlight_guard_reason_code(item)
+            if guard_reason is not None:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=item_index,
+                        item_type=item.item_type,
+                        anchor_segment_id=item.anchor_segment_id,
+                        selected_text=item.selected_text,
+                        reason_code=guard_reason,
+                    )
+                )
+                continue
+        elif isinstance(item, VocabularyPhraseGlossCandidateItem):
             guard_reason = _phrase_gloss_guard_reason_code(item)
+            if guard_reason is not None:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=item_index,
+                        item_type=item.item_type,
+                        anchor_segment_id=item.anchor_segment_id,
+                        selected_text=item.selected_text,
+                        reason_code=guard_reason,
+                    )
+                )
+                continue
+        elif isinstance(item, VocabularyContextGlossCandidateItem):
+            guard_reason = _context_gloss_guard_reason_code(item)
             if guard_reason is not None:
                 skipped_items.append(
                     _build_skip_diagnostic(
@@ -2640,6 +2778,7 @@ def _build_resolved_vocabulary_item(
             phrase=item.phrase,
             phrase_type=item.phrase_type,
             gloss=item.gloss,
+            learning_note=item.learning_note,
             example=item.example,
         )
     return VocabularyContextGlossItem(

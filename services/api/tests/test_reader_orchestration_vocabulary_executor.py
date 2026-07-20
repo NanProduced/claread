@@ -122,10 +122,11 @@ async def test_real_executor_resolves_offsets_hashes_and_typed_output(
                 {
                     "item_type": "phrase_gloss",
                     "anchor_segment_id": "s1",
-                    "selected_text": "prompted the team",
+                    "selected_text": "prompted the team to rethink",
                     "phrase": "prompt sb to do sth",
-                    "phrase_type": "phrasal_verb",
+                    "phrase_type": "verb_expression",
                     "gloss": "促使某人做某事",
+                    "learning_note": "动词 `prompt` + 宾语 + to do。",
                     "example": None,
                 }
             ],
@@ -137,12 +138,16 @@ async def test_real_executor_resolves_offsets_hashes_and_typed_output(
     assert len(result.output.items) == 1
     item = result.output.items[0]
     assert item.item_type == "phrase_gloss"
+    assert item.phrase_type == "verb_expression"
+    assert item.learning_note == "动词 `prompt` + 宾语 + to do。"
     assert item.anchor.anchor_segment_id == "s1"
     assert item.anchor.start_offset == utf16_code_unit_length("The results ")
     assert item.anchor.end_offset == utf16_code_unit_length(
-        "The results prompted the team"
+        "The results prompted the team to rethink"
     )
-    assert item.anchor.text_hash == compute_text_range_hash("prompted the team")
+    assert item.anchor.text_hash == compute_text_range_hash(
+        "prompted the team to rethink"
+    )
     assert result.model_route == "reader_layer_vocabulary"
     assert result.model_profile == "reader-vocab-profile"
     assert result.model_provider == "stub-provider"
@@ -177,8 +182,8 @@ async def test_real_executor_skips_ambiguous_and_missing_selected_text(
                 {
                     "item_type": "context_gloss",
                     "anchor_segment_id": "s1",
-                    "selected_text": "ghost phrase",
-                    "display": "ghost phrase",
+                    "selected_text": "ghostword",
+                    "display": "ghostword",
                     "gloss": "不存在",
                     "reason": "不应被定位",
                 },
@@ -206,10 +211,38 @@ async def test_real_executor_keeps_highest_priority_item_for_same_span(
     context = _build_context(
         source_text="The results prompted the team to rethink their approach.",
     )
+    # context_gloss is single-lexical-item only; same-span priority is
+    # verified on a single word where context_gloss outranks vocab_highlight.
+    # Multiword phrase_gloss vs vocab_highlight is a separate span conflict.
     executor = _ExecutorUnderTest(
         {
             "schema_version": 1,
             "items": [
+                {
+                    "item_type": "vocab_highlight",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "prompted",
+                    "headword": "prompted",
+                    "brief_explanation": "促使",
+                    "reason": "common",
+                },
+                {
+                    "item_type": "context_gloss",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "prompted",
+                    "display": "prompted",
+                    "gloss": "在这里强调触发后续反思",
+                    "reason": "依赖当前语境",
+                },
+                {
+                    "item_type": "phrase_gloss",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "prompted the team",
+                    "phrase": "prompt the team",
+                    "phrase_type": "fixed_collocation",
+                    "gloss": "促使团队行动",
+                    "example": None,
+                },
                 {
                     "item_type": "vocab_highlight",
                     "anchor_segment_id": "s1",
@@ -218,36 +251,28 @@ async def test_real_executor_keeps_highest_priority_item_for_same_span(
                     "brief_explanation": "促使",
                     "reason": "common",
                 },
-                {
-                    "item_type": "phrase_gloss",
-                    "anchor_segment_id": "s1",
-                    "selected_text": "prompted the team",
-                    "phrase": "prompt the team",
-                    "phrase_type": "collocation",
-                    "gloss": "促使团队行动",
-                    "example": None,
-                },
-                {
-                    "item_type": "context_gloss",
-                    "anchor_segment_id": "s1",
-                    "selected_text": "prompted the team",
-                    "display": "prompt the team",
-                    "gloss": "在这里强调触发后续反思",
-                    "reason": "依赖当前语境",
-                },
             ],
         }
     )
 
     result = await executor.generate(context)
 
-    assert len(result.output.items) == 1
-    assert result.output.items[0].item_type == "context_gloss"
+    assert len(result.output.items) == 2
+    item_types = {item.item_type for item in result.output.items}
+    assert item_types == {"context_gloss", "phrase_gloss"}
     assert result.diagnostics is not None
     assert result.diagnostics["skipped_item_count"] == 2
+    # R7-2: the multiword vocab_highlight ("prompted the team" with a
+    # single-word headword) is fail-closed skipped by the single-
+    # lexical-item guard BEFORE the span-conflict pass; the single-word
+    # vocab_highlight still loses the same-span priority contest to
+    # context_gloss.
     assert {
         item["reason_code"] for item in result.diagnostics["skipped_items"]
-    } == {"span_conflict_higher_priority_kept"}
+    } == {
+        "span_conflict_higher_priority_kept",
+        "vocab_highlight_not_single_lexical_item",
+    }
 
 
 @pytest.mark.anyio
@@ -295,7 +320,7 @@ async def test_real_executor_rejects_too_many_candidate_items(
                     "brief_explanation": "解释",
                     "reason": "common",
                 }
-                for index in range(6)
+                for index in range(11)
             ],
         }
     )

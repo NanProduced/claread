@@ -948,6 +948,7 @@ def _project_vocabulary_mark(
         mark["phrase"] = item.phrase  # type: ignore[attr-defined]
         mark["phrase_type"] = item.phrase_type  # type: ignore[attr-defined]
         mark["gloss"] = item.gloss  # type: ignore[attr-defined]
+        mark["learning_note"] = item.learning_note  # type: ignore[attr-defined]
         mark["example"] = item.example  # type: ignore[attr-defined]
     elif item_type == "context_gloss":
         mark["display"] = item.display  # type: ignore[attr-defined]

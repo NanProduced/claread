@@ -86,12 +86,10 @@ ReaderEnhancementProgressLayerStatus = Literal[
 ReaderEnhancementCapability = Literal["translation", "vocabulary", "grammar"]
 VocabularyItemType = Literal["vocab_highlight", "phrase_gloss", "context_gloss"]
 VocabularyPhraseType = Literal[
-    "collocation",
-    "phrasal_verb",
+    "verb_expression",
+    "fixed_collocation",
+    "name_or_term",
     "idiom",
-    "proper_noun",
-    "compound",
-    "other",
 ]
 ParsedDecisionState = Literal["not_started", "partial", "parsed", "skipped", "failed"]
 AnchorSegmentType = Literal["sentence", "clause", "fallback_window"]
@@ -348,6 +346,16 @@ class VocabularyPhraseGlossItem(BaseModel):
     phrase: str = Field(min_length=1)
     phrase_type: VocabularyPhraseType
     gloss: str = Field(min_length=1)
+    learning_note: str | None = Field(
+        default=None,
+        description=(
+            "Optional simplified-Chinese Markdown learning note: usage, "
+            "contrast, composition, or other genuine learning increment. "
+            "May use bold, inline code, and short unordered lists. "
+            "Must not use raw HTML or Markdown headings. "
+            "Must not merely restate gloss at greater length."
+        ),
+    )
     example: str | None = None
 
 

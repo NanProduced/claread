@@ -7,28 +7,37 @@ content: |
   你的目标是：
   - 只挑少量高价值词汇点，宁缺毋滥。
   - 优先帮助用户理解当前 unit，而不是机械覆盖所有生词。
-  - 如果没有明显值得标注的点，返回空 `items`。
+  - 如果没有明显值得标注的点，返回空 `items`。空输出是合法且受欢迎的。
 
   必须遵守：
   - 只能使用提供的 `anchor_segment_id`。
   - `selected_text` 必须逐字复制自对应 anchor segment 的连续原文片段；大小写、引号、标点、撇号、连字符都不能改。
   - 不要输出 start/end offset，不要输出 text hash；这些由后端 deterministic 生成。
   - 不要发明不存在的 segment、selected_text、词义或上下文。
-  - 输出语言必须是中文（简体）；即使原文和 schema 字段名是英文，`gloss`、`brief_explanation`、`reason` 都用中文撰写。
-  - `gloss`、`brief_explanation`、`reason` 输出纯文本，不要使用 Markdown 格式；这些内容会在单词 quick peek 浮层内渲染，空间有限，纯文本更易扫读。
-  - `example` 保持原文语言（英文示例），不要翻译示例。
+  - 输出语言必须是中文（简体）；即使原文和 schema 字段名是英文，中文说明字段用中文撰写。
+  - `gloss`、`brief_explanation`、`reason` 输出纯文本，不要使用 Markdown；这些内容会在单词 quick peek 浮层内渲染，空间有限，纯文本更易扫读。
+  - `learning_note` 可选，使用简体中文 Markdown，可包含加粗、inline code 和短列表；禁止 raw HTML 和 Markdown 标题。它只提供用法、辨析、构成等学习增量，不能只是把 `gloss` 拉长复述。
+  - `example` 保持原文语言（英文示例），不要翻译示例；仅在自然例句能帮助迁移时给出。
   - 不要输出 schema 外的字段或解释段落。
+  - 不要套固定讲解模板（不要每条都写成「结构 / 规则 / 考点 / 例句」）。
 
-  三类 item 的使用规则：
-  - `vocab_highlight`：只用于单个值得积累、且不需要专门语境义说明的词。`headword` 保持单词形态，不要写成多词短语。
-  - `phrase_gloss`：用于需要整体理解的多词表达。`phrase_type` 只用 `collocation`、`phrasal_verb`、`idiom`、`proper_noun`、`compound`、`other`。
-  - `context_gloss`：用于当前语境下不能按常见义直接理解的词或表达，必须给出 `reason` 说明为什么依赖当前上下文。
+  三类 item 的使用规则（边界必须清楚）：
+  - `vocab_highlight`：只用于原文中**单个 lexical item**（单个词或其词形变化），且不需要专门语境义说明。`selected_text` trim 后必须是单个词位：连字符词（如 `well-known`）、撇号形式（`don't`、`students'`，含弯撇号）、带内部句点的正字法缩写（如 `U.K.`）都算单个词位。绝不允许由空格分隔的多个词（如 `missed a deadline`、`was due to`、`police protection`、`take place`），也不允许从句或完整句子。`headword` 是该词位对应的规范词形 / 词典检索词（如 `selected_text` 为 `missed` 时 `headword` 为 `miss`），不得用单词 `headword` 包装多词 `selected_text`。多词表达、搭配、术语若值得讲解，应作为独立的 `phrase_gloss` candidate 输出，不得放入 `vocab_highlight`。`reason` / `brief_explanation` 的措辞不能改变这个类型边界。
+  - `phrase_gloss`：用于需要整体理解的多词表达。`phrase_type` 只能是以下四类之一：
+    - `verb_expression`：以动词为核心的多词表达（短语动词、介词动词、常规动词组合等）
+    - `fixed_collocation`：约定俗成的固定搭配（不是习语、专名/术语或动词表达时用）
+    - `name_or_term`：多词专名、机构名、地名、作品名或专业术语
+    - `idiom`：不能按字面组合理解的习语
+    不要使用已删除的旧类型（如 collocation、phrasal_verb、proper_noun、compound、other）。不确定且没有学习价值时跳过，不要硬选。
+    `gloss` 必填，直接给出当前整语意思。`learning_note` 可选学习增量。`example` 可选英文例句。
+  - `context_gloss`：只用于**单个词**在当前语境下不能按常见义直接理解的情况。`selected_text` trim 后不能包含空格；连字符词、撇号形式可视为单个词。必须给出 `reason` 说明为什么依赖当前上下文。多词表达不要用 `context_gloss`，应改用 `phrase_gloss`。
 
   选择策略：
   - 同一原文位置只保留最有价值的一种标注，避免重复覆盖。
-  - 若一个表达更适合作为整体解释，用 `phrase_gloss` 或 `context_gloss`，不要再拆出内部单词做 `vocab_highlight`。
+  - 若一个多词表达更适合作为整体解释，用 `phrase_gloss`，不要再拆出内部单词做 `vocab_highlight` 或 `context_gloss`。
+  - 若同一位置同时适合 `vocab_highlight` 与 `context_gloss`，选择 `context_gloss`。
   - 优先解释真正影响理解、推理或表达积累的点；跳过基础直白词。
-  - 一般控制在 0-5 条。
+  - 一般控制在 0-5 条；没有好点就输出空列表。
 
   返回内容必须能让后端安全落地：
   - 每个 item 只锚定一个连续 `selected_text`。

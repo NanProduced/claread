@@ -41,6 +41,7 @@ from app.services.reader_orchestration.vocabulary_worker import (
     VocabularyBatchUnitCandidateOutput,
     VocabularyBatchUnitContext,
     VocabularyCandidateOutput,
+    VocabularyContextGlossCandidateItem,
     VocabularyExecutionError,
     VocabularyExecutionResult,
     VocabularyJobContext,
@@ -53,9 +54,11 @@ from app.services.reader_orchestration.vocabulary_worker import (
     _build_vocabulary_batch_quality_json,
     _build_vocabulary_output_from_candidates,
     _build_vocabulary_prompt,
+    _context_gloss_guard_reason_code,
     _phrase_gloss_guard_reason_code,
     _validate_vocabulary_strategy_metadata,
 )
+from pydantic import ValidationError
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
@@ -212,26 +215,31 @@ def _build_anchor(
 
 
 def _sample_vocabulary_output(context: VocabularyJobContext) -> VocabularyLayerOutput:
+    # Happy-path spans must not overlap:
+    # - vocab_highlight: single accumulable word ("results")
+    # - phrase_gloss: full multiword expression ("prompted the team to rethink")
+    # - context_gloss: single contextual sense ("approach" = 方法/做法)
     return VocabularyLayerOutput(
         items=[
             VocabularyHighlightItem(
-                anchor=_build_anchor(context, "prompted"),
-                headword="prompted",
-                brief_explanation="促使",
+                anchor=_build_anchor(context, "results"),
+                headword="results",
+                brief_explanation="结果；成果",
                 reason="useful_for_current_goal",
             ),
             VocabularyPhraseGlossItem(
-                anchor=_build_anchor(context, "prompted the team"),
+                anchor=_build_anchor(context, "prompted the team to rethink"),
                 phrase="prompt sb to do sth",
-                phrase_type="phrasal_verb",
+                phrase_type="verb_expression",
                 gloss="促使某人做某事",
+                learning_note="动词 `prompt` + 宾语 + to do。",
                 example=None,
             ),
             VocabularyContextGlossItem(
-                anchor=_build_anchor(context, "prompted the team to rethink"),
-                display="prompt sb to do sth",
-                gloss="促使团队重新思考",
-                reason="当前语境强调引发后续动作，不是普通词典义",
+                anchor=_build_anchor(context, "approach"),
+                display="approach",
+                gloss="方法；做法",
+                reason="这里指应对问题的路径/做法，不是“接近；靠近”的字面动作义",
             ),
         ]
     )
@@ -508,27 +516,28 @@ async def test_real_executor_path_publishes_vocabulary_layer_and_snapshot_marks(
                 {
                     "item_type": "vocab_highlight",
                     "anchor_segment_id": "s1",
-                    "selected_text": "prompted",
-                    "headword": "prompted",
-                    "brief_explanation": "促使",
+                    "selected_text": "results",
+                    "headword": "results",
+                    "brief_explanation": "结果；成果",
                     "reason": "useful_for_current_goal",
                 },
                 {
                     "item_type": "phrase_gloss",
                     "anchor_segment_id": "s1",
-                    "selected_text": "prompted the team",
+                    "selected_text": "prompted the team to rethink",
                     "phrase": "prompt sb to do sth",
-                    "phrase_type": "phrasal_verb",
+                    "phrase_type": "verb_expression",
                     "gloss": "促使某人做某事",
+                    "learning_note": "动词 `prompt` + 宾语 + to do。",
                     "example": None,
                 },
                 {
                     "item_type": "context_gloss",
                     "anchor_segment_id": "s1",
-                    "selected_text": "prompted the team to rethink",
-                    "display": "prompt sb to do sth",
-                    "gloss": "促使团队重新思考",
-                    "reason": "当前语境强调引发后续动作，不是普通词典义",
+                    "selected_text": "approach",
+                    "display": "approach",
+                    "gloss": "方法；做法",
+                    "reason": "这里指应对问题的路径/做法，不是“接近；靠近”的字面动作义",
                 },
             ],
         }
@@ -1177,7 +1186,7 @@ def test_real_executor_resolves_normal_segment_when_other_segment_is_fallback() 
                     "anchor_segment_id": "fb1",
                     "selected_text": "longword",
                     "phrase": "longword",
-                    "phrase_type": "compound",
+                    "phrase_type": "name_or_term",
                     "gloss": "长词",
                 },
             ],
@@ -2056,7 +2065,7 @@ def test_phrase_gloss_same_phrase_same_gloss_only_published_once() -> None:
                     "anchor_segment_id": "s1",
                     "selected_text": "took off",
                     "phrase": "take off",
-                    "phrase_type": "phrasal_verb",
+                    "phrase_type": "verb_expression",
                     "gloss": "起飞",
                 },
                 {
@@ -2064,7 +2073,7 @@ def test_phrase_gloss_same_phrase_same_gloss_only_published_once() -> None:
                     "anchor_segment_id": "s2",
                     "selected_text": "took off",
                     "phrase": "take off",
-                    "phrase_type": "phrasal_verb",
+                    "phrase_type": "verb_expression",
                     "gloss": "起飞",
                 },
                 {
@@ -2072,7 +2081,7 @@ def test_phrase_gloss_same_phrase_same_gloss_only_published_once() -> None:
                     "anchor_segment_id": "s3",
                     "selected_text": "took off",
                     "phrase": "take off",
-                    "phrase_type": "phrasal_verb",
+                    "phrase_type": "verb_expression",
                     "gloss": "突然成功",
                 },
             ],
@@ -2272,7 +2281,7 @@ def test_different_phrases_not_deduplicated() -> None:
                     "anchor_segment_id": "s1",
                     "selected_text": "took off",
                     "phrase": "take off",
-                    "phrase_type": "phrasal_verb",
+                    "phrase_type": "verb_expression",
                     "gloss": "脱下",
                 },
                 {
@@ -2280,7 +2289,7 @@ def test_different_phrases_not_deduplicated() -> None:
                     "anchor_segment_id": "s1",
                     "selected_text": "took over",
                     "phrase": "take over",
-                    "phrase_type": "phrasal_verb",
+                    "phrase_type": "verb_expression",
                     "gloss": "接管",
                 },
             ],
@@ -2430,7 +2439,7 @@ def test_batch_cross_unit_dedup_keeps_different_senses() -> None:
                             "anchor_segment_id": "s1",
                             "selected_text": "took off",
                             "phrase": "take off",
-                            "phrase_type": "phrasal_verb",
+                            "phrase_type": "verb_expression",
                             "gloss": "起飞",
                         }
                     ],
@@ -2443,7 +2452,7 @@ def test_batch_cross_unit_dedup_keeps_different_senses() -> None:
                             "anchor_segment_id": "s2",
                             "selected_text": "took off",
                             "phrase": "take off",
-                            "phrase_type": "phrasal_verb",
+                            "phrase_type": "verb_expression",
                             "gloss": "突然成功",
                         }
                     ],
@@ -3067,23 +3076,19 @@ def test_t32b_cross_window_duplicate_headword_v1_both_windows_keep_highlight() -
 
 
 # ---------------------------------------------------------------------------
-# T3.3: phrase_gloss selection rules + deterministic guard + batch grounding
+# phrase_gloss selection rules + deterministic guard + batch grounding
 # ---------------------------------------------------------------------------
 #
-# Real-page verification found phrase_gloss frequently marked long half-
-# sentences, whole sentences and questions (e.g. "threw them through the bars
-# of my window", "Are we to have nothing tonight?"). phrase_gloss must be a
-# lexical expression (collocation / phrasal verb / idiom / compound / proper
-# noun), not a full sentence or clause. The prompt now carries explicit
-# selection rules and a deterministic backend guard rejects obvious
-# sentence-shaped / over-long candidates before grounding.
+# phrase_gloss must be a multiword lexical expression, not a full sentence.
+# The prompt carries selection rules (four phrase_type values, no word-count
+# cap). The deterministic backend guard rejects obvious sentence-shaped
+# candidates (terminal punctuation) before grounding; length alone is not
+# a rejection rule.
 
 
 def test_build_vocabulary_prompt_contains_phrase_gloss_rules() -> None:
-    """T3.3: the per-unit vocabulary prompt must carry the universal
-    phrase_gloss selection rules so the LLM knows phrase_gloss is a
-    lexical expression, not a full sentence. The batch prompt must carry
-    the same section."""
+    """Per-unit and batch prompts share the universal phrase_gloss rules:
+    multiword lexical expression, four phrase types, no 8+ word hard limit."""
     context = _build_context_for_variant(
         reading_goal="daily_reading",
         reading_variant="intermediate_reading",
@@ -3091,7 +3096,11 @@ def test_build_vocabulary_prompt_contains_phrase_gloss_rules() -> None:
     prompt = _build_vocabulary_prompt(context)
     assert "<phrase_gloss_rules>" in prompt
     assert "</phrase_gloss_rules>" in prompt
-    assert "phrase_gloss is a lexical expression" in prompt
+    assert "phrase_gloss is a multiword lexical expression" in prompt
+    assert "verb_expression" in prompt
+    assert "fixed_collocation" in prompt
+    assert "name_or_term" in prompt
+    assert "8+ words" not in prompt
     # accept / reject examples must appear so the LLM sees concrete guidance.
     assert "stole back" in prompt
     assert "at any rate" in prompt
@@ -3116,7 +3125,8 @@ def test_build_vocabulary_prompt_contains_phrase_gloss_rules() -> None:
     )
     batch_prompt = _build_vocabulary_batch_prompt(batch_context)
     assert "<phrase_gloss_rules>" in batch_prompt
-    assert "phrase_gloss is a lexical expression" in batch_prompt
+    assert "phrase_gloss is a multiword lexical expression" in batch_prompt
+    assert "8+ words" not in batch_prompt
 
 
 def test_build_vocabulary_batch_prompt_contains_segment_text() -> None:
@@ -3172,9 +3182,8 @@ def test_build_vocabulary_batch_prompt_contains_segment_text() -> None:
 
 
 def test_phrase_gloss_guard_reason_code_unit_cases() -> None:
-    """T3.3: the deterministic guard returns the reason_code for rejected
-    inputs and None for accepted inputs. Covers the explicit accept/reject
-    examples from the product spec."""
+    """Deterministic guard returns reason_code for sentence-shaped inputs
+    and None for accepted inputs. Length alone is not a rejection rule."""
 
     def _make_phrase_candidate(selected_text: str, phrase: str) -> VocabularyPhraseGlossCandidateItem:
         return VocabularyPhraseGlossCandidateItem.model_validate(
@@ -3183,7 +3192,7 @@ def test_phrase_gloss_guard_reason_code_unit_cases() -> None:
                 "anchor_segment_id": "s1",
                 "selected_text": selected_text,
                 "phrase": phrase,
-                "phrase_type": "other",
+                "phrase_type": "verb_expression",
                 "gloss": "gloss",
             }
         )
@@ -3196,17 +3205,7 @@ def test_phrase_gloss_guard_reason_code_unit_cases() -> None:
                 "Are we to have nothing tonight?",
             )
         )
-        == "phrase_gloss_too_long_or_clause_like"
-    )
-    # Rejected: over-long clause-like span (8 words).
-    assert (
-        _phrase_gloss_guard_reason_code(
-            _make_phrase_candidate(
-                "threw them through the bars of my window",
-                "threw them through the bars of my window",
-            )
-        )
-        == "phrase_gloss_too_long_or_clause_like"
+        == "phrase_gloss_sentence_like"
     )
     # Rejected: phrase field ends with terminal punctuation even when
     # selected_text is short — a sentence-shaped label is still bad.
@@ -3214,41 +3213,31 @@ def test_phrase_gloss_guard_reason_code_unit_cases() -> None:
         _phrase_gloss_guard_reason_code(
             _make_phrase_candidate("bank", "What is a bank?")
         )
-        == "phrase_gloss_too_long_or_clause_like"
-    )
-    # Rejected: 8 words (> _PHRASE_GLOSS_MAX_WORDS = 7).
-    assert (
-        _phrase_gloss_guard_reason_code(
-            _make_phrase_candidate(
-                "one two three four five six seven eight",
-                "one two three four five six seven eight",
-            )
-        )
-        == "phrase_gloss_too_long_or_clause_like"
+        == "phrase_gloss_sentence_like"
     )
 
-    # Accepted: short phrasal verb.
+    # Accepted: short verb expression.
     assert (
         _phrase_gloss_guard_reason_code(
             _make_phrase_candidate("stole back", "steal back")
         )
         is None
     )
-    # Accepted: collocation (3 words).
+    # Accepted: fixed collocation (3 words).
     assert (
         _phrase_gloss_guard_reason_code(
             _make_phrase_candidate("at any rate", "at any rate")
         )
         is None
     )
-    # Accepted: collocation (3 words).
+    # Accepted: verb expression (3 words).
     assert (
         _phrase_gloss_guard_reason_code(
             _make_phrase_candidate("caught sight of", "catch sight of")
         )
         is None
     )
-    # Accepted: compound (3 words).
+    # Accepted: name/term (3 words).
     assert (
         _phrase_gloss_guard_reason_code(
             _make_phrase_candidate("letter of credit", "letter of credit")
@@ -3265,12 +3254,23 @@ def test_phrase_gloss_guard_reason_code_unit_cases() -> None:
         )
         is None
     )
-    # Accepted: 7-word span at the boundary (not > 7).
+    # Accepted: 8+ words without terminal punctuation (no word-count cap).
     assert (
         _phrase_gloss_guard_reason_code(
             _make_phrase_candidate(
-                "alpha beta gamma delta epsilon zeta eta",
-                "alpha beta gamma delta epsilon zeta eta",
+                "one two three four five six seven eight",
+                "one two three four five six seven eight",
+            )
+        )
+        is None
+    )
+    # Accepted: clause-like span without terminal punctuation is not
+    # hard-rejected by length; prompt semantics remain the soft filter.
+    assert (
+        _phrase_gloss_guard_reason_code(
+            _make_phrase_candidate(
+                "threw them through the bars of my window",
+                "threw them through the bars of my window",
             )
         )
         is None
@@ -3282,7 +3282,7 @@ def test_phrase_gloss_guard_rejects_full_question_sentence_in_output_builder() -
     sentence, not a lexical expression. The guard inside
     _build_vocabulary_output_from_candidates must reject it before grounding
     and record a diagnostic with reason_code
-    phrase_gloss_too_long_or_clause_like."""
+    phrase_gloss_sentence_like."""
     seg_text = "Are we to have nothing tonight? Then we shall sleep."
     context = _build_multi_segment_context(
         unit_text=seg_text,
@@ -3303,7 +3303,7 @@ def test_phrase_gloss_guard_rejects_full_question_sentence_in_output_builder() -
                     "anchor_segment_id": "s1",
                     "selected_text": "Are we to have nothing tonight?",
                     "phrase": "Are we to have nothing tonight?",
-                    "phrase_type": "other",
+                    "phrase_type": "verb_expression",
                     "gloss": "我们今晚什么都没有吗",
                 }
             ],
@@ -3320,7 +3320,7 @@ def test_phrase_gloss_guard_rejects_full_question_sentence_in_output_builder() -
         for entry in diagnostics.get("skipped_items", [])
         if isinstance(entry, dict)
     ]
-    assert reason_codes == ["phrase_gloss_too_long_or_clause_like"]
+    assert reason_codes == ["phrase_gloss_sentence_like"]
     assert diagnostics["skipped_item_count"] == 1
     assert diagnostics["resolved_item_count"] == 0
     # The diagnostic must carry the anchor_segment_id and selected_text.
@@ -3329,10 +3329,13 @@ def test_phrase_gloss_guard_rejects_full_question_sentence_in_output_builder() -
     assert "Are we to have nothing tonight" in diag["selected_text"]
 
 
-def test_phrase_gloss_guard_rejects_long_clause_like_span_in_output_builder() -> None:
-    """T3.3: 'threw them through the bars of my window' (8 words) is a
-    long clause-like span, not a phrase. The guard rejects it."""
-    seg_text = "He threw them through the bars of my window and laughed."
+def test_phrase_gloss_guard_accepts_eight_plus_word_phrase_in_output_builder() -> None:
+    """Legitimate multiword names/terms longer than 7 words must not be
+    rejected solely for length. No terminal punctuation → publish."""
+    long_phrase = (
+        "World Health Organization Regional Office for the Eastern Mediterranean"
+    )
+    seg_text = f"The {long_phrase} issued a report."
     context = _build_multi_segment_context(
         unit_text=seg_text,
         segments=[
@@ -3350,10 +3353,11 @@ def test_phrase_gloss_guard_rejects_long_clause_like_span_in_output_builder() ->
                 {
                     "item_type": "phrase_gloss",
                     "anchor_segment_id": "s1",
-                    "selected_text": "threw them through the bars of my window",
-                    "phrase": "threw them through the bars of my window",
-                    "phrase_type": "other",
-                    "gloss": "把它们从我窗户的栏杆间扔了出去",
+                    "selected_text": long_phrase,
+                    "phrase": long_phrase,
+                    "phrase_type": "name_or_term",
+                    "gloss": "世界卫生组织东地中海区域办事处",
+                    "learning_note": "专名整体记忆，不必按词拆开。",
                 }
             ],
         }
@@ -3363,17 +3367,21 @@ def test_phrase_gloss_guard_rejects_long_clause_like_span_in_output_builder() ->
         context, candidate
     )
 
-    assert output.items == []
+    assert len(output.items) == 1
+    item = output.items[0]
+    assert item.item_type == "phrase_gloss"
+    assert item.phrase_type == "name_or_term"
+    assert item.learning_note == "专名整体记忆，不必按词拆开。"
     reason_codes = [
         entry.get("reason_code")
         for entry in diagnostics.get("skipped_items", [])
         if isinstance(entry, dict)
     ]
-    assert "phrase_gloss_too_long_or_clause_like" in reason_codes
+    assert "phrase_gloss_sentence_like" not in reason_codes
 
 
 def test_phrase_gloss_guard_accepts_short_phrasal_verb_in_output_builder() -> None:
-    """T3.3: 'stole back' is a legitimate phrasal verb (2 words, no
+    """'stole back' is a legitimate verb expression (2 words, no
     terminal punctuation). The guard must NOT reject it; it should pass
     through to normal grounding and be published."""
     seg_text = "He stole back the document before anyone noticed."
@@ -3396,7 +3404,7 @@ def test_phrase_gloss_guard_accepts_short_phrasal_verb_in_output_builder() -> No
                     "anchor_segment_id": "s1",
                     "selected_text": "stole back",
                     "phrase": "steal back",
-                    "phrase_type": "phrasal_verb",
+                    "phrase_type": "verb_expression",
                     "gloss": "偷回来；悄悄拿回",
                 }
             ],
@@ -3416,13 +3424,13 @@ def test_phrase_gloss_guard_accepts_short_phrasal_verb_in_output_builder() -> No
         for entry in diagnostics.get("skipped_items", [])
         if isinstance(entry, dict)
     ]
-    assert "phrase_gloss_too_long_or_clause_like" not in reason_codes
+    assert "phrase_gloss_sentence_like" not in reason_codes
 
 
 def test_phrase_gloss_guard_does_not_misfire_on_reasonable_idioms_and_compounds() -> None:
-    """T3.3: the guard must NOT misfire on reasonable proper nouns,
-    compounds and idioms. 'between Scylla and Charybdis' (4-word idiom) and
-    'letter of credit' (3-word compound) must both pass and be published."""
+    """Guard must NOT misfire on legitimate multiword expressions.
+    'between Scylla and Charybdis' (idiom) and 'letter of credit'
+    (name_or_term only) must both pass and be published."""
     seg1 = "She was between Scylla and Charybdis,"
     seg2 = "and the letter of credit was due."
     unit_text = f"{seg1} {seg2}"
@@ -3458,7 +3466,7 @@ def test_phrase_gloss_guard_does_not_misfire_on_reasonable_idioms_and_compounds(
                     "anchor_segment_id": "s2",
                     "selected_text": "letter of credit",
                     "phrase": "letter of credit",
-                    "phrase_type": "compound",
+                    "phrase_type": "name_or_term",
                     "gloss": "信用证",
                 },
             ],
@@ -3475,7 +3483,7 @@ def test_phrase_gloss_guard_does_not_misfire_on_reasonable_idioms_and_compounds(
         for entry in diagnostics.get("skipped_items", [])
         if isinstance(entry, dict)
     ]
-    assert "phrase_gloss_too_long_or_clause_like" not in reason_codes
+    assert "phrase_gloss_sentence_like" not in reason_codes
 
 
 def test_batch_output_grounds_selected_text_from_segment_text() -> None:
@@ -3512,7 +3520,7 @@ def test_batch_output_grounds_selected_text_from_segment_text() -> None:
                             "anchor_segment_id": "s1",
                             "selected_text": "caught sight of",
                             "phrase": "catch sight of",
-                            "phrase_type": "collocation",
+                            "phrase_type": "fixed_collocation",
                             "gloss": "看到；瞥见",
                         }
                     ],
@@ -3538,13 +3546,13 @@ def test_batch_output_grounds_selected_text_from_segment_text() -> None:
         if isinstance(entry, dict)
     ]
     assert "selected_text_not_found" not in reason_codes
-    assert "phrase_gloss_too_long_or_clause_like" not in reason_codes
+    assert "phrase_gloss_sentence_like" not in reason_codes
 
 
 def test_batch_phrase_gloss_guard_records_diagnostics_with_unit_id() -> None:
     """T3.3: in the batch path, a rejected phrase_gloss candidate must
     surface in batch diagnostics enriched with unit_id, anchor_segment_id,
-    selected_text and reason_code=phrase_gloss_too_long_or_clause_like."""
+    selected_text and reason_code=phrase_gloss_sentence_like."""
     seg_text = "Are we to have nothing tonight? Then we shall sleep."
     batch_context = _build_batch_context(
         units=[
@@ -3574,7 +3582,7 @@ def test_batch_phrase_gloss_guard_records_diagnostics_with_unit_id() -> None:
                             "anchor_segment_id": "s1",
                             "selected_text": "Are we to have nothing tonight?",
                             "phrase": "Are we to have nothing tonight?",
-                            "phrase_type": "other",
+                            "phrase_type": "verb_expression",
                             "gloss": "我们今晚什么都没有吗",
                         }
                     ],
@@ -3593,7 +3601,7 @@ def test_batch_phrase_gloss_guard_records_diagnostics_with_unit_id() -> None:
     assert layer.items == []
     assert len(batch_diagnostics) == 1
     diag = batch_diagnostics[0]
-    assert diag["reason_code"] == "phrase_gloss_too_long_or_clause_like"
+    assert diag["reason_code"] == "phrase_gloss_sentence_like"
     assert diag["item_type"] == "phrase_gloss"
     assert diag["unit_id"] == "u1"
     assert diag["anchor_segment_id"] == "s1"
@@ -3633,7 +3641,7 @@ def test_phrase_gloss_guard_runs_before_duplicate_policy_and_cap() -> None:
                     "anchor_segment_id": "s1",
                     "selected_text": "stole back",
                     "phrase": "steal back",
-                    "phrase_type": "phrasal_verb",
+                    "phrase_type": "verb_expression",
                     "gloss": "偷回来",
                 },
                 {
@@ -3641,7 +3649,7 @@ def test_phrase_gloss_guard_runs_before_duplicate_policy_and_cap() -> None:
                     "anchor_segment_id": "s2",
                     "selected_text": "Are we to have nothing tonight?",
                     "phrase": "Are we to have nothing tonight?",
-                    "phrase_type": "other",
+                    "phrase_type": "verb_expression",
                     "gloss": "我们今晚什么都没有吗",
                 },
             ],
@@ -3661,6 +3669,271 @@ def test_phrase_gloss_guard_runs_before_duplicate_policy_and_cap() -> None:
         for entry in diagnostics.get("skipped_items", [])
         if isinstance(entry, dict)
     ]
-    assert "phrase_gloss_too_long_or_clause_like" in reason_codes
+    assert "phrase_gloss_sentence_like" in reason_codes
     assert "duplicate_phrase_gloss" not in reason_codes
     assert "candidate_limit_exceeded" not in reason_codes
+
+
+# ---------------------------------------------------------------------------
+# R1 vocabulary contract: phrase_type taxonomy, learning_note, context_gloss
+# ---------------------------------------------------------------------------
+
+
+def test_phrase_gloss_candidate_accepts_four_new_phrase_types() -> None:
+    for phrase_type in (
+        "verb_expression",
+        "fixed_collocation",
+        "name_or_term",
+        "idiom",
+    ):
+        item = VocabularyPhraseGlossCandidateItem.model_validate(
+            {
+                "item_type": "phrase_gloss",
+                "anchor_segment_id": "s1",
+                "selected_text": "at any rate",
+                "phrase": "at any rate",
+                "phrase_type": phrase_type,
+                "gloss": "无论如何",
+            }
+        )
+        assert item.phrase_type == phrase_type
+
+
+@pytest.mark.parametrize(
+    "old_type",
+    ["collocation", "phrasal_verb", "proper_noun", "compound", "other"],
+)
+def test_phrase_gloss_candidate_rejects_old_phrase_types(old_type: str) -> None:
+    with pytest.raises(ValidationError):
+        VocabularyPhraseGlossCandidateItem.model_validate(
+            {
+                "item_type": "phrase_gloss",
+                "anchor_segment_id": "s1",
+                "selected_text": "at any rate",
+                "phrase": "at any rate",
+                "phrase_type": old_type,
+                "gloss": "无论如何",
+            }
+        )
+
+
+def test_learning_note_none_and_markdown_round_trip_to_published_item() -> None:
+    seg_text = "She gave up smoking last year."
+    context = _build_multi_segment_context(
+        unit_text=seg_text,
+        segments=[
+            _make_segment_with_offset(
+                anchor_segment_id="s1",
+                text=seg_text,
+                unit_start_utf16=0,
+            )
+        ],
+    )
+    note = "常见搭配：`give up` + 名词/动名词。\n- 不要写成 give uping"
+    candidate = VocabularyCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "phrase_gloss",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "gave up",
+                    "phrase": "give up",
+                    "phrase_type": "verb_expression",
+                    "gloss": "放弃；戒掉",
+                    "learning_note": None,
+                },
+                {
+                    "item_type": "phrase_gloss",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "last year",
+                    "phrase": "last year",
+                    "phrase_type": "fixed_collocation",
+                    "gloss": "去年",
+                    "learning_note": note,
+                },
+            ],
+        }
+    )
+
+    output, diagnostics = _build_vocabulary_output_from_candidates(
+        context, candidate
+    )
+
+    assert len(output.items) == 2
+    by_phrase = {item.phrase: item for item in output.items}
+    assert isinstance(by_phrase["give up"], VocabularyPhraseGlossItem)
+    assert by_phrase["give up"].learning_note is None
+    assert by_phrase["last year"].learning_note == note
+    assert diagnostics["resolved_item_count"] == 2
+
+
+def test_context_gloss_guard_reason_code_unit_cases() -> None:
+    def _make_ctx(selected_text: str) -> VocabularyContextGlossCandidateItem:
+        return VocabularyContextGlossCandidateItem.model_validate(
+            {
+                "item_type": "context_gloss",
+                "anchor_segment_id": "s1",
+                "selected_text": selected_text,
+                "display": selected_text,
+                "gloss": "语境义",
+                "reason": "这里依赖上下文",
+            }
+        )
+
+    assert _context_gloss_guard_reason_code(_make_ctx("address")) is None
+    assert _context_gloss_guard_reason_code(_make_ctx("well-known")) is None
+    assert _context_gloss_guard_reason_code(_make_ctx("don't")) is None
+    assert _context_gloss_guard_reason_code(_make_ctx("world's")) is None
+    assert (
+        _context_gloss_guard_reason_code(_make_ctx("nod to"))
+        == "context_gloss_not_single_lexical_item"
+    )
+    assert (
+        _context_gloss_guard_reason_code(_make_ctx("  take place  "))
+        == "context_gloss_not_single_lexical_item"
+    )
+
+
+def test_context_gloss_skips_multiword_with_diagnostic() -> None:
+    seg_text = "They will take place next week."
+    context = _build_multi_segment_context(
+        unit_text=seg_text,
+        segments=[
+            _make_segment_with_offset(
+                anchor_segment_id="s1",
+                text=seg_text,
+                unit_start_utf16=0,
+            )
+        ],
+    )
+    candidate = VocabularyCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "context_gloss",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "take place",
+                    "display": "take place",
+                    "gloss": "发生",
+                    "reason": "整体搭配",
+                }
+            ],
+        }
+    )
+
+    output, diagnostics = _build_vocabulary_output_from_candidates(
+        context, candidate
+    )
+
+    assert output.items == []
+    reason_codes = [
+        entry.get("reason_code")
+        for entry in diagnostics.get("skipped_items", [])
+        if isinstance(entry, dict)
+    ]
+    assert reason_codes == ["context_gloss_not_single_lexical_item"]
+
+
+def test_context_gloss_accepts_hyphenated_and_apostrophe_words() -> None:
+    seg_text = "It's a well-known world's first."
+    context = _build_multi_segment_context(
+        unit_text=seg_text,
+        segments=[
+            _make_segment_with_offset(
+                anchor_segment_id="s1",
+                text=seg_text,
+                unit_start_utf16=0,
+            )
+        ],
+    )
+    candidate = VocabularyCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "items": [
+                {
+                    "item_type": "context_gloss",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "well-known",
+                    "display": "well-known",
+                    "gloss": "众所周知的",
+                    "reason": "作定语修饰 first",
+                },
+                {
+                    "item_type": "context_gloss",
+                    "anchor_segment_id": "s1",
+                    "selected_text": "world's",
+                    "display": "world's",
+                    "gloss": "世界的",
+                    "reason": "所有格形式",
+                },
+            ],
+        }
+    )
+
+    output, diagnostics = _build_vocabulary_output_from_candidates(
+        context, candidate
+    )
+
+    assert len(output.items) == 2
+    assert {item.display for item in output.items} == {"well-known", "world's"}
+    reason_codes = [
+        entry.get("reason_code")
+        for entry in diagnostics.get("skipped_items", [])
+        if isinstance(entry, dict)
+    ]
+    assert "context_gloss_not_single_lexical_item" not in reason_codes
+
+
+def test_batch_context_gloss_multiword_skip_parity_with_per_unit() -> None:
+    """Batch path uses the same context_gloss whitespace guard as per-unit."""
+    seg_text = "They will take place next week."
+    batch_context = _build_batch_context(
+        units=[
+            (
+                "u1",
+                1,
+                seg_text,
+                [
+                    _make_segment_with_offset(
+                        anchor_segment_id="s1",
+                        text=seg_text,
+                        unit_start_utf16=0,
+                    )
+                ],
+            ),
+        ],
+    )
+    candidate = VocabularyBatchCandidateOutput.model_validate(
+        {
+            "schema_version": 1,
+            "units": [
+                {
+                    "unit_id": "u1",
+                    "items": [
+                        {
+                            "item_type": "context_gloss",
+                            "anchor_segment_id": "s1",
+                            "selected_text": "take place",
+                            "display": "take place",
+                            "gloss": "发生",
+                            "reason": "整体搭配",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    outputs, batch_diagnostics = _build_vocabulary_batch_outputs(
+        context=batch_context,
+        candidate_output=candidate,
+    )
+
+    assert len(outputs) == 1
+    _uid, layer = outputs[0]
+    assert layer.items == []
+    assert len(batch_diagnostics) == 1
+    assert batch_diagnostics[0]["reason_code"] == "context_gloss_not_single_lexical_item"
+    assert batch_diagnostics[0]["unit_id"] == "u1"
