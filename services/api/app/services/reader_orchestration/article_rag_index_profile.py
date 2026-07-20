@@ -380,6 +380,159 @@ def resolve_article_rag_index_profile(
     return resolution
 
 
+# ---------------------------------------------------------------------------
+# P2-A: V2a offline evaluation profile resolver
+# ---------------------------------------------------------------------------
+#
+# This block establishes a read-only offline V2a evaluation profile seam
+# that is strictly distinct from the production resolver above.  The
+# production resolver MUST remain fail-closed on
+# ``"article_rag_index_v2"``; the evaluation resolver accepts ONLY the
+# explicit V2a identity string and rejects every other input (including
+# V1, unknown versions, non-string types, and malicious values) with a
+# fixed local error message and a clean exception chain (``__cause__``
+# and ``__context__`` both ``None``).
+#
+# The V2a profile is NOT added to the production ``_REGISTRY``.  The
+# production default version, the production resolver, and the V1
+# fingerprint bytes are all unchanged.  No runtime register, override,
+# mutation, or environment hook is exposed.
+
+# The single explicit V2a evaluation identity accepted by
+# ``resolve_article_rag_index_evaluation_profile``.  This is NOT a
+# fallback and NOT registered in the production ``_REGISTRY``.
+_V2A_EVALUATION_INDEX_VERSION = "article_rag_index_v2"
+
+# Fixed local error message used for ALL evaluation-resolution
+# failures.  The offending input is never echoed, truncated, or
+# interpolated.  Same literal text as the production resolver to avoid
+# introducing a distinguishable surface for fingerprinting by message
+# content; the contract here is fail-closed + no-echo, not message
+# divergence.
+_V2A_EVALUATION_ERROR_MESSAGE = "Article RAG index profile is not registered"
+
+
+def _build_v2a_evaluation_resolution() -> ArticleRagIndexProfileResolution:
+    """Build the frozen V2a evaluation resolution at module import time.
+
+    The V2a profile is the canonical Article RAG index identity used
+    ONLY by the offline evaluation plan builder.  It MUST NOT be added
+    to the production ``_REGISTRY``, and the production resolver MUST
+    remain fail-closed on ``"article_rag_index_v2"``.
+
+    Design notes:
+
+      * ``index_version`` is ``"article_rag_index_v2"`` — the explicit
+        V2 identity, distinct from V1.
+      * ``plan_version`` and ``chunker_version`` are both
+        ``"article_rag_index_plan_v2a"`` — the versioned V2a plan
+        identity used by the contiguous-merge builder.
+      * ``document_embedding_model`` / ``query_embedding_model`` remain
+        ``"text-embedding-v4"`` — V2a reuses the V1 model but does not
+        wire it into the production embedding pipeline.
+      * ``document_embedding_text_type`` /
+        ``query_embedding_text_type`` remain ``"provider_default"`` —
+        V2a does not introduce a new ``text_type`` axis.
+      * ``vector_namespace`` is ``"article_rag_index_v2"`` — a distinct
+        namespace, but V2a never writes vectors.
+      * ``retrieval_schema_version`` is ``"article_rag_retrieval_v2a"``
+        and ``citation_mode_version`` is
+        ``"article_rag_citation_v2a_contiguous"`` — both frozen V2a
+        identities.
+    """
+    profile = ArticleRagIndexProfile(
+        index_version=_V2A_EVALUATION_INDEX_VERSION,
+        plan_version="article_rag_index_plan_v2a",
+        chunker_version="article_rag_index_plan_v2a",
+        document_embedding_model="text-embedding-v4",
+        document_embedding_dimension=1024,
+        document_embedding_text_type="provider_default",
+        query_embedding_model="text-embedding-v4",
+        query_embedding_text_type="provider_default",
+        vector_namespace="article_rag_index_v2",
+        retrieval_schema_version="article_rag_retrieval_v2a",
+        citation_mode_version="article_rag_citation_v2a_contiguous",
+    )
+    fingerprint = compute_article_rag_index_profile_fingerprint(profile)
+    return ArticleRagIndexProfileResolution(
+        profile=profile,
+        profile_fingerprint=fingerprint,
+    )
+
+
+# Single frozen V2a evaluation resolution, built once at module import.
+# The evaluation resolver returns this same instance on every successful
+# V2a resolve.  This is deliberately a separate singleton from
+# ``_V1_RESOLUTION`` — V2a is not registered in ``_REGISTRY``.
+_V2A_EVALUATION_RESOLUTION: ArticleRagIndexProfileResolution = (
+    _build_v2a_evaluation_resolution()
+)
+
+
+def resolve_article_rag_index_evaluation_profile(
+    index_version: str,
+) -> ArticleRagIndexProfileResolution:
+    """Resolve the V2a offline evaluation profile identity.
+
+    This is a read-only public seam used ONLY by the offline evaluation
+    plan builder (``build_evaluation_index_plan`` /
+    ``build_evaluation_index_plan_in_transaction``).  It accepts ONLY
+    the explicit V2a identity string ``"article_rag_index_v2"`` and
+    rejects every other input — including V1, unknown versions,
+    non-string types, and malicious values — with a fixed local error
+    message and a clean exception chain (``__cause__`` and
+    ``__context__`` both ``None``).
+
+    Args:
+        index_version: MUST be the exact string
+            ``"article_rag_index_v2"``.  No default, no fallback, no
+            runtime register, no override, no environment hook.
+
+    Returns:
+        The frozen V2a :class:`ArticleRagIndexProfileResolution`.  The
+        same singleton instance is returned for every successful
+        resolve.
+
+    Raises:
+        ArticleRagIndexProfileResolutionError: If ``index_version`` is
+            not exactly ``"article_rag_index_v2"``, including V1,
+            unknown versions, non-string types, blank/whitespace-padded
+            values, and malicious content.  The offending input is
+            never echoed, truncated, or persisted in the error.
+
+    This seam is intentionally separate from
+    :func:`resolve_article_rag_index_profile` to keep production
+    dispatch fail-closed on V2 while still allowing the offline
+    evaluation plan builder to resolve the V2a identity without
+    touching the production registry.
+    """
+    # Reject non-string, empty, blank, or whitespace-padded inputs
+    # without echoing the value.  ``strip() != value`` catches leading
+    # and trailing whitespace (including newlines and tabs).
+    resolution_error: ArticleRagIndexProfileResolutionError | None = None
+    if (
+        not isinstance(index_version, str)
+        or not index_version
+        or (index_version.strip() != index_version)
+        or not index_version.strip()
+    ):
+        resolution_error = ArticleRagIndexProfileResolutionError(
+            _V2A_EVALUATION_ERROR_MESSAGE
+        )
+    elif index_version != _V2A_EVALUATION_INDEX_VERSION:
+        resolution_error = ArticleRagIndexProfileResolutionError(
+            _V2A_EVALUATION_ERROR_MESSAGE
+        )
+
+    if resolution_error is not None:
+        # Raise OUTSIDE the ``except`` block to guarantee
+        # ``__cause__`` and ``__context__`` are both ``None``.  The
+        # offending input is never echoed, truncated, or persisted.
+        raise resolution_error
+
+    return _V2A_EVALUATION_RESOLUTION
+
+
 __all__ = [
     "ArticleRagIndexProfile",
     "compute_article_rag_index_profile_fingerprint",
@@ -387,4 +540,5 @@ __all__ = [
     "ArticleRagIndexProfileResolution",
     "ArticleRagIndexProfileResolutionError",
     "resolve_article_rag_index_profile",
+    "resolve_article_rag_index_evaluation_profile",
 ]

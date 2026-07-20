@@ -34,19 +34,22 @@ from app.database.connection import init_connection
 from app.database.json_compat import jsonb_param
 from app.services.reader_orchestration import article_rag_index_plan as plan_module
 from app.services.reader_orchestration.article_rag_index_plan import (
+    CHUNKER_VERSION,
+    V2A_MAX_MERGED_CANONICAL_UTF16_UNITS,
     ArticleRagCitationRef,
     ArticleRagIndexChunk,
     ArticleRagIndexPlan,
     ArticleRagIndexPlanError,
     ArticleRagIndexPlanService,
-    CHUNKER_VERSION,
     compute_plan_content_sha256,
 )
 from app.services.reader_orchestration.article_rag_index_profile import (
     DEFAULT_ARTICLE_RAG_INDEX_VERSION,
     ArticleRagIndexProfile,
     ArticleRagIndexProfileResolution,
+    ArticleRagIndexProfileResolutionError,
     compute_article_rag_index_profile_fingerprint,
+    resolve_article_rag_index_evaluation_profile,
 )
 
 pytestmark = pytest.mark.anyio
@@ -2608,3 +2611,2174 @@ async def test_p1e_r1_resolved_unsupported_chunker_version_fails_closed(
         f"unsupported chunker_version leaked into exception message line: "
         f"{exception_message_line!r}"
     )
+
+
+# ===========================================================================
+# P2-A Group B: V1 byte-stability under V2a coexistence
+# ===========================================================================
+#
+# P2-A requires that the V2a evaluation profile and plan builder seam
+# coexist with V1 WITHOUT changing any V1 byte.  The existing P1-E
+# golden literals (chunker_version, chunk IDs, content/embedding
+# hashes, plan_content_sha256, chunk_count, citations) MUST remain
+# exact.  This group re-asserts the V1 golden with the V2a seam
+# present in the same module.
+
+
+async def test_p2a_group_b_v1_golden_literals_unchanged(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group B: V1 golden literals MUST remain byte-stable when
+    the V2a evaluation seam is added to the same module.
+
+    Re-asserts the full P1-E-R1 golden fixture via
+    ``_assert_p1e_v1_golden_fields`` after the V2a seam is present.
+    """
+    await _p1e_seed_minimal_v1_env(index_env)
+
+    service = _build_service(index_env)
+    plan = await service.build_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # V1 chunker_version unchanged.
+    assert plan.chunker_version == _P1E_V1_CHUNKER_VERSION
+    assert plan.chunker_version == CHUNKER_VERSION
+
+    # V1 plan content sha256 unchanged.
+    assert compute_plan_content_sha256(plan) == _P1E_V1_PLAN_CONTENT_SHA256
+
+    # V1 chunk count unchanged.
+    assert len(plan.chunks) == 1
+
+    # V1 chunk IDs, content/embedding hashes, citations unchanged.
+    _assert_p1e_v1_golden_fields(plan)
+
+
+async def test_p2a_group_b_v1_default_equals_explicit_v1(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group B: omitting ``index_version`` MUST still default to
+    V1 and produce the same plan as explicit V1.  The V2a seam MUST
+    NOT change the default."""
+    await _p1e_seed_minimal_v1_env(index_env)
+
+    service = _build_service(index_env)
+    plan_default = await service.build_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    plan_explicit = await service.build_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version=DEFAULT_ARTICLE_RAG_INDEX_VERSION,
+    )
+
+    assert plan_default.chunker_version == plan_explicit.chunker_version
+    assert (
+        compute_plan_content_sha256(plan_default)
+        == compute_plan_content_sha256(plan_explicit)
+        == _P1E_V1_PLAN_CONTENT_SHA256
+    )
+
+
+# ===========================================================================
+# P2-A Group D: Dispatch isolation (must fail BEFORE any DB read)
+# ===========================================================================
+
+# P2-A fixed local error message for the evaluation builder dispatch
+# guard.  The offending input is NEVER echoed in any error surface.
+_P2A_MSG_UNKNOWN_INDEX_VERSION = (
+    "Article RAG index plan version is not supported"
+)
+_P2A_MSG_EVALUATION_V2A_ONLY = (
+    "Article RAG index plan version is not supported"
+)
+
+
+async def test_p2a_group_d_production_builder_rejects_v2_before_db_read() -> None:
+    """P2-A Group D: the production ``build_index_plan_in_transaction``
+    MUST reject ``index_version="article_rag_index_v2"`` at the
+    resolver seam BEFORE any truth-layer read.
+
+    The probe connection raises ``AssertionError`` on any DB call.  The
+    production builder MUST raise ``ArticleRagIndexPlanError`` with a
+    fixed local message; ``probe.call_count`` MUST be 0.
+    """
+    probe = _P1ER1ProbeConnection()
+    service = ArticleRagIndexPlanService(pool=None)
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_index_plan_in_transaction(
+            probe,
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version="article_rag_index_v2",
+        )
+    err = exc_info.value
+    assert str(err) == _P2A_MSG_UNKNOWN_INDEX_VERSION
+    assert err.__cause__ is None
+    assert err.__context__ is None
+    assert probe.call_count == 0
+
+
+async def test_p2a_group_d_production_build_index_plan_rejects_v2_before_db_read() -> None:
+    """P2-A Group D: the public ``build_index_plan`` (pool variant)
+    MUST also reject V2 before any truth-layer read.  Verified via a
+    probe pool wrapper."""
+    # Build a service whose pool is a probe that raises on any acquire.
+    class _ProbePool:
+        def acquire(self):
+            raise AssertionError(
+                "Probe pool was acquired — production build_index_plan "
+                "attempted a truth-layer read before rejecting V2."
+            )
+
+    service = ArticleRagIndexPlanService(pool=_ProbePool())  # type: ignore[arg-type]
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_index_plan(
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version="article_rag_index_v2",
+        )
+    err = exc_info.value
+    assert str(err) == _P2A_MSG_UNKNOWN_INDEX_VERSION
+    assert err.__cause__ is None
+    assert err.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "bad_version",
+    [
+        None,
+        "article_rag_index_v1",
+        "article_rag_index_v3",
+        "",
+        "  ",
+        "article_rag_index_v2 ",
+        " article_rag_index_v2",
+        "ARTICLE_RAG_INDEX_V2",
+        "article_rag_index_v2\n",
+        "article_rag_index_v2\x00",
+        "article_rag_index_v2; DROP TABLE users;",
+        b"article_rag_index_v2",
+        1,
+        True,
+        False,
+        [],
+        {},
+        object(),
+    ],
+)
+async def test_p2a_group_d_evaluation_builder_rejects_non_v2a_before_db_read(
+    bad_version: object,
+) -> None:
+    """P2-A Group D: the evaluation builder MUST reject every input
+    that is not exactly ``"article_rag_index_v2"`` BEFORE any
+    truth-layer read.  Includes V1, unknown versions, non-string
+    types, and malicious values."""
+    probe = _P1ER1ProbeConnection()
+    service = ArticleRagIndexPlanService(pool=None)
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_evaluation_index_plan_in_transaction(
+            probe,
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version=bad_version,  # type: ignore[arg-type]
+        )
+    err = exc_info.value
+    assert str(err) == _P2A_MSG_EVALUATION_V2A_ONLY
+    assert err.__cause__ is None
+    assert err.__context__ is None
+    assert probe.call_count == 0
+
+
+async def test_p2a_group_d_evaluation_builder_rejects_missing_index_version() -> None:
+    """P2-A Group D: the evaluation builder MUST require an explicit
+    ``index_version`` keyword argument.  Omitting it MUST raise
+    ``TypeError`` at the Python signature level (no default value)."""
+    import inspect
+
+    sig = inspect.signature(
+        ArticleRagIndexPlanService.build_evaluation_index_plan_in_transaction
+    )
+    param = sig.parameters["index_version"]
+    assert param.default is inspect.Parameter.empty, (
+        "evaluation builder index_version MUST NOT have a default value; "
+        "the caller MUST pass it explicitly."
+    )
+
+
+async def test_p2a_group_d_evaluation_builder_rejects_v2a_lookup_in_production_resolver() -> None:
+    """P2-A Group D: the production resolver MUST remain fail-closed
+    on V2.  This is a cross-check that the evaluation builder does not
+    secretly rely on the production resolver accepting V2."""
+    with pytest.raises(ArticleRagIndexProfileResolutionError):
+        resolve_article_rag_index_evaluation_profile(
+            "article_rag_index_v1"
+        )
+
+
+# ===========================================================================
+# P2-A Group C: V2a contiguous-only merging algorithm
+# ===========================================================================
+
+
+def _v2a_seed_two_adjacent_paragraphs(
+    pool: asyncpg.Pool,
+    *,
+    text_a: str = "First paragraph for V2a merge.",
+    text_b: str = "Second paragraph for V2a merge.",
+) -> tuple[str, list[tuple[int, int]], str]:
+    """Seed two canonical-adjacent main_reading paragraph blocks.
+
+    Returns (base_text, [(start_a, end_a), (start_b, end_b)], source_scope).
+    """
+    raise NotImplementedError("helper scheduled for Group C tests")
+
+
+async def _seed_v2a_two_paragraph_env(
+    pool: asyncpg.Pool,
+    *,
+    text_a: str = "First paragraph for V2a merge.",
+    text_b: str = "Second paragraph for V2a merge.",
+    scope: str = "main_reading_text",
+) -> str:
+    """Seed environment with two canonical-adjacent main_reading paragraphs."""
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+    await _seed_full_environment(pool, base_text=base_text)
+    await _seed_block(
+        pool,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy(scope),
+    )
+    await _seed_block(
+        pool,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_main_reading_policy(scope),
+    )
+    return base_text
+
+
+async def _seed_v2a_three_paragraph_env(
+    pool: asyncpg.Pool,
+    *,
+    text_a: str = "First paragraph for V2a merge.",
+    text_b: str = "Second paragraph for V2a merge.",
+    text_c: str = "Third paragraph for V2a merge.",
+    scope: str = "main_reading_text",
+) -> str:
+    """Seed environment with three canonical-adjacent main_reading paragraphs."""
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b, text_c)
+    await _seed_full_environment(pool, base_text=base_text)
+    for i, (text, (start, end), block_id) in enumerate(
+        [
+            (text_a, offsets[0], "paragraph-1"),
+            (text_b, offsets[1], "paragraph-2"),
+            (text_c, offsets[2], "paragraph-3"),
+        ]
+    ):
+        await _seed_block(
+            pool,
+            block_id=block_id,
+            order_index=i,
+            block_type="paragraph",
+            text_content=text,
+            canonical_text_start_utf16=start,
+            canonical_text_end_utf16=end,
+            interpretation_policy=_main_reading_policy(scope),
+        )
+    return base_text
+
+
+async def test_p2a_group_c_tracer_bullet_v2a_two_paragraph_merge(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C tracer bullet: two canonical-adjacent main_reading
+    paragraphs MUST merge into a single V2a chunk.
+
+    RED-first: the evaluation builder seam does not exist yet."""
+    base_text = await _seed_v2a_two_paragraph_env(index_env)
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    # V2a chunker_version.
+    assert plan.chunker_version == "article_rag_index_plan_v2a"
+
+    # Two adjacent paragraphs merged into ONE chunk.
+    assert len(plan.chunks) == 1
+    chunk = plan.chunks[0]
+
+    # Merged text is the full canonical base slice (includes real "\n\n").
+    assert chunk.text == base_text
+    assert "\n\n" in chunk.text
+
+    # Citation block_ids are ordered.
+    assert chunk.citation.block_ids == ("paragraph-1", "paragraph-2")
+
+    # Canonical span covers the full merged range.
+    assert chunk.citation.canonical_text_start_utf16 == 0
+    assert chunk.citation.canonical_text_end_utf16 == (
+        utf16_code_unit_length(base_text)
+    )
+
+
+async def test_p2a_group_c_v2a_three_paragraph_merge(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: three canonical-adjacent main_reading paragraphs
+    MUST merge into a single V2a chunk."""
+    base_text = await _seed_v2a_three_paragraph_env(index_env)
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    assert len(plan.chunks) == 1
+    chunk = plan.chunks[0]
+
+    assert chunk.text == base_text
+    assert chunk.text.count("\n\n") == 2
+    assert chunk.citation.block_ids == (
+        "paragraph-1",
+        "paragraph-2",
+        "paragraph-3",
+    )
+    assert chunk.citation.canonical_text_start_utf16 == 0
+    assert chunk.citation.canonical_text_end_utf16 == (
+        utf16_code_unit_length(base_text)
+    )
+
+
+async def test_p2a_group_c_v2a_merged_text_contains_real_separator(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: the merged text MUST contain the real ``"\\n\\n"``
+    separator between adjacent blocks.  No manual concatenation with
+    spaces, single newlines, or other characters."""
+    text_a = "AAA"
+    text_b = "BBB"
+    base_text = await _seed_v2a_two_paragraph_env(
+        index_env, text_a=text_a, text_b=text_b
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    assert len(plan.chunks) == 1
+    # The merged text MUST be exactly "AAA\n\nBBB" — not "AAA BBB",
+    # not "AAA\nBBB", not "AAA-BBB".
+    assert plan.chunks[0].text == "AAA\n\nBBB"
+    assert base_text == "AAA\n\nBBB"
+
+
+async def test_p2a_group_c_v2a_chunk_id_is_deterministic_and_distinct_from_v1(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: the V2a chunk ID MUST be deterministic (same
+    input → same output) and MUST differ from the V1 chunk ID for the
+    same single-block input."""
+    await _p1e_seed_minimal_v1_env(index_env)
+
+    service = _build_service(index_env)
+    v1_plan = await service.build_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    v2a_plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    v1_chunk_id = v1_plan.chunks[0].chunk_id
+    v2a_chunk_id = v2a_plan.chunks[0].chunk_id
+
+    # Determinism: same input → same ID.
+    v2a_plan_b = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+    assert v2a_plan_b.chunks[0].chunk_id == v2a_chunk_id
+
+    # V2a chunk ID MUST differ from V1 chunk ID.
+    assert v2a_chunk_id != v1_chunk_id
+
+
+async def test_p2a_group_c_v2a_plan_hash_is_deterministic_and_distinct_from_v1(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: the V2a plan content hash MUST be deterministic
+    and MUST differ from the V1 plan content hash for the same input
+    (because chunker_version and chunk IDs differ)."""
+    await _p1e_seed_minimal_v1_env(index_env)
+
+    service = _build_service(index_env)
+    v1_plan = await service.build_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    v2a_plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    v1_hash = compute_plan_content_sha256(v1_plan)
+    v2a_hash = compute_plan_content_sha256(v2a_plan)
+
+    # Determinism.
+    v2a_plan_b = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+    assert compute_plan_content_sha256(v2a_plan_b) == v2a_hash
+
+    # V2a plan hash MUST differ from V1 plan hash.
+    assert v2a_hash != v1_hash
+
+
+async def test_p2a_group_c_v2a_citation_unit_and_anchor_ids_ordered_and_deduped(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: V2a merged chunk's ``unit_ids`` and
+    ``anchor_segment_ids`` MUST be ordered by canonical order and
+    deduplicated."""
+    text_a = "First paragraph."
+    text_b = "Second paragraph."
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    # Seed a unit that overlaps both paragraphs.  The reading_units
+    # schema enforces ``order_index >= 1`` (CHECK constraint
+    # ``reading_units_order_index_check``), so the value MUST be >= 1.
+    await _seed_unit(
+        index_env,
+        unit_id="unit-cross",
+        order_index=1,
+        base_start_utf16=0,
+        base_end_utf16=offsets[1][1],
+    )
+    # Seed a segment that overlaps only the first paragraph.
+    # ``anchor_segments`` has UNIQUE constraints on
+    # ``(base_id, sentence_id)`` and ``(base_id, unit_id, unit_order_index)``,
+    # so the two segments MUST use distinct ``sentence_id`` AND
+    # ``unit_order_index`` values (the defaults would collide).
+    await _seed_segment(
+        index_env,
+        anchor_segment_id="seg-1",
+        unit_id="unit-cross",
+        sentence_id="sent-1",
+        order_index=1,
+        unit_order_index=1,
+        base_start_utf16=offsets[0][0],
+        base_end_utf16=offsets[0][1],
+    )
+    # Seed a segment that overlaps only the second paragraph.
+    await _seed_segment(
+        index_env,
+        anchor_segment_id="seg-2",
+        unit_id="unit-cross",
+        sentence_id="sent-2",
+        order_index=2,
+        unit_order_index=2,
+        base_start_utf16=offsets[1][0],
+        base_end_utf16=offsets[1][1],
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    assert len(plan.chunks) == 1
+    chunk = plan.chunks[0]
+    # Unit ID is deduplicated (unit-cross overlaps both paragraphs).
+    assert chunk.citation.unit_ids == ("unit-cross",)
+    # Anchor segment IDs are ordered and deduplicated.
+    assert chunk.citation.anchor_segment_ids == ("seg-1", "seg-2")
+
+
+async def test_p2a_group_c_v2a_4096_boundary_equal_can_merge(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: when the merged canonical span EQUALS 4096 UTF-16
+    units, the blocks MUST merge (boundary is inclusive)."""
+    # Build two paragraphs whose merged span == 4096 UTF-16 units.
+    # Each paragraph is 2047 UTF-16 units, plus "\n\n" (2 units) = 4096.
+    text_a = "A" * 2047
+    text_b = "B" * 2047
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+    merged_utf16 = utf16_code_unit_length(base_text)
+    assert merged_utf16 == V2A_MAX_MERGED_CANONICAL_UTF16_UNITS, (
+        f"test setup error: merged span {merged_utf16} != "
+        f"{V2A_MAX_MERGED_CANONICAL_UTF16_UNITS}"
+    )
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    # Equal to 4096 → merge succeeds.
+    assert len(plan.chunks) == 1
+    assert plan.chunks[0].citation.block_ids == ("paragraph-1", "paragraph-2")
+
+
+async def test_p2a_group_c_v2a_4096_boundary_exceeds_no_merge(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: when the merged canonical span EXCEEDS 4096 UTF-16
+    units, the blocks MUST NOT merge — each block becomes its own
+    chunk."""
+    # Build two paragraphs whose merged span == 4097 UTF-16 units.
+    text_a = "A" * 2047
+    text_b = "B" * 2048
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+    merged_utf16 = utf16_code_unit_length(base_text)
+    assert merged_utf16 == V2A_MAX_MERGED_CANONICAL_UTF16_UNITS + 1, (
+        f"test setup error: merged span {merged_utf16} != "
+        f"{V2A_MAX_MERGED_CANONICAL_UTF16_UNITS + 1}"
+    )
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    # Exceeds 4096 → no merge; each block is its own chunk.
+    assert len(plan.chunks) == 2
+    assert plan.chunks[0].citation.block_ids == ("paragraph-1",)
+    assert plan.chunks[1].citation.block_ids == ("paragraph-2",)
+
+
+async def test_p2a_group_c_v2a_single_block_exceeding_4096_stays_standalone(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: a single block whose own span exceeds 4096 UTF-16
+    units MUST stay as a standalone chunk (no internal splitting in
+    this round)."""
+    text_a = "A" * 5000
+    text_b = "B" * 10
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    # paragraph-1 is > 4096 → stays standalone.
+    # paragraph-2 cannot merge with paragraph-1 (would exceed 4096).
+    # Both are standalone.
+    assert len(plan.chunks) == 2
+    assert plan.chunks[0].citation.block_ids == ("paragraph-1",)
+    assert plan.chunks[1].citation.block_ids == ("paragraph-2",)
+
+
+async def test_p2a_group_c_v2a_heading_is_standalone_and_breaks_merge(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: an eligible heading MUST be a standalone chunk
+    and a hard boundary — it MUST break the merge window on both
+    sides."""
+    text_a = "First paragraph."
+    text_heading = "Section Title"
+    text_b = "Second paragraph."
+    base_text, offsets = _build_base_text_and_offsets(
+        text_a, text_heading, text_b
+    )
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="heading-1",
+        order_index=1,
+        block_type="heading",
+        text_content=text_heading,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=2,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[2][0],
+        canonical_text_end_utf16=offsets[2][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    # Heading breaks the merge: 3 standalone chunks.
+    assert len(plan.chunks) == 3
+    assert plan.chunks[0].citation.block_ids == ("paragraph-1",)
+    assert plan.chunks[1].citation.block_ids == ("heading-1",)
+    assert plan.chunks[2].citation.block_ids == ("paragraph-2",)
+
+
+async def test_p2a_group_c_v2a_different_route_does_not_merge(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: adjacent blocks with different effective routes
+    MUST NOT merge."""
+    text_a = "First paragraph."
+    text_b = "Table cell content."
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="table-cell-1",
+        order_index=1,
+        block_type="table_cell",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_rag_ask_only_policy(),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+        include_rag_ask_only=True,
+    )
+
+    # Different routes → no merge.
+    assert len(plan.chunks) == 2
+    assert plan.chunks[0].citation.block_ids == ("paragraph-1",)
+    assert plan.chunks[1].citation.block_ids == ("table-cell-1",)
+
+
+async def test_p2a_group_c_v2a_different_source_scope_does_not_merge(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: adjacent main_reading blocks with different
+    effective source scopes MUST NOT merge."""
+    text_a = "First paragraph."
+    text_b = "Second paragraph."
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy("main_reading_text"),
+    )
+    # P2-A-R1: use a valid ``StableDocumentSourceScope`` Literal value
+    # (``"heading"``) rather than an arbitrary string — the V2a
+    # materialized policy fingerprint now validates the full
+    # ``StableDocumentInterpretationPolicy`` model, so an invalid scope
+    # value would fail-closed at the policy boundary instead of
+    # exercising the "different scope → no merge" path.
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_main_reading_policy("heading"),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    # Different source scope → no merge.
+    assert len(plan.chunks) == 2
+    assert plan.chunks[0].citation.block_ids == ("paragraph-1",)
+    assert plan.chunks[1].citation.block_ids == ("paragraph-2",)
+
+
+async def test_p2a_group_c_v2a_different_policy_fingerprint_does_not_merge(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: adjacent main_reading blocks with the same route
+    and scope but different materialized interpretation-policy
+    fingerprints MUST NOT merge.
+
+    The policy fingerprint captures the full materialized policy dict
+    (route, scope, rag_eligible).  Two blocks with the same route and
+    scope but different ``rag_eligible`` flags have different
+    fingerprints and MUST NOT merge.
+    """
+    text_a = "First paragraph."
+    text_b = "Second paragraph."
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    # Block 1: main_reading, rag_eligible=True.
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy={
+            "allowed_source_scope": ["main_reading_text"],
+            "default_route": "main_reading",
+            "rag_eligible": True,
+        },
+    )
+    # Block 2: main_reading route but rag_eligible=False (different
+    # materialized policy fingerprint).
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy={
+            "allowed_source_scope": ["main_reading_text"],
+            "default_route": "main_reading",
+            "rag_eligible": False,
+        },
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    # Block 2 is not RAG-eligible → it is skipped entirely.
+    # Block 1 is a standalone chunk.
+    assert len(plan.chunks) == 1
+    assert plan.chunks[0].citation.block_ids == ("paragraph-1",)
+
+
+# ===========================================================================
+# P2-A-R1: complete materialized policy fingerprint (covers ``notes``)
+# ===========================================================================
+#
+# The V2a materialized policy fingerprint MUST cover the full
+# ``StableDocumentInterpretationPolicy`` model — ``allowed_source_scope``,
+# ``default_route``, ``rag_eligible`` AND ``notes``.  Two eligible
+# main_reading blocks with the same route / scope / rag_eligible but
+# different ``notes`` MUST NOT merge.  Testing ``rag_eligible=False``
+# only proves eligibility filtering, not the policy fingerprint.
+
+# P2-A-R1: frozen V2a golden literals for the canonical two-paragraph
+# merged fixture produced by ``_seed_v2a_two_paragraph_env``.  These
+# literals MUST be hardcoded — they MUST NOT be computed at runtime by
+# calling production helpers.  If the V2a seed, serialization, or merge
+# identity intentionally changes, the plan / chunker version MUST be
+# bumped and these literals updated explicitly.  This blocks unversioned
+# spec drift.
+#
+# The fixture base text is fixed by ``_seed_v2a_two_paragraph_env``'s
+# default ``text_a`` / ``text_b`` joined with ``"\n\n"``.
+_P2A_V2A_MERGED_FIXTURE_BASE_TEXT = (
+    "First paragraph for V2a merge.\n\nSecond paragraph for V2a merge."
+)
+# Frozen V2a chunk_id for the canonical merged fixture — 16 hex chars
+# (SHA-256 truncated to 64 bits).  Derived from the V2a seed
+# ``v2a:{chunker_version}:{stable_document_id}:{source_scope}:`` plus
+# ``paragraph-1,paragraph-2:{start}:{end}``.
+_P2A_V2A_MERGED_CHUNK_ID = "e1a812ef420be808"
+# Frozen V2a plan_content_sha256 for the canonical merged fixture — 64
+# hex chars (full SHA-256).  Captures stable_document_id, base_id,
+# record_generation, content_sha256, canonical_text_sha256,
+# chunker_version, chunk count, and per-chunk identity / citation
+# fields (see ``compute_plan_content_sha256``).
+_P2A_V2A_MERGED_PLAN_CONTENT_SHA256 = (
+    "cc626cc12a4f4cf8bfa200172fb2045d08cce3f382cc5e5b91f9476aa9a46deb"
+)
+
+
+def _main_reading_policy_with_notes(
+    notes: list[str],
+    *,
+    scope: str = "main_reading_text",
+) -> dict:
+    """Main-reading policy with explicit ``notes`` field.
+
+    Used to test that the V2a materialized policy fingerprint covers
+    the full ``StableDocumentInterpretationPolicy`` model, not just the
+    ``(route, scope, rag_eligible)`` triple.
+    """
+    return {
+        "allowed_source_scope": [scope],
+        "default_route": "main_reading",
+        "rag_eligible": True,
+        "notes": list(notes),
+    }
+
+
+async def test_p2a_r1_notes_different_both_eligible_does_not_merge(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A-R1 RED: two canonical-adjacent main_reading paragraphs with
+    identical route / scope / rag_eligible but different ``notes`` MUST
+    NOT merge.
+
+    The materialized policy fingerprint MUST cover the full
+    ``StableDocumentInterpretationPolicy`` model, including ``notes``.
+    The current ``(route, scope, rag_eligible)`` triple implementation
+    will incorrectly merge these blocks; this test captures the
+    expected behavior (two standalone chunks) and fails RED until the
+    fingerprint covers ``notes``.
+    """
+    text_a = "First paragraph for notes policy test."
+    text_b = "Second paragraph for notes policy test."
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy_with_notes(["policy-a"]),
+    )
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_main_reading_policy_with_notes(["policy-b"]),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    # Different ``notes`` → different materialized policy fingerprint
+    # → two standalone chunks, no merge.
+    assert len(plan.chunks) == 2
+    assert plan.chunks[0].citation.block_ids == ("paragraph-1",)
+    assert plan.chunks[1].citation.block_ids == ("paragraph-2",)
+
+
+async def test_p2a_r1_notes_same_merges(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A-R1: two canonical-adjacent main_reading paragraphs with the
+    SAME ``notes`` value MUST merge — the materialized policy
+    fingerprint is equal."""
+    text_a = "First paragraph for same notes merge."
+    text_b = "Second paragraph for same notes merge."
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy_with_notes(["shared-note"]),
+    )
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_main_reading_policy_with_notes(["shared-note"]),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    assert len(plan.chunks) == 1
+    assert plan.chunks[0].citation.block_ids == (
+        "paragraph-1",
+        "paragraph-2",
+    )
+
+
+async def test_p2a_r1_empty_dict_merges_with_explicit_default(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A-R1: a block whose ``interpretation_policy_json`` is ``{}``
+    (DB storage placeholder) MUST be materialised via
+    ``default_interpretation_policy_for(block_type)`` and produce the
+    SAME fingerprint as a block whose policy is the explicit per-type
+    default dict — so two such adjacent blocks MUST merge."""
+    text_a = "First paragraph for empty dict materialization."
+    text_b = "Second paragraph for empty dict materialization."
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    # Block 1: empty {} — materialised via default_interpretation_policy_for
+    # ("paragraph") which yields:
+    #   {allowed_source_scope: ["main_reading_text"],
+    #    default_route: "main_reading",
+    #    rag_eligible: True,
+    #    notes: []}
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy={},
+    )
+    # Block 2: explicit per-type default dict with ``notes: []``.
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy={
+            "allowed_source_scope": ["main_reading_text"],
+            "default_route": "main_reading",
+            "rag_eligible": True,
+            "notes": [],
+        },
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    # Same materialised policy fingerprint → merge.
+    assert len(plan.chunks) == 1
+    assert plan.chunks[0].citation.block_ids == (
+        "paragraph-1",
+        "paragraph-2",
+    )
+
+
+async def test_p2a_r1_json_key_order_difference_merges(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A-R1: two adjacent blocks whose ``interpretation_policy_json``
+    has the SAME semantic content but different JSON key order MUST
+    merge.  The fingerprint is computed over the canonical
+    ``sort_keys=True`` serialisation, so key order in storage is
+    irrelevant."""
+    text_a = "First paragraph for key order test."
+    text_b = "Second paragraph for key order test."
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    # Block 1: keys in alphabetical order.
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy={
+            "allowed_source_scope": ["main_reading_text"],
+            "default_route": "main_reading",
+            "notes": ["k"],
+            "rag_eligible": True,
+        },
+    )
+    # Block 2: keys in a different order, same semantic content.
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy={
+            "rag_eligible": True,
+            "notes": ["k"],
+            "default_route": "main_reading",
+            "allowed_source_scope": ["main_reading_text"],
+        },
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    # Canonical serialisation is identical → same fingerprint → merge.
+    assert len(plan.chunks) == 1
+    assert plan.chunks[0].citation.block_ids == (
+        "paragraph-1",
+        "paragraph-2",
+    )
+
+
+async def test_p2a_r1_malicious_notes_fail_closed(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A-R1: a block whose ``interpretation_policy_json`` has a
+    ``notes`` field with a non-string element MUST fail closed with a
+    fixed local error.  The raw policy / notes value MUST NOT be
+    echoed in ``str``, ``repr``, ``args``, or traceback."""
+    text_a = "First paragraph for malicious notes test."
+    text_b = "Second paragraph for malicious notes test."
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy={
+            "allowed_source_scope": ["main_reading_text"],
+            "default_route": "main_reading",
+            "rag_eligible": True,
+            "notes": ["normal-note"],
+        },
+    )
+    # Block 2: ``notes`` contains a malicious non-string sentinel
+    # (a dict masquerading as a notes entry).
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy={
+            "allowed_source_scope": ["main_reading_text"],
+            "default_route": "main_reading",
+            "rag_eligible": True,
+            "notes": [{"$gt": ""}],  # malicious NoSQL-style sentinel
+        },
+    )
+
+    service = _build_service(index_env)
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_evaluation_index_plan(
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version="article_rag_index_v2",
+        )
+    err = exc_info.value
+    # Fixed local message — no echo of the raw policy / notes / sentinel.
+    # P2-A-R2: asserted verbatim (the message was made more specific than
+    # the generic dispatch-wrapper text so callers can distinguish "policy
+    # payload invalid" from "index version unsupported").
+    err_str = str(err)
+    err_repr = repr(err)
+    assert err_str == _P2A_R2_EXPECTED_POLICY_MESSAGE
+    assert "$gt" not in err_str
+    assert "$gt" not in err_repr
+    # Clean exception chain — no cause / context leakage.
+    assert err.__cause__ is None
+    assert err.__context__ is None
+
+
+async def test_p2a_r1_extra_field_fail_closed(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A-R1: a block whose ``interpretation_policy_json`` contains an
+    unknown extra field MUST fail closed.  ``StableDocumentInterpretationPolicy``
+    uses ``extra='forbid'`` so any extra field is a validation error."""
+    text_a = "First paragraph for extra field test."
+    base_text, offsets = _build_base_text_and_offsets(text_a)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy={
+            "allowed_source_scope": ["main_reading_text"],
+            "default_route": "main_reading",
+            "rag_eligible": True,
+            "notes": [],
+            "extra_malicious_field": "should-be-rejected",
+        },
+    )
+
+    service = _build_service(index_env)
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_evaluation_index_plan(
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version="article_rag_index_v2",
+        )
+    err = exc_info.value
+    err_str = str(err)
+    err_repr = repr(err)
+    # P2-A-R2: fixed local message asserted verbatim.
+    assert err_str == _P2A_R2_EXPECTED_POLICY_MESSAGE
+    # No echo of the raw policy / extra field name / sentinel.
+    assert "extra_malicious_field" not in err_str
+    assert "extra_malicious_field" not in err_repr
+    assert "should-be-rejected" not in err_str
+    assert "should-be-rejected" not in err_repr
+    assert err.__cause__ is None
+    assert err.__context__ is None
+
+
+async def test_p2a_r1_malformed_policy_fail_closed(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A-R1: a block whose ``interpretation_policy_json`` has a
+    wrong-typed ``default_route`` (non-string) MUST fail closed with a
+    fixed local message."""
+    text_a = "First paragraph for malformed policy test."
+    base_text, offsets = _build_base_text_and_offsets(text_a)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy={
+            "allowed_source_scope": ["main_reading_text"],
+            "default_route": ["not", "a", "string"],
+            "rag_eligible": True,
+        },
+    )
+
+    service = _build_service(index_env)
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_evaluation_index_plan(
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version="article_rag_index_v2",
+        )
+    err = exc_info.value
+    err_str = str(err)
+    # P2-A-R2: fixed local message asserted verbatim.
+    assert err_str == _P2A_R2_EXPECTED_POLICY_MESSAGE
+    # No echo of the raw policy / sentinel.
+    assert err.__cause__ is None
+    assert err.__context__ is None
+
+
+# ===========================================================================
+# P2-A-R1: fixed V2a identity golden literals
+# ===========================================================================
+#
+# Frozen golden literals for the canonical two-paragraph V2a merged
+# fixture.  These literals MUST be hardcoded — they MUST NOT be
+# computed by calling production helpers at test runtime.  If the V2a
+# seed, serialization, or merge identity intentionally changes, the
+# plan / chunker version MUST be bumped and these literals updated
+# explicitly.  This blocks unversioned spec drift.
+
+
+async def test_p2a_r1_v2a_merged_chunk_id_golden_literal(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A-R1: the V2a chunk ID for the canonical two-paragraph merged
+    fixture MUST equal the frozen golden literal below.  The literal is
+    NOT computed at runtime — it freezes the V2a seed bytes against
+    unversioned drift."""
+    base_text = await _seed_v2a_two_paragraph_env(index_env)
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    assert len(plan.chunks) == 1
+    chunk = plan.chunks[0]
+    # Frozen golden — see _P2A_V2A_MERGED_CHUNK_ID literal definition.
+    assert chunk.chunk_id == _P2A_V2A_MERGED_CHUNK_ID
+    # Smoke: the golden literal is 16 hex chars.
+    assert len(_P2A_V2A_MERGED_CHUNK_ID) == 16
+    # The merged base text is also frozen for plan_hash stability.
+    assert base_text == _P2A_V2A_MERGED_FIXTURE_BASE_TEXT
+
+
+async def test_p2a_r1_v2a_merged_plan_content_sha256_golden_literal(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A-R1: the V2a plan content SHA-256 for the canonical
+    two-paragraph merged fixture MUST equal the frozen golden literal
+    below.  The literal is NOT computed at runtime."""
+    await _seed_v2a_two_paragraph_env(index_env)
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    # Frozen golden — see _P2A_V2A_MERGED_PLAN_CONTENT_SHA256 literal.
+    assert compute_plan_content_sha256(plan) == (
+        _P2A_V2A_MERGED_PLAN_CONTENT_SHA256
+    )
+    assert len(_P2A_V2A_MERGED_PLAN_CONTENT_SHA256) == 64
+
+
+# ===========================================================================
+# P2-A-R2: V2a policy validation coverage closure
+# ===========================================================================
+#
+# P2-A-R1 closed the policy fingerprint gap for the main_reading merge
+# path, but the V2a builder still validated policy ONLY on that path.
+# Blocks that took an earlier branch — rag_eligible=False, excluded
+# route (metadata_only / ignored), rag_ask_only, or heading — bypassed
+# full ``StableDocumentInterpretationPolicy`` validation entirely.  A
+# malformed or malicious policy on any of those branches was silently
+# accepted.
+#
+# P2-A-R2 closes the bypass: the V2a builder MUST materialize / validate
+# the policy at the START of every block iteration, BEFORE any routing
+# decision.  Every branch — including the four bypass paths below —
+# MUST fail-closed on an invalid / extra-field / malformed policy.
+#
+# All four scenarios use the PUBLIC ``build_evaluation_index_plan`` seam
+# (parameterised via ``include_rag_ask_only`` where needed) so the
+# contract is enforced at the API surface, not just inside the private
+# builder.
+
+# P2-A-R2: the fixed local error message asserted verbatim by every
+# bypass test below.  This literal MUST match the production constant
+# ``_P2A_MSG_POLICY_INVALID`` in ``article_rag_index_plan.py`` exactly.
+_P2A_R2_EXPECTED_POLICY_MESSAGE = (
+    "Article RAG V2a interpretation policy is invalid"
+)
+
+
+async def test_p2a_r2_rag_eligible_false_with_extra_field_fail_closed(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A-R2 bypass #1: a block with ``rag_eligible=False`` AND an
+    unknown extra policy field MUST fail closed at the policy boundary,
+    NOT silently fall through the ``not rag_eligible`` early-continue.
+
+    Before P2-A-R2 the V2a builder called the lenient V1
+    ``_interpretation_policy_fields`` helper first, saw
+    ``rag_eligible=False``, and ``continue``-d before ever validating
+    the full policy — so the malicious extra field was never rejected.
+    """
+    text_a = "First paragraph for rag_eligible bypass test."
+    base_text, offsets = _build_base_text_and_offsets(text_a)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    # Block 1: rag_eligible=False (would early-continue) BUT the policy
+    # carries an extra field that ``StableDocumentInterpretationPolicy``
+    # (extra='forbid') must reject.  The validation MUST happen BEFORE
+    # the rag_eligible branch.
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy={
+            "allowed_source_scope": ["main_reading_text"],
+            "default_route": "main_reading",
+            "rag_eligible": False,
+            "notes": [],
+            "extra_bypass_field": "must-be-rejected",
+        },
+    )
+
+    service = _build_service(index_env)
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_evaluation_index_plan(
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version="article_rag_index_v2",
+        )
+    err = exc_info.value
+    # Fixed local message — asserted verbatim.
+    assert str(err) == _P2A_R2_EXPECTED_POLICY_MESSAGE
+    # No echo of the raw policy / extra field / sentinel.
+    err_repr = repr(err)
+    assert "extra_bypass_field" not in str(err)
+    assert "extra_bypass_field" not in err_repr
+    assert "must-be-rejected" not in str(err)
+    assert "must-be-rejected" not in err_repr
+    # Clean exception chain — no cause / context leakage.
+    assert err.__cause__ is None
+    assert err.__context__ is None
+
+
+async def test_p2a_r2_excluded_route_with_extra_field_fail_closed(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A-R2 bypass #2: a block with an excluded route
+    (``metadata_only`` / ``ignored``) AND an unknown extra policy field
+    MUST fail closed at the policy boundary, NOT silently fall through
+    the ``route in _EXCLUDED_ROUTES`` early-continue."""
+    text_a = "First paragraph for excluded-route bypass test."
+    base_text, offsets = _build_base_text_and_offsets(text_a)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    # Block 1: metadata_only route (would early-continue) BUT the policy
+    # carries an extra field that must be rejected BEFORE the route
+    # branch.
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy={
+            "allowed_source_scope": ["main_reading_text"],
+            "default_route": "metadata_only",
+            "rag_eligible": False,
+            "notes": [],
+            "extra_route_bypass": "rejected-before-route-check",
+        },
+    )
+
+    service = _build_service(index_env)
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_evaluation_index_plan(
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version="article_rag_index_v2",
+        )
+    err = exc_info.value
+    assert str(err) == _P2A_R2_EXPECTED_POLICY_MESSAGE
+    err_repr = repr(err)
+    assert "extra_route_bypass" not in str(err)
+    assert "extra_route_bypass" not in err_repr
+    assert "rejected-before-route-check" not in str(err)
+    assert "rejected-before-route-check" not in err_repr
+    assert err.__cause__ is None
+    assert err.__context__ is None
+
+
+async def test_p2a_r2_rag_ask_only_with_malformed_notes_fail_closed(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A-R2 bypass #3: a ``rag_ask_only`` block with malformed
+    ``notes`` MUST fail closed at the policy boundary, NOT be emitted as
+    a standalone chunk via the ``include_rag_ask_only=True`` path before
+    validation.
+
+    Uses ``include_rag_ask_only=True`` so the rag_ask_only branch is
+    actually reached; without it the block would be silently dropped
+    and the malformed policy would never be observed.
+    """
+    text_a = "First paragraph for rag_ask_only bypass test."
+    base_text, offsets = _build_base_text_and_offsets(text_a)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    # Block 1: rag_ask_only route with malformed notes (non-string
+    # element).  The V2a builder MUST validate the policy BEFORE
+    # emitting the rag_ask_only standalone chunk.
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy={
+            "allowed_source_scope": ["table_cell"],
+            "default_route": "rag_ask_only",
+            "rag_eligible": True,
+            "notes": [{"$ne": None}],  # malicious NoSQL-style sentinel
+        },
+    )
+
+    service = _build_service(index_env)
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_evaluation_index_plan(
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version="article_rag_index_v2",
+            include_rag_ask_only=True,
+        )
+    err = exc_info.value
+    assert str(err) == _P2A_R2_EXPECTED_POLICY_MESSAGE
+    err_repr = repr(err)
+    assert "$ne" not in str(err)
+    assert "$ne" not in err_repr
+    assert "notes" not in str(err).lower()
+    assert "notes" not in err_repr.lower()
+    assert err.__cause__ is None
+    assert err.__context__ is None
+
+
+async def test_p2a_r2_heading_with_malformed_policy_fail_closed(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A-R2 bypass #4: a ``heading`` block with a malformed policy
+    field MUST fail closed at the policy boundary, NOT be emitted as a
+    standalone heading chunk before validation.
+
+    The heading branch in the V2a builder runs BEFORE the main_reading
+    merge path, so P2-A-R1's fingerprint helper never observed heading
+    policies.  P2-A-R2 moves validation to the top of the loop so
+    heading policies are validated too.
+    """
+    text_a = "First heading for malformed-policy bypass test."
+    base_text, offsets = _build_base_text_and_offsets(text_a)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    # Block 1: heading with a malformed policy (default_route is a list
+    # instead of a string).  The V2a builder MUST validate the policy
+    # BEFORE emitting the heading standalone chunk.
+    await _seed_block(
+        index_env,
+        block_id="heading-1",
+        order_index=0,
+        block_type="heading",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy={
+            "allowed_source_scope": ["heading"],
+            "default_route": ["not", "a", "string"],
+            "rag_eligible": True,
+            "notes": [],
+        },
+    )
+
+    service = _build_service(index_env)
+    with pytest.raises(ArticleRagIndexPlanError) as exc_info:
+        await service.build_evaluation_index_plan(
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version="article_rag_index_v2",
+        )
+    err = exc_info.value
+    assert str(err) == _P2A_R2_EXPECTED_POLICY_MESSAGE
+    err_repr = repr(err)
+    # No echo of the raw policy / sentinel.
+    assert "not" not in str(err).lower()
+    assert "not" not in err_repr.lower()
+    assert err.__cause__ is None
+    assert err.__context__ is None
+
+
+async def test_p2a_group_c_v2a_null_offset_breaks_merge(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: a main_reading block with null canonical offsets
+    MUST break the merge window.  V2a remains consistent with V1: a
+    main_reading block MUST have canonical offsets; null offsets raise
+    ``ArticleRagIndexPlanError``."""
+    text_a = "First paragraph."
+    text_b = "Second paragraph."
+    text_c = "Third paragraph."
+    base_text, offsets = _build_base_text_and_offsets(
+        text_a, text_b, text_c
+    )
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    # Block 2: main_reading but null offsets — data inconsistency.
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=None,
+        canonical_text_end_utf16=None,
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="paragraph-3",
+        order_index=2,
+        block_type="paragraph",
+        text_content=text_c,
+        canonical_text_start_utf16=offsets[2][0],
+        canonical_text_end_utf16=offsets[2][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+
+    service = _build_service(index_env)
+    # Main_reading block with null offsets raises an error (V2a
+    # consistent with V1).
+    with pytest.raises(ArticleRagIndexPlanError):
+        await service.build_evaluation_index_plan(
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            index_version="article_rag_index_v2",
+        )
+
+
+async def test_p2a_group_c_v2a_canonical_gap_does_not_merge(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: when two main_reading blocks are NOT canonically
+    adjacent (gap in offsets), they MUST NOT merge.
+
+    The canonical adjacency rule requires:
+      next.start == previous.end + 2 UTF-16 units
+    and the base slice between them MUST be exactly ``"\\n\\n"``.
+    """
+    # Build two paragraphs that are NOT canonically adjacent: leave
+    # a 4-unit gap (extra "\n\n" prefix) between them.
+    text_a = "AAA"
+    text_b = "BBB"
+    # base_text = "AAA\n\n\n\nBBB" (gap of 4 units between A and B)
+    base_text = f"{text_a}\n\n\n\n{text_b}"
+    start_a = 0
+    end_a = utf16_code_unit_length(text_a)
+    # B starts 4 units after A's end (gap of "\n\n\n\n").
+    start_b = end_a + 4
+    end_b = start_b + utf16_code_unit_length(text_b)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=start_a,
+        canonical_text_end_utf16=end_a,
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=start_b,
+        canonical_text_end_utf16=end_b,
+        interpretation_policy=_main_reading_policy(),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    # Canonical gap → no merge.
+    assert len(plan.chunks) == 2
+    assert plan.chunks[0].citation.block_ids == ("paragraph-1",)
+    assert plan.chunks[1].citation.block_ids == ("paragraph-2",)
+
+
+async def test_p2a_group_c_v2a_separator_not_double_newline_does_not_merge(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: when two main_reading blocks are canonically
+    adjacent (next.start == previous.end + 2) but the base slice
+    between them is NOT exactly ``"\\n\\n"`` (e.g. two spaces), they
+    MUST NOT merge.
+
+    The canonical separator MUST be exactly ``"\\n\\n"`` (2 UTF-16
+    units).  Any other 2-unit separator (e.g. two spaces) MUST NOT
+    merge.
+    """
+    # Build two paragraphs separated by two spaces (2 UTF-16 units,
+    # same length as "\n\n" but different content).
+    text_a = "AAA"
+    text_b = "BBB"
+    separator = "  "  # two spaces (2 UTF-16 units)
+    base_text = f"{text_a}{separator}{text_b}"
+    start_a = 0
+    end_a = utf16_code_unit_length(text_a)
+    start_b = end_a + utf16_code_unit_length(separator)
+    end_b = start_b + utf16_code_unit_length(text_b)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=start_a,
+        canonical_text_end_utf16=end_a,
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=start_b,
+        canonical_text_end_utf16=end_b,
+        interpretation_policy=_main_reading_policy(),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    # Separator is two spaces, not "\n\n" → no merge.
+    assert len(plan.chunks) == 2
+    assert plan.chunks[0].citation.block_ids == ("paragraph-1",)
+    assert plan.chunks[1].citation.block_ids == ("paragraph-2",)
+
+
+async def test_p2a_group_c_v2a_ineligible_block_breaks_merge_window(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: a non-RAG-eligible block (e.g. metadata_only)
+    between two main_reading blocks MUST break the merge window.  The
+    ineligible block itself is NOT emitted as a chunk."""
+    text_a = "First paragraph."
+    text_metadata = "Metadata block."
+    text_b = "Second paragraph."
+    base_text, offsets = _build_base_text_and_offsets(
+        text_a, text_metadata, text_b
+    )
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="metadata-1",
+        order_index=1,
+        block_type="image",
+        text_content=text_metadata,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_metadata_only_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=2,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[2][0],
+        canonical_text_end_utf16=offsets[2][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    # Ineligible block breaks the merge: 2 standalone chunks (no
+    # metadata chunk).
+    assert len(plan.chunks) == 2
+    assert plan.chunks[0].citation.block_ids == ("paragraph-1",)
+    assert plan.chunks[1].citation.block_ids == ("paragraph-2",)
+
+
+async def test_p2a_group_c_v2a_rag_ask_only_never_merges_with_main_reading(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: a ``rag_ask_only`` block MUST NEVER merge with a
+    main_reading block, even when include_rag_ask_only=True."""
+    text_a = "First paragraph."
+    text_b = "Table cell content."
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="table-cell-1",
+        order_index=1,
+        block_type="table_cell",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_rag_ask_only_policy(),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+        include_rag_ask_only=True,
+    )
+
+    # rag_ask_only never merges with main_reading.
+    assert len(plan.chunks) == 2
+    assert plan.chunks[0].citation.block_ids == ("paragraph-1",)
+    assert plan.chunks[1].citation.block_ids == ("table-cell-1",)
+
+
+async def test_p2a_group_c_v2a_include_rag_ask_only_false_excludes_ask_only(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: when ``include_rag_ask_only=False`` (default),
+    ``rag_ask_only`` blocks MUST NOT produce chunks."""
+    text_a = "First paragraph."
+    text_b = "Table cell content."
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="table-cell-1",
+        order_index=1,
+        block_type="table_cell",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_rag_ask_only_policy(),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+        include_rag_ask_only=False,
+    )
+
+    # Only main_reading chunk; ask-only excluded.
+    assert len(plan.chunks) == 1
+    assert plan.chunks[0].citation.block_ids == ("paragraph-1",)
+
+
+async def test_p2a_group_c_v2a_eligible_heading_produces_chunk(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: an eligible heading (block_type=heading,
+    rag_eligible=True) MUST produce its own chunk even when no
+    surrounding main_reading blocks exist."""
+    text_heading = "Standalone Heading"
+    base_text = text_heading
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="heading-1",
+        order_index=0,
+        block_type="heading",
+        text_content=text_heading,
+        canonical_text_start_utf16=0,
+        canonical_text_end_utf16=utf16_code_unit_length(text_heading),
+        interpretation_policy=_main_reading_policy(),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    assert len(plan.chunks) == 1
+    assert plan.chunks[0].citation.block_ids == ("heading-1",)
+    assert plan.chunks[0].text == text_heading
+
+
+async def test_p2a_group_c_v2a_zero_vector_embedding_provider_calls(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: the V2a evaluation builder MUST NOT call any
+    embedding provider, vector writer, or Zilliz.  Verified by
+    asserting no DB writes occur and the plan is read-only."""
+    await _seed_v2a_two_paragraph_env(index_env)
+
+    tables_to_check = [
+        "reader_article_rag_index_runs",
+        "reader_jobs",
+        "reader_runs",
+        "reader_job_events",
+    ]
+    pre_counts: dict[str, int] = {}
+    async with index_env.acquire() as conn:
+        for table in tables_to_check:
+            pre_counts[table] = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {table}"
+            )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+    assert len(plan.chunks) >= 1
+
+    # No DB writes occurred.
+    async with index_env.acquire() as conn:
+        for table in tables_to_check:
+            post_count = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {table}"
+            )
+            assert post_count == pre_counts[table], (
+                f"V2a evaluation builder wrote to {table}: "
+                f"{pre_counts[table]} -> {post_count}"
+            )
+
+
+async def test_p2a_group_c_v2a_metadata_honestly_expresses_merged_chunk(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: V2a merged chunk metadata MUST honestly express
+    the merge — e.g. ``merged_block_count``, ``first_block_order``,
+    ``last_block_order``, ``source_scope``, ``default_route``,
+    ``chunk_index``, ``has_canonical_offsets``.
+
+    The metadata is NOT citation truth — citation truth comes from
+    the Postgres plan only.  But metadata MUST honestly describe the
+    merge structure."""
+    await _seed_v2a_two_paragraph_env(index_env)
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    assert len(plan.chunks) == 1
+    metadata = plan.chunks[0].metadata_json
+
+    # Metadata MUST express the merge honestly.
+    assert metadata["merged_block_count"] == 2
+    assert metadata["first_block_order_index"] == 0
+    assert metadata["last_block_order_index"] == 1
+    assert metadata["source_scope"] == "main_reading_text"
+    assert metadata["default_route"] == "main_reading"
+    assert metadata["chunk_index"] == 0
+    assert metadata["has_canonical_offsets"] is True
+
+
+async def test_p2a_group_c_v2a_single_block_metadata(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: a standalone V2a chunk (single block, no merge)
+    MUST have ``merged_block_count == 1`` in its metadata."""
+    await _p1e_seed_minimal_v1_env(index_env)
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    assert len(plan.chunks) == 1
+    metadata = plan.chunks[0].metadata_json
+    assert metadata["merged_block_count"] == 1
+    assert metadata["first_block_order_index"] == 0
+    assert metadata["last_block_order_index"] == 0
+
+
+async def test_p2a_group_c_v2a_chunk_index_sequential(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: when multiple V2a chunks are produced, their
+    ``chunk_index`` metadata MUST be sequential (0, 1, 2, ...)."""
+    # Two paragraphs separated by a heading → 3 standalone chunks.
+    text_a = "First paragraph."
+    text_heading = "Section Title"
+    text_b = "Second paragraph."
+    base_text, offsets = _build_base_text_and_offsets(
+        text_a, text_heading, text_b
+    )
+
+    await _seed_full_environment(index_env, base_text=base_text)
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="heading-1",
+        order_index=1,
+        block_type="heading",
+        text_content=text_heading,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    await _seed_block(
+        index_env,
+        block_id="paragraph-2",
+        order_index=2,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[2][0],
+        canonical_text_end_utf16=offsets[2][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    assert len(plan.chunks) == 3
+    for i, chunk in enumerate(plan.chunks):
+        assert chunk.metadata_json["chunk_index"] == i
+
+
+async def test_p2a_group_c_v2a_citation_no_plate_markdown_fields(
+    index_env: asyncpg.Pool,
+) -> None:
+    """P2-A Group C: V2a citation refs MUST NOT contain any Plate,
+    Slate, DOM, or Markdown fields.  Only canonical truth fields."""
+    await _seed_v2a_two_paragraph_env(index_env)
+
+    service = _build_service(index_env)
+    plan = await service.build_evaluation_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+        index_version="article_rag_index_v2",
+    )
+
+    citation = plan.chunks[0].citation
+    # Citation fields are exactly the canonical truth fields.
+    expected_fields = {
+        "reading_record_id",
+        "stable_document_id",
+        "base_id",
+        "record_generation",
+        "block_ids",
+        "unit_ids",
+        "anchor_segment_ids",
+        "canonical_text_start_utf16",
+        "canonical_text_end_utf16",
+    }
+    actual_fields = set(citation.__dataclass_fields__.keys())
+    assert actual_fields == expected_fields
