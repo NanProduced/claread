@@ -21,8 +21,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import traceback
-from types import MappingProxyType
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import asyncpg
 import pytest
@@ -41,8 +40,10 @@ from app.services.reader_orchestration.article_rag_index_plan import (
 from app.services.reader_orchestration.article_rag_index_plan_evaluation import (  # noqa: E402
     ArticleRagIndexPlanEvaluationError,
     ArticleRagIndexPlanEvaluationService,
+    ArticleRagPlanShapeMetrics,
     ArticleRagV1V2aPlanComparison,
     _assert_coverage_invariant,
+    _basis_points_reduction,
     _build_shape_metrics,
 )
 from app.services.reader_orchestration.article_rag_index_profile import (
@@ -78,50 +79,6 @@ from tests.test_d6_i4a_article_rag_index_plan import (  # noqa: E402
 )
 
 pytestmark = pytest.mark.anyio
-
-
-# ---------------------------------------------------------------------------
-# JSON serialization helper for ``MappingProxyType``
-# ---------------------------------------------------------------------------
-#
-# ``dataclasses.asdict`` recursively walks dataclass fields but does NOT
-# convert ``MappingProxyType`` (the type returned by
-# ``ArticleRagPlanShapeMetrics.source_scope_counts``) to a plain dict —
-# it leaves the proxy object as-is via ``copy.deepcopy``, which raises
-# ``TypeError: cannot pickle 'mappingproxy' object``.  We cannot use the
-# ``default`` hook of ``json.dumps`` because ``asdict`` fails BEFORE
-# ``json.dumps`` gets to call the hook.
-#
-# ``_to_jsonable`` is a minimal recursive converter that walks frozen
-# dataclasses, converts ``MappingProxyType`` to plain ``dict``, and
-# falls back to ``str`` for unknown leaf types (UUIDs, etc.).  It is
-# used in place of ``dataclasses.asdict`` for JSON snapshot comparisons.
-def _to_jsonable(obj: object) -> object:
-    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        return {
-            f.name: _to_jsonable(getattr(obj, f.name))
-            for f in dataclasses.fields(obj)
-        }
-    if isinstance(obj, MappingProxyType):
-        return {k: _to_jsonable(v) for k, v in obj.items()}
-    if isinstance(obj, dict):
-        return {k: _to_jsonable(v) for k, v in obj.items()}
-    if isinstance(obj, list | tuple):
-        return [_to_jsonable(v) for v in obj]
-    if isinstance(obj, UUID):
-        return str(obj)
-    return obj
-
-
-def _json_default(obj: object) -> object:
-    """Fallback ``default`` hook for ``json.dumps``.
-
-    Only invoked if ``_to_jsonable`` misses a type — converts
-    ``MappingProxyType`` to ``dict`` and falls back to ``str``.
-    """
-    if isinstance(obj, MappingProxyType):
-        return dict(obj)
-    return str(obj)
 
 
 # ---------------------------------------------------------------------------
@@ -329,8 +286,10 @@ def _assert_sentinels_absent_from_result(result: ArticleRagV1V2aPlanComparison) 
     ``repr`` or its JSON-serialised snapshot.
     """
     result_repr = repr(result)
-    result_dict = _to_jsonable(result)
-    result_json = json.dumps(result_dict, default=_json_default, sort_keys=True)
+    result_dict = result.canonical_payload()
+    result_json = json.dumps(
+        result_dict, ensure_ascii=False, separators=(",", ":")
+    )
     for sentinel in _P2B_SENTINELS:
         assert sentinel not in result_repr, (
             f"Sentinel {sentinel!r} leaked into repr(result)"
@@ -891,10 +850,10 @@ async def test_p2b_d_repeat_comparison_byte_equal(
         )
         results.append(result)
 
-    # All results byte-equal: compare via _to_jsonable + JSON dump
-    # (deterministic key order via sort_keys=True).
+    # All results byte-equal: compare via canonical_payload() +
+    # JSON dump (deterministic key order frozen by canonical_payload()).
     snapshots = [
-        json.dumps(_to_jsonable(r), default=_json_default, sort_keys=True)
+        json.dumps(r.canonical_payload(), ensure_ascii=False, separators=(",", ":"))
         for r in results
     ]
     first = snapshots[0]
@@ -1016,7 +975,7 @@ async def test_p2b_d_json_snapshot_key_order_contract(
 ) -> None:
     """Section D: JSON / dict snapshot key set and order is stable.
     The ``ArticleRagV1V2aPlanComparison`` dataclass field order is
-    the canonical contract; ``_to_jsonable`` preserves it.
+    the canonical contract; ``canonical_payload()`` preserves it.
     """
     await _seed_v2a_two_paragraph_env(p2b_env)
     service = _build_eval_service(p2b_env)
@@ -1076,8 +1035,8 @@ async def test_p2b_d_json_snapshot_key_order_contract(
         )
 
     # JSON snapshot deterministic.
-    s1 = json.dumps(_to_jsonable(r1), default=_json_default, sort_keys=True)
-    s2 = json.dumps(_to_jsonable(r2), default=_json_default, sort_keys=True)
+    s1 = json.dumps(r1.canonical_payload(), ensure_ascii=False, separators=(",", ":"))
+    s2 = json.dumps(r2.canonical_payload(), ensure_ascii=False, separators=(",", ":"))
     assert s1 == s2
 
 
@@ -1248,7 +1207,11 @@ async def test_p2b_e_public_identity_only_allowed(
     }
 
     result_repr = repr(result)
-    result_json = json.dumps(_to_jsonable(result), default=_json_default, sort_keys=True)
+    result_json = json.dumps(
+        result.canonical_payload(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     result_str = str(result)
 
     # Build the set of characters/substrings actually present.
@@ -2004,3 +1967,585 @@ async def test_p2b_r1_per_block_scope_reassignment_fails_closed(
     assert str(err) == _P2B_MSG_COVERAGE_INVARIANT_FAILED
     assert err.__cause__ is None
     assert err.__context__ is None
+
+
+# ===================================================================
+# P2-B-R2 — Output Contract Closure
+#   (1) merge metrics citation-truth source
+#   (2) basis-points no-float contract
+#   (3) canonical_payload() public API
+# ===================================================================
+
+
+# ---------------------------------------------------------------------------
+# Sentinel used in P2-B-R2 metadata-poisoning matrix.
+# ---------------------------------------------------------------------------
+
+_P2B_R2_METADATA_SENTINEL = "P2B-R2-METADATA-SENTINEL"
+
+
+# ===================================================================
+# P2-B-R2 (1) — Merge metrics MUST use citation.block_ids, not metadata
+# ===================================================================
+
+
+async def test_p2b_r2_merge_metrics_use_citation_truth_not_metadata(
+    p2b_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2-B-R2: ``merged_chunk_count`` and ``max_blocks_per_chunk`` MUST
+    be derived from ``citation.block_ids`` (the same truth source used
+    by the coverage invariant), NOT from
+    ``metadata_json["merged_block_count"]``.
+
+    The V2a plan from ``_seed_v2a_two_paragraph_env`` produces one
+    chunk whose ``citation.block_ids = ("paragraph-1", "paragraph-2")``
+    (length 2).  We construct six V2a plan variants that share the
+    same citation but carry different ``metadata_json`` values:
+      * missing ``merged_block_count``
+      * ``True`` (bool — old code falls back to 1)
+      * ``0``
+      * ``-1``
+      * ``999``
+      * ``"P2B-R2-METADATA-SENTINEL"`` (str — old code falls back to 1)
+
+    For every variant, the comparison result MUST produce identical:
+      * ``v2a_metrics.merged_chunk_count`` == 1   (one chunk with 2 blocks)
+      * ``v2a_metrics.max_blocks_per_chunk`` == 2 (largest citation slice)
+      * ``v2a_metrics.source_block_count`` == 2  (sum of citation lengths)
+      * ``chunk_count_reduction_basis_points`` == 5000  (V1=2, V2a=1)
+
+    The metadata sentinel MUST NOT leak into ``repr(result)``,
+    ``repr(v2a_metrics)``, ``canonical_payload()`` JSON, or a fresh
+    ``canonical_payload()`` snapshot.
+    """
+    await _seed_v2a_two_paragraph_env(p2b_env)
+    v1_plan, v2a_plan = await _build_v1_and_v2a_plans(p2b_env)
+
+    # Sanity: V2a has one chunk whose citation spans two block ids.
+    assert len(v2a_plan.chunks) == 1
+    assert len(v2a_plan.chunks[0].citation.block_ids) == 2
+    # Sanity: V1 has two single-block chunks.
+    assert len(v1_plan.chunks) == 2
+    for c in v1_plan.chunks:
+        assert len(c.citation.block_ids) == 1
+
+    metadata_variants: list[dict[str, object]] = [
+        {},                                       # missing
+        {"merged_block_count": True},             # bool -> old fallback
+        {"merged_block_count": 0},
+        {"merged_block_count": -1},
+        {"merged_block_count": 999},
+        {"merged_block_count": _P2B_R2_METADATA_SENTINEL},  # str -> old fallback
+    ]
+
+    results: list[ArticleRagV1V2aPlanComparison] = []
+    for metadata in metadata_variants:
+        custom_chunks = tuple(
+            dataclasses.replace(c, metadata_json=dict(metadata))
+            for c in v2a_plan.chunks
+        )
+        custom_v2a = dataclasses.replace(v2a_plan, chunks=custom_chunks)
+
+        # Bind loop variables as default args to avoid B023 late-binding
+        # closure issues — the functions are called synchronously within
+        # the same iteration, but default-arg binding makes the captured
+        # value explicit and ruff-clean.
+        async def return_v1(
+            *args: object,
+            _v1: ArticleRagIndexPlan = v1_plan,
+            **kwargs: object,
+        ) -> ArticleRagIndexPlan:
+            return _v1
+
+        async def return_v2a(
+            *args: object,
+            _v2a: ArticleRagIndexPlan = custom_v2a,
+            **kwargs: object,
+        ) -> ArticleRagIndexPlan:
+            return _v2a
+
+        monkeypatch.setattr(
+            ArticleRagIndexPlanService,
+            "build_index_plan_in_transaction",
+            return_v1,
+        )
+        monkeypatch.setattr(
+            ArticleRagIndexPlanService,
+            "build_evaluation_index_plan_in_transaction",
+            return_v2a,
+        )
+
+        service = _build_eval_service(p2b_env)
+        async with p2b_env.acquire() as conn:
+            async with conn.transaction():
+                result = await service.compare_for_record_in_transaction(
+                    conn,
+                    record_id=_RECORD_ID,
+                    user_id=_USER_ID,
+                )
+        results.append(result)
+
+    # All six results MUST agree on the four citation-derived metrics.
+    base = results[0]
+    for i, r in enumerate(results[1:], start=1):
+        assert r.v2a_metrics.merged_chunk_count == base.v2a_metrics.merged_chunk_count, (
+            f"variant {i} merged_chunk_count diverged: "
+            f"{r.v2a_metrics.merged_chunk_count} != {base.v2a_metrics.merged_chunk_count}"
+        )
+        assert r.v2a_metrics.max_blocks_per_chunk == base.v2a_metrics.max_blocks_per_chunk, (
+            f"variant {i} max_blocks_per_chunk diverged: "
+            f"{r.v2a_metrics.max_blocks_per_chunk} != {base.v2a_metrics.max_blocks_per_chunk}"
+        )
+        assert r.v2a_metrics.source_block_count == base.v2a_metrics.source_block_count, (
+            f"variant {i} source_block_count diverged"
+        )
+        assert r.chunk_count_reduction_basis_points == base.chunk_count_reduction_basis_points, (
+            f"variant {i} chunk_count_reduction_basis_points diverged"
+        )
+
+    # Citation-truth expected values:
+    #   * V2a has one chunk with 2 citation block_ids -> merged_chunk_count = 1
+    #   * max blocks per chunk = 2
+    #   * source_block_count = 2
+    #   * V1=2, V2a=1, reduction = (2-1)/2 * 10000 = 5000 bp
+    for i, r in enumerate(results):
+        assert r.v2a_metrics.merged_chunk_count == 1, (
+            f"variant {i} merged_chunk_count = {r.v2a_metrics.merged_chunk_count}, expected 1"
+        )
+        assert r.v2a_metrics.max_blocks_per_chunk == 2, (
+            f"variant {i} max_blocks_per_chunk = {r.v2a_metrics.max_blocks_per_chunk}, expected 2"
+        )
+        assert r.v2a_metrics.source_block_count == 2, (
+            f"variant {i} source_block_count = {r.v2a_metrics.source_block_count}, expected 2"
+        )
+        assert r.chunk_count_reduction_basis_points == 5000, (
+            f"variant {i} chunk_count_reduction_basis_points = "
+            f"{r.chunk_count_reduction_basis_points}, expected 5000"
+        )
+
+    # Metadata sentinel MUST NOT leak into any surface, including the
+    # canonical payload (public API) and a fresh payload snapshot.
+    for r in results:
+        assert _P2B_R2_METADATA_SENTINEL not in repr(r)
+        assert _P2B_R2_METADATA_SENTINEL not in repr(r.v2a_metrics)
+        payload = r.canonical_payload()
+        payload_json = json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":")
+        )
+        assert _P2B_R2_METADATA_SENTINEL not in payload_json
+        assert _P2B_R2_METADATA_SENTINEL not in repr(payload)
+        fresh_payload = r.canonical_payload()
+        fresh_json = json.dumps(
+            fresh_payload, ensure_ascii=False, separators=(",", ":")
+        )
+        assert _P2B_R2_METADATA_SENTINEL not in fresh_json
+
+
+# ===================================================================
+# P2-B-R2 (2) — Basis-points no-float contract
+# ===================================================================
+
+
+def test_p2b_r2_basis_points_no_float_fixed_literals() -> None:
+    """P2-B-R2: integer basis-point rounding matches fixed literals.
+
+    This narrow numerical contract intentionally exercises the private pure
+    helper because the public comparison seam cannot construct arbitrary
+    signed denominators without manufacturing millions of plan chunks.
+
+    Frozen literals (NOT recomputed via the production algorithm) cover
+    half-even rounding symmetry for positive and negative numerators and
+    denominators, divide-by-zero, and the canonical 1/3 and 2/3 cases.
+    """
+    assert _basis_points_reduction(1, 2) == 5000
+    assert _basis_points_reduction(1, 3) == 3333
+    assert _basis_points_reduction(2, 3) == 6667
+    assert _basis_points_reduction(1, 32) == 312
+    assert _basis_points_reduction(3, 32) == 938
+    assert _basis_points_reduction(-1, 32) == -312
+    assert _basis_points_reduction(-3, 32) == -938
+
+    # Negative denominators are mathematically equivalent to negating the
+    # numerator; these literals expose floor-division sign errors.
+    assert _basis_points_reduction(1, -3) == -3333
+    assert _basis_points_reduction(-1, -3) == 3333
+    assert _basis_points_reduction(1, -32) == -312
+    assert _basis_points_reduction(3, -32) == -938
+
+    assert _basis_points_reduction(1, 0) == 0
+    assert _basis_points_reduction(0, 7) == 0
+
+
+def test_p2b_r2_basis_points_big_integer_precision_vs_float() -> None:
+    """P2-B-R2: a big-integer case that proves the legacy float path
+    loses precision.
+
+    ``numerator = 2**53 + 1 = 9007199254740993`` cannot be represented
+    exactly as a float (float64 mantissa is 52 bits + implicit leading
+    1, so 2**53 is the largest contiguous integer).  When multiplied
+    by 10000 and divided by 1, the legacy float path produces
+    ``90071992547409936384`` (float64 representation error compounds
+    across the multiply), whereas the correct integer result is
+    ``90071992547409930000`` (``numerator * 10000`` exactly).
+
+    This and the fixed-literal rounding matrix are intentionally narrow
+    tests of the private pure helper. The public comparison seam covers the
+    normal 5000-bp integration case, but cannot reasonably manufacture the
+    signed denominators or enormous plan sizes needed for these boundaries.
+    """
+    numerator = 2**53 + 1  # 9007199254740993
+    expected = 90071992547409930000  # numerator * 10000, exact integer
+    # Sanity: prove the float path diverges from the integer path.
+    float_path = round(numerator * 10000 / 1)
+    assert float_path != expected, (
+        "Float path unexpectedly matched integer path — test premise invalid"
+    )
+    # The exact float-path value is a fixed literal observed on CPython
+    # 3.x / IEEE 754 float64.  It is NOT recomputed from the production
+    # algorithm — it independently certifies that the legacy float path
+    # loses precision and that the production seam MUST NOT follow it.
+    assert float_path == 90071992547409936384, (
+        f"Float path produced {float_path!r}, "
+        f"expected 90071992547409936384"
+    )
+    # The production seam MUST return the integer path.
+    assert _basis_points_reduction(numerator, 1) == expected
+
+
+# ===================================================================
+# P2-B-R2 (3) — canonical_payload() public API
+# ===================================================================
+
+
+async def test_p2b_r2_canonical_payload_tracer_and_schema(
+    p2b_env: asyncpg.Pool,
+) -> None:
+    """P2-B-R2: ``ArticleRagV1V2aPlanComparison.canonical_payload()``
+    returns a JSON-compatible detached dict with the exact frozen
+    schema and key order.
+
+    The top-level payload MUST start with ``$schema`` (discriminator)
+    and then strictly follow the ``ArticleRagV1V2aPlanComparison``
+    dataclass field declaration order.  Nested ``v1_metrics`` /
+    ``v2a_metrics`` payloads MUST strictly follow the
+    ``ArticleRagPlanShapeMetrics`` field declaration order.
+
+    ``record_id`` MUST be a ``str`` (UUID stringified).
+    ``source_scope_counts`` MUST be a plain ``dict`` with keys sorted
+    ascending.
+
+    Standard ``json.dumps(payload, ensure_ascii=False,
+    separators=(",", ":"))`` MUST succeed without any custom
+    ``default`` hook.
+    """
+    await _seed_v2a_two_paragraph_env(p2b_env)
+    service = _build_eval_service(p2b_env)
+    result = await service.compare_for_record(
+        record_id=_RECORD_ID, user_id=_USER_ID,
+    )
+
+    payload = result.canonical_payload()
+
+    # --- Top-level key order ---------------------------------------
+    expected_top_keys = (
+        "$schema",
+        "record_id",
+        "v1_metrics",
+        "v2a_metrics",
+        "chunk_count_delta",
+        "chunk_count_reduction_basis_points",
+        "vector_count_delta",
+        "embedding_input_count_delta",
+        "total_utf16_units_delta",
+        "flattened_block_id_order_equal",
+        "citation_coverage_equal",
+    )
+    assert tuple(payload.keys()) == expected_top_keys, (
+        f"Top-level key order drift: {tuple(payload.keys())}"
+    )
+    assert payload["$schema"] == "article_rag_v1_v2a_plan_comparison_v1"
+    assert payload["record_id"] == str(_RECORD_ID)
+    assert isinstance(payload["record_id"], str)
+
+    # --- Metrics key order -----------------------------------------
+    expected_metrics_keys = (
+        "index_version",
+        "profile_fingerprint",
+        "chunker_version",
+        "plan_content_sha256",
+        "chunk_count",
+        "source_block_count",
+        "merged_chunk_count",
+        "max_blocks_per_chunk",
+        "embedding_input_count",
+        "vector_count",
+        "total_embedding_input_utf16_units",
+        "min_chunk_utf16_units",
+        "max_chunk_utf16_units",
+        "p50_chunk_utf16_units",
+        "p95_chunk_utf16_units",
+        "canonical_citation_count",
+        "noncanonical_citation_count",
+        "unit_reference_count",
+        "anchor_segment_reference_count",
+        "source_scope_counts",
+    )
+    assert tuple(payload["v1_metrics"].keys()) == expected_metrics_keys, (
+        f"v1_metrics key order drift: {tuple(payload['v1_metrics'].keys())}"
+    )
+    assert tuple(payload["v2a_metrics"].keys()) == expected_metrics_keys, (
+        f"v2a_metrics key order drift: {tuple(payload['v2a_metrics'].keys())}"
+    )
+
+    # --- source_scope_counts: plain dict, keys sorted ascending ----
+    for metrics_key in ("v1_metrics", "v2a_metrics"):
+        scope_counts = payload[metrics_key]["source_scope_counts"]
+        assert isinstance(scope_counts, dict), (
+            f"{metrics_key}.source_scope_counts must be a plain dict, "
+            f"got {type(scope_counts).__name__}"
+        )
+        scope_keys = list(scope_counts.keys())
+        assert scope_keys == sorted(scope_keys), (
+            f"{metrics_key}.source_scope_counts keys not sorted: {scope_keys}"
+        )
+
+    # --- All leaf values MUST be JSON primitives -------------------
+    def assert_jsonable(obj: object, path: str = "") -> None:
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                assert_jsonable(v, f"{path}.{k}")
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                assert_jsonable(v, f"{path}[{i}]")
+        elif isinstance(obj, str | int | bool) or obj is None:
+            pass
+        else:
+            raise AssertionError(
+                f"Non-JSON value at {path}: {type(obj).__name__}={obj!r}"
+            )
+
+    assert_jsonable(payload, "payload")
+
+    # --- Standard json.dumps MUST succeed with no custom default ---
+    serialized = json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":")
+    )
+    assert isinstance(serialized, str)
+    # Round-trip back through json.loads must produce an equal dict.
+    assert json.loads(serialized) == payload
+
+
+async def test_p2b_r2_canonical_payload_fields_track_dataclasses(
+    p2b_env: asyncpg.Pool,
+) -> None:
+    """Every dataclass field is represented once and in declaration order."""
+    await _seed_v2a_two_paragraph_env(p2b_env)
+    result = await _build_eval_service(p2b_env).compare_for_record(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    payload = result.canonical_payload()
+
+    comparison_fields = tuple(
+        field.name
+        for field in dataclasses.fields(ArticleRagV1V2aPlanComparison)
+    )
+    assert tuple(key for key in payload if key != "$schema") == comparison_fields
+
+    metrics_fields = tuple(
+        field.name for field in dataclasses.fields(ArticleRagPlanShapeMetrics)
+    )
+    assert tuple(payload["v1_metrics"]) == metrics_fields
+    assert tuple(payload["v2a_metrics"]) == metrics_fields
+
+
+async def test_p2b_r2_canonical_payload_detached_mutation(
+    p2b_env: asyncpg.Pool,
+) -> None:
+    """P2-B-R2: ``canonical_payload()`` MUST return a fresh detached
+    snapshot on every call.
+
+    Mutating the returned payload's top-level fields, nested metrics
+    dict, or nested ``source_scope_counts`` dict MUST NOT affect:
+      * the original ``ArticleRagV1V2aPlanComparison`` dataclass
+      * the next ``canonical_payload()`` call
+    """
+    await _seed_v2a_two_paragraph_env(p2b_env)
+    service = _build_eval_service(p2b_env)
+    result = await service.compare_for_record(
+        record_id=_RECORD_ID, user_id=_USER_ID,
+    )
+
+    payload1 = result.canonical_payload()
+    original_v1_chunk_count = payload1["v1_metrics"]["chunk_count"]
+    original_delta = payload1["chunk_count_delta"]
+    original_scope_keys = list(
+        payload1["v1_metrics"]["source_scope_counts"].keys()
+    )
+
+    # Mutate three levels of nesting.
+    payload1["chunk_count_delta"] = 999999
+    payload1["v1_metrics"]["chunk_count"] = 999999
+    payload1["v1_metrics"]["source_scope_counts"]["fake-scope"] = 999999
+    if original_scope_keys:
+        original_scope = original_scope_keys[0]
+        payload1["v1_metrics"]["source_scope_counts"][original_scope] = -1
+
+    # Second call MUST return a fresh, unmutated snapshot.
+    payload2 = result.canonical_payload()
+    assert payload2 is not payload1
+    assert payload2["chunk_count_delta"] == original_delta
+    assert payload2["v1_metrics"]["chunk_count"] == original_v1_chunk_count
+    assert "fake-scope" not in payload2["v1_metrics"]["source_scope_counts"]
+    if original_scope_keys:
+        assert payload2["v1_metrics"]["source_scope_counts"][original_scope] != -1
+
+    # Original dataclass field MUST remain unchanged.
+    assert result.chunk_count_delta == original_delta
+    assert result.v1_metrics.chunk_count == original_v1_chunk_count
+
+    # Third call MUST also be fresh and equal to payload2.
+    payload3 = result.canonical_payload()
+    assert payload3 == payload2
+    assert payload3 is not payload2
+
+
+async def test_p2b_r2_canonical_payload_sentinel_safety(
+    p2b_env: asyncpg.Pool,
+) -> None:
+    """P2-B-R2: sentinels planted in chunk text / block id / policy
+    notes MUST NOT leak into ``canonical_payload()`` JSON,
+    ``repr(payload)``, ``repr(result)``, or a fresh payload snapshot.
+
+    The canonical payload is the public contract that downstream
+    runners consume — it MUST NOT contain chunk text, block IDs, policy
+    notes, URIs, API keys, SDK objects, or raw exceptions.
+    """
+    # Plant independent sentinels in chunk text, policy notes, and a
+    # valid citation block ID. The comparison result must expose only
+    # aggregate coverage booleans, never raw citation identifiers.
+    block_id_sentinel = "P2B-R2-BLOCK-ID-SENTINEL"
+    sentinels = (*_P2B_SENTINELS, block_id_sentinel)
+    text_a = "First paragraph sk-ANT-sentinel123 contents."
+    text_b = "Second paragraph https://attacker.example/payload end."
+    base_text, offsets = _build_base_text_and_offsets(text_a, text_b)
+    await _seed_full_environment(p2b_env, base_text=base_text)
+    await _seed_block(
+        p2b_env,
+        block_id=f"paragraph-1-{block_id_sentinel}",
+        order_index=0,
+        block_type="paragraph",
+        text_content=text_a,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy_with_notes(
+            ["DashScopeError[sentinel]", "<script>\U0001f3af</script>"],
+        ),
+    )
+    await _seed_block(
+        p2b_env,
+        block_id="paragraph-2",
+        order_index=1,
+        block_type="paragraph",
+        text_content=text_b,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+
+    service = _build_eval_service(p2b_env)
+    result = await service.compare_for_record(
+        record_id=_RECORD_ID, user_id=_USER_ID,
+    )
+
+    payload = result.canonical_payload()
+    payload_json = json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":")
+    )
+    payload_repr = repr(payload)
+    result_repr = repr(result)
+
+    for sentinel in sentinels:
+        assert sentinel not in payload_json, (
+            f"Sentinel {sentinel!r} leaked into canonical_payload() JSON"
+        )
+        assert sentinel not in payload_repr, (
+            f"Sentinel {sentinel!r} leaked into repr(payload)"
+        )
+        assert sentinel not in result_repr, (
+            f"Sentinel {sentinel!r} leaked into repr(result)"
+        )
+
+    # Fresh payload snapshot MUST also be clean.
+    fresh_payload = result.canonical_payload()
+    fresh_json = json.dumps(
+        fresh_payload, ensure_ascii=False, separators=(",", ":")
+    )
+    for sentinel in sentinels:
+        assert sentinel not in fresh_json, (
+            f"Sentinel {sentinel!r} leaked into fresh canonical_payload() JSON"
+        )
+
+
+async def test_p2b_r2_metrics_canonical_payload_matches_top_level(
+    p2b_env: asyncpg.Pool,
+) -> None:
+    """P2-B-R2: ``ArticleRagPlanShapeMetrics.canonical_payload()`` MUST
+    return a JSON-compatible dict whose key order matches the
+    dataclass field declaration order, and whose values are detached
+    JSON primitives.
+
+    Both ``v1_metrics`` and ``v2a_metrics`` of the comparison's
+    ``canonical_payload()`` MUST equal the corresponding
+    ``ArticleRagPlanShapeMetrics.canonical_payload()`` snapshot.
+    """
+    await _seed_v2a_two_paragraph_env(p2b_env)
+    service = _build_eval_service(p2b_env)
+    result = await service.compare_for_record(
+        record_id=_RECORD_ID, user_id=_USER_ID,
+    )
+
+    v1_payload = result.v1_metrics.canonical_payload()
+    v2a_payload = result.v2a_metrics.canonical_payload()
+
+    expected_metrics_keys = (
+        "index_version",
+        "profile_fingerprint",
+        "chunker_version",
+        "plan_content_sha256",
+        "chunk_count",
+        "source_block_count",
+        "merged_chunk_count",
+        "max_blocks_per_chunk",
+        "embedding_input_count",
+        "vector_count",
+        "total_embedding_input_utf16_units",
+        "min_chunk_utf16_units",
+        "max_chunk_utf16_units",
+        "p50_chunk_utf16_units",
+        "p95_chunk_utf16_units",
+        "canonical_citation_count",
+        "noncanonical_citation_count",
+        "unit_reference_count",
+        "anchor_segment_reference_count",
+        "source_scope_counts",
+    )
+    assert tuple(v1_payload.keys()) == expected_metrics_keys
+    assert tuple(v2a_payload.keys()) == expected_metrics_keys
+
+    # Standard json.dumps MUST succeed.
+    json.dumps(v1_payload, ensure_ascii=False, separators=(",", ":"))
+    json.dumps(v2a_payload, ensure_ascii=False, separators=(",", ":"))
+
+    # The nested metrics inside the comparison's canonical_payload()
+    # MUST equal the per-metrics canonical_payload().
+    comparison_payload = result.canonical_payload()
+    assert comparison_payload["v1_metrics"] == v1_payload
+    assert comparison_payload["v2a_metrics"] == v2a_payload
+
+    # Detached: mutating per-metrics payload MUST NOT affect the
+    # comparison-level payload.
+    v1_payload["chunk_count"] = -999
+    fresh_comparison = result.canonical_payload()
+    assert fresh_comparison["v1_metrics"]["chunk_count"] != -999

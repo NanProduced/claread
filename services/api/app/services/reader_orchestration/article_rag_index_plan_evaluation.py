@@ -170,9 +170,12 @@ class ArticleRagPlanShapeMetrics:
       * ``source_block_count``: sum of ``len(citation.block_ids)``
         across chunks (allows duplicates — merge does not dedupe).
       * ``merged_chunk_count``: count of chunks whose
-        ``metadata_json["merged_block_count"] > 1``.
-      * ``max_blocks_per_chunk``: max of ``merged_block_count``;
-        0 for empty plan.
+        ``len(citation.block_ids) > 1``.  Derived from citation
+        truth (the same source used by the coverage invariant),
+        NOT from ``metadata_json["merged_block_count"]``.
+      * ``max_blocks_per_chunk``: max of
+        ``len(citation.block_ids)`` across chunks; 0 for empty
+        plan.  Citation-derived, NOT metadata-derived.
       * ``embedding_input_count``: equals ``chunk_count``; represents
         input entries, NOT provider request count.
       * ``vector_count``: equals ``chunk_count``; represents expected
@@ -217,6 +220,53 @@ class ArticleRagPlanShapeMetrics:
     unit_reference_count: int
     anchor_segment_reference_count: int
     source_scope_counts: Mapping[str, int]
+
+    def canonical_payload(self) -> dict[str, object]:
+        """Return a fresh detached JSON-compatible snapshot.
+
+        Keys are inserted in the dataclass field declaration order
+        (frozen contract).  ``source_scope_counts`` (a
+        ``MappingProxyType``) is converted to a plain ``dict`` with
+        keys sorted ascending.  All leaf values are JSON primitives
+        (``str`` / ``int`` / ``bool`` / ``None``) — no ``UUID``, no
+        ``MappingProxyType``, no SDK object, no chunk text, no block
+        id, no URI, no policy notes, no raw exception.
+
+        The returned dict is a fresh deep copy — mutating it (or any
+        nested dict) does NOT affect the original dataclass or
+        subsequent ``canonical_payload()`` calls.  Standard
+        ``json.dumps(payload, ensure_ascii=False, separators=(",", ":"))``
+        succeeds without any custom ``default`` hook.
+
+        Excluded by design: chunk text, block IDs, policy notes,
+        URIs, API keys, SDK objects, raw exceptions.  Only aggregate
+        counts, frozen identity strings, hashes, and the sorted
+        source-scope breakdown are exposed.
+        """
+        return {
+            "index_version": self.index_version,
+            "profile_fingerprint": self.profile_fingerprint,
+            "chunker_version": self.chunker_version,
+            "plan_content_sha256": self.plan_content_sha256,
+            "chunk_count": self.chunk_count,
+            "source_block_count": self.source_block_count,
+            "merged_chunk_count": self.merged_chunk_count,
+            "max_blocks_per_chunk": self.max_blocks_per_chunk,
+            "embedding_input_count": self.embedding_input_count,
+            "vector_count": self.vector_count,
+            "total_embedding_input_utf16_units": self.total_embedding_input_utf16_units,
+            "min_chunk_utf16_units": self.min_chunk_utf16_units,
+            "max_chunk_utf16_units": self.max_chunk_utf16_units,
+            "p50_chunk_utf16_units": self.p50_chunk_utf16_units,
+            "p95_chunk_utf16_units": self.p95_chunk_utf16_units,
+            "canonical_citation_count": self.canonical_citation_count,
+            "noncanonical_citation_count": self.noncanonical_citation_count,
+            "unit_reference_count": self.unit_reference_count,
+            "anchor_segment_reference_count": self.anchor_segment_reference_count,
+            "source_scope_counts": dict(
+                sorted(self.source_scope_counts.items())
+            ),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,6 +314,46 @@ class ArticleRagV1V2aPlanComparison:
     total_utf16_units_delta: int
     flattened_block_id_order_equal: bool
     citation_coverage_equal: bool
+
+    def canonical_payload(self) -> dict[str, object]:
+        """Return a fresh detached JSON-compatible snapshot.
+
+        Top-level keys are inserted in dataclass field declaration
+        order, with ``$schema`` (discriminator) inserted FIRST to
+        allow downstream consumers to dispatch on the payload shape
+        before reading any field.  ``record_id`` (a ``UUID``) is
+        converted to ``str``.  Nested ``v1_metrics`` / ``v2a_metrics``
+        are produced via
+        :meth:`ArticleRagPlanShapeMetrics.canonical_payload`, ensuring
+        the same key order and JSON-primitive leaf contract.
+
+        The returned dict is a fresh deep copy — mutating it (or any
+        nested dict, including the per-metrics payload or the nested
+        ``source_scope_counts`` dict) does NOT affect the original
+        dataclass or subsequent ``canonical_payload()`` calls.
+
+        Standard
+        ``json.dumps(payload, ensure_ascii=False, separators=(",", ":"))``
+        succeeds without any custom ``default`` hook.  No ``pickle``,
+        no test-only serializer, no ``sort_keys`` — the key order is
+        frozen by this method.
+
+        Excluded by design: chunk text, block IDs, policy notes,
+        URIs, API keys, SDK objects, raw exceptions.
+        """
+        return {
+            "$schema": "article_rag_v1_v2a_plan_comparison_v1",
+            "record_id": str(self.record_id),
+            "v1_metrics": self.v1_metrics.canonical_payload(),
+            "v2a_metrics": self.v2a_metrics.canonical_payload(),
+            "chunk_count_delta": self.chunk_count_delta,
+            "chunk_count_reduction_basis_points": self.chunk_count_reduction_basis_points,
+            "vector_count_delta": self.vector_count_delta,
+            "embedding_input_count_delta": self.embedding_input_count_delta,
+            "total_utf16_units_delta": self.total_utf16_units_delta,
+            "flattened_block_id_order_equal": self.flattened_block_id_order_equal,
+            "citation_coverage_equal": self.citation_coverage_equal,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -362,20 +452,19 @@ def _build_shape_metrics(
         len(c.citation.block_ids) for c in plan.chunks
     )
 
-    merged_chunk_count = 0
-    max_blocks_per_chunk = 0
-    for c in plan.chunks:
-        mbc = c.metadata_json.get("merged_block_count", 1)
-        if isinstance(mbc, bool) or not isinstance(mbc, int):
-            # Treat malformed / missing merged_block_count as 1
-            # (single-block chunk).  This is a defensive fallback for
-            # the metrics only — citation truth comes from
-            # ``ArticleRagCitationRef``, never from metadata.
-            mbc = 1
-        if mbc > 1:
-            merged_chunk_count += 1
-        if mbc > max_blocks_per_chunk:
-            max_blocks_per_chunk = mbc
+    # P2-B-R2: merge metrics MUST use ``citation.block_ids`` as the
+    # single truth source — the same source used by the coverage
+    # invariant.  ``metadata_json["merged_block_count"]`` is
+    # redundant, may be missing / malformed / drift, and MUST NOT be
+    # read here.  There is NO silent fallback for missing or
+    # malformed metadata; metadata is simply not consulted.
+    blocks_per_chunk_values = [
+        len(c.citation.block_ids) for c in plan.chunks
+    ]
+    merged_chunk_count = sum(1 for n in blocks_per_chunk_values if n > 1)
+    max_blocks_per_chunk = (
+        max(blocks_per_chunk_values) if blocks_per_chunk_values else 0
+    )
 
     chunk_utf16_lengths = [
         utf16_code_unit_length(c.text) for c in plan.chunks
@@ -529,15 +618,28 @@ def _assert_coverage_invariant(
 
 
 def _basis_points_reduction(numerator: int, denominator: int) -> int:
-    """Compute integer basis points reduction
-    ``round(numerator / denominator * 10000)``.
+    """Return round-half-even basis points using integer arithmetic.
 
-    Returns 0 on divide-by-zero (``denominator == 0``).  Result is
-    always an ``int`` — no ``float`` or unfrozen ``Decimal`` context.
+    A zero denominator returns zero because an empty V1 plan has no
+    meaningful reduction. Negative denominators are normalized before
+    divmod so rounding stays sign-symmetric.
     """
     if denominator == 0:
         return 0
-    return round(numerator * 10000 / denominator)
+    if denominator < 0:
+        numerator = -numerator
+        denominator = -denominator
+
+    product = numerator * 10000
+    quotient, remainder = divmod(product, denominator)
+    twice_remainder = remainder * 2
+
+    if twice_remainder > denominator:
+        quotient += 1
+    elif twice_remainder == denominator and quotient % 2 != 0:
+        quotient += 1
+
+    return quotient
 
 
 def _wrap_plan_error(
